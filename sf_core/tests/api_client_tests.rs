@@ -244,9 +244,7 @@ fn test_connection_init() {
     client.database_init(db.clone()).unwrap();
 
     let conn = client.connection_new().unwrap();
-    client
-        .connection_init(conn.clone(), db.clone())
-        .unwrap();
+    client.connection_init(conn.clone(), db.clone()).unwrap();
     client.connection_release(conn).unwrap();
     client.database_release(db).unwrap();
 }
@@ -261,9 +259,7 @@ fn test_connection_get_info() {
     client.database_init(db.clone()).unwrap();
 
     let conn = client.connection_new().unwrap();
-    client
-        .connection_init(conn.clone(), db.clone())
-        .unwrap();
+    client.connection_init(conn.clone(), db.clone()).unwrap();
 
     let info_codes = vec![InfoCode::DRIVER_NAME, InfoCode::DRIVER_VERSION];
     let _info_result = client
@@ -284,9 +280,7 @@ fn test_connection_get_objects() {
     client.database_init(db.clone()).unwrap();
 
     let conn = client.connection_new().unwrap();
-    client
-        .connection_init(conn.clone(), db.clone())
-        .unwrap();
+    client.connection_init(conn.clone(), db.clone()).unwrap();
 
     let _objects = client
         .connection_get_objects(
@@ -314,9 +308,7 @@ fn test_connection_get_table_schema() {
     client.database_init(db.clone()).unwrap();
 
     let conn = client.connection_new().unwrap();
-    client
-        .connection_init(conn.clone(), db.clone())
-        .unwrap();
+    client.connection_init(conn.clone(), db.clone()).unwrap();
 
     let _schema = client
         .connection_get_table_schema(
@@ -341,9 +333,7 @@ fn test_connection_get_table_types() {
     client.database_init(db.clone()).unwrap();
 
     let conn = client.connection_new().unwrap();
-    client
-        .connection_init(conn.clone(), db.clone())
-        .unwrap();
+    client.connection_init(conn.clone(), db.clone()).unwrap();
 
     let _table_types = client.connection_get_table_types(conn.clone()).unwrap();
 
@@ -361,9 +351,7 @@ fn test_connection_commit() {
     client.database_init(db.clone()).unwrap();
 
     let conn = client.connection_new().unwrap();
-    client
-        .connection_init(conn.clone(), db.clone())
-        .unwrap();
+    client.connection_init(conn.clone(), db.clone()).unwrap();
 
     client.connection_commit(conn.clone()).unwrap();
 
@@ -381,9 +369,7 @@ fn test_connection_rollback() {
     client.database_init(db.clone()).unwrap();
 
     let conn = client.connection_new().unwrap();
-    client
-        .connection_init(conn.clone(), db.clone())
-        .unwrap();
+    client.connection_init(conn.clone(), db.clone()).unwrap();
 
     client.connection_rollback(conn.clone()).unwrap();
 
@@ -420,9 +406,7 @@ fn test_connection_lifecycle() {
         .unwrap();
 
     // Initialize connection
-    client
-        .connection_init(conn.clone(), db.clone())
-        .unwrap();
+    client.connection_init(conn.clone(), db.clone()).unwrap();
 
     // Get driver info
     let info_codes = vec![InfoCode::DRIVER_NAME, InfoCode::DRIVER_VERSION];
@@ -449,9 +433,7 @@ fn test_statement_new_and_release() {
     client.database_init(db.clone()).unwrap();
 
     let conn = client.connection_new().unwrap();
-    client
-        .connection_init(conn.clone(), db.clone())
-        .unwrap();
+    client.connection_init(conn.clone(), db.clone()).unwrap();
 
     let stmt = client.statement_new(conn.clone()).unwrap();
 
@@ -470,9 +452,7 @@ fn test_statement_set_sql_query() {
     client.database_init(db.clone()).unwrap();
 
     let conn = client.connection_new().unwrap();
-    client
-        .connection_init(conn.clone(), db.clone())
-        .unwrap();
+    client.connection_init(conn.clone(), db.clone()).unwrap();
 
     let stmt = client.statement_new(conn.clone()).unwrap();
     client
@@ -494,9 +474,7 @@ fn test_statement_set_substrait_plan() {
     client.database_init(db.clone()).unwrap();
 
     let conn = client.connection_new().unwrap();
-    client
-        .connection_init(conn.clone(), db.clone())
-        .unwrap();
+    client.connection_init(conn.clone(), db.clone()).unwrap();
 
     let stmt = client.statement_new(conn.clone()).unwrap();
     let plan_bytes = vec![0x00, 0x01, 0x02, 0x03]; // Mock substrait plan
@@ -519,9 +497,7 @@ fn test_statement_prepare() {
     client.database_init(db.clone()).unwrap();
 
     let conn = client.connection_new().unwrap();
-    client
-        .connection_init(conn.clone(), db.clone())
-        .unwrap();
+    client.connection_init(conn.clone(), db.clone()).unwrap();
 
     let stmt = client.statement_new(conn.clone()).unwrap();
     client
@@ -544,9 +520,7 @@ fn test_statement_set_option_string() {
     client.database_init(db.clone()).unwrap();
 
     let conn = client.connection_new().unwrap();
-    client
-        .connection_init(conn.clone(), db.clone())
-        .unwrap();
+    client.connection_init(conn.clone(), db.clone()).unwrap();
 
     let stmt = client.statement_new(conn.clone()).unwrap();
     client
@@ -568,9 +542,7 @@ fn test_statement_set_option_bytes() {
     client.database_init(db.clone()).unwrap();
 
     let conn = client.connection_new().unwrap();
-    client
-        .connection_init(conn.clone(), db.clone())
-        .unwrap();
+    client.connection_init(conn.clone(), db.clone()).unwrap();
 
     let stmt = client.statement_new(conn.clone()).unwrap();
     let option_bytes = vec![0xFF, 0xFE, 0xFD];
@@ -593,9 +565,7 @@ fn test_statement_set_option_int() {
     client.database_init(db.clone()).unwrap();
 
     let conn = client.connection_new().unwrap();
-    client
-        .connection_init(conn.clone(), db.clone())
-        .unwrap();
+    client.connection_init(conn.clone(), db.clone()).unwrap();
 
     let stmt = client.statement_new(conn.clone()).unwrap();
     client
@@ -617,9 +587,7 @@ fn test_statement_set_option_double() {
     client.database_init(db.clone()).unwrap();
 
     let conn = client.connection_new().unwrap();
-    client
-        .connection_init(conn.clone(), db.clone())
-        .unwrap();
+    client.connection_init(conn.clone(), db.clone()).unwrap();
 
     let stmt = client.statement_new(conn.clone()).unwrap();
     client
@@ -641,9 +609,7 @@ fn test_statement_get_parameter_schema() {
     client.database_init(db.clone()).unwrap();
 
     let conn = client.connection_new().unwrap();
-    client
-        .connection_init(conn.clone(), db.clone())
-        .unwrap();
+    client.connection_init(conn.clone(), db.clone()).unwrap();
 
     let stmt = client.statement_new(conn.clone()).unwrap();
     client
@@ -668,9 +634,7 @@ fn test_statement_bind() {
     client.database_init(db.clone()).unwrap();
 
     let conn = client.connection_new().unwrap();
-    client
-        .connection_init(conn.clone(), db.clone())
-        .unwrap();
+    client.connection_init(conn.clone(), db.clone()).unwrap();
 
     let stmt = client.statement_new(conn.clone()).unwrap();
     client
@@ -699,9 +663,7 @@ fn test_statement_bind_stream() {
     client.database_init(db.clone()).unwrap();
 
     let conn = client.connection_new().unwrap();
-    client
-        .connection_init(conn.clone(), db.clone())
-        .unwrap();
+    client.connection_init(conn.clone(), db.clone()).unwrap();
 
     let stmt = client.statement_new(conn.clone()).unwrap();
     client
@@ -729,9 +691,7 @@ fn test_statement_execute_query() {
     client.database_init(db.clone()).unwrap();
 
     let conn = client.connection_new().unwrap();
-    client
-        .connection_init(conn.clone(), db.clone())
-        .unwrap();
+    client.connection_init(conn.clone(), db.clone()).unwrap();
 
     let stmt = client.statement_new(conn.clone()).unwrap();
     client
@@ -755,9 +715,7 @@ fn test_statement_execute_partitions() {
     client.database_init(db.clone()).unwrap();
 
     let conn = client.connection_new().unwrap();
-    client
-        .connection_init(conn.clone(), db.clone())
-        .unwrap();
+    client.connection_init(conn.clone(), db.clone()).unwrap();
 
     let stmt = client.statement_new(conn.clone()).unwrap();
     client
@@ -783,9 +741,7 @@ fn test_statement_read_partition() {
     client.database_init(db.clone()).unwrap();
 
     let conn = client.connection_new().unwrap();
-    client
-        .connection_init(conn.clone(), db.clone())
-        .unwrap();
+    client.connection_init(conn.clone(), db.clone()).unwrap();
 
     let stmt = client.statement_new(conn.clone()).unwrap();
     client
@@ -834,9 +790,7 @@ fn test_statement_lifecycle() {
         .unwrap();
 
     // Initialize connection
-    client
-        .connection_init(conn.clone(), db.clone())
-        .unwrap();
+    client.connection_init(conn.clone(), db.clone()).unwrap();
 
     // Create statement
     let stmt = client.statement_new(conn.clone()).unwrap();
@@ -891,9 +845,7 @@ fn test_full_adbc_workflow() {
     client
         .connection_set_option_string(conn.clone(), "host".to_string(), "localhost".to_string())
         .unwrap();
-    client
-        .connection_init(conn.clone(), db.clone())
-        .unwrap();
+    client.connection_init(conn.clone(), db.clone()).unwrap();
 
     // Get driver info
     let info_codes = vec![
