@@ -302,7 +302,7 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
     fn handle_connection_init(
         &self,
         conn_handle: ConnectionHandle,
-        _db_handle: String,
+        _db_handle: DatabaseHandle,
     ) -> thrift::Result<()> {
         let handle = conn_handle.into();
         match self.conn_handle_manager.get_obj(handle) {

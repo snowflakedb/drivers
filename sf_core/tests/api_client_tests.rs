@@ -240,11 +240,15 @@ fn test_connection_init() {
     setup_logging();
     let mut client = new_database_driver_v1_client();
 
+    let db = client.database_new().unwrap();
+    client.database_init(db.clone()).unwrap();
+
     let conn = client.connection_new().unwrap();
     client
-        .connection_init(conn.clone(), "test_db".to_string())
+        .connection_init(conn.clone(), db.clone())
         .unwrap();
     client.connection_release(conn).unwrap();
+    client.database_release(db).unwrap();
 }
 
 #[test]
@@ -253,9 +257,12 @@ fn test_connection_get_info() {
     setup_logging();
     let mut client = new_database_driver_v1_client();
 
+    let db = client.database_new().unwrap();
+    client.database_init(db.clone()).unwrap();
+
     let conn = client.connection_new().unwrap();
     client
-        .connection_init(conn.clone(), "test_db".to_string())
+        .connection_init(conn.clone(), db.clone())
         .unwrap();
 
     let info_codes = vec![InfoCode::DRIVER_NAME, InfoCode::DRIVER_VERSION];
@@ -264,6 +271,7 @@ fn test_connection_get_info() {
         .unwrap();
 
     client.connection_release(conn).unwrap();
+    client.database_release(db).unwrap();
 }
 
 #[test]
@@ -272,9 +280,12 @@ fn test_connection_get_objects() {
     setup_logging();
     let mut client = new_database_driver_v1_client();
 
+    let db = client.database_new().unwrap();
+    client.database_init(db.clone()).unwrap();
+
     let conn = client.connection_new().unwrap();
     client
-        .connection_init(conn.clone(), "test_db".to_string())
+        .connection_init(conn.clone(), db.clone())
         .unwrap();
 
     let _objects = client
@@ -290,6 +301,7 @@ fn test_connection_get_objects() {
         .unwrap();
 
     client.connection_release(conn).unwrap();
+    client.database_release(db).unwrap();
 }
 
 #[test]
@@ -298,9 +310,12 @@ fn test_connection_get_table_schema() {
     setup_logging();
     let mut client = new_database_driver_v1_client();
 
+    let db = client.database_new().unwrap();
+    client.database_init(db.clone()).unwrap();
+
     let conn = client.connection_new().unwrap();
     client
-        .connection_init(conn.clone(), "test_db".to_string())
+        .connection_init(conn.clone(), db.clone())
         .unwrap();
 
     let _schema = client
@@ -313,6 +328,7 @@ fn test_connection_get_table_schema() {
         .unwrap();
 
     client.connection_release(conn).unwrap();
+    client.database_release(db).unwrap();
 }
 
 #[test]
@@ -321,14 +337,18 @@ fn test_connection_get_table_types() {
     setup_logging();
     let mut client = new_database_driver_v1_client();
 
+    let db = client.database_new().unwrap();
+    client.database_init(db.clone()).unwrap();
+
     let conn = client.connection_new().unwrap();
     client
-        .connection_init(conn.clone(), "test_db".to_string())
+        .connection_init(conn.clone(), db.clone())
         .unwrap();
 
     let _table_types = client.connection_get_table_types(conn.clone()).unwrap();
 
     client.connection_release(conn).unwrap();
+    client.database_release(db).unwrap();
 }
 
 #[test]
@@ -337,14 +357,18 @@ fn test_connection_commit() {
     setup_logging();
     let mut client = new_database_driver_v1_client();
 
+    let db = client.database_new().unwrap();
+    client.database_init(db.clone()).unwrap();
+
     let conn = client.connection_new().unwrap();
     client
-        .connection_init(conn.clone(), "test_db".to_string())
+        .connection_init(conn.clone(), db.clone())
         .unwrap();
 
     client.connection_commit(conn.clone()).unwrap();
 
     client.connection_release(conn).unwrap();
+    client.database_release(db).unwrap();
 }
 
 #[test]
@@ -353,14 +377,18 @@ fn test_connection_rollback() {
     setup_logging();
     let mut client = new_database_driver_v1_client();
 
+    let db = client.database_new().unwrap();
+    client.database_init(db.clone()).unwrap();
+
     let conn = client.connection_new().unwrap();
     client
-        .connection_init(conn.clone(), "test_db".to_string())
+        .connection_init(conn.clone(), db.clone())
         .unwrap();
 
     client.connection_rollback(conn.clone()).unwrap();
 
     client.connection_release(conn).unwrap();
+    client.database_release(db).unwrap();
 }
 
 #[test]
@@ -368,6 +396,10 @@ fn test_connection_rollback() {
 fn test_connection_lifecycle() {
     setup_logging();
     let mut client = new_database_driver_v1_client();
+
+    // Setup database
+    let db = client.database_new().unwrap();
+    client.database_init(db.clone()).unwrap();
 
     // Create connection
     let conn = client.connection_new().unwrap();
@@ -389,7 +421,7 @@ fn test_connection_lifecycle() {
 
     // Initialize connection
     client
-        .connection_init(conn.clone(), "test_db".to_string())
+        .connection_init(conn.clone(), db.clone())
         .unwrap();
 
     // Get driver info
@@ -403,6 +435,7 @@ fn test_connection_lifecycle() {
 
     // Release connection
     client.connection_release(conn).unwrap();
+    client.database_release(db).unwrap();
 }
 
 // Statement operation tests
@@ -412,15 +445,19 @@ fn test_statement_new_and_release() {
     setup_logging();
     let mut client = new_database_driver_v1_client();
 
+    let db = client.database_new().unwrap();
+    client.database_init(db.clone()).unwrap();
+
     let conn = client.connection_new().unwrap();
     client
-        .connection_init(conn.clone(), "test_db".to_string())
+        .connection_init(conn.clone(), db.clone())
         .unwrap();
 
     let stmt = client.statement_new(conn.clone()).unwrap();
 
     client.statement_release(stmt).unwrap();
     client.connection_release(conn).unwrap();
+    client.database_release(db).unwrap();
 }
 
 #[test]
@@ -429,9 +466,12 @@ fn test_statement_set_sql_query() {
     setup_logging();
     let mut client = new_database_driver_v1_client();
 
+    let db = client.database_new().unwrap();
+    client.database_init(db.clone()).unwrap();
+
     let conn = client.connection_new().unwrap();
     client
-        .connection_init(conn.clone(), "test_db".to_string())
+        .connection_init(conn.clone(), db.clone())
         .unwrap();
 
     let stmt = client.statement_new(conn.clone()).unwrap();
@@ -441,6 +481,7 @@ fn test_statement_set_sql_query() {
 
     client.statement_release(stmt).unwrap();
     client.connection_release(conn).unwrap();
+    client.database_release(db).unwrap();
 }
 
 #[test]
@@ -449,9 +490,12 @@ fn test_statement_set_substrait_plan() {
     setup_logging();
     let mut client = new_database_driver_v1_client();
 
+    let db = client.database_new().unwrap();
+    client.database_init(db.clone()).unwrap();
+
     let conn = client.connection_new().unwrap();
     client
-        .connection_init(conn.clone(), "test_db".to_string())
+        .connection_init(conn.clone(), db.clone())
         .unwrap();
 
     let stmt = client.statement_new(conn.clone()).unwrap();
@@ -462,6 +506,7 @@ fn test_statement_set_substrait_plan() {
 
     client.statement_release(stmt).unwrap();
     client.connection_release(conn).unwrap();
+    client.database_release(db).unwrap();
 }
 
 #[test]
@@ -470,9 +515,12 @@ fn test_statement_prepare() {
     setup_logging();
     let mut client = new_database_driver_v1_client();
 
+    let db = client.database_new().unwrap();
+    client.database_init(db.clone()).unwrap();
+
     let conn = client.connection_new().unwrap();
     client
-        .connection_init(conn.clone(), "test_db".to_string())
+        .connection_init(conn.clone(), db.clone())
         .unwrap();
 
     let stmt = client.statement_new(conn.clone()).unwrap();
@@ -483,6 +531,7 @@ fn test_statement_prepare() {
 
     client.statement_release(stmt).unwrap();
     client.connection_release(conn).unwrap();
+    client.database_release(db).unwrap();
 }
 
 #[test]
@@ -491,9 +540,12 @@ fn test_statement_set_option_string() {
     setup_logging();
     let mut client = new_database_driver_v1_client();
 
+    let db = client.database_new().unwrap();
+    client.database_init(db.clone()).unwrap();
+
     let conn = client.connection_new().unwrap();
     client
-        .connection_init(conn.clone(), "test_db".to_string())
+        .connection_init(conn.clone(), db.clone())
         .unwrap();
 
     let stmt = client.statement_new(conn.clone()).unwrap();
@@ -503,6 +555,7 @@ fn test_statement_set_option_string() {
 
     client.statement_release(stmt).unwrap();
     client.connection_release(conn).unwrap();
+    client.database_release(db).unwrap();
 }
 
 #[test]
@@ -511,9 +564,12 @@ fn test_statement_set_option_bytes() {
     setup_logging();
     let mut client = new_database_driver_v1_client();
 
+    let db = client.database_new().unwrap();
+    client.database_init(db.clone()).unwrap();
+
     let conn = client.connection_new().unwrap();
     client
-        .connection_init(conn.clone(), "test_db".to_string())
+        .connection_init(conn.clone(), db.clone())
         .unwrap();
 
     let stmt = client.statement_new(conn.clone()).unwrap();
@@ -524,6 +580,7 @@ fn test_statement_set_option_bytes() {
 
     client.statement_release(stmt).unwrap();
     client.connection_release(conn).unwrap();
+    client.database_release(db).unwrap();
 }
 
 #[test]
@@ -532,9 +589,12 @@ fn test_statement_set_option_int() {
     setup_logging();
     let mut client = new_database_driver_v1_client();
 
+    let db = client.database_new().unwrap();
+    client.database_init(db.clone()).unwrap();
+
     let conn = client.connection_new().unwrap();
     client
-        .connection_init(conn.clone(), "test_db".to_string())
+        .connection_init(conn.clone(), db.clone())
         .unwrap();
 
     let stmt = client.statement_new(conn.clone()).unwrap();
@@ -544,6 +604,7 @@ fn test_statement_set_option_int() {
 
     client.statement_release(stmt).unwrap();
     client.connection_release(conn).unwrap();
+    client.database_release(db).unwrap();
 }
 
 #[test]
@@ -552,9 +613,12 @@ fn test_statement_set_option_double() {
     setup_logging();
     let mut client = new_database_driver_v1_client();
 
+    let db = client.database_new().unwrap();
+    client.database_init(db.clone()).unwrap();
+
     let conn = client.connection_new().unwrap();
     client
-        .connection_init(conn.clone(), "test_db".to_string())
+        .connection_init(conn.clone(), db.clone())
         .unwrap();
 
     let stmt = client.statement_new(conn.clone()).unwrap();
@@ -564,6 +628,7 @@ fn test_statement_set_option_double() {
 
     client.statement_release(stmt).unwrap();
     client.connection_release(conn).unwrap();
+    client.database_release(db).unwrap();
 }
 
 #[test]
@@ -572,9 +637,12 @@ fn test_statement_get_parameter_schema() {
     setup_logging();
     let mut client = new_database_driver_v1_client();
 
+    let db = client.database_new().unwrap();
+    client.database_init(db.clone()).unwrap();
+
     let conn = client.connection_new().unwrap();
     client
-        .connection_init(conn.clone(), "test_db".to_string())
+        .connection_init(conn.clone(), db.clone())
         .unwrap();
 
     let stmt = client.statement_new(conn.clone()).unwrap();
@@ -587,6 +655,7 @@ fn test_statement_get_parameter_schema() {
 
     client.statement_release(stmt).unwrap();
     client.connection_release(conn).unwrap();
+    client.database_release(db).unwrap();
 }
 
 #[test]
@@ -595,9 +664,12 @@ fn test_statement_bind() {
     setup_logging();
     let mut client = new_database_driver_v1_client();
 
+    let db = client.database_new().unwrap();
+    client.database_init(db.clone()).unwrap();
+
     let conn = client.connection_new().unwrap();
     client
-        .connection_init(conn.clone(), "test_db".to_string())
+        .connection_init(conn.clone(), db.clone())
         .unwrap();
 
     let stmt = client.statement_new(conn.clone()).unwrap();
@@ -614,6 +686,7 @@ fn test_statement_bind() {
 
     client.statement_release(stmt).unwrap();
     client.connection_release(conn).unwrap();
+    client.database_release(db).unwrap();
 }
 
 #[test]
@@ -622,9 +695,12 @@ fn test_statement_bind_stream() {
     setup_logging();
     let mut client = new_database_driver_v1_client();
 
+    let db = client.database_new().unwrap();
+    client.database_init(db.clone()).unwrap();
+
     let conn = client.connection_new().unwrap();
     client
-        .connection_init(conn.clone(), "test_db".to_string())
+        .connection_init(conn.clone(), db.clone())
         .unwrap();
 
     let stmt = client.statement_new(conn.clone()).unwrap();
@@ -640,6 +716,7 @@ fn test_statement_bind_stream() {
 
     client.statement_release(stmt).unwrap();
     client.connection_release(conn).unwrap();
+    client.database_release(db).unwrap();
 }
 
 #[test]
@@ -648,9 +725,12 @@ fn test_statement_execute_query() {
     setup_logging();
     let mut client = new_database_driver_v1_client();
 
+    let db = client.database_new().unwrap();
+    client.database_init(db.clone()).unwrap();
+
     let conn = client.connection_new().unwrap();
     client
-        .connection_init(conn.clone(), "test_db".to_string())
+        .connection_init(conn.clone(), db.clone())
         .unwrap();
 
     let stmt = client.statement_new(conn.clone()).unwrap();
@@ -662,6 +742,7 @@ fn test_statement_execute_query() {
 
     client.statement_release(stmt).unwrap();
     client.connection_release(conn).unwrap();
+    client.database_release(db).unwrap();
 }
 
 #[test]
@@ -670,9 +751,12 @@ fn test_statement_execute_partitions() {
     setup_logging();
     let mut client = new_database_driver_v1_client();
 
+    let db = client.database_new().unwrap();
+    client.database_init(db.clone()).unwrap();
+
     let conn = client.connection_new().unwrap();
     client
-        .connection_init(conn.clone(), "test_db".to_string())
+        .connection_init(conn.clone(), db.clone())
         .unwrap();
 
     let stmt = client.statement_new(conn.clone()).unwrap();
@@ -686,6 +770,7 @@ fn test_statement_execute_partitions() {
 
     client.statement_release(stmt).unwrap();
     client.connection_release(conn).unwrap();
+    client.database_release(db).unwrap();
 }
 
 #[test]
@@ -694,9 +779,12 @@ fn test_statement_read_partition() {
     setup_logging();
     let mut client = new_database_driver_v1_client();
 
+    let db = client.database_new().unwrap();
+    client.database_init(db.clone()).unwrap();
+
     let conn = client.connection_new().unwrap();
     client
-        .connection_init(conn.clone(), "test_db".to_string())
+        .connection_init(conn.clone(), db.clone())
         .unwrap();
 
     let stmt = client.statement_new(conn.clone()).unwrap();
@@ -714,6 +802,7 @@ fn test_statement_read_partition() {
 
     client.statement_release(stmt).unwrap();
     client.connection_release(conn).unwrap();
+    client.database_release(db).unwrap();
 }
 
 #[test]
@@ -722,10 +811,31 @@ fn test_statement_lifecycle() {
     setup_logging();
     let mut client = new_database_driver_v1_client();
 
-    // Setup connection
+    // Setup database
+    let db = client.database_new().unwrap();
+    client.database_init(db.clone()).unwrap();
+
+    // Create connection
     let conn = client.connection_new().unwrap();
+
+    // Set connection options
     client
-        .connection_init(conn.clone(), "test_db".to_string())
+        .connection_set_option_string(conn.clone(), "host".to_string(), "localhost".to_string())
+        .unwrap();
+    client
+        .connection_set_option_int(conn.clone(), "port".to_string(), 5432)
+        .unwrap();
+    client
+        .connection_set_option_string(
+            conn.clone(),
+            "username".to_string(),
+            "test_user".to_string(),
+        )
+        .unwrap();
+
+    // Initialize connection
+    client
+        .connection_init(conn.clone(), db.clone())
         .unwrap();
 
     // Create statement
@@ -760,6 +870,7 @@ fn test_statement_lifecycle() {
     // Clean up
     client.statement_release(stmt).unwrap();
     client.connection_release(conn).unwrap();
+    client.database_release(db).unwrap();
 }
 
 #[test]
@@ -781,7 +892,7 @@ fn test_full_adbc_workflow() {
         .connection_set_option_string(conn.clone(), "host".to_string(), "localhost".to_string())
         .unwrap();
     client
-        .connection_init(conn.clone(), "test_db".to_string())
+        .connection_init(conn.clone(), db.clone())
         .unwrap();
 
     // Get driver info
@@ -843,6 +954,9 @@ fn test_snowflake_connection_settings() {
     setup_logging();
     let driver = DatabaseDriverV1::new();
 
+    let db_handle = driver.handle_database_new().unwrap();
+    driver.handle_database_init(db_handle.clone()).unwrap();
+
     // Get credentials from parameters.json
     let account_name = PARAMETERS.account_name.clone().unwrap();
     let user = PARAMETERS.user.clone().unwrap();
@@ -879,7 +993,7 @@ fn test_snowflake_connection_settings() {
     }
 
     // Attempt to initialize the connection with real credentials
-    let result = driver.handle_connection_init(conn_handle.clone(), "test_db".to_string());
+    let result = driver.handle_connection_init(conn_handle.clone(), db_handle.clone());
     println!("result: {:?}", result);
     assert!(result.is_ok());
     driver.handle_connection_release(conn_handle).unwrap();
@@ -889,6 +1003,8 @@ fn test_snowflake_connection_settings() {
 fn test_snowflake_select_1() {
     setup_logging();
     let mut driver = new_database_driver_v1_client();
+    let db_handle = driver.database_new().unwrap();
+    driver.database_init(db_handle.clone()).unwrap();
 
     let conn_handle = driver.connection_new().unwrap();
     driver
@@ -914,7 +1030,7 @@ fn test_snowflake_select_1() {
         .unwrap();
     // driver.connection_set_option_string(conn_handle.clone(), "server_url".to_string(), PARAMETERS.server_url.clone().unwrap()).unwrap();
     driver
-        .connection_init(conn_handle.clone(), "test_db".to_string())
+        .connection_init(conn_handle.clone(), db_handle.clone())
         .unwrap();
     let stmt_handle = driver.statement_new(conn_handle.clone()).unwrap();
     driver

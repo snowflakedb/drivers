@@ -903,7 +903,7 @@ pub trait TDatabaseDriverSyncClient {
   fn connection_set_option_double(&mut self, conn_handle: ConnectionHandle, key: String, value: OrderedFloat<f64>) -> thrift::Result<()>;
   /// Finalize connection initialization.
   /// Corresponds to AdbcConnectionInit.
-  fn connection_init(&mut self, conn_handle: ConnectionHandle, db_handle: String) -> thrift::Result<()>;
+  fn connection_init(&mut self, conn_handle: ConnectionHandle, db_handle: DatabaseHandle) -> thrift::Result<()>;
   /// Release the connection object and its resources. The handle is invalidated.
   /// Corresponds to AdbcConnectionRelease.
   fn connection_release(&mut self, conn_handle: ConnectionHandle) -> thrift::Result<()>;
@@ -1333,7 +1333,7 @@ impl <C: TThriftClient + TDatabaseDriverSyncClientMarker> TDatabaseDriverSyncCli
       result.ok_or()
     }
   }
-  fn connection_init(&mut self, conn_handle: ConnectionHandle, db_handle: String) -> thrift::Result<()> {
+  fn connection_init(&mut self, conn_handle: ConnectionHandle, db_handle: DatabaseHandle) -> thrift::Result<()> {
     (
       {
         self.increment_sequence_number();
@@ -2001,7 +2001,7 @@ pub trait DatabaseDriverSyncHandler {
   fn handle_connection_set_option_double(&self, conn_handle: ConnectionHandle, key: String, value: OrderedFloat<f64>) -> thrift::Result<()>;
   /// Finalize connection initialization.
   /// Corresponds to AdbcConnectionInit.
-  fn handle_connection_init(&self, conn_handle: ConnectionHandle, db_handle: String) -> thrift::Result<()>;
+  fn handle_connection_init(&self, conn_handle: ConnectionHandle, db_handle: DatabaseHandle) -> thrift::Result<()>;
   /// Release the connection object and its resources. The handle is invalidated.
   /// Corresponds to AdbcConnectionRelease.
   fn handle_connection_release(&self, conn_handle: ConnectionHandle) -> thrift::Result<()>;
@@ -5868,14 +5868,14 @@ impl DatabaseDriverConnectionSetOptionDoubleResult {
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 struct DatabaseDriverConnectionInitArgs {
   conn_handle: ConnectionHandle,
-  db_handle: String,
+  db_handle: DatabaseHandle,
 }
 
 impl DatabaseDriverConnectionInitArgs {
   fn read_from_in_protocol(i_prot: &mut dyn TInputProtocol) -> thrift::Result<DatabaseDriverConnectionInitArgs> {
     i_prot.read_struct_begin()?;
     let mut f_1: Option<ConnectionHandle> = None;
-    let mut f_2: Option<String> = None;
+    let mut f_2: Option<DatabaseHandle> = None;
     loop {
       let field_ident = i_prot.read_field_begin()?;
       if field_ident.field_type == TType::Stop {
@@ -5888,7 +5888,7 @@ impl DatabaseDriverConnectionInitArgs {
           f_1 = Some(val);
         },
         2 => {
-          let val = i_prot.read_string()?;
+          let val = DatabaseHandle::read_from_in_protocol(i_prot)?;
           f_2 = Some(val);
         },
         _ => {
@@ -5912,8 +5912,8 @@ impl DatabaseDriverConnectionInitArgs {
     o_prot.write_field_begin(&TFieldIdentifier::new("conn_handle", TType::Struct, 1))?;
     self.conn_handle.write_to_out_protocol(o_prot)?;
     o_prot.write_field_end()?;
-    o_prot.write_field_begin(&TFieldIdentifier::new("db_handle", TType::String, 2))?;
-    o_prot.write_string(&self.db_handle)?;
+    o_prot.write_field_begin(&TFieldIdentifier::new("db_handle", TType::Struct, 2))?;
+    self.db_handle.write_to_out_protocol(o_prot)?;
     o_prot.write_field_end()?;
     o_prot.write_field_stop()?;
     o_prot.write_struct_end()

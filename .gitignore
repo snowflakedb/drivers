@@ -2,3 +2,7 @@
 target/
 parameters.json
 cmake-build
+.venv
+__pycache__
+pep249_dbapi/pep249_dbapi.egg-info/
+

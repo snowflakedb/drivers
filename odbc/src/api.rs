@@ -477,7 +477,7 @@ pub unsafe extern "C" fn SQLDriverConnect(
         }
     }
 
-    match client.connection_init(conn_handle.clone(), "".to_owned()) {
+    match client.connection_init(conn_handle.clone(), db_handle.clone()) {
         Ok(_) => {
             connection.state = ConnectionState::Connected {
                 client,
