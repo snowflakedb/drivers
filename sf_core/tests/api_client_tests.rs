@@ -49,7 +49,7 @@ use std::fs;
 lazy_static! {
     static ref PARAMETERS: Parameters = {
         let parameter_path = std::env::var("PARAMETER_PATH").unwrap();
-        println!("Parameter path: {}", parameter_path);
+        println!("Parameter path: {parameter_path}");
         let parameters = fs::read_to_string(parameter_path).unwrap();
         let parameters: ParametersFile = serde_json::from_str(&parameters).unwrap();
         println!(
@@ -946,7 +946,7 @@ fn test_snowflake_connection_settings() {
 
     // Attempt to initialize the connection with real credentials
     let result = driver.handle_connection_init(conn_handle.clone(), db_handle.clone());
-    println!("result: {:?}", result);
+    println!("result: {result:?}");
     assert!(result.is_ok());
     driver.handle_connection_release(conn_handle).unwrap();
 }
@@ -989,9 +989,9 @@ fn test_snowflake_select_1() {
         .statement_set_sql_query(stmt_handle.clone(), "SELECT 1".to_string())
         .unwrap();
     let result = driver.statement_execute_query(stmt_handle.clone()).unwrap();
-    println!("result: {:?}", result);
+    println!("result: {result:?}");
     let stream_ptr: *mut FFI_ArrowArrayStream = result.stream.into();
-    println!("stream_ptr: {:?}", stream_ptr as *mut u64);
+    println!("stream_ptr: {stream_ptr:?}");
     let stream: FFI_ArrowArrayStream = unsafe { FFI_ArrowArrayStream::from_raw(stream_ptr) };
     let mut reader = ArrowArrayStreamReader::try_new(stream).unwrap();
     let record_batch = reader.next().unwrap().unwrap();

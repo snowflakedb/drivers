@@ -38,13 +38,11 @@ fn get_server_url(conn: &Connection) -> Result<String, RestError> {
             .unwrap_or("https".to_string());
         if protocol != "https" && protocol != "http" {
             tracing::warn!(
-                "Unexpected protocol specified during server url construction: {}",
-                protocol
+                "Unexpected protocol specified during server url construction: {protocol}"
             );
         }
         return Ok(format!(
-            "{}://{}.snowflakecomputing.com",
-            protocol, account_name
+            "{protocol}://{account_name}.snowflakecomputing.com"
         ));
     }
 
@@ -165,7 +163,7 @@ pub async fn snowflake_login(
     let request = request.build().unwrap();
     let response = client.execute(request).await.map_err(|e| {
         tracing::error!(error = %e, "HTTP request failed");
-        RestError::Internal(format!("HTTP request failed: {}", e))
+        RestError::Internal(format!("HTTP request failed: {e}"))
     })?;
 
     let status = response.status();
@@ -178,8 +176,7 @@ pub async fn snowflake_login(
             .unwrap_or_else(|_| "Unknown error".to_string());
         tracing::error!(status = %status, error_text = %error_text, "Login request failed");
         return Err(RestError::Internal(format!(
-            "Login failed with status {}: {}",
-            status, error_text
+            "Login failed with status {status}: {error_text}"
         )));
     }
 
@@ -187,7 +184,7 @@ pub async fn snowflake_login(
     tracing::debug!("Parsing login response");
     let login_response: SnowflakeLoginResponse = response.json().await.map_err(|e| {
         tracing::error!(error = %e, "Failed to parse login response");
-        RestError::Internal(format!("Failed to parse login response: {}", e))
+        RestError::Internal(format!("Failed to parse login response: {e}"))
     })?;
 
     if !login_response.success {
@@ -228,7 +225,7 @@ pub async fn snowflake_query(
     };
 
     let client = reqwest::Client::new();
-    let query_url = format!("{}/queries/v1/query-request", server_url);
+    let query_url = format!("{server_url}/queries/v1/query-request");
 
     let query_request = SnowflakeQueryRequest {
         sql_text: sql,
@@ -246,7 +243,7 @@ pub async fn snowflake_query(
         .post(&query_url)
         .header(
             "Authorization",
-            &format!("Snowflake Token=\"{}\"", session_token),
+            &format!("Snowflake Token=\"{session_token}\""),
         )
         .header("Accept", "application/snowflake")
         .header(
@@ -266,7 +263,7 @@ pub async fn snowflake_query(
         .build()
         .map_err(|e| {
             tracing::error!(error = %e, "Failed to build query request");
-            RestError::Internal(format!("Failed to build query request: {}", e))
+            RestError::Internal(format!("Failed to build query request: {e}"))
         })?;
 
     tracing::debug!("Query request: {:?}", request);
@@ -282,7 +279,7 @@ pub async fn snowflake_query(
 
     let response = client.execute(request).await.map_err(|e| {
         tracing::error!(error = %e, "Failed to execute query request");
-        RestError::Internal(format!("Failed to execute query request: {}", e))
+        RestError::Internal(format!("Failed to execute query request: {e}"))
     })?;
 
     if !response.status().is_success() {
@@ -303,7 +300,7 @@ pub async fn snowflake_query(
         serde_json::from_str(&response_text).map_err(|e| {
             tracing::error!(error = %e, "Failed to parse query response");
             tracing::trace!("Response text: {}", response_text);
-            RestError::Internal(format!("Failed to parse query response: {}", e))
+            RestError::Internal(format!("Failed to parse query response: {e}"))
         })?;
 
     Ok(response_data)
