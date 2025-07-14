@@ -178,6 +178,12 @@ pytest --cov=pep249_dbapi --cov-report=html
 
 ## Development
 
+Setup virtual env:
+```bash
+python -m venv .venv
+source .venv/bin/activate
+```
+
 Install in development mode:
 
 ```bash

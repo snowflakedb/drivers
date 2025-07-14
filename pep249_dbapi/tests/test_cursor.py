@@ -7,15 +7,15 @@ import pytest
 from pep249_dbapi.connection import Connection
 from pep249_dbapi.cursor import Cursor
 from pep249_dbapi.exceptions import NotSupportedError
+from . import create_connection
 
 
-@pytest.mark.skip(reason="Cursor is not implemented")
 class TestCursorProperties:
     """Test Cursor object properties."""
     
     def test_description_property(self):
         """Test description property getter and setter."""
-        conn = Connection()
+        conn = create_connection()
         cursor = Cursor(conn)
         
         # Test initial value
@@ -31,7 +31,7 @@ class TestCursorProperties:
     
     def test_rowcount_property(self):
         """Test rowcount property getter and setter."""
-        conn = Connection()
+        conn = create_connection()
         cursor = Cursor(conn)
         
         # Test initial value
@@ -41,13 +41,13 @@ class TestCursorProperties:
         cursor.rowcount = 42
         assert cursor.rowcount == 42
 
-@pytest.mark.skip(reason="Cursor is not implemented")
+# @pytest.mark.skip(reason="Cursor is not implemented")
 class TestCursorMethods:
     """Test Cursor object methods."""
     
     def test_close_cursor(self):
         """Test closing a cursor."""
-        conn = Connection()
+        conn = create_connection()
         cursor = Cursor(conn)
         assert not cursor._closed
         cursor.close()
@@ -55,7 +55,7 @@ class TestCursorMethods:
     
     def test_callproc_not_implemented(self):
         """Test that callproc raises NotSupportedError."""
-        conn = Connection()
+        conn = create_connection()
         cursor = Cursor(conn)
         with pytest.raises(NotSupportedError) as excinfo:
             cursor.callproc("test_proc", [1, 2, 3])
@@ -63,7 +63,7 @@ class TestCursorMethods:
     
     def test_execute_not_implemented(self):
         """Test that execute raises NotSupportedError."""
-        conn = Connection()
+        conn = create_connection()
         cursor = Cursor(conn)
         with pytest.raises(NotSupportedError) as excinfo:
             cursor.execute("SELECT * FROM test")
@@ -71,7 +71,7 @@ class TestCursorMethods:
     
     def test_executemany_not_implemented(self):
         """Test that executemany raises NotSupportedError."""
-        conn = Connection()
+        conn = create_connection()
         cursor = Cursor(conn)
         with pytest.raises(NotSupportedError) as excinfo:
             cursor.executemany("INSERT INTO test VALUES (?)", [(1,), (2,)])
@@ -79,7 +79,7 @@ class TestCursorMethods:
     
     def test_fetchone_not_implemented(self):
         """Test that fetchone raises NotSupportedError."""
-        conn = Connection()
+        conn = create_connection()
         cursor = Cursor(conn)
         with pytest.raises(NotSupportedError) as excinfo:
             cursor.fetchone()
@@ -87,7 +87,7 @@ class TestCursorMethods:
     
     def test_fetchmany_not_implemented(self):
         """Test that fetchmany raises NotSupportedError."""
-        conn = Connection()
+        conn = create_connection()
         cursor = Cursor(conn)
         with pytest.raises(NotSupportedError) as excinfo:
             cursor.fetchmany()
@@ -95,7 +95,7 @@ class TestCursorMethods:
     
     def test_fetchmany_with_size_not_implemented(self):
         """Test that fetchmany with size raises NotSupportedError."""
-        conn = Connection()
+        conn = create_connection()
         cursor = Cursor(conn)
         with pytest.raises(NotSupportedError) as excinfo:
             cursor.fetchmany(5)
@@ -103,7 +103,7 @@ class TestCursorMethods:
     
     def test_fetchall_not_implemented(self):
         """Test that fetchall raises NotSupportedError."""
-        conn = Connection()
+        conn = create_connection()
         cursor = Cursor(conn)
         with pytest.raises(NotSupportedError) as excinfo:
             cursor.fetchall()
@@ -111,7 +111,7 @@ class TestCursorMethods:
     
     def test_nextset_not_implemented(self):
         """Test that nextset raises NotSupportedError."""
-        conn = Connection()
+        conn = create_connection()
         cursor = Cursor(conn)
         with pytest.raises(NotSupportedError) as excinfo:
             cursor.nextset()
@@ -119,32 +119,31 @@ class TestCursorMethods:
     
     def test_setinputsizes_no_op(self):
         """Test that setinputsizes is a no-op."""
-        conn = Connection()
+        conn = create_connection()
         cursor = Cursor(conn)
         # Should not raise any exception
         cursor.setinputsizes([10, 20, 30])
     
     def test_setoutputsize_no_op(self):
         """Test that setoutputsize is a no-op."""
-        conn = Connection()
+        conn = create_connection()
         cursor = Cursor(conn)
         # Should not raise any exception
         cursor.setoutputsize(100)
         cursor.setoutputsize(100, 1)
 
-@pytest.mark.skip(reason="Cursor is not implemented")
 class TestCursorIterator:
     """Test Cursor iterator protocol."""
     
     def test_cursor_is_iterator(self):
         """Test that cursor returns itself as iterator."""
-        conn = Connection()
+        conn = create_connection()
         cursor = Cursor(conn)
         assert iter(cursor) is cursor
     
     def test_cursor_next_calls_fetchone(self):
         """Test that __next__ calls fetchone."""
-        conn = Connection()
+        conn = create_connection()
         cursor = Cursor(conn)
         
         # Mock fetchone to return a test row, then None
@@ -168,7 +167,7 @@ class TestCursorIterator:
     
     def test_cursor_iteration_with_multiple_rows(self):
         """Test cursor iteration with multiple rows."""
-        conn = Connection()
+        conn = create_connection()
         cursor = Cursor(conn)
         
         # Mock fetchone to return test rows
@@ -189,20 +188,19 @@ class TestCursorIterator:
         rows = list(cursor)
         assert rows == test_rows
 
-@pytest.mark.skip(reason="Cursor is not implemented")
 class TestCursorContextManager:
     """Test Cursor context manager functionality."""
     
     def test_context_manager_entry(self):
         """Test entering cursor context manager."""
-        conn = Connection()
+        conn = create_connection()
         cursor = Cursor(conn)
         with cursor as c:
             assert c is cursor
     
     def test_context_manager_exit(self):
         """Test exiting cursor context manager."""
-        conn = Connection()
+        conn = create_connection()
         cursor = Cursor(conn)
         
         with cursor:
@@ -212,7 +210,7 @@ class TestCursorContextManager:
     
     def test_context_manager_exit_with_exception(self):
         """Test exiting cursor context manager with exception."""
-        conn = Connection()
+        conn = create_connection()
         cursor = Cursor(conn)
         
         try:
@@ -223,13 +221,12 @@ class TestCursorContextManager:
         
         assert cursor._closed
 
-@pytest.mark.skip(reason="Cursor is not implemented")
 class TestCursorPython2Compatibility:
     """Test Python 2 compatibility features."""
     
     def test_next_method_exists(self):
         """Test that 'next' method exists for Python 2 compatibility."""
-        conn = Connection()
+        conn = create_connection()
         cursor = Cursor(conn)
         
         # Should have both __next__ and next
