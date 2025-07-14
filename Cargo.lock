@@ -1576,6 +1576,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "tempfile",
  "thrift",
  "tokio",
  "tracing",

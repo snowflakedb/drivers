@@ -45,6 +45,8 @@ struct Parameters {
 
 use lazy_static::lazy_static;
 use std::fs;
+use std::io::Write;
+use tempfile::NamedTempFile;
 
 lazy_static! {
     static ref PARAMETERS: Parameters = {
@@ -937,6 +939,55 @@ fn test_snowflake_select_1() {
             .value(0)
             == 1
     );
+    driver.statement_release(stmt_handle).unwrap();
+    driver.connection_release(conn_handle).unwrap();
+}
+
+#[test]
+fn test_snowflake_put() {
+    setup_logging();
+    let mut driver = new_database_driver_v1_client();
+
+    // Create a temporary file with test content
+    let mut temp_file = NamedTempFile::new().unwrap();
+    temp_file.write_all(b"Hello, world!").unwrap();
+    let temp_path = temp_file.path().to_str().unwrap();
+
+    let conn_handle = driver.connection_new().unwrap();
+    driver
+        .connection_set_option_string(
+            conn_handle.clone(),
+            "account".to_string(),
+            PARAMETERS.account_name.clone().unwrap(),
+        )
+        .unwrap();
+    driver
+        .connection_set_option_string(
+            conn_handle.clone(),
+            "user".to_string(),
+            PARAMETERS.user.clone().unwrap(),
+        )
+        .unwrap();
+    driver
+        .connection_set_option_string(
+            conn_handle.clone(),
+            "password".to_string(),
+            PARAMETERS.password.clone().unwrap(),
+        )
+        .unwrap();
+    driver
+        .connection_init(conn_handle.clone(), "test_db".to_string())
+        .unwrap();
+
+    let stmt_handle = driver.statement_new(conn_handle.clone()).unwrap();
+    let put_query = format!("PUT file://{} @%", temp_path);
+    driver
+        .statement_set_sql_query(stmt_handle.clone(), put_query)
+        .unwrap();
+    
+    let result = driver.statement_execute_query(stmt_handle.clone()).unwrap();
+    println!("PUT result: {:?}", result);
+
     driver.statement_release(stmt_handle).unwrap();
     driver.connection_release(conn_handle).unwrap();
 }
