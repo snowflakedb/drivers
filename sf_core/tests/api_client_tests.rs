@@ -3,7 +3,7 @@ extern crate sf_core;
 extern crate tracing;
 extern crate tracing_subscriber;
 
-use arrow::array::{Array, Int8Array};
+use arrow::array::{Array, Int8Array, StringArray};
 use arrow::ffi_stream::ArrowArrayStreamReader;
 use arrow::ffi_stream::FFI_ArrowArrayStream;
 use sf_core::api_client::new_database_driver_v1_client;
@@ -1005,6 +1005,81 @@ fn test_snowflake_select_1() {
             .value(0)
             == 1
     );
+    driver.statement_release(stmt_handle).unwrap();
+    driver.connection_release(conn_handle).unwrap();
+}
+
+#[test]
+fn test_create_temporary_stage() {
+    setup_logging();
+    let mut driver = new_database_driver_v1_client();
+    let db_handle = driver.database_new().unwrap();
+    driver.database_init(db_handle.clone()).unwrap();
+
+    let conn_handle = driver.connection_new().unwrap();
+    driver
+        .connection_set_option_string(
+            conn_handle.clone(),
+            "account".to_string(),
+            PARAMETERS.account_name.clone().unwrap(),
+        )
+        .unwrap();
+    driver
+        .connection_set_option_string(
+            conn_handle.clone(),
+            "user".to_string(),
+            PARAMETERS.user.clone().unwrap(),
+        )
+        .unwrap();
+    driver
+        .connection_set_option_string(
+            conn_handle.clone(),
+            "password".to_string(),
+            PARAMETERS.password.clone().unwrap(),
+        )
+        .unwrap();
+    // driver.connection_set_option_string(conn_handle.clone(), "server_url".to_string(), PARAMETERS.server_url.clone().unwrap()).unwrap();
+    driver
+        .connection_init(conn_handle.clone(), db_handle.clone())
+        .unwrap();
+    let stmt_handle = driver.statement_new(conn_handle.clone()).unwrap();
+    let stage_name = "test_stage".to_uppercase();
+    driver
+        .statement_set_sql_query(
+            stmt_handle.clone(),
+            format!("create temporary stage {stage_name}").to_string(),
+        )
+        .unwrap();
+
+    let result = driver.statement_execute_query(stmt_handle.clone()).unwrap();
+    println!("result: {result:?}");
+
+    // Process the Arrow stream result to verify the response
+    let stream_ptr: *mut FFI_ArrowArrayStream = result.stream.into();
+    let stream: FFI_ArrowArrayStream = unsafe { FFI_ArrowArrayStream::from_raw(stream_ptr) };
+    let mut reader = ArrowArrayStreamReader::try_new(stream).unwrap();
+    let record_batch = reader.next().unwrap().unwrap();
+
+    // Verify exactly one row is returned
+    assert_eq!(record_batch.num_rows(), 1, "Expected exactly one row");
+
+    // Verify the message content
+    let array_ref = record_batch.column(0);
+    let string_array = array_ref
+        .as_any()
+        .downcast_ref::<StringArray>()
+        .expect("Expected string array");
+
+    let message = string_array.value(0);
+    let expected_message = format!("Stage area {stage_name} successfully created.");
+    assert_eq!(
+        message, expected_message,
+        "Expected stage creation success message"
+    );
+
+    // Ensure no more batches
+    assert!(reader.next().is_none(), "Expected no more record batches");
+
     driver.statement_release(stmt_handle).unwrap();
     driver.connection_release(conn_handle).unwrap();
 }
