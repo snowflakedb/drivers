@@ -566,7 +566,10 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
 
                 // TODO: Branch out to handle PUT / GET commands
 
-                let rowset_base64 = response.data.rowset_base64.unwrap();
+                let rowset_base64 = response.data.rowset_base64.ok_or_else(|| {
+                    RestError::Internal("Rowset base64 not found in response".to_string())
+                })?;
+
                 let rowset = general_purpose::STANDARD
                     .decode(rowset_base64)
                     .map_err(|e| RestError::Internal(format!("Failed to decode rowset: {e}")))?;
