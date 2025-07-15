@@ -3,9 +3,8 @@ PEP 249 Database API 2.0 Cursor Objects
 
 This module defines the Cursor class as specified in PEP 249.
 """
-
 from .exceptions import NotSupportedError
-
+import pyarrow
 
 class Cursor:
     """
@@ -92,8 +91,12 @@ class Cursor:
         Raises:
             NotSupportedError: If not implemented
         """
-        raise NotSupportedError("execute is not implemented")
-    
+        stmt_handle = self.connection.db_api.statementNew(self.connection.conn_handle)
+        self.connection.db_api.statementSetSqlQuery(stmt_handle, operation)
+        self.execute_result = self.connection.db_api.statementExecuteQuery(stmt_handle)
+
+
+
     def executemany(self, operation, seq_of_parameters):
         """
         Execute a database operation repeatedly for each element in seq_of_parameters.
@@ -106,6 +109,7 @@ class Cursor:
             NotSupportedError: If not implemented
         """
         raise NotSupportedError("executemany is not implemented")
+
     
     def fetchone(self):
         """
@@ -117,8 +121,15 @@ class Cursor:
         Raises:
             NotSupportedError: If not implemented
         """
-        raise NotSupportedError("fetchone is not implemented")
-    
+        stream_ptr = int.from_bytes(self.execute_result.stream.value, byteorder="little", signed=False)
+        reader = pyarrow.RecordBatchReader._import_from_c(stream_ptr)
+        batch = reader.read_next_batch()
+        print(batch.columns)
+        print(batch.num_rows)
+        print(batch.num_columns)
+        return (batch.columns[0][0].as_py(),)
+
+
     def fetchmany(self, size=None):
         """
         Fetch the next set of rows of a query result.

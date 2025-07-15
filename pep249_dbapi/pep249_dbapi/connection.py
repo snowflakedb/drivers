@@ -7,6 +7,7 @@ from .api_client.client_api import client_api_init
 from .api_client.c_api import CORE_API
 from .cursor import Cursor
 from .exceptions import NotSupportedError, InterfaceError
+from .thrift_gen.database_driver_v1 import DatabaseDriver
 
 
 class Connection:
@@ -26,7 +27,7 @@ class Connection:
             port: Port number
             **kwargs: Additional connection parameters
         """
-        self.db_api = client_api_init(CORE_API.DATABASE_DRIVER_API_V1)
+        self.db_api: DatabaseDriver.Client  = client_api_init(CORE_API.DATABASE_DRIVER_API_V1)
         self.db_handle = self.db_api.databaseNew()
         self.db_api.databaseInit(self.db_handle)
         self.conn_handle = self.db_api.connectionNew()

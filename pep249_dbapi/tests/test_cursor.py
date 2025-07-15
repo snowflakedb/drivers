@@ -61,14 +61,6 @@ class TestCursorMethods:
             cursor.callproc("test_proc", [1, 2, 3])
         assert "callproc is not implemented" in str(excinfo.value)
     
-    def test_execute_not_implemented(self):
-        """Test that execute raises NotSupportedError."""
-        conn = create_connection()
-        cursor = Cursor(conn)
-        with pytest.raises(NotSupportedError) as excinfo:
-            cursor.execute("SELECT * FROM test")
-        assert "execute is not implemented" in str(excinfo.value)
-    
     def test_executemany_not_implemented(self):
         """Test that executemany raises NotSupportedError."""
         conn = create_connection()
@@ -76,14 +68,6 @@ class TestCursorMethods:
         with pytest.raises(NotSupportedError) as excinfo:
             cursor.executemany("INSERT INTO test VALUES (?)", [(1,), (2,)])
         assert "executemany is not implemented" in str(excinfo.value)
-    
-    def test_fetchone_not_implemented(self):
-        """Test that fetchone raises NotSupportedError."""
-        conn = create_connection()
-        cursor = Cursor(conn)
-        with pytest.raises(NotSupportedError) as excinfo:
-            cursor.fetchone()
-        assert "fetchone is not implemented" in str(excinfo.value)
     
     def test_fetchmany_not_implemented(self):
         """Test that fetchmany raises NotSupportedError."""
@@ -253,3 +237,13 @@ class TestCursorPython2Compatibility:
         call_count = 0
         row2 = cursor.__next__()
         assert row2 == ("test", "row") 
+
+class TestCursorSimpleSelect:
+    """Test Cursor simple select."""
+
+    def test_simple_select(self):
+        """Test simple select."""
+        conn = create_connection()
+        cursor = Cursor(conn)
+        cursor.execute("SELECT 1")
+        assert cursor.fetchone() == (1,)

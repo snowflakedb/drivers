@@ -35,6 +35,7 @@ setup(
     python_requires=">=3.7",
     install_requires=[
         "thrift>=0.17.0",
+        "pyarrow>=19.0.0",
     ],
     extras_require={
         "dev": [
