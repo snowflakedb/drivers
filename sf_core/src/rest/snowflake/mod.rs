@@ -172,10 +172,10 @@ pub async fn snowflake_login(
     let status = response.status();
     tracing::debug!(status = %status, "Received login response");
 
-    let response_text = response.text().await.map_err(|e| {
-        tracing::error!(error = %e, "Failed to get response text");
-        RestError::Internal(format!("Failed to get response text: {e}"))
-    })?;
+    let response_text = response.text().await.unwrap_or_else(|_| {
+        tracing::error!("Failed to read response body");
+        "Unknown error".to_string()
+    });
     tracing::debug!(response = %response_text, "Raw login response body");
 
     if !status.is_success() {
