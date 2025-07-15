@@ -644,7 +644,7 @@ fn convert_single_row_to_arrow(rowset: Vec<Vec<Option<String>>>) -> Result<Vec<u
 
     // Create simple string schema with generic column names
     let fields: Vec<Field> = (0..num_columns)
-        .map(|i| Field::new(format!("column_{}", i), DataType::Utf8, true))
+        .map(|i| Field::new(format!("column_{i}"), DataType::Utf8, true))
         .collect();
     let schema = Schema::new(fields);
 
