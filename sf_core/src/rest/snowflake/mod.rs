@@ -1,5 +1,5 @@
-mod data;
 mod auth;
+mod data;
 mod query;
 
 use crate::driver::{Connection, Setting, Settings};
@@ -172,18 +172,16 @@ pub async fn snowflake_login(
     let status = response.status();
     tracing::debug!(status = %status, "Received login response");
 
-    // Log raw response body for debugging
     let response_text = response.text().await.map_err(|e| {
         tracing::error!(error = %e, "Failed to get response text");
-        RestError::Internal(format!("Failed to get response text: {}", e))
+        RestError::Internal(format!("Failed to get response text: {e}"))
     })?;
     tracing::debug!(response = %response_text, "Raw login response body");
 
     if !status.is_success() {
         tracing::error!(status = %status, error_text = %response_text, "Login request failed");
         return Err(RestError::Internal(format!(
-            "Login failed with status {}: {}",
-            status, response_text
+            "Login failed with status {status}: {response_text}"
         )));
     }
 
@@ -194,7 +192,9 @@ pub async fn snowflake_login(
     })?;
 
     if !auth_response.success {
-        let message = auth_response.message.unwrap_or_else(|| "Unknown error".to_string());
+        let message = auth_response
+            .message
+            .unwrap_or_else(|| "Unknown error".to_string());
         tracing::error!(message = %message, "Snowflake login failed");
         return Err(RestError::Status(status));
     }
@@ -302,13 +302,13 @@ pub async fn snowflake_query(
         .text()
         .await
         .unwrap_or_else(|_| "Unknown error".to_string());
-    
+
     tracing::debug!("Query response text: {}", response_text);
-    
+
     let response_data: ExecResponse = serde_json::from_str(&response_text).map_err(|e| {
         tracing::error!(error = %e, "Failed to parse query response");
         tracing::trace!("Response text: {}", response_text);
-        RestError::Internal(format!("Failed to parse query response: {}", e))
+        RestError::Internal(format!("Failed to parse query response: {e}"))
     })?;
 
     Ok(response_data)

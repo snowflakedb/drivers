@@ -38,7 +38,10 @@ pub struct AuthRequestData {
     pub password: Option<String>,
     #[serde(rename = "RAW_SAML_RESPONSE", skip_serializing_if = "Option::is_none")]
     pub raw_saml_response: Option<String>,
-    #[serde(rename = "EXT_AUTHN_DUO_METHOD", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "EXT_AUTHN_DUO_METHOD",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub ext_authn_duo_method: Option<String>,
     #[serde(rename = "PASSCODE", skip_serializing_if = "Option::is_none")]
     pub passcode: Option<String>,
@@ -48,7 +51,10 @@ pub struct AuthRequestData {
     pub session_parameters: Option<HashMap<String, serde_json::Value>>,
     #[serde(rename = "CLIENT_ENVIRONMENT")]
     pub client_environment: AuthRequestClientEnvironment,
-    #[serde(rename = "BROWSER_MODE_REDIRECT_PORT", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "BROWSER_MODE_REDIRECT_PORT",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub browser_mode_redirect_port: Option<String>,
     #[serde(rename = "PROOF_KEY", skip_serializing_if = "Option::is_none")]
     pub proof_key: Option<String>,

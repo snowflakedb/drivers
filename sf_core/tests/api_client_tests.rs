@@ -1052,7 +1052,7 @@ fn test_snowflake_put() {
     driver
         .statement_set_sql_query(stmt_handle.clone(), put_query)
         .unwrap();
-    
+
     let result = driver.statement_execute_query(stmt_handle.clone()).unwrap();
     println!("PUT result: {:?}", result);
 
