@@ -551,7 +551,7 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
                 let response =
                     rt.block_on(crate::rest::snowflake::snowflake_query(&stmt.conn, query))?;
 
-                if response.success == false {
+                if !response.success {
                     // TODO: Add proper error handling
                     return Err(Error::from(DriverException::new(
                         response
