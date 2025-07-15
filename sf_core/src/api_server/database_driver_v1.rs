@@ -550,7 +550,18 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
 
                 let response =
                     rt.block_on(crate::rest::snowflake::snowflake_query(&stmt.conn, query))?;
-                
+
+                if response.success == false {
+                    // TODO: Add proper error handling
+                    return Err(Error::from(DriverException::new(
+                        response.message.unwrap_or_else(|| "Unknown error".to_string()),
+                        StatusCode::UNKNOWN,
+                        None,
+                        None,
+                        None,
+                    )));
+                }
+
                 // TODO: Branch out to handle PUT / GET commands
                 
                 let rowset_base64 = response.data.rowset_base64.unwrap();

@@ -295,9 +295,9 @@ pub struct ResponseQueryContextEntry {
 pub struct ExecResponse {
     pub data: ExecResponseData,
     #[serde(rename = "message")]
-    pub _message: Option<String>,
+    pub message: Option<String>,
     #[serde(rename = "code")]
     pub _code: Option<String>,
     #[serde(rename = "success")]
-    pub _success: bool,
+    pub success: bool,
 }
