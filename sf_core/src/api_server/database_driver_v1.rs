@@ -6,15 +6,21 @@ use crate::thrift_gen::database_driver_v1::{
     DatabaseHandle, DriverException, ExecuteResult, InfoCode, PartitionedResult, StatementHandle,
     StatusCode,
 };
+use arrow::array::{Array, StringArray};
+use arrow::datatypes::{DataType, Field, Schema};
 use arrow::ffi_stream::FFI_ArrowArrayStream;
+use arrow::record_batch::RecordBatch;
 use arrow_ipc::reader::StreamReader;
+use arrow_ipc::writer::StreamWriter;
 use base64::Engine;
+use std::mem::size_of;
 use std::sync::Mutex;
 use thrift::server::TProcessor;
 use thrift::{Error, OrderedFloat};
 
 use crate::driver::StatementState;
 use crate::thrift_gen::database_driver_v1::ArrowArrayStreamPtr;
+
 impl From<Handle> for DatabaseHandle {
     fn from(handle: Handle) -> Self {
         DatabaseHandle {
@@ -566,14 +572,31 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
 
                 // TODO: Branch out to handle PUT / GET commands
 
-                let rowset_base64 = response.data.rowset_base64.ok_or_else(|| {
-                    RestError::Internal("Rowset base64 not found in response".to_string())
-                })?;
+                let rowset_bytes = match response.data.rowset_base64 {
+                    Some(rowset_base64) => {
+                        // Decode the base64 string to bytes
+                        general_purpose::STANDARD
+                            .decode(rowset_base64)
+                            .map_err(|e| {
+                                RestError::Internal(format!("Failed to decode rowset: {e}"))
+                            })?
+                    }
+                    None => {
+                        match response.data.rowset {
+                            Some(rowset) => {
+                                // Simple conversion assuming single row with string values
+                                convert_single_row_to_arrow(rowset)?
+                            }
+                            None => {
+                                return Err(Error::from(RestError::Internal(
+                                    "Rowset not found in response".to_string(),
+                                )));
+                            }
+                        }
+                    }
+                };
 
-                let rowset = general_purpose::STANDARD
-                    .decode(rowset_base64)
-                    .map_err(|e| RestError::Internal(format!("Failed to decode rowset: {e}")))?;
-                let cursor = std::io::Cursor::new(rowset);
+                let cursor = std::io::Cursor::new(rowset_bytes);
                 // Parse rowset from arrow ipc format
                 let reader = Box::new(StreamReader::try_new(cursor, None).map_err(|e| {
                     RestError::Internal(format!("Failed to create stream reader: {e}"))
@@ -608,4 +631,47 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
     ) -> thrift::Result<i64> {
         todo!()
     }
+}
+
+fn convert_single_row_to_arrow(rowset: Vec<Vec<Option<String>>>) -> Result<Vec<u8>, RestError> {
+    if rowset.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // Assumption: single row with string values
+    let row = &rowset[0];
+    let num_columns = row.len();
+
+    // Create simple string schema with generic column names
+    let fields: Vec<Field> = (0..num_columns)
+        .map(|i| Field::new(format!("column_{}", i), DataType::Utf8, true))
+        .collect();
+    let schema = Schema::new(fields);
+
+    // Create string arrays from the single row
+    let arrow_arrays: Vec<std::sync::Arc<dyn Array>> = (0..num_columns)
+        .map(|col_idx| {
+            let values = vec![row[col_idx].clone()]; // Single value per column
+            std::sync::Arc::new(StringArray::from(values)) as std::sync::Arc<dyn Array>
+        })
+        .collect();
+
+    // Create RecordBatch
+    let batch = RecordBatch::try_new(std::sync::Arc::new(schema), arrow_arrays)
+        .map_err(|e| RestError::Internal(format!("Failed to create RecordBatch: {e}")))?;
+
+    // Serialize to Arrow IPC format
+    let mut bytes = Vec::new();
+    let mut writer = StreamWriter::try_new(&mut bytes, &batch.schema())
+        .map_err(|e| RestError::Internal(format!("Failed to create StreamWriter: {e}")))?;
+
+    writer
+        .write(&batch)
+        .map_err(|e| RestError::Internal(format!("Failed to write batch: {e}")))?;
+
+    writer
+        .finish()
+        .map_err(|e| RestError::Internal(format!("Failed to finish writing: {e}")))?;
+
+    Ok(bytes)
 }

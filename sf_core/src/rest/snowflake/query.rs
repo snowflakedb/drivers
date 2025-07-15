@@ -190,7 +190,7 @@ pub struct ExecResponseData {
     #[serde(rename = "rowType")]
     pub _row_type: Option<Vec<ExecResponseRowType>>,
     #[serde(rename = "rowset")]
-    pub _rowset: Option<Vec<Vec<Option<String>>>>,
+    pub rowset: Option<Vec<Vec<Option<String>>>>,
     #[serde(rename = "rowsetBase64")]
     pub rowset_base64: Option<String>,
     #[serde(rename = "total")]
