@@ -1,0 +1,226 @@
+"""
+PEP 249 Database API 2.0 Cursor Objects
+
+This module defines the Cursor class as specified in PEP 249.
+"""
+
+from .exceptions import NotSupportedError
+
+
+class Cursor:
+    """
+    Cursor objects represent a database cursor, which is used to manage the context
+    of a fetch operation.
+    """
+    
+    # Class attribute for arraysize
+    arraysize = 1
+    
+    def __init__(self, connection):
+        """
+        Initialize a new cursor object.
+        
+        Args:
+            connection: Connection object that created this cursor
+        """
+        self.connection = connection
+        self.description = None
+        self.rowcount = -1
+        self.arraysize = 1  # Instance attribute overrides class attribute
+        self._closed = False
+    
+    @property
+    def description(self):
+        """
+        Read-only attribute describing the result columns of a query.
+        
+        Returns:
+            tuple: Sequence of 7-item tuples describing each result column:
+                   (name, type_code, display_size, internal_size, precision, scale, null_ok)
+        """
+        return self._description
+    
+    @description.setter
+    def description(self, value):
+        self._description = value
+    
+    @property
+    def rowcount(self):
+        """
+        Read-only attribute specifying the number of rows that the last
+        .execute*() produced or affected.
+        
+        Returns:
+            int: Number of rows affected, or -1 if not determined
+        """
+        return self._rowcount
+    
+    @rowcount.setter  
+    def rowcount(self, value):
+        self._rowcount = value
+    
+    def callproc(self, procname, parameters=None):
+        """
+        Call a stored database procedure with the given name.
+        
+        Args:
+            procname (str): Name of the procedure to call
+            parameters (sequence): Input parameters for the procedure
+            
+        Returns:
+            sequence: The result of the procedure call
+            
+        Raises:
+            NotSupportedError: If not implemented
+        """
+        raise NotSupportedError("callproc is not implemented")
+    
+    def close(self):
+        """
+        Close the cursor now (rather than whenever __del__ is called).
+        """
+        self._closed = True
+    
+    def execute(self, operation, parameters=None):
+        """
+        Execute a database operation (query or command).
+        
+        Args:
+            operation (str): SQL statement to execute
+            parameters (sequence or mapping): Parameters for the operation
+            
+        Raises:
+            NotSupportedError: If not implemented
+        """
+        raise NotSupportedError("execute is not implemented")
+    
+    def executemany(self, operation, seq_of_parameters):
+        """
+        Execute a database operation repeatedly for each element in seq_of_parameters.
+        
+        Args:
+            operation (str): SQL statement to execute
+            seq_of_parameters (sequence): Sequence of parameter sequences
+            
+        Raises:
+            NotSupportedError: If not implemented
+        """
+        raise NotSupportedError("executemany is not implemented")
+    
+    def fetchone(self):
+        """
+        Fetch the next row of a query result set.
+        
+        Returns:
+            sequence: Next row, or None when no more data is available
+            
+        Raises:
+            NotSupportedError: If not implemented
+        """
+        raise NotSupportedError("fetchone is not implemented")
+    
+    def fetchmany(self, size=None):
+        """
+        Fetch the next set of rows of a query result.
+        
+        Args:
+            size (int): Number of rows to fetch (defaults to arraysize)
+            
+        Returns:
+            sequence: List of rows
+            
+        Raises:
+            NotSupportedError: If not implemented
+        """
+        if size is None:
+            size = self.arraysize
+        raise NotSupportedError("fetchmany is not implemented")
+    
+    def fetchall(self):
+        """
+        Fetch all (remaining) rows of a query result.
+        
+        Returns:
+            sequence: List of all remaining rows
+            
+        Raises:
+            NotSupportedError: If not implemented
+        """
+        raise NotSupportedError("fetchall is not implemented")
+    
+    def nextset(self):
+        """
+        Skip to the next available set, discarding any remaining rows from current set.
+        
+        Returns:
+            bool: True if next set is available, False/None otherwise
+            
+        Raises:
+            NotSupportedError: If not implemented
+        """
+        raise NotSupportedError("nextset is not implemented")
+    
+    def setinputsizes(self, sizes):
+        """
+        Predefine memory areas for the operation parameters.
+        
+        Args:
+            sizes (sequence): Sequence of type objects or integers
+        """
+        # This method is optional and can be implemented as a no-op
+        pass
+    
+    def setoutputsize(self, size, column=None):
+        """
+        Set a column buffer size for fetches of large columns.
+        
+        Args:
+            size (int): Buffer size
+            column (int): Column index (optional)
+        """
+        # This method is optional and can be implemented as a no-op
+        pass
+    
+    def __iter__(self):
+        """
+        Return the cursor itself as an iterator.
+        
+        Returns:
+            Cursor: Self
+        """
+        return self
+    
+    def __next__(self):
+        """
+        Fetch the next row from the currently executed statement.
+        
+        Returns:
+            sequence: Next row
+            
+        Raises:
+            StopIteration: When no more rows are available
+        """
+        row = self.fetchone()
+        if row is None:
+            raise StopIteration
+        return row
+    
+    # Python 2 compatibility
+    def next(self):
+        """Python 2 compatibility method."""
+        return self.__next__()
+    
+    def __enter__(self):
+        """
+        Enter the runtime context for the cursor.
+        
+        Returns:
+            Cursor: Self
+        """
+        return self
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """
+        Exit the runtime context for the cursor.
+        """
+        self.close() 

@@ -302,7 +302,7 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
     fn handle_connection_init(
         &self,
         conn_handle: ConnectionHandle,
-        _db_handle: String,
+        _db_handle: DatabaseHandle,
     ) -> thrift::Result<()> {
         let handle = conn_handle.into();
         match self.conn_handle_manager.get_obj(handle) {
@@ -310,7 +310,7 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
                 // Create a blocking runtime for the login process
                 let rt = tokio::runtime::Runtime::new().map_err(|e| {
                     Error::from(DriverException::new(
-                        format!("Failed to create runtime: {}", e),
+                        format!("Failed to create runtime: {e}"),
                         StatusCode::UNKNOWN,
                         None,
                         None,
@@ -540,7 +540,7 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
                 // Run within the async runtime
                 let rt = tokio::runtime::Runtime::new().map_err(|e| {
                     Error::from(DriverException::new(
-                        format!("Failed to create runtime: {}", e),
+                        format!("Failed to create runtime: {e}"),
                         StatusCode::UNKNOWN,
                         None,
                         None,
@@ -556,11 +556,11 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
                 let rowset_base64 = response.data.rowset_base64.unwrap();
                 let rowset = general_purpose::STANDARD
                     .decode(rowset_base64)
-                    .map_err(|e| RestError::Internal(format!("Failed to decode rowset: {}", e)))?;
+                    .map_err(|e| RestError::Internal(format!("Failed to decode rowset: {e}")))?;
                 let cursor = std::io::Cursor::new(rowset);
                 // Parse rowset from arrow ipc format
                 let reader = Box::new(StreamReader::try_new(cursor, None).map_err(|e| {
-                    RestError::Internal(format!("Failed to create stream reader: {}", e))
+                    RestError::Internal(format!("Failed to create stream reader: {e}"))
                 })?);
                 let stream = Box::new(arrow::ffi_stream::FFI_ArrowArrayStream::new(reader));
                 // Serialize pointer into integer

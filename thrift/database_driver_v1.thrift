@@ -155,7 +155,7 @@ service DatabaseDriver {
    * Finalize connection initialization.
    * Corresponds to AdbcConnectionInit.
    */
-  void connectionInit(1: ConnectionHandle conn_handle, 2: string db_handle) throws (1: DriverException e);
+  void connectionInit(1: ConnectionHandle conn_handle, 2: DatabaseHandle db_handle) throws (1: DriverException e);
 
   /**
    * Release the connection object and its resources. The handle is invalidated.
