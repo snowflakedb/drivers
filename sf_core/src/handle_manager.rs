@@ -65,7 +65,7 @@ impl<T> HandleManager<T> {
         let magic = handle_value.magic;
         match handle_value.value.as_ref() {
             Some(val) if magic == handle.magic => {
-                tracing::debug!(target: "handle_manager", "Handle retrieved successfully");
+                //tracing::debug!(target: "handle_manager", "Handle retrieved successfully");
                 Some(val.clone())
             }
             Some(_) => {
