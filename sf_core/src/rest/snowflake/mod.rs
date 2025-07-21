@@ -255,7 +255,7 @@ pub async fn snowflake_query(
             &format!("Snowflake Token=\"{session_token}\""),
         )
         // we might want to add some logic to handle different content types later
-        .header("accept", "application/json")
+        .header("Accept", "application/json")
         .header(
             "User-Agent",
             format!(
