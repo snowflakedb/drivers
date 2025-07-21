@@ -264,7 +264,7 @@ pub struct ExecResponseData {
     #[serde(rename = "stageInfo")]
     pub _stage_info: Option<ExecResponseStageInfo>,
     #[serde(rename = "command")]
-    pub _command: Option<String>,
+    pub command: Option<String>,
     #[serde(rename = "kind")]
     pub _kind: Option<String>,
     #[serde(rename = "operation")]

@@ -570,7 +570,14 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
                     )));
                 }
 
-                // TODO: Branch out to handle PUT / GET commands
+                if let Some(command) = response.data.command {
+                    // TODO: Handle PUT / GET queries
+                    if command == "UPLOAD" || command == "DOWNLOAD" {
+                        return Err(Error::from(RestError::Internal(
+                            "Handling PUT / GET queries is not yet implemented".to_string(),
+                        )));
+                    }
+                }
 
                 let rowset_bytes = match response.data.rowset_base64 {
                     Some(rowset_base64) => {

@@ -1038,7 +1038,6 @@ fn test_create_temporary_stage() {
             PARAMETERS.password.clone().unwrap(),
         )
         .unwrap();
-    // driver.connection_set_option_string(conn_handle.clone(), "server_url".to_string(), PARAMETERS.server_url.clone().unwrap()).unwrap();
     driver
         .connection_init(conn_handle.clone(), db_handle.clone())
         .unwrap();
@@ -1082,4 +1081,84 @@ fn test_create_temporary_stage() {
 
     driver.statement_release(stmt_handle).unwrap();
     driver.connection_release(conn_handle).unwrap();
+}
+
+#[test]
+fn test_put() {
+    setup_logging();
+    let mut driver = new_database_driver_v1_client();
+    let db_handle = driver.database_new().unwrap();
+    driver.database_init(db_handle.clone()).unwrap();
+
+    let conn_handle = driver.connection_new().unwrap();
+    driver
+        .connection_set_option_string(
+            conn_handle.clone(),
+            "account".to_string(),
+            PARAMETERS.account_name.clone().unwrap(),
+        )
+        .unwrap();
+    driver
+        .connection_set_option_string(
+            conn_handle.clone(),
+            "user".to_string(),
+            PARAMETERS.user.clone().unwrap(),
+        )
+        .unwrap();
+    driver
+        .connection_set_option_string(
+            conn_handle.clone(),
+            "password".to_string(),
+            PARAMETERS.password.clone().unwrap(),
+        )
+        .unwrap();
+    driver
+        .connection_init(conn_handle.clone(), db_handle.clone())
+        .unwrap();
+    let stmt_handle = driver.statement_new(conn_handle.clone()).unwrap();
+
+    // Create a temporary stage
+    let stage_name = "test_stage_put".to_uppercase();
+    driver
+        .statement_set_sql_query(
+            stmt_handle.clone(),
+            format!("create temporary stage {stage_name}").to_string(),
+        )
+        .unwrap();
+
+    driver.statement_execute_query(stmt_handle.clone()).unwrap();
+
+    // Prepare a file to upload
+    let file_path = std::env::current_dir()
+        .unwrap()
+        .join("test_file.txt")
+        .to_str()
+        .unwrap()
+        .to_string();
+    fs::write(&file_path, "This is a test file.").expect("Failed to write test file");
+
+    // Use the PUT command to upload the file to the stage
+    driver
+        .statement_set_sql_query(
+            stmt_handle.clone(),
+            format!("PUT file://{file_path} @{stage_name}").to_string(),
+        )
+        .unwrap();
+
+    // Execute the PUT query and expect it to fail with the not implemented error
+    let result = driver.statement_execute_query(stmt_handle.clone());
+
+    // Assert that the query failed with the expected error message
+    match result {
+        Err(e) => {
+            let error_message = format!("{e:?}");
+            assert!(
+                error_message.contains("Handling PUT / GET queries is not yet implemented"),
+                "Expected error message about PUT/GET not implemented, but got: {error_message}",
+            );
+        }
+        Ok(_) => {
+            panic!("Expected PUT query to fail with not implemented error, but it succeeded");
+        }
+    }
 }
