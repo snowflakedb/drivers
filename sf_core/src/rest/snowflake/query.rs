@@ -123,11 +123,11 @@ pub struct ExecResponseChunk {
 #[derive(Deserialize)]
 pub struct ExecResponseCredentials {
     #[serde(rename = "AWS_KEY_ID")]
-    pub _aws_key_id: Option<String>,
+    pub aws_key_id: Option<String>,
     #[serde(rename = "AWS_SECRET_KEY")]
-    pub _aws_secret_key: Option<String>,
+    pub aws_secret_key: Option<String>,
     #[serde(rename = "AWS_TOKEN")]
-    pub _aws_token: Option<String>,
+    pub aws_token: Option<String>,
     #[serde(rename = "AWS_ID")]
     pub _aws_id: Option<String>,
     #[serde(rename = "AWS_KEY")]
@@ -143,17 +143,17 @@ pub struct ExecResponseStageInfo {
     #[serde(rename = "locationType")]
     pub _location_type: Option<String>,
     #[serde(rename = "location")]
-    pub _location: Option<String>,
+    pub location: Option<String>,
     #[serde(rename = "path")]
     pub _path: Option<String>,
     #[serde(rename = "region")]
-    pub _region: Option<String>,
+    pub region: Option<String>,
     #[serde(rename = "storageAccount")]
     pub _storage_account: Option<String>,
     #[serde(rename = "isClientSideEncrypted")]
     pub _is_client_side_encrypted: Option<bool>,
     #[serde(rename = "creds")]
-    pub _creds: Option<ExecResponseCredentials>,
+    pub creds: Option<ExecResponseCredentials>,
     #[serde(rename = "presignedUrl")]
     pub _presigned_url: Option<String>,
     #[serde(rename = "endPoint")]
@@ -259,7 +259,7 @@ pub struct ExecResponseData {
     #[serde(rename = "presignedUrls")]
     pub _presigned_urls: Option<serde_json::Value>,
     #[serde(rename = "stageInfo")]
-    pub _stage_info: Option<ExecResponseStageInfo>,
+    pub stage_info: Option<ExecResponseStageInfo>,
     #[serde(rename = "command")]
     pub command: Option<String>,
     #[serde(rename = "kind")]

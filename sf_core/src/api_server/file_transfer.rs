@@ -11,6 +11,8 @@ use aws_config::{BehaviorVersion, Region};
 use aws_credential_types::Credentials;
 use aws_sdk_s3::{Client as S3Client, primitives::ByteStream};
 
+// TODO: Encrypt the file before uploading to S3
+
 pub fn transfer_file(
     _conn_ptr: &Arc<Mutex<Connection>>,
     data: &ExecResponseData,
@@ -29,7 +31,7 @@ pub fn transfer_file(
 
     // Get stage info for S3 upload
     let stage_info = data
-        ._stage_info
+        .stage_info
         .as_ref()
         .ok_or_else(|| RestError::Internal("Stage info not found in response".to_string()))?;
 
@@ -69,18 +71,18 @@ async fn upload_to_s3_simple(
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Extract AWS credentials from stage info
     let creds = stage_info
-        ._creds
+        .creds
         .as_ref()
-        .ok_or("AWS credentials not found in stage info")?;
+        .ok_or("AWS credentials not found in stage")?;
 
-    let aws_key_id = creds._aws_key_id.as_ref().ok_or("AWS_KEY_ID not found")?;
+    let aws_key_id = creds.aws_key_id.as_ref().ok_or("AWS_KEY_ID not found")?;
 
     let aws_secret_key = creds
-        ._aws_secret_key
+        .aws_secret_key
         .as_ref()
         .ok_or("AWS_SECRET_KEY not found")?;
 
-    let aws_token = creds._aws_token.as_ref().ok_or("AWS_TOKEN not found")?;
+    let aws_token = creds.aws_token.as_ref().ok_or("AWS_TOKEN not found")?;
 
     // Create AWS credentials
     let credentials = Credentials::new(
@@ -93,7 +95,7 @@ async fn upload_to_s3_simple(
 
     // Configure AWS client
     let region = stage_info
-        ._region
+        .region
         .as_ref()
         .cloned()
         .unwrap_or_else(|| "us-west-2".to_string());
@@ -108,7 +110,7 @@ async fn upload_to_s3_simple(
 
     // Extract S3 bucket and key from location
     let location = stage_info
-        ._location
+        .location
         .as_ref()
         .ok_or("S3 location not found")?;
 
