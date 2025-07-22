@@ -26,7 +26,7 @@ pub fn transfer_file(
             RestError::Internal("Source file location not found in response".to_string())
         })?;
 
-    let compressed_data = compress_and_normalize_gzip(file_path)
+    let compressed_data = compress_data(file_path)
         .map_err(|e| RestError::Internal(format!("Failed to compress file: {e}")))?;
 
     // Get stage info for S3 upload
@@ -48,14 +48,14 @@ pub fn transfer_file(
 
 // TODO: streaming instead of loading the whole file into memory
 
-pub fn compress_and_normalize_gzip(file_path: &str) -> Result<Vec<u8>, std::io::Error> {
+pub fn compress_data(file_path: &str) -> Result<Vec<u8>, std::io::Error> {
     let mut input_file = File::open(file_path)?;
     let mut input_data = Vec::new();
     input_file.read_to_end(&mut input_data)?;
 
     // Use GzBuilder to create a normalized gzip encoder with controlled header
     let mut encoder = GzBuilder::new()
-        //.mtime(0) // Set timestamp to 0 for consistent normalization
+        .mtime(0) // Set timestamp to 0 for consistent normalization
         .write(Vec::new(), Compression::default());
 
     encoder.write_all(&input_data)?;
@@ -169,7 +169,7 @@ mod tests {
         let mut compressed_outputs = HashSet::new();
 
         // Create and compress the same content multiple times with slight delays
-        for _i in 0..5 {
+        for _i in 0..3 {
             // Create a temporary file with the test content
             let mut temp_file = NamedTempFile::new().expect("Failed to create temp file");
             temp_file
@@ -178,10 +178,10 @@ mod tests {
             temp_file.flush().expect("Failed to flush temp file");
 
             // Add a small delay to ensure different timestamps
-            std::thread::sleep(std::time::Duration::from_millis(10));
+            std::thread::sleep(std::time::Duration::from_secs(2));
 
             let compressed =
-                compress_and_normalize_gzip(temp_file.path().to_str().expect("Invalid path"))
+                compress_data(temp_file.path().to_str().expect("Invalid path"))
                     .expect("Failed to compress file");
 
             compressed_outputs.insert(compressed);

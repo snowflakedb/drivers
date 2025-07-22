@@ -1180,7 +1180,7 @@ fn test_put() {
 
     let temp_filename = test_file.path().file_name().unwrap().to_str().unwrap();
     let expected_file_name = format!("{temp_filename}.gz");
-    let expected_full_path = format!("{stage_name}/{expected_file_name}");
+    let expected_full_path = format!("{}/{expected_file_name}", stage_name.to_lowercase());
     assert_eq!(
         name_str, expected_full_path,
         "File name should match uploaded file"
