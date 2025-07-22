@@ -186,10 +186,9 @@ pub async fn snowflake_login(
     }
 
     // Parse the response
-    let auth_response: AuthResponse = serde_json::from_str(&response_text).map_err(|e| {
-        tracing::error!(error = %e, "Failed to parse login response");
-        RestError::Internal(format!("Failed to parse login response: {e}"))
-    })?;
+    let auth_response: AuthResponse = serde_json::from_str(&response_text).unwrap_or_else(|e| {
+        panic!("Failed to parse Snowflake login response: {e}")
+    });
 
     if !auth_response.success {
         let message = auth_response
@@ -308,11 +307,10 @@ pub async fn snowflake_query(
 
     tracing::debug!("Query response text: {}", response_text);
 
-    let response_data: ExecResponse = serde_json::from_str(&response_text).map_err(|e| {
-        tracing::error!(error = %e, "Failed to parse query response");
+    let response_data: ExecResponse = serde_json::from_str(&response_text).unwrap_or_else(|e| {
         tracing::trace!("Response text: {}", response_text);
-        RestError::Internal(format!("Failed to parse query response: {e}"))
-    })?;
+        panic!("Failed to parse Snowflake query response: {e}")
+    });
 
     Ok(response_data)
 }

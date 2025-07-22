@@ -28,7 +28,9 @@ pub fn transfer_file(_conn_ptr: &Arc<Mutex<Connection>>, data: &ExecResponseData
 
     // Upload to S3 (without encryption for now)
     let runtime = tokio::runtime::Runtime::new()
-        .map_err(|e| RestError::Internal(format!("Failed to create async runtime: {}", e)))?;
+        .unwrap_or_else(|e| {
+            panic!("Failed to create async runtime: {e}")
+        });
     
     runtime.block_on(async {
         upload_to_s3_simple(&compressed_data, stage_info, file_path).await

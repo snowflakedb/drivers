@@ -588,9 +588,9 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
                         // Decode the base64 string to bytes
                         general_purpose::STANDARD
                             .decode(rowset_base64)
-                            .map_err(|e| {
-                                RestError::Internal(format!("Failed to decode rowset: {e}"))
-                            })?
+                            .unwrap_or_else(|e| {
+                                panic!("Failed to decode base64 rowset: {e}")
+                            })
                     }
                     None => {
                         match response.data.rowset {
@@ -669,20 +669,20 @@ fn convert_single_row_to_arrow(rowset: Vec<Vec<Option<String>>>) -> Result<Vec<u
 
     // Create RecordBatch
     let batch = RecordBatch::try_new(std::sync::Arc::new(schema), arrow_arrays)
-        .map_err(|e| RestError::Internal(format!("Failed to create RecordBatch: {e}")))?;
+        .unwrap_or_else(|e| panic!("Failed to create RecordBatch: {e}"));
 
     // Serialize to Arrow IPC format
     let mut bytes = Vec::new();
     let mut writer = StreamWriter::try_new(&mut bytes, &batch.schema())
-        .map_err(|e| RestError::Internal(format!("Failed to create StreamWriter: {e}")))?;
+        .unwrap_or_else(|e| panic!("Failed to create StreamWriter: {e}"));
 
     writer
         .write(&batch)
-        .map_err(|e| RestError::Internal(format!("Failed to write batch: {e}")))?;
+        .unwrap_or_else(|e| panic!("Failed to write batch: {e}"));
 
     writer
         .finish()
-        .map_err(|e| RestError::Internal(format!("Failed to finish writing: {e}")))?;
+        .unwrap_or_else(|e| panic!("Failed to finish writing: {e}"));
 
     Ok(bytes)
 }
