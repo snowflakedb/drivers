@@ -981,9 +981,7 @@ fn test_snowflake_select_1() {
         )
         .unwrap();
     // driver.connection_set_option_string(conn_handle.clone(), "server_url".to_string(), PARAMETERS.server_url.clone().unwrap()).unwrap();
-    driver
-        .connection_init(conn_handle.clone(), db_handle.clone())
-        .unwrap();
+    driver.connection_init(conn_handle.clone(), db_handle.clone()).unwrap();
     let stmt_handle = driver.statement_new(conn_handle.clone()).unwrap();
     driver
         .statement_set_sql_query(stmt_handle.clone(), "SELECT 1".to_string())
@@ -1227,6 +1225,104 @@ fn test_put() {
         name_str.ends_with(".gz"),
         "File should be compressed with .gz"
     );
+
+    // Clean up the test file
+    let _ = fs::remove_file(&file_path);
+}
+
+#[test]
+fn test_get() {
+    setup_logging();
+    let mut driver = new_database_driver_v1_client();
+    let db_handle = driver.database_new().unwrap();
+    driver.database_init(db_handle.clone()).unwrap();
+
+    let conn_handle = driver.connection_new().unwrap();
+    driver
+        .connection_set_option_string(
+            conn_handle.clone(),
+            "account".to_string(),
+            PARAMETERS.account_name.clone().unwrap(),
+        )
+        .unwrap();
+    driver
+        .connection_set_option_string(
+            conn_handle.clone(),
+            "user".to_string(),
+            PARAMETERS.user.clone().unwrap(),
+        )
+        .unwrap();
+    driver
+        .connection_set_option_string(
+            conn_handle.clone(),
+            "password".to_string(),
+            PARAMETERS.password.clone().unwrap(),
+        )
+        .unwrap();
+
+    driver.connection_init(conn_handle.clone(), db_handle.clone()).unwrap();
+
+    // Create a test file to upload first
+    let file_path = std::env::current_dir()
+        .unwrap()
+        .join("test_get_file.csv")
+        .to_str()
+        .unwrap()
+        .to_string();
+    fs::write(&file_path, "a,b,c\n1,2,3\n").unwrap();
+
+    // Create a temporary stage
+    let stage_name = "TEST_STAGE_GET";
+    let create_stage_stmt = driver.statement_new(conn_handle.clone()).unwrap();
+    driver
+        .statement_set_sql_query(
+            create_stage_stmt.clone(),
+            format!("create temporary stage {}", stage_name),
+        )
+        .unwrap();
+    driver
+        .statement_execute_query(create_stage_stmt.clone())
+        .unwrap();
+
+    // First upload the file using PUT (which now works)
+    let put_stmt_handle = driver.statement_new(conn_handle.clone()).unwrap();
+    driver
+        .statement_set_sql_query(
+            put_stmt_handle.clone(),
+            format!("PUT 'file://{}' @{}", file_path, stage_name),
+        )
+        .unwrap();
+    
+    let _put_result = driver.statement_execute_query(put_stmt_handle.clone()).unwrap();
+    println!("PUT command executed successfully");
+
+    // Now try to download the file using GET (should fail)
+    let get_stmt_handle = driver.statement_new(conn_handle.clone()).unwrap();
+    driver
+        .statement_set_sql_query(
+            get_stmt_handle.clone(),
+            format!("GET @{}/test_get_file.csv.gz file://./downloaded/", stage_name),
+        )
+        .unwrap();
+    
+    // Execute GET command - this should fail with "not implemented"
+    let get_result = driver.statement_execute_query(get_stmt_handle.clone());
+    
+    // Verify that GET fails with the expected error message
+    match get_result {
+        Err(err) => {
+            let error_msg = format!("{:?}", err);
+            assert!(
+                error_msg.contains("Handling GET queries is not yet implemented"),
+                "Expected GET to fail with 'not implemented' error, got: {}",
+                error_msg
+            );
+            println!("✅ GET correctly failed with expected error: not yet implemented");
+        }
+        Ok(_) => {
+            panic!("Expected GET command to fail with 'not implemented' error, but it succeeded");
+        }
+    }
 
     // Clean up the test file
     let _ = fs::remove_file(&file_path);
