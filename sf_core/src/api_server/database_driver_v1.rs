@@ -1,7 +1,7 @@
+use crate::api_server::file_transfer::transfer_file;
 use crate::driver::{Connection, Database, Setting, Statement};
 use crate::handle_manager::{Handle, HandleManager};
 use crate::rest::error::RestError;
-use crate::api_server::file_transfer::transfer_file;
 use crate::thrift_gen::database_driver_v1::{
     ArrowSchemaPtr, ConnectionHandle, DatabaseDriverSyncHandler, DatabaseDriverSyncProcessor,
     DatabaseHandle, DriverException, ExecuteResult, InfoCode, PartitionedResult, StatementHandle,
@@ -575,7 +575,10 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
                     if command == "UPLOAD" {
                         transfer_file(&stmt.conn, &response.data)?;
                         stmt.state = StatementState::Executed;
-                        return Ok(ExecuteResult::new(Box::new(ArrowArrayStreamPtr::new(Vec::new())), 0));
+                        return Ok(ExecuteResult::new(
+                            Box::new(ArrowArrayStreamPtr::new(Vec::new())),
+                            0,
+                        ));
                     } else if command == "DOWNLOAD" {
                         return Err(Error::from(RestError::Internal(
                             "Handling GET queries is not yet implemented".to_string(),
@@ -588,9 +591,7 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
                         // Decode the base64 string to bytes
                         general_purpose::STANDARD
                             .decode(rowset_base64)
-                            .unwrap_or_else(|e| {
-                                panic!("Failed to decode base64 rowset: {e}")
-                            })
+                            .unwrap_or_else(|e| panic!("Failed to decode base64 rowset: {e}"))
                     }
                     None => {
                         match response.data.rowset {

@@ -186,9 +186,8 @@ pub async fn snowflake_login(
     }
 
     // Parse the response
-    let auth_response: AuthResponse = serde_json::from_str(&response_text).unwrap_or_else(|e| {
-        panic!("Failed to parse Snowflake login response: {e}")
-    });
+    let auth_response: AuthResponse = serde_json::from_str(&response_text)
+        .unwrap_or_else(|e| panic!("Failed to parse Snowflake login response: {e}"));
 
     if !auth_response.success {
         let message = auth_response

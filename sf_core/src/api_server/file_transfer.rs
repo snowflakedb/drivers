@@ -1,40 +1,45 @@
-use flate2::{Compression, GzBuilder};
-use std::io::{Write, Read};
-use std::fs::File;
-use std::sync::{Arc, Mutex};
-use crate::rest::snowflake::query::ExecResponseData;
-use crate::rest::error::RestError;
 use crate::driver::Connection;
+use crate::rest::error::RestError;
+use crate::rest::snowflake::query::ExecResponseData;
+use flate2::{Compression, GzBuilder};
+use std::fs::File;
+use std::io::{Read, Write};
+use std::sync::{Arc, Mutex};
 
 // AWS SDK imports
-use aws_sdk_s3::{Client as S3Client, primitives::ByteStream};
 use aws_config::{BehaviorVersion, Region};
 use aws_credential_types::Credentials;
+use aws_sdk_s3::{Client as S3Client, primitives::ByteStream};
 
-pub fn transfer_file(_conn_ptr: &Arc<Mutex<Connection>>, data: &ExecResponseData) -> Result<(), RestError> {
+pub fn transfer_file(
+    _conn_ptr: &Arc<Mutex<Connection>>,
+    data: &ExecResponseData,
+) -> Result<(), RestError> {
     // Extract the source file path
-    let file_path = data.src_locations
+    let file_path = data
+        .src_locations
         .as_ref()
         .and_then(|locations| locations.first())
-        .ok_or_else(|| RestError::Internal("Source file location not found in response".to_string()))?;
+        .ok_or_else(|| {
+            RestError::Internal("Source file location not found in response".to_string())
+        })?;
 
     let compressed_data = compress_and_normalize_gzip(file_path)
-        .map_err(|e| RestError::Internal(format!("Failed to compress file: {}", e)))?;
+        .map_err(|e| RestError::Internal(format!("Failed to compress file: {e}")))?;
 
     // Get stage info for S3 upload
-    let stage_info = data._stage_info
+    let stage_info = data
+        ._stage_info
         .as_ref()
         .ok_or_else(|| RestError::Internal("Stage info not found in response".to_string()))?;
 
     // Upload to S3 (without encryption for now)
     let runtime = tokio::runtime::Runtime::new()
-        .unwrap_or_else(|e| {
-            panic!("Failed to create async runtime: {e}")
-        });
-    
-    runtime.block_on(async {
-        upload_to_s3_simple(&compressed_data, stage_info, file_path).await
-    }).map_err(|e| RestError::Internal(format!("Failed to upload to S3: {}", e)))?;
+        .unwrap_or_else(|e| panic!("Failed to create async runtime: {e}"));
+
+    runtime
+        .block_on(async { upload_to_s3_simple(&compressed_data, stage_info, file_path).await })
+        .map_err(|e| RestError::Internal(format!("Failed to upload to S3: {e}")))?;
 
     Ok(())
 }
@@ -48,37 +53,35 @@ pub fn compress_and_normalize_gzip(file_path: &str) -> Result<Vec<u8>, std::io::
 
     // Use GzBuilder to create a normalized gzip encoder with controlled header
     let mut encoder = GzBuilder::new()
-        .mtime(0) // Set timestamp to 0 for consistent normalization
+        //.mtime(0) // Set timestamp to 0 for consistent normalization
         .write(Vec::new(), Compression::default());
-    
+
     encoder.write_all(&input_data)?;
     let compressed_data = encoder.finish()?;
-    
+
     Ok(compressed_data)
 }
 
 async fn upload_to_s3_simple(
-    data: &[u8], 
+    data: &[u8],
     stage_info: &crate::rest::snowflake::query::ExecResponseStageInfo,
-    file_path: &str
+    file_path: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Extract AWS credentials from stage info
-    let creds = stage_info._creds
+    let creds = stage_info
+        ._creds
         .as_ref()
         .ok_or("AWS credentials not found in stage info")?;
-    
-    let aws_key_id = creds._aws_key_id
-        .as_ref()
-        .ok_or("AWS_KEY_ID not found")?;
-    
-    let aws_secret_key = creds._aws_secret_key
+
+    let aws_key_id = creds._aws_key_id.as_ref().ok_or("AWS_KEY_ID not found")?;
+
+    let aws_secret_key = creds
+        ._aws_secret_key
         .as_ref()
         .ok_or("AWS_SECRET_KEY not found")?;
-    
-    let aws_token = creds._aws_token
-        .as_ref()
-        .ok_or("AWS_TOKEN not found")?;
-    
+
+    let aws_token = creds._aws_token.as_ref().ok_or("AWS_TOKEN not found")?;
+
     // Create AWS credentials
     let credentials = Credentials::new(
         aws_key_id,
@@ -87,47 +90,49 @@ async fn upload_to_s3_simple(
         None,
         "snowflake-upload",
     );
-    
+
     // Configure AWS client
-    let region = stage_info._region
+    let region = stage_info
+        ._region
         .as_ref()
         .cloned()
         .unwrap_or_else(|| "us-west-2".to_string());
-    
+
     let config = aws_config::defaults(BehaviorVersion::latest())
         .credentials_provider(credentials)
         .region(Region::new(region))
         .load()
         .await;
-    
+
     let s3_client = S3Client::new(&config);
-    
+
     // Extract S3 bucket and key from location
-    let location = stage_info._location
+    let location = stage_info
+        ._location
         .as_ref()
         .ok_or("S3 location not found")?;
-    
+
     // Parse bucket and key prefix from location (format: "bucket-name/path/")
     let parts: Vec<&str> = location.split('/').collect();
     if parts.is_empty() {
         return Err("Invalid S3 location format".into());
     }
-    
+
     let bucket = parts[0];
     let key_prefix = if parts.len() > 1 {
         parts[1..].join("/")
     } else {
         String::new()
     };
-    
+
     // Create S3 key: key_prefix + filename.gz
     let file_name = std::path::Path::new(file_path)
         .file_name()
         .and_then(|name| name.to_str())
         .ok_or("Invalid file path")?;
-    
-    let s3_key = format!("{}{}.gz", key_prefix, file_name);
-    
+
+    let s3_key = format!("{key_prefix}{file_name}.gz");
+
     // Upload to S3 (simple version without encryption)
     let result = s3_client
         .put_object()
@@ -137,9 +142,67 @@ async fn upload_to_s3_simple(
         .content_type("application/gzip")
         .send()
         .await?;
-    
-    tracing::info!("Successfully uploaded file to S3: s3://{}/{}", bucket, s3_key);
+
+    tracing::info!(
+        "Successfully uploaded file to S3: s3://{}/{}",
+        bucket,
+        s3_key
+    );
     tracing::debug!("S3 upload result: {:?}", result);
-    
+
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use flate2::read::GzDecoder;
+    use std::collections::HashSet;
+    use std::io::{Read, Write};
+    use tempfile::NamedTempFile;
+
+    #[test]
+    fn test_gzip_normalization_comprehensive() {
+        let test_content = "Test content for comprehensive gzip normalization.\nLine 2\nLine 3\n";
+        let mut compressed_outputs = HashSet::new();
+
+        // Create and compress the same content multiple times with slight delays
+        for _i in 0..5 {
+            // Create a temporary file with the test content
+            let mut temp_file = NamedTempFile::new().expect("Failed to create temp file");
+            temp_file
+                .write_all(test_content.as_bytes())
+                .expect("Failed to write to temp file");
+            temp_file.flush().expect("Failed to flush temp file");
+
+            // Add a small delay to ensure different timestamps
+            std::thread::sleep(std::time::Duration::from_millis(10));
+
+            let compressed =
+                compress_and_normalize_gzip(temp_file.path().to_str().expect("Invalid path"))
+                    .expect("Failed to compress file");
+
+            compressed_outputs.insert(compressed);
+        }
+
+        // All compressed outputs should be identical (only one unique output)
+        assert_eq!(
+            compressed_outputs.len(),
+            1,
+            "Gzip normalization failed: {} different outputs for identical content",
+            compressed_outputs.len()
+        );
+
+        // Get the single compressed output and verify it's valid
+        let compressed = compressed_outputs.into_iter().next().unwrap();
+
+        // Verify decompression works
+        let mut decoder = GzDecoder::new(&compressed[..]);
+        let mut decompressed = String::new();
+        decoder
+            .read_to_string(&mut decompressed)
+            .expect("Failed to decompress");
+
+        assert_eq!(decompressed, test_content);
+    }
 }

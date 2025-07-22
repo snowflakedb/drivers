@@ -10,6 +10,8 @@ use sf_core::api_client::new_database_driver_v1_client;
 use sf_core::api_server::database_driver_v1::DatabaseDriverV1;
 use sf_core::thrift_gen::database_driver_v1::DatabaseDriverSyncHandler;
 use sf_core::thrift_gen::database_driver_v1::InfoCode;
+use std::io::Write;
+use tempfile::NamedTempFile;
 use tracing::Level;
 use tracing_subscriber::EnvFilter;
 
@@ -148,19 +150,14 @@ impl SnowflakeTestClient {
         let result = self.driver.statement_execute_query(stmt_handle.clone());
         match result {
             Err(err) => {
-                let error_msg = format!("{:?}", err);
+                let error_msg = format!("{err:?}");
                 assert!(
                     error_msg.contains(expected_error),
-                    "Expected error to contain '{}', got: {}",
-                    expected_error,
-                    error_msg
+                    "Expected error to contain '{expected_error}', got: {error_msg}"
                 );
             }
             Ok(_) => {
-                panic!(
-                    "Expected query to fail with '{}' error, but it succeeded",
-                    expected_error
-                );
+                panic!("Expected query to fail with '{expected_error}' error, but it succeeded");
             }
         }
     }
@@ -185,7 +182,7 @@ impl ArrowResultHelper {
         match self.reader.next() {
             Some(Ok(batch)) => Some(batch),
             Some(Err(e)) => {
-                println!("Error reading record batch: {}", e);
+                println!("Error reading record batch: {e}");
                 None
             }
             None => None,
@@ -220,37 +217,6 @@ impl ArrowResultHelper {
             "Expected no more record batches"
         );
         batch
-    }
-}
-
-/// Helper for temporary file management
-struct TempFile {
-    path: String,
-}
-
-impl TempFile {
-    /// Creates a new temporary file with the given content
-    fn new(filename: &str, content: &str) -> Self {
-        let path = std::env::current_dir()
-            .unwrap()
-            .join(filename)
-            .to_str()
-            .unwrap()
-            .to_string();
-        fs::write(&path, content).expect("Failed to write test file");
-        Self { path }
-    }
-
-    /// Gets the file path
-    fn path(&self) -> &str {
-        &self.path
-    }
-}
-
-impl Drop for TempFile {
-    /// Automatically cleans up the file when dropped
-    fn drop(&mut self) {
-        let _ = fs::remove_file(&self.path);
     }
 }
 
@@ -1178,18 +1144,19 @@ fn test_put() {
     client.execute_query(&format!("create temporary stage {stage_name}"));
 
     // Create test file
-    let _test_file = TempFile::new("test_put_file.txt", "test\n");
+    let mut test_file = NamedTempFile::new().unwrap();
+    test_file.write_all("test\n".as_bytes()).unwrap();
+    test_file.flush().unwrap();
 
     // Execute PUT command
     let put_sql = format!(
-        "PUT 'file://{}' @{}",
-        _test_file.path().replace("\\", "/"),
-        stage_name
+        "PUT 'file://{test_file}' @{stage_name}",
+        test_file = test_file.path().to_str().unwrap().replace("\\", "/")
     );
     client.execute_query(&put_sql);
 
     // Verify file was uploaded with LS command
-    let ls_result = client.execute_query(&format!("LS @{}", stage_name));
+    let ls_result = client.execute_query(&format!("LS @{stage_name}"));
 
     // Parse Arrow result to verify file listing
     let mut arrow_helper = ArrowResultHelper::from_result(ls_result);
@@ -1211,8 +1178,9 @@ fn test_put() {
         .unwrap()
         .value(0);
 
-    let expected_file_name = "test_put_file.txt.gz";
-    let expected_full_path = format!("{}/{}", stage_name.to_lowercase(), expected_file_name);
+    let temp_filename = test_file.path().file_name().unwrap().to_str().unwrap();
+    let expected_file_name = format!("{temp_filename}.gz");
+    let expected_full_path = format!("{stage_name}/{expected_file_name}");
     assert_eq!(
         name_str, expected_full_path,
         "File name should match uploaded file"
@@ -1230,18 +1198,21 @@ fn test_get() {
     let stage_name = "TEST_STAGE_GET";
 
     // Create test file and temporary stage
-    let _test_file = TempFile::new("test_get_file.csv", "a,b,c\n1,2,3\n");
-    client.execute_query(&format!("create temporary stage {}", stage_name));
+    let mut test_file = NamedTempFile::new().unwrap();
+    test_file.write_all("a,b,c\n1,2,3\n".as_bytes()).unwrap();
+    test_file.flush().unwrap();
+    client.execute_query(&format!("create temporary stage {stage_name}"));
 
     // Upload file using PUT (which now works)
-    let put_sql = format!("PUT 'file://{}' @{}", _test_file.path(), stage_name);
+    let put_sql = format!(
+        "PUT 'file://{test_file}' @{stage_name}",
+        test_file = test_file.path().to_str().unwrap().replace("\\", "/")
+    );
     client.execute_query(&put_sql);
 
     // Try to download the file using GET (should fail)
-    let get_sql = format!(
-        "GET @{}/test_get_file.csv.gz file://./downloaded/",
-        stage_name
-    );
+    let temp_filename = test_file.path().file_name().unwrap().to_str().unwrap();
+    let get_sql = format!("GET @{stage_name}/{temp_filename}.gz file://./downloaded/");
     client.execute_query_expect_error(&get_sql, "Handling GET queries is not yet implemented");
     println!("GET correctly failed with expected error: not yet implemented");
 }

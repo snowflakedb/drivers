@@ -28,3 +28,6 @@ aws-sdk-s3 = "1.0"
 aws-config = "1.0"
 aws-credential-types = "1.0"
 aws-types = "1.0"
+
+[dev-dependencies]
+tempfile = "3.0"
