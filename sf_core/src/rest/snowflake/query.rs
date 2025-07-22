@@ -181,9 +181,6 @@ pub struct SnowflakeResult {}
 pub struct SnowflakeRows {}
 
 #[derive(Deserialize)]
-pub struct EncryptionWrapper {}
-
-#[derive(Deserialize)]
 pub struct ExecResponseData {
     #[serde(rename = "parameters")]
     pub _parameters: Option<Vec<NameValueParameter>>,
@@ -258,9 +255,9 @@ pub struct ExecResponseData {
     #[serde(rename = "clientShowEncryptionParameter")]
     pub _show_encryption_parameter: Option<bool>,
     #[serde(rename = "encryptionMaterial")]
-    pub _encryption_material: Option<EncryptionWrapper>,
+    pub _encryption_material: Option<serde_json::Value>,
     #[serde(rename = "presignedUrls")]
-    pub _presigned_urls: Option<Vec<String>>,
+    pub _presigned_urls: Option<serde_json::Value>,
     #[serde(rename = "stageInfo")]
     pub _stage_info: Option<ExecResponseStageInfo>,
     #[serde(rename = "command")]
