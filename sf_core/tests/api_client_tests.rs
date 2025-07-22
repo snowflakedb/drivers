@@ -3,7 +3,7 @@ extern crate sf_core;
 extern crate tracing;
 extern crate tracing_subscriber;
 
-use arrow::array::{Array, Int8Array, StringArray};
+use arrow::array::{Array, Int8Array, Int64Array, StringArray};
 use arrow::ffi_stream::ArrowArrayStreamReader;
 use arrow::ffi_stream::FFI_ArrowArrayStream;
 use sf_core::api_client::new_database_driver_v1_client;
@@ -1118,7 +1118,7 @@ fn test_put() {
     let stmt_handle = driver.statement_new(conn_handle.clone()).unwrap();
 
     // Create a temporary stage
-    let stage_name = "test_stage_put".to_uppercase();
+    let stage_name = "test_stage_normalput".to_uppercase();
     driver
         .statement_set_sql_query(
             stmt_handle.clone(),
@@ -1128,37 +1128,106 @@ fn test_put() {
 
     driver.statement_execute_query(stmt_handle.clone()).unwrap();
 
-    // Prepare a file to upload
+    // Prepare a CSV file to upload with test data
     let file_path = std::env::current_dir()
         .unwrap()
-        .join("test_file.txt")
+        .join("test_put_file.txt")
         .to_str()
         .unwrap()
         .to_string();
-    fs::write(&file_path, "This is a test file.").expect("Failed to write test file");
+    fs::write(&file_path, "test\n").expect("Failed to write test file");
 
     // Use the PUT command to upload the file to the stage
     driver
         .statement_set_sql_query(
             stmt_handle.clone(),
-            format!("PUT file://{file_path} @{stage_name}").to_string(),
+            format!(
+                "PUT 'file://{}' @{}",
+                file_path.replace("\\", "/"),
+                stage_name
+            )
+            .to_string(),
         )
         .unwrap();
 
-    // Execute the PUT query and expect it to fail with the not implemented error
-    let result = driver.statement_execute_query(stmt_handle.clone());
+    // Execute PUT command to upload the file
+    let _result = driver.statement_execute_query(stmt_handle.clone()).unwrap();
+    println!("PUT command executed successfully");
 
-    // Assert that the query failed with the expected error message
-    match result {
-        Err(e) => {
-            let error_message = format!("{e:?}");
-            assert!(
-                error_message.contains("Handling PUT / GET queries is not yet implemented"),
-                "Expected error message about PUT/GET not implemented, but got: {error_message}",
-            );
-        }
-        Ok(_) => {
-            panic!("Expected PUT query to fail with not implemented error, but it succeeded");
-        }
-    }
+    // Verify the file was uploaded by listing the stage contents with LS
+    let ls_stmt_handle = driver.statement_new(conn_handle.clone()).unwrap();
+    driver
+        .statement_set_sql_query(ls_stmt_handle.clone(), format!("LS @{}", stage_name))
+        .unwrap();
+
+    let ls_result = driver
+        .statement_execute_query(ls_stmt_handle.clone())
+        .unwrap();
+    println!("LS command executed successfully");
+
+    // Parse the Arrow result to verify our file is listed
+    let expected_file_name = "test_put_file.txt.gz";
+
+    // Convert the result stream to Arrow format (following select_1 test pattern)
+    let stream_ptr: *mut FFI_ArrowArrayStream = ls_result.stream.into();
+    let stream: FFI_ArrowArrayStream = unsafe { FFI_ArrowArrayStream::from_raw(stream_ptr) };
+    let mut reader = ArrowArrayStreamReader::try_new(stream).unwrap();
+    let record_batch = reader.next().unwrap().unwrap();
+
+    // LS should return columns: [name, size, md5, last_modified]
+    assert_eq!(record_batch.num_columns(), 4, "LS should return 4 columns");
+    assert_eq!(
+        record_batch.num_rows(),
+        1,
+        "Expected exactly 1 file in the stage"
+    );
+
+    // Get the file name from column 0
+    let name_array = record_batch.column(0);
+    assert_eq!(
+        name_array.data_type(),
+        &arrow::datatypes::DataType::Utf8,
+        "File name should be string"
+    );
+    let name_str = name_array
+        .as_any()
+        .downcast_ref::<StringArray>()
+        .unwrap()
+        .value(0);
+
+    // Verify the file name contains our expected file (stage name + file name)
+    let expected_full_path = format!("{}/{}", stage_name.to_lowercase(), expected_file_name);
+    assert_eq!(
+        name_str, expected_full_path,
+        "File name should match uploaded file"
+    );
+
+    // Get the file size from column 1
+    let size_array = record_batch.column(1);
+    let file_size = if size_array.data_type() == &arrow::datatypes::DataType::Int64 {
+        size_array
+            .as_any()
+            .downcast_ref::<Int64Array>()
+            .unwrap()
+            .value(0)
+    } else {
+        // Handle other possible integer types
+        size_array
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap()
+            .value(0)
+            .parse::<i64>()
+            .unwrap()
+    };
+
+    // Basic validation
+    assert!(file_size > 0, "File size should be greater than 0");
+    assert!(
+        name_str.ends_with(".gz"),
+        "File should be compressed with .gz"
+    );
+
+    // Clean up the test file
+    let _ = fs::remove_file(&file_path);
 }

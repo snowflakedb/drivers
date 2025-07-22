@@ -21,3 +21,10 @@ uuid = { version = "1.0", features = ["v4"] }
 base64 = "0.22.1"
 arrow-ipc = "55.1.0"
 arrow = { version = "55.1.0", features = ["ffi"] }
+flate2 = "1.0"
+
+# AWS SDK dependencies
+aws-sdk-s3 = "1.0"
+aws-config = "1.0"
+aws-credential-types = "1.0"
+aws-types = "1.0"

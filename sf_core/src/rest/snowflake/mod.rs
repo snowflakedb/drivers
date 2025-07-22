@@ -1,6 +1,6 @@
 mod auth;
 mod data;
-mod query;
+pub mod query;
 
 use crate::driver::{Connection, Setting, Settings};
 use crate::rest::error::RestError;

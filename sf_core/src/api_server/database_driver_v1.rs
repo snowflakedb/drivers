@@ -1,6 +1,7 @@
 use crate::driver::{Connection, Database, Setting, Statement};
 use crate::handle_manager::{Handle, HandleManager};
 use crate::rest::error::RestError;
+use crate::api_server::file_transfer::transfer_file;
 use crate::thrift_gen::database_driver_v1::{
     ArrowSchemaPtr, ConnectionHandle, DatabaseDriverSyncHandler, DatabaseDriverSyncProcessor,
     DatabaseHandle, DriverException, ExecuteResult, InfoCode, PartitionedResult, StatementHandle,
@@ -570,11 +571,14 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
                     )));
                 }
 
-                if let Some(command) = response.data.command {
-                    // TODO: Handle PUT / GET queries
-                    if command == "UPLOAD" || command == "DOWNLOAD" {
+                if let Some(ref command) = response.data.command {
+                    if command == "UPLOAD" {
+                        transfer_file(&stmt.conn, &response.data)?;
+                        stmt.state = StatementState::Executed;
+                        return Ok(ExecuteResult::new(Box::new(ArrowArrayStreamPtr::new(Vec::new())), 0));
+                    } else if command == "DOWNLOAD" {
                         return Err(Error::from(RestError::Internal(
-                            "Handling PUT / GET queries is not yet implemented".to_string(),
+                            "Handling GET queries is not yet implemented".to_string(),
                         )));
                     }
                 }

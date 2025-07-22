@@ -243,8 +243,8 @@ pub struct ExecResponseData {
     pub _upload_info: Option<ExecResponseStageInfo>,
     #[serde(rename = "localLocation")]
     pub _local_location: Option<String>,
-    #[serde(rename = "srcLocations")]
-    pub _src_locations: Option<Vec<String>>,
+    #[serde(rename = "src_locations")]
+    pub src_locations: Option<Vec<String>>,
     #[serde(rename = "parallel")]
     pub _parallel: Option<i64>,
     #[serde(rename = "threshold")]
