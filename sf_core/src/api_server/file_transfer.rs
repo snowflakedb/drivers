@@ -35,7 +35,7 @@ pub fn transfer_file(data: &ExecResponseData) -> Result<(), RestError> {
         .map_err(|e| RestError::Internal(format!("Failed to create async runtime: {e}")))?;
 
     runtime
-        .block_on(async { upload_to_s3_simple(&compressed_data, stage_info, file_path).await })
+        .block_on(async { upload_to_s3_simple(compressed_data, stage_info, file_path).await })
         .map_err(|e| RestError::Internal(format!("Failed to upload to S3: {e}")))?;
 
     Ok(())
@@ -60,7 +60,7 @@ fn compress_data(file_path: &str) -> Result<Vec<u8>, std::io::Error> {
 }
 
 async fn upload_to_s3_simple(
-    data: &[u8],
+    data: Vec<u8>,
     stage_info: &crate::rest::snowflake::query::ExecResponseStageInfo,
     file_path: &str,
 ) -> Result<(), RestError> {
@@ -144,7 +144,7 @@ async fn upload_to_s3_simple(
         .put_object()
         .bucket(bucket)
         .key(&s3_key)
-        .body(ByteStream::from(data.to_vec()))
+        .body(ByteStream::from(data))
         .content_type("application/gzip")
         .send()
         .await
