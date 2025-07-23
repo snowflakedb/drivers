@@ -3,8 +3,6 @@ package com.snowflake.jdbc;
 import org.apache.thrift.TConfiguration;
 import org.apache.thrift.transport.TTransport;
 import org.apache.thrift.transport.TTransportException;
-import sun.rmi.transport.Transport;
-import sun.rmi.transport.tcp.TCPTransport;
 
 /**
  * CoreTransport provides a Thrift transport implementation that integrates with the sf_core library.
@@ -51,9 +49,7 @@ public class CoreTransport extends TTransport {
      * This constructor automatically initializes a DatabaseDriverV1 API instance.
      */
     public CoreTransport(CoreApi.ApiType apiType) {
-        System.out.println("CoreTransport: " + apiType.id);
         this.apiHandle = nativeInit(apiType.id);
-        System.out.println("CoreTransport: " + apiHandle[0] + " " + apiHandle[1]);
         this.open = false;
     }
     
@@ -80,7 +76,6 @@ public class CoreTransport extends TTransport {
     
     @Override
     public int read(byte[] buf, int off, int len) throws TTransportException {
-        System.out.println("read: " + len);
         if (!isOpen()) {
             throw new TTransportException(TTransportException.NOT_OPEN, "Transport is not open");
         }
@@ -114,7 +109,6 @@ public class CoreTransport extends TTransport {
     
     @Override
     public void write(byte[] buf, int off, int len) throws TTransportException {
-        System.out.println("write: " + len);
         if (!isOpen()) {
             throw new TTransportException(TTransportException.NOT_OPEN, "Transport is not open");
         }

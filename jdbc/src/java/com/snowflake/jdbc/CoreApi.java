@@ -1,7 +1,6 @@
 package com.snowflake.jdbc;
 
 import com.snowflake.jdbc.thrift_gen.DatabaseDriver;
-import com.sun.tools.javac.util.DefinedBy;
 import org.apache.thrift.protocol.TCompactProtocol;
 import org.apache.thrift.transport.TTransportException;
 
