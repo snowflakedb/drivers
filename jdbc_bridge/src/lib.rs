@@ -60,8 +60,11 @@ pub extern "system" fn Java_com_snowflake_jdbc_CoreTransport_nativeInit(
 /// * `_env` - JNI environment
 /// * `_class` - The calling Java class
 /// * `handle` - The API handle to destroy
+///
+/// # Safety
+/// Called from Java, so we need to be careful with the pointer.
 #[no_mangle]
-pub extern "system" fn Java_com_snowflake_jdbc_CoreTransport_nativeDestroy(
+pub unsafe extern "system" fn Java_com_snowflake_jdbc_CoreTransport_nativeDestroy(
     mut env: JNIEnv,
     _class: JClass,
     handle: jlongArray,
@@ -81,8 +84,11 @@ pub extern "system" fn Java_com_snowflake_jdbc_CoreTransport_nativeDestroy(
 ///
 /// # Returns
 /// The number of bytes written
+///
+/// # Safety
+/// Called from Java, so we need to be careful with the pointer.
 #[no_mangle]
-pub extern "system" fn Java_com_snowflake_jdbc_CoreTransport_nativeWrite(
+pub unsafe extern "system" fn Java_com_snowflake_jdbc_CoreTransport_nativeWrite(
     mut env: JNIEnv,
     _class: JClass,
     handle: jlongArray,
@@ -130,8 +136,11 @@ pub extern "system" fn Java_com_snowflake_jdbc_CoreTransport_nativeWrite(
 ///
 /// # Returns
 /// The number of bytes read
+///
+/// # Safety
+/// Called from Java, so we need to be careful with the pointer.
 #[no_mangle]
-pub extern "system" fn Java_com_snowflake_jdbc_CoreTransport_nativeRead(
+pub unsafe extern "system" fn Java_com_snowflake_jdbc_CoreTransport_nativeRead(
     mut env: JNIEnv,
     _class: JClass,
     handle: jlongArray,
@@ -167,8 +176,9 @@ pub extern "system" fn Java_com_snowflake_jdbc_CoreTransport_nativeRead(
     if bytes_read > 0 {
         // Copy the read data back to the Java byte array
         let bytes_to_copy = std::cmp::min(bytes_read, length_usize);
-        if let Err(_) =
-            env.set_byte_array_region(&java_buffer, 0, &read_buffer[..bytes_to_copy] as &[i8])
+        if env
+            .set_byte_array_region(&java_buffer, 0, &read_buffer[..bytes_to_copy] as &[i8])
+            .is_err()
         {
             return -1;
         }
@@ -183,58 +193,15 @@ pub extern "system" fn Java_com_snowflake_jdbc_CoreTransport_nativeRead(
 /// * `_env` - JNI environment
 /// * `_class` - The calling Java class
 /// * `handle` - The API handle
+///
+/// # Safety
+/// Called from Java, so we need to be careful with the pointer.
 #[no_mangle]
-pub extern "system" fn Java_com_snowflake_jdbc_CoreTransport_nativeFlush(
+pub unsafe extern "system" fn Java_com_snowflake_jdbc_CoreTransport_nativeFlush(
     mut env: JNIEnv,
     _class: JClass,
     handle: jlongArray,
 ) {
     let api_handle = jlong_array_to_handle(&mut env, unsafe { JLongArray::from_raw(handle) });
     sf_core_api_flush(api_handle);
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    // #[test]
-    // fn test_handle_conversion() {
-    //     let original_handle = CApiHandle {
-    //         id: 0x12345678,
-    //         magic: 0x87654321,
-    //     };
-
-    //     let jlong_val = handle_to_jlong_array(&mut _env, original_handle);
-    //     let converted_back = jlong_array_to_handle(&mut _env, unsafe { JLongArray::from_raw(jlong_val) });
-
-    //     assert_eq!(original_handle.id, converted_back.id);
-    //     assert_eq!(original_handle.magic, converted_back.magic);
-    // }
-
-    // #[test]
-    // fn test_handle_conversion_edge_cases() {
-    //     // Test with maximum values
-    //     let max_handle = CApiHandle {
-    //         id: 0xFFFFFFFF,
-    //         magic: 0xFFFFFFFF,
-    //     };
-
-    //     let jlong_val = handle_to_jlong(max_handle);
-    //     let converted_back = jlong_to_handle(jlong_val);
-
-    //     assert_eq!(max_handle.id, converted_back.id);
-    //     assert_eq!(max_handle.magic, converted_back.magic);
-
-    //     // Test with zero values
-    //     let zero_handle = CApiHandle {
-    //         id: 0,
-    //         magic: 0,
-    //     };
-
-    //     let jlong_val = handle_to_jlong(zero_handle);
-    //     let converted_back = jlong_to_handle(jlong_val);
-
-    //     assert_eq!(zero_handle.id, converted_back.id);
-    //     assert_eq!(zero_handle.magic, converted_back.magic);
-    // }
 }
