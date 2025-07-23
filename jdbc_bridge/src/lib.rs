@@ -8,8 +8,8 @@ use sf_core::c_api::{
 
 /// Convert a CApiHandle to a Java long for storage in Java objects
 fn handle_to_jlong_array<'a>(env: &mut JNIEnv<'a>, handle: CApiHandle) -> JLongArray<'a> {
-    // Pack the handle into a single 64-bit value
-    // Upper 32 bits: magic, Lower 32 bits: id (truncated to 32 bits)
+    // Store the handle as two 64-bit values in a 2-element array
+    // First element: id as a full 64-bit value, Second element: magic as a full 64-bit value
     // Return java struct
     let array = env.new_long_array(2).unwrap();
     env.set_long_array_region(&array, 0, &[handle.id as i64, handle.magic as i64])
