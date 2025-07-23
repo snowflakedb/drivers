@@ -205,3 +205,36 @@ jobs:
           cd pep249_dbapi
           pip install -e .
           pytest tests/ -v
+
+  jdbc_tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          java-version: '8'
+          distribution: 'temurin'
+
+      - name: Decode secrets
+        run: ./scripts/decode_secrets.sh
+        env:
+          PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
+
+      - name: Build Rust components
+        run: |
+          cargo build --package sf_core
+          cargo build --package jdbc_bridge
+
+      - name: Make gradlew executable
+        run: chmod +x jdbc/gradlew
+
+      - name: Run JDBC tests
+        run: |
+          ls -l target/debug/
+          export PARAMETER_PATH=$(pwd)/parameters.json
+          export CORE_PATH=$(pwd)/target/debug/libjdbc_bridge.so
+          cd jdbc
+          ./gradlew test --stacktrace
