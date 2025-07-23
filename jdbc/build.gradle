@@ -98,7 +98,9 @@ publishing {
 
 test {
     useJUnit()
-    jvmArgs '--add-opens=java.base/java.nio=org.apache.arrow.memory.core,ALL-UNNAMED'
+    if (JavaVersion.current().isJava9Compatible()) {
+        jvmArgs '--add-opens=java.base/java.nio=org.apache.arrow.memory.core,ALL-UNNAMED'
+    }
     testLogging {
         outputs.upToDateWhen {false}
         showStandardStreams = true
