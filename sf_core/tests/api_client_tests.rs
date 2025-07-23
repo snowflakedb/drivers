@@ -1,224 +1,16 @@
-extern crate lazy_static;
 extern crate sf_core;
-extern crate tracing;
-extern crate tracing_subscriber;
 
-use arrow::array::{Array, Int8Array, StringArray};
-use arrow::ffi_stream::ArrowArrayStreamReader;
-use arrow::ffi_stream::FFI_ArrowArrayStream;
+mod test_utils;
+
+use arrow::array::{Array, StringArray};
 use sf_core::api_client::new_database_driver_v1_client;
 use sf_core::api_server::database_driver_v1::DatabaseDriverV1;
 use sf_core::thrift_gen::database_driver_v1::DatabaseDriverSyncHandler;
 use sf_core::thrift_gen::database_driver_v1::InfoCode;
 use std::io::Write;
 use tempfile::NamedTempFile;
-use tracing::Level;
-use tracing_subscriber::EnvFilter;
+use test_utils::{setup_logging, ArrowResultHelper, SnowflakeTestClient, get_parameters};
 
-// Use serde to parse parameters.json
-use serde::{Deserialize, Serialize};
-
-#[derive(Deserialize, Serialize)]
-struct ParametersFile {
-    testconnection: Parameters,
-}
-
-#[derive(Deserialize, Serialize)]
-struct Parameters {
-    #[serde(rename = "SNOWFLAKE_TEST_ACCOUNT")]
-    account_name: Option<String>,
-    #[serde(rename = "SNOWFLAKE_TEST_USER")]
-    user: Option<String>,
-    #[serde(rename = "SNOWFLAKE_TEST_PASSWORD")]
-    password: Option<String>,
-    #[serde(rename = "SNOWFLAKE_TEST_DATABASE")]
-    database: Option<String>,
-    #[serde(rename = "SNOWFLAKE_TEST_SCHEMA")]
-    schema: Option<String>,
-    #[serde(rename = "SNOWFLAKE_TEST_WAREHOUSE")]
-    warehouse: Option<String>,
-    #[serde(rename = "SNOWFLAKE_TEST_HOST")]
-    host: Option<String>,
-    #[serde(rename = "SNOWFLAKE_TEST_ROLE")]
-    role: Option<String>,
-    #[serde(rename = "SNOWFLAKE_TEST_SERVER_URL")]
-    server_url: Option<String>,
-}
-
-use lazy_static::lazy_static;
-use std::fs;
-
-lazy_static! {
-    static ref PARAMETERS: Parameters = {
-        let parameter_path = std::env::var("PARAMETER_PATH").unwrap();
-        println!("Parameter path: {parameter_path}");
-        let parameters = fs::read_to_string(parameter_path).unwrap();
-        let parameters: ParametersFile = serde_json::from_str(&parameters).unwrap();
-        println!(
-            "Parameters: {:?}",
-            serde_json::to_string_pretty(&parameters).unwrap()
-        );
-        parameters.testconnection
-    };
-}
-
-// Helper functions to reduce test boilerplate
-
-/// Sets up logging for tests
-fn setup_logging() {
-    let env_filter = EnvFilter::builder()
-        .with_default_directive(Level::DEBUG.into())
-        .from_env()
-        .unwrap();
-    let _ = tracing_subscriber::fmt::fmt()
-        .with_env_filter(env_filter)
-        .try_init();
-}
-
-/// Creates a connected Snowflake client with database and connection initialized
-struct SnowflakeTestClient {
-    pub driver: Box<dyn sf_core::thrift_gen::database_driver_v1::TDatabaseDriverSyncClient + Send>,
-    pub conn_handle: sf_core::thrift_gen::database_driver_v1::ConnectionHandle,
-}
-
-impl SnowflakeTestClient {
-    /// Creates a new test client with Snowflake connection established
-    fn new() -> Self {
-        setup_logging();
-        let mut driver = new_database_driver_v1_client();
-        let db_handle = driver.database_new().unwrap();
-        driver.database_init(db_handle.clone()).unwrap();
-
-        let conn_handle = driver.connection_new().unwrap();
-        driver
-            .connection_set_option_string(
-                conn_handle.clone(),
-                "account".to_string(),
-                PARAMETERS.account_name.clone().unwrap(),
-            )
-            .unwrap();
-        driver
-            .connection_set_option_string(
-                conn_handle.clone(),
-                "user".to_string(),
-                PARAMETERS.user.clone().unwrap(),
-            )
-            .unwrap();
-        driver
-            .connection_set_option_string(
-                conn_handle.clone(),
-                "password".to_string(),
-                PARAMETERS.password.clone().unwrap(),
-            )
-            .unwrap();
-        driver
-            .connection_init(conn_handle.clone(), db_handle.clone())
-            .unwrap();
-
-        Self {
-            driver,
-            conn_handle,
-        }
-    }
-
-    /// Creates a new statement handle
-    fn new_statement(&mut self) -> sf_core::thrift_gen::database_driver_v1::StatementHandle {
-        self.driver.statement_new(self.conn_handle.clone()).unwrap()
-    }
-
-    /// Executes a SQL query and returns the result
-    fn execute_query(
-        &mut self,
-        sql: &str,
-    ) -> sf_core::thrift_gen::database_driver_v1::ExecuteResult {
-        let stmt_handle = self.new_statement();
-        self.driver
-            .statement_set_sql_query(stmt_handle.clone(), sql.to_string())
-            .unwrap();
-        self.driver
-            .statement_execute_query(stmt_handle.clone())
-            .unwrap()
-    }
-
-    /// Executes a SQL query and expects it to fail with a specific error message
-    fn execute_query_expect_error(&mut self, sql: &str, expected_error: &str) {
-        let stmt_handle = self.new_statement();
-        self.driver
-            .statement_set_sql_query(stmt_handle.clone(), sql.to_string())
-            .unwrap();
-
-        let result = self.driver.statement_execute_query(stmt_handle.clone());
-        match result {
-            Err(err) => {
-                let error_msg = format!("{err:?}");
-                assert!(
-                    error_msg.contains(expected_error),
-                    "Expected error to contain '{expected_error}', got: {error_msg}"
-                );
-            }
-            Ok(_) => {
-                panic!("Expected query to fail with '{expected_error}' error, but it succeeded");
-            }
-        }
-    }
-}
-
-/// Helper for processing Arrow stream results
-struct ArrowResultHelper {
-    reader: ArrowArrayStreamReader,
-}
-
-impl ArrowResultHelper {
-    /// Creates a new Arrow result helper from an ExecuteResult
-    fn from_result(result: sf_core::thrift_gen::database_driver_v1::ExecuteResult) -> Self {
-        let stream_ptr: *mut FFI_ArrowArrayStream = result.stream.into();
-        let stream: FFI_ArrowArrayStream = unsafe { FFI_ArrowArrayStream::from_raw(stream_ptr) };
-        let reader = ArrowArrayStreamReader::try_new(stream).unwrap();
-        Self { reader }
-    }
-
-    /// Gets the next record batch
-    fn next_batch(&mut self) -> Option<arrow::record_batch::RecordBatch> {
-        match self.reader.next() {
-            Some(Ok(batch)) => Some(batch),
-            Some(Err(e)) => {
-                println!("Error reading record batch: {e}");
-                None
-            }
-            None => None,
-        }
-    }
-
-    /// Gets the first record batch (convenience method)
-    fn first_batch(&mut self) -> arrow::record_batch::RecordBatch {
-        self.next_batch()
-            .expect("Expected at least one record batch")
-    }
-
-    /// Extracts an integer value from the first column of the first row
-    fn first_int_value(&mut self) -> i8 {
-        let batch = self.first_batch();
-        let array_ref = batch.column(0);
-        let int_array = array_ref
-            .as_any()
-            .downcast_ref::<Int8Array>()
-            .expect("Expected int8 array");
-        int_array.value(0)
-    }
-
-    /// Validates that exactly one row is returned
-    fn assert_single_row(&mut self) -> arrow::record_batch::RecordBatch {
-        let batch = self
-            .next_batch()
-            .expect("Expected at least one record batch");
-        assert_eq!(batch.num_rows(), 1, "Expected exactly one row");
-        assert!(
-            self.next_batch().is_none(),
-            "Expected no more record batches"
-        );
-        batch
-    }
-}
 
 // Database operation tests
 #[test]
@@ -1060,9 +852,10 @@ fn test_snowflake_connection_settings() {
     driver.handle_database_init(db_handle.clone()).unwrap();
 
     // Get credentials from parameters.json
-    let account_name = PARAMETERS.account_name.clone().unwrap();
-    let user = PARAMETERS.user.clone().unwrap();
-    let password = PARAMETERS.password.clone().unwrap();
+    let parameters = get_parameters();
+    let account_name = parameters.account_name.clone().unwrap();
+    let user = parameters.user.clone().unwrap();
+    let password = parameters.password.clone().unwrap();
 
     // Create a new connection
     let conn_handle = driver.handle_connection_new().unwrap();
@@ -1084,7 +877,7 @@ fn test_snowflake_connection_settings() {
         .handle_connection_set_option_string(conn_handle.clone(), "password".to_string(), password)
         .unwrap();
 
-    if let Some(server_url) = PARAMETERS.server_url.clone() {
+    if let Some(server_url) = parameters.server_url.clone() {
         driver
             .handle_connection_set_option_string(
                 conn_handle.clone(),
