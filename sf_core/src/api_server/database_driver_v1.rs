@@ -674,7 +674,7 @@ fn convert_single_row_to_arrow(rowset: Vec<Vec<Option<String>>>) -> Result<Vec<u
 
     // Create RecordBatch
     let batch = RecordBatch::try_new(std::sync::Arc::new(schema), arrow_arrays).map_err(|e| {
-        RestError::InvalidSnowflakeResponse(format!(
+        RestError::Internal(format!(
             "Failed to create RecordBatch from rowset: {e}"
         ))
     })?;
@@ -682,15 +682,15 @@ fn convert_single_row_to_arrow(rowset: Vec<Vec<Option<String>>>) -> Result<Vec<u
     // Serialize to Arrow IPC format
     let mut bytes = Vec::new();
     let mut writer = StreamWriter::try_new(&mut bytes, &batch.schema()).map_err(|e| {
-        RestError::InvalidSnowflakeResponse(format!("Failed to create Arrow StreamWriter: {e}"))
+        RestError::Internal(format!("Failed to create Arrow StreamWriter: {e}"))
     })?;
 
     writer.write(&batch).map_err(|e| {
-        RestError::InvalidSnowflakeResponse(format!("Failed to write Arrow batch: {e}"))
+        RestError::Internal(format!("Failed to write Arrow batch: {e}"))
     })?;
 
     writer.finish().map_err(|e| {
-        RestError::InvalidSnowflakeResponse(format!("Failed to finish Arrow writing: {e}"))
+        RestError::Internal(format!("Failed to finish Arrow writing: {e}"))
     })?;
 
     Ok(bytes)
