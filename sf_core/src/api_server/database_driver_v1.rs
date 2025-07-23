@@ -573,7 +573,7 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
 
                 if let Some(ref command) = response.data.command {
                     if command == "UPLOAD" {
-                        transfer_file(&stmt.conn, &response.data)?;
+                        transfer_file(&response.data)?;
                         stmt.state = StatementState::Executed;
                         return Ok(ExecuteResult::new(
                             Box::new(ArrowArrayStreamPtr::new(Vec::new())),
@@ -591,7 +591,7 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
                         // Decode the base64 string to bytes
                         general_purpose::STANDARD
                             .decode(rowset_base64)
-                            .unwrap_or_else(|e| panic!("Failed to decode base64 rowset: {e}"))
+                            .map_err(|e| Error::from(RestError::InvalidSnowflakeResponse(format!("Failed to decode base64 rowset: {e}"))))?
                     }
                     None => {
                         match response.data.rowset {
@@ -600,7 +600,7 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
                                 convert_single_row_to_arrow(rowset)?
                             }
                             None => {
-                                return Err(Error::from(RestError::Internal(
+                                return Err(Error::from(RestError::InvalidSnowflakeResponse(
                                     "Rowset not found in response".to_string(),
                                 )));
                             }
@@ -670,20 +670,20 @@ fn convert_single_row_to_arrow(rowset: Vec<Vec<Option<String>>>) -> Result<Vec<u
 
     // Create RecordBatch
     let batch = RecordBatch::try_new(std::sync::Arc::new(schema), arrow_arrays)
-        .unwrap_or_else(|e| panic!("Failed to create RecordBatch: {e}"));
+        .map_err(|e| RestError::InvalidSnowflakeResponse(format!("Failed to create RecordBatch from rowset: {e}")))?;
 
     // Serialize to Arrow IPC format
     let mut bytes = Vec::new();
     let mut writer = StreamWriter::try_new(&mut bytes, &batch.schema())
-        .unwrap_or_else(|e| panic!("Failed to create StreamWriter: {e}"));
+        .map_err(|e| RestError::InvalidSnowflakeResponse(format!("Failed to create Arrow StreamWriter: {e}")))?;
 
     writer
         .write(&batch)
-        .unwrap_or_else(|e| panic!("Failed to write batch: {e}"));
+        .map_err(|e| RestError::InvalidSnowflakeResponse(format!("Failed to write Arrow batch: {e}")))?;
 
     writer
         .finish()
-        .unwrap_or_else(|e| panic!("Failed to finish writing: {e}"));
+        .map_err(|e| RestError::InvalidSnowflakeResponse(format!("Failed to finish Arrow writing: {e}")))?;
 
     Ok(bytes)
 }

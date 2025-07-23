@@ -1,10 +1,8 @@
-use crate::driver::Connection;
 use crate::rest::error::RestError;
 use crate::rest::snowflake::query::ExecResponseData;
 use flate2::{Compression, GzBuilder};
 use std::fs::File;
 use std::io::{Read, Write};
-use std::sync::{Arc, Mutex};
 
 // AWS SDK imports
 use aws_config::{BehaviorVersion, Region};
@@ -13,10 +11,7 @@ use aws_sdk_s3::{Client as S3Client, primitives::ByteStream};
 
 // TODO: Encrypt the file before uploading to S3
 
-pub fn transfer_file(
-    _conn_ptr: &Arc<Mutex<Connection>>,
-    data: &ExecResponseData,
-) -> Result<(), RestError> {
+pub fn transfer_file(data: &ExecResponseData) -> Result<(), RestError> {
     // Extract the source file path
     let file_path = data
         .src_locations
@@ -37,7 +32,7 @@ pub fn transfer_file(
 
     // Upload to S3 (without encryption for now)
     let runtime = tokio::runtime::Runtime::new()
-        .unwrap_or_else(|e| panic!("Failed to create async runtime: {e}"));
+        .map_err(|e| RestError::Internal(format!("Failed to create async runtime: {e}")))?;
 
     runtime
         .block_on(async { upload_to_s3_simple(&compressed_data, stage_info, file_path).await })
@@ -48,7 +43,7 @@ pub fn transfer_file(
 
 // TODO: streaming instead of loading the whole file into memory
 
-pub fn compress_data(file_path: &str) -> Result<Vec<u8>, std::io::Error> {
+fn compress_data(file_path: &str) -> Result<Vec<u8>, std::io::Error> {
     let mut input_file = File::open(file_path)?;
     let mut input_data = Vec::new();
     input_file.read_to_end(&mut input_data)?;
@@ -68,21 +63,31 @@ async fn upload_to_s3_simple(
     data: &[u8],
     stage_info: &crate::rest::snowflake::query::ExecResponseStageInfo,
     file_path: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), RestError> {
     // Extract AWS credentials from stage info
     let creds = stage_info
         .creds
         .as_ref()
-        .ok_or("AWS credentials not found in stage")?;
+        .ok_or("AWS credentials not found in stage")
+        .map_err(|e| RestError::InvalidSnowflakeResponse(e.to_string()))?;
 
-    let aws_key_id = creds.aws_key_id.as_ref().ok_or("AWS_KEY_ID not found")?;
+    let aws_key_id = creds
+        .aws_key_id
+        .as_ref()
+        .ok_or("AWS_KEY_ID not found")
+        .map_err(|e| RestError::InvalidSnowflakeResponse(e.to_string()))?;
 
     let aws_secret_key = creds
         .aws_secret_key
         .as_ref()
-        .ok_or("AWS_SECRET_KEY not found")?;
+        .ok_or("AWS_SECRET_KEY not found")
+        .map_err(|e| RestError::InvalidSnowflakeResponse(e.to_string()))?;
 
-    let aws_token = creds.aws_token.as_ref().ok_or("AWS_TOKEN not found")?;
+    let aws_token = creds
+        .aws_token
+        .as_ref()
+        .ok_or("AWS_TOKEN not found")
+        .map_err(|e| RestError::InvalidSnowflakeResponse(e.to_string()))?;
 
     // Create AWS credentials
     let credentials = Credentials::new(
@@ -98,7 +103,8 @@ async fn upload_to_s3_simple(
         .region
         .as_ref()
         .cloned()
-        .unwrap_or_else(|| "us-west-2".to_string());
+        .ok_or("Region not found")
+        .map_err(|e| RestError::InvalidSnowflakeResponse(e.to_string()))?;
 
     let config = aws_config::defaults(BehaviorVersion::latest())
         .credentials_provider(credentials)
@@ -112,26 +118,24 @@ async fn upload_to_s3_simple(
     let location = stage_info
         .location
         .as_ref()
-        .ok_or("S3 location not found")?;
+        .ok_or("S3 location not found in Snowflake stage info")
+        .map_err(|e| RestError::InvalidSnowflakeResponse(e.to_string()))?;
 
     // Parse bucket and key prefix from location (format: "bucket-name/path/")
-    let parts: Vec<&str> = location.split('/').collect();
-    if parts.is_empty() {
-        return Err("Invalid S3 location format".into());
-    }
+    let bucket_separator = location
+        .find('/')
+        .ok_or("Invalid S3 location format: missing bucket separator")
+        .map_err(|e| RestError::InvalidSnowflakeResponse(e.to_string()))?;
 
-    let bucket = parts[0];
-    let key_prefix = if parts.len() > 1 {
-        parts[1..].join("/")
-    } else {
-        String::new()
-    };
+    let bucket = &location[..bucket_separator];
+    let key_prefix = &location[bucket_separator + 1..]; // Everything after bucket/
 
     // Create S3 key: key_prefix + filename.gz
     let file_name = std::path::Path::new(file_path)
         .file_name()
         .and_then(|name| name.to_str())
-        .ok_or("Invalid file path")?;
+        .ok_or("Invalid file path")
+        .map_err(|e| RestError::Internal(e.to_string()))?;
 
     let s3_key = format!("{key_prefix}{file_name}.gz");
 
@@ -143,7 +147,8 @@ async fn upload_to_s3_simple(
         .body(ByteStream::from(data.to_vec()))
         .content_type("application/gzip")
         .send()
-        .await?;
+        .await
+        .map_err(|e| RestError::Internal(format!("Failed to upload to S3: {e}")))?;
 
     tracing::info!(
         "Successfully uploaded file to S3: s3://{}/{}",
@@ -180,9 +185,8 @@ mod tests {
             // Add a small delay to ensure different timestamps
             std::thread::sleep(std::time::Duration::from_secs(2));
 
-            let compressed =
-                compress_data(temp_file.path().to_str().expect("Invalid path"))
-                    .expect("Failed to compress file");
+            let compressed = compress_data(temp_file.path().to_str().expect("Invalid path"))
+                .expect("Failed to compress file");
 
             compressed_outputs.insert(compressed);
         }
