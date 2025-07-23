@@ -591,7 +591,11 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
                         // Decode the base64 string to bytes
                         general_purpose::STANDARD
                             .decode(rowset_base64)
-                            .map_err(|e| Error::from(RestError::InvalidSnowflakeResponse(format!("Failed to decode base64 rowset: {e}"))))?
+                            .map_err(|e| {
+                                Error::from(RestError::InvalidSnowflakeResponse(format!(
+                                    "Failed to decode base64 rowset: {e}"
+                                )))
+                            })?
                     }
                     None => {
                         match response.data.rowset {
@@ -669,21 +673,25 @@ fn convert_single_row_to_arrow(rowset: Vec<Vec<Option<String>>>) -> Result<Vec<u
         .collect();
 
     // Create RecordBatch
-    let batch = RecordBatch::try_new(std::sync::Arc::new(schema), arrow_arrays)
-        .map_err(|e| RestError::InvalidSnowflakeResponse(format!("Failed to create RecordBatch from rowset: {e}")))?;
+    let batch = RecordBatch::try_new(std::sync::Arc::new(schema), arrow_arrays).map_err(|e| {
+        RestError::InvalidSnowflakeResponse(format!(
+            "Failed to create RecordBatch from rowset: {e}"
+        ))
+    })?;
 
     // Serialize to Arrow IPC format
     let mut bytes = Vec::new();
-    let mut writer = StreamWriter::try_new(&mut bytes, &batch.schema())
-        .map_err(|e| RestError::InvalidSnowflakeResponse(format!("Failed to create Arrow StreamWriter: {e}")))?;
+    let mut writer = StreamWriter::try_new(&mut bytes, &batch.schema()).map_err(|e| {
+        RestError::InvalidSnowflakeResponse(format!("Failed to create Arrow StreamWriter: {e}"))
+    })?;
 
-    writer
-        .write(&batch)
-        .map_err(|e| RestError::InvalidSnowflakeResponse(format!("Failed to write Arrow batch: {e}")))?;
+    writer.write(&batch).map_err(|e| {
+        RestError::InvalidSnowflakeResponse(format!("Failed to write Arrow batch: {e}"))
+    })?;
 
-    writer
-        .finish()
-        .map_err(|e| RestError::InvalidSnowflakeResponse(format!("Failed to finish Arrow writing: {e}")))?;
+    writer.finish().map_err(|e| {
+        RestError::InvalidSnowflakeResponse(format!("Failed to finish Arrow writing: {e}"))
+    })?;
 
     Ok(bytes)
 }
