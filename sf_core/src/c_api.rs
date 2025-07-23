@@ -53,7 +53,6 @@ pub extern "C" fn sf_core_api_destroy(api: CApiHandle) {
 /// The caller must ensure that `buf` is valid for reads of `len` bytes.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sf_core_api_write(api: CApiHandle, buf: *mut u8, len: usize) -> usize {
-    println!("sf_core_api_write: {:?}", api);
     let tt_ptr = TRANSPORT_HANDLE_MANAGER
         .get_obj(api.to_handle())
         .expect("Thrift transport not found");
