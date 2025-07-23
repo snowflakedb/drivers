@@ -7,8 +7,10 @@ thrift -r --gen java --out jdbc/src/java/com/snowflake/jdbc/thrift_gen/ thrift/d
 for SOURCE in jdbc/src/java/com/snowflake/jdbc/thrift_gen/*.java; do
     TEMP_FILE=$(mktemp)
     echo "package com.snowflake.jdbc.thrift_gen;" > ${TEMP_FILE}
-    cat ${SOURCE} >> ${TEMP_FILE}
+    # Remove date parameter from @javax.annotation.Generated annotation
+    sed 's/@javax\.annotation\.Generated(value = "\([^"]*\)", date = "[^"]*")/@javax.annotation.Generated(value = "\1")/g' ${SOURCE} >> ${TEMP_FILE}
     cat ${TEMP_FILE} > ${SOURCE}
+    rm ${TEMP_FILE}
 done
 
 # Generate Rust code from thrift file
