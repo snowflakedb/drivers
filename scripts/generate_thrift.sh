@@ -8,7 +8,7 @@ for SOURCE in jdbc/src/java/com/snowflake/jdbc/thrift_gen/*.java; do
     TEMP_FILE=$(mktemp)
     echo "package com.snowflake.jdbc.thrift_gen;" > ${TEMP_FILE}
     cat ${SOURCE} >> ${TEMP_FILE}
-    mv ${TEMP_FILE} ${SOURCE}
+    cat ${TEMP_FILE} > ${SOURCE}
 done
 
 # Generate Rust code from thrift file
