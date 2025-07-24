@@ -573,7 +573,8 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
 
                 if let Some(ref command) = response.data.command {
                     if command == "UPLOAD" {
-                        transfer_file(&response.data)?;
+                        let file_transfer_data = response.data.to_file_transfer_data()?;
+                        rt.block_on(transfer_file(&file_transfer_data))?;
                         stmt.state = StatementState::Executed;
                         return Ok(ExecuteResult::new(
                             Box::new(ArrowArrayStreamPtr::new(Vec::new())),

@@ -298,3 +298,509 @@ pub struct ExecResponse {
     #[serde(rename = "success")]
     pub success: bool,
 }
+
+// Translation functions to convert from query types to file transfer types
+impl ExecResponseData {
+    /// Convert ExecResponseData to FileTransferData, validating that all required fields are present
+    pub fn to_file_transfer_data(
+        &self,
+    ) -> Result<crate::api_server::file_transfer::FileTransferData, crate::rest::error::RestError>
+    {
+        let src_locations = self
+            .src_locations
+            .as_ref()
+            .ok_or_else(|| {
+                crate::rest::error::RestError::Internal(
+                    "Source locations not found in response".to_string(),
+                )
+            })?
+            .clone();
+
+        if src_locations.is_empty() {
+            return Err(crate::rest::error::RestError::Internal(
+                "No source locations found".to_string(),
+            ));
+        }
+
+        let stage_info = self
+            .stage_info
+            .as_ref()
+            .ok_or_else(|| {
+                crate::rest::error::RestError::Internal(
+                    "Stage info not found in response".to_string(),
+                )
+            })?
+            .to_file_transfer_stage_info()?;
+
+        Ok(crate::api_server::file_transfer::FileTransferData {
+            src_locations,
+            stage_info,
+        })
+    }
+}
+
+impl ExecResponseStageInfo {
+    /// Convert ExecResponseStageInfo to FileTransferStageInfo, validating that all required fields are present
+    pub fn to_file_transfer_stage_info(
+        &self,
+    ) -> Result<
+        crate::api_server::file_transfer::FileTransferStageInfo,
+        crate::rest::error::RestError,
+    > {
+        let location = self
+            .location
+            .as_ref()
+            .ok_or_else(|| {
+                crate::rest::error::RestError::InvalidSnowflakeResponse(
+                    "S3 location not found in stage info".to_string(),
+                )
+            })?
+            .clone();
+
+        let region = self
+            .region
+            .as_ref()
+            .ok_or_else(|| {
+                crate::rest::error::RestError::InvalidSnowflakeResponse(
+                    "Region not found in stage info".to_string(),
+                )
+            })?
+            .clone();
+
+        let creds = self
+            .creds
+            .as_ref()
+            .ok_or_else(|| {
+                crate::rest::error::RestError::InvalidSnowflakeResponse(
+                    "Credentials not found in stage info".to_string(),
+                )
+            })?
+            .to_file_transfer_credentials()?;
+
+        Ok(crate::api_server::file_transfer::FileTransferStageInfo {
+            location,
+            region,
+            creds,
+        })
+    }
+}
+
+impl ExecResponseCredentials {
+    /// Convert ExecResponseCredentials to FileTransferCredentials, validating that all required fields are present
+    pub fn to_file_transfer_credentials(
+        &self,
+    ) -> Result<
+        crate::api_server::file_transfer::FileTransferCredentials,
+        crate::rest::error::RestError,
+    > {
+        let aws_key_id = self
+            .aws_key_id
+            .as_ref()
+            .ok_or_else(|| {
+                crate::rest::error::RestError::InvalidSnowflakeResponse(
+                    "AWS_KEY_ID not found in credentials".to_string(),
+                )
+            })?
+            .clone();
+
+        let aws_secret_key = self
+            .aws_secret_key
+            .as_ref()
+            .ok_or_else(|| {
+                crate::rest::error::RestError::InvalidSnowflakeResponse(
+                    "AWS_SECRET_KEY not found in credentials".to_string(),
+                )
+            })?
+            .clone();
+
+        let aws_token = self
+            .aws_token
+            .as_ref()
+            .ok_or_else(|| {
+                crate::rest::error::RestError::InvalidSnowflakeResponse(
+                    "AWS_TOKEN not found in credentials".to_string(),
+                )
+            })?
+            .clone();
+
+        Ok(crate::api_server::file_transfer::FileTransferCredentials {
+            aws_key_id,
+            aws_secret_key,
+            aws_token,
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::rest::error::RestError;
+
+    fn create_valid_credentials() -> ExecResponseCredentials {
+        serde_json::from_str(
+            r#"{
+            "AWS_KEY_ID": "test_key_id",
+            "AWS_SECRET_KEY": "test_secret_key",
+            "AWS_TOKEN": "test_token"
+        }"#,
+        )
+        .unwrap()
+    }
+
+    fn create_valid_stage_info() -> ExecResponseStageInfo {
+        serde_json::from_str(
+            r#"{
+            "location": "test-bucket/path/",
+            "region": "us-east-1",
+            "creds": {
+                "AWS_KEY_ID": "test_key_id",
+                "AWS_SECRET_KEY": "test_secret_key",
+                "AWS_TOKEN": "test_token"
+            }
+        }"#,
+        )
+        .unwrap()
+    }
+
+    fn create_valid_exec_response_data() -> ExecResponseData {
+        serde_json::from_str(
+            r#"{
+            "src_locations": ["test_file.csv"],
+            "stageInfo": {
+                "location": "test-bucket/path/",
+                "region": "us-east-1",
+                "creds": {
+                    "AWS_KEY_ID": "test_key_id",
+                    "AWS_SECRET_KEY": "test_secret_key",
+                    "AWS_TOKEN": "test_token"
+                }
+            },
+            "command": "UPLOAD"
+        }"#,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn test_credentials_conversion_success() {
+        let creds = create_valid_credentials();
+        let result = creds.to_file_transfer_credentials();
+
+        assert!(result.is_ok());
+        let file_creds = result.unwrap();
+        assert_eq!(file_creds.aws_key_id, "test_key_id");
+        assert_eq!(file_creds.aws_secret_key, "test_secret_key");
+        assert_eq!(file_creds.aws_token, "test_token");
+    }
+
+    #[test]
+    fn test_credentials_conversion_missing_key_id() {
+        let creds: ExecResponseCredentials = serde_json::from_str(
+            r#"{
+            "AWS_SECRET_KEY": "test_secret_key",
+            "AWS_TOKEN": "test_token"
+        }"#,
+        )
+        .unwrap();
+
+        let result = creds.to_file_transfer_credentials();
+        assert!(result.is_err());
+
+        if let Err(RestError::InvalidSnowflakeResponse(msg)) = result {
+            assert!(msg.contains("AWS_KEY_ID not found"));
+        } else {
+            panic!("Expected InvalidSnowflakeResponse error");
+        }
+    }
+
+    #[test]
+    fn test_credentials_conversion_missing_secret_key() {
+        let creds: ExecResponseCredentials = serde_json::from_str(
+            r#"{
+            "AWS_KEY_ID": "test_key_id",
+            "AWS_TOKEN": "test_token"
+        }"#,
+        )
+        .unwrap();
+
+        let result = creds.to_file_transfer_credentials();
+        assert!(result.is_err());
+
+        if let Err(RestError::InvalidSnowflakeResponse(msg)) = result {
+            assert!(msg.contains("AWS_SECRET_KEY not found"));
+        } else {
+            panic!("Expected InvalidSnowflakeResponse error");
+        }
+    }
+
+    #[test]
+    fn test_credentials_conversion_missing_token() {
+        let creds: ExecResponseCredentials = serde_json::from_str(
+            r#"{
+            "AWS_KEY_ID": "test_key_id",
+            "AWS_SECRET_KEY": "test_secret_key"
+        }"#,
+        )
+        .unwrap();
+
+        let result = creds.to_file_transfer_credentials();
+        assert!(result.is_err());
+
+        if let Err(RestError::InvalidSnowflakeResponse(msg)) = result {
+            assert!(msg.contains("AWS_TOKEN not found"));
+        } else {
+            panic!("Expected InvalidSnowflakeResponse error");
+        }
+    }
+
+    #[test]
+    fn test_stage_info_conversion_success() {
+        let stage_info = create_valid_stage_info();
+        let result = stage_info.to_file_transfer_stage_info();
+
+        assert!(result.is_ok());
+        let file_stage_info = result.unwrap();
+        assert_eq!(file_stage_info.location, "test-bucket/path/");
+        assert_eq!(file_stage_info.region, "us-east-1");
+        assert_eq!(file_stage_info.creds.aws_key_id, "test_key_id");
+    }
+
+    #[test]
+    fn test_stage_info_conversion_missing_location() {
+        let stage_info: ExecResponseStageInfo = serde_json::from_str(
+            r#"{
+            "region": "us-east-1",
+            "creds": {
+                "AWS_KEY_ID": "test_key_id",
+                "AWS_SECRET_KEY": "test_secret_key",
+                "AWS_TOKEN": "test_token"
+            }
+        }"#,
+        )
+        .unwrap();
+
+        let result = stage_info.to_file_transfer_stage_info();
+        assert!(result.is_err());
+
+        if let Err(RestError::InvalidSnowflakeResponse(msg)) = result {
+            assert!(msg.contains("S3 location not found"));
+        } else {
+            panic!("Expected InvalidSnowflakeResponse error");
+        }
+    }
+
+    #[test]
+    fn test_stage_info_conversion_missing_region() {
+        let stage_info: ExecResponseStageInfo = serde_json::from_str(
+            r#"{
+            "location": "test-bucket/path/",
+            "creds": {
+                "AWS_KEY_ID": "test_key_id",
+                "AWS_SECRET_KEY": "test_secret_key",
+                "AWS_TOKEN": "test_token"
+            }
+        }"#,
+        )
+        .unwrap();
+
+        let result = stage_info.to_file_transfer_stage_info();
+        assert!(result.is_err());
+
+        if let Err(RestError::InvalidSnowflakeResponse(msg)) = result {
+            assert!(msg.contains("Region not found"));
+        } else {
+            panic!("Expected InvalidSnowflakeResponse error");
+        }
+    }
+
+    #[test]
+    fn test_stage_info_conversion_missing_credentials() {
+        let stage_info: ExecResponseStageInfo = serde_json::from_str(
+            r#"{
+            "location": "test-bucket/path/",
+            "region": "us-east-1"
+        }"#,
+        )
+        .unwrap();
+
+        let result = stage_info.to_file_transfer_stage_info();
+        assert!(result.is_err());
+
+        if let Err(RestError::InvalidSnowflakeResponse(msg)) = result {
+            assert!(msg.contains("Credentials not found"));
+        } else {
+            panic!("Expected InvalidSnowflakeResponse error");
+        }
+    }
+
+    #[test]
+    fn test_exec_response_data_conversion_success() {
+        let data = create_valid_exec_response_data();
+        let result = data.to_file_transfer_data();
+
+        assert!(result.is_ok());
+        let file_data = result.unwrap();
+        assert_eq!(file_data.src_locations.len(), 1);
+        assert_eq!(file_data.src_locations[0], "test_file.csv");
+        assert_eq!(file_data.stage_info.location, "test-bucket/path/");
+        assert_eq!(file_data.stage_info.region, "us-east-1");
+    }
+
+    #[test]
+    fn test_exec_response_data_conversion_missing_src_locations() {
+        let data: ExecResponseData = serde_json::from_str(
+            r#"{
+            "stageInfo": {
+                "location": "test-bucket/path/",
+                "region": "us-east-1",
+                "creds": {
+                    "AWS_KEY_ID": "test_key_id",
+                    "AWS_SECRET_KEY": "test_secret_key",
+                    "AWS_TOKEN": "test_token"
+                }
+            },
+            "command": "UPLOAD"
+        }"#,
+        )
+        .unwrap();
+
+        let result = data.to_file_transfer_data();
+        assert!(result.is_err());
+
+        if let Err(RestError::Internal(msg)) = result {
+            assert!(msg.contains("Source locations not found"));
+        } else {
+            panic!("Expected Internal error");
+        }
+    }
+
+    #[test]
+    fn test_exec_response_data_conversion_empty_src_locations() {
+        let data: ExecResponseData = serde_json::from_str(
+            r#"{
+            "src_locations": [],
+            "stageInfo": {
+                "location": "test-bucket/path/",
+                "region": "us-east-1",
+                "creds": {
+                    "AWS_KEY_ID": "test_key_id",
+                    "AWS_SECRET_KEY": "test_secret_key",
+                    "AWS_TOKEN": "test_token"
+                }
+            },
+            "command": "UPLOAD"
+        }"#,
+        )
+        .unwrap();
+
+        let result = data.to_file_transfer_data();
+        assert!(result.is_err());
+
+        if let Err(RestError::Internal(msg)) = result {
+            assert!(msg.contains("No source locations found"));
+        } else {
+            panic!("Expected Internal error");
+        }
+    }
+
+    #[test]
+    fn test_exec_response_data_conversion_missing_stage_info() {
+        let data: ExecResponseData = serde_json::from_str(
+            r#"{
+            "src_locations": ["test_file.csv"],
+            "command": "UPLOAD"
+        }"#,
+        )
+        .unwrap();
+
+        let result = data.to_file_transfer_data();
+        assert!(result.is_err());
+
+        if let Err(RestError::Internal(msg)) = result {
+            assert!(msg.contains("Stage info not found"));
+        } else {
+            panic!("Expected Internal error");
+        }
+    }
+
+    #[test]
+    fn test_exec_response_data_conversion_multiple_src_locations() {
+        let data: ExecResponseData = serde_json::from_str(
+            r#"{
+            "src_locations": ["file1.csv", "file2.csv", "file3.csv"],
+            "stageInfo": {
+                "location": "test-bucket/path/",
+                "region": "us-east-1",
+                "creds": {
+                    "AWS_KEY_ID": "test_key_id",
+                    "AWS_SECRET_KEY": "test_secret_key",
+                    "AWS_TOKEN": "test_token"
+                }
+            },
+            "command": "UPLOAD"
+        }"#,
+        )
+        .unwrap();
+
+        let result = data.to_file_transfer_data();
+        assert!(result.is_ok());
+
+        let file_data = result.unwrap();
+        assert_eq!(file_data.src_locations.len(), 3);
+        assert_eq!(file_data.src_locations[0], "file1.csv");
+        assert_eq!(file_data.src_locations[1], "file2.csv");
+        assert_eq!(file_data.src_locations[2], "file3.csv");
+    }
+
+    #[test]
+    fn test_stage_info_conversion_propagates_credential_errors() {
+        let stage_info: ExecResponseStageInfo = serde_json::from_str(
+            r#"{
+            "location": "test-bucket/path/",
+            "region": "us-east-1",
+            "creds": {
+                "AWS_SECRET_KEY": "test_secret_key",
+                "AWS_TOKEN": "test_token"
+            }
+        }"#,
+        )
+        .unwrap();
+
+        let result = stage_info.to_file_transfer_stage_info();
+        assert!(result.is_err());
+
+        if let Err(RestError::InvalidSnowflakeResponse(msg)) = result {
+            assert!(msg.contains("AWS_KEY_ID not found"));
+        } else {
+            panic!("Expected InvalidSnowflakeResponse error from credentials");
+        }
+    }
+
+    #[test]
+    fn test_exec_response_data_conversion_propagates_stage_info_errors() {
+        let data: ExecResponseData = serde_json::from_str(
+            r#"{
+            "src_locations": ["test_file.csv"],
+            "stageInfo": {
+                "region": "us-east-1",
+                "creds": {
+                    "AWS_KEY_ID": "test_key_id",
+                    "AWS_SECRET_KEY": "test_secret_key",
+                    "AWS_TOKEN": "test_token"
+                }
+            },
+            "command": "UPLOAD"
+        }"#,
+        )
+        .unwrap();
+
+        let result = data.to_file_transfer_data();
+        assert!(result.is_err());
+
+        if let Err(RestError::InvalidSnowflakeResponse(msg)) = result {
+            assert!(msg.contains("S3 location not found"));
+        } else {
+            panic!("Expected InvalidSnowflakeResponse error from stage info");
+        }
+    }
+}

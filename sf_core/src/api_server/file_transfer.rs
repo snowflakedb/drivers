@@ -1,5 +1,4 @@
 use crate::rest::error::RestError;
-use crate::rest::snowflake::query::ExecResponseData;
 use flate2::{Compression, GzBuilder};
 use std::fs::File;
 use std::io::{Read, Write};
@@ -9,34 +8,39 @@ use aws_config::{BehaviorVersion, Region};
 use aws_credential_types::Credentials;
 use aws_sdk_s3::{Client as S3Client, primitives::ByteStream};
 
+// Dedicated file transfer types (not optionals since we validate before calling transfer_file)
+#[derive(Debug, Clone)]
+pub struct FileTransferData {
+    pub src_locations: Vec<String>,
+    pub stage_info: FileTransferStageInfo,
+}
+
+#[derive(Debug, Clone)]
+pub struct FileTransferStageInfo {
+    pub location: String,
+    pub region: String,
+    pub creds: FileTransferCredentials,
+}
+
+#[derive(Debug, Clone)]
+pub struct FileTransferCredentials {
+    pub aws_key_id: String,
+    pub aws_secret_key: String,
+    pub aws_token: String,
+}
+
 // TODO: Encrypt the file before uploading to S3
 
-pub fn transfer_file(data: &ExecResponseData) -> Result<(), RestError> {
+pub async fn transfer_file(data: &FileTransferData) -> Result<(), RestError> {
     // Extract the source file path
-    let file_path = data
-        .src_locations
-        .as_ref()
-        .and_then(|locations| locations.first())
-        .ok_or_else(|| {
-            RestError::Internal("Source file location not found in response".to_string())
-        })?;
+    let file_path = data.src_locations.first().ok_or_else(|| {
+        RestError::Internal("Source file location not found in response".to_string())
+    })?;
 
     let compressed_data = compress_data(file_path)
         .map_err(|e| RestError::Internal(format!("Failed to compress file: {e}")))?;
 
-    // Get stage info for S3 upload
-    let stage_info = data
-        .stage_info
-        .as_ref()
-        .ok_or_else(|| RestError::Internal("Stage info not found in response".to_string()))?;
-
-    // Upload to S3 (without encryption for now)
-    let runtime = tokio::runtime::Runtime::new()
-        .map_err(|e| RestError::Internal(format!("Failed to create async runtime: {e}")))?;
-
-    runtime
-        .block_on(async { upload_to_s3_simple(compressed_data, stage_info, file_path).await })
-        .map_err(|e| RestError::Internal(format!("Failed to upload to S3: {e}")))?;
+    upload_to_s3_simple(compressed_data, &data.stage_info, file_path).await?;
 
     Ok(())
 }
@@ -61,65 +65,32 @@ fn compress_data(file_path: &str) -> Result<Vec<u8>, std::io::Error> {
 
 async fn upload_to_s3_simple(
     data: Vec<u8>,
-    stage_info: &crate::rest::snowflake::query::ExecResponseStageInfo,
+    stage_info: &FileTransferStageInfo,
     file_path: &str,
 ) -> Result<(), RestError> {
     // Extract AWS credentials from stage info
-    let creds = stage_info
-        .creds
-        .as_ref()
-        .ok_or("AWS credentials not found in stage")
-        .map_err(|e| RestError::InvalidSnowflakeResponse(e.to_string()))?;
-
-    let aws_key_id = creds
-        .aws_key_id
-        .as_ref()
-        .ok_or("AWS_KEY_ID not found")
-        .map_err(|e| RestError::InvalidSnowflakeResponse(e.to_string()))?;
-
-    let aws_secret_key = creds
-        .aws_secret_key
-        .as_ref()
-        .ok_or("AWS_SECRET_KEY not found")
-        .map_err(|e| RestError::InvalidSnowflakeResponse(e.to_string()))?;
-
-    let aws_token = creds
-        .aws_token
-        .as_ref()
-        .ok_or("AWS_TOKEN not found")
-        .map_err(|e| RestError::InvalidSnowflakeResponse(e.to_string()))?;
+    let creds = &stage_info.creds;
 
     // Create AWS credentials
     let credentials = Credentials::new(
-        aws_key_id,
-        aws_secret_key,
-        Some(aws_token.clone()),
+        &creds.aws_key_id,
+        &creds.aws_secret_key,
+        Some(creds.aws_token.clone()),
         None,
         "snowflake-upload",
     );
 
     // Configure AWS client
-    let region = stage_info
-        .region
-        .as_ref()
-        .cloned()
-        .ok_or("Region not found")
-        .map_err(|e| RestError::InvalidSnowflakeResponse(e.to_string()))?;
-
     let config = aws_config::defaults(BehaviorVersion::latest())
         .credentials_provider(credentials)
-        .region(Region::new(region))
+        .region(Region::new(stage_info.region.clone()))
         .load()
         .await;
 
     let s3_client = S3Client::new(&config);
 
     // Extract S3 bucket and key from location
-    let location = stage_info
-        .location
-        .as_ref()
-        .ok_or("S3 location not found in Snowflake stage info")
-        .map_err(|e| RestError::InvalidSnowflakeResponse(e.to_string()))?;
+    let location = &stage_info.location;
 
     // Parse bucket and key prefix from location (format: "bucket-name/path/")
     let bucket_separator = location
