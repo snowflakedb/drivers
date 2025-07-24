@@ -71,6 +71,12 @@ pub struct SnowflakeTestClient {
     pub conn_handle: sf_core::thrift_gen::database_driver_v1::ConnectionHandle,
 }
 
+impl Default for SnowflakeTestClient {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SnowflakeTestClient {
     /// Creates a new test client with Snowflake connection established
     pub fn new() -> Self {
@@ -209,4 +215,4 @@ impl ArrowResultHelper {
         );
         batch
     }
-} 
+}

@@ -9,8 +9,7 @@ use sf_core::thrift_gen::database_driver_v1::DatabaseDriverSyncHandler;
 use sf_core::thrift_gen::database_driver_v1::InfoCode;
 use std::io::Write;
 use tempfile::NamedTempFile;
-use test_utils::{setup_logging, ArrowResultHelper, SnowflakeTestClient, get_parameters};
-
+use test_utils::{ArrowResultHelper, SnowflakeTestClient, get_parameters, setup_logging};
 
 // Database operation tests
 #[test]
