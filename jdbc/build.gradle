@@ -1,0 +1,111 @@
+plugins {
+    id 'java-library'
+    id 'maven-publish'
+}
+
+group = 'com.snowflake'
+version = '0.1.0'
+sourceCompatibility = '1.8'
+targetCompatibility = '1.8'
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    // No external dependencies for the stub implementation
+    testImplementation 'junit:junit:4.13.2'
+    testImplementation 'org.mockito:mockito-core:4.6.1'
+    testImplementation 'org.json:json:20231013'
+    implementation 'org.apache.thrift:libthrift:0.21.0'
+    implementation 'org.slf4j:slf4j-api:2.0.9'
+    implementation 'org.slf4j:slf4j-simple:2.0.9'
+    implementation 'javax.annotation:javax.annotation-api:1.3.2'
+    implementation 'org.apache.arrow:arrow-vector:17.0.0'
+    implementation 'org.apache.arrow:arrow-memory:17.0.0'
+    implementation 'org.apache.arrow:arrow-memory-core:17.0.0'
+    implementation 'org.apache.arrow:arrow-memory-netty:17.0.0'
+    implementation 'org.apache.arrow:arrow-c-data:17.0.0'
+}
+
+sourceSets {
+    main {
+        java {
+            srcDirs = ['src/java']
+        }
+        resources {
+            srcDirs = ['src/resources']
+        }
+    }
+    test {
+        java {
+            srcDirs = ['src/test/java']
+        }
+        resources {
+            srcDirs = ['src/test/resources']
+        }
+    }
+}
+
+jar {
+    manifest {
+        attributes(
+            'Implementation-Title': 'Snowflake JDBC Driver',
+            'Implementation-Version': project.version,
+            'Implementation-Vendor': 'Snowflake Inc.',
+            'Main-Class': 'com.snowflake.jdbc.SnowflakeDriver'
+        )
+    }
+}
+
+// Copy the native library to the jar resources
+task copyNativeLib(type: Copy) {
+    from '../target/release'
+    include 'libjdbc.*'
+    into 'build/resources/main'
+}
+
+processResources.dependsOn copyNativeLib
+
+publishing {
+    publications {
+        maven(MavenPublication) {
+            from components.java
+            
+            pom {
+                name = 'Snowflake JDBC Driver'
+                description = 'JDBC driver for Snowflake database'
+                url = 'https://github.com/snowflake/universal-driver'
+                
+                licenses {
+                    license {
+                        name = 'The Apache License, Version 2.0'
+                        url = 'http://www.apache.org/licenses/LICENSE-2.0.txt'
+                    }
+                }
+                
+                developers {
+                    developer {
+                        id = 'snowflake'
+                        name = 'Snowflake Inc.'
+                        email = 'support@snowflake.com'
+                    }
+                }
+            }
+        }
+    }
+}
+
+test {
+    useJUnit()
+    if (JavaVersion.current().isJava9Compatible()) {
+        jvmArgs '--add-opens=java.base/java.nio=org.apache.arrow.memory.core,ALL-UNNAMED'
+    }
+    testLogging {
+        outputs.upToDateWhen {false}
+        showStandardStreams = true
+        showExceptions true
+        showCauses true
+        showStackTraces true
+    }
+}

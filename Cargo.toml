@@ -3,5 +3,6 @@
 members = [
     "sf_core",
     "odbc",
+    "jdbc_bridge",
 ]
 resolver = "1"

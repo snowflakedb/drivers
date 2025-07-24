@@ -1,0 +1,16 @@
+[package]
+name = "jdbc_bridge"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "jdbc_bridge"
+crate-type = ["cdylib"]
+
+[dependencies]
+sf_core = { path = "../sf_core" }
+
+[dependencies.jni]
+version = "0.21"
+default-features = false
+features = ["invocation"] 

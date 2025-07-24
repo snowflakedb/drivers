@@ -11,8 +11,8 @@ pub enum SfCoreApi {
 #[derive(Debug, Clone, Copy)]
 #[repr(C)]
 pub struct CApiHandle {
-    id: u64,
-    magic: u64,
+    pub id: u64,
+    pub magic: u64,
 }
 
 impl CApiHandle {

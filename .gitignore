@@ -6,4 +6,6 @@ cmake-build
 __pycache__/
 pep249_dbapi/pep249_dbapi.egg-info/
 pep249_dbapi/build
+jdbc/.gradle
+jdbc/build
 
