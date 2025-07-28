@@ -113,28 +113,57 @@ impl SnowflakeTestClient {
             )
             .unwrap();
 
-        // Set database if specified in parameters
+        // Set optional parameters if specified
         if let Some(database) = parameters.database.clone() {
             driver
                 .connection_set_option_string(conn_handle.clone(), "database".to_string(), database)
                 .unwrap();
         }
 
-        // Set schema if specified in parameters
         if let Some(schema) = parameters.schema.clone() {
             driver
                 .connection_set_option_string(conn_handle.clone(), "schema".to_string(), schema)
                 .unwrap();
         }
 
-        // Set port if specified in parameters
+        if let Some(warehouse) = parameters.warehouse.clone() {
+            driver
+                .connection_set_option_string(
+                    conn_handle.clone(),
+                    "warehouse".to_string(),
+                    warehouse,
+                )
+                .unwrap();
+        }
+
+        if let Some(host) = parameters.host.clone() {
+            driver
+                .connection_set_option_string(conn_handle.clone(), "host".to_string(), host)
+                .unwrap();
+        }
+
+        if let Some(role) = parameters.role.clone() {
+            driver
+                .connection_set_option_string(conn_handle.clone(), "role".to_string(), role)
+                .unwrap();
+        }
+
+        if let Some(server_url) = parameters.server_url.clone() {
+            driver
+                .connection_set_option_string(
+                    conn_handle.clone(),
+                    "server_url".to_string(),
+                    server_url,
+                )
+                .unwrap();
+        }
+
         if let Some(port) = parameters.port {
             driver
                 .connection_set_option_int(conn_handle.clone(), "port".to_string(), port)
                 .unwrap();
         }
 
-        // Set protocol if specified in parameters
         if let Some(protocol) = parameters.protocol.clone() {
             driver
                 .connection_set_option_string(conn_handle.clone(), "protocol".to_string(), protocol)

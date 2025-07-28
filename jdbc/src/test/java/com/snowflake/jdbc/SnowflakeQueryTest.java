@@ -38,9 +38,25 @@ public class SnowflakeQueryTest {
         props.setProperty("warehouse", params.getString("SNOWFLAKE_TEST_WAREHOUSE"));
         props.setProperty("account", params.getString("SNOWFLAKE_TEST_ACCOUNT"));
         
-        // Add port if specified
+        // Add optional parameters if specified
         if (params.has("SNOWFLAKE_TEST_PORT")) {
             props.setProperty("port", String.valueOf(params.getInt("SNOWFLAKE_TEST_PORT")));
+        }
+        
+        if (params.has("SNOWFLAKE_TEST_ROLE")) {
+            props.setProperty("role", params.getString("SNOWFLAKE_TEST_ROLE"));
+        }
+        
+        if (params.has("SNOWFLAKE_TEST_SERVER_URL")) {
+            props.setProperty("server_url", params.getString("SNOWFLAKE_TEST_SERVER_URL"));
+        }
+        
+        if (params.has("SNOWFLAKE_TEST_HOST")) {
+            props.setProperty("host", params.getString("SNOWFLAKE_TEST_HOST"));
+        }
+        
+        if (params.has("SNOWFLAKE_TEST_PROTOCOL")) {
+            props.setProperty("protocol", params.getString("SNOWFLAKE_TEST_PROTOCOL"));
         }
         
         return props;

@@ -455,7 +455,7 @@ pub unsafe extern "C" fn SQLDriverConnect(
             }
             "SERVER" => {
                 client
-                    .connection_set_option_string(conn_handle.clone(), "server".to_owned(), value)
+                    .connection_set_option_string(conn_handle.clone(), "host".to_owned(), value)
                     .unwrap();
             }
             "PWD" => {
@@ -466,6 +466,28 @@ pub unsafe extern "C" fn SQLDriverConnect(
             "UID" => {
                 client
                     .connection_set_option_string(conn_handle.clone(), "user".to_owned(), value)
+                    .unwrap();
+            }
+            "PORT" => {
+                let port_int: i64 = value
+                    .parse()
+                    .map_err(|e| {
+                        eprintln!("RUST: SQLDriverConnect: failed to parse port '{value}': {e}");
+                        sql::SqlReturn::ERROR.0
+                    })
+                    .unwrap();
+                client
+                    .connection_set_option_int(conn_handle.clone(), "port".to_owned(), port_int)
+                    .unwrap();
+            }
+            "PROTOCOL" => {
+                client
+                    .connection_set_option_string(conn_handle.clone(), "protocol".to_owned(), value)
+                    .unwrap();
+            }
+            "DATABASE" => {
+                client
+                    .connection_set_option_string(conn_handle.clone(), "database".to_owned(), value)
                     .unwrap();
             }
             _ => {
