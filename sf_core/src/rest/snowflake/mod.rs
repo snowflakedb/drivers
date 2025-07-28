@@ -32,33 +32,25 @@ fn get_server_url(conn: &Connection) -> Result<String, RestError> {
         return Ok(value.clone());
     }
 
-    if let Some(Setting::String(_account_name)) = conn.settings.get("account") {
-        let protocol = conn
-            .settings
-            .get_string("protocol")
-            .unwrap_or("https".to_string());
-        let host = conn.settings.get_string("host").unwrap_or_else(|| {
-            tracing::warn!("No host specified, defaulting to 'localhost'");
-            "localhost".to_string()
-        });
-        if protocol != "https" && protocol != "http" {
-            tracing::warn!(
-                "Unexpected protocol specified during server url construction: {protocol}"
-            );
-        }
-
-        // Check if a custom port is specified
-        let base_url = format!("{protocol}://{host}");
-        if let Some(port) = conn.settings.get_int("port") {
-            return Ok(format!("{base_url}:{port}"));
-        }
-
-        return Ok(base_url);
+    let protocol = conn
+        .settings
+        .get_string("protocol")
+        .unwrap_or("https".to_string());
+    let host = conn
+        .settings
+        .get_string("host")
+        .ok_or_else(|| RestError::MissingParameter("host".to_string()))?;
+    if protocol != "https" && protocol != "http" {
+        tracing::warn!("Unexpected protocol specified during server url construction: {protocol}");
     }
 
-    Err(RestError::MissingParameter(
-        "server_url or account".to_string(),
-    ))
+    // Check if a custom port is specified
+    let base_url = format!("{protocol}://{host}");
+    if let Some(port) = conn.settings.get_int("port") {
+        return Ok(format!("{base_url}:{port}"));
+    }
+
+    Ok(base_url)
 }
 
 fn get_login_parameters(conn: &Connection) -> Result<LoginParameters, RestError> {
