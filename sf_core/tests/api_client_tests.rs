@@ -875,9 +875,9 @@ fn test_create_temporary_stage() {
 }
 
 #[test]
-fn test_put() {
+fn test_put_ls() {
     let mut client = SnowflakeTestClient::new();
-    let stage_name = "TEST_STAGE_PUT";
+    let stage_name = "TEST_STAGE_PUT_LS";
 
     // Create temporary stage
     client.execute_query(&format!("create temporary stage {stage_name}"));
@@ -954,4 +954,62 @@ fn test_get() {
     let get_sql = format!("GET @{stage_name}/{temp_filename}.gz file://./downloaded/");
     client.execute_query_expect_error(&get_sql, "Handling GET queries is not yet implemented");
     println!("GET correctly failed with expected error: not yet implemented");
+}
+
+#[test]
+fn test_put_select() {
+    let mut client = SnowflakeTestClient::new();
+    let stage_name = "TEST_STAGE_PUT_SELECT";
+
+    // Create test file with specific name "test_put_select.csv"
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let test_file_path = temp_dir.path().join("test_put_select.csv");
+    std::fs::write(&test_file_path, "1,2,3\n").unwrap();
+
+    // Create temporary stage
+    client.execute_query(&format!("create temporary stage {stage_name}"));
+
+    // Upload file using PUT
+    let put_sql = format!(
+        "PUT 'file://{test_file}' @{stage_name}",
+        test_file = test_file_path.to_str().unwrap().replace("\\", "/")
+    );
+    client.execute_query(&put_sql);
+
+    // Query the uploaded file data
+    let select_sql = format!("select $1, $2, $3 from @{stage_name}");
+    let result = client.execute_query(&select_sql);
+
+    // Verify the data matches what we uploaded
+    let mut arrow_helper = ArrowResultHelper::from_result(result);
+    let batch = arrow_helper.assert_single_row();
+
+    // Verify we have 3 columns
+    assert_eq!(batch.num_columns(), 3, "Should have 3 columns");
+
+    // Extract values from the batch
+    let col1_array = batch
+        .column(0)
+        .as_any()
+        .downcast_ref::<StringArray>()
+        .unwrap();
+    let col2_array = batch
+        .column(1)
+        .as_any()
+        .downcast_ref::<StringArray>()
+        .unwrap();
+    let col3_array = batch
+        .column(2)
+        .as_any()
+        .downcast_ref::<StringArray>()
+        .unwrap();
+
+    let col1_value = col1_array.value(0);
+    let col2_value = col2_array.value(0);
+    let col3_value = col3_array.value(0);
+
+    // Assert the values match the uploaded CSV data
+    assert_eq!(col1_value, "1");
+    assert_eq!(col2_value, "2");
+    assert_eq!(col3_value, "3");
 }

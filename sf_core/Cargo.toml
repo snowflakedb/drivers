@@ -22,6 +22,7 @@ base64 = "0.22.1"
 arrow-ipc = "55.1.0"
 arrow = { version = "55.1.0", features = ["ffi"] }
 flate2 = "1.0"
+openssl = "0.10"
 
 # AWS SDK dependencies
 aws-sdk-s3 = "1.0"
