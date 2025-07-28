@@ -73,6 +73,7 @@ pub fn setup_logging() {
 pub struct SnowflakeTestClient {
     pub driver: Box<dyn sf_core::thrift_gen::database_driver_v1::TDatabaseDriverSyncClient + Send>,
     pub conn_handle: sf_core::thrift_gen::database_driver_v1::ConnectionHandle,
+    pub db_handle: sf_core::thrift_gen::database_driver_v1::DatabaseHandle,
 }
 
 impl Default for SnowflakeTestClient {
@@ -177,6 +178,7 @@ impl SnowflakeTestClient {
         Self {
             driver,
             conn_handle,
+            db_handle,
         }
     }
 
@@ -227,6 +229,10 @@ impl Drop for SnowflakeTestClient {
         // Release the connection when the client is dropped
         if let Err(e) = self.driver.connection_release(self.conn_handle.clone()) {
             eprintln!("Warning: Failed to release connection in Drop: {e:?}");
+        }
+        // Release the database handle
+        if let Err(e) = self.driver.database_release(self.db_handle.clone()) {
+            eprintln!("Warning: Failed to release database handle in Drop: {e:?}");
         }
     }
 }
