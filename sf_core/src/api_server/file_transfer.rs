@@ -165,7 +165,7 @@ async fn upload_to_s3_simple(
         // Calculate SHA256 digest of the encrypted data
         let digest = hash(MessageDigest::sha256(), &data)
             .map_err(|e| RestError::Internal(format!("Failed to calculate digest: {e}")))?;
-        let digest_b64 = general_purpose::STANDARD.encode(&digest);
+        let digest_b64 = general_purpose::STANDARD.encode(digest);
 
         put_object_request = put_object_request
             .metadata("sfc-digest", digest_b64)
@@ -207,18 +207,12 @@ mod tests {
     }
 
     fn bytes_to_hex(bytes: &[u8]) -> String {
-        bytes
-            .iter()
-            .map(|b| format!("{:02x}", b))
-            .collect::<String>()
+        bytes.iter().map(|b| format!("{b:02x}")).collect::<String>()
     }
 
     #[test]
     fn test_compress_test_normal_put_csv() {
-        // Content: "1,2,3\n" (note: this matches the hex 31 2c 32 2c 33 0a)
         let content = "1,2,3\n";
-
-        // Expected content before compression (hex): 31 2c 32 2c 33 0a
         let expected_content_hex = "312c322c330a";
 
         // Expected content after compression (hex bytes):
@@ -233,9 +227,6 @@ mod tests {
 
         // Verify content before compression
         let content_hex = bytes_to_hex(content.as_bytes());
-        println!("DEBUG: Content: {:?}", content);
-        println!("DEBUG: Content (hex): {}", content_hex);
-        println!("DEBUG: Expected content (hex): {}", expected_content_hex);
 
         // Verify content hex matches expected
         assert_eq!(
@@ -249,28 +240,13 @@ mod tests {
         // Convert result to hex for comparison
         let result_hex = bytes_to_hex(&compressed_data);
 
-        println!("DEBUG: Actual compressed (hex): {}", result_hex);
-        println!(
-            "DEBUG: Expected compressed (hex): {}",
-            expected_compressed_hex
-        );
-        println!("DEBUG: Compressed size: {} bytes", compressed_data.len());
-
         // Convert expected hex to bytes for comparison
         let expected = hex_to_bytes(expected_compressed_hex).expect("Invalid expected hex");
 
         // Verify the compressed output matches exactly
         assert_eq!(
             compressed_data, expected,
-            "Compressed output doesn't match expected result.\nExpected: {}\nActual:   {}",
-            expected_compressed_hex, result_hex
-        );
-
-        println!("✅ Compression test successful!");
-        println!("   - Input: test_normal_put.csv with content \"1,2,3\\n\"");
-        println!(
-            "   - Output: {} bytes matching expected hex dump",
-            compressed_data.len()
+            "Compressed output doesn't match expected result.\nExpected: {expected_compressed_hex}\nActual:   {result_hex}"
         );
     }
 }

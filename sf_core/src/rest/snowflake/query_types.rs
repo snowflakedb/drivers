@@ -2,7 +2,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 // Import encryption types from separate module
-use super::query_encryption_types::{ExecResponseEncryptionMaterial, deserialize_encryption_material};
+use super::query_encryption_types::{
+    ExecResponseEncryptionMaterial, deserialize_encryption_material,
+};
 
 // Import file transfer types from separate module
 use super::query_file_transfer_types::ExecResponseStageInfo;
@@ -197,7 +199,6 @@ pub struct ExecResponseData {
     #[serde(rename = "asyncRows")]
     pub _async_rows: Option<SnowflakeRows>,
     #[serde(rename = "uploadInfo")]
-
     // file transfer response data
     pub _upload_info: Option<ExecResponseStageInfo>,
     #[serde(rename = "localLocation")]
@@ -216,7 +217,11 @@ pub struct ExecResponseData {
     pub _source_compression: Option<String>,
     #[serde(rename = "clientShowEncryptionParameter")]
     pub _show_encryption_parameter: Option<bool>,
-    #[serde(rename = "encryptionMaterial", deserialize_with = "deserialize_encryption_material", default)]
+    #[serde(
+        rename = "encryptionMaterial",
+        deserialize_with = "deserialize_encryption_material",
+        default
+    )]
     pub encryption_material: Option<Vec<ExecResponseEncryptionMaterial>>,
     #[serde(rename = "presignedUrls")]
     pub _presigned_urls: Option<serde_json::Value>,
@@ -229,8 +234,6 @@ pub struct ExecResponseData {
     #[serde(rename = "operation")]
     pub _operation: Option<String>,
     #[serde(rename = "queryContext")]
-
-
     pub _query_context: Option<ResponseQueryContext>,
 }
 

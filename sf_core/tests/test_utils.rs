@@ -228,11 +228,11 @@ impl Drop for SnowflakeTestClient {
     fn drop(&mut self) {
         // Release the connection when the client is dropped
         if let Err(e) = self.driver.connection_release(self.conn_handle.clone()) {
-            eprintln!("Warning: Failed to release connection in Drop: {e:?}");
+            tracing::warn!("Failed to release connection in Drop: {e:?}");
         }
         // Release the database handle
         if let Err(e) = self.driver.database_release(self.db_handle.clone()) {
-            eprintln!("Warning: Failed to release database handle in Drop: {e:?}");
+            tracing::warn!("Failed to release database handle in Drop: {e:?}");
         }
     }
 }
@@ -256,7 +256,7 @@ impl ArrowResultHelper {
         match self.reader.next() {
             Some(Ok(batch)) => Some(batch),
             Some(Err(e)) => {
-                println!("Error reading record batch: {e}");
+                tracing::error!("Error reading record batch: {e}");
                 None
             }
             None => None,

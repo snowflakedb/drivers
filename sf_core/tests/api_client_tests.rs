@@ -953,7 +953,6 @@ fn test_get() {
     let temp_filename = test_file.path().file_name().unwrap().to_str().unwrap();
     let get_sql = format!("GET @{stage_name}/{temp_filename}.gz file://./downloaded/");
     client.execute_query_expect_error(&get_sql, "Handling GET queries is not yet implemented");
-    println!("GET correctly failed with expected error: not yet implemented");
 }
 
 #[test]

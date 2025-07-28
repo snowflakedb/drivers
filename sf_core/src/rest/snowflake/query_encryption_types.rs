@@ -60,7 +60,7 @@ where
             S: SeqAccess<'de>,
         {
             // It's an array - deserialize normally
-            let materials: Vec<ExecResponseEncryptionMaterial> = 
+            let materials: Vec<ExecResponseEncryptionMaterial> =
                 Vec::deserialize(de::value::SeqAccessDeserializer::new(seq))?;
             Ok(Some(materials))
         }
@@ -70,8 +70,10 @@ where
             M: MapAccess<'de>,
         {
             // It's a single object - wrap in array
-            let material: ExecResponseEncryptionMaterial = 
-                ExecResponseEncryptionMaterial::deserialize(de::value::MapAccessDeserializer::new(map))?;
+            let material: ExecResponseEncryptionMaterial =
+                ExecResponseEncryptionMaterial::deserialize(
+                    de::value::MapAccessDeserializer::new(map),
+                )?;
             Ok(Some(vec![material]))
         }
     }
@@ -102,8 +104,9 @@ mod tests {
             "command": "UPLOAD"
         }"#;
 
-        let data: crate::rest::snowflake::query_types::ExecResponseData = serde_json::from_str(json).unwrap();
-        
+        let data: crate::rest::snowflake::query_types::ExecResponseData =
+            serde_json::from_str(json).unwrap();
+
         // Should successfully parse single object as array with one element
         assert!(data.encryption_material.is_some());
         let materials = data.encryption_material.unwrap();
@@ -140,8 +143,9 @@ mod tests {
             "command": "UPLOAD"
         }"#;
 
-        let data: crate::rest::snowflake::query_types::ExecResponseData = serde_json::from_str(json).unwrap();
-        
+        let data: crate::rest::snowflake::query_types::ExecResponseData =
+            serde_json::from_str(json).unwrap();
+
         // Should successfully parse array normally
         assert!(data.encryption_material.is_some());
         let materials = data.encryption_material.unwrap();
@@ -166,9 +170,10 @@ mod tests {
             "command": "UPLOAD"
         }"#;
 
-        let data: crate::rest::snowflake::query_types::ExecResponseData = serde_json::from_str(json).unwrap();
-        
+        let data: crate::rest::snowflake::query_types::ExecResponseData =
+            serde_json::from_str(json).unwrap();
+
         // Should successfully parse missing field as None
         assert!(data.encryption_material.is_none());
     }
-} 
+}

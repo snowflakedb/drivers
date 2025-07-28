@@ -1,8 +1,8 @@
 mod auth_types;
 mod data;
-pub mod query_types;
 pub mod query_encryption_types;
 pub mod query_file_transfer_types;
+pub mod query_types;
 
 use crate::driver::{Connection, Setting, Settings};
 use crate::rest::error::RestError;
@@ -321,7 +321,10 @@ pub async fn snowflake_query(
 
     // Check if this is an async result that needs polling
     if let Some(ref get_result_url) = response_data.data._get_result_url {
-        tracing::info!("Query returned async result, polling for completion: {}", get_result_url);
+        tracing::info!(
+            "Query returned async result, polling for completion: {}",
+            get_result_url
+        );
         return snowflake_poll_async_result(conn_ptr, get_result_url).await;
     }
 
@@ -344,13 +347,18 @@ async fn snowflake_poll_async_result(
 
     let client = reqwest::Client::new();
     let result_url = format!("{server_url}{get_result_url}");
-    
+
     let max_attempts = 30; // Maximum number of polling attempts
     let poll_interval = std::time::Duration::from_secs(1); // Poll every 1 second
-    
+
     for attempt in 1..=max_attempts {
-        tracing::debug!("Polling async result, attempt {}/{}: {}", attempt, max_attempts, result_url);
-        
+        tracing::debug!(
+            "Polling async result, attempt {}/{}: {}",
+            attempt,
+            max_attempts,
+            result_url
+        );
+
         let request = client
             .get(&result_url)
             .header(
@@ -397,14 +405,19 @@ async fn snowflake_poll_async_result(
 
         let response_data: ExecResponse = serde_json::from_str(&response_text).map_err(|e| {
             tracing::trace!("Response text: {}", response_text);
-            RestError::InvalidSnowflakeResponse(format!("Failed to parse async result response: {e}"))
+            RestError::InvalidSnowflakeResponse(format!(
+                "Failed to parse async result response: {e}"
+            ))
         })?;
 
         // Check if query is still in progress
         if let Some(ref code) = response_data._code {
             if code == "333334" || code == "333333" {
                 // Query still in progress, continue polling
-                tracing::debug!("Query still in progress (code: {}), waiting before next poll...", code);
+                tracing::debug!(
+                    "Query still in progress (code: {}), waiting before next poll...",
+                    code
+                );
                 tokio::time::sleep(poll_interval).await;
                 continue;
             }
@@ -412,20 +425,24 @@ async fn snowflake_poll_async_result(
 
         // Query completed (either successfully or with error)
         if response_data.success {
-            tracing::info!("Async query completed successfully after {} attempts", attempt);
+            tracing::info!(
+                "Async query completed successfully after {} attempts",
+                attempt
+            );
             return Ok(response_data);
         } else {
             let message = response_data
                 .message
                 .unwrap_or_else(|| "Unknown error".to_string());
-            tracing::error!("Async query failed: {}", message);
-            return Err(RestError::Internal(format!("Async query failed: {}", message)));
+            tracing::error!("Async query failed: {message}");
+            return Err(RestError::Internal(format!(
+                "Async query failed: {message}"
+            )));
         }
     }
 
     // Polling timeout
     Err(RestError::Internal(format!(
-        "Async query polling timeout after {} attempts",
-        max_attempts
+        "Async query polling timeout after {max_attempts} attempts"
     )))
 }

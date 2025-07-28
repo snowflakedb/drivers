@@ -52,8 +52,7 @@ pub fn encrypt_file_data(
     let key_size = master_key.len();
     if key_size != AES_128_KEY_SIZE && key_size != AES_256_KEY_SIZE {
         return Err(RestError::Internal(format!(
-            "Unsupported master key size: {} bytes. Expected {} or {} bytes",
-            key_size, AES_128_KEY_SIZE, AES_256_KEY_SIZE
+            "Unsupported master key size: {key_size} bytes. Expected {AES_128_KEY_SIZE} or {AES_256_KEY_SIZE} bytes"
         )));
     }
 
@@ -74,8 +73,8 @@ pub fn encrypt_file_data(
 
     let key_size_bits = key_size * 8;
     let mat_desc = format!(
-        "{{\"queryId\":\"{}\",\"smkId\":\"{}\",\"keySize\":\"{}\"}}",
-        encryption_material.query_id, encryption_material.smk_id, key_size_bits
+        "{{\"queryId\":\"{}\",\"smkId\":\"{}\",\"keySize\":\"{key_size_bits}\"}}",
+        encryption_material.query_id, encryption_material.smk_id
     );
 
     let metadata = EncryptedFileMetadata {
@@ -112,8 +111,7 @@ fn encrypt_aes_cbc_pkcs7(
         AES_256_KEY_SIZE => Cipher::aes_256_cbc(),
         _ => {
             return Err(RestError::Internal(format!(
-                "Unsupported key size: {} bytes. Expected 16 or 32 bytes",
-                key_size
+                "Unsupported key size: {key_size} bytes. Expected {AES_128_KEY_SIZE} or {AES_256_KEY_SIZE} bytes"
             )));
         }
     };
@@ -137,15 +135,14 @@ fn encrypt_key_with_master_key(file_key: &[u8], master_key: &[u8]) -> Result<Vec
         AES_256_KEY_SIZE => Cipher::aes_256_ecb(),
         _ => {
             return Err(RestError::Internal(format!(
-                "Unsupported master key size: {} bytes. Expected 16 or 32 bytes",
-                key_size
+                "Unsupported master key size: {key_size} bytes. Expected {AES_128_KEY_SIZE} or {AES_256_KEY_SIZE} bytes"
             )));
         }
     };
 
     // Encrypt the padded file key using ECB mode (no IV needed)
     // PKCS#7 padding is applied by default
-    let encrypted_key = encrypt(cipher, master_key, None, &file_key)
+    let encrypted_key = encrypt(cipher, master_key, None, file_key)
         .map_err(|e| RestError::Internal(format!("Failed to encrypt file key: {e}")))?;
 
     Ok(encrypted_key)
