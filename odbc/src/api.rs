@@ -469,13 +469,13 @@ pub unsafe extern "C" fn SQLDriverConnect(
                     .unwrap();
             }
             "PORT" => {
-                let port_int: i64 = value
-                    .parse()
-                    .map_err(|e| {
+                let port_int: i64 = match value.parse() {
+                    Ok(port) => port,
+                    Err(e) => {
                         eprintln!("RUST: SQLDriverConnect: failed to parse port '{value}': {e}");
-                        sql::SqlReturn::ERROR.0
-                    })
-                    .unwrap();
+                        return sql::SqlReturn::ERROR.0;
+                    }
+                };
                 client
                     .connection_set_option_int(conn_handle.clone(), "port".to_owned(), port_int)
                     .unwrap();
