@@ -177,7 +177,7 @@ pub fn to_file_transfer_data(
             )
         })?
         .iter()
-        .map(|mat| mat.to_encryption_material())
+        .map(|mat| mat.into())
         .collect::<Vec<_>>();
 
     Ok(crate::api_server::file_transfer::FileTransferData {

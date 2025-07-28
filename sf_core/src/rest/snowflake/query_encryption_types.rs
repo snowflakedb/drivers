@@ -11,13 +11,12 @@ pub struct ExecResponseEncryptionMaterial {
     pub smk_id: i64,
 }
 
-impl ExecResponseEncryptionMaterial {
-    /// Convert ExecResponseEncryptionMaterial to EncryptionMaterial for the encryption module
-    pub fn to_encryption_material(&self) -> crate::api_server::encryption::EncryptionMaterial {
-        crate::api_server::encryption::EncryptionMaterial {
-            query_stage_master_key: self.query_stage_master_key.clone(),
-            query_id: self.query_id.clone(),
-            smk_id: self.smk_id,
+impl From<&ExecResponseEncryptionMaterial> for crate::api_server::encryption::EncryptionMaterial {
+    fn from(value: &ExecResponseEncryptionMaterial) -> Self {
+        Self {
+            query_stage_master_key: value.query_stage_master_key.clone(),
+            query_id: value.query_id.clone(),
+            smk_id: value.smk_id,
         }
     }
 }
