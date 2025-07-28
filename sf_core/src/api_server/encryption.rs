@@ -2,6 +2,7 @@ use crate::rest::error::RestError;
 use base64::{Engine, engine::general_purpose};
 use openssl::rand::rand_bytes;
 use openssl::symm::{Cipher, encrypt};
+use serde::Serialize;
 
 // Cryptographic constants
 const AES_256_KEY_SIZE: usize = 32; // 256 bits ÷ 8 = 32 bytes
@@ -23,6 +24,17 @@ pub struct EncryptedFileMetadata {
     pub encrypted_key: String, // Base64 encoded
     pub iv: String,            // Base64 encoded
     pub mat_desc: String,
+}
+
+// Material description structure for JSON serialization
+#[derive(Debug, Serialize)]
+struct MaterialDescription {
+    #[serde(rename = "queryId")]
+    query_id: String,
+    #[serde(rename = "smkId")]
+    smk_id: String,
+    #[serde(rename = "keySize")]
+    key_size: String,
 }
 
 // Result of encryption containing encrypted data and metadata
@@ -72,10 +84,14 @@ pub fn encrypt_file_data(
     let encrypted_file_key = encrypt_key_with_master_key(&file_key, &master_key)?;
 
     let key_size_bits = key_size * 8;
-    let mat_desc = format!(
-        "{{\"queryId\":\"{}\",\"smkId\":\"{}\",\"keySize\":\"{key_size_bits}\"}}",
-        encryption_material.query_id, encryption_material.smk_id
-    );
+    let material_desc = MaterialDescription {
+        query_id: encryption_material.query_id.clone(),
+        smk_id: encryption_material.smk_id.to_string(),
+        key_size: key_size_bits.to_string(),
+    };
+    let mat_desc = serde_json::to_string(&material_desc).map_err(|e| {
+        RestError::Internal(format!("Failed to serialize material description: {e}"))
+    })?;
 
     let metadata = EncryptedFileMetadata {
         encryption_material: encryption_material.clone(),
