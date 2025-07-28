@@ -3,6 +3,8 @@ pub struct LoginParameters {
     pub login_name: String,
     pub password: String,
     pub server_url: String,
+    pub database: Option<String>,
+    pub schema: Option<String>,
 }
 
 pub struct ClientInfo {

@@ -59,6 +59,11 @@ TEST_CASE("Test ODBC connection", "[odbc]") {
         ss << "ACCOUNT=" << params.get("testconnection").get("SNOWFLAKE_TEST_ACCOUNT").get<std::string>() << ";";
         ss << "UID=" << params.get("testconnection").get("SNOWFLAKE_TEST_USER").get<std::string>() << ";";
         ss << "PWD=" << params.get("testconnection").get("SNOWFLAKE_TEST_PASSWORD").get<std::string>() << ";";
+        
+        // Add port if specified
+        if (params.get("testconnection").contains("SNOWFLAKE_TEST_PORT")) {
+            ss << "PORT=" << params.get("testconnection").get("SNOWFLAKE_TEST_PORT").get<double>() << ";";
+        }
 
         std::cerr << "Connection string: " << ss.str() << std::endl;
 

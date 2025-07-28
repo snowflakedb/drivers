@@ -32,19 +32,28 @@ fn get_server_url(conn: &Connection) -> Result<String, RestError> {
         return Ok(value.clone());
     }
 
-    if let Some(Setting::String(account_name)) = conn.settings.get("account") {
+    if let Some(Setting::String(_account_name)) = conn.settings.get("account") {
         let protocol = conn
             .settings
             .get_string("protocol")
             .unwrap_or("https".to_string());
+        let host = conn.settings.get_string("host").unwrap_or_else(|| {
+            tracing::warn!("No host specified, defaulting to 'localhost'");
+            "localhost".to_string()
+        });
         if protocol != "https" && protocol != "http" {
             tracing::warn!(
                 "Unexpected protocol specified during server url construction: {protocol}"
             );
         }
-        return Ok(format!(
-            "{protocol}://{account_name}.snowflakecomputing.com"
-        ));
+
+        // Check if a custom port is specified
+        let base_url = format!("{protocol}://{host}");
+        if let Some(port) = conn.settings.get_int("port") {
+            return Ok(format!("{base_url}:{port}"));
+        }
+
+        return Ok(base_url);
     }
 
     Err(RestError::MissingParameter(
@@ -78,6 +87,8 @@ fn get_login_parameters(conn: &Connection) -> Result<LoginParameters, RestError>
             }
         },
         server_url: get_server_url(conn)?,
+        database: conn.settings.get_string("database"),
+        schema: conn.settings.get_string("schema"),
     };
     Ok(params)
 }
@@ -104,6 +115,8 @@ pub async fn snowflake_login(
         account_name = %login_parameters.account_name,
         login_name = %login_parameters.login_name,
         server_url = %login_parameters.server_url,
+        database = ?login_parameters.database,
+        schema = ?login_parameters.schema,
         "Extracted connection settings"
     );
 

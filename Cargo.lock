@@ -855,6 +855,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "cesu8"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6d43a04d8753f35258c91f8ec639f792891f748a1edbd759cf1dcea3382ad83c"
+
+[[package]]
 name = "cexpr"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -862,12 +868,6 @@ checksum = "6fac387a98bb7c37292057cffc56d62ecb629900026402633ae9160df93a8766"
 dependencies = [
  "nom",
 ]
-
-[[package]]
-name = "cesu8"
-version = "1.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6d43a04d8753f35258c91f8ec639f792891f748a1edbd759cf1dcea3382ad83c"
 
 [[package]]
 name = "cfg-if"
@@ -895,7 +895,7 @@ checksum = "0b023947811758c97c59bf9d1c188fd619ad4718dcaa767947df1cadb14f39f4"
 dependencies = [
  "glob",
  "libc",
- "libloading",
+ "libloading 0.8.8",
 ]
 
 [[package]]
@@ -908,12 +908,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "const-oid"
-version = "0.9.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c2459377285ad874054d797f3ccebf984978aa39129f6eafde5cdc8315b612f8"
-
-[[package]]
 name = "combine"
 version = "4.6.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -922,6 +916,12 @@ dependencies = [
  "bytes",
  "memchr",
 ]
+
+[[package]]
+name = "const-oid"
+version = "0.9.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c2459377285ad874054d797f3ccebf984978aa39129f6eafde5cdc8315b612f8"
 
 [[package]]
 name = "const-random"
@@ -1795,16 +1795,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4a5f13b858c8d314ee3e8f639011f7ccefe71f97f96e50151fb991f267928e2c"
 
 [[package]]
-name = "jobserver"
-version = "0.1.33"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "38f262f097c174adebe41eb73d66ae9c06b2844fb0da69969647bbddd9b0538a"
-dependencies = [
- "getrandom 0.3.3",
- "libc",
-]
-
-[[package]]
 name = "java-locator"
 version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1832,7 +1822,7 @@ dependencies = [
  "combine",
  "java-locator",
  "jni-sys",
- "libloading",
+ "libloading 0.7.4",
  "log",
  "thiserror",
  "walkdir",
@@ -1844,6 +1834,16 @@ name = "jni-sys"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8eaf4bc02d17cbdd7ff4c7438cafcdf7fb9a4613313ad11b4f8fefe7d3fa0130"
+
+[[package]]
+name = "jobserver"
+version = "0.1.33"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "38f262f097c174adebe41eb73d66ae9c06b2844fb0da69969647bbddd9b0538a"
+dependencies = [
+ "getrandom 0.3.3",
+ "libc",
+]
 
 [[package]]
 name = "js-sys"
@@ -1939,22 +1939,22 @@ checksum = "d8cfeafaffdbc32176b64fb251369d52ea9f0a8fbc6f8759edffef7b525d64bb"
 
 [[package]]
 name = "libloading"
-version = "0.8.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "07033963ba89ebaf1584d767badaa2e8fcec21aedea6b8c0346d487d49c28667"
-dependencies = [
- "cfg-if",
- "windows-targets 0.53.2",
-]
-
-[[package]]
-name = "libloading"
 version = "0.7.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b67380fd3b2fbe7527a606e18729d21c6f3951633d0500574c4dc22d2d638b9f"
 dependencies = [
  "cfg-if",
  "winapi",
+]
+
+[[package]]
+name = "libloading"
+version = "0.8.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "07033963ba89ebaf1584d767badaa2e8fcec21aedea6b8c0346d487d49c28667"
+dependencies = [
+ "cfg-if",
+ "windows-targets 0.53.2",
 ]
 
 [[package]]

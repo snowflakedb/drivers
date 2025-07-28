@@ -25,6 +25,7 @@ def create_connection():
         schema=test_params.get("SNOWFLAKE_TEST_SCHEMA"),
         warehouse=test_params.get("SNOWFLAKE_TEST_WAREHOUSE"),
         role=test_params.get("SNOWFLAKE_TEST_ROLE"),
-        server_url=test_params.get("SNOWFLAKE_TEST_SERVER_URL")
+        server_url=test_params.get("SNOWFLAKE_TEST_SERVER_URL"),
+        port=test_params.get("SNOWFLAKE_TEST_PORT")
     )
     return conn

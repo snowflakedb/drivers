@@ -4,12 +4,10 @@ mod test_utils;
 
 use arrow::array::{Array, StringArray};
 use sf_core::api_client::new_database_driver_v1_client;
-use sf_core::api_server::database_driver_v1::DatabaseDriverV1;
-use sf_core::thrift_gen::database_driver_v1::DatabaseDriverSyncHandler;
 use sf_core::thrift_gen::database_driver_v1::InfoCode;
 use std::io::Write;
 use tempfile::NamedTempFile;
-use test_utils::{ArrowResultHelper, SnowflakeTestClient, get_parameters, setup_logging};
+use test_utils::{ArrowResultHelper, SnowflakeTestClient, setup_logging};
 
 // Database operation tests
 #[test]
@@ -844,53 +842,7 @@ fn test_full_adbc_workflow() {
 
 #[test]
 fn test_snowflake_connection_settings() {
-    setup_logging();
-    let driver = DatabaseDriverV1::new();
-
-    let db_handle = driver.handle_database_new().unwrap();
-    driver.handle_database_init(db_handle.clone()).unwrap();
-
-    // Get credentials from parameters.json
-    let parameters = get_parameters();
-    let account_name = parameters.account_name.clone().unwrap();
-    let user = parameters.user.clone().unwrap();
-    let password = parameters.password.clone().unwrap();
-
-    // Create a new connection
-    let conn_handle = driver.handle_connection_new().unwrap();
-
-    // Set required connection settings
-    driver
-        .handle_connection_set_option_string(
-            conn_handle.clone(),
-            "account".to_string(),
-            account_name,
-        )
-        .unwrap();
-
-    driver
-        .handle_connection_set_option_string(conn_handle.clone(), "user".to_string(), user)
-        .unwrap();
-
-    driver
-        .handle_connection_set_option_string(conn_handle.clone(), "password".to_string(), password)
-        .unwrap();
-
-    if let Some(server_url) = parameters.server_url.clone() {
-        driver
-            .handle_connection_set_option_string(
-                conn_handle.clone(),
-                "server_url".to_string(),
-                server_url,
-            )
-            .unwrap();
-    }
-
-    // Attempt to initialize the connection with real credentials
-    let result = driver.handle_connection_init(conn_handle.clone(), db_handle.clone());
-    println!("result: {result:?}");
-    assert!(result.is_ok());
-    driver.handle_connection_release(conn_handle).unwrap();
+    SnowflakeTestClient::new();
 }
 
 #[test]

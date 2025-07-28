@@ -38,6 +38,11 @@ public class SnowflakeQueryTest {
         props.setProperty("warehouse", params.getString("SNOWFLAKE_TEST_WAREHOUSE"));
         props.setProperty("account", params.getString("SNOWFLAKE_TEST_ACCOUNT"));
         
+        // Add port if specified
+        if (params.has("SNOWFLAKE_TEST_PORT")) {
+            props.setProperty("port", String.valueOf(params.getInt("SNOWFLAKE_TEST_PORT")));
+        }
+        
         return props;
     }
 
@@ -45,7 +50,11 @@ public class SnowflakeQueryTest {
     public void testSimpleSelect() throws Exception {
         // Load connection properties
         Properties props = loadConnectionProperties();
-        String url = props.getProperty("url", "jdbc:snowflake://" + props.getProperty("account") + ".snowflakecomputing.com");
+        String defaultUrl = "jdbc:snowflake://" + props.getProperty("account") + ".snowflakecomputing.com";
+        if (props.getProperty("port") != null) {
+            defaultUrl += ":" + props.getProperty("port");
+        }
+        String url = props.getProperty("url", defaultUrl);
         
         // Create connection
         SnowflakeDriver.empty();

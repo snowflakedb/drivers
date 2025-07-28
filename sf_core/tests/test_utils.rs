@@ -37,6 +37,10 @@ pub struct Parameters {
     pub role: Option<String>,
     #[serde(rename = "SNOWFLAKE_TEST_SERVER_URL")]
     pub server_url: Option<String>,
+    #[serde(rename = "SNOWFLAKE_TEST_PORT")]
+    pub port: Option<i64>,
+    #[serde(rename = "SNOWFLAKE_TEST_PROTOCOL")]
+    pub protocol: Option<String>,
 }
 
 use std::fs;
@@ -108,6 +112,35 @@ impl SnowflakeTestClient {
                 parameters.password.clone().unwrap(),
             )
             .unwrap();
+
+        // Set database if specified in parameters
+        if let Some(database) = parameters.database.clone() {
+            driver
+                .connection_set_option_string(conn_handle.clone(), "database".to_string(), database)
+                .unwrap();
+        }
+
+        // Set schema if specified in parameters
+        if let Some(schema) = parameters.schema.clone() {
+            driver
+                .connection_set_option_string(conn_handle.clone(), "schema".to_string(), schema)
+                .unwrap();
+        }
+
+        // Set port if specified in parameters
+        if let Some(port) = parameters.port {
+            driver
+                .connection_set_option_int(conn_handle.clone(), "port".to_string(), port)
+                .unwrap();
+        }
+
+        // Set protocol if specified in parameters
+        if let Some(protocol) = parameters.protocol.clone() {
+            driver
+                .connection_set_option_string(conn_handle.clone(), "protocol".to_string(), protocol)
+                .unwrap();
+        }
+
         driver
             .connection_init(conn_handle.clone(), db_handle.clone())
             .unwrap();
@@ -156,6 +189,15 @@ impl SnowflakeTestClient {
             Ok(_) => {
                 panic!("Expected query to fail with '{expected_error}' error, but it succeeded");
             }
+        }
+    }
+}
+
+impl Drop for SnowflakeTestClient {
+    fn drop(&mut self) {
+        // Release the connection when the client is dropped
+        if let Err(e) = self.driver.connection_release(self.conn_handle.clone()) {
+            eprintln!("Warning: Failed to release connection in Drop: {e:?}");
         }
     }
 }
