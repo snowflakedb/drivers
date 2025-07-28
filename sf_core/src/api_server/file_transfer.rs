@@ -152,21 +152,21 @@ async fn upload_to_s3_simple(
 
     let s3_key = format!("{key_prefix}{file_name}.gz");
 
+    // Calculate SHA256 digest of the encrypted data
+    let digest = hash(MessageDigest::sha256(), &data)
+        .map_err(|e| RestError::Internal(format!("Failed to calculate digest: {e}")))?;
+    let digest_b64 = general_purpose::STANDARD.encode(digest);
+
     // Calculate digest if we have encrypted data
     let mut put_object_request = s3_client
         .put_object()
         .bucket(bucket)
         .key(&s3_key)
-        .body(ByteStream::from(data.clone()))
+        .body(ByteStream::from(data))
         .content_type("application/octet-stream");
 
     // Add encryption metadata headers if available
     if let Some(metadata) = encryption_metadata {
-        // Calculate SHA256 digest of the encrypted data
-        let digest = hash(MessageDigest::sha256(), &data)
-            .map_err(|e| RestError::Internal(format!("Failed to calculate digest: {e}")))?;
-        let digest_b64 = general_purpose::STANDARD.encode(digest);
-
         put_object_request = put_object_request
             .metadata("sfc-digest", digest_b64)
             .metadata("x-amz-iv", &metadata.iv)
