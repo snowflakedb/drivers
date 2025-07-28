@@ -74,7 +74,7 @@ pub fn encrypt_file_data(
 
     let key_size_bits = key_size * 8;
     let mat_desc = format!(
-        "{{\"queryId\":\"{}\",\"smkId\":{},\"keySize\":\"{}\"}}",
+        "{{\"queryId\":\"{}\",\"smkId\":\"{}\",\"keySize\":\"{}\"}}",
         encryption_material.query_id, encryption_material.smk_id, key_size_bits
     );
 
