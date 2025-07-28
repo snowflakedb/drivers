@@ -841,11 +841,6 @@ fn test_full_adbc_workflow() {
 }
 
 #[test]
-fn test_snowflake_connection_settings() {
-    SnowflakeTestClient::new();
-}
-
-#[test]
 fn test_snowflake_select_1() {
     let mut client = SnowflakeTestClient::new();
     let result = client.execute_query("SELECT 1");
