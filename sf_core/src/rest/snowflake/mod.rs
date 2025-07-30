@@ -1,16 +1,14 @@
-mod auth_types;
+mod auth;
 mod data;
-pub mod query_encryption_types;
-pub mod query_file_transfer_types;
-pub mod query_types;
+pub mod query_request;
+pub mod query_response;
 
 use crate::driver::{Connection, Setting, Settings};
 use crate::rest::error::RestError;
-use crate::rest::snowflake::auth_types::{
+use crate::rest::snowflake::auth::{
     AuthRequest, AuthRequestClientEnvironment, AuthRequestData, AuthResponse,
 };
-use crate::rest::snowflake::data::{ClientInfo, LoginParameters};
-use crate::rest::snowflake::query_types::{ExecRequest, ExecResponse, RequestQueryContext};
+use data::{ClientInfo, LoginParameters};
 use reqwest;
 use serde_json;
 use std::collections::HashMap;
@@ -222,7 +220,7 @@ pub async fn snowflake_login(
 pub async fn snowflake_query(
     conn_ptr: &std::sync::Arc<Mutex<Connection>>,
     sql: String,
-) -> Result<ExecResponse, RestError> {
+) -> Result<query_response::Response, RestError> {
     let (session_token, server_url, client_info) = {
         let conn = conn_ptr.lock().unwrap();
         let session_token = conn
@@ -235,7 +233,7 @@ pub async fn snowflake_query(
     let client = reqwest::Client::new();
     let query_url = format!("{server_url}/queries/v1/query-request");
 
-    let query_request = ExecRequest {
+    let query_request = query_request::Request {
         sql_text: sql,
         async_exec: false,
         sequence_id: 1,
@@ -248,7 +246,7 @@ pub async fn snowflake_query(
         parameters: None,
         bindings: None,
         bind_stage: None,
-        query_context: RequestQueryContext { entries: None },
+        query_context: query_request::QueryContext { entries: None },
     };
 
     let json_payload = serde_json::to_string_pretty(&query_request).unwrap();
@@ -314,10 +312,11 @@ pub async fn snowflake_query(
 
     tracing::debug!("Query response text: {}", response_text);
 
-    let response_data: ExecResponse = serde_json::from_str(&response_text).map_err(|e| {
-        tracing::trace!("Response text: {}", response_text);
-        RestError::InvalidSnowflakeResponse(format!("Failed to parse query response: {e}"))
-    })?;
+    let response_data: query_response::Response =
+        serde_json::from_str(&response_text).map_err(|e| {
+            tracing::trace!("Response text: {}", response_text);
+            RestError::InvalidSnowflakeResponse(format!("Failed to parse query response: {e}"))
+        })?;
 
     Ok(response_data)
 }

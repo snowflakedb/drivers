@@ -1,5 +1,5 @@
-use crate::api_server::file_transfer::transfer_file;
 use crate::driver::{Connection, Database, Setting, Statement};
+use crate::file_manager::transfer_file;
 use crate::handle_manager::{Handle, HandleManager};
 use crate::rest::error::RestError;
 use crate::thrift_gen::database_driver_v1::{
@@ -555,7 +555,7 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
                     ))
                 })?;
 
-                let response =
+                let mut response =
                     rt.block_on(crate::rest::snowflake::snowflake_query(&stmt.conn, query))?;
 
                 if !response.success {
@@ -573,8 +573,13 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
 
                 if let Some(ref command) = response.data.command {
                     if command == "UPLOAD" {
-                        let file_transfer_data = response.data.to_file_transfer_data()?;
-                        rt.block_on(transfer_file(&file_transfer_data))?;
+                        let file_transfer_data = response.data.extract_file_transfer_data()?;
+                        rt.block_on(transfer_file(file_transfer_data))
+                            .map_err(|e| {
+                                Error::from(RestError::Internal(format!(
+                                    "Failed to transfer file: {e}"
+                                )))
+                            })?;
                         stmt.state = StatementState::Executed;
                         return Ok(ExecuteResult::new(
                             Box::new(ArrowArrayStreamPtr::new(Vec::new())),
