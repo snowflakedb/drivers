@@ -5,9 +5,10 @@ mod test_utils;
 use arrow::array::{Array, StringArray};
 use sf_core::api_client::new_database_driver_v1_client;
 use sf_core::thrift_gen::database_driver_v1::InfoCode;
+use std::fs;
 use std::io::Write;
 use tempfile::NamedTempFile;
-use test_utils::{ArrowResultHelper, SnowflakeTestClient, setup_logging};
+use test_utils::{ArrowResultHelper, SnowflakeTestClient, decompress_gzipped_file, setup_logging};
 
 // Database operation tests
 #[test]
@@ -936,23 +937,51 @@ fn test_get() {
     let mut client = SnowflakeTestClient::new();
     let stage_name = "TEST_STAGE_GET";
 
-    // Create test file and temporary stage
-    let mut test_file = NamedTempFile::new().unwrap();
-    test_file.write_all("a,b,c\n1,2,3\n".as_bytes()).unwrap();
-    test_file.flush().unwrap();
+    // Create temporary directories
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let upload_dir = temp_dir.path().join("upload");
+    let download_dir = temp_dir.path().join("download");
+    fs::create_dir_all(&upload_dir).unwrap();
+    fs::create_dir_all(&download_dir).unwrap();
+
+    // Create test file with known content
+    let test_file_path = upload_dir.join("data.csv");
+    fs::write(&test_file_path, "1,2,3\n").unwrap();
+
+    // Create temporary stage
     client.execute_query(&format!("create temporary stage {stage_name}"));
 
-    // Upload file using PUT (which now works)
+    // Upload file using PUT
     let put_sql = format!(
         "PUT 'file://{test_file}' @{stage_name}",
-        test_file = test_file.path().to_str().unwrap().replace("\\", "/")
+        test_file = test_file_path.to_str().unwrap().replace("\\", "/")
     );
     client.execute_query(&put_sql);
 
-    // Try to download the file using GET (should fail)
-    let temp_filename = test_file.path().file_name().unwrap().to_str().unwrap();
-    let get_sql = format!("GET @{stage_name}/{temp_filename}.gz file://./downloaded/");
-    client.execute_query_expect_error(&get_sql, "Handling GET queries is not yet implemented");
+    // Download file using GET
+    let get_sql = format!(
+        "GET @{stage_name}/data.csv.gz file://{download_dir}/",
+        download_dir = download_dir.to_str().unwrap().replace("\\", "/")
+    );
+    let _get_result = client.execute_query(&get_sql);
+
+    // Verify the downloaded file exists and is gzipped
+    let downloaded_file_gz = download_dir.join("data.csv.gz");
+    assert!(
+        downloaded_file_gz.exists(),
+        "Downloaded gzipped file should exist at {downloaded_file_gz:?}",
+    );
+
+    // Decompress the file using utility function
+    let decompressed_content =
+        decompress_gzipped_file(&downloaded_file_gz).expect("Failed to decompress downloaded file");
+
+    // Verify the content matches the original
+    let original_content = fs::read_to_string(&test_file_path).unwrap();
+    assert_eq!(
+        decompressed_content, original_content,
+        "Downloaded and decompressed content should match original"
+    );
 }
 
 #[test]
@@ -963,7 +992,7 @@ fn test_put_select() {
     // Create test file with specific name "test_put_select.csv"
     let temp_dir = tempfile::TempDir::new().unwrap();
     let test_file_path = temp_dir.path().join("test_put_select.csv");
-    std::fs::write(&test_file_path, "1,2,3\n").unwrap();
+    fs::write(&test_file_path, "1,2,3\n").unwrap();
 
     // Create temporary stage
     client.execute_query(&format!("create temporary stage {stage_name}"));

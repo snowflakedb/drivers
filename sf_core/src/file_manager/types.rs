@@ -1,33 +1,43 @@
 use crate::rest::error::RestError;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use crate::thrift_gen::database_driver_v1::{DriverException, StatusCode};
 use aws_sdk_s3::error as s3_error;
+use aws_sdk_s3::operation::get_object as s3_get_object;
 use aws_sdk_s3::operation::put_object as s3_put_object;
 
 // Dedicated file transfer types
-#[derive(Debug, Clone)]
-pub struct Data {
+#[derive(Debug)]
+pub struct UploadData {
     pub src_locations: Vec<String>,
     pub stage_info: StageInfo,
     pub encryption_materials: Vec<EncryptionMaterial>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
+pub struct DownloadData {
+    pub src_locations: Vec<String>,
+    pub local_location: String,
+    pub stage_info: StageInfo,
+    pub encryption_materials: Vec<EncryptionMaterial>,
+}
+
+#[derive(Debug)]
 pub struct StageInfo {
     pub location: String,
     pub region: String,
     pub creds: Credentials,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Credentials {
     pub aws_key_id: String,
     pub aws_secret_key: String,
     pub aws_token: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct EncryptionMaterial {
     pub query_stage_master_key: String,
     pub query_id: String,
@@ -51,7 +61,7 @@ pub struct EncryptedFileMetadata {
 }
 
 // Material description structure for JSON serialization
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct MaterialDescription {
     #[serde(rename = "queryId")]
     pub query_id: String,
@@ -71,9 +81,21 @@ pub enum FileManagerError {
     #[error("Compression error: {0}")]
     Compression(#[from] CompressionError),
     #[error("S3 upload error: {0}")]
-    FileUpload(#[from] FileUploadError),
+    FileUpload(#[from] FileTransferError),
     #[error("Rest error: {0}")]
     Rest(#[from] RestError),
+}
+
+impl From<FileManagerError> for DriverException {
+    fn from(err: FileManagerError) -> Self {
+        DriverException::new(
+            format!("FileManager error: {err}"),
+            StatusCode::UNKNOWN,
+            None,
+            None,
+            None,
+        )
+    }
 }
 
 #[derive(Error, Debug)]
@@ -95,22 +117,34 @@ pub enum EncryptionError {
 }
 
 #[derive(Error, Debug)]
-pub enum FileUploadError {
+pub enum FileTransferError {
     #[error("IO error: {0}")]
-    IoE(#[from] std::io::Error),
+    Io(#[from] std::io::Error),
     #[error("S3 upload error: {0}")]
     // Boxed error to avoid large size difference between error types
     // TODO: Remove this once we have SDK-less file transfer
     S3Upload(#[from] Box<s3_error::SdkError<s3_put_object::PutObjectError>>),
+    #[error("S3 download error: {0}")]
+    S3Download(#[from] Box<s3_error::SdkError<s3_get_object::GetObjectError>>),
+    #[error("ByteStream error: {0}")]
+    ByteStream(String),
     #[error("Rest error: {0}")]
     Rest(#[from] RestError),
     #[error("Serialization error: {0}")]
     Serialization(#[from] serde_json::Error),
+    #[error("File metadata error: {0}")]
+    FileMetadata(String),
 }
 
-// Manual implementation of From<FileUploadError> since boxing breaks #[from]
-impl From<s3_error::SdkError<s3_put_object::PutObjectError>> for FileUploadError {
+// Manual implementation of From since boxing breaks #[from]
+impl From<s3_error::SdkError<s3_put_object::PutObjectError>> for FileTransferError {
     fn from(err: s3_error::SdkError<s3_put_object::PutObjectError>) -> Self {
-        FileUploadError::S3Upload(Box::new(err))
+        FileTransferError::S3Upload(Box::new(err))
+    }
+}
+
+impl From<s3_error::SdkError<s3_get_object::GetObjectError>> for FileTransferError {
+    fn from(err: s3_error::SdkError<s3_get_object::GetObjectError>) -> Self {
+        FileTransferError::S3Download(Box::new(err))
     }
 }

@@ -32,6 +32,8 @@ pub struct Data {
     stage_info: Option<StageInfo>,
     #[serde(rename = "encryptionMaterial")]
     encryption_material: Option<OneOrMany<EncryptionMaterial>>,
+    #[serde(rename = "localLocation")]
+    local_location: Option<String>,
 
     //unused fields
     #[serde(rename = "parameters")]
@@ -86,8 +88,6 @@ pub struct Data {
     _async_rows: Option<SnowflakeRows>,
     #[serde(rename = "uploadInfo")]
     _upload_info: Option<StageInfo>,
-    #[serde(rename = "localLocation")]
-    _local_location: Option<String>,
     #[serde(rename = "parallel")]
     _parallel: Option<i64>,
     #[serde(rename = "threshold")]
@@ -258,7 +258,7 @@ pub struct EncryptionMaterial {
 
 impl Data {
     /// Copies the fields necessary for file transfer.
-    pub fn to_file_transfer_data(&self) -> Result<file_manager::Data, RestError> {
+    pub fn to_file_upload_data(&self) -> Result<file_manager::UploadData, RestError> {
         let src_locations = self
             .src_locations
             .as_ref()
@@ -279,13 +279,47 @@ impl Data {
             .encryption_material
             .as_ref()
             .ok_or_else(|| RestError::MissingParameter("encryption material".to_string()))?
-            .as_slice()
-            .iter()
-            .map(|em| em.into())
-            .collect();
+            .into();
 
-        Ok(file_manager::Data {
+        Ok(file_manager::UploadData {
             src_locations,
+            stage_info,
+            encryption_materials,
+        })
+    }
+
+    pub fn to_file_download_data(&self) -> Result<file_manager::DownloadData, RestError> {
+        let src_locations = self
+            .src_locations
+            .as_ref()
+            .ok_or_else(|| RestError::MissingParameter("source locations".to_string()))?
+            .clone();
+
+        if src_locations.is_empty() {
+            return Err(RestError::MissingParameter("source locations".to_string()));
+        }
+
+        let stage_info: file_manager::StageInfo = self
+            .stage_info
+            .as_ref()
+            .ok_or_else(|| RestError::MissingParameter("stage info".to_string()))?
+            .try_into()?;
+
+        let encryption_materials: Vec<_> = self
+            .encryption_material
+            .as_ref()
+            .ok_or_else(|| RestError::MissingParameter("encryption material".to_string()))?
+            .into();
+
+        let local_location: String = self
+            .local_location
+            .as_ref()
+            .ok_or_else(|| RestError::MissingParameter("local location".to_string()))?
+            .clone();
+
+        Ok(file_manager::DownloadData {
+            src_locations,
+            local_location,
             stage_info,
             encryption_materials,
         })
@@ -362,6 +396,12 @@ impl From<&EncryptionMaterial> for file_manager::EncryptionMaterial {
             // Snowflake sends smk_id as i64, but later expects it as a string
             smk_id: value.smk_id.to_string(),
         }
+    }
+}
+
+impl From<&OneOrMany<EncryptionMaterial>> for Vec<file_manager::EncryptionMaterial> {
+    fn from(value: &OneOrMany<EncryptionMaterial>) -> Self {
+        value.as_slice().iter().map(|em| em.into()).collect()
     }
 }
 

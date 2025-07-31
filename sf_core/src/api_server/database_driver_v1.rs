@@ -1,5 +1,5 @@
 use crate::driver::{Connection, Database, Setting, Statement};
-use crate::file_manager::transfer_file;
+use crate::file_manager::{download_file, upload_file};
 use crate::handle_manager::{Handle, HandleManager};
 use crate::rest::error::RestError;
 use crate::thrift_gen::database_driver_v1::{
@@ -573,23 +573,28 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
 
                 if let Some(ref command) = response.data.command {
                     if command == "UPLOAD" {
-                        let file_transfer_data = response.data.to_file_transfer_data()?;
-                        rt.block_on(transfer_file(file_transfer_data))
-                            .map_err(|e| {
-                                Error::from(RestError::Internal(format!(
-                                    "Failed to transfer file: {e}"
-                                )))
-                            })?;
-                        stmt.state = StatementState::Executed;
-                        return Ok(ExecuteResult::new(
-                            Box::new(ArrowArrayStreamPtr::new(Vec::new())),
-                            0,
-                        ));
+                        let file_upload_data = response.data.to_file_upload_data()?;
+                        rt.block_on(upload_file(file_upload_data))
+                            .map_err(DriverException::from)?;
                     } else if command == "DOWNLOAD" {
-                        return Err(Error::from(RestError::Internal(
-                            "Handling GET queries is not yet implemented".to_string(),
+                        let file_download_data = response.data.to_file_download_data()?;
+                        rt.block_on(download_file(file_download_data))
+                            .map_err(DriverException::from)?;
+                    } else {
+                        return Err(Error::from(DriverException::new(
+                            format!("Unsupported command: {command}"),
+                            StatusCode::INVALID_ARGUMENT,
+                            None,
+                            None,
+                            None,
                         )));
                     }
+
+                    stmt.state = StatementState::Executed;
+                    return Ok(ExecuteResult::new(
+                        Box::new(ArrowArrayStreamPtr::new(Vec::new())),
+                        0,
+                    ));
                 }
 
                 let rowset_bytes = match response.data.rowset_base64 {

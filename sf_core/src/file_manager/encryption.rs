@@ -9,7 +9,7 @@ use openssl::{
     error::ErrorStack,
     hash::{MessageDigest, hash},
     rand::rand_bytes,
-    symm::{Cipher, encrypt},
+    symm::{Cipher, decrypt, encrypt},
 };
 
 // Cryptographic constants
@@ -81,6 +81,37 @@ pub fn encrypt_file_data(
         data: encrypted_data,
         metadata,
     })
+}
+
+/// Decrypts file data using AES-CBC with PKCS#7 padding.
+pub fn decrypt_file_data(
+    encrypted_data: &[u8],
+    metadata: &EncryptedFileMetadata,
+    encryption_material: &EncryptionMaterial,
+) -> Result<Vec<u8>, EncryptionError> {
+    // 1. Decode master key and select the appropriate cipher suite.
+    let master_key = BASE64_ENGINE.decode(&encryption_material.query_stage_master_key)?;
+    let cipher_suite = CipherSuite::from_key_len(master_key.len())?;
+
+    // 2. Decode the encrypted file key and IV from metadata.
+    let encrypted_file_key = BASE64_ENGINE.decode(&metadata.encrypted_key)?;
+    let iv = BASE64_ENGINE.decode(&metadata.iv)?;
+
+    // 3. Verify the digest of encrypted data.
+    let calculated_digest = calculate_digest(encrypted_data)?;
+    if calculated_digest != metadata.digest {
+        return Err(EncryptionError::from(RestError::InvalidSnowflakeResponse(
+            "Data integrity check failed: digest mismatch".to_string(),
+        )));
+    }
+
+    // 4. Decrypt the file key using the master key with AES-ECB.
+    let file_key = decrypt(cipher_suite.ecb, &master_key, None, &encrypted_file_key)?;
+
+    // 5. Decrypt the file data using the file key and IV with AES-CBC.
+    let decrypted_data = decrypt(cipher_suite.cbc, &file_key, Some(&iv), encrypted_data)?;
+
+    Ok(decrypted_data)
 }
 
 /// Generates a vector of random bytes of a specified size.

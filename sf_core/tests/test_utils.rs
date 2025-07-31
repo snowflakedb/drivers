@@ -5,7 +5,9 @@ extern crate tracing_subscriber;
 use arrow::array::{Array, Int8Array};
 use arrow::ffi_stream::ArrowArrayStreamReader;
 use arrow::ffi_stream::FFI_ArrowArrayStream;
+use flate2::read::GzDecoder;
 use sf_core::api_client::new_database_driver_v1_client;
+use std::fs;
 use tracing::Level;
 use tracing_subscriber::EnvFilter;
 
@@ -42,8 +44,6 @@ pub struct Parameters {
     #[serde(rename = "SNOWFLAKE_TEST_PROTOCOL")]
     pub protocol: Option<String>,
 }
-
-use std::fs;
 
 /// Parses and returns the test parameters from the configured parameter file
 pub fn get_parameters() -> Parameters {
@@ -202,7 +202,7 @@ impl SnowflakeTestClient {
     }
 
     /// Executes a SQL query and expects it to fail with a specific error message
-    pub fn execute_query_expect_error(&mut self, sql: &str, expected_error: &str) {
+    pub fn _execute_query_expect_error(&mut self, sql: &str, expected_error: &str) {
         let stmt_handle = self.new_statement();
         self.driver
             .statement_set_sql_query(stmt_handle.clone(), sql.to_string())
@@ -292,4 +292,15 @@ impl ArrowResultHelper {
         );
         batch
     }
+}
+
+/// Decompresses a gzipped file and returns its content as a string
+pub fn decompress_gzipped_file<P: AsRef<std::path::Path>>(file_path: P) -> std::io::Result<String> {
+    use std::io::Read;
+
+    let gz_file = fs::File::open(file_path)?;
+    let mut decoder = GzDecoder::new(gz_file);
+    let mut decompressed_content = String::new();
+    decoder.read_to_string(&mut decompressed_content)?;
+    Ok(decompressed_content)
 }
