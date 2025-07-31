@@ -3,78 +3,78 @@ use super::types::{
     MaterialDescription,
 };
 use crate::rest::error::RestError;
-use base64::Engine;
-use base64::engine::general_purpose::STANDARD as base64_engine;
-use openssl::hash::{MessageDigest, hash};
-use openssl::rand::rand_bytes;
-use openssl::symm::{Cipher, encrypt};
+
+use base64::{Engine, engine::general_purpose::STANDARD as BASE64_ENGINE};
+use openssl::{
+    error::ErrorStack,
+    hash::{MessageDigest, hash},
+    rand::rand_bytes,
+    symm::{Cipher, encrypt},
+};
 
 // Cryptographic constants
-const AES_256_KEY_SIZE_IN_BYTES: usize = 32; // 256 bits ÷ 8 = 32 bytes
-const AES_128_KEY_SIZE_IN_BYTES: usize = 16; // 128 bits ÷ 8 = 16 bytes
-const AES_BLOCK_SIZE_IN_BYTES: usize = 16; // 128 bits ÷ 8 = 16 bytes
+const AES_256_KEY_SIZE_IN_BYTES: usize = 32; // 256 bits
+const AES_128_KEY_SIZE_IN_BYTES: usize = 16; // 128 bits
+const AES_BLOCK_SIZE_IN_BYTES: usize = 16; // 128-bit block size for AES
 
-/// Encrypts file data using AES-CBC with PKCS#7 padding
-///
-/// Steps:
-/// 1. Decode master key to determine its size and corresponding algorithms
-/// 2. Generate random data encryption key (same size as master key)
-/// 3. Generate random IV (AES_BLOCK_SIZE bytes for AES-CBC)
-/// 4. Encrypt the file data using AES-CBC with PKCS#7 padding
-/// 5. Encrypt the data encryption key using the master key with PKCS#7 padding
+/// A container for the ciphers and key length determined by the master key.
+struct CipherSuite {
+    key_len: usize,
+    cbc: Cipher,
+    ecb: Cipher,
+}
+
+impl CipherSuite {
+    fn from_key_len(key_len: usize) -> Result<Self, EncryptionError> {
+        match key_len {
+            AES_128_KEY_SIZE_IN_BYTES => Ok(Self {
+                key_len,
+                cbc: Cipher::aes_128_cbc(),
+                ecb: Cipher::aes_128_ecb(),
+            }),
+            AES_256_KEY_SIZE_IN_BYTES => Ok(Self {
+                key_len,
+                cbc: Cipher::aes_256_cbc(),
+                ecb: Cipher::aes_256_ecb(),
+            }),
+            _ => Err(EncryptionError::from(RestError::InvalidSnowflakeResponse(
+                format!("Unsupported master key size: {key_len} bytes"),
+            ))),
+        }
+    }
+}
+
+/// Encrypts file data using AES-CBC with PKCS#7 padding.
 pub fn encrypt_file_data(
     file_data: &[u8],
     encryption_material: EncryptionMaterial,
 ) -> Result<EncryptionResult, EncryptionError> {
-    // Step 1: Decode master key to determine key size and algorithms
-    let master_key = base64_engine.decode(encryption_material.query_stage_master_key)?;
+    // 1. Decode master key and select the appropriate cipher suite.
+    let master_key = BASE64_ENGINE.decode(&encryption_material.query_stage_master_key)?;
+    let cipher_suite = CipherSuite::from_key_len(master_key.len())?;
 
-    let (master_key_len, cbc_cipher, ecb_cipher) = match master_key.len() {
-        AES_128_KEY_SIZE_IN_BYTES => (
-            AES_128_KEY_SIZE_IN_BYTES,
-            Cipher::aes_128_cbc(),
-            Cipher::aes_128_ecb(),
-        ),
-        AES_256_KEY_SIZE_IN_BYTES => (
-            AES_256_KEY_SIZE_IN_BYTES,
-            Cipher::aes_256_cbc(),
-            Cipher::aes_256_ecb(),
-        ),
-        _ => {
-            return Err(EncryptionError::from(RestError::InvalidSnowflakeResponse(
-                format!("Unsupported master key size: {} bytes", master_key.len()),
-            )));
-        }
-    };
+    // 2. Generate a random data encryption key (file key) and initialization vector (IV).
+    let file_key = generate_random_bytes(cipher_suite.key_len)?;
+    let iv = generate_random_bytes(AES_BLOCK_SIZE_IN_BYTES)?;
 
-    // Step 2: Generate random data encryption key (same size as master key)
-    let mut file_key = vec![0u8; master_key_len];
-    rand_bytes(&mut file_key)?;
+    // 3. Encrypt the file data using the file key and IV with AES-CBC.
+    let encrypted_data = encrypt(cipher_suite.cbc, &file_key, Some(&iv), file_data)?;
 
-    // Step 3: Generate random IV
-    let mut iv = vec![0u8; AES_BLOCK_SIZE_IN_BYTES];
-    rand_bytes(&mut iv)?;
+    // 4. Encrypt the file key using the master key with AES-ECB.
+    let encrypted_file_key = encrypt(cipher_suite.ecb, &master_key, None, &file_key)?;
 
-    // Step 4: Encrypt the file data
-    let encrypted_data = encrypt(cbc_cipher, &file_key, Some(&iv), file_data)?;
-
-    // Step 5: Encrypt the data encryption key using the master key
-    let encrypted_file_key = encrypt(ecb_cipher, &master_key, None, &file_key)?;
-
-    let key_size_bits = master_key_len * 8;
+    // 5. Prepare the metadata for the encrypted file.
     let material_desc = MaterialDescription {
         query_id: encryption_material.query_id,
         smk_id: encryption_material.smk_id,
-        key_size: key_size_bits.to_string(),
+        key_size: (cipher_suite.key_len * 8).to_string(),
     };
 
-    let digest = calculate_digest(&encrypted_data)?;
-
     let metadata = EncryptedFileMetadata {
-        encrypted_key: base64_engine.encode(&encrypted_file_key),
-        iv: base64_engine.encode(&iv),
+        encrypted_key: BASE64_ENGINE.encode(&encrypted_file_key),
+        iv: BASE64_ENGINE.encode(&iv),
         material_desc,
-        digest,
+        digest: calculate_digest(&encrypted_data)?,
     };
 
     Ok(EncryptionResult {
@@ -83,7 +83,15 @@ pub fn encrypt_file_data(
     })
 }
 
-fn calculate_digest(data: &[u8]) -> Result<String, EncryptionError> {
+/// Generates a vector of random bytes of a specified size.
+fn generate_random_bytes(size: usize) -> Result<Vec<u8>, ErrorStack> {
+    let mut buffer = vec![0; size];
+    rand_bytes(&mut buffer)?;
+    Ok(buffer)
+}
+
+/// Computes the SHA-256 digest of the data and returns it as a Base64 string.
+fn calculate_digest(data: &[u8]) -> Result<String, ErrorStack> {
     let digest = hash(MessageDigest::sha256(), data)?;
-    Ok(base64_engine.encode(digest))
+    Ok(BASE64_ENGINE.encode(digest))
 }
