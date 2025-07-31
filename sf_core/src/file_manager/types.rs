@@ -81,7 +81,7 @@ pub enum FileManagerError {
     #[error("Compression error: {0}")]
     Compression(#[from] CompressionError),
     #[error("S3 upload error: {0}")]
-    FileUpload(#[from] FileTransferError),
+    FileTransfer(#[from] FileTransferError),
     #[error("Rest error: {0}")]
     Rest(#[from] RestError),
 }
