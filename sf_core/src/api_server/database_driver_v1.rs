@@ -555,7 +555,7 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
                     ))
                 })?;
 
-                let mut response =
+                let response =
                     rt.block_on(crate::rest::snowflake::snowflake_query(&stmt.conn, query))?;
 
                 if !response.success {
@@ -573,7 +573,7 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
 
                 if let Some(ref command) = response.data.command {
                     if command == "UPLOAD" {
-                        let file_transfer_data = response.data.extract_file_transfer_data()?;
+                        let file_transfer_data = response.data.to_file_transfer_data()?;
                         rt.block_on(transfer_file(file_transfer_data))
                             .map_err(|e| {
                                 Error::from(RestError::Internal(format!(

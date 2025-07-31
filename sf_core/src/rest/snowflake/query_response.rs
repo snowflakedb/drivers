@@ -257,13 +257,13 @@ pub struct EncryptionMaterial {
 }
 
 impl Data {
-    /// Extracts the fields necessary for file transfer, leaving `None` in their place.
-    /// This consumes the inner data of the fields but not the struct itself.
-    pub fn extract_file_transfer_data(&mut self) -> Result<file_manager::Data, RestError> {
+    /// Copies the fields necessary for file transfer.
+    pub fn to_file_transfer_data(&self) -> Result<file_manager::Data, RestError> {
         let src_locations = self
             .src_locations
-            .take()
-            .ok_or_else(|| RestError::MissingParameter("source locations".to_string()))?;
+            .as_ref()
+            .ok_or_else(|| RestError::MissingParameter("source locations".to_string()))?
+            .clone();
 
         if src_locations.is_empty() {
             return Err(RestError::MissingParameter("source locations".to_string()));
@@ -271,17 +271,17 @@ impl Data {
 
         let stage_info: file_manager::StageInfo = self
             .stage_info
-            .take()
+            .as_ref()
             .ok_or_else(|| RestError::MissingParameter("stage info".to_string()))?
             .try_into()?;
 
         let encryption_materials: Vec<_> = self
             .encryption_material
-            .take()
+            .as_ref()
             .ok_or_else(|| RestError::MissingParameter("encryption material".to_string()))?
-            .into_vec()
-            .into_iter()
-            .map(EncryptionMaterial::into)
+            .as_slice()
+            .iter()
+            .map(|em| em.into())
             .collect();
 
         Ok(file_manager::Data {
@@ -292,20 +292,25 @@ impl Data {
     }
 }
 
-impl TryFrom<StageInfo> for file_manager::StageInfo {
+impl TryFrom<&StageInfo> for file_manager::StageInfo {
     type Error = RestError;
 
-    fn try_from(value: StageInfo) -> Result<Self, Self::Error> {
+    fn try_from(value: &StageInfo) -> Result<Self, Self::Error> {
         let location = value
             .location
-            .ok_or_else(|| RestError::MissingParameter("stage info -> location".to_string()))?;
+            .as_ref()
+            .ok_or_else(|| RestError::MissingParameter("stage info -> location".to_string()))?
+            .clone();
 
         let region = value
             .region
-            .ok_or_else(|| RestError::MissingParameter("stage info -> region".to_string()))?;
+            .as_ref()
+            .ok_or_else(|| RestError::MissingParameter("stage info -> region".to_string()))?
+            .clone();
 
         let creds: file_manager::Credentials = value
             .creds
+            .as_ref()
             .ok_or_else(|| RestError::MissingParameter("stage info -> credentials".to_string()))?
             .try_into()?;
 
@@ -317,21 +322,29 @@ impl TryFrom<StageInfo> for file_manager::StageInfo {
     }
 }
 
-impl TryFrom<Credentials> for file_manager::Credentials {
+impl TryFrom<&Credentials> for file_manager::Credentials {
     type Error = RestError;
 
-    fn try_from(value: Credentials) -> Result<Self, Self::Error> {
+    fn try_from(value: &Credentials) -> Result<Self, Self::Error> {
         let aws_key_id = value
             .aws_key_id
-            .ok_or_else(|| RestError::MissingParameter("credentials -> aws key id".to_string()))?;
+            .as_ref()
+            .ok_or_else(|| RestError::MissingParameter("credentials -> aws key id".to_string()))?
+            .clone();
 
-        let aws_secret_key = value.aws_secret_key.ok_or_else(|| {
-            RestError::MissingParameter("credentials -> aws secret key".to_string())
-        })?;
+        let aws_secret_key = value
+            .aws_secret_key
+            .as_ref()
+            .ok_or_else(|| {
+                RestError::MissingParameter("credentials -> aws secret key".to_string())
+            })?
+            .clone();
 
         let aws_token = value
             .aws_token
-            .ok_or_else(|| RestError::MissingParameter("credentials -> aws token".to_string()))?;
+            .as_ref()
+            .ok_or_else(|| RestError::MissingParameter("credentials -> aws token".to_string()))?
+            .clone();
 
         Ok(file_manager::Credentials {
             aws_key_id,
@@ -341,11 +354,11 @@ impl TryFrom<Credentials> for file_manager::Credentials {
     }
 }
 
-impl From<EncryptionMaterial> for file_manager::EncryptionMaterial {
-    fn from(value: EncryptionMaterial) -> Self {
+impl From<&EncryptionMaterial> for file_manager::EncryptionMaterial {
+    fn from(value: &EncryptionMaterial) -> Self {
         Self {
-            query_stage_master_key: value.query_stage_master_key,
-            query_id: value.query_id,
+            query_stage_master_key: value.query_stage_master_key.clone(),
+            query_id: value.query_id.clone(),
             // Snowflake sends smk_id as i64, but later expects it as a string
             smk_id: value.smk_id.to_string(),
         }
@@ -361,12 +374,11 @@ pub enum OneOrMany<T> {
 }
 
 impl<T> OneOrMany<T> {
-    /// Consumes the enum and returns a Vec<T>,
-    /// wrapping the single item in a vector if necessary.
-    fn into_vec(self) -> Vec<T> {
+    /// Returns a slice of the items without consuming the enum.
+    fn as_slice(&self) -> &[T] {
         match self {
-            OneOrMany::One(item) => vec![item],
-            OneOrMany::Many(vec) => vec,
+            OneOrMany::One(item) => std::slice::from_ref(item),
+            OneOrMany::Many(vec) => vec.as_slice(),
         }
     }
 }
