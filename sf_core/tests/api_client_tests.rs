@@ -1045,7 +1045,7 @@ fn test_put_select() {
 fn test_put_get_with_auto_compress_set(auto_compress: bool) {
     let mut client = SnowflakeTestClient::new();
     let stage_name = "TEST_STAGE_PUT_COMPRESS";
-    
+
     // Create test file with specific name "test_put_compress.csv"
     let original_file_name = "test_put_compress.csv".to_string();
     let temp_dir = tempfile::TempDir::new().unwrap();
