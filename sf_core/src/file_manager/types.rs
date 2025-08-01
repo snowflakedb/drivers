@@ -13,6 +13,7 @@ pub struct UploadData {
     pub src_locations: Vec<String>,
     pub stage_info: StageInfo,
     pub encryption_materials: Vec<EncryptionMaterial>,
+    pub auto_compress: bool,
 }
 
 #[derive(Debug)]

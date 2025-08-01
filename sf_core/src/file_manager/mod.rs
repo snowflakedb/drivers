@@ -25,23 +25,35 @@ pub async fn upload_file(mut data: UploadData) -> Result<(), FileManagerError> {
 
     let file_path = Path::new(&src_location);
     let mut input_file = File::open(file_path)?;
-    let file_name = file_path
+    let mut file_name_with_extension = file_path
         .file_name()
         .and_then(|name| name.to_str())
-        .ok_or_else(|| RestError::Internal("Invalid file name".to_string()))?;
+        .ok_or_else(|| RestError::Internal("Invalid file name".to_string()))?
+        .to_string();
 
     let mut input_data = Vec::new();
     input_file.read_to_end(&mut input_data)?;
 
-    // Read and compress the file data
-    let compressed_data = compress_data(input_data, file_name)?;
+    // Compress the file data if automatic compression is enabled
+    if data.auto_compress {
+        tracing::info!("Compressing file data before upload");
+        input_data = compress_data(input_data, file_name_with_extension.as_str())?;
+        file_name_with_extension = format!("{file_name_with_extension}.gz");
+    } else {
+        tracing::info!("Skipping compression, auto_compress is disabled");
+    }
 
     // Encrypt the compressed data using the provided encryption material
-    let encryption_result = encrypt_file_data(&compressed_data, encryption_material)?;
+    let encryption_result = encrypt_file_data(&input_data, encryption_material)?;
 
     tracing::trace!("Encryption metadata: {:?}", encryption_result.metadata);
 
-    upload_to_s3(encryption_result, &data.stage_info, file_name).await?;
+    upload_to_s3(
+        encryption_result,
+        &data.stage_info,
+        file_name_with_extension.as_str(),
+    )
+    .await?;
 
     Ok(())
 }

@@ -24,6 +24,8 @@ pub struct Data {
     pub rowset_base64: Option<String>,
     #[serde(rename = "command")]
     pub command: Option<String>,
+    #[serde(rename = "autoCompress")]
+    auto_compress: Option<bool>,
 
     // file transfer response data
     #[serde(rename = "src_locations")]
@@ -92,8 +94,6 @@ pub struct Data {
     _parallel: Option<i64>,
     #[serde(rename = "threshold")]
     _threshold: Option<i64>,
-    #[serde(rename = "autoCompress")]
-    _auto_compress: Option<bool>,
     #[serde(rename = "overwrite")]
     _overwrite: Option<bool>,
     #[serde(rename = "sourceCompression")]
@@ -281,10 +281,15 @@ impl Data {
             .ok_or_else(|| RestError::MissingParameter("encryption material".to_string()))?
             .into();
 
+        let auto_compress = self
+            .auto_compress
+            .ok_or_else(|| RestError::MissingParameter("auto compress".to_string()))?;
+
         Ok(file_manager::UploadData {
             src_locations,
             stage_info,
             encryption_materials,
+            auto_compress,
         })
     }
 

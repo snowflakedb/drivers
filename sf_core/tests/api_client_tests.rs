@@ -1041,3 +1041,133 @@ fn test_put_select() {
     assert_eq!(col2_value, "2");
     assert_eq!(col3_value, "3");
 }
+
+fn test_put_get_with_auto_compress_set(auto_compress: bool) {
+    let mut client = SnowflakeTestClient::new();
+    let stage_name = "TEST_STAGE_PUT_COMPRESS";
+
+    // Create test file with specific name "test_put_no_compress.csv"
+    let original_file_name = "test_put_compress.csv".to_string();
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let test_file_path = temp_dir.path().join(&original_file_name);
+    fs::write(&test_file_path, "1,2,3\n").unwrap();
+
+    let uploaded_file_name = if auto_compress {
+        format!("{original_file_name}.gz")
+    } else {
+        original_file_name.clone()
+    };
+
+    // Create temporary stage
+    client.execute_query(&format!("create temporary stage {stage_name}"));
+
+    let auto_compress_option = if auto_compress {
+        "AUTO_COMPRESS=TRUE"
+    } else {
+        "AUTO_COMPRESS=FALSE"
+    };
+
+    // Upload file using PUT with auto_compress=false
+    let put_sql = format!(
+        "PUT 'file://{test_file}' @{stage_name} {auto_compress_option}",
+        test_file = test_file_path.to_str().unwrap().replace("\\", "/")
+    );
+    client.execute_query(&put_sql);
+
+    // Verify file was uploaded with LS command
+    let ls_result = client.execute_query(&format!("LS @{stage_name}"));
+
+    // Parse Arrow result to verify file listing
+    let mut arrow_helper = ArrowResultHelper::from_result(ls_result);
+    let batch = arrow_helper.assert_single_row();
+
+    // Verify LS result structure: [name, size, md5, last_modified]
+    assert_eq!(batch.num_columns(), 4, "LS should return 4 columns");
+
+    // Check file name (column 0)
+    let name_array = batch.column(0);
+    assert_eq!(
+        name_array.data_type(),
+        &arrow::datatypes::DataType::Utf8,
+        "File name should be string"
+    );
+    let name_str = name_array
+        .as_any()
+        .downcast_ref::<StringArray>()
+        .unwrap()
+        .value(0);
+
+    let expected_full_path = format!("{}/{uploaded_file_name}", stage_name.to_lowercase());
+    assert_eq!(
+        name_str, expected_full_path,
+        "File name should match uploaded file"
+    );
+
+    let download_dir = temp_dir.path().join("download");
+    fs::create_dir_all(&download_dir).unwrap();
+
+    // Download file using GET
+    let get_sql = format!(
+        "GET @{stage_name}/{original_file_name} file://{}/",
+        download_dir.to_str().unwrap().replace("\\", "/")
+    );
+    let _get_result = client.execute_query(&get_sql);
+
+    // Verify the downloaded file exists
+    let downloaded_file = download_dir.join(&uploaded_file_name);
+    assert!(
+        downloaded_file.exists(),
+        "Downloaded file should exist at {downloaded_file:?}",
+    );
+
+    let downloaded_file_name = downloaded_file.file_name().unwrap().to_str().unwrap();
+
+    if auto_compress {
+        let wrong_file = download_dir.join(&original_file_name);
+        assert!(
+            !wrong_file.exists(),
+            "Uncompressed file should not exist at {wrong_file:?}",
+        );
+        assert_eq!(
+            downloaded_file_name, uploaded_file_name,
+            "Downloaded file should be gzipped"
+        );
+        // Verify the content matches the original
+        let decompressed_content = decompress_gzipped_file(&downloaded_file)
+            .expect("Failed to decompress downloaded file");
+        let original_content = fs::read_to_string(&test_file_path).unwrap();
+        assert_eq!(
+            decompressed_content, original_content,
+            "Downloaded and decompressed content should match original"
+        );
+    } else {
+        let wrong_file = download_dir.join(format!("{original_file_name}.gz"));
+        assert!(
+            !wrong_file.exists(),
+            "Compressed file should not exist at {wrong_file:?}",
+        );
+        assert_eq!(
+            downloaded_file_name, original_file_name,
+            "Downloaded should file not be gzipped"
+        );
+        // Verify the content matches the original
+        let original_content = fs::read_to_string(&test_file_path).unwrap();
+        let downloaded_content = fs::read_to_string(&downloaded_file).unwrap();
+        assert_eq!(
+            downloaded_content, original_content,
+            "Downloaded content should match original"
+        );
+    }
+}
+
+#[test]
+fn test_put_get_with_auto_compress_false() {
+    // Test with auto_compress=false
+    test_put_get_with_auto_compress_set(false);
+}
+
+#[test]
+fn test_put_get_with_auto_compress_true() {
+    // Test with auto_compress=true
+    test_put_get_with_auto_compress_set(true);
+}

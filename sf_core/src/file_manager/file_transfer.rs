@@ -17,14 +17,13 @@ const CONTENT_TYPE_OCTET_STREAM: &str = "application/octet-stream";
 pub async fn upload_to_s3(
     encryption_result: EncryptionResult,
     stage_info: &StageInfo,
-    file_name: &str,
+    file_name_with_extension: &str,
 ) -> Result<(), FileTransferError> {
     let s3_client = create_s3_client(stage_info, SNOWFLAKE_UPLOAD_PROVIDER).await;
 
     let s3_location = S3Location::new(&stage_info.location)?;
 
-    let filename_with_extension = format!("{file_name}.gz");
-    let s3_key = s3_location.build_key(filename_with_extension.as_str());
+    let s3_key = s3_location.build_key(file_name_with_extension);
 
     // Serialize encryption metadata
     let mat_desc = serde_json::to_string(&encryption_result.metadata.material_desc)?;
