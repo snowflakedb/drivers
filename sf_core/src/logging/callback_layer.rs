@@ -28,7 +28,7 @@ where
     S: Subscriber + for<'a> registry::LookupSpan<'a>,
 {
     fn on_event(&self, event: &Event<'_>, _ctx: Context<'_, S>) {
-        let level = match event.metadata().level().clone() {
+        let level = match *event.metadata().level() {
             Level::ERROR => 0,
             Level::WARN => 1,
             Level::INFO => 2,
