@@ -45,9 +45,9 @@ where
         });
         // let message = message.as_bytes();
         let line = event.metadata().line().unwrap_or(0);
-        let message = CString::new(message).unwrap();
-        let filename = CString::new(event.metadata().file().unwrap_or("unknown")).unwrap();
-        let function = CString::new(event.metadata().name()).unwrap();
+        let message = CString::new(message).unwrap_or_default();
+        let filename = CString::new(event.metadata().file().unwrap_or("unknown")).unwrap_or_default();
+        let function = CString::new(event.metadata().name()).unwrap_or_default();
         unsafe {
             (self.callback)(
                 level,
