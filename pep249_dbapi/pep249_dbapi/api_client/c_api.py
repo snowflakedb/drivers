@@ -65,4 +65,10 @@ def logger_callback(level, message, filename, line, function):
     return 0
 
 c_logger_callback = LOGGER_CALLBACK(logger_callback)
-sf_core_init_logger(c_logger_callback)
+def register_default_logger_callback():
+    """
+    Registers the default logger callback with the core API.
+    Call this function explicitly to set up logging.
+    """
+    c_logger_callback = LOGGER_CALLBACK(logger_callback)
+    sf_core_init_logger(c_logger_callback)
