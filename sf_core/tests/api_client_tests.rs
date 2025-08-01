@@ -873,7 +873,12 @@ fn test_put_select() {
 
     // Setup stage and upload file
     client.create_temporary_stage(stage_name);
-    client.put_file_with_options(&test_file_path, stage_name, "");
+
+    let put_sql = format!(
+        "PUT 'file://{}' @{stage_name}",
+        test_file_path.to_str().unwrap().replace("\\", "/")
+    );
+    client.execute_query(&put_sql);
 
     // Query the uploaded file data
     let select_sql = format!("select $1, $2, $3 from @{stage_name}");
@@ -896,7 +901,12 @@ fn test_put_ls() {
 
     // Set up stage and upload file
     client.create_temporary_stage(stage_name);
-    client.put_file_with_options(&test_file_path, stage_name, "");
+
+    let put_sql = format!(
+        "PUT 'file://{}' @{stage_name}",
+        test_file_path.to_str().unwrap().replace("\\", "/")
+    );
+    client.execute_query(&put_sql);
 
     // Verify file was uploaded with LS command
     let expected_file_name = format!("{}/test_put_ls.csv.gz", stage_name.to_lowercase()); // File is compressed by default
@@ -920,14 +930,23 @@ fn test_get() {
 
     // Setup stage and upload file
     client.create_temporary_stage(stage_name);
-    client.put_file_with_options(&test_file_path, stage_name, "");
+
+    let put_sql = format!(
+        "PUT 'file://{}' @{stage_name}",
+        test_file_path.to_str().unwrap().replace("\\", "/")
+    );
+    client.execute_query(&put_sql);
 
     // Create directory for download
     let download_dir = temp_dir.path().join("download");
     fs::create_dir_all(&download_dir).unwrap();
 
     // Download file using GET
-    client.get_file(&format!("{stage_name}/{file_name}"), &download_dir);
+    let get_sql = format!(
+        "GET @{stage_name}/{file_name} file://{}/",
+        download_dir.to_str().unwrap().replace("\\", "/")
+    );
+    client.execute_query(&get_sql);
 
     // Verify the downloaded file exists and content matches
     let expected_file_path = download_dir.join("test_get.csv.gz");
@@ -958,14 +977,23 @@ fn test_put_get_with_auto_compress_false() {
 
     // Setup stage and upload file
     client.create_temporary_stage(stage_name);
-    client.put_file_with_options(&test_file_path, stage_name, "AUTO_COMPRESS=FALSE");
+
+    let put_sql = format!(
+        "PUT 'file://{}' @{stage_name} AUTO_COMPRESS=FALSE",
+        test_file_path.to_str().unwrap().replace("\\", "/")
+    );
+    client.execute_query(&put_sql);
 
     // Create directory for download
     let download_dir = temp_dir.path().join("download");
     fs::create_dir_all(&download_dir).unwrap();
 
     // Download file using GET
-    client.get_file(&format!("{stage_name}/{file_name}"), &download_dir);
+    let get_sql = format!(
+        "GET @{stage_name}/{file_name} file://{}/",
+        download_dir.to_str().unwrap().replace("\\", "/")
+    );
+    client.execute_query(&get_sql);
 
     // Verify the downloaded file exists and content matches
     let expected_file_path = download_dir.join("test_put_get_compress_false.csv");
@@ -1000,14 +1028,22 @@ fn test_put_get_with_auto_compress_true() {
 
     // Setup stage and upload file
     client.create_temporary_stage(stage_name);
-    client.put_file_with_options(&test_file_path, stage_name, "AUTO_COMPRESS=TRUE");
+
+    let put_sql = format!(
+        "PUT 'file://{}' @{stage_name} AUTO_COMPRESS=TRUE",
+        test_file_path.to_str().unwrap().replace("\\", "/")
+    );
+    client.execute_query(&put_sql);
 
     // Create directory for download
     let download_dir = temp_dir.path().join("download");
     fs::create_dir_all(&download_dir).unwrap();
 
-    // Download file using GET
-    client.get_file(&format!("{stage_name}/{file_name}"), &download_dir);
+    let get_sql = format!(
+        "GET @{stage_name}/{file_name} file://{}/",
+        download_dir.to_str().unwrap().replace("\\", "/")
+    );
+    client.execute_query(&get_sql);
 
     // Verify the downloaded file exists and content matches
     let expected_file_path = download_dir.join("test_put_get_compress_true.csv.gz");

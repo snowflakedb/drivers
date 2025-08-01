@@ -205,7 +205,7 @@ impl SnowflakeTestClient {
         self.execute_query(&format!("create temporary stage {stage_name}"));
     }
 
-    pub fn put_file_with_options(
+    pub fn _put_file_with_options(
         &mut self,
         file_path: &std::path::Path,
         stage_name: &str,
@@ -218,7 +218,7 @@ impl SnowflakeTestClient {
         self.execute_query(&put_sql);
     }
 
-    pub fn get_file(&mut self, stage_file_path: &str, download_dir: &std::path::Path) {
+    pub fn _get_file(&mut self, stage_file_path: &str, download_dir: &std::path::Path) {
         let get_sql = format!(
             "GET @{stage_file_path} file://{}/",
             download_dir.to_str().unwrap().replace("\\", "/")
