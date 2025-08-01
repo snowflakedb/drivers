@@ -2,7 +2,7 @@ extern crate sf_core;
 extern crate tracing;
 extern crate tracing_subscriber;
 
-use arrow::array::{Array, Int8Array};
+use arrow::array::{Array, Float64Array, Int8Array, Int64Array, StringArray};
 use arrow::ffi_stream::ArrowArrayStreamReader;
 use arrow::ffi_stream::FFI_ArrowArrayStream;
 use flate2::read::GzDecoder;
@@ -201,26 +201,29 @@ impl SnowflakeTestClient {
             .unwrap()
     }
 
-    /// Executes a SQL query and expects it to fail with a specific error message
-    pub fn _execute_query_expect_error(&mut self, sql: &str, expected_error: &str) {
-        let stmt_handle = self.new_statement();
-        self.driver
-            .statement_set_sql_query(stmt_handle.clone(), sql.to_string())
-            .unwrap();
+    pub fn create_temporary_stage(&mut self, stage_name: &str) {
+        self.execute_query(&format!("create temporary stage {stage_name}"));
+    }
 
-        let result = self.driver.statement_execute_query(stmt_handle.clone());
-        match result {
-            Err(err) => {
-                let error_msg = format!("{err:?}");
-                assert!(
-                    error_msg.contains(expected_error),
-                    "Expected error to contain '{expected_error}', got: {error_msg}"
-                );
-            }
-            Ok(_) => {
-                panic!("Expected query to fail with '{expected_error}' error, but it succeeded");
-            }
-        }
+    pub fn put_file_with_options(
+        &mut self,
+        file_path: &std::path::Path,
+        stage_name: &str,
+        options: &str,
+    ) {
+        let put_sql = format!(
+            "PUT 'file://{}' @{stage_name} {options}",
+            file_path.to_str().unwrap().replace("\\", "/")
+        );
+        self.execute_query(&put_sql);
+    }
+
+    pub fn get_file(&mut self, stage_file_path: &str, download_dir: &std::path::Path) {
+        let get_sql = format!(
+            "GET @{stage_file_path} file://{}/",
+            download_dir.to_str().unwrap().replace("\\", "/")
+        );
+        self.execute_query(&get_sql);
     }
 }
 
@@ -263,34 +266,88 @@ impl ArrowResultHelper {
         }
     }
 
-    /// Gets the first record batch (convenience method)
-    pub fn first_batch(&mut self) -> arrow::record_batch::RecordBatch {
-        self.next_batch()
-            .expect("Expected at least one record batch")
+    /// Converts all result data to a 2D array of strings for easy comparison
+    pub fn transform_into_string_array(&mut self) -> Vec<Vec<String>> {
+        let mut all_rows = Vec::new();
+
+        while let Some(batch) = self.next_batch() {
+            for row_idx in 0..batch.num_rows() {
+                let mut row = Vec::new();
+                for col_idx in 0..batch.num_columns() {
+                    let column = batch.column(col_idx);
+                    let value_str = extract_string_value(column, row_idx);
+                    row.push(value_str);
+                }
+                all_rows.push(row);
+            }
+        }
+
+        all_rows
     }
 
-    /// Extracts an integer value from the first column of the first row
-    pub fn first_int_value(&mut self) -> i8 {
-        let batch = self.first_batch();
-        let array_ref = batch.column(0);
-        let int_array = array_ref
-            .as_any()
-            .downcast_ref::<Int8Array>()
-            .expect("Expected int8 array");
-        int_array.value(0)
-    }
+    /// Asserts that the result equals the expected 2D array
+    pub fn assert_equals_array(&mut self, expected: Vec<Vec<&str>>) {
+        let actual = self.transform_into_string_array();
+        let expected_strings: Vec<Vec<String>> = expected
+            .iter()
+            .map(|row| row.iter().map(|s| s.to_string()).collect())
+            .collect();
 
-    /// Validates that exactly one row is returned
-    pub fn assert_single_row(&mut self) -> arrow::record_batch::RecordBatch {
-        let batch = self
-            .next_batch()
-            .expect("Expected at least one record batch");
-        assert_eq!(batch.num_rows(), 1, "Expected exactly one row");
-        assert!(
-            self.next_batch().is_none(),
-            "Expected no more record batches"
+        assert_eq!(
+            actual, expected_strings,
+            "Arrow result does not match expected array"
         );
-        batch
+    }
+
+    /// Convenience method for single row assertions
+    pub fn assert_equals_single_row(&mut self, expected: Vec<&str>) {
+        self.assert_equals_array(vec![expected]);
+    }
+
+    /// Convenience method for single value assertions
+    pub fn assert_equals_single_value(&mut self, expected: &str) {
+        self.assert_equals_array(vec![vec![expected]]);
+    }
+}
+
+/// Extracts a string representation of a value from an Arrow array at the given index
+fn extract_string_value(column: &dyn Array, row_idx: usize) -> String {
+    use arrow::datatypes::DataType;
+
+    if column.is_null(row_idx) {
+        return "NULL".to_string();
+    }
+
+    match column.data_type() {
+        DataType::Utf8 => {
+            let string_array = column
+                .as_any()
+                .downcast_ref::<StringArray>()
+                .expect("Expected string array");
+            string_array.value(row_idx).to_string()
+        }
+        DataType::Int8 => {
+            let int_array = column
+                .as_any()
+                .downcast_ref::<Int8Array>()
+                .expect("Expected int8 array");
+            int_array.value(row_idx).to_string()
+        }
+        DataType::Int64 => {
+            let int_array = column
+                .as_any()
+                .downcast_ref::<Int64Array>()
+                .expect("Expected int64 array");
+            int_array.value(row_idx).to_string()
+        }
+        DataType::Float64 => {
+            let float_array = column
+                .as_any()
+                .downcast_ref::<Float64Array>()
+                .expect("Expected float64 array");
+            float_array.value(row_idx).to_string()
+        }
+        _ => format!("UNSUPPORTED_TYPE({:?})", column.data_type()),
     }
 }
 
@@ -303,4 +360,14 @@ pub fn decompress_gzipped_file<P: AsRef<std::path::Path>>(file_path: P) -> std::
     let mut decompressed_content = String::new();
     decoder.read_to_string(&mut decompressed_content)?;
     Ok(decompressed_content)
+}
+
+pub fn create_test_file(
+    temp_dir: &std::path::Path,
+    file_name: &str,
+    content: &str,
+) -> std::path::PathBuf {
+    let file_path = temp_dir.join(file_name);
+    fs::write(&file_path, content).unwrap();
+    file_path
 }

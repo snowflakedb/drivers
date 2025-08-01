@@ -2,13 +2,13 @@ extern crate sf_core;
 
 mod test_utils;
 
-use arrow::array::{Array, StringArray};
 use sf_core::api_client::new_database_driver_v1_client;
 use sf_core::thrift_gen::database_driver_v1::InfoCode;
 use std::fs;
-use std::io::Write;
-use tempfile::NamedTempFile;
-use test_utils::{ArrowResultHelper, SnowflakeTestClient, decompress_gzipped_file, setup_logging};
+use test_utils::{
+    ArrowResultHelper, SnowflakeTestClient, create_test_file, decompress_gzipped_file,
+    setup_logging,
+};
 
 // Database operation tests
 #[test]
@@ -847,8 +847,7 @@ fn test_snowflake_select_1() {
     let result = client.execute_query("SELECT 1");
 
     let mut arrow_helper = ArrowResultHelper::from_result(result);
-    let value = arrow_helper.first_int_value();
-    assert_eq!(value, 1);
+    arrow_helper.assert_equals_single_value("1");
 }
 
 #[test]
@@ -858,77 +857,54 @@ fn test_create_temporary_stage() {
     let result = client.execute_query(&format!("create temporary stage {stage_name}"));
 
     let mut arrow_helper = ArrowResultHelper::from_result(result);
-    let batch = arrow_helper.assert_single_row();
-    let expected_message = format!("Stage area {stage_name} successfully created.");
+    arrow_helper
+        .assert_equals_single_value(&format!("Stage area {stage_name} successfully created."));
+}
 
-    // Extract the string value from the batch
-    let array_ref = batch.column(0);
-    let string_array = array_ref
-        .as_any()
-        .downcast_ref::<StringArray>()
-        .expect("Expected string array");
-    let message = string_array.value(0).to_string();
+#[test]
+fn test_put_select() {
+    let mut client = SnowflakeTestClient::new();
+    let stage_name = "TEST_STAGE_PUT_SELECT";
+    let file_name = "test_put_select.csv";
 
-    assert_eq!(
-        message, expected_message,
-        "Expected stage creation success message"
-    );
+    // Create test file with CSV data
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let test_file_path = create_test_file(temp_dir.path(), file_name, "1,2,3\n");
+
+    // Setup stage and upload file
+    client.create_temporary_stage(stage_name);
+    client.put_file_with_options(&test_file_path, stage_name, "");
+
+    // Query the uploaded file data
+    let select_sql = format!("select $1, $2, $3 from @{stage_name}");
+    let result = client.execute_query(&select_sql);
+
+    // Verify the data matches what we uploaded
+    let mut arrow_helper = ArrowResultHelper::from_result(result);
+    arrow_helper.assert_equals_single_row(vec!["1", "2", "3"]);
 }
 
 #[test]
 fn test_put_ls() {
     let mut client = SnowflakeTestClient::new();
     let stage_name = "TEST_STAGE_PUT_LS";
+    let file_name = "test_put_ls.csv";
 
-    // Create temporary stage
-    client.execute_query(&format!("create temporary stage {stage_name}"));
+    // Setup test environment
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let test_file_path = create_test_file(temp_dir.path(), file_name, "1,2,3\n");
 
-    // Create test file
-    let mut test_file = NamedTempFile::new().unwrap();
-    test_file.write_all("test\n".as_bytes()).unwrap();
-    test_file.flush().unwrap();
-
-    // Execute PUT command
-    let put_sql = format!(
-        "PUT 'file://{test_file}' @{stage_name}",
-        test_file = test_file.path().to_str().unwrap().replace("\\", "/")
-    );
-    client.execute_query(&put_sql);
+    // Set up stage and upload file
+    client.create_temporary_stage(stage_name);
+    client.put_file_with_options(&test_file_path, stage_name, "");
 
     // Verify file was uploaded with LS command
+    let expected_file_name = format!("{}/test_put_ls.csv.gz", stage_name.to_lowercase()); // File is compressed by default
     let ls_result = client.execute_query(&format!("LS @{stage_name}"));
-
-    // Parse Arrow result to verify file listing
-    let mut arrow_helper = ArrowResultHelper::from_result(ls_result);
-    let batch = arrow_helper.assert_single_row();
-
-    // Verify LS result structure: [name, size, md5, last_modified]
-    assert_eq!(batch.num_columns(), 4, "LS should return 4 columns");
-
-    // Check file name (column 0)
-    let name_array = batch.column(0);
+    let result_vector = ArrowResultHelper::from_result(ls_result).transform_into_string_array();
     assert_eq!(
-        name_array.data_type(),
-        &arrow::datatypes::DataType::Utf8,
-        "File name should be string"
-    );
-    let name_str = name_array
-        .as_any()
-        .downcast_ref::<StringArray>()
-        .unwrap()
-        .value(0);
-
-    let temp_filename = test_file.path().file_name().unwrap().to_str().unwrap();
-    let expected_file_name = format!("{temp_filename}.gz");
-    let expected_full_path = format!("{}/{expected_file_name}", stage_name.to_lowercase());
-    assert_eq!(
-        name_str, expected_full_path,
-        "File name should match uploaded file"
-    );
-
-    assert!(
-        name_str.ends_with(".gz"),
-        "File should be compressed with .gz"
+        result_vector[0][0], expected_file_name,
+        "File should be listed in stage"
     );
 }
 
@@ -936,47 +912,33 @@ fn test_put_ls() {
 fn test_get() {
     let mut client = SnowflakeTestClient::new();
     let stage_name = "TEST_STAGE_GET";
+    let file_name = "test_get.csv";
 
-    // Create temporary directories
+    // Set up test environment
     let temp_dir = tempfile::TempDir::new().unwrap();
-    let upload_dir = temp_dir.path().join("upload");
+    let test_file_path = create_test_file(temp_dir.path(), file_name, "1,2,3\n");
+
+    // Setup stage and upload file
+    client.create_temporary_stage(stage_name);
+    client.put_file_with_options(&test_file_path, stage_name, "");
+
+    // Create directory for download
     let download_dir = temp_dir.path().join("download");
-    fs::create_dir_all(&upload_dir).unwrap();
     fs::create_dir_all(&download_dir).unwrap();
 
-    // Create test file with known content
-    let test_file_path = upload_dir.join("data.csv");
-    fs::write(&test_file_path, "1,2,3\n").unwrap();
-
-    // Create temporary stage
-    client.execute_query(&format!("create temporary stage {stage_name}"));
-
-    // Upload file using PUT
-    let put_sql = format!(
-        "PUT 'file://{test_file}' @{stage_name}",
-        test_file = test_file_path.to_str().unwrap().replace("\\", "/")
-    );
-    client.execute_query(&put_sql);
-
     // Download file using GET
-    let get_sql = format!(
-        "GET @{stage_name}/data.csv.gz file://{download_dir}/",
-        download_dir = download_dir.to_str().unwrap().replace("\\", "/")
-    );
-    let _get_result = client.execute_query(&get_sql);
+    client.get_file(&format!("{stage_name}/{file_name}"), &download_dir);
 
-    // Verify the downloaded file exists and is gzipped
-    let downloaded_file_gz = download_dir.join("data.csv.gz");
+    // Verify the downloaded file exists and content matches
+    let expected_file_path = download_dir.join("test_get.csv.gz");
     assert!(
-        downloaded_file_gz.exists(),
-        "Downloaded gzipped file should exist at {downloaded_file_gz:?}",
+        expected_file_path.exists(),
+        "Downloaded gzipped file should exist at {expected_file_path:?}",
     );
 
-    // Decompress the file using utility function
+    // Decompress and verify content
     let decompressed_content =
-        decompress_gzipped_file(&downloaded_file_gz).expect("Failed to decompress downloaded file");
-
-    // Verify the content matches the original
+        decompress_gzipped_file(&expected_file_path).expect("Failed to decompress downloaded file");
     let original_content = fs::read_to_string(&test_file_path).unwrap();
     assert_eq!(
         decompressed_content, original_content,
@@ -985,187 +947,86 @@ fn test_get() {
 }
 
 #[test]
-fn test_put_select() {
+fn test_put_get_with_auto_compress_false() {
     let mut client = SnowflakeTestClient::new();
-    let stage_name = "TEST_STAGE_PUT_SELECT";
+    let stage_name = "TEST_STAGE_PUT_GET_COMPRESS_FALSE";
+    let file_name = "test_put_get_compress_false.csv";
 
-    // Create test file with specific name "test_put_select.csv"
+    // Set up test environment
     let temp_dir = tempfile::TempDir::new().unwrap();
-    let test_file_path = temp_dir.path().join("test_put_select.csv");
-    fs::write(&test_file_path, "1,2,3\n").unwrap();
+    let test_file_path = create_test_file(temp_dir.path(), file_name, "1,2,3\n");
 
-    // Create temporary stage
-    client.execute_query(&format!("create temporary stage {stage_name}"));
+    // Setup stage and upload file
+    client.create_temporary_stage(stage_name);
+    client.put_file_with_options(&test_file_path, stage_name, "AUTO_COMPRESS=FALSE");
 
-    // Upload file using PUT
-    let put_sql = format!(
-        "PUT 'file://{test_file}' @{stage_name}",
-        test_file = test_file_path.to_str().unwrap().replace("\\", "/")
-    );
-    client.execute_query(&put_sql);
-
-    // Query the uploaded file data
-    let select_sql = format!("select $1, $2, $3 from @{stage_name}");
-    let result = client.execute_query(&select_sql);
-
-    // Verify the data matches what we uploaded
-    let mut arrow_helper = ArrowResultHelper::from_result(result);
-    let batch = arrow_helper.assert_single_row();
-
-    // Verify we have 3 columns
-    assert_eq!(batch.num_columns(), 3, "Should have 3 columns");
-
-    // Extract values from the batch
-    let col1_array = batch
-        .column(0)
-        .as_any()
-        .downcast_ref::<StringArray>()
-        .unwrap();
-    let col2_array = batch
-        .column(1)
-        .as_any()
-        .downcast_ref::<StringArray>()
-        .unwrap();
-    let col3_array = batch
-        .column(2)
-        .as_any()
-        .downcast_ref::<StringArray>()
-        .unwrap();
-
-    let col1_value = col1_array.value(0);
-    let col2_value = col2_array.value(0);
-    let col3_value = col3_array.value(0);
-
-    // Assert the values match the uploaded CSV data
-    assert_eq!(col1_value, "1");
-    assert_eq!(col2_value, "2");
-    assert_eq!(col3_value, "3");
-}
-
-fn test_put_get_with_auto_compress_set(auto_compress: bool) {
-    let mut client = SnowflakeTestClient::new();
-    let stage_name = "TEST_STAGE_PUT_COMPRESS";
-
-    // Create test file with specific name "test_put_compress.csv"
-    let original_file_name = "test_put_compress.csv".to_string();
-    let temp_dir = tempfile::TempDir::new().unwrap();
-    let test_file_path = temp_dir.path().join(&original_file_name);
-    fs::write(&test_file_path, "1,2,3\n").unwrap();
-
-    let uploaded_file_name = if auto_compress {
-        format!("{original_file_name}.gz")
-    } else {
-        original_file_name.clone()
-    };
-
-    // Create temporary stage
-    client.execute_query(&format!("create temporary stage {stage_name}"));
-
-    let auto_compress_option = if auto_compress {
-        "AUTO_COMPRESS=TRUE"
-    } else {
-        "AUTO_COMPRESS=FALSE"
-    };
-
-    // Upload file using PUT with auto_compress option set
-    let put_sql = format!(
-        "PUT 'file://{test_file}' @{stage_name} {auto_compress_option}",
-        test_file = test_file_path.to_str().unwrap().replace("\\", "/")
-    );
-    client.execute_query(&put_sql);
-
-    // Verify file was uploaded with LS command
-    let ls_result = client.execute_query(&format!("LS @{stage_name}"));
-
-    // Parse Arrow result to verify file listing
-    let mut arrow_helper = ArrowResultHelper::from_result(ls_result);
-    let batch = arrow_helper.assert_single_row();
-
-    // Verify LS result structure: [name, size, md5, last_modified]
-    assert_eq!(batch.num_columns(), 4, "LS should return 4 columns");
-
-    // Check file name (column 0)
-    let name_array = batch.column(0);
-    assert_eq!(
-        name_array.data_type(),
-        &arrow::datatypes::DataType::Utf8,
-        "File name should be string"
-    );
-    let name_str = name_array
-        .as_any()
-        .downcast_ref::<StringArray>()
-        .unwrap()
-        .value(0);
-
-    let expected_full_path = format!("{}/{uploaded_file_name}", stage_name.to_lowercase());
-    assert_eq!(
-        name_str, expected_full_path,
-        "File name should match uploaded file"
-    );
-
+    // Create directory for download
     let download_dir = temp_dir.path().join("download");
     fs::create_dir_all(&download_dir).unwrap();
 
     // Download file using GET
-    let get_sql = format!(
-        "GET @{stage_name}/{original_file_name} file://{}/",
-        download_dir.to_str().unwrap().replace("\\", "/")
-    );
-    let _get_result = client.execute_query(&get_sql);
+    client.get_file(&format!("{stage_name}/{file_name}"), &download_dir);
 
-    // Verify the downloaded file exists
-    let downloaded_file = download_dir.join(&uploaded_file_name);
+    // Verify the downloaded file exists and content matches
+    let expected_file_path = download_dir.join("test_put_get_compress_false.csv");
     assert!(
-        downloaded_file.exists(),
-        "Downloaded file should exist at {downloaded_file:?}",
+        expected_file_path.exists(),
+        "Downloaded file should exist at {expected_file_path:?}",
+    );
+    let not_expected_file_path = download_dir.join("test_put_get_compress_false.csv.gz");
+    assert!(
+        !not_expected_file_path.exists(),
+        "Compressed file should not exist at {not_expected_file_path:?}",
     );
 
-    let downloaded_file_name = downloaded_file.file_name().unwrap().to_str().unwrap();
-
-    if auto_compress {
-        let wrong_file = download_dir.join(&original_file_name);
-        assert!(
-            !wrong_file.exists(),
-            "Uncompressed file should not exist at {wrong_file:?}",
-        );
-        assert_eq!(
-            downloaded_file_name, uploaded_file_name,
-            "Downloaded file should be gzipped"
-        );
-        // Verify the content matches the original
-        let decompressed_content = decompress_gzipped_file(&downloaded_file)
-            .expect("Failed to decompress downloaded file");
-        let original_content = fs::read_to_string(&test_file_path).unwrap();
-        assert_eq!(
-            decompressed_content, original_content,
-            "Downloaded and decompressed content should match original"
-        );
-    } else {
-        let wrong_file = download_dir.join(format!("{original_file_name}.gz"));
-        assert!(
-            !wrong_file.exists(),
-            "Compressed file should not exist at {wrong_file:?}",
-        );
-        assert_eq!(
-            downloaded_file_name, original_file_name,
-            "Downloaded file should not be gzipped"
-        );
-        // Verify the content matches the original
-        let original_content = fs::read_to_string(&test_file_path).unwrap();
-        let downloaded_content = fs::read_to_string(&downloaded_file).unwrap();
-        assert_eq!(
-            downloaded_content, original_content,
-            "Downloaded content should match original"
-        );
-    }
-}
-
-#[test]
-fn test_put_get_with_auto_compress_false() {
-    test_put_get_with_auto_compress_set(false);
+    // Decompress and verify content
+    let downloaded_content = fs::read_to_string(&expected_file_path).unwrap();
+    let original_content = fs::read_to_string(&test_file_path).unwrap();
+    assert_eq!(
+        downloaded_content, original_content,
+        "Downloaded content should match original"
+    );
 }
 
 #[test]
 fn test_put_get_with_auto_compress_true() {
-    test_put_get_with_auto_compress_set(true);
+    let mut client = SnowflakeTestClient::new();
+    let stage_name = "TEST_STAGE_PUT_GET_COMPRESS_TRUE";
+    let file_name = "test_put_get_compress_true.csv";
+
+    // Set up test environment
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let test_file_path = create_test_file(temp_dir.path(), file_name, "1,2,3\n");
+
+    // Setup stage and upload file
+    client.create_temporary_stage(stage_name);
+    client.put_file_with_options(&test_file_path, stage_name, "AUTO_COMPRESS=TRUE");
+
+    // Create directory for download
+    let download_dir = temp_dir.path().join("download");
+    fs::create_dir_all(&download_dir).unwrap();
+
+    // Download file using GET
+    client.get_file(&format!("{stage_name}/{file_name}"), &download_dir);
+
+    // Verify the downloaded file exists and content matches
+    let expected_file_path = download_dir.join("test_put_get_compress_true.csv.gz");
+    assert!(
+        expected_file_path.exists(),
+        "Downloaded gzipped file should exist at {expected_file_path:?}",
+    );
+    let not_expected_file_path = download_dir.join("test_put_get_compress_true.csv");
+    assert!(
+        !not_expected_file_path.exists(),
+        "Uncompressed file should not exist at {not_expected_file_path:?}",
+    );
+
+    // Decompress and verify content
+    let decompressed_content =
+        decompress_gzipped_file(&expected_file_path).expect("Failed to decompress downloaded file");
+    let original_content = fs::read_to_string(&test_file_path).unwrap();
+    assert_eq!(
+        decompressed_content, original_content,
+        "Downloaded and decompressed content should match original"
+    );
 }
