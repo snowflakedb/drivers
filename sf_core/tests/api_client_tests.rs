@@ -1045,8 +1045,8 @@ fn test_put_select() {
 fn test_put_get_with_auto_compress_set(auto_compress: bool) {
     let mut client = SnowflakeTestClient::new();
     let stage_name = "TEST_STAGE_PUT_COMPRESS";
-
-    // Create test file with specific name "test_put_no_compress.csv"
+    
+    // Create test file with specific name "test_put_compress.csv"
     let original_file_name = "test_put_compress.csv".to_string();
     let temp_dir = tempfile::TempDir::new().unwrap();
     let test_file_path = temp_dir.path().join(&original_file_name);
@@ -1067,7 +1067,7 @@ fn test_put_get_with_auto_compress_set(auto_compress: bool) {
         "AUTO_COMPRESS=FALSE"
     };
 
-    // Upload file using PUT with auto_compress=false
+    // Upload file using PUT with auto_compress option set
     let put_sql = format!(
         "PUT 'file://{test_file}' @{stage_name} {auto_compress_option}",
         test_file = test_file_path.to_str().unwrap().replace("\\", "/")
@@ -1148,7 +1148,7 @@ fn test_put_get_with_auto_compress_set(auto_compress: bool) {
         );
         assert_eq!(
             downloaded_file_name, original_file_name,
-            "Downloaded should file not be gzipped"
+            "Downloaded file should not be gzipped"
         );
         // Verify the content matches the original
         let original_content = fs::read_to_string(&test_file_path).unwrap();
@@ -1162,12 +1162,10 @@ fn test_put_get_with_auto_compress_set(auto_compress: bool) {
 
 #[test]
 fn test_put_get_with_auto_compress_false() {
-    // Test with auto_compress=false
     test_put_get_with_auto_compress_set(false);
 }
 
 #[test]
 fn test_put_get_with_auto_compress_true() {
-    // Test with auto_compress=true
     test_put_get_with_auto_compress_set(true);
 }
