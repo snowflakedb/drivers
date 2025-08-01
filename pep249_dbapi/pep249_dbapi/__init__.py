@@ -4,7 +4,7 @@ PEP 249 Database API 2.0 Implementation
 This module provides an empty implementation of the Python Database API Specification 2.0
 as defined in PEP 249.
 """
-from .api_client.c_api import CORE_API
+from .api_client.c_api import CORE_API, register_default_logger_callback
 from .connection import Connection
 from .cursor import Cursor
 from .exceptions import (
@@ -21,6 +21,7 @@ apilevel = "2.0"
 threadsafety = 1  # Threads may share the module, but not connections
 paramstyle = "format"  # Python extended format codes, e.g. ...WHERE name=%s
 
+register_default_logger_callback()
 
 def connect(**kwargs):
     """
