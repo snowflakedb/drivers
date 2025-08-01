@@ -3,10 +3,9 @@ use crate::logging::callback_layer::CallbackLayer;
 use crate::logging::error::LogError;
 use crate::logging::opentelemetry::init_meter_provider;
 use crate::logging::opentelemetry::init_tracer;
-use std::fmt::{Debug, Display};
 use tracing_opentelemetry::{MetricsLayer, OpenTelemetryLayer};
 use tracing_subscriber::layer::SubscriberExt;
-use tracing_subscriber::{Layer, Registry, registry};
+use tracing_subscriber::Registry;
 
 mod callback_layer;
 mod error;

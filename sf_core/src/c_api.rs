@@ -1,4 +1,3 @@
-use lazy_static::lazy_static;
 
 use crate::api_server::database_driver_v1::DatabaseDriverV1;
 use crate::handle_manager::Handle;

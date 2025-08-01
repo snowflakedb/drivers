@@ -7,11 +7,6 @@ use opentelemetry_sdk::metrics::{MeterProviderBuilder, PeriodicReader, SdkMeterP
 use opentelemetry_sdk::trace::{RandomIdGenerator, Sampler, SdkTracerProvider, Tracer};
 use opentelemetry_semantic_conventions::SCHEMA_URL;
 use opentelemetry_semantic_conventions::resource::SERVICE_VERSION;
-use tracing::field::Field;
-use tracing::{Event, Level, Subscriber};
-use tracing_opentelemetry::{MetricsLayer, OpenTelemetryLayer};
-use tracing_subscriber::layer::{Context, SubscriberExt};
-use tracing_subscriber::{Layer, Registry, registry};
 
 fn resource() -> Resource {
     Resource::builder()
