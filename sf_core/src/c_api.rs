@@ -1,4 +1,3 @@
-
 use crate::api_server::database_driver_v1::DatabaseDriverV1;
 use crate::handle_manager::Handle;
 use crate::logging;
@@ -40,7 +39,7 @@ pub extern "C" fn sf_core_init_logger(callback: logging::CLogCallback) -> u32 {
     match logging::init_logging(config) {
         Ok(_) => 0,
         Err(e) => {
-            eprintln!("Failed to initialize logging: {:?}", e);
+            eprintln!("Failed to initialize logging: {e:?}");
             1
         }
     }

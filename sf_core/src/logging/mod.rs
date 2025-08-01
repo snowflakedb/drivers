@@ -4,8 +4,8 @@ use crate::logging::error::LogError;
 use crate::logging::opentelemetry::init_meter_provider;
 use crate::logging::opentelemetry::init_tracer;
 use tracing_opentelemetry::{MetricsLayer, OpenTelemetryLayer};
-use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::Registry;
+use tracing_subscriber::layer::SubscriberExt;
 
 mod callback_layer;
 mod error;

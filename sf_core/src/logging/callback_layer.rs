@@ -38,15 +38,17 @@ where
         let mut message = String::new();
         event.record(&mut |field: &Field, value: &dyn Debug| {
             if field.name() == "message" {
-                message.push_str(&format!("{:?}", value));
+                message.push_str(&format!("{value:?}"));
             } else {
-                message.push_str(&format!(" {}={:?}", field.name(), value));
+                let name = field.name();
+                message.push_str(&format!(" {name}={value:?}"));
             }
         });
         // let message = message.as_bytes();
         let line = event.metadata().line().unwrap_or(0);
         let message = CString::new(message).unwrap_or_default();
-        let filename = CString::new(event.metadata().file().unwrap_or("unknown")).unwrap_or_default();
+        let filename =
+            CString::new(event.metadata().file().unwrap_or("unknown")).unwrap_or_default();
         let function = CString::new(event.metadata().name()).unwrap_or_default();
         unsafe {
             (self.callback)(
