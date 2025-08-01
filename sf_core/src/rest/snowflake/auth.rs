@@ -99,7 +99,7 @@ pub struct AuthResponseMain {
     #[serde(rename = "masterToken")]
     pub _master_token: Option<String>,
     #[serde(rename = "masterValidityInSeconds")]
-    pub _master_validity: u64,
+    pub _master_validity: Option<u64>,
     #[serde(rename = "mfaToken")]
     pub _mfa_token: Option<String>,
     #[serde(rename = "mfaTokenValidityInSeconds")]
