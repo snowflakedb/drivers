@@ -217,6 +217,7 @@ pub async fn snowflake_login(
     }
 }
 
+#[tracing::instrument(skip(conn_ptr), fields(sql))]
 pub async fn snowflake_query(
     conn_ptr: &std::sync::Arc<Mutex<Connection>>,
     sql: String,

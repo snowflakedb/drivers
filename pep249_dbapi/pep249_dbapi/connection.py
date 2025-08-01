@@ -41,7 +41,6 @@ class Connection:
             if isinstance(value, float):
                 self.db_api.connectionSetOptionDouble(self.conn_handle, key, value)
 
-        print(self.conn_handle, self.db_handle)
         self.db_api.connectionInit(self.conn_handle, self.db_handle)
         self.kwargs = kwargs
         self._closed = False

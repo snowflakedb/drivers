@@ -18,6 +18,7 @@ use std::mem::size_of;
 use std::sync::Mutex;
 use thrift::server::TProcessor;
 use thrift::{Error, OrderedFloat};
+use tracing::instrument;
 
 use crate::driver::StatementState;
 use crate::thrift_gen::database_driver_v1::ArrowArrayStreamPtr;
@@ -193,6 +194,7 @@ impl DatabaseDriverV1 {
 }
 
 impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
+    #[instrument(name = "DatabaseDriverV1::database_new", skip(self))]
     fn handle_database_new(&self) -> thrift::Result<DatabaseHandle> {
         let handle = self
             .db_handle_manager
@@ -200,6 +202,7 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
         Ok(DatabaseHandle::from(handle))
     }
 
+    #[instrument(name = "DatabaseDriverV1::database_set_option_string", skip(self))]
     fn handle_database_set_option_string(
         &self,
         db_handle: DatabaseHandle,
@@ -209,6 +212,7 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
         self.database_set_option(db_handle, key, Setting::String(value))
     }
 
+    #[instrument(name = "DatabaseDriverV1::database_set_option_bytes", skip(self))]
     fn handle_database_set_option_bytes(
         &self,
         db_handle: DatabaseHandle,
@@ -218,6 +222,7 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
         self.database_set_option(db_handle, key, Setting::Bytes(value))
     }
 
+    #[instrument(name = "DatabaseDriverV1::database_set_option_int", skip(self))]
     fn handle_database_set_option_int(
         &self,
         db_handle: DatabaseHandle,
@@ -227,6 +232,7 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
         self.database_set_option(db_handle, key, Setting::Int(value))
     }
 
+    #[instrument(name = "DatabaseDriverV1::database_set_option_double", skip(self))]
     fn handle_database_set_option_double(
         &self,
         db_handle: DatabaseHandle,
@@ -236,6 +242,7 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
         self.database_set_option(db_handle, key, Setting::Double(value.into_inner()))
     }
 
+    #[instrument(name = "DatabaseDriverV1::database_init", skip(self))]
     fn handle_database_init(&self, db_handle: DatabaseHandle) -> thrift::Result<()> {
         let handle = db_handle.into();
         match self.db_handle_manager.get_obj(handle) {
@@ -250,6 +257,7 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
         }
     }
 
+    #[instrument(name = "DatabaseDriverV1::database_release", skip(self))]
     fn handle_database_release(&self, db_handle: DatabaseHandle) -> thrift::Result<()> {
         match self.db_handle_manager.delete_handle(db_handle.into()) {
             true => Ok(()),
@@ -263,6 +271,7 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
         }
     }
 
+    #[instrument(name = "DatabaseDriverV1::connection_new", skip(self))]
     fn handle_connection_new(&self) -> thrift::Result<ConnectionHandle> {
         let handle = self
             .conn_handle_manager
@@ -270,6 +279,7 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
         Ok(ConnectionHandle::from(handle))
     }
 
+    #[instrument(name = "DatabaseDriverV1::connection_set_option_string", skip(self))]
     fn handle_connection_set_option_string(
         &self,
         conn_handle: ConnectionHandle,
@@ -279,6 +289,7 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
         self.connection_set_option(conn_handle, key, Setting::String(value))
     }
 
+    #[instrument(name = "DatabaseDriverV1::connection_set_option_bytes", skip(self))]
     fn handle_connection_set_option_bytes(
         &self,
         conn_handle: ConnectionHandle,
@@ -288,6 +299,7 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
         self.connection_set_option(conn_handle, key, Setting::Bytes(value))
     }
 
+    #[instrument(name = "DatabaseDriverV1::connection_set_option_int", skip(self))]
     fn handle_connection_set_option_int(
         &self,
         conn_handle: ConnectionHandle,
@@ -297,6 +309,7 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
         self.connection_set_option(conn_handle, key, Setting::Int(value))
     }
 
+    #[instrument(name = "DatabaseDriverV1::connection_set_option_double", skip(self))]
     fn handle_connection_set_option_double(
         &self,
         conn_handle: ConnectionHandle,
@@ -306,6 +319,7 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
         self.connection_set_option(conn_handle, key, Setting::Double(value.into_inner()))
     }
 
+    #[instrument(name = "DatabaseDriverV1::connection_init", skip(self))]
     fn handle_connection_init(
         &self,
         conn_handle: ConnectionHandle,
@@ -343,6 +357,7 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
         }
     }
 
+    #[instrument(name = "DatabaseDriverV1::connection_release", skip(self))]
     fn handle_connection_release(&self, conn_handle: ConnectionHandle) -> thrift::Result<()> {
         match self.conn_handle_manager.delete_handle(conn_handle.into()) {
             true => Ok(()),
@@ -357,6 +372,7 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
         }
     }
 
+    #[instrument(name = "DatabaseDriverV1::connection_get_info", skip(self))]
     fn handle_connection_get_info(
         &self,
         _conn_handle: ConnectionHandle,
@@ -365,6 +381,7 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
         todo!()
     }
 
+    #[instrument(name = "DatabaseDriverV1::connection_get_objects", skip(self))]
     fn handle_connection_get_objects(
         &self,
         _conn_handle: ConnectionHandle,
@@ -378,6 +395,7 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
         todo!()
     }
 
+    #[instrument(name = "DatabaseDriverV1::connection_get_table_schema", skip(self))]
     fn handle_connection_get_table_schema(
         &self,
         _conn_handle: ConnectionHandle,
@@ -388,6 +406,7 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
         todo!()
     }
 
+    #[instrument(name = "DatabaseDriverV1::connection_get_table_types", skip(self))]
     fn handle_connection_get_table_types(
         &self,
         _conn_handle: ConnectionHandle,
@@ -395,14 +414,17 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
         todo!()
     }
 
+    #[instrument(name = "DatabaseDriverV1::connection_commit", skip(self))]
     fn handle_connection_commit(&self, _conn_handle: ConnectionHandle) -> thrift::Result<()> {
         todo!()
     }
 
+    #[instrument(name = "DatabaseDriverV1::connection_rollback", skip(self))]
     fn handle_connection_rollback(&self, _conn_handle: ConnectionHandle) -> thrift::Result<()> {
         todo!()
     }
 
+    #[instrument(name = "DatabaseDriverV1::statement_new", skip(self))]
     fn handle_statement_new(
         &self,
         conn_handle: ConnectionHandle,
@@ -424,6 +446,7 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
         }
     }
 
+    #[instrument(name = "DatabaseDriverV1::statement_release", skip(self))]
     fn handle_statement_release(&self, stmt_handle: StatementHandle) -> thrift::Result<()> {
         match self.stmt_handle_manager.delete_handle(stmt_handle.into()) {
             true => Ok(()),
@@ -438,6 +461,7 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
         }
     }
 
+    #[instrument(name = "DatabaseDriverV1::statement_set_sql_query", skip(self))]
     fn handle_statement_set_sql_query(
         &self,
         stmt_handle: StatementHandle,
@@ -460,6 +484,7 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
         }
     }
 
+    #[instrument(name = "DatabaseDriverV1::statement_set_substrait_plan", skip(self))]
     fn handle_statement_set_substrait_plan(
         &self,
         _stmt_handle: StatementHandle,
@@ -468,10 +493,12 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
         todo!()
     }
 
+    #[instrument(name = "DatabaseDriverV1::statement_prepare", skip(self))]
     fn handle_statement_prepare(&self, _stmt_handle: StatementHandle) -> thrift::Result<()> {
         todo!()
     }
 
+    #[instrument(name = "DatabaseDriverV1::statement_set_option_string", skip(self))]
     fn handle_statement_set_option_string(
         &self,
         stmt_handle: StatementHandle,
@@ -481,6 +508,7 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
         self.statement_set_option(stmt_handle, key, Setting::String(value))
     }
 
+    #[instrument(name = "DatabaseDriverV1::statement_set_option_bytes", skip(self))]
     fn handle_statement_set_option_bytes(
         &self,
         stmt_handle: StatementHandle,
@@ -490,6 +518,7 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
         self.statement_set_option(stmt_handle, key, Setting::Bytes(value))
     }
 
+    #[instrument(name = "DatabaseDriverV1::statement_set_option_int", skip(self))]
     fn handle_statement_set_option_int(
         &self,
         stmt_handle: StatementHandle,
@@ -499,6 +528,7 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
         self.statement_set_option(stmt_handle, key, Setting::Int(value))
     }
 
+    #[instrument(name = "DatabaseDriverV1::statement_set_option_double", skip(self))]
     fn handle_statement_set_option_double(
         &self,
         stmt_handle: StatementHandle,
@@ -508,6 +538,7 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
         self.statement_set_option(stmt_handle, key, Setting::Double(value.into_inner()))
     }
 
+    #[instrument(name = "DatabaseDriverV1::statement_get_parameter_schema", skip(self))]
     fn handle_statement_get_parameter_schema(
         &self,
         _stmt_handle: StatementHandle,
@@ -515,6 +546,7 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
         todo!()
     }
 
+    #[instrument(name = "DatabaseDriverV1::statement_bind", skip(self))]
     fn handle_statement_bind(
         &self,
         _stmt_handle: StatementHandle,
@@ -523,6 +555,7 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
         todo!()
     }
 
+    #[instrument(name = "DatabaseDriverV1::statement_bind_stream", skip(self))]
     fn handle_statement_bind_stream(
         &self,
         _stmt_handle: StatementHandle,
@@ -531,6 +564,7 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
         todo!()
     }
 
+    #[instrument(name = "DatabaseDriverV1::statement_execute_query", skip(self))]
     fn handle_statement_execute_query(
         &self,
         stmt_handle: StatementHandle,
@@ -644,6 +678,7 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
         }
     }
 
+    #[instrument(name = "DatabaseDriverV1::statement_execute_partitions", skip(self))]
     fn handle_statement_execute_partitions(
         &self,
         _stmt_handle: StatementHandle,
@@ -651,6 +686,7 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
         todo!()
     }
 
+    #[instrument(name = "DatabaseDriverV1::statement_read_partition", skip(self))]
     fn handle_statement_read_partition(
         &self,
         _stmt_handle: StatementHandle,

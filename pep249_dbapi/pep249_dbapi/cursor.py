@@ -124,9 +124,6 @@ class Cursor:
         stream_ptr = int.from_bytes(self.execute_result.stream.value, byteorder="little", signed=False)
         reader = pyarrow.RecordBatchReader._import_from_c(stream_ptr)
         batch = reader.read_next_batch()
-        print(batch.columns)
-        print(batch.num_rows)
-        print(batch.num_columns)
         return (batch.columns[0][0].as_py(),)
 
 
