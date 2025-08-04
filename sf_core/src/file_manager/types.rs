@@ -95,6 +95,8 @@ pub enum FileManagerError {
     Rest(#[from] RestError),
     #[error("Invalid pattern in source location: {0}")]
     Pattern(#[from] glob::PatternError),
+    #[error("Glob error: {0}")]
+    Glob(#[from] glob::GlobError),
 }
 
 impl From<FileManagerError> for DriverException {

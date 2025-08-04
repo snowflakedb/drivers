@@ -140,8 +140,8 @@ fn validate_src_location_and_encryption_materials(
     ))
 }
 
+/// Expands file names using glob patterns, returning a list of valid file paths
 fn expand_file_names(pattern: &str) -> Result<Vec<String>, FileManagerError> {
-    //return all files that match the provided patterns
     let mut expanded_files = Vec::new();
     let paths = glob::glob(pattern)?;
 
@@ -159,12 +159,13 @@ fn expand_file_names(pattern: &str) -> Result<Vec<String>, FileManagerError> {
                         }
                     }
                 } else {
-                    return Err(FileManagerError::from(RestError::InvalidSnowflakeResponse(
-                        format!("Path '{}' is not a file", p.display()),
-                    )));
+                    return Err(FileManagerError::from(RestError::Internal(format!(
+                        "Path '{}' is not a file",
+                        p.display()
+                    ))));
                 }
             }
-            Err(e) => return Err(FileManagerError::from(RestError::Internal(e.to_string()))),
+            Err(e) => return Err(e.into()),
         }
     }
 
