@@ -4,7 +4,6 @@ pub use crate::logging::callback_layer::CLogCallback;
 pub use crate::logging::callback_layer::CallbackLayer;
 use crate::logging::error::LogError;
 use crate::logging::opentelemetry::init_tracer;
-use tracing::Subscriber;
 use tracing_opentelemetry::OpenTelemetryLayer;
 use tracing_subscriber::Layer;
 use tracing_subscriber::Registry;
