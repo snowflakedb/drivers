@@ -3,7 +3,7 @@ use std::fmt::Debug;
 use tracing::field::Field;
 use tracing::{Event, Level, Subscriber};
 use tracing_subscriber::layer::Context;
-use tracing_subscriber::{Layer, registry};
+use tracing_subscriber::Layer;
 
 pub type CLogCallback = unsafe extern "C" fn(
     level: u32,

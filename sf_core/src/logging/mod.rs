@@ -1,15 +1,11 @@
-use std::collections::HashMap;
-use std::path::Path;
 use std::path::PathBuf;
 
 pub use crate::logging::callback_layer::CLogCallback;
 pub use crate::logging::callback_layer::CallbackLayer;
 use crate::logging::error::LogError;
-use crate::logging::opentelemetry::init_meter_provider;
 use crate::logging::opentelemetry::init_tracer;
 use tracing::Subscriber;
-use tracing_opentelemetry::{MetricsLayer, OpenTelemetryLayer};
-use tracing_subscriber::registry::LookupSpan;
+use tracing_opentelemetry::OpenTelemetryLayer;
 use tracing_subscriber::Layer;
 use tracing_subscriber::Registry;
 use tracing_subscriber::layer::SubscriberExt;
