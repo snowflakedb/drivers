@@ -1,5 +1,5 @@
 use crate::driver::{Connection, Database, Setting, Statement};
-use crate::file_manager::{download_file, upload_file};
+use crate::file_manager::{download_file, upload_files};
 use crate::handle_manager::{Handle, HandleManager};
 use crate::rest::error::RestError;
 use crate::thrift_gen::database_driver_v1::{
@@ -608,7 +608,7 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
                 if let Some(ref command) = response.data.command {
                     if command == "UPLOAD" {
                         let file_upload_data = response.data.to_file_upload_data()?;
-                        rt.block_on(upload_file(file_upload_data))
+                        rt.block_on(upload_files(file_upload_data))
                             .map_err(DriverException::from)?;
                     } else if command == "DOWNLOAD" {
                         let file_download_data = response.data.to_file_download_data()?;
@@ -645,8 +645,8 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
                     None => {
                         match response.data.rowset {
                             Some(rowset) => {
-                                // Simple conversion assuming single row with string values
-                                convert_single_row_to_arrow(rowset)?
+                                // Convert JSON rowset to Arrow format
+                                convert_result_to_arrow(rowset)?
                             }
                             None => {
                                 return Err(Error::from(RestError::InvalidSnowflakeResponse(
@@ -696,14 +696,14 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
     }
 }
 
-fn convert_single_row_to_arrow(rowset: Vec<Vec<Option<String>>>) -> Result<Vec<u8>, RestError> {
+// This function assumes that the rowset contains only string values
+fn convert_result_to_arrow(rowset: Vec<Vec<Option<String>>>) -> Result<Vec<u8>, RestError> {
     if rowset.is_empty() {
         return Ok(Vec::new());
     }
 
-    // Assumption: single row with string values
-    let row = &rowset[0];
-    let num_columns = row.len();
+    // Get the number of columns from the first row
+    let num_columns = rowset[0].len();
 
     // Create simple string schema with generic column names
     let fields: Vec<Field> = (0..num_columns)
@@ -711,10 +711,12 @@ fn convert_single_row_to_arrow(rowset: Vec<Vec<Option<String>>>) -> Result<Vec<u
         .collect();
     let schema = Schema::new(fields);
 
-    // Create string arrays from the single row
+    // Create string arrays from all rows
     let arrow_arrays: Vec<std::sync::Arc<dyn Array>> = (0..num_columns)
         .map(|col_idx| {
-            let values = vec![row[col_idx].clone()]; // Single value per column
+            // Collect values from all rows for this column
+            let values: Vec<Option<String>> =
+                rowset.iter().map(|row| row[col_idx].clone()).collect();
             std::sync::Arc::new(StringArray::from(values)) as std::sync::Arc<dyn Array>
         })
         .collect();

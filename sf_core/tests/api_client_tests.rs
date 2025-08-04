@@ -1066,3 +1066,145 @@ fn test_put_get_with_auto_compress_true() {
         "Downloaded and decompressed content should match original"
     );
 }
+
+#[test]
+fn test_put_wildcard_question_mark() {
+    let mut client = SnowflakeTestClient::new();
+    let stage_name = "TEST_STAGE_PUT_WILDCARD_QUESTION_MARK";
+    let file_name_base = "test_put_wildcard_question_mark";
+    let extension = "csv";
+
+    // Set up test environment
+    let temp_dir = tempfile::TempDir::new().unwrap();
+
+    for i in 1..=5 {
+        let file_name = format!("{file_name_base}_{i}.{extension}");
+        create_test_file(temp_dir.path(), &file_name, "1,2,3\n");
+    }
+
+    // Create files that should NOT match the '?' wildcard pattern
+    let non_matching_file1 = format!("{file_name_base}_10.{extension}"); // Two digits instead of one
+    let non_matching_file2 = format!("{file_name_base}_abc.{extension}"); // Multiple characters
+    create_test_file(temp_dir.path(), &non_matching_file1, "1,2,3\n");
+    create_test_file(temp_dir.path(), &non_matching_file2, "1,2,3\n");
+
+    let files_wildcard = format!(
+        "{}/{file_name_base}_?.{extension}",
+        temp_dir.path().to_str().unwrap().replace("\\", "/"),
+    );
+
+    // Setup stage and upload files
+    client.create_temporary_stage(stage_name);
+
+    let put_sql = format!("PUT 'file://{files_wildcard}' @{stage_name}");
+    client.execute_query(&put_sql);
+
+    let ls_result = client.execute_query(&format!("LS @{stage_name}"));
+    let result_vector = ArrowResultHelper::from_result(ls_result).transform_into_string_array();
+
+    for i in 1..=5 {
+        let expected_file_name = format!(
+            "{}/{}_{i}.csv.gz",
+            stage_name.to_lowercase(),
+            file_name_base
+        );
+        assert!(
+            result_vector
+                .iter()
+                .any(|row| row.contains(&expected_file_name)),
+            "File {expected_file_name} should be listed in stage"
+        );
+    }
+
+    // Assert that non-matching files are NOT present
+    let non_matching_file1_gz =
+        format!("{}/{}_10.csv.gz", stage_name.to_lowercase(), file_name_base);
+    let non_matching_file2_gz = format!(
+        "{}/{}_abc.csv.gz",
+        stage_name.to_lowercase(),
+        file_name_base
+    );
+
+    assert!(
+        !result_vector
+            .iter()
+            .any(|row| row.contains(&non_matching_file1_gz)),
+        "File {non_matching_file1_gz} should NOT be listed in stage (doesn't match '?' pattern)"
+    );
+    assert!(
+        !result_vector
+            .iter()
+            .any(|row| row.contains(&non_matching_file2_gz)),
+        "File {non_matching_file2_gz} should NOT be listed in stage (doesn't match '?' pattern)"
+    );
+}
+
+#[test]
+fn test_put_wildcard_star() {
+    let mut client = SnowflakeTestClient::new();
+    let stage_name = "TEST_STAGE_PUT_WILDCARD_STAR";
+    let file_name_base = "test_put_wildcard_star";
+    let extension = "csv";
+
+    // Set up test environment
+    let temp_dir = tempfile::TempDir::new().unwrap();
+
+    for i in 1..=5 {
+        let file_name = format!("{file_name_base}_{i}{i}{i}.{extension}");
+        create_test_file(temp_dir.path(), &file_name, "1,2,3\n");
+    }
+
+    // Create files that should NOT match the '*' wildcard pattern
+    let non_matching_file1 = format!("{file_name_base}.{extension}"); // No underscore and suffix
+    let non_matching_file2 = format!("{file_name_base}_test.txt"); // Different extension
+    create_test_file(temp_dir.path(), &non_matching_file1, "1,2,3\n");
+    create_test_file(temp_dir.path(), &non_matching_file2, "1,2,3\n");
+
+    let files_wildcard = format!(
+        "{}/{file_name_base}_*.{extension}",
+        temp_dir.path().to_str().unwrap().replace("\\", "/"),
+    );
+
+    // Setup stage and upload files
+    client.create_temporary_stage(stage_name);
+
+    let put_sql = format!("PUT 'file://{files_wildcard}' @{stage_name}");
+    client.execute_query(&put_sql);
+
+    let ls_result = client.execute_query(&format!("LS @{stage_name}"));
+    let result_vector = ArrowResultHelper::from_result(ls_result).transform_into_string_array();
+
+    for i in 1..=5 {
+        let expected_file_name = format!(
+            "{}/{file_name_base}_{i}{i}{i}.csv.gz",
+            stage_name.to_lowercase(),
+        );
+        assert!(
+            result_vector
+                .iter()
+                .any(|row| row.contains(&expected_file_name)),
+            "File {expected_file_name} should be listed in stage"
+        );
+    }
+
+    // Assert that non-matching files are NOT present
+    let non_matching_file1_gz = format!("{}/{}.csv.gz", stage_name.to_lowercase(), file_name_base);
+    let non_matching_file2_gz = format!(
+        "{}/{}_test.txt.gz",
+        stage_name.to_lowercase(),
+        file_name_base
+    );
+
+    assert!(
+        !result_vector
+            .iter()
+            .any(|row| row.contains(&non_matching_file1_gz)),
+        "File {non_matching_file1_gz} should NOT be listed in stage (doesn't match '*' pattern)"
+    );
+    assert!(
+        !result_vector
+            .iter()
+            .any(|row| row.contains(&non_matching_file2_gz)),
+        "File {non_matching_file2_gz} should NOT be listed in stage (doesn't match '*' pattern)"
+    );
+}

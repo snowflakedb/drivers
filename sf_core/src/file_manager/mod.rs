@@ -14,16 +14,37 @@ use std::fs::File;
 use std::io::{Read, Write};
 use std::path::Path;
 
-pub async fn upload_file(mut data: UploadData) -> Result<(), FileManagerError> {
-    // TODO: Implement multiple files upload
+pub async fn upload_files(mut data: UploadData) -> Result<(), FileManagerError> {
+    for file_location in data.src_locations {
+        tracing::info!("Uploading file: {}", file_location);
 
-    // Validate and extract the single source file and encryption material
-    let (src_location, encryption_material) = validate_src_location_and_encryption_materials(
-        &mut data.src_locations,
-        &mut data.encryption_materials,
-    )?;
+        let encryption_material = data.encryption_materials.pop().ok_or_else(|| {
+            RestError::Internal("No encryption material provided for upload".to_string())
+        })?;
 
-    let file_path = Path::new(&src_location);
+        let file_locations = expand_file_names(&file_location)?;
+
+        for file_location in file_locations {
+            tracing::info!("Expanded file location: {}", file_location);
+
+            // TODO: We could experiment with references here for performance after we have working parallel implementation
+
+            let single_upload_data = SingleUploadData {
+                src_location: file_location,
+                stage_info: data.stage_info.clone(),
+                encryption_material: encryption_material.clone(),
+                auto_compress: data.auto_compress,
+            };
+
+            upload_single_file(single_upload_data).await?;
+        }
+    }
+
+    Ok(())
+}
+
+pub async fn upload_single_file(data: SingleUploadData) -> Result<(), FileManagerError> {
+    let file_path = Path::new(&data.src_location);
     let mut input_file = File::open(file_path)?;
     let mut file_name_with_extension = file_path
         .file_name()
@@ -44,7 +65,7 @@ pub async fn upload_file(mut data: UploadData) -> Result<(), FileManagerError> {
     }
 
     // Encrypt the compressed data using the provided encryption material
-    let encryption_result = encrypt_file_data(&input_data, encryption_material)?;
+    let encryption_result = encrypt_file_data(&input_data, data.encryption_material)?;
 
     tracing::trace!("Encryption metadata: {:?}", encryption_result.metadata);
 
@@ -117,4 +138,35 @@ fn validate_src_location_and_encryption_materials(
         src_locations.pop().unwrap(),
         encryption_materials.pop().unwrap(),
     ))
+}
+
+fn expand_file_names(pattern: &str) -> Result<Vec<String>, FileManagerError> {
+    //return all files that match the provided patterns
+    let mut expanded_files = Vec::new();
+    let paths = glob::glob(pattern)?;
+
+    for path in paths {
+        match path {
+            Ok(p) => {
+                if p.is_file() {
+                    match p.to_str() {
+                        Some(path_str) => expanded_files.push(path_str.to_string()),
+                        None => {
+                            return Err(FileManagerError::from(RestError::Internal(format!(
+                                "Path '{}' contains invalid UTF-8",
+                                p.display()
+                            ))));
+                        }
+                    }
+                } else {
+                    return Err(FileManagerError::from(RestError::InvalidSnowflakeResponse(
+                        format!("Path '{}' is not a file", p.display()),
+                    )));
+                }
+            }
+            Err(e) => return Err(FileManagerError::from(RestError::Internal(e.to_string()))),
+        }
+    }
+
+    Ok(expanded_files)
 }

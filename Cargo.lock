@@ -3058,6 +3058,7 @@ dependencies = [
  "aws-sdk-s3",
  "base64 0.22.1",
  "flate2",
+ "glob",
  "openssl",
  "opentelemetry",
  "opentelemetry-otlp",

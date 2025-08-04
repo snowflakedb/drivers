@@ -1,4 +1,5 @@
 use crate::rest::error::RestError;
+use glob;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -16,6 +17,13 @@ pub struct UploadData {
     pub auto_compress: bool,
 }
 
+pub struct SingleUploadData {
+    pub src_location: String,
+    pub stage_info: StageInfo,
+    pub encryption_material: EncryptionMaterial,
+    pub auto_compress: bool,
+}
+
 #[derive(Debug)]
 pub struct DownloadData {
     pub src_locations: Vec<String>,
@@ -24,21 +32,21 @@ pub struct DownloadData {
     pub encryption_materials: Vec<EncryptionMaterial>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct StageInfo {
     pub location: String,
     pub region: String,
     pub creds: Credentials,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Credentials {
     pub aws_key_id: String,
     pub aws_secret_key: String,
     pub aws_token: String,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct EncryptionMaterial {
     pub query_stage_master_key: String,
     pub query_id: String,
@@ -85,6 +93,8 @@ pub enum FileManagerError {
     FileTransfer(#[from] FileTransferError),
     #[error("Rest error: {0}")]
     Rest(#[from] RestError),
+    #[error("Invalid pattern in source location: {0}")]
+    Pattern(#[from] glob::PatternError),
 }
 
 impl From<FileManagerError> for DriverException {
