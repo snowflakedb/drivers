@@ -28,10 +28,7 @@ impl LoggingConfig {
     }
 }
 
-pub fn init_logging<L>(
-    config: LoggingConfig,
-    extra_layer: Option<L>,
-) -> Result<(), LogError>
+pub fn init_logging<L>(config: LoggingConfig, extra_layer: Option<L>) -> Result<(), LogError>
 where
     L: Layer<Registry> + Send + Sync,
 {
@@ -55,6 +52,7 @@ where
     };
     let subscriber = subscriber.with(opentelemetry_layer);
 
-    tracing::subscriber::set_global_default(subscriber).map_err(|e| LogError::InitError(e.to_string()))?;
+    tracing::subscriber::set_global_default(subscriber)
+        .map_err(|e| LogError::InitError(e.to_string()))?;
     Ok(())
 }
