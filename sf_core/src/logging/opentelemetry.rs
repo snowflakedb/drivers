@@ -19,7 +19,7 @@ fn resource() -> Resource {
 }
 
 // Construct MeterProvider for MetricsLayer
-pub fn init_meter_provider() -> Result<SdkMeterProvider, LogError> {
+pub fn _init_meter_provider() -> Result<SdkMeterProvider, LogError> {
     let exporter = opentelemetry_otlp::MetricExporter::builder()
         .with_http()
         .with_temporality(opentelemetry_sdk::metrics::Temporality::default())
