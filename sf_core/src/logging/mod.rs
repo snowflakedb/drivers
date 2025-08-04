@@ -31,12 +31,11 @@ impl LoggingConfig {
 pub fn init_logging<L>(
     config: LoggingConfig,
     extra_layer: Option<L>,
-) -> Result<Box<dyn Subscriber>, LogError>
+) -> Result<(), LogError>
 where
-    L: Layer<Registry>,
+    L: Layer<Registry> + Send + Sync,
 {
     let subscriber = Registry::default();
-
     let subscriber = subscriber.with(extra_layer);
 
     let file_layer = if let Some(log_file) = config.log_file {
@@ -46,6 +45,7 @@ where
     } else {
         None
     };
+    let subscriber = subscriber.with(file_layer);
 
     let opentelemetry_layer = if config.opentelemetry {
         let tracer_layer = init_tracer()?;
@@ -53,8 +53,8 @@ where
     } else {
         None
     };
-
-    let subscriber = subscriber.with(file_layer);
     let subscriber = subscriber.with(opentelemetry_layer);
-    Ok(Box::new(subscriber))
+
+    tracing::subscriber::set_global_default(subscriber).map_err(|e| LogError::InitError(e.to_string()))?;
+    Ok(())
 }

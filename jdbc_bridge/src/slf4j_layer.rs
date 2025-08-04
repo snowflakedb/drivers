@@ -47,8 +47,20 @@ where
         let log_msg = format!("[{filename}:{line}] {message}");
 
         // Call SLF4J logger through JNI
-        let jvm = unsafe { JavaVM::from_raw(self.jvm).unwrap() };
-        let mut env = jvm.attach_current_thread().unwrap();
+        let jvm = match unsafe { JavaVM::from_raw(self.jvm) } {
+            Ok(jvm) => jvm,
+            Err(e) => {
+                eprintln!("Failed to get JavaVM: {e:?}");
+                return;
+            }
+        };
+        let mut env = match jvm.attach_current_thread() {
+            Ok(env) => env,
+            Err(e) => {
+                eprintln!("Failed to attach current thread: {e:?}");
+                return;
+            }
+        };
 
         // Get org.slf4j.LoggerFactory class
         let logger_factory = env.find_class("org/slf4j/LoggerFactory").unwrap();
