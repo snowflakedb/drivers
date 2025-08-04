@@ -25,7 +25,7 @@ impl CallbackLayer {
 
 impl<S> Layer<S> for CallbackLayer
 where
-    S: Subscriber + for<'a> registry::LookupSpan<'a>,
+    S: Subscriber,
 {
     fn on_event(&self, event: &Event<'_>, _ctx: Context<'_, S>) {
         let level = match *event.metadata().level() {

@@ -1,9 +1,16 @@
+use std::collections::HashMap;
+use std::path::Path;
+use std::path::PathBuf;
+
 pub use crate::logging::callback_layer::CLogCallback;
-use crate::logging::callback_layer::CallbackLayer;
+pub use crate::logging::callback_layer::CallbackLayer;
 use crate::logging::error::LogError;
 use crate::logging::opentelemetry::init_meter_provider;
 use crate::logging::opentelemetry::init_tracer;
+use tracing::Subscriber;
 use tracing_opentelemetry::{MetricsLayer, OpenTelemetryLayer};
+use tracing_subscriber::registry::LookupSpan;
+use tracing_subscriber::Layer;
 use tracing_subscriber::Registry;
 use tracing_subscriber::layer::SubscriberExt;
 
@@ -12,40 +19,37 @@ mod error;
 mod opentelemetry;
 
 pub struct LoggingConfig {
-    c_callback: CLogCallback,
-    log_file: String,
+    pub log_file: Option<PathBuf>,
+    pub opentelemetry: bool,
 }
 
 impl LoggingConfig {
-    pub fn new(c_callback: CLogCallback, log_file: String) -> Self {
-        Self {
-            c_callback,
-            log_file,
-        }
+    pub fn new(log_file: Option<PathBuf>, opentelemetry: bool) -> Self {
+        Self { log_file, opentelemetry }
     }
 }
 
-/*
-    TODO:
-    - Configure logging dynamically
-    - Disable opentelemetry if not needed
-*/
 
-pub fn init_logging(config: LoggingConfig) -> Result<(), LogError> {
+pub fn init_logging<L>(config: LoggingConfig, extra_layer: Option<L>) -> Result<Box<dyn Subscriber>, LogError> where L: Layer<Registry> {
     let subscriber = Registry::default();
 
-    let log_file =
-        std::fs::File::create(config.log_file).map_err(|e| LogError::InitError(e.to_string()))?;
-    let subscriber = subscriber.with(tracing_subscriber::fmt::layer().with_writer(log_file));
+    let subscriber = subscriber.with(extra_layer);
 
-    let subscriber = subscriber.with(CallbackLayer::new(config.c_callback));
+    let file_layer = if let Some(log_file) = config.log_file {
+        let log_file = std::fs::File::create(log_file).map_err(|e| LogError::InitError(e.to_string()))?;
+        Some(tracing_subscriber::fmt::layer().with_writer(log_file))
+    } else {
+        None
+    };
 
-    let meter_provider = init_meter_provider()?;
-    let subscriber = subscriber.with(MetricsLayer::new(meter_provider));
+    let opentelemetry_layer = if config.opentelemetry {
+        let tracer_layer = init_tracer()?;
+        Some(OpenTelemetryLayer::new(tracer_layer))
+    } else {
+        None
+    };
 
-    let tracer_layer = init_tracer()?;
-    let subscriber = subscriber.with(OpenTelemetryLayer::new(tracer_layer));
-
-    tracing::subscriber::set_global_default(subscriber)
-        .map_err(|e| LogError::InitError(e.to_string()))
+    let subscriber = subscriber.with(file_layer);
+    let subscriber = subscriber.with(opentelemetry_layer);
+    Ok(Box::new(subscriber))
 }

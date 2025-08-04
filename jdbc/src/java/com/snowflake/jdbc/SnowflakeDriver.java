@@ -21,7 +21,6 @@ public class SnowflakeDriver implements Driver {
 
     static public void registerDriver() {
         try {
-            System.out.println("Driver registered");
             DriverManager.registerDriver(new SnowflakeDriver());
         } catch (SQLException e) {
             throw new RuntimeException("Failed to register Snowflake JDBC driver", e);
@@ -34,7 +33,6 @@ public class SnowflakeDriver implements Driver {
 
     @Override
     public Connection connect(String url, Properties info) throws SQLException {
-        System.out.println("connect: " + url);
         if (!acceptsURL(url)) {
             return null;
         }

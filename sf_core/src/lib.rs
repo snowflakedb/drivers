@@ -8,7 +8,7 @@ pub mod c_api;
 pub mod driver;
 mod file_manager;
 pub mod handle_manager;
-mod logging;
+pub mod logging;
 mod rest;
 pub mod thrift_gen;
 mod transport;

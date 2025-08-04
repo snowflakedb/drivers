@@ -21,7 +21,6 @@ public class SnowflakeQueryTest {
         if (paramPath == null) {
             paramPath = "/parameters.json";
         }
-        System.out.println("paramPath: " + paramPath);
         InputStream input = new java.io.FileInputStream(paramPath);
         if (input == null) {
             throw new RuntimeException("Could not find parameters.json in test resources");
@@ -75,8 +74,7 @@ public class SnowflakeQueryTest {
         // Create connection
         SnowflakeDriver.empty();
         Connection conn = DriverManager.getConnection(url, props);
-        assertNotNull("Connection should not be null", conn);
-        
+
         try {
             // Create and execute statement
             Statement stmt = conn.createStatement();

@@ -100,6 +100,7 @@ test {
     useJUnit()
     if (JavaVersion.current().isJava9Compatible()) {
         jvmArgs '--add-opens=java.base/java.nio=org.apache.arrow.memory.core,ALL-UNNAMED'
+        jvmArgs '--enable-native-access=ALL-UNNAMED'
     }
     testLogging {
         outputs.upToDateWhen {false}

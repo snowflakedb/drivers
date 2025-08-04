@@ -47,12 +47,9 @@ public class SnowflakeResultSet implements ResultSet {
     public SnowflakeResultSet(SnowflakeStatement statement, ExecuteResult result) throws IOException {
         this.statement = statement;
         long ptr = Long.reverseBytes(result.stream.value.getLong());
-        // Print long value in hex
-        System.out.println("ptr: 0x" + Long.toHexString(ptr));
         this.stream = ArrowArrayStream.wrap(ptr);
         this.allocator = new RootAllocator(Long.MAX_VALUE);
         this.reader = Data.importArrayStream(this.allocator, this.stream);
-//        this.reader.
     }
     
     @Override

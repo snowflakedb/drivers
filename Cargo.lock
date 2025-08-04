@@ -1872,6 +1872,8 @@ version = "0.1.0"
 dependencies = [
  "jni",
  "sf_core",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

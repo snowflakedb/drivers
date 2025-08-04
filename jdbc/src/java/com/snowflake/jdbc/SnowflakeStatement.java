@@ -42,7 +42,6 @@ public class SnowflakeStatement implements Statement {
 
         try {
             ExecuteResult result = this.connection.driverApi.statementExecuteQuery(this.statementHandle);
-            System.out.println("Executing query: " + sql);
             return new SnowflakeResultSet(this, result);
         } catch (TException e) {
             throw new RuntimeException(e);
@@ -54,7 +53,6 @@ public class SnowflakeStatement implements Statement {
     @Override
     public int executeUpdate(String sql) throws SQLException {
         checkClosed();
-        System.out.println("Executing update: " + sql);
         return 0; // Stub: return 0 rows affected
     }
     

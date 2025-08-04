@@ -6,6 +6,8 @@ use sf_core::c_api::{
     CApiHandle, SfCoreApi,
 };
 
+mod slf4j_layer;
+
 /// Convert a CApiHandle to a Java long for storage in Java objects
 fn handle_to_jlong_array<'a>(env: &mut JNIEnv<'a>, handle: CApiHandle) -> JLongArray<'a> {
     // Store the handle as two 64-bit values in a 2-element array
@@ -25,6 +27,26 @@ fn jlong_array_to_handle<'a>(env: &mut JNIEnv<'a>, array: JLongArray<'a>) -> CAp
         id: buffer[0] as u64,
         magic: buffer[1] as u64,
     }
+}
+
+#[no_mangle]
+#[allow(non_snake_case)]
+pub extern "system" fn JNI_OnLoad(jvm: *mut jni::sys::JavaVM, _: *mut u8) -> jint {
+    let config = sf_core::logging::LoggingConfig::new(None, false);
+    let layer = slf4j_layer::SLF4JLayer::new(jvm);
+    match sf_core::logging::init_logging(config, Some(layer)) {
+        Ok(_) => jni::sys::JNI_VERSION_1_2,
+        Err(e) => {
+            eprintln!("Failed to initialize logging: {e:?}");
+            -1
+        }
+    }
+}
+
+#[no_mangle]
+#[allow(non_snake_case)]
+pub extern "system" fn JNI_OnUnload(jvm: *mut jni::sys::JavaVM, _: *mut u8) -> jint {
+    0
 }
 
 /// Initialize the sf_core API
