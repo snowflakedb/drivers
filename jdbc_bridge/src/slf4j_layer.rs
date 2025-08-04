@@ -1,8 +1,8 @@
-use tracing::{Event, field::Field, Level, Subscriber};
+use jni::JavaVM;
+use std::fmt::Debug;
+use tracing::{field::Field, Event, Level, Subscriber};
 use tracing_subscriber::layer::Context;
 use tracing_subscriber::Layer;
-use std::fmt::Debug;
-use jni::JavaVM;
 
 pub(crate) struct SLF4JLayer {
     jvm: *mut jni::sys::JavaVM,
@@ -54,12 +54,16 @@ where
         let logger_factory = env.find_class("org/slf4j/LoggerFactory").unwrap();
         let logger_name = env.new_string("com.snowflake.jdbc.CoreLogger").unwrap();
         // Get logger for our class
-        let logger = env.call_static_method(
-            logger_factory,
-            "getLogger",
-            "(Ljava/lang/String;)Lorg/slf4j/Logger;",
-            &[(&logger_name).into()]
-        ).unwrap().l().unwrap();
+        let logger = env
+            .call_static_method(
+                logger_factory,
+                "getLogger",
+                "(Ljava/lang/String;)Lorg/slf4j/Logger;",
+                &[(&logger_name).into()],
+            )
+            .unwrap()
+            .l()
+            .unwrap();
 
         let java_log_msg = env.new_string(log_msg).unwrap();
 
@@ -68,8 +72,9 @@ where
             logger,
             level_str.to_lowercase().as_str(),
             "(Ljava/lang/String;)V",
-            &[(&java_log_msg).into()]
-        ).unwrap();
+            &[(&java_log_msg).into()],
+        )
+        .unwrap();
     }
 }
 

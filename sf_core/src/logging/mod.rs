@@ -21,18 +21,27 @@ pub struct LoggingConfig {
 
 impl LoggingConfig {
     pub fn new(log_file: Option<PathBuf>, opentelemetry: bool) -> Self {
-        Self { log_file, opentelemetry }
+        Self {
+            log_file,
+            opentelemetry,
+        }
     }
 }
 
-
-pub fn init_logging<L>(config: LoggingConfig, extra_layer: Option<L>) -> Result<Box<dyn Subscriber>, LogError> where L: Layer<Registry> {
+pub fn init_logging<L>(
+    config: LoggingConfig,
+    extra_layer: Option<L>,
+) -> Result<Box<dyn Subscriber>, LogError>
+where
+    L: Layer<Registry>,
+{
     let subscriber = Registry::default();
 
     let subscriber = subscriber.with(extra_layer);
 
     let file_layer = if let Some(log_file) = config.log_file {
-        let log_file = std::fs::File::create(log_file).map_err(|e| LogError::InitError(e.to_string()))?;
+        let log_file =
+            std::fs::File::create(log_file).map_err(|e| LogError::InitError(e.to_string()))?;
         Some(tracing_subscriber::fmt::layer().with_writer(log_file))
     } else {
         None
