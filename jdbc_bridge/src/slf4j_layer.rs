@@ -44,11 +44,11 @@ where
             Level::TRACE => "trace",
         };
         // Format the log message
-        let log_msg = format!("[{}:{}] {}", filename, line, message);
+        let log_msg = format!("[{filename}:{line}] {message}");
 
         // Call SLF4J logger through JNI
         let jvm = unsafe { JavaVM::from_raw(self.jvm).unwrap() };
-        let mut env = unsafe { jvm.attach_current_thread().unwrap() };
+        let mut env = jvm.attach_current_thread().unwrap();
 
         // Get org.slf4j.LoggerFactory class
         let logger_factory = env.find_class("org/slf4j/LoggerFactory").unwrap();

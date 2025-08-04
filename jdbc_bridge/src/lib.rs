@@ -45,7 +45,7 @@ pub extern "system" fn JNI_OnLoad(jvm: *mut jni::sys::JavaVM, _: *mut u8) -> jin
 
 #[no_mangle]
 #[allow(non_snake_case)]
-pub extern "system" fn JNI_OnUnload(jvm: *mut jni::sys::JavaVM, _: *mut u8) -> jint {
+pub extern "system" fn JNI_OnUnload(_jvm: *mut jni::sys::JavaVM, _: *mut u8) -> jint {
     0
 }
 
