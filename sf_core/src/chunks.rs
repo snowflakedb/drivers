@@ -94,7 +94,11 @@ pub async fn get_chunk_data(chunk: &ChunkDownloadData) -> Result<Vec<u8>, RestEr
     let client = reqwest::Client::new();
     let mut headers = HeaderMap::new();
     for (key, value) in chunk.headers.iter() {
-        headers.insert(HeaderName::from_str(key).unwrap(), value.parse().unwrap());
+        let header_name = HeaderName::from_str(key)
+            .map_err(|e| RestError::Internal(format!("Invalid header name '{}': {}", key, e)))?;
+        let header_value = HeaderValue::from_str(value)
+            .map_err(|e| RestError::Internal(format!("Invalid header value for '{}': {}", key, e)))?;
+        headers.insert(header_name, header_value);
     }
     let response = client
         .get(url)
