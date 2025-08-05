@@ -2,8 +2,7 @@ use std::io::{Read, Write};
 use std::sync::Mutex;
 use thrift::protocol::{TCompactInputProtocol, TCompactOutputProtocol};
 use thrift::server::TProcessor;
-use tracing::{Level, debug};
-use tracing::{event, span, trace};
+use tracing::{Level, event, span, trace};
 
 use crate::handle_manager::HandleManager;
 
@@ -100,7 +99,7 @@ impl ThriftTransport {
         let input_bytes = self.input.bytes.len();
         let mut input_protocol = TCompactInputProtocol::new(&mut self.input);
         let mut output_protocol = TCompactOutputProtocol::new(&mut self.output);
-        debug!(target: "thrift_transport", "Processing a call(input_length={:?})", input_bytes);
+        trace!(target: "thrift_transport", "Processing a call(input_length={:?})", input_bytes);
         self.processor
             .process(&mut input_protocol, &mut output_protocol)?;
         trace!(target: "thrift_transport", "Finished processing a call(output_length={:?})", self.output.bytes.len());

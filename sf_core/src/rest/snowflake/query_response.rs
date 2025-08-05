@@ -67,11 +67,11 @@ pub struct Data {
     #[serde(rename = "version")]
     _version: Option<i64>,
     #[serde(rename = "chunks")]
-    _chunks: Option<Vec<Chunk>>,
+    pub chunks: Option<Vec<Chunk>>,
     #[serde(rename = "qrmk")]
     _qrmk: Option<String>,
     #[serde(rename = "chunkHeaders")]
-    _chunk_headers: Option<HashMap<String, String>>,
+    pub chunk_headers: Option<HashMap<String, String>>,
     #[serde(rename = "getResultUrl")]
     _get_result_url: Option<String>,
     #[serde(rename = "progressDesc")]
@@ -134,13 +134,13 @@ pub struct QueryContextEntry {
 pub struct Chunk {
     //unused fields
     #[serde(rename = "url")]
-    _url: String,
+    pub url: String,
     #[serde(rename = "rowCount")]
-    _row_count: i32,
+    pub _row_count: i32,
     #[serde(rename = "uncompressedSize")]
-    _uncompressed_size: i64,
+    pub _uncompressed_size: i64,
     #[serde(rename = "compressedSize")]
-    _compressed_size: i64,
+    pub _compressed_size: i64,
 }
 
 #[derive(Deserialize)]

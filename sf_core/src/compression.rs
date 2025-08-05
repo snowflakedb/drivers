@@ -1,7 +1,17 @@
-use super::types::CompressionError;
-use flate2::{Compression, GzBuilder};
-use std::io::Write;
+use flate2::{Compression, GzBuilder, bufread::GzDecoder};
+use std::io::{Read, Write};
 
+use thiserror::Error;
+
+#[derive(Error, Debug)]
+pub enum CompressionError {
+    #[error("IO error: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("Compression error: {0}")]
+    Compression(#[from] flate2::CompressError),
+}
+
+// PUT/GET compression
 pub fn compress_data(input_data: Vec<u8>, filename: &str) -> Result<Vec<u8>, CompressionError> {
     // Python Connector adds a "_c" suffix to the filename and replaces it with spaces
     // To match that behavior, we replace the filename with spaces + 2
@@ -19,11 +29,20 @@ pub fn compress_data(input_data: Vec<u8>, filename: &str) -> Result<Vec<u8>, Com
     Ok(compressed_data)
 }
 
+// Chunks decompression
+pub fn decompress_data(input_data: Vec<u8>) -> Result<Vec<u8>, CompressionError> {
+    let mut decoder = GzDecoder::new(input_data.as_slice());
+    let mut decompressed_data = Vec::new();
+    decoder.read_to_end(&mut decompressed_data)?;
+    Ok(decompressed_data)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::super::test_utils::{bytes_to_hex, hex_to_bytes};
     use super::*;
+    use crate::test_utils::{bytes_to_hex, hex_to_bytes};
 
+    // TODO: Remove this test once we got rid of special python connector behavior
     #[test]
     fn test_compress_test_normal_put_csv() {
         let content = "1,2,3\n";

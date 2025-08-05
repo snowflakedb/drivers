@@ -1,3 +1,4 @@
+use crate::compression::CompressionError;
 use crate::rest::error::RestError;
 use glob;
 use serde::{Deserialize, Serialize};
@@ -109,14 +110,6 @@ impl From<FileManagerError> for DriverException {
             None,
         )
     }
-}
-
-#[derive(Error, Debug)]
-pub enum CompressionError {
-    #[error("IO error: {0}")]
-    Io(#[from] std::io::Error),
-    #[error("Compression error: {0}")]
-    Compression(#[from] flate2::CompressError),
 }
 
 #[derive(Error, Debug)]

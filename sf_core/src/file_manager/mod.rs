@@ -1,13 +1,11 @@
-mod compression;
 mod encryption;
 mod file_transfer;
-mod test_utils;
 pub mod types;
 
 pub use self::types::*;
 
+use crate::compression::compress_data;
 use crate::rest::error::RestError;
-use compression::compress_data;
 use encryption::{decrypt_file_data, encrypt_file_data};
 use file_transfer::{download_from_s3, upload_to_s3};
 use std::fs::File;

@@ -110,7 +110,11 @@ class Cursor:
         """
         raise NotSupportedError("executemany is not implemented")
 
-    
+    def _batch_reader(self):
+        stream_ptr = int.from_bytes(self.execute_result.stream.value, byteorder="little", signed=False)
+        reader = pyarrow.RecordBatchReader._import_from_c(stream_ptr)
+        return reader
+
     def fetchone(self):
         """
         Fetch the next row of a query result set.
@@ -154,7 +158,19 @@ class Cursor:
         Raises:
             NotSupportedError: If not implemented
         """
-        raise NotSupportedError("fetchall is not implemented")
+        reader = self._batch_reader()
+        rows = []
+        while True:
+            try:
+                batch = reader.read_next_batch()
+            except StopIteration:
+                break
+            for row_index in range(batch.num_rows):
+                row = []
+                for column_index in range(batch.num_columns): 
+                    row.append(batch.columns[column_index][row_index].as_py())
+                rows.append(tuple(row))
+        return rows
     
     def nextset(self):
         """

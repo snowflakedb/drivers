@@ -911,7 +911,9 @@ fn test_put_ls() {
     // Verify file was uploaded with LS command
     let expected_file_name = format!("{}/test_put_ls.csv.gz", stage_name.to_lowercase()); // File is compressed by default
     let ls_result = client.execute_query(&format!("LS @{stage_name}"));
-    let result_vector = ArrowResultHelper::from_result(ls_result).transform_into_string_array();
+    let result_vector = ArrowResultHelper::from_result(ls_result)
+        .transform_into_array::<String>()
+        .unwrap();
     assert_eq!(
         result_vector[0][0], expected_file_name,
         "File should be listed in stage"

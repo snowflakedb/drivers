@@ -240,6 +240,53 @@ impl Drop for SnowflakeTestClient {
     }
 }
 
+#[derive(Debug)]
+pub enum ArrowExtractError {
+    UnsupportedType,
+}
+
+pub trait ArrowExtractValue: Sized {
+    fn extract_int8(_value: i8) -> Result<Self, ArrowExtractError> {
+        Err(ArrowExtractError::UnsupportedType)
+    }
+    fn extract_int64(_value: i64) -> Result<Self, ArrowExtractError> {
+        Err(ArrowExtractError::UnsupportedType)
+    }
+    fn extract_float64(_value: f64) -> Result<Self, ArrowExtractError> {
+        Err(ArrowExtractError::UnsupportedType)
+    }
+    fn extract_string(_value: &str) -> Result<Self, ArrowExtractError> {
+        Err(ArrowExtractError::UnsupportedType)
+    }
+}
+
+impl ArrowExtractValue for String {
+    fn extract_int8(value: i8) -> Result<String, ArrowExtractError> {
+        Ok(value.to_string())
+    }
+
+    fn extract_int64(value: i64) -> Result<String, ArrowExtractError> {
+        Ok(value.to_string())
+    }
+
+    fn extract_float64(value: f64) -> Result<String, ArrowExtractError> {
+        Ok(value.to_string())
+    }
+
+    fn extract_string(value: &str) -> Result<String, ArrowExtractError> {
+        Ok(value.to_string())
+    }
+}
+
+impl ArrowExtractValue for i64 {
+    fn extract_int8(value: i8) -> Result<i64, ArrowExtractError> {
+        Ok(value as i64)
+    }
+    fn extract_int64(value: i64) -> Result<i64, ArrowExtractError> {
+        Ok(value)
+    }
+}
+
 /// Helper for processing Arrow stream results
 pub struct ArrowResultHelper {
     reader: ArrowArrayStreamReader,
@@ -267,27 +314,27 @@ impl ArrowResultHelper {
     }
 
     /// Converts all result data to a 2D array of strings for easy comparison
-    pub fn transform_into_string_array(&mut self) -> Vec<Vec<String>> {
+    pub fn transform_into_array<T: ArrowExtractValue>(
+        &mut self,
+    ) -> Result<Vec<Vec<T>>, ArrowExtractError> {
         let mut all_rows = Vec::new();
-
         while let Some(batch) = self.next_batch() {
             for row_idx in 0..batch.num_rows() {
                 let mut row = Vec::new();
                 for col_idx in 0..batch.num_columns() {
                     let column = batch.column(col_idx);
-                    let value_str = extract_string_value(column, row_idx);
-                    row.push(value_str);
+                    let value = extract_value::<T>(column, row_idx)?;
+                    row.push(value);
                 }
                 all_rows.push(row);
             }
         }
-
-        all_rows
+        Ok(all_rows)
     }
 
     /// Asserts that the result equals the expected 2D array
     pub fn assert_equals_array(&mut self, expected: Vec<Vec<&str>>) {
-        let actual = self.transform_into_string_array();
+        let actual = self.transform_into_array::<String>().unwrap();
         let expected_strings: Vec<Vec<String>> = expected
             .iter()
             .map(|row| row.iter().map(|s| s.to_string()).collect())
@@ -307,6 +354,44 @@ impl ArrowResultHelper {
     /// Convenience method for single value assertions
     pub fn assert_equals_single_value(&mut self, expected: &str) {
         self.assert_equals_array(vec![vec![expected]]);
+    }
+}
+
+fn extract_value<T: ArrowExtractValue>(
+    column: &dyn Array,
+    row_idx: usize,
+) -> Result<T, ArrowExtractError> {
+    use arrow::datatypes::DataType;
+    match column.data_type() {
+        DataType::Int8 => {
+            let int_array = column
+                .as_any()
+                .downcast_ref::<Int8Array>()
+                .expect("Expected int8 array");
+            T::extract_int8(int_array.value(row_idx))
+        }
+        DataType::Int64 => {
+            let int_array = column
+                .as_any()
+                .downcast_ref::<Int64Array>()
+                .expect("Expected int64 array");
+            T::extract_int64(int_array.value(row_idx))
+        }
+        DataType::Float64 => {
+            let float_array = column
+                .as_any()
+                .downcast_ref::<Float64Array>()
+                .expect("Expected float64 array");
+            T::extract_float64(float_array.value(row_idx))
+        }
+        DataType::Utf8 => {
+            let string_array = column
+                .as_any()
+                .downcast_ref::<StringArray>()
+                .expect("Expected string array");
+            T::extract_string(string_array.value(row_idx))
+        }
+        _ => Err(ArrowExtractError::UnsupportedType),
     }
 }
 

@@ -1,3 +1,4 @@
+use crate::chunks::{ChunkDownloadData, ChunkReader};
 use crate::driver::{Connection, Database, Setting, Statement};
 use crate::file_manager::{download_file, upload_files};
 use crate::handle_manager::{Handle, HandleManager};
@@ -11,7 +12,6 @@ use arrow::array::{Array, StringArray};
 use arrow::datatypes::{DataType, Field, Schema};
 use arrow::ffi_stream::FFI_ArrowArrayStream;
 use arrow::record_batch::RecordBatch;
-use arrow_ipc::reader::StreamReader;
 use arrow_ipc::writer::StreamWriter;
 use base64::Engine;
 use std::mem::size_of;
@@ -657,11 +657,37 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
                     }
                 };
 
-                let cursor = std::io::Cursor::new(rowset_bytes);
-                // Parse rowset from arrow ipc format
-                let reader = Box::new(StreamReader::try_new(cursor, None).map_err(|e| {
-                    RestError::Internal(format!("Failed to create stream reader: {e}"))
-                })?);
+                let reader = if let (Some(chunks), Some(chunk_headers)) =
+                    (response.data.chunks, response.data.chunk_headers)
+                {
+                    let chunk_download_data = chunks
+                        .iter()
+                        .map(|chunk| ChunkDownloadData::new(chunk, &chunk_headers))
+                        .collect();
+                    Box::new(
+                        ChunkReader::multi_chunk(rowset_bytes, chunk_download_data).map_err(
+                            |e| {
+                                Error::from(DriverException::new(
+                                    format!("Failed to create chunk reader: {e}"),
+                                    StatusCode::UNKNOWN,
+                                    None,
+                                    None,
+                                    None,
+                                ))
+                            },
+                        )?,
+                    )
+                } else {
+                    Box::new(ChunkReader::single_chunk(rowset_bytes).map_err(|e| {
+                        Error::from(DriverException::new(
+                            format!("Failed to create chunk reader: {e}"),
+                            StatusCode::UNKNOWN,
+                            None,
+                            None,
+                            None,
+                        ))
+                    })?)
+                };
                 let stream = Box::new(arrow::ffi_stream::FFI_ArrowArrayStream::new(reader));
                 // Serialize pointer into integer
                 let stream_ptr = Box::into_raw(stream);

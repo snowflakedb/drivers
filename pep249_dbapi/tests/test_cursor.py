@@ -85,14 +85,6 @@ class TestCursorMethods:
             cursor.fetchmany(5)
         assert "fetchmany is not implemented" in str(excinfo.value)
     
-    def test_fetchall_not_implemented(self):
-        """Test that fetchall raises NotSupportedError."""
-        conn = create_connection()
-        cursor = Cursor(conn)
-        with pytest.raises(NotSupportedError) as excinfo:
-            cursor.fetchall()
-        assert "fetchall is not implemented" in str(excinfo.value)
-    
     def test_nextset_not_implemented(self):
         """Test that nextset raises NotSupportedError."""
         conn = create_connection()
@@ -247,3 +239,21 @@ class TestCursorSimpleSelect:
         cursor = Cursor(conn)
         cursor.execute("SELECT 1")
         assert cursor.fetchone() == (1,)
+
+
+class TestCursorLargeResult:
+    """Test Cursor large result."""
+
+    data_sizes = [100000, 1000000]
+
+    @pytest.mark.parametrize("data_size", data_sizes)
+    def test_large_result(self, data_size):
+        """Test large result."""
+        conn = create_connection()
+        cursor = Cursor(conn)
+        cursor.execute(f"SELECT seq8() as id FROM TABLE(GENERATOR(ROWCOUNT => {data_size})) v ORDER BY id")
+        rows = cursor.fetchall()
+        assert len(rows) == data_size
+        for (i, row) in enumerate(rows):
+            assert row == (i,)
+
