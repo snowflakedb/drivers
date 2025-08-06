@@ -24,7 +24,6 @@ impl ChunkDownloadData {
         }
     }
 }
-
 pub struct ChunkReader {
     rest: VecDeque<ChunkDownloadData>,
     schema: SchemaRef,
@@ -87,7 +86,9 @@ impl RecordBatchReader for ChunkReader {
     }
 }
 
+// TODO Should we return RestError here?
 pub fn get_chunk_data_sync(chunk: &ChunkDownloadData) -> Result<Vec<u8>, RestError> {
+    // TODO: Find a better way of managing tokio runtimes
     let rt = tokio::runtime::Runtime::new().unwrap();
     rt.block_on(async { get_chunk_data(chunk).await })
 }
@@ -98,9 +99,9 @@ pub async fn get_chunk_data(chunk: &ChunkDownloadData) -> Result<Vec<u8>, RestEr
     let mut headers = HeaderMap::new();
     for (key, value) in chunk.headers.iter() {
         let header_name = HeaderName::from_str(key)
-            .map_err(|e| RestError::Internal(format!("Invalid header name '{}': {}", key, e)))?;
+            .map_err(|e| RestError::Internal(format!("Invalid header name '{key}': {e}")))?;
         let header_value = HeaderValue::from_str(value)
-            .map_err(|e| RestError::Internal(format!("Invalid header value for '{}': {}", key, e)))?;
+            .map_err(|e| RestError::Internal(format!("Invalid header value for '{key}': {e}")))?;
         headers.insert(header_name, header_value);
     }
     let response = client
