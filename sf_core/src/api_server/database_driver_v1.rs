@@ -1,4 +1,4 @@
-use crate::chunks::{ChunkDownloadData, ChunkReader};
+use crate::chunks::ChunkReader;
 use crate::driver::{Connection, Database, Setting, Statement};
 use crate::file_manager::{download_file, upload_files};
 use crate::handle_manager::{Handle, HandleManager};
@@ -8,12 +8,7 @@ use crate::thrift_gen::database_driver_v1::{
     DatabaseHandle, DriverException, ExecuteResult, InfoCode, PartitionedResult, StatementHandle,
     StatusCode,
 };
-use arrow::array::{Array, StringArray};
-use arrow::datatypes::{DataType, Field, Schema};
 use arrow::ffi_stream::FFI_ArrowArrayStream;
-use arrow::record_batch::RecordBatch;
-use arrow_ipc::writer::StreamWriter;
-use base64::Engine;
 use std::mem::size_of;
 use std::sync::Mutex;
 use thrift::server::TProcessor;
@@ -572,7 +567,6 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
         let handle = stmt_handle.into();
         match self.stmt_handle_manager.get_obj(handle) {
             Some(stmt_ptr) => {
-                use base64::engine::general_purpose;
                 let mut stmt = stmt_ptr.lock().unwrap();
                 let query = stmt
                     .query
@@ -631,63 +625,25 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
                     ));
                 }
 
-                let rowset_bytes = match response.data.rowset_base64 {
-                    Some(rowset_base64) => {
-                        // Decode the base64 string to bytes
-                        general_purpose::STANDARD
-                            .decode(rowset_base64)
-                            .map_err(|e| {
-                                Error::from(RestError::InvalidSnowflakeResponse(format!(
-                                    "Failed to decode base64 rowset: {e}"
-                                )))
-                            })?
-                    }
-                    None => {
-                        match response.data.rowset {
-                            Some(rowset) => {
-                                // Convert JSON rowset to Arrow format
-                                convert_result_to_arrow(rowset)?
-                            }
-                            None => {
-                                return Err(Error::from(RestError::InvalidSnowflakeResponse(
-                                    "Rowset not found in response".to_string(),
-                                )));
-                            }
-                        }
-                    }
-                };
+                let rowset_bytes = response.data.to_rowset_bytes().map_err(Error::from)?;
 
-                let reader = if let (Some(chunks), Some(chunk_headers)) =
-                    (response.data.chunks, response.data.chunk_headers)
-                {
-                    let chunk_download_data = chunks
-                        .iter()
-                        .map(|chunk| ChunkDownloadData::new(chunk, &chunk_headers))
-                        .collect();
-                    Box::new(
-                        ChunkReader::multi_chunk(rowset_bytes, chunk_download_data).map_err(
-                            |e| {
-                                Error::from(DriverException::new(
-                                    format!("Failed to create chunk reader: {e}"),
-                                    StatusCode::UNKNOWN,
-                                    None,
-                                    None,
-                                    None,
-                                ))
-                            },
-                        )?,
-                    )
-                } else {
-                    Box::new(ChunkReader::single_chunk(rowset_bytes).map_err(|e| {
-                        Error::from(DriverException::new(
-                            format!("Failed to create chunk reader: {e}"),
-                            StatusCode::UNKNOWN,
-                            None,
-                            None,
-                            None,
-                        ))
-                    })?)
-                };
+                let reader_result =
+                    if let Some(chunk_download_data) = response.data.to_chunk_download_data() {
+                        ChunkReader::multi_chunk(rowset_bytes, chunk_download_data)
+                    } else {
+                        ChunkReader::single_chunk(rowset_bytes)
+                    };
+
+                let reader = Box::new(reader_result.map_err(|e| {
+                    Error::from(DriverException::new(
+                        format!("Failed to create chunk reader: {e}"),
+                        StatusCode::UNKNOWN,
+                        None,
+                        None,
+                        None,
+                    ))
+                })?);
+
                 let stream = Box::new(arrow::ffi_stream::FFI_ArrowArrayStream::new(reader));
                 // Serialize pointer into integer
                 let stream_ptr = Box::into_raw(stream);
@@ -720,50 +676,4 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
     ) -> thrift::Result<i64> {
         todo!()
     }
-}
-
-// This function assumes that the rowset contains only string values
-fn convert_result_to_arrow(rowset: Vec<Vec<Option<String>>>) -> Result<Vec<u8>, RestError> {
-    if rowset.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    // Get the number of columns from the first row
-    let num_columns = rowset[0].len();
-
-    // Create simple string schema with generic column names
-    let fields: Vec<Field> = (0..num_columns)
-        .map(|i| Field::new(format!("column_{i}"), DataType::Utf8, true))
-        .collect();
-    let schema = Schema::new(fields);
-
-    // Create string arrays from all rows
-    let arrow_arrays: Vec<std::sync::Arc<dyn Array>> = (0..num_columns)
-        .map(|col_idx| {
-            // Collect values from all rows for this column
-            let values: Vec<Option<String>> =
-                rowset.iter().map(|row| row[col_idx].clone()).collect();
-            std::sync::Arc::new(StringArray::from(values)) as std::sync::Arc<dyn Array>
-        })
-        .collect();
-
-    // Create RecordBatch
-    let batch = RecordBatch::try_new(std::sync::Arc::new(schema), arrow_arrays).map_err(|e| {
-        RestError::Internal(format!("Failed to create RecordBatch from rowset: {e}"))
-    })?;
-
-    // Serialize to Arrow IPC format
-    let mut bytes = Vec::new();
-    let mut writer = StreamWriter::try_new(&mut bytes, &batch.schema())
-        .map_err(|e| RestError::Internal(format!("Failed to create Arrow StreamWriter: {e}")))?;
-
-    writer
-        .write(&batch)
-        .map_err(|e| RestError::Internal(format!("Failed to write Arrow batch: {e}")))?;
-
-    writer
-        .finish()
-        .map_err(|e| RestError::Internal(format!("Failed to finish Arrow writing: {e}")))?;
-
-    Ok(bytes)
 }

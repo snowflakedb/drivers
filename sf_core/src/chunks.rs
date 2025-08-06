@@ -1,7 +1,8 @@
 use std::collections::{HashMap, VecDeque};
+use std::io;
 use std::str::FromStr;
 
-use arrow::array::RecordBatchReader;
+use arrow::array::{RecordBatch, RecordBatchReader};
 use arrow::datatypes::SchemaRef;
 use arrow::error::ArrowError;
 use arrow_ipc::reader::StreamReader;
@@ -9,17 +10,16 @@ use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 
 use crate::compression::decompress_data;
 use crate::rest::RestError;
-use crate::rest::snowflake::query_response::Chunk;
 
 pub struct ChunkDownloadData {
-    pub url: String,
-    pub headers: HashMap<String, String>,
+    url: String,
+    headers: HashMap<String, String>,
 }
 
 impl ChunkDownloadData {
-    pub fn new(chunk: &Chunk, chunk_headers: &HashMap<String, String>) -> Self {
+    pub fn new(chunk_url: &str, chunk_headers: &HashMap<String, String>) -> Self {
         Self {
-            url: chunk.url.clone(),
+            url: chunk_url.to_string(),
             headers: chunk_headers.clone(),
         }
     }
@@ -27,12 +27,12 @@ impl ChunkDownloadData {
 pub struct ChunkReader {
     rest: VecDeque<ChunkDownloadData>,
     schema: SchemaRef,
-    current_stream: Option<StreamReader<std::io::Cursor<Vec<u8>>>>,
+    current_stream: Option<StreamReader<io::Cursor<Vec<u8>>>>,
 }
 
 impl ChunkReader {
     pub fn multi_chunk(initial: Vec<u8>, rest: Vec<ChunkDownloadData>) -> Result<Self, ArrowError> {
-        let cursor = std::io::Cursor::new(initial);
+        let cursor = io::Cursor::new(initial);
         let reader = StreamReader::try_new(cursor, None)?;
         let schema = reader.schema().clone();
         Ok(Self {
@@ -42,7 +42,7 @@ impl ChunkReader {
         })
     }
     pub fn single_chunk(initial: Vec<u8>) -> Result<Self, ArrowError> {
-        let cursor = std::io::Cursor::new(initial);
+        let cursor = io::Cursor::new(initial);
         let reader = StreamReader::try_new(cursor, None)?;
         Ok(Self {
             rest: VecDeque::new(),
@@ -53,7 +53,7 @@ impl ChunkReader {
 }
 
 impl Iterator for ChunkReader {
-    type Item = Result<arrow::record_batch::RecordBatch, ArrowError>;
+    type Item = Result<RecordBatch, ArrowError>;
 
     fn next(&mut self) -> Option<Self::Item> {
         while let Some(mut current_stream) = self.current_stream.take() {
@@ -68,7 +68,7 @@ impl Iterator for ChunkReader {
                     return Some(Err(ArrowError::IpcError(e.to_string())));
                 }
                 let data = chunk_data_result.unwrap();
-                let cursor = std::io::Cursor::new(data);
+                let cursor = io::Cursor::new(data);
                 let reader = match StreamReader::try_new(cursor, None) {
                     Ok(r) => r,
                     Err(e) => return Some(Err(e)),

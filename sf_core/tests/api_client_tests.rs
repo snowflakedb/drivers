@@ -1,4 +1,4 @@
-mod common;
+pub mod common;
 
 use common::test_utils::*;
 use sf_core::api_client::new_database_driver_v1_client;
@@ -1097,7 +1097,9 @@ fn test_put_wildcard_question_mark() {
     client.execute_query(&put_sql);
 
     let ls_result = client.execute_query(&format!("LS @{stage_name}"));
-    let result_vector = ArrowResultHelper::from_result(ls_result).transform_into_string_array();
+    let result_vector = ArrowResultHelper::from_result(ls_result)
+        .transform_into_array::<String>()
+        .unwrap();
 
     for i in 1..=5 {
         let expected_file_name = format!(
@@ -1169,7 +1171,9 @@ fn test_put_wildcard_star() {
     client.execute_query(&put_sql);
 
     let ls_result = client.execute_query(&format!("LS @{stage_name}"));
-    let result_vector = ArrowResultHelper::from_result(ls_result).transform_into_string_array();
+    let result_vector = ArrowResultHelper::from_result(ls_result)
+        .transform_into_array::<String>()
+        .unwrap();
 
     for i in 1..=5 {
         let expected_file_name = format!(

@@ -1,5 +1,9 @@
+use crate::arrow_utils::convert_result_to_arrow;
+use crate::chunks::ChunkDownloadData;
 use crate::file_manager;
 use crate::rest::RestError;
+use base64::Engine;
+use base64::engine::general_purpose;
 use serde::Deserialize;
 use std::collections::HashMap;
 
@@ -67,11 +71,11 @@ pub struct Data {
     #[serde(rename = "version")]
     _version: Option<i64>,
     #[serde(rename = "chunks")]
-    pub chunks: Option<Vec<Chunk>>,
+    chunks: Option<Vec<Chunk>>,
     #[serde(rename = "qrmk")]
     _qrmk: Option<String>,
     #[serde(rename = "chunkHeaders")]
-    pub chunk_headers: Option<HashMap<String, String>>,
+    chunk_headers: Option<HashMap<String, String>>,
     #[serde(rename = "getResultUrl")]
     _get_result_url: Option<String>,
     #[serde(rename = "progressDesc")]
@@ -134,13 +138,13 @@ pub struct QueryContextEntry {
 pub struct Chunk {
     //unused fields
     #[serde(rename = "url")]
-    pub url: String,
+    url: String,
     #[serde(rename = "rowCount")]
-    pub _row_count: i32,
+    _row_count: i32,
     #[serde(rename = "uncompressedSize")]
-    pub _uncompressed_size: i64,
+    _uncompressed_size: i64,
     #[serde(rename = "compressedSize")]
-    pub _compressed_size: i64,
+    _compressed_size: i64,
 }
 
 #[derive(Deserialize)]
@@ -328,6 +332,42 @@ impl Data {
             stage_info,
             encryption_materials,
         })
+    }
+
+    pub fn to_chunk_download_data(&self) -> Option<Vec<ChunkDownloadData>> {
+        let chunks = self.chunks.as_ref()?;
+        let chunk_headers = self.chunk_headers.as_ref()?;
+        let chunk_download_data = chunks
+            .iter()
+            .map(|chunk| ChunkDownloadData::new(&chunk.url, chunk_headers))
+            .collect();
+        Some(chunk_download_data)
+    }
+
+    pub fn to_rowset_bytes(&self) -> Result<Vec<u8>, RestError> {
+        match self.rowset_base64.as_ref() {
+            Some(rowset_base64) => {
+                // Decode the base64 string to bytes
+                general_purpose::STANDARD
+                    .decode(rowset_base64)
+                    .map_err(|e| {
+                        RestError::InvalidSnowflakeResponse(format!(
+                            "Failed to decode base64 rowset: {e}"
+                        ))
+                    })
+            }
+            None => {
+                match self.rowset.as_ref() {
+                    Some(rowset) => {
+                        // Convert JSON rowset to Arrow format
+                        convert_result_to_arrow(rowset)
+                    }
+                    None => Err(RestError::InvalidSnowflakeResponse(
+                        "Rowset not found in response".to_string(),
+                    )),
+                }
+            }
+        }
     }
 }
 
