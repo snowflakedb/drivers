@@ -70,7 +70,10 @@ impl Iterator for ChunkReader {
                 }
                 let data = chunk_data_result.unwrap();
                 let cursor = std::io::Cursor::new(data);
-                let reader = StreamReader::try_new(cursor, None).unwrap();
+                let reader = match StreamReader::try_new(cursor, None) {
+                    Ok(r) => r,
+                    Err(e) => return Some(Err(e)),
+                };
                 self.current_stream = Some(reader);
             }
         }
