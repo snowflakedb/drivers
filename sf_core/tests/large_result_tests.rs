@@ -1,8 +1,6 @@
-extern crate sf_core;
+pub mod common;
 
-mod test_utils;
-
-use test_utils::*;
+use common::test_utils::*;
 
 #[test]
 fn test_large_result() {
