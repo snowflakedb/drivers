@@ -115,6 +115,10 @@ jobs:
           set -x
           sudo apt-get update
           sudo apt-get install -y unixodbc unixodbc-dev curl odbcinst
+          wget https://github.com/Kitware/CMake/releases/download/v4.0.3/cmake-4.0.3-linux-x86_64.sh
+          sudo sh cmake-4.0.3-linux-x86_64.sh --skip-license --prefix=/usr/local
+          sudo rm cmake-4.0.3-linux-x86_64.sh
+          cmake --version
           curl -O https://sfc-repo.snowflakecomputing.com/odbc/linux/3.9.0/snowflake-odbc-3.9.0.x86_64.deb
           sudo dpkg -i snowflake-odbc-3.9.0.x86_64.deb
           sudo sed -i 's,ODBCInstLib=.*,ODBCInstLib=/usr/lib/x86_64-linux-gnu/libodbcinst.so.2,g' /usr/lib/snowflake/odbc/lib/simba.snowflake.ini
