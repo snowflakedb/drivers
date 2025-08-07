@@ -76,9 +76,11 @@ pub async fn download_files(mut data: DownloadData) -> Result<(), FileManagerErr
         )));
     }
 
-    while let Some(file_location) = data.src_locations.pop() {
-        let encryption_material = data.encryption_materials.pop().unwrap();
-
+    for (file_location, encryption_material) in data
+        .src_locations
+        .drain(..)
+        .zip(data.encryption_materials.drain(..))
+    {
         let single_download_data = SingleDownloadData {
             src_location: file_location,
             local_location: data.local_location.clone(),
