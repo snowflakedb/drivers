@@ -279,10 +279,6 @@ impl Data {
             .ok_or_else(|| RestError::MissingParameter("source location".to_string()))?
             .clone();
 
-        if src_locations.is_empty() {
-            return Err(RestError::MissingParameter("source locations".to_string()));
-        }
-
         let stage_info: file_manager::StageInfo = self
             .stage_info
             .as_ref()
