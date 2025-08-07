@@ -1,7 +1,10 @@
+#ifndef HANDLE_WRAPPER_HPP
+#define HANDLE_WRAPPER_HPP
+
 #include <sql.h>
 #include <sqltypes.h>
 
-#include <macros.hpp>
+#include "macros.hpp"
 
 class HandleWrapper {
  public:
@@ -46,3 +49,5 @@ class EnvironmentHandleWrapper : public HandleWrapper {
 
   ConnectionHandleWrapper createConnectionHandle() { return {this->handle, SQL_HANDLE_DBC}; }
 };
+
+#endif  // HANDLE_WRAPPER_HPP

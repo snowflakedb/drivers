@@ -7,4 +7,4 @@ add_library(common STATIC
         include/Connection.hpp
 )
 target_include_directories(common PUBLIC ${picojson_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_link_libraries(common PRIVATE Catch2::Catch2WithMain ODBC::ODBC)
+target_link_libraries(common PUBLIC Catch2::Catch2WithMain ODBC::ODBC)

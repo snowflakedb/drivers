@@ -1,3 +1,6 @@
+#ifndef TEST_SETUP_HPP
+#define TEST_SETUP_HPP
+
 #include <picojson.h>
 
 #include <fstream>
@@ -82,3 +85,5 @@ inline std::string get_connection_string() {
   WARN("Connection string: " << ss.str());
   return ss.str();
 }
+
+#endif  // TEST_SETUP_HPP

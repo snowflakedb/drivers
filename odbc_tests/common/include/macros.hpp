@@ -1,11 +1,11 @@
+#ifndef ODBC_TESTS_MACROS_HPP
+#define ODBC_TESTS_MACROS_HPP
+
 #include <sql.h>
 #include <sqlext.h>
 #include <sqltypes.h>
 
 #include <catch2/catch_test_macros.hpp>
-
-#ifndef ODBC_TESTS_MACROS_HPP
-#define ODBC_TESTS_MACROS_HPP
 
 #define CHECK_ODBC(ret, handle) CHECK_ODBC_ERROR(ret, handle.getHandle(), handle.getType())
 
