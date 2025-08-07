@@ -1,0 +1,36 @@
+BasedOnStyle: Google
+
+ColumnLimit: 100
+DerivePointerAlignment: false
+PointerAlignment: Left
+AllowShortLoopsOnASingleLine: false
+InsertNewlineAtEOF: true
+Standard: c++17
+
+IncludeCategories:
+  - Regex:           '^<[^\/]*\.h>'
+    Priority:        1
+    SortPriority:    0
+  - Regex:           '^<sys.*\.h>'
+    Priority:        1
+    SortPriority:    0
+  - Regex:           '^<[^\/]*>'
+    Priority:        2
+    SortPriority:    0
+  - Regex:           '^<.*'
+    Priority:        3
+    SortPriority:    0
+  - Regex:           '.*'
+    Priority:        4
+    SortPriority:    0
+
+QualifierAlignment: Custom
+QualifierOrder:
+ - static
+ - inline
+ - constexpr
+ - const
+ - friend
+ - volatile
+ - type
+ - restrict

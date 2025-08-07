@@ -1,7 +1,8 @@
 // ODBC API implementation will go here.
 
+use crate::extract::ReadArrowValue;
 use arrow::{
-    array::{Int8Array, RecordBatch},
+    array::RecordBatch,
     ffi_stream::{ArrowArrayStreamReader, FFI_ArrowArrayStream},
 };
 use odbc_sys as sql;
@@ -37,10 +38,10 @@ enum StatementState {
     Executed {
         result: ExecuteResult,
     },
-    Fetched {
-        #[allow(dead_code)]
+    Fetching {
         reader: ArrowArrayStreamReader,
         record_batch: RecordBatch,
+        batch_idx: usize,
     },
     Done,
 }
@@ -558,10 +559,37 @@ pub unsafe extern "C" fn SQLFetch(statement_handle: sql::Handle) -> i16 {
             match reader.next() {
                 Some(Ok(record_batch)) => {
                     eprintln!("RUST: SQLFetch: fetched: {record_batch:?}");
-                    stmt.state = StatementState::Fetched {
+                    stmt.state = StatementState::Fetching {
                         reader,
                         record_batch,
+                        batch_idx: 0,
                     };
+                    sql::SqlReturn::SUCCESS.0
+                }
+                Some(Err(e)) => {
+                    eprintln!("RUST: SQLFetch: error: {e:?}");
+                    sql::SqlReturn::ERROR.0
+                }
+                None => {
+                    eprintln!("RUST: SQLFetch: no data");
+                    stmt.state = StatementState::Done;
+                    sql::SqlReturn::NO_DATA.0
+                }
+            }
+        }
+        StatementState::Fetching {
+            reader,
+            record_batch,
+            batch_idx,
+        } => {
+            *batch_idx += 1;
+            if *batch_idx < record_batch.num_rows() {
+                return sql::SqlReturn::SUCCESS.0;
+            }
+            match reader.next() {
+                Some(Ok(new_record_batch)) => {
+                    *record_batch = new_record_batch;
+                    *batch_idx = 0;
                     sql::SqlReturn::SUCCESS.0
                 }
                 Some(Err(e)) => {
@@ -603,7 +631,7 @@ pub unsafe extern "C" fn SQLFetch(statement_handle: sql::Handle) -> i16 {
 pub unsafe extern "C" fn SQLGetData(
     statement_handle: sql::Handle,
     col_or_param_num: sql::USmallInt,
-    _target_type: sql::SqlDataType,
+    target_type: sql::SqlDataType,
     target_value_ptr: sql::Pointer,
     _buffer_length: sql::Len,
     _str_len_or_ind_ptr: *mut sql::Len,
@@ -611,20 +639,32 @@ pub unsafe extern "C" fn SQLGetData(
     eprintln!("RUST: SQLGetData: {statement_handle:?}");
     let stmt = stmt_from_handle(statement_handle);
     match &mut stmt.state {
-        StatementState::Fetched {
+        StatementState::Fetching {
             reader: _,
             record_batch,
+            batch_idx,
         } => {
-            eprintln!("RUST: SQLGetData: fetched: {record_batch:?}");
             let array_ref = record_batch.column((col_or_param_num - 1) as usize);
-            // TODO: handle other types
-            let array = array_ref.as_any().downcast_ref::<Int8Array>().unwrap();
-            eprintln!("RUST: SQLGetData: array: {array:?}");
-            let value = array.value(0);
-            unsafe {
-                std::ptr::write(target_value_ptr as *mut i8, value);
+            match target_type {
+                sql::SqlDataType::INTEGER => {
+                    match ReadArrowValue::read(target_value_ptr as *mut i64, array_ref, *batch_idx)
+                    {
+                        Ok(_) => sql::SqlReturn::SUCCESS.0,
+                        Err(e) => {
+                            eprintln!("RUST: SQLGetData: error: {e:?}");
+                            sql::SqlReturn::ERROR.0
+                        }
+                    }
+                }
+                _ => {
+                    eprintln!("RUST: SQLGetData: unsupported type: {target_type:?}");
+                    sql::SqlReturn::ERROR.0
+                }
             }
-            sql::SqlReturn::SUCCESS.0
+        }
+        StatementState::Done => {
+            eprintln!("RUST: SQLGetData: done");
+            sql::SqlReturn::NO_DATA.0
         }
         _ => {
             eprintln!("RUST: SQLGetData: not fetched");

@@ -21,4 +21,11 @@
         pass_filenames: false
         types: [file, rust]
         language: system
+    -   id: clang-format
+        name: clang-format
+        description: Run clang-format on C/C++ files included in the commit. clang-format should be installed before-hand.
+        entry: clang-format -i
+        pass_filenames: true
+        types_or: [c, c++]
+        language: system
 

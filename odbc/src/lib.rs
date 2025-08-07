@@ -1,4 +1,6 @@
 pub mod api;
+mod extract;
+
 extern crate sf_core;
 extern crate thiserror;
 extern crate thrift;

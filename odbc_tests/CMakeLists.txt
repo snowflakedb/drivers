@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.20)
+cmake_minimum_required(VERSION 4.0)
 project(odbc_tests)
 
 enable_testing()
@@ -28,8 +28,13 @@ find_package(ODBC REQUIRED)
 message(STATUS "ODBC_INCLUDE_DIRS: ${ODBC_INCLUDE_DIRS}")
 message(STATUS "ODBC_LIBRARIES: ${ODBC_LIBRARIES}")
 
-# Add tests
-add_executable(tests test.cpp)
-target_link_libraries(tests PRIVATE Catch2::Catch2WithMain ODBC::ODBC)
-target_include_directories(tests PRIVATE ${picojson_SOURCE_DIR})
-add_test(NAME tests COMMAND tests)
+add_subdirectory(common)
+
+function(add_odbc_test name)
+  add_executable(${name} ${ARGN})
+  target_link_libraries(${name} PRIVATE Catch2::Catch2WithMain ODBC::ODBC common)
+  target_include_directories(${name} PRIVATE ${picojson_SOURCE_DIR})
+  add_test(NAME ${name} COMMAND ${name})
+endfunction()
+
+add_subdirectory(tests)
