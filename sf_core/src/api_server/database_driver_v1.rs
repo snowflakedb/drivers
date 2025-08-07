@@ -1,6 +1,6 @@
 use crate::chunks::ChunkReader;
 use crate::driver::{Connection, Database, Setting, Statement};
-use crate::file_manager::{download_file, upload_files};
+use crate::file_manager::{download_files, upload_files};
 use crate::handle_manager::{Handle, HandleManager};
 use crate::rest::error::RestError;
 use crate::thrift_gen::database_driver_v1::{
@@ -606,7 +606,7 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
                             .map_err(DriverException::from)?;
                     } else if command == "DOWNLOAD" {
                         let file_download_data = response.data.to_file_download_data()?;
-                        rt.block_on(download_file(file_download_data))
+                        rt.block_on(download_files(file_download_data))
                             .map_err(DriverException::from)?;
                     } else {
                         return Err(Error::from(DriverException::new(

@@ -12,13 +12,6 @@ use aws_sdk_s3::operation::put_object as s3_put_object;
 // Dedicated file transfer types
 #[derive(Debug)]
 pub struct UploadData {
-    pub src_locations: Vec<String>,
-    pub stage_info: StageInfo,
-    pub encryption_materials: Vec<EncryptionMaterial>,
-    pub auto_compress: bool,
-}
-
-pub struct SingleUploadData {
     pub src_location: String,
     pub stage_info: StageInfo,
     pub encryption_material: EncryptionMaterial,
@@ -31,6 +24,14 @@ pub struct DownloadData {
     pub local_location: String,
     pub stage_info: StageInfo,
     pub encryption_materials: Vec<EncryptionMaterial>,
+}
+
+#[derive(Debug)]
+pub struct SingleDownloadData {
+    pub src_location: String,
+    pub local_location: String,
+    pub stage_info: StageInfo,
+    pub encryption_material: EncryptionMaterial,
 }
 
 #[derive(Debug, Clone)]
