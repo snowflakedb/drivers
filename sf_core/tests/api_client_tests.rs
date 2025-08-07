@@ -1255,7 +1255,7 @@ fn test_put_get_regexp() {
     let download_dir = temp_dir.path().join("download");
     fs::create_dir_all(&download_dir).unwrap();
 
-    // Regexp pattern
+    // The last two dots are escaped to match literal ".csv.gz"
     let get_pattern = format!(r".*/{file_name_base}_.\.csv\.gz");
 
     let get_sql = format!(
