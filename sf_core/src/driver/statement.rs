@@ -36,7 +36,7 @@ fn parameters_from_record_batch(
                 parameters.insert(
                     format!("{}", i + 1),
                     query_request::BindParameter {
-                        tpe: "FIXED".to_string(),
+                        type_: "FIXED".to_string(),
                         value: json_value,
                         format: None,
                         schema: None,

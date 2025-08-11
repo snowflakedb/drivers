@@ -28,7 +28,7 @@ pub struct Request {
 #[derive(Serialize, Clone)]
 pub struct BindParameter {
     #[serde(rename = "type")]
-    pub tpe: String,
+    pub type_: String,
     pub value: serde_json::Value,
     #[serde(rename = "fmt", skip_serializing_if = "Option::is_none")]
     pub format: Option<String>,
