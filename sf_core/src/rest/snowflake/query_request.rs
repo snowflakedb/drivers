@@ -25,10 +25,10 @@ pub struct Request {
     pub query_context: QueryContext,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Clone)]
 pub struct BindParameter {
     #[serde(rename = "type")]
-    pub type_: String,
+    pub tpe: String,
     pub value: serde_json::Value,
     #[serde(rename = "fmt", skip_serializing_if = "Option::is_none")]
     pub format: Option<String>,
@@ -36,7 +36,7 @@ pub struct BindParameter {
     pub schema: Option<BindingSchema>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Clone)]
 pub struct BindingSchema {}
 
 #[derive(Serialize)]

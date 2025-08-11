@@ -859,6 +859,62 @@ impl TSerializable for ArrowSchemaPtr {
 }
 
 //
+// ArrowArrayPtr
+//
+
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct ArrowArrayPtr {
+  pub value: Vec<u8>,
+}
+
+impl ArrowArrayPtr {
+  pub fn new(value: Vec<u8>) -> ArrowArrayPtr {
+    ArrowArrayPtr {
+      value,
+    }
+  }
+}
+
+impl TSerializable for ArrowArrayPtr {
+  fn read_from_in_protocol(i_prot: &mut dyn TInputProtocol) -> thrift::Result<ArrowArrayPtr> {
+    i_prot.read_struct_begin()?;
+    let mut f_1: Option<Vec<u8>> = None;
+    loop {
+      let field_ident = i_prot.read_field_begin()?;
+      if field_ident.field_type == TType::Stop {
+        break;
+      }
+      let field_id = field_id(&field_ident)?;
+      match field_id {
+        1 => {
+          let val = i_prot.read_bytes()?;
+          f_1 = Some(val);
+        },
+        _ => {
+          i_prot.skip(field_ident.field_type)?;
+        },
+      };
+      i_prot.read_field_end()?;
+    }
+    i_prot.read_struct_end()?;
+    verify_required_field_exists("ArrowArrayPtr.value", &f_1)?;
+    let ret = ArrowArrayPtr {
+      value: f_1.expect("auto-generated code should have checked for presence of required fields"),
+    };
+    Ok(ret)
+  }
+  fn write_to_out_protocol(&self, o_prot: &mut dyn TOutputProtocol) -> thrift::Result<()> {
+    let struct_ident = TStructIdentifier::new("ArrowArrayPtr");
+    o_prot.write_struct_begin(&struct_ident)?;
+    o_prot.write_field_begin(&TFieldIdentifier::new("value", TType::String, 1))?;
+    o_prot.write_bytes(&self.value)?;
+    o_prot.write_field_end()?;
+    o_prot.write_field_stop()?;
+    o_prot.write_struct_end()
+  }
+}
+
+//
 // DatabaseDriver service client
 //
 
@@ -965,7 +1021,7 @@ pub trait TDatabaseDriverSyncClient {
   /// Bind a single batch of values to a prepared statement.
   /// Corresponds to AdbcStatementBind.
   /// @param values An Arrow RecordBatch serialized in IPC format.
-  fn statement_bind(&mut self, stmt_handle: StatementHandle, values: Vec<u8>) -> thrift::Result<()>;
+  fn statement_bind(&mut self, stmt_handle: StatementHandle, schema: ArrowSchemaPtr, array: ArrowArrayPtr) -> thrift::Result<()>;
   /// Bind a stream of values to a statement (for bulk ingestion).
   /// Corresponds to AdbcStatementBindStream.
   /// @param stream An Arrow stream serialized in IPC format.
@@ -1819,12 +1875,12 @@ impl <C: TThriftClient + TDatabaseDriverSyncClientMarker> TDatabaseDriverSyncCli
       result.ok_or()
     }
   }
-  fn statement_bind(&mut self, stmt_handle: StatementHandle, values: Vec<u8>) -> thrift::Result<()> {
+  fn statement_bind(&mut self, stmt_handle: StatementHandle, schema: ArrowSchemaPtr, array: ArrowArrayPtr) -> thrift::Result<()> {
     (
       {
         self.increment_sequence_number();
         let message_ident = TMessageIdentifier::new("statementBind", TMessageType::Call, self.sequence_number());
-        let call_args = DatabaseDriverStatementBindArgs { stmt_handle, values };
+        let call_args = DatabaseDriverStatementBindArgs { stmt_handle, schema, array };
         self.o_prot_mut().write_message_begin(&message_ident)?;
         call_args.write_to_out_protocol(self.o_prot_mut())?;
         self.o_prot_mut().write_message_end()?;
@@ -2063,7 +2119,7 @@ pub trait DatabaseDriverSyncHandler {
   /// Bind a single batch of values to a prepared statement.
   /// Corresponds to AdbcStatementBind.
   /// @param values An Arrow RecordBatch serialized in IPC format.
-  fn handle_statement_bind(&self, stmt_handle: StatementHandle, values: Vec<u8>) -> thrift::Result<()>;
+  fn handle_statement_bind(&self, stmt_handle: StatementHandle, schema: ArrowSchemaPtr, array: ArrowArrayPtr) -> thrift::Result<()>;
   /// Bind a stream of values to a statement (for bulk ingestion).
   /// Corresponds to AdbcStatementBindStream.
   /// @param stream An Arrow stream serialized in IPC format.
@@ -4005,7 +4061,7 @@ impl TDatabaseDriverProcessFunctions {
   }
   pub fn process_statement_bind<H: DatabaseDriverSyncHandler>(handler: &H, incoming_sequence_number: i32, i_prot: &mut dyn TInputProtocol, o_prot: &mut dyn TOutputProtocol) -> thrift::Result<()> {
     let args = DatabaseDriverStatementBindArgs::read_from_in_protocol(i_prot)?;
-    match handler.handle_statement_bind(args.stmt_handle, args.values) {
+    match handler.handle_statement_bind(args.stmt_handle, args.schema, args.array) {
       Ok(_) => {
         let message_ident = TMessageIdentifier::new("statementBind", TMessageType::Reply, incoming_sequence_number);
         o_prot.write_message_begin(&message_ident)?;
@@ -8117,14 +8173,16 @@ impl DatabaseDriverStatementGetParameterSchemaResult {
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 struct DatabaseDriverStatementBindArgs {
   stmt_handle: StatementHandle,
-  values: Vec<u8>,
+  schema: ArrowSchemaPtr,
+  array: ArrowArrayPtr,
 }
 
 impl DatabaseDriverStatementBindArgs {
   fn read_from_in_protocol(i_prot: &mut dyn TInputProtocol) -> thrift::Result<DatabaseDriverStatementBindArgs> {
     i_prot.read_struct_begin()?;
     let mut f_1: Option<StatementHandle> = None;
-    let mut f_2: Option<Vec<u8>> = None;
+    let mut f_2: Option<ArrowSchemaPtr> = None;
+    let mut f_3: Option<ArrowArrayPtr> = None;
     loop {
       let field_ident = i_prot.read_field_begin()?;
       if field_ident.field_type == TType::Stop {
@@ -8137,8 +8195,12 @@ impl DatabaseDriverStatementBindArgs {
           f_1 = Some(val);
         },
         2 => {
-          let val = i_prot.read_bytes()?;
+          let val = ArrowSchemaPtr::read_from_in_protocol(i_prot)?;
           f_2 = Some(val);
+        },
+        3 => {
+          let val = ArrowArrayPtr::read_from_in_protocol(i_prot)?;
+          f_3 = Some(val);
         },
         _ => {
           i_prot.skip(field_ident.field_type)?;
@@ -8148,10 +8210,12 @@ impl DatabaseDriverStatementBindArgs {
     }
     i_prot.read_struct_end()?;
     verify_required_field_exists("DatabaseDriverStatementBindArgs.stmt_handle", &f_1)?;
-    verify_required_field_exists("DatabaseDriverStatementBindArgs.values", &f_2)?;
+    verify_required_field_exists("DatabaseDriverStatementBindArgs.schema", &f_2)?;
+    verify_required_field_exists("DatabaseDriverStatementBindArgs.array", &f_3)?;
     let ret = DatabaseDriverStatementBindArgs {
       stmt_handle: f_1.expect("auto-generated code should have checked for presence of required fields"),
-      values: f_2.expect("auto-generated code should have checked for presence of required fields"),
+      schema: f_2.expect("auto-generated code should have checked for presence of required fields"),
+      array: f_3.expect("auto-generated code should have checked for presence of required fields"),
     };
     Ok(ret)
   }
@@ -8161,8 +8225,11 @@ impl DatabaseDriverStatementBindArgs {
     o_prot.write_field_begin(&TFieldIdentifier::new("stmt_handle", TType::Struct, 1))?;
     self.stmt_handle.write_to_out_protocol(o_prot)?;
     o_prot.write_field_end()?;
-    o_prot.write_field_begin(&TFieldIdentifier::new("values", TType::String, 2))?;
-    o_prot.write_bytes(&self.values)?;
+    o_prot.write_field_begin(&TFieldIdentifier::new("schema", TType::Struct, 2))?;
+    self.schema.write_to_out_protocol(o_prot)?;
+    o_prot.write_field_end()?;
+    o_prot.write_field_begin(&TFieldIdentifier::new("array", TType::Struct, 3))?;
+    self.array.write_to_out_protocol(o_prot)?;
     o_prot.write_field_end()?;
     o_prot.write_field_stop()?;
     o_prot.write_struct_end()

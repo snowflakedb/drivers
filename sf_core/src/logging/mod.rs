@@ -2,8 +2,9 @@ use std::path::PathBuf;
 
 pub use crate::logging::callback_layer::CLogCallback;
 pub use crate::logging::callback_layer::CallbackLayer;
-use crate::logging::error::LogError;
+pub use crate::logging::error::LogError;
 use crate::logging::opentelemetry::init_tracer;
+use tracing::level_filters::LevelFilter;
 use tracing_opentelemetry::OpenTelemetryLayer;
 use tracing_subscriber::Layer;
 use tracing_subscriber::Registry;
@@ -15,16 +16,27 @@ mod opentelemetry;
 
 pub struct LoggingConfig {
     pub log_file: Option<PathBuf>,
+    pub stderr: bool,
     pub opentelemetry: bool,
 }
 
 impl LoggingConfig {
-    pub fn new(log_file: Option<PathBuf>, opentelemetry: bool) -> Self {
+    pub fn new(log_file: Option<PathBuf>, stderr: bool, opentelemetry: bool) -> Self {
         Self {
             log_file,
+            stderr,
             opentelemetry,
         }
     }
+}
+
+struct EmptyLayer;
+
+impl Layer<Registry> for EmptyLayer {}
+
+pub fn init(config: LoggingConfig) -> Result<(), LogError> {
+    eprintln!("Initializing logging");
+    init_logging::<EmptyLayer>(config, None)
 }
 
 pub fn init_logging<L>(config: LoggingConfig, extra_layer: Option<L>) -> Result<(), LogError>
@@ -50,6 +62,17 @@ where
         None
     };
     let subscriber = subscriber.with(opentelemetry_layer);
+
+    let stderr_layer = if config.stderr {
+        Some(
+            tracing_subscriber::fmt::layer()
+                .with_writer(std::io::stderr)
+                .with_filter(LevelFilter::DEBUG),
+        )
+    } else {
+        None
+    };
+    let subscriber = subscriber.with(stderr_layer);
 
     tracing::subscriber::set_global_default(subscriber)
         .map_err(|e| LogError::InitError(e.to_string()))?;

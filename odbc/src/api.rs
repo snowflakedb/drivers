@@ -1,19 +1,49 @@
-// ODBC API implementation will go here.
-
-use crate::extract::ReadArrowValue;
+use crate::read_arrow::ReadArrowValue;
 use arrow::{
-    array::RecordBatch,
+    array::{Array, Int8Array, Int64Array, RecordBatch},
+    ffi::{FFI_ArrowArray, FFI_ArrowSchema},
     ffi_stream::{ArrowArrayStreamReader, FFI_ArrowArrayStream},
 };
+use lazy_static::lazy_static;
 use odbc_sys as sql;
 use sf_core::{
     api_client,
     thrift_gen::database_driver_v1::{
-        ConnectionHandle as TConnectionHandle, DatabaseHandle as TDatabaseHandle, ExecuteResult,
-        StatementHandle, TDatabaseDriverSyncClient,
+        ArrowArrayPtr, ArrowSchemaPtr, ConnectionHandle as TConnectionHandle,
+        DatabaseHandle as TDatabaseHandle, ExecuteResult, StatementHandle,
+        TDatabaseDriverSyncClient,
     },
 };
-use std::{collections::HashMap, str};
+use std::{collections::HashMap, str, sync::Arc};
+use tracing;
+
+fn thrift_from_ffi_arrow_array(raw: *mut FFI_ArrowArray) -> ArrowArrayPtr {
+    let len = size_of::<*mut FFI_ArrowArray>();
+    let buf_ptr = std::ptr::addr_of!(raw) as *const u8;
+    let slice = unsafe { std::slice::from_raw_parts(buf_ptr, len) };
+    let vec = slice.to_vec();
+    ArrowArrayPtr { value: vec }
+}
+
+fn thrift_from_ffi_arrow_schema(raw: *mut FFI_ArrowSchema) -> ArrowSchemaPtr {
+    let len = size_of::<*mut FFI_ArrowSchema>();
+    let buf_ptr = std::ptr::addr_of!(raw) as *const u8;
+    let slice = unsafe { std::slice::from_raw_parts(buf_ptr, len) };
+    let vec = slice.to_vec();
+    ArrowSchemaPtr { value: vec }
+}
+
+lazy_static! {
+    // TODO: This is a hack to initialize the logging system.
+    // We should find a better way to do this.
+    static ref LOGGING_RESULT: Result<(), sf_core::logging::LogError> = sf_core::logging::init(sf_core::logging::LoggingConfig::new(None, true, false));
+}
+
+fn init_logging() {
+    if let Err(e) = LOGGING_RESULT.as_ref() {
+        eprintln!("Failed to initialize logging: {e:?}");
+    }
+}
 
 struct Environment {
     odbc_version: sql::Integer,
@@ -33,6 +63,12 @@ struct Connection {
     state: ConnectionState,
 }
 
+#[derive(Debug, Clone)]
+struct ParameterBinding {
+    value_type: sql::SqlDataType,
+    parameter_value_ptr: sql::Pointer,
+}
+
 enum StatementState {
     Created,
     Executed {
@@ -50,6 +86,7 @@ struct Statement<'a> {
     conn: &'a mut Connection,
     stmt_handle: StatementHandle,
     state: StatementState,
+    parameter_bindings: HashMap<u16, ParameterBinding>,
 }
 
 fn env_from_handle<'a>(handle: sql::Handle) -> &'a mut Environment {
@@ -72,10 +109,14 @@ fn sql_alloc_handle(
     input_handle: sql::Handle,
     output_handle: *mut sql::Handle,
 ) -> i16 {
-    eprintln!("RUST: SQLAllocHandle: {handle_type:?}");
+    init_logging();
+    tracing::debug!("SQLAllocHandle: handle_type={:?}", handle_type);
     match handle_type {
         sql::HandleType::Env => {
-            eprintln!("Allocating new env: SQLAllocHandle: {handle_type:?}");
+            tracing::info!(
+                "Allocating new env: SQLAllocHandle: handle_type={:?}",
+                handle_type
+            );
             let env = Box::new(Environment { odbc_version: 3 });
             let handle = Box::into_raw(env);
             unsafe {
@@ -84,21 +125,25 @@ fn sql_alloc_handle(
             sql::SqlReturn::SUCCESS.0
         }
         sql::HandleType::Dbc => {
-            eprintln!("Allocating new dbc: SQLAllocHandle: {handle_type:?}");
+            tracing::info!(
+                "Allocating new dbc: SQLAllocHandle: handle_type={:?}",
+                handle_type
+            );
             let dbc = Box::new(Connection {
                 state: ConnectionState::Disconnected,
             });
-            // eprintln!("RUST: SQLAllocHandle: dbc: {:?}", dbc);
             let handle = Box::into_raw(dbc);
-            // eprintln!("RUST: SQLAllocHandle: dbc: {:?}", handle);
             unsafe {
                 *output_handle = handle as sql::Handle;
             }
-            eprintln!("RUST: SQLAllocHandle: dbc: {handle:?}");
+            tracing::debug!("SQLAllocHandle: dbc allocated: handle={:?}", handle);
             sql::SqlReturn::SUCCESS.0
         }
         sql::HandleType::Stmt => {
-            eprintln!("Allocating new stmt: SQLAllocHandle: {handle_type:?}");
+            tracing::info!(
+                "Allocating new stmt: SQLAllocHandle: handle_type={:?}",
+                handle_type
+            );
             let conn = conn_from_handle(input_handle);
             match &mut conn.state {
                 ConnectionState::Connected {
@@ -111,6 +156,7 @@ fn sql_alloc_handle(
                         conn,
                         stmt_handle,
                         state: StatementState::Created,
+                        parameter_bindings: HashMap::new(),
                     });
                     let handle = Box::into_raw(stmt);
                     unsafe {
@@ -119,18 +165,21 @@ fn sql_alloc_handle(
                     sql::SqlReturn::SUCCESS.0
                 }
                 ConnectionState::Disconnected => {
-                    eprintln!("RUST: SQLAllocHandle: disconnected");
+                    tracing::error!("SQLAllocHandle: connection is disconnected");
                     sql::SqlReturn::ERROR.0
                 }
             }
         }
         sql::HandleType::Desc => {
             // Not implemented yet
-            eprintln!("RUST: SQLAllocHandle: Desc: {handle_type:?}");
+            tracing::warn!(
+                "SQLAllocHandle: Desc handle type not implemented: {:?}",
+                handle_type
+            );
             sql::SqlReturn::ERROR.0
         }
         _ => {
-            eprintln!("RUST: SQLAllocHandle: unknown handle type: {handle_type:?}");
+            tracing::error!("SQLAllocHandle: unknown handle type: {:?}", handle_type);
             sql::SqlReturn::ERROR.0
         }
     }
@@ -140,7 +189,7 @@ fn sql_alloc_handle(
 /// This function is called by the ODBC driver manager.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SQLAllocEnv(output_handle: *mut sql::Handle) -> i16 {
-    eprintln!("RUST: SQLAllocEnv");
+    tracing::debug!("SQLAllocEnv called");
     sql_alloc_handle(sql::HandleType::Env, 0 as sql::Handle, output_handle)
 }
 
@@ -151,7 +200,7 @@ pub unsafe extern "C" fn SQLAllocConnect(
     environment_handle: sql::Handle,
     output_handle: *mut sql::Handle,
 ) -> i16 {
-    eprintln!("RUST: SQLAllocConnect");
+    tracing::debug!("SQLAllocConnect called");
     sql_alloc_handle(sql::HandleType::Dbc, environment_handle, output_handle)
 }
 
@@ -189,7 +238,7 @@ pub unsafe extern "C" fn SQLExecDirect(
     text_length: sql::Integer,
 ) -> sql::RetCode {
     let stmt = stmt_from_handle(statement_handle);
-    eprintln!("RUST: SQLExecDirect: {statement_handle:?}");
+    tracing::debug!("SQLExecDirect: statement_handle={:?}", statement_handle);
     match &mut stmt.conn.state {
         ConnectionState::Connected {
             client,
@@ -207,7 +256,7 @@ pub unsafe extern "C" fn SQLExecDirect(
             sql::SqlReturn::SUCCESS.0
         }
         ConnectionState::Disconnected => {
-            eprintln!("RUST: SQLExecDirect: disconnected");
+            tracing::error!("SQLExecDirect: connection is disconnected");
             sql::SqlReturn::ERROR.0
         }
     }
@@ -226,21 +275,21 @@ pub unsafe extern "C" fn SQLFreeHandle(
 
     match handle_type {
         sql::HandleType::Env => {
-            eprintln!("Freeing env: SQLFreeHandle: {handle_type:?}");
+            tracing::info!("Freeing env: SQLFreeHandle: handle_type={:?}", handle_type);
             unsafe {
                 drop(Box::from_raw(handle as *mut Environment));
             }
             sql::SqlReturn::SUCCESS
         }
         sql::HandleType::Dbc => {
-            eprintln!("Freeing dbc: SQLFreeHandle: {handle_type:?}");
+            tracing::info!("Freeing dbc: SQLFreeHandle: handle_type={:?}", handle_type);
             unsafe {
                 drop(Box::from_raw(handle as *mut Connection));
             }
             sql::SqlReturn::SUCCESS
         }
         sql::HandleType::Stmt => {
-            eprintln!("Freeing stmt: SQLFreeHandle: {handle_type:?}");
+            tracing::info!("Freeing stmt: SQLFreeHandle: handle_type={:?}", handle_type);
             unsafe {
                 drop(Box::from_raw(handle as *mut Statement));
             }
@@ -266,7 +315,7 @@ pub unsafe extern "C" fn SQLConnect(
     _authentication: *const sql::Char,
     _name_length3: sql::SmallInt,
 ) -> sql::SqlReturn {
-    eprintln!("RUST: SQLConnect: {connection_handle:?}");
+    tracing::debug!("SQLConnect: connection_handle={:?}", connection_handle);
     // todo!()
 
     // let dbc_handle = *(connection_handle as *mut Handle);
@@ -350,23 +399,23 @@ pub unsafe extern "C" fn SQLSetEnvAttr(
     value: sql::Pointer,
     _string_length: sql::SmallInt,
 ) -> i16 {
-    eprintln!("RUST: SQLSetEnvAttr: {environment_handle:?}");
+    tracing::debug!("SQLSetEnvAttr: environment_handle={:?}", environment_handle);
     let env = env_from_handle(environment_handle);
     let attr = to_env_attr(attribute);
     if attr.is_none() {
-        eprintln!("RUST: SQLSetEnvAttr: unknown attribute: {attribute:?}");
+        tracing::error!("SQLSetEnvAttr: unknown attribute: {:?}", attribute);
         return sql::SqlReturn::ERROR.0;
     }
 
     match attr.unwrap() {
         sql::EnvironmentAttribute::OdbcVersion => {
-            eprintln!("RUST: SQLSetEnvAttr: OdbcVersion: {value:?}");
+            tracing::debug!("SQLSetEnvAttr: OdbcVersion: value={:?}", value);
             let int = value as sql::Integer;
             env.odbc_version = int;
             sql::SqlReturn::SUCCESS.0
         }
         _ => {
-            eprintln!("RUST: SQLSetEnvAttr: unknown attribute: {attribute:?}");
+            tracing::error!("SQLSetEnvAttr: unhandled attribute: {:?}", attribute);
             sql::SqlReturn::ERROR.0
         }
     }
@@ -381,25 +430,25 @@ pub unsafe extern "C" fn SQLGetEnvAttr(
     value: sql::Pointer,
     _string_length: sql::SmallInt,
 ) -> i16 {
-    eprintln!("RUST: SQLGetEnvAttr: {environment_handle:?}");
+    tracing::debug!("SQLGetEnvAttr: environment_handle={:?}", environment_handle);
     let env = env_from_handle(environment_handle);
     let attr = to_env_attr(attribute);
     if attr.is_none() {
-        eprintln!("RUST: SQLGetEnvAttr: unknown attribute: {attribute:?}");
+        tracing::error!("SQLGetEnvAttr: unknown attribute: {:?}", attribute);
         return sql::SqlReturn::ERROR.0;
     }
     match attr.unwrap() {
         sql::EnvironmentAttribute::OdbcVersion => {
-            eprintln!("RUST: SQLGetEnvAttr: OdbcVersion: {value:?}");
+            tracing::debug!("SQLGetEnvAttr: OdbcVersion: value={:?}", value);
             let int_ptr = value as *mut sql::Integer;
             unsafe {
                 std::ptr::write(int_ptr, env.odbc_version);
             }
-            eprintln!("RUST: SQLGetEnvAttr: OdbcVersion: {}", env.odbc_version);
+            tracing::debug!("SQLGetEnvAttr: OdbcVersion: {}", env.odbc_version);
             sql::SqlReturn::SUCCESS.0
         }
         _ => {
-            eprintln!("RUST: SQLGetEnvAttr: unknown attribute: {attribute:?}");
+            tracing::error!("SQLGetEnvAttr: unhandled attribute: {:?}", attribute);
             sql::SqlReturn::ERROR.0
         }
     }
@@ -431,7 +480,10 @@ pub unsafe extern "C" fn SQLDriverConnect(
     // Parse the connection string
     let connection_string = text_to_string(in_connection_string, in_string_length as i32);
     let connection_string_map = parse_connection_string(&connection_string);
-    eprintln!("RUST: SQLDriverConnect: {connection_string_map:?}");
+    tracing::info!(
+        "SQLDriverConnect: connection_string={:?}",
+        connection_string_map
+    );
 
     let connection = conn_from_handle(connection_handle);
     let mut client = api_client::new_database_driver_v1_client();
@@ -473,7 +525,11 @@ pub unsafe extern "C" fn SQLDriverConnect(
                 let port_int: i64 = match value.parse() {
                     Ok(port) => port,
                     Err(e) => {
-                        eprintln!("RUST: SQLDriverConnect: failed to parse port '{value}': {e}");
+                        tracing::error!(
+                            "SQLDriverConnect: failed to parse port '{}': {}",
+                            value,
+                            e
+                        );
                         return sql::SqlReturn::ERROR.0;
                     }
                 };
@@ -492,7 +548,7 @@ pub unsafe extern "C" fn SQLDriverConnect(
                     .unwrap();
             }
             _ => {
-                eprintln!("RUST: SQLDriverConnect: unknown key: {key:?}");
+                tracing::warn!("SQLDriverConnect: unknown connection string key: {:?}", key);
             }
         }
     }
@@ -507,7 +563,10 @@ pub unsafe extern "C" fn SQLDriverConnect(
             sql::SqlReturn::SUCCESS.0
         }
         Err(e) => {
-            eprintln!("RUST: SQLDriverConnect: error: {e:?}");
+            tracing::error!(
+                "SQLDriverConnect: connection initialization failed: {:?}",
+                e
+            );
             sql::SqlReturn::ERROR.0
         }
     }
@@ -548,7 +607,7 @@ pub unsafe extern "C" fn SQLDisconnect(_connection_handle: sql::Handle) -> sql::
 /// This function is called by the ODBC driver manager.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SQLFetch(statement_handle: sql::Handle) -> i16 {
-    eprintln!("RUST: SQLFetch");
+    tracing::debug!("SQLFetch called");
     let stmt = stmt_from_handle(statement_handle);
     match &mut stmt.state {
         StatementState::Executed { result } => {
@@ -558,7 +617,10 @@ pub unsafe extern "C" fn SQLFetch(statement_handle: sql::Handle) -> i16 {
             let mut reader = ArrowArrayStreamReader::try_new(stream).unwrap();
             match reader.next() {
                 Some(Ok(record_batch)) => {
-                    eprintln!("RUST: SQLFetch: fetched: {record_batch:?}");
+                    tracing::debug!(
+                        "SQLFetch: fetched record_batch with {} rows",
+                        record_batch.num_rows()
+                    );
                     stmt.state = StatementState::Fetching {
                         reader,
                         record_batch,
@@ -567,11 +629,11 @@ pub unsafe extern "C" fn SQLFetch(statement_handle: sql::Handle) -> i16 {
                     sql::SqlReturn::SUCCESS.0
                 }
                 Some(Err(e)) => {
-                    eprintln!("RUST: SQLFetch: error: {e:?}");
+                    tracing::error!("SQLFetch: error fetching data: {:?}", e);
                     sql::SqlReturn::ERROR.0
                 }
                 None => {
-                    eprintln!("RUST: SQLFetch: no data");
+                    tracing::debug!("SQLFetch: no more data available");
                     stmt.state = StatementState::Done;
                     sql::SqlReturn::NO_DATA.0
                 }
@@ -593,18 +655,18 @@ pub unsafe extern "C" fn SQLFetch(statement_handle: sql::Handle) -> i16 {
                     sql::SqlReturn::SUCCESS.0
                 }
                 Some(Err(e)) => {
-                    eprintln!("RUST: SQLFetch: error: {e:?}");
+                    tracing::error!("SQLFetch: error fetching next batch: {:?}", e);
                     sql::SqlReturn::ERROR.0
                 }
                 None => {
-                    eprintln!("RUST: SQLFetch: no data");
+                    tracing::debug!("SQLFetch: no more data available");
                     stmt.state = StatementState::Done;
                     sql::SqlReturn::NO_DATA.0
                 }
             }
         }
         _ => {
-            eprintln!("RUST: SQLFetch: not executed");
+            tracing::error!("SQLFetch: statement not executed");
             sql::SqlReturn::ERROR.0
         }
     }
@@ -636,7 +698,7 @@ pub unsafe extern "C" fn SQLGetData(
     _buffer_length: sql::Len,
     _str_len_or_ind_ptr: *mut sql::Len,
 ) -> sql::RetCode {
-    eprintln!("RUST: SQLGetData: {statement_handle:?}");
+    tracing::debug!("SQLGetData: statement_handle={:?}", statement_handle);
     let stmt = stmt_from_handle(statement_handle);
     match &mut stmt.state {
         StatementState::Fetching {
@@ -651,23 +713,23 @@ pub unsafe extern "C" fn SQLGetData(
                     {
                         Ok(_) => sql::SqlReturn::SUCCESS.0,
                         Err(e) => {
-                            eprintln!("RUST: SQLGetData: error: {e:?}");
+                            tracing::error!("SQLGetData: error reading arrow value: {:?}", e);
                             sql::SqlReturn::ERROR.0
                         }
                     }
                 }
                 _ => {
-                    eprintln!("RUST: SQLGetData: unsupported type: {target_type:?}");
+                    tracing::error!("SQLGetData: unsupported target type: {:?}", target_type);
                     sql::SqlReturn::ERROR.0
                 }
             }
         }
         StatementState::Done => {
-            eprintln!("RUST: SQLGetData: done");
+            tracing::debug!("SQLGetData: statement execution is done");
             sql::SqlReturn::NO_DATA.0
         }
         _ => {
-            eprintln!("RUST: SQLGetData: not fetched");
+            tracing::error!("SQLGetData: data not fetched yet");
             sql::SqlReturn::ERROR.0
         }
     }
@@ -680,7 +742,7 @@ pub unsafe extern "C" fn SQLNumResultCols(
     _statement_handle: sql::Handle,
     _column_count_ptr: *mut sql::SmallInt,
 ) -> sql::SqlReturn {
-    eprintln!("RUST: SQLNumResultCols");
+    tracing::debug!("SQLNumResultCols called");
     let int_ptr = _column_count_ptr as *mut i32;
     unsafe {
         std::ptr::write(int_ptr, 1);
@@ -695,7 +757,7 @@ pub unsafe extern "C" fn SQLRowCount(
     statement_handle: sql::Handle,
     row_count_ptr: *mut sql::Len,
 ) -> sql::SqlReturn {
-    eprintln!("RUST: SQLRowCount");
+    tracing::debug!("SQLRowCount called");
     let stmt = stmt_from_handle(statement_handle);
     let row_count_ptr = row_count_ptr as *mut i32;
     match &mut stmt.state {
@@ -707,4 +769,188 @@ pub unsafe extern "C" fn SQLRowCount(
         },
     }
     sql::SqlReturn::SUCCESS
+}
+
+/// # Safety
+/// This function is called by the ODBC driver manager.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn SQLBindParameter(
+    statement_handle: sql::Handle,
+    parameter_number: sql::USmallInt,
+    input_output_type: sql::ParamType,
+    value_type: sql::SqlDataType,
+    parameter_type: sql::SqlDataType,
+    _column_size: sql::ULen,
+    _decimal_digits: sql::SmallInt,
+    parameter_value_ptr: sql::Pointer,
+    _buffer_length: sql::Len,
+    _str_len_or_ind_ptr: *mut sql::Len,
+) -> sql::RetCode {
+    tracing::debug!(
+        "SQLBindParameter: parameter_number={}, input_output_type={:?}, value_type={:?}, parameter_type={:?}",
+        parameter_number,
+        input_output_type,
+        value_type,
+        parameter_type
+    );
+
+    if parameter_number == 0 {
+        tracing::error!("SQLBindParameter: parameter_number cannot be 0");
+        return sql::SqlReturn::ERROR.0;
+    }
+
+    let stmt = stmt_from_handle(statement_handle);
+
+    let binding = ParameterBinding {
+        value_type,
+        parameter_value_ptr,
+    };
+
+    // // Store the binding
+    stmt.parameter_bindings.insert(parameter_number, binding);
+
+    tracing::info!(
+        "SQLBindParameter: Successfully bound parameter {}",
+        parameter_number
+    );
+    sql::SqlReturn::SUCCESS.0
+}
+
+/// # Safety
+/// This function is called by the ODBC driver manager.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn SQLPrepare(
+    statement_handle: sql::Handle,
+    statement_text: *const sql::Char,
+    text_length: sql::Integer,
+) -> sql::RetCode {
+    tracing::debug!("SQLPrepare: statement_handle={:?}", statement_handle);
+    let stmt = stmt_from_handle(statement_handle);
+    match &mut stmt.conn.state {
+        ConnectionState::Connected {
+            client,
+            db_handle: _,
+            conn_handle: _,
+        } => {
+            let query = text_to_string(statement_text, text_length);
+            tracing::debug!("SQLPrepare: query = {}", query);
+
+            // Set the SQL query for the statement
+            match client.statement_set_sql_query(stmt.stmt_handle.clone(), query) {
+                Ok(_) => {
+                    // Call the prepare method on the statement
+                    match client.statement_prepare(stmt.stmt_handle.clone()) {
+                        Ok(_) => {
+                            tracing::info!("SQLPrepare: Successfully prepared statement");
+                            sql::SqlReturn::SUCCESS.0
+                        }
+                        Err(e) => {
+                            tracing::error!("SQLPrepare: Failed to prepare statement: {:?}", e);
+                            sql::SqlReturn::ERROR.0
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::error!("SQLPrepare: Failed to set SQL query: {:?}", e);
+                    sql::SqlReturn::ERROR.0
+                }
+            }
+        }
+        ConnectionState::Disconnected => {
+            tracing::error!("SQLPrepare: connection is disconnected");
+            sql::SqlReturn::ERROR.0
+        }
+    }
+}
+
+/// # Safety
+/// This function is called by the ODBC driver manager.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn SQLExecute(statement_handle: sql::Handle) -> sql::RetCode {
+    tracing::debug!("SQLExecute: statement_handle={:?}", statement_handle);
+    let stmt = stmt_from_handle(statement_handle);
+
+    match &mut stmt.conn.state {
+        ConnectionState::Connected {
+            client,
+            db_handle: _,
+            conn_handle: _,
+        } => {
+            // If there are bound parameters, we should bind them to the statement
+            if !stmt.parameter_bindings.is_empty() {
+                tracing::info!(
+                    "SQLExecute: Found {} bound parameters",
+                    stmt.parameter_bindings.len()
+                );
+                let mut schema_fields = Vec::new();
+                let mut arrays = Vec::new();
+                let max_key = *stmt.parameter_bindings.keys().max().unwrap_or(&0);
+                let min_key = *stmt.parameter_bindings.keys().min().unwrap_or(&1);
+                for param_num in min_key..=max_key {
+                    let binding = stmt.parameter_bindings.get(&param_num);
+                    if binding.is_none() {
+                        tracing::error!(
+                            "SQLExecute: parameter #{param_num} not found. Make sure parameter bindings are contiguous and start at 1.",
+                        );
+                        return sql::SqlReturn::ERROR.0;
+                    }
+                    let binding = binding.unwrap();
+                    let arrow_dt: arrow::datatypes::DataType = match binding.value_type {
+                        sql::SqlDataType::INTEGER => arrow::datatypes::DataType::Int64,
+                        _ => arrow::datatypes::DataType::Int8,
+                    };
+                    schema_fields.push(arrow::datatypes::Field::new(
+                        format!("param_{param_num}"),
+                        arrow_dt.clone(),
+                        false,
+                    ));
+
+                    let array: Arc<dyn Array> = match binding.value_type {
+                        sql::SqlDataType::INTEGER => Arc::new(Int64Array::from(vec![unsafe {
+                            std::ptr::read(binding.parameter_value_ptr as *const i64)
+                        }])),
+                        _ => Arc::new(Int8Array::from(vec![2])),
+                    };
+                    arrays.push((
+                        Arc::new(arrow::datatypes::Field::new(
+                            format!("param_{param_num}"),
+                            arrow_dt,
+                            false,
+                        )),
+                        array,
+                    ));
+                }
+                let schema = arrow::datatypes::Schema::new(schema_fields);
+                let schema = Box::new(arrow::ffi::FFI_ArrowSchema::try_from(&schema).unwrap());
+                let array = arrow::array::StructArray::from(arrays);
+                let array = Box::new(arrow::ffi::FFI_ArrowArray::new(&array.into_data()));
+                // Bind parameters to statement
+                match client.statement_bind(
+                    stmt.stmt_handle.clone(),
+                    thrift_from_ffi_arrow_schema(Box::into_raw(schema)),
+                    thrift_from_ffi_arrow_array(Box::into_raw(array)),
+                ) {
+                    Ok(_) => tracing::info!("Successfully bound parameters"),
+                    Err(e) => tracing::error!("Failed to bind parameters: {:?}", e),
+                }
+            }
+
+            // Execute the prepared statement
+            match client.statement_execute_query(stmt.stmt_handle.clone()) {
+                Ok(result) => {
+                    tracing::info!("SQLExecute: Successfully executed statement");
+                    stmt.state = StatementState::Executed { result };
+                    sql::SqlReturn::SUCCESS.0
+                }
+                Err(e) => {
+                    tracing::error!("SQLExecute: Failed to execute statement: {:?}", e);
+                    sql::SqlReturn::ERROR.0
+                }
+            }
+        }
+        ConnectionState::Disconnected => {
+            tracing::error!("SQLExecute: connection is disconnected");
+            sql::SqlReturn::ERROR.0
+        }
+    }
 }

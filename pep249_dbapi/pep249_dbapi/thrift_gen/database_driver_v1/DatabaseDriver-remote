@@ -54,7 +54,7 @@ if len(sys.argv) <= 1 or sys.argv[1] == '--help':
     print('  void statementSetOptionInt(StatementHandle stmt_handle, string key, i64 value)')
     print('  void statementSetOptionDouble(StatementHandle stmt_handle, string key, double value)')
     print('  ArrowSchemaPtr statementGetParameterSchema(StatementHandle stmt_handle)')
-    print('  void statementBind(StatementHandle stmt_handle, string values)')
+    print('  void statementBind(StatementHandle stmt_handle, ArrowSchemaPtr schema, ArrowArrayPtr array)')
     print('  void statementBindStream(StatementHandle stmt_handle, string stream)')
     print('  ExecuteResult statementExecuteQuery(StatementHandle stmt_handle)')
     print('  PartitionedResult statementExecutePartitions(StatementHandle stmt_handle)')
@@ -319,10 +319,10 @@ elif cmd == 'statementGetParameterSchema':
     pp.pprint(client.statementGetParameterSchema(eval(args[0]),))
 
 elif cmd == 'statementBind':
-    if len(args) != 2:
-        print('statementBind requires 2 args')
+    if len(args) != 3:
+        print('statementBind requires 3 args')
         sys.exit(1)
-    pp.pprint(client.statementBind(eval(args[0]), args[1],))
+    pp.pprint(client.statementBind(eval(args[0]), eval(args[1]), eval(args[2]),))
 
 elif cmd == 'statementBindStream':
     if len(args) != 2:

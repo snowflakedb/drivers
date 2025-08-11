@@ -75,6 +75,10 @@ struct ArrowSchemaPtr {
   1: required binary value;
 }
 
+struct ArrowArrayPtr {
+  1: required binary value;
+}
+
 service DatabaseDriver {
 
   /**
@@ -276,7 +280,7 @@ service DatabaseDriver {
    * Corresponds to AdbcStatementBind.
    * @param values An Arrow RecordBatch serialized in IPC format.
    */
-  void statementBind(1: StatementHandle stmt_handle, 2: binary values) throws (1: DriverException e);
+  void statementBind(1: StatementHandle stmt_handle, 2: ArrowSchemaPtr schema, 3: ArrowArrayPtr array) throws (1: DriverException e);
 
   /**
    * Bind a stream of values to a statement (for bulk ingestion).

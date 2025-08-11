@@ -1,16 +1,18 @@
 use crate::chunks::ChunkReader;
-use crate::driver::{Connection, Database, Setting, Statement};
+use crate::driver::{Connection, Database, Setting, Statement, StatementError};
 use crate::file_manager::{download_file, upload_files};
 use crate::handle_manager::{Handle, HandleManager};
 use crate::rest::error::RestError;
 use crate::thrift_gen::database_driver_v1::{
-    ArrowSchemaPtr, ConnectionHandle, DatabaseDriverSyncHandler, DatabaseDriverSyncProcessor,
-    DatabaseHandle, DriverException, ExecuteResult, InfoCode, PartitionedResult, StatementHandle,
-    StatusCode,
+    ArrowArrayPtr, ArrowSchemaPtr, ConnectionHandle, DatabaseDriverSyncHandler,
+    DatabaseDriverSyncProcessor, DatabaseHandle, DriverException, ExecuteResult, InfoCode,
+    PartitionedResult, StatementHandle, StatusCode,
 };
+use arrow::array::{RecordBatch, StructArray};
+use arrow::ffi::{FFI_ArrowArray, FFI_ArrowSchema};
 use arrow::ffi_stream::FFI_ArrowArrayStream;
 use std::mem::size_of;
-use std::sync::Mutex;
+use std::sync::{Mutex, MutexGuard};
 use thrift::server::TProcessor;
 use thrift::{Error, OrderedFloat};
 use tracing::instrument;
@@ -105,7 +107,47 @@ impl Default for DatabaseDriverV1 {
     }
 }
 
+impl From<StatementError> for Error {
+    fn from(error: StatementError) -> Self {
+        Error::from(DriverException::new(
+            format!("{error:?}"),
+            StatusCode::INVALID_STATE,
+            None,
+            None,
+            None,
+        ))
+    }
+}
+
 impl DatabaseDriverV1 {
+    fn with_statement<T>(
+        &self,
+        handle: StatementHandle,
+        f: impl FnOnce(MutexGuard<Statement>) -> Result<T, Error>,
+    ) -> Result<T, Error> {
+        let handle = handle.into();
+        let stmt =
+            self.stmt_handle_manager
+                .get_obj(handle)
+                .ok_or(Error::from(DriverException::new(
+                    "Statement handle not found".to_string(),
+                    StatusCode::INVALID_ARGUMENT,
+                    None,
+                    None,
+                    None,
+                )))?;
+        let guard = stmt.lock().map_err(|_| {
+            Error::from(DriverException::new(
+                "Statement cannot be locked".to_string(),
+                StatusCode::INVALID_STATE,
+                None,
+                None,
+                None,
+            ))
+        })?;
+        f(guard)
+    }
+
     pub fn new() -> DatabaseDriverV1 {
         DatabaseDriverV1 {
             db_handle_manager: HandleManager::new(),
@@ -490,7 +532,7 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
 
     #[instrument(name = "DatabaseDriverV1::statement_prepare", skip(self))]
     fn handle_statement_prepare(&self, _stmt_handle: StatementHandle) -> thrift::Result<()> {
-        todo!()
+        Ok(())
     }
 
     #[instrument(name = "DatabaseDriverV1::statement_set_option_string", skip(self))]
@@ -544,10 +586,25 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
     #[instrument(name = "DatabaseDriverV1::statement_bind", skip(self))]
     fn handle_statement_bind(
         &self,
-        _stmt_handle: StatementHandle,
-        _values: Vec<u8>,
+        stmt_handle: StatementHandle,
+        schema: ArrowSchemaPtr,
+        array: ArrowArrayPtr,
     ) -> thrift::Result<()> {
-        todo!()
+        let schema = unsafe { FFI_ArrowSchema::from_raw(schema.into()) };
+        let array = unsafe { FFI_ArrowArray::from_raw(array.into()) };
+        let array = unsafe { arrow::ffi::from_ffi(array, &schema) }.map_err(|e| {
+            Error::from(DriverException::new(
+                format!("Failed to convert ArrowArray: {e}"),
+                StatusCode::UNKNOWN,
+                None,
+                None,
+                None,
+            ))
+        })?;
+        let record_batch = RecordBatch::from(StructArray::from(array));
+        self.with_statement(stmt_handle, |mut stmt| {
+            stmt.bind_parameters(record_batch).map_err(Error::from)
+        })
     }
 
     #[instrument(name = "DatabaseDriverV1::statement_bind_stream", skip(self))]
@@ -583,8 +640,11 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
                     ))
                 })?;
 
-                let response =
-                    rt.block_on(crate::rest::snowflake::snowflake_query(&stmt.conn, query))?;
+                let response = rt.block_on(crate::rest::snowflake::snowflake_query(
+                    &stmt.conn,
+                    query,
+                    stmt.get_query_parameter_bindings().map_err(Error::from)?,
+                ))?;
 
                 if !response.success {
                     // TODO: Add proper error handling

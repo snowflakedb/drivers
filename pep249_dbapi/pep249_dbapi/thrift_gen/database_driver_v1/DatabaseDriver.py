@@ -390,7 +390,7 @@ class Iface(object):
         """
         pass
 
-    def statementBind(self, stmt_handle, values):
+    def statementBind(self, stmt_handle, schema, array):
         """
         Bind a single batch of values to a prepared statement.
         Corresponds to AdbcStatementBind.
@@ -398,7 +398,8 @@ class Iface(object):
 
         Parameters:
          - stmt_handle
-         - values
+         - schema
+         - array
 
         """
         pass
@@ -1603,7 +1604,7 @@ class Client(Iface):
             raise result.e
         raise TApplicationException(TApplicationException.MISSING_RESULT, "statementGetParameterSchema failed: unknown result")
 
-    def statementBind(self, stmt_handle, values):
+    def statementBind(self, stmt_handle, schema, array):
         """
         Bind a single batch of values to a prepared statement.
         Corresponds to AdbcStatementBind.
@@ -1611,17 +1612,19 @@ class Client(Iface):
 
         Parameters:
          - stmt_handle
-         - values
+         - schema
+         - array
 
         """
-        self.send_statementBind(stmt_handle, values)
+        self.send_statementBind(stmt_handle, schema, array)
         self.recv_statementBind()
 
-    def send_statementBind(self, stmt_handle, values):
+    def send_statementBind(self, stmt_handle, schema, array):
         self._oprot.writeMessageBegin('statementBind', TMessageType.CALL, self._seqid)
         args = statementBind_args()
         args.stmt_handle = stmt_handle
-        args.values = values
+        args.schema = schema
+        args.array = array
         args.write(self._oprot)
         self._oprot.writeMessageEnd()
         self._oprot.trans.flush()
@@ -2644,7 +2647,7 @@ class Processor(Iface, TProcessor):
         iprot.readMessageEnd()
         result = statementBind_result()
         try:
-            self._handler.statementBind(args.stmt_handle, args.values)
+            self._handler.statementBind(args.stmt_handle, args.schema, args.array)
             msg_type = TMessageType.REPLY
         except TTransport.TTransportException:
             raise
@@ -7158,15 +7161,17 @@ class statementBind_args(object):
     """
     Attributes:
      - stmt_handle
-     - values
+     - schema
+     - array
 
     """
     thrift_spec = None
 
 
-    def __init__(self, stmt_handle = None, values = None,):
+    def __init__(self, stmt_handle = None, schema = None, array = None,):
         self.stmt_handle = stmt_handle
-        self.values = values
+        self.schema = schema
+        self.array = array
 
     def read(self, iprot):
         if iprot._fast_decode is not None and isinstance(iprot.trans, TTransport.CReadableTransport) and self.thrift_spec is not None:
@@ -7184,8 +7189,15 @@ class statementBind_args(object):
                 else:
                     iprot.skip(ftype)
             elif fid == 2:
-                if ftype == TType.STRING:
-                    self.values = iprot.readBinary()
+                if ftype == TType.STRUCT:
+                    self.schema = ArrowSchemaPtr()
+                    self.schema.read(iprot)
+                else:
+                    iprot.skip(ftype)
+            elif fid == 3:
+                if ftype == TType.STRUCT:
+                    self.array = ArrowArrayPtr()
+                    self.array.read(iprot)
                 else:
                     iprot.skip(ftype)
             else:
@@ -7203,9 +7215,13 @@ class statementBind_args(object):
             oprot.writeFieldBegin('stmt_handle', TType.STRUCT, 1)
             self.stmt_handle.write(oprot)
             oprot.writeFieldEnd()
-        if self.values is not None:
-            oprot.writeFieldBegin('values', TType.STRING, 2)
-            oprot.writeBinary(self.values)
+        if self.schema is not None:
+            oprot.writeFieldBegin('schema', TType.STRUCT, 2)
+            self.schema.write(oprot)
+            oprot.writeFieldEnd()
+        if self.array is not None:
+            oprot.writeFieldBegin('array', TType.STRUCT, 3)
+            self.array.write(oprot)
             oprot.writeFieldEnd()
         oprot.writeFieldStop()
         oprot.writeStructEnd()
@@ -7227,7 +7243,8 @@ all_structs.append(statementBind_args)
 statementBind_args.thrift_spec = (
     None,  # 0
     (1, TType.STRUCT, 'stmt_handle', [StatementHandle, None], None, ),  # 1
-    (2, TType.STRING, 'values', 'BINARY', None, ),  # 2
+    (2, TType.STRUCT, 'schema', [ArrowSchemaPtr, None], None, ),  # 2
+    (3, TType.STRUCT, 'array', [ArrowArrayPtr, None], None, ),  # 3
 )
 
 

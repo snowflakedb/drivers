@@ -82,7 +82,6 @@ inline std::string get_connection_string() {
   add_param_optional<std::string>(ss, params, "SNOWFLAKE_TEST_DATABASE", "DATABASE");
   add_param_optional<std::string>(ss, params, "SNOWFLAKE_TEST_PORT", "PORT");
   add_param_optional<std::string>(ss, params, "SNOWFLAKE_TEST_PROTOCOL", "PROTOCOL");
-  WARN("Connection string: " << ss.str());
   return ss.str();
 }
 

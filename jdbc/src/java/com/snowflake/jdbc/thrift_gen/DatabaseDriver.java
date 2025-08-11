@@ -299,9 +299,10 @@ public class DatabaseDriver {
      * @param values An Arrow RecordBatch serialized in IPC format.
      * 
      * @param stmt_handle
-     * @param values
+     * @param schema
+     * @param array
      */
-    public void statementBind(StatementHandle stmt_handle, java.nio.ByteBuffer values) throws DriverException, org.apache.thrift.TException;
+    public void statementBind(StatementHandle stmt_handle, ArrowSchemaPtr schema, ArrowArrayPtr array) throws DriverException, org.apache.thrift.TException;
 
     /**
      * Bind a stream of values to a statement (for bulk ingestion).
@@ -406,7 +407,7 @@ public class DatabaseDriver {
 
     public void statementGetParameterSchema(StatementHandle stmt_handle, org.apache.thrift.async.AsyncMethodCallback<ArrowSchemaPtr> resultHandler) throws org.apache.thrift.TException;
 
-    public void statementBind(StatementHandle stmt_handle, java.nio.ByteBuffer values, org.apache.thrift.async.AsyncMethodCallback<Void> resultHandler) throws org.apache.thrift.TException;
+    public void statementBind(StatementHandle stmt_handle, ArrowSchemaPtr schema, ArrowArrayPtr array, org.apache.thrift.async.AsyncMethodCallback<Void> resultHandler) throws org.apache.thrift.TException;
 
     public void statementBindStream(StatementHandle stmt_handle, java.nio.ByteBuffer stream, org.apache.thrift.async.AsyncMethodCallback<Void> resultHandler) throws org.apache.thrift.TException;
 
@@ -1220,17 +1221,18 @@ public class DatabaseDriver {
     }
 
     @Override
-    public void statementBind(StatementHandle stmt_handle, java.nio.ByteBuffer values) throws DriverException, org.apache.thrift.TException
+    public void statementBind(StatementHandle stmt_handle, ArrowSchemaPtr schema, ArrowArrayPtr array) throws DriverException, org.apache.thrift.TException
     {
-      send_statementBind(stmt_handle, values);
+      send_statementBind(stmt_handle, schema, array);
       recv_statementBind();
     }
 
-    public void send_statementBind(StatementHandle stmt_handle, java.nio.ByteBuffer values) throws org.apache.thrift.TException
+    public void send_statementBind(StatementHandle stmt_handle, ArrowSchemaPtr schema, ArrowArrayPtr array) throws org.apache.thrift.TException
     {
       statementBind_args args = new statementBind_args();
       args.setStmt_handle(stmt_handle);
-      args.setValues(values);
+      args.setSchema(schema);
+      args.setArray(array);
       sendBase("statementBind", args);
     }
 
@@ -2548,20 +2550,22 @@ public class DatabaseDriver {
     }
 
     @Override
-    public void statementBind(StatementHandle stmt_handle, java.nio.ByteBuffer values, org.apache.thrift.async.AsyncMethodCallback<Void> resultHandler) throws org.apache.thrift.TException {
+    public void statementBind(StatementHandle stmt_handle, ArrowSchemaPtr schema, ArrowArrayPtr array, org.apache.thrift.async.AsyncMethodCallback<Void> resultHandler) throws org.apache.thrift.TException {
       checkReady();
-      statementBind_call method_call = new statementBind_call(stmt_handle, values, resultHandler, this, ___protocolFactory, ___transport);
+      statementBind_call method_call = new statementBind_call(stmt_handle, schema, array, resultHandler, this, ___protocolFactory, ___transport);
       this.___currentMethod = method_call;
       ___manager.call(method_call);
     }
 
     public static class statementBind_call extends org.apache.thrift.async.TAsyncMethodCall<Void> {
       private StatementHandle stmt_handle;
-      private java.nio.ByteBuffer values;
-      public statementBind_call(StatementHandle stmt_handle, java.nio.ByteBuffer values, org.apache.thrift.async.AsyncMethodCallback<Void> resultHandler, org.apache.thrift.async.TAsyncClient client, org.apache.thrift.protocol.TProtocolFactory protocolFactory, org.apache.thrift.transport.TNonblockingTransport transport) throws org.apache.thrift.TException {
+      private ArrowSchemaPtr schema;
+      private ArrowArrayPtr array;
+      public statementBind_call(StatementHandle stmt_handle, ArrowSchemaPtr schema, ArrowArrayPtr array, org.apache.thrift.async.AsyncMethodCallback<Void> resultHandler, org.apache.thrift.async.TAsyncClient client, org.apache.thrift.protocol.TProtocolFactory protocolFactory, org.apache.thrift.transport.TNonblockingTransport transport) throws org.apache.thrift.TException {
         super(client, protocolFactory, transport, resultHandler, false);
         this.stmt_handle = stmt_handle;
-        this.values = values;
+        this.schema = schema;
+        this.array = array;
       }
 
       @Override
@@ -2569,7 +2573,8 @@ public class DatabaseDriver {
         prot.writeMessageBegin(new org.apache.thrift.protocol.TMessage("statementBind", org.apache.thrift.protocol.TMessageType.CALL, 0));
         statementBind_args args = new statementBind_args();
         args.setStmt_handle(stmt_handle);
-        args.setValues(values);
+        args.setSchema(schema);
+        args.setArray(array);
         args.write(prot);
         prot.writeMessageEnd();
       }
@@ -3923,7 +3928,7 @@ public class DatabaseDriver {
       public statementBind_result getResult(I iface, statementBind_args args) throws org.apache.thrift.TException {
         statementBind_result result = getEmptyResultInstance();
         try {
-          iface.statementBind(args.stmt_handle, args.values);
+          iface.statementBind(args.stmt_handle, args.schema, args.array);
         } catch (DriverException e) {
           result.e = e;
         }
@@ -6460,7 +6465,7 @@ public class DatabaseDriver {
 
       @Override
       public void start(I iface, statementBind_args args, org.apache.thrift.async.AsyncMethodCallback<Void> resultHandler) throws org.apache.thrift.TException {
-        iface.statementBind(args.stmt_handle, args.values,resultHandler);
+        iface.statementBind(args.stmt_handle, args.schema, args.array,resultHandler);
       }
     }
 
@@ -34387,18 +34392,21 @@ public class DatabaseDriver {
     private static final org.apache.thrift.protocol.TStruct STRUCT_DESC = new org.apache.thrift.protocol.TStruct("statementBind_args");
 
     private static final org.apache.thrift.protocol.TField STMT_HANDLE_FIELD_DESC = new org.apache.thrift.protocol.TField("stmt_handle", org.apache.thrift.protocol.TType.STRUCT, (short)1);
-    private static final org.apache.thrift.protocol.TField VALUES_FIELD_DESC = new org.apache.thrift.protocol.TField("values", org.apache.thrift.protocol.TType.STRING, (short)2);
+    private static final org.apache.thrift.protocol.TField SCHEMA_FIELD_DESC = new org.apache.thrift.protocol.TField("schema", org.apache.thrift.protocol.TType.STRUCT, (short)2);
+    private static final org.apache.thrift.protocol.TField ARRAY_FIELD_DESC = new org.apache.thrift.protocol.TField("array", org.apache.thrift.protocol.TType.STRUCT, (short)3);
 
     private static final org.apache.thrift.scheme.SchemeFactory STANDARD_SCHEME_FACTORY = new statementBind_argsStandardSchemeFactory();
     private static final org.apache.thrift.scheme.SchemeFactory TUPLE_SCHEME_FACTORY = new statementBind_argsTupleSchemeFactory();
 
     public @org.apache.thrift.annotation.Nullable StatementHandle stmt_handle; // required
-    public @org.apache.thrift.annotation.Nullable java.nio.ByteBuffer values; // required
+    public @org.apache.thrift.annotation.Nullable ArrowSchemaPtr schema; // required
+    public @org.apache.thrift.annotation.Nullable ArrowArrayPtr array; // required
 
     /** The set of fields this struct contains, along with convenience methods for finding and manipulating them. */
     public enum _Fields implements org.apache.thrift.TFieldIdEnum {
       STMT_HANDLE((short)1, "stmt_handle"),
-      VALUES((short)2, "values");
+      SCHEMA((short)2, "schema"),
+      ARRAY((short)3, "array");
 
       private static final java.util.Map<java.lang.String, _Fields> byName = new java.util.HashMap<java.lang.String, _Fields>();
 
@@ -34416,8 +34424,10 @@ public class DatabaseDriver {
         switch(fieldId) {
           case 1: // STMT_HANDLE
             return STMT_HANDLE;
-          case 2: // VALUES
-            return VALUES;
+          case 2: // SCHEMA
+            return SCHEMA;
+          case 3: // ARRAY
+            return ARRAY;
           default:
             return null;
         }
@@ -34466,8 +34476,10 @@ public class DatabaseDriver {
       java.util.Map<_Fields, org.apache.thrift.meta_data.FieldMetaData> tmpMap = new java.util.EnumMap<_Fields, org.apache.thrift.meta_data.FieldMetaData>(_Fields.class);
       tmpMap.put(_Fields.STMT_HANDLE, new org.apache.thrift.meta_data.FieldMetaData("stmt_handle", org.apache.thrift.TFieldRequirementType.DEFAULT, 
           new org.apache.thrift.meta_data.StructMetaData(org.apache.thrift.protocol.TType.STRUCT, StatementHandle.class)));
-      tmpMap.put(_Fields.VALUES, new org.apache.thrift.meta_data.FieldMetaData("values", org.apache.thrift.TFieldRequirementType.DEFAULT, 
-          new org.apache.thrift.meta_data.FieldValueMetaData(org.apache.thrift.protocol.TType.STRING          , true)));
+      tmpMap.put(_Fields.SCHEMA, new org.apache.thrift.meta_data.FieldMetaData("schema", org.apache.thrift.TFieldRequirementType.DEFAULT, 
+          new org.apache.thrift.meta_data.StructMetaData(org.apache.thrift.protocol.TType.STRUCT, ArrowSchemaPtr.class)));
+      tmpMap.put(_Fields.ARRAY, new org.apache.thrift.meta_data.FieldMetaData("array", org.apache.thrift.TFieldRequirementType.DEFAULT, 
+          new org.apache.thrift.meta_data.StructMetaData(org.apache.thrift.protocol.TType.STRUCT, ArrowArrayPtr.class)));
       metaDataMap = java.util.Collections.unmodifiableMap(tmpMap);
       org.apache.thrift.meta_data.FieldMetaData.addStructMetaDataMap(statementBind_args.class, metaDataMap);
     }
@@ -34477,11 +34489,13 @@ public class DatabaseDriver {
 
     public statementBind_args(
       StatementHandle stmt_handle,
-      java.nio.ByteBuffer values)
+      ArrowSchemaPtr schema,
+      ArrowArrayPtr array)
     {
       this();
       this.stmt_handle = stmt_handle;
-      this.values = org.apache.thrift.TBaseHelper.copyBinary(values);
+      this.schema = schema;
+      this.array = array;
     }
 
     /**
@@ -34491,8 +34505,11 @@ public class DatabaseDriver {
       if (other.isSetStmt_handle()) {
         this.stmt_handle = new StatementHandle(other.stmt_handle);
       }
-      if (other.isSetValues()) {
-        this.values = org.apache.thrift.TBaseHelper.copyBinary(other.values);
+      if (other.isSetSchema()) {
+        this.schema = new ArrowSchemaPtr(other.schema);
+      }
+      if (other.isSetArray()) {
+        this.array = new ArrowArrayPtr(other.array);
       }
     }
 
@@ -34504,7 +34521,8 @@ public class DatabaseDriver {
     @Override
     public void clear() {
       this.stmt_handle = null;
-      this.values = null;
+      this.schema = null;
+      this.array = null;
     }
 
     @org.apache.thrift.annotation.Nullable
@@ -34532,37 +34550,53 @@ public class DatabaseDriver {
       }
     }
 
-    public byte[] getValues() {
-      setValues(org.apache.thrift.TBaseHelper.rightSize(values));
-      return values == null ? null : values.array();
+    @org.apache.thrift.annotation.Nullable
+    public ArrowSchemaPtr getSchema() {
+      return this.schema;
     }
 
-    public java.nio.ByteBuffer bufferForValues() {
-      return org.apache.thrift.TBaseHelper.copyBinary(values);
-    }
-
-    public statementBind_args setValues(byte[] values) {
-      this.values = values == null ? (java.nio.ByteBuffer)null     : java.nio.ByteBuffer.wrap(values.clone());
+    public statementBind_args setSchema(@org.apache.thrift.annotation.Nullable ArrowSchemaPtr schema) {
+      this.schema = schema;
       return this;
     }
 
-    public statementBind_args setValues(@org.apache.thrift.annotation.Nullable java.nio.ByteBuffer values) {
-      this.values = org.apache.thrift.TBaseHelper.copyBinary(values);
-      return this;
+    public void unsetSchema() {
+      this.schema = null;
     }
 
-    public void unsetValues() {
-      this.values = null;
+    /** Returns true if field schema is set (has been assigned a value) and false otherwise */
+    public boolean isSetSchema() {
+      return this.schema != null;
     }
 
-    /** Returns true if field values is set (has been assigned a value) and false otherwise */
-    public boolean isSetValues() {
-      return this.values != null;
-    }
-
-    public void setValuesIsSet(boolean value) {
+    public void setSchemaIsSet(boolean value) {
       if (!value) {
-        this.values = null;
+        this.schema = null;
+      }
+    }
+
+    @org.apache.thrift.annotation.Nullable
+    public ArrowArrayPtr getArray() {
+      return this.array;
+    }
+
+    public statementBind_args setArray(@org.apache.thrift.annotation.Nullable ArrowArrayPtr array) {
+      this.array = array;
+      return this;
+    }
+
+    public void unsetArray() {
+      this.array = null;
+    }
+
+    /** Returns true if field array is set (has been assigned a value) and false otherwise */
+    public boolean isSetArray() {
+      return this.array != null;
+    }
+
+    public void setArrayIsSet(boolean value) {
+      if (!value) {
+        this.array = null;
       }
     }
 
@@ -34577,15 +34611,19 @@ public class DatabaseDriver {
         }
         break;
 
-      case VALUES:
+      case SCHEMA:
         if (value == null) {
-          unsetValues();
+          unsetSchema();
         } else {
-          if (value instanceof byte[]) {
-            setValues((byte[])value);
-          } else {
-            setValues((java.nio.ByteBuffer)value);
-          }
+          setSchema((ArrowSchemaPtr)value);
+        }
+        break;
+
+      case ARRAY:
+        if (value == null) {
+          unsetArray();
+        } else {
+          setArray((ArrowArrayPtr)value);
         }
         break;
 
@@ -34599,8 +34637,11 @@ public class DatabaseDriver {
       case STMT_HANDLE:
         return getStmt_handle();
 
-      case VALUES:
-        return getValues();
+      case SCHEMA:
+        return getSchema();
+
+      case ARRAY:
+        return getArray();
 
       }
       throw new java.lang.IllegalStateException();
@@ -34616,8 +34657,10 @@ public class DatabaseDriver {
       switch (field) {
       case STMT_HANDLE:
         return isSetStmt_handle();
-      case VALUES:
-        return isSetValues();
+      case SCHEMA:
+        return isSetSchema();
+      case ARRAY:
+        return isSetArray();
       }
       throw new java.lang.IllegalStateException();
     }
@@ -34644,12 +34687,21 @@ public class DatabaseDriver {
           return false;
       }
 
-      boolean this_present_values = true && this.isSetValues();
-      boolean that_present_values = true && that.isSetValues();
-      if (this_present_values || that_present_values) {
-        if (!(this_present_values && that_present_values))
+      boolean this_present_schema = true && this.isSetSchema();
+      boolean that_present_schema = true && that.isSetSchema();
+      if (this_present_schema || that_present_schema) {
+        if (!(this_present_schema && that_present_schema))
           return false;
-        if (!this.values.equals(that.values))
+        if (!this.schema.equals(that.schema))
+          return false;
+      }
+
+      boolean this_present_array = true && this.isSetArray();
+      boolean that_present_array = true && that.isSetArray();
+      if (this_present_array || that_present_array) {
+        if (!(this_present_array && that_present_array))
+          return false;
+        if (!this.array.equals(that.array))
           return false;
       }
 
@@ -34664,9 +34716,13 @@ public class DatabaseDriver {
       if (isSetStmt_handle())
         hashCode = hashCode * 8191 + stmt_handle.hashCode();
 
-      hashCode = hashCode * 8191 + ((isSetValues()) ? 131071 : 524287);
-      if (isSetValues())
-        hashCode = hashCode * 8191 + values.hashCode();
+      hashCode = hashCode * 8191 + ((isSetSchema()) ? 131071 : 524287);
+      if (isSetSchema())
+        hashCode = hashCode * 8191 + schema.hashCode();
+
+      hashCode = hashCode * 8191 + ((isSetArray()) ? 131071 : 524287);
+      if (isSetArray())
+        hashCode = hashCode * 8191 + array.hashCode();
 
       return hashCode;
     }
@@ -34689,12 +34745,22 @@ public class DatabaseDriver {
           return lastComparison;
         }
       }
-      lastComparison = java.lang.Boolean.compare(isSetValues(), other.isSetValues());
+      lastComparison = java.lang.Boolean.compare(isSetSchema(), other.isSetSchema());
       if (lastComparison != 0) {
         return lastComparison;
       }
-      if (isSetValues()) {
-        lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.values, other.values);
+      if (isSetSchema()) {
+        lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.schema, other.schema);
+        if (lastComparison != 0) {
+          return lastComparison;
+        }
+      }
+      lastComparison = java.lang.Boolean.compare(isSetArray(), other.isSetArray());
+      if (lastComparison != 0) {
+        return lastComparison;
+      }
+      if (isSetArray()) {
+        lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.array, other.array);
         if (lastComparison != 0) {
           return lastComparison;
         }
@@ -34731,11 +34797,19 @@ public class DatabaseDriver {
       }
       first = false;
       if (!first) sb.append(", ");
-      sb.append("values:");
-      if (this.values == null) {
+      sb.append("schema:");
+      if (this.schema == null) {
         sb.append("null");
       } else {
-        org.apache.thrift.TBaseHelper.toString(this.values, sb);
+        sb.append(this.schema);
+      }
+      first = false;
+      if (!first) sb.append(", ");
+      sb.append("array:");
+      if (this.array == null) {
+        sb.append("null");
+      } else {
+        sb.append(this.array);
       }
       first = false;
       sb.append(")");
@@ -34747,6 +34821,12 @@ public class DatabaseDriver {
       // check for sub-struct validity
       if (stmt_handle != null) {
         stmt_handle.validate();
+      }
+      if (schema != null) {
+        schema.validate();
+      }
+      if (array != null) {
+        array.validate();
       }
     }
 
@@ -34795,10 +34875,20 @@ public class DatabaseDriver {
                 org.apache.thrift.protocol.TProtocolUtil.skip(iprot, schemeField.type);
               }
               break;
-            case 2: // VALUES
-              if (schemeField.type == org.apache.thrift.protocol.TType.STRING) {
-                struct.values = iprot.readBinary();
-                struct.setValuesIsSet(true);
+            case 2: // SCHEMA
+              if (schemeField.type == org.apache.thrift.protocol.TType.STRUCT) {
+                struct.schema = new ArrowSchemaPtr();
+                struct.schema.read(iprot);
+                struct.setSchemaIsSet(true);
+              } else { 
+                org.apache.thrift.protocol.TProtocolUtil.skip(iprot, schemeField.type);
+              }
+              break;
+            case 3: // ARRAY
+              if (schemeField.type == org.apache.thrift.protocol.TType.STRUCT) {
+                struct.array = new ArrowArrayPtr();
+                struct.array.read(iprot);
+                struct.setArrayIsSet(true);
               } else { 
                 org.apache.thrift.protocol.TProtocolUtil.skip(iprot, schemeField.type);
               }
@@ -34824,9 +34914,14 @@ public class DatabaseDriver {
           struct.stmt_handle.write(oprot);
           oprot.writeFieldEnd();
         }
-        if (struct.values != null) {
-          oprot.writeFieldBegin(VALUES_FIELD_DESC);
-          oprot.writeBinary(struct.values);
+        if (struct.schema != null) {
+          oprot.writeFieldBegin(SCHEMA_FIELD_DESC);
+          struct.schema.write(oprot);
+          oprot.writeFieldEnd();
+        }
+        if (struct.array != null) {
+          oprot.writeFieldBegin(ARRAY_FIELD_DESC);
+          struct.array.write(oprot);
           oprot.writeFieldEnd();
         }
         oprot.writeFieldStop();
@@ -34851,30 +34946,42 @@ public class DatabaseDriver {
         if (struct.isSetStmt_handle()) {
           optionals.set(0);
         }
-        if (struct.isSetValues()) {
+        if (struct.isSetSchema()) {
           optionals.set(1);
         }
-        oprot.writeBitSet(optionals, 2);
+        if (struct.isSetArray()) {
+          optionals.set(2);
+        }
+        oprot.writeBitSet(optionals, 3);
         if (struct.isSetStmt_handle()) {
           struct.stmt_handle.write(oprot);
         }
-        if (struct.isSetValues()) {
-          oprot.writeBinary(struct.values);
+        if (struct.isSetSchema()) {
+          struct.schema.write(oprot);
+        }
+        if (struct.isSetArray()) {
+          struct.array.write(oprot);
         }
       }
 
       @Override
       public void read(org.apache.thrift.protocol.TProtocol prot, statementBind_args struct) throws org.apache.thrift.TException {
         org.apache.thrift.protocol.TTupleProtocol iprot = (org.apache.thrift.protocol.TTupleProtocol) prot;
-        java.util.BitSet incoming = iprot.readBitSet(2);
+        java.util.BitSet incoming = iprot.readBitSet(3);
         if (incoming.get(0)) {
           struct.stmt_handle = new StatementHandle();
           struct.stmt_handle.read(iprot);
           struct.setStmt_handleIsSet(true);
         }
         if (incoming.get(1)) {
-          struct.values = iprot.readBinary();
-          struct.setValuesIsSet(true);
+          struct.schema = new ArrowSchemaPtr();
+          struct.schema.read(iprot);
+          struct.setSchemaIsSet(true);
+        }
+        if (incoming.get(2)) {
+          struct.array = new ArrowArrayPtr();
+          struct.array.read(iprot);
+          struct.setArrayIsSet(true);
         }
       }
     }

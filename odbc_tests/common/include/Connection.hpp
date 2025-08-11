@@ -39,6 +39,12 @@ class Connection {
 
   StatementHandleWrapper createStatement() { return dbc.createStatementHandle(); }
 
+  void execute(const std::string& query) {
+    auto stmt = createStatement();
+    SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)query.c_str(), SQL_NTS);
+    CHECK_ODBC(ret, stmt);
+  }
+
  private:
   std::string connection_string;
   EnvironmentHandleWrapper env;

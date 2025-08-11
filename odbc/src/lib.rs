@@ -1,5 +1,5 @@
 pub mod api;
-mod extract;
+mod read_arrow;
 
 extern crate sf_core;
 extern crate thiserror;

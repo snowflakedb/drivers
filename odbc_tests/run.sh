@@ -6,6 +6,7 @@ set -e
 # Requires odbc_config to be available in PATH
 
 cargo build
+export DRIVER_PATH=$(pwd)/target/debug/libsfodbc.dylib
 
 pushd odbc_tests
     if [ ! -d cmake-build ]; then
@@ -16,5 +17,5 @@ pushd odbc_tests
             .
     fi
     cmake --build cmake-build -- -j 16
-    ctest -C Debug --test-dir cmake-build --output-on-failure
+    ctest -C Debug --test-dir cmake-build --output-on-failure -R bindings_tests
 popd

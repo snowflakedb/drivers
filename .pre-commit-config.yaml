@@ -1,7 +1,7 @@
 -   repo: local
     hooks:
     -   id: rust-linting
-        name: Rust linting
+        name: Rust formatting
         description: Run cargo fmt on files included in the commit. rustfmt should be installed before-hand.
         entry: cargo fmt --all --
         pass_filenames: true

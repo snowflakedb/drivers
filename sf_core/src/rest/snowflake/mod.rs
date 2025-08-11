@@ -217,10 +217,11 @@ pub async fn snowflake_login(
     }
 }
 
-#[tracing::instrument(skip(conn_ptr), fields(sql))]
+#[tracing::instrument(skip(conn_ptr, parameter_bindings), fields(sql))]
 pub async fn snowflake_query(
     conn_ptr: &std::sync::Arc<Mutex<Connection>>,
     sql: String,
+    parameter_bindings: Option<HashMap<String, query_request::BindParameter>>,
 ) -> Result<query_response::Response, RestError> {
     let (session_token, server_url, client_info) = {
         let conn = conn_ptr.lock().unwrap();
@@ -245,7 +246,7 @@ pub async fn snowflake_query(
         is_internal: false,
         describe_only: None,
         parameters: None,
-        bindings: None,
+        bindings: parameter_bindings,
         bind_stage: None,
         query_context: query_request::QueryContext { entries: None },
     };

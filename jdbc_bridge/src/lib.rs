@@ -32,7 +32,7 @@ fn jlong_array_to_handle<'a>(env: &mut JNIEnv<'a>, array: JLongArray<'a>) -> CAp
 #[no_mangle]
 #[allow(non_snake_case)]
 pub extern "system" fn JNI_OnLoad(jvm: *mut jni::sys::JavaVM, _: *mut u8) -> jint {
-    let config = sf_core::logging::LoggingConfig::new(None, false);
+    let config = sf_core::logging::LoggingConfig::new(None, false, false);
     let layer = slf4j_layer::SLF4JLayer::new(jvm);
     match sf_core::logging::init_logging(config, Some(layer)) {
         Ok(_) => jni::sys::JNI_VERSION_1_2,

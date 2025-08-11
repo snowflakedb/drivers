@@ -2,11 +2,12 @@ extern crate sf_core;
 extern crate tracing;
 extern crate tracing_subscriber;
 
-use arrow::array::{Array, Float64Array, Int8Array, Int64Array, StringArray};
+use arrow::array::{Array, Float64Array, Int8Array, Int64Array, StringArray, StructArray};
 use arrow::ffi_stream::ArrowArrayStreamReader;
 use arrow::ffi_stream::FFI_ArrowArrayStream;
 use flate2::read::GzDecoder;
 use sf_core::api_client::new_database_driver_v1_client;
+use sf_core::thrift_gen::database_driver_v1::{ArrowArrayPtr, ArrowSchemaPtr};
 use std::fmt::Debug;
 use std::fs;
 use tracing::Level;
@@ -420,4 +421,63 @@ pub fn create_test_file(
     let file_path = temp_dir.join(file_name);
     fs::write(&file_path, content).unwrap();
     file_path
+}
+
+pub fn create_param_bindings(params: &[i64]) -> (ArrowSchemaPtr, ArrowArrayPtr) {
+    use arrow::array::{ArrayRef, Int64Array};
+    use arrow::datatypes::{DataType, Field, Schema};
+    use arrow::ffi::{FFI_ArrowArray, FFI_ArrowSchema};
+    use sf_core::thrift_gen::database_driver_v1::{ArrowArrayPtr, ArrowSchemaPtr};
+    use std::sync::Arc;
+
+    let schema_fields = params
+        .iter()
+        .enumerate()
+        .map(|(i, _)| Field::new(format!("param_{}", i + 1), DataType::Int64, false))
+        .collect::<Vec<_>>();
+
+    let arrays = params
+        .iter()
+        .map(|p| Arc::new(Int64Array::from(vec![*p])) as ArrayRef)
+        .collect::<Vec<_>>();
+    let array = StructArray::from(
+        arrays
+            .iter()
+            .enumerate()
+            .map(|(i, array)| {
+                (
+                    Arc::new(Field::new(
+                        format!("param_{}", i + 1),
+                        DataType::Int64,
+                        false,
+                    )),
+                    array.clone(),
+                )
+            })
+            .collect::<Vec<_>>(),
+    );
+    let array_data = array.to_data();
+    let schema = Schema::new(schema_fields);
+
+    let schema_box = Box::new(FFI_ArrowSchema::try_from(&schema).unwrap());
+    let array_box = Box::new(FFI_ArrowArray::new(&array_data));
+    let raw_array = Box::into_raw(array_box);
+    let raw_schema = Box::into_raw(schema_box);
+
+    let schema = ArrowSchemaPtr {
+        value: unsafe {
+            let len = std::mem::size_of::<*mut FFI_ArrowSchema>();
+            let buf_ptr = std::ptr::addr_of!(raw_schema) as *const u8;
+            std::slice::from_raw_parts(buf_ptr, len).to_vec()
+        },
+    };
+
+    let array = ArrowArrayPtr {
+        value: unsafe {
+            let len = std::mem::size_of::<*mut FFI_ArrowArray>();
+            let buf_ptr = std::ptr::addr_of!(raw_array) as *const u8;
+            std::slice::from_raw_parts(buf_ptr, len).to_vec()
+        },
+    };
+    (schema, array)
 }
