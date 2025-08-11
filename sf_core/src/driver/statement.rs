@@ -15,7 +15,7 @@ use super::settings::Setting;
 
 #[derive(Debug, Clone)]
 pub enum StatementError {
-    UnsportedBindParameterType(String),
+    UnsupportedBindParameterType(String),
     InvalidStateTransition { from: StatementState, msg: String },
 }
 
