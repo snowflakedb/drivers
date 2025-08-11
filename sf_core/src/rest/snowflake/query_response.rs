@@ -266,12 +266,18 @@ impl Data {
         let src_locations = self
             .src_locations
             .as_ref()
-            .ok_or_else(|| RestError::MissingParameter("source locations".to_string()))?
-            .clone();
+            .ok_or_else(|| RestError::MissingParameter("source locations".to_string()))?;
 
-        if src_locations.is_empty() {
-            return Err(RestError::MissingParameter("source locations".to_string()));
+        if src_locations.len() != 1 {
+            return Err(RestError::InvalidSnowflakeResponse(
+                "Expected exactly one source location for upload".to_string(),
+            ));
         }
+
+        let src_location = src_locations
+            .first()
+            .ok_or_else(|| RestError::MissingParameter("source location".to_string()))?
+            .clone();
 
         let stage_info: file_manager::StageInfo = self
             .stage_info
@@ -285,14 +291,25 @@ impl Data {
             .ok_or_else(|| RestError::MissingParameter("encryption material".to_string()))?
             .into();
 
+        if encryption_materials.len() != 1 {
+            return Err(RestError::InvalidSnowflakeResponse(
+                "Expected exactly one encryption material for upload".to_string(),
+            ));
+        }
+
+        let encryption_material = encryption_materials
+            .first()
+            .ok_or_else(|| RestError::MissingParameter("encryption material".to_string()))?
+            .clone();
+
         let auto_compress = self
             .auto_compress
             .ok_or_else(|| RestError::MissingParameter("auto compress".to_string()))?;
 
         Ok(file_manager::UploadData {
-            src_locations,
+            src_location,
             stage_info,
-            encryption_materials,
+            encryption_material,
             auto_compress,
         })
     }

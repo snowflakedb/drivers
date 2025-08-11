@@ -666,7 +666,7 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
                             .map_err(DriverException::from)?;
                     } else if command == "DOWNLOAD" {
                         let file_download_data = response.data.to_file_download_data()?;
-                        rt.block_on(download_file(file_download_data))
+                        rt.block_on(download_files(file_download_data))
                             .map_err(DriverException::from)?;
                     } else {
                         return Err(Error::from(DriverException::new(

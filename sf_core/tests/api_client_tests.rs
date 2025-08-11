@@ -896,28 +896,27 @@ fn test_put_get_with_auto_compress_true() {
 }
 
 #[test]
-fn test_put_wildcard_question_mark() {
+fn test_put_ls_wildcard_question_mark() {
     let mut client = SnowflakeTestClient::new();
     let stage_name = "TEST_STAGE_PUT_WILDCARD_QUESTION_MARK";
     let file_name_base = "test_put_wildcard_question_mark";
-    let extension = "csv";
 
     // Set up test environment
     let temp_dir = tempfile::TempDir::new().unwrap();
 
     for i in 1..=5 {
-        let file_name = format!("{file_name_base}_{i}.{extension}");
+        let file_name = format!("{file_name_base}_{i}.csv");
         create_test_file(temp_dir.path(), &file_name, "1,2,3\n");
     }
 
     // Create files that should NOT match the '?' wildcard pattern
-    let non_matching_file1 = format!("{file_name_base}_10.{extension}"); // Two digits instead of one
-    let non_matching_file2 = format!("{file_name_base}_abc.{extension}"); // Multiple characters
+    let non_matching_file1 = format!("{file_name_base}_10.csv"); // Two digits instead of one
+    let non_matching_file2 = format!("{file_name_base}_abc.csv"); // Multiple characters
     create_test_file(temp_dir.path(), &non_matching_file1, "1,2,3\n");
     create_test_file(temp_dir.path(), &non_matching_file2, "1,2,3\n");
 
     let files_wildcard = format!(
-        "{}/{file_name_base}_?.{extension}",
+        "{}/{file_name_base}_?.csv",
         temp_dir.path().to_str().unwrap().replace("\\", "/"),
     );
 
@@ -970,28 +969,27 @@ fn test_put_wildcard_question_mark() {
 }
 
 #[test]
-fn test_put_wildcard_star() {
+fn test_put_ls_wildcard_star() {
     let mut client = SnowflakeTestClient::new();
     let stage_name = "TEST_STAGE_PUT_WILDCARD_STAR";
     let file_name_base = "test_put_wildcard_star";
-    let extension = "csv";
 
     // Set up test environment
     let temp_dir = tempfile::TempDir::new().unwrap();
 
     for i in 1..=5 {
-        let file_name = format!("{file_name_base}_{i}{i}{i}.{extension}");
+        let file_name = format!("{file_name_base}_{i}{i}{i}.csv");
         create_test_file(temp_dir.path(), &file_name, "1,2,3\n");
     }
 
     // Create files that should NOT match the '*' wildcard pattern
-    let non_matching_file1 = format!("{file_name_base}.{extension}"); // No underscore and suffix
+    let non_matching_file1 = format!("{file_name_base}.csv"); // No underscore and suffix
     let non_matching_file2 = format!("{file_name_base}_test.txt"); // Different extension
     create_test_file(temp_dir.path(), &non_matching_file1, "1,2,3\n");
     create_test_file(temp_dir.path(), &non_matching_file2, "1,2,3\n");
 
     let files_wildcard = format!(
-        "{}/{file_name_base}_*.{extension}",
+        "{}/{file_name_base}_*.csv",
         temp_dir.path().to_str().unwrap().replace("\\", "/"),
     );
 
@@ -1038,5 +1036,84 @@ fn test_put_wildcard_star() {
             .iter()
             .any(|row| row.contains(&non_matching_file2_gz)),
         "File {non_matching_file2_gz} should NOT be listed in stage (doesn't match '*' pattern)"
+    );
+}
+
+// This test's purpose is to check if download of multiple files is working correctly.
+// Regular expression handling is the job of Snowflake's backend.
+// Escaping in the regexp does not seem to work correctly, it should be taken care of in the future.
+
+#[test]
+fn test_put_get_regexp() {
+    let mut client = SnowflakeTestClient::new();
+    let stage_name = "TEST_STAGE_PUT_GET_REGEXP";
+    let file_name_base = "data";
+
+    // Set up test environment
+    let temp_dir = tempfile::TempDir::new().unwrap();
+
+    // Setup stage
+    client.create_temporary_stage(stage_name);
+
+    // Create and upload test files that match the regexp pattern
+    for i in 1..=5 {
+        let file_name = format!("{file_name_base}_{i}.csv");
+        let file_path = create_test_file(temp_dir.path(), &file_name, "1,2,3\n");
+        let put_sql = format!(
+            "PUT 'file://{}' @{stage_name}",
+            file_path.to_str().unwrap().replace("\\", "/"),
+        );
+        client.execute_query(&put_sql);
+    }
+
+    // Create and upload files that should NOT match the regexp pattern
+    let non_matching_file1 = format!("{file_name_base}_10.csv"); // Two digits instead of one
+    let non_matching_file2 = format!("{file_name_base}_abc.csv"); // Multiple characters
+    create_test_file(temp_dir.path(), &non_matching_file1, "1,2,3\n");
+    create_test_file(temp_dir.path(), &non_matching_file2, "1,2,3\n");
+    client.execute_query(&format!(
+        "PUT 'file://{}/{}' @{stage_name}",
+        temp_dir.path().to_str().unwrap().replace("\\", "/"),
+        non_matching_file1
+    ));
+    client.execute_query(&format!(
+        "PUT 'file://{}/{}' @{stage_name}",
+        temp_dir.path().to_str().unwrap().replace("\\", "/"),
+        non_matching_file2
+    ));
+
+    // Create directory for download
+    let download_dir = temp_dir.path().join("download");
+    fs::create_dir_all(&download_dir).unwrap();
+
+    // The last two dots are escaped to match literal ".csv.gz"
+    let get_pattern = format!(r".*/{file_name_base}_.\.csv\.gz");
+
+    let get_sql = format!(
+        "GET @{stage_name} file://{}/ PATTERN='{}'",
+        download_dir.to_str().unwrap().replace("\\", "/"),
+        get_pattern
+    );
+    client.execute_query(&get_sql);
+
+    // Verify the downloaded files exist
+    for i in 1..=5 {
+        let expected_file_path = download_dir.join(format!("{file_name_base}_{i}.csv.gz"));
+        assert!(
+            expected_file_path.exists(),
+            "Downloaded file should exist at {expected_file_path:?}",
+        );
+    }
+
+    // Assert that non-matching files are NOT present
+    let non_matching_file1_gz = download_dir.join(format!("{file_name_base}_10.csv.gz"));
+    let non_matching_file2_gz = download_dir.join(format!("{file_name_base}_abc.csv.gz"));
+    assert!(
+        !non_matching_file1_gz.exists(),
+        "Non-matching file should NOT exist at {non_matching_file1_gz:?}"
+    );
+    assert!(
+        !non_matching_file2_gz.exists(),
+        "Non-matching file should NOT exist at {non_matching_file2_gz:?}"
     );
 }
