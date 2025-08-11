@@ -44,7 +44,7 @@ fn parameters_from_record_batch(
                 );
             }
             _ => {
-                return Err(StatementError::UnsportedBindParameterType(
+                return Err(StatementError::UnsupportedBindParameterType(
                     column.data_type().to_string(),
                 ));
             }

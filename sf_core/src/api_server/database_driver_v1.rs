@@ -1,6 +1,6 @@
 use crate::chunks::ChunkReader;
 use crate::driver::{Connection, Database, Setting, Statement, StatementError};
-use crate::file_manager::{download_file, upload_files};
+use crate::file_manager::{download_files, upload_files};
 use crate::handle_manager::{Handle, HandleManager};
 use crate::rest::error::RestError;
 use crate::thrift_gen::database_driver_v1::{
