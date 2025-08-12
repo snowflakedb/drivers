@@ -81,6 +81,7 @@ fn get_login_parameters(conn: &Connection) -> Result<LoginParameters, RestError>
         server_url: get_server_url(conn)?,
         database: conn.settings.get_string("database"),
         schema: conn.settings.get_string("schema"),
+        warehouse: conn.settings.get_string("warehouse"),
     };
     Ok(params)
 }
@@ -109,6 +110,7 @@ pub async fn snowflake_login(
         server_url = %login_parameters.server_url,
         database = ?login_parameters.database,
         schema = ?login_parameters.schema,
+        warehouse = ?login_parameters.warehouse,
         "Extracted connection settings"
     );
 
@@ -156,6 +158,20 @@ pub async fn snowflake_login(
     tracing::info!(login_url = %login_url, "Making Snowflake login request");
     let request = client
         .post(&login_url)
+        .query(&[
+            (
+                "databaseName",
+                login_parameters.database.unwrap_or("".to_string()),
+            ),
+            (
+                "schemaName",
+                login_parameters.schema.unwrap_or("".to_string()),
+            ),
+            (
+                "warehouse",
+                login_parameters.warehouse.unwrap_or("".to_string()),
+            ),
+        ])
         .json(&login_request)
         .header("accept", "application/snowflake")
         .header(
