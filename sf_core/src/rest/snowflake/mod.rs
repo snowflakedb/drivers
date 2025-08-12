@@ -82,6 +82,7 @@ fn get_login_parameters(conn: &Connection) -> Result<LoginParameters, RestError>
         database: conn.settings.get_string("database"),
         schema: conn.settings.get_string("schema"),
         warehouse: conn.settings.get_string("warehouse"),
+        role: conn.settings.get_string("role"),
     };
     Ok(params)
 }
@@ -165,6 +166,7 @@ pub async fn snowflake_login(
             ),
             ("schemaName", login_parameters.schema.unwrap_or_default()),
             ("warehouse", login_parameters.warehouse.unwrap_or_default()),
+            ("roleName", login_parameters.role.unwrap_or_default()),
         ])
         .json(&login_request)
         .header("accept", "application/snowflake")

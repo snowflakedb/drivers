@@ -547,6 +547,25 @@ pub unsafe extern "C" fn SQLDriverConnect(
                     .connection_set_option_string(conn_handle.clone(), "database".to_owned(), value)
                     .unwrap();
             }
+            "WAREHOUSE" => {
+                client
+                    .connection_set_option_string(
+                        conn_handle.clone(),
+                        "warehouse".to_owned(),
+                        value,
+                    )
+                    .unwrap();
+            }
+            "ROLE" => {
+                client
+                    .connection_set_option_string(conn_handle.clone(), "role".to_owned(), value)
+                    .unwrap();
+            }
+            "SCHEMA" => {
+                client
+                    .connection_set_option_string(conn_handle.clone(), "schema".to_owned(), value)
+                    .unwrap();
+            }
             _ => {
                 tracing::warn!("SQLDriverConnect: unknown connection string key: {:?}", key);
             }

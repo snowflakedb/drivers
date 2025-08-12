@@ -6,6 +6,7 @@ pub struct LoginParameters {
     pub database: Option<String>,
     pub schema: Option<String>,
     pub warehouse: Option<String>,
+    pub role: Option<String>,
 }
 
 pub struct ClientInfo {
