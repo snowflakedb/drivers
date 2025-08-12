@@ -109,7 +109,7 @@ pub struct AuthResponseMain {
     #[serde(rename = "idTokenValidityInSeconds")]
     pub _id_token_validity: Option<u64>,
     #[serde(rename = "displayUserName")]
-    pub display_user_name: Option<String>,
+    pub _display_user_name: Option<String>,
     #[serde(rename = "serverVersion")]
     pub _server_version: String,
     #[serde(rename = "firstLogin")]
