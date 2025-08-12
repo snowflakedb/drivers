@@ -161,16 +161,10 @@ pub async fn snowflake_login(
         .query(&[
             (
                 "databaseName",
-                login_parameters.database.unwrap_or("".to_string()),
+                login_parameters.database.unwrap_or_default(),
             ),
-            (
-                "schemaName",
-                login_parameters.schema.unwrap_or("".to_string()),
-            ),
-            (
-                "warehouse",
-                login_parameters.warehouse.unwrap_or("".to_string()),
-            ),
+            ("schemaName", login_parameters.schema.unwrap_or_default()),
+            ("warehouse", login_parameters.warehouse.unwrap_or_default()),
         ])
         .json(&login_request)
         .header("accept", "application/snowflake")
