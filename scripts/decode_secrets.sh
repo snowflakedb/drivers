@@ -6,4 +6,4 @@ if [ -z "${PARAMETERS_SECRET}" ]; then
     PARAMETERS_SECRET=$(op read "op://Eng - Snow Drivers Warsaw/PARAMETERS_SECRET/password")
 fi
 
-gpg --batch --yes --passphrase "${PARAMETERS_SECRET}" --decrypt ./.github/secrets/parameters_aws_capi.json.gpg > parameters.json
+gpg --batch --yes --passphrase "${PARAMETERS_SECRET}" --decrypt ./.github/secrets/parameters_aws.json.gpg > parameters.json
