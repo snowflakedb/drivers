@@ -282,7 +282,6 @@ dependencies = [
 name = "arrow_deserialize_macro"
 version = "0.1.0"
 dependencies = [
- "arrow",
  "quote",
  "syn",
 ]
