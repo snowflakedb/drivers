@@ -45,6 +45,10 @@ pub struct Parameters {
     pub port: Option<i64>,
     #[serde(rename = "SNOWFLAKE_TEST_PROTOCOL")]
     pub protocol: Option<String>,
+    #[serde(rename = "SNOWFLAKE_TEST_PRIVATE_KEY_CONTENTS")]
+    pub private_key_contents: Option<Vec<String>>,
+    #[serde(rename = "SNOWFLAKE_TEST_PRIVATE_KEY_PASSWORD")]
+    pub private_key_password: Option<String>,
 }
 
 /// Parses and returns the test parameters from the configured parameter file
@@ -63,7 +67,7 @@ pub fn get_parameters() -> Parameters {
 /// Sets up logging for tests
 pub fn setup_logging() {
     let env_filter = EnvFilter::builder()
-        .with_default_directive(Level::DEBUG.into())
+        .with_default_directive(Level::INFO.into())
         .from_env()
         .unwrap();
     let _ = tracing_subscriber::fmt::fmt()
@@ -76,17 +80,17 @@ pub struct SnowflakeTestClient {
     pub driver: Box<dyn sf_core::thrift_gen::database_driver_v1::TDatabaseDriverSyncClient + Send>,
     pub conn_handle: sf_core::thrift_gen::database_driver_v1::ConnectionHandle,
     pub db_handle: sf_core::thrift_gen::database_driver_v1::DatabaseHandle,
+    pub parameters: Parameters,
 }
 
 impl Default for SnowflakeTestClient {
     fn default() -> Self {
-        Self::new()
+        Self::connect_with_default_auth()
     }
 }
 
 impl SnowflakeTestClient {
-    /// Creates a new test client with Snowflake connection established
-    pub fn new() -> Self {
+    pub fn with_default_params() -> Self {
         setup_logging();
         let parameters = get_parameters();
         let mut driver = new_database_driver_v1_client();
@@ -108,14 +112,6 @@ impl SnowflakeTestClient {
                 parameters.user.clone().unwrap(),
             )
             .unwrap();
-        driver
-            .connection_set_option_string(
-                conn_handle.clone(),
-                "password".to_string(),
-                parameters.password.clone().unwrap(),
-            )
-            .unwrap();
-
         // Set optional parameters if specified
         if let Some(database) = parameters.database.clone() {
             driver
@@ -173,15 +169,33 @@ impl SnowflakeTestClient {
                 .unwrap();
         }
 
-        driver
-            .connection_init(conn_handle.clone(), db_handle.clone())
-            .unwrap();
-
         Self {
             driver,
             conn_handle,
             db_handle,
+            parameters,
         }
+    }
+    /// Creates a new test client with Snowflake connection established
+    pub fn connect_with_default_auth() -> Self {
+        setup_logging();
+        let mut client = Self::with_default_params();
+
+        client
+            .driver
+            .connection_set_option_string(
+                client.conn_handle.clone(),
+                "password".to_string(),
+                client.parameters.password.clone().unwrap(),
+            )
+            .unwrap();
+
+        client
+            .driver
+            .connection_init(client.conn_handle.clone(), client.db_handle.clone())
+            .unwrap();
+
+        client
     }
 
     /// Creates a new statement handle

@@ -1,5 +1,8 @@
 use crate::chunks::ChunkReader;
-use crate::driver::{Connection, Database, Setting, Statement, StatementError};
+use crate::config::ConfigError;
+use crate::config::rest_parameters::{LoginParameters, QueryParameters};
+use crate::config::settings::Setting;
+use crate::driver::{Connection, Database, Statement, StatementError};
 use crate::file_manager::{download_files, upload_files};
 use crate::handle_manager::{Handle, HandleManager};
 use crate::rest::error::RestError;
@@ -95,6 +98,19 @@ impl From<RestError> for thrift::Error {
         ))
     }
 }
+
+impl From<ConfigError> for Error {
+    fn from(error: ConfigError) -> Self {
+        Error::from(DriverException::new(
+            format!("Configuration error: {error:?}"),
+            StatusCode::INVALID_STATE,
+            None,
+            None,
+            None,
+        ))
+    }
+}
+
 pub struct DatabaseDriverV1 {
     db_handle_manager: HandleManager<Mutex<Database>>,
     conn_handle_manager: HandleManager<Mutex<Connection>>,
@@ -376,11 +392,18 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
                     ))
                 })?;
 
-                let login_result =
-                    rt.block_on(async { crate::rest::snowflake::snowflake_login(&conn_ptr).await });
+                let login_parameters =
+                    LoginParameters::from_settings(&conn_ptr.lock().unwrap().settings)?;
+
+                let login_result = rt.block_on(async {
+                    crate::rest::snowflake::snowflake_login(&login_parameters).await
+                });
 
                 match login_result {
-                    Ok(_) => Ok(()),
+                    Ok(session_token) => {
+                        conn_ptr.lock().unwrap().session_token = Some(session_token);
+                        Ok(())
+                    }
                     Err(e) => Err(e.into()),
                 }
             }
@@ -640,8 +663,19 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
                     ))
                 })?;
 
+                let (query_parameters, session_token) = {
+                    let conn = stmt.conn.lock().unwrap();
+                    (
+                        QueryParameters::from_settings(&conn.settings)?,
+                        conn.session_token
+                            .clone()
+                            .ok_or(RestError::Internal("Session token not found".to_string()))?,
+                    )
+                };
+
                 let response = rt.block_on(crate::rest::snowflake::snowflake_query(
-                    &stmt.conn,
+                    query_parameters,
+                    session_token,
                     query,
                     stmt.get_query_parameter_bindings().map_err(Error::from)?,
                 ))?;

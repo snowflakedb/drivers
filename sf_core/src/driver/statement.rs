@@ -11,7 +11,7 @@ use arrow::{
 use crate::rest::snowflake::query_request;
 
 use super::connection::Connection;
-use super::settings::Setting;
+use crate::config::settings::Setting;
 
 #[derive(Debug, Clone)]
 pub enum StatementError {

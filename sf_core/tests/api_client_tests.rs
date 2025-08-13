@@ -669,7 +669,7 @@ fn test_statement_read_partition() {
 
 #[test]
 fn test_snowflake_select_1() {
-    let mut client = SnowflakeTestClient::new();
+    let mut client = SnowflakeTestClient::connect_with_default_auth();
     let result = client.execute_query("SELECT 1");
 
     let mut arrow_helper = ArrowResultHelper::from_result(result);
@@ -678,7 +678,7 @@ fn test_snowflake_select_1() {
 
 #[test]
 fn test_create_temporary_stage() {
-    let mut client = SnowflakeTestClient::new();
+    let mut client = SnowflakeTestClient::connect_with_default_auth();
     let stage_name = "TEST_STAGE";
     let result = client.execute_query(&format!("create temporary stage {stage_name}"));
 
@@ -689,7 +689,7 @@ fn test_create_temporary_stage() {
 
 #[test]
 fn test_put_select() {
-    let mut client = SnowflakeTestClient::new();
+    let mut client = SnowflakeTestClient::connect_with_default_auth();
     let stage_name = "TEST_STAGE_PUT_SELECT";
     let file_name = "test_put_select.csv";
 
@@ -717,7 +717,7 @@ fn test_put_select() {
 
 #[test]
 fn test_put_ls() {
-    let mut client = SnowflakeTestClient::new();
+    let mut client = SnowflakeTestClient::connect_with_default_auth();
     let stage_name = "TEST_STAGE_PUT_LS";
     let file_name = "test_put_ls.csv";
 
@@ -748,7 +748,7 @@ fn test_put_ls() {
 
 #[test]
 fn test_get() {
-    let mut client = SnowflakeTestClient::new();
+    let mut client = SnowflakeTestClient::connect_with_default_auth();
     let stage_name = "TEST_STAGE_GET";
     let file_name = "test_get.csv";
 
@@ -795,7 +795,7 @@ fn test_get() {
 
 #[test]
 fn test_put_get_with_auto_compress_false() {
-    let mut client = SnowflakeTestClient::new();
+    let mut client = SnowflakeTestClient::connect_with_default_auth();
     let stage_name = "TEST_STAGE_PUT_GET_COMPRESS_FALSE";
     let file_name = "test_put_get_compress_false.csv";
 
@@ -846,7 +846,7 @@ fn test_put_get_with_auto_compress_false() {
 
 #[test]
 fn test_put_get_with_auto_compress_true() {
-    let mut client = SnowflakeTestClient::new();
+    let mut client = SnowflakeTestClient::connect_with_default_auth();
     let stage_name = "TEST_STAGE_PUT_GET_COMPRESS_TRUE";
     let file_name = "test_put_get_compress_true.csv";
 
@@ -897,7 +897,7 @@ fn test_put_get_with_auto_compress_true() {
 
 #[test]
 fn test_put_ls_wildcard_question_mark() {
-    let mut client = SnowflakeTestClient::new();
+    let mut client = SnowflakeTestClient::connect_with_default_auth();
     let stage_name = "TEST_STAGE_PUT_WILDCARD_QUESTION_MARK";
     let file_name_base = "test_put_wildcard_question_mark";
 
@@ -970,7 +970,7 @@ fn test_put_ls_wildcard_question_mark() {
 
 #[test]
 fn test_put_ls_wildcard_star() {
-    let mut client = SnowflakeTestClient::new();
+    let mut client = SnowflakeTestClient::connect_with_default_auth();
     let stage_name = "TEST_STAGE_PUT_WILDCARD_STAR";
     let file_name_base = "test_put_wildcard_star";
 
@@ -1045,7 +1045,7 @@ fn test_put_ls_wildcard_star() {
 
 #[test]
 fn test_put_get_regexp() {
-    let mut client = SnowflakeTestClient::new();
+    let mut client = SnowflakeTestClient::connect_with_default_auth();
     let stage_name = "TEST_STAGE_PUT_GET_REGEXP";
     let file_name_base = "data";
 

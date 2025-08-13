@@ -498,6 +498,7 @@ pub unsafe extern "C" fn SQLDriverConnect(
 
     for (key, value) in connection_string_map {
         match key.as_str() {
+            // TODO: Do it more generically
             "DRIVER" => {
                 // ignore
             }
@@ -564,6 +565,33 @@ pub unsafe extern "C" fn SQLDriverConnect(
             "SCHEMA" => {
                 client
                     .connection_set_option_string(conn_handle.clone(), "schema".to_owned(), value)
+                    .unwrap();
+            }
+            "PRIVATE_KEY_FILE" => {
+                client
+                    .connection_set_option_string(
+                        conn_handle.clone(),
+                        "private_key_file".to_owned(),
+                        value,
+                    )
+                    .unwrap();
+            }
+            "AUTHENTICATOR" => {
+                client
+                    .connection_set_option_string(
+                        conn_handle.clone(),
+                        "authenticator".to_owned(),
+                        value,
+                    )
+                    .unwrap();
+            }
+            "PRIVATE_KEY_PASSWORD" => {
+                client
+                    .connection_set_option_string(
+                        conn_handle.clone(),
+                        "private_key_password".to_owned(),
+                        value,
+                    )
                     .unwrap();
             }
             _ => {

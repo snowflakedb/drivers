@@ -8,7 +8,7 @@ use crate::common::test_utils::{
 #[test]
 fn test_statement_bind() {
     setup_logging();
-    let mut client = SnowflakeTestClient::new();
+    let mut client = SnowflakeTestClient::connect_with_default_auth();
     let stmt = client.new_statement();
     client
         .driver
@@ -30,7 +30,7 @@ fn test_statement_bind() {
 #[test]
 fn test_statement_bind_multiple_params() {
     setup_logging();
-    let mut client = SnowflakeTestClient::new();
+    let mut client = SnowflakeTestClient::connect_with_default_auth();
     let stmt = client.new_statement();
     client
         .driver

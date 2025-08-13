@@ -68,6 +68,26 @@ inline void add_param_optional(std::stringstream& ss, picojson::object& params,
   }
 }
 
+inline std::string read_private_key(picojson::object& params) {
+  auto it = params.find("SNOWFLAKE_TEST_PRIVATE_KEY_CONTENTS");
+  if (it == params.end()) {
+    FAIL(
+        "Required parameter 'SNOWFLAKE_TEST_PRIVATE_KEY_CONTENTS' is missing in the test "
+        "parameters.");
+  }
+
+  if (!it->second.is<picojson::array>()) {
+    FAIL("Parameter 'SNOWFLAKE_TEST_PRIVATE_KEY_CONTENTS' is not of expected type.");
+  }
+
+  auto private_key_lines = it->second.get<picojson::array>();
+  std::stringstream private_key_stream;
+  for (const auto& line : private_key_lines) {
+    private_key_stream << line.get<std::string>() << "\n";
+  }
+  return private_key_stream.str();
+}
+
 inline std::string get_connection_string() {
   auto params = get_test_parameters("testconnection");
   std::stringstream ss;

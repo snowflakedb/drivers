@@ -4,7 +4,7 @@ use std::collections::HashMap;
 // TODO: Delete all unused fields when we are sure they are not needed
 
 // TODO: Currently this is only compatible with Python, should be generalized later
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Default)]
 pub struct AuthRequestClientEnvironment {
     #[serde(rename = "APPLICATION")]
     pub application: String,
@@ -22,7 +22,7 @@ pub struct AuthRequestClientEnvironment {
     pub python_compiler: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Default)]
 pub struct AuthRequestData {
     #[serde(rename = "CLIENT_APP_ID")]
     pub client_app_id: String,
