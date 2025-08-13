@@ -1,5 +1,6 @@
 use super::types::{
-    EncryptedFileMetadata, EncryptionResult, FileTransferError, MaterialDescription, StageInfo,
+    DownloadFileError, EncryptedFileMetadata, EncryptionResult, MaterialDescription, StageInfo,
+    UploadFileError,
 };
 use crate::rest::error::RestError;
 
@@ -17,13 +18,13 @@ const CONTENT_TYPE_OCTET_STREAM: &str = "application/octet-stream";
 pub async fn upload_to_s3(
     encryption_result: EncryptionResult,
     stage_info: &StageInfo,
-    file_name_with_extension: &str,
-) -> Result<(), FileTransferError> {
+    filename: &str,
+) -> Result<(), UploadFileError> {
     let s3_client = create_s3_client(stage_info, SNOWFLAKE_UPLOAD_PROVIDER).await;
 
     let s3_location = S3Location::new(&stage_info.location)?;
 
-    let s3_key = s3_location.build_key(file_name_with_extension);
+    let s3_key = s3_location.build_key(filename);
 
     // Serialize encryption metadata
     let mat_desc = serde_json::to_string(&encryption_result.metadata.material_desc)?;
@@ -42,7 +43,10 @@ pub async fn upload_to_s3(
     tracing::debug!("PUT object request: {:?}", put_object_request);
 
     // Upload to S3 (with optional encryption metadata)
-    let result = put_object_request.send().await?;
+    let result = put_object_request
+        .send()
+        .await
+        .map_err(aws_sdk_s3::Error::from)?;
 
     tracing::debug!("S3 upload result: {:?}", result);
 
@@ -51,13 +55,13 @@ pub async fn upload_to_s3(
 
 pub async fn download_from_s3(
     stage_info: &StageInfo,
-    file_name_with_extension: &str,
-) -> Result<(Vec<u8>, EncryptedFileMetadata), FileTransferError> {
+    filename: &str,
+) -> Result<(Vec<u8>, EncryptedFileMetadata), DownloadFileError> {
     let s3_client = create_s3_client(stage_info, SNOWFLAKE_DOWNLOAD_PROVIDER).await;
 
     let s3_location = S3Location::new(&stage_info.location)?;
 
-    let s3_key = s3_location.build_key(file_name_with_extension);
+    let s3_key = s3_location.build_key(filename);
 
     tracing::debug!(
         "Downloading from S3: s3://{}/{}",
@@ -71,15 +75,16 @@ pub async fn download_from_s3(
         .bucket(s3_location.bucket)
         .key(&s3_key)
         .send()
-        .await?;
+        .await
+        .map_err(aws_sdk_s3::Error::from)?;
 
     // Extract metadata from S3 response and construct the metadata structure directly
     let metadata_map = response
         .metadata()
-        .ok_or_else(|| FileTransferError::FileMetadata("Missing file metadata".to_string()))?;
+        .ok_or_else(|| DownloadFileError::FileMetadata("Missing file metadata".to_string()))?;
 
     let mat_desc_str = metadata_map.get("x-amz-matdesc").ok_or_else(|| {
-        FileTransferError::FileMetadata("Missing x-amz-matdesc field".to_string())
+        DownloadFileError::FileMetadata("Missing x-amz-matdesc field".to_string())
     })?;
 
     let material_desc: MaterialDescription = serde_json::from_str(mat_desc_str)?;
@@ -88,27 +93,21 @@ pub async fn download_from_s3(
     let file_metadata = EncryptedFileMetadata {
         encrypted_key: metadata_map
             .get("x-amz-key")
-            .ok_or_else(|| FileTransferError::FileMetadata("Missing x-amz-key field".to_string()))?
+            .ok_or_else(|| DownloadFileError::FileMetadata("Missing x-amz-key field".to_string()))?
             .to_owned(),
         iv: metadata_map
             .get("x-amz-iv")
-            .ok_or_else(|| FileTransferError::FileMetadata("Missing x-amz-iv field".to_string()))?
+            .ok_or_else(|| DownloadFileError::FileMetadata("Missing x-amz-iv field".to_string()))?
             .to_owned(),
         material_desc,
         digest: metadata_map
             .get("sfc-digest")
-            .ok_or_else(|| FileTransferError::FileMetadata("Missing sfc-digest field".to_string()))?
+            .ok_or_else(|| DownloadFileError::FileMetadata("Missing sfc-digest field".to_string()))?
             .to_owned(),
     };
 
     // Read the encrypted data from the response body
-    let encrypted_data = response
-        .body
-        .collect()
-        .await
-        .map_err(|e| FileTransferError::ByteStream(e.to_string()))?
-        .into_bytes()
-        .to_vec();
+    let encrypted_data = response.body.collect().await?.into_bytes().to_vec();
 
     Ok((encrypted_data, file_metadata))
 }
@@ -149,7 +148,7 @@ impl S3Location {
         })
     }
 
-    fn build_key(&self, file_name: &str) -> String {
-        format!("{}{file_name}", self.key_prefix)
+    fn build_key(&self, filename: &str) -> String {
+        format!("{}{filename}", self.key_prefix)
     }
 }

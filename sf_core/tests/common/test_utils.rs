@@ -16,6 +16,8 @@ use std::fs;
 use tracing::Level;
 use tracing_subscriber::EnvFilter;
 
+use super::arrow_deserialize::ArrowDeserialize;
+
 // Use serde to parse parameters.json
 use serde::{Deserialize, Serialize};
 
@@ -223,27 +225,6 @@ impl SnowflakeTestClient {
     pub fn create_temporary_stage(&mut self, stage_name: &str) {
         self.execute_query(&format!("create temporary stage {stage_name}"));
     }
-
-    pub fn _put_file_with_options(
-        &mut self,
-        file_path: &std::path::Path,
-        stage_name: &str,
-        options: &str,
-    ) {
-        let put_sql = format!(
-            "PUT 'file://{}' @{stage_name} {options}",
-            file_path.to_str().unwrap().replace("\\", "/")
-        );
-        self.execute_query(&put_sql);
-    }
-
-    pub fn _get_file(&mut self, stage_file_path: &str, download_dir: &std::path::Path) {
-        let get_sql = format!(
-            "GET @{stage_file_path} file://{}/",
-            download_dir.to_str().unwrap().replace("\\", "/")
-        );
-        self.execute_query(&get_sql);
-    }
 }
 
 impl Drop for SnowflakeTestClient {
@@ -309,6 +290,8 @@ impl ArrowExtractValue for i64 {
 /// Helper for processing Arrow stream results
 pub struct ArrowResultHelper {
     reader: ArrowArrayStreamReader,
+    current_batch: Option<arrow::record_batch::RecordBatch>,
+    current_row_index: usize,
 }
 
 impl ArrowResultHelper {
@@ -317,7 +300,11 @@ impl ArrowResultHelper {
         let stream_ptr: *mut FFI_ArrowArrayStream = result.stream.into();
         let stream: FFI_ArrowArrayStream = unsafe { FFI_ArrowArrayStream::from_raw(stream_ptr) };
         let reader = ArrowArrayStreamReader::try_new(stream).unwrap();
-        Self { reader }
+        Self {
+            reader,
+            current_batch: None,
+            current_row_index: 0,
+        }
     }
 
     /// Gets the next record batch
@@ -379,6 +366,101 @@ impl ArrowResultHelper {
     ) {
         self.assert_equals_array(vec![vec![expected]]);
     }
+
+    /// Fetches all batches, converts them all to vectors and returns one big merged vector
+    ///
+    /// This method reads all remaining batches from the stream and deserializes all rows
+    /// into a single Vec<T> where T implements ArrowDeserialize. It properly handles the
+    /// current batch state and includes any remaining rows from the current batch.
+    ///
+    /// # Type Parameters
+    ///
+    /// * `T` - A type that implements ArrowDeserialize
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing a `Vec<T>` with all rows from all batches, or an error string on failure.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error string if deserialization fails for any row.
+    pub fn fetch_all<T: ArrowDeserialize>(&mut self) -> Result<Vec<T>, String> {
+        let mut all_rows = Vec::new();
+
+        // First, handle any remaining rows in the current batch
+        if let Some(ref batch) = self.current_batch {
+            // Deserialize remaining rows from the current batch
+            for row_idx in self.current_row_index..batch.num_rows() {
+                let row = T::deserialize_one(batch, row_idx)?;
+                all_rows.push(row);
+            }
+            // Mark current batch as exhausted
+            self.current_batch = None;
+            self.current_row_index = 0;
+        }
+
+        // Then read all remaining batches
+        while let Some(batch) = self.next_batch() {
+            let batch_rows = T::deserialize_all(&batch)?;
+            all_rows.extend(batch_rows);
+        }
+
+        Ok(all_rows)
+    }
+
+    /// Reads one row from the current batch and returns T
+    ///
+    /// This method reads one row at a time from the current batch and advances to the next row.
+    /// When the current batch is exhausted, it automatically moves to the next batch.
+    ///
+    /// # Type Parameters
+    ///
+    /// * `T` - A type that implements ArrowDeserialize
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing a `T` instance from the current row, or an error string on failure.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error string if:
+    /// - No more batches are available from the stream
+    /// - All batches are empty
+    /// - Deserialization fails for the current row
+    pub fn fetch_one<T: ArrowDeserialize>(&mut self) -> Result<T, String> {
+        // Check if we need to load a new batch or advance to the next batch
+        loop {
+            match &self.current_batch {
+                None => {
+                    // Load the first batch
+                    self.current_batch = self.next_batch();
+                    self.current_row_index = 0;
+
+                    if self.current_batch.is_none() {
+                        return Err("No batches available in the stream".to_string());
+                    }
+                }
+                Some(batch) => {
+                    // Check if we've exhausted the current batch
+                    if self.current_row_index >= batch.num_rows() {
+                        // Move to the next batch
+                        self.current_batch = self.next_batch();
+                        self.current_row_index = 0;
+
+                        if self.current_batch.is_none() {
+                            return Err("No more rows available in the stream".to_string());
+                        }
+                        continue;
+                    }
+
+                    // We have a valid batch and row index
+                    let result = T::deserialize_one(batch, self.current_row_index);
+                    self.current_row_index += 1;
+                    return result;
+                }
+            }
+        }
+    }
 }
 
 fn extract_value<T: ArrowExtractValue>(
@@ -432,10 +514,10 @@ pub fn decompress_gzipped_file<P: AsRef<std::path::Path>>(file_path: P) -> std::
 
 pub fn create_test_file(
     temp_dir: &std::path::Path,
-    file_name: &str,
+    filename: &str,
     content: &str,
 ) -> std::path::PathBuf {
-    let file_path = temp_dir.join(file_name);
+    let file_path = temp_dir.join(filename);
     fs::write(&file_path, content).unwrap();
     file_path
 }

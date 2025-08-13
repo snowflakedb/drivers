@@ -279,6 +279,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "arrow_deserialize_macro"
+version = "0.1.0"
+dependencies = [
+ "arrow",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "async-trait"
 version = "0.1.88"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3077,6 +3086,7 @@ version = "0.0.0"
 dependencies = [
  "arrow",
  "arrow-ipc",
+ "arrow_deserialize_macro",
  "aws-config",
  "aws-credential-types",
  "aws-sdk-s3",

@@ -1,5 +1,6 @@
 pub mod common;
 
+use common::arrow_deserialize::ArrowDeserialize;
 use common::test_utils::*;
 use sf_core::api_client::new_database_driver_v1_client;
 use sf_core::thrift_gen::database_driver_v1::InfoCode;
@@ -691,11 +692,11 @@ fn test_create_temporary_stage() {
 fn test_put_select() {
     let mut client = SnowflakeTestClient::connect_with_default_auth();
     let stage_name = "TEST_STAGE_PUT_SELECT";
-    let file_name = "test_put_select.csv";
+    let filename = "test_put_select.csv";
 
     // Create test file with CSV data
     let temp_dir = tempfile::TempDir::new().unwrap();
-    let test_file_path = create_test_file(temp_dir.path(), file_name, "1,2,3\n");
+    let test_file_path = create_test_file(temp_dir.path(), filename, "1,2,3\n");
 
     // Setup stage and upload file
     client.create_temporary_stage(stage_name);
@@ -719,11 +720,11 @@ fn test_put_select() {
 fn test_put_ls() {
     let mut client = SnowflakeTestClient::connect_with_default_auth();
     let stage_name = "TEST_STAGE_PUT_LS";
-    let file_name = "test_put_ls.csv";
+    let filename = "test_put_ls.csv";
 
     // Setup test environment
     let temp_dir = tempfile::TempDir::new().unwrap();
-    let test_file_path = create_test_file(temp_dir.path(), file_name, "1,2,3\n");
+    let test_file_path = create_test_file(temp_dir.path(), filename, "1,2,3\n");
 
     // Set up stage and upload file
     client.create_temporary_stage(stage_name);
@@ -735,13 +736,13 @@ fn test_put_ls() {
     client.execute_query(&put_sql);
 
     // Verify file was uploaded with LS command
-    let expected_file_name = format!("{}/test_put_ls.csv.gz", stage_name.to_lowercase()); // File is compressed by default
+    let expected_filename = format!("{}/test_put_ls.csv.gz", stage_name.to_lowercase()); // File is compressed by default
     let ls_result = client.execute_query(&format!("LS @{stage_name}"));
     let result_vector = ArrowResultHelper::from_result(ls_result)
         .transform_into_array::<String>()
         .unwrap();
     assert_eq!(
-        result_vector[0][0], expected_file_name,
+        result_vector[0][0], expected_filename,
         "File should be listed in stage"
     );
 }
@@ -750,11 +751,11 @@ fn test_put_ls() {
 fn test_get() {
     let mut client = SnowflakeTestClient::connect_with_default_auth();
     let stage_name = "TEST_STAGE_GET";
-    let file_name = "test_get.csv";
+    let filename = "test_get.csv";
 
     // Set up test environment
     let temp_dir = tempfile::TempDir::new().unwrap();
-    let test_file_path = create_test_file(temp_dir.path(), file_name, "1,2,3\n");
+    let test_file_path = create_test_file(temp_dir.path(), filename, "1,2,3\n");
 
     // Setup stage and upload file
     client.create_temporary_stage(stage_name);
@@ -771,7 +772,7 @@ fn test_get() {
 
     // Download file using GET
     let get_sql = format!(
-        "GET @{stage_name}/{file_name} file://{}/",
+        "GET @{stage_name}/{filename} file://{}/",
         download_dir.to_str().unwrap().replace("\\", "/")
     );
     client.execute_query(&get_sql);
@@ -797,11 +798,11 @@ fn test_get() {
 fn test_put_get_with_auto_compress_false() {
     let mut client = SnowflakeTestClient::connect_with_default_auth();
     let stage_name = "TEST_STAGE_PUT_GET_COMPRESS_FALSE";
-    let file_name = "test_put_get_compress_false.csv";
+    let filename = "test_put_get_compress_false.csv";
 
     // Set up test environment
     let temp_dir = tempfile::TempDir::new().unwrap();
-    let test_file_path = create_test_file(temp_dir.path(), file_name, "1,2,3\n");
+    let test_file_path = create_test_file(temp_dir.path(), filename, "1,2,3\n");
 
     // Setup stage and upload file
     client.create_temporary_stage(stage_name);
@@ -818,7 +819,7 @@ fn test_put_get_with_auto_compress_false() {
 
     // Download file using GET
     let get_sql = format!(
-        "GET @{stage_name}/{file_name} file://{}/",
+        "GET @{stage_name}/{filename} file://{}/",
         download_dir.to_str().unwrap().replace("\\", "/")
     );
     client.execute_query(&get_sql);
@@ -848,11 +849,11 @@ fn test_put_get_with_auto_compress_false() {
 fn test_put_get_with_auto_compress_true() {
     let mut client = SnowflakeTestClient::connect_with_default_auth();
     let stage_name = "TEST_STAGE_PUT_GET_COMPRESS_TRUE";
-    let file_name = "test_put_get_compress_true.csv";
+    let filename = "test_put_get_compress_true.csv";
 
     // Set up test environment
     let temp_dir = tempfile::TempDir::new().unwrap();
-    let test_file_path = create_test_file(temp_dir.path(), file_name, "1,2,3\n");
+    let test_file_path = create_test_file(temp_dir.path(), filename, "1,2,3\n");
 
     // Setup stage and upload file
     client.create_temporary_stage(stage_name);
@@ -868,7 +869,7 @@ fn test_put_get_with_auto_compress_true() {
     fs::create_dir_all(&download_dir).unwrap();
 
     let get_sql = format!(
-        "GET @{stage_name}/{file_name} file://{}/",
+        "GET @{stage_name}/{filename} file://{}/",
         download_dir.to_str().unwrap().replace("\\", "/")
     );
     client.execute_query(&get_sql);
@@ -899,24 +900,24 @@ fn test_put_get_with_auto_compress_true() {
 fn test_put_ls_wildcard_question_mark() {
     let mut client = SnowflakeTestClient::connect_with_default_auth();
     let stage_name = "TEST_STAGE_PUT_WILDCARD_QUESTION_MARK";
-    let file_name_base = "test_put_wildcard_question_mark";
+    let base_name = "test_put_wildcard_question_mark";
 
     // Set up test environment
     let temp_dir = tempfile::TempDir::new().unwrap();
 
     for i in 1..=5 {
-        let file_name = format!("{file_name_base}_{i}.csv");
-        create_test_file(temp_dir.path(), &file_name, "1,2,3\n");
+        let filename = format!("{base_name}_{i}.csv");
+        create_test_file(temp_dir.path(), &filename, "1,2,3\n");
     }
 
     // Create files that should NOT match the '?' wildcard pattern
-    let non_matching_file1 = format!("{file_name_base}_10.csv"); // Two digits instead of one
-    let non_matching_file2 = format!("{file_name_base}_abc.csv"); // Multiple characters
+    let non_matching_file1 = format!("{base_name}_10.csv"); // Two digits instead of one
+    let non_matching_file2 = format!("{base_name}_abc.csv"); // Multiple characters
     create_test_file(temp_dir.path(), &non_matching_file1, "1,2,3\n");
     create_test_file(temp_dir.path(), &non_matching_file2, "1,2,3\n");
 
     let files_wildcard = format!(
-        "{}/{file_name_base}_?.csv",
+        "{}/{base_name}_?.csv",
         temp_dir.path().to_str().unwrap().replace("\\", "/"),
     );
 
@@ -932,27 +933,18 @@ fn test_put_ls_wildcard_question_mark() {
         .unwrap();
 
     for i in 1..=5 {
-        let expected_file_name = format!(
-            "{}/{}_{i}.csv.gz",
-            stage_name.to_lowercase(),
-            file_name_base
-        );
+        let expected_filename = format!("{}/{}_{i}.csv.gz", stage_name.to_lowercase(), base_name);
         assert!(
             result_vector
                 .iter()
-                .any(|row| row.contains(&expected_file_name)),
-            "File {expected_file_name} should be listed in stage"
+                .any(|row| row.contains(&expected_filename)),
+            "File {expected_filename} should be listed in stage"
         );
     }
 
     // Assert that non-matching files are NOT present
-    let non_matching_file1_gz =
-        format!("{}/{}_10.csv.gz", stage_name.to_lowercase(), file_name_base);
-    let non_matching_file2_gz = format!(
-        "{}/{}_abc.csv.gz",
-        stage_name.to_lowercase(),
-        file_name_base
-    );
+    let non_matching_file1_gz = format!("{}/{}_10.csv.gz", stage_name.to_lowercase(), base_name);
+    let non_matching_file2_gz = format!("{}/{}_abc.csv.gz", stage_name.to_lowercase(), base_name);
 
     assert!(
         !result_vector
@@ -972,24 +964,24 @@ fn test_put_ls_wildcard_question_mark() {
 fn test_put_ls_wildcard_star() {
     let mut client = SnowflakeTestClient::connect_with_default_auth();
     let stage_name = "TEST_STAGE_PUT_WILDCARD_STAR";
-    let file_name_base = "test_put_wildcard_star";
+    let base_name = "test_put_wildcard_star";
 
     // Set up test environment
     let temp_dir = tempfile::TempDir::new().unwrap();
 
     for i in 1..=5 {
-        let file_name = format!("{file_name_base}_{i}{i}{i}.csv");
-        create_test_file(temp_dir.path(), &file_name, "1,2,3\n");
+        let filename = format!("{base_name}_{i}{i}{i}.csv");
+        create_test_file(temp_dir.path(), &filename, "1,2,3\n");
     }
 
     // Create files that should NOT match the '*' wildcard pattern
-    let non_matching_file1 = format!("{file_name_base}.csv"); // No underscore and suffix
-    let non_matching_file2 = format!("{file_name_base}_test.txt"); // Different extension
+    let non_matching_file1 = format!("{base_name}.csv"); // No underscore and suffix
+    let non_matching_file2 = format!("{base_name}_test.txt"); // Different extension
     create_test_file(temp_dir.path(), &non_matching_file1, "1,2,3\n");
     create_test_file(temp_dir.path(), &non_matching_file2, "1,2,3\n");
 
     let files_wildcard = format!(
-        "{}/{file_name_base}_*.csv",
+        "{}/{base_name}_*.csv",
         temp_dir.path().to_str().unwrap().replace("\\", "/"),
     );
 
@@ -1005,25 +997,19 @@ fn test_put_ls_wildcard_star() {
         .unwrap();
 
     for i in 1..=5 {
-        let expected_file_name = format!(
-            "{}/{file_name_base}_{i}{i}{i}.csv.gz",
-            stage_name.to_lowercase(),
-        );
+        let expected_filename =
+            format!("{}/{base_name}_{i}{i}{i}.csv.gz", stage_name.to_lowercase(),);
         assert!(
             result_vector
                 .iter()
-                .any(|row| row.contains(&expected_file_name)),
-            "File {expected_file_name} should be listed in stage"
+                .any(|row| row.contains(&expected_filename)),
+            "File {expected_filename} should be listed in stage"
         );
     }
 
     // Assert that non-matching files are NOT present
-    let non_matching_file1_gz = format!("{}/{}.csv.gz", stage_name.to_lowercase(), file_name_base);
-    let non_matching_file2_gz = format!(
-        "{}/{}_test.txt.gz",
-        stage_name.to_lowercase(),
-        file_name_base
-    );
+    let non_matching_file1_gz = format!("{}/{}.csv.gz", stage_name.to_lowercase(), base_name);
+    let non_matching_file2_gz = format!("{}/{}_test.txt.gz", stage_name.to_lowercase(), base_name);
 
     assert!(
         !result_vector
@@ -1047,7 +1033,7 @@ fn test_put_ls_wildcard_star() {
 fn test_put_get_regexp() {
     let mut client = SnowflakeTestClient::connect_with_default_auth();
     let stage_name = "TEST_STAGE_PUT_GET_REGEXP";
-    let file_name_base = "data";
+    let base_name = "data";
 
     // Set up test environment
     let temp_dir = tempfile::TempDir::new().unwrap();
@@ -1057,8 +1043,8 @@ fn test_put_get_regexp() {
 
     // Create and upload test files that match the regexp pattern
     for i in 1..=5 {
-        let file_name = format!("{file_name_base}_{i}.csv");
-        let file_path = create_test_file(temp_dir.path(), &file_name, "1,2,3\n");
+        let filename = format!("{base_name}_{i}.csv");
+        let file_path = create_test_file(temp_dir.path(), &filename, "1,2,3\n");
         let put_sql = format!(
             "PUT 'file://{}' @{stage_name}",
             file_path.to_str().unwrap().replace("\\", "/"),
@@ -1067,8 +1053,8 @@ fn test_put_get_regexp() {
     }
 
     // Create and upload files that should NOT match the regexp pattern
-    let non_matching_file1 = format!("{file_name_base}_10.csv"); // Two digits instead of one
-    let non_matching_file2 = format!("{file_name_base}_abc.csv"); // Multiple characters
+    let non_matching_file1 = format!("{base_name}_10.csv"); // Two digits instead of one
+    let non_matching_file2 = format!("{base_name}_abc.csv"); // Multiple characters
     create_test_file(temp_dir.path(), &non_matching_file1, "1,2,3\n");
     create_test_file(temp_dir.path(), &non_matching_file2, "1,2,3\n");
     client.execute_query(&format!(
@@ -1087,7 +1073,7 @@ fn test_put_get_regexp() {
     fs::create_dir_all(&download_dir).unwrap();
 
     // The last two dots are escaped to match literal ".csv.gz"
-    let get_pattern = format!(r".*/{file_name_base}_.\.csv\.gz");
+    let get_pattern = format!(r".*/{base_name}_.\.csv\.gz");
 
     let get_sql = format!(
         "GET @{stage_name} file://{}/ PATTERN='{}'",
@@ -1098,7 +1084,7 @@ fn test_put_get_regexp() {
 
     // Verify the downloaded files exist
     for i in 1..=5 {
-        let expected_file_path = download_dir.join(format!("{file_name_base}_{i}.csv.gz"));
+        let expected_file_path = download_dir.join(format!("{base_name}_{i}.csv.gz"));
         assert!(
             expected_file_path.exists(),
             "Downloaded file should exist at {expected_file_path:?}",
@@ -1106,8 +1092,8 @@ fn test_put_get_regexp() {
     }
 
     // Assert that non-matching files are NOT present
-    let non_matching_file1_gz = download_dir.join(format!("{file_name_base}_10.csv.gz"));
-    let non_matching_file2_gz = download_dir.join(format!("{file_name_base}_abc.csv.gz"));
+    let non_matching_file1_gz = download_dir.join(format!("{base_name}_10.csv.gz"));
+    let non_matching_file2_gz = download_dir.join(format!("{base_name}_abc.csv.gz"));
     assert!(
         !non_matching_file1_gz.exists(),
         "Non-matching file should NOT exist at {non_matching_file1_gz:?}"
@@ -1116,4 +1102,74 @@ fn test_put_get_regexp() {
         !non_matching_file2_gz.exists(),
         "Non-matching file should NOT exist at {non_matching_file2_gz:?}"
     );
+}
+
+// Structured types for Snowflake command results using our arrow_deserialize macro
+#[derive(ArrowDeserialize, Debug, PartialEq)]
+struct PutResult {
+    source: String,
+    target: String,
+    source_size: i64,
+    target_size: i64,
+    source_compression: String,
+    target_compression: String,
+    status: String,
+    message: String,
+}
+
+#[derive(ArrowDeserialize, Debug, PartialEq)]
+struct GetResult {
+    file: String,
+    size: i64,
+    status: String,
+    message: String,
+}
+
+#[test]
+fn test_put_get_rowset() {
+    let mut client = SnowflakeTestClient::new();
+    let stage_name = "TEST_STAGE_PUT_ROWSET";
+    let filename = "test_put_get_rowset.csv";
+
+    // Set up test environment
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let test_file_path = create_test_file(temp_dir.path(), filename, "1,2,3\n");
+
+    // Setup stage and upload file
+    client.create_temporary_stage(stage_name);
+    let put_sql = format!(
+        "PUT 'file://{}' @{stage_name}",
+        test_file_path.to_str().unwrap().replace("\\", "/")
+    );
+    let put_data = client.execute_query(&put_sql);
+    let mut arrow_helper = ArrowResultHelper::from_result(put_data);
+
+    let put_result: PutResult = arrow_helper
+        .fetch_one()
+        .expect("Failed to fetch first PUT result");
+
+    assert_eq!(put_result.source, "test_put_get_rowset.csv");
+    assert_eq!(put_result.target, "test_put_get_rowset.csv.gz");
+    assert_eq!(put_result.source_size, 6);
+    assert_eq!(put_result.target_size, 64);
+    assert_eq!(put_result.source_compression, "NONE");
+    assert_eq!(put_result.target_compression, "GZIP");
+    assert_eq!(put_result.status, "UPLOADED");
+    assert_eq!(put_result.message, "");
+
+    let get_sql = format!(
+        "GET @{stage_name}/{filename} file://{}/",
+        temp_dir.path().to_str().unwrap().replace("\\", "/")
+    );
+    let get_data = client.execute_query(&get_sql);
+    let mut arrow_helper = ArrowResultHelper::from_result(get_data);
+
+    let get_result: GetResult = arrow_helper
+        .fetch_one()
+        .expect("Failed to fetch first GET result");
+
+    assert_eq!(get_result.file, "test_put_get_rowset.csv.gz");
+    assert_eq!(get_result.size, 52);
+    assert_eq!(get_result.status, "DOWNLOADED");
+    assert_eq!(get_result.message, "");
 }

@@ -6,6 +6,7 @@ use crate::driver::{Connection, Database, Statement, StatementError};
 use crate::file_manager::{download_files, upload_files};
 use crate::handle_manager::{Handle, HandleManager};
 use crate::rest::error::RestError;
+use crate::rest::snowflake::query_response::RowType;
 use crate::thrift_gen::database_driver_v1::{
     ArrowArrayPtr, ArrowSchemaPtr, ConnectionHandle, DatabaseDriverSyncHandler,
     DatabaseDriverSyncProcessor, DatabaseHandle, DriverException, ExecuteResult, InfoCode,
@@ -20,6 +21,7 @@ use thrift::server::TProcessor;
 use thrift::{Error, OrderedFloat};
 use tracing::instrument;
 
+use crate::arrow_utils::convert_result_to_arrow;
 use crate::driver::StatementState;
 use crate::thrift_gen::database_driver_v1::ArrowArrayStreamPtr;
 
@@ -162,6 +164,14 @@ impl DatabaseDriverV1 {
             ))
         })?;
         f(guard)
+    }
+
+    fn text_column_rowtype(column_name: &str) -> RowType {
+        RowType::new(column_name.to_string(), "TEXT".to_string(), None, false)
+    }
+
+    fn int_column_rowtype(column_name: &str) -> RowType {
+        RowType::new(column_name.to_string(), "FIXED".to_string(), Some(0), false)
     }
 
     pub fn new() -> DatabaseDriverV1 {
@@ -693,15 +703,67 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
                     )));
                 }
 
-                if let Some(ref command) = response.data.command {
+                let rowset_bytes = if let Some(ref command) = response.data.command {
                     if command == "UPLOAD" {
                         let file_upload_data = response.data.to_file_upload_data()?;
-                        rt.block_on(upload_files(file_upload_data))
+                        let upload_results = rt
+                            .block_on(upload_files(file_upload_data))
                             .map_err(DriverException::from)?;
+
+                        let rowtype = vec![
+                            Self::text_column_rowtype("source"),
+                            Self::text_column_rowtype("target"),
+                            Self::int_column_rowtype("source_size"),
+                            Self::int_column_rowtype("target_size"),
+                            Self::text_column_rowtype("source_compression"),
+                            Self::text_column_rowtype("target_compression"),
+                            Self::text_column_rowtype("status"),
+                            Self::text_column_rowtype("message"),
+                        ];
+
+                        let rowset: Vec<Vec<Option<String>>> = upload_results
+                            .into_iter()
+                            .map(|result| {
+                                vec![
+                                    Some(result.source),
+                                    Some(result.target),
+                                    Some(result.source_size.to_string()),
+                                    Some(result.target_size.to_string()),
+                                    Some(result.source_compression),
+                                    Some(result.target_compression),
+                                    Some(result.status),
+                                    Some(result.message),
+                                ]
+                            })
+                            .collect();
+
+                        convert_result_to_arrow(&rowset, &rowtype)?
                     } else if command == "DOWNLOAD" {
                         let file_download_data = response.data.to_file_download_data()?;
-                        rt.block_on(download_files(file_download_data))
+                        let download_results = rt
+                            .block_on(download_files(file_download_data))
                             .map_err(DriverException::from)?;
+
+                        let rowtype = vec![
+                            Self::text_column_rowtype("file"),
+                            Self::int_column_rowtype("size"),
+                            Self::text_column_rowtype("status"),
+                            Self::text_column_rowtype("message"),
+                        ];
+
+                        let rowset: Vec<Vec<Option<String>>> = download_results
+                            .into_iter()
+                            .map(|result| {
+                                vec![
+                                    Some(result.file),
+                                    Some(result.size.to_string()),
+                                    Some(result.status),
+                                    Some(result.message),
+                                ]
+                            })
+                            .collect();
+
+                        convert_result_to_arrow(&rowset, &rowtype)?
                     } else {
                         return Err(Error::from(DriverException::new(
                             format!("Unsupported command: {command}"),
@@ -711,15 +773,9 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
                             None,
                         )));
                     }
-
-                    stmt.state = StatementState::Executed;
-                    return Ok(ExecuteResult::new(
-                        Box::new(ArrowArrayStreamPtr::new(Vec::new())),
-                        0,
-                    ));
-                }
-
-                let rowset_bytes = response.data.to_rowset_bytes().map_err(Error::from)?;
+                } else {
+                    response.data.to_rowset_bytes().map_err(Error::from)?
+                };
 
                 let reader_result =
                     if let Some(chunk_download_data) = response.data.to_chunk_download_data() {
@@ -738,7 +794,7 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
                     ))
                 })?);
 
-                let stream = Box::new(arrow::ffi_stream::FFI_ArrowArrayStream::new(reader));
+                let stream = Box::new(FFI_ArrowArrayStream::new(reader));
                 // Serialize pointer into integer
                 let stream_ptr = Box::into_raw(stream);
                 stmt.state = StatementState::Executed;

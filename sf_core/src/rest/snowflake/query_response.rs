@@ -26,12 +26,14 @@ pub struct Data {
     pub rowset: Option<Vec<Vec<Option<String>>>>,
     #[serde(rename = "rowsetBase64")]
     pub rowset_base64: Option<String>,
+    #[serde(rename = "rowtype")]
+    row_type: Option<Vec<RowType>>,
     #[serde(rename = "command")]
     pub command: Option<String>,
-    #[serde(rename = "autoCompress")]
-    auto_compress: Option<bool>,
 
     // file transfer response data
+    #[serde(rename = "autoCompress")]
+    auto_compress: Option<bool>,
     #[serde(rename = "src_locations")]
     src_locations: Option<Vec<String>>,
     #[serde(rename = "stageInfo")]
@@ -44,8 +46,6 @@ pub struct Data {
     //unused fields
     #[serde(rename = "parameters")]
     _parameters: Option<Vec<NameValueParameter>>,
-    #[serde(rename = "rowType")]
-    _row_type: Option<Vec<RowType>>,
     #[serde(rename = "total")]
     _total: Option<i64>,
     #[serde(rename = "returned")]
@@ -164,9 +164,8 @@ pub struct NameValueParameter {
 
 #[derive(Deserialize)]
 pub struct RowType {
-    //unused fields
     #[serde(rename = "name")]
-    _name: String,
+    pub name: String,
     #[serde(rename = "fields")]
     _fields: Option<Vec<FieldMetadata>>,
     #[serde(rename = "byteLength")]
@@ -174,13 +173,29 @@ pub struct RowType {
     #[serde(rename = "length")]
     _length: Option<i64>,
     #[serde(rename = "type")]
-    _type_: String,
+    pub type_: String,
     #[serde(rename = "precision")]
-    _precision: i64,
+    _precision: Option<i64>,
     #[serde(rename = "scale")]
-    _scale: i64,
+    pub scale: Option<i64>,
     #[serde(rename = "nullable")]
-    _nullable: bool,
+    pub nullable: bool,
+}
+
+impl RowType {
+    /// Create a new RowType for use in constructing rowsets
+    pub fn new(name: String, type_: String, scale: Option<i64>, nullable: bool) -> Self {
+        Self {
+            name,
+            type_,
+            scale,
+            nullable,
+            _fields: None,
+            _byte_length: None,
+            _length: None,
+            _precision: None,
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -374,15 +389,17 @@ impl Data {
                     })
             }
             None => {
-                match self.rowset.as_ref() {
-                    Some(rowset) => {
-                        // Convert JSON rowset to Arrow format
-                        convert_result_to_arrow(rowset)
-                    }
-                    None => Err(RestError::InvalidSnowflakeResponse(
-                        "Rowset not found in response".to_string(),
-                    )),
-                }
+                let rowtype = self
+                    .row_type
+                    .as_ref()
+                    .ok_or_else(|| RestError::MissingParameter("row type".to_string()))?;
+
+                let rowset = self
+                    .rowset
+                    .as_ref()
+                    .ok_or_else(|| RestError::MissingParameter("rowset".to_string()))?;
+
+                convert_result_to_arrow(rowset, rowtype)
             }
         }
     }

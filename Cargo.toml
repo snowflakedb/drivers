@@ -4,5 +4,6 @@ members = [
     "sf_core",
     "odbc",
     "jdbc_bridge",
+    "sf_core/tests/arrow_deserialize_macro",
 ]
 resolver = "1"
