@@ -29,18 +29,13 @@ pub fn convert_result_to_arrow(
     if rowset.is_empty() {
         return Ok(Vec::new());
     }
+    let num_columns_rowset = rowset.first().unwrap().len();
+    let num_columns_rowtype = row_types.len();
 
-    let num_columns = row_types.len();
     // Validate that row_types matches the number of columns
-    if num_columns != rowset[0].len() {
+    if num_columns_rowset != num_columns_rowtype {
         return Err(RestError::InvalidSnowflakeResponse(format!(
-            "RowType count ({}) doesn't match column count ({})",
-            num_columns,
-    if num_columns != rowset.first().unwrap().len() {
-        return Err(RestError::InvalidSnowflakeResponse(format!(
-            "RowType count ({}) doesn't match column count ({})",
-            num_columns,
-            rowset.first().unwrap().len()
+            "RowType count ({num_columns_rowtype}) doesn't match column count ({num_columns_rowset})",
         )));
     }
 
