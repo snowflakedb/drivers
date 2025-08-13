@@ -1,11 +1,9 @@
 pub mod common;
 extern crate sf_core;
 
+use crate::common::arrow_result_helper::ArrowResultHelper;
+use crate::common::test_utils::{SnowflakeTestClient, create_param_bindings, setup_logging};
 use arrow::datatypes::Int32Type;
-
-use crate::common::test_utils::{
-    ArrowResultHelper, SnowflakeTestClient, create_param_bindings, setup_logging,
-};
 
 #[test]
 fn test_statement_bind() {

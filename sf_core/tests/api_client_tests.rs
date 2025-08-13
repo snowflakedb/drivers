@@ -1,6 +1,7 @@
 pub mod common;
 
 use common::arrow_deserialize::ArrowDeserialize;
+use common::arrow_result_helper::ArrowResultHelper;
 use common::test_utils::*;
 use sf_core::api_client::new_database_driver_v1_client;
 use sf_core::thrift_gen::database_driver_v1::InfoCode;

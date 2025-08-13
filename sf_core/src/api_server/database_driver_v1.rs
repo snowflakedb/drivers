@@ -4,26 +4,30 @@ use crate::config::rest_parameters::{LoginParameters, QueryParameters};
 use crate::config::settings::Setting;
 use crate::driver::{Connection, Database, Statement, StatementError};
 use crate::file_manager::{download_files, upload_files};
+use crate::driver::{Connection, Database, Setting, Statement, StatementError};
+use crate::file_manager::{DownloadResult, UploadResult, download_files, upload_files};
 use crate::handle_manager::{Handle, HandleManager};
 use crate::rest::error::RestError;
-use crate::rest::snowflake::query_response::RowType;
+
 use crate::thrift_gen::database_driver_v1::{
     ArrowArrayPtr, ArrowSchemaPtr, ConnectionHandle, DatabaseDriverSyncHandler,
     DatabaseDriverSyncProcessor, DatabaseHandle, DriverException, ExecuteResult, InfoCode,
     PartitionedResult, StatementHandle, StatusCode,
 };
-use arrow::array::{RecordBatch, StructArray};
+
+use arrow::array::{Array, Int64Array, RecordBatch, StringArray, StructArray};
+use arrow::datatypes::{DataType, Field, Schema};
 use arrow::ffi::{FFI_ArrowArray, FFI_ArrowSchema};
 use arrow::ffi_stream::FFI_ArrowArrayStream;
 use std::mem::size_of;
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard};
 use thrift::server::TProcessor;
 use thrift::{Error, OrderedFloat};
 use tracing::instrument;
 
-use crate::arrow_utils::convert_result_to_arrow;
 use crate::driver::StatementState;
 use crate::thrift_gen::database_driver_v1::ArrowArrayStreamPtr;
+use arrow::error::ArrowError;
 
 impl From<Handle> for DatabaseHandle {
     fn from(handle: Handle) -> Self {
@@ -138,40 +142,46 @@ impl From<StatementError> for Error {
 }
 
 impl DatabaseDriverV1 {
+    /// Helper to create a standard DriverException with commonly used defaults
+    fn driver_error(message: impl Into<String>, status: StatusCode) -> Error {
+        Error::from(DriverException::new(
+            message.into(),
+            status,
+            None,
+            None,
+            None,
+        ))
+    }
+
+    /// Helper to create an invalid argument error
+    fn invalid_argument(message: impl Into<String>) -> Error {
+        Self::driver_error(message, StatusCode::INVALID_ARGUMENT)
+    }
+
+    /// Helper to create an invalid state error
+    fn invalid_state(message: impl Into<String>) -> Error {
+        Self::driver_error(message, StatusCode::INVALID_STATE)
+    }
+
+    /// Helper to create an unknown error
+    fn unknown_error(message: impl Into<String>) -> Error {
+        Self::driver_error(message, StatusCode::UNKNOWN)
+    }
+
     fn with_statement<T>(
         &self,
         handle: StatementHandle,
         f: impl FnOnce(MutexGuard<Statement>) -> Result<T, Error>,
     ) -> Result<T, Error> {
         let handle = handle.into();
-        let stmt =
-            self.stmt_handle_manager
-                .get_obj(handle)
-                .ok_or(Error::from(DriverException::new(
-                    "Statement handle not found".to_string(),
-                    StatusCode::INVALID_ARGUMENT,
-                    None,
-                    None,
-                    None,
-                )))?;
-        let guard = stmt.lock().map_err(|_| {
-            Error::from(DriverException::new(
-                "Statement cannot be locked".to_string(),
-                StatusCode::INVALID_STATE,
-                None,
-                None,
-                None,
-            ))
-        })?;
+        let stmt = self
+            .stmt_handle_manager
+            .get_obj(handle)
+            .ok_or_else(|| Self::invalid_argument("Statement handle not found"))?;
+        let guard = stmt
+            .lock()
+            .map_err(|_| Self::invalid_state("Statement cannot be locked"))?;
         f(guard)
-    }
-
-    fn text_column_rowtype(column_name: &str) -> RowType {
-        RowType::new(column_name.to_string(), "TEXT".to_string(), None, false)
-    }
-
-    fn int_column_rowtype(column_name: &str) -> RowType {
-        RowType::new(column_name.to_string(), "FIXED".to_string(), Some(0), false)
     }
 
     pub fn new() -> DatabaseDriverV1 {
@@ -199,13 +209,7 @@ impl DatabaseDriverV1 {
                 db.settings.insert(key, value);
                 Ok(())
             }
-            None => Err(Error::from(DriverException::new(
-                String::from("Database handle not found"),
-                StatusCode::INVALID_ARGUMENT,
-                None,
-                None,
-                None,
-            ))),
+            None => Err(Self::invalid_argument("Database handle not found")),
         }
     }
 
@@ -222,13 +226,7 @@ impl DatabaseDriverV1 {
                 conn.settings.insert(key, value);
                 Ok(())
             }
-            None => Err(Error::from(DriverException::new(
-                String::from("Connection handle not found"),
-                StatusCode::INVALID_ARGUMENT,
-                None,
-                None,
-                None,
-            ))),
+            None => Err(Self::invalid_argument("Connection handle not found")),
         }
     }
 
@@ -245,13 +243,7 @@ impl DatabaseDriverV1 {
                 stmt.settings.insert(key, value);
                 Ok(())
             }
-            None => Err(Error::from(DriverException::new(
-                String::from("Statement handle not found"),
-                StatusCode::INVALID_ARGUMENT,
-                None,
-                None,
-                None,
-            ))),
+            None => Err(Self::invalid_argument("Statement handle not found")),
         }
     }
 }
@@ -310,13 +302,7 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
         let handle = db_handle.into();
         match self.db_handle_manager.get_obj(handle) {
             Some(_db_ptr) => Ok(()),
-            None => Err(Error::from(DriverException::new(
-                String::from("Database handle not found"),
-                StatusCode::INVALID_ARGUMENT,
-                None,
-                None,
-                None,
-            ))),
+            None => Err(Self::invalid_argument("Database handle not found")),
         }
     }
 
@@ -324,13 +310,7 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
     fn handle_database_release(&self, db_handle: DatabaseHandle) -> thrift::Result<()> {
         match self.db_handle_manager.delete_handle(db_handle.into()) {
             true => Ok(()),
-            false => Err(Error::from(DriverException::new(
-                String::from("Failed to release database handle"),
-                StatusCode::INVALID_ARGUMENT,
-                None,
-                None,
-                None,
-            ))),
+            false => Err(Self::invalid_argument("Failed to release database handle")),
         }
     }
 
@@ -392,15 +372,8 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
         match self.conn_handle_manager.get_obj(handle) {
             Some(conn_ptr) => {
                 // Create a blocking runtime for the login process
-                let rt = tokio::runtime::Runtime::new().map_err(|e| {
-                    Error::from(DriverException::new(
-                        format!("Failed to create runtime: {e}"),
-                        StatusCode::UNKNOWN,
-                        None,
-                        None,
-                        None,
-                    ))
-                })?;
+                let rt = tokio::runtime::Runtime::new()
+                    .map_err(|e| Self::unknown_error(format!("Failed to create runtime: {e}")))?;
 
                 let login_parameters =
                     LoginParameters::from_settings(&conn_ptr.lock().unwrap().settings)?;
@@ -417,13 +390,7 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
                     Err(e) => Err(e.into()),
                 }
             }
-            None => Err(Error::from(DriverException::new(
-                String::from("Connection handle not found"),
-                StatusCode::INVALID_ARGUMENT,
-                None,
-                None,
-                None,
-            ))),
+            None => Err(Self::invalid_argument("Connection handle not found")),
         }
     }
 
@@ -431,14 +398,9 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
     fn handle_connection_release(&self, conn_handle: ConnectionHandle) -> thrift::Result<()> {
         match self.conn_handle_manager.delete_handle(conn_handle.into()) {
             true => Ok(()),
-            false => Err(DriverException::new(
-                String::from("Failed to release connection handle"),
-                StatusCode::INVALID_ARGUMENT,
-                None,
-                None,
-                None,
-            )
-            .into()),
+            false => Err(Self::invalid_argument(
+                "Failed to release connection handle",
+            )),
         }
     }
 
@@ -506,13 +468,7 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
                 let handle = self.stmt_handle_manager.add_handle(stmt);
                 Ok(handle.into())
             }
-            None => Err(Error::from(DriverException::new(
-                String::from("Connection handle not found"),
-                StatusCode::INVALID_ARGUMENT,
-                None,
-                None,
-                None,
-            ))),
+            None => Err(Self::invalid_argument("Connection handle not found")),
         }
     }
 
@@ -520,14 +476,7 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
     fn handle_statement_release(&self, stmt_handle: StatementHandle) -> thrift::Result<()> {
         match self.stmt_handle_manager.delete_handle(stmt_handle.into()) {
             true => Ok(()),
-            false => Err(DriverException::new(
-                String::from("Failed to release statement handle"),
-                StatusCode::INVALID_ARGUMENT,
-                None,
-                None,
-                None,
-            )
-            .into()),
+            false => Err(Self::invalid_argument("Failed to release statement handle")),
         }
     }
 
@@ -544,13 +493,7 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
                 stmt.query = Some(query);
                 Ok(())
             }
-            None => Err(Error::from(DriverException::new(
-                String::from("Statement handle not found"),
-                StatusCode::INVALID_ARGUMENT,
-                None,
-                None,
-                None,
-            ))),
+            None => Err(Self::invalid_argument("Statement handle not found")),
         }
     }
 
@@ -625,15 +568,8 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
     ) -> thrift::Result<()> {
         let schema = unsafe { FFI_ArrowSchema::from_raw(schema.into()) };
         let array = unsafe { FFI_ArrowArray::from_raw(array.into()) };
-        let array = unsafe { arrow::ffi::from_ffi(array, &schema) }.map_err(|e| {
-            Error::from(DriverException::new(
-                format!("Failed to convert ArrowArray: {e}"),
-                StatusCode::UNKNOWN,
-                None,
-                None,
-                None,
-            ))
-        })?;
+        let array = unsafe { arrow::ffi::from_ffi(array, &schema) }
+            .map_err(|e| Self::unknown_error(format!("Failed to convert ArrowArray: {e}")))?;
         let record_batch = RecordBatch::from(StructArray::from(array));
         self.with_statement(stmt_handle, |mut stmt| {
             stmt.bind_parameters(record_batch).map_err(Error::from)
@@ -655,23 +591,20 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
         stmt_handle: StatementHandle,
     ) -> thrift::Result<ExecuteResult> {
         let handle = stmt_handle.into();
-        match self.stmt_handle_manager.get_obj(handle) {
-            Some(stmt_ptr) => {
-                let mut stmt = stmt_ptr.lock().unwrap();
-                let query = stmt
-                    .query
-                    .take()
-                    .ok_or(RestError::Internal("Query not found".to_string()))?;
-                // Run within the async runtime
-                let rt = tokio::runtime::Runtime::new().map_err(|e| {
-                    Error::from(DriverException::new(
-                        format!("Failed to create runtime: {e}"),
-                        StatusCode::UNKNOWN,
-                        None,
-                        None,
-                        None,
-                    ))
-                })?;
+        let stmt_ptr = self
+            .stmt_handle_manager
+            .get_obj(handle)
+            .ok_or_else(|| Self::invalid_argument("Statement handle not found"))?;
+
+        let mut stmt = stmt_ptr.lock().unwrap();
+        let query = stmt
+            .query
+            .take()
+            .ok_or(RestError::Internal("Query not found".to_string()))?;
+
+        // Run within the async runtime
+        let rt = tokio::runtime::Runtime::new()
+            .map_err(|e| Self::unknown_error(format!("Failed to create runtime: {e}")))?;
 
                 let (query_parameters, session_token) = {
                     let conn = stmt.conn.lock().unwrap();
@@ -690,124 +623,60 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
                     stmt.get_query_parameter_bindings().map_err(Error::from)?,
                 ))?;
 
-                if !response.success {
-                    // TODO: Add proper error handling
-                    return Err(Error::from(DriverException::new(
-                        response
-                            .message
-                            .unwrap_or_else(|| "Unknown error".to_string()),
-                        StatusCode::UNKNOWN,
-                        None,
-                        None,
-                        None,
-                    )));
-                }
-
-                let rowset_bytes = if let Some(ref command) = response.data.command {
-                    if command == "UPLOAD" {
-                        let file_upload_data = response.data.to_file_upload_data()?;
-                        let upload_results = rt
-                            .block_on(upload_files(file_upload_data))
-                            .map_err(DriverException::from)?;
-
-                        let rowtype = vec![
-                            Self::text_column_rowtype("source"),
-                            Self::text_column_rowtype("target"),
-                            Self::int_column_rowtype("source_size"),
-                            Self::int_column_rowtype("target_size"),
-                            Self::text_column_rowtype("source_compression"),
-                            Self::text_column_rowtype("target_compression"),
-                            Self::text_column_rowtype("status"),
-                            Self::text_column_rowtype("message"),
-                        ];
-
-                        let rowset: Vec<Vec<Option<String>>> = upload_results
-                            .into_iter()
-                            .map(|result| {
-                                vec![
-                                    Some(result.source),
-                                    Some(result.target),
-                                    Some(result.source_size.to_string()),
-                                    Some(result.target_size.to_string()),
-                                    Some(result.source_compression),
-                                    Some(result.target_compression),
-                                    Some(result.status),
-                                    Some(result.message),
-                                ]
-                            })
-                            .collect();
-
-                        convert_result_to_arrow(&rowset, &rowtype)?
-                    } else if command == "DOWNLOAD" {
-                        let file_download_data = response.data.to_file_download_data()?;
-                        let download_results = rt
-                            .block_on(download_files(file_download_data))
-                            .map_err(DriverException::from)?;
-
-                        let rowtype = vec![
-                            Self::text_column_rowtype("file"),
-                            Self::int_column_rowtype("size"),
-                            Self::text_column_rowtype("status"),
-                            Self::text_column_rowtype("message"),
-                        ];
-
-                        let rowset: Vec<Vec<Option<String>>> = download_results
-                            .into_iter()
-                            .map(|result| {
-                                vec![
-                                    Some(result.file),
-                                    Some(result.size.to_string()),
-                                    Some(result.status),
-                                    Some(result.message),
-                                ]
-                            })
-                            .collect();
-
-                        convert_result_to_arrow(&rowset, &rowtype)?
-                    } else {
-                        return Err(Error::from(DriverException::new(
-                            format!("Unsupported command: {command}"),
-                            StatusCode::INVALID_ARGUMENT,
-                            None,
-                            None,
-                            None,
-                        )));
-                    }
-                } else {
-                    response.data.to_rowset_bytes().map_err(Error::from)?
-                };
-
-                let reader_result =
-                    if let Some(chunk_download_data) = response.data.to_chunk_download_data() {
-                        ChunkReader::multi_chunk(rowset_bytes, chunk_download_data)
-                    } else {
-                        ChunkReader::single_chunk(rowset_bytes)
-                    };
-
-                let reader = Box::new(reader_result.map_err(|e| {
-                    Error::from(DriverException::new(
-                        format!("Failed to create chunk reader: {e}"),
-                        StatusCode::UNKNOWN,
-                        None,
-                        None,
-                        None,
-                    ))
-                })?);
-
-                let stream = Box::new(FFI_ArrowArrayStream::new(reader));
-                // Serialize pointer into integer
-                let stream_ptr = Box::into_raw(stream);
-                stmt.state = StatementState::Executed;
-                Ok(ExecuteResult::new(Box::new(stream_ptr.into()), 0))
-            }
-            None => Err(Error::from(DriverException::new(
-                String::from("Statement handle not found"),
-                StatusCode::INVALID_ARGUMENT,
-                None,
-                None,
-                None,
-            ))),
+        if !response.success {
+            // TODO: Add proper error handling
+            return Err(Self::unknown_error(
+                response
+                    .message
+                    .unwrap_or_else(|| "Unknown error".to_string()),
+            ));
         }
+
+        let rowset_bytes = if let Some(ref command) = response.data.command {
+            if command == "UPLOAD" {
+                let file_upload_data = response.data.to_file_upload_data()?;
+                let upload_results = rt
+                    .block_on(upload_files(file_upload_data))
+                    .map_err(DriverException::from)?;
+
+                upload_results_to_arrow(upload_results).map_err(|e| {
+                    Self::unknown_error(format!("Failed to convert upload results to Arrow: {e}"))
+                })?
+            } else if command == "DOWNLOAD" {
+                let file_download_data = response.data.to_file_download_data()?;
+                let download_results = rt
+                    .block_on(download_files(file_download_data))
+                    .map_err(DriverException::from)?;
+
+                download_results_to_arrow(download_results).map_err(|e| {
+                    Self::unknown_error(format!("Failed to convert download results to Arrow: {e}"))
+                })?
+            } else {
+                return Err(Self::invalid_argument(format!(
+                    "Unsupported command: {command}"
+                )));
+            }
+        } else {
+            response.data.to_rowset_bytes().map_err(Error::from)?
+        };
+
+        let reader_result =
+            if let Some(chunk_download_data) = response.data.to_chunk_download_data() {
+                ChunkReader::multi_chunk(rowset_bytes, chunk_download_data)
+            } else {
+                ChunkReader::single_chunk(rowset_bytes)
+            };
+
+        let reader = Box::new(
+            reader_result
+                .map_err(|e| Self::unknown_error(format!("Failed to create chunk reader: {e}")))?,
+        );
+
+        let stream = Box::new(FFI_ArrowArrayStream::new(reader));
+        // Serialize pointer into integer
+        let stream_ptr = Box::into_raw(stream);
+        stmt.state = StatementState::Executed;
+        Ok(ExecuteResult::new(Box::new(stream_ptr.into()), 0))
     }
 
     #[instrument(name = "DatabaseDriverV1::statement_execute_partitions", skip(self))]
@@ -826,4 +695,80 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
     ) -> thrift::Result<i64> {
         todo!()
     }
+}
+
+/// Helper macro to create string arrays from field accessors
+macro_rules! string_array {
+    ($data:expr, $field:ident) => {
+        Arc::new(StringArray::from(
+            $data.iter().map(|r| r.$field.as_str()).collect::<Vec<_>>(),
+        ))
+    };
+}
+
+/// Helper macro to create int64 arrays from field accessors
+macro_rules! int64_array {
+    ($data:expr, $field:ident) => {
+        Arc::new(Int64Array::from(
+            $data.iter().map(|r| r.$field).collect::<Vec<_>>(),
+        ))
+    };
+}
+
+/// Converts upload results to Arrow format
+pub fn upload_results_to_arrow(upload_results: Vec<UploadResult>) -> Result<Vec<u8>, ArrowError> {
+    if upload_results.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("source", DataType::Utf8, false),
+        Field::new("target", DataType::Utf8, false),
+        Field::new("source_size", DataType::Int64, false),
+        Field::new("target_size", DataType::Int64, false),
+        Field::new("source_compression", DataType::Utf8, false),
+        Field::new("target_compression", DataType::Utf8, false),
+        Field::new("status", DataType::Utf8, false),
+        Field::new("message", DataType::Utf8, false),
+    ]));
+
+    let columns: Vec<Arc<dyn Array>> = vec![
+        string_array!(upload_results, source),
+        string_array!(upload_results, target),
+        int64_array!(upload_results, source_size),
+        int64_array!(upload_results, target_size),
+        string_array!(upload_results, source_compression),
+        string_array!(upload_results, target_compression),
+        string_array!(upload_results, status),
+        string_array!(upload_results, message),
+    ];
+
+    let batch = RecordBatch::try_new(schema, columns)?;
+    crate::arrow_utils::serialize_to_arrow_ipc(batch)
+}
+
+/// Converts download results to Arrow format
+pub fn download_results_to_arrow(
+    download_results: Vec<DownloadResult>,
+) -> Result<Vec<u8>, ArrowError> {
+    if download_results.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("file", DataType::Utf8, false),
+        Field::new("size", DataType::Int64, false),
+        Field::new("status", DataType::Utf8, false),
+        Field::new("message", DataType::Utf8, false),
+    ]));
+
+    let columns: Vec<Arc<dyn Array>> = vec![
+        string_array!(download_results, file),
+        int64_array!(download_results, size),
+        string_array!(download_results, status),
+        string_array!(download_results, message),
+    ];
+
+    let batch = RecordBatch::try_new(schema, columns)?;
+    crate::arrow_utils::serialize_to_arrow_ipc(batch)
 }

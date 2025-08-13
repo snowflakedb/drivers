@@ -1,4 +1,4 @@
-use crate::arrow_utils::convert_result_to_arrow;
+use crate::arrow_utils::convert_string_rowset_to_arrow;
 use crate::chunks::ChunkDownloadData;
 use crate::file_manager;
 use crate::rest::RestError;
@@ -23,7 +23,7 @@ pub struct Response {
 #[derive(Deserialize)]
 pub struct Data {
     #[serde(rename = "rowset")]
-    pub rowset: Option<Vec<Vec<Option<String>>>>,
+    pub rowset: Option<Vec<Vec<String>>>,
     #[serde(rename = "rowsetBase64")]
     pub rowset_base64: Option<String>,
     #[serde(rename = "rowtype")]
@@ -180,22 +180,6 @@ pub struct RowType {
     pub scale: Option<i64>,
     #[serde(rename = "nullable")]
     pub nullable: bool,
-}
-
-impl RowType {
-    /// Create a new RowType for use in constructing rowsets
-    pub fn new(name: String, type_: String, scale: Option<i64>, nullable: bool) -> Self {
-        Self {
-            name,
-            type_,
-            scale,
-            nullable,
-            _fields: None,
-            _byte_length: None,
-            _length: None,
-            _precision: None,
-        }
-    }
 }
 
 #[derive(Deserialize)]
@@ -399,7 +383,20 @@ impl Data {
                     .as_ref()
                     .ok_or_else(|| RestError::MissingParameter("rowset".to_string()))?;
 
-                convert_result_to_arrow(rowset, rowtype)
+                // Validate column counts before converting
+                if !rowset.is_empty() {
+                    let num_columns_rowset = rowset.first().unwrap().len();
+                    let num_columns_rowtype = rowtype.len();
+                    if num_columns_rowset != num_columns_rowtype {
+                        return Err(RestError::InvalidSnowflakeResponse(format!(
+                            "RowType count ({num_columns_rowtype}) doesn't match column count ({num_columns_rowset})"
+                        )));
+                    }
+                }
+
+                convert_string_rowset_to_arrow(rowset, rowtype).map_err(|e| {
+                    RestError::Internal(format!("Failed to convert rowset to Arrow: {e}"))
+                })
             }
         }
     }
