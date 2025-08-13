@@ -36,7 +36,11 @@ pub fn convert_result_to_arrow(
         return Err(RestError::InvalidSnowflakeResponse(format!(
             "RowType count ({}) doesn't match column count ({})",
             num_columns,
-            rowset[0].len()
+    if num_columns != rowset.first().unwrap().len() {
+        return Err(RestError::InvalidSnowflakeResponse(format!(
+            "RowType count ({}) doesn't match column count ({})",
+            num_columns,
+            rowset.first().unwrap().len()
         )));
     }
 
