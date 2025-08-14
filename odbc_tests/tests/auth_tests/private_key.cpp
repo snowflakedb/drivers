@@ -43,9 +43,9 @@ std::string get_private_key_connection_string() {
   add_param_optional<std::string>(ss, params, "SNOWFLAKE_TEST_PORT", "PORT");
   add_param_optional<std::string>(ss, params, "SNOWFLAKE_TEST_PROTOCOL", "PROTOCOL");
   add_param_optional<std::string>(ss, params, "SNOWFLAKE_TEST_PRIVATE_KEY_PASSWORD",
-                                  "PRIVATE_KEY_PASSWORD");
+                                  "PRIV_KEY_FILE_PWD");
   ss << "AUTHENTICATOR=SNOWFLAKE_JWT;";
-  ss << "PRIVATE_KEY_FILE=" << get_private_key_path(params) << ";";
+  ss << "PRIV_KEY_FILE=" << get_private_key_path(params) << ";";
   return ss.str();
 }
 

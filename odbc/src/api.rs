@@ -567,7 +567,7 @@ pub unsafe extern "C" fn SQLDriverConnect(
                     .connection_set_option_string(conn_handle.clone(), "schema".to_owned(), value)
                     .unwrap();
             }
-            "PRIVATE_KEY_FILE" => {
+            "PRIV_KEY_FILE" => {
                 client
                     .connection_set_option_string(
                         conn_handle.clone(),
@@ -585,7 +585,7 @@ pub unsafe extern "C" fn SQLDriverConnect(
                     )
                     .unwrap();
             }
-            "PRIVATE_KEY_PASSWORD" => {
+            "PRIV_KEY_FILE_PWD" => {
                 client
                     .connection_set_option_string(
                         conn_handle.clone(),
