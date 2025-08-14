@@ -15,10 +15,11 @@ impl Drop for PrivateKeyFile {
 fn get_private_key_file(parameters: &Parameters) -> PrivateKeyFile {
     let private_key_contents = parameters.private_key_contents.clone().unwrap();
     let private_key_contents = private_key_contents.join("\n");
-    let private_key_path = "rsa_key.p8";
-    std::fs::write(private_key_path, private_key_contents).unwrap();
+    let suffix = format!("{:x}", rand::random::<u32>());
+    let private_key_path = format!("rsa_key_{suffix}.p8");
+    std::fs::write(&private_key_path, private_key_contents).unwrap();
     PrivateKeyFile {
-        path: private_key_path.to_string(),
+        path: private_key_path,
     }
 }
 
