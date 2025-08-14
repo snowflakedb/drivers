@@ -16,7 +16,7 @@ pub enum AuthError {
 
 pub enum Credentials {
     Password { username: String, password: String },
-    PrivateKey { username: String, token: String },
+    Jwt { username: String, token: String },
 }
 
 #[derive(Debug, Serialize)]
@@ -109,7 +109,7 @@ pub fn create_credentials(login_parameters: &LoginParameters) -> Result<Credenti
                 private_key,
                 passphrase.as_deref(),
             )?;
-            Ok(Credentials::PrivateKey {
+            Ok(Credentials::Jwt {
                 username: username.clone(),
                 token,
             })

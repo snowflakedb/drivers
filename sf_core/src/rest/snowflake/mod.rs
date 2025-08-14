@@ -47,7 +47,7 @@ pub fn auth_request_data(login_parameters: &LoginParameters) -> Result<AuthReque
             data.password = Some(password);
             data.authenticator = Some("SNOWFLAKE".to_string());
         }
-        Credentials::PrivateKey { username, token } => {
+        Credentials::Jwt { username, token } => {
             data.login_name = Some(username);
             data.token = Some(token);
             data.authenticator = Some("SNOWFLAKE_JWT".to_string());
