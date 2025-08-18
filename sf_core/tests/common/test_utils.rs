@@ -2,7 +2,10 @@ extern crate sf_core;
 extern crate tracing;
 extern crate tracing_subscriber;
 
-use arrow::array::{Array, Float64Array, Int8Array, Int64Array, StringArray, StructArray};
+use arrow::array::{
+    Array, ArrowPrimitiveType, Float64Array, Int8Array, Int64Array, PrimitiveArray, StringArray,
+    StructArray,
+};
 use arrow::ffi_stream::ArrowArrayStreamReader;
 use arrow::ffi_stream::FFI_ArrowArrayStream;
 use flate2::read::GzDecoder;
@@ -437,8 +440,13 @@ pub fn create_test_file(
     file_path
 }
 
-pub fn create_param_bindings(params: &[i64]) -> (ArrowSchemaPtr, ArrowArrayPtr) {
-    use arrow::array::{ArrayRef, Int64Array};
+pub fn create_param_bindings<T: ArrowPrimitiveType>(
+    params: &[T::Native],
+) -> (ArrowSchemaPtr, ArrowArrayPtr)
+where
+    PrimitiveArray<T>: From<Vec<T::Native>>,
+{
+    use arrow::array::{ArrayRef, PrimitiveArray};
     use arrow::datatypes::{DataType, Field, Schema};
     use arrow::ffi::{FFI_ArrowArray, FFI_ArrowSchema};
     use sf_core::thrift_gen::database_driver_v1::{ArrowArrayPtr, ArrowSchemaPtr};
@@ -447,12 +455,12 @@ pub fn create_param_bindings(params: &[i64]) -> (ArrowSchemaPtr, ArrowArrayPtr) 
     let schema_fields = params
         .iter()
         .enumerate()
-        .map(|(i, _)| Field::new(format!("param_{}", i + 1), DataType::Int64, false))
+        .map(|(i, _)| Field::new(format!("param_{}", i + 1), T::DATA_TYPE, false))
         .collect::<Vec<_>>();
 
     let arrays = params
         .iter()
-        .map(|p| Arc::new(Int64Array::from(vec![*p])) as ArrayRef)
+        .map(|p| Arc::new(PrimitiveArray::<T>::from(vec![*p])) as ArrayRef)
         .collect::<Vec<_>>();
     let array = StructArray::from(
         arrays
@@ -460,11 +468,7 @@ pub fn create_param_bindings(params: &[i64]) -> (ArrowSchemaPtr, ArrowArrayPtr) 
             .enumerate()
             .map(|(i, array)| {
                 (
-                    Arc::new(Field::new(
-                        format!("param_{}", i + 1),
-                        DataType::Int64,
-                        false,
-                    )),
+                    Arc::new(Field::new(format!("param_{}", i + 1), T::DATA_TYPE, false)),
                     array.clone(),
                 )
             })

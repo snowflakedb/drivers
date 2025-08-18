@@ -1,6 +1,8 @@
 pub mod common;
 extern crate sf_core;
 
+use arrow::datatypes::Int32Type;
+
 use crate::common::test_utils::{
     ArrowResultHelper, SnowflakeTestClient, create_param_bindings, setup_logging,
 };
@@ -14,7 +16,7 @@ fn test_statement_bind() {
         .driver
         .statement_set_sql_query(stmt.clone(), "SELECT ? as value".to_string())
         .unwrap();
-    let (schema, array) = create_param_bindings(&[42]);
+    let (schema, array) = create_param_bindings::<Int32Type>(&[42]);
 
     client
         .driver
@@ -36,7 +38,7 @@ fn test_statement_bind_multiple_params() {
         .driver
         .statement_set_sql_query(stmt.clone(), "SELECT ?, ? as value".to_string())
         .unwrap();
-    let (schema, array) = create_param_bindings(&[42, 1]);
+    let (schema, array) = create_param_bindings::<Int32Type>(&[42, 1]);
     client
         .driver
         .statement_bind(stmt.clone(), schema, array)
