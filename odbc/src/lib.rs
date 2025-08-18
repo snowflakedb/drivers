@@ -1,5 +1,7 @@
 pub mod api;
+mod cdata_types;
 mod read_arrow;
+mod write_arrow;
 
 extern crate sf_core;
 extern crate thiserror;

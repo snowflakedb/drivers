@@ -1,6 +1,10 @@
-use crate::read_arrow::ReadArrowValue;
+use crate::cdata_types::CDataType;
+use crate::{
+    read_arrow::{Buffer, ReadArrowValue},
+    write_arrow::odbc_bindings_to_arrow_bindings,
+};
 use arrow::{
-    array::{Array, Int8Array, Int64Array, RecordBatch},
+    array::RecordBatch,
     ffi::{FFI_ArrowArray, FFI_ArrowSchema},
     ffi_stream::{ArrowArrayStreamReader, FFI_ArrowArrayStream},
 };
@@ -14,7 +18,7 @@ use sf_core::{
         TDatabaseDriverSyncClient,
     },
 };
-use std::{collections::HashMap, str, sync::Arc};
+use std::{collections::HashMap, str};
 use tracing;
 
 fn thrift_from_ffi_arrow_array(raw: *mut FFI_ArrowArray) -> ArrowArrayPtr {
@@ -64,9 +68,12 @@ struct Connection {
 }
 
 #[derive(Debug, Clone)]
-struct ParameterBinding {
-    value_type: sql::SqlDataType,
-    parameter_value_ptr: sql::Pointer,
+pub struct ParameterBinding {
+    pub parameter_type: sql::SqlDataType,
+    pub value_type: CDataType,
+    pub parameter_value_ptr: sql::Pointer,
+    pub buffer_length: sql::Len,
+    pub str_len_or_ind_ptr: *mut sql::Len,
 }
 
 enum StatementState {
@@ -740,10 +747,10 @@ pub unsafe extern "C" fn SQLFetch(statement_handle: sql::Handle) -> i16 {
 pub unsafe extern "C" fn SQLGetData(
     statement_handle: sql::Handle,
     col_or_param_num: sql::USmallInt,
-    target_type: sql::SqlDataType,
+    target_type: CDataType,
     target_value_ptr: sql::Pointer,
-    _buffer_length: sql::Len,
-    _str_len_or_ind_ptr: *mut sql::Len,
+    buffer_length: sql::Len,
+    str_len_or_ind_ptr: *mut sql::Len,
 ) -> sql::RetCode {
     tracing::debug!("SQLGetData: statement_handle={:?}", statement_handle);
     let stmt = stmt_from_handle(statement_handle);
@@ -755,9 +762,26 @@ pub unsafe extern "C" fn SQLGetData(
         } => {
             let array_ref = record_batch.column((col_or_param_num - 1) as usize);
             match target_type {
-                sql::SqlDataType::INTEGER => {
-                    match ReadArrowValue::read(target_value_ptr as *mut i64, array_ref, *batch_idx)
-                    {
+                CDataType::Long => {
+                    match ReadArrowValue::read(
+                        target_value_ptr as *mut sql::UInteger,
+                        array_ref,
+                        *batch_idx,
+                    ) {
+                        Ok(_) => sql::SqlReturn::SUCCESS.0,
+                        Err(e) => {
+                            tracing::error!("SQLGetData: error reading arrow value: {:?}", e);
+                            sql::SqlReturn::ERROR.0
+                        }
+                    }
+                }
+                CDataType::Char => {
+                    let buffer = Buffer::new(
+                        target_value_ptr as *mut sql::Char,
+                        buffer_length as usize,
+                        str_len_or_ind_ptr,
+                    );
+                    match ReadArrowValue::read(buffer, array_ref, *batch_idx) {
                         Ok(_) => sql::SqlReturn::SUCCESS.0,
                         Err(e) => {
                             tracing::error!("SQLGetData: error reading arrow value: {:?}", e);
@@ -825,14 +849,15 @@ pub unsafe extern "C" fn SQLBindParameter(
     statement_handle: sql::Handle,
     parameter_number: sql::USmallInt,
     input_output_type: sql::ParamType,
-    value_type: sql::SqlDataType,
+    value_type: CDataType,
     parameter_type: sql::SqlDataType,
     _column_size: sql::ULen,
     _decimal_digits: sql::SmallInt,
     parameter_value_ptr: sql::Pointer,
-    _buffer_length: sql::Len,
-    _str_len_or_ind_ptr: *mut sql::Len,
+    buffer_length: sql::Len,
+    str_len_or_ind_ptr: *mut sql::Len,
 ) -> sql::RetCode {
+    // TODO handle input_output_type
     tracing::debug!(
         "SQLBindParameter: parameter_number={}, input_output_type={:?}, value_type={:?}, parameter_type={:?}",
         parameter_number,
@@ -849,8 +874,11 @@ pub unsafe extern "C" fn SQLBindParameter(
     let stmt = stmt_from_handle(statement_handle);
 
     let binding = ParameterBinding {
+        parameter_type,
         value_type,
         parameter_value_ptr,
+        buffer_length,
+        str_len_or_ind_ptr,
     };
 
     // // Store the binding
@@ -929,56 +957,25 @@ pub unsafe extern "C" fn SQLExecute(statement_handle: sql::Handle) -> sql::RetCo
                     "SQLExecute: Found {} bound parameters",
                     stmt.parameter_bindings.len()
                 );
-                let mut schema_fields = Vec::new();
-                let mut arrays = Vec::new();
-                let max_key = *stmt.parameter_bindings.keys().max().unwrap_or(&0);
-                let min_key = *stmt.parameter_bindings.keys().min().unwrap_or(&1);
-                for param_num in min_key..=max_key {
-                    let binding = stmt.parameter_bindings.get(&param_num);
-                    if binding.is_none() {
-                        tracing::error!(
-                            "SQLExecute: parameter #{param_num} not found. Make sure parameter bindings are contiguous and start at 1.",
-                        );
+                match odbc_bindings_to_arrow_bindings(&stmt.parameter_bindings) {
+                    Ok((schema, array)) => {
+                        // Bind parameters to statement
+                        match client.statement_bind(
+                            stmt.stmt_handle.clone(),
+                            thrift_from_ffi_arrow_schema(Box::into_raw(schema)),
+                            thrift_from_ffi_arrow_array(Box::into_raw(array)),
+                        ) {
+                            Ok(_) => tracing::info!("Successfully bound parameters"),
+                            Err(e) => {
+                                tracing::error!("Failed to bind parameters: {:?}", e);
+                                return sql::SqlReturn::ERROR.0;
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!("SQLExecute: error binding parameters: {:?}", e);
                         return sql::SqlReturn::ERROR.0;
                     }
-                    let binding = binding.unwrap();
-                    let arrow_dt: arrow::datatypes::DataType = match binding.value_type {
-                        sql::SqlDataType::INTEGER => arrow::datatypes::DataType::Int64,
-                        _ => arrow::datatypes::DataType::Int8,
-                    };
-                    schema_fields.push(arrow::datatypes::Field::new(
-                        format!("param_{param_num}"),
-                        arrow_dt.clone(),
-                        false,
-                    ));
-
-                    let array: Arc<dyn Array> = match binding.value_type {
-                        sql::SqlDataType::INTEGER => Arc::new(Int64Array::from(vec![unsafe {
-                            std::ptr::read(binding.parameter_value_ptr as *const i64)
-                        }])),
-                        _ => Arc::new(Int8Array::from(vec![2])),
-                    };
-                    arrays.push((
-                        Arc::new(arrow::datatypes::Field::new(
-                            format!("param_{param_num}"),
-                            arrow_dt,
-                            false,
-                        )),
-                        array,
-                    ));
-                }
-                let schema = arrow::datatypes::Schema::new(schema_fields);
-                let schema = Box::new(arrow::ffi::FFI_ArrowSchema::try_from(&schema).unwrap());
-                let array = arrow::array::StructArray::from(arrays);
-                let array = Box::new(arrow::ffi::FFI_ArrowArray::new(&array.into_data()));
-                // Bind parameters to statement
-                match client.statement_bind(
-                    stmt.stmt_handle.clone(),
-                    thrift_from_ffi_arrow_schema(Box::into_raw(schema)),
-                    thrift_from_ffi_arrow_array(Box::into_raw(array)),
-                ) {
-                    Ok(_) => tracing::info!("Successfully bound parameters"),
-                    Err(e) => tracing::error!("Failed to bind parameters: {:?}", e),
                 }
             }
 

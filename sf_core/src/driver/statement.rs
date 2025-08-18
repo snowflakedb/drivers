@@ -4,7 +4,7 @@ use std::{
 };
 
 use arrow::{
-    array::{Int64Array, RecordBatch},
+    array::{Int32Array, RecordBatch, StringArray},
     datatypes::DataType,
 };
 
@@ -26,10 +26,10 @@ fn parameters_from_record_batch(
     for i in 0..record_batch.num_columns() {
         let column = record_batch.column(i);
         match column.data_type() {
-            DataType::Int64 => {
+            DataType::Int32 => {
                 let value = column
                     .as_any()
-                    .downcast_ref::<Int64Array>()
+                    .downcast_ref::<Int32Array>()
                     .unwrap()
                     .value(0);
                 let json_value = serde_json::Value::String(value.to_string());
@@ -37,6 +37,23 @@ fn parameters_from_record_batch(
                     format!("{}", i + 1),
                     query_request::BindParameter {
                         type_: "FIXED".to_string(),
+                        value: json_value,
+                        format: None,
+                        schema: None,
+                    },
+                );
+            }
+            DataType::Utf8 => {
+                let value = column
+                    .as_any()
+                    .downcast_ref::<StringArray>()
+                    .unwrap()
+                    .value(0);
+                let json_value = serde_json::Value::String(value.to_string());
+                parameters.insert(
+                    format!("{}", i + 1),
+                    query_request::BindParameter {
+                        type_: "TEXT".to_string(),
                         value: json_value,
                         format: None,
                         schema: None,
