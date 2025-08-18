@@ -40,7 +40,7 @@ inline picojson::object get_test_parameters(std::string connection_name) {
 }
 
 template <typename T>
-inline void add_param_required(std::stringstream& ss, picojson::object& params,
+inline void add_param_required(std::stringstream& ss, const picojson::object& params,
                                const std::string& cfg_param_name,
                                const std::string& conn_param_name) {
   auto it = params.find(cfg_param_name);
@@ -55,7 +55,7 @@ inline void add_param_required(std::stringstream& ss, picojson::object& params,
 }
 
 template <typename T>
-inline void add_param_optional(std::stringstream& ss, picojson::object& params,
+inline void add_param_optional(std::stringstream& ss, const picojson::object& params,
                                const std::string& cfg_param_name,
                                const std::string& conn_param_name) {
   auto it = params.find(cfg_param_name);
@@ -68,7 +68,7 @@ inline void add_param_optional(std::stringstream& ss, picojson::object& params,
   }
 }
 
-inline std::string read_private_key(picojson::object& params) {
+inline std::string read_private_key(const picojson::object& params) {
   auto it = params.find("SNOWFLAKE_TEST_PRIVATE_KEY_CONTENTS");
   if (it == params.end()) {
     FAIL(
@@ -88,20 +88,24 @@ inline std::string read_private_key(picojson::object& params) {
   return private_key_stream.str();
 }
 
-inline std::string get_connection_string() {
-  auto params = get_test_parameters("testconnection");
-  std::stringstream ss;
+inline void read_default_params(std::stringstream& ss, const picojson::object& params) {
   ss << "DRIVER=" << get_driver_path() << ";";
   add_param_required<std::string>(ss, params, "SNOWFLAKE_TEST_HOST", "SERVER");
   add_param_required<std::string>(ss, params, "SNOWFLAKE_TEST_ACCOUNT", "ACCOUNT");
   add_param_required<std::string>(ss, params, "SNOWFLAKE_TEST_USER", "UID");
-  add_param_required<std::string>(ss, params, "SNOWFLAKE_TEST_PASSWORD", "PWD");
   add_param_optional<std::string>(ss, params, "SNOWFLAKE_TEST_WAREHOUSE", "WAREHOUSE");
   add_param_optional<std::string>(ss, params, "SNOWFLAKE_TEST_ROLE", "ROLE");
   add_param_optional<std::string>(ss, params, "SNOWFLAKE_TEST_SCHEMA", "SCHEMA");
   add_param_optional<std::string>(ss, params, "SNOWFLAKE_TEST_DATABASE", "DATABASE");
   add_param_optional<std::string>(ss, params, "SNOWFLAKE_TEST_PORT", "PORT");
   add_param_optional<std::string>(ss, params, "SNOWFLAKE_TEST_PROTOCOL", "PROTOCOL");
+}
+
+inline std::string get_connection_string() {
+  auto params = get_test_parameters("testconnection");
+  std::stringstream ss;
+  read_default_params(ss, params);
+  add_param_required<std::string>(ss, params, "SNOWFLAKE_TEST_PASSWORD", "PWD");
   return ss.str();
 }
 

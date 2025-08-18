@@ -86,16 +86,7 @@ class Pat {
 std::string get_pat_as_password_connection_string(const std::string& pat_secret) {
   auto params = get_test_parameters("testconnection");
   std::stringstream ss;
-  ss << "DRIVER=" << get_driver_path() << ";";
-  add_param_required<std::string>(ss, params, "SNOWFLAKE_TEST_HOST", "SERVER");
-  add_param_required<std::string>(ss, params, "SNOWFLAKE_TEST_ACCOUNT", "ACCOUNT");
-  add_param_required<std::string>(ss, params, "SNOWFLAKE_TEST_USER", "UID");
-  add_param_optional<std::string>(ss, params, "SNOWFLAKE_TEST_WAREHOUSE", "WAREHOUSE");
-  add_param_optional<std::string>(ss, params, "SNOWFLAKE_TEST_ROLE", "ROLE");
-  add_param_optional<std::string>(ss, params, "SNOWFLAKE_TEST_SCHEMA", "SCHEMA");
-  add_param_optional<std::string>(ss, params, "SNOWFLAKE_TEST_DATABASE", "DATABASE");
-  add_param_optional<std::string>(ss, params, "SNOWFLAKE_TEST_PORT", "PORT");
-  add_param_optional<std::string>(ss, params, "SNOWFLAKE_TEST_PROTOCOL", "PROTOCOL");
+  read_default_params(ss, params);
   ss << "PWD=" << pat_secret << ";";
   return ss.str();
 }
@@ -103,16 +94,7 @@ std::string get_pat_as_password_connection_string(const std::string& pat_secret)
 std::string get_pat_as_token_connection_string(const std::string& pat_secret) {
   auto params = get_test_parameters("testconnection");
   std::stringstream ss;
-  ss << "DRIVER=" << get_driver_path() << ";";
-  add_param_required<std::string>(ss, params, "SNOWFLAKE_TEST_HOST", "SERVER");
-  add_param_required<std::string>(ss, params, "SNOWFLAKE_TEST_ACCOUNT", "ACCOUNT");
-  add_param_required<std::string>(ss, params, "SNOWFLAKE_TEST_USER", "UID");
-  add_param_optional<std::string>(ss, params, "SNOWFLAKE_TEST_WAREHOUSE", "WAREHOUSE");
-  add_param_optional<std::string>(ss, params, "SNOWFLAKE_TEST_ROLE", "ROLE");
-  add_param_optional<std::string>(ss, params, "SNOWFLAKE_TEST_SCHEMA", "SCHEMA");
-  add_param_optional<std::string>(ss, params, "SNOWFLAKE_TEST_DATABASE", "DATABASE");
-  add_param_optional<std::string>(ss, params, "SNOWFLAKE_TEST_PORT", "PORT");
-  add_param_optional<std::string>(ss, params, "SNOWFLAKE_TEST_PROTOCOL", "PROTOCOL");
+  read_default_params(ss, params);
   ss << "AUTHENTICATOR=PROGRAMMATIC_ACCESS_TOKEN;";
   ss << "TOKEN=" << pat_secret << ";";
   return ss.str();

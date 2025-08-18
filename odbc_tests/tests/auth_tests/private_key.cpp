@@ -32,16 +32,7 @@ std::string get_private_key_path(picojson::object& params) {
 std::string get_private_key_connection_string() {
   auto params = get_test_parameters("testconnection");
   std::stringstream ss;
-  ss << "DRIVER=" << get_driver_path() << ";";
-  add_param_required<std::string>(ss, params, "SNOWFLAKE_TEST_HOST", "SERVER");
-  add_param_required<std::string>(ss, params, "SNOWFLAKE_TEST_ACCOUNT", "ACCOUNT");
-  add_param_required<std::string>(ss, params, "SNOWFLAKE_TEST_USER", "UID");
-  add_param_optional<std::string>(ss, params, "SNOWFLAKE_TEST_WAREHOUSE", "WAREHOUSE");
-  add_param_optional<std::string>(ss, params, "SNOWFLAKE_TEST_ROLE", "ROLE");
-  add_param_optional<std::string>(ss, params, "SNOWFLAKE_TEST_SCHEMA", "SCHEMA");
-  add_param_optional<std::string>(ss, params, "SNOWFLAKE_TEST_DATABASE", "DATABASE");
-  add_param_optional<std::string>(ss, params, "SNOWFLAKE_TEST_PORT", "PORT");
-  add_param_optional<std::string>(ss, params, "SNOWFLAKE_TEST_PROTOCOL", "PROTOCOL");
+  read_default_params(ss, params);
   add_param_optional<std::string>(ss, params, "SNOWFLAKE_TEST_PRIVATE_KEY_PASSWORD",
                                   "PRIV_KEY_FILE_PWD");
   ss << "AUTHENTICATOR=SNOWFLAKE_JWT;";
