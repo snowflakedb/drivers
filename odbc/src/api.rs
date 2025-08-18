@@ -18,6 +18,7 @@ use sf_core::{
         TDatabaseDriverSyncClient,
     },
 };
+use std::path::PathBuf;
 use std::{collections::HashMap, str};
 use tracing;
 
@@ -599,6 +600,11 @@ pub unsafe extern "C" fn SQLDriverConnect(
                         "private_key_password".to_owned(),
                         value,
                     )
+                    .unwrap();
+            }
+            "TOKEN" => {
+                client
+                    .connection_set_option_string(conn_handle.clone(), "token".to_owned(), value)
                     .unwrap();
             }
             _ => {

@@ -104,6 +104,10 @@ pub enum LoginMethod {
         private_key: String,
         passphrase: Option<String>,
     },
+    Pat {
+        username: String,
+        token: String,
+    },
 }
 
 impl LoginMethod {
@@ -140,6 +144,14 @@ impl LoginMethod {
                 password: settings
                     .get_string("password")
                     .ok_or(ConfigError::MissingParameter("password".to_string()))?,
+            }),
+            "PROGRAMMATIC_ACCESS_TOKEN" => Ok(Self::Pat {
+                username: settings
+                    .get_string("user")
+                    .ok_or(ConfigError::MissingParameter("user".to_string()))?,
+                token: settings
+                    .get_string("token")
+                    .ok_or(ConfigError::MissingParameter("token".to_string()))?,
             }),
             _ => Err(ConfigError::InvalidArgument(
                 "Invalid authenticator".to_string(),

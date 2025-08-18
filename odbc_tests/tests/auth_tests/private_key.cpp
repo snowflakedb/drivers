@@ -62,21 +62,20 @@ TEST_CASE("Private Key Authentication - Basic Connection", "[private_key_auth]")
                          0, NULL, SQL_DRIVER_NOPROMPT);
   CHECK_ODBC(ret, dbc);
 
-  // TODO: Uncomment this when we have string support in the driver
-  //   {
-  //     StatementHandleWrapper stmt = dbc.createStatementHandle();
-  //     ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT CURRENT_USER()", SQL_NTS);
-  //     CHECK_ODBC(ret, stmt);
+  {
+    StatementHandleWrapper stmt = dbc.createStatementHandle();
+    ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT CURRENT_USER()", SQL_NTS);
+    CHECK_ODBC(ret, stmt);
 
-  //     ret = SQLFetch(stmt.getHandle());
-  //     CHECK_ODBC(ret, stmt);
+    ret = SQLFetch(stmt.getHandle());
+    CHECK_ODBC(ret, stmt);
 
-  //     SQLCHAR username[256];
-  //     ret = SQLGetData(stmt.getHandle(), 1, SQL_C_CHAR, username, sizeof(username), NULL);
-  //     CHECK_ODBC(ret, stmt);
+    SQLCHAR username[256];
+    ret = SQLGetData(stmt.getHandle(), 1, SQL_C_CHAR, username, sizeof(username), NULL);
+    CHECK_ODBC(ret, stmt);
 
-  //     INFO("Connected as user: " << username);
-  //   }
+    INFO("Connected as user: " << username);
+  }
 
   SQLDisconnect(dbc.getHandle());
 }

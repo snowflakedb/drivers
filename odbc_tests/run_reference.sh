@@ -39,6 +39,7 @@ docker run --rm \
         cmake -B cmake-build-reference \\
             -D ODBC_LIBRARY='/usr/lib/aarch64-linux-gnu/libodbc.so' \\
             -D ODBC_INCLUDE_DIR='/usr/include' \\
+            -D SKIP_NEW_TESTS=TRUE \\
             .
         
         # Build tests

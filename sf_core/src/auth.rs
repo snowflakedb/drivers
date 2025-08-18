@@ -17,6 +17,7 @@ pub enum AuthError {
 pub enum Credentials {
     Password { username: String, password: String },
     Jwt { username: String, token: String },
+    Pat { username: String, token: String },
 }
 
 #[derive(Debug, Serialize)]
@@ -114,5 +115,9 @@ pub fn create_credentials(login_parameters: &LoginParameters) -> Result<Credenti
                 token,
             })
         }
+        LoginMethod::Pat { username, token } => Ok(Credentials::Pat {
+            username: username.clone(),
+            token: token.clone(),
+        }),
     }
 }

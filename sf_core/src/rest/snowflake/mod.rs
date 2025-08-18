@@ -52,6 +52,11 @@ pub fn auth_request_data(login_parameters: &LoginParameters) -> Result<AuthReque
             data.token = Some(token);
             data.authenticator = Some("SNOWFLAKE_JWT".to_string());
         }
+        Credentials::Pat { username, token } => {
+            data.login_name = Some(username);
+            data.token = Some(token);
+            data.authenticator = Some("PROGRAMMATIC_ACCESS_TOKEN".to_string());
+        }
     }
     Ok(data)
 }

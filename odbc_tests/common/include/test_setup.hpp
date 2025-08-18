@@ -18,7 +18,7 @@ inline std::string get_driver_path() {
   return driver_path;
 }
 
-picojson::object get_test_parameters(std::string connection_name) {
+inline picojson::object get_test_parameters(std::string connection_name) {
   const char* parameter_path_env_value = std::getenv("PARAMETER_PATH");
   REQUIRE(parameter_path_env_value != nullptr);
   std::string parameter_path = std::string(parameter_path_env_value);

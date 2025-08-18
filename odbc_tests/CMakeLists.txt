@@ -23,6 +23,13 @@ FetchContent_Declare(
 
 FetchContent_MakeAvailable(picojson)
 
+if (SKIP_NEW_TESTS STREQUAL "TRUE")
+  set(CATCH_TAGS "~[new_odbc]")
+else()
+  set(CATCH_TAGS "")
+endif()
+
+
 # Find odbc library
 find_package(ODBC REQUIRED)
 message(STATUS "ODBC_INCLUDE_DIRS: ${ODBC_INCLUDE_DIRS}")
@@ -34,7 +41,7 @@ function(add_odbc_test name)
   add_executable(${name} ${ARGN})
   target_link_libraries(${name} PRIVATE Catch2::Catch2WithMain ODBC::ODBC common)
   target_include_directories(${name} PRIVATE ${picojson_SOURCE_DIR})
-  add_test(NAME ${name} COMMAND ${name})
+  add_test(NAME ${name} COMMAND ${name} ${CATCH_TAGS})
 endfunction()
 
 add_subdirectory(tests)
