@@ -447,7 +447,7 @@ where
     PrimitiveArray<T>: From<Vec<T::Native>>,
 {
     use arrow::array::{ArrayRef, PrimitiveArray};
-    use arrow::datatypes::{DataType, Field, Schema};
+    use arrow::datatypes::{Field, Schema};
     use arrow::ffi::{FFI_ArrowArray, FFI_ArrowSchema};
     use sf_core::thrift_gen::database_driver_v1::{ArrowArrayPtr, ArrowSchemaPtr};
     use std::sync::Arc;
