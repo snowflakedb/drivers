@@ -145,7 +145,7 @@ pub enum EncryptionError {
 #[derive(Error, Debug)]
 pub enum UploadFileError {
     #[error("S3 error: {0}")]
-    S3(#[from] aws_sdk_s3::Error),
+    S3(#[from] Box<aws_sdk_s3::Error>), // Box to avoid large enum size
     #[error("Rest error: {0}")]
     Rest(#[from] RestError),
     #[error("Serialization error: {0}")]
@@ -155,7 +155,7 @@ pub enum UploadFileError {
 #[derive(Error, Debug)]
 pub enum DownloadFileError {
     #[error("S3 error: {0}")]
-    S3(#[from] aws_sdk_s3::Error),
+    S3(#[from] Box<aws_sdk_s3::Error>), // Box to avoid large enum size
     #[error("Rest error: {0}")]
     Rest(#[from] RestError),
     #[error("Deserialization error: {0}")]

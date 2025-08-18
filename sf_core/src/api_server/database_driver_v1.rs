@@ -1,11 +1,8 @@
-use crate::chunks::ChunkReader;
+use crate::api_server::query::process_query_response;
 use crate::config::ConfigError;
 use crate::config::rest_parameters::{LoginParameters, QueryParameters};
 use crate::config::settings::Setting;
 use crate::driver::{Connection, Database, Statement, StatementError};
-use crate::file_manager::{download_files, upload_files};
-use crate::driver::{Connection, Database, Setting, Statement, StatementError};
-use crate::file_manager::{DownloadResult, UploadResult, download_files, upload_files};
 use crate::handle_manager::{Handle, HandleManager};
 use crate::rest::error::RestError;
 
@@ -15,19 +12,17 @@ use crate::thrift_gen::database_driver_v1::{
     PartitionedResult, StatementHandle, StatusCode,
 };
 
-use arrow::array::{Array, Int64Array, RecordBatch, StringArray, StructArray};
-use arrow::datatypes::{DataType, Field, Schema};
+use arrow::array::{RecordBatch, StructArray};
 use arrow::ffi::{FFI_ArrowArray, FFI_ArrowSchema};
 use arrow::ffi_stream::FFI_ArrowArrayStream;
 use std::mem::size_of;
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Mutex, MutexGuard};
 use thrift::server::TProcessor;
 use thrift::{Error, OrderedFloat};
 use tracing::instrument;
 
 use crate::driver::StatementState;
 use crate::thrift_gen::database_driver_v1::ArrowArrayStreamPtr;
-use arrow::error::ArrowError;
 
 impl From<Handle> for DatabaseHandle {
     fn from(handle: Handle) -> Self {
@@ -606,22 +601,22 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
         let rt = tokio::runtime::Runtime::new()
             .map_err(|e| Self::unknown_error(format!("Failed to create runtime: {e}")))?;
 
-                let (query_parameters, session_token) = {
-                    let conn = stmt.conn.lock().unwrap();
-                    (
-                        QueryParameters::from_settings(&conn.settings)?,
-                        conn.session_token
-                            .clone()
-                            .ok_or(RestError::Internal("Session token not found".to_string()))?,
-                    )
-                };
+        let (query_parameters, session_token) = {
+            let conn = stmt.conn.lock().unwrap();
+            (
+                QueryParameters::from_settings(&conn.settings)?,
+                conn.session_token
+                    .clone()
+                    .ok_or(RestError::Internal("Session token not found".to_string()))?,
+            )
+        };
 
-                let response = rt.block_on(crate::rest::snowflake::snowflake_query(
-                    query_parameters,
-                    session_token,
-                    query,
-                    stmt.get_query_parameter_bindings().map_err(Error::from)?,
-                ))?;
+        let response = rt.block_on(crate::rest::snowflake::snowflake_query(
+            query_parameters,
+            session_token,
+            query,
+            stmt.get_query_parameter_bindings().map_err(Error::from)?,
+        ))?;
 
         if !response.success {
             // TODO: Add proper error handling
@@ -632,49 +627,12 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
             ));
         }
 
-        let rowset_bytes = if let Some(ref command) = response.data.command {
-            if command == "UPLOAD" {
-                let file_upload_data = response.data.to_file_upload_data()?;
-                let upload_results = rt
-                    .block_on(upload_files(file_upload_data))
-                    .map_err(DriverException::from)?;
+        let rowset_stream = rt
+            .block_on(process_query_response(&response.data))
+            .map_err(|e| Self::unknown_error(format!("Failed to process query response: {e}")))?;
 
-                upload_results_to_arrow(upload_results).map_err(|e| {
-                    Self::unknown_error(format!("Failed to convert upload results to Arrow: {e}"))
-                })?
-            } else if command == "DOWNLOAD" {
-                let file_download_data = response.data.to_file_download_data()?;
-                let download_results = rt
-                    .block_on(download_files(file_download_data))
-                    .map_err(DriverException::from)?;
-
-                download_results_to_arrow(download_results).map_err(|e| {
-                    Self::unknown_error(format!("Failed to convert download results to Arrow: {e}"))
-                })?
-            } else {
-                return Err(Self::invalid_argument(format!(
-                    "Unsupported command: {command}"
-                )));
-            }
-        } else {
-            response.data.to_rowset_bytes().map_err(Error::from)?
-        };
-
-        let reader_result =
-            if let Some(chunk_download_data) = response.data.to_chunk_download_data() {
-                ChunkReader::multi_chunk(rowset_bytes, chunk_download_data)
-            } else {
-                ChunkReader::single_chunk(rowset_bytes)
-            };
-
-        let reader = Box::new(
-            reader_result
-                .map_err(|e| Self::unknown_error(format!("Failed to create chunk reader: {e}")))?,
-        );
-
-        let stream = Box::new(FFI_ArrowArrayStream::new(reader));
         // Serialize pointer into integer
-        let stream_ptr = Box::into_raw(stream);
+        let stream_ptr = Box::into_raw(rowset_stream);
         stmt.state = StatementState::Executed;
         Ok(ExecuteResult::new(Box::new(stream_ptr.into()), 0))
     }
@@ -695,80 +653,4 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
     ) -> thrift::Result<i64> {
         todo!()
     }
-}
-
-/// Helper macro to create string arrays from field accessors
-macro_rules! string_array {
-    ($data:expr, $field:ident) => {
-        Arc::new(StringArray::from(
-            $data.iter().map(|r| r.$field.as_str()).collect::<Vec<_>>(),
-        ))
-    };
-}
-
-/// Helper macro to create int64 arrays from field accessors
-macro_rules! int64_array {
-    ($data:expr, $field:ident) => {
-        Arc::new(Int64Array::from(
-            $data.iter().map(|r| r.$field).collect::<Vec<_>>(),
-        ))
-    };
-}
-
-/// Converts upload results to Arrow format
-pub fn upload_results_to_arrow(upload_results: Vec<UploadResult>) -> Result<Vec<u8>, ArrowError> {
-    if upload_results.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    let schema = Arc::new(Schema::new(vec![
-        Field::new("source", DataType::Utf8, false),
-        Field::new("target", DataType::Utf8, false),
-        Field::new("source_size", DataType::Int64, false),
-        Field::new("target_size", DataType::Int64, false),
-        Field::new("source_compression", DataType::Utf8, false),
-        Field::new("target_compression", DataType::Utf8, false),
-        Field::new("status", DataType::Utf8, false),
-        Field::new("message", DataType::Utf8, false),
-    ]));
-
-    let columns: Vec<Arc<dyn Array>> = vec![
-        string_array!(upload_results, source),
-        string_array!(upload_results, target),
-        int64_array!(upload_results, source_size),
-        int64_array!(upload_results, target_size),
-        string_array!(upload_results, source_compression),
-        string_array!(upload_results, target_compression),
-        string_array!(upload_results, status),
-        string_array!(upload_results, message),
-    ];
-
-    let batch = RecordBatch::try_new(schema, columns)?;
-    crate::arrow_utils::serialize_to_arrow_ipc(batch)
-}
-
-/// Converts download results to Arrow format
-pub fn download_results_to_arrow(
-    download_results: Vec<DownloadResult>,
-) -> Result<Vec<u8>, ArrowError> {
-    if download_results.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    let schema = Arc::new(Schema::new(vec![
-        Field::new("file", DataType::Utf8, false),
-        Field::new("size", DataType::Int64, false),
-        Field::new("status", DataType::Utf8, false),
-        Field::new("message", DataType::Utf8, false),
-    ]));
-
-    let columns: Vec<Arc<dyn Array>> = vec![
-        string_array!(download_results, file),
-        int64_array!(download_results, size),
-        string_array!(download_results, status),
-        string_array!(download_results, message),
-    ];
-
-    let batch = RecordBatch::try_new(schema, columns)?;
-    crate::arrow_utils::serialize_to_arrow_ipc(batch)
 }

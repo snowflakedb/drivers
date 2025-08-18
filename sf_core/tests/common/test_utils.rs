@@ -2,12 +2,7 @@ extern crate sf_core;
 extern crate tracing;
 extern crate tracing_subscriber;
 
-use arrow::array::{
-    Array, ArrowPrimitiveType, Float64Array, Int8Array, Int64Array, PrimitiveArray, StringArray,
-    StructArray,
-};
-use arrow::ffi_stream::ArrowArrayStreamReader;
-use arrow::ffi_stream::FFI_ArrowArrayStream;
+use arrow::array::{Array, ArrowPrimitiveType, PrimitiveArray, StructArray};
 use flate2::read::GzDecoder;
 use sf_core::api_client::new_database_driver_v1_client;
 use sf_core::thrift_gen::database_driver_v1::{ArrowArrayPtr, ArrowSchemaPtr};

@@ -46,7 +46,7 @@ pub async fn upload_to_s3(
     let result = put_object_request
         .send()
         .await
-        .map_err(aws_sdk_s3::Error::from)?;
+        .map_err(|e| Box::new(aws_sdk_s3::Error::from(e)))?;
 
     tracing::debug!("S3 upload result: {:?}", result);
 
@@ -76,7 +76,7 @@ pub async fn download_from_s3(
         .key(&s3_key)
         .send()
         .await
-        .map_err(aws_sdk_s3::Error::from)?;
+        .map_err(|e| Box::new(aws_sdk_s3::Error::from(e)))?;
 
     // Extract metadata from S3 response and construct the metadata structure directly
     let metadata_map = response

@@ -1,12 +1,8 @@
-use crate::arrow_utils::convert_string_rowset_to_arrow;
 use crate::chunks::ChunkDownloadData;
 use crate::file_manager;
 use crate::rest::RestError;
-use base64::Engine;
-use base64::engine::general_purpose;
 use serde::Deserialize;
 use std::collections::HashMap;
-
 // TODO: Delete all unused fields when we are sure they are not needed
 
 #[derive(Deserialize)]
@@ -27,7 +23,7 @@ pub struct Data {
     #[serde(rename = "rowsetBase64")]
     pub rowset_base64: Option<String>,
     #[serde(rename = "rowtype")]
-    row_type: Option<Vec<RowType>>,
+    pub(crate) row_type: Option<Vec<RowType>>,
     #[serde(rename = "command")]
     pub command: Option<String>,
 
@@ -358,47 +354,6 @@ impl Data {
             .map(|chunk| ChunkDownloadData::new(&chunk.url, chunk_headers))
             .collect();
         Some(chunk_download_data)
-    }
-
-    pub fn to_rowset_bytes(&self) -> Result<Vec<u8>, RestError> {
-        match self.rowset_base64.as_ref() {
-            Some(rowset_base64) => {
-                // Decode the base64 string to bytes
-                general_purpose::STANDARD
-                    .decode(rowset_base64)
-                    .map_err(|e| {
-                        RestError::InvalidSnowflakeResponse(format!(
-                            "Failed to decode base64 rowset: {e}"
-                        ))
-                    })
-            }
-            None => {
-                let rowtype = self
-                    .row_type
-                    .as_ref()
-                    .ok_or_else(|| RestError::MissingParameter("row type".to_string()))?;
-
-                let rowset = self
-                    .rowset
-                    .as_ref()
-                    .ok_or_else(|| RestError::MissingParameter("rowset".to_string()))?;
-
-                // Validate column counts before converting
-                if !rowset.is_empty() {
-                    let num_columns_rowset = rowset.first().unwrap().len();
-                    let num_columns_rowtype = rowtype.len();
-                    if num_columns_rowset != num_columns_rowtype {
-                        return Err(RestError::InvalidSnowflakeResponse(format!(
-                            "RowType count ({num_columns_rowtype}) doesn't match column count ({num_columns_rowset})"
-                        )));
-                    }
-                }
-
-                convert_string_rowset_to_arrow(rowset, rowtype).map_err(|e| {
-                    RestError::Internal(format!("Failed to convert rowset to Arrow: {e}"))
-                })
-            }
-        }
     }
 }
 

@@ -1,5 +1,6 @@
 pub mod common;
 
+use common::arrow_result_helper::ArrowResultHelper;
 use common::test_utils::*;
 
 struct PrivateKeyFile {

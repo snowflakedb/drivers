@@ -3,7 +3,6 @@ use arrow::array::{Array, Int64Array, StringArray};
 use arrow::datatypes::{DataType, Field, Schema};
 use arrow::error::ArrowError;
 use arrow::record_batch::RecordBatch;
-use arrow_ipc::writer::StreamWriter;
 use std::sync::Arc;
 use thiserror::Error;
 
@@ -36,7 +35,7 @@ fn create_field(row_type: &RowType) -> Result<Field, ArrowUtilsError> {
 
 /// Creates an Arrow array from column values and data type
 fn create_column_array(
-    values: Vec<String>,
+    values: Vec<&str>,
     data_type: &DataType,
 ) -> Result<Arc<dyn Array>, ArrowUtilsError> {
     match data_type {
@@ -53,26 +52,13 @@ fn create_column_array(
     }
 }
 
-/// Serializes a RecordBatch to Arrow IPC format
-pub fn serialize_to_arrow_ipc(batch: RecordBatch) -> Result<Vec<u8>, ArrowError> {
-    let mut bytes = Vec::new();
-    let mut writer = StreamWriter::try_new(&mut bytes, &batch.schema())?;
-    writer.write(&batch)?;
-    writer.finish()?;
-    Ok(bytes)
-}
-
 /// Converts a string rowset with RowType metadata to Arrow format
 /// Supports TEXT and FIXED (with scale 0) types, converting strings to appropriate Arrow types
 /// Assumes rowset and row_types have been validated to have matching column counts
-pub fn convert_string_rowset_to_arrow(
+pub fn convert_string_rowset_to_arrow_reader(
     rowset: &[Vec<String>],
     row_types: &[RowType],
-) -> Result<Vec<u8>, ArrowUtilsError> {
-    if rowset.is_empty() {
-        return Ok(Vec::new());
-    }
-
+) -> Result<Box<dyn arrow::record_batch::RecordBatchReader + Send>, ArrowUtilsError> {
     // Create Arrow schema from RowType metadata
     let fields: Result<Vec<Field>, ArrowUtilsError> = row_types.iter().map(create_field).collect();
     let fields = fields?;
@@ -83,12 +69,24 @@ pub fn convert_string_rowset_to_arrow(
         .iter()
         .enumerate()
         .map(|(col_idx, _row_type)| {
-            let values: Vec<String> = rowset.iter().map(|row| row[col_idx].clone()).collect();
+            let values: Vec<&str> = rowset.iter().map(|row| row[col_idx].as_str()).collect();
             let data_type = schema.field(col_idx).data_type();
             create_column_array(values, data_type)
         })
         .collect();
 
-    let batch = RecordBatch::try_new(schema, columns?)?;
-    serialize_to_arrow_ipc(batch).map_err(|e| e.into())
+    let columns = columns?;
+
+    boxed_arrow_reader(schema, columns).map_err(|e| e.into())
+}
+
+pub fn boxed_arrow_reader(
+    schema: Arc<Schema>,
+    columns: Vec<Arc<dyn Array>>,
+) -> Result<Box<dyn arrow::record_batch::RecordBatchReader + Send>, ArrowError> {
+    let batch = RecordBatch::try_new(schema.clone(), columns)?;
+    Ok(Box::new(arrow::record_batch::RecordBatchIterator::new(
+        vec![Ok(batch)],
+        schema,
+    )))
 }

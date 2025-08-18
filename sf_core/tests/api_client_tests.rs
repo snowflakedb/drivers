@@ -1128,7 +1128,7 @@ struct GetResult {
 
 #[test]
 fn test_put_get_rowset() {
-    let mut client = SnowflakeTestClient::new();
+    let mut client = SnowflakeTestClient::connect_with_default_auth();
     let stage_name = "TEST_STAGE_PUT_ROWSET";
     let filename = "test_put_get_rowset.csv";
 
@@ -1147,7 +1147,7 @@ fn test_put_get_rowset() {
 
     let put_result: PutResult = arrow_helper
         .fetch_one()
-        .expect("Failed to fetch first PUT result");
+        .expect("Failed to fetch PUT result");
 
     assert_eq!(put_result.source, "test_put_get_rowset.csv");
     assert_eq!(put_result.target, "test_put_get_rowset.csv.gz");
@@ -1167,7 +1167,7 @@ fn test_put_get_rowset() {
 
     let get_result: GetResult = arrow_helper
         .fetch_one()
-        .expect("Failed to fetch first GET result");
+        .expect("Failed to fetch GET result");
 
     assert_eq!(get_result.file, "test_put_get_rowset.csv.gz");
     assert_eq!(get_result.size, 52);
