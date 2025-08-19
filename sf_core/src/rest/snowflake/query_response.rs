@@ -29,8 +29,6 @@ pub struct Data {
     pub command: Option<String>,
 
     // file transfer response data
-    #[serde(rename = "autoCompress")]
-    auto_compress: Option<bool>,
     #[serde(rename = "src_locations")]
     src_locations: Option<Vec<String>>,
     #[serde(rename = "stageInfo")]
@@ -39,6 +37,10 @@ pub struct Data {
     encryption_material: Option<OneOrMany<EncryptionMaterial>>,
     #[serde(rename = "localLocation")]
     local_location: Option<String>,
+    #[serde(rename = "autoCompress")]
+    auto_compress: Option<bool>,
+    #[serde(rename = "overwrite")]
+    overwrite: Option<bool>,
     #[serde(rename = "sourceCompression")]
     source_compression: Option<String>,
 
@@ -97,8 +99,6 @@ pub struct Data {
     _parallel: Option<i64>,
     #[serde(rename = "threshold")]
     _threshold: Option<i64>,
-    #[serde(rename = "overwrite")]
-    _overwrite: Option<bool>,
     #[serde(rename = "clientShowEncryptionParameter")]
     _show_encryption_parameter: Option<bool>,
     #[serde(rename = "presignedUrls")]
@@ -324,12 +324,18 @@ impl Data {
             }
         };
 
+        let overwrite = self
+            .overwrite
+            .ok_or_else(|| RestError::MissingParameter("overwrite".to_string()))?;
+
+
         Ok(file_manager::UploadData {
             src_location,
             stage_info,
             encryption_material,
             auto_compress,
             source_compression,
+            overwrite,
         })
     }
 

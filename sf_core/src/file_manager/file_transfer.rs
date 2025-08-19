@@ -7,6 +7,7 @@ use crate::rest::error::RestError;
 // AWS SDK imports
 use aws_config::{BehaviorVersion, Region};
 use aws_credential_types::Credentials;
+use aws_sdk_s3::error::SdkError;
 use aws_sdk_s3::{Client as S3Client, primitives::ByteStream};
 
 const SNOWFLAKE_UPLOAD_PROVIDER: &str = "snowflake-upload";
@@ -19,11 +20,9 @@ pub async fn upload_to_s3(
     encryption_result: EncryptionResult,
     stage_info: &StageInfo,
     filename: &str,
-) -> Result<(), UploadFileError> {
+) -> Result<String, UploadFileError> {
     let s3_client = create_s3_client(stage_info, SNOWFLAKE_UPLOAD_PROVIDER).await;
-
     let s3_location = S3Location::new(&stage_info.location)?;
-
     let s3_key = s3_location.build_key(filename);
 
     // Serialize encryption metadata
@@ -50,7 +49,26 @@ pub async fn upload_to_s3(
 
     tracing::debug!("S3 upload result: {:?}", result);
 
-    Ok(())
+    Ok("UPLOADED".to_string())
+}
+
+pub async fn check_if_file_exists(
+    s3_client: &S3Client,
+    s3_location: &S3Location,
+    s3_key: &str,
+) -> Result<bool, UploadFileError> {
+    // Check if the object exists in S3
+    match s3_client
+        .head_object()
+        .bucket(s3_location.bucket.clone())
+        .key(s3_key)
+        .send()
+        .await
+    {
+        Ok(_) => Ok(true),
+        Err(SdkError::ServiceError(err)) if err.err().is_not_found() => Ok(false),
+        Err(e) => Err(UploadFileError::S3(aws_sdk_s3::Error::from(e).into())),
+    }
 }
 
 pub async fn download_from_s3(

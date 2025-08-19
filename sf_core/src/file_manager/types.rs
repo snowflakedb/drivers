@@ -16,6 +16,7 @@ pub struct UploadData {
     pub encryption_material: EncryptionMaterial,
     pub auto_compress: bool,
     pub source_compression: SourceCompressionParam,
+    pub overwrite: bool,
 }
 #[derive(Debug, Clone)]
 pub struct UploadMetadata {
