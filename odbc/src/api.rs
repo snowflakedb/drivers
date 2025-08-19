@@ -18,7 +18,6 @@ use sf_core::{
         TDatabaseDriverSyncClient,
     },
 };
-use std::path::PathBuf;
 use std::{collections::HashMap, str};
 use tracing;
 
