@@ -627,9 +627,11 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
             ));
         }
 
-        let rowset_stream = rt
+        let response_reader = rt
             .block_on(process_query_response(&response.data))
             .map_err(|e| Self::unknown_error(format!("Failed to process query response: {e}")))?;
+
+        let rowset_stream = Box::new(FFI_ArrowArrayStream::new(response_reader));
 
         // Serialize pointer into integer
         let stream_ptr = Box::into_raw(rowset_stream);
