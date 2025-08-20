@@ -328,7 +328,6 @@ impl Data {
             .overwrite
             .ok_or_else(|| RestError::MissingParameter("overwrite".to_string()))?;
 
-
         Ok(file_manager::UploadData {
             src_location,
             stage_info,
