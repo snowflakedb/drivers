@@ -1,7 +1,8 @@
 use arrow::{
     array::{Array, ArrowPrimitiveType, GenericByteArray, PrimitiveArray},
     datatypes::{
-        ByteArrayType, DataType, Field, Int8Type, Int16Type, Int32Type, Int64Type, Utf8Type,
+        ByteArrayType, DataType, Decimal128Type, Field, Int8Type, Int16Type, Int32Type, Int64Type,
+        Utf8Type,
     },
 };
 use odbc_sys as sql;
@@ -115,6 +116,12 @@ pub trait ReadArrowValue<T>: Sized {
                 &get_field_meta(field)?,
                 get_byte_array_value::<Utf8Type>(array, row_idx)?,
             ),
+            DataType::Decimal128(precision, scale) => self.read_decimal128(
+                &get_field_meta(field)?,
+                get_value::<Decimal128Type>(array, row_idx)?,
+                *precision,
+                *scale,
+            ),
             _ => Err(ExtractError::UnsupportedArrowType(
                 array.data_type().clone(),
             )),
@@ -135,6 +142,18 @@ pub trait ReadArrowValue<T>: Sized {
     fn read_utf8(self, _field: &FieldMeta, _value: &str) -> Result<(), ExtractError> {
         Err(ExtractError::UnsupportedArrowType(DataType::Utf8))
     }
+
+    fn read_decimal128(
+        self,
+        _field: &FieldMeta,
+        _value: i128,
+        precision: u8,
+        scale: i8,
+    ) -> Result<(), ExtractError> {
+        Err(ExtractError::UnsupportedArrowType(DataType::Decimal128(
+            precision, scale,
+        )))
+    }
 }
 
 impl<V: WriteValue<UBigInt>> ReadArrowValue<UBigInt> for V {
@@ -149,6 +168,15 @@ impl<V: WriteValue<UBigInt>> ReadArrowValue<UBigInt> for V {
     }
     fn read_int64(self, field: &FieldMeta, value: i64) -> Result<(), ExtractError> {
         read_u64(self, field, value as u64)
+    }
+    fn read_decimal128(
+        self,
+        _field: &FieldMeta,
+        value: i128,
+        precision: u8,
+        scale: i8,
+    ) -> Result<(), ExtractError> {
+        read_u128(self, value as u128, precision, scale)
     }
 }
 
@@ -232,12 +260,12 @@ impl<T> Buffer<T> {
     }
 }
 
-fn decimal_to_string(value: i64, scale: u32) -> String {
+fn decimal_to_string(value: i128, scale: u32) -> String {
     if scale == 0 {
         return value.to_string();
     }
 
-    let scale_dec = 10_i64.pow(scale);
+    let scale_dec = 10_i128.pow(scale);
     let whole = value / scale_dec;
     let decimal = value % scale_dec;
     format!(
@@ -284,13 +312,23 @@ impl ReadArrowValue<&str> for Buffer<sql::Char> {
 
     fn read_int64(self, field: &FieldMeta, value: i64) -> Result<(), ExtractError> {
         if let FieldMeta::Fixed { scale, .. } = field {
-            self.read_utf8(field, decimal_to_string(value, *scale).as_str())
+            self.read_utf8(field, decimal_to_string(value as i128, *scale).as_str())
         } else {
             Err(ExtractError::UnsupportedFieldMeta(
                 field.clone(),
                 DataType::Int64,
             ))
         }
+    }
+
+    fn read_decimal128(
+        self,
+        field: &FieldMeta,
+        value: i128,
+        _precision: u8,
+        scale: i8,
+    ) -> Result<(), ExtractError> {
+        self.read_utf8(field, decimal_to_string(value, scale as u32).as_str())
     }
 }
 
@@ -310,6 +348,18 @@ fn read_u64<V: WriteValue<UBigInt>>(
     }
 }
 
+fn read_u128<V: WriteValue<UBigInt>>(
+    sink: V,
+    value: u128,
+    _precision: u8,
+    scale: i8,
+) -> Result<(), ExtractError> {
+    let scale_dec = 10_u128.pow(scale as u32);
+    let whole = value / scale_dec;
+    sink.write(whole as UBigInt);
+    Ok(())
+}
+
 fn read_i64<V: WriteValue<SBigInt>>(
     sink: V,
     field: &FieldMeta,
@@ -326,10 +376,22 @@ fn read_i64<V: WriteValue<SBigInt>>(
     }
 }
 
+fn read_i128<V: WriteValue<SBigInt>>(
+    sink: V,
+    value: i128,
+    _precision: u8,
+    scale: i8,
+) -> Result<(), ExtractError> {
+    let scale_dec = 10_i128.pow(scale as u32);
+    let whole = value / scale_dec;
+    sink.write(whole as SBigInt);
+    Ok(())
+}
+
 fn read_f64<V: WriteValue<Double>>(
     sink: V,
     field: &FieldMeta,
-    value: i64,
+    value: i128,
 ) -> Result<(), ExtractError> {
     if let FieldMeta::Fixed { scale, .. } = field {
         // TODO: Don't parse to string, parse to f64 directly
@@ -361,22 +423,41 @@ impl<V: WriteValue<SBigInt>> ReadArrowValue<SBigInt> for V {
     fn read_int64(self, field: &FieldMeta, value: i64) -> Result<(), ExtractError> {
         read_i64(self, field, value)
     }
+    fn read_decimal128(
+        self,
+        _field: &FieldMeta,
+        value: i128,
+        precision: u8,
+        scale: i8,
+    ) -> Result<(), ExtractError> {
+        read_i128(self, value, precision, scale)
+    }
 }
 
 impl<V: WriteValue<Double>> ReadArrowValue<Double> for V {
     fn read_int8(self, _field: &FieldMeta, value: i8) -> Result<(), ExtractError> {
-        read_f64(self, _field, value as i64)?;
+        read_f64(self, _field, value as i128)?;
         Ok(())
     }
     fn read_int16(self, _field: &FieldMeta, value: i16) -> Result<(), ExtractError> {
-        read_f64(self, _field, value as i64)?;
+        read_f64(self, _field, value as i128)?;
         Ok(())
     }
     fn read_int32(self, _field: &FieldMeta, value: i32) -> Result<(), ExtractError> {
-        read_f64(self, _field, value as i64)?;
+        read_f64(self, _field, value as i128)?;
         Ok(())
     }
     fn read_int64(self, field: &FieldMeta, value: i64) -> Result<(), ExtractError> {
+        read_f64(self, field, value as i128)?;
+        Ok(())
+    }
+    fn read_decimal128(
+        self,
+        field: &FieldMeta,
+        value: i128,
+        _precision: u8,
+        _scale: i8,
+    ) -> Result<(), ExtractError> {
         read_f64(self, field, value)?;
         Ok(())
     }

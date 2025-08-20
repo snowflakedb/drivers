@@ -115,3 +115,51 @@ TEST_CASE("Test decimal conversion", "[datatype][number]") {
     CHECK(get_data<SQL_C_CHAR>(stmt, i) == expected_string_values[i - 1]);
   }
 }
+
+template <int SQL_C_TYPE>
+void test_at_limits(Connection& conn) {
+  std::stringstream queryBuilder;
+  queryBuilder << "SELECT ";
+  // prefix + to ensure numeric limits are treated as numbers, not characters
+  queryBuilder << +std::numeric_limits<typename MetaOfSqlCType<SQL_C_TYPE>::type>::max()
+               << " AS max, ";
+  queryBuilder << +std::numeric_limits<typename MetaOfSqlCType<SQL_C_TYPE>::type>::min()
+               << " AS min";
+  auto query = queryBuilder.str();
+  std::cout << "Executing query: " << query << std::endl;
+  INFO("Executing query: " << query);
+  auto stmt = conn.execute_fetch(query);
+  CHECK(get_data<SQL_C_TYPE>(stmt, 1) ==
+        std::numeric_limits<typename MetaOfSqlCType<SQL_C_TYPE>::type>::max());
+  CHECK(get_data<SQL_C_TYPE>(stmt, 2) ==
+        std::numeric_limits<typename MetaOfSqlCType<SQL_C_TYPE>::type>::min());
+}
+
+void test_string_at_limits(Connection& conn) {
+  std::stringstream queryBuilder;
+  std::string max = std::string(37, '9');
+  std::string min = "-" + std::string(37, '9');
+  queryBuilder << "SELECT " << max << " AS max, " << min << " AS min";
+  auto query = queryBuilder.str();
+  std::cout << "Executing query: " << query << std::endl;
+  INFO("Executing query: " << query);
+  auto stmt = conn.execute_fetch(query);
+  CHECK(get_data<SQL_C_CHAR>(stmt, 1) == max);
+  CHECK(get_data<SQL_C_CHAR>(stmt, 2) == min);
+}
+
+TEST_CASE("Test at limits", "[datatype][number]") {
+  Connection conn;
+  test_at_limits<SQL_C_LONG>(conn);
+  test_at_limits<SQL_C_SLONG>(conn);
+  test_at_limits<SQL_C_ULONG>(conn);
+  test_at_limits<SQL_C_SHORT>(conn);
+  test_at_limits<SQL_C_SSHORT>(conn);
+  test_at_limits<SQL_C_USHORT>(conn);
+  test_at_limits<SQL_C_TINYINT>(conn);
+  test_at_limits<SQL_C_STINYINT>(conn);
+  test_at_limits<SQL_C_UTINYINT>(conn);
+  test_at_limits<SQL_C_SBIGINT>(conn);
+  test_at_limits<SQL_C_UBIGINT>(conn);
+  test_string_at_limits(conn);
+}

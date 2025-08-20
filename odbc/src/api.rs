@@ -227,11 +227,13 @@ pub unsafe extern "C" fn SQLAllocHandle(
 
 fn text_to_string(text: *const sql::Char, length: sql::Integer) -> String {
     if length == sql::NTS as i32 {
-        unsafe {
-            std::ffi::CStr::from_ptr(text as *const i8)
-                .to_str()
-                .unwrap()
-                .to_string()
+        let result = unsafe { std::ffi::CStr::from_ptr(text as *const i8).to_str() };
+        match result {
+            Ok(s) => s.to_string(),
+            Err(e) => {
+                tracing::error!("text_to_string: error converting text to string: {}", e);
+                String::new()
+            }
         }
     } else {
         let text_slice = unsafe { std::slice::from_raw_parts(text, length as usize) };
