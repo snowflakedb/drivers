@@ -1,4 +1,5 @@
-pub mod api;
+mod api;
+pub mod c_api;
 mod cdata_types;
 mod read_arrow;
 mod write_arrow;
