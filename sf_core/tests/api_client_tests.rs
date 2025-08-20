@@ -3,9 +3,14 @@ pub mod common;
 use common::arrow_deserialize::ArrowDeserialize;
 use common::arrow_result_helper::ArrowResultHelper;
 use common::test_utils::*;
+use flate2::{
+    Compression,
+    write::{DeflateEncoder, GzEncoder},
+};
 use sf_core::api_client::new_database_driver_v1_client;
 use sf_core::thrift_gen::database_driver_v1::InfoCode;
 use std::fs;
+use std::io::Write;
 
 // Database operation tests
 #[test]
@@ -1175,12 +1180,6 @@ fn test_put_get_rowset() {
     assert_eq!(get_result.message, "");
 }
 
-// Additional imports for compression testing
-use flate2::{
-    Compression,
-    write::{DeflateEncoder, GzEncoder},
-};
-use std::io::Write;
 // Tests for SOURCE_COMPRESSION parameter
 
 #[test]
@@ -1234,7 +1233,7 @@ fn test_put_source_compression_auto_detect_standard_types() {
                 encoder.write_all(content.as_bytes()).unwrap();
                 encoder.finish().unwrap();
             }
-            _ => unreachable!(),
+            _ => panic!("Unsupported compression type in test: {expected_compression}"),
         }
 
         // Upload file with AUTO_DETECT
@@ -1480,7 +1479,7 @@ fn test_put_source_compression_explicit_standard_types() {
                 encoder.write_all(content.as_bytes()).unwrap();
                 encoder.finish().unwrap();
             }
-            _ => unreachable!(),
+            _ => panic!("Unsupported compression type in test: {compression_type}"),
         }
 
         // Upload file with explicit SOURCE_COMPRESSION
