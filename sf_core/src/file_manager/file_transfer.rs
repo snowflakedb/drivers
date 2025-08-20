@@ -16,6 +16,7 @@ const CONTENT_TYPE_OCTET_STREAM: &str = "application/octet-stream";
 
 // TODO: streaming instead of loading the whole file into memory
 
+/// Uploads a file to S3, skipping if it already exists and `overwrite` is false.
 pub async fn upload_to_s3_or_skip(
     encryption_result: EncryptionResult,
     stage_info: &StageInfo,
@@ -32,17 +33,17 @@ pub async fn upload_to_s3_or_skip(
         return Ok("SKIPPED".to_string());
     }
 
-    // Proceed with upload if the file does not exist
+    // Proceed with upload if the file does not exist or overwrite is true
     upload_to_s3(encryption_result, &s3_client, &s3_location, &s3_key).await?;
     Ok("UPLOADED".to_string())
 }
 
+/// Returns true if the file exists in S3, false if it does not.
 async fn check_if_file_exists(
     s3_client: &S3Client,
     s3_location: &S3Location,
     s3_key: &str,
 ) -> Result<bool, UploadFileError> {
-    // Check if the object exists in S3
     match s3_client
         .head_object()
         .bucket(s3_location.bucket.clone())
