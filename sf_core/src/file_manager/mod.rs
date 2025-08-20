@@ -73,6 +73,7 @@ pub async fn upload_single_file(data: UploadData) -> Result<UploadResult, FileMa
     })
 }
 
+/// Sets file metadata, compresses the file if needed, and encrypts the data before uploading it to S3.
 fn preprocess_file_before_upload(
     filename: &str,
     mut file_buffer: Vec<u8>,
@@ -113,6 +114,7 @@ fn preprocess_file_before_upload(
     ))
 }
 
+/// Uses user-specified compression type or auto-detects the compression type based on the file name and content.
 fn get_source_compression(
     filename: &str,
     file_buffer: &[u8],

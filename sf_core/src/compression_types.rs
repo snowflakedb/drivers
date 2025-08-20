@@ -69,6 +69,10 @@ fn get_compression_type_from_extension(
     }
 }
 
+// Tries to guess the compression type based on the last extension of the filename
+// If that fails, it tries to guess based on the file buffer content
+// If both fail, it returns CompressionType::None
+// Returns an error if the compression type is unsupported
 pub fn try_guess_compression_type(
     filename: &str,
     file_buffer: &[u8],

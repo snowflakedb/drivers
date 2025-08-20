@@ -39,6 +39,8 @@ pub struct Data {
     encryption_material: Option<OneOrMany<EncryptionMaterial>>,
     #[serde(rename = "localLocation")]
     local_location: Option<String>,
+    #[serde(rename = "sourceCompression")]
+    source_compression: Option<String>,
 
     //unused fields
     #[serde(rename = "parameters")]
@@ -97,8 +99,6 @@ pub struct Data {
     _threshold: Option<i64>,
     #[serde(rename = "overwrite")]
     _overwrite: Option<bool>,
-    #[serde(rename = "sourceCompression")]
-    _source_compression: Option<String>,
     #[serde(rename = "clientShowEncryptionParameter")]
     _show_encryption_parameter: Option<bool>,
     #[serde(rename = "presignedUrls")]
@@ -303,7 +303,7 @@ impl Data {
             .ok_or_else(|| RestError::MissingParameter("auto compress".to_string()))?;
 
         let source_compression_string = self
-            ._source_compression
+            .source_compression
             .as_ref()
             .ok_or_else(|| RestError::MissingParameter("source compression".to_string()))?
             .clone();
