@@ -4,5 +4,5 @@ alwaysApply: true
 ---
 
 Always when you run tests in sf_core/tests, define environmental variable:
-PARAMETER_PATH=/Users/mrolbiecki/code/rust/universal-driver/parameters.json
-Tests wont't work without this variable.
+PARAMETER_PATH=/[project_location]/parameters.json
+Where [project_location] is the path to your project root.

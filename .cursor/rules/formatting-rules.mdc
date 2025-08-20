@@ -7,6 +7,6 @@ alwaysApply: true
 
 When using format! or assert! macros in Rust, always put variables inside brackets when possible. Example:
 Instead of this:
-format!("Failed to fetch PUT result for {}", filename")
+format!("Failed to fetch PUT result for {}", filename)
 Do this:
 format!("Failed to fetch PUT result for {filename}")
