@@ -53,7 +53,7 @@ pub enum CDataType {
 
     Bit = -7,
     // deprecated
-    // SQL_C_TINYINT = -6,
+    TinyInt = -6,
     Binary = -2,
     /// `SQLCHAR` - CHAR, VARCHAR, DECIMAL, NUMERIC
     Char = 1,
@@ -102,3 +102,8 @@ pub enum CDataType {
     SsTime2 = C_TYPES_EXTENDED,
     SsTimestampOffset = C_TYPES_EXTENDED + 1,
 }
+
+pub type UBigInt = u64;
+pub type SBigInt = i64;
+pub type Real = f32;
+pub type Double = f64;

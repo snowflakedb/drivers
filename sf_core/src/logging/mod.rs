@@ -67,7 +67,7 @@ where
         Some(
             tracing_subscriber::fmt::layer()
                 .with_writer(std::io::stderr)
-                .with_filter(LevelFilter::DEBUG),
+                .with_filter(LevelFilter::ERROR),
         )
     } else {
         None
