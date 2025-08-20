@@ -8,7 +8,7 @@ use crate::compression::compress_data;
 use crate::compression_types::{CompressionType, CompressionTypeError, try_guess_compression_type};
 use crate::rest::error::RestError;
 use encryption::{decrypt_file_data, encrypt_file_data};
-use file_transfer::{download_from_s3, upload_to_s3};
+use file_transfer::{download_from_s3, upload_to_s3_or_skip};
 use std::fs::File;
 use std::io::{Read, Write};
 use std::path::Path;
@@ -28,6 +28,7 @@ pub async fn upload_files(data: &UploadData) -> Result<Vec<UploadResult>, FileMa
             encryption_material: data.encryption_material.clone(),
             auto_compress: data.auto_compress,
             source_compression: data.source_compression.clone(),
+            overwrite: data.overwrite,
         };
 
         let result = upload_single_file(single_upload_data).await?;
@@ -52,14 +53,16 @@ pub async fn upload_single_file(data: UploadData) -> Result<UploadResult, FileMa
     let (encryption_result, file_metadata) =
         preprocess_file_before_upload(&filename, file_buffer, &data)?;
 
-    upload_to_s3(
+    let status = upload_to_s3_or_skip(
         encryption_result,
         &data.stage_info,
         file_metadata.target.as_str(),
+        data.overwrite,
     )
     .await?;
 
-    // TODO: Right now "UPLOADED" is hardcoded, because any error in the upload process will result in an error before this point.
+    // TODO: Right now empty message is hardcoded, because any error in the upload process will
+    // result in an error before this point and an ERROR status is never returned.
     // We should adjust this after we have more tests in different wrappers to ensure error handling is consistent.
     Ok(UploadResult {
         source: file_metadata.source,
@@ -68,7 +71,7 @@ pub async fn upload_single_file(data: UploadData) -> Result<UploadResult, FileMa
         target_size: file_metadata.target_size,
         source_compression: file_metadata.source_compression.to_string(),
         target_compression: file_metadata.target_compression.to_string(),
-        status: "UPLOADED".to_string(),
+        status,
         message: "".to_string(),
     })
 }

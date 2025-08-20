@@ -16,22 +16,59 @@ const CONTENT_TYPE_OCTET_STREAM: &str = "application/octet-stream";
 
 // TODO: streaming instead of loading the whole file into memory
 
-pub async fn upload_to_s3(
+pub async fn upload_to_s3_or_skip(
     encryption_result: EncryptionResult,
     stage_info: &StageInfo,
     filename: &str,
+    overwrite: bool,
 ) -> Result<String, UploadFileError> {
+    // Check if the file already exists in S3
     let s3_client = create_s3_client(stage_info, SNOWFLAKE_UPLOAD_PROVIDER).await;
     let s3_location = S3Location::new(&stage_info.location)?;
     let s3_key = s3_location.build_key(filename);
 
+    if !overwrite && check_if_file_exists(&s3_client, &s3_location, &s3_key).await? {
+        tracing::info!("File already exists in S3: {}", s3_key);
+        return Ok("SKIPPED".to_string());
+    }
+
+    // Proceed with upload if the file does not exist
+    upload_to_s3(encryption_result, &s3_client, &s3_location, &s3_key).await?;
+    Ok("UPLOADED".to_string())
+}
+
+async fn check_if_file_exists(
+    s3_client: &S3Client,
+    s3_location: &S3Location,
+    s3_key: &str,
+) -> Result<bool, UploadFileError> {
+    // Check if the object exists in S3
+    match s3_client
+        .head_object()
+        .bucket(s3_location.bucket.clone())
+        .key(s3_key)
+        .send()
+        .await
+    {
+        Ok(_) => Ok(true),
+        Err(SdkError::ServiceError(err)) if err.err().is_not_found() => Ok(false),
+        Err(e) => Err(UploadFileError::S3(aws_sdk_s3::Error::from(e).into())),
+    }
+}
+
+async fn upload_to_s3(
+    encryption_result: EncryptionResult,
+    s3_client: &S3Client,
+    s3_location: &S3Location,
+    s3_key: &str,
+) -> Result<(), UploadFileError> {
     // Serialize encryption metadata
     let mat_desc = serde_json::to_string(&encryption_result.metadata.material_desc)?;
 
     let put_object_request = s3_client
         .put_object()
-        .bucket(s3_location.bucket)
-        .key(&s3_key)
+        .bucket(s3_location.bucket.clone())
+        .key(s3_key)
         .body(ByteStream::from(encryption_result.data))
         .content_type(CONTENT_TYPE_OCTET_STREAM)
         .metadata("sfc-digest", &encryption_result.metadata.digest)
@@ -49,26 +86,7 @@ pub async fn upload_to_s3(
 
     tracing::debug!("S3 upload result: {:?}", result);
 
-    Ok("UPLOADED".to_string())
-}
-
-pub async fn check_if_file_exists(
-    s3_client: &S3Client,
-    s3_location: &S3Location,
-    s3_key: &str,
-) -> Result<bool, UploadFileError> {
-    // Check if the object exists in S3
-    match s3_client
-        .head_object()
-        .bucket(s3_location.bucket.clone())
-        .key(s3_key)
-        .send()
-        .await
-    {
-        Ok(_) => Ok(true),
-        Err(SdkError::ServiceError(err)) if err.err().is_not_found() => Ok(false),
-        Err(e) => Err(UploadFileError::S3(aws_sdk_s3::Error::from(e).into())),
-    }
+    Ok(())
 }
 
 pub async fn download_from_s3(
