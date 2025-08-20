@@ -46,16 +46,14 @@ fn get_byte_array_value<T: ByteArrayType>(
 pub enum FieldMeta {
     Fixed { scale: u32, precision: u32 },
     Text,
+    None,
 }
 
 fn get_field_meta(field: &Field) -> Result<FieldMeta, ExtractError> {
     let metadata = field.metadata();
-    let logical_type = metadata
-        .get("logicalType")
-        .ok_or(ExtractError::ErrorParsingFieldMeta(
-            Box::new(field.clone()),
-            "logicalType not found".to_string(),
-        ))?;
+    let default_value = "NONE".to_string();
+    let logical_type = metadata.get("logicalType").unwrap_or(&default_value);
+
     match logical_type.as_str() {
         "FIXED" => {
             let scale = metadata
@@ -87,10 +85,10 @@ fn get_field_meta(field: &Field) -> Result<FieldMeta, ExtractError> {
             })
         }
         "TEXT" => Ok(FieldMeta::Text),
-        _ => Err(ExtractError::ErrorParsingFieldMeta(
-            Box::new(field.clone()),
-            format!("unknown logicalType: {}", logical_type.as_str()),
-        )),
+        _ => {
+            tracing::warn!("Unknown logicalType: {}", logical_type.as_str());
+            Ok(FieldMeta::None)
+        }
     }
 }
 
