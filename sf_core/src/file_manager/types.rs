@@ -1,4 +1,5 @@
 use crate::compression::CompressionError;
+use crate::compression_types::{CompressionType, CompressionTypeError};
 use crate::rest::error::RestError;
 use glob;
 use serde::{Deserialize, Serialize};
@@ -14,6 +15,28 @@ pub struct UploadData {
     pub stage_info: StageInfo,
     pub encryption_material: EncryptionMaterial,
     pub auto_compress: bool,
+    pub source_compression: SourceCompressionParam,
+}
+#[derive(Debug, Clone)]
+pub struct UploadMetadata {
+    pub source: String,
+    pub target: String,
+    pub source_size: i64,
+    pub target_size: i64,
+    pub source_compression: CompressionType,
+    pub target_compression: CompressionType,
+}
+
+#[derive(Debug, Clone)]
+pub enum SourceCompressionParam {
+    Gzip,
+    Bzip2,
+    Brotli,
+    Zstd,
+    Deflate,
+    RawDeflate,
+    None,
+    AutoDetect,
 }
 
 #[derive(Debug)]
@@ -118,6 +141,8 @@ pub enum FileManagerError {
     Rest(#[from] RestError),
     #[error("Path error: {0}")]
     Path(#[from] PathError),
+    #[error("Unsupported compression type: {0}")]
+    UnsupportedCompressionType(#[from] CompressionTypeError),
 }
 
 impl From<FileManagerError> for DriverException {

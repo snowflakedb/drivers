@@ -5,6 +5,7 @@ pub mod types;
 pub use self::types::*;
 
 use crate::compression::compress_data;
+use crate::compression_types::{CompressionType, CompressionTypeError, try_guess_compression_type};
 use crate::rest::error::RestError;
 use encryption::{decrypt_file_data, encrypt_file_data};
 use file_transfer::{download_from_s3, upload_to_s3};
@@ -12,7 +13,7 @@ use std::fs::File;
 use std::io::{Read, Write};
 use std::path::Path;
 
-pub async fn upload_files(data: UploadData) -> Result<Vec<UploadResult>, FileManagerError> {
+pub async fn upload_files(data: &UploadData) -> Result<Vec<UploadResult>, FileManagerError> {
     let file_locations = expand_filenames(&data.src_location)?;
     let mut results = Vec::new();
 
@@ -26,6 +27,7 @@ pub async fn upload_files(data: UploadData) -> Result<Vec<UploadResult>, FileMan
             stage_info: data.stage_info.clone(),
             encryption_material: data.encryption_material.clone(),
             auto_compress: data.auto_compress,
+            source_compression: data.source_compression.clone(),
         };
 
         let result = upload_single_file(single_upload_data).await?;
@@ -38,53 +40,94 @@ pub async fn upload_files(data: UploadData) -> Result<Vec<UploadResult>, FileMan
 pub async fn upload_single_file(data: UploadData) -> Result<UploadResult, FileManagerError> {
     let file_path = Path::new(&data.src_location);
     let mut input_file = File::open(file_path)?;
-    let mut filename = file_path
+    let filename = file_path
         .file_name()
         .and_then(|name| name.to_str())
         .ok_or_else(|| RestError::Internal("Invalid file name".to_string()))?
         .to_string();
 
-    let mut input_data = Vec::new();
-    input_file.read_to_end(&mut input_data)?;
-    let source_size = input_data.len() as i64;
+    let mut file_buffer = Vec::new();
+    input_file.read_to_end(&mut file_buffer)?;
 
-    // TODO: Determine if source file is compressed and set this accordingly
-    let source_compression = "NONE".to_string();
+    let (encryption_result, file_metadata) =
+        preprocess_file_before_upload(&filename, file_buffer, &data)?;
 
-    let mut target_compression = "NONE".to_string();
-    let original_filename = filename.clone();
-
-    // Compress the file data if automatic compression is enabled
-    if data.auto_compress {
-        tracing::info!("Compressing file data before upload");
-        input_data = compress_data(input_data, filename.as_str())?;
-        target_compression = "GZIP".to_string();
-        filename = format!("{filename}.gz");
-    } else {
-        tracing::info!("Skipping compression, auto_compress is disabled");
-    }
-
-    // Encrypt the compressed data using the provided encryption material
-    let encryption_result = encrypt_file_data(&input_data, data.encryption_material)?;
-
-    let target_size = encryption_result.data.len() as i64;
-
-    tracing::trace!("Encryption metadata: {:?}", encryption_result.metadata);
-
-    upload_to_s3(encryption_result, &data.stage_info, filename.as_str()).await?;
+    upload_to_s3(
+        encryption_result,
+        &data.stage_info,
+        file_metadata.target.as_str(),
+    )
+    .await?;
 
     // TODO: Right now "UPLOADED" is hardcoded, because any error in the upload process will result in an error before this point.
     // We should adjust this after we have more tests in different wrappers to ensure error handling is consistent.
     Ok(UploadResult {
-        source: original_filename,
-        target: filename,
-        source_size,
-        target_size,
-        source_compression,
-        target_compression,
+        source: file_metadata.source,
+        target: file_metadata.target,
+        source_size: file_metadata.source_size,
+        target_size: file_metadata.target_size,
+        source_compression: file_metadata.source_compression.to_string(),
+        target_compression: file_metadata.target_compression.to_string(),
         status: "UPLOADED".to_string(),
         message: "".to_string(),
     })
+}
+
+fn preprocess_file_before_upload(
+    filename: &str,
+    mut file_buffer: Vec<u8>,
+    data: &UploadData,
+) -> Result<(EncryptionResult, UploadMetadata), FileManagerError> {
+    let source_size = file_buffer.len() as i64;
+
+    let source_compression =
+        get_source_compression(filename, file_buffer.as_slice(), &data.source_compression)?;
+
+    let source = filename.to_string();
+    let mut target = filename.to_string();
+
+    // Compress the data if needed
+    let target_compression = if data.auto_compress && source_compression == CompressionType::None {
+        file_buffer = compress_data(file_buffer, filename)?;
+        target = format!("{filename}.gz");
+        CompressionType::Gzip
+    } else {
+        source_compression.clone()
+    };
+
+    // Encrypt the data
+    let encryption_result = encrypt_file_data(file_buffer.as_slice(), &data.encryption_material)?;
+
+    let target_size = encryption_result.data.len() as i64;
+
+    Ok((
+        encryption_result,
+        UploadMetadata {
+            source,
+            target,
+            source_size,
+            source_compression,
+            target_size,
+            target_compression,
+        },
+    ))
+}
+
+fn get_source_compression(
+    filename: &str,
+    file_buffer: &[u8],
+    source_compression: &SourceCompressionParam,
+) -> Result<CompressionType, CompressionTypeError> {
+    match source_compression {
+        SourceCompressionParam::AutoDetect => try_guess_compression_type(filename, file_buffer),
+        SourceCompressionParam::None => Ok(CompressionType::None),
+        SourceCompressionParam::Gzip => Ok(CompressionType::Gzip),
+        SourceCompressionParam::Bzip2 => Ok(CompressionType::Bzip2),
+        SourceCompressionParam::Brotli => Ok(CompressionType::Brotli),
+        SourceCompressionParam::Zstd => Ok(CompressionType::Zstd),
+        SourceCompressionParam::Deflate => Ok(CompressionType::Deflate),
+        SourceCompressionParam::RawDeflate => Ok(CompressionType::RawDeflate),
+    }
 }
 
 pub async fn download_files(

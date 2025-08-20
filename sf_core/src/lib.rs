@@ -9,6 +9,7 @@ mod auth;
 pub mod c_api;
 mod chunks;
 mod compression;
+mod compression_types;
 mod config;
 pub mod driver;
 mod file_manager;

@@ -38,7 +38,7 @@ async fn perform_put_get(
     match command.as_str() {
         "UPLOAD" => {
             let file_upload_data = data.to_file_upload_data()?;
-            let upload_results = upload_files(file_upload_data).await?;
+            let upload_results = upload_files(&file_upload_data).await?;
             upload_results_reader(upload_results).map_err(|e| e.into())
         }
         "DOWNLOAD" => {

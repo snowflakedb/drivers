@@ -5,7 +5,7 @@ extern crate tracing_subscriber;
 use arrow::array::{Array, ArrowPrimitiveType, PrimitiveArray, StructArray};
 use flate2::read::GzDecoder;
 use sf_core::api_client::new_database_driver_v1_client;
-use sf_core::thrift_gen::database_driver_v1::{ArrowArrayPtr, ArrowSchemaPtr};
+use sf_core::thrift_gen::database_driver_v1::{ArrowArrayPtr, ArrowSchemaPtr, ExecuteResult};
 use std::fs;
 use tracing::Level;
 use tracing_subscriber::EnvFilter;
@@ -201,10 +201,7 @@ impl SnowflakeTestClient {
     }
 
     /// Executes a SQL query and returns the result
-    pub fn execute_query(
-        &mut self,
-        sql: &str,
-    ) -> sf_core::thrift_gen::database_driver_v1::ExecuteResult {
+    pub fn execute_query(&mut self, sql: &str) -> ExecuteResult {
         let stmt_handle = self.new_statement();
         self.driver
             .statement_set_sql_query(stmt_handle.clone(), sql.to_string())
@@ -212,6 +209,13 @@ impl SnowflakeTestClient {
         self.driver
             .statement_execute_query(stmt_handle.clone())
             .unwrap()
+    }
+
+    pub fn execute_query_no_unwrap(&mut self, sql: &str) -> thrift::Result<ExecuteResult> {
+        let stmt_handle = self.new_statement();
+        self.driver
+            .statement_set_sql_query(stmt_handle.clone(), sql.to_string())?;
+        self.driver.statement_execute_query(stmt_handle.clone())
     }
 
     pub fn create_temporary_stage(&mut self, stage_name: &str) {
@@ -297,7 +301,7 @@ where
 
     let schema = ArrowSchemaPtr {
         value: unsafe {
-            let len = std::mem::size_of::<*mut FFI_ArrowSchema>();
+            let len = size_of::<*mut FFI_ArrowSchema>();
             let buf_ptr = std::ptr::addr_of!(raw_schema) as *const u8;
             std::slice::from_raw_parts(buf_ptr, len).to_vec()
         },
@@ -305,7 +309,7 @@ where
 
     let array = ArrowArrayPtr {
         value: unsafe {
-            let len = std::mem::size_of::<*mut FFI_ArrowArray>();
+            let len = size_of::<*mut FFI_ArrowArray>();
             let buf_ptr = std::ptr::addr_of!(raw_array) as *const u8;
             std::slice::from_raw_parts(buf_ptr, len).to_vec()
         },

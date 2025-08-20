@@ -1,5 +1,6 @@
 use crate::chunks::ChunkDownloadData;
 use crate::file_manager;
+use crate::file_manager::SourceCompressionParam;
 use crate::rest::RestError;
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -301,11 +302,34 @@ impl Data {
             .auto_compress
             .ok_or_else(|| RestError::MissingParameter("auto compress".to_string()))?;
 
+        let source_compression_string = self
+            ._source_compression
+            .as_ref()
+            .ok_or_else(|| RestError::MissingParameter("source compression".to_string()))?
+            .clone();
+
+        let source_compression = match source_compression_string.to_uppercase().as_str() {
+            "AUTO_DETECT" => SourceCompressionParam::AutoDetect,
+            "GZIP" => SourceCompressionParam::Gzip,
+            "BZ2" => SourceCompressionParam::Bzip2,
+            "BROTLI" => SourceCompressionParam::Brotli,
+            "ZSTD" => SourceCompressionParam::Zstd,
+            "DEFLATE" => SourceCompressionParam::Deflate,
+            "RAW_DEFLATE" => SourceCompressionParam::RawDeflate,
+            "NONE" => SourceCompressionParam::None,
+            _ => {
+                return Err(RestError::InvalidSnowflakeResponse(format!(
+                    "Unknown source compression type: {source_compression_string}",
+                )));
+            }
+        };
+
         Ok(file_manager::UploadData {
             src_location,
             stage_info,
             encryption_material,
             auto_compress,
+            source_compression,
         })
     }
 
