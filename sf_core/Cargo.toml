@@ -13,32 +13,32 @@ opentelemetry_sdk = { version = "0.30.0", default-features = false, features = [
 opentelemetry-otlp = { version = "0.30.0" }
 opentelemetry-semantic-conventions = { version = "0.30.0" }
 tracing = "0.1.41"
-tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
-rand = "0.9.1"
+tracing-subscriber = { version = "0.3.19", features = ["fmt", "env-filter"] }
+rand = "0.9.2"
 thrift = "0.17.0"
-reqwest = { version = "0.12.22", features = ["json"] }
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-tokio = { version = "1.0", features = ["full"] }
-uuid = { version = "1.0", features = ["v4"] }
+reqwest = { version = "0.12.23", features = ["json"] }
+serde = { version = "1.0.219", features = ["derive"] }
+serde_json = "1.0.143"
+tokio = { version = "1.47.1", features = ["full"] }
+uuid = { version = "1.18", features = ["v4"] }
 base64 = "0.22.1"
-arrow-ipc = "55.1.0"
-arrow = { version = "55.1.0", features = ["ffi"] }
-flate2 = "1.0"
-openssl = "0.10"
+arrow-ipc = "56.0.0"
+arrow = { version = "56.0.0", features = ["ffi"] }
+flate2 = "1.1.2"
+openssl = "0.10.73"
 jwt = { version = "0.16.0", features = ["openssl"] }
 infer = "0.19.0"
 
 # AWS SDK dependencies
-aws-sdk-s3 = "1.0"
-aws-config = "1.0"
-aws-credential-types = "1.0"
-thiserror = "2.0.12"
-glob = "0.3.2"
+aws-sdk-s3 = "1.103.0"
+aws-config = "1.8.5"
+aws-credential-types = "1.2.5"
+thiserror = "2.0.16"
+glob = "0.3.3"
 
 [dev-dependencies]
-tempfile = "3.0"
+tempfile = "3.21.0"
 arrow_deserialize_macro = { path = "tests/common/arrow_deserialize_macro" }
-bzip2 = "0.4"
-brotli = "6.0"
-zstd = "0.13"
+bzip2 = "0.6.0"
+brotli = "8.0.2"
+zstd = "0.13.3"
