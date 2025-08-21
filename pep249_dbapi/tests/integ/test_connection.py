@@ -1,7 +1,8 @@
 """
-    Integration tests for PEP 249 Connection objects.
+Integration tests for PEP 249 Connection objects.
 """
 import pytest
+from unittest.mock import Mock
 
 from pep249_dbapi.connection import Connection
 from pep249_dbapi.cursor import Cursor
@@ -51,31 +52,23 @@ class TestConnectionContextManager:
         with connection as c:
             assert c is connection
     
-    def test_context_manager_exit_success(self, connection):
+    def test_context_manager_exit_success(self, connection, monkeypatch):
         """Test exiting connection context manager successfully."""
         # Mock commit to not raise an exception
-        commit_called = False
-        def mock_commit():
-            nonlocal commit_called
-            commit_called = True
-        
-        connection.commit = mock_commit
+        mock_commit = Mock()
+        monkeypatch.setattr(connection, 'commit', mock_commit)
         
         with connection:
             pass
         
-        assert commit_called
+        mock_commit.assert_called_once()
         assert connection._closed
     
-    def test_context_manager_exit_with_exception(self, connection):
+    def test_context_manager_exit_with_exception(self, connection, monkeypatch):
         """Test exiting connection context manager with exception."""
         # Mock rollback to not raise an exception
-        rollback_called = False
-        def mock_rollback():
-            nonlocal rollback_called
-            rollback_called = True
-        
-        connection.rollback = mock_rollback
+        mock_rollback = Mock()
+        monkeypatch.setattr(connection, 'rollback', mock_rollback)
         
         try:
             with connection:
@@ -83,7 +76,7 @@ class TestConnectionContextManager:
         except ValueError:
             pass
         
-        assert rollback_called
+        mock_rollback.assert_called_once()
         assert connection._closed
     
     def test_context_manager_handles_not_supported_commit(self, connection):
@@ -144,24 +137,16 @@ class TestConnectionAutocommitProperty:
         connection._autocommit = True
         assert connection.autocommit is True
     
-    def test_autocommit_property_set(self, connection):
+    def test_autocommit_property_set(self, connection, monkeypatch):
         """Test setting autocommit property."""
         # Mock set_autocommit to track calls
-        set_autocommit_called = False
-        set_autocommit_value = None
-        
-        def mock_set_autocommit(value):
-            nonlocal set_autocommit_called, set_autocommit_value
-            set_autocommit_called = True
-            set_autocommit_value = value
-        
-        connection.set_autocommit = mock_set_autocommit
+        mock_set_autocommit = Mock()
+        monkeypatch.setattr(connection, 'set_autocommit', mock_set_autocommit)
         
         connection.autocommit = True
         
         assert connection._autocommit is True
-        assert set_autocommit_called
-        assert set_autocommit_value is True
+        mock_set_autocommit.assert_called_once_with(True)
     
     def test_autocommit_property_set_handles_not_supported(self, connection):
         """Test setting autocommit property handles NotSupportedError."""
