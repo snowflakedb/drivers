@@ -1,5 +1,5 @@
 """
-Tests for PEP 249 Connection objects.
+    Integration tests for PEP 249 Connection objects.
 """
 import pytest
 
@@ -11,162 +11,141 @@ from pep249_dbapi.exceptions import NotSupportedError, InterfaceError
 class TestConnectionMethods:
     """Test Connection object methods."""
 
-    def test_close_connection(self, mock_connection):
+    def test_close_connection(self, connection):
         """Test closing a connection."""
-        conn = mock_connection
-        assert not conn._closed
-        conn.close()
-        assert conn._closed
+        assert not connection._closed
+        connection.close()
+        assert connection._closed
 
-    def test_commit_not_implemented(self, mock_connection):
+    def test_commit_not_implemented(self, connection):
         """Test that commit raises NotSupportedError."""
-        conn = mock_connection
         with pytest.raises(NotSupportedError) as excinfo:
-            conn.commit()
+            connection.commit()
         assert "commit is not implemented" in str(excinfo.value)
 
-    def test_rollback_not_implemented(self, mock_connection):
+    def test_rollback_not_implemented(self, connection):
         """Test that rollback raises NotSupportedError."""
-        conn = mock_connection
         with pytest.raises(NotSupportedError) as excinfo:
-            conn.rollback()
+            connection.rollback()
         assert "rollback is not implemented" in str(excinfo.value)
     
-    def test_cursor_creation(self, mock_connection):
+    def test_cursor_creation(self, connection):
         """Test creating a cursor from connection."""
-        conn = mock_connection
-        cursor = conn.cursor()
+        cursor = connection.cursor()
         assert isinstance(cursor, Cursor)
-        assert cursor.connection is conn
+        assert cursor.connection is connection
     
-    def test_cursor_creation_on_closed_connection(self, mock_connection):
+    def test_cursor_creation_on_closed_connection(self, connection):
         """Test that creating cursor on closed connection raises error."""
-        conn = mock_connection
-        conn.close()
+        connection.close()
         with pytest.raises(InterfaceError) as excinfo:
-            conn.cursor()
+            connection.cursor()
         assert "Connection is closed" in str(excinfo.value)
 
 
 class TestConnectionContextManager:
     """Test Connection context manager functionality."""
     
-    def test_context_manager_entry(self, mock_connection):
+    def test_context_manager_entry(self, connection):
         """Test entering connection context manager."""
-        conn = mock_connection
-        with conn as c:
-            assert c is conn
+        with connection as c:
+            assert c is connection
     
-    def test_context_manager_exit_success(self, mock_connection):
+    def test_context_manager_exit_success(self, connection):
         """Test exiting connection context manager successfully."""
-        conn = mock_connection
-        
         # Mock commit to not raise an exception
         commit_called = False
         def mock_commit():
             nonlocal commit_called
             commit_called = True
         
-        conn.commit = mock_commit
+        connection.commit = mock_commit
         
-        with conn:
+        with connection:
             pass
         
         assert commit_called
-        assert conn._closed
+        assert connection._closed
     
-    def test_context_manager_exit_with_exception(self, mock_connection):
+    def test_context_manager_exit_with_exception(self, connection):
         """Test exiting connection context manager with exception."""
-        conn = mock_connection
-        
         # Mock rollback to not raise an exception
         rollback_called = False
         def mock_rollback():
             nonlocal rollback_called
             rollback_called = True
         
-        conn.rollback = mock_rollback
+        connection.rollback = mock_rollback
         
         try:
-            with conn:
+            with connection:
                 raise ValueError("Test exception")
         except ValueError:
             pass
         
         assert rollback_called
-        assert conn._closed
+        assert connection._closed
     
-    def test_context_manager_handles_not_supported_commit(self, mock_connection):
+    def test_context_manager_handles_not_supported_commit(self, connection):
         """Test context manager handles NotSupportedError from commit."""
-        conn = mock_connection
-
         # Default commit raises NotSupportedError, should be handled gracefully
-        with conn:
+        with connection:
             pass
         
-        assert conn._closed
+        assert connection._closed
     
-    def test_context_manager_handles_not_supported_rollback(self, mock_connection):
+    def test_context_manager_handles_not_supported_rollback(self, connection):
         """Test context manager handles NotSupportedError from rollback."""
-        conn = mock_connection
-        
         # Default rollback raises NotSupportedError, should be handled gracefully
         try:
-            with conn:
+            with connection:
                 raise ValueError("Test exception")
         except ValueError:
             pass
         
-        assert conn._closed
+        assert connection._closed
 
 
 class TestConnectionOptionalMethods:
     """Test optional Connection methods."""
     
-    def test_cancel_not_implemented(self, mock_connection):
+    def test_cancel_not_implemented(self, connection):
         """Test that cancel raises NotSupportedError."""
-        conn = mock_connection
         with pytest.raises(NotSupportedError) as excinfo:
-            conn.cancel()
+            connection.cancel()
         assert "cancel is not implemented" in str(excinfo.value)
     
-    def test_ping_not_implemented(self, mock_connection):
+    def test_ping_not_implemented(self, connection):
         """Test that ping raises NotSupportedError."""
-        conn = mock_connection
         with pytest.raises(NotSupportedError) as excinfo:
-            conn.ping()
+            connection.ping()
         assert "ping is not implemented" in str(excinfo.value)
     
-    def test_set_autocommit_not_implemented(self, mock_connection):
+    def test_set_autocommit_not_implemented(self, connection):
         """Test that set_autocommit raises NotSupportedError."""
-        conn = mock_connection
         with pytest.raises(NotSupportedError) as excinfo:
-            conn.set_autocommit(True)
+            connection.set_autocommit(True)
         assert "set_autocommit is not implemented" in str(excinfo.value)
     
-    def test_get_autocommit_not_implemented(self, mock_connection):
+    def test_get_autocommit_not_implemented(self, connection):
         """Test that get_autocommit raises NotSupportedError."""
-        conn = mock_connection
         with pytest.raises(NotSupportedError) as excinfo:
-            conn.get_autocommit()
+            connection.get_autocommit()
         assert "get_autocommit is not implemented" in str(excinfo.value)
 
 
 class TestConnectionAutocommitProperty:
     """Test Connection autocommit property."""
     
-    def test_autocommit_property_get(self, mock_connection):
+    def test_autocommit_property_get(self, connection):
         """Test getting autocommit property."""
-        conn = mock_connection
-        assert conn.autocommit is False
+        assert connection.autocommit is False
         
-        conn._autocommit = True
-        assert conn.autocommit is True
+        connection._autocommit = True
+        assert connection.autocommit is True
     
-    def test_autocommit_property_set(self, mock_connection):
+    def test_autocommit_property_set(self, connection):
         """Test setting autocommit property."""
-        conn = mock_connection
-        
         # Mock set_autocommit to track calls
         set_autocommit_called = False
         set_autocommit_value = None
@@ -176,39 +155,26 @@ class TestConnectionAutocommitProperty:
             set_autocommit_called = True
             set_autocommit_value = value
         
-        conn.set_autocommit = mock_set_autocommit
+        connection.set_autocommit = mock_set_autocommit
         
-        conn.autocommit = True
+        connection.autocommit = True
         
-        assert conn._autocommit is True
+        assert connection._autocommit is True
         assert set_autocommit_called
         assert set_autocommit_value is True
     
-    def test_autocommit_property_set_handles_not_supported(self, mock_connection):
+    def test_autocommit_property_set_handles_not_supported(self, connection):
         """Test setting autocommit property handles NotSupportedError."""
-        conn = mock_connection
-        
         # Default set_autocommit raises NotSupportedError
-        conn.autocommit = True
+        connection.autocommit = True
         
         # Should set internal flag despite NotSupportedError
-        assert conn._autocommit is True
+        assert connection._autocommit is True
 
 
 @pytest.mark.integration
-class TestIntegrationConnection:
-    """Integration tests for Connection with real database connections."""
-    
-    def test_connection_creation(self, connection):
-        """Test creating a real connection."""
-        assert connection is not None
-        assert hasattr(connection, 'cursor')
-        
-    def test_cursor_creation(self, connection):
-        """Test creating a cursor from real connection."""
-        cursor = connection.cursor()
-        assert cursor is not None
-        assert hasattr(cursor, 'execute')
+class TestConnectionDatabaseQueries:
+    """Integration tests for Connection with real database queries."""
 
     def test_simple_select(self, cursor):
         """Test simple SELECT query."""
@@ -221,4 +187,4 @@ class TestIntegrationConnection:
         """Test querying connection information."""
         cursor.execute("SELECT CURRENT_VERSION()")
         result = cursor.fetchone()
-        assert result is not None 
+        assert result is not None

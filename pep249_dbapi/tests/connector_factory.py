@@ -1,5 +1,5 @@
 """
-Connector factory for testing multiple Snowflake connector implementations.
+Connector factory for testing different Snowflake connector implementations.
 
 This module provides a unified interface to test different Snowflake connector
 implementations with the same test suite.
@@ -8,8 +8,10 @@ implementations with the same test suite.
 import os
 import json
 from abc import ABC, abstractmethod
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 import importlib
+
+from .connector_types import ConnectorType
 
 
 class ConnectorAdapter(ABC):
@@ -31,18 +33,24 @@ class ConnectorAdapter(ABC):
     def version(self) -> str:
         """Return the version of this connector implementation."""
         pass
+    
+    @property
+    @abstractmethod
+    def connector_type(self) -> ConnectorType:
+        """Return the connector type enum."""
+        pass
 
 
-class NewConnectorAdapter(ConnectorAdapter):
-    """Adapter for the new PEP 249 connector implementation."""
+class UniversalConnectorAdapter(ConnectorAdapter):
+    """Adapter for the universal driver implementation."""
     
     def __init__(self):
-        # Import the new connector
+        # Import the universal connector
         import pep249_dbapi
         self.connector = pep249_dbapi
     
     def connect(self, **kwargs) -> Any:
-        """Create a connection using the new connector."""
+        """Create a connection using the universal connector."""
         return self.connector.connect(**kwargs)
     
     @property
@@ -55,6 +63,10 @@ class NewConnectorAdapter(ConnectorAdapter):
             return self.connector.__version__
         except AttributeError:
             return "0.1.0"
+    
+    @property
+    def connector_type(self) -> ConnectorType:
+        return ConnectorType.UNIVERSAL
 
 
 class ReferenceConnectorAdapter(ConnectorAdapter):
@@ -81,18 +93,22 @@ class ReferenceConnectorAdapter(ConnectorAdapter):
             return self.connector.__version__
         except AttributeError:
             return "unknown"
+    
+    @property
+    def connector_type(self) -> ConnectorType:
+        return ConnectorType.REFERENCE
 
 
 class ConnectorFactory:
     """Factory for creating connector adapters."""
     
     _adapters = {
-        "new": NewConnectorAdapter,
-        "reference": ReferenceConnectorAdapter,
+        ConnectorType.UNIVERSAL: UniversalConnectorAdapter,
+        ConnectorType.REFERENCE: ReferenceConnectorAdapter,
     }
     
     @classmethod
-    def create_adapter(cls, connector_type: str, **kwargs) -> ConnectorAdapter:
+    def create_adapter(cls, connector_type: ConnectorType, **kwargs) -> ConnectorAdapter:
         """Create a connector adapter of the specified type."""
         if connector_type not in cls._adapters:
             raise ValueError(f"Unknown connector type: {connector_type}. "
@@ -102,11 +118,11 @@ class ConnectorFactory:
         return adapter_class(**kwargs)
     
     @classmethod
-    def get_available_connectors(cls) -> Dict[str, str]:
+    def get_available_connectors(cls) -> Dict[ConnectorType, str]:
         """Get a list of available connector types and their descriptions."""
         return {
-            "new": "New PEP 249 connector implementation",
-            "reference": "Reference Snowflake connector implementation"
+            ConnectorType.UNIVERSAL: "Universal driver implementation",
+            ConnectorType.REFERENCE: "Old Snowflake connector implementation"
         }
 
 
@@ -135,8 +151,13 @@ def get_test_parameters():
     }
 
 
-def create_connection_with_adapter(adapter: ConnectorAdapter):
-    """Create a connection using the specified adapter and test parameters."""
+def create_connection_with_adapter(adapter: ConnectorAdapter, **override_params):
+    """Create a connection using the specified adapter and test parameters.
+    
+    Args:
+        adapter: The connector adapter to use
+        **override_params: Parameters to override defaults (e.g., account="test", user="testuser")
+    """
     test_params = get_test_parameters()
     
     # Convert test parameter names to connection parameter names
@@ -162,5 +183,8 @@ def create_connection_with_adapter(adapter: ConnectorAdapter):
     
     # Remove None values
     connection_params = {k: v for k, v in connection_params.items() if v is not None}
+    
+    # Apply overrides
+    connection_params.update(override_params)
     
     return adapter.connect(**connection_params)
