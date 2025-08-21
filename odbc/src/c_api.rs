@@ -1,18 +1,15 @@
 //! ODBC C API functions
 //!
 //! This module provides the C API interface for ODBC functions.
-//! All implementations delegate to the Rust-like interfaces in the `api` module.
 
 use crate::api::{self, ToSqlReturn};
 use crate::cdata_types::CDataType;
 use odbc_sys as sql;
-use tracing;
 
 /// # Safety
 /// This function is called by the ODBC driver manager.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SQLAllocEnv(output_handle: *mut sql::Handle) -> sql::RetCode {
-    tracing::debug!("SQLAllocEnv called");
     api::handle_allocation::sql_alloc_handle(sql::HandleType::Env, 0 as sql::Handle, output_handle)
         .to_sql_code()
 }
@@ -24,7 +21,6 @@ pub unsafe extern "C" fn SQLAllocConnect(
     environment_handle: sql::Handle,
     output_handle: *mut sql::Handle,
 ) -> sql::RetCode {
-    tracing::debug!("SQLAllocConnect called");
     api::handle_allocation::sql_alloc_handle(
         sql::HandleType::Dbc,
         environment_handle,

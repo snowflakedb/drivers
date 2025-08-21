@@ -1,5 +1,3 @@
-//! Utility functions with Rust-like interfaces
-
 use crate::api::{OdbcResult, StatementState, stmt_from_handle};
 use odbc_sys as sql;
 use tracing;

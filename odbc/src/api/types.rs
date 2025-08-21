@@ -1,5 +1,3 @@
-//! Type definitions for ODBC operations
-
 use crate::api::OdbcError;
 use crate::cdata_types::CDataType;
 use arrow::{array::RecordBatch, ffi_stream::ArrowArrayStreamReader};

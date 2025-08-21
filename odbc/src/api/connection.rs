@@ -1,5 +1,3 @@
-//! Connection functions with Rust-like interfaces
-
 use crate::api::{ConnectionState, OdbcError, OdbcResult, conn_from_handle};
 use odbc_sys as sql;
 use sf_core::api_client;

@@ -1,5 +1,3 @@
-//! Error types for ODBC operations
-
 use crate::read_arrow::ExtractError;
 use thiserror::Error;
 

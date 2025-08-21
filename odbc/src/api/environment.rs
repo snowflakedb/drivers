@@ -1,5 +1,3 @@
-//! Environment attribute functions with Rust-like interfaces
-
 use crate::api::{OdbcError, OdbcResult, env_from_handle};
 use odbc_sys as sql;
 use tracing;

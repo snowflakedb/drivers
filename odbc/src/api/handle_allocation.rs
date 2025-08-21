@@ -1,5 +1,3 @@
-//! Handle allocation functions with Rust-like interfaces
-
 use crate::api::{
     Connection, ConnectionState, Environment, OdbcError, OdbcResult, Statement, StatementState,
     conn_from_handle,

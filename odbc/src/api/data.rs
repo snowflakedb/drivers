@@ -1,5 +1,3 @@
-//! Data retrieval functions with Rust-like interfaces
-
 use crate::api::{OdbcError, OdbcResult, StatementState, stmt_from_handle};
 use crate::cdata_types::{CDataType, Double, Real, SBigInt, UBigInt};
 use crate::read_arrow::{Buffer, ExtractError, ReadArrowValue, Value};

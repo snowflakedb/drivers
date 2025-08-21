@@ -1,5 +1,3 @@
-//! ODBC function implementations with Rust-like interfaces
-
 pub mod connection;
 pub mod data;
 pub mod environment;

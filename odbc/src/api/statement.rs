@@ -1,5 +1,3 @@
-//! Statement functions with Rust-like interfaces
-
 use crate::api::{
     ConnectionState, OdbcError, OdbcResult, ParameterBinding, StatementState, stmt_from_handle,
 };
