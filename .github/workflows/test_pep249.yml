@@ -1,4 +1,4 @@
-name: Test PEP249 Driver
+name: PEP-249 CI
 
 on:
   push:
