@@ -10,6 +10,7 @@ use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 
 use crate::compression::decompress_data;
 use crate::rest::RestError;
+use crate::rest::error::InternalSnafu;
 
 pub struct ChunkDownloadData {
     url: String,
@@ -99,9 +100,15 @@ pub async fn get_chunk_data(chunk: &ChunkDownloadData) -> Result<Vec<u8>, RestEr
     let mut headers = HeaderMap::new();
     for (key, value) in chunk.headers.iter() {
         let header_name = HeaderName::from_str(key)
-            .map_err(|e| RestError::Internal(format!("Invalid header name '{key}': {e}")))?;
+            .map_err(|e| InternalSnafu {
+                message: format!("Invalid header name '{key}': {e}"),
+            }
+            .build())?;
         let header_value = HeaderValue::from_str(value)
-            .map_err(|e| RestError::Internal(format!("Invalid header value for '{key}': {e}")))?;
+            .map_err(|e| InternalSnafu {
+                message: format!("Invalid header value for '{key}': {e}"),
+            }
+            .build())?;
         headers.insert(header_name, header_value);
     }
     let response = client
@@ -109,12 +116,15 @@ pub async fn get_chunk_data(chunk: &ChunkDownloadData) -> Result<Vec<u8>, RestEr
         .headers(headers)
         .send()
         .await
-        .map_err(|e| RestError::Internal(format!("Failed to get chunk data: {e}")))?;
+        .map_err(|e| InternalSnafu {
+            message: format!("Failed to get chunk data: {e}"),
+        }
+        .build())?;
     if !response.status().is_success() {
-        return Err(RestError::Internal(format!(
-            "Failed to get chunk data: {}",
-            response.status()
-        )));
+        return Err(InternalSnafu {
+            message: format!("Failed to get chunk data: {}", response.status()),
+        }
+        .build());
     }
     tracing::debug!("Chunk response: {:?}", response);
     let body = if response.headers().get("Content-Encoding")
@@ -124,14 +134,23 @@ pub async fn get_chunk_data(chunk: &ChunkDownloadData) -> Result<Vec<u8>, RestEr
         let compressed_body = response
             .bytes()
             .await
-            .map_err(|e| RestError::Internal(format!("Failed to get chunk data: {e}")))?;
+            .map_err(|e| InternalSnafu {
+                message: format!("Failed to get chunk data: {e}"),
+            }
+            .build())?;
         decompress_data(compressed_body.to_vec())
-            .map_err(|e| RestError::Internal(format!("Failed to decompress chunk data: {e}")))?
+            .map_err(|e| InternalSnafu {
+                message: format!("Failed to decompress chunk data: {e}"),
+            }
+            .build())?
     } else {
         response
             .bytes()
             .await
-            .map_err(|e| RestError::Internal(format!("Failed to get chunk data: {e}")))?
+            .map_err(|e| InternalSnafu {
+                message: format!("Failed to get chunk data: {e}"),
+            }
+            .build())?
             .to_vec()
     };
 

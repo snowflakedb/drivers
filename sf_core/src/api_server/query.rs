@@ -9,25 +9,15 @@ use arrow::datatypes::{DataType, Field, Schema};
 use arrow::error::ArrowError;
 use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
 use rest::snowflake::query_response;
+use snafu::{Location, ResultExt, Snafu};
 use std::sync::Arc;
-use thiserror::Error;
-
-#[derive(Debug, Error)]
-pub enum QueryResponseProcessingError {
-    #[error("Arrow processing error: {0}")]
-    Arrow(#[from] ArrowError),
-    #[error("File manager error: {0}")]
-    FileManager(#[from] file_manager::FileManagerError),
-    #[error("Rest error: {0}")]
-    Rest(#[from] RestError),
-}
 
 pub async fn process_query_response(
     data: &query_response::Data,
 ) -> Result<Box<dyn RecordBatchReader + Send>, QueryResponseProcessingError> {
     match data.command {
         Some(ref command) => perform_put_get(command.clone(), data).await,
-        None => read_batches(data),
+        None => read_batches(data).context(ReadBatchesSnafu),
     }
 }
 
@@ -37,35 +27,41 @@ async fn perform_put_get(
 ) -> Result<Box<dyn RecordBatchReader + Send>, QueryResponseProcessingError> {
     match command.as_str() {
         "UPLOAD" => {
-            let file_upload_data = data.to_file_upload_data()?;
-            let upload_results = upload_files(&file_upload_data).await?;
-            upload_results_reader(upload_results).map_err(|e| e.into())
+            let file_upload_data = data.to_file_upload_data()
+                .context(PrepareFileTransferSnafu)?;
+            let upload_results = upload_files(&file_upload_data).await
+                .context(FileUploadSnafu)?;
+            upload_results_reader(upload_results)
+                .context(ConvertUploadResultsSnafu)
         }
         "DOWNLOAD" => {
-            let file_download_data = data.to_file_download_data()?;
-            let download_results = download_files(file_download_data).await?;
-            download_results_reader(download_results).map_err(|e| e.into())
+            let file_download_data = data.to_file_download_data()
+                .context(PrepareFileTransferSnafu)?;
+            let download_results = download_files(file_download_data).await
+                .context(FileDownloadSnafu)?;
+            download_results_reader(download_results)
+                .context(ConvertDownloadResultsSnafu)
         }
-        _ => Err(RestError::InvalidSnowflakeResponse(
-            "Unsupported command in query response".to_string(),
-        )
-        .into()),
+        _ => UnsupportedCommandSnafu {
+            command: command.to_string(),
+        }
+        .fail(),
     }
 }
 
 fn read_batches(
     data: &query_response::Data,
-) -> Result<Box<dyn RecordBatchReader + Send>, QueryResponseProcessingError> {
+) -> Result<Box<dyn RecordBatchReader + Send>, ReadBatchesError> {
     if let Some(rowset_base64) = &data.rowset_base64 {
-        let rowset_bytes = BASE64.decode(rowset_base64).map_err(|e| {
-            RestError::InvalidSnowflakeResponse(format!("Failed to decode base64 rowset: {e}"))
-        })?;
+        let rowset_bytes = BASE64.decode(rowset_base64)
+            .context(Base64DecodeSnafu)?;
 
         let reader_result = if let Some(chunk_download_data) = data.to_chunk_download_data() {
             ChunkReader::multi_chunk(rowset_bytes, chunk_download_data)
         } else {
             ChunkReader::single_chunk(rowset_bytes)
-        }?;
+        }
+        .context(ChunkReaderSnafu)?;
 
         Ok(Box::new(reader_result))
     } else if let (Some(rowset), Some(rowtype)) = (&data.rowset, &data.row_type) {
@@ -74,19 +70,17 @@ fn read_batches(
             let num_columns_rowset = rowset.first().unwrap().len();
             let num_columns_rowtype = rowtype.len();
             if num_columns_rowset != num_columns_rowtype {
-                return Err(RestError::InvalidSnowflakeResponse(format!(
-                    "RowType count ({num_columns_rowtype}) doesn't match column count ({num_columns_rowset})"
-                )).into());
+                return ColumnCountMismatchSnafu {
+                    rowtype_count: num_columns_rowtype,
+                    rowset_count: num_columns_rowset,
+                }
+                .fail();
             }
         }
-        convert_string_rowset_to_arrow_reader(rowset, rowtype).map_err(|e| {
-            RestError::InvalidSnowflakeResponse(format!("Failed to convert rowset: {e}")).into()
-        })
+        convert_string_rowset_to_arrow_reader(rowset, rowtype)
+            .context(ConvertRowsetSnafu)
     } else {
-        Err(RestError::InvalidSnowflakeResponse(
-            "Rowset or rowtype not found in the response".to_string(),
-        )
-        .into())
+        MissingRowsetOrRowtypeSnafu.fail()
     }
 }
 
@@ -156,4 +150,84 @@ pub fn download_results_reader(
     ];
 
     boxed_arrow_reader(schema, columns)
+}
+
+#[derive(Debug, Snafu)]
+pub enum QueryResponseProcessingError {
+    #[snafu(display("Failed to convert upload results to Arrow format"))]
+    ConvertUploadResults {
+        source: ArrowError,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Failed to convert download results to Arrow format"))]
+    ConvertDownloadResults {
+        source: ArrowError,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Failed to upload files"))]
+    FileUpload {
+        source: file_manager::FileManagerError,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Failed to download files"))]
+    FileDownload {
+        source: file_manager::FileManagerError,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Failed to read batches from query response"))]
+    ReadBatches {
+        source: ReadBatchesError,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Unsupported command in query response: {command}"))]
+    UnsupportedCommand {
+        command: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Failed to prepare file transfer data"))]
+    PrepareFileTransfer {
+        source: RestError,
+        #[snafu(implicit)]
+        location: Location,
+    },
+}
+
+#[derive(Debug, Snafu)]
+pub enum ReadBatchesError {
+    #[snafu(display("Column count mismatch: rowtype has {rowtype_count} columns, but rowset has {rowset_count} columns"))]
+    ColumnCountMismatch {
+        rowtype_count: usize,
+        rowset_count: usize,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Rowset or rowtype not found in the response"))]
+    MissingRowsetOrRowtype {
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Failed to decode base64 rowset"))]
+    Base64Decode {
+        source: base64::DecodeError,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Failed to read chunks"))]
+    ChunkReader {
+        source: ArrowError,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Failed to convert rowset to Arrow format"))]
+    ConvertRowset {
+        source: crate::arrow_utils::ArrowUtilsError,
+        #[snafu(implicit)]
+        location: Location,
+    },
 }

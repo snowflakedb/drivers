@@ -1,8 +1,20 @@
 pub mod rest_parameters;
 pub mod settings;
 
-#[derive(Debug)]
+use snafu::{Location, Snafu};
+
+#[derive(Debug, Snafu)]
 pub enum ConfigError {
-    MissingParameter(String),
-    InvalidArgument(String),
+    #[snafu(display("Missing required parameter: {parameter}"))]
+    MissingParameter {
+        parameter: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Invalid argument: {argument}"))]
+    InvalidArgument {
+        argument: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
 }

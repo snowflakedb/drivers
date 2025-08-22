@@ -3,19 +3,8 @@ use arrow::array::{Array, Int64Array, StringArray};
 use arrow::datatypes::{DataType, Field, Schema};
 use arrow::error::ArrowError;
 use arrow::record_batch::RecordBatch;
+use snafu::{Location, ResultExt, Snafu};
 use std::sync::Arc;
-use thiserror::Error;
-
-/// Custom error type for Arrow operations
-#[derive(Error, Debug)]
-pub enum ArrowUtilsError {
-    #[error("Arrow error: {0}")]
-    Arrow(#[from] ArrowError),
-    #[error("Invalid integer value")]
-    InvalidInteger(#[from] std::num::ParseIntError),
-    #[error("Unsupported Snowflake type, only TEXT and FIXED with scale 0 types are supported")]
-    UnsupportedType,
-}
 
 /// Maps Snowflake data types to Arrow data types
 /// Only supports TEXT and FIXED (with scale 0) types
@@ -23,7 +12,10 @@ fn snowflake_type_to_arrow_type(row_type: &RowType) -> Result<DataType, ArrowUti
     match row_type.type_.to_uppercase().as_str() {
         "TEXT" => Ok(DataType::Utf8),
         "FIXED" if row_type.scale == Some(0) => Ok(DataType::Int64),
-        _ => Err(ArrowUtilsError::UnsupportedType),
+        _ => UnsupportedTypeSnafu {
+            snowflake_type: format!("{} (scale: {:?})", row_type.type_, row_type.scale),
+        }
+        .fail(),
     }
 }
 
@@ -44,11 +36,18 @@ fn create_column_array(
             // Convert string values to i64 and return parsing error if any value is invalid
             let int_values: Result<Vec<i64>, ArrowUtilsError> = values
                 .into_iter()
-                .map(|v| v.parse::<i64>().map_err(ArrowUtilsError::InvalidInteger))
+                .map(|v| {
+                    v.parse::<i64>().context(InvalidIntegerSnafu {
+                        value: v.to_string(),
+                    })
+                })
                 .collect();
             Ok(Arc::new(Int64Array::from(int_values?)))
         }
-        _ => Err(ArrowUtilsError::UnsupportedType),
+        _ => UnsupportedTypeSnafu {
+            snowflake_type: format!("{data_type:?}"),
+        }
+        .fail(),
     }
 }
 
@@ -77,7 +76,7 @@ pub fn convert_string_rowset_to_arrow_reader(
 
     let columns = columns?;
 
-    boxed_arrow_reader(schema, columns).map_err(|e| e.into())
+    boxed_arrow_reader(schema, columns).context(ArrowSnafu)
 }
 
 pub fn boxed_arrow_reader(
@@ -89,4 +88,27 @@ pub fn boxed_arrow_reader(
         vec![Ok(batch)],
         schema,
     )))
+}
+
+#[derive(Snafu, Debug)]
+pub enum ArrowUtilsError {
+    #[snafu(display("Arrow operation failed"))]
+    Arrow {
+        source: ArrowError,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Failed to parse integer value: {value}"))]
+    InvalidInteger {
+        value: String,
+        source: std::num::ParseIntError,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Unsupported Snowflake type: {snowflake_type}. Only TEXT and FIXED with scale 0 are supported"))]
+    UnsupportedType {
+        snowflake_type: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
 }

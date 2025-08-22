@@ -1,7 +1,5 @@
 extern crate infer;
-
-use std::fmt;
-use thiserror::Error;
+use snafu::{Location, Snafu};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum CompressionType {
@@ -14,24 +12,18 @@ pub enum CompressionType {
     None,
 }
 
-impl fmt::Display for CompressionType {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl CompressionType {
+    pub fn get_snowflake_representation(&self) -> &str {
         match self {
-            CompressionType::Gzip => write!(f, "GZIP"),
-            CompressionType::Bzip2 => write!(f, "BZ2"),
-            CompressionType::Brotli => write!(f, "BROTLI"),
-            CompressionType::Zstd => write!(f, "ZSTD"),
-            CompressionType::Deflate => write!(f, "DEFLATE"),
-            CompressionType::RawDeflate => write!(f, "RAW_DEFLATE"),
-            CompressionType::None => write!(f, "NONE"),
+            CompressionType::Gzip => "GZIP",
+            CompressionType::Bzip2 => "BZ2",
+            CompressionType::Brotli => "BROTLI",
+            CompressionType::Zstd => "ZSTD",
+            CompressionType::Deflate => "DEFLATE",
+            CompressionType::RawDeflate => "RAW_DEFLATE",
+            CompressionType::None => "NONE",
         }
     }
-}
-
-#[derive(Error, Debug)]
-pub enum CompressionTypeError {
-    #[error("Unsupported compression type: {0}")]
-    UnsupportedCompressionType(String),
 }
 
 fn get_compression_type_from_extension(
@@ -44,27 +36,34 @@ fn get_compression_type_from_extension(
         "zst" => Ok(Some(CompressionType::Zstd)),
         "deflate" => Ok(Some(CompressionType::Deflate)),
         "raw_deflate" => Ok(Some(CompressionType::RawDeflate)),
-        "lz" => Err(CompressionTypeError::UnsupportedCompressionType(
-            "LZIP".to_string(),
-        )),
-        "lzma" => Err(CompressionTypeError::UnsupportedCompressionType(
-            "LZMA".to_string(),
-        )),
-        "lzo" => Err(CompressionTypeError::UnsupportedCompressionType(
-            "LZO".to_string(),
-        )),
-        "xz" => Err(CompressionTypeError::UnsupportedCompressionType(
-            "XZ".to_string(),
-        )),
-        "Z" => Err(CompressionTypeError::UnsupportedCompressionType(
-            "COMPRESS".to_string(),
-        )),
-        "parquet" => Err(CompressionTypeError::UnsupportedCompressionType(
-            "PARQUET".to_string(),
-        )),
-        "orc" => Err(CompressionTypeError::UnsupportedCompressionType(
-            "ORC".to_string(),
-        )),
+        "lz" => UnsupportedCompressionTypeSnafu {
+            type_name: "LZ".to_string(),
+        }
+        .fail(),
+        "lzma" => UnsupportedCompressionTypeSnafu {
+            type_name: "LZMA".to_string(),
+        }
+        .fail(),
+        "lzo" => UnsupportedCompressionTypeSnafu {
+            type_name: "LZO".to_string(),
+        }
+        .fail(),
+        "xz" => UnsupportedCompressionTypeSnafu {
+            type_name: "XZ".to_string(),
+        }
+        .fail(),
+        "Z" => UnsupportedCompressionTypeSnafu {
+            type_name: "COMPRESS".to_string(),
+        }
+        .fail(),
+        "parquet" => UnsupportedCompressionTypeSnafu {
+            type_name: "PARQUET".to_string(),
+        }
+        .fail(),
+        "orc" => UnsupportedCompressionTypeSnafu {
+            type_name: "ORC".to_string(),
+        }
+        .fail(),
         _ => Ok(None),
     }
 }
@@ -110,4 +109,14 @@ fn try_guess_compression_type_from_buffer(
         Some(kind) => get_compression_type_from_extension(kind.extension()),
         None => Ok(None),
     }
+}
+
+#[derive(Snafu, Debug)]
+pub enum CompressionTypeError {
+    #[snafu(display("Unsupported compression type: {type_name}"))]
+    UnsupportedCompressionType {
+        type_name: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
 }

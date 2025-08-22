@@ -5,7 +5,8 @@ pub mod query_response;
 use crate::auth::{Credentials, create_credentials};
 use crate::config::rest_parameters::ClientInfo;
 use crate::config::rest_parameters::{LoginParameters, QueryParameters};
-use crate::rest::error::RestError;
+use crate::rest::error::{RestError, AuthSnafu, InternalSnafu, InvalidSnowflakeResponseSnafu, StatusSnafu};
+use snafu::ResultExt;
 use crate::rest::snowflake::auth::{
     AuthRequest, AuthRequestClientEnvironment, AuthRequestData, AuthResponse,
 };
@@ -41,7 +42,7 @@ pub fn auth_request_data(login_parameters: &LoginParameters) -> Result<AuthReque
         ..Default::default()
     };
 
-    match create_credentials(login_parameters).map_err(RestError::AuthError)? {
+    match create_credentials(login_parameters).context(AuthSnafu)? {
         Credentials::Password { username, password } => {
             data.login_name = Some(username);
             data.password = Some(password);
@@ -131,7 +132,10 @@ pub async fn snowflake_login(login_parameters: &LoginParameters) -> Result<Strin
     let request = request.build().unwrap();
     let response = client.execute(request).await.map_err(|e| {
         tracing::error!(error = %e, "HTTP request failed");
-        RestError::Internal(format!("HTTP request failed: {e}"))
+        InternalSnafu {
+            message: format!("HTTP request failed: {e}"),
+        }
+        .build()
     })?;
 
     let status = response.status();
@@ -145,14 +149,18 @@ pub async fn snowflake_login(login_parameters: &LoginParameters) -> Result<Strin
 
     if !status.is_success() {
         tracing::error!(status = %status, error_text = %response_text, "Login request failed");
-        return Err(RestError::Internal(format!(
-            "Login failed with status {status}: {response_text}"
-        )));
+        return Err(InternalSnafu {
+            message: format!("Login failed with status {status}: {response_text}"),
+        }
+        .build());
     }
 
     // Parse the response
     let auth_response: AuthResponse = serde_json::from_str(&response_text).map_err(|e| {
-        RestError::InvalidSnowflakeResponse(format!("Failed to parse login response: {e}"))
+        InvalidSnowflakeResponseSnafu {
+            message: format!("Failed to parse login response: {e}"),
+        }
+        .build()
     })?;
 
     if !auth_response.success {
@@ -160,7 +168,7 @@ pub async fn snowflake_login(login_parameters: &LoginParameters) -> Result<Strin
             .message
             .unwrap_or_else(|| "Unknown error".to_string());
         tracing::error!(message = %message, "Snowflake login failed");
-        return Err(RestError::Status(status));
+        return Err(StatusSnafu { status }.build());
     }
 
     // Extract and store the session token
@@ -170,9 +178,10 @@ pub async fn snowflake_login(login_parameters: &LoginParameters) -> Result<Strin
         Ok(token)
     } else {
         tracing::error!("Login response missing token data");
-        Err(RestError::Internal(
-            "Login response missing token data".to_string(),
-        ))
+        Err(InternalSnafu {
+            message: "Login response missing token data".to_string(),
+        }
+        .build())
     }
 }
 
@@ -224,7 +233,10 @@ pub async fn snowflake_query(
         .build()
         .map_err(|e| {
             tracing::error!(error = %e, "Failed to build query request");
-            RestError::Internal(format!("Failed to build query request: {e}"))
+            InternalSnafu {
+                message: format!("Failed to build query request: {e}"),
+            }
+            .build()
         })?;
 
     tracing::debug!("Query request: {:?}", request);
@@ -239,7 +251,10 @@ pub async fn snowflake_query(
 
     let response = client.execute(request).await.map_err(|e| {
         tracing::error!(error = %e, "Failed to execute query request");
-        RestError::Internal(format!("Failed to execute query request: {e}"))
+        InternalSnafu {
+            message: format!("Failed to execute query request: {e}"),
+        }
+        .build()
     })?;
 
     if !response.status().is_success() {
@@ -249,7 +264,7 @@ pub async fn snowflake_query(
             .await
             .unwrap_or_else(|_| "Unknown error".to_string());
         tracing::error!(status = %status, error_text = %error_text, "Query request failed");
-        return Err(RestError::Status(status));
+        return Err(StatusSnafu { status }.build());
     }
 
     let response_text = response
@@ -262,7 +277,10 @@ pub async fn snowflake_query(
     let response_data: query_response::Response =
         serde_json::from_str(&response_text).map_err(|e| {
             tracing::trace!("Response text: {}", response_text);
-            RestError::InvalidSnowflakeResponse(format!("Failed to parse query response: {e}"))
+            InvalidSnowflakeResponseSnafu {
+                message: format!("Failed to parse query response: {e}"),
+            }
+            .build()
         })?;
 
     Ok(response_data)

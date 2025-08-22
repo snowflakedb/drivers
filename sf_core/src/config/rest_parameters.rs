@@ -1,6 +1,6 @@
 use std::fs;
 
-use crate::config::ConfigError;
+use crate::config::{ConfigError, InvalidArgumentSnafu, MissingParameterSnafu};
 use crate::config::settings::Setting;
 use crate::config::settings::Settings;
 
@@ -14,7 +14,7 @@ fn get_server_url(settings: &dyn Settings) -> Result<String, ConfigError> {
         .unwrap_or("https".to_string());
     let host = settings
         .get_string("host")
-        .ok_or_else(|| ConfigError::MissingParameter("host".to_string()))?;
+        .ok_or_else(|| MissingParameterSnafu { parameter: "host" }.build())?;
     if protocol != "https" && protocol != "http" {
         tracing::warn!("Unexpected protocol specified during server url construction: {protocol}");
     }
@@ -80,7 +80,7 @@ impl LoginParameters {
                 if let Some(value) = settings.get_string("account") {
                     value
                 } else {
-                    return Err(ConfigError::MissingParameter("account".to_string()));
+                    return Err(MissingParameterSnafu { parameter: "account" }.build());
                 }
             },
             login_method: LoginMethod::from_settings(settings)?,
@@ -114,13 +114,17 @@ impl LoginMethod {
     fn read_private_key(settings: &dyn Settings) -> Result<String, ConfigError> {
         if let Some(private_key_file) = settings.get_string("private_key_file") {
             let private_key = fs::read_to_string(private_key_file).map_err(|e| {
-                ConfigError::InvalidArgument(format!("Could not read private key file: {e}"))
+                InvalidArgumentSnafu {
+                    argument: format!("Could not read private key file: {e}"),
+                }
+                .build()
             })?;
             Ok(private_key)
         } else {
-            Err(ConfigError::MissingParameter(
-                "private_key_file".to_string(),
-            ))
+            Err(MissingParameterSnafu {
+                parameter: "private_key_file",
+            }
+            .build())
         }
     }
 
@@ -133,29 +137,30 @@ impl LoginMethod {
             "SNOWFLAKE_JWT" => Ok(Self::PrivateKey {
                 username: settings
                     .get_string("user")
-                    .ok_or(ConfigError::MissingParameter("user".to_string()))?,
+                    .ok_or_else(|| MissingParameterSnafu { parameter: "user" }.build())?,
                 private_key: Self::read_private_key(settings)?,
                 passphrase: settings.get_string("private_key_password"),
             }),
             "SNOWFLAKE_PASSWORD" | "" => Ok(Self::Password {
                 username: settings
                     .get_string("user")
-                    .ok_or(ConfigError::MissingParameter("user".to_string()))?,
+                    .ok_or_else(|| MissingParameterSnafu { parameter: "user" }.build())?,
                 password: settings
                     .get_string("password")
-                    .ok_or(ConfigError::MissingParameter("password".to_string()))?,
+                    .ok_or_else(|| MissingParameterSnafu { parameter: "password" }.build())?,
             }),
             "PROGRAMMATIC_ACCESS_TOKEN" => Ok(Self::Pat {
                 username: settings
                     .get_string("user")
-                    .ok_or(ConfigError::MissingParameter("user".to_string()))?,
+                    .ok_or_else(|| MissingParameterSnafu { parameter: "user" }.build())?,
                 token: settings
                     .get_string("token")
-                    .ok_or(ConfigError::MissingParameter("token".to_string()))?,
+                    .ok_or_else(|| MissingParameterSnafu { parameter: "token" }.build())?,
             }),
-            _ => Err(ConfigError::InvalidArgument(
-                "Invalid authenticator".to_string(),
-            )),
+            _ => Err(InvalidArgumentSnafu {
+                argument: "Invalid authenticator",
+            }
+            .build()),
         }
     }
 }

@@ -4,7 +4,7 @@ use crate::config::rest_parameters::{LoginParameters, QueryParameters};
 use crate::config::settings::Setting;
 use crate::driver::{Connection, Database, Statement, StatementError};
 use crate::handle_manager::{Handle, HandleManager};
-use crate::rest::error::RestError;
+use crate::rest::error::{RestError, InternalSnafu};
 
 use crate::thrift_gen::database_driver_v1::{
     ArrowArrayPtr, ArrowSchemaPtr, ConnectionHandle, DatabaseDriverSyncHandler,
@@ -595,7 +595,10 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
         let query = stmt
             .query
             .take()
-            .ok_or(RestError::Internal("Query not found".to_string()))?;
+            .ok_or_else(|| InternalSnafu {
+                message: "Query not found".to_string(),
+            }
+            .build())?;
 
         // Run within the async runtime
         let rt = tokio::runtime::Runtime::new()
@@ -607,7 +610,10 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
                 QueryParameters::from_settings(&conn.settings)?,
                 conn.session_token
                     .clone()
-                    .ok_or(RestError::Internal("Session token not found".to_string()))?,
+                    .ok_or_else(|| InternalSnafu {
+                        message: "Session token not found".to_string(),
+                    }
+                    .build())?,
             )
         };
 
@@ -627,9 +633,16 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
             ));
         }
 
+        use snafu::Report;
+
         let response_reader = rt
             .block_on(process_query_response(&response.data))
-            .map_err(|e| Self::unknown_error(format!("Failed to process query response: {e}")))?;
+            .map_err(|e| {
+                Self::unknown_error(format!(
+                    "Failed to process query response: {}",
+                    Report::from_error(e)
+                ))
+            })?;
 
         let rowset_stream = Box::new(FFI_ArrowArrayStream::new(response_reader));
 
