@@ -35,7 +35,7 @@ jobs:
           path: target/debug/libsf_core.so
 
   # Combined unit + integration tests with universal connector
-  test_universal:
+  pep249_tests:
     needs: build_rust_core
     strategy:
       fail-fast: false
@@ -91,7 +91,7 @@ jobs:
           path: pep249_dbapi/reports/*-${{ matrix.py }}.*
 
   # Integration tests only with reference connector (for comparison)
-  test_reference:
+  pep249_tests_reference:
     needs: build_rust_core
     strategy:
       fail-fast: false
@@ -148,8 +148,8 @@ jobs:
           path: pep249_dbapi/reports/*-${{ matrix.py }}.*
 
   # Compare results between connectors
-  compare_results:
-    needs: [test_universal, test_reference]
+  pep249_compare_results:
+    needs: [pep249_tests, pep249_tests_reference]
     if: always()
     strategy:
       fail-fast: false
