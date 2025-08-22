@@ -150,6 +150,7 @@ jobs:
   # Compare results between connectors
   compare_results:
     needs: [test_universal, test_reference]
+    if: always()
     strategy:
       fail-fast: false
       matrix: 
