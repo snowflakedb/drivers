@@ -180,21 +180,12 @@ jobs:
           ctest -C Debug --test-dir cmake-build --output-on-failure
 
 
-  # Python connector unit tests - fast tests on all Python versions
-  python_unit_tests:
+  # Build Rust core library once and share across Python jobs
+  build_rust_core:
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix: 
-        py: ["3.9", "3.10", "3.11", "3.12", "3.13"]
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
-      - name: Set up Python ${{ matrix.py }}
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.py }}
 
       - name: Install system dependencies
         run: |
@@ -204,19 +195,15 @@ jobs:
       - name: Build Rust core library
         run: cargo build --package sf_core
 
-      - name: Run unit tests
-        run: |
-          export CORE_PATH=$(pwd)/target/debug/libsf_core.so
-          cd pep249_dbapi
-          make unit-universal PY=${{ matrix.py }}
-      
-      - uses: actions/upload-artifact@v4
+      - name: Upload Rust artifacts
+        uses: actions/upload-artifact@v4
         with:
-          name: results-unit-${{ matrix.py }}
-          path: pep249_dbapi/reports/unit-${{ matrix.py }}.xml
+          name: rust-core-library
+          path: target/debug/libsf_core.so
 
-  # Integration tests with universal connector
-  integ_universal:
+  # Combined unit + integration tests with universal connector
+  test_universal:
+    needs: build_rust_core
     strategy:
       fail-fast: false
       matrix: 
@@ -231,27 +218,27 @@ jobs:
       - uses: actions/cache@v4
         with:
           path: ~/.cache/uv
-          key: uv-${{ runner.os }}-${{ matrix.py }}-${{ hashFiles('pep249_dbapi/pyproject.toml','pep249_dbapi/Makefile') }}
+          key: uv-${{ runner.os }}-${{ matrix.py }}-${{ hashFiles('pep249_dbapi/pyproject.toml','tox.ini') }}
       
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y unixodbc-dev
-
-      - name: Build Rust core library
-        run: cargo build --package sf_core
+      - name: Download Rust artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: rust-core-library
+          path: target/debug/
 
       - name: Decode secrets
         run: ./scripts/decode_secrets.sh
         env:
           PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
 
-      - name: Universal integ
+      - name: Run all tests (unit + integration)
         env:
           SNOWFLAKE_TEST_ACCOUNT: ${{ secrets.SNOWFLAKE_TEST_ACCOUNT }}
           SNOWFLAKE_USER: ${{ secrets.SNOWFLAKE_USER }}
           SNOWFLAKE_PASSWORD: ${{ secrets.SNOWFLAKE_PASSWORD }}
-        run: make integ-universal PY=${{ matrix.py }} REPORTS_DIR=reports
+        run: |
+          # Run all tests once and extract integration results for comparison
+          make all-universal PY=${{ matrix.py }} REPORTS_DIR=reports
         working-directory: pep249_dbapi
       
       - uses: actions/upload-artifact@v4
@@ -259,9 +246,9 @@ jobs:
           name: results-universal-${{ matrix.py }}
           path: pep249_dbapi/reports/*-${{ matrix.py }}.*
 
-  # Integration tests with reference connector
-  integ_reference:
-    needs: integ_universal
+  # Integration tests only with reference connector (for comparison)
+  test_reference:
+    needs: build_rust_core
     strategy:
       fail-fast: false
       matrix: 
@@ -276,22 +263,20 @@ jobs:
       - uses: actions/cache@v4
         with:
           path: ~/.cache/uv
-          key: uv-${{ runner.os }}-${{ matrix.py }}-${{ hashFiles('pep249_dbapi/pyproject.toml','pep249_dbapi/Makefile') }}
+          key: uv-${{ runner.os }}-${{ matrix.py }}-${{ hashFiles('pep249_dbapi/pyproject.toml','tox.ini') }}
       
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y unixodbc-dev
-
-      - name: Build Rust core library
-        run: cargo build --package sf_core
+      - name: Download Rust artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: rust-core-library
+          path: target/debug/
 
       - name: Decode secrets
         run: ./scripts/decode_secrets.sh
         env:
           PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
 
-      - name: Reference integ
+      - name: Run integration tests only (for comparison)
         env:
           SNOWFLAKE_TEST_ACCOUNT: ${{ secrets.SNOWFLAKE_TEST_ACCOUNT }}
           SNOWFLAKE_USER: ${{ secrets.SNOWFLAKE_USER }}
@@ -307,7 +292,7 @@ jobs:
 
   # Compare results between connectors
   compare_results:
-    needs: [python_unit_tests, integ_universal, integ_reference]
+    needs: [test_universal, test_reference]
     strategy:
       fail-fast: false
       matrix: 
@@ -315,10 +300,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
-        with: 
-          name: results-unit-${{ matrix.py }}
-          path: unit-results
       - uses: actions/download-artifact@v4
         with: 
           name: results-universal-${{ matrix.py }}
@@ -331,31 +312,8 @@ jobs:
         env:
           UNIVERSAL_DIR: universal-results
           REFERENCE_DIR: reference-results
-          UNIT_DIR: unit-results
           FAIL_ON_REGRESSIONS: "0"   # flip to "1" when you're ready to gate
-        run: |
-          echo "## Test Results Summary - Python ${{ matrix.py }}" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          
-          # Show unit test results
-          if [ -f unit-results/unit-${{ matrix.py }}.xml ]; then
-            echo "### Unit Tests" >> $GITHUB_STEP_SUMMARY
-            python3 -c "
-import xml.etree.ElementTree as ET
-tree = ET.parse('unit-results/unit-${{ matrix.py }}.xml')
-root = tree.getroot()
-tests = int(root.get('tests', 0))
-failures = int(root.get('failures', 0))
-errors = int(root.get('errors', 0))
-status = '✅ PASS' if failures == 0 and errors == 0 else '❌ FAIL'
-print(f'- **Unit tests**: {status} ({tests} tests, {failures} failures, {errors} errors)')
-" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-          fi
-          
-          # Compare integration tests
-          echo "### Integration Test Comparison" >> $GITHUB_STEP_SUMMARY
-          make compare-artifacts PY=${{ matrix.py }} | tee -a $GITHUB_STEP_SUMMARY
+        run: make compare-artifacts PY=${{ matrix.py }} | tee -a $GITHUB_STEP_SUMMARY
         working-directory: pep249_dbapi
 
   jdbc_tests:
