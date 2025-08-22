@@ -14,11 +14,6 @@ env:
 
 jobs:
   # Build Rust core library once and share across Python jobs
-  old-job-name:           # if protection expects a job-level check
-    runs-on: ubuntu-latest
-    steps:
-      - run: echo "Compat shim to satisfy old required check"
-
   build_rust_core:
     runs-on: ubuntu-latest
     steps:
@@ -152,31 +147,31 @@ jobs:
           name: results-reference-${{ matrix.py }}
           path: pep249_dbapi/reports/*-${{ matrix.py }}.*
 
-  # Compare results between connectors
-  pep_249_compare_results:
-    needs: [pep_249_tests, pep_249_tests_reference]
-    if: always()
-    strategy:
-      fail-fast: false
-      matrix:
-        py: ${{ fromJson(format('["{0}"]', join(split(vars.REFERENCE_TEST_VERSIONS, ' '), '", "'))) }}
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
-        with:
-          name: results-universal-${{ matrix.py }}
-          path: universal-results
-      - uses: actions/download-artifact@v4
-        with:
-          name: results-reference-${{ matrix.py }}
-          path: reference-results
-      - name: Compare & summarize
-        env:
-          UNIVERSAL_DIR: universal-results
-          REFERENCE_DIR: reference-results
-          FAIL_ON_REGRESSIONS: "0"   # set to "1" when ready to for a strong requirement on compliance with old driver
-        run: |
-          make setup
-          make compare-artifacts PY=${{ matrix.py }} | tee -a $GITHUB_STEP_SUMMARY
-        working-directory: pep249_dbapi
+#  # Compare results between connectors
+#  pep_249_compare_results:
+#    needs: [pep_249_tests, pep_249_tests_reference]
+#    if: always()
+#    strategy:
+#      fail-fast: false
+#      matrix:
+#        py: ${{ fromJson(format('["{0}"]', join(split(vars.REFERENCE_TEST_VERSIONS, ' '), '", "'))) }}
+#    runs-on: ubuntu-latest
+#    steps:
+#      - uses: actions/checkout@v4
+#      - uses: actions/download-artifact@v4
+#        with:
+#          name: results-universal-${{ matrix.py }}
+#          path: universal-results
+#      - uses: actions/download-artifact@v4
+#        with:
+#          name: results-reference-${{ matrix.py }}
+#          path: reference-results
+#      - name: Compare & summarize
+#        env:
+#          UNIVERSAL_DIR: universal-results
+#          REFERENCE_DIR: reference-results
+#          FAIL_ON_REGRESSIONS: "0"   # set to "1" when ready to for a strong requirement on compliance with old driver
+#        run: |
+#          make setup
+#          make compare-artifacts PY=${{ matrix.py }} | tee -a $GITHUB_STEP_SUMMARY
+#        working-directory: pep249_dbapi
