@@ -39,7 +39,7 @@ jobs:
     needs: build_rust_core
     strategy:
       fail-fast: false
-      matrix: 
+      matrix:
         py: ["3.9", "3.10", "3.11", "3.12", "3.13"]
     runs-on: ubuntu-latest
     if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
@@ -84,7 +84,7 @@ jobs:
           make setup
           make test-integ-universal PY=${{ matrix.py }}
         working-directory: pep249_dbapi
-      
+
       - uses: actions/upload-artifact@v4
         with:
           name: results-universal-${{ matrix.py }}
@@ -95,7 +95,7 @@ jobs:
     needs: build_rust_core
     strategy:
       fail-fast: false
-      matrix: 
+      matrix:
         py: ${{ fromJson(format('["{0}"]', join(split(vars.REFERENCE_TEST_VERSIONS, ' '), '", "'))) }}
     runs-on: ubuntu-latest
     if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
@@ -141,7 +141,7 @@ jobs:
           make setup
           make test-integ-reference PY=${{ matrix.py }}
         working-directory: pep249_dbapi
-      
+
       - uses: actions/upload-artifact@v4
         with:
           name: results-reference-${{ matrix.py }}
@@ -153,17 +153,17 @@ jobs:
     if: always()
     strategy:
       fail-fast: false
-      matrix: 
+      matrix:
         py: ${{ fromJson(format('["{0}"]', join(split(vars.REFERENCE_TEST_VERSIONS, ' '), '", "'))) }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
-        with: 
+        with:
           name: results-universal-${{ matrix.py }}
           path: universal-results
       - uses: actions/download-artifact@v4
-        with: 
+        with:
           name: results-reference-${{ matrix.py }}
           path: reference-results
       - name: Compare & summarize
