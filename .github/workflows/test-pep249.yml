@@ -1,4 +1,4 @@
-name: PEP-249 CI
+name: PEP-249 CI Tests
 
 on:
   push:
