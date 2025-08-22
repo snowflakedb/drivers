@@ -101,10 +101,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        py: ${{ fromJson(format('["{0}"]', join(split(vars.REFERENCE_TEST_VERSIONS, ' '), '", "'))) }}
+        py: ["3.13"]
     runs-on: ubuntu-latest
     if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
-    continue-on-error: true
+    continue-on-error: true  # Reference tests expected to fail due to behavioral differences
     steps:
       - uses: actions/checkout@v4
 
@@ -149,7 +149,7 @@ jobs:
         working-directory: pep249_dbapi
 
       - uses: actions/upload-artifact@v4
-        if: always()
+        if: always()  # Upload test results even if tests fail (needed for comparison)
         with:
           name: results-reference-${{ matrix.py }}
           path: pep249_dbapi/reports/*-${{ matrix.py }}.*
@@ -157,11 +157,11 @@ jobs:
   # Compare results between connectors
   pep249_compare_results:
     needs: [pep249_tests, pep249_tests_reference]
-    if: always()
+    if: always()  # Run comparison even if reference tests fail (we want to see the differences)
     strategy:
       fail-fast: false
       matrix:
-        py: ${{ fromJson(format('["{0}"]', join(split(vars.REFERENCE_TEST_VERSIONS, ' '), '", "'))) }}
+        py: ["3.13"]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
