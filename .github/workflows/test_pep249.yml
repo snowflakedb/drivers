@@ -170,7 +170,7 @@ jobs:
         env:
           UNIVERSAL_DIR: universal-results
           REFERENCE_DIR: reference-results
-          FAIL_ON_REGRESSIONS: "0"   # flip to "1" when you're ready to gate
+          FAIL_ON_REGRESSIONS: "0"   # set to "1" when ready to for a strong requirement on compliance with old driver
         run: |
           make setup
           make compare-artifacts PY=${{ matrix.py }} | tee -a $GITHUB_STEP_SUMMARY
