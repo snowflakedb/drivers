@@ -14,8 +14,8 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   PYTHON_REFERENCE_DRIVER_VERSION: "3.10.1"
-  # Python versions to run reference tests and comparison (space-separated)
-  REFERENCE_TEST_VERSIONS: "3.13"
+  # Python version to run reference tests and comparison
+  REFERENCE_PYTHON_VERSION: "3.13"
 
 jobs:
   # Build Rust core library once and share across Python jobs
@@ -81,13 +81,15 @@ jobs:
         env:
           PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
 
-      - name: Setup dependencies and run integration tests
+      - name: Setup dependencies
+        run: make setup
+        working-directory: pep249_dbapi
+
+      - name: Run integration tests
         env:
           CORE_PATH: ${{ github.workspace }}/target/debug/libsf_core.so
           PARAMETER_PATH: ${{ github.workspace }}/parameters.json
-        run: |
-          make setup
-          make test-integ-universal PY=${{ matrix.py }}
+        run: make test-integ-universal PY=${{ matrix.py }}
         working-directory: pep249_dbapi
 
       - uses: actions/upload-artifact@v4
@@ -101,7 +103,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        py: ["3.13"]
+        py: ["${{ env.REFERENCE_PYTHON_VERSION }}"]
     runs-on: ubuntu-latest
     if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
     continue-on-error: true  # Reference tests expected to fail due to behavioral differences
@@ -138,14 +140,16 @@ jobs:
         env:
           PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
 
-      - name: Setup dependencies and run reference integration tests
+      - name: Setup dependencies
+        run: make setup
+        working-directory: pep249_dbapi
+
+      - name: Run reference integration tests
         env:
           CORE_PATH: ${{ github.workspace }}/target/debug/libsf_core.so
           PARAMETER_PATH: ${{ github.workspace }}/parameters.json
           REF_VERSION: ${{ env.PYTHON_REFERENCE_DRIVER_VERSION }}
-        run: |
-          make setup
-          make test-integ-reference PY=${{ matrix.py }}
+        run: make test-integ-reference PY=${{ matrix.py }}
         working-directory: pep249_dbapi
 
       - uses: actions/upload-artifact@v4
@@ -161,10 +165,15 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        py: ["3.13"]
+        py: ["${{ env.REFERENCE_PYTHON_VERSION }}"]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "0.5.11"
       - uses: actions/download-artifact@v4
         with:
           name: results-universal-${{ matrix.py }}
@@ -175,8 +184,8 @@ jobs:
           path: reference-results
       - name: Compare & summarize
         env:
-          UNIVERSAL_DIR: universal-results
-          REFERENCE_DIR: reference-results
+          UNIVERSAL_TEST_REPORTS_DIR: universal-results
+          REFERENCE_TEST_REPORTS_DIR: reference-results
           FAIL_ON_REGRESSIONS: "0"   # set to "1" when ready to for a strong requirement on compliance with old driver
         run: |
           make setup

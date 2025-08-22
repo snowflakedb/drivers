@@ -14,7 +14,7 @@ DEFAULT_PARAMETER_PATH := $(shell cd .. && pwd)/parameters.json
 SHELL := bash
 .ONESHELL:
 
-.PHONY: check-env-or-build check-env-or-fail setup test-local test-local-tox test-unit-local test-integ-local test-reference-local test-reference-local-tox test-integ-universal test-integ-reference compare compare-local clean-reports
+.PHONY: check-env-or-build check-env-or-fail setup test-local test-local-tox test-unit-local test-integ-local test-reference-local test-reference-local-tox test-integ-universal test-integ-reference compare compare-artifacts compare-local clean-reports
 
 # Auto-detect platform-specific paths
 DETECTED_CORE_PATH := $(shell \
@@ -65,6 +65,8 @@ setup:
 		echo "uv installed. Please restart your shell or run: source ~/.local/bin/env"; \
 		echo "Then run 'make setup' again."; \
 		exit 1; \
+	else \
+		echo "uv already installed: $$(uv --version)"; \
 	fi
 	uv sync --extra dev
 	mkdir -p $(REPORTS_DIR)
@@ -91,19 +93,19 @@ test-integ-local: check-env-or-build setup
 	  --json-report --json-report-file=$(REPORTS_DIR)/universal-$(PY).json $(POSARGS)
 
 # Run integration tests with reference connector (direct pytest with xdist)
-test-reference-local: setup
+test-reference-local: check-env-or-build setup
 	CORE_PATH=$(DETECTED_CORE_PATH) PARAMETER_PATH=$(DETECTED_PARAMETER_PATH) uv run pytest tests/integ/ --connector=reference -v -n auto \
 	  --json-report --json-report-file=$(REPORTS_DIR)/reference-$(PY).json $(POSARGS)
 
 # Run integration tests with reference connector using tox + xdist for faster parallel execution
-test-reference-local-tox: setup
+test-reference-local-tox: check-env-or-build setup
 	CORE_PATH=$(DETECTED_CORE_PATH) PARAMETER_PATH=$(DETECTED_PARAMETER_PATH) uv run tox -e py$(PYID)-integ-reference -- \
 	  --json-report --json-report-file=$(REPORTS_DIR)/reference-$(PY).json \
 	  -n auto $(POSARGS)
 
 # ===== CI/Tox Commands =====
 
-# CI: Run integration tests with universal connector (expects CORE_PATH set)
+# CI: Run integration tests with universal connector (expects CORE_PATH set, uv pre-installed)
 test-integ-universal: check-env-or-fail
 	mkdir -p $(REPORTS_DIR)
 	uv run tox -e py$(PYID)-integ-universal -- \
@@ -111,7 +113,7 @@ test-integ-universal: check-env-or-fail
 	  --junitxml=$(REPORTS_DIR)/universal-$(PY).xml \
 	  $(POSARGS)
 
-# CI: Run integration tests with reference connector (expects CORE_PATH set)
+# CI: Run integration tests with reference connector (expects CORE_PATH set, uv pre-installed)
 test-integ-reference: check-env-or-fail
 	mkdir -p $(REPORTS_DIR)
 	uv run tox -e py$(PYID)-integ-reference -- \
@@ -130,6 +132,14 @@ compare:
 
 # Fast comparison using tox for parallel execution
 compare-local: test-local-tox test-reference-local-tox compare
+
+# Use this when comparing downloaded CI artifacts
+compare-artifacts:
+	python3 ci/reference_tests/compare_reports.py \
+	  --py $(PY) \
+	  --universal $(UNIVERSAL_TEST_REPORTS_DIR)/universal-$(PY).json \
+	  --reference $(REFERENCE_TEST_REPORTS_DIR)/reference-$(PY).json \
+	  --fail-on-regressions $(FAIL_ON_REGRESSIONS)
 
 # ===== Utility Commands =====
 
