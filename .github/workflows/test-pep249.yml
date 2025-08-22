@@ -91,61 +91,61 @@ jobs:
           path: pep249_dbapi/reports/*-${{ matrix.py }}.*
 
   # Integration tests only with reference connector (for comparison)
-  pep_249_tests_reference:
-    needs: build_rust_core
-    strategy:
-      fail-fast: false
-      matrix:
-        py: ${{ fromJson(format('["{0}"]', join(split(vars.REFERENCE_TEST_VERSIONS, ' '), '", "'))) }}
-    runs-on: ubuntu-latest
-    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v4
-        with:
-          version: "0.5.11"
-
-      - name: Restore uv cache
-        env:
-          UV_CACHE_DIR: /tmp/.uv-cache
-        uses: actions/cache@v4
-        with:
-          path: /tmp/.uv-cache
-          key: uv-${{ runner.os }}-${{ matrix.py }}-${{ hashFiles('pep249_dbapi/uv.lock', 'pep249_dbapi/pyproject.toml', 'pep249_dbapi/tox.ini') }}
-          restore-keys: |
-            uv-${{ runner.os }}-${{ matrix.py }}-
-            uv-${{ runner.os }}-
-
-      - name: Set up Python ${{ matrix.py }}
-        run: uv python install ${{ matrix.py }}
-
-      - name: Download Rust artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: rust-core-library
-          path: target/debug/
-
-      - name: Decode secrets
-        run: ./scripts/decode_secrets.sh
-        env:
-          PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
-
-      - name: Setup dependencies and run reference integration tests
-        env:
-          CORE_PATH: ${{ github.workspace }}/target/debug/libsf_core.so
-          PARAMETER_PATH: ${{ github.workspace }}/parameters.json
-          REF_VERSION: ${{ env.PYTHON_REFERENCE_DRIVER_VERSION }}
-        run: |
-          make setup
-          make test-integ-reference PY=${{ matrix.py }}
-        working-directory: pep249_dbapi
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: results-reference-${{ matrix.py }}
-          path: pep249_dbapi/reports/*-${{ matrix.py }}.*
+#  pep_249_tests_reference:
+#    needs: build_rust_core
+#    strategy:
+#      fail-fast: false
+#      matrix:
+#        py: ${{ fromJson(format('["{0}"]', join(split(vars.REFERENCE_TEST_VERSIONS, ' '), '", "'))) }}
+#    runs-on: ubuntu-latest
+#    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+#    steps:
+#      - uses: actions/checkout@v4
+#
+#      - name: Install uv
+#        uses: astral-sh/setup-uv@v4
+#        with:
+#          version: "0.5.11"
+#
+#      - name: Restore uv cache
+#        env:
+#          UV_CACHE_DIR: /tmp/.uv-cache
+#        uses: actions/cache@v4
+#        with:
+#          path: /tmp/.uv-cache
+#          key: uv-${{ runner.os }}-${{ matrix.py }}-${{ hashFiles('pep249_dbapi/uv.lock', 'pep249_dbapi/pyproject.toml', 'pep249_dbapi/tox.ini') }}
+#          restore-keys: |
+#            uv-${{ runner.os }}-${{ matrix.py }}-
+#            uv-${{ runner.os }}-
+#
+#      - name: Set up Python ${{ matrix.py }}
+#        run: uv python install ${{ matrix.py }}
+#
+#      - name: Download Rust artifacts
+#        uses: actions/download-artifact@v4
+#        with:
+#          name: rust-core-library
+#          path: target/debug/
+#
+#      - name: Decode secrets
+#        run: ./scripts/decode_secrets.sh
+#        env:
+#          PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
+#
+#      - name: Setup dependencies and run reference integration tests
+#        env:
+#          CORE_PATH: ${{ github.workspace }}/target/debug/libsf_core.so
+#          PARAMETER_PATH: ${{ github.workspace }}/parameters.json
+#          REF_VERSION: ${{ env.PYTHON_REFERENCE_DRIVER_VERSION }}
+#        run: |
+#          make setup
+#          make test-integ-reference PY=${{ matrix.py }}
+#        working-directory: pep249_dbapi
+#
+#      - uses: actions/upload-artifact@v4
+#        with:
+#          name: results-reference-${{ matrix.py }}
+#          path: pep249_dbapi/reports/*-${{ matrix.py }}.*
 
 #  # Compare results between connectors
 #  pep_249_compare_results:
