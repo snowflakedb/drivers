@@ -100,10 +100,6 @@ jobs:
   # Integration tests only with reference connector (for comparison)
   pep249_tests_reference:
     needs: build_rust_core
-    strategy:
-      fail-fast: false
-      matrix:
-        py: ["${{ env.REFERENCE_PYTHON_VERSION }}"]
     runs-on: ubuntu-latest
     if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
     continue-on-error: true  # Reference tests expected to fail due to behavioral differences
@@ -121,13 +117,13 @@ jobs:
         uses: actions/cache@v4
         with:
           path: /tmp/.uv-cache
-          key: uv-${{ runner.os }}-${{ matrix.py }}-${{ hashFiles('pep249_dbapi/uv.lock', 'pep249_dbapi/pyproject.toml', 'pep249_dbapi/tox.ini') }}
+          key: uv-${{ runner.os }}-${{ env.REFERENCE_PYTHON_VERSION }}-${{ hashFiles('pep249_dbapi/uv.lock', 'pep249_dbapi/pyproject.toml', 'pep249_dbapi/tox.ini') }}
           restore-keys: |
-            uv-${{ runner.os }}-${{ matrix.py }}-
+            uv-${{ runner.os }}-${{ env.REFERENCE_PYTHON_VERSION }}-
             uv-${{ runner.os }}-
 
-      - name: Set up Python ${{ matrix.py }}
-        run: uv python install ${{ matrix.py }}
+      - name: Set up Python ${{ env.REFERENCE_PYTHON_VERSION }}
+        run: uv python install ${{ env.REFERENCE_PYTHON_VERSION }}
 
       - name: Download Rust artifacts
         uses: actions/download-artifact@v4
@@ -149,23 +145,19 @@ jobs:
           CORE_PATH: ${{ github.workspace }}/target/debug/libsf_core.so
           PARAMETER_PATH: ${{ github.workspace }}/parameters.json
           REF_VERSION: ${{ env.PYTHON_REFERENCE_DRIVER_VERSION }}
-        run: make test-integ-reference PY=${{ matrix.py }}
+        run: make test-integ-reference PY=${{ env.REFERENCE_PYTHON_VERSION }}
         working-directory: pep249_dbapi
 
       - uses: actions/upload-artifact@v4
         if: always()  # Upload test results even if tests fail (needed for comparison)
         with:
-          name: results-reference-${{ matrix.py }}
-          path: pep249_dbapi/reports/*-${{ matrix.py }}.*
+          name: results-reference-${{ env.REFERENCE_PYTHON_VERSION }}
+          path: pep249_dbapi/reports/*-${{ env.REFERENCE_PYTHON_VERSION }}.*
 
   # Compare results between connectors
   pep249_compare_results:
     needs: [pep249_tests, pep249_tests_reference]
     if: always()  # Run comparison even if reference tests fail (we want to see the differences)
-    strategy:
-      fail-fast: false
-      matrix:
-        py: ["${{ env.REFERENCE_PYTHON_VERSION }}"]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -174,13 +166,14 @@ jobs:
         uses: astral-sh/setup-uv@v4
         with:
           version: "0.5.11"
+      
       - uses: actions/download-artifact@v4
-        with:
-          name: results-universal-${{ matrix.py }}
+        with: 
+          name: results-universal-${{ env.REFERENCE_PYTHON_VERSION }}
           path: universal-results
       - uses: actions/download-artifact@v4
-        with:
-          name: results-reference-${{ matrix.py }}
+        with: 
+          name: results-reference-${{ env.REFERENCE_PYTHON_VERSION }}
           path: reference-results
       - name: Compare & summarize
         env:
@@ -189,5 +182,5 @@ jobs:
           FAIL_ON_REGRESSIONS: "0"   # set to "1" when ready to for a strong requirement on compliance with old driver
         run: |
           make setup
-          make compare-artifacts PY=${{ matrix.py }} | tee -a $GITHUB_STEP_SUMMARY
+          make compare-artifacts PY=${{ env.REFERENCE_PYTHON_VERSION }} | tee -a $GITHUB_STEP_SUMMARY
         working-directory: pep249_dbapi
