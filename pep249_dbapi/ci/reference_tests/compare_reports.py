@@ -49,7 +49,7 @@ def main():
     r_skip = {k for k,v in R.items() if v == "skipped"}
 
     regress     = r_pass & u_fail
-    improve     = r_fail & u_pass
+    bcrs     = r_fail & u_pass
     both_fail   = r_fail & u_fail
     only_u_skip = u_skip - r_skip
     only_r_skip = r_skip - u_skip
@@ -61,7 +61,7 @@ def main():
     )
     body = "".join([
         block("Regressions (ref ✅ / universal ❌)", regress),
-        block("Improvements (ref ❌ / universal ✅)", improve),
+        block("Breaking changes (ref ❌ / universal ✅)", bcrs),
         block("Both failing", both_fail),
         block("Skipped only on universal", only_u_skip),
         block("Skipped only on reference", only_r_skip),

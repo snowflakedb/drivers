@@ -122,7 +122,7 @@ test-integ-reference: check-env-or-fail
 # ===== Comparison Commands =====
 
 compare:
-	python ci/reference_tests/compare_reports.py \
+	python3 ci/reference_tests/compare_reports.py \
 	  --py $(PY) \
 	  --universal $(REPORTS_DIR)/universal-$(PY).json \
 	  --reference $(REPORTS_DIR)/reference-$(PY).json \
