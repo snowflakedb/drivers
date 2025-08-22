@@ -1,0 +1,86 @@
+name: ODBC CI
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  odbc_tests_reference:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        
+      - name: Install dependencies
+        run: |
+          set -x
+          sudo apt-get update
+          sudo apt-get install -y unixodbc unixodbc-dev curl odbcinst
+          wget https://github.com/Kitware/CMake/releases/download/v4.0.3/cmake-4.0.3-linux-x86_64.sh
+          sudo sh cmake-4.0.3-linux-x86_64.sh --skip-license --prefix=/usr/local
+          sudo rm cmake-4.0.3-linux-x86_64.sh
+          cmake --version
+          curl -O https://sfc-repo.snowflakecomputing.com/odbc/linux/3.9.0/snowflake-odbc-3.9.0.x86_64.deb
+          sudo dpkg -i snowflake-odbc-3.9.0.x86_64.deb
+          sudo sed -i 's,ODBCInstLib=.*,ODBCInstLib=/usr/lib/x86_64-linux-gnu/libodbcinst.so.2,g' /usr/lib/snowflake/odbc/lib/simba.snowflake.ini
+
+      - name: Decode secrets
+        run: ./scripts/decode_secrets.sh
+        env:
+          PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
+
+      - name: Run ODBC tests
+        run: |
+          export DRIVER_PATH=/usr/lib/snowflake/odbc/lib/libSnowflake.so
+          export PARAMETER_PATH=$(pwd)/parameters.json
+          cd odbc_tests/
+          mkdir -p cmake-build
+          cmake -B cmake-build \
+              -D ODBC_LIBRARY="/usr/lib/x86_64-linux-gnu/libodbc.so" \
+              -D ODBC_INCLUDE_DIR="/usr/include" \
+              -D SKIP_NEW_TESTS=TRUE \
+              .
+          cmake --build cmake-build -- -j $(nproc)
+          ctest -C Debug --test-dir cmake-build --output-on-failure
+
+  odbc_tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y unixodbc-dev build-essential
+          wget https://github.com/Kitware/CMake/releases/download/v4.0.3/cmake-4.0.3-linux-x86_64.sh
+          sudo sh cmake-4.0.3-linux-x86_64.sh --skip-license --prefix=/usr/local
+          sudo rm cmake-4.0.3-linux-x86_64.sh
+          cmake --version
+
+      - name: Decode secrets
+        run: ./scripts/decode_secrets.sh
+        env:
+          PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
+
+      - name: Build Rust ODBC driver
+        run: cargo build
+
+      - name: Build and run ODBC tests
+        run: |
+          ls -l target/debug/
+          export DRIVER_PATH=$(pwd)/target/debug/libsfodbc.so
+          export PARAMETER_PATH=$(pwd)/parameters.json
+          cd odbc_tests
+          mkdir -p cmake-build
+          cmake -B cmake-build \
+              -D ODBC_LIBRARY="/usr/lib/x86_64-linux-gnu/libodbc.so" \
+              -D ODBC_INCLUDE_DIR="/usr/include" \
+              .
+          cmake --build cmake-build -- -j $(nproc)
+          ctest -C Debug --test-dir cmake-build --output-on-failure

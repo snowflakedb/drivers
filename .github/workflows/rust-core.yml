@@ -1,0 +1,105 @@
+name: Rust Core CI
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install llvm-cov
+        run: cargo +stable install cargo-llvm-cov
+
+      - name: Install unixodbc
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y unixodbc-dev
+
+      - name: Decode secrets
+        run: ./scripts/decode_secrets.sh
+        env:
+          PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
+
+      - name: Run coverage
+        run: |
+          export PARAMETER_PATH=$(pwd)/parameters.json
+          cargo llvm-cov --workspace --all-targets --all-features --output-path ./lcov.info
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }} # Not required for public repos
+          files: ./lcov.info
+          fail_ci_if_error: false
+
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        
+      - name: Install rustfmt
+        run: rustup component add rustfmt
+        
+      - name: Check formatting
+        run: cargo fmt -- --check
+
+  clippy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        
+      - name: Install clippy
+        run: rustup component add clippy
+        
+      - name: Run clippy
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+  
+  thrift:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Generate thrift
+        uses: ./.github/actions/generate-thrift
+
+      - name: Check thrift files are up-to-date
+        run: git diff --exit-code
+        
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install unixodbc
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y unixodbc-dev
+
+      - name: Check
+        run: cargo check --workspace
+
+      - name: Build
+        run: cargo build --workspace
+
+      - name: Decode secrets
+        run: ./scripts/decode_secrets.sh
+        env:
+          PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
+
+      - name: Test
+        run: |
+          export PARAMETER_PATH=$(pwd)/parameters.json
+          cargo test --workspace
