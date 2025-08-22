@@ -6,6 +6,11 @@ on:
   pull_request:
     branches: [ "main" ]
 
+concurrency:
+  # older builds for the same pull request number or branch should be cancelled
+  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+
 env:
   CARGO_TERM_COLOR: always
   PYTHON_REFERENCE_DRIVER_VERSION: "3.10.1"
@@ -91,7 +96,7 @@ jobs:
           path: pep249_dbapi/reports/*-${{ matrix.py }}.*
 
   # Integration tests only with reference connector (for comparison)
-  python_tests_reference:
+  pep_249_tests_reference:
     needs: build_rust_core
     strategy:
       fail-fast: false
@@ -148,8 +153,8 @@ jobs:
           path: pep249_dbapi/reports/*-${{ matrix.py }}.*
 
 #  # Compare results between connectors
-#  python_compare_results:
-#    needs: [python_tests, python_tests_reference]
+#  pep_249_compare_results:
+#    needs: [pep_249_tests, pep_249_tests_reference]
 #    if: always()
 #    strategy:
 #      fail-fast: false
