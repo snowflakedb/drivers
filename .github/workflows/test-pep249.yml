@@ -96,7 +96,7 @@ jobs:
           path: pep249_dbapi/reports/*-${{ matrix.py }}.*
 
   # Integration tests only with reference connector (for comparison)
-  pep_249_tests_reference:
+  sometestname:
     needs: build_rust_core
     strategy:
       fail-fast: false
