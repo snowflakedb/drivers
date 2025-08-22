@@ -77,8 +77,8 @@ test-local: check-env-or-build setup
 
 # Run integration tests with tox + xdist for faster parallel execution
 test-local-tox: check-env-or-build setup
-	cd .. && CORE_PATH=$(DETECTED_CORE_PATH) PARAMETER_PATH=$(DETECTED_PARAMETER_PATH) uv run tox -e py$(PYID)-integ-universal -- \
-	  --json-report --json-report-file=pep249_dbapi/$(REPORTS_DIR)/universal-$(PY).json \
+	CORE_PATH=$(DETECTED_CORE_PATH) PARAMETER_PATH=$(DETECTED_PARAMETER_PATH) uv run tox -e py$(PYID)-integ-universal -- \
+	  --json-report --json-report-file=$(REPORTS_DIR)/universal-$(PY).json \
 	  -n auto $(POSARGS)
 
 # Run only unit tests with direct pytest
@@ -97,8 +97,8 @@ test-reference-local: setup
 
 # Run integration tests with reference connector using tox + xdist for faster parallel execution
 test-reference-local-tox: setup
-	cd .. && CORE_PATH=$(DETECTED_CORE_PATH) PARAMETER_PATH=$(DETECTED_PARAMETER_PATH) uv run tox -e py$(PYID)-integ-reference -- \
-	  --json-report --json-report-file=pep249_dbapi/$(REPORTS_DIR)/reference-$(PY).json \
+	CORE_PATH=$(DETECTED_CORE_PATH) PARAMETER_PATH=$(DETECTED_PARAMETER_PATH) uv run tox -e py$(PYID)-integ-reference -- \
+	  --json-report --json-report-file=$(REPORTS_DIR)/reference-$(PY).json \
 	  -n auto $(POSARGS)
 
 # ===== CI/Tox Commands =====
@@ -106,17 +106,17 @@ test-reference-local-tox: setup
 # CI: Run integration tests with universal connector (expects CORE_PATH set)
 test-integ-universal: check-env-or-fail
 	mkdir -p $(REPORTS_DIR)
-	cd .. && uv run tox -e py$(PYID)-integ-universal -- \
-	  --json-report --json-report-file=pep249_dbapi/$(REPORTS_DIR)/universal-$(PY).json \
-	  --junitxml=pep249_dbapi/$(REPORTS_DIR)/universal-$(PY).xml \
+	uv run tox -e py$(PYID)-integ-universal -- \
+	  --json-report --json-report-file=$(REPORTS_DIR)/universal-$(PY).json \
+	  --junitxml=$(REPORTS_DIR)/universal-$(PY).xml \
 	  $(POSARGS)
 
 # CI: Run integration tests with reference connector (expects CORE_PATH set)
 test-integ-reference: check-env-or-fail
 	mkdir -p $(REPORTS_DIR)
-	cd .. && uv run tox -e py$(PYID)-integ-reference -- \
-	  --json-report --json-report-file=pep249_dbapi/$(REPORTS_DIR)/reference-$(PY).json \
-	  --junitxml=pep249_dbapi/$(REPORTS_DIR)/reference-$(PY).xml \
+	uv run tox -e py$(PYID)-integ-reference -- \
+	  --json-report --json-report-file=$(REPORTS_DIR)/reference-$(PY).json \
+	  --junitxml=$(REPORTS_DIR)/reference-$(PY).xml \
 	  $(POSARGS)
 
 # ===== Comparison Commands =====
