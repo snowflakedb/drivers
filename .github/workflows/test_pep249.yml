@@ -9,6 +9,8 @@ on:
 env:
   CARGO_TERM_COLOR: always
   PYTHON_REFERENCE_DRIVER_VERSION: "3.10.1"
+  # Python versions to run reference tests and comparison (space-separated)
+  REFERENCE_TEST_VERSIONS: "3.13"
 
 jobs:
   # Build Rust core library once and share across Python jobs
@@ -94,7 +96,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix: 
-        py: ["3.9", "3.10", "3.11", "3.12", "3.13"]
+        py: ${{ fromJson(format('["{0}"]', join(split(vars.REFERENCE_TEST_VERSIONS, ' '), '", "'))) }}
     runs-on: ubuntu-latest
     if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
     steps:
@@ -151,7 +153,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix: 
-        py: ["3.9", "3.10", "3.11", "3.12", "3.13"]
+        py: ${{ fromJson(format('["{0}"]', join(split(vars.REFERENCE_TEST_VERSIONS, ' '), '", "'))) }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
