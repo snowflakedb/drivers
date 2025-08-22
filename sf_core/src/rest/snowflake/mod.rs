@@ -1,113 +1,76 @@
 mod auth;
-mod data;
 pub mod query_request;
 pub mod query_response;
 
-use crate::driver::{Connection, Setting, Settings};
+use crate::auth::{Credentials, create_credentials};
+use crate::config::rest_parameters::ClientInfo;
+use crate::config::rest_parameters::{LoginParameters, QueryParameters};
 use crate::rest::error::RestError;
 use crate::rest::snowflake::auth::{
     AuthRequest, AuthRequestClientEnvironment, AuthRequestData, AuthResponse,
 };
-use data::{ClientInfo, LoginParameters};
 use reqwest;
 use serde_json;
 use std::collections::HashMap;
-use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tracing;
 
-fn client_info(_conn: &Connection) -> Result<ClientInfo, RestError> {
-    let client_info = ClientInfo {
-        application: "PythonConnector".to_string(),
-        version: "3.15.0".to_string(),
-        os: "Darwin".to_string(),
-        os_version: "macOS-15.5-arm64-arm-64bit".to_string(),
-        ocsp_mode: Some("FAIL_OPEN".to_string()),
+pub fn user_agent(client_info: &ClientInfo) -> String {
+    format!(
+        "{}/{} ({}) CPython/3.11.6",
+        client_info.application,
+        client_info.version.clone(),
+        client_info.os.clone()
+    )
+}
+
+pub fn auth_request_data(login_parameters: &LoginParameters) -> Result<AuthRequestData, RestError> {
+    let mut data = AuthRequestData {
+        account_name: login_parameters.account_name.clone(),
+        client_app_id: login_parameters.client_info.application.clone(),
+        client_app_version: login_parameters.client_info.version.clone(),
+        client_environment: AuthRequestClientEnvironment {
+            application: login_parameters.client_info.application.clone(),
+            os: login_parameters.client_info.os.clone(),
+            os_version: login_parameters.client_info.os_version.clone(),
+            ocsp_mode: login_parameters.client_info.ocsp_mode.clone(),
+            python_version: Some("3.11.6".to_string()),
+            python_runtime: Some("CPython".to_string()),
+            python_compiler: Some("Clang 13.0.0 (clang-1300.0.29.30)".to_string()),
+        },
+        ..Default::default()
     };
-    Ok(client_info)
+
+    match create_credentials(login_parameters).map_err(RestError::AuthError)? {
+        Credentials::Password { username, password } => {
+            data.login_name = Some(username);
+            data.password = Some(password);
+            data.authenticator = Some("SNOWFLAKE".to_string());
+        }
+        Credentials::Jwt { username, token } => {
+            data.login_name = Some(username);
+            data.token = Some(token);
+            data.authenticator = Some("SNOWFLAKE_JWT".to_string());
+        }
+        Credentials::Pat { username, token } => {
+            data.login_name = Some(username);
+            data.token = Some(token);
+            data.authenticator = Some("PROGRAMMATIC_ACCESS_TOKEN".to_string());
+        }
+    }
+    Ok(data)
 }
 
-fn get_server_url(conn: &Connection) -> Result<String, RestError> {
-    if let Some(Setting::String(value)) = conn.settings.get("server_url") {
-        return Ok(value.clone());
-    }
-
-    let protocol = conn
-        .settings
-        .get_string("protocol")
-        .unwrap_or("https".to_string());
-    let host = conn
-        .settings
-        .get_string("host")
-        .ok_or_else(|| RestError::MissingParameter("host".to_string()))?;
-    if protocol != "https" && protocol != "http" {
-        tracing::warn!("Unexpected protocol specified during server url construction: {protocol}");
-    }
-
-    // Check if a custom port is specified
-    let base_url = format!("{protocol}://{host}");
-    if let Some(port) = conn.settings.get_int("port") {
-        return Ok(format!("{base_url}:{port}"));
-    }
-
-    Ok(base_url)
-}
-
-fn get_login_parameters(conn: &Connection) -> Result<LoginParameters, RestError> {
-    let params = LoginParameters {
-        account_name: {
-            tracing::debug!("Getting account name from connection settings");
-            tracing::debug!("Connection settings: {:?}", conn.settings);
-            if let Some(value) = conn.settings.get_string("account") {
-                value
-            } else {
-                return Err(RestError::MissingParameter("account".to_string()));
-            }
-        },
-        login_name: {
-            if let Some(Setting::String(value)) = conn.settings.get("user") {
-                value.clone()
-            } else {
-                return Err(RestError::MissingParameter("user".to_string()));
-            }
-        },
-        password: {
-            if let Some(Setting::String(value)) = conn.settings.get("password") {
-                value.clone()
-            } else {
-                return Err(RestError::MissingParameter("password".to_string()));
-            }
-        },
-        server_url: get_server_url(conn)?,
-        database: conn.settings.get_string("database"),
-        schema: conn.settings.get_string("schema"),
-        warehouse: conn.settings.get_string("warehouse"),
-        role: conn.settings.get_string("role"),
-    };
-    Ok(params)
-}
-
-#[tracing::instrument(skip(conn_ptr), fields(account_name, login_name))]
-pub async fn snowflake_login(
-    conn_ptr: &std::sync::Arc<Mutex<Connection>>,
-) -> Result<(), RestError> {
+#[tracing::instrument(skip(login_parameters), fields(account_name, login_name))]
+pub async fn snowflake_login(login_parameters: &LoginParameters) -> Result<String, RestError> {
     tracing::info!("Starting Snowflake login process");
-
-    // Extract required settings from connection
-    tracing::debug!("Extracting connection settings");
-    let (login_parameters, client_info) = {
-        let conn = conn_ptr.lock().unwrap();
-        (get_login_parameters(&conn)?, client_info(&conn)?)
-    };
 
     // Record key fields in the span
     tracing::Span::current().record("account_name", &login_parameters.account_name);
-    tracing::Span::current().record("login_name", &login_parameters.login_name);
 
     // Optional settings
     tracing::debug!(
         account_name = %login_parameters.account_name,
-        login_name = %login_parameters.login_name,
         server_url = %login_parameters.server_url,
         database = ?login_parameters.database,
         schema = ?login_parameters.schema,
@@ -116,34 +79,10 @@ pub async fn snowflake_login(
     );
 
     // Build the login request
+    let auth_request_data = auth_request_data(login_parameters)?;
+    tracing::Span::current().record("login_name", &auth_request_data.login_name);
     let login_request = AuthRequest {
-        data: AuthRequestData {
-            client_app_id: client_info.application.clone(),
-            client_app_version: client_info.version.clone(),
-            _svn_revision: None,
-            account_name: login_parameters.account_name,
-            login_name: Some(login_parameters.login_name),
-            password: Some(login_parameters.password),
-            browser_mode_redirect_port: None,
-            proof_key: None,
-            client_environment: AuthRequestClientEnvironment {
-                application: client_info.application.clone(),
-                os: client_info.os.clone(),
-                os_version: client_info.os_version.clone(),
-                ocsp_mode: client_info.ocsp_mode,
-                python_version: Some("3.11.6".to_string()),
-                python_runtime: Some("CPython".to_string()),
-                python_compiler: Some("Clang 13.0.0 (clang-1300.0.29.30)".to_string()),
-            },
-            session_parameters: Some(HashMap::new()),
-            authenticator: Some("snowflake".to_string()),
-            raw_saml_response: None,
-            ext_authn_duo_method: None,
-            passcode: None,
-            token: None,
-            oauth_type: None,
-            provider: None,
-        },
+        data: auth_request_data,
     };
 
     tracing::debug!(
@@ -162,11 +101,20 @@ pub async fn snowflake_login(
         .query(&[
             (
                 "databaseName",
-                login_parameters.database.unwrap_or_default(),
+                login_parameters.database.as_deref().unwrap_or_default(),
             ),
-            ("schemaName", login_parameters.schema.unwrap_or_default()),
-            ("warehouse", login_parameters.warehouse.unwrap_or_default()),
-            ("roleName", login_parameters.role.unwrap_or_default()),
+            (
+                "schemaName",
+                login_parameters.schema.as_deref().unwrap_or_default(),
+            ),
+            (
+                "warehouse",
+                login_parameters.warehouse.as_deref().unwrap_or_default(),
+            ),
+            (
+                "roleName",
+                login_parameters.role.as_deref().unwrap_or_default(),
+            ),
         ])
         .json(&login_request)
         .header("accept", "application/snowflake")
@@ -174,9 +122,9 @@ pub async fn snowflake_login(
             "User-Agent",
             format!(
                 "{}/{} ({}) CPython/3.11.6",
-                client_info.application,
-                client_info.version.clone(),
-                client_info.os.clone()
+                login_parameters.client_info.application,
+                login_parameters.client_info.version.clone(),
+                login_parameters.client_info.os.clone()
             ),
         )
         .header("Authorization", "Snowflake Token=\"None\"");
@@ -218,9 +166,8 @@ pub async fn snowflake_login(
     // Extract and store the session token
     tracing::debug!("Login successful, extracting session token");
     if let Some(token) = auth_response.data.token {
-        conn_ptr.lock().unwrap().session_token = Some(token);
         tracing::info!("Snowflake login completed successfully");
-        Ok(())
+        Ok(token)
     } else {
         tracing::error!("Login response missing token data");
         Err(RestError::Internal(
@@ -229,20 +176,14 @@ pub async fn snowflake_login(
     }
 }
 
-#[tracing::instrument(skip(conn_ptr, parameter_bindings), fields(sql))]
+#[tracing::instrument(skip(query_parameters, session_token, parameter_bindings), fields(sql))]
 pub async fn snowflake_query(
-    conn_ptr: &std::sync::Arc<Mutex<Connection>>,
+    query_parameters: QueryParameters,
+    session_token: String,
     sql: String,
     parameter_bindings: Option<HashMap<String, query_request::BindParameter>>,
 ) -> Result<query_response::Response, RestError> {
-    let (session_token, server_url, client_info) = {
-        let conn = conn_ptr.lock().unwrap();
-        let session_token = conn
-            .session_token
-            .clone()
-            .ok_or(RestError::Internal("Session token not found".to_string()))?;
-        (session_token, get_server_url(&conn)?, client_info(&conn)?)
-    };
+    let server_url = query_parameters.server_url;
 
     let client = reqwest::Client::new();
     let query_url = format!("{server_url}/queries/v1/query-request");
@@ -274,15 +215,7 @@ pub async fn snowflake_query(
         )
         // we might want to add some logic to handle different content types later
         .header("Accept", "application/json")
-        .header(
-            "User-Agent",
-            format!(
-                "{}/{} ({}) CPython/3.11.6",
-                client_info.application,
-                client_info.version.clone(),
-                client_info.os_version.clone()
-            ),
-        )
+        .header("User-Agent", user_agent(&query_parameters.client_info))
         .query(&[
             ("requestId", uuid::Uuid::new_v4().to_string()),
             ("request_guid", uuid::Uuid::new_v4().to_string()),

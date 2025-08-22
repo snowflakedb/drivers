@@ -1,7 +1,6 @@
 #!/bin/bash
 
 set -e
-
 # Build and run ODBC tests using CMake
 # Requires odbc_config to be available in PATH
 
@@ -17,5 +16,5 @@ pushd odbc_tests
             .
     fi
     cmake --build cmake-build -- -j 16
-    ctest -C Debug --test-dir cmake-build --output-on-failure
+    ctest -C Debug --test-dir cmake-build --output-on-failure "$@"
 popd

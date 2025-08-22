@@ -1,0 +1,8 @@
+---
+description: environmental variable for testing
+alwaysApply: true
+---
+
+Always when you run tests in sf_core/tests, define environmental variable:
+PARAMETER_PATH=/[project_location]/parameters.json
+Where [project_location] is the path to your project root.

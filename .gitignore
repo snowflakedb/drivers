@@ -1,7 +1,7 @@
 .idea/
 target/
 parameters.json
-cmake-build
+cmake-build*
 .venv
 __pycache__/
 pep249_dbapi/pep249_dbapi.egg-info/
@@ -10,4 +10,5 @@ pep249_dbapi/reports
 jdbc/.gradle
 jdbc/build
 odbc_tests/cmake-build
+rsa_key.p8
 

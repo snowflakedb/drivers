@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use super::settings::Setting;
+use crate::config::settings::Setting;
 
 pub struct Database {
     pub settings: HashMap<String, Setting>,

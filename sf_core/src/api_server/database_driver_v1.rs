@@ -1,13 +1,17 @@
-use crate::chunks::ChunkReader;
-use crate::driver::{Connection, Database, Setting, Statement, StatementError};
-use crate::file_manager::{download_files, upload_files};
+use crate::api_server::query::process_query_response;
+use crate::config::ConfigError;
+use crate::config::rest_parameters::{LoginParameters, QueryParameters};
+use crate::config::settings::Setting;
+use crate::driver::{Connection, Database, Statement, StatementError};
 use crate::handle_manager::{Handle, HandleManager};
 use crate::rest::error::RestError;
+
 use crate::thrift_gen::database_driver_v1::{
     ArrowArrayPtr, ArrowSchemaPtr, ConnectionHandle, DatabaseDriverSyncHandler,
     DatabaseDriverSyncProcessor, DatabaseHandle, DriverException, ExecuteResult, InfoCode,
     PartitionedResult, StatementHandle, StatusCode,
 };
+
 use arrow::array::{RecordBatch, StructArray};
 use arrow::ffi::{FFI_ArrowArray, FFI_ArrowSchema};
 use arrow::ffi_stream::FFI_ArrowArrayStream;
@@ -95,6 +99,19 @@ impl From<RestError> for thrift::Error {
         ))
     }
 }
+
+impl From<ConfigError> for Error {
+    fn from(error: ConfigError) -> Self {
+        Error::from(DriverException::new(
+            format!("Configuration error: {error:?}"),
+            StatusCode::INVALID_STATE,
+            None,
+            None,
+            None,
+        ))
+    }
+}
+
 pub struct DatabaseDriverV1 {
     db_handle_manager: HandleManager<Mutex<Database>>,
     conn_handle_manager: HandleManager<Mutex<Connection>>,
@@ -120,31 +137,45 @@ impl From<StatementError> for Error {
 }
 
 impl DatabaseDriverV1 {
+    /// Helper to create a standard DriverException with commonly used defaults
+    fn driver_error(message: impl Into<String>, status: StatusCode) -> Error {
+        Error::from(DriverException::new(
+            message.into(),
+            status,
+            None,
+            None,
+            None,
+        ))
+    }
+
+    /// Helper to create an invalid argument error
+    fn invalid_argument(message: impl Into<String>) -> Error {
+        Self::driver_error(message, StatusCode::INVALID_ARGUMENT)
+    }
+
+    /// Helper to create an invalid state error
+    fn invalid_state(message: impl Into<String>) -> Error {
+        Self::driver_error(message, StatusCode::INVALID_STATE)
+    }
+
+    /// Helper to create an unknown error
+    fn unknown_error(message: impl Into<String>) -> Error {
+        Self::driver_error(message, StatusCode::UNKNOWN)
+    }
+
     fn with_statement<T>(
         &self,
         handle: StatementHandle,
         f: impl FnOnce(MutexGuard<Statement>) -> Result<T, Error>,
     ) -> Result<T, Error> {
         let handle = handle.into();
-        let stmt =
-            self.stmt_handle_manager
-                .get_obj(handle)
-                .ok_or(Error::from(DriverException::new(
-                    "Statement handle not found".to_string(),
-                    StatusCode::INVALID_ARGUMENT,
-                    None,
-                    None,
-                    None,
-                )))?;
-        let guard = stmt.lock().map_err(|_| {
-            Error::from(DriverException::new(
-                "Statement cannot be locked".to_string(),
-                StatusCode::INVALID_STATE,
-                None,
-                None,
-                None,
-            ))
-        })?;
+        let stmt = self
+            .stmt_handle_manager
+            .get_obj(handle)
+            .ok_or_else(|| Self::invalid_argument("Statement handle not found"))?;
+        let guard = stmt
+            .lock()
+            .map_err(|_| Self::invalid_state("Statement cannot be locked"))?;
         f(guard)
     }
 
@@ -173,13 +204,7 @@ impl DatabaseDriverV1 {
                 db.settings.insert(key, value);
                 Ok(())
             }
-            None => Err(Error::from(DriverException::new(
-                String::from("Database handle not found"),
-                StatusCode::INVALID_ARGUMENT,
-                None,
-                None,
-                None,
-            ))),
+            None => Err(Self::invalid_argument("Database handle not found")),
         }
     }
 
@@ -196,13 +221,7 @@ impl DatabaseDriverV1 {
                 conn.settings.insert(key, value);
                 Ok(())
             }
-            None => Err(Error::from(DriverException::new(
-                String::from("Connection handle not found"),
-                StatusCode::INVALID_ARGUMENT,
-                None,
-                None,
-                None,
-            ))),
+            None => Err(Self::invalid_argument("Connection handle not found")),
         }
     }
 
@@ -219,13 +238,7 @@ impl DatabaseDriverV1 {
                 stmt.settings.insert(key, value);
                 Ok(())
             }
-            None => Err(Error::from(DriverException::new(
-                String::from("Statement handle not found"),
-                StatusCode::INVALID_ARGUMENT,
-                None,
-                None,
-                None,
-            ))),
+            None => Err(Self::invalid_argument("Statement handle not found")),
         }
     }
 }
@@ -284,13 +297,7 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
         let handle = db_handle.into();
         match self.db_handle_manager.get_obj(handle) {
             Some(_db_ptr) => Ok(()),
-            None => Err(Error::from(DriverException::new(
-                String::from("Database handle not found"),
-                StatusCode::INVALID_ARGUMENT,
-                None,
-                None,
-                None,
-            ))),
+            None => Err(Self::invalid_argument("Database handle not found")),
         }
     }
 
@@ -298,13 +305,7 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
     fn handle_database_release(&self, db_handle: DatabaseHandle) -> thrift::Result<()> {
         match self.db_handle_manager.delete_handle(db_handle.into()) {
             true => Ok(()),
-            false => Err(Error::from(DriverException::new(
-                String::from("Failed to release database handle"),
-                StatusCode::INVALID_ARGUMENT,
-                None,
-                None,
-                None,
-            ))),
+            false => Err(Self::invalid_argument("Failed to release database handle")),
         }
     }
 
@@ -366,31 +367,25 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
         match self.conn_handle_manager.get_obj(handle) {
             Some(conn_ptr) => {
                 // Create a blocking runtime for the login process
-                let rt = tokio::runtime::Runtime::new().map_err(|e| {
-                    Error::from(DriverException::new(
-                        format!("Failed to create runtime: {e}"),
-                        StatusCode::UNKNOWN,
-                        None,
-                        None,
-                        None,
-                    ))
-                })?;
+                let rt = tokio::runtime::Runtime::new()
+                    .map_err(|e| Self::unknown_error(format!("Failed to create runtime: {e}")))?;
 
-                let login_result =
-                    rt.block_on(async { crate::rest::snowflake::snowflake_login(&conn_ptr).await });
+                let login_parameters =
+                    LoginParameters::from_settings(&conn_ptr.lock().unwrap().settings)?;
+
+                let login_result = rt.block_on(async {
+                    crate::rest::snowflake::snowflake_login(&login_parameters).await
+                });
 
                 match login_result {
-                    Ok(_) => Ok(()),
+                    Ok(session_token) => {
+                        conn_ptr.lock().unwrap().session_token = Some(session_token);
+                        Ok(())
+                    }
                     Err(e) => Err(e.into()),
                 }
             }
-            None => Err(Error::from(DriverException::new(
-                String::from("Connection handle not found"),
-                StatusCode::INVALID_ARGUMENT,
-                None,
-                None,
-                None,
-            ))),
+            None => Err(Self::invalid_argument("Connection handle not found")),
         }
     }
 
@@ -398,14 +393,9 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
     fn handle_connection_release(&self, conn_handle: ConnectionHandle) -> thrift::Result<()> {
         match self.conn_handle_manager.delete_handle(conn_handle.into()) {
             true => Ok(()),
-            false => Err(DriverException::new(
-                String::from("Failed to release connection handle"),
-                StatusCode::INVALID_ARGUMENT,
-                None,
-                None,
-                None,
-            )
-            .into()),
+            false => Err(Self::invalid_argument(
+                "Failed to release connection handle",
+            )),
         }
     }
 
@@ -473,13 +463,7 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
                 let handle = self.stmt_handle_manager.add_handle(stmt);
                 Ok(handle.into())
             }
-            None => Err(Error::from(DriverException::new(
-                String::from("Connection handle not found"),
-                StatusCode::INVALID_ARGUMENT,
-                None,
-                None,
-                None,
-            ))),
+            None => Err(Self::invalid_argument("Connection handle not found")),
         }
     }
 
@@ -487,14 +471,7 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
     fn handle_statement_release(&self, stmt_handle: StatementHandle) -> thrift::Result<()> {
         match self.stmt_handle_manager.delete_handle(stmt_handle.into()) {
             true => Ok(()),
-            false => Err(DriverException::new(
-                String::from("Failed to release statement handle"),
-                StatusCode::INVALID_ARGUMENT,
-                None,
-                None,
-                None,
-            )
-            .into()),
+            false => Err(Self::invalid_argument("Failed to release statement handle")),
         }
     }
 
@@ -511,13 +488,7 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
                 stmt.query = Some(query);
                 Ok(())
             }
-            None => Err(Error::from(DriverException::new(
-                String::from("Statement handle not found"),
-                StatusCode::INVALID_ARGUMENT,
-                None,
-                None,
-                None,
-            ))),
+            None => Err(Self::invalid_argument("Statement handle not found")),
         }
     }
 
@@ -592,15 +563,8 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
     ) -> thrift::Result<()> {
         let schema = unsafe { FFI_ArrowSchema::from_raw(schema.into()) };
         let array = unsafe { FFI_ArrowArray::from_raw(array.into()) };
-        let array = unsafe { arrow::ffi::from_ffi(array, &schema) }.map_err(|e| {
-            Error::from(DriverException::new(
-                format!("Failed to convert ArrowArray: {e}"),
-                StatusCode::UNKNOWN,
-                None,
-                None,
-                None,
-            ))
-        })?;
+        let array = unsafe { arrow::ffi::from_ffi(array, &schema) }
+            .map_err(|e| Self::unknown_error(format!("Failed to convert ArrowArray: {e}")))?;
         let record_batch = RecordBatch::from(StructArray::from(array));
         self.with_statement(stmt_handle, |mut stmt| {
             stmt.bind_parameters(record_batch).map_err(Error::from)
@@ -622,102 +586,57 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
         stmt_handle: StatementHandle,
     ) -> thrift::Result<ExecuteResult> {
         let handle = stmt_handle.into();
-        match self.stmt_handle_manager.get_obj(handle) {
-            Some(stmt_ptr) => {
-                let mut stmt = stmt_ptr.lock().unwrap();
-                let query = stmt
-                    .query
-                    .take()
-                    .ok_or(RestError::Internal("Query not found".to_string()))?;
-                // Run within the async runtime
-                let rt = tokio::runtime::Runtime::new().map_err(|e| {
-                    Error::from(DriverException::new(
-                        format!("Failed to create runtime: {e}"),
-                        StatusCode::UNKNOWN,
-                        None,
-                        None,
-                        None,
-                    ))
-                })?;
+        let stmt_ptr = self
+            .stmt_handle_manager
+            .get_obj(handle)
+            .ok_or_else(|| Self::invalid_argument("Statement handle not found"))?;
 
-                let response = rt.block_on(crate::rest::snowflake::snowflake_query(
-                    &stmt.conn,
-                    query,
-                    stmt.get_query_parameter_bindings().map_err(Error::from)?,
-                ))?;
+        let mut stmt = stmt_ptr.lock().unwrap();
+        let query = stmt
+            .query
+            .take()
+            .ok_or(RestError::Internal("Query not found".to_string()))?;
 
-                if !response.success {
-                    // TODO: Add proper error handling
-                    return Err(Error::from(DriverException::new(
-                        response
-                            .message
-                            .unwrap_or_else(|| "Unknown error".to_string()),
-                        StatusCode::UNKNOWN,
-                        None,
-                        None,
-                        None,
-                    )));
-                }
+        // Run within the async runtime
+        let rt = tokio::runtime::Runtime::new()
+            .map_err(|e| Self::unknown_error(format!("Failed to create runtime: {e}")))?;
 
-                if let Some(ref command) = response.data.command {
-                    if command == "UPLOAD" {
-                        let file_upload_data = response.data.to_file_upload_data()?;
-                        rt.block_on(upload_files(file_upload_data))
-                            .map_err(DriverException::from)?;
-                    } else if command == "DOWNLOAD" {
-                        let file_download_data = response.data.to_file_download_data()?;
-                        rt.block_on(download_files(file_download_data))
-                            .map_err(DriverException::from)?;
-                    } else {
-                        return Err(Error::from(DriverException::new(
-                            format!("Unsupported command: {command}"),
-                            StatusCode::INVALID_ARGUMENT,
-                            None,
-                            None,
-                            None,
-                        )));
-                    }
+        let (query_parameters, session_token) = {
+            let conn = stmt.conn.lock().unwrap();
+            (
+                QueryParameters::from_settings(&conn.settings)?,
+                conn.session_token
+                    .clone()
+                    .ok_or(RestError::Internal("Session token not found".to_string()))?,
+            )
+        };
 
-                    stmt.state = StatementState::Executed;
-                    return Ok(ExecuteResult::new(
-                        Box::new(ArrowArrayStreamPtr::new(Vec::new())),
-                        0,
-                    ));
-                }
+        let response = rt.block_on(crate::rest::snowflake::snowflake_query(
+            query_parameters,
+            session_token,
+            query,
+            stmt.get_query_parameter_bindings().map_err(Error::from)?,
+        ))?;
 
-                let rowset_bytes = response.data.to_rowset_bytes().map_err(Error::from)?;
-
-                let reader_result =
-                    if let Some(chunk_download_data) = response.data.to_chunk_download_data() {
-                        ChunkReader::multi_chunk(rowset_bytes, chunk_download_data)
-                    } else {
-                        ChunkReader::single_chunk(rowset_bytes)
-                    };
-
-                let reader = Box::new(reader_result.map_err(|e| {
-                    Error::from(DriverException::new(
-                        format!("Failed to create chunk reader: {e}"),
-                        StatusCode::UNKNOWN,
-                        None,
-                        None,
-                        None,
-                    ))
-                })?);
-
-                let stream = Box::new(arrow::ffi_stream::FFI_ArrowArrayStream::new(reader));
-                // Serialize pointer into integer
-                let stream_ptr = Box::into_raw(stream);
-                stmt.state = StatementState::Executed;
-                Ok(ExecuteResult::new(Box::new(stream_ptr.into()), 0))
-            }
-            None => Err(Error::from(DriverException::new(
-                String::from("Statement handle not found"),
-                StatusCode::INVALID_ARGUMENT,
-                None,
-                None,
-                None,
-            ))),
+        if !response.success {
+            // TODO: Add proper error handling
+            return Err(Self::unknown_error(
+                response
+                    .message
+                    .unwrap_or_else(|| "Unknown error".to_string()),
+            ));
         }
+
+        let response_reader = rt
+            .block_on(process_query_response(&response.data))
+            .map_err(|e| Self::unknown_error(format!("Failed to process query response: {e}")))?;
+
+        let rowset_stream = Box::new(FFI_ArrowArrayStream::new(response_reader));
+
+        // Serialize pointer into integer
+        let stream_ptr = Box::into_raw(rowset_stream);
+        stmt.state = StatementState::Executed;
+        Ok(ExecuteResult::new(Box::new(stream_ptr.into()), 0))
     }
 
     #[instrument(name = "DatabaseDriverV1::statement_execute_partitions", skip(self))]

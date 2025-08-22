@@ -1,13 +1,12 @@
 use crate::compression::CompressionError;
+use crate::compression_types::{CompressionType, CompressionTypeError};
 use crate::rest::error::RestError;
 use glob;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::thrift_gen::database_driver_v1::{DriverException, StatusCode};
-use aws_sdk_s3::error as s3_error;
-use aws_sdk_s3::operation::get_object as s3_get_object;
-use aws_sdk_s3::operation::put_object as s3_put_object;
+use aws_sdk_s3::primitives::ByteStreamError;
 
 // Dedicated file transfer types
 #[derive(Debug)]
@@ -16,6 +15,29 @@ pub struct UploadData {
     pub stage_info: StageInfo,
     pub encryption_material: EncryptionMaterial,
     pub auto_compress: bool,
+    pub source_compression: SourceCompressionParam,
+    pub overwrite: bool,
+}
+#[derive(Debug, Clone)]
+pub struct UploadMetadata {
+    pub source: String,
+    pub target: String,
+    pub source_size: i64,
+    pub target_size: i64,
+    pub source_compression: CompressionType,
+    pub target_compression: CompressionType,
+}
+
+#[derive(Debug, Clone)]
+pub enum SourceCompressionParam {
+    Gzip,
+    Bzip2,
+    Brotli,
+    Zstd,
+    Deflate,
+    RawDeflate,
+    None,
+    AutoDetect,
 }
 
 #[derive(Debug)]
@@ -82,6 +104,27 @@ pub struct MaterialDescription {
     pub key_size: String,
 }
 
+// Result types for file operations
+#[derive(Debug, Clone)]
+pub struct UploadResult {
+    pub source: String,
+    pub target: String,
+    pub source_size: i64,
+    pub target_size: i64,
+    pub source_compression: String,
+    pub target_compression: String,
+    pub status: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct DownloadResult {
+    pub file: String,
+    pub size: i64,
+    pub status: String,
+    pub message: String,
+}
+
 // Error types for file manager operations
 #[derive(Error, Debug)]
 pub enum FileManagerError {
@@ -92,13 +135,15 @@ pub enum FileManagerError {
     #[error("Compression error: {0}")]
     Compression(#[from] CompressionError),
     #[error("S3 upload error: {0}")]
-    FileTransfer(#[from] FileTransferError),
+    S3Upload(#[from] UploadFileError),
+    #[error("S3 download error: {0}")]
+    S3Download(#[from] DownloadFileError),
     #[error("Rest error: {0}")]
     Rest(#[from] RestError),
-    #[error("Invalid pattern in source location: {0}")]
-    Pattern(#[from] glob::PatternError),
-    #[error("Glob error: {0}")]
-    Glob(#[from] glob::GlobError),
+    #[error("Path error: {0}")]
+    Path(#[from] PathError),
+    #[error("Unsupported compression type: {0}")]
+    UnsupportedCompressionType(#[from] CompressionTypeError),
 }
 
 impl From<FileManagerError> for DriverException {
@@ -124,34 +169,35 @@ pub enum EncryptionError {
 }
 
 #[derive(Error, Debug)]
-pub enum FileTransferError {
-    #[error("IO error: {0}")]
-    Io(#[from] std::io::Error),
-    #[error("S3 upload error: {0}")]
-    // Boxed error to avoid large size difference between error types
-    // TODO: Remove this once we have SDK-less file transfer
-    S3Upload(#[from] Box<s3_error::SdkError<s3_put_object::PutObjectError>>),
-    #[error("S3 download error: {0}")]
-    S3Download(#[from] Box<s3_error::SdkError<s3_get_object::GetObjectError>>),
-    #[error("ByteStream error: {0}")]
-    ByteStream(String),
+pub enum UploadFileError {
+    #[error("S3 error: {0}")]
+    S3(#[from] Box<aws_sdk_s3::Error>), // Box to avoid large enum size
     #[error("Rest error: {0}")]
     Rest(#[from] RestError),
     #[error("Serialization error: {0}")]
     Serialization(#[from] serde_json::Error),
+}
+
+#[derive(Error, Debug)]
+pub enum DownloadFileError {
+    #[error("S3 error: {0}")]
+    S3(#[from] Box<aws_sdk_s3::Error>), // Box to avoid large enum size
+    #[error("Rest error: {0}")]
+    Rest(#[from] RestError),
+    #[error("Deserialization error: {0}")]
+    Deserialization(#[from] serde_json::Error),
     #[error("File metadata error: {0}")]
     FileMetadata(String),
+    #[error("ByteStream error: {0}")]
+    ByteStream(#[from] ByteStreamError),
 }
 
-// Manual implementation of From since boxing breaks #[from]
-impl From<s3_error::SdkError<s3_put_object::PutObjectError>> for FileTransferError {
-    fn from(err: s3_error::SdkError<s3_put_object::PutObjectError>) -> Self {
-        FileTransferError::S3Upload(Box::new(err))
-    }
-}
-
-impl From<s3_error::SdkError<s3_get_object::GetObjectError>> for FileTransferError {
-    fn from(err: s3_error::SdkError<s3_get_object::GetObjectError>) -> Self {
-        FileTransferError::S3Download(Box::new(err))
-    }
+#[derive(Error, Debug)]
+pub enum PathError {
+    #[error("Invalid path: {0}")]
+    InvalidPath(String),
+    #[error("Pattern error: {0}")]
+    Pattern(#[from] glob::PatternError),
+    #[error("Glob error: {0}")]
+    Glob(#[from] glob::GlobError),
 }

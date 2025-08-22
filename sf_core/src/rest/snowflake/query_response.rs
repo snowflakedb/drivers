@@ -1,12 +1,9 @@
-use crate::arrow_utils::convert_result_to_arrow;
 use crate::chunks::ChunkDownloadData;
 use crate::file_manager;
+use crate::file_manager::SourceCompressionParam;
 use crate::rest::RestError;
-use base64::Engine;
-use base64::engine::general_purpose;
 use serde::Deserialize;
 use std::collections::HashMap;
-
 // TODO: Delete all unused fields when we are sure they are not needed
 
 #[derive(Deserialize)]
@@ -23,13 +20,13 @@ pub struct Response {
 #[derive(Deserialize)]
 pub struct Data {
     #[serde(rename = "rowset")]
-    pub rowset: Option<Vec<Vec<Option<String>>>>,
+    pub rowset: Option<Vec<Vec<String>>>,
     #[serde(rename = "rowsetBase64")]
     pub rowset_base64: Option<String>,
+    #[serde(rename = "rowtype")]
+    pub(crate) row_type: Option<Vec<RowType>>,
     #[serde(rename = "command")]
     pub command: Option<String>,
-    #[serde(rename = "autoCompress")]
-    auto_compress: Option<bool>,
 
     // file transfer response data
     #[serde(rename = "src_locations")]
@@ -40,12 +37,16 @@ pub struct Data {
     encryption_material: Option<OneOrMany<EncryptionMaterial>>,
     #[serde(rename = "localLocation")]
     local_location: Option<String>,
+    #[serde(rename = "autoCompress")]
+    auto_compress: Option<bool>,
+    #[serde(rename = "overwrite")]
+    overwrite: Option<bool>,
+    #[serde(rename = "sourceCompression")]
+    source_compression: Option<String>,
 
     //unused fields
     #[serde(rename = "parameters")]
     _parameters: Option<Vec<NameValueParameter>>,
-    #[serde(rename = "rowType")]
-    _row_type: Option<Vec<RowType>>,
     #[serde(rename = "total")]
     _total: Option<i64>,
     #[serde(rename = "returned")]
@@ -98,10 +99,6 @@ pub struct Data {
     _parallel: Option<i64>,
     #[serde(rename = "threshold")]
     _threshold: Option<i64>,
-    #[serde(rename = "overwrite")]
-    _overwrite: Option<bool>,
-    #[serde(rename = "sourceCompression")]
-    _source_compression: Option<String>,
     #[serde(rename = "clientShowEncryptionParameter")]
     _show_encryption_parameter: Option<bool>,
     #[serde(rename = "presignedUrls")]
@@ -164,9 +161,8 @@ pub struct NameValueParameter {
 
 #[derive(Deserialize)]
 pub struct RowType {
-    //unused fields
     #[serde(rename = "name")]
-    _name: String,
+    pub name: String,
     #[serde(rename = "fields")]
     _fields: Option<Vec<FieldMetadata>>,
     #[serde(rename = "byteLength")]
@@ -174,13 +170,13 @@ pub struct RowType {
     #[serde(rename = "length")]
     _length: Option<i64>,
     #[serde(rename = "type")]
-    _type_: String,
+    pub type_: String,
     #[serde(rename = "precision")]
-    _precision: i64,
+    _precision: Option<i64>,
     #[serde(rename = "scale")]
-    _scale: i64,
+    pub scale: Option<i64>,
     #[serde(rename = "nullable")]
-    _nullable: bool,
+    pub nullable: bool,
 }
 
 #[derive(Deserialize)]
@@ -306,11 +302,39 @@ impl Data {
             .auto_compress
             .ok_or_else(|| RestError::MissingParameter("auto compress".to_string()))?;
 
+        let source_compression_string = self
+            .source_compression
+            .as_ref()
+            .ok_or_else(|| RestError::MissingParameter("source compression".to_string()))?
+            .clone();
+
+        let source_compression = match source_compression_string.to_uppercase().as_str() {
+            "AUTO_DETECT" => SourceCompressionParam::AutoDetect,
+            "GZIP" => SourceCompressionParam::Gzip,
+            "BZ2" => SourceCompressionParam::Bzip2,
+            "BROTLI" => SourceCompressionParam::Brotli,
+            "ZSTD" => SourceCompressionParam::Zstd,
+            "DEFLATE" => SourceCompressionParam::Deflate,
+            "RAW_DEFLATE" => SourceCompressionParam::RawDeflate,
+            "NONE" => SourceCompressionParam::None,
+            _ => {
+                return Err(RestError::InvalidSnowflakeResponse(format!(
+                    "Unknown source compression type: {source_compression_string}",
+                )));
+            }
+        };
+
+        let overwrite = self
+            .overwrite
+            .ok_or_else(|| RestError::MissingParameter("overwrite".to_string()))?;
+
         Ok(file_manager::UploadData {
             src_location,
             stage_info,
             encryption_material,
             auto_compress,
+            source_compression,
+            overwrite,
         })
     }
 
@@ -359,32 +383,6 @@ impl Data {
             .map(|chunk| ChunkDownloadData::new(&chunk.url, chunk_headers))
             .collect();
         Some(chunk_download_data)
-    }
-
-    pub fn to_rowset_bytes(&self) -> Result<Vec<u8>, RestError> {
-        match self.rowset_base64.as_ref() {
-            Some(rowset_base64) => {
-                // Decode the base64 string to bytes
-                general_purpose::STANDARD
-                    .decode(rowset_base64)
-                    .map_err(|e| {
-                        RestError::InvalidSnowflakeResponse(format!(
-                            "Failed to decode base64 rowset: {e}"
-                        ))
-                    })
-            }
-            None => {
-                match self.rowset.as_ref() {
-                    Some(rowset) => {
-                        // Convert JSON rowset to Arrow format
-                        convert_result_to_arrow(rowset)
-                    }
-                    None => Err(RestError::InvalidSnowflakeResponse(
-                        "Rowset not found in response".to_string(),
-                    )),
-                }
-            }
-        }
     }
 }
 

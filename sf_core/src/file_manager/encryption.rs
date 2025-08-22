@@ -47,7 +47,7 @@ impl CipherSuite {
 /// Encrypts file data using AES-CBC with PKCS#7 padding.
 pub fn encrypt_file_data(
     file_data: &[u8],
-    encryption_material: EncryptionMaterial,
+    encryption_material: &EncryptionMaterial,
 ) -> Result<EncryptionResult, EncryptionError> {
     // 1. Decode master key and select the appropriate cipher suite.
     let master_key = BASE64_ENGINE.decode(&encryption_material.query_stage_master_key)?;
@@ -65,8 +65,8 @@ pub fn encrypt_file_data(
 
     // 5. Prepare the metadata for the encrypted file.
     let material_desc = MaterialDescription {
-        query_id: encryption_material.query_id,
-        smk_id: encryption_material.smk_id,
+        query_id: encryption_material.query_id.clone(),
+        smk_id: encryption_material.smk_id.clone(),
         key_size: (cipher_suite.key_len * 8).to_string(),
     };
 

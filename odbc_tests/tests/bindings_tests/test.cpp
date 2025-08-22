@@ -2,7 +2,7 @@
 
 #include "Connection.hpp"
 
-TEST_CASE("Test integer single column, single row binding", "[large_result_tests]") {
+TEST_CASE("Test integer single column, single row binding", "[bindings_tests]") {
   Connection conn;
   conn.execute("DROP TABLE IF EXISTS universal_driver_odbc_small_binding_integer_test_table");
   conn.execute("CREATE TABLE universal_driver_odbc_small_binding_integer_test_table (id NUMBER)");

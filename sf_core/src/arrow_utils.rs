@@ -1,52 +1,92 @@
-use arrow::array::{Array, StringArray};
+use crate::rest::snowflake::query_response::RowType;
+use arrow::array::{Array, Int64Array, StringArray};
 use arrow::datatypes::{DataType, Field, Schema};
+use arrow::error::ArrowError;
 use arrow::record_batch::RecordBatch;
-use arrow_ipc::writer::StreamWriter;
+use std::sync::Arc;
+use thiserror::Error;
 
-use crate::rest::RestError;
+/// Custom error type for Arrow operations
+#[derive(Error, Debug)]
+pub enum ArrowUtilsError {
+    #[error("Arrow error: {0}")]
+    Arrow(#[from] ArrowError),
+    #[error("Invalid integer value")]
+    InvalidInteger(#[from] std::num::ParseIntError),
+    #[error("Unsupported Snowflake type, only TEXT and FIXED with scale 0 types are supported")]
+    UnsupportedType,
+}
 
-// This function assumes that the rowset contains only string values
-pub fn convert_result_to_arrow(rowset: &[Vec<Option<String>>]) -> Result<Vec<u8>, RestError> {
-    if rowset.is_empty() {
-        return Ok(Vec::new());
+/// Maps Snowflake data types to Arrow data types
+/// Only supports TEXT and FIXED (with scale 0) types
+fn snowflake_type_to_arrow_type(row_type: &RowType) -> Result<DataType, ArrowUtilsError> {
+    match row_type.type_.to_uppercase().as_str() {
+        "TEXT" => Ok(DataType::Utf8),
+        "FIXED" if row_type.scale == Some(0) => Ok(DataType::Int64),
+        _ => Err(ArrowUtilsError::UnsupportedType),
     }
+}
 
-    // Get the number of columns from the first row
-    let num_columns = rowset[0].len();
+/// Creates an Arrow Field from a RowType
+fn create_field(row_type: &RowType) -> Result<Field, ArrowUtilsError> {
+    let arrow_type = snowflake_type_to_arrow_type(row_type)?;
+    Ok(Field::new(&row_type.name, arrow_type, row_type.nullable))
+}
 
-    // Create simple string schema with generic column names
-    let fields: Vec<Field> = (0..num_columns)
-        .map(|i| Field::new(format!("column_{i}"), DataType::Utf8, true))
-        .collect();
-    let schema = Schema::new(fields);
+/// Creates an Arrow array from column values and data type
+fn create_column_array(
+    values: Vec<&str>,
+    data_type: &DataType,
+) -> Result<Arc<dyn Array>, ArrowUtilsError> {
+    match data_type {
+        DataType::Utf8 => Ok(Arc::new(StringArray::from(values))),
+        DataType::Int64 => {
+            // Convert string values to i64 and return parsing error if any value is invalid
+            let int_values: Result<Vec<i64>, ArrowUtilsError> = values
+                .into_iter()
+                .map(|v| v.parse::<i64>().map_err(ArrowUtilsError::InvalidInteger))
+                .collect();
+            Ok(Arc::new(Int64Array::from(int_values?)))
+        }
+        _ => Err(ArrowUtilsError::UnsupportedType),
+    }
+}
 
-    // Create string arrays from all rows
-    let arrow_arrays: Vec<std::sync::Arc<dyn Array>> = (0..num_columns)
-        .map(|col_idx| {
-            // Collect values from all rows for this column
-            let values: Vec<Option<String>> =
-                rowset.iter().map(|row| row[col_idx].clone()).collect();
-            std::sync::Arc::new(StringArray::from(values)) as std::sync::Arc<dyn Array>
+/// Converts a string rowset with RowType metadata to Arrow format
+/// Supports TEXT and FIXED (with scale 0) types, converting strings to appropriate Arrow types
+/// Assumes rowset and row_types have been validated to have matching column counts
+pub fn convert_string_rowset_to_arrow_reader(
+    rowset: &[Vec<String>],
+    row_types: &[RowType],
+) -> Result<Box<dyn arrow::record_batch::RecordBatchReader + Send>, ArrowUtilsError> {
+    // Create Arrow schema from RowType metadata
+    let fields: Result<Vec<Field>, ArrowUtilsError> = row_types.iter().map(create_field).collect();
+    let fields = fields?;
+    let schema = Arc::new(Schema::new(fields));
+
+    // Create Arrow arrays for each column
+    let columns: Result<Vec<Arc<dyn Array>>, ArrowUtilsError> = row_types
+        .iter()
+        .enumerate()
+        .map(|(col_idx, _row_type)| {
+            let values: Vec<&str> = rowset.iter().map(|row| row[col_idx].as_str()).collect();
+            let data_type = schema.field(col_idx).data_type();
+            create_column_array(values, data_type)
         })
         .collect();
 
-    // Create RecordBatch
-    let batch = RecordBatch::try_new(std::sync::Arc::new(schema), arrow_arrays).map_err(|e| {
-        RestError::Internal(format!("Failed to create RecordBatch from rowset: {e}"))
-    })?;
+    let columns = columns?;
 
-    // Serialize to Arrow IPC format
-    let mut bytes = Vec::new();
-    let mut writer = StreamWriter::try_new(&mut bytes, &batch.schema())
-        .map_err(|e| RestError::Internal(format!("Failed to create Arrow StreamWriter: {e}")))?;
+    boxed_arrow_reader(schema, columns).map_err(|e| e.into())
+}
 
-    writer
-        .write(&batch)
-        .map_err(|e| RestError::Internal(format!("Failed to write Arrow batch: {e}")))?;
-
-    writer
-        .finish()
-        .map_err(|e| RestError::Internal(format!("Failed to finish Arrow writing: {e}")))?;
-
-    Ok(bytes)
+pub fn boxed_arrow_reader(
+    schema: Arc<Schema>,
+    columns: Vec<Arc<dyn Array>>,
+) -> Result<Box<dyn arrow::record_batch::RecordBatchReader + Send>, ArrowError> {
+    let batch = RecordBatch::try_new(schema.clone(), columns)?;
+    Ok(Box::new(arrow::record_batch::RecordBatchIterator::new(
+        vec![Ok(batch)],
+        schema,
+    )))
 }

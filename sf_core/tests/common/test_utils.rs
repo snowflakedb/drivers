@@ -2,13 +2,10 @@ extern crate sf_core;
 extern crate tracing;
 extern crate tracing_subscriber;
 
-use arrow::array::{Array, Float64Array, Int8Array, Int64Array, StringArray, StructArray};
-use arrow::ffi_stream::ArrowArrayStreamReader;
-use arrow::ffi_stream::FFI_ArrowArrayStream;
+use arrow::array::{Array, ArrowPrimitiveType, PrimitiveArray, StructArray};
 use flate2::read::GzDecoder;
 use sf_core::api_client::new_database_driver_v1_client;
-use sf_core::thrift_gen::database_driver_v1::{ArrowArrayPtr, ArrowSchemaPtr};
-use std::fmt::Debug;
+use sf_core::thrift_gen::database_driver_v1::{ArrowArrayPtr, ArrowSchemaPtr, ExecuteResult};
 use std::fs;
 use tracing::Level;
 use tracing_subscriber::EnvFilter;
@@ -45,6 +42,10 @@ pub struct Parameters {
     pub port: Option<i64>,
     #[serde(rename = "SNOWFLAKE_TEST_PROTOCOL")]
     pub protocol: Option<String>,
+    #[serde(rename = "SNOWFLAKE_TEST_PRIVATE_KEY_CONTENTS")]
+    pub private_key_contents: Option<Vec<String>>,
+    #[serde(rename = "SNOWFLAKE_TEST_PRIVATE_KEY_PASSWORD")]
+    pub private_key_password: Option<String>,
 }
 
 /// Parses and returns the test parameters from the configured parameter file
@@ -63,7 +64,7 @@ pub fn get_parameters() -> Parameters {
 /// Sets up logging for tests
 pub fn setup_logging() {
     let env_filter = EnvFilter::builder()
-        .with_default_directive(Level::DEBUG.into())
+        .with_default_directive(Level::INFO.into())
         .from_env()
         .unwrap();
     let _ = tracing_subscriber::fmt::fmt()
@@ -76,17 +77,17 @@ pub struct SnowflakeTestClient {
     pub driver: Box<dyn sf_core::thrift_gen::database_driver_v1::TDatabaseDriverSyncClient + Send>,
     pub conn_handle: sf_core::thrift_gen::database_driver_v1::ConnectionHandle,
     pub db_handle: sf_core::thrift_gen::database_driver_v1::DatabaseHandle,
+    pub parameters: Parameters,
 }
 
 impl Default for SnowflakeTestClient {
     fn default() -> Self {
-        Self::new()
+        Self::connect_with_default_auth()
     }
 }
 
 impl SnowflakeTestClient {
-    /// Creates a new test client with Snowflake connection established
-    pub fn new() -> Self {
+    pub fn with_default_params() -> Self {
         setup_logging();
         let parameters = get_parameters();
         let mut driver = new_database_driver_v1_client();
@@ -108,14 +109,6 @@ impl SnowflakeTestClient {
                 parameters.user.clone().unwrap(),
             )
             .unwrap();
-        driver
-            .connection_set_option_string(
-                conn_handle.clone(),
-                "password".to_string(),
-                parameters.password.clone().unwrap(),
-            )
-            .unwrap();
-
         // Set optional parameters if specified
         if let Some(database) = parameters.database.clone() {
             driver
@@ -173,15 +166,33 @@ impl SnowflakeTestClient {
                 .unwrap();
         }
 
-        driver
-            .connection_init(conn_handle.clone(), db_handle.clone())
-            .unwrap();
-
         Self {
             driver,
             conn_handle,
             db_handle,
+            parameters,
         }
+    }
+    /// Creates a new test client with Snowflake connection established
+    pub fn connect_with_default_auth() -> Self {
+        setup_logging();
+        let mut client = Self::with_default_params();
+
+        client
+            .driver
+            .connection_set_option_string(
+                client.conn_handle.clone(),
+                "password".to_string(),
+                client.parameters.password.clone().unwrap(),
+            )
+            .unwrap();
+
+        client
+            .driver
+            .connection_init(client.conn_handle.clone(), client.db_handle.clone())
+            .unwrap();
+
+        client
     }
 
     /// Creates a new statement handle
@@ -190,10 +201,7 @@ impl SnowflakeTestClient {
     }
 
     /// Executes a SQL query and returns the result
-    pub fn execute_query(
-        &mut self,
-        sql: &str,
-    ) -> sf_core::thrift_gen::database_driver_v1::ExecuteResult {
+    pub fn execute_query(&mut self, sql: &str) -> ExecuteResult {
         let stmt_handle = self.new_statement();
         self.driver
             .statement_set_sql_query(stmt_handle.clone(), sql.to_string())
@@ -203,29 +211,15 @@ impl SnowflakeTestClient {
             .unwrap()
     }
 
+    pub fn execute_query_no_unwrap(&mut self, sql: &str) -> thrift::Result<ExecuteResult> {
+        let stmt_handle = self.new_statement();
+        self.driver
+            .statement_set_sql_query(stmt_handle.clone(), sql.to_string())?;
+        self.driver.statement_execute_query(stmt_handle.clone())
+    }
+
     pub fn create_temporary_stage(&mut self, stage_name: &str) {
         self.execute_query(&format!("create temporary stage {stage_name}"));
-    }
-
-    pub fn _put_file_with_options(
-        &mut self,
-        file_path: &std::path::Path,
-        stage_name: &str,
-        options: &str,
-    ) {
-        let put_sql = format!(
-            "PUT 'file://{}' @{stage_name} {options}",
-            file_path.to_str().unwrap().replace("\\", "/")
-        );
-        self.execute_query(&put_sql);
-    }
-
-    pub fn _get_file(&mut self, stage_file_path: &str, download_dir: &std::path::Path) {
-        let get_sql = format!(
-            "GET @{stage_file_path} file://{}/",
-            download_dir.to_str().unwrap().replace("\\", "/")
-        );
-        self.execute_query(&get_sql);
     }
 }
 
@@ -242,166 +236,6 @@ impl Drop for SnowflakeTestClient {
     }
 }
 
-#[derive(Debug)]
-pub enum ArrowExtractError {
-    UnsupportedType,
-}
-
-pub trait ArrowExtractValue: Sized {
-    fn extract_int8(_value: i8) -> Result<Self, ArrowExtractError> {
-        Err(ArrowExtractError::UnsupportedType)
-    }
-    fn extract_int64(_value: i64) -> Result<Self, ArrowExtractError> {
-        Err(ArrowExtractError::UnsupportedType)
-    }
-    fn extract_float64(_value: f64) -> Result<Self, ArrowExtractError> {
-        Err(ArrowExtractError::UnsupportedType)
-    }
-    fn extract_string(_value: &str) -> Result<Self, ArrowExtractError> {
-        Err(ArrowExtractError::UnsupportedType)
-    }
-}
-
-impl ArrowExtractValue for String {
-    fn extract_int8(value: i8) -> Result<String, ArrowExtractError> {
-        Ok(value.to_string())
-    }
-
-    fn extract_int64(value: i64) -> Result<String, ArrowExtractError> {
-        Ok(value.to_string())
-    }
-
-    fn extract_float64(value: f64) -> Result<String, ArrowExtractError> {
-        Ok(value.to_string())
-    }
-
-    fn extract_string(value: &str) -> Result<String, ArrowExtractError> {
-        Ok(value.to_string())
-    }
-}
-
-impl ArrowExtractValue for i64 {
-    fn extract_int8(value: i8) -> Result<i64, ArrowExtractError> {
-        Ok(value as i64)
-    }
-    fn extract_int64(value: i64) -> Result<i64, ArrowExtractError> {
-        Ok(value)
-    }
-}
-
-/// Helper for processing Arrow stream results
-pub struct ArrowResultHelper {
-    reader: ArrowArrayStreamReader,
-}
-
-impl ArrowResultHelper {
-    /// Creates a new Arrow result helper from an ExecuteResult
-    pub fn from_result(result: sf_core::thrift_gen::database_driver_v1::ExecuteResult) -> Self {
-        let stream_ptr: *mut FFI_ArrowArrayStream = result.stream.into();
-        let stream: FFI_ArrowArrayStream = unsafe { FFI_ArrowArrayStream::from_raw(stream_ptr) };
-        let reader = ArrowArrayStreamReader::try_new(stream).unwrap();
-        Self { reader }
-    }
-
-    /// Gets the next record batch
-    pub fn next_batch(&mut self) -> Option<arrow::record_batch::RecordBatch> {
-        match self.reader.next() {
-            Some(Ok(batch)) => Some(batch),
-            Some(Err(e)) => {
-                tracing::error!("Error reading record batch: {e}");
-                None
-            }
-            None => None,
-        }
-    }
-
-    /// Converts all result data to a 2D array of strings for easy comparison
-    pub fn transform_into_array<T: ArrowExtractValue>(
-        &mut self,
-    ) -> Result<Vec<Vec<T>>, ArrowExtractError> {
-        let mut all_rows = Vec::new();
-        while let Some(batch) = self.next_batch() {
-            for row_idx in 0..batch.num_rows() {
-                let mut row = Vec::new();
-                for col_idx in 0..batch.num_columns() {
-                    let column = batch.column(col_idx);
-                    let value = extract_value::<T>(column, row_idx)?;
-                    row.push(value);
-                }
-                all_rows.push(row);
-            }
-        }
-        Ok(all_rows)
-    }
-
-    /// Asserts that the result equals the expected 2D array
-    pub fn assert_equals_array<T: ArrowExtractValue + PartialEq + Debug>(
-        &mut self,
-        expected: Vec<Vec<T>>,
-    ) {
-        let actual = self.transform_into_array::<T>().unwrap();
-
-        assert_eq!(
-            actual, expected,
-            "Arrow result does not match expected array"
-        );
-    }
-
-    /// Convenience method for single row assertions
-    pub fn assert_equals_single_row<T: ArrowExtractValue + PartialEq + Debug>(
-        &mut self,
-        expected: Vec<T>,
-    ) {
-        self.assert_equals_array(vec![expected]);
-    }
-
-    /// Convenience method for single value assertions
-    pub fn assert_equals_single_value<T: ArrowExtractValue + PartialEq + Debug>(
-        &mut self,
-        expected: T,
-    ) {
-        self.assert_equals_array(vec![vec![expected]]);
-    }
-}
-
-fn extract_value<T: ArrowExtractValue>(
-    column: &dyn Array,
-    row_idx: usize,
-) -> Result<T, ArrowExtractError> {
-    use arrow::datatypes::DataType;
-    match column.data_type() {
-        DataType::Int8 => {
-            let int_array = column
-                .as_any()
-                .downcast_ref::<Int8Array>()
-                .expect("Expected int8 array");
-            T::extract_int8(int_array.value(row_idx))
-        }
-        DataType::Int64 => {
-            let int_array = column
-                .as_any()
-                .downcast_ref::<Int64Array>()
-                .expect("Expected int64 array");
-            T::extract_int64(int_array.value(row_idx))
-        }
-        DataType::Float64 => {
-            let float_array = column
-                .as_any()
-                .downcast_ref::<Float64Array>()
-                .expect("Expected float64 array");
-            T::extract_float64(float_array.value(row_idx))
-        }
-        DataType::Utf8 => {
-            let string_array = column
-                .as_any()
-                .downcast_ref::<StringArray>()
-                .expect("Expected string array");
-            T::extract_string(string_array.value(row_idx))
-        }
-        _ => Err(ArrowExtractError::UnsupportedType),
-    }
-}
-
 /// Decompresses a gzipped file and returns its content as a string
 pub fn decompress_gzipped_file<P: AsRef<std::path::Path>>(file_path: P) -> std::io::Result<String> {
     use std::io::Read;
@@ -415,17 +249,22 @@ pub fn decompress_gzipped_file<P: AsRef<std::path::Path>>(file_path: P) -> std::
 
 pub fn create_test_file(
     temp_dir: &std::path::Path,
-    file_name: &str,
+    filename: &str,
     content: &str,
 ) -> std::path::PathBuf {
-    let file_path = temp_dir.join(file_name);
+    let file_path = temp_dir.join(filename);
     fs::write(&file_path, content).unwrap();
     file_path
 }
 
-pub fn create_param_bindings(params: &[i64]) -> (ArrowSchemaPtr, ArrowArrayPtr) {
-    use arrow::array::{ArrayRef, Int64Array};
-    use arrow::datatypes::{DataType, Field, Schema};
+pub fn create_param_bindings<T: ArrowPrimitiveType>(
+    params: &[T::Native],
+) -> (ArrowSchemaPtr, ArrowArrayPtr)
+where
+    PrimitiveArray<T>: From<Vec<T::Native>>,
+{
+    use arrow::array::{ArrayRef, PrimitiveArray};
+    use arrow::datatypes::{Field, Schema};
     use arrow::ffi::{FFI_ArrowArray, FFI_ArrowSchema};
     use sf_core::thrift_gen::database_driver_v1::{ArrowArrayPtr, ArrowSchemaPtr};
     use std::sync::Arc;
@@ -433,12 +272,12 @@ pub fn create_param_bindings(params: &[i64]) -> (ArrowSchemaPtr, ArrowArrayPtr) 
     let schema_fields = params
         .iter()
         .enumerate()
-        .map(|(i, _)| Field::new(format!("param_{}", i + 1), DataType::Int64, false))
+        .map(|(i, _)| Field::new(format!("param_{}", i + 1), T::DATA_TYPE, false))
         .collect::<Vec<_>>();
 
     let arrays = params
         .iter()
-        .map(|p| Arc::new(Int64Array::from(vec![*p])) as ArrayRef)
+        .map(|p| Arc::new(PrimitiveArray::<T>::from(vec![*p])) as ArrayRef)
         .collect::<Vec<_>>();
     let array = StructArray::from(
         arrays
@@ -446,11 +285,7 @@ pub fn create_param_bindings(params: &[i64]) -> (ArrowSchemaPtr, ArrowArrayPtr) 
             .enumerate()
             .map(|(i, array)| {
                 (
-                    Arc::new(Field::new(
-                        format!("param_{}", i + 1),
-                        DataType::Int64,
-                        false,
-                    )),
+                    Arc::new(Field::new(format!("param_{}", i + 1), T::DATA_TYPE, false)),
                     array.clone(),
                 )
             })
@@ -466,7 +301,7 @@ pub fn create_param_bindings(params: &[i64]) -> (ArrowSchemaPtr, ArrowArrayPtr) 
 
     let schema = ArrowSchemaPtr {
         value: unsafe {
-            let len = std::mem::size_of::<*mut FFI_ArrowSchema>();
+            let len = size_of::<*mut FFI_ArrowSchema>();
             let buf_ptr = std::ptr::addr_of!(raw_schema) as *const u8;
             std::slice::from_raw_parts(buf_ptr, len).to_vec()
         },
@@ -474,7 +309,7 @@ pub fn create_param_bindings(params: &[i64]) -> (ArrowSchemaPtr, ArrowArrayPtr) 
 
     let array = ArrowArrayPtr {
         value: unsafe {
-            let len = std::mem::size_of::<*mut FFI_ArrowArray>();
+            let len = size_of::<*mut FFI_ArrowArray>();
             let buf_ptr = std::ptr::addr_of!(raw_array) as *const u8;
             std::slice::from_raw_parts(buf_ptr, len).to_vec()
         },

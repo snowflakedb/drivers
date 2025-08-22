@@ -1,20 +1,20 @@
 pub mod common;
 extern crate sf_core;
 
-use crate::common::test_utils::{
-    ArrowResultHelper, SnowflakeTestClient, create_param_bindings, setup_logging,
-};
+use crate::common::arrow_result_helper::ArrowResultHelper;
+use crate::common::test_utils::{SnowflakeTestClient, create_param_bindings, setup_logging};
+use arrow::datatypes::Int32Type;
 
 #[test]
 fn test_statement_bind() {
     setup_logging();
-    let mut client = SnowflakeTestClient::new();
+    let mut client = SnowflakeTestClient::connect_with_default_auth();
     let stmt = client.new_statement();
     client
         .driver
         .statement_set_sql_query(stmt.clone(), "SELECT ? as value".to_string())
         .unwrap();
-    let (schema, array) = create_param_bindings(&[42]);
+    let (schema, array) = create_param_bindings::<Int32Type>(&[42]);
 
     client
         .driver
@@ -30,13 +30,13 @@ fn test_statement_bind() {
 #[test]
 fn test_statement_bind_multiple_params() {
     setup_logging();
-    let mut client = SnowflakeTestClient::new();
+    let mut client = SnowflakeTestClient::connect_with_default_auth();
     let stmt = client.new_statement();
     client
         .driver
         .statement_set_sql_query(stmt.clone(), "SELECT ?, ? as value".to_string())
         .unwrap();
-    let (schema, array) = create_param_bindings(&[42, 1]);
+    let (schema, array) = create_param_bindings::<Int32Type>(&[42, 1]);
     client
         .driver
         .statement_bind(stmt.clone(), schema, array)
