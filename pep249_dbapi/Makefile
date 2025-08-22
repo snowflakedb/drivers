@@ -1,35 +1,50 @@
 # -------- Settings (override at call) --------
-PY             ?= $(shell python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
-PYID           := $(subst .,,$(PY))
-REPORTS_DIR    ?= reports
-REF_VERSION    ?= 3.10.1
-FAIL_ON_REGRESSIONS ?= 0              # should the pipeline fail if there is discrepancy between original driver and the new (universal) implementation
-POSARGS        ?=                     # extra pytest args, e.g. -k smoke -m reference
+PY ?= $(shell python3 -c 'import sys;print(f"{sys.version_info.major}.{sys.version_info.minor}")')
+PYID := $(subst .,,$(PY))
+REPORTS_DIR ?= reports
+REF_VERSION ?= 3.10.1
+POSARGS ?=
+FAIL_ON_REGRESSIONS ?= 0
 
-# Required environment variables (no defaults)
-# CORE_PATH      - Path to the Rust core library
-# PARAMETER_PATH - Path to test parameters JSON file
+# Default paths for local development (can be overridden)
+DEFAULT_CORE_PATH_MACOS := $(shell cd .. && pwd)/target/debug/libsf_core.dylib
+DEFAULT_CORE_PATH_LINUX := $(shell cd .. && pwd)/target/debug/libsf_core.so
+DEFAULT_PARAMETER_PATH := $(shell cd .. && pwd)/parameters.json
 
 SHELL := bash
 .ONESHELL:
 
-.PHONY: check-env-or-build check-env-or-fail install-tools test-local test-unit-local test-integ-local test-reference-local unit unit-universal all-universal integ-reference compare compare-artifacts test-and-compare-local clean-reports
+.PHONY: check-env-or-build check-env-or-fail setup test-local test-local-tox test-unit-local test-integ-local test-reference-local test-reference-local-tox test-integ-universal test-integ-reference compare compare-local clean-reports
 
-# For local development - build core if missing
+# Auto-detect platform-specific paths
+DETECTED_CORE_PATH := $(shell \
+	if [ -n "$$CORE_PATH" ]; then \
+		echo "$$CORE_PATH"; \
+	elif [[ "$$(uname)" == "Darwin" ]]; then \
+		echo "$(DEFAULT_CORE_PATH_MACOS)"; \
+	else \
+		echo "$(DEFAULT_CORE_PATH_LINUX)"; \
+	fi)
+
+DETECTED_PARAMETER_PATH := $(shell \
+	if [ -n "$$PARAMETER_PATH" ]; then \
+		echo "$$PARAMETER_PATH"; \
+	else \
+		echo "$(DEFAULT_PARAMETER_PATH)"; \
+	fi)
+
+# For local development - build Rust core if missing
 check-env-or-build:
-	@if [ -z "$(CORE_PATH)" ]; then \
-		echo "Error: CORE_PATH environment variable not set"; \
-		echo "Set it to the path of your Rust core library"; \
-		echo "Example: export CORE_PATH=../target/debug/libsf_core.dylib"; \
-		exit 1; \
-	fi
-	@if [ ! -f "$(CORE_PATH)" ]; then \
-		echo "Core library not found, building..."; \
+	@echo "Using CORE_PATH: $(DETECTED_CORE_PATH)"
+	@echo "Using PARAMETER_PATH: $(DETECTED_PARAMETER_PATH)"
+	@if [ ! -f "$(DETECTED_CORE_PATH)" ]; then \
+		echo "Rust core library not found, building..."; \
 		cd .. && cargo build --package sf_core || { \
 			echo "Failed to build Rust core library"; \
-			echo "Make sure you're in a virtual environment: source venv/bin/activate"; \
+			echo "Make sure Rust toolchain is installed: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"; \
 			exit 1; \
 		}; \
+		echo "Rust core library built successfully"; \
 	fi
 
 # For CI - fail if core missing
@@ -43,87 +58,68 @@ check-env-or-fail:
 		exit 1; \
 	fi
 
-install-tools:
-	@python3 -m pip install -U pip tox tox-uv pytest-xdist pytest-json-report || { \
-		echo "Failed to install Python tools"; \
-		echo "Make sure you're in a virtual environment: source venv/bin/activate"; \
+setup:
+	@if ! command -v uv >/dev/null 2>&1; then \
+		echo "Installing uv..."; \
+		curl -LsSf https://astral.sh/uv/install.sh | sh; \
+		echo "uv installed. Please restart your shell or run: source ~/.local/bin/env"; \
+		echo "Then run 'make setup' again."; \
 		exit 1; \
-	}
+	fi
+	uv sync --extra dev
 	mkdir -p $(REPORTS_DIR)
 
 # ===== Local Development Commands =====
 
-# Local testing - replaces run_tests.sh  
-test-local: check-env-or-build
-	@python3 -m pip install -e ".[dev]" || { \
-		echo "Failed to install package"; \
-		echo "Make sure you're in a virtual environment: source venv/bin/activate"; \
-		exit 1; \
-	}
-	CORE_PATH=$(CORE_PATH) PARAMETER_PATH=$(PARAMETER_PATH) pytest tests/ -v $(POSARGS)
+# Run all tests (unit + integration) with direct pytest
+test-local: check-env-or-build setup
+	CORE_PATH=$(DETECTED_CORE_PATH) PARAMETER_PATH=$(DETECTED_PARAMETER_PATH) uv run pytest tests/ -v $(POSARGS)
 
-test-unit-local: check-env-or-build
-	@python3 -m pip install -e ".[dev]" || { \
-		echo "Failed to install package"; \
-		echo "Make sure you're in a virtual environment: source venv/bin/activate"; \
-		exit 1; \
-	}
-	CORE_PATH=$(CORE_PATH) pytest tests/unit/ -v $(POSARGS)
+# Run integration tests with tox + xdist for faster parallel execution
+test-local-tox: check-env-or-build setup
+	cd .. && CORE_PATH=$(DETECTED_CORE_PATH) PARAMETER_PATH=$(DETECTED_PARAMETER_PATH) uv run tox -e py$(PYID)-integ-universal -- \
+	  --json-report --json-report-file=pep249_dbapi/$(REPORTS_DIR)/universal-$(PY).json \
+	  -n auto $(POSARGS)
 
-test-integ-local: check-env-or-build
-	@python3 -m pip install -e ".[dev]" || { \
-		echo "Failed to install package"; \
-		echo "Make sure you're in a virtual environment: source venv/bin/activate"; \
-		exit 1; \
-	}
-	mkdir -p $(REPORTS_DIR)
-	CORE_PATH=$(CORE_PATH) PARAMETER_PATH=$(PARAMETER_PATH) pytest tests/integ/ --connector=universal -v \
+# Run only unit tests with direct pytest
+test-unit-local: check-env-or-build setup
+	CORE_PATH=$(DETECTED_CORE_PATH) uv run pytest tests/unit/ -v $(POSARGS)
+
+# Run integration tests with universal connector (direct pytest with xdist)
+test-integ-local: check-env-or-build setup
+	CORE_PATH=$(DETECTED_CORE_PATH) PARAMETER_PATH=$(DETECTED_PARAMETER_PATH) uv run pytest tests/integ/ --connector=universal -v -n auto \
 	  --json-report --json-report-file=$(REPORTS_DIR)/universal-$(PY).json $(POSARGS)
 
-test-reference-local: check-env-or-build
-	@python3 -m pip install -e ".[dev]" || { \
-		echo "Failed to install package"; \
-		echo "Make sure you're in a virtual environment: source venv/bin/activate"; \
-		exit 1; \
-	}
-	mkdir -p $(REPORTS_DIR)
-	CORE_PATH=$(CORE_PATH) PARAMETER_PATH=$(PARAMETER_PATH) pytest tests/integ/ --connector=reference -v \
+# Run integration tests with reference connector (direct pytest with xdist)
+test-reference-local: setup
+	CORE_PATH=$(DETECTED_CORE_PATH) PARAMETER_PATH=$(DETECTED_PARAMETER_PATH) uv run pytest tests/integ/ --connector=reference -v -n auto \
 	  --json-report --json-report-file=$(REPORTS_DIR)/reference-$(PY).json $(POSARGS)
+
+# Run integration tests with reference connector using tox + xdist for faster parallel execution
+test-reference-local-tox: setup
+	cd .. && CORE_PATH=$(DETECTED_CORE_PATH) PARAMETER_PATH=$(DETECTED_PARAMETER_PATH) uv run tox -e py$(PYID)-integ-reference -- \
+	  --json-report --json-report-file=pep249_dbapi/$(REPORTS_DIR)/reference-$(PY).json \
+	  -n auto $(POSARGS)
 
 # ===== CI/Tox Commands =====
 
-unit: check-env-or-fail install-tools
+# CI: Run integration tests with universal connector (expects CORE_PATH set)
+test-integ-universal: check-env-or-fail
 	mkdir -p $(REPORTS_DIR)
-	cd .. && CORE_PATH=$(CORE_PATH) tox -e py$(PYID)-unit -- \
-	  $(POSARGS) \
-	  --junitxml=pep249_dbapi/$(REPORTS_DIR)/unit-$(PY).xml
+	cd .. && uv run tox -e py$(PYID)-integ-universal -- \
+	  --json-report --json-report-file=pep249_dbapi/$(REPORTS_DIR)/universal-$(PY).json \
+	  --junitxml=pep249_dbapi/$(REPORTS_DIR)/universal-$(PY).xml \
+	  $(POSARGS)
 
-unit-universal: check-env-or-fail
+# CI: Run integration tests with reference connector (expects CORE_PATH set)
+test-integ-reference: check-env-or-fail
 	mkdir -p $(REPORTS_DIR)
-	@python3 -m pip install -e ".[dev]" || { \
-		echo "Failed to install package"; \
-		echo "Make sure you're in a virtual environment: source venv/bin/activate"; \
-		exit 1; \
-	}
-	CORE_PATH=$(CORE_PATH) pytest tests/unit/ -v --tb=short \
-	  --junitxml=$(REPORTS_DIR)/unit-$(PY).xml
-
-all-universal: check-env-or-fail install-tools
-	mkdir -p $(REPORTS_DIR)
-	cd .. && CORE_PATH=$(CORE_PATH) PARAMETER_PATH=$(PARAMETER_PATH) tox -e py$(PYID)-all-universal -- \
-	  $(POSARGS) \
-	  --json-report --json-report-file=pep249_dbapi/$(REPORTS_DIR)/universal-all-$(PY).json \
-	  --junitxml=pep249_dbapi/$(REPORTS_DIR)/universal-all-$(PY).xml
-	python ci/extract_integ_results.py \
-	  --input $(REPORTS_DIR)/universal-all-$(PY).json \
-	  --output $(REPORTS_DIR)/universal-$(PY).json
-
-integ-reference: check-env-or-fail install-tools
-	mkdir -p $(REPORTS_DIR)
-	cd .. && CORE_PATH=$(CORE_PATH) PARAMETER_PATH=$(PARAMETER_PATH) tox -e py$(PYID)-integ-reference -- \
-	  $(POSARGS) \
+	cd .. && uv run tox -e py$(PYID)-integ-reference -- \
 	  --json-report --json-report-file=pep249_dbapi/$(REPORTS_DIR)/reference-$(PY).json \
-	  --junitxml=pep249_dbapi/$(REPORTS_DIR)/reference-$(PY).xml
+	  --junitxml=pep249_dbapi/$(REPORTS_DIR)/reference-$(PY).xml \
+	  $(POSARGS)
+
+# ===== Comparison Commands =====
 
 compare:
 	python ci/reference_tests/compare_reports.py \
@@ -132,16 +128,10 @@ compare:
 	  --reference $(REPORTS_DIR)/reference-$(PY).json \
 	  --fail-on-regressions $(FAIL_ON_REGRESSIONS)
 
-# One-shot local run: universal → reference → diff
-test-and-compare-local: test-integ-local test-reference-local compare
+# Fast comparison using tox for parallel execution
+compare-local: test-local-tox test-reference-local-tox compare
 
-# Use this when comparing downloaded CI artifacts
-compare-artifacts:
-	python ci/reference_tests/compare_reports.py \
-	  --py $(PY) \
-	  --universal $${UNIVERSAL_DIR}/universal-$(PY).json \
-	  --reference $${REFERENCE_DIR}/reference-$(PY).json \
-	  --fail-on-regressions $(FAIL_ON_REGRESSIONS)
+# ===== Utility Commands =====
 
 clean-reports:
 	rm -rf $(REPORTS_DIR)
