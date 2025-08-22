@@ -218,7 +218,7 @@ jobs:
       - uses: actions/cache@v4
         with:
           path: ~/.cache/uv
-          key: uv-${{ runner.os }}-${{ matrix.py }}-${{ hashFiles('pep249_dbapi/pyproject.toml','tox.ini') }}
+          key: uv-${{ runner.os }}-${{ matrix.py }}-${{ hashFiles('pep249_dbapi/pyproject.toml','pep249_dbapi/tox.ini') }}
       
       - name: Download Rust artifacts
         uses: actions/download-artifact@v4
@@ -231,14 +231,13 @@ jobs:
         env:
           PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
 
-      - name: Run all tests (unit + integration)
+      - name: Setup dependencies and run integration tests
         env:
-          SNOWFLAKE_TEST_ACCOUNT: ${{ secrets.SNOWFLAKE_TEST_ACCOUNT }}
-          SNOWFLAKE_USER: ${{ secrets.SNOWFLAKE_USER }}
-          SNOWFLAKE_PASSWORD: ${{ secrets.SNOWFLAKE_PASSWORD }}
+          CORE_PATH: ${{ github.workspace }}/target/debug/libsf_core.so
+          PARAMETER_PATH: ${{ github.workspace }}/parameters.json
         run: |
-          # Run all tests once and extract integration results for comparison
-          make all-universal PY=${{ matrix.py }} REPORTS_DIR=reports
+          make setup
+          make test-integ-universal PY=${{ matrix.py }}
         working-directory: pep249_dbapi
       
       - uses: actions/upload-artifact@v4
@@ -263,7 +262,7 @@ jobs:
       - uses: actions/cache@v4
         with:
           path: ~/.cache/uv
-          key: uv-${{ runner.os }}-${{ matrix.py }}-${{ hashFiles('pep249_dbapi/pyproject.toml','tox.ini') }}
+          key: uv-${{ runner.os }}-${{ matrix.py }}-${{ hashFiles('pep249_dbapi/pyproject.toml','pep249_dbapi/tox.ini') }}
       
       - name: Download Rust artifacts
         uses: actions/download-artifact@v4
@@ -276,13 +275,14 @@ jobs:
         env:
           PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
 
-      - name: Run integration tests only (for comparison)
+      - name: Setup dependencies and run reference integration tests
         env:
-          SNOWFLAKE_TEST_ACCOUNT: ${{ secrets.SNOWFLAKE_TEST_ACCOUNT }}
-          SNOWFLAKE_USER: ${{ secrets.SNOWFLAKE_USER }}
-          SNOWFLAKE_PASSWORD: ${{ secrets.SNOWFLAKE_PASSWORD }}
-          PYTHON_REFERENCE_DRIVER_VERSION: ${{ env.PYTHON_REFERENCE_DRIVER_VERSION }}
-        run: make integ-reference PY=${{ matrix.py }} REPORTS_DIR=reports REF_VERSION=$PYTHON_REFERENCE_DRIVER_VERSION
+          CORE_PATH: ${{ github.workspace }}/target/debug/libsf_core.so
+          PARAMETER_PATH: ${{ github.workspace }}/parameters.json
+          REF_VERSION: ${{ env.PYTHON_REFERENCE_DRIVER_VERSION }}
+        run: |
+          make setup
+          make test-integ-reference PY=${{ matrix.py }}
         working-directory: pep249_dbapi
       
       - uses: actions/upload-artifact@v4
@@ -313,7 +313,9 @@ jobs:
           UNIVERSAL_DIR: universal-results
           REFERENCE_DIR: reference-results
           FAIL_ON_REGRESSIONS: "0"   # flip to "1" when you're ready to gate
-        run: make compare-artifacts PY=${{ matrix.py }} | tee -a $GITHUB_STEP_SUMMARY
+        run: |
+          make setup
+          make compare-artifacts PY=${{ matrix.py }} | tee -a $GITHUB_STEP_SUMMARY
         working-directory: pep249_dbapi
 
   jdbc_tests:
