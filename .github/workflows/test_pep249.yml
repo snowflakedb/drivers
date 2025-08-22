@@ -11,8 +11,30 @@ env:
   PYTHON_REFERENCE_DRIVER_VERSION: "3.10.1"
 
 jobs:
+  # Build Rust core library once and share across Python jobs
+  build_rust_core:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y unixodbc-dev
+
+      - name: Build Rust core library
+        run: cargo build --package sf_core
+
+      - name: Upload Rust artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-core-library
+          path: target/debug/libsf_core.so
+
   # Combined unit + integration tests with universal connector
   test_universal:
+    needs: build_rust_core
     strategy:
       fail-fast: false
       matrix: 
@@ -41,13 +63,11 @@ jobs:
       - name: Set up Python ${{ matrix.py }}
         run: uv python install ${{ matrix.py }}
 
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y unixodbc-dev
-
-      - name: Build Rust core library
-        run: cargo build --package sf_core
+      - name: Download Rust artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: rust-core-library
+          path: target/debug/
 
       - name: Decode secrets
         run: ./scripts/decode_secrets.sh
@@ -70,6 +90,7 @@ jobs:
 
   # Integration tests only with reference connector (for comparison)
   test_reference:
+    needs: build_rust_core
     strategy:
       fail-fast: false
       matrix: 
@@ -98,13 +119,11 @@ jobs:
       - name: Set up Python ${{ matrix.py }}
         run: uv python install ${{ matrix.py }}
 
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y unixodbc-dev
-
-      - name: Build Rust core library
-        run: cargo build --package sf_core
+      - name: Download Rust artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: rust-core-library
+          path: target/debug/
 
       - name: Decode secrets
         run: ./scripts/decode_secrets.sh
