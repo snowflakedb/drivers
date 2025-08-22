@@ -1,10 +1,19 @@
-name: PEP-249 CI Tests
+name: PEP-249 CI
+
 on:
-  pull_request:
-    branches: [ main ]   # adjust to your base branch(es)
   push:
-    branches: [ main ]
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+env:
+  CARGO_TERM_COLOR: always
+  PYTHON_REFERENCE_DRIVER_VERSION: "3.10.1"
+  # Python versions to run reference tests and comparison (space-separated)
+  REFERENCE_TEST_VERSIONS: "3.13"
+
 jobs:
+  # Build Rust core library once and share across Python jobs
   old-job-name:           # if protection expects a job-level check
     runs-on: ubuntu-latest
     steps:
