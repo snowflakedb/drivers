@@ -1,8 +1,8 @@
 use std::fs;
 
-use crate::config::{ConfigError, InvalidArgumentSnafu, MissingParameterSnafu};
 use crate::config::settings::Setting;
 use crate::config::settings::Settings;
+use crate::config::{ConfigError, InvalidArgumentSnafu, MissingParameterSnafu};
 
 fn get_server_url(settings: &dyn Settings) -> Result<String, ConfigError> {
     if let Some(Setting::String(value)) = settings.get("server_url") {
@@ -80,7 +80,10 @@ impl LoginParameters {
                 if let Some(value) = settings.get_string("account") {
                     value
                 } else {
-                    return Err(MissingParameterSnafu { parameter: "account" }.build());
+                    return Err(MissingParameterSnafu {
+                        parameter: "account",
+                    }
+                    .build());
                 }
             },
             login_method: LoginMethod::from_settings(settings)?,
@@ -145,9 +148,12 @@ impl LoginMethod {
                 username: settings
                     .get_string("user")
                     .ok_or_else(|| MissingParameterSnafu { parameter: "user" }.build())?,
-                password: settings
-                    .get_string("password")
-                    .ok_or_else(|| MissingParameterSnafu { parameter: "password" }.build())?,
+                password: settings.get_string("password").ok_or_else(|| {
+                    MissingParameterSnafu {
+                        parameter: "password",
+                    }
+                    .build()
+                })?,
             }),
             "PROGRAMMATIC_ACCESS_TOKEN" => Ok(Self::Pat {
                 username: settings

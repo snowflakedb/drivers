@@ -1,4 +1,4 @@
-use crate::api::{OdbcResult, StatementState, stmt_from_handle};
+use crate::api::{stmt_from_handle, OdbcResult, StatementState};
 use odbc_sys as sql;
 use tracing;
 

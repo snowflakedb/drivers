@@ -1,12 +1,12 @@
 use crate::logging::error::LogError;
 use opentelemetry::trace::TracerProvider;
-use opentelemetry::{KeyValue, global};
+use opentelemetry::{global, KeyValue};
 use opentelemetry_otlp::WithExportConfig;
-use opentelemetry_sdk::Resource;
 use opentelemetry_sdk::metrics::{MeterProviderBuilder, PeriodicReader, SdkMeterProvider};
 use opentelemetry_sdk::trace::{RandomIdGenerator, Sampler, SdkTracerProvider, Tracer};
-use opentelemetry_semantic_conventions::SCHEMA_URL;
+use opentelemetry_sdk::Resource;
 use opentelemetry_semantic_conventions::resource::SERVICE_VERSION;
+use opentelemetry_semantic_conventions::SCHEMA_URL;
 
 fn resource() -> Resource {
     Resource::builder()

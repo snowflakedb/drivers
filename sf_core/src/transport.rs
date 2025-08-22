@@ -2,7 +2,7 @@ use std::io::{Read, Write};
 use std::sync::Mutex;
 use thrift::protocol::{TCompactInputProtocol, TCompactOutputProtocol};
 use thrift::server::TProcessor;
-use tracing::{Level, event, span, trace};
+use tracing::{event, span, trace, Level};
 
 use crate::handle_manager::HandleManager;
 

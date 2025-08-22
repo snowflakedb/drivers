@@ -1,13 +1,13 @@
 use crate::arrow_utils::{boxed_arrow_reader, convert_string_rowset_to_arrow_reader};
 use crate::chunks::ChunkReader;
 use crate::file_manager;
-use crate::file_manager::{DownloadResult, UploadResult, download_files, upload_files};
+use crate::file_manager::{download_files, upload_files, DownloadResult, UploadResult};
 use crate::rest;
 use crate::rest::RestError;
 use arrow::array::{Array, Int64Array, RecordBatchReader, StringArray};
 use arrow::datatypes::{DataType, Field, Schema};
 use arrow::error::ArrowError;
-use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use rest::snowflake::query_response;
 use snafu::{Location, ResultExt, Snafu};
 use std::sync::Arc;
@@ -27,20 +27,22 @@ async fn perform_put_get(
 ) -> Result<Box<dyn RecordBatchReader + Send>, QueryResponseProcessingError> {
     match command.as_str() {
         "UPLOAD" => {
-            let file_upload_data = data.to_file_upload_data()
+            let file_upload_data = data
+                .to_file_upload_data()
                 .context(PrepareFileTransferSnafu)?;
-            let upload_results = upload_files(&file_upload_data).await
+            let upload_results = upload_files(&file_upload_data)
+                .await
                 .context(FileUploadSnafu)?;
-            upload_results_reader(upload_results)
-                .context(ConvertUploadResultsSnafu)
+            upload_results_reader(upload_results).context(ConvertUploadResultsSnafu)
         }
         "DOWNLOAD" => {
-            let file_download_data = data.to_file_download_data()
+            let file_download_data = data
+                .to_file_download_data()
                 .context(PrepareFileTransferSnafu)?;
-            let download_results = download_files(file_download_data).await
+            let download_results = download_files(file_download_data)
+                .await
                 .context(FileDownloadSnafu)?;
-            download_results_reader(download_results)
-                .context(ConvertDownloadResultsSnafu)
+            download_results_reader(download_results).context(ConvertDownloadResultsSnafu)
         }
         _ => UnsupportedCommandSnafu {
             command: command.to_string(),
@@ -53,8 +55,7 @@ fn read_batches(
     data: &query_response::Data,
 ) -> Result<Box<dyn RecordBatchReader + Send>, ReadBatchesError> {
     if let Some(rowset_base64) = &data.rowset_base64 {
-        let rowset_bytes = BASE64.decode(rowset_base64)
-            .context(Base64DecodeSnafu)?;
+        let rowset_bytes = BASE64.decode(rowset_base64).context(Base64DecodeSnafu)?;
 
         let reader_result = if let Some(chunk_download_data) = data.to_chunk_download_data() {
             ChunkReader::multi_chunk(rowset_bytes, chunk_download_data)
@@ -77,8 +78,7 @@ fn read_batches(
                 .fail();
             }
         }
-        convert_string_rowset_to_arrow_reader(rowset, rowtype)
-            .context(ConvertRowsetSnafu)
+        convert_string_rowset_to_arrow_reader(rowset, rowtype).context(ConvertRowsetSnafu)
     } else {
         MissingRowsetOrRowtypeSnafu.fail()
     }

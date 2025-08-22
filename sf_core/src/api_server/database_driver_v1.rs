@@ -1,10 +1,10 @@
 use crate::api_server::query::process_query_response;
-use crate::config::ConfigError;
 use crate::config::rest_parameters::{LoginParameters, QueryParameters};
 use crate::config::settings::Setting;
+use crate::config::ConfigError;
 use crate::driver::{Connection, Database, Statement, StatementError};
 use crate::handle_manager::{Handle, HandleManager};
-use crate::rest::error::{RestError, InternalSnafu};
+use crate::rest::error::{InternalSnafu, RestError};
 
 use crate::thrift_gen::database_driver_v1::{
     ArrowArrayPtr, ArrowSchemaPtr, ConnectionHandle, DatabaseDriverSyncHandler,
@@ -592,13 +592,12 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
             .ok_or_else(|| Self::invalid_argument("Statement handle not found"))?;
 
         let mut stmt = stmt_ptr.lock().unwrap();
-        let query = stmt
-            .query
-            .take()
-            .ok_or_else(|| InternalSnafu {
+        let query = stmt.query.take().ok_or_else(|| {
+            InternalSnafu {
                 message: "Query not found".to_string(),
             }
-            .build())?;
+            .build()
+        })?;
 
         // Run within the async runtime
         let rt = tokio::runtime::Runtime::new()
@@ -608,12 +607,12 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
             let conn = stmt.conn.lock().unwrap();
             (
                 QueryParameters::from_settings(&conn.settings)?,
-                conn.session_token
-                    .clone()
-                    .ok_or_else(|| InternalSnafu {
+                conn.session_token.clone().ok_or_else(|| {
+                    InternalSnafu {
                         message: "Session token not found".to_string(),
                     }
-                    .build())?,
+                    .build()
+                })?,
             )
         };
 

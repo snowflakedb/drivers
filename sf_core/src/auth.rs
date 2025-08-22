@@ -60,7 +60,7 @@ fn generate_jwt_token(
     private_key: &str,
     passphrase: Option<&str>,
 ) -> Result<String, AuthError> {
-    use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
+    use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
     use jwt::{Header, Token};
     use openssl::{pkey::PKey, rsa::Rsa};
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -75,7 +75,9 @@ fn generate_jwt_token(
     let private_key = PKey::from_rsa(rsa).context(CreatePrivateKeySnafu)?;
 
     // Extract public key and hash it
-    let public_key_der = private_key.public_key_to_der().context(ExtractPublicKeySnafu)?;
+    let public_key_der = private_key
+        .public_key_to_der()
+        .context(ExtractPublicKeySnafu)?;
     let mut hasher = openssl::sha::Sha256::new();
     hasher.update(&public_key_der);
     let public_key_hash = hasher.finish();

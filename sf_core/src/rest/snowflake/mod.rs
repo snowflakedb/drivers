@@ -2,16 +2,18 @@ mod auth;
 pub mod query_request;
 pub mod query_response;
 
-use crate::auth::{Credentials, create_credentials};
+use crate::auth::{create_credentials, Credentials};
 use crate::config::rest_parameters::ClientInfo;
 use crate::config::rest_parameters::{LoginParameters, QueryParameters};
-use crate::rest::error::{RestError, AuthSnafu, InternalSnafu, InvalidSnowflakeResponseSnafu, StatusSnafu};
-use snafu::ResultExt;
+use crate::rest::error::{
+    AuthSnafu, InternalSnafu, InvalidSnowflakeResponseSnafu, RestError, StatusSnafu,
+};
 use crate::rest::snowflake::auth::{
     AuthRequest, AuthRequestClientEnvironment, AuthRequestData, AuthResponse,
 };
 use reqwest;
 use serde_json;
+use snafu::ResultExt;
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tracing;

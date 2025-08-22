@@ -1,5 +1,5 @@
 use std::sync::{Arc, RwLock};
-use tracing::{Level, span};
+use tracing::{span, Level};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Handle {

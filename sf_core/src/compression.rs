@@ -1,4 +1,4 @@
-use flate2::{Compression, GzBuilder, bufread::GzDecoder};
+use flate2::{bufread::GzDecoder, Compression, GzBuilder};
 use snafu::{Location, ResultExt, Snafu};
 use std::io::{Read, Write};
 
@@ -24,7 +24,9 @@ pub fn compress_data(input_data: Vec<u8>, filename: &str) -> Result<Vec<u8>, Com
 pub fn decompress_data(input_data: Vec<u8>) -> Result<Vec<u8>, CompressionError> {
     let mut decoder = GzDecoder::new(input_data.as_slice());
     let mut decompressed_data = Vec::new();
-    decoder.read_to_end(&mut decompressed_data).context(ReadDataSnafu)?;
+    decoder
+        .read_to_end(&mut decompressed_data)
+        .context(ReadDataSnafu)?;
     Ok(decompressed_data)
 }
 

@@ -1,4 +1,4 @@
-use crate::api::{ConnectionState, OdbcError, OdbcResult, conn_from_handle};
+use crate::api::{conn_from_handle, ConnectionState, OdbcError, OdbcResult};
 use odbc_sys as sql;
 use sf_core::api_client;
 use std::collections::HashMap;

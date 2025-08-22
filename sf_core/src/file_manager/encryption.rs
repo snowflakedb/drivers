@@ -3,12 +3,12 @@ use super::types::{
 };
 use snafu::{Location, ResultExt, Snafu};
 
-use base64::{Engine, engine::general_purpose::STANDARD as BASE64_ENGINE};
+use base64::{engine::general_purpose::STANDARD as BASE64_ENGINE, Engine};
 use openssl::{
     error::ErrorStack as OpenSslErrorStack,
-    hash::{MessageDigest, hash},
+    hash::{hash, MessageDigest},
     rand::rand_bytes,
-    symm::{Cipher, decrypt, encrypt},
+    symm::{decrypt, encrypt, Cipher},
 };
 
 #[derive(Snafu, Debug)]

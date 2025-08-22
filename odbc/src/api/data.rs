@@ -1,4 +1,4 @@
-use crate::api::{OdbcError, OdbcResult, StatementState, stmt_from_handle};
+use crate::api::{stmt_from_handle, OdbcError, OdbcResult, StatementState};
 use crate::cdata_types::{CDataType, Double, Real, SBigInt, UBigInt};
 use crate::read_arrow::{Buffer, ExtractError, ReadArrowValue, Value};
 use arrow::{
