@@ -1,222 +1,166 @@
-# PEP 249 Database API 2.0 Implementation
+# Universal Driver Testing
 
-A Python library that implements [PEP 249 (Python Database API Specification 2.0)](https://peps.python.org/pep-0249/) with empty interface implementations. This library provides a complete skeleton implementation that follows the PEP 249 specification, making it an ideal starting point for creating new database drivers or for testing database API compliance.
+Tests the universal driver (Rust-backed) against the reference Snowflake connector to catch behavioral differences.
 
-## Features
-
-- **Complete PEP 249 compliance**: Implements all required interfaces, constants, and exception hierarchy
-- **Empty implementation**: All methods raise `NotSupportedError` by default, allowing incremental implementation
-- **Full type support**: Includes all required type constructors and type objects
-- **Context manager support**: Both Connection and Cursor objects support the `with` statement
-- **Iterator protocol**: Cursor objects are iterable
-- **Python 2/3 compatibility**: Includes compatibility features for both Python versions
-- **Comprehensive tests**: Full test suite using pytest
-
-## Installation
+## Setup
 
 ```bash
-pip install pep249-dbapi
+make setup  # Install deps, create venv
 ```
 
-For development:
+Requires:
+- Rust core built: `../target/debug/libsf_core.{so,dylib}`
+- Credentials: `../parameters.json`
+
+## Running Tests
 
 ```bash
-pip install pep249-dbapi[dev]
+make test-local              # All tests (universal driver)
+make test-unit-local         # Unit tests only
+make test-integ-local        # Integration tests (universal)
+make test-reference-local    # Integration tests (reference)
+make compare-local           # Run both + compare
 ```
 
-## Quick Start
+## Test Structure
+
+```
+tests/
+├── unit/    # Fast tests, no DB connection
+└── integ/   # Requires Snowflake connection
+```
+
+## Specific Tests
+
+```bash
+# Single test file
+make test-local PYTEST_ARGS="tests/integ/test_connection.py"
+
+# Single test method  
+make test-local PYTEST_ARGS="tests/integ/test_connection.py::TestConnectionMethods::test_close_connection"
+
+# Pattern matching
+make test-local PYTEST_ARGS="-k test_connection"
+
+# Skip slow tests
+make test-local PYTEST_ARGS="-m 'not slow'"
+
+# Stop on first failure
+make test-local PYTEST_ARGS="--maxfail=1 -vv"
+
+# Different Python version
+make test-local PYTHON_VERSION=3.12
+```
+
+## Configuration
+
+### Connection Parameters (`../parameters.json`)
+
+```json
+{
+  "testconnection": {
+    "SNOWFLAKE_TEST_ACCOUNT": "your-account",
+    "SNOWFLAKE_TEST_USER": "username", 
+    "SNOWFLAKE_TEST_PASSWORD": "password",
+    "SNOWFLAKE_TEST_DATABASE": "database",
+    "SNOWFLAKE_TEST_SCHEMA": "schema",
+    "SNOWFLAKE_TEST_WAREHOUSE": "warehouse",
+    "SNOWFLAKE_TEST_ROLE": "role"
+  }
+}
+```
+
+### Override Parameters in Tests
 
 ```python
-import pep249_dbapi
-
-# Module-level constants
-print(f"API Level: {pep249_dbapi.apilevel}")
-print(f"Thread Safety: {pep249_dbapi.threadsafety}")
-print(f"Parameter Style: {pep249_dbapi.paramstyle}")
-
-# Create a connection
-conn = pep249_dbapi.connect(
-    database="mydb",
-    user="myuser",
-    password="mypass",
-    host="localhost"
-)
-
-# Use connection as context manager
-with conn:
-    # Create a cursor
-    cursor = conn.cursor()
-    
-    # Use cursor as context manager
-    with cursor:
-        # Execute a query (will raise NotSupportedError in base implementation)
-        try:
-            cursor.execute("SELECT * FROM users")
-            results = cursor.fetchall()
-        except pep249_dbapi.NotSupportedError:
-            print("Method not implemented yet")
+def test_custom_db(connection_factory):
+    with connection_factory(database="test_db") as conn:
+        # Use different database
+        pass
 ```
 
-## API Reference
+## Comparison Reports
 
-### Module Constants
-
-- `apilevel`: String constant stating the supported DB API level ("2.0")
-- `threadsafety`: Integer constant stating the level of thread safety (1)
-- `paramstyle`: String constant stating the type of parameter marker formatting ("format")
-
-### Functions
-
-- `connect(**kwargs)`: Create a new database connection
-
-### Exception Hierarchy
-
-```
-Warning
-Error
-├── InterfaceError
-└── DatabaseError
-    ├── DataError
-    ├── OperationalError
-    ├── IntegrityError
-    ├── InternalError
-    ├── ProgrammingError
-    └── NotSupportedError
+```bash
+make compare-local  # Runs both drivers, shows differences
 ```
 
-### Type Constructors
+Report sections:
+- **Regressions**: Reference passes, universal fails
+- **Breaking changes**: Reference fails, universal passes  
+- **Both failing**: Expected differences
+- **Skip differences**: Different skip behavior
 
-- `Date(year, month, day)`: Construct a date object
-- `Time(hour, minute, second)`: Construct a time object
-- `Timestamp(year, month, day, hour, minute, second)`: Construct a timestamp object
-- `DateFromTicks(ticks)`: Construct a date from seconds since epoch
-- `TimeFromTicks(ticks)`: Construct a time from seconds since epoch
-- `TimestampFromTicks(ticks)`: Construct a timestamp from seconds since epoch
-- `Binary(data)`: Construct a binary object
+## Adding Tests
 
-### Type Objects
-
-- `STRING`: Type object for string-like columns
-- `BINARY`: Type object for binary columns
-- `NUMBER`: Type object for numeric columns
-- `DATETIME`: Type object for date/time columns
-- `ROWID`: Type object for row ID columns
-
-### Connection Objects
-
-#### Methods
-
-- `close()`: Close the connection
-- `commit()`: Commit pending transactions (raises NotSupportedError)
-- `rollback()`: Rollback pending transactions (raises NotSupportedError)
-- `cursor()`: Create a new cursor object
-
-#### Properties
-
-- `autocommit`: Get/set autocommit mode
-
-### Cursor Objects
-
-#### Attributes
-
-- `description`: Describes result columns (read-only)
-- `rowcount`: Number of rows affected by last operation (read-only)
-- `arraysize`: Number of rows to fetch at a time (default: 1)
-
-#### Methods
-
-- `callproc(procname, parameters=None)`: Call a stored procedure (raises NotSupportedError)
-- `close()`: Close the cursor
-- `execute(operation, parameters=None)`: Execute an operation (raises NotSupportedError)
-- `executemany(operation, seq_of_parameters)`: Execute operation multiple times (raises NotSupportedError)
-- `fetchone()`: Fetch next row (raises NotSupportedError)
-- `fetchmany(size=None)`: Fetch multiple rows (raises NotSupportedError)
-- `fetchall()`: Fetch all remaining rows (raises NotSupportedError)
-- `nextset()`: Move to next result set (raises NotSupportedError)
-- `setinputsizes(sizes)`: Set input sizes (no-op)
-- `setoutputsize(size, column=None)`: Set output size (no-op)
-
-## Extending the Implementation
-
-To create a working database driver, inherit from the provided classes and implement the required methods:
-
+**Unit tests** (`tests/unit/`): No database required
 ```python
-from pep249_dbapi import Connection as BaseConnection, Cursor as BaseCursor
+def test_module_constant():
+    assert pep249_dbapi.apilevel == "2.0"
+```
 
-class MyConnection(BaseConnection):
-    def commit(self):
-        # Implement actual commit logic
-        pass
-    
-    def rollback(self):
-        # Implement actual rollback logic
-        pass
-
-class MyCursor(BaseCursor):
-    def execute(self, operation, parameters=None):
-        # Implement actual query execution
-        pass
-    
-    def fetchone(self):
-        # Implement actual row fetching
+**Integration tests** (`tests/integ/`): Need database connection
+```python
+class TestNewFeature:
+    def test_method(self, connection):
+        cursor = connection.cursor()
+        # Test actual behavior
+        
+    @pytest.mark.slow
+    def test_large_data(self, cursor):
+        # Mark slow tests
         pass
 ```
 
-## Testing
+## Environment Variables
 
-Run the test suite:
+Auto-detected locally, set manually in CI:
+- `CORE_PATH`: Path to `libsf_core.{so,dylib}`
+- `PARAMETER_PATH`: Path to `parameters.json`
+- `PYTHON_VERSION`: Python version (default: current)
+- `PYTEST_ARGS`: Extra pytest arguments
+- `REFERENCE_DRIVER_VERSION`: Reference driver version
 
-```bash
-pytest
-```
-
-Run with coverage:
-
-```bash
-pytest --cov=pep249_dbapi --cov-report=html
-```
-
-## Development
-
-Setup virtual env:
-```bash
-python -m venv .venv
-source .venv/bin/activate
-```
-
-Install in development mode:
+## Debugging
 
 ```bash
-pip install -e .[dev]
+# Verbose output
+make test-local PYTEST_ARGS="-vv"
+
+# Debug on failure
+make test-local PYTEST_ARGS="--pdb"
+
+# Full traceback
+make test-local PYTEST_ARGS="--tb=long"
 ```
 
-Run code formatting:
+## CI
 
-```bash
-black pep249_dbapi tests
-```
+Runs on GitHub Actions:
+1. Build Rust core (once)
+2. Test universal driver (Python 3.9-3.13)
+3. Test reference driver (Python 3.13)
+4. Compare results
 
-Run linting:
+## Make Targets
 
-```bash
-flake8 pep249_dbapi tests
-```
+| Command | Description |
+|---------|-------------|
+| `setup` | Install dependencies |
+| `test-local` | All tests (universal) |
+| `test-local-tox` | Integration tests with tox |
+| `test-unit-local` | Unit tests only |
+| `test-integ-local` | Integration tests (universal) |
+| `test-reference-local` | Integration tests (reference) |
+| `compare-local` | Test both + compare |
+| `clean-reports` | Remove report files |
 
-Run type checking:
+All targets accept `PYTHON_VERSION` and `PYTEST_ARGS`.
 
-```bash
-mypy pep249_dbapi
-```
+## Troubleshooting
 
-## License
+**Missing core library**: `cd ../sf_core && cargo build`
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+**Connection issues**: Check `parameters.json` and network access
 
-## Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
-
-## References
-
-- [PEP 249 - Python Database API Specification v2.0](https://peps.python.org/pep-0249/)
-- [Python Database API Specification v2.0](https://www.python.org/dev/peps/pep-0249/) 
+**Test failures**: Use `-vv` for details, check if it's expected difference

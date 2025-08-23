@@ -14,7 +14,7 @@ DEFAULT_PARAMETER_PATH := $(shell cd .. && pwd)/parameters.json
 SHELL := bash
 .ONESHELL:
 
-.PHONY: check-env-or-build check-env-or-fail setup test-local test-local-tox test-unit-local test-integ-local test-reference-local test-reference-local-tox test-integ-universal test-integ-reference compare compare-artifacts compare-local clean-reports
+.PHONY: check-env-or-build check-env-or-fail setup test test-local tox test-local-tox test-unit-local test-integ-local test-reference-local test-reference-local-tox test-integ-universal test-integ-reference compare compare-artifacts compare-local clean-reports
 
 # Auto-detect platform-specific paths
 DETECTED_CORE_PATH := $(shell \
@@ -75,27 +75,33 @@ setup:
 
 # Run all tests (unit + integration) with direct pytest
 test-local: check-env-or-build setup
-	CORE_PATH=$(DETECTED_CORE_PATH) PARAMETER_PATH=$(DETECTED_PARAMETER_PATH) uv run pytest tests/ -n auto -v $(PYTEST_ARGS)
+	CORE_PATH=$(DETECTED_CORE_PATH) PARAMETER_PATH=$(DETECTED_PARAMETER_PATH) uv run pytest tests/ -n auto -v $(PYTEST_ARGS) $(filter-out test-local test,$(MAKECMDGOALS))
+
+# Alias for test-local
+test: test-local
 
 # Run integration tests with tox + xdist for faster parallel execution
 test-local-tox: check-env-or-build setup
 	CORE_PATH=$(DETECTED_CORE_PATH) PARAMETER_PATH=$(DETECTED_PARAMETER_PATH) uv run tox -e py$(PYTHON_ID)-integ-universal -- \
 	  --json-report --json-report-file=$(REPORTS_DIR)/universal-$(PYTHON_VERSION).json \
-	  -n auto $(PYTEST_ARGS)
+	  -n auto $(PYTEST_ARGS) $(filter-out test-local-tox tox,$(MAKECMDGOALS))
+
+# Alias for test-local-tox
+tox: test-local-tox
 
 # Run only unit tests with direct pytest
 test-unit-local: check-env-or-build setup
-	CORE_PATH=$(DETECTED_CORE_PATH) uv run pytest tests/unit/ -v $(PYTEST_ARGS)
+	CORE_PATH=$(DETECTED_CORE_PATH) uv run pytest tests/unit/ -v $(PYTEST_ARGS) $(filter-out test-unit-local,$(MAKECMDGOALS))
 
 # Run integration tests with universal connector (direct pytest with xdist)
 test-integ-local: check-env-or-build setup
 	CORE_PATH=$(DETECTED_CORE_PATH) PARAMETER_PATH=$(DETECTED_PARAMETER_PATH) uv run pytest tests/integ/ --connector=universal -v -n auto \
-	  --json-report --json-report-file=$(REPORTS_DIR)/universal-$(PYTHON_VERSION).json $(PYTEST_ARGS)
+	  --json-report --json-report-file=$(REPORTS_DIR)/universal-$(PYTHON_VERSION).json $(PYTEST_ARGS) $(filter-out test-integ-local,$(MAKECMDGOALS))
 
 # Run integration tests with reference connector (direct pytest with xdist)
 test-reference-local: check-env-or-build setup
 	CORE_PATH=$(DETECTED_CORE_PATH) PARAMETER_PATH=$(DETECTED_PARAMETER_PATH) uv run pytest tests/integ/ --connector=reference -v -n auto \
-	  --json-report --json-report-file=$(REPORTS_DIR)/reference-$(PYTHON_VERSION).json $(PYTEST_ARGS)
+	  --json-report --json-report-file=$(REPORTS_DIR)/reference-$(PYTHON_VERSION).json $(PYTEST_ARGS) $(filter-out test-reference-local,$(MAKECMDGOALS))
 
 # Run integration tests with reference connector using tox + xdist for faster parallel execution
 test-reference-local-tox: check-env-or-build setup
@@ -148,3 +154,7 @@ compare-artifacts:
 
 clean-reports:
 	rm -rf $(REPORTS_DIR)
+
+# Catch-all rule to prevent make from trying to execute pytest args as targets
+%:
+	@:
