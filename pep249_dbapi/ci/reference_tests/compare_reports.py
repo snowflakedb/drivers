@@ -3,6 +3,10 @@ import argparse, json, os, sys
 from typing import Dict, Iterable, Set
 
 
+# Only compare integration tests since unit tests can't run on reference driver
+INTEG_TESTS_PATH = "tests/integ"
+
+
 def load_json(path: str) -> dict:
     try:
         with open(path, "r", encoding="utf-8") as f:
@@ -11,73 +15,120 @@ def load_json(path: str) -> dict:
         print(f"[compare] missing file: {path}", file=sys.stderr)
         sys.exit(2)
 
-def outcomes(js: dict) -> Dict[str, str]:
-    # pytest-json-report schema
-    tests = js.get("tests", [])
-    return {t["nodeid"]: t["outcome"] for t in tests}
+def extract_test_outcomes(report_data: dict, filter_integration_only: bool = False) -> Dict[str, str]:
+    """Extract test outcomes from pytest-json-report format."""
+    tests = report_data.get("tests", [])
+    if filter_integration_only:
+        return {
+            test["nodeid"]: test["outcome"] 
+            for test in tests 
+            if test["nodeid"].startswith(INTEG_TESTS_PATH)
+        }
+    else:
+        return {test["nodeid"]: test["outcome"] for test in tests}
 
-def block(title: str, items: Iterable[str], limit: int = 80) -> str:
-    s: Set[str] = set(items)
-    out = [f"### {title} ({len(s)})"]
-    if not s:
-        return "\n".join(out + ["_none_", ""])
-    for i, node in enumerate(sorted(s)):
+
+def categorize_test_outcomes(outcomes: Dict[str, str]) -> Dict[str, Set[str]]:
+    """Categorize tests by outcome in a single pass."""
+    categories = {
+        "passed": set(),
+        "failed": set(), 
+        "skipped": set()
+    }
+    
+    for test_id, outcome in outcomes.items():
+        if outcome == "passed":
+            categories["passed"].add(test_id)
+        elif outcome in ("failed", "error"):
+            categories["failed"].add(test_id)
+        elif outcome == "skipped":
+            categories["skipped"].add(test_id)
+    
+    return categories
+
+
+def format_test_list(title: str, test_ids: Iterable[str], limit: int = 80) -> str:
+    """Format a list of test IDs as markdown."""
+    test_set = set(test_ids)
+    lines = [f"### {title} ({len(test_set)})"]
+    
+    if not test_set:
+        return "\n".join(lines + ["_none_", ""])
+    
+    for i, test_id in enumerate(sorted(test_set)):
         if i >= limit:
-            out.append(f"- … and {len(s) - limit} more")
+            lines.append(f"- … and {len(test_set) - limit} more")
             break
-        out.append(f"- `{node}`")
-    out.append("")
-    return "\n".join(out)
+        lines.append(f"- `{test_id}`")
+    
+    lines.append("")
+    return "\n".join(lines)
+
 
 def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--py", required=True, help="Python version label, e.g. 3.12")
-    ap.add_argument("--universal", required=True, help="Path to universal JSON report")
-    ap.add_argument("--reference", required=True, help="Path to reference JSON report")
-    ap.add_argument("--summary", default="", help="Path to GITHUB_STEP_SUMMARY (optional)")
-    ap.add_argument("--fail-on-regressions", type=int, default=0, help="1 to exit nonzero if regressions exist")
-    args = ap.parse_args()
+    parser = argparse.ArgumentParser(description="Compare test results between universal and reference drivers")
+    parser.add_argument("--py", required=True, help="Python version label, e.g. 3.12")
+    parser.add_argument("--universal", required=True, help="Path to universal driver JSON report")
+    parser.add_argument("--reference", required=True, help="Path to reference driver JSON report")
+    parser.add_argument("--summary", default="", help="Path to GITHUB_STEP_SUMMARY (optional)")
+    parser.add_argument("--fail-on-regressions", type=int, default=0, help="1 to exit nonzero if regressions exist")
+    args = parser.parse_args()
 
-    U = outcomes(load_json(args.universal))
-    R = outcomes(load_json(args.reference))
+    # Load and extract test outcomes
+    # Filter universal results to integration tests only (supposing reference already contains only integration tests)
+    universal_outcomes = extract_test_outcomes(load_json(args.universal), filter_integration_only=True)
+    reference_outcomes = extract_test_outcomes(load_json(args.reference), filter_integration_only=False)
 
-    u_pass = {k for k,v in U.items() if v == "passed"}
-    u_fail = {k for k,v in U.items() if v in ("failed","error")}
-    u_skip = {k for k,v in U.items() if v == "skipped"}
+    # Categorize outcomes in single pass for each driver
+    universal_categories = categorize_test_outcomes(universal_outcomes)
+    reference_categories = categorize_test_outcomes(reference_outcomes)
 
-    r_pass = {k for k,v in R.items() if v == "passed"}
-    r_fail = {k for k,v in R.items() if v in ("failed","error")}
-    r_skip = {k for k,v in R.items() if v == "skipped"}
+    # Extract categorized sets for readability
+    universal_passed = universal_categories["passed"]
+    universal_failed = universal_categories["failed"]
+    universal_skipped = universal_categories["skipped"]
+    
+    reference_passed = reference_categories["passed"]
+    reference_failed = reference_categories["failed"]
+    reference_skipped = reference_categories["skipped"]
 
-    regress     = r_pass & u_fail
-    bcrs     = r_fail & u_pass
-    both_fail   = r_fail & u_fail
-    only_u_skip = u_skip - r_skip
-    only_r_skip = r_skip - u_skip
+    # Analyze differences
+    regressions_from_pass = reference_passed & universal_failed  # Reference passed, universal failed
+    regressions_from_fail = reference_failed & universal_passed  # Reference failed, universal passed
+    both_failing = reference_failed & universal_failed
+    universal_only_skipped = universal_skipped - reference_skipped
+    reference_only_skipped = reference_skipped - universal_skipped
 
+    # Generate report
     header = f"## Universal vs Reference — Python {args.py}\n"
-    counts = (
-        f"- Total (universal): {len(U)} | pass {len(u_pass)} / fail {len(u_fail)} / skip {len(u_skip)}\n"
-        f"- Total (reference): {len(R)} | pass {len(r_pass)} / fail {len(r_fail)} / skip {len(r_skip)}\n\n"
+    summary_stats = (
+        f"- Total (universal): {len(universal_outcomes)} | "
+        f"pass {len(universal_passed)} / fail {len(universal_failed)} / skip {len(universal_skipped)}\n"
+        f"- Total (reference): {len(reference_outcomes)} | "
+        f"pass {len(reference_passed)} / fail {len(reference_failed)} / skip {len(reference_skipped)}\n\n"
     )
-    body = "".join([
-        block("Regressions (ref ✅ / universal ❌)", regress),
-        block("Breaking changes (ref ❌ / universal ✅)", bcrs),
-        block("Both failing", both_fail),
-        block("Skipped only on universal", only_u_skip),
-        block("Skipped only on reference", only_r_skip),
+    
+    comparison_details = "".join([
+        format_test_list("Regressions from passing (ref ✅ / universal ❌)", regressions_from_pass),
+        format_test_list("Regressions from failing (ref ❌ / universal ✅)", regressions_from_fail),
+        format_test_list("Both failing", both_failing),
+        format_test_list("Skipped only on universal", universal_only_skipped),
+        format_test_list("Skipped only on reference", reference_only_skipped),
     ])
-    md = header + counts + body
-    print(md)
+    
+    report = header + summary_stats + comparison_details
+    print(report)
 
+    # Write to GitHub step summary if requested
     if args.summary:
         try:
-            with open(args.summary, "a", encoding="utf-8") as s:
-                s.write(md)
+            with open(args.summary, "a", encoding="utf-8") as summary_file:
+                summary_file.write(report)
         except Exception as e:
             print(f"[compare] could not write summary: {e}", file=sys.stderr)
 
-    if args.fail_on_regressions and regress:
+    # Exit with error code if regressions_from_pass found and requested
+    if args.fail_on_regressions and (regressions_from_pass or regressions_from_fail):
         sys.exit(1)
 
 if __name__ == "__main__":
