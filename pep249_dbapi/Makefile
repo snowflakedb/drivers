@@ -1,22 +1,22 @@
-# -------- Settings (override at call) --------
+# Override these at command line: make test PYTHON_VERSION=3.12 PYTEST_ARGS="-k test_connection"
 PYTHON_VERSION ?= $(shell python3 -c 'import sys;print(f"{sys.version_info.major}.{sys.version_info.minor}")')
-PYTHON_ID := $(subst .,,$(PYTHON_VERSION))
+PYTHON_ID := $(subst .,,$(PYTHON_VERSION))  # 3.11 -> 311 for tox env names
 REPORTS_DIR ?= reports
 REFERENCE_DRIVER_VERSION ?= 3.17.2
 PYTEST_ARGS ?=
 FAIL_ON_REGRESSIONS ?= 0
 
-# Default paths for local development (can be overridden)
+# Absolute paths to avoid relative path issues across different working directories
 DEFAULT_CORE_PATH_MACOS := $(shell cd .. && pwd)/target/debug/libsf_core.dylib
 DEFAULT_CORE_PATH_LINUX := $(shell cd .. && pwd)/target/debug/libsf_core.so
 DEFAULT_PARAMETER_PATH := $(shell cd .. && pwd)/parameters.json
 
 SHELL := bash
-.ONESHELL:
+.ONESHELL:  # Execute each recipe in a single shell (needed for multi-line commands)
 
 .PHONY: check-env-or-build check-env-or-fail setup test test-local tox test-local-tox test-unit-local test-integ-local test-reference-local test-reference-local-tox test-integ-universal test-integ-reference compare compare-artifacts compare-local clean-reports
 
-# Auto-detect platform-specific paths
+# Platform-aware path detection with environment variable override
 DETECTED_CORE_PATH := $(shell \
 	if [ -n "$$CORE_PATH" ]; then \
 		echo "$$CORE_PATH"; \
@@ -33,7 +33,7 @@ DETECTED_PARAMETER_PATH := $(shell \
 		echo "$(DEFAULT_PARAMETER_PATH)"; \
 	fi)
 
-# For local development - build Rust core if missing
+# Local development: auto-build missing Rust core
 check-env-or-build:
 	@echo "Using CORE_PATH: $(DETECTED_CORE_PATH)"
 	@echo "Using PARAMETER_PATH: $(DETECTED_PARAMETER_PATH)"
@@ -47,7 +47,7 @@ check-env-or-build:
 		echo "Rust core library built successfully"; \
 	fi
 
-# For CI - fail if core missing
+# CI: fail fast if environment not properly set up
 check-env-or-fail:
 	@if [ -z "$(CORE_PATH)" ]; then \
 		echo "Error: CORE_PATH environment variable not set"; \
@@ -71,47 +71,38 @@ setup:
 	uv sync --extra dev
 	mkdir -p $(REPORTS_DIR)
 
-# ===== Local Development Commands =====
+# ===== Local Development =====
 
-# Run all tests (unit + integration) with direct pytest
 test-local: check-env-or-build setup
 	CORE_PATH=$(DETECTED_CORE_PATH) PARAMETER_PATH=$(DETECTED_PARAMETER_PATH) uv run pytest tests/ -n auto -v $(PYTEST_ARGS) $(filter-out test-local test,$(MAKECMDGOALS))
 
-# Alias for test-local
-test: test-local
+test: test-local  # Short alias
 
-# Run integration tests with tox + xdist for faster parallel execution
 test-local-tox: check-env-or-build setup
 	CORE_PATH=$(DETECTED_CORE_PATH) PARAMETER_PATH=$(DETECTED_PARAMETER_PATH) uv run tox -e py$(PYTHON_ID)-integ-universal -- \
 	  --json-report --json-report-file=$(REPORTS_DIR)/universal-$(PYTHON_VERSION).json \
 	  -n auto $(PYTEST_ARGS) $(filter-out test-local-tox tox,$(MAKECMDGOALS))
 
-# Alias for test-local-tox
-tox: test-local-tox
+tox: test-local-tox  # Short alias
 
-# Run only unit tests with direct pytest
 test-unit-local: check-env-or-build setup
 	CORE_PATH=$(DETECTED_CORE_PATH) uv run pytest tests/unit/ -v $(PYTEST_ARGS) $(filter-out test-unit-local,$(MAKECMDGOALS))
 
-# Run integration tests with universal connector (direct pytest with xdist)
 test-integ-local: check-env-or-build setup
 	CORE_PATH=$(DETECTED_CORE_PATH) PARAMETER_PATH=$(DETECTED_PARAMETER_PATH) uv run pytest tests/integ/ --connector=universal -v -n auto \
 	  --json-report --json-report-file=$(REPORTS_DIR)/universal-$(PYTHON_VERSION).json $(PYTEST_ARGS) $(filter-out test-integ-local,$(MAKECMDGOALS))
 
-# Run integration tests with reference connector (direct pytest with xdist)
 test-reference-local: check-env-or-build setup
 	CORE_PATH=$(DETECTED_CORE_PATH) PARAMETER_PATH=$(DETECTED_PARAMETER_PATH) uv run pytest tests/integ/ --connector=reference -v -n auto \
 	  --json-report --json-report-file=$(REPORTS_DIR)/reference-$(PYTHON_VERSION).json $(PYTEST_ARGS) $(filter-out test-reference-local,$(MAKECMDGOALS))
 
-# Run integration tests with reference connector using tox + xdist for faster parallel execution
 test-reference-local-tox: check-env-or-build setup
 	CORE_PATH=$(DETECTED_CORE_PATH) PARAMETER_PATH=$(DETECTED_PARAMETER_PATH) uv run tox -e py$(PYTHON_ID)-integ-reference -- \
 	  --json-report --json-report-file=$(REPORTS_DIR)/reference-$(PYTHON_VERSION).json \
 	  -n auto $(PYTEST_ARGS)
 
-# ===== CI/Tox Commands =====
+# ===== CI Commands =====
 
-# CI: Run integration tests with universal connector (expects CORE_PATH set, uv pre-installed)
 test-integ-universal: check-env-or-fail
 	mkdir -p $(REPORTS_DIR)
 	uv run tox -e py$(PYTHON_ID)-integ-universal -- \
@@ -119,7 +110,6 @@ test-integ-universal: check-env-or-fail
 	  --junitxml=$(REPORTS_DIR)/universal-$(PYTHON_VERSION).xml \
 	  $(PYTEST_ARGS)
 
-# CI: Run integration tests with reference connector (expects CORE_PATH set, uv pre-installed)
 test-integ-reference: check-env-or-fail
 	mkdir -p $(REPORTS_DIR)
 	uv run tox -e py$(PYTHON_ID)-integ-reference -- \
@@ -127,7 +117,7 @@ test-integ-reference: check-env-or-fail
 	  --junitxml=$(REPORTS_DIR)/reference-$(PYTHON_VERSION).xml \
 	  $(PYTEST_ARGS)
 
-# ===== Comparison Commands =====
+# ===== Comparison =====
 
 compare:
 	python3 ci/reference_tests/compare_reports.py \
@@ -136,13 +126,12 @@ compare:
 	  --reference $(REPORTS_DIR)/reference-$(PYTHON_VERSION).json \
 	  --fail-on-regressions $(FAIL_ON_REGRESSIONS)
 
-# Fast comparison using tox for parallel execution in isolated env
 compare-local:
-	$(MAKE) test-local-tox || true
-	$(MAKE) test-reference-local-tox || true   # tests can fail and still we want the final report
+	$(MAKE) test-local-tox || true  # Continue even if tests fail - we want the comparison
+	$(MAKE) test-reference-local-tox || true
 	$(MAKE) compare
 
-# Use this when comparing downloaded CI artifacts
+# For CI: compare downloaded artifacts (paths set via env vars)
 compare-artifacts:
 	python3 ci/reference_tests/compare_reports.py \
 	  --py $(PYTHON_VERSION) \
@@ -150,11 +139,12 @@ compare-artifacts:
 	  --reference $(REFERENCE_TEST_REPORTS_DIR)/reference-$(PYTHON_VERSION).json \
 	  --fail-on-regressions $(FAIL_ON_REGRESSIONS)
 
-# ===== Utility Commands =====
-
 clean-reports:
 	rm -rf $(REPORTS_DIR)
 
-# Catch-all rule to prevent make from trying to execute pytest args as targets
+# Magic: Allow passing pytest args directly after make target
+# $(filter-out target-name alias,$(MAKECMDGOALS)) captures trailing args but excludes the target itself
+# Without this, "make test -k connection" would pass "test" to pytest, causing it to look for a test named "test"
+# The catch-all rule prevents make from trying to execute pytest args as make targets
 %:
 	@:
