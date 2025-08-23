@@ -1,9 +1,9 @@
 # -------- Settings (override at call) --------
-PY ?= $(shell python3 -c 'import sys;print(f"{sys.version_info.major}.{sys.version_info.minor}")')
-PYID := $(subst .,,$(PY))
+PYTHON_VERSION ?= $(shell python3 -c 'import sys;print(f"{sys.version_info.major}.{sys.version_info.minor}")')
+PYTHON_ID := $(subst .,,$(PYTHON_VERSION))
 REPORTS_DIR ?= reports
-REF_VERSION ?= 3.17.2
-POSARGS ?=
+REFERENCE_DRIVER_VERSION ?= 3.17.2
+PYTEST_ARGS ?=
 FAIL_ON_REGRESSIONS ?= 0
 
 # Default paths for local development (can be overridden)
@@ -75,59 +75,59 @@ setup:
 
 # Run all tests (unit + integration) with direct pytest
 test-local: check-env-or-build setup
-	CORE_PATH=$(DETECTED_CORE_PATH) PARAMETER_PATH=$(DETECTED_PARAMETER_PATH) uv run pytest tests/ -n auto -v $(POSARGS)
+	CORE_PATH=$(DETECTED_CORE_PATH) PARAMETER_PATH=$(DETECTED_PARAMETER_PATH) uv run pytest tests/ -n auto -v $(PYTEST_ARGS)
 
 # Run integration tests with tox + xdist for faster parallel execution
 test-local-tox: check-env-or-build setup
-	CORE_PATH=$(DETECTED_CORE_PATH) PARAMETER_PATH=$(DETECTED_PARAMETER_PATH) uv run tox -e py$(PYID)-integ-universal -- \
-	  --json-report --json-report-file=$(REPORTS_DIR)/universal-$(PY).json \
-	  -n auto $(POSARGS)
+	CORE_PATH=$(DETECTED_CORE_PATH) PARAMETER_PATH=$(DETECTED_PARAMETER_PATH) uv run tox -e py$(PYTHON_ID)-integ-universal -- \
+	  --json-report --json-report-file=$(REPORTS_DIR)/universal-$(PYTHON_VERSION).json \
+	  -n auto $(PYTEST_ARGS)
 
 # Run only unit tests with direct pytest
 test-unit-local: check-env-or-build setup
-	CORE_PATH=$(DETECTED_CORE_PATH) uv run pytest tests/unit/ -v $(POSARGS)
+	CORE_PATH=$(DETECTED_CORE_PATH) uv run pytest tests/unit/ -v $(PYTEST_ARGS)
 
 # Run integration tests with universal connector (direct pytest with xdist)
 test-integ-local: check-env-or-build setup
 	CORE_PATH=$(DETECTED_CORE_PATH) PARAMETER_PATH=$(DETECTED_PARAMETER_PATH) uv run pytest tests/integ/ --connector=universal -v -n auto \
-	  --json-report --json-report-file=$(REPORTS_DIR)/universal-$(PY).json $(POSARGS)
+	  --json-report --json-report-file=$(REPORTS_DIR)/universal-$(PYTHON_VERSION).json $(PYTEST_ARGS)
 
 # Run integration tests with reference connector (direct pytest with xdist)
 test-reference-local: check-env-or-build setup
 	CORE_PATH=$(DETECTED_CORE_PATH) PARAMETER_PATH=$(DETECTED_PARAMETER_PATH) uv run pytest tests/integ/ --connector=reference -v -n auto \
-	  --json-report --json-report-file=$(REPORTS_DIR)/reference-$(PY).json $(POSARGS)
+	  --json-report --json-report-file=$(REPORTS_DIR)/reference-$(PYTHON_VERSION).json $(PYTEST_ARGS)
 
 # Run integration tests with reference connector using tox + xdist for faster parallel execution
 test-reference-local-tox: check-env-or-build setup
-	CORE_PATH=$(DETECTED_CORE_PATH) PARAMETER_PATH=$(DETECTED_PARAMETER_PATH) uv run tox -e py$(PYID)-integ-reference -- \
-	  --json-report --json-report-file=$(REPORTS_DIR)/reference-$(PY).json \
-	  -n auto $(POSARGS)
+	CORE_PATH=$(DETECTED_CORE_PATH) PARAMETER_PATH=$(DETECTED_PARAMETER_PATH) uv run tox -e py$(PYTHON_ID)-integ-reference -- \
+	  --json-report --json-report-file=$(REPORTS_DIR)/reference-$(PYTHON_VERSION).json \
+	  -n auto $(PYTEST_ARGS)
 
 # ===== CI/Tox Commands =====
 
 # CI: Run integration tests with universal connector (expects CORE_PATH set, uv pre-installed)
 test-integ-universal: check-env-or-fail
 	mkdir -p $(REPORTS_DIR)
-	uv run tox -e py$(PYID)-integ-universal -- \
-	  --json-report --json-report-file=$(REPORTS_DIR)/universal-$(PY).json \
-	  --junitxml=$(REPORTS_DIR)/universal-$(PY).xml \
-	  $(POSARGS)
+	uv run tox -e py$(PYTHON_ID)-integ-universal -- \
+	  --json-report --json-report-file=$(REPORTS_DIR)/universal-$(PYTHON_VERSION).json \
+	  --junitxml=$(REPORTS_DIR)/universal-$(PYTHON_VERSION).xml \
+	  $(PYTEST_ARGS)
 
 # CI: Run integration tests with reference connector (expects CORE_PATH set, uv pre-installed)
 test-integ-reference: check-env-or-fail
 	mkdir -p $(REPORTS_DIR)
-	uv run tox -e py$(PYID)-integ-reference -- \
-	  --json-report --json-report-file=$(REPORTS_DIR)/reference-$(PY).json \
-	  --junitxml=$(REPORTS_DIR)/reference-$(PY).xml \
-	  $(POSARGS)
+	uv run tox -e py$(PYTHON_ID)-integ-reference -- \
+	  --json-report --json-report-file=$(REPORTS_DIR)/reference-$(PYTHON_VERSION).json \
+	  --junitxml=$(REPORTS_DIR)/reference-$(PYTHON_VERSION).xml \
+	  $(PYTEST_ARGS)
 
 # ===== Comparison Commands =====
 
 compare:
 	python3 ci/reference_tests/compare_reports.py \
-	  --py $(PY) \
-	  --universal $(REPORTS_DIR)/universal-$(PY).json \
-	  --reference $(REPORTS_DIR)/reference-$(PY).json \
+	  --py $(PYTHON_VERSION) \
+	  --universal $(REPORTS_DIR)/universal-$(PYTHON_VERSION).json \
+	  --reference $(REPORTS_DIR)/reference-$(PYTHON_VERSION).json \
 	  --fail-on-regressions $(FAIL_ON_REGRESSIONS)
 
 # Fast comparison using tox for parallel execution
@@ -136,9 +136,9 @@ compare-local: test-local-tox test-reference-local-tox compare
 # Use this when comparing downloaded CI artifacts
 compare-artifacts:
 	python3 ci/reference_tests/compare_reports.py \
-	  --py $(PY) \
-	  --universal $(UNIVERSAL_TEST_REPORTS_DIR)/universal-$(PY).json \
-	  --reference $(REFERENCE_TEST_REPORTS_DIR)/reference-$(PY).json \
+	  --py $(PYTHON_VERSION) \
+	  --universal $(UNIVERSAL_TEST_REPORTS_DIR)/universal-$(PYTHON_VERSION).json \
+	  --reference $(REFERENCE_TEST_REPORTS_DIR)/reference-$(PYTHON_VERSION).json \
 	  --fail-on-regressions $(FAIL_ON_REGRESSIONS)
 
 # ===== Utility Commands =====
