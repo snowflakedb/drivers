@@ -6,64 +6,78 @@
 
 ```bash
 cd pep249_dbapi/
-make setup  # Install deps, create venv
+make setup  # Install uv, sync dependencies, create reports directory
 ```
 
-Requires:
-- Rust core built: `../target/debug/libsf_core.{so,dylib}`
-- Credentials: `../parameters.json`
+**Requirements:**
+- Rust core library: `../target/debug/libsf_core.{so,dylib}` (auto-built if missing)
+- Credentials: `../parameters.json` (for integration tests)
+- Python 3.9+
 
-## Quick Testing
+## Quick Start
 
-### Run all tests (preferred)
-Tox creates own isolated venv - not dependent on local env
+### Run all tests (recommended)
 ```bash
-make tox
+make test  # Tox-based testing with reports and parallel execution
 ```
 
-### Run specific test with different Python version
+### Run specific tests
+Pytest args can be appended after '--' separator as in key-word way (_PYTEST_ARGS_).
 ```bash
-make tox tests/integ/test_connection.py PYTHON_VERSION=3.12
+make test -- -k test_connection --maxfail=1
+make test PYTEST_ARGS="-k test_connection --maxfail=1"
 ```
 
-### Compare both drivers
-Runs integ tests on both and returns report
+### Test with different Python version
 ```bash
-make compare-local
+make test PYTHON_VERSION=3.12
 ```
 
-## Additional testing options
-
-### Basic Commands
+### Compare universal vs reference drivers
 ```bash
-make test                    # All tests (universal driver) - local uv env
-make test-integ-local-tox    # Integration tests only
-make test-reference-local    # Reference driver tests
+make compare-local  # Runs both drivers and compares results
+make compare-local REFERENCE_DRIVER_VERSION=3.18.0  # Use specific reference version
 ```
 
-### Test Arguments
-Pass pytest arguments two ways:
+## Testing Commands
+
+### Local Development Commands
+
+| Command | Description                                  | Use Case                                                                         |
+|---------|----------------------------------------------|----------------------------------------------------------------------------------|
+| `make test` | Tox with reports (main)                      | Full testing with proper isolation                                               |
+| `make test-local` | Direct pytest (fast)                         | Testing using local environment - e.g. using some specific venv setup            |
+| `make test-local-sequential` | Direct pytest (no parallel)                  | Debugging test interactions - searching for race conditions in tests             |
+| `make test-local-tox-sequential` | Tox without parallel                         | Debugging in isolated environment - searching for race conditions in tests       
+| `make test-integ-local-tox` | Integration tests only                       | Used mainly in `make compare-local`. Can be repaced with `make test tests/integ` |
+| `make test-reference-local` | Reference driver testing (integration tests) | Testing whether new changes introduced regression / BCRs                         |
+
+### Generic Runners
+
+| Command | Description | Example                                                        |
+|---------|-------------|----------------------------------------------------------------|
+| `make run-with-setup` | Run any command with environment | `make run-with-setup echo ${DETECTED_CORE_PATH}`              |
+| `make run-with-uv` | Run uv commands with environment | `make run-with-uv pytest tests/unit/test_module.py -- -n auto` |
+| `make run-with-tox` | Run specific tox environments | `make run-with-tox py311-unit`                                 |
+
+### CI Commands
+
+| Command | Description | When to Use |
+|---------|-------------|-------------|
+| `make test-all` | Full CI testing with XML reports | GitHub Actions |
+| `make test-integ-reference` | Reference driver CI testing | Comparison baseline |
+| `make compare-artifacts` | Compare downloaded CI reports | CI comparison step |
+
+
+
+### Common Pytest Options
 ```bash
-make tox PYTEST_ARGS="-k test_connection"  # Keyword way
-make tox -k test_connection                 # Direct way (trailing args)
-```
-
-### Examples
-```bash
-make tox tests/integ/test_connection.py                    # Single file
-make tox -k test_connection                                # Pattern match
-make tox -m "not slow"                                     # Skip tests marked as @pytest.mark.slow (or any other mark)
-make tox --maxfail=1 -vv                                   # Stop on first failure
-make tox PYTHON_VERSION=3.12                              # Different Python version
-make tox tests/unit/ PYTHON_VERSION=3.12 # Unit tests + version
-```
-
-## Test Structure
-
-```
-tests/
-├── unit/    # Fast tests, no DB connection
-└── integ/   # Requires Snowflake connection
+# Execution control
+PYTEST_ARGS="--maxfail=1"                 # Stop on first failure
+# Output control
+PYTEST_ARGS="-vv"                         # Extra verbose
+# Markers
+PYTEST_ARGS="-m 'not slow'"               # Skip slow tests
 ```
 
 ## Configuration
@@ -89,7 +103,7 @@ tests/
 ```python
 def test_custom_db(connection_factory):
     with connection_factory(database="test_db") as conn:
-        # Use different database
+        # Use different database for this test
         pass
 ```
 
@@ -98,72 +112,27 @@ def test_custom_db(connection_factory):
 `make compare-local` runs integration tests on both drivers and compares results. The comparison automatically filters to only compare integration tests for fair comparison (universal runs unit+integ, reference only integ).
 
 Report sections:
-- **Regressions from passing**: Reference passed, universal failed (we broke something)
-- **Regressions from failing**: Reference failed, universal passed (behavioral differences)
-- **Both failing**: Expected differences
+- **Regressions from passing**: Reference passed, universal failed (we do not support something yet)
+- **Regressions from failing**: Reference failed, universal passed (behavioral differences - may require @pytest.mark.skipreference)
+- **Both failing**: Not supported in any
 - **Skipped differences**: Different skip behavior
-
-## Adding Tests
-
-**Unit tests** (`tests/unit/`): No database required
-```python
-def test_module_constant():
-    assert pep249_dbapi.apilevel == "2.0"
-```
-
-**Integration tests** (`tests/integ/`): Need database connection
-```python
-class TestNewFeature:
-    def test_method(self, connection):
-        cursor = connection.cursor()
-        # Test actual behavior
-        
-    @pytest.mark.slow
-    def test_large_data(self, cursor):
-        # Mark slow tests
-        pass
-```
 
 ## Environment Variables
 
-Auto-detected locally, set manually in CI:
-- `CORE_PATH`: Path to `libsf_core.{so,dylib}`
-- `PARAMETER_PATH`: Path to `parameters.json`
-- `PYTHON_VERSION`: Python version (default: current)
-- `PYTEST_ARGS`: Extra pytest arguments
-- `REFERENCE_DRIVER_VERSION`: Reference driver version (default: 3.17.2)
+### Auto-detected (Local Development)
+- `CORE_PATH`: Auto-detects `../target/debug/libsf_core.{so,dylib}`
+- `PARAMETER_PATH`: Auto-detects `../parameters.json`
+- `PYTHON_VERSION`: Auto-detects current Python version
 
-## Debugging
+### Configurable
+- `PYTHON_VERSION`: Override Python version (e.g., `3.13`, `3.11`)
+- `PYTEST_ARGS`: Additional pytest arguments
+- `REFERENCE_DRIVER_VERSION`: Reference driver version (default: `3.17.2`)
+- `REPORTS_DIR`: Report output directory (default: `reports`)
+- `FAIL_ON_REGRESSIONS`: Fail comparison on differences in passing tests between universal and reference driver (default: `0`)
 
-```bash
-make test -vv        # Verbose output
-make test --pdb      # Debug on failure
-make test --tb=long  # Full traceback
-```
+### CI-specific
+- `CORE_PATH`: Must be set explicitly in CI
+- `UNIVERSAL_TEST_REPORTS_DIR`: Path to universal driver reports
+- `REFERENCE_TEST_REPORTS_DIR`: Path to reference driver reports
 
-## CI Workflow
-
-GitHub Actions: Build Rust core once → Test universal (all tests, Python 3.9-3.13) → Test reference (integ only, Python 3.13) → Compare (integ only for fair comparison)
-
-## Make Targets
-
-| Command | Description |
-|---------|-------------|
-| `setup` | Install dependencies |
-| `test` / `tox` | All tests (aliases) |
-| `test-integ-local-tox` | Integration tests only |
-| `test-reference-local` | Reference driver tests |
-| `compare-local` | Test both + compare |
-| `clean-reports` | Remove report files |
-
-All targets accept `PYTHON_VERSION` and `PYTEST_ARGS`.
-
-## Troubleshooting
-
-**Missing core library**: `cd ../sf_core && cargo build`
-
-**Connection issues**: Check `parameters.json` and network access
-
-**Test failures**: Use `-vv` for details, check if it's expected behavioral difference
-
-**Tox environment issues**: Clean with `rm -rf .tox` and retry
