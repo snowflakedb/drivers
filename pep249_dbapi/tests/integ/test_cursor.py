@@ -56,7 +56,8 @@ class TestCursorMethods:
         with pytest.raises(NotSupportedError) as excinfo:
             cursor.executemany("INSERT INTO test VALUES (?)", [(1,), (2,)])
         assert "executemany is not implemented" in str(excinfo.value)
-    
+
+    @pytest.mark.skip_reference
     def test_fetchmany_not_implemented(self, cursor):
         """Test that fetchmany raises NotSupportedError."""
         with pytest.raises(NotSupportedError) as excinfo:
@@ -179,7 +180,6 @@ class TestCursorPython2Compatibility:
         assert mock_fetchone.call_count == 2
 
 
-@pytest.mark.integration
 class TestCursorDatabaseQueries:
     """Integration tests for Cursor with real database queries."""
 
@@ -196,7 +196,6 @@ class TestCursorDatabaseQueries:
         result = cursor.fetchone()
         assert result is not None
 
-    @pytest.mark.slow
     @pytest.mark.parametrize("data_size", [1000, 10000])
     def test_large_result(self, cursor, data_size):
         """Test large result."""

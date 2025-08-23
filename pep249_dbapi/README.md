@@ -80,6 +80,10 @@ PYTEST_ARGS="-vv"                         # Extra verbose
 PYTEST_ARGS="-m 'not slow'"               # Skip slow tests
 ```
 
+### Test Markers
+- `@pytest.mark.skip_universal(reason="...")` - Skip on universal driver
+- `@pytest.mark.skip_reference(reason="...")` - Skip on reference driver
+
 ## Configuration
 
 ### Connection Parameters (`../parameters.json`)

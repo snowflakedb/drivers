@@ -157,7 +157,6 @@ class TestConnectionAutocommitProperty:
         assert connection._autocommit is True
 
 
-@pytest.mark.integration
 class TestConnectionDatabaseQueries:
     """Integration tests for Connection with real database queries."""
 

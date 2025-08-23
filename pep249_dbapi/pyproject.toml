@@ -69,9 +69,8 @@ addopts = [
     "--strict-markers",
 ]
 markers = [
-    "unit: Unit tests",
-    "integration: Integration tests", 
-    "slow: Slow running tests",
+    "skip_reference(reason: str=''): skip when --connector=reference",
+    "skip_universal(reason: str=''): skip when --connector=universal",
 ]
 
 [tool.ruff]

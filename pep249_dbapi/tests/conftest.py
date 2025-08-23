@@ -75,3 +75,13 @@ def cursor(connection):
     """Create a test cursor from a connection."""
     with connection.cursor() as cursor:
         yield cursor
+
+
+def pytest_runtest_setup(item):
+    """Skip tests based on connector type and markers."""
+    connector_type = item.config.getoption("--connector")
+    
+    if connector_type == "universal" and item.get_closest_marker("skip_universal"):
+        pytest.skip("Skipping test for universal driver")
+    elif connector_type == "reference" and item.get_closest_marker("skip_reference"):
+        pytest.skip("Skipping test for reference driver")
