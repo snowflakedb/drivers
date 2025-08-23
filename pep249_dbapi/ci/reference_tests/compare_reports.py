@@ -3,10 +3,6 @@ import argparse, json, os, sys
 from typing import Dict, Iterable, Set
 
 
-# Only compare integration tests since unit tests can't run on reference driver
-INTEG_TESTS_PATH = "tests/integ"
-
-
 def load_json(path: str) -> dict:
     try:
         with open(path, "r", encoding="utf-8") as f:
@@ -15,17 +11,29 @@ def load_json(path: str) -> dict:
         print(f"[compare] missing file: {path}", file=sys.stderr)
         sys.exit(2)
 
-def extract_test_outcomes(report_data: dict, filter_integration_only: bool = False) -> Dict[str, str]:
-    """Extract test outcomes from pytest-json-report format."""
+def extract_test_outcomes(report_data: dict) -> Dict[str, str]:
+    """Extract test outcomes from pytest-json-report format.
+    
+    Returns a dict mapping nodeid -> outcome for all tests in the report.
+    """
     tests = report_data.get("tests", [])
-    if filter_integration_only:
-        return {
-            test["nodeid"]: test["outcome"] 
-            for test in tests 
-            if test["nodeid"].startswith(INTEG_TESTS_PATH)
-        }
-    else:
-        return {test["nodeid"]: test["outcome"] for test in tests}
+    return {test["nodeid"]: test["outcome"] for test in tests}
+
+def filter_universal_by_reference_nodeids(universal_outcomes: Dict[str, str], reference_nodeids: Set[str]) -> Dict[str, str]:
+    """Filter universal test outcomes to only include tests that also ran for reference.
+    
+    Args:
+        universal_outcomes: All universal test results (nodeid -> outcome)
+        reference_nodeids: Set of nodeids that actually ran for reference driver
+        
+    Returns:
+        Filtered universal outcomes containing only tests that also ran for reference
+    """
+    return {
+        nodeid: outcome 
+        for nodeid, outcome in universal_outcomes.items() 
+        if nodeid in reference_nodeids
+    }
 
 
 def categorize_test_outcomes(outcomes: Dict[str, str]) -> Dict[str, Set[str]]:
@@ -74,10 +82,13 @@ def main():
     parser.add_argument("--fail-on-regressions", type=int, default=0, help="1 to exit nonzero if regressions exist")
     args = parser.parse_args()
 
-    # Load and extract test outcomes
-    # Filter universal results to integration tests only (supposing reference already contains only integration tests)
-    universal_outcomes = extract_test_outcomes(load_json(args.universal), filter_integration_only=True)
-    reference_outcomes = extract_test_outcomes(load_json(args.reference), filter_integration_only=False)
+    # Load and extract all test outcomes from both reports
+    all_universal_outcomes = extract_test_outcomes(load_json(args.universal))
+    reference_outcomes = extract_test_outcomes(load_json(args.reference))
+    
+    # Filter universal to only tests that ran for reference (in case there were some tests apart from integration added)
+    reference_nodeids = set(reference_outcomes.keys())
+    universal_outcomes = filter_universal_by_reference_nodeids(all_universal_outcomes, reference_nodeids)
 
     # Categorize outcomes in single pass for each driver
     universal_categories = categorize_test_outcomes(universal_outcomes)
@@ -99,12 +110,13 @@ def main():
     universal_only_skipped = universal_skipped - reference_skipped
     reference_only_skipped = reference_skipped - universal_skipped
 
-    # Generate report
+    # Generate report=
     header = f"## Universal vs Reference — Python {args.py}\n"
     summary_stats = (
-        f"- Total (universal): {len(universal_outcomes)} | "
+        f"- Universal (all tests): {len(all_universal_outcomes)} tests\n"
+        f"- Universal (matched with reference tests): {len(universal_outcomes)} | "
         f"pass {len(universal_passed)} / fail {len(universal_failed)} / skip {len(universal_skipped)}\n"
-        f"- Total (reference): {len(reference_outcomes)} | "
+        f"- Reference: {len(reference_outcomes)} | "
         f"pass {len(reference_passed)} / fail {len(reference_failed)} / skip {len(reference_skipped)}\n\n"
     )
     
