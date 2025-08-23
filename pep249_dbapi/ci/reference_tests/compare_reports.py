@@ -23,6 +23,8 @@ def load_json(path: str) -> dict:
     except FileNotFoundError:
         print(f"[compare] missing file: {path}", file=sys.stderr)
         show_directory_contents(path)
+        show_directory_contents("..")
+        show_directory_contents(".")
         sys.exit(2)
 
 def outcomes(js: dict) -> Dict[str, str]:

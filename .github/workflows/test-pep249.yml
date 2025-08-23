@@ -92,7 +92,8 @@ jobs:
         run: make test-integ-universal PY=${{ matrix.py }}
         working-directory: pep249_dbapi
 
-      - uses: actions/upload-artifact@v4
+      - name: Upload test results as GitHub artifact
+        uses: actions/upload-artifact@v4
         with:
           name: results-universal-${{ matrix.py }}
           path: pep249_dbapi/reports/*-${{ matrix.py }}.*
@@ -148,7 +149,8 @@ jobs:
         run: make test-integ-reference PY=${{ env.REFERENCE_PYTHON_VERSION }}
         working-directory: pep249_dbapi
 
-      - uses: actions/upload-artifact@v4
+      - name: Upload test results as GitHub artifact
+        uses: actions/upload-artifact@v4
         if: always()  # Upload test results even if tests fail (needed for comparison)
         with:
           name: results-reference-${{ env.REFERENCE_PYTHON_VERSION }}
