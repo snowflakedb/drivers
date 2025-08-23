@@ -1,6 +1,7 @@
 # Override these at command line: make test PYTHON_VERSION=3.12 PYTEST_ARGS="-k test_connection"
 PYTHON_VERSION ?= $(shell python3 -c 'import sys;print(f"{sys.version_info.major}.{sys.version_info.minor}")')
-PYTHON_ID := $(subst .,,$(PYTHON_VERSION))  # 3.11 -> 311 for tox env names
+# 3.11 -> 311 for tox env names
+PYTHON_ID := $(subst .,,$(PYTHON_VERSION))
 REPORTS_DIR ?= reports
 REFERENCE_DRIVER_VERSION ?= 3.17.2
 PYTEST_ARGS ?=
@@ -14,7 +15,7 @@ DEFAULT_PARAMETER_PATH := $(shell cd .. && pwd)/parameters.json
 SHELL := bash
 .ONESHELL:  # Execute each recipe in a single shell (needed for multi-line commands)
 
-.PHONY: check-env-or-build check-env-or-fail setup test test-local tox test-local-tox test-unit-local test-integ-local test-reference-local test-reference-local-tox test-integ-universal test-integ-reference compare compare-artifacts compare-local clean-reports
+.PHONY: check-env-or-build check-env-or-fail setup test test-local tox test-local-tox test-reference-local test-reference-local-tox test-all-universal test-integ-universal test-integ-reference compare compare-artifacts compare-local clean-reports
 
 # Platform-aware path detection with environment variable override
 DETECTED_CORE_PATH := $(shell \
@@ -74,23 +75,16 @@ setup:
 # ===== Local Development =====
 
 test-local: check-env-or-build setup
-	CORE_PATH=$(DETECTED_CORE_PATH) PARAMETER_PATH=$(DETECTED_PARAMETER_PATH) uv run pytest tests/ -n auto -v $(PYTEST_ARGS) $(filter-out test-local test,$(MAKECMDGOALS))
+	CORE_PATH=$(DETECTED_CORE_PATH) PARAMETER_PATH=$(DETECTED_PARAMETER_PATH) uv run pytest tests/ --connector=universal -n auto -v $(PYTEST_ARGS) $(filter-out test-local test,$(MAKECMDGOALS))
 
 test: test-local  # Short alias
 
 test-local-tox: check-env-or-build setup
-	CORE_PATH=$(DETECTED_CORE_PATH) PARAMETER_PATH=$(DETECTED_PARAMETER_PATH) uv run tox -e py$(PYTHON_ID)-integ-universal -- \
+	CORE_PATH=$(DETECTED_CORE_PATH) PARAMETER_PATH=$(DETECTED_PARAMETER_PATH) uv run tox -e py$(PYTHON_ID)-all-universal -- \
 	  --json-report --json-report-file=$(REPORTS_DIR)/universal-$(PYTHON_VERSION).json \
 	  -n auto $(PYTEST_ARGS) $(filter-out test-local-tox tox,$(MAKECMDGOALS))
 
 tox: test-local-tox  # Short alias
-
-test-unit-local: check-env-or-build setup
-	CORE_PATH=$(DETECTED_CORE_PATH) uv run pytest tests/unit/ -v $(PYTEST_ARGS) $(filter-out test-unit-local,$(MAKECMDGOALS))
-
-test-integ-local: check-env-or-build setup
-	CORE_PATH=$(DETECTED_CORE_PATH) PARAMETER_PATH=$(DETECTED_PARAMETER_PATH) uv run pytest tests/integ/ --connector=universal -v -n auto \
-	  --json-report --json-report-file=$(REPORTS_DIR)/universal-$(PYTHON_VERSION).json $(PYTEST_ARGS) $(filter-out test-integ-local,$(MAKECMDGOALS))
 
 test-reference-local: check-env-or-build setup
 	CORE_PATH=$(DETECTED_CORE_PATH) PARAMETER_PATH=$(DETECTED_PARAMETER_PATH) uv run pytest tests/integ/ --connector=reference -v -n auto \
@@ -103,9 +97,9 @@ test-reference-local-tox: check-env-or-build setup
 
 # ===== CI Commands =====
 
-test-integ-universal: check-env-or-fail
+test-all-universal: check-env-or-fail
 	mkdir -p $(REPORTS_DIR)
-	uv run tox -e py$(PYTHON_ID)-integ-universal -- \
+	uv run tox -e py$(PYTHON_ID)-all-universal -- \
 	  --json-report --json-report-file=$(REPORTS_DIR)/universal-$(PYTHON_VERSION).json \
 	  --junitxml=$(REPORTS_DIR)/universal-$(PYTHON_VERSION).xml \
 	  $(PYTEST_ARGS)

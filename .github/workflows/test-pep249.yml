@@ -85,11 +85,12 @@ jobs:
         run: make setup
         working-directory: pep249_dbapi
 
-      - name: Run integration tests
+      - name: Run all tests
         env:
           CORE_PATH: ${{ github.workspace }}/target/debug/libsf_core.so
           PARAMETER_PATH: ${{ github.workspace }}/parameters.json
-        run: make test-integ-universal PY=${{ matrix.py }}
+          REFERENCE_DRIVER_VERSION: ${{ env.PYTHON_REFERENCE_DRIVER_VERSION }}
+        run: make test-all-universal PYTHON_VERSION=${{ matrix.py }}
         working-directory: pep249_dbapi
 
       - name: Upload test results as GitHub artifact
@@ -145,8 +146,8 @@ jobs:
         env:
           CORE_PATH: ${{ github.workspace }}/target/debug/libsf_core.so
           PARAMETER_PATH: ${{ github.workspace }}/parameters.json
-          REF_VERSION: ${{ env.PYTHON_REFERENCE_DRIVER_VERSION }}
-        run: make test-integ-reference PY=${{ env.REFERENCE_PYTHON_VERSION }}
+          REFERENCE_DRIVER_VERSION: ${{ env.PYTHON_REFERENCE_DRIVER_VERSION }}
+        run: make test-integ-reference PYTHON_VERSION=${{ env.REFERENCE_PYTHON_VERSION }}
         working-directory: pep249_dbapi
 
       - name: Upload test results as GitHub artifact
@@ -185,11 +186,11 @@ jobs:
         run: make setup
         working-directory: pep249_dbapi
 
-      - name: Compare & summarize
+      - name: Compare integration test results
         env:
           UNIVERSAL_TEST_REPORTS_DIR: ${{ github.workspace }}/universal-results
           REFERENCE_TEST_REPORTS_DIR: ${{ github.workspace }}/reference-results
           FAIL_ON_REGRESSIONS: "0"   # set to "1" when ready to for a strong requirement on compliance with old driver
         run: |
-          make compare-artifacts PY=${{ env.REFERENCE_PYTHON_VERSION }} | tee -a $GITHUB_STEP_SUMMARY
+          make compare-artifacts PYTHON_VERSION=${{ env.REFERENCE_PYTHON_VERSION }} | tee -a $GITHUB_STEP_SUMMARY
         working-directory: pep249_dbapi
