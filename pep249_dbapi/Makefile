@@ -75,16 +75,22 @@ setup:
 # ===== Local Development =====
 
 test-local: check-env-or-build setup
-	CORE_PATH=$(DETECTED_CORE_PATH) PARAMETER_PATH=$(DETECTED_PARAMETER_PATH) uv run pytest tests/ --connector=universal -n auto -v $(PYTEST_ARGS) $(filter-out test-local test,$(MAKECMDGOALS))
+	CORE_PATH=$(DETECTED_CORE_PATH) PARAMETER_PATH=$(DETECTED_PARAMETER_PATH) uv run pytest tests/ --connector=universal -n auto -v $(PYTEST_ARGS) $(filter-out test-local,$(MAKECMDGOALS))
 
-test: test-local  # Short alias
+test-local-sequential: check-env-or-build setup
+	CORE_PATH=$(DETECTED_CORE_PATH) PARAMETER_PATH=$(DETECTED_PARAMETER_PATH) uv run pytest tests/ --connector=universal -v $(PYTEST_ARGS) $(filter-out test-local-sequential,$(MAKECMDGOALS))
 
 test-local-tox: check-env-or-build setup
 	CORE_PATH=$(DETECTED_CORE_PATH) PARAMETER_PATH=$(DETECTED_PARAMETER_PATH) uv run tox -e py$(PYTHON_ID)-all-universal -- \
 	  --json-report --json-report-file=$(REPORTS_DIR)/universal-$(PYTHON_VERSION).json \
-	  -n auto $(PYTEST_ARGS) $(filter-out test-local-tox tox,$(MAKECMDGOALS))
+	  -n auto $(PYTEST_ARGS) $(filter-out test-local-tox test,$(MAKECMDGOALS))
 
-tox: test-local-tox  # Short alias
+test: test-local-tox  # Short alias
+
+test-local-tox-sequential: check-env-or-build setup
+	CORE_PATH=$(DETECTED_CORE_PATH) PARAMETER_PATH=$(DETECTED_PARAMETER_PATH) uv run tox -e py$(PYTHON_ID)-all-universal -- \
+	  --json-report --json-report-file=$(REPORTS_DIR)/universal-$(PYTHON_VERSION).json \
+	  $(PYTEST_ARGS) $(filter-out test-local-tox-sequential,$(MAKECMDGOALS))
 
 test-integ-local-tox: check-env-or-build setup
 	CORE_PATH=$(DETECTED_CORE_PATH) PARAMETER_PATH=$(DETECTED_PARAMETER_PATH) uv run tox -e py$(PYTHON_ID)-integ-universal -- \

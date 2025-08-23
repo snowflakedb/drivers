@@ -32,32 +32,30 @@ Runs integ tests on both and returns report
 make compare-local
 ```
 
-## All Available Commands
+## Additional testing options
 
-### Basic Testing
+### Basic Commands
 ```bash
-make test                    # All tests (universal driver) - short alias
-make test-local              # All tests (universal driver) 
-make tox                     # All tests with tox (isolated env) - short alias
-make test-local-tox          # All tests with tox (isolated env)
+make test                    # All tests (universal driver) - local uv env
+make test-integ-local-tox    # Integration tests only
+make test-reference-local    # Reference driver tests
 ```
 
-### Integration Testing
+### Test Arguments
+Pass pytest arguments two ways:
 ```bash
-make test-integ-local-tox    # Integration tests only with tox
-make test-reference-local    # Integration tests (reference driver)
-make test-reference-local-tox # Integration tests (reference) with tox
+make tox PYTEST_ARGS="-k test_connection"  # Keyword way
+make tox -k test_connection                 # Direct way (trailing args)
 ```
 
-### Comparison
+### Examples
 ```bash
-make compare-local           # Run integration tests on both + compare
-```
-
-### Utility
-```bash
-make setup                   # Install dependencies
-make clean-reports           # Remove report files
+make tox tests/integ/test_connection.py                    # Single file
+make tox -k test_connection                                # Pattern match
+make tox -m "not slow"                                     # Skip tests marked as @pytest.mark.slow (or any other mark)
+make tox --maxfail=1 -vv                                   # Stop on first failure
+make tox PYTHON_VERSION=3.12                              # Different Python version
+make tox tests/unit/ PYTHON_VERSION=3.12 # Unit tests + version
 ```
 
 ## Test Structure
@@ -66,43 +64,6 @@ make clean-reports           # Remove report files
 tests/
 ├── unit/    # Fast tests, no DB connection
 └── integ/   # Requires Snowflake connection
-```
-
-## Passing Arguments
-
-You can pass pytest arguments in two ways:
-
-```bash
-# Key-word way
-make test PYTEST_ARGS="-k test_connection"
-
-# Direct way (trailing arguments)
-make test -k test_connection
-make test tests/integ/test_connection.py
-make test --maxfail=1 -vv
-make test -m "not slow"
-```
-
-## Specific Tests
-
-```bash
-# Single test file
-make test tests/integ/test_connection.py
-
-# Single test method  
-make test tests/integ/test_connection.py::TestConnectionMethods::test_close_connection
-
-# Pattern matching
-make test -k test_connection
-
-# Skip tests marked using @pytest.mark.slow
-make test -m "not slow"
-
-# Stop on first failure
-make test --maxfail=1 -vv
-
-# Different Python version
-make test PYTHON_VERSION=3.12
 ```
 
 ## Configuration
@@ -132,22 +93,15 @@ def test_custom_db(connection_factory):
         pass
 ```
 
-## Comparison Reports
+## Comparison
 
-```bash
-make compare-local  # Runs integration tests on both drivers, shows differences
-```
-
-The comparison automatically filters to only compare integration tests since:
-- Universal driver runs both unit + integration tests
-- Reference driver only runs integration tests  
-- Comparison script filters universal results to `tests/integ/*` for fair comparison
+`make compare-local` runs integration tests on both drivers and compares results. The comparison automatically filters to only compare integration tests for fair comparison (universal runs unit+integ, reference only integ).
 
 Report sections:
-- **Regressions from passing**: Reference passed, universal failed (bad - we broke something)
+- **Regressions from passing**: Reference passed, universal failed (we broke something)
 - **Regressions from failing**: Reference failed, universal passed (behavioral differences)
 - **Both failing**: Expected differences
-- **Skipped only on universal/reference**: Different skip behavior
+- **Skipped differences**: Different skip behavior
 
 ## Adding Tests
 
@@ -182,42 +136,24 @@ Auto-detected locally, set manually in CI:
 ## Debugging
 
 ```bash
-# Verbose output
-make test -vv
-
-# Debug on failure
-make test --pdb
-
-# Full traceback
-make test --tb=long
+make test -vv        # Verbose output
+make test --pdb      # Debug on failure
+make test --tb=long  # Full traceback
 ```
 
 ## CI Workflow
 
-GitHub Actions runs:
-1. **Build Rust core** (once, shared across jobs)
-2. **Test universal driver** (Python 3.9-3.13, all tests)
-3. **Test reference driver** (Python 3.13 only, integration tests)
-4. **Compare results** (integration tests only for fair comparison)
-
-The CI automatically:
-- Runs comprehensive tests on universal driver
-- Compares only integration tests (both drivers can run these)
-- Generates comparison reports showing behavioral differences
+GitHub Actions: Build Rust core once → Test universal (all tests, Python 3.9-3.13) → Test reference (integ only, Python 3.13) → Compare (integ only for fair comparison)
 
 ## Make Targets
 
 | Command | Description |
 |---------|-------------|
 | `setup` | Install dependencies |
-| `test` | All tests (universal) - short alias |
-| `test-local` | All tests (universal) |
-| `tox` | All tests with tox - short alias |
-| `test-local-tox` | All tests with tox (isolated env) |
-| `test-integ-local-tox` | Integration tests only with tox |
-| `test-reference-local` | Integration tests (reference) |
-| `test-reference-local-tox` | Integration tests (reference) with tox |
-| `compare-local` | Run integration tests on both + compare |
+| `test` / `tox` | All tests (aliases) |
+| `test-integ-local-tox` | Integration tests only |
+| `test-reference-local` | Reference driver tests |
+| `compare-local` | Test both + compare |
 | `clean-reports` | Remove report files |
 
 All targets accept `PYTHON_VERSION` and `PYTEST_ARGS`.
