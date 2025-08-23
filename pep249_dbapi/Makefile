@@ -130,8 +130,11 @@ compare:
 	  --reference $(REPORTS_DIR)/reference-$(PYTHON_VERSION).json \
 	  --fail-on-regressions $(FAIL_ON_REGRESSIONS)
 
-# Fast comparison using tox for parallel execution
-compare-local: test-local-tox test-reference-local-tox compare
+# Fast comparison using tox for parallel execution in isolated env
+compare-local:
+	$(MAKE) test-local-tox || true
+	$(MAKE) test-reference-local-tox || true   # tests can fail and still we want the final report
+	$(MAKE) compare
 
 # Use this when comparing downloaded CI artifacts
 compare-artifacts:
