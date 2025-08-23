@@ -86,10 +86,10 @@ test-local-tox: check-env-or-build setup
 
 tox: test-local-tox  # Short alias
 
-test-integ-local: check-env-or-build setup
+test-integ-local-tox: check-env-or-build setup
 	CORE_PATH=$(DETECTED_CORE_PATH) PARAMETER_PATH=$(DETECTED_PARAMETER_PATH) uv run tox -e py$(PYTHON_ID)-integ-universal -- \
 	  --json-report --json-report-file=$(REPORTS_DIR)/universal-$(PYTHON_VERSION).json \
-	  -n auto $(PYTEST_ARGS) $(filter-out test-integ-local,$(MAKECMDGOALS))
+	  -n auto $(PYTEST_ARGS) $(filter-out test-integ-local-tox,$(MAKECMDGOALS))
 
 test-reference-local: check-env-or-build setup
 	CORE_PATH=$(DETECTED_CORE_PATH) PARAMETER_PATH=$(DETECTED_PARAMETER_PATH) uv run pytest tests/integ/ --connector=reference -v -n auto \
@@ -126,7 +126,7 @@ compare:
 	  --fail-on-regressions $(FAIL_ON_REGRESSIONS)
 
 compare-local:
-	$(MAKE) test-integ-local || true  # Continue even if tests fail - we want the comparison
+	$(MAKE) test-integ-local-tox || true  # Continue even if tests fail - we want the comparison
 	$(MAKE) test-reference-local-tox || true
 	$(MAKE) compare
 
