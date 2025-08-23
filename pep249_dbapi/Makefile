@@ -2,7 +2,7 @@
 PY ?= $(shell python3 -c 'import sys;print(f"{sys.version_info.major}.{sys.version_info.minor}")')
 PYID := $(subst .,,$(PY))
 REPORTS_DIR ?= reports
-REF_VERSION ?= 3.10.1
+REF_VERSION ?= 3.17.2
 POSARGS ?=
 FAIL_ON_REGRESSIONS ?= 0
 
@@ -75,7 +75,7 @@ setup:
 
 # Run all tests (unit + integration) with direct pytest
 test-local: check-env-or-build setup
-	CORE_PATH=$(DETECTED_CORE_PATH) PARAMETER_PATH=$(DETECTED_PARAMETER_PATH) uv run pytest tests/ -v $(POSARGS)
+	CORE_PATH=$(DETECTED_CORE_PATH) PARAMETER_PATH=$(DETECTED_PARAMETER_PATH) uv run pytest tests/ -n auto -v $(POSARGS)
 
 # Run integration tests with tox + xdist for faster parallel execution
 test-local-tox: check-env-or-build setup

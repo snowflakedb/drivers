@@ -11,9 +11,13 @@ requires-python = ">=3.9"
 authors = [
     {name = "Your Name", email = "your.email@example.com"}
 ]
+keywords = ["database", "api", "pep249", "dbapi", "python", "snowflake"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
+    "Topic :: Database",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
@@ -25,6 +29,12 @@ dependencies = [
     "thrift>=0.17.0",
     "pyarrow>=19.0.0",
 ]
+
+[project.urls]
+"Homepage" = "https://github.com/snowflakedb/universal-driver"
+"Bug Reports" = "https://github.com/snowflakedb/universal-driver/issues"
+"Source" = "https://github.com/snowflakedb/universal-driver"
+"Documentation" = "https://github.com/snowflakedb/universal-driver/blob/main/README.md"
 
 [tool.setuptools.packages.find]
 where = ["."]
