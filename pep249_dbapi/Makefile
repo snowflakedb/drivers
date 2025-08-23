@@ -15,7 +15,7 @@ DEFAULT_PARAMETER_PATH := $(shell cd .. && pwd)/parameters.json
 SHELL := bash
 .ONESHELL:  # Execute each recipe in a single shell (needed for multi-line commands)
 
-.PHONY: check-env-or-build check-env-or-fail setup test test-local tox test-local-tox test-reference-local test-reference-local-tox test-all-universal test-integ-universal test-integ-reference compare compare-artifacts compare-local clean-reports
+.PHONY: check-env-or-build check-env-or-fail setup test test-local tox test-local-tox test-integ-local test-reference-local test-reference-local-tox test-all-universal test-integ-universal test-integ-reference compare compare-artifacts compare-local clean-reports
 
 # Platform-aware path detection with environment variable override
 DETECTED_CORE_PATH := $(shell \
@@ -86,6 +86,11 @@ test-local-tox: check-env-or-build setup
 
 tox: test-local-tox  # Short alias
 
+test-integ-local: check-env-or-build setup
+	CORE_PATH=$(DETECTED_CORE_PATH) PARAMETER_PATH=$(DETECTED_PARAMETER_PATH) uv run tox -e py$(PYTHON_ID)-integ-universal -- \
+	  --json-report --json-report-file=$(REPORTS_DIR)/universal-$(PYTHON_VERSION).json \
+	  -n auto $(PYTEST_ARGS) $(filter-out test-integ-local,$(MAKECMDGOALS))
+
 test-reference-local: check-env-or-build setup
 	CORE_PATH=$(DETECTED_CORE_PATH) PARAMETER_PATH=$(DETECTED_PARAMETER_PATH) uv run pytest tests/integ/ --connector=reference -v -n auto \
 	  --json-report --json-report-file=$(REPORTS_DIR)/reference-$(PYTHON_VERSION).json $(PYTEST_ARGS) $(filter-out test-reference-local,$(MAKECMDGOALS))
@@ -121,7 +126,7 @@ compare:
 	  --fail-on-regressions $(FAIL_ON_REGRESSIONS)
 
 compare-local:
-	$(MAKE) test-local-tox || true  # Continue even if tests fail - we want the comparison
+	$(MAKE) test-integ-local || true  # Continue even if tests fail - we want the comparison
 	$(MAKE) test-reference-local-tox || true
 	$(MAKE) compare
 
