@@ -141,14 +141,14 @@ test-reference-local-tox: check-env-or-build setup
 
 # ===== CI Commands =====
 
-test-all: check-env-or-fail
+ci-test-all: check-env-or-fail
 	mkdir -p $(REPORTS_DIR)
 	uv run tox -e $(TOX_ALL_ENV) -- \
 	  $(PYTEST_REPORT_JSON_UNIVERSAL) \
 	  --junitxml=$(UNIVERSAL_XML) \
 	  $(PYTEST_ARGS)
 
-test-integ-reference: check-env-or-fail
+ci-test-integ-reference: check-env-or-fail
 	mkdir -p $(REPORTS_DIR)
 	uv run tox -e $(TOX_REFERENCE_ENV) -- \
 	  $(PYTEST_REPORT_JSON_REFERENCE) \
@@ -170,7 +170,7 @@ compare-local:
 	$(MAKE) compare
 
 # For CI: compare downloaded artifacts (paths set via env vars)
-compare-artifacts:
+ci-compare-artifacts:
 	python3 ci/reference_tests/compare_reports.py \
 	  --py $(PYTHON_VERSION) \
 	  --universal $(UNIVERSAL_TEST_REPORTS_DIR)/universal-$(PYTHON_VERSION).json \

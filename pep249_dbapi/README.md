@@ -64,9 +64,9 @@ make compare-local REFERENCE_DRIVER_VERSION=3.18.0  # Use specific reference ver
 
 | Command | Description | When to Use |
 |---------|-------------|-------------|
-| `make test-all` | Full CI testing with XML reports | GitHub Actions |
-| `make test-integ-reference` | Reference driver CI testing | Comparison baseline |
-| `make compare-artifacts` | Compare downloaded CI reports | CI comparison step |
+| `make ci-test-all` | Full CI testing with XML reports | GitHub Actions |
+| `make ci-test-integ-reference` | Reference driver CI testing | Comparison baseline |
+| `make ci-compare-artifacts` | Compare downloaded CI reports | CI comparison step |
 
 
 

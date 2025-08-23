@@ -90,7 +90,7 @@ jobs:
           CORE_PATH: ${{ github.workspace }}/target/debug/libsf_core.so
           PARAMETER_PATH: ${{ github.workspace }}/parameters.json
           REFERENCE_DRIVER_VERSION: ${{ env.PYTHON_REFERENCE_DRIVER_VERSION }}
-        run: make test-all-universal PYTHON_VERSION=${{ matrix.py }}
+        run: make ci-test-all PYTHON_VERSION=${{ matrix.py }}
         working-directory: pep249_dbapi
 
       - name: Upload test results as GitHub artifact
@@ -147,7 +147,7 @@ jobs:
           CORE_PATH: ${{ github.workspace }}/target/debug/libsf_core.so
           PARAMETER_PATH: ${{ github.workspace }}/parameters.json
           REFERENCE_DRIVER_VERSION: ${{ env.PYTHON_REFERENCE_DRIVER_VERSION }}
-        run: make test-integ-reference PYTHON_VERSION=${{ env.REFERENCE_PYTHON_VERSION }}
+        run: make ci-test-integ-reference PYTHON_VERSION=${{ env.REFERENCE_PYTHON_VERSION }}
         working-directory: pep249_dbapi
 
       - name: Upload test results as GitHub artifact
@@ -192,5 +192,5 @@ jobs:
           REFERENCE_TEST_REPORTS_DIR: ${{ github.workspace }}/reference-results
           FAIL_ON_REGRESSIONS: "0"   # set to "1" when ready to for a strong requirement on compliance with old driver
         run: |
-          make compare-artifacts PYTHON_VERSION=${{ env.REFERENCE_PYTHON_VERSION }} | tee -a $GITHUB_STEP_SUMMARY
+          make ci-compare-artifacts PYTHON_VERSION=${{ env.REFERENCE_PYTHON_VERSION }} | tee -a $GITHUB_STEP_SUMMARY
         working-directory: pep249_dbapi
