@@ -141,7 +141,9 @@ compare-artifacts:
 clean-reports:
 	rm -rf $(REPORTS_DIR)
 
-# Magic: Allow passing pytest args directly after make target
+clean: clean-reports # Short alias
+
+# Below: Allow passing pytest args directly after make target
 # $(filter-out target-name alias,$(MAKECMDGOALS)) captures trailing args but excludes the target itself
 # Without this, "make test -k connection" would pass "test" to pytest, causing it to look for a test named "test"
 # The catch-all rule prevents make from trying to execute pytest args as make targets
