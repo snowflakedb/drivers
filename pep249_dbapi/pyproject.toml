@@ -3,14 +3,12 @@ requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "snowflake-universal"
+name = "snowflake-pep249-dbapi"
 version = "0.1.0"
 description = "A PEP 249 Database API 2.0 implementation for Snowflake"
 readme = "README.md"
-requires-python = ">=3.9"
-authors = [
-    {name = "Your Name", email = "your.email@example.com"}
-]
+license = {text = "MIT"}
+
 keywords = ["database", "api", "pep249", "dbapi", "python", "snowflake"]
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -25,6 +23,7 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
 ]
+requires-python = ">=3.9"
 dependencies = [
     "thrift>=0.17.0",
     "pyarrow>=19.0.0",
@@ -42,18 +41,20 @@ include = ["pep249_dbapi*"]
 exclude = ["tests*", "reports*", "ci*"]
 
 [project.optional-dependencies]
-dev = [
-    "tox>=4.14",
-    "tox-uv>=1.8",
+test = [
     "pytest>=8",
     "pytest-xdist",
     "pytest-json-report",
     "pytest-split",
     "hypothesis",
-    "ruff",
-    "mypy",
-
+    "tox>=4.14",
+    "tox-uv>=1.8",
     "snowflake-connector-python>=3.6.0",
+]
+dev = [
+    "black",
+    "flake8",
+    "mypy",
 ]
 
 
@@ -64,25 +65,87 @@ python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
 addopts = [
-    "-v",
-    "--tb=short",
     "--strict-markers",
+    "--strict-config",
+    "-v",
 ]
 markers = [
     "skip_reference(reason: str=''): skip when --connector=reference",
     "skip_universal(reason: str=''): skip when --connector=universal",
 ]
+log_cli = true
+log_cli_level = "INFO"
+log_cli_format = "%(asctime)s [%(levelname)8s] %(message)s (%(pathname)s:%(lineno)s)"
+log_cli_date_format = "%Y-%m-%d %H:%M:%S"
 
-[tool.ruff]
+[tool.coverage.run]
+source = ["pep249_dbapi"]
+omit = [
+    "*/tests/*",
+    "*/test_*",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "if self.debug:",
+    "if settings.DEBUG",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if 0:",
+    "if __name__ == .__main__.:",
+    "class .*\\bProtocol\\):",
+    "@(abc\\.)?abstractmethod",
+]
+
+[tool.black]
 line-length = 88
-target-version = "py39"
+target-version = ['py39']
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+  # directories
+  \.eggs
+  | \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | build
+  | dist
+)/
+'''
 
-[tool.ruff.lint]
-select = ["E", "F", "W", "I"]
-ignore = ["E501"]
+[tool.flake8]
+max-line-length = 88
+extend-ignore = ["E203", "W503"]
+exclude = [
+    ".git",
+    "__pycache__",
+    "build",
+    "dist",
+    ".tox",
+    ".venv",
+    "thrift_gen",
+]
 
 [tool.mypy]
 python_version = "3.9"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+disallow_untyped_decorators = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_no_return = true
+warn_unreachable = true
+strict_equality = true
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
