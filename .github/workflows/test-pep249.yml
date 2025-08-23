@@ -13,7 +13,7 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
-  PYTHON_REFERENCE_DRIVER_VERSION: "3.10.1"
+  PYTHON_REFERENCE_DRIVER_VERSION: "3.17.2"
   # Python version to run reference tests and comparison
   REFERENCE_PYTHON_VERSION: "3.13"
 
@@ -175,12 +175,15 @@ jobs:
         with: 
           name: results-reference-${{ env.REFERENCE_PYTHON_VERSION }}
           path: reference-results
+
+      - name: Setup dependencies
+        run: make setup
+
       - name: Compare & summarize
         env:
           UNIVERSAL_TEST_REPORTS_DIR: universal-results
           REFERENCE_TEST_REPORTS_DIR: reference-results
           FAIL_ON_REGRESSIONS: "0"   # set to "1" when ready to for a strong requirement on compliance with old driver
         run: |
-          make setup
           make compare-artifacts PY=${{ env.REFERENCE_PYTHON_VERSION }} | tee -a $GITHUB_STEP_SUMMARY
         working-directory: pep249_dbapi
