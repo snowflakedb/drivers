@@ -178,6 +178,7 @@ jobs:
 
       - name: Setup dependencies
         run: make setup
+        working-directory: pep249_dbapi
 
       - name: Compare & summarize
         env:
