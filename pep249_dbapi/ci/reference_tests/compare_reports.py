@@ -2,12 +2,27 @@
 import argparse, json, os, sys
 from typing import Dict, Iterable, Set
 
+def show_directory_contents(path: str) -> None:
+    """Show contents of directory containing the missing file for debugging."""
+    dir_path = os.path.dirname(path) or "."
+    print(f"[compare] contents of {dir_path}:", file=sys.stderr)
+    try:
+        files = os.listdir(dir_path)
+        if files:
+            for f in sorted(files):
+                print(f"  {f}", file=sys.stderr)
+        else:
+            print("  (empty directory)", file=sys.stderr)
+    except Exception as e:
+        print(f"  (could not list directory: {e})", file=sys.stderr)
+
 def load_json(path: str) -> dict:
     try:
         with open(path, "r", encoding="utf-8") as f:
             return json.load(f)
     except FileNotFoundError:
         print(f"[compare] missing file: {path}", file=sys.stderr)
+        show_directory_contents(path)
         sys.exit(2)
 
 def outcomes(js: dict) -> Dict[str, str]:
