@@ -15,7 +15,7 @@ DEFAULT_PARAMETER_PATH := $(shell cd .. && pwd)/parameters.json
 SHELL := bash
 .ONESHELL:  # Execute each recipe in a single shell (needed for multi-line commands)
 
-.PHONY: check-env-or-build check-env-or-fail setup test test-local tox test-local-tox test-integ-local test-reference-local test-reference-local-tox test-all test-integ test-integ-reference compare compare-artifacts compare-local clean-reports run-with-setup
+.PHONY: check-env-or-build check-env-or-fail setup test test-local test-local-sequential test-local-tox test-local-tox-sequential test-integ-local-tox test-reference-local-tox test-all test-integ-reference compare compare-local compare-artifacts clean clean-reports run-with-setup run-with-uv run-with-tox
 
 
 # ===== Reusable Command Components =====
@@ -98,7 +98,8 @@ setup:
 	uv sync --extra dev
 	mkdir -p $(REPORTS_DIR)
 
-# ===== Local Development =====
+# ===== Generic Runners =====
+
 run-with-setup: check-env-or-build setup
 	$(LOCAL_ENV) $(filter-out $@,$(MAKECMDGOALS))
 
@@ -107,6 +108,8 @@ run-with-uv: check-env-or-build setup
 
 run-with-tox: check-env-or-build setup
 	$(LOCAL_ENV) uv run tox -e $(filter-out $@,$(MAKECMDGOALS))
+
+# ===== Local Development =====
 
 test-local: check-env-or-build setup
 	$(LOCAL_ENV) uv run pytest tests/ --connector=universal $(PYTEST_PARALLEL) $(PYTEST_VERBOSE) $(PYTEST_ARGS) $(filter-out $@,$(MAKECMDGOALS))
@@ -131,14 +134,10 @@ test-integ-local-tox: check-env-or-build setup
 	  $(PYTEST_REPORT_JSON_UNIVERSAL) \
 	  $(PYTEST_PARALLEL) $(PYTEST_ARGS) $(filter-out $@,$(MAKECMDGOALS))
 
-test-reference-local: check-env-or-build setup
-	$(LOCAL_ENV) uv run pytest tests/integ/ --connector=reference $(PYTEST_VERBOSE) $(PYTEST_PARALLEL) \
-	  $(PYTEST_REPORT_JSON_REFERENCE) $(PYTEST_ARGS) $(filter-out $@,$(MAKECMDGOALS))
-
 test-reference-local-tox: check-env-or-build setup
 	$(LOCAL_ENV) uv run tox -e $(TOX_REFERENCE_ENV) -- \
 	  $(PYTEST_REPORT_JSON_REFERENCE) \
-	  $(PYTEST_PARALLEL) $(PYTEST_ARGS)
+	  $(PYTEST_PARALLEL) $(PYTEST_ARGS) $(filter-out $@,$(MAKECMDGOALS))
 
 # ===== CI Commands =====
 
@@ -166,7 +165,7 @@ compare:
 	  --fail-on-regressions $(FAIL_ON_REGRESSIONS)
 
 compare-local:
-	$(MAKE) test-integ-local-tox || true  # Continue even if tests fail - we want the comparison
+	$(MAKE) test-integ-local-tox || true  # Continue especially if tests fail
 	$(MAKE) test-reference-local-tox || true
 	$(MAKE) compare
 
