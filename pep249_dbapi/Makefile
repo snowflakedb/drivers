@@ -95,7 +95,7 @@ setup:
 	else \
 		echo "uv already installed: $$(uv --version)"; \
 	fi
-	uv sync --extra dev
+	uv sync --extra dev,test
 	mkdir -p $(REPORTS_DIR)
 
 # ===== Generic Runners =====
