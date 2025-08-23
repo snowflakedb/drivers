@@ -15,7 +15,7 @@ DEFAULT_PARAMETER_PATH := $(shell cd .. && pwd)/parameters.json
 SHELL := bash
 .ONESHELL:  # Execute each recipe in a single shell (needed for multi-line commands)
 
-.PHONY: check-env-or-build check-env-or-fail setup test test-local test-local-sequential test-local-tox test-local-tox-sequential test-integ-local-tox test-reference-local-tox test-all test-integ-reference compare compare-local compare-artifacts clean clean-reports run-with-setup run-with-uv run-with-tox
+.PHONY: check-env-or-build check-env-or-fail setup build-wheel test test-local test-local-sequential test-local-tox test-local-tox-sequential test-integ-local-tox test-reference-local-tox test-all test-integ-reference compare compare-local compare-artifacts clean clean-reports run-with-setup run-with-uv run-with-tox
 
 
 # ===== Reusable Command Components =====
@@ -95,8 +95,11 @@ setup:
 	else \
 		echo "uv already installed: $$(uv --version)"; \
 	fi
-	uv sync --extra dev,test
+	uv sync --all-extras
 	mkdir -p $(REPORTS_DIR)
+
+build-wheel: setup
+	uv build
 
 # ===== Generic Runners =====
 
