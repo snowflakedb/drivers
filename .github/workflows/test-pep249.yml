@@ -169,14 +169,17 @@ jobs:
         with:
           version: "0.5.11"
       
-      - uses: actions/download-artifact@v4
+      - name: Download universal test results
+        uses: actions/download-artifact@v4
         with: 
           name: results-universal-${{ env.REFERENCE_PYTHON_VERSION }}
-          path: universal-results
-      - uses: actions/download-artifact@v4
+          path: ${{ github.workspace }}/universal-results
+      
+      - name: Download reference test results
+        uses: actions/download-artifact@v4
         with: 
           name: results-reference-${{ env.REFERENCE_PYTHON_VERSION }}
-          path: reference-results
+          path: ${{ github.workspace }}/reference-results
 
       - name: Setup dependencies
         run: make setup
@@ -184,8 +187,8 @@ jobs:
 
       - name: Compare & summarize
         env:
-          UNIVERSAL_TEST_REPORTS_DIR: universal-results
-          REFERENCE_TEST_REPORTS_DIR: reference-results
+          UNIVERSAL_TEST_REPORTS_DIR: ${{ github.workspace }}/universal-results
+          REFERENCE_TEST_REPORTS_DIR: ${{ github.workspace }}/reference-results
           FAIL_ON_REGRESSIONS: "0"   # set to "1" when ready to for a strong requirement on compliance with old driver
         run: |
           make compare-artifacts PY=${{ env.REFERENCE_PYTHON_VERSION }} | tee -a $GITHUB_STEP_SUMMARY
