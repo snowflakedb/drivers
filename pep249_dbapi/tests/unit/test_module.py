@@ -53,6 +53,10 @@ class TestModuleConnectFunction:
         assert callable(pep249_dbapi.connect)
         assert callable(connect)
 
+    def test_connect_returns_connection(self, connection):
+        """Test that connect returns a Connection object."""
+        assert isinstance(connection, Connection)
+
 class TestModuleExports:
     """Test that all required symbols are exported."""
     

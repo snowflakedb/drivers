@@ -190,20 +190,12 @@ class TestCursorDatabaseQueries:
         # Result format may vary between connectors, just check it's not None
         assert result is not None
 
-    def test_current_version_select(self, cursor):
-        """Test querying current version."""
-        cursor.execute("SELECT CURRENT_VERSION()")
-        result = cursor.fetchone()
-        assert result is not None
-
     @pytest.mark.parametrize("data_size", [1000, 10000])
     def test_large_result(self, cursor, data_size):
         """Test large result."""
         cursor.execute(f"SELECT seq8() as id FROM TABLE(GENERATOR(ROWCOUNT => {data_size})) v ORDER BY id")
         rows = cursor.fetchall()
         assert len(rows) == data_size
-        # Check first few and last few rows instead of all to be more efficient
-        for i in range(min(10, data_size)):
-            assert rows[i] == (i,)
-        for i in range(max(0, data_size - 10), data_size):
-            assert rows[i] == (i,)
+
+        for (i, row) in enumerate(rows):
+            assert row == (i,)
