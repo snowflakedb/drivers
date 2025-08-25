@@ -11,35 +11,6 @@ use openssl::{
     symm::{Cipher, decrypt, encrypt},
 };
 
-#[derive(Snafu, Debug)]
-pub enum EncryptionError {
-    #[snafu(display("OpenSSL cryptographic operation failed during {operation}"))]
-    OpenSsl {
-        operation: String,
-        source: OpenSslErrorStack,
-        #[snafu(implicit)]
-        location: Location,
-    },
-    #[snafu(display("Failed to decode Base64 encoded data: {context}"))]
-    Base64Decode {
-        context: String,
-        source: base64::DecodeError,
-        #[snafu(implicit)]
-        location: Location,
-    },
-    #[snafu(display("Unsupported encryption key size: {key_size} bytes"))]
-    UnsupportedKeySize {
-        key_size: usize,
-        #[snafu(implicit)]
-        location: Location,
-    },
-    #[snafu(display("Data integrity check failed: digest mismatch"))]
-    DigestMismatch {
-        #[snafu(implicit)]
-        location: Location,
-    },
-}
-
 // Cryptographic constants
 const AES_256_KEY_SIZE_IN_BYTES: usize = 32; // 256 bits
 const AES_128_KEY_SIZE_IN_BYTES: usize = 16; // 128 bits
@@ -187,4 +158,33 @@ fn generate_random_bytes(size: usize) -> Result<Vec<u8>, OpenSslErrorStack> {
 fn calculate_digest(data: &[u8]) -> Result<String, OpenSslErrorStack> {
     let digest = hash(MessageDigest::sha256(), data)?;
     Ok(BASE64_ENGINE.encode(digest))
+}
+
+#[derive(Snafu, Debug)]
+pub enum EncryptionError {
+    #[snafu(display("OpenSSL cryptographic operation failed during {operation}"))]
+    OpenSsl {
+        operation: String,
+        source: OpenSslErrorStack,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Failed to decode Base64 encoded data: {context}"))]
+    Base64Decode {
+        context: String,
+        source: base64::DecodeError,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Unsupported encryption key size: {key_size} bytes"))]
+    UnsupportedKeySize {
+        key_size: usize,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Data integrity check failed: digest mismatch"))]
+    DigestMismatch {
+        #[snafu(implicit)]
+        location: Location,
+    },
 }

@@ -8,7 +8,6 @@ pub use self::types::*;
 
 use crate::compression::{CompressionError, compress_data};
 use crate::compression_types::{CompressionType, CompressionTypeError, try_guess_compression_type};
-use crate::thrift_gen::database_driver_v1::{DriverException, StatusCode};
 use encryption::{EncryptionError, decrypt_file_data, encrypt_file_data};
 use file_transfer::{DownloadFileError, UploadFileError, download_from_s3, upload_to_s3_or_skip};
 use path_expansion::{PathExpansionError, expand_filenames};
@@ -257,16 +256,4 @@ pub enum FileManagerError {
         location: Location,
         backtrace: snafu::Backtrace,
     },
-}
-
-impl From<FileManagerError> for DriverException {
-    fn from(err: FileManagerError) -> Self {
-        DriverException::new(
-            format!("FileManager error: {err:#?}"),
-            StatusCode::UNKNOWN,
-            None,
-            None,
-            None,
-        )
-    }
 }
