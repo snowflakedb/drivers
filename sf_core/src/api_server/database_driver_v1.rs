@@ -1,7 +1,7 @@
 use crate::api_server::query::process_query_response;
 use crate::config::rest_parameters::{LoginParameters, QueryParameters};
 use crate::config::settings::Setting;
-use crate::driver::{Connection, Database, Statement, StatementError};
+use crate::driver::{Connection, Database, Statement};
 use crate::handle_manager::{Handle, HandleManager};
 use snafu::Report;
 
@@ -87,18 +87,6 @@ impl From<StatementHandle> for Handle {
     }
 }
 
-// impl From<ConfigError> for Error {
-//     fn from(error: ConfigError) -> Self {
-//         Error::from(DriverException::new(
-//             format!("Configuration error: {error:?}"),
-//             StatusCode::INVALID_STATE,
-//             None,
-//             None,
-//             None,
-//         ))
-//     }
-// }
-
 pub struct DatabaseDriverV1 {
     db_handle_manager: HandleManager<Mutex<Database>>,
     conn_handle_manager: HandleManager<Mutex<Connection>>,
@@ -108,18 +96,6 @@ pub struct DatabaseDriverV1 {
 impl Default for DatabaseDriverV1 {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-impl From<StatementError> for Error {
-    fn from(error: StatementError) -> Self {
-        Error::from(DriverException::new(
-            format!("{error:?}"),
-            StatusCode::INVALID_STATE,
-            None,
-            None,
-            None,
-        ))
     }
 }
 
@@ -555,7 +531,7 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
             .map_err(|e| Self::unknown_error(format!("Failed to convert ArrowArray: {e}")))?;
         let record_batch = RecordBatch::from(StructArray::from(array));
         self.with_statement(stmt_handle, |mut stmt| {
-            stmt.bind_parameters(record_batch).map_err(Error::from)
+            stmt.bind_parameters(record_batch).map_err(snafu_to_thrift)
         })
     }
 
@@ -604,7 +580,8 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
                 query_parameters,
                 session_token,
                 query,
-                stmt.get_query_parameter_bindings().map_err(Error::from)?,
+                stmt.get_query_parameter_bindings()
+                    .map_err(snafu_to_thrift)?,
             ))
             .map_err(snafu_to_thrift)?;
 

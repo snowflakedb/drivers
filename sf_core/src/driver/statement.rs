@@ -1,23 +1,16 @@
+use arrow::{
+    array::{Int32Array, RecordBatch, StringArray},
+    datatypes::DataType,
+};
+use snafu::Snafu;
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex},
 };
 
-use arrow::{
-    array::{Int32Array, RecordBatch, StringArray},
-    datatypes::DataType,
-};
-
-use crate::rest::snowflake::query_request;
-
 use super::connection::Connection;
 use crate::config::settings::Setting;
-
-#[derive(Debug, Clone)]
-pub enum StatementError {
-    UnsupportedBindParameterType(String),
-    InvalidStateTransition { from: StatementState, msg: String },
-}
+use crate::rest::snowflake::query_request;
 
 fn parameters_from_record_batch(
     record_batch: &RecordBatch,
@@ -61,9 +54,10 @@ fn parameters_from_record_batch(
                 );
             }
             _ => {
-                return Err(StatementError::UnsupportedBindParameterType(
-                    column.data_type().to_string(),
-                ));
+                BindParameterTypeSnafu {
+                    type_: column.data_type().to_string(),
+                }
+                .fail()?;
             }
         }
     }
@@ -101,10 +95,10 @@ impl Statement {
                 self.parameter_bindings = Some(record_batch);
             }
             _ => {
-                return Err(StatementError::InvalidStateTransition {
-                    from: self.state.clone(),
+                TransactionStateSnafu {
                     msg: format!("Cannot bind parameters in state={:?}", self.state),
-                });
+                }
+                .fail()?;
             }
         }
         Ok(())
@@ -118,4 +112,20 @@ impl Statement {
             None => Ok(None),
         }
     }
+}
+
+#[derive(Snafu, Debug)]
+pub enum StatementError {
+    #[snafu(display("Unsupported bind parameter type: {type_}"))]
+    BindParameterType {
+        type_: String,
+        #[snafu(implicit)]
+        location: snafu::Location,
+    },
+    #[snafu(display("Invalid state transaction: {msg}"))]
+    TransactionState {
+        msg: String,
+        #[snafu(implicit)]
+        location: snafu::Location,
+    },
 }
