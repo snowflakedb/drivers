@@ -2,7 +2,7 @@ use crate::chunks::ChunkDownloadData;
 use crate::file_manager;
 use crate::file_manager::SourceCompressionParam;
 use serde::Deserialize;
-use snafu::Snafu;
+use snafu::{OptionExt, Snafu};
 use std::collections::HashMap;
 // TODO: Delete all unused fields when we are sure they are not needed
 
@@ -265,84 +265,63 @@ pub struct EncryptionMaterial {
 impl Data {
     /// Copies the fields necessary for file transfer.
     pub fn to_file_upload_data(&self) -> Result<file_manager::UploadData, QueryResponseError> {
-        let src_locations = self.src_locations.as_ref().ok_or_else(|| {
-            MissingParameterSnafu {
-                parameter: "source locations",
-            }
-            .build()
+        let src_locations = self.src_locations.as_ref().context(MissingParameterSnafu {
+            parameter: "source locations",
         })?;
 
         if src_locations.len() != 1 {
-            return Err(InvalidFormatSnafu {
+            InvalidFormatSnafu {
                 message: "Expected exactly one source location for upload".to_string(),
             }
-            .build());
+            .fail()?;
         }
 
         let src_location = src_locations
             .first()
-            .ok_or_else(|| {
-                MissingParameterSnafu {
-                    parameter: "source location",
-                }
-                .build()
+            .context(MissingParameterSnafu {
+                parameter: "source location",
             })?
             .clone();
 
         let stage_info: file_manager::StageInfo = self
             .stage_info
             .as_ref()
-            .ok_or_else(|| {
-                MissingParameterSnafu {
-                    parameter: "stage info",
-                }
-                .build()
+            .context(MissingParameterSnafu {
+                parameter: "stage info",
             })?
             .try_into()?;
 
         let encryption_materials: Vec<_> = self
             .encryption_material
             .as_ref()
-            .ok_or_else(|| {
-                MissingParameterSnafu {
-                    parameter: "encryption material",
-                }
-                .build()
+            .context(MissingParameterSnafu {
+                parameter: "encryption material",
             })?
             .into();
 
         if encryption_materials.len() != 1 {
-            return Err(InvalidFormatSnafu {
+            InvalidFormatSnafu {
                 message: "Expected exactly one encryption material for upload".to_string(),
             }
-            .build());
+            .fail()?;
         }
 
         let encryption_material = encryption_materials
             .first()
-            .ok_or_else(|| {
-                MissingParameterSnafu {
-                    parameter: "encryption material",
-                }
-                .build()
+            .context(MissingParameterSnafu {
+                parameter: "encryption material",
             })?
             .clone();
 
-        let auto_compress = self.auto_compress.ok_or_else(|| {
-            MissingParameterSnafu {
-                parameter: "auto compress",
-            }
-            .build()
+        let auto_compress = self.auto_compress.context(MissingParameterSnafu {
+            parameter: "auto compress",
         })?;
 
         let source_compression_string = self
             .source_compression
             .as_ref()
-            .ok_or_else(|| {
-                MissingParameterSnafu {
-                    parameter: "source compression",
-                }
-                .build()
+            .context(MissingParameterSnafu {
+                parameter: "source compression",
             })?
             .clone();
 
@@ -355,21 +334,14 @@ impl Data {
             "DEFLATE" => SourceCompressionParam::Deflate,
             "RAW_DEFLATE" => SourceCompressionParam::RawDeflate,
             "NONE" => SourceCompressionParam::None,
-            _ => {
-                return Err(InvalidFormatSnafu {
-                    message: format!(
-                        "Unknown source compression type: {source_compression_string}"
-                    ),
-                }
-                .build());
+            _ => InvalidFormatSnafu {
+                message: format!("Unknown source compression type: {source_compression_string}"),
             }
+            .fail()?,
         };
 
-        let overwrite = self.overwrite.ok_or_else(|| {
-            MissingParameterSnafu {
-                parameter: "overwrite",
-            }
-            .build()
+        let overwrite = self.overwrite.context(MissingParameterSnafu {
+            parameter: "overwrite",
         })?;
 
         Ok(file_manager::UploadData {
@@ -386,59 +358,47 @@ impl Data {
         let src_locations = self
             .src_locations
             .as_ref()
-            .ok_or_else(|| {
-                MissingParameterSnafu {
-                    parameter: "source locations",
-                }
-                .build()
+            .context(MissingParameterSnafu {
+                parameter: "source locations",
             })?
             .clone();
 
         if src_locations.is_empty() {
-            return Err(MissingParameterSnafu {
+            MissingParameterSnafu {
                 parameter: "source locations",
             }
-            .build());
+            .fail()?;
         }
 
         let stage_info: file_manager::StageInfo = self
             .stage_info
             .as_ref()
-            .ok_or_else(|| {
-                MissingParameterSnafu {
-                    parameter: "stage info",
-                }
-                .build()
+            .context(MissingParameterSnafu {
+                parameter: "stage info",
             })?
             .try_into()?;
 
         let encryption_materials: Vec<_> = self
             .encryption_material
             .as_ref()
-            .ok_or_else(|| {
-                MissingParameterSnafu {
-                    parameter: "encryption material",
-                }
-                .build()
+            .context(MissingParameterSnafu {
+                parameter: "encryption material",
             })?
             .into();
 
         if src_locations.len() != encryption_materials.len() {
-            return Err(InvalidFormatSnafu {
+            InvalidFormatSnafu {
                 message: "Number of source locations must match number of encryption materials"
                     .to_string(),
             }
-            .build());
+            .fail()?;
         }
 
         let local_location: String = self
             .local_location
             .as_ref()
-            .ok_or_else(|| {
-                MissingParameterSnafu {
-                    parameter: "local location",
-                }
-                .build()
+            .context(MissingParameterSnafu {
+                parameter: "local location",
             })?
             .clone();
 
@@ -469,19 +429,13 @@ impl TryFrom<&StageInfo> for file_manager::StageInfo {
         let location = value
             .location
             .as_ref()
-            .ok_or_else(|| {
-                MissingParameterSnafu {
-                    parameter: "stage info -> location",
-                }
-                .build()
+            .context(MissingParameterSnafu {
+                parameter: "stage info -> location",
             })?
             .clone();
 
-        let bucket_separator = location.find('/').ok_or_else(|| {
-            InvalidFormatSnafu {
-                message: format!("Invalid S3 location format: {location}"),
-            }
-            .build()
+        let bucket_separator = location.find('/').context(InvalidFormatSnafu {
+            message: format!("Invalid S3 location format: {location}"),
         })?;
 
         let bucket = location[..bucket_separator].to_string();
@@ -490,22 +444,16 @@ impl TryFrom<&StageInfo> for file_manager::StageInfo {
         let region = value
             .region
             .as_ref()
-            .ok_or_else(|| {
-                MissingParameterSnafu {
-                    parameter: "stage info -> region",
-                }
-                .build()
+            .context(MissingParameterSnafu {
+                parameter: "stage info -> region",
             })?
             .clone();
 
         let creds: file_manager::Credentials = value
             .creds
             .as_ref()
-            .ok_or_else(|| {
-                MissingParameterSnafu {
-                    parameter: "stage info -> credentials",
-                }
-                .build()
+            .context(MissingParameterSnafu {
+                parameter: "stage info -> credentials",
             })?
             .try_into()?;
 
@@ -525,33 +473,24 @@ impl TryFrom<&Credentials> for file_manager::Credentials {
         let aws_key_id = value
             .aws_key_id
             .as_ref()
-            .ok_or_else(|| {
-                MissingParameterSnafu {
-                    parameter: "credentials -> aws key id",
-                }
-                .build()
+            .context(MissingParameterSnafu {
+                parameter: "credentials -> aws key id",
             })?
             .clone();
 
         let aws_secret_key = value
             .aws_secret_key
             .as_ref()
-            .ok_or_else(|| {
-                MissingParameterSnafu {
-                    parameter: "credentials -> aws secret key",
-                }
-                .build()
+            .context(MissingParameterSnafu {
+                parameter: "credentials -> aws secret key",
             })?
             .clone();
 
         let aws_token = value
             .aws_token
             .as_ref()
-            .ok_or_else(|| {
-                MissingParameterSnafu {
-                    parameter: "credentials -> aws token",
-                }
-                .build()
+            .context(MissingParameterSnafu {
+                parameter: "credentials -> aws token",
             })?
             .clone();
 

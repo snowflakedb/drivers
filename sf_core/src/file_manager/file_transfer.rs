@@ -1,5 +1,5 @@
 use super::types::{EncryptedFileMetadata, EncryptionResult, MaterialDescription, StageInfo};
-use snafu::{Location, ResultExt, Snafu};
+use snafu::{Location, OptionExt, ResultExt, Snafu};
 
 // AWS SDK imports
 use aws_config::{BehaviorVersion, Region};
@@ -106,19 +106,15 @@ pub async fn download_from_s3(
         .context(DownloadS3Snafu)?;
 
     // Extract metadata from S3 response and construct the metadata structure directly
-    let metadata_map = response.metadata().ok_or_else(|| {
-        MissingFileMetadataSnafu {
-            field: "All fields".to_string(),
-        }
-        .build()
+    let metadata_map = response.metadata().context(MissingFileMetadataSnafu {
+        field: "All fields".to_string(),
     })?;
 
-    let mat_desc_str = metadata_map.get("x-amz-matdesc").ok_or_else(|| {
-        MissingFileMetadataSnafu {
+    let mat_desc_str = metadata_map
+        .get("x-amz-matdesc")
+        .context(MissingFileMetadataSnafu {
             field: "x-amz-matdesc".to_string(),
-        }
-        .build()
-    })?;
+        })?;
 
     let material_desc: MaterialDescription =
         serde_json::from_str(mat_desc_str).context(DeserializationSnafu)?;
@@ -127,30 +123,21 @@ pub async fn download_from_s3(
     let file_metadata = EncryptedFileMetadata {
         encrypted_key: metadata_map
             .get("x-amz-key")
-            .ok_or_else(|| {
-                MissingFileMetadataSnafu {
-                    field: "x-amz-key".to_string(),
-                }
-                .build()
+            .context(MissingFileMetadataSnafu {
+                field: "x-amz-key".to_string(),
             })?
             .to_owned(),
         iv: metadata_map
             .get("x-amz-iv")
-            .ok_or_else(|| {
-                MissingFileMetadataSnafu {
-                    field: "x-amz-iv".to_string(),
-                }
-                .build()
+            .context(MissingFileMetadataSnafu {
+                field: "x-amz-iv".to_string(),
             })?
             .to_owned(),
         material_desc,
         digest: metadata_map
             .get("sfc-digest")
-            .ok_or_else(|| {
-                MissingFileMetadataSnafu {
-                    field: "sfc-digest".to_string(),
-                }
-                .build()
+            .context(MissingFileMetadataSnafu {
+                field: "sfc-digest".to_string(),
             })?
             .to_owned(),
     };
