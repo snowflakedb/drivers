@@ -49,7 +49,7 @@ async fn check_if_file_exists(
     {
         Ok(_) => Ok(true),
         Err(SdkError::ServiceError(err)) if err.err().is_not_found() => Ok(false),
-        Err(e) => Err(aws_sdk_s3::Error::from(e)).context(UploadS3Snafu),
+        Err(e) => Err(aws_sdk_s3::Error::from(e)).context(HeadS3Snafu),
     }
 }
 
