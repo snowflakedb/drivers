@@ -4,8 +4,8 @@ use common::put_get_common::*;
 use common::test_utils::*;
 
 use flate2::{
-    write::{DeflateEncoder, GzEncoder},
     Compression,
+    write::{DeflateEncoder, GzEncoder},
 };
 use std::fs;
 use std::io::Write;

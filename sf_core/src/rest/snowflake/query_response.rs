@@ -1,9 +1,8 @@
 use crate::chunks::ChunkDownloadData;
 use crate::file_manager;
 use crate::file_manager::SourceCompressionParam;
-use crate::rest::error::{InvalidSnowflakeResponseSnafu, MissingParameterSnafu};
-use crate::rest::RestError;
 use serde::Deserialize;
+use snafu::Snafu;
 use std::collections::HashMap;
 // TODO: Delete all unused fields when we are sure they are not needed
 
@@ -45,6 +44,14 @@ pub struct Data {
     #[serde(rename = "sourceCompression")]
     source_compression: Option<String>,
 
+    // chunked query results
+    #[serde(rename = "chunks")]
+    chunks: Option<Vec<Chunk>>,
+    #[serde(rename = "qrmk")]
+    _qrmk: Option<String>,
+    #[serde(rename = "chunkHeaders")]
+    chunk_headers: Option<HashMap<String, String>>,
+
     //unused fields
     #[serde(rename = "parameters")]
     _parameters: Option<Vec<NameValueParameter>>,
@@ -72,12 +79,6 @@ pub struct Data {
     _statement_type_id: Option<i64>,
     #[serde(rename = "version")]
     _version: Option<i64>,
-    #[serde(rename = "chunks")]
-    chunks: Option<Vec<Chunk>>,
-    #[serde(rename = "qrmk")]
-    _qrmk: Option<String>,
-    #[serde(rename = "chunkHeaders")]
-    chunk_headers: Option<HashMap<String, String>>,
     #[serde(rename = "getResultUrl")]
     _get_result_url: Option<String>,
     #[serde(rename = "progressDesc")]
@@ -134,9 +135,9 @@ pub struct QueryContextEntry {
 
 #[derive(Deserialize)]
 pub struct Chunk {
-    //unused fields
     #[serde(rename = "url")]
     url: String,
+    //unused fields
     #[serde(rename = "rowCount")]
     _row_count: i32,
     #[serde(rename = "uncompressedSize")]
@@ -164,20 +165,22 @@ pub struct NameValueParameter {
 pub struct RowType {
     #[serde(rename = "name")]
     pub name: String,
+    #[serde(rename = "scale")]
+    pub scale: Option<i64>,
+    #[serde(rename = "nullable")]
+    pub nullable: bool,
+    #[serde(rename = "type")]
+    pub type_: String,
+
+    // unused fields
     #[serde(rename = "fields")]
     _fields: Option<Vec<FieldMetadata>>,
     #[serde(rename = "byteLength")]
     _byte_length: Option<i64>,
     #[serde(rename = "length")]
     _length: Option<i64>,
-    #[serde(rename = "type")]
-    pub type_: String,
     #[serde(rename = "precision")]
     _precision: Option<i64>,
-    #[serde(rename = "scale")]
-    pub scale: Option<i64>,
-    #[serde(rename = "nullable")]
-    pub nullable: bool,
 }
 
 #[derive(Deserialize)]
@@ -207,7 +210,8 @@ pub struct StageInfo {
     region: Option<String>,
     #[serde(rename = "location")]
     location: Option<String>,
-    //unused fields
+
+    // unused fields
     #[serde(rename = "locationType")]
     _location_type: Option<String>,
     #[serde(rename = "path")]
@@ -236,7 +240,8 @@ pub struct Credentials {
     aws_secret_key: Option<String>,
     #[serde(rename = "AWS_TOKEN")]
     aws_token: Option<String>,
-    //unused fields
+
+    // unused fields
     #[serde(rename = "AWS_ID")]
     _aws_id: Option<String>,
     #[serde(rename = "AWS_KEY")]
@@ -259,7 +264,7 @@ pub struct EncryptionMaterial {
 
 impl Data {
     /// Copies the fields necessary for file transfer.
-    pub fn to_file_upload_data(&self) -> Result<file_manager::UploadData, RestError> {
+    pub fn to_file_upload_data(&self) -> Result<file_manager::UploadData, QueryResponseError> {
         let src_locations = self.src_locations.as_ref().ok_or_else(|| {
             MissingParameterSnafu {
                 parameter: "source locations",
@@ -268,7 +273,7 @@ impl Data {
         })?;
 
         if src_locations.len() != 1 {
-            return Err(InvalidSnowflakeResponseSnafu {
+            return Err(InvalidFormatSnafu {
                 message: "Expected exactly one source location for upload".to_string(),
             }
             .build());
@@ -307,7 +312,7 @@ impl Data {
             .into();
 
         if encryption_materials.len() != 1 {
-            return Err(InvalidSnowflakeResponseSnafu {
+            return Err(InvalidFormatSnafu {
                 message: "Expected exactly one encryption material for upload".to_string(),
             }
             .build());
@@ -351,7 +356,7 @@ impl Data {
             "RAW_DEFLATE" => SourceCompressionParam::RawDeflate,
             "NONE" => SourceCompressionParam::None,
             _ => {
-                return Err(InvalidSnowflakeResponseSnafu {
+                return Err(InvalidFormatSnafu {
                     message: format!(
                         "Unknown source compression type: {source_compression_string}"
                     ),
@@ -377,7 +382,7 @@ impl Data {
         })
     }
 
-    pub fn to_file_download_data(&self) -> Result<file_manager::DownloadData, RestError> {
+    pub fn to_file_download_data(&self) -> Result<file_manager::DownloadData, QueryResponseError> {
         let src_locations = self
             .src_locations
             .as_ref()
@@ -419,7 +424,7 @@ impl Data {
             .into();
 
         if src_locations.len() != encryption_materials.len() {
-            return Err(InvalidSnowflakeResponseSnafu {
+            return Err(InvalidFormatSnafu {
                 message: "Number of source locations must match number of encryption materials"
                     .to_string(),
             }
@@ -452,12 +457,13 @@ impl Data {
             .iter()
             .map(|chunk| ChunkDownloadData::new(&chunk.url, chunk_headers))
             .collect();
+
         Some(chunk_download_data)
     }
 }
 
 impl TryFrom<&StageInfo> for file_manager::StageInfo {
-    type Error = RestError;
+    type Error = QueryResponseError;
 
     fn try_from(value: &StageInfo) -> Result<Self, Self::Error> {
         let location = value
@@ -472,7 +478,7 @@ impl TryFrom<&StageInfo> for file_manager::StageInfo {
             .clone();
 
         let bucket_separator = location.find('/').ok_or_else(|| {
-            InvalidSnowflakeResponseSnafu {
+            InvalidFormatSnafu {
                 message: format!("Invalid S3 location format: {location}"),
             }
             .build()
@@ -513,7 +519,7 @@ impl TryFrom<&StageInfo> for file_manager::StageInfo {
 }
 
 impl TryFrom<&Credentials> for file_manager::Credentials {
-    type Error = RestError;
+    type Error = QueryResponseError;
 
     fn try_from(value: &Credentials) -> Result<Self, Self::Error> {
         let aws_key_id = value
@@ -590,4 +596,20 @@ impl<T> OneOrMany<T> {
             OneOrMany::Many(vec) => vec.as_slice(),
         }
     }
+}
+
+#[derive(Snafu, Debug)]
+pub enum QueryResponseError {
+    #[snafu(display("Missing parameter in Snowflake response: {parameter}"))]
+    MissingParameter {
+        parameter: String,
+        #[snafu(implicit)]
+        location: snafu::Location,
+    },
+    #[snafu(display("Invalid Snowflake response: {message}"))]
+    InvalidFormat {
+        message: String,
+        #[snafu(implicit)]
+        location: snafu::Location,
+    },
 }

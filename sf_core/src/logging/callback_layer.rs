@@ -1,9 +1,9 @@
-use std::ffi::{c_char, CString};
+use std::ffi::{CString, c_char};
 use std::fmt::Debug;
 use tracing::field::Field;
 use tracing::{Event, Level, Subscriber};
-use tracing_subscriber::layer::Context;
 use tracing_subscriber::Layer;
+use tracing_subscriber::layer::Context;
 
 pub type CLogCallback = unsafe extern "C" fn(
     level: u32,

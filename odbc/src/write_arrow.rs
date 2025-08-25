@@ -1,13 +1,13 @@
 use std::{
     collections::HashMap,
-    ffi::{c_char, CStr},
+    ffi::{CStr, c_char},
     marker::PhantomData,
     slice,
     sync::Arc,
 };
 
 use arrow::{
-    array::{Array, Int32Array, Int8Array, StringArray},
+    array::{Array, Int8Array, Int32Array, StringArray},
     datatypes::{DataType, Int32Type, Utf8Type},
     ffi::{FFI_ArrowArray, FFI_ArrowSchema},
 };

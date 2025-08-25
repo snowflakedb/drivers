@@ -2,18 +2,15 @@ mod auth;
 pub mod query_request;
 pub mod query_response;
 
-use crate::auth::{create_credentials, Credentials};
+use crate::auth::{AuthError, Credentials, create_credentials};
 use crate::config::rest_parameters::ClientInfo;
 use crate::config::rest_parameters::{LoginParameters, QueryParameters};
-use crate::rest::error::{
-    AuthSnafu, InternalSnafu, InvalidSnowflakeResponseSnafu, RestError, StatusSnafu,
-};
 use crate::rest::snowflake::auth::{
     AuthRequest, AuthRequestClientEnvironment, AuthRequestData, AuthResponse,
 };
 use reqwest;
 use serde_json;
-use snafu::ResultExt;
+use snafu::{Location, ResultExt, Snafu};
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tracing;
@@ -286,4 +283,45 @@ pub async fn snowflake_query(
         })?;
 
     Ok(response_data)
+}
+
+#[derive(Debug, Snafu)]
+#[snafu(visibility(pub(crate)))]
+pub enum RestError {
+    #[snafu(display("Authentication failed"))]
+    Auth {
+        source: AuthError,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Missing required parameter: {parameter}"))]
+    MissingParameter {
+        parameter: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Invalid argument: {argument}"))]
+    InvalidArgument {
+        argument: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Invalid Snowflake response: {message}"))]
+    InvalidSnowflakeResponse {
+        message: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Internal error: {message}"))]
+    Internal {
+        message: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("HTTP status error: {status}"))]
+    Status {
+        status: reqwest::StatusCode,
+        #[snafu(implicit)]
+        location: Location,
+    },
 }

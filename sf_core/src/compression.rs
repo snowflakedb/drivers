@@ -1,4 +1,4 @@
-use flate2::{bufread::GzDecoder, Compression, GzBuilder};
+use flate2::{Compression, GzBuilder, bufread::GzDecoder};
 use snafu::{Location, ResultExt, Snafu};
 use std::io::{Read, Write};
 

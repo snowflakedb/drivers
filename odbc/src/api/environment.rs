@@ -1,4 +1,4 @@
-use crate::api::{env_from_handle, OdbcError, OdbcResult};
+use crate::api::{OdbcError, OdbcResult, env_from_handle};
 use odbc_sys as sql;
 use tracing;
 

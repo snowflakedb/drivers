@@ -1,7 +1,7 @@
 use arrow::{
     array::{Array, ArrowPrimitiveType, GenericByteArray, PrimitiveArray},
     datatypes::{
-        ByteArrayType, DataType, Decimal128Type, Field, Int16Type, Int32Type, Int64Type, Int8Type,
+        ByteArrayType, DataType, Decimal128Type, Field, Int8Type, Int16Type, Int32Type, Int64Type,
         Utf8Type,
     },
 };

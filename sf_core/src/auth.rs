@@ -6,40 +6,6 @@ use snafu::{Location, ResultExt, Snafu};
 
 use crate::config::rest_parameters::{LoginMethod, LoginParameters};
 
-#[derive(Debug, Snafu)]
-pub enum AuthError {
-    #[snafu(display("Invalid private key format"))]
-    InvalidPrivateKeyFormat {
-        source: openssl::error::ErrorStack,
-        #[snafu(implicit)]
-        location: Location,
-    },
-    #[snafu(display("Failed to create private key from RSA"))]
-    CreatePrivateKey {
-        source: openssl::error::ErrorStack,
-        #[snafu(implicit)]
-        location: Location,
-    },
-    #[snafu(display("Failed to extract public key from private key"))]
-    ExtractPublicKey {
-        source: openssl::error::ErrorStack,
-        #[snafu(implicit)]
-        location: Location,
-    },
-    #[snafu(display("Failed to get current system time"))]
-    GetCurrentTime {
-        source: std::time::SystemTimeError,
-        #[snafu(implicit)]
-        location: Location,
-    },
-    #[snafu(display("Failed to sign JWT token"))]
-    SignJWT {
-        source: jwt::Error,
-        #[snafu(implicit)]
-        location: Location,
-    },
-}
-
 pub enum Credentials {
     Password { username: String, password: String },
     Jwt { username: String, token: String },
@@ -60,7 +26,7 @@ fn generate_jwt_token(
     private_key: &str,
     passphrase: Option<&str>,
 ) -> Result<String, AuthError> {
-    use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+    use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
     use jwt::{Header, Token};
     use openssl::{pkey::PKey, rsa::Rsa};
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -144,4 +110,38 @@ pub fn create_credentials(login_parameters: &LoginParameters) -> Result<Credenti
             token: token.clone(),
         }),
     }
+}
+
+#[derive(Debug, Snafu)]
+pub enum AuthError {
+    #[snafu(display("Invalid private key format"))]
+    InvalidPrivateKeyFormat {
+        source: openssl::error::ErrorStack,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Failed to create private key from RSA"))]
+    CreatePrivateKey {
+        source: openssl::error::ErrorStack,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Failed to extract public key from private key"))]
+    ExtractPublicKey {
+        source: openssl::error::ErrorStack,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Failed to get current system time"))]
+    GetCurrentTime {
+        source: std::time::SystemTimeError,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Failed to sign JWT token"))]
+    SignJWT {
+        source: jwt::Error,
+        #[snafu(implicit)]
+        location: Location,
+    },
 }

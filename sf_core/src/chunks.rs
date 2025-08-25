@@ -7,10 +7,9 @@ use arrow::datatypes::SchemaRef;
 use arrow::error::ArrowError;
 use arrow_ipc::reader::StreamReader;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
+use snafu::{Location, ResultExt, Snafu};
 
-use crate::compression::decompress_data;
-use crate::rest::error::InternalSnafu;
-use crate::rest::RestError;
+use crate::compression::{CompressionError, decompress_data};
 
 pub struct ChunkDownloadData {
     url: String,
@@ -87,73 +86,80 @@ impl RecordBatchReader for ChunkReader {
     }
 }
 
-// TODO Should we return RestError here?
-pub fn get_chunk_data_sync(chunk: &ChunkDownloadData) -> Result<Vec<u8>, RestError> {
+pub fn get_chunk_data_sync(chunk: &ChunkDownloadData) -> Result<Vec<u8>, ChunkError> {
     // TODO: Find a better way of managing tokio runtimes
     let rt = tokio::runtime::Runtime::new().unwrap();
     rt.block_on(async { get_chunk_data(chunk).await })
 }
 
-pub async fn get_chunk_data(chunk: &ChunkDownloadData) -> Result<Vec<u8>, RestError> {
+pub async fn get_chunk_data(chunk: &ChunkDownloadData) -> Result<Vec<u8>, ChunkError> {
     let url = chunk.url.clone();
     let client = reqwest::Client::new();
     let mut headers = HeaderMap::new();
     for (key, value) in chunk.headers.iter() {
-        let header_name = HeaderName::from_str(key).map_err(|e| {
-            InternalSnafu {
-                message: format!("Invalid header name '{key}': {e}"),
-            }
-            .build()
-        })?;
-        let header_value = HeaderValue::from_str(value).map_err(|e| {
-            InternalSnafu {
-                message: format!("Invalid header value for '{key}': {e}"),
-            }
-            .build()
-        })?;
+        let header_name = HeaderName::from_str(key).context(HeaderNameSnafu { key })?;
+        let header_value = HeaderValue::from_str(value).context(HeaderValueSnafu { key })?;
         headers.insert(header_name, header_value);
     }
-    let response = client.get(url).headers(headers).send().await.map_err(|e| {
-        InternalSnafu {
-            message: format!("Failed to get chunk data: {e}"),
-        }
-        .build()
-    })?;
+    let response = client
+        .get(url)
+        .headers(headers)
+        .send()
+        .await
+        .context(CommunicationSnafu)?;
+
     if !response.status().is_success() {
-        return Err(InternalSnafu {
-            message: format!("Failed to get chunk data: {}", response.status()),
+        SnowflakeSnafu {
+            status: response.status().to_string(),
         }
-        .build());
+        .fail()?;
     }
     tracing::debug!("Chunk response: {:?}", response);
     let body = if response.headers().get("Content-Encoding")
         == Some(&HeaderValue::from_str("gzip").unwrap())
     {
         tracing::debug!("Decompressing chunk data");
-        let compressed_body = response.bytes().await.map_err(|e| {
-            InternalSnafu {
-                message: format!("Failed to get chunk data: {e}"),
-            }
-            .build()
-        })?;
-        decompress_data(compressed_body.to_vec()).map_err(|e| {
-            InternalSnafu {
-                message: format!("Failed to decompress chunk data: {e}"),
-            }
-            .build()
-        })?
+        let compressed_body = response.bytes().await.context(CommunicationSnafu)?;
+        decompress_data(compressed_body.to_vec()).context(DecompressionSnafu)?
     } else {
-        response
-            .bytes()
-            .await
-            .map_err(|e| {
-                InternalSnafu {
-                    message: format!("Failed to get chunk data: {e}"),
-                }
-                .build()
-            })?
-            .to_vec()
+        response.bytes().await.context(CommunicationSnafu)?.to_vec()
     };
 
     Ok(body)
+}
+
+#[derive(Snafu, Debug)]
+pub enum ChunkError {
+    #[snafu(display("Invalid header name for {key}"))]
+    HeaderName {
+        key: String,
+        source: reqwest::header::InvalidHeaderName,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Invalid header value for {key}"))]
+    HeaderValue {
+        key: String,
+        source: reqwest::header::InvalidHeaderValue,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Failed to communicate with Snowflake to get chunk data"))]
+    Communication {
+        source: reqwest::Error,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Snowflake internal error: with status: {status}"))]
+    Snowflake {
+        status: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Failed to decompress chunk data"))]
+    Decompression {
+        source: CompressionError,
+        #[snafu(implicit)]
+        location: Location,
+    },
 }

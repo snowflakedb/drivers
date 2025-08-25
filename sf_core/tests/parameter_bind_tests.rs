@@ -2,7 +2,7 @@ pub mod common;
 extern crate sf_core;
 
 use crate::common::arrow_result_helper::ArrowResultHelper;
-use crate::common::test_utils::{create_param_bindings, setup_logging, SnowflakeTestClient};
+use crate::common::test_utils::{SnowflakeTestClient, create_param_bindings, setup_logging};
 use arrow::datatypes::Int32Type;
 
 #[test]

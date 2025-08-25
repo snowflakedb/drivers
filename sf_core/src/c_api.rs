@@ -1,7 +1,7 @@
 use crate::api_server::database_driver_v1::DatabaseDriverV1;
 use crate::handle_manager::Handle;
 use crate::logging;
-use crate::transport::{ThriftTransport, TRANSPORT_HANDLE_MANAGER};
+use crate::transport::{TRANSPORT_HANDLE_MANAGER, ThriftTransport};
 use std::fmt::Debug;
 use std::sync::Mutex;
 

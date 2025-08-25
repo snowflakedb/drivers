@@ -3,7 +3,7 @@ extern crate tracing;
 extern crate tracing_subscriber;
 
 use super::arrow_deserialize::ArrowDeserialize;
-use super::arrow_extract_value::{extract_arrow_value, ArrowExtractError, ArrowExtractValue};
+use super::arrow_extract_value::{ArrowExtractError, ArrowExtractValue, extract_arrow_value};
 use arrow::ffi_stream::ArrowArrayStreamReader;
 use arrow::ffi_stream::FFI_ArrowArrayStream;
 use std::fmt::Debug;
@@ -97,10 +97,10 @@ impl ArrowResultHelper {
 
     /// Reads one row from the current batch and returns T
     pub fn fetch_one<T: ArrowDeserialize>(&mut self) -> Result<T, String> {
-        if let Some(batch) = self.next_batch() {
-            if batch.num_rows() == 1 {
-                return T::deserialize_one(&batch, 0);
-            }
+        if let Some(batch) = self.next_batch()
+            && batch.num_rows() == 1
+        {
+            return T::deserialize_one(&batch, 0);
         }
         Err("Expected exactly one row in the batch".to_string())
     }

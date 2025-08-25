@@ -1,4 +1,4 @@
-use arrow::array::{Array, Float64Array, Int64Array, Int8Array, StringArray};
+use arrow::array::{Array, Float64Array, Int8Array, Int64Array, StringArray};
 
 #[derive(Debug)]
 pub enum ArrowExtractError {

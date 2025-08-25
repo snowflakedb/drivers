@@ -1,14 +1,13 @@
 use crate::arrow_utils::{boxed_arrow_reader, convert_string_rowset_to_arrow_reader};
 use crate::chunks::ChunkReader;
 use crate::file_manager;
-use crate::file_manager::{download_files, upload_files, DownloadResult, UploadResult};
+use crate::file_manager::{DownloadResult, UploadResult, download_files, upload_files};
 use crate::rest;
-use crate::rest::RestError;
 use arrow::array::{Array, Int64Array, RecordBatchReader, StringArray};
 use arrow::datatypes::{DataType, Field, Schema};
 use arrow::error::ArrowError;
-use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
-use rest::snowflake::query_response;
+use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
+use rest::snowflake::query_response::{self, QueryResponseError};
 use snafu::{Location, ResultExt, Snafu};
 use std::sync::Arc;
 
@@ -192,7 +191,7 @@ pub enum QueryResponseProcessingError {
     },
     #[snafu(display("Failed to prepare file transfer data"))]
     PrepareFileTransfer {
-        source: RestError,
+        source: QueryResponseError,
         #[snafu(implicit)]
         location: Location,
     },
@@ -200,7 +199,9 @@ pub enum QueryResponseProcessingError {
 
 #[derive(Debug, Snafu)]
 pub enum ReadBatchesError {
-    #[snafu(display("Column count mismatch: rowtype has {rowtype_count} columns, but rowset has {rowset_count} columns"))]
+    #[snafu(display(
+        "Column count mismatch: rowtype has {rowtype_count} columns, but rowset has {rowset_count} columns"
+    ))]
     ColumnCountMismatch {
         rowtype_count: usize,
         rowset_count: usize,

@@ -105,7 +105,9 @@ pub enum ArrowUtilsError {
         #[snafu(implicit)]
         location: Location,
     },
-    #[snafu(display("Unsupported Snowflake type: {snowflake_type}. Only TEXT and FIXED with scale 0 are supported"))]
+    #[snafu(display(
+        "Unsupported Snowflake type: {snowflake_type}. Only TEXT and FIXED with scale 0 are supported"
+    ))]
     UnsupportedType {
         snowflake_type: String,
         #[snafu(implicit)]

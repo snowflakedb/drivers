@@ -1,6 +1,6 @@
 use crate::api::{
-    conn_from_handle, Connection, ConnectionState, Environment, OdbcError, OdbcResult, Statement,
-    StatementState,
+    Connection, ConnectionState, Environment, OdbcError, OdbcResult, Statement, StatementState,
+    conn_from_handle,
 };
 use odbc_sys as sql;
 use tracing;

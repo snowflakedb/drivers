@@ -1,5 +1,5 @@
 use crate::api::{
-    stmt_from_handle, ConnectionState, OdbcError, OdbcResult, ParameterBinding, StatementState,
+    ConnectionState, OdbcError, OdbcResult, ParameterBinding, StatementState, stmt_from_handle,
 };
 use crate::cdata_types::CDataType;
 use crate::write_arrow::odbc_bindings_to_arrow_bindings;

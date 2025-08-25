@@ -28,15 +28,14 @@ pub struct ValidatedFilePath {
 
 impl ValidatedFilePath {
     pub fn new(path_buf: std::path::PathBuf) -> Result<Self, PathExpansionError> {
-        if path_buf.is_file() {
-            if let Some(path_str) = path_buf.to_str() {
-                if let Some(filename) = path_buf.file_name().and_then(|name| name.to_str()) {
-                    return Ok(ValidatedFilePath {
-                        path: path_str.to_string(),
-                        filename: filename.to_string(),
-                    });
-                }
-            }
+        if path_buf.is_file()
+            && let Some(path_str) = path_buf.to_str()
+            && let Some(filename) = path_buf.file_name().and_then(|name| name.to_str())
+        {
+            return Ok(ValidatedFilePath {
+                path: path_str.to_string(),
+                filename: filename.to_string(),
+            });
         }
         InvalidPathSnafu {
             path: path_buf.to_string_lossy().to_string(),

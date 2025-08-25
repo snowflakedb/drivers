@@ -1,6 +1,6 @@
 [package]
 name = "sf_core"
-edition = "2021"
+edition = "2024"
 
 [lib]
 name = "sf_core"
