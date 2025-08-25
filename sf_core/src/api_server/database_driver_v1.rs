@@ -3,6 +3,7 @@ use crate::config::rest_parameters::{LoginParameters, QueryParameters};
 use crate::config::settings::Setting;
 use crate::driver::{Connection, Database, Statement};
 use crate::handle_manager::{Handle, HandleManager};
+use crate::rest::snowflake::snowflake_query;
 use snafu::Report;
 
 use crate::thrift_gen::database_driver_v1::{
@@ -122,7 +123,7 @@ impl DatabaseDriverV1 {
     }
 
     /// Helper to create an unknown error
-    fn unknown_error(message: impl Into<String>) -> Error {
+    fn internal_error(message: impl Into<String>) -> Error {
         Self::driver_error(message, StatusCode::UNKNOWN)
     }
 
@@ -331,7 +332,7 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
             Some(conn_ptr) => {
                 // Create a blocking runtime for the login process
                 let rt = tokio::runtime::Runtime::new()
-                    .map_err(|e| Self::unknown_error(format!("Failed to create runtime: {e}")))?;
+                    .map_err(|e| Self::internal_error(format!("Failed to create runtime: {e}")))?;
 
                 let login_parameters =
                     LoginParameters::from_settings(&conn_ptr.lock().unwrap().settings)
@@ -528,7 +529,7 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
         let schema = unsafe { FFI_ArrowSchema::from_raw(schema.into()) };
         let array = unsafe { FFI_ArrowArray::from_raw(array.into()) };
         let array = unsafe { arrow::ffi::from_ffi(array, &schema) }
-            .map_err(|e| Self::unknown_error(format!("Failed to convert ArrowArray: {e}")))?;
+            .map_err(|e| Self::internal_error(format!("Failed to convert ArrowArray: {e}")))?;
         let record_batch = RecordBatch::from(StructArray::from(array));
         self.with_statement(stmt_handle, |mut stmt| {
             stmt.bind_parameters(record_batch).map_err(snafu_to_thrift)
@@ -563,7 +564,7 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
 
         // Run within the async runtime
         let rt = tokio::runtime::Runtime::new()
-            .map_err(|e| Self::unknown_error(format!("Failed to create runtime: {e}")))?;
+            .map_err(|e| Self::internal_error(format!("Failed to create runtime: {e}")))?;
 
         let (query_parameters, session_token) = {
             let conn = stmt.conn.lock().unwrap();
@@ -576,7 +577,7 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
         };
 
         let response = rt
-            .block_on(crate::rest::snowflake::snowflake_query(
+            .block_on(snowflake_query(
                 query_parameters,
                 session_token,
                 query,
@@ -585,18 +586,9 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
             ))
             .map_err(snafu_to_thrift)?;
 
-        if !response.success {
-            // TODO: Add proper error handling
-            return Err(Self::unknown_error(
-                response
-                    .message
-                    .unwrap_or_else(|| "Unknown error".to_string()),
-            ));
-        }
-
         let response_reader = rt
             .block_on(process_query_response(&response.data))
-            .map_err(|e| Self::unknown_error(format!("Failed to process query response: {e}")))?;
+            .map_err(snafu_to_thrift)?;
 
         let rowset_stream = Box::new(FFI_ArrowArrayStream::new(response_reader));
 
