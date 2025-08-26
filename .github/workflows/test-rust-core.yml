@@ -51,7 +51,7 @@ jobs:
         run: rustup component add rustfmt && cargo fmt --version
         
       - name: Check formatting
-        run: cargo fmt -- --check
+        run: cargo fmt --all -- --check
 
   clippy:
     runs-on: ubuntu-latest
