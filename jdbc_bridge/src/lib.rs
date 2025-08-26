@@ -1,9 +1,9 @@
+use jni::JNIEnv;
 use jni::objects::{AsJArrayRaw, JByteArray, JClass, JLongArray};
 use jni::sys::{jbyteArray, jint, jlongArray};
-use jni::JNIEnv;
 use sf_core::c_api::{
-    sf_core_api_destroy, sf_core_api_flush, sf_core_api_init, sf_core_api_read, sf_core_api_write,
-    CApiHandle, SfCoreApi,
+    CApiHandle, SfCoreApi, sf_core_api_destroy, sf_core_api_flush, sf_core_api_init,
+    sf_core_api_read, sf_core_api_write,
 };
 
 mod slf4j_layer;

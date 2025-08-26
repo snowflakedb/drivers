@@ -1,8 +1,8 @@
 use jni::JavaVM;
 use std::fmt::Debug;
-use tracing::{field::Field, Event, Level, Subscriber};
-use tracing_subscriber::layer::Context;
+use tracing::{Event, Level, Subscriber, field::Field};
 use tracing_subscriber::Layer;
+use tracing_subscriber::layer::Context;
 
 pub(crate) struct SLF4JLayer {
     jvm: *mut jni::sys::JavaVM,
