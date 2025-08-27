@@ -181,4 +181,13 @@ class Connection:
         try:
             self.set_autocommit(value)
         except NotSupportedError:
-            pass  # autocommit not supported by implementation 
+            pass  # autocommit not supported by implementation
+
+    def is_closed(self):
+        """
+        Check if the connection is closed.
+
+        Returns:
+            bool: True if connection is closed, False otherwise
+        """
+        return self._closed

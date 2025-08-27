@@ -27,7 +27,12 @@ class Cursor:
         self.rowcount = -1
         self.arraysize = 1  # Instance attribute overrides class attribute
         self._closed = False
-    
+        # Streaming state for Arrow results
+        self._reader = None
+        self._current_batch = None
+        self._current_row_in_batch = 0
+        self.execute_result = None
+
     @property
     def description(self):
         """
@@ -94,8 +99,10 @@ class Cursor:
         stmt_handle = self.connection.db_api.statementNew(self.connection.conn_handle)
         self.connection.db_api.statementSetSqlQuery(stmt_handle, operation)
         self.execute_result = self.connection.db_api.statementExecuteQuery(stmt_handle)
-
-
+        # Reset streaming state for a new result
+        self._reader = None
+        self._current_batch = None
+        self._current_row_in_batch = 0
 
     def executemany(self, operation, seq_of_parameters):
         """
@@ -115,6 +122,10 @@ class Cursor:
         reader = pyarrow.RecordBatchReader._import_from_c(stream_ptr)
         return reader
 
+    def _ensure_reader(self):
+        if self._reader is None:
+            self._reader = self._batch_reader()
+
     def fetchone(self):
         """
         Fetch the next row of a query result set.
@@ -125,11 +136,26 @@ class Cursor:
         Raises:
             NotSupportedError: If not implemented
         """
-        stream_ptr = int.from_bytes(self.execute_result.stream.value, byteorder="little", signed=False)
-        reader = pyarrow.RecordBatchReader._import_from_c(stream_ptr)
-        batch = reader.read_next_batch()
-        return (batch.columns[0][0].as_py(),)
-
+        # Initialize reader on first use
+        self._ensure_reader()
+        # If no current batch or exhausted, read next batch
+        while True:
+            if self._current_batch is None or self._current_row_in_batch >= self._current_batch.num_rows:
+                try:
+                    self._current_batch = self._reader.read_next_batch()
+                    self._current_row_in_batch = 0
+                except StopIteration:
+                    return None
+            # Produce row from current batch
+            row_index = self._current_row_in_batch
+            self._current_row_in_batch += 1
+            # Handle empty schema
+            if self._current_batch.num_columns == 0:
+                return tuple()
+            values = []
+            for col_idx in range(self._current_batch.num_columns):
+                values.append(self._current_batch.columns[col_idx][row_index].as_py())
+            return tuple(values)
 
     def fetchmany(self, size=None):
         """
@@ -144,8 +170,6 @@ class Cursor:
         Raises:
             NotSupportedError: If not implemented
         """
-        if size is None:
-            size = self.arraysize
         raise NotSupportedError("fetchmany is not implemented")
     
     def fetchall(self):
@@ -158,18 +182,32 @@ class Cursor:
         Raises:
             NotSupportedError: If not implemented
         """
-        reader = self._batch_reader()
+        # Consume remaining rows using current streaming state
+        self._ensure_reader()
         rows = []
+        # Drain current batch first (if any)
+        if self._current_batch is not None:
+            while self._current_row_in_batch < self._current_batch.num_rows:
+                row_index = self._current_row_in_batch
+                self._current_row_in_batch += 1
+                values = []
+                for column_index in range(self._current_batch.num_columns):
+                    values.append(self._current_batch.columns[column_index][row_index].as_py())
+                rows.append(tuple(values))
+        # Read following batches
         while True:
             try:
-                batch = reader.read_next_batch()
+                batch = self._reader.read_next_batch()
             except StopIteration:
                 break
             for row_index in range(batch.num_rows):
-                row = []
-                for column_index in range(batch.num_columns): 
-                    row.append(batch.columns[column_index][row_index].as_py())
-                rows.append(tuple(row))
+                values = []
+                for column_index in range(batch.num_columns):
+                    values.append(batch.columns[column_index][row_index].as_py())
+                rows.append(tuple(values))
+        # Mark stream as exhausted
+        self._current_batch = None
+        self._current_row_in_batch = 0
         return rows
     
     def nextset(self):
@@ -247,4 +285,13 @@ class Cursor:
         """
         Exit the runtime context for the cursor.
         """
-        self.close() 
+        self.close()
+
+    def is_closed(self):
+        """
+        Check if the cursor is closed.
+
+        Returns:
+            bool: True if closed, False otherwise
+        """
+        return self._closed
