@@ -1,142 +1,222 @@
-# Universal Driver Testing
+# PEP 249 Database API 2.0 Implementation
 
-**Run all commands from the `pep249_dbapi/` directory.**
+A Python library that implements [PEP 249 (Python Database API Specification 2.0)](https://peps.python.org/pep-0249/) with empty interface implementations. This library provides a complete skeleton implementation that follows the PEP 249 specification, making it an ideal starting point for creating new database drivers or for testing database API compliance.
 
-## Setup
+## Features
+
+- **Complete PEP 249 compliance**: Implements all required interfaces, constants, and exception hierarchy
+- **Empty implementation**: All methods raise `NotSupportedError` by default, allowing incremental implementation
+- **Full type support**: Includes all required type constructors and type objects
+- **Context manager support**: Both Connection and Cursor objects support the `with` statement
+- **Iterator protocol**: Cursor objects are iterable
+- **Python 2/3 compatibility**: Includes compatibility features for both Python versions
+- **Comprehensive tests**: Full test suite using pytest
+
+## Installation
 
 ```bash
-cd pep249_dbapi/
-make setup  # Install uv, sync dependencies, create reports directory
+pip install pep249-dbapi
 ```
 
-**Requirements:**
-- Rust core library: `../target/debug/libsf_core.{so,dylib}` (auto-built if missing)
-- Credentials: `../parameters.json` (for integration tests)
-- Python 3.9+
+For development:
+
+```bash
+pip install pep249-dbapi[dev]
+```
 
 ## Quick Start
 
-### Run all tests (recommended)
-```bash
-make test  # Tox-based testing with reports and parallel execution
+```python
+import pep249_dbapi
+
+# Module-level constants
+print(f"API Level: {pep249_dbapi.apilevel}")
+print(f"Thread Safety: {pep249_dbapi.threadsafety}")
+print(f"Parameter Style: {pep249_dbapi.paramstyle}")
+
+# Create a connection
+conn = pep249_dbapi.connect(
+    database="mydb",
+    user="myuser",
+    password="mypass",
+    host="localhost"
+)
+
+# Use connection as context manager
+with conn:
+    # Create a cursor
+    cursor = conn.cursor()
+    
+    # Use cursor as context manager
+    with cursor:
+        # Execute a query (will raise NotSupportedError in base implementation)
+        try:
+            cursor.execute("SELECT * FROM users")
+            results = cursor.fetchall()
+        except pep249_dbapi.NotSupportedError:
+            print("Method not implemented yet")
 ```
 
-### Run specific tests
-Pytest args can be appended after '--' separator as in key-word way (_PYTEST_ARGS_).
-```bash
-make test -- -k test_connection --maxfail=1
-make test PYTEST_ARGS="-k test_connection --maxfail=1"
+## API Reference
+
+### Module Constants
+
+- `apilevel`: String constant stating the supported DB API level ("2.0")
+- `threadsafety`: Integer constant stating the level of thread safety (1)
+- `paramstyle`: String constant stating the type of parameter marker formatting ("format")
+
+### Functions
+
+- `connect(**kwargs)`: Create a new database connection
+
+### Exception Hierarchy
+
+```
+Warning
+Error
+├── InterfaceError
+└── DatabaseError
+    ├── DataError
+    ├── OperationalError
+    ├── IntegrityError
+    ├── InternalError
+    ├── ProgrammingError
+    └── NotSupportedError
 ```
 
-### Test with different Python version
-```bash
-make test PYTHON_VERSION=3.12
-```
+### Type Constructors
 
-### Compare universal vs reference drivers
-```bash
-make compare-local  # Runs both drivers and compares results
-make compare-local REFERENCE_DRIVER_VERSION=3.18.0  # Use specific reference version
-```
+- `Date(year, month, day)`: Construct a date object
+- `Time(hour, minute, second)`: Construct a time object
+- `Timestamp(year, month, day, hour, minute, second)`: Construct a timestamp object
+- `DateFromTicks(ticks)`: Construct a date from seconds since epoch
+- `TimeFromTicks(ticks)`: Construct a time from seconds since epoch
+- `TimestampFromTicks(ticks)`: Construct a timestamp from seconds since epoch
+- `Binary(data)`: Construct a binary object
 
-## Testing Commands
+### Type Objects
 
-### Local Development Commands
+- `STRING`: Type object for string-like columns
+- `BINARY`: Type object for binary columns
+- `NUMBER`: Type object for numeric columns
+- `DATETIME`: Type object for date/time columns
+- `ROWID`: Type object for row ID columns
 
-| Command | Description                                  | Use Case                                                                         |
-|---------|----------------------------------------------|----------------------------------------------------------------------------------|
-| `make test` | Tox with reports (main)                      | Full testing with proper isolation                                               |
-| `make test-local` | Direct pytest (fast)                         | Testing using local environment - e.g. using some specific venv setup            |
-| `make test-local-sequential` | Direct pytest (no parallel)                  | Debugging test interactions - searching for race conditions in tests             |
-| `make test-local-tox-sequential` | Tox without parallel                         | Debugging in isolated environment - searching for race conditions in tests       
-| `make test-integ-local-tox` | Integration tests only                       | Used mainly in `make compare-local`. Can be repaced with `make test tests/integ` |
-| `make test-reference-local` | Reference driver testing (integration tests) | Testing whether new changes introduced regression / BCRs                         |
+### Connection Objects
 
-### Generic Runners
+#### Methods
 
-| Command | Description | Example                                                        |
-|---------|-------------|----------------------------------------------------------------|
-| `make run-with-setup` | Run any command with environment | `make run-with-setup echo ${DETECTED_CORE_PATH}`              |
-| `make run-with-uv` | Run uv commands with environment | `make run-with-uv pytest tests/unit/test_module.py -- -n auto` |
-| `make run-with-tox` | Run specific tox environments | `make run-with-tox py311-unit`                                 |
+- `close()`: Close the connection
+- `commit()`: Commit pending transactions (raises NotSupportedError)
+- `rollback()`: Rollback pending transactions (raises NotSupportedError)
+- `cursor()`: Create a new cursor object
 
-### CI Commands
+#### Properties
 
-| Command | Description | When to Use |
-|---------|-------------|-------------|
-| `make ci-test-all` | Full CI testing with XML reports | GitHub Actions |
-| `make ci-test-integ-reference` | Reference driver CI testing | Comparison baseline |
-| `make ci-compare-artifacts` | Compare downloaded CI reports | CI comparison step |
+- `autocommit`: Get/set autocommit mode
 
+### Cursor Objects
 
+#### Attributes
 
-### Common Pytest Options
-```bash
-# Execution control
-PYTEST_ARGS="--maxfail=1"                 # Stop on first failure
-# Output control
-PYTEST_ARGS="-vv"                         # Extra verbose
-# Markers
-PYTEST_ARGS="-m 'not slow'"               # Skip slow tests
-```
+- `description`: Describes result columns (read-only)
+- `rowcount`: Number of rows affected by last operation (read-only)
+- `arraysize`: Number of rows to fetch at a time (default: 1)
 
-### Test Markers
-- `@pytest.mark.skip_universal(reason="...")` - Skip on universal driver
-- `@pytest.mark.skip_reference(reason="...")` - Skip on reference driver
+#### Methods
 
-## Configuration
+- `callproc(procname, parameters=None)`: Call a stored procedure (raises NotSupportedError)
+- `close()`: Close the cursor
+- `execute(operation, parameters=None)`: Execute an operation (raises NotSupportedError)
+- `executemany(operation, seq_of_parameters)`: Execute operation multiple times (raises NotSupportedError)
+- `fetchone()`: Fetch next row (raises NotSupportedError)
+- `fetchmany(size=None)`: Fetch multiple rows (raises NotSupportedError)
+- `fetchall()`: Fetch all remaining rows (raises NotSupportedError)
+- `nextset()`: Move to next result set (raises NotSupportedError)
+- `setinputsizes(sizes)`: Set input sizes (no-op)
+- `setoutputsize(size, column=None)`: Set output size (no-op)
 
-### Connection Parameters (`../parameters.json`)
+## Extending the Implementation
 
-```json
-{
-  "testconnection": {
-    "SNOWFLAKE_TEST_ACCOUNT": "your-account",
-    "SNOWFLAKE_TEST_USER": "username", 
-    "SNOWFLAKE_TEST_PASSWORD": "password",
-    "SNOWFLAKE_TEST_DATABASE": "database",
-    "SNOWFLAKE_TEST_SCHEMA": "schema",
-    "SNOWFLAKE_TEST_WAREHOUSE": "warehouse",
-    "SNOWFLAKE_TEST_ROLE": "role"
-  }
-}
-```
-
-### Override Parameters in Tests
+To create a working database driver, inherit from the provided classes and implement the required methods:
 
 ```python
-def test_custom_db(connection_factory):
-    with connection_factory(database="test_db") as conn:
-        # Use different database for this test
+from pep249_dbapi import Connection as BaseConnection, Cursor as BaseCursor
+
+class MyConnection(BaseConnection):
+    def commit(self):
+        # Implement actual commit logic
+        pass
+    
+    def rollback(self):
+        # Implement actual rollback logic
+        pass
+
+class MyCursor(BaseCursor):
+    def execute(self, operation, parameters=None):
+        # Implement actual query execution
+        pass
+    
+    def fetchone(self):
+        # Implement actual row fetching
         pass
 ```
 
-## Comparison
+## Testing
 
-`make compare-local` runs integration tests on both drivers and compares results. The comparison automatically filters to only compare integration tests for fair comparison (universal runs unit+integ, reference only integ).
+Run the test suite:
 
-Report sections:
-- **Regressions from passing**: Reference passed, universal failed (we do not support something yet)
-- **Regressions from failing**: Reference failed, universal passed (behavioral differences - may require @pytest.mark.skipreference)
-- **Both failing**: Not supported in any
-- **Skipped differences**: Different skip behavior
+```bash
+pytest
+```
 
-## Environment Variables
+Run with coverage:
 
-### Auto-detected (Local Development)
-- `CORE_PATH`: Auto-detects `../target/debug/libsf_core.{so,dylib}`
-- `PARAMETER_PATH`: Auto-detects `../parameters.json`
-- `PYTHON_VERSION`: Auto-detects current Python version
+```bash
+pytest --cov=pep249_dbapi --cov-report=html
+```
 
-### Configurable
-- `PYTHON_VERSION`: Override Python version (e.g., `3.13`, `3.11`)
-- `PYTEST_ARGS`: Additional pytest arguments
-- `REFERENCE_DRIVER_VERSION`: Reference driver version (default: `3.17.2`)
-- `REPORTS_DIR`: Report output directory (default: `reports`)
-- `FAIL_ON_REGRESSIONS`: Fail comparison on differences in passing tests between universal and reference driver (default: `0`)
+## Development
 
-### CI-specific
-- `CORE_PATH`: Must be set explicitly in CI
-- `UNIVERSAL_TEST_REPORTS_DIR`: Path to universal driver reports
-- `REFERENCE_TEST_REPORTS_DIR`: Path to reference driver reports
+Setup virtual env:
+```bash
+python -m venv .venv
+source .venv/bin/activate
+```
 
+Install in development mode:
+
+```bash
+pip install -e .[dev]
+```
+
+Run code formatting:
+
+```bash
+black pep249_dbapi tests
+```
+
+Run linting:
+
+```bash
+flake8 pep249_dbapi tests
+```
+
+Run type checking:
+
+```bash
+mypy pep249_dbapi
+```
+
+## License
+
+This project is licensed under the MIT License - see the LICENSE file for details.
+
+## Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
+
+## References
+
+- [PEP 249 - Python Database API Specification v2.0](https://peps.python.org/pep-0249/)
+- [Python Database API Specification v2.0](https://www.python.org/dev/peps/pep-0249/) 

@@ -43,14 +43,14 @@ make compare-local REFERENCE_DRIVER_VERSION=3.18.0  # Use specific reference ver
 
 ### Local Development Commands
 
-| Command | Description                                  | Use Case                                                                         |
-|---------|----------------------------------------------|----------------------------------------------------------------------------------|
-| `make test` | Tox with reports (main)                      | Full testing with proper isolation                                               |
-| `make test-local` | Direct pytest (fast)                         | Testing using local environment - e.g. using some specific venv setup            |
-| `make test-local-sequential` | Direct pytest (no parallel)                  | Debugging test interactions - searching for race conditions in tests             |
-| `make test-local-tox-sequential` | Tox without parallel                         | Debugging in isolated environment - searching for race conditions in tests       
-| `make test-integ-local-tox` | Integration tests only                       | Used mainly in `make compare-local`. Can be repaced with `make test tests/integ` |
-| `make test-reference-local` | Reference driver testing (integration tests) | Testing whether new changes introduced regression / BCRs                         |
+| Command | Description                                  | Use Case                                                                          |
+|---------|----------------------------------------------|-----------------------------------------------------------------------------------|
+| `make test` | Tox with reports (main)                      | Full testing with proper isolation                                                |
+| `make test-local` | Direct pytest (fast)                         | Testing using local environment - e.g. using some specific venv setup             |
+| `make test-local-sequential` | Direct pytest (no parallel)                  | Debugging test interactions - searching for race conditions in tests              |
+| `make test-local-tox-sequential` | Tox without parallel                         | Debugging in isolated environment - searching for race conditions in tests        
+| `make test-integ-local-tox` | Integration tests only                       | Used mainly in `make compare-local`. Can be replaced with `make test tests/integ` |
+| `make test-reference-local` | Reference driver testing (integration tests) | Testing whether new changes introduced regression / BCRs                          |
 
 ### Generic Runners
 

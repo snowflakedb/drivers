@@ -120,7 +120,7 @@ class TestCursorIterator:
         # until it returns None to signal end of results
         mock_fetchone = Mock(side_effect=test_rows + [None])
         monkeypatch.setattr(cursor, 'fetchone', mock_fetchone)
-        
+
         # Collect all rows
         rows = list(cursor)
         assert rows == test_rows
@@ -131,19 +131,19 @@ class TestCursorIterator:
 
 class TestCursorContextManager:
     """Test Cursor context manager functionality."""
-    
+
     def test_context_manager_entry(self, cursor):
         """Test entering cursor context manager."""
         with cursor as c:
             assert c is cursor
-    
+
     def test_context_manager_exit(self, cursor):
         """Test exiting cursor context manager."""
         with cursor:
             pass
-        
+
         assert cursor._closed
-    
+
     def test_context_manager_exit_with_exception(self, cursor):
         """Test exiting cursor context manager with exception."""
         try:
@@ -151,24 +151,24 @@ class TestCursorContextManager:
                 raise ValueError("Test exception")
         except ValueError:
             pass
-        
+
         assert cursor._closed
 
 
 class TestCursorPython2Compatibility:
     """Test Python 2 compatibility features."""
-    
+
     def test_next_method_exists(self, cursor, monkeypatch):
         """Test that 'next' method exists for Python 2 compatibility."""
         # Should have both __next__ and next
         assert hasattr(cursor, '__next__')
         assert hasattr(cursor, 'next')
         assert callable(cursor.next)
-        
+
         # Test that next() calls __next__() by mocking fetchone
         mock_fetchone = Mock(side_effect=[("test", "row"), ("test", "row")])
         monkeypatch.setattr(cursor, 'fetchone', mock_fetchone)
-        
+
         # Both next() and __next__() should work the same way
         row1 = cursor.next()
         assert row1 == ("test", "row")
