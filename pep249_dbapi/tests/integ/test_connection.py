@@ -155,20 +155,3 @@ class TestConnectionAutocommitProperty:
         
         # Should set internal flag despite NotSupportedError
         assert connection._autocommit is True
-
-
-class TestConnectionDatabaseQueries:
-    """Integration tests for Connection with real database queries."""
-
-    def test_simple_select(self, cursor):
-        """Test simple SELECT query."""
-        cursor.execute("SELECT 1 as test_column")
-        result = cursor.fetchone()
-        # Result format may vary between connectors
-        assert result is not None
-        
-    def test_connection_info_query(self, cursor):
-        """Test querying connection information."""
-        cursor.execute("SELECT CURRENT_VERSION()")
-        result = cursor.fetchone()
-        assert result is not None

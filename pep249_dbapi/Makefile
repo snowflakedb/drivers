@@ -41,23 +41,24 @@ DETECTED_PARAMETER_PATH := $(shell \
 # Environment variables for local development
 LOCAL_ENV = CORE_PATH=$(DETECTED_CORE_PATH) PARAMETER_PATH=$(DETECTED_PARAMETER_PATH)
 
+# Report file paths
+UNIVERSAL_REPORT_JSON_PATH = $(REPORTS_DIR)/universal-$(PYTHON_VERSION).json
+REFERENCE_REPORT_JSON_PATH = $(REPORTS_DIR)/reference-$(PYTHON_VERSION).json
+UNIVERSAL_REPORT_XML_PATH = $(REPORTS_DIR)/universal-$(PYTHON_VERSION).xml
+REFERENCE_REPORT_XML_PATH = $(REPORTS_DIR)/reference-$(PYTHON_VERSION).xml
+
 # Common pytest report flags
 PYTEST_PARALLEL = -n auto
 PYTEST_VERBOSE = -v
-PYTEST_REPORT_FLAGS = --json-report --json-report-file=$(REPORTS_DIR)
-PYTEST_REPORT_JSON_UNIVERSAL = $(PYTEST_REPORT_FLAGS)/universal-$(PYTHON_VERSION).json
-PYTEST_REPORT_JSON_REFERENCE = $(PYTEST_REPORT_FLAGS)/reference-$(PYTHON_VERSION).json
+PYTEST_REPORT_JSON_FLAGS = --json-report --json-report-file=
+PYTEST_REPORT_JSON_UNIVERSAL = $(PYTEST_REPORT_JSON_FLAGS)$(UNIVERSAL_REPORT_JSON_PATH)
+PYTEST_REPORT_JSON_REFERENCE = $(PYTEST_REPORT_JSON_FLAGS)$(REFERENCE_REPORT_JSON_PATH)
 
 # Tox environment names
 TOX_ALL_ENV = py$(PYTHON_ID)-all
 TOX_INTEG_ENV = py$(PYTHON_ID)-integ
 TOX_REFERENCE_ENV = py$(PYTHON_ID)-integ-reference
 
-# Report file paths
-UNIVERSAL_REPORT = $(REPORTS_DIR)/universal-$(PYTHON_VERSION).json
-REFERENCE_REPORT = $(REPORTS_DIR)/reference-$(PYTHON_VERSION).json
-UNIVERSAL_XML = $(REPORTS_DIR)/universal-$(PYTHON_VERSION).xml
-REFERENCE_XML = $(REPORTS_DIR)/reference-$(PYTHON_VERSION).xml
 
 
 # Local development: auto-build missing Rust core
@@ -148,14 +149,14 @@ ci-test-all: check-env-or-fail
 	mkdir -p $(REPORTS_DIR)
 	uv run tox -e $(TOX_ALL_ENV) -- \
 	  $(PYTEST_REPORT_JSON_UNIVERSAL) \
-	  --junitxml=$(UNIVERSAL_XML) \
+	  --junitxml=$(UNIVERSAL_REPORT_XML_PATH) \
 	  $(PYTEST_ARGS)
 
 ci-test-integ-reference: check-env-or-fail
 	mkdir -p $(REPORTS_DIR)
 	uv run tox -e $(TOX_REFERENCE_ENV) -- \
 	  $(PYTEST_REPORT_JSON_REFERENCE) \
-	  --junitxml=$(REFERENCE_XML) \
+	  --junitxml=$(REFERENCE_REPORT_XML_PATH) \
 	  $(PYTEST_ARGS)
 
 # ===== Comparison =====
@@ -163,8 +164,8 @@ ci-test-integ-reference: check-env-or-fail
 compare:
 	python3 ci/reference_tests/compare_reports.py \
 	  --py $(PYTHON_VERSION) \
-	  --universal $(UNIVERSAL_REPORT) \
-	  --reference $(REFERENCE_REPORT) \
+	  --universal $(UNIVERSAL_REPORT_JSON_PATH) \
+	  --reference $(REFERENCE_REPORT_JSON_PATH) \
 	  --fail-on-regressions $(FAIL_ON_REGRESSIONS)
 
 compare-local:
