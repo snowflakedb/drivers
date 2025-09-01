@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import tempfile
 from pathlib import Path
 
@@ -119,7 +117,7 @@ def test_put_overwrite_false_multiple_files_mixed_status(cursor):
         # Verify that only the second file was skipped
         rows = cursor.fetchall()
         assert len(rows) == 3
-        
+
         # Sort rows by filename for easier testing
         rows.sort(key=lambda r: r[0])
         assert rows[0][0] == f1

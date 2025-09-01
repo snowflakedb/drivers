@@ -1,10 +1,12 @@
-from __future__ import annotations
-
 import gzip
 from pathlib import Path
 import uuid
 import io
 import pytest
+import bz2
+import zlib
+import brotli
+import zstandard as zstd
 
 from pep249_dbapi.cursor import Cursor
 
@@ -37,6 +39,7 @@ def decompress_gzip_file(path: Path) -> str:
     with gzip.open(path, "rt", encoding="utf-8") as f:
         return f.read()
 
+
 def compress_bytes(data: bytes, comp: str) -> bytes:
     comp = comp.upper()
     if comp == "GZIP":
@@ -45,24 +48,11 @@ def compress_bytes(data: bytes, comp: str) -> bytes:
             gz.write(data)
         return buf.getvalue()
     if comp == "BZ2":
-        import bz2
-
         return bz2.compress(data)
     if comp == "DEFLATE":
-        import zlib
-
         return zlib.compress(data)
     if comp == "BROTLI":
-        try:
-            import brotli  # type: ignore
-        except Exception:
-            pytest.skip("brotli package not available")
         return brotli.compress(data)
     if comp == "ZSTD":
-        try:
-            import zstandard as zstd  # type: ignore
-        except Exception:
-            pytest.skip("zstandard package not available")
-        c = zstd.ZstdCompressor()
-        return c.compress(data)
+        return zstd.ZstdCompressor().compress(data)
     pytest.skip(f"Unsupported compression type in test: {comp}")

@@ -50,6 +50,8 @@ test = [
     "tox>=4.14",
     "tox-uv>=1.8",
     "snowflake-connector-python>=3.6.0",
+    "brotli",
+    "zstandard",
 ]
 dev = [
     "black",
