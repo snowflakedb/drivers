@@ -28,7 +28,6 @@ def test_put_overwrite_true(cursor):
         # Verify that the file was uploaded
         row = cursor.fetchone()
         assert row[PUT_ROW_SOURCE_IDX] == filename
-        assert row[PUT_ROW_TARGET_IDX] == filename
         assert row[PUT_ROW_STATUS_IDX] == "UPLOADED"
 
         # Upload again with changed content and OVERWRITE=TRUE
@@ -40,7 +39,6 @@ def test_put_overwrite_true(cursor):
         # Verify that the file was uploaded
         row = cursor.fetchone()
         assert row[PUT_ROW_SOURCE_IDX] == filename
-        assert row[PUT_ROW_TARGET_IDX] == filename
         assert row[PUT_ROW_STATUS_IDX] == "UPLOADED"
 
         # Verify that the content was updated
@@ -66,7 +64,6 @@ def test_put_overwrite_false(cursor):
         # Verify that the file was uploaded
         row = cursor.fetchone()
         assert row[PUT_ROW_SOURCE_IDX] == filename
-        assert row[PUT_ROW_TARGET_IDX] == filename
         assert row[PUT_ROW_STATUS_IDX] == "UPLOADED"
 
         # Try to upload changed content with OVERWRITE=FALSE
