@@ -41,7 +41,7 @@ pub fn auth_request_data(login_parameters: &LoginParameters) -> Result<AuthReque
         ..Default::default()
     };
 
-    match create_credentials(login_parameters).context(AuthSnafu)? {
+    match create_credentials(login_parameters).context(AuthenticationSnafu)? {
         Credentials::Password { username, password } => {
             data.login_name = Some(username);
             data.password = Some(password);
@@ -129,14 +129,14 @@ pub async fn snowflake_login(login_parameters: &LoginParameters) -> Result<Strin
         )
         .header("Authorization", "Snowflake Token=\"None\"")
         .build()
-        .context(RequestSnafu { request: "login" })?;
+        .context(RequestConstructionSnafu { request: "login" })?;
     let response = client.execute(request).await.context(CommunicationSnafu {
         context: "Failed to execute login request",
     })?;
 
     let auth_response = read_response_json::<AuthResponse>(response)
         .await
-        .context(SnowflakeResponseSnafu)?;
+        .context(InvalidSnowflakeResponseSnafu)?;
 
     if !auth_response.success {
         let message = auth_response
@@ -145,7 +145,7 @@ pub async fn snowflake_login(login_parameters: &LoginParameters) -> Result<Strin
         tracing::error!(message = %message, "Snowflake login failed");
         InvalidResponseSnafu { message }
             .fail()
-            .context(SnowflakeResponseSnafu)?;
+            .context(InvalidSnowflakeResponseSnafu)?;
     }
 
     // Extract and store the session token
@@ -159,7 +159,7 @@ pub async fn snowflake_login(login_parameters: &LoginParameters) -> Result<Strin
             message: "Login response missing token".to_string(),
         }
         .fail()
-        .context(SnowflakeResponseSnafu)?
+        .context(InvalidSnowflakeResponseSnafu)?
     }
 }
 
@@ -209,7 +209,7 @@ pub async fn snowflake_query(
         ])
         .json(&query_request)
         .build()
-        .context(RequestSnafu { request: "query" })?;
+        .context(RequestConstructionSnafu { request: "query" })?;
 
     tracing::debug!("Query request: {:?}", request);
     tracing::debug!("Request headers: {:?}", request.headers());
@@ -227,7 +227,7 @@ pub async fn snowflake_query(
 
     let query_response = read_response_json::<query_response::Response>(response)
         .await
-        .context(SnowflakeResponseSnafu)?;
+        .context(InvalidSnowflakeResponseSnafu)?;
 
     if !query_response.success {
         let message = query_response
@@ -235,7 +235,7 @@ pub async fn snowflake_query(
             .unwrap_or_else(|| "Unknown error".to_string());
         InvalidResponseSnafu { message }
             .fail()
-            .context(SnowflakeResponseSnafu)
+            .context(InvalidSnowflakeResponseSnafu)
     } else {
         Ok(query_response)
     }
@@ -266,13 +266,13 @@ where
 #[derive(Debug, Snafu)]
 pub enum RestError {
     #[snafu(display("Authentication failed"))]
-    Auth {
+    Authentication {
         source: AuthError,
         #[snafu(implicit)]
         location: Location,
     },
     #[snafu(display("Invalid Snowflake response"))]
-    SnowflakeResponse {
+    InvalidSnowflakeResponse {
         source: SnowflakeResponseError,
         #[snafu(implicit)]
         location: Location,
@@ -285,7 +285,7 @@ pub enum RestError {
         location: Location,
     },
     #[snafu(display("Failed to build request: {request}"))]
-    Request {
+    RequestConstruction {
         request: String,
         source: reqwest::Error,
         #[snafu(implicit)]

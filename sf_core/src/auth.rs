@@ -38,12 +38,12 @@ fn generate_jwt_token(
         Rsa::private_key_from_pem(private_key.as_bytes())
     }
     .context(InvalidPrivateKeyFormatSnafu)?;
-    let private_key = PKey::from_rsa(rsa).context(CreatePrivateKeySnafu)?;
+    let private_key = PKey::from_rsa(rsa).context(PrivateKeyCreationSnafu)?;
 
     // Extract public key and hash it
     let public_key_der = private_key
         .public_key_to_der()
-        .context(ExtractPublicKeySnafu)?;
+        .context(PublicKeyExtractionSnafu)?;
     let mut hasher = openssl::sha::Sha256::new();
     hasher.update(&public_key_der);
     let public_key_hash = hasher.finish();
@@ -63,7 +63,7 @@ fn generate_jwt_token(
     // Create claims
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .context(GetCurrentTimeSnafu)?
+        .context(SystemTimeSnafu)?
         .as_secs() as i64;
 
     let sub = format!("{}.{}", account.to_uppercase(), username.to_uppercase());
@@ -78,7 +78,7 @@ fn generate_jwt_token(
     // Create and sign token
     let token = Token::new(header, claim)
         .sign_with_key(&pkey_with_digest)
-        .context(SignJWTSnafu)?;
+        .context(JWTSigningSnafu)?;
 
     Ok(token.as_str().to_string())
 }
@@ -121,25 +121,25 @@ pub enum AuthError {
         location: Location,
     },
     #[snafu(display("Failed to create private key from RSA"))]
-    CreatePrivateKey {
+    PrivateKeyCreation {
         source: openssl::error::ErrorStack,
         #[snafu(implicit)]
         location: Location,
     },
     #[snafu(display("Failed to extract public key from private key"))]
-    ExtractPublicKey {
+    PublicKeyExtraction {
         source: openssl::error::ErrorStack,
         #[snafu(implicit)]
         location: Location,
     },
     #[snafu(display("Failed to get current system time"))]
-    GetCurrentTime {
+    SystemTime {
         source: std::time::SystemTimeError,
         #[snafu(implicit)]
         location: Location,
     },
     #[snafu(display("Failed to sign JWT token"))]
-    SignJWT {
+    JWTSigning {
         source: jwt::Error,
         #[snafu(implicit)]
         location: Location,

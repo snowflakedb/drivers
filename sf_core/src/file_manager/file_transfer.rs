@@ -49,7 +49,7 @@ async fn check_if_file_exists(
     {
         Ok(_) => Ok(true),
         Err(SdkError::ServiceError(err)) if err.err().is_not_found() => Ok(false),
-        Err(e) => Err(aws_sdk_s3::Error::from(e)).context(HeadS3Snafu),
+        Err(e) => Err(aws_sdk_s3::Error::from(e)).context(S3HeadSnafu),
     }
 }
 
@@ -81,7 +81,7 @@ async fn upload_to_s3(
         .send()
         .await
         .map_err(aws_sdk_s3::Error::from)
-        .context(UploadS3Snafu)?;
+        .context(S3UploadSnafu)?;
 
     tracing::debug!("S3 upload result: {:?}", result);
 
@@ -103,7 +103,7 @@ pub async fn download_from_s3(
         .send()
         .await
         .map_err(aws_sdk_s3::Error::from)
-        .context(DownloadS3Snafu)?;
+        .context(S3DownloadSnafu)?;
 
     // Extract metadata from S3 response and construct the metadata structure directly
     let metadata_map = response.metadata().context(MissingFileMetadataSnafu {
@@ -175,14 +175,14 @@ async fn create_s3_client(stage_info: &StageInfo, provider_name: &'static str) -
 #[derive(Snafu, Debug)]
 pub enum UploadFileError {
     #[snafu(display("Failed to upload file to S3"))]
-    UploadS3 {
+    S3Upload {
         #[snafu(source(from(aws_sdk_s3::Error, Box::new)))]
         source: Box<aws_sdk_s3::Error>,
         #[snafu(implicit)]
         location: Location,
     },
     #[snafu(display("Failed to check if file exists in S3"))]
-    HeadS3 {
+    S3Head {
         #[snafu(source(from(aws_sdk_s3::Error, Box::new)))]
         source: Box<aws_sdk_s3::Error>,
         #[snafu(implicit)]
@@ -199,7 +199,7 @@ pub enum UploadFileError {
 #[derive(Snafu, Debug)]
 pub enum DownloadFileError {
     #[snafu(display("Failed to download file from S3"))]
-    DownloadS3 {
+    S3Download {
         #[snafu(source(from(aws_sdk_s3::Error, Box::new)))]
         source: Box<aws_sdk_s3::Error>,
         #[snafu(implicit)]

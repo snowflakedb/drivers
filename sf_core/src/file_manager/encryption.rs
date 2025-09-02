@@ -49,28 +49,28 @@ pub fn encrypt_file_data(
     // 1. Decode master key and select the appropriate cipher suite.
     let master_key = BASE64_ENGINE
         .decode(&encryption_material.query_stage_master_key)
-        .context(Base64DecodeSnafu {
+        .context(Base64DecodingSnafu {
             context: "master key",
         })?;
     let cipher_suite = CipherSuite::from_key_len(master_key.len())?;
 
     // 2. Generate a random data encryption key (file key) and initialization vector (IV).
-    let file_key = generate_random_bytes(cipher_suite.key_len).context(OpenSslSnafu {
+    let file_key = generate_random_bytes(cipher_suite.key_len).context(OpenSSLSnafu {
         operation: "generating file key",
     })?;
-    let iv = generate_random_bytes(AES_BLOCK_SIZE_IN_BYTES).context(OpenSslSnafu {
+    let iv = generate_random_bytes(AES_BLOCK_SIZE_IN_BYTES).context(OpenSSLSnafu {
         operation: "generating initialization vector",
     })?;
 
     // 3. Encrypt the file data using the file key and IV with AES-CBC.
     let encrypted_data =
-        encrypt(cipher_suite.cbc, &file_key, Some(&iv), file_data).context(OpenSslSnafu {
+        encrypt(cipher_suite.cbc, &file_key, Some(&iv), file_data).context(OpenSSLSnafu {
             operation: "encrypting file data with AES-CBC",
         })?;
 
     // 4. Encrypt the file key using the master key with AES-ECB.
     let encrypted_file_key =
-        encrypt(cipher_suite.ecb, &master_key, None, &file_key).context(OpenSslSnafu {
+        encrypt(cipher_suite.ecb, &master_key, None, &file_key).context(OpenSSLSnafu {
             operation: "encrypting file key with AES-ECB",
         })?;
 
@@ -85,7 +85,7 @@ pub fn encrypt_file_data(
         encrypted_key: BASE64_ENGINE.encode(&encrypted_file_key),
         iv: BASE64_ENGINE.encode(&iv),
         material_desc,
-        digest: calculate_digest(&encrypted_data).context(OpenSslSnafu {
+        digest: calculate_digest(&encrypted_data).context(OpenSSLSnafu {
             operation: "calculating SHA-256 digest",
         })?,
     };
@@ -105,7 +105,7 @@ pub fn decrypt_file_data(
     // 1. Decode master key and select the appropriate cipher suite.
     let master_key = BASE64_ENGINE
         .decode(&encryption_material.query_stage_master_key)
-        .context(Base64DecodeSnafu {
+        .context(Base64DecodingSnafu {
             context: "master key",
         })?;
     let cipher_suite = CipherSuite::from_key_len(master_key.len())?;
@@ -114,17 +114,17 @@ pub fn decrypt_file_data(
     let encrypted_file_key =
         BASE64_ENGINE
             .decode(&metadata.encrypted_key)
-            .context(Base64DecodeSnafu {
+            .context(Base64DecodingSnafu {
                 context: "encrypted file key",
             })?;
     let iv = BASE64_ENGINE
         .decode(&metadata.iv)
-        .context(Base64DecodeSnafu {
+        .context(Base64DecodingSnafu {
             context: "initialization vector",
         })?;
 
     // 3. Verify the digest of encrypted data.
-    let calculated_digest = calculate_digest(encrypted_data).context(OpenSslSnafu {
+    let calculated_digest = calculate_digest(encrypted_data).context(OpenSSLSnafu {
         operation: "calculating SHA-256 digest for verification",
     })?;
     if calculated_digest != metadata.digest {
@@ -133,14 +133,14 @@ pub fn decrypt_file_data(
 
     // 4. Decrypt the file key using the master key with AES-ECB.
     let file_key = decrypt(cipher_suite.ecb, &master_key, None, &encrypted_file_key).context(
-        OpenSslSnafu {
+        OpenSSLSnafu {
             operation: "decrypting file key with AES-ECB",
         },
     )?;
 
     // 5. Decrypt the file data using the file key and IV with AES-CBC.
     let decrypted_data =
-        decrypt(cipher_suite.cbc, &file_key, Some(&iv), encrypted_data).context(OpenSslSnafu {
+        decrypt(cipher_suite.cbc, &file_key, Some(&iv), encrypted_data).context(OpenSSLSnafu {
             operation: "decrypting file data with AES-CBC",
         })?;
 
@@ -163,14 +163,14 @@ fn calculate_digest(data: &[u8]) -> Result<String, OpenSslErrorStack> {
 #[derive(Snafu, Debug)]
 pub enum EncryptionError {
     #[snafu(display("OpenSSL cryptographic operation failed during {operation}"))]
-    OpenSsl {
+    OpenSSL {
         operation: String,
         source: OpenSslErrorStack,
         #[snafu(implicit)]
         location: Location,
     },
     #[snafu(display("Failed to decode Base64 encoded data: {context}"))]
-    Base64Decode {
+    Base64Decoding {
         context: String,
         source: base64::DecodeError,
         #[snafu(implicit)]

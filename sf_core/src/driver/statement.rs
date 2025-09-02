@@ -54,7 +54,7 @@ fn parameters_from_record_batch(
                 );
             }
             _ => {
-                BindParameterTypeSnafu {
+                UnsupportedBindParameterTypeSnafu {
                     type_: column.data_type().to_string(),
                 }
                 .fail()?;
@@ -95,7 +95,7 @@ impl Statement {
                 self.parameter_bindings = Some(record_batch);
             }
             _ => {
-                TransactionStateSnafu {
+                InvalidStateTransitionSnafu {
                     msg: format!("Cannot bind parameters in state={:?}", self.state),
                 }
                 .fail()?;
@@ -117,13 +117,13 @@ impl Statement {
 #[derive(Snafu, Debug)]
 pub enum StatementError {
     #[snafu(display("Unsupported bind parameter type: {type_}"))]
-    BindParameterType {
+    UnsupportedBindParameterType {
         type_: String,
         #[snafu(implicit)]
         location: snafu::Location,
     },
-    #[snafu(display("Invalid state transaction: {msg}"))]
-    TransactionState {
+    #[snafu(display("Invalid state transition: {msg}"))]
+    InvalidStateTransition {
         msg: String,
         #[snafu(implicit)]
         location: snafu::Location,

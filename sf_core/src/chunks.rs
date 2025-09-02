@@ -2,14 +2,13 @@ use std::collections::{HashMap, VecDeque};
 use std::io;
 use std::str::FromStr;
 
+use crate::compression::{CompressionError, decompress_data};
 use arrow::array::{RecordBatch, RecordBatchReader};
 use arrow::datatypes::SchemaRef;
 use arrow::error::ArrowError;
 use arrow_ipc::reader::StreamReader;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use snafu::{Location, ResultExt, Snafu};
-
-use crate::compression::{CompressionError, decompress_data};
 
 pub struct ChunkDownloadData {
     url: String,
@@ -109,8 +108,8 @@ pub async fn get_chunk_data(chunk: &ChunkDownloadData) -> Result<Vec<u8>, ChunkE
         .context(CommunicationSnafu)?;
 
     if !response.status().is_success() {
-        SnowflakeSnafu {
-            status: response.status().to_string(),
+        UnsuccessfulResponseHTTPSnafu {
+            status: response.status(),
         }
         .fail()?;
     }
@@ -150,9 +149,9 @@ pub enum ChunkError {
         #[snafu(implicit)]
         location: Location,
     },
-    #[snafu(display("Snowflake internal error: with status: {status}"))]
-    Snowflake {
-        status: String,
+    #[snafu(display("Snowflake responded with non-successful HTTP status"))]
+    UnsuccessfulResponseHTTP {
+        status: reqwest::StatusCode,
         #[snafu(implicit)]
         location: Location,
     },
