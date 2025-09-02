@@ -1,0 +1,14 @@
+---
+description: rules for formatting rust code
+globs: **/*.rs
+---
+
+# Rust Macros
+
+When using `format!` or `assert!` macros in Rust, always put variables inside brackets when possible.
+*Example*:
+
+Instead of this:
+`format!("Failed to fetch PUT result for {}", filename)`
+Do this:
+`format!("Failed to fetch PUT result for {filename}")`
