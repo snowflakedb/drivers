@@ -24,6 +24,11 @@ PUT_ROW_TARGET_COMPRESSION_IDX = 5
 PUT_ROW_STATUS_IDX = 6
 PUT_ROW_MESSAGE_IDX = 7
 
+LS_ROW_NAME_IDX = 0
+LS_ROW_SIZE_IDX = 1
+LS_ROW_MD5_IDX = 2
+LS_ROW_LAST_MODIFIED_IDX = 3
+
 
 def as_file_uri(p: Path) -> str:
     return p.as_posix().replace("\\", "/")

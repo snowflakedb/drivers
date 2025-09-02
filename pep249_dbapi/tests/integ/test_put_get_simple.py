@@ -18,6 +18,7 @@ from .utils_put_get import (
     GET_ROW_SIZE_IDX,
     GET_ROW_STATUS_IDX,
     GET_ROW_MESSAGE_IDX,
+    LS_ROW_NAME_IDX,
 )
 
 
@@ -60,7 +61,7 @@ def test_put_ls(cursor):
         cursor.execute(f"LS @{stage_name}")
         row = cursor.fetchone()
 
-        assert row[PUT_ROW_SOURCE_IDX] == expected_filename
+        assert row[LS_ROW_NAME_IDX] == expected_filename
 
 
 def test_get(cursor):
