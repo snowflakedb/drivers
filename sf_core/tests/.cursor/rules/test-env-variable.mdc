@@ -1,8 +1,0 @@
----
-description: environmental variable for rust integration tests
-globs: **/*.rs
----
-
-Always when you run tests in sf_core/tests, define environmental variable:
-PARAMETER_PATH=/[project_location]/parameters.json
-Where [project_location] is the path to your project root.
