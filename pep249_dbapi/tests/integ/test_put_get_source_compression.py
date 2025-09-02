@@ -9,6 +9,11 @@ from .utils_put_get import (
     as_file_uri,
     create_temporary_stage,
     compress_bytes,
+    PUT_ROW_SOURCE_IDX,
+    PUT_ROW_TARGET_IDX,
+    PUT_ROW_SOURCE_COMPRESSION_IDX,
+    PUT_ROW_TARGET_COMPRESSION_IDX,
+    PUT_ROW_STATUS_IDX,
 )
 
 
@@ -39,12 +44,11 @@ def test_put_source_compression_auto_detect_standard_types(cursor, filename, com
 
         # Verify that the file was uploaded, compression type was detected correctly and the file was not compressed again
         row = cursor.fetchone()
-        # (source, target, source_size, target_size, source_compression, target_compression, status, message)
-        assert row[0] == filename
-        assert row[1] == filename
-        assert row[4] == compression_type
-        assert row[5] == compression_type
-        assert row[6] == "UPLOADED"
+        assert row[PUT_ROW_SOURCE_IDX] == filename
+        assert row[PUT_ROW_TARGET_IDX] == filename
+        assert row[PUT_ROW_SOURCE_COMPRESSION_IDX] == compression_type
+        assert row[PUT_ROW_TARGET_COMPRESSION_IDX] == compression_type
+        assert row[PUT_ROW_STATUS_IDX] == "UPLOADED"
 
 
 def test_put_source_compression_auto_detect_raw_deflate(cursor):
@@ -64,11 +68,11 @@ def test_put_source_compression_auto_detect_raw_deflate(cursor):
 
         # Verify that the file was uploaded, compression type was detected correctly and the file was not compressed again
         row = cursor.fetchone()
-        assert row[0] == filename
-        assert row[1] == filename
-        assert row[4] == "RAW_DEFLATE"
-        assert row[5] == "RAW_DEFLATE"
-        assert row[6] == "UPLOADED"
+        assert row[PUT_ROW_SOURCE_IDX] == filename
+        assert row[PUT_ROW_TARGET_IDX] == filename
+        assert row[PUT_ROW_SOURCE_COMPRESSION_IDX] == "RAW_DEFLATE"
+        assert row[PUT_ROW_TARGET_COMPRESSION_IDX] == "RAW_DEFLATE"
+        assert row[PUT_ROW_STATUS_IDX] == "UPLOADED"
 
 
 def test_put_source_compression_auto_detect_none_no_auto_compress(cursor):
@@ -87,11 +91,11 @@ def test_put_source_compression_auto_detect_none_no_auto_compress(cursor):
 
         # Verify that the file was uploaded, compression type was detected as "NONE" correctly and the file was not compressed
         row = cursor.fetchone()
-        assert row[0] == filename
-        assert row[1] == filename
-        assert row[4] == "NONE"
-        assert row[5] == "NONE"
-        assert row[6] == "UPLOADED"
+        assert row[PUT_ROW_SOURCE_IDX] == filename
+        assert row[PUT_ROW_TARGET_IDX] == filename
+        assert row[PUT_ROW_SOURCE_COMPRESSION_IDX] == "NONE"
+        assert row[PUT_ROW_TARGET_COMPRESSION_IDX] == "NONE"
+        assert row[PUT_ROW_STATUS_IDX] == "UPLOADED"
 
 
 def test_put_source_compression_auto_detect_none_with_auto_compress(cursor):
@@ -110,11 +114,11 @@ def test_put_source_compression_auto_detect_none_with_auto_compress(cursor):
 
         # Verify that the file was uploaded, compression type was detected as "NONE" correctly and the file was compressed to gzip
         row = cursor.fetchone()
-        assert row[0] == filename
-        assert row[1] == f"{filename}.gz"
-        assert row[4] == "NONE"
-        assert row[5] == "GZIP"
-        assert row[6] == "UPLOADED"
+        assert row[PUT_ROW_SOURCE_IDX] == filename
+        assert row[PUT_ROW_TARGET_IDX] == f"{filename}.gz"
+        assert row[PUT_ROW_SOURCE_COMPRESSION_IDX] == "NONE"
+        assert row[PUT_ROW_TARGET_COMPRESSION_IDX] == "GZIP"
+        assert row[PUT_ROW_STATUS_IDX] == "UPLOADED"
 
 
 @pytest.mark.parametrize(
@@ -143,11 +147,11 @@ def test_put_source_compression_explicit_standard_types(cursor, filename, compre
 
         # Verify that the file was uploaded, compression type was detected correctly and the file was not compressed again
         row = cursor.fetchone()
-        assert row[0] == filename
-        assert row[1] == filename
-        assert row[4] == compression_type
-        assert row[5] == compression_type
-        assert row[6] == "UPLOADED"
+        assert row[PUT_ROW_SOURCE_IDX] == filename
+        assert row[PUT_ROW_TARGET_IDX] == filename
+        assert row[PUT_ROW_SOURCE_COMPRESSION_IDX] == compression_type
+        assert row[PUT_ROW_TARGET_COMPRESSION_IDX] == compression_type
+        assert row[PUT_ROW_STATUS_IDX] == "UPLOADED"
 
 
 def test_put_source_compression_explicit_raw_deflate(cursor):
@@ -166,11 +170,11 @@ def test_put_source_compression_explicit_raw_deflate(cursor):
 
         # Verify that the file was uploaded, compression type was detected correctly and the file was not compressed again
         row = cursor.fetchone()
-        assert row[0] == filename
-        assert row[1] == filename
-        assert row[4] == "RAW_DEFLATE"
-        assert row[5] == "RAW_DEFLATE"
-        assert row[6] == "UPLOADED"
+        assert row[PUT_ROW_SOURCE_IDX] == filename
+        assert row[PUT_ROW_TARGET_IDX] == filename
+        assert row[PUT_ROW_SOURCE_COMPRESSION_IDX] == "RAW_DEFLATE"
+        assert row[PUT_ROW_TARGET_COMPRESSION_IDX] == "RAW_DEFLATE"
+        assert row[PUT_ROW_STATUS_IDX] == "UPLOADED"
 
 
 def test_put_source_compression_explicit_none_no_auto_compress(cursor):
@@ -189,11 +193,11 @@ def test_put_source_compression_explicit_none_no_auto_compress(cursor):
 
         # Verify that the file was uploaded, compression type was set to NONE and the file was not compressed
         row = cursor.fetchone()
-        assert row[0] == filename
-        assert row[1] == filename
-        assert row[4] == "NONE"
-        assert row[5] == "NONE"
-        assert row[6] == "UPLOADED"
+        assert row[PUT_ROW_SOURCE_IDX] == filename
+        assert row[PUT_ROW_TARGET_IDX] == filename
+        assert row[PUT_ROW_SOURCE_COMPRESSION_IDX] == "NONE"
+        assert row[PUT_ROW_TARGET_COMPRESSION_IDX] == "NONE"
+        assert row[PUT_ROW_STATUS_IDX] == "UPLOADED"
 
 
 def test_put_source_compression_explicit_with_auto_compress(cursor):
@@ -212,8 +216,8 @@ def test_put_source_compression_explicit_with_auto_compress(cursor):
 
         # Verify that the file was uploaded, compression type was set to NONE and the file was compressed to gzip
         row = cursor.fetchone()
-        assert row[0] == filename
-        assert row[1] == f"{filename}.gz"
-        assert row[4] == "NONE"
-        assert row[5] == "GZIP"
-        assert row[6] == "UPLOADED"
+        assert row[PUT_ROW_SOURCE_IDX] == filename
+        assert row[PUT_ROW_TARGET_IDX] == f"{filename}.gz"
+        assert row[PUT_ROW_SOURCE_COMPRESSION_IDX] == "NONE"
+        assert row[PUT_ROW_TARGET_COMPRESSION_IDX] == "GZIP"
+        assert row[PUT_ROW_STATUS_IDX] == "UPLOADED"

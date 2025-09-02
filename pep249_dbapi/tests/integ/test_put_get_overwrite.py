@@ -5,6 +5,9 @@ from .utils_put_get import (
     as_file_uri,
     write_text_file,
     create_temporary_stage,
+    PUT_ROW_SOURCE_IDX,
+    PUT_ROW_TARGET_IDX,
+    PUT_ROW_STATUS_IDX,
 )
 
 
@@ -24,8 +27,9 @@ def test_put_overwrite_true(cursor):
 
         # Verify that the file was uploaded
         row = cursor.fetchone()
-        assert row[0] == filename
-        assert row[6] == "UPLOADED"
+        assert row[PUT_ROW_SOURCE_IDX] == filename
+        assert row[PUT_ROW_TARGET_IDX] == filename
+        assert row[PUT_ROW_STATUS_IDX] == "UPLOADED"
 
         # Upload again with changed content and OVERWRITE=TRUE
         updated = write_text_file(tmpdir, filename, "updated,data,2\n")
@@ -35,8 +39,9 @@ def test_put_overwrite_true(cursor):
 
         # Verify that the file was uploaded
         row = cursor.fetchone()
-        assert row[0] == filename
-        assert row[6] == "UPLOADED"
+        assert row[PUT_ROW_SOURCE_IDX] == filename
+        assert row[PUT_ROW_TARGET_IDX] == filename
+        assert row[PUT_ROW_STATUS_IDX] == "UPLOADED"
 
         # Verify that the content was updated
         cursor.execute(f"SELECT $1, $2, $3 FROM @{stage_name}")
@@ -60,8 +65,9 @@ def test_put_overwrite_false(cursor):
 
         # Verify that the file was uploaded
         row = cursor.fetchone()
-        assert row[0] == filename
-        assert row[6] == "UPLOADED"
+        assert row[PUT_ROW_SOURCE_IDX] == filename
+        assert row[PUT_ROW_TARGET_IDX] == filename
+        assert row[PUT_ROW_STATUS_IDX] == "UPLOADED"
 
         # Try to upload changed content with OVERWRITE=FALSE
         updated = write_text_file(tmpdir, filename, "updated,data,2\n")
@@ -71,8 +77,8 @@ def test_put_overwrite_false(cursor):
 
         # Verify that the file was not uploaded
         row = cursor.fetchone()
-        assert row[0] == filename
-        assert row[6] == "SKIPPED"
+        assert row[PUT_ROW_SOURCE_IDX] == filename
+        assert row[PUT_ROW_STATUS_IDX] == "SKIPPED"
 
         # Verify original content remains
         cursor.execute(f"SELECT $1, $2, $3 FROM @{stage_name}")
@@ -102,8 +108,8 @@ def test_put_overwrite_false_multiple_files_mixed_status(cursor):
 
         # Verify that the file was uploaded
         row = cursor.fetchone()
-        assert row[0] == f2
-        assert row[6] == "UPLOADED"
+        assert row[PUT_ROW_SOURCE_IDX] == f2
+        assert row[PUT_ROW_STATUS_IDX] == "UPLOADED"
 
         # Update the second file with new content
         write_text_file(tmpdir, f2, "file2,new_content,2\n")
@@ -120,12 +126,12 @@ def test_put_overwrite_false_multiple_files_mixed_status(cursor):
 
         # Sort rows by filename for easier testing
         rows.sort(key=lambda r: r[0])
-        assert rows[0][0] == f1
-        assert rows[0][6] == "UPLOADED"
-        assert rows[1][0] == f2
-        assert rows[1][6] == "SKIPPED"
-        assert rows[2][0] == f3
-        assert rows[2][6] == "UPLOADED"
+        assert rows[0][PUT_ROW_SOURCE_IDX] == f1
+        assert rows[0][PUT_ROW_STATUS_IDX] == "UPLOADED"
+        assert rows[1][PUT_ROW_SOURCE_IDX] == f2
+        assert rows[1][PUT_ROW_STATUS_IDX] == "SKIPPED"
+        assert rows[2][PUT_ROW_SOURCE_IDX] == f3
+        assert rows[2][PUT_ROW_STATUS_IDX] == "UPLOADED"
 
         # Verify that all files are present in the stage and no content was changed
         cursor.execute(f"SELECT $1, $2, $3 FROM @{stage_name} ORDER BY $1")

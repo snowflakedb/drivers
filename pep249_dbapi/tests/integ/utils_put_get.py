@@ -10,6 +10,20 @@ import zstandard as zstd
 
 from pep249_dbapi.cursor import Cursor
 
+GET_ROW_FILE_IDX = 0
+GET_ROW_SIZE_IDX = 1
+GET_ROW_STATUS_IDX = 2
+GET_ROW_MESSAGE_IDX = 3
+
+PUT_ROW_SOURCE_IDX = 0
+PUT_ROW_TARGET_IDX = 1
+PUT_ROW_SOURCE_SIZE_IDX = 2
+PUT_ROW_TARGET_SIZE_IDX = 3
+PUT_ROW_SOURCE_COMPRESSION_IDX = 4
+PUT_ROW_TARGET_COMPRESSION_IDX = 5
+PUT_ROW_STATUS_IDX = 6
+PUT_ROW_MESSAGE_IDX = 7
+
 
 def as_file_uri(p: Path) -> str:
     return p.as_posix().replace("\\", "/")
