@@ -1,15 +1,19 @@
-use crate::arrow_utils::{boxed_arrow_reader, convert_string_rowset_to_arrow_reader};
+use crate::arrow_utils::{
+    boxed_arrow_reader, convert_string_rowset_to_arrow_reader, create_schema,
+};
 use crate::chunks::ChunkReader;
 use crate::file_manager;
 use crate::file_manager::{DownloadResult, UploadResult, download_files, upload_files};
 use crate::rest;
 use arrow::array::{Array, Int64Array, RecordBatchReader, StringArray};
-use arrow::datatypes::{DataType, Field, Schema};
 use arrow::error::ArrowError;
 use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
-use rest::snowflake::query_response::{self, QueryResponseError};
+use rest::snowflake::query_response::{self, QueryResponseError, RowType};
 use snafu::{Location, ResultExt, Snafu};
 use std::sync::Arc;
+
+const PUT__GET_ROWSET_TEXT_LENGTH: u64 = 10000;
+const PUT__GET_ROWSET_FIXED_LENGTH: u64 = 64;
 
 pub async fn process_query_response(
     data: &query_response::Data,
@@ -105,16 +109,17 @@ macro_rules! int64_array {
 pub fn upload_results_reader(
     upload_results: Vec<UploadResult>,
 ) -> Result<Box<dyn RecordBatchReader + Send>, ArrowError> {
-    let schema = Arc::new(Schema::new(vec![
-        Field::new("source", DataType::Utf8, false),
-        Field::new("target", DataType::Utf8, false),
-        Field::new("source_size", DataType::Int64, false),
-        Field::new("target_size", DataType::Int64, false),
-        Field::new("source_compression", DataType::Utf8, false),
-        Field::new("target_compression", DataType::Utf8, false),
-        Field::new("status", DataType::Utf8, false),
-        Field::new("message", DataType::Utf8, false),
-    ]));
+    let row_types: Vec<RowType> = vec![
+        build_generic_text_rowtype("source"),
+        build_generic_text_rowtype("target"),
+        build_generic_fixed_rowtype("source_size"),
+        build_generic_fixed_rowtype("target_size"),
+        build_generic_text_rowtype("source_compression"),
+        build_generic_text_rowtype("target_compression"),
+        build_generic_text_rowtype("status"),
+        build_generic_text_rowtype("message"),
+    ];
+    let schema = create_schema(&row_types).expect("Failed to create schema from RowTypes");
 
     let columns: Vec<Arc<dyn Array>> = vec![
         string_array!(upload_results, source),
@@ -134,12 +139,13 @@ pub fn upload_results_reader(
 pub fn download_results_reader(
     download_results: Vec<DownloadResult>,
 ) -> Result<Box<dyn RecordBatchReader + Send>, ArrowError> {
-    let schema = Arc::new(Schema::new(vec![
-        Field::new("file", DataType::Utf8, false),
-        Field::new("size", DataType::Int64, false),
-        Field::new("status", DataType::Utf8, false),
-        Field::new("message", DataType::Utf8, false),
-    ]));
+    let row_types: Vec<RowType> = vec![
+        build_generic_text_rowtype("file"),
+        build_generic_fixed_rowtype("size"),
+        build_generic_text_rowtype("status"),
+        build_generic_text_rowtype("message"),
+    ];
+    let schema = create_schema(&row_types).expect("Failed to create schema from RowTypes");
 
     let columns: Vec<Arc<dyn Array>> = vec![
         string_array!(download_results, file),
@@ -149,6 +155,19 @@ pub fn download_results_reader(
     ];
 
     boxed_arrow_reader(schema, columns)
+}
+
+fn build_generic_text_rowtype(name: &str) -> RowType {
+    RowType::text(
+        name,
+        false,
+        PUT__GET_ROWSET_TEXT_LENGTH,
+        PUT__GET_ROWSET_TEXT_LENGTH,
+    )
+}
+
+fn build_generic_fixed_rowtype(name: &str) -> RowType {
+    RowType::fixed(name, false, PUT__GET_ROWSET_FIXED_LENGTH, 0)
 }
 
 #[derive(Debug, Snafu)]

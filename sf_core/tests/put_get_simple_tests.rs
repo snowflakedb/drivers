@@ -1,4 +1,5 @@
 pub mod common;
+use arrow::datatypes::Field;
 use common::arrow_result_helper::ArrowResultHelper;
 use common::put_get_common::*;
 use common::test_utils::*;
@@ -129,6 +130,19 @@ fn test_put_get_rowset() {
     let put_data = client.execute_query(&put_sql);
     let mut arrow_helper = ArrowResultHelper::from_result(put_data);
 
+    // Assert Arrow field metadata for PUT result
+    let schema = arrow_helper.schema();
+    let fields = schema.fields();
+    assert_eq!(fields.len(), 8);
+    check_text_field(&fields[0], "source");
+    check_text_field(&fields[1], "target");
+    check_fixed_field(&fields[2], "source_size");
+    check_fixed_field(&fields[3], "target_size");
+    check_text_field(&fields[4], "source_compression");
+    check_text_field(&fields[5], "target_compression");
+    check_text_field(&fields[6], "status");
+    check_text_field(&fields[7], "message");
+
     let put_result: PutResult = arrow_helper
         .fetch_one()
         .expect("Failed to fetch PUT result");
@@ -149,6 +163,15 @@ fn test_put_get_rowset() {
     let get_data = client.execute_query(&get_sql);
     let mut arrow_helper = ArrowResultHelper::from_result(get_data);
 
+    // Assert Arrow field metadata for GET result
+    let schema = arrow_helper.schema();
+    let fields = schema.fields();
+    assert_eq!(fields.len(), 4);
+    check_text_field(&fields[0], "file");
+    check_fixed_field(&fields[1], "size");
+    check_text_field(&fields[2], "status");
+    check_text_field(&fields[3], "message");
+
     let get_result: GetResult = arrow_helper
         .fetch_one()
         .expect("Failed to fetch GET result");
@@ -157,4 +180,22 @@ fn test_put_get_rowset() {
     assert_eq!(get_result.size, 26);
     assert_eq!(get_result.status, "DOWNLOADED");
     assert_eq!(get_result.message, "");
+}
+
+fn check_text_field(field: &Field, name: &str) {
+    assert_eq!(field.name(), name);
+    let m0 = field.metadata();
+    assert_eq!(m0.get("logicalType"), Some(&"TEXT".to_string()));
+    assert_eq!(m0.get("physicalType"), Some(&"LOB".to_string()));
+    assert_eq!(m0.get("charLength"), Some(&"10000".to_string()));
+    assert_eq!(m0.get("byteLength"), Some(&"10000".to_string()));
+}
+
+fn check_fixed_field(field: &Field, name: &str) {
+    assert_eq!(field.name(), name);
+    let m0 = field.metadata();
+    assert_eq!(m0.get("logicalType"), Some(&"FIXED".to_string()));
+    assert_eq!(m0.get("scale"), Some(&"0".to_string()));
+    assert_eq!(m0.get("precision"), Some(&"64".to_string()));
+    assert_eq!(m0.get("physicalType"), Some(&"SB8".to_string()));
 }

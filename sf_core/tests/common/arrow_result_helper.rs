@@ -6,7 +6,9 @@ use super::arrow_deserialize::ArrowDeserialize;
 use super::arrow_extract_value::{ArrowExtractError, ArrowExtractValue, extract_arrow_value};
 use arrow::ffi_stream::ArrowArrayStreamReader;
 use arrow::ffi_stream::FFI_ArrowArrayStream;
+use arrow::record_batch::RecordBatchReader;
 use std::fmt::Debug;
+use std::sync::Arc;
 
 /// Helper for processing Arrow stream results
 pub struct ArrowResultHelper {
@@ -32,6 +34,11 @@ impl ArrowResultHelper {
             }
             None => None,
         }
+    }
+
+    /// Returns the Arrow schema without consuming the stream
+    pub fn schema(&self) -> Arc<arrow::datatypes::Schema> {
+        self.reader.schema()
     }
 
     /// Converts all result data to a 2D array of strings for easy comparison
