@@ -5,6 +5,9 @@ use common::put_get_common::*;
 use common::test_utils::*;
 use std::fs;
 
+const PUT_GET_ROWSET_TEXT_LENGTH_STR: &str = "10000";
+const PUT_GET_ROWSET_FIXED_LENGTH_STR: &str = "64";
+
 #[test]
 fn test_put_select() {
     let mut client = SnowflakeTestClient::connect_with_default_auth();
@@ -187,8 +190,14 @@ fn check_text_field(field: &Field, name: &str) {
     let m0 = field.metadata();
     assert_eq!(m0.get("logicalType"), Some(&"TEXT".to_string()));
     assert_eq!(m0.get("physicalType"), Some(&"LOB".to_string()));
-    assert_eq!(m0.get("charLength"), Some(&"10000".to_string()));
-    assert_eq!(m0.get("byteLength"), Some(&"10000".to_string()));
+    assert_eq!(
+        m0.get("charLength"),
+        Some(&PUT_GET_ROWSET_TEXT_LENGTH_STR.to_string())
+    );
+    assert_eq!(
+        m0.get("byteLength"),
+        Some(&PUT_GET_ROWSET_TEXT_LENGTH_STR.to_string())
+    );
 }
 
 fn check_fixed_field(field: &Field, name: &str) {
@@ -196,6 +205,9 @@ fn check_fixed_field(field: &Field, name: &str) {
     let m0 = field.metadata();
     assert_eq!(m0.get("logicalType"), Some(&"FIXED".to_string()));
     assert_eq!(m0.get("scale"), Some(&"0".to_string()));
-    assert_eq!(m0.get("precision"), Some(&"64".to_string()));
+    assert_eq!(
+        m0.get("precision"),
+        Some(&PUT_GET_ROWSET_FIXED_LENGTH_STR.to_string())
+    );
     assert_eq!(m0.get("physicalType"), Some(&"SB8".to_string()));
 }
