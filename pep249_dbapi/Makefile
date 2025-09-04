@@ -15,7 +15,7 @@ DEFAULT_PARAMETER_PATH := $(shell cd .. && pwd)/parameters.json
 SHELL := bash
 .ONESHELL:  # Execute each recipe in a single shell (needed for multi-line commands)
 
-.PHONY: check-env-or-build check-env-or-fail setup build-wheel test test-local test-local-sequential test-local-tox test-local-tox-sequential test-integ-local-tox test-reference-local-tox test-all test-integ-reference compare compare-local compare-artifacts clean clean-reports run-with-setup run-with-uv run-with-tox
+.PHONY: check-env-or-build check-env-or-fail setup build-wheel test test-local test-local-sequential test-local-tox test-local-tox-sequential test-all-local-tox test-integ-local-tox test-e2e-local-tox test-reference-local-tox test-all test-integ-reference compare compare-local compare-artifacts clean clean-reports run-with-setup run-with-uv run-with-tox
 
 
 # ===== Reusable Command Components =====
@@ -57,6 +57,7 @@ PYTEST_REPORT_JSON_REFERENCE = $(PYTEST_REPORT_JSON_FLAGS)$(REFERENCE_REPORT_JSO
 # Tox environment names
 TOX_ALL_ENV = py$(PYTHON_ID)-all
 TOX_INTEG_ENV = py$(PYTHON_ID)-integ
+TOX_E2E_ENV = py$(PYTHON_ID)-e2e
 TOX_REFERENCE_ENV = py$(PYTHON_ID)-integ-reference
 
 
@@ -126,7 +127,12 @@ test-local-tox: check-env-or-build setup
 	  $(PYTEST_REPORT_JSON_UNIVERSAL) \
 	  $(PYTEST_PARALLEL) $(PYTEST_ARGS) $(filter-out $@ test,$(MAKECMDGOALS))
 
-test: test-local-tox  # Short alias
+test-all-local-tox: check-env-or-build setup
+	$(LOCAL_ENV) uv run tox -e $(TOX_ALL_ENV) -- \
+	  $(PYTEST_REPORT_JSON_UNIVERSAL) \
+	  $(PYTEST_PARALLEL) $(PYTEST_ARGS) $(filter-out $@ test,$(MAKECMDGOALS))
+
+test: test-all-local-tox  # Short alias - runs unit, integ, and e2e tests
 
 test-local-tox-sequential: check-env-or-build setup
 	$(LOCAL_ENV) uv run tox -e $(TOX_ALL_ENV) -- \
@@ -135,6 +141,11 @@ test-local-tox-sequential: check-env-or-build setup
 
 test-integ-local-tox: check-env-or-build setup
 	$(LOCAL_ENV) uv run tox -e $(TOX_INTEG_ENV) -- \
+	  $(PYTEST_REPORT_JSON_UNIVERSAL) \
+	  $(PYTEST_PARALLEL) $(PYTEST_ARGS) $(filter-out $@,$(MAKECMDGOALS))
+
+test-e2e-local-tox: check-env-or-build setup
+	$(LOCAL_ENV) uv run tox -e $(TOX_E2E_ENV) -- \
 	  $(PYTEST_REPORT_JSON_UNIVERSAL) \
 	  $(PYTEST_PARALLEL) $(PYTEST_ARGS) $(filter-out $@,$(MAKECMDGOALS))
 

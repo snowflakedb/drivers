@@ -1,6 +1,6 @@
 .idea/
 target/
-parameters.json
+parameters*.json
 cmake-build*
 .venv
 __pycache__/
@@ -12,4 +12,4 @@ jdbc/.gradle
 jdbc/build
 odbc_tests/cmake-build
 rsa_key.p8
-
+universal_driver_e2e_test_coverage.html

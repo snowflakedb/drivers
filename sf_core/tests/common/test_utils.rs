@@ -221,6 +221,15 @@ impl SnowflakeTestClient {
     pub fn create_temporary_stage(&mut self, stage_name: &str) {
         self.execute_query(&format!("create temporary stage {stage_name}"));
     }
+
+    pub fn connect(&mut self) -> thrift::Result<()> {
+        self.driver
+            .connection_init(self.conn_handle.clone(), self.db_handle.clone())
+    }
+
+    pub fn verify_simple_query(&mut self) {
+        let _result = self.execute_query("SELECT 1");
+    }
 }
 
 impl Drop for SnowflakeTestClient {
