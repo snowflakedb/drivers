@@ -166,21 +166,21 @@ pub struct RowType {
     #[serde(rename = "name")]
     pub name: String,
     #[serde(rename = "scale")]
-    pub scale: Option<i64>,
+    pub scale: Option<u64>,
     #[serde(rename = "nullable")]
     pub nullable: bool,
     #[serde(rename = "type")]
     pub type_: String,
+    #[serde(rename = "byteLength")]
+    pub byte_length: Option<u64>,
+    #[serde(rename = "length")]
+    pub length: Option<u64>,
+    #[serde(rename = "precision")]
+    pub precision: Option<u64>,
 
     // unused fields
     #[serde(rename = "fields")]
-    _fields: Option<Vec<FieldMetadata>>,
-    #[serde(rename = "byteLength")]
-    _byte_length: Option<i64>,
-    #[serde(rename = "length")]
-    _length: Option<i64>,
-    #[serde(rename = "precision")]
-    _precision: Option<i64>,
+    pub _fields: Option<Vec<FieldMetadata>>,
 }
 
 #[derive(Deserialize)]
@@ -260,6 +260,34 @@ pub struct EncryptionMaterial {
     query_id: String,
     #[serde(rename = "smkId")]
     smk_id: i64,
+}
+
+impl RowType {
+    pub fn text<N: Into<String>>(name: N, nullable: bool, length: u64, byte_length: u64) -> Self {
+        Self {
+            name: name.into(),
+            scale: None,
+            nullable,
+            type_: "TEXT".to_string(),
+            _fields: None,
+            byte_length: Some(byte_length),
+            length: Some(length),
+            precision: None,
+        }
+    }
+
+    pub fn fixed<N: Into<String>>(name: N, nullable: bool, precision: u64, scale: u64) -> Self {
+        Self {
+            name: name.into(),
+            scale: Some(scale),
+            nullable,
+            type_: "FIXED".to_string(),
+            _fields: None,
+            byte_length: None,
+            length: None,
+            precision: Some(precision),
+        }
+    }
 }
 
 impl Data {
