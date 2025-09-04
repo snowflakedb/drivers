@@ -12,8 +12,8 @@ use rest::snowflake::query_response::{self, QueryResponseError, RowType};
 use snafu::{Location, ResultExt, Snafu};
 use std::sync::Arc;
 
-const PUT__GET_ROWSET_TEXT_LENGTH: u64 = 10000;
-const PUT__GET_ROWSET_FIXED_LENGTH: u64 = 64;
+const PUT_GET_ROWSET_TEXT_LENGTH: u64 = 10000;
+const PUT_GET_ROWSET_FIXED_LENGTH: u64 = 64;
 
 pub async fn process_query_response(
     data: &query_response::Data,
@@ -161,13 +161,13 @@ fn build_generic_text_rowtype(name: &str) -> RowType {
     RowType::text(
         name,
         false,
-        PUT__GET_ROWSET_TEXT_LENGTH,
-        PUT__GET_ROWSET_TEXT_LENGTH,
+        PUT_GET_ROWSET_TEXT_LENGTH,
+        PUT_GET_ROWSET_TEXT_LENGTH,
     )
 }
 
 fn build_generic_fixed_rowtype(name: &str) -> RowType {
-    RowType::fixed(name, false, PUT__GET_ROWSET_FIXED_LENGTH, 0)
+    RowType::fixed(name, false, PUT_GET_ROWSET_FIXED_LENGTH, 0)
 }
 
 #[derive(Debug, Snafu)]
