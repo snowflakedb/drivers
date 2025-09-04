@@ -1,4 +1,8 @@
-use crate::api::{OdbcError, OdbcResult, StatementState, stmt_from_handle};
+use crate::api::error::{
+    ArrowReadSnafu, DataNotFetchedSnafu, ExecutionDoneSnafu, FetchDataSnafu, NoMoreDataSnafu,
+    StatementNotExecutedSnafu,
+};
+use crate::api::{OdbcResult, StatementState, stmt_from_handle};
 use crate::cdata_types::{CDataType, Double, Real, SBigInt, UBigInt};
 use crate::read_arrow::{Buffer, ExtractError, ReadArrowValue, Value};
 use arrow::{
@@ -7,6 +11,7 @@ use arrow::{
     ffi_stream::{ArrowArrayStreamReader, FFI_ArrowArrayStream},
 };
 use odbc_sys as sql;
+use snafu::ResultExt;
 use tracing;
 
 fn read_arrow_value(
@@ -92,11 +97,11 @@ pub fn fetch(statement_handle: sql::Handle) -> OdbcResult<()> {
             let stream_ptr: *mut FFI_ArrowArrayStream = result.stream.clone().into();
             let stream: FFI_ArrowArrayStream =
                 unsafe { FFI_ArrowArrayStream::from_raw(stream_ptr) };
-            let mut reader = ArrowArrayStreamReader::try_new(stream)
-                .map_err(|e| OdbcError::FetchData(format!("Failed to create reader: {e:?}")))?;
+            let mut reader = ArrowArrayStreamReader::try_new(stream).context(FetchDataSnafu)?;
 
             match reader.next() {
-                Some(Ok(record_batch)) => {
+                Some(record_batch_result) => {
+                    let record_batch = record_batch_result.context(FetchDataSnafu)?;
                     tracing::debug!(
                         "fetch: fetched record_batch with {} rows",
                         record_batch.num_rows()
@@ -108,14 +113,10 @@ pub fn fetch(statement_handle: sql::Handle) -> OdbcResult<()> {
                     };
                     Ok(())
                 }
-                Some(Err(e)) => {
-                    tracing::error!("fetch: error fetching data: {:?}", e);
-                    Err(OdbcError::FetchData(format!("{e:?}")))
-                }
                 None => {
                     tracing::debug!("fetch: no more data available");
                     stmt.state = StatementState::Done;
-                    Err(OdbcError::NoMoreData)
+                    NoMoreDataSnafu.fail()
                 }
             }
         }
@@ -129,25 +130,22 @@ pub fn fetch(statement_handle: sql::Handle) -> OdbcResult<()> {
                 return Ok(());
             }
             match reader.next() {
-                Some(Ok(new_record_batch)) => {
+                Some(new_record_batch_result) => {
+                    let new_record_batch = new_record_batch_result.context(FetchDataSnafu)?;
                     *record_batch = new_record_batch;
                     *batch_idx = 0;
                     Ok(())
                 }
-                Some(Err(e)) => {
-                    tracing::error!("fetch: error fetching next batch: {:?}", e);
-                    Err(OdbcError::FetchData(format!("{e:?}")))
-                }
                 None => {
                     tracing::debug!("fetch: no more data available");
                     stmt.state = StatementState::Done;
-                    Err(OdbcError::NoMoreData)
+                    NoMoreDataSnafu.fail()
                 }
             }
         }
         _ => {
             tracing::error!("fetch: statement not executed");
-            Err(OdbcError::StatementNotExecuted)
+            StatementNotExecutedSnafu.fail()
         }
     }
 }
@@ -183,17 +181,17 @@ pub fn get_data(
                 field,
                 *batch_idx,
             )
-            .map_err(OdbcError::ArrowRead)?;
+            .context(ArrowReadSnafu)?;
 
             Ok(())
         }
         StatementState::Done => {
             tracing::debug!("get_data: statement execution is done");
-            Err(OdbcError::ExecutionDone)
+            ExecutionDoneSnafu.fail()
         }
         _ => {
             tracing::error!("get_data: data not fetched yet");
-            Err(OdbcError::DataNotFetched)
+            DataNotFetchedSnafu.fail()
         }
     }
 }

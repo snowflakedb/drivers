@@ -1,15 +1,20 @@
 use crate::api_server::query::process_query_response;
+use crate::config::ConfigError;
 use crate::config::rest_parameters::{LoginParameters, QueryParameters};
 use crate::config::settings::Setting;
 use crate::driver::{Connection, Database, Statement};
 use crate::handle_manager::{Handle, HandleManager};
-use crate::rest::snowflake::snowflake_query;
-use snafu::Report;
+use crate::rest::snowflake::{RestError, snowflake_query};
+use snafu;
+use snafu::{Location, Report, ResultExt, location};
+extern crate lazy_static;
+use lazy_static::lazy_static;
 
 use crate::thrift_gen::database_driver_v1::{
-    ArrowArrayPtr, ArrowSchemaPtr, ConnectionHandle, DatabaseDriverSyncHandler,
-    DatabaseDriverSyncProcessor, DatabaseHandle, DriverException, ExecuteResult, InfoCode,
-    PartitionedResult, StatementHandle, StatusCode,
+    ArrowArrayPtr, ArrowSchemaPtr, AuthenticationError, ConnectionHandle,
+    DatabaseDriverSyncHandler, DatabaseDriverSyncProcessor, DatabaseHandle, DriverError,
+    DriverException, ExecuteResult, GenericError, InfoCode, InternalError, InvalidParameterValue,
+    LoginError, MissingParameter, PartitionedResult, StatementHandle, StatusCode,
 };
 
 use arrow::array::{RecordBatch, StructArray};
@@ -88,15 +93,173 @@ impl From<StatementHandle> for Handle {
     }
 }
 
-pub struct DatabaseDriverV1 {
-    db_handle_manager: HandleManager<Mutex<Database>>,
-    conn_handle_manager: HandleManager<Mutex<Connection>>,
-    stmt_handle_manager: HandleManager<Mutex<Statement>>,
+lazy_static! {
+    static ref DB_HANDLE_MANAGER: HandleManager<Mutex<Database>> = HandleManager::new();
+    static ref CONN_HANDLE_MANAGER: HandleManager<Mutex<Connection>> = HandleManager::new();
+    static ref STMT_HANDLE_MANAGER: HandleManager<Mutex<Statement>> = HandleManager::new();
 }
+pub struct DatabaseDriverV1 {}
 
 impl Default for DatabaseDriverV1 {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+use snafu::Snafu;
+
+#[derive(Debug, Snafu)]
+pub enum ApiError {
+    #[snafu(display("Generic error"))]
+    GenericError {
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Failed to create runtime"))]
+    FailedToCreateRuntime {
+        #[snafu(implicit)]
+        location: Location,
+        source: std::io::Error,
+    },
+    #[snafu(display("Configuration error: {source}"))]
+    ConfigurationError {
+        #[snafu(implicit)]
+        location: Location,
+        source: ConfigError,
+    },
+    #[snafu(display("Invalid argument: {argument}"))]
+    InvalidArgument {
+        argument: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Failed to login: {source}"))]
+    FailedToLogin {
+        #[snafu(implicit)]
+        location: Location,
+        source: RestError,
+    },
+    #[snafu(display("Failed to lock connection"))]
+    FailedToLockConnection {
+        #[snafu(implicit)]
+        location: Location,
+    },
+}
+
+impl ApiError {
+    fn to_driver_error(&self) -> DriverError {
+        match self {
+            ApiError::GenericError { .. } => DriverError::GenericError(GenericError::new()),
+            ApiError::FailedToCreateRuntime { .. } => {
+                DriverError::InternalError(InternalError::new())
+            }
+            ApiError::ConfigurationError {
+                source:
+                    ConfigError::InvalidParameterValue {
+                        parameter,
+                        value,
+                        explanation,
+                        ..
+                    },
+                ..
+            } => DriverError::InvalidParameterValue(InvalidParameterValue::new(
+                parameter.clone(),
+                value.clone(),
+                explanation.clone(),
+            )),
+            ApiError::ConfigurationError {
+                source: ConfigError::MissingParameter { parameter, .. },
+                ..
+            } => DriverError::MissingParameter(MissingParameter::new(parameter.clone())),
+            ApiError::InvalidArgument { .. } => DriverError::InternalError(InternalError::new()),
+            ApiError::FailedToLogin {
+                source: RestError::LoginError { message, code, .. },
+                ..
+            } => DriverError::LoginError(LoginError {
+                message: message.clone(),
+                code: *code,
+            }),
+            ApiError::FailedToLogin { source, .. } => {
+                DriverError::AuthError(AuthenticationError::new(source.to_string()))
+            }
+            ApiError::FailedToLockConnection { .. } => {
+                DriverError::InternalError(InternalError::new())
+            }
+        }
+    }
+}
+
+fn status_code_of_driver_error(error: &DriverError) -> StatusCode {
+    match error {
+        DriverError::GenericError(_) => StatusCode::GENERIC_ERROR,
+        DriverError::InternalError(_) => StatusCode::INTERNAL_ERROR,
+        DriverError::AuthError(_) => StatusCode::AUTHENTICATION_ERROR,
+        DriverError::MissingParameter(_) => StatusCode::MISSING_PARAMETER,
+        DriverError::InvalidParameterValue(_) => StatusCode::INVALID_PARAMETER_VALUE,
+        DriverError::LoginError(_) => StatusCode::LOGIN_ERROR,
+    }
+}
+
+impl From<ApiError> for thrift::Error {
+    fn from(error: ApiError) -> Self {
+        let driver_error = error.to_driver_error();
+        let message = error.to_string();
+        let report = Report::from_error(error).to_string();
+        Error::from(DriverException::new(
+            message,
+            status_code_of_driver_error(&driver_error),
+            driver_error,
+            report,
+        ))
+    }
+}
+
+trait ToThriftResult {
+    fn to_thrift(self) -> thrift::Result<()>;
+}
+
+impl<E> ToThriftResult for Result<(), E>
+where
+    E: Into<thrift::Error>,
+{
+    fn to_thrift(self) -> thrift::Result<()> {
+        self.map_err(|e| e.into())
+    }
+}
+
+fn connection_init(
+    conn_handle: ConnectionHandle,
+    _db_handle: DatabaseHandle,
+) -> Result<(), ApiError> {
+    let handle = conn_handle.into();
+    match CONN_HANDLE_MANAGER.get_obj(handle) {
+        Some(conn_ptr) => {
+            // Create a blocking runtime for the login process
+            let rt = tokio::runtime::Runtime::new().context(FailedToCreateRuntimeSnafu)?;
+            // .map_err(|e| internal_error(format!("Failed to create runtime: {e}")))?;
+
+            let login_parameters =
+                LoginParameters::from_settings(&conn_ptr.lock().unwrap().settings)
+                    .context(ConfigurationSnafu)?;
+
+            let login_result = rt
+                .block_on(async {
+                    crate::rest::snowflake::snowflake_login(&login_parameters).await
+                })
+                .context(FailedToLoginSnafu)?;
+
+            conn_ptr
+                .lock()
+                .map_err(|_| ApiError::FailedToLockConnection {
+                    location: location!(),
+                })?
+                .session_token = Some(login_result);
+            Ok(())
+        }
+        None => Err(ApiError::InvalidArgument {
+            argument: "Connection handle not found".to_string(),
+            location: location!(),
+        }),
     }
 }
 
@@ -106,9 +269,8 @@ impl DatabaseDriverV1 {
         Error::from(DriverException::new(
             message.into(),
             status,
-            None,
-            None,
-            None,
+            DriverError::GenericError(GenericError::new()),
+            "".to_string(),
         ))
     }
 
@@ -124,7 +286,7 @@ impl DatabaseDriverV1 {
 
     /// Helper to create an unknown error
     fn internal_error(message: impl Into<String>) -> Error {
-        Self::driver_error(message, StatusCode::UNKNOWN)
+        Self::driver_error(message, StatusCode::GENERIC_ERROR)
     }
 
     fn with_statement<T>(
@@ -133,8 +295,7 @@ impl DatabaseDriverV1 {
         f: impl FnOnce(MutexGuard<Statement>) -> Result<T, Error>,
     ) -> Result<T, Error> {
         let handle = handle.into();
-        let stmt = self
-            .stmt_handle_manager
+        let stmt = STMT_HANDLE_MANAGER
             .get_obj(handle)
             .ok_or_else(|| Self::invalid_argument("Statement handle not found"))?;
         let guard = stmt
@@ -144,11 +305,7 @@ impl DatabaseDriverV1 {
     }
 
     pub fn new() -> DatabaseDriverV1 {
-        DatabaseDriverV1 {
-            db_handle_manager: HandleManager::new(),
-            conn_handle_manager: HandleManager::new(),
-            stmt_handle_manager: HandleManager::new(),
-        }
+        DatabaseDriverV1 {}
     }
 
     pub fn processor() -> Box<dyn TProcessor + Send + Sync> {
@@ -162,7 +319,7 @@ impl DatabaseDriverV1 {
         value: Setting,
     ) -> thrift::Result<()> {
         let handle = db_handle.into();
-        match self.db_handle_manager.get_obj(handle) {
+        match DB_HANDLE_MANAGER.get_obj(handle) {
             Some(db_ptr) => {
                 let mut db = db_ptr.lock().unwrap();
                 db.settings.insert(key, value);
@@ -179,7 +336,7 @@ impl DatabaseDriverV1 {
         value: Setting,
     ) -> thrift::Result<()> {
         let handle = handle.into();
-        match self.conn_handle_manager.get_obj(handle) {
+        match CONN_HANDLE_MANAGER.get_obj(handle) {
             Some(conn_ptr) => {
                 let mut conn = conn_ptr.lock().unwrap();
                 conn.settings.insert(key, value);
@@ -196,7 +353,7 @@ impl DatabaseDriverV1 {
         value: Setting,
     ) -> thrift::Result<()> {
         let handle = handle.into();
-        match self.stmt_handle_manager.get_obj(handle) {
+        match STMT_HANDLE_MANAGER.get_obj(handle) {
             Some(stmt_ptr) => {
                 let mut stmt = stmt_ptr.lock().unwrap();
                 stmt.settings.insert(key, value);
@@ -210,9 +367,7 @@ impl DatabaseDriverV1 {
 impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
     #[instrument(name = "DatabaseDriverV1::database_new", skip(self))]
     fn handle_database_new(&self) -> thrift::Result<DatabaseHandle> {
-        let handle = self
-            .db_handle_manager
-            .add_handle(Mutex::new(Database::new()));
+        let handle = DB_HANDLE_MANAGER.add_handle(Mutex::new(Database::new()));
         Ok(DatabaseHandle::from(handle))
     }
 
@@ -259,7 +414,7 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
     #[instrument(name = "DatabaseDriverV1::database_init", skip(self))]
     fn handle_database_init(&self, db_handle: DatabaseHandle) -> thrift::Result<()> {
         let handle = db_handle.into();
-        match self.db_handle_manager.get_obj(handle) {
+        match DB_HANDLE_MANAGER.get_obj(handle) {
             Some(_db_ptr) => Ok(()),
             None => Err(Self::invalid_argument("Database handle not found")),
         }
@@ -267,7 +422,7 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
 
     #[instrument(name = "DatabaseDriverV1::database_release", skip(self))]
     fn handle_database_release(&self, db_handle: DatabaseHandle) -> thrift::Result<()> {
-        match self.db_handle_manager.delete_handle(db_handle.into()) {
+        match DB_HANDLE_MANAGER.delete_handle(db_handle.into()) {
             true => Ok(()),
             false => Err(Self::invalid_argument("Failed to release database handle")),
         }
@@ -275,9 +430,7 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
 
     #[instrument(name = "DatabaseDriverV1::connection_new", skip(self))]
     fn handle_connection_new(&self) -> thrift::Result<ConnectionHandle> {
-        let handle = self
-            .conn_handle_manager
-            .add_handle(Mutex::new(Connection::new()));
+        let handle = CONN_HANDLE_MANAGER.add_handle(Mutex::new(Connection::new()));
         Ok(ConnectionHandle::from(handle))
     }
 
@@ -325,38 +478,14 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
     fn handle_connection_init(
         &self,
         conn_handle: ConnectionHandle,
-        _db_handle: DatabaseHandle,
+        db_handle: DatabaseHandle,
     ) -> thrift::Result<()> {
-        let handle = conn_handle.into();
-        match self.conn_handle_manager.get_obj(handle) {
-            Some(conn_ptr) => {
-                // Create a blocking runtime for the login process
-                let rt = tokio::runtime::Runtime::new()
-                    .map_err(|e| Self::internal_error(format!("Failed to create runtime: {e}")))?;
-
-                let login_parameters =
-                    LoginParameters::from_settings(&conn_ptr.lock().unwrap().settings)
-                        .map_err(snafu_to_thrift)?;
-
-                let login_result = rt.block_on(async {
-                    crate::rest::snowflake::snowflake_login(&login_parameters).await
-                });
-
-                match login_result {
-                    Ok(session_token) => {
-                        conn_ptr.lock().unwrap().session_token = Some(session_token);
-                        Ok(())
-                    }
-                    Err(e) => Err(snafu_to_thrift(e)),
-                }
-            }
-            None => Err(Self::invalid_argument("Connection handle not found")),
-        }
+        connection_init(conn_handle, db_handle).to_thrift()
     }
 
     #[instrument(name = "DatabaseDriverV1::connection_release", skip(self))]
     fn handle_connection_release(&self, conn_handle: ConnectionHandle) -> thrift::Result<()> {
-        match self.conn_handle_manager.delete_handle(conn_handle.into()) {
+        match CONN_HANDLE_MANAGER.delete_handle(conn_handle.into()) {
             true => Ok(()),
             false => Err(Self::invalid_argument(
                 "Failed to release connection handle",
@@ -422,10 +551,10 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
         conn_handle: ConnectionHandle,
     ) -> thrift::Result<StatementHandle> {
         let handle = conn_handle.into();
-        match self.conn_handle_manager.get_obj(handle) {
+        match CONN_HANDLE_MANAGER.get_obj(handle) {
             Some(conn_ptr) => {
                 let stmt = Mutex::new(Statement::new(conn_ptr));
-                let handle = self.stmt_handle_manager.add_handle(stmt);
+                let handle = STMT_HANDLE_MANAGER.add_handle(stmt);
                 Ok(handle.into())
             }
             None => Err(Self::invalid_argument("Connection handle not found")),
@@ -434,7 +563,7 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
 
     #[instrument(name = "DatabaseDriverV1::statement_release", skip(self))]
     fn handle_statement_release(&self, stmt_handle: StatementHandle) -> thrift::Result<()> {
-        match self.stmt_handle_manager.delete_handle(stmt_handle.into()) {
+        match STMT_HANDLE_MANAGER.delete_handle(stmt_handle.into()) {
             true => Ok(()),
             false => Err(Self::invalid_argument("Failed to release statement handle")),
         }
@@ -447,7 +576,7 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
         query: String,
     ) -> thrift::Result<()> {
         let handle = stmt_handle.into();
-        match self.stmt_handle_manager.get_obj(handle) {
+        match STMT_HANDLE_MANAGER.get_obj(handle) {
             Some(stmt_ptr) => {
                 let mut stmt = stmt_ptr.lock().unwrap();
                 stmt.query = Some(query);
@@ -551,8 +680,7 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
         stmt_handle: StatementHandle,
     ) -> thrift::Result<ExecuteResult> {
         let handle = stmt_handle.into();
-        let stmt_ptr = self
-            .stmt_handle_manager
+        let stmt_ptr = STMT_HANDLE_MANAGER
             .get_obj(handle)
             .ok_or_else(|| Self::invalid_argument("Statement handle not found"))?;
 
@@ -632,10 +760,9 @@ where
     E: std::error::Error + Send + Sync + 'static,
 {
     Error::from(DriverException::new(
+        error.to_string(),
+        StatusCode::GENERIC_ERROR,
+        DriverError::GenericError(GenericError::new()),
         generate_error_report(error),
-        StatusCode::UNKNOWN,
-        None,
-        None,
-        None,
     ))
 }

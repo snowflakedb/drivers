@@ -11,9 +11,11 @@ pub enum ConfigError {
         #[snafu(implicit)]
         location: Location,
     },
-    #[snafu(display("Invalid argument: {argument}"))]
-    InvalidArgument {
-        argument: String,
+    #[snafu(display("Invalid value '{value}' for parameter '{parameter}' - {explanation}"))]
+    InvalidParameterValue {
+        parameter: String,
+        value: String,
+        explanation: String,
         #[snafu(implicit)]
         location: Location,
     },

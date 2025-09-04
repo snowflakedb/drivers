@@ -28,6 +28,7 @@ flate2 = "1.1.2"
 openssl = "0.10.73"
 jwt = { version = "0.16.0", features = ["openssl"] }
 infer = "0.19.0"
+lazy_static = "1.5.0"
 
 # AWS SDK dependencies
 aws-sdk-s3 = "1.103.0"

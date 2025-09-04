@@ -1,3 +1,7 @@
+use crate::api::error::{
+    ArrowBindingSnafu, DisconnectedSnafu, InvalidParameterNumberSnafu, TextConversionFromUtf8Snafu,
+    TextConversionUtf8Snafu,
+};
 use crate::api::{
     ConnectionState, OdbcError, OdbcResult, ParameterBinding, StatementState, stmt_from_handle,
 };
@@ -6,6 +10,7 @@ use crate::write_arrow::odbc_bindings_to_arrow_bindings;
 use arrow::ffi::{FFI_ArrowArray, FFI_ArrowSchema};
 use odbc_sys as sql;
 use sf_core::thrift_gen::database_driver_v1::{ArrowArrayPtr, ArrowSchemaPtr};
+use snafu::ResultExt;
 use tracing;
 
 fn thrift_from_ffi_arrow_array(raw: *mut FFI_ArrowArray) -> ArrowArrayPtr {
@@ -28,19 +33,10 @@ fn thrift_from_ffi_arrow_schema(raw: *mut FFI_ArrowSchema) -> ArrowSchemaPtr {
 fn text_to_string(text: *const sql::Char, length: sql::Integer) -> Result<String, OdbcError> {
     if length == sql::NTS as i32 {
         let result = unsafe { std::ffi::CStr::from_ptr(text as *const i8).to_str() };
-        match result {
-            Ok(s) => Ok(s.to_string()),
-            Err(e) => {
-                tracing::error!("text_to_string: error converting text to string: {}", e);
-                Err(OdbcError::TextConversion(format!(
-                    "Failed to convert text: {e}"
-                )))
-            }
-        }
+        result.context(TextConversionUtf8Snafu {}).map(String::from)
     } else {
         let text_slice = unsafe { std::slice::from_raw_parts(text, length as usize) };
-        String::from_utf8(text_slice.to_vec())
-            .map_err(|e| OdbcError::TextConversion(format!("Failed to convert UTF-8: {e}")))
+        String::from_utf8(text_slice.to_vec()).context(TextConversionFromUtf8Snafu {})
     }
 }
 
@@ -62,19 +58,19 @@ pub fn exec_direct(
             let query = text_to_string(statement_text, text_length)?;
 
             client
-                .statement_set_sql_query(stmt.stmt_handle.clone(), query)
-                .map_err(|e| OdbcError::SetSqlQuery(format!("{e:?}")))?;
+                .statement_set_sql_query(stmt.stmt_handle.clone(), query.clone())
+                .map_err(OdbcError::from_thrift_error)?;
 
             let result = client
                 .statement_execute_query(stmt.stmt_handle.clone())
-                .map_err(|e| OdbcError::ExecuteStatement(format!("{e:?}")))?;
+                .map_err(OdbcError::from_thrift_error)?;
 
             stmt.state = StatementState::Executed { result };
             Ok(())
         }
         ConnectionState::Disconnected => {
             tracing::error!("exec_direct: connection is disconnected");
-            Err(OdbcError::Disconnected)
+            DisconnectedSnafu.fail()
         }
     }
 }
@@ -99,20 +95,20 @@ pub fn prepare(
 
             // Set the SQL query for the statement
             client
-                .statement_set_sql_query(stmt.stmt_handle.clone(), query)
-                .map_err(|e| OdbcError::SetSqlQuery(format!("{e:?}")))?;
+                .statement_set_sql_query(stmt.stmt_handle.clone(), query.clone())
+                .map_err(OdbcError::from_thrift_error)?;
 
             // Call the prepare method on the statement
             client
                 .statement_prepare(stmt.stmt_handle.clone())
-                .map_err(|e| OdbcError::PrepareStatement(format!("{e:?}")))?;
+                .map_err(OdbcError::from_thrift_error)?;
 
             tracing::info!("prepare: Successfully prepared statement");
             Ok(())
         }
         ConnectionState::Disconnected => {
             tracing::error!("prepare: connection is disconnected");
-            Err(OdbcError::Disconnected)
+            DisconnectedSnafu.fail()
         }
     }
 }
@@ -136,7 +132,7 @@ pub fn execute(statement_handle: sql::Handle) -> OdbcResult<()> {
                 );
 
                 let (schema, array) = odbc_bindings_to_arrow_bindings(&stmt.parameter_bindings)
-                    .map_err(|e| OdbcError::ParameterBinding(format!("{e:?}")))?;
+                    .context(ArrowBindingSnafu {})?;
 
                 // Bind parameters to statement
                 client
@@ -145,7 +141,7 @@ pub fn execute(statement_handle: sql::Handle) -> OdbcResult<()> {
                         thrift_from_ffi_arrow_schema(Box::into_raw(schema)),
                         thrift_from_ffi_arrow_array(Box::into_raw(array)),
                     )
-                    .map_err(|e| OdbcError::BindParameters(format!("{e:?}")))?;
+                    .map_err(OdbcError::from_thrift_error)?;
 
                 tracing::info!("Successfully bound parameters");
             }
@@ -153,7 +149,7 @@ pub fn execute(statement_handle: sql::Handle) -> OdbcResult<()> {
             // Execute the prepared statement
             let result = client
                 .statement_execute_query(stmt.stmt_handle.clone())
-                .map_err(|e| OdbcError::ExecuteStatement(format!("{e:?}")))?;
+                .map_err(OdbcError::from_thrift_error)?;
 
             tracing::info!("execute: Successfully executed statement");
             stmt.state = StatementState::Executed { result };
@@ -161,7 +157,7 @@ pub fn execute(statement_handle: sql::Handle) -> OdbcResult<()> {
         }
         ConnectionState::Disconnected => {
             tracing::error!("execute: connection is disconnected");
-            Err(OdbcError::Disconnected)
+            DisconnectedSnafu.fail()
         }
     }
 }
@@ -191,7 +187,7 @@ pub fn bind_parameter(
 
     if parameter_number == 0 {
         tracing::error!("bind_parameter: parameter_number cannot be 0");
-        return Err(OdbcError::InvalidParameterNumber);
+        return InvalidParameterNumberSnafu.fail();
     }
 
     let stmt = stmt_from_handle(statement_handle);

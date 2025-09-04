@@ -3,9 +3,13 @@
 #include <sstream>
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_all.hpp>
 
 #include "Connection.hpp"
+#include "compatibility.hpp"
 #include "require.hpp"
+
+using namespace Catch::Matchers;
 
 class Pat {
  private:
@@ -151,7 +155,20 @@ TEST_CASE("PAT Authentication - Invalid Token", "[pat_auth]") {
 
   // Use an obviously invalid token
   std::string connection_string = get_pat_as_password_connection_string("invalid_token_12345");
-  require_connection_failed(connection_string);
+  auto records = require_connection_failed(connection_string);
+  REQUIRE(records.size() == 1);
+
+  CHECK(records[0].sqlState == "28000");
+  OLD_DRIVER_ONLY("BC#1: Native error code should be 0 when error originates from client side.") {
+    CHECK(records[0].nativeError == 390100);
+  }
+
+  NEW_DRIVER_ONLY("BC#1: Native error code should be 0 when error originates from client side.") {
+    CHECK(records[0].nativeError == 390100);
+  }
+
+  CHECK_THAT(records[0].messageText,
+             ContainsSubstring("Incorrect username or password was specified."));
 }
 
 TEST_CASE("PAT Authentication - Missing Token with PROGRAMMATIC_ACCESS_TOKEN", "[pat_auth]") {
@@ -167,5 +184,16 @@ TEST_CASE("PAT Authentication - Missing Token with PROGRAMMATIC_ACCESS_TOKEN", "
   ss << "AUTHENTICATOR=PROGRAMMATIC_ACCESS_TOKEN;";
 
   std::string connection_string = ss.str();
-  require_connection_failed(connection_string);
+  auto records = require_connection_failed(connection_string);
+  REQUIRE(records.size() == 1);
+  CHECK(records[0].sqlState == "28000");
+  OLD_DRIVER_ONLY("BC#1: Native error code should be 0 when error originates from client side.") {
+    CHECK(records[0].nativeError == 20032);
+    CHECK_THAT(records[0].messageText, ContainsSubstring("Required setting 'TOKEN'"));
+  }
+
+  NEW_DRIVER_ONLY("BC#1: Native error code should be 0 when error originates from client side.") {
+    CHECK(records[0].nativeError == 0);
+    CHECK_THAT(records[0].messageText, ContainsSubstring("Missing required parameter: token"));
+  }
 }

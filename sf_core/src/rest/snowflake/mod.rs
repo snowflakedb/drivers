@@ -143,9 +143,11 @@ pub async fn snowflake_login(login_parameters: &LoginParameters) -> Result<Strin
             .message
             .unwrap_or_else(|| "Unknown error".to_string());
         tracing::error!(message = %message, "Snowflake login failed");
-        InvalidResponseSnafu { message }
-            .fail()
-            .context(InvalidSnowflakeResponseSnafu)?;
+        let code = auth_response
+            ._code
+            .map(|c| c.parse::<i32>().unwrap_or(-1))
+            .unwrap_or(-1);
+        LoginSnafu { message, code }.fail()?;
     }
 
     // Extract and store the session token
@@ -258,6 +260,7 @@ where
 
     let response_text = response_text.context(ResponseTextSnafu)?;
 
+    tracing::debug!("Response text: {}", response_text);
     let response_data: T = serde_json::from_str(&response_text).context(ResponseFormatSnafu)?;
 
     Ok(response_data)
@@ -288,6 +291,14 @@ pub enum RestError {
     RequestConstruction {
         request: String,
         source: reqwest::Error,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("Login error: {message}, code: {code}"))]
+    LoginError {
+        message: String,
+        code: i32,
         #[snafu(implicit)]
         location: Location,
     },

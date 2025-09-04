@@ -500,13 +500,13 @@ public class PartitionedResult implements org.apache.thrift.TBase<PartitionedRes
           case 2: // PARTITIONS
             if (schemeField.type == org.apache.thrift.protocol.TType.LIST) {
               {
-                org.apache.thrift.protocol.TList _list8 = iprot.readListBegin();
-                struct.partitions = new java.util.ArrayList<java.nio.ByteBuffer>(_list8.size);
-                @org.apache.thrift.annotation.Nullable java.nio.ByteBuffer _elem9;
-                for (int _i10 = 0; _i10 < _list8.size; ++_i10)
+                org.apache.thrift.protocol.TList _list0 = iprot.readListBegin();
+                struct.partitions = new java.util.ArrayList<java.nio.ByteBuffer>(_list0.size);
+                @org.apache.thrift.annotation.Nullable java.nio.ByteBuffer _elem1;
+                for (int _i2 = 0; _i2 < _list0.size; ++_i2)
                 {
-                  _elem9 = iprot.readBinary();
-                  struct.partitions.add(_elem9);
+                  _elem1 = iprot.readBinary();
+                  struct.partitions.add(_elem1);
                 }
                 iprot.readListEnd();
               }
@@ -552,9 +552,9 @@ public class PartitionedResult implements org.apache.thrift.TBase<PartitionedRes
         oprot.writeFieldBegin(PARTITIONS_FIELD_DESC);
         {
           oprot.writeListBegin(new org.apache.thrift.protocol.TList(org.apache.thrift.protocol.TType.STRING, struct.partitions.size()));
-          for (java.nio.ByteBuffer _iter11 : struct.partitions)
+          for (java.nio.ByteBuffer _iter3 : struct.partitions)
           {
-            oprot.writeBinary(_iter11);
+            oprot.writeBinary(_iter3);
           }
           oprot.writeListEnd();
         }
@@ -584,9 +584,9 @@ public class PartitionedResult implements org.apache.thrift.TBase<PartitionedRes
       oprot.writeI64(struct.schema);
       {
         oprot.writeI32(struct.partitions.size());
-        for (java.nio.ByteBuffer _iter12 : struct.partitions)
+        for (java.nio.ByteBuffer _iter4 : struct.partitions)
         {
-          oprot.writeBinary(_iter12);
+          oprot.writeBinary(_iter4);
         }
       }
       oprot.writeI64(struct.rows_affected);
@@ -598,13 +598,13 @@ public class PartitionedResult implements org.apache.thrift.TBase<PartitionedRes
       struct.schema = iprot.readI64();
       struct.setSchemaIsSet(true);
       {
-        org.apache.thrift.protocol.TList _list13 = iprot.readListBegin(org.apache.thrift.protocol.TType.STRING);
-        struct.partitions = new java.util.ArrayList<java.nio.ByteBuffer>(_list13.size);
-        @org.apache.thrift.annotation.Nullable java.nio.ByteBuffer _elem14;
-        for (int _i15 = 0; _i15 < _list13.size; ++_i15)
+        org.apache.thrift.protocol.TList _list5 = iprot.readListBegin(org.apache.thrift.protocol.TType.STRING);
+        struct.partitions = new java.util.ArrayList<java.nio.ByteBuffer>(_list5.size);
+        @org.apache.thrift.annotation.Nullable java.nio.ByteBuffer _elem6;
+        for (int _i7 = 0; _i7 < _list5.size; ++_i7)
         {
-          _elem14 = iprot.readBinary();
-          struct.partitions.add(_elem14);
+          _elem6 = iprot.readBinary();
+          struct.partitions.add(_elem6);
         }
       }
       struct.setPartitionsIsSet(true);

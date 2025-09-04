@@ -29,7 +29,7 @@ inline picojson::object get_test_parameters(const std::string& connection_name) 
   picojson::value connections;
   std::string err = picojson::parse(connections, params_file);
   if (!err.empty()) {
-    FAIL("Failed to parse parameters: " << err);
+    FAIL("Failed to parse parameters: '" << err << "'");
   }
 
   REQUIRE(connections.is<picojson::object>());

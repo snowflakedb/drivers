@@ -23,6 +23,14 @@ pub enum ArrowBindingError {
     UnsupportedCDataType(CDataType),
 }
 
+impl std::error::Error for ArrowBindingError {}
+
+impl std::fmt::Display for ArrowBindingError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
+
 struct Writer<T> {
     marker: PhantomData<T>,
 }

@@ -1,6 +1,10 @@
-use crate::api::{ConnectionState, OdbcError, OdbcResult, conn_from_handle};
+use crate::api::{
+    ConnectionState, OdbcError, OdbcResult, conn_from_handle,
+    error::{InvalidPortSnafu, TextConversionFromUtf8Snafu, TextConversionUtf8Snafu},
+};
 use odbc_sys as sql;
 use sf_core::api_client;
+use snafu::ResultExt;
 use std::collections::HashMap;
 use tracing;
 
@@ -8,19 +12,10 @@ use tracing;
 fn text_to_string(text: *const sql::Char, length: sql::Integer) -> Result<String, OdbcError> {
     if length == sql::NTS as i32 {
         let result = unsafe { std::ffi::CStr::from_ptr(text as *const i8).to_str() };
-        match result {
-            Ok(s) => Ok(s.to_string()),
-            Err(e) => {
-                tracing::error!("text_to_string: error converting text to string: {}", e);
-                Err(OdbcError::TextConversion(format!(
-                    "Failed to convert text: {e}"
-                )))
-            }
-        }
+        result.context(TextConversionUtf8Snafu {}).map(String::from)
     } else {
         let text_slice = unsafe { std::slice::from_raw_parts(text, length as usize) };
-        String::from_utf8(text_slice.to_vec())
-            .map_err(|e| OdbcError::TextConversion(format!("Failed to convert UTF-8: {e}")))
+        String::from_utf8(text_slice.to_vec()).context(TextConversionFromUtf8Snafu {})
     }
 }
 
@@ -52,12 +47,12 @@ pub fn driver_connect(
 
     let connection = conn_from_handle(connection_handle);
     let mut client = api_client::new_database_driver_v1_client();
-    let db_handle = client.database_new().map_err(|e| {
-        OdbcError::ConnectionInit(format!("Failed to create database handle: {e:?}"))
-    })?;
-    let conn_handle = client.connection_new().map_err(|e| {
-        OdbcError::ConnectionInit(format!("Failed to create connection handle: {e:?}"))
-    })?;
+    let db_handle = client
+        .database_new()
+        .map_err(OdbcError::from_thrift_error)?;
+    let conn_handle = client
+        .connection_new()
+        .map_err(OdbcError::from_thrift_error)?;
 
     for (key, value) in connection_string_map {
         match key.as_str() {
@@ -68,51 +63,40 @@ pub fn driver_connect(
             "ACCOUNT" => {
                 client
                     .connection_set_option_string(conn_handle.clone(), "account".to_owned(), value)
-                    .map_err(|e| {
-                        OdbcError::ConnectionInit(format!("Failed to set account: {e:?}"))
-                    })?;
+                    .map_err(OdbcError::from_thrift_error)?;
             }
             "SERVER" => {
                 client
                     .connection_set_option_string(conn_handle.clone(), "host".to_owned(), value)
-                    .map_err(|e| {
-                        OdbcError::ConnectionInit(format!("Failed to set server: {e:?}"))
-                    })?;
+                    .map_err(OdbcError::from_thrift_error)?;
             }
             "PWD" => {
                 client
                     .connection_set_option_string(conn_handle.clone(), "password".to_owned(), value)
-                    .map_err(|e| {
-                        OdbcError::ConnectionInit(format!("Failed to set password: {e:?}"))
-                    })?;
+                    .map_err(OdbcError::from_thrift_error)?;
             }
             "UID" => {
                 client
                     .connection_set_option_string(conn_handle.clone(), "user".to_owned(), value)
-                    .map_err(|e| OdbcError::ConnectionInit(format!("Failed to set user: {e:?}")))?;
+                    .map_err(OdbcError::from_thrift_error)?;
             }
             "PORT" => {
-                let port_int: i64 = value.parse().map_err(|e| OdbcError::InvalidPort {
+                let port_int: i64 = value.parse().context(InvalidPortSnafu {
                     port: value.clone(),
-                    source: e,
                 })?;
                 client
                     .connection_set_option_int(conn_handle.clone(), "port".to_owned(), port_int)
-                    .map_err(|e| OdbcError::ConnectionInit(format!("Failed to set port: {e:?}")))?;
+                    .map_err(OdbcError::from_thrift_error)?;
             }
             "PROTOCOL" => {
                 client
                     .connection_set_option_string(conn_handle.clone(), "protocol".to_owned(), value)
-                    .map_err(|e| {
-                        OdbcError::ConnectionInit(format!("Failed to set protocol: {e:?}"))
-                    })?;
+                    .map_err(OdbcError::from_thrift_error)?;
             }
             "DATABASE" => {
                 client
                     .connection_set_option_string(conn_handle.clone(), "database".to_owned(), value)
-                    .map_err(|e| {
-                        OdbcError::ConnectionInit(format!("Failed to set database: {e:?}"))
-                    })?;
+                    .map_err(OdbcError::from_thrift_error)?;
             }
             "WAREHOUSE" => {
                 client
@@ -121,21 +105,17 @@ pub fn driver_connect(
                         "warehouse".to_owned(),
                         value,
                     )
-                    .map_err(|e| {
-                        OdbcError::ConnectionInit(format!("Failed to set warehouse: {e:?}"))
-                    })?;
+                    .map_err(OdbcError::from_thrift_error)?;
             }
             "ROLE" => {
                 client
                     .connection_set_option_string(conn_handle.clone(), "role".to_owned(), value)
-                    .map_err(|e| OdbcError::ConnectionInit(format!("Failed to set role: {e:?}")))?;
+                    .map_err(OdbcError::from_thrift_error)?;
             }
             "SCHEMA" => {
                 client
                     .connection_set_option_string(conn_handle.clone(), "schema".to_owned(), value)
-                    .map_err(|e| {
-                        OdbcError::ConnectionInit(format!("Failed to set schema: {e:?}"))
-                    })?;
+                    .map_err(OdbcError::from_thrift_error)?;
             }
             "PRIV_KEY_FILE" => {
                 client
@@ -144,9 +124,7 @@ pub fn driver_connect(
                         "private_key_file".to_owned(),
                         value,
                     )
-                    .map_err(|e| {
-                        OdbcError::ConnectionInit(format!("Failed to set private key file: {e:?}"))
-                    })?;
+                    .map_err(OdbcError::from_thrift_error)?;
             }
             "AUTHENTICATOR" => {
                 client
@@ -155,9 +133,7 @@ pub fn driver_connect(
                         "authenticator".to_owned(),
                         value,
                     )
-                    .map_err(|e| {
-                        OdbcError::ConnectionInit(format!("Failed to set authenticator: {e:?}"))
-                    })?;
+                    .map_err(OdbcError::from_thrift_error)?;
             }
             "PRIV_KEY_FILE_PWD" => {
                 client
@@ -166,18 +142,12 @@ pub fn driver_connect(
                         "private_key_password".to_owned(),
                         value,
                     )
-                    .map_err(|e| {
-                        OdbcError::ConnectionInit(format!(
-                            "Failed to set private key password: {e:?}"
-                        ))
-                    })?;
+                    .map_err(OdbcError::from_thrift_error)?;
             }
             "TOKEN" => {
                 client
                     .connection_set_option_string(conn_handle.clone(), "token".to_owned(), value)
-                    .map_err(|e| {
-                        OdbcError::ConnectionInit(format!("Failed to set token: {e:?}"))
-                    })?;
+                    .map_err(OdbcError::from_thrift_error)?;
             }
             _ => {
                 tracing::warn!("driver_connect: unknown connection string key: {:?}", key);
@@ -187,9 +157,7 @@ pub fn driver_connect(
 
     client
         .connection_init(conn_handle.clone(), db_handle.clone())
-        .map_err(|e| {
-            OdbcError::ConnectionInit(format!("Connection initialization failed: {e:?}"))
-        })?;
+        .map_err(OdbcError::from_thrift_error)?;
 
     connection.state = ConnectionState::Connected {
         client,

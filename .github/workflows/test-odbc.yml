@@ -43,7 +43,7 @@ jobs:
           cmake -B cmake-build \
               -D ODBC_LIBRARY="/usr/lib/x86_64-linux-gnu/libodbc.so" \
               -D ODBC_INCLUDE_DIR="/usr/include" \
-              -D SKIP_NEW_TESTS=TRUE \
+              -D DRIVER_TYPE=OLD \
               .
           cmake --build cmake-build -- -j $(nproc)
           ctest -C Debug --test-dir cmake-build --output-on-failure
@@ -81,6 +81,7 @@ jobs:
           cmake -B cmake-build \
               -D ODBC_LIBRARY="/usr/lib/x86_64-linux-gnu/libodbc.so" \
               -D ODBC_INCLUDE_DIR="/usr/include" \
+              -D DRIVER_TYPE=NEW \
               .
           cmake --build cmake-build -- -j $(nproc)
           ctest -C Debug --test-dir cmake-build --output-on-failure

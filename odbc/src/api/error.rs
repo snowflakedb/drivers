@@ -1,68 +1,300 @@
-use crate::read_arrow::ExtractError;
-use thiserror::Error;
+use std::{collections::HashSet, str::Utf8Error, string::FromUtf8Error};
 
-#[derive(Error, Debug)]
+use crate::{
+    api::{SqlState, diagnostic::DiagnosticRecord},
+    read_arrow::ExtractError,
+    write_arrow::ArrowBindingError,
+};
+use arrow::error::ArrowError;
+use lazy_static::lazy_static;
+use odbc_sys as sql;
+use sf_core::thrift_gen::database_driver_v1::{
+    DriverError, DriverException, InvalidParameterValue, LoginError, MissingParameter, StatusCode,
+};
+use snafu::{Location, Snafu, location};
+
+#[derive(Snafu, Debug)]
+#[snafu(visibility(pub))]
 pub enum OdbcError {
-    #[error("Connection is disconnected")]
-    Disconnected,
+    #[snafu(display("Connection is disconnected"))]
+    Disconnected {
+        #[snafu(implicit)]
+        location: Location,
+    },
 
-    #[error("Invalid handle")]
-    InvalidHandle,
+    #[snafu(display("Invalid handle"))]
+    InvalidHandle {
+        #[snafu(implicit)]
+        location: Location,
+    },
 
-    #[error("Unknown attribute: {0}")]
-    UnknownAttribute(i32),
+    #[snafu(display("Invalid record number: {number}"))]
+    InvalidRecordNumber {
+        number: sql::SmallInt,
+        #[snafu(implicit)]
+        location: Location,
+    },
 
-    #[error("Parameter number cannot be 0")]
-    InvalidParameterNumber,
+    #[snafu(display("Invalid diagnostic identifier: {identifier}"))]
+    InvalidDiagnosticIdentifier {
+        identifier: sql::SmallInt,
+        #[snafu(implicit)]
+        location: Location,
+    },
 
-    #[error("Statement not executed")]
-    StatementNotExecuted,
+    #[snafu(display("Unknown attribute: {attribute}"))]
+    UnknownAttribute {
+        attribute: i32,
+        #[snafu(implicit)]
+        location: Location,
+    },
 
-    #[error("Data not fetched yet")]
-    DataNotFetched,
+    #[snafu(display("Parameter number cannot be 0"))]
+    InvalidParameterNumber {
+        #[snafu(implicit)]
+        location: Location,
+    },
 
-    #[error("Statement execution is done")]
-    ExecutionDone,
+    #[snafu(display("Statement not executed"))]
+    StatementNotExecuted {
+        #[snafu(implicit)]
+        location: Location,
+    },
 
-    #[error("No more data available")]
-    NoMoreData,
+    #[snafu(display("Data not fetched yet"))]
+    DataNotFetched {
+        #[snafu(implicit)]
+        location: Location,
+    },
 
-    #[error("Failed to parse port '{port}': {source}")]
+    #[snafu(display("Statement execution is done"))]
+    ExecutionDone {
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("No more data available"))]
+    NoMoreData {
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("Failed to parse port '{port}'"))]
     InvalidPort {
         port: String,
         source: std::num::ParseIntError,
+        #[snafu(implicit)]
+        location: Location,
     },
 
-    #[error("Failed to set SQL query: {0}")]
-    SetSqlQuery(String),
+    #[snafu(display("Failed to set SQL query: {query}"))]
+    SetSqlQuery {
+        query: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
 
-    #[error("Failed to prepare statement: {0}")]
-    PrepareStatement(String),
+    #[snafu(display("Failed to prepare statement: {statement}"))]
+    PrepareStatement {
+        statement: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
 
-    #[error("Failed to execute statement: {0}")]
-    ExecuteStatement(String),
+    #[snafu(display("Failed to execute statement: {statement}"))]
+    ExecuteStatement {
+        statement: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
 
-    #[error("Failed to bind parameters: {0}")]
-    BindParameters(String),
+    #[snafu(display("Failed to bind parameters: {parameters}"))]
+    BindParameters {
+        parameters: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
 
-    #[error("Connection initialization failed: {0}")]
-    ConnectionInit(String),
+    #[snafu(display("Connection initialization failed: {connection}"))]
+    ConnectionInit {
+        connection: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
 
-    #[error("Error reading arrow value: {0:?}")]
-    ArrowRead(ExtractError),
+    #[snafu(display("Error reading arrow value: {source:?}"))]
+    ArrowRead {
+        source: ExtractError,
+        #[snafu(implicit)]
+        location: Location,
+    },
 
-    #[error("Error binding parameters: {0}")]
-    ParameterBinding(String),
+    #[snafu(display("Error binding arrow parameters: {source:?}"))]
+    ArrowBinding {
+        source: ArrowBindingError,
+        #[snafu(implicit)]
+        location: Location,
+    },
 
-    #[error("Error fetching data: {0}")]
-    FetchData(String),
+    #[snafu(display("Error binding parameters: {parameters}"))]
+    ParameterBinding {
+        parameters: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
 
-    #[error("Text conversion error: {0}")]
-    TextConversion(String),
+    #[snafu(display("Error fetching data: {source}"))]
+    FetchData {
+        source: ArrowError,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("Text conversion error: {source}"))]
+    TextConversionFromUtf8 {
+        source: FromUtf8Error,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Text conversion error: {source}"))]
+    TextConversionUtf8 {
+        source: Utf8Error,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("[Core] {message}\n report: {report}"))]
+    ThriftDriverException {
+        message: String,
+        report: String,
+        status_code: StatusCode,
+        error: Box<DriverError>,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("Thrift communication error"))]
+    ThriftCommunication {
+        message: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
 }
 
-impl From<ExtractError> for OdbcError {
-    fn from(e: ExtractError) -> Self {
-        OdbcError::ArrowRead(e)
+lazy_static! {
+    static ref AUTHENTICATOR_PARAMETERS: HashSet<String> = {
+        let mut set = HashSet::new();
+        set.insert("PRIV_KEY_FILE".to_string());
+        set.insert("PRIVATE_KEY_FILE".to_string());
+        set.insert("PRIV_KEY_FILE_PWD".to_string());
+        set.insert("TOKEN".to_string());
+        set.insert("AUTHENTICATOR".to_string());
+        set.insert("USER".to_string());
+        set.insert("PASSWORD".to_string());
+        set
+    };
+}
+
+impl OdbcError {
+    pub fn to_diagnostic_record(&self) -> DiagnosticRecord {
+        DiagnosticRecord {
+            message_text: self.to_string(),
+            sql_state: self.to_sql_state(),
+            native_error: self.to_native_error(),
+            ..Default::default()
+        }
+    }
+
+    pub fn to_sql_state(&self) -> SqlState {
+        match self {
+            OdbcError::Disconnected { .. } => SqlState::ConnectionDoesNotExist,
+            OdbcError::InvalidHandle { .. } => SqlState::InvalidConnectionName,
+            OdbcError::InvalidRecordNumber { .. } => SqlState::InvalidDescriptorIndex,
+            OdbcError::InvalidDiagnosticIdentifier { .. } => {
+                SqlState::InvalidDescriptorFieldIdentifier
+            }
+            OdbcError::UnknownAttribute { .. } => SqlState::GeneralError,
+            OdbcError::InvalidParameterNumber { .. } => SqlState::WrongNumberOfParameters,
+            OdbcError::StatementNotExecuted { .. } => SqlState::FunctionSequenceError,
+            OdbcError::DataNotFetched { .. } => SqlState::FunctionSequenceError,
+            OdbcError::ExecutionDone { .. } => SqlState::FunctionSequenceError,
+            OdbcError::NoMoreData { .. } => SqlState::NoDataFound,
+            OdbcError::InvalidPort { .. } => SqlState::InvalidConnectionStringAttribute,
+            OdbcError::SetSqlQuery { .. } => SqlState::SyntaxErrorOrAccessRuleViolation,
+            OdbcError::PrepareStatement { .. } => SqlState::SyntaxErrorOrAccessRuleViolation,
+            OdbcError::ExecuteStatement { .. } => SqlState::GeneralError,
+            OdbcError::BindParameters { .. } => SqlState::WrongNumberOfParameters,
+            OdbcError::ConnectionInit { .. } => SqlState::ClientUnableToEstablishConnection,
+            OdbcError::ArrowRead { .. } => SqlState::GeneralError,
+            OdbcError::ParameterBinding { .. } => SqlState::WrongNumberOfParameters,
+            OdbcError::FetchData { .. } => SqlState::GeneralError,
+            OdbcError::TextConversionUtf8 { .. } => SqlState::StringDataRightTruncated,
+            OdbcError::TextConversionFromUtf8 { .. } => SqlState::StringDataRightTruncated,
+            OdbcError::ThriftDriverException { error, .. } => {
+                // Map DriverException StatusCode to appropriate SQL states
+                match *error.clone() {
+                    DriverError::AuthError(_) => SqlState::InvalidAuthorizationSpecification,
+                    DriverError::GenericError(_) => SqlState::GeneralError,
+                    DriverError::InvalidParameterValue(InvalidParameterValue {
+                        parameter, ..
+                    }) => {
+                        if AUTHENTICATOR_PARAMETERS.contains(&parameter.to_uppercase()) {
+                            SqlState::InvalidAuthorizationSpecification
+                        } else {
+                            SqlState::InvalidConnectionStringAttribute
+                        }
+                    }
+                    DriverError::MissingParameter(MissingParameter { parameter }) => {
+                        if AUTHENTICATOR_PARAMETERS.contains(&parameter.to_uppercase()) {
+                            SqlState::InvalidAuthorizationSpecification
+                        } else {
+                            SqlState::InvalidConnectionStringAttribute
+                        }
+                    }
+                    DriverError::InternalError(_) => SqlState::GeneralError,
+                    DriverError::LoginError(_) => SqlState::InvalidAuthorizationSpecification,
+                }
+            }
+            OdbcError::ArrowBinding { .. } => SqlState::GeneralError,
+            OdbcError::ThriftCommunication { .. } => SqlState::ClientUnableToEstablishConnection,
+        }
+    }
+
+    pub fn to_native_error(&self) -> sql::Integer {
+        match self {
+            OdbcError::ThriftDriverException { error, .. } => match *error.clone() {
+                DriverError::LoginError(LoginError { code, .. }) => code,
+                _ => 0,
+            },
+            _ => 0,
+        }
+    }
+
+    /// Convert a thrift::Error into the appropriate OdbcError variant
+    #[track_caller]
+    pub fn from_thrift_error(error: thrift::Error) -> Self {
+        match error {
+            thrift::Error::User(boxed_error) => {
+                // Try to downcast to DriverException
+                if let Some(driver_exception) = boxed_error.downcast_ref::<DriverException>() {
+                    OdbcError::ThriftDriverException {
+                        message: driver_exception.message.clone(),
+                        status_code: driver_exception.status_code,
+                        error: Box::new(driver_exception.error.clone()),
+                        location: location!(),
+                        report: driver_exception.report.clone(),
+                    }
+                } else {
+                    ThriftCommunicationSnafu {
+                        message: boxed_error.to_string(),
+                    }
+                    .build()
+                }
+            }
+            err => ThriftCommunicationSnafu {
+                message: err.to_string(),
+            }
+            .build(),
+        }
     }
 }

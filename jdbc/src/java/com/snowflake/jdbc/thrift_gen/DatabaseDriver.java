@@ -19675,15 +19675,15 @@ public class DatabaseDriver {
             case 2: // INFO_CODES
               if (schemeField.type == org.apache.thrift.protocol.TType.LIST) {
                 {
-                  org.apache.thrift.protocol.TList _list16 = iprot.readListBegin();
-                  struct.info_codes = new java.util.ArrayList<InfoCode>(_list16.size);
-                  @org.apache.thrift.annotation.Nullable InfoCode _elem17;
-                  for (int _i18 = 0; _i18 < _list16.size; ++_i18)
+                  org.apache.thrift.protocol.TList _list8 = iprot.readListBegin();
+                  struct.info_codes = new java.util.ArrayList<InfoCode>(_list8.size);
+                  @org.apache.thrift.annotation.Nullable InfoCode _elem9;
+                  for (int _i10 = 0; _i10 < _list8.size; ++_i10)
                   {
-                    _elem17 = InfoCode.findByValue(iprot.readI32());
-                    if (_elem17 != null)
+                    _elem9 = InfoCode.findByValue(iprot.readI32());
+                    if (_elem9 != null)
                     {
-                      struct.info_codes.add(_elem17);
+                      struct.info_codes.add(_elem9);
                     }
                   }
                   iprot.readListEnd();
@@ -19718,9 +19718,9 @@ public class DatabaseDriver {
           oprot.writeFieldBegin(INFO_CODES_FIELD_DESC);
           {
             oprot.writeListBegin(new org.apache.thrift.protocol.TList(org.apache.thrift.protocol.TType.I32, struct.info_codes.size()));
-            for (InfoCode _iter19 : struct.info_codes)
+            for (InfoCode _iter11 : struct.info_codes)
             {
-              oprot.writeI32(_iter19.getValue());
+              oprot.writeI32(_iter11.getValue());
             }
             oprot.writeListEnd();
           }
@@ -19758,9 +19758,9 @@ public class DatabaseDriver {
         if (struct.isSetInfo_codes()) {
           {
             oprot.writeI32(struct.info_codes.size());
-            for (InfoCode _iter20 : struct.info_codes)
+            for (InfoCode _iter12 : struct.info_codes)
             {
-              oprot.writeI32(_iter20.getValue());
+              oprot.writeI32(_iter12.getValue());
             }
           }
         }
@@ -19777,15 +19777,15 @@ public class DatabaseDriver {
         }
         if (incoming.get(1)) {
           {
-            org.apache.thrift.protocol.TList _list21 = iprot.readListBegin(org.apache.thrift.protocol.TType.I32);
-            struct.info_codes = new java.util.ArrayList<InfoCode>(_list21.size);
-            @org.apache.thrift.annotation.Nullable InfoCode _elem22;
-            for (int _i23 = 0; _i23 < _list21.size; ++_i23)
+            org.apache.thrift.protocol.TList _list13 = iprot.readListBegin(org.apache.thrift.protocol.TType.I32);
+            struct.info_codes = new java.util.ArrayList<InfoCode>(_list13.size);
+            @org.apache.thrift.annotation.Nullable InfoCode _elem14;
+            for (int _i15 = 0; _i15 < _list13.size; ++_i15)
             {
-              _elem22 = InfoCode.findByValue(iprot.readI32());
-              if (_elem22 != null)
+              _elem14 = InfoCode.findByValue(iprot.readI32());
+              if (_elem14 != null)
               {
-                struct.info_codes.add(_elem22);
+                struct.info_codes.add(_elem14);
               }
             }
           }
@@ -21157,13 +21157,13 @@ public class DatabaseDriver {
             case 6: // TABLE_TYPE
               if (schemeField.type == org.apache.thrift.protocol.TType.LIST) {
                 {
-                  org.apache.thrift.protocol.TList _list24 = iprot.readListBegin();
-                  struct.table_type = new java.util.ArrayList<java.lang.String>(_list24.size);
-                  @org.apache.thrift.annotation.Nullable java.lang.String _elem25;
-                  for (int _i26 = 0; _i26 < _list24.size; ++_i26)
+                  org.apache.thrift.protocol.TList _list16 = iprot.readListBegin();
+                  struct.table_type = new java.util.ArrayList<java.lang.String>(_list16.size);
+                  @org.apache.thrift.annotation.Nullable java.lang.String _elem17;
+                  for (int _i18 = 0; _i18 < _list16.size; ++_i18)
                   {
-                    _elem25 = iprot.readString();
-                    struct.table_type.add(_elem25);
+                    _elem17 = iprot.readString();
+                    struct.table_type.add(_elem17);
                   }
                   iprot.readListEnd();
                 }
@@ -21223,9 +21223,9 @@ public class DatabaseDriver {
           oprot.writeFieldBegin(TABLE_TYPE_FIELD_DESC);
           {
             oprot.writeListBegin(new org.apache.thrift.protocol.TList(org.apache.thrift.protocol.TType.STRING, struct.table_type.size()));
-            for (java.lang.String _iter27 : struct.table_type)
+            for (java.lang.String _iter19 : struct.table_type)
             {
-              oprot.writeString(_iter27);
+              oprot.writeString(_iter19);
             }
             oprot.writeListEnd();
           }
@@ -21295,9 +21295,9 @@ public class DatabaseDriver {
         if (struct.isSetTable_type()) {
           {
             oprot.writeI32(struct.table_type.size());
-            for (java.lang.String _iter28 : struct.table_type)
+            for (java.lang.String _iter20 : struct.table_type)
             {
-              oprot.writeString(_iter28);
+              oprot.writeString(_iter20);
             }
           }
         }
@@ -21333,13 +21333,13 @@ public class DatabaseDriver {
         }
         if (incoming.get(5)) {
           {
-            org.apache.thrift.protocol.TList _list29 = iprot.readListBegin(org.apache.thrift.protocol.TType.STRING);
-            struct.table_type = new java.util.ArrayList<java.lang.String>(_list29.size);
-            @org.apache.thrift.annotation.Nullable java.lang.String _elem30;
-            for (int _i31 = 0; _i31 < _list29.size; ++_i31)
+            org.apache.thrift.protocol.TList _list21 = iprot.readListBegin(org.apache.thrift.protocol.TType.STRING);
+            struct.table_type = new java.util.ArrayList<java.lang.String>(_list21.size);
+            @org.apache.thrift.annotation.Nullable java.lang.String _elem22;
+            for (int _i23 = 0; _i23 < _list21.size; ++_i23)
             {
-              _elem30 = iprot.readString();
-              struct.table_type.add(_elem30);
+              _elem22 = iprot.readString();
+              struct.table_type.add(_elem22);
             }
           }
           struct.setTable_typeIsSet(true);

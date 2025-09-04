@@ -4801,10 +4801,10 @@ class connectionGetInfo_args(object):
             elif fid == 2:
                 if ftype == TType.LIST:
                     self.info_codes = []
-                    (_etype17, _size14) = iprot.readListBegin()
-                    for _i18 in range(_size14):
-                        _elem19 = iprot.readI32()
-                        self.info_codes.append(_elem19)
+                    (_etype10, _size7) = iprot.readListBegin()
+                    for _i11 in range(_size7):
+                        _elem12 = iprot.readI32()
+                        self.info_codes.append(_elem12)
                     iprot.readListEnd()
                 else:
                     iprot.skip(ftype)
@@ -4826,8 +4826,8 @@ class connectionGetInfo_args(object):
         if self.info_codes is not None:
             oprot.writeFieldBegin('info_codes', TType.LIST, 2)
             oprot.writeListBegin(TType.I32, len(self.info_codes))
-            for iter20 in self.info_codes:
-                oprot.writeI32(iter20)
+            for iter13 in self.info_codes:
+                oprot.writeI32(iter13)
             oprot.writeListEnd()
             oprot.writeFieldEnd()
         oprot.writeFieldStop()
@@ -4991,10 +4991,10 @@ class connectionGetObjects_args(object):
             elif fid == 6:
                 if ftype == TType.LIST:
                     self.table_type = []
-                    (_etype24, _size21) = iprot.readListBegin()
-                    for _i25 in range(_size21):
-                        _elem26 = iprot.readString().decode('utf-8', errors='replace') if sys.version_info[0] == 2 else iprot.readString()
-                        self.table_type.append(_elem26)
+                    (_etype17, _size14) = iprot.readListBegin()
+                    for _i18 in range(_size14):
+                        _elem19 = iprot.readString().decode('utf-8', errors='replace') if sys.version_info[0] == 2 else iprot.readString()
+                        self.table_type.append(_elem19)
                     iprot.readListEnd()
                 else:
                     iprot.skip(ftype)
@@ -5037,8 +5037,8 @@ class connectionGetObjects_args(object):
         if self.table_type is not None:
             oprot.writeFieldBegin('table_type', TType.LIST, 6)
             oprot.writeListBegin(TType.STRING, len(self.table_type))
-            for iter27 in self.table_type:
-                oprot.writeString(iter27.encode('utf-8') if sys.version_info[0] == 2 else iter27)
+            for iter20 in self.table_type:
+                oprot.writeString(iter20.encode('utf-8') if sys.version_info[0] == 2 else iter20)
             oprot.writeListEnd()
             oprot.writeFieldEnd()
         if self.column_name is not None:

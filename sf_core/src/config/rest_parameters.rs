@@ -1,8 +1,9 @@
 use std::fs;
 
+use crate::config::InvalidParameterValueSnafu;
 use crate::config::settings::Setting;
 use crate::config::settings::Settings;
-use crate::config::{ConfigError, InvalidArgumentSnafu, MissingParameterSnafu};
+use crate::config::{ConfigError, MissingParameterSnafu};
 use snafu::OptionExt;
 
 fn get_server_url(settings: &dyn Settings) -> Result<String, ConfigError> {
@@ -117,9 +118,11 @@ pub enum LoginMethod {
 impl LoginMethod {
     fn read_private_key(settings: &dyn Settings) -> Result<String, ConfigError> {
         if let Some(private_key_file) = settings.get_string("private_key_file") {
-            let private_key = fs::read_to_string(private_key_file).map_err(|e| {
-                InvalidArgumentSnafu {
-                    argument: format!("Could not read private key file: {e}"),
+            let private_key = fs::read_to_string(private_key_file.clone()).map_err(|e| {
+                InvalidParameterValueSnafu {
+                    parameter: "private_key_file",
+                    value: private_key_file,
+                    explanation: format!("Could not read private key file: {e}"),
                 }
                 .build()
             })?;
@@ -133,10 +136,8 @@ impl LoginMethod {
     }
 
     pub fn from_settings(settings: &dyn Settings) -> Result<Self, ConfigError> {
-        match settings
-            .get_string("authenticator")
-            .unwrap_or_default()
-            .as_str()
+        let authenticator = settings.get_string("authenticator").unwrap_or_default();
+        match authenticator.as_str()
         {
             "SNOWFLAKE_JWT" => Ok(Self::PrivateKey {
                 username: settings
@@ -163,10 +164,12 @@ impl LoginMethod {
                     .get_string("token")
                     .context(MissingParameterSnafu { parameter: "token" })?,
             }),
-            _ => Err(InvalidArgumentSnafu {
-                argument: "Invalid authenticator",
+            _ => InvalidParameterValueSnafu {
+                parameter: "authenticator",
+                value: authenticator,
+                explanation: "Allowed values are SNOWFLAKE_JWT, SNOWFLAKE_PASSWORD, and PROGRAMMATIC_ACCESS_TOKEN",
             }
-            .fail()?),
+            .fail()?,
         }
     }
 }

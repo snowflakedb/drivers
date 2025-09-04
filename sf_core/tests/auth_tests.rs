@@ -42,14 +42,14 @@ impl Drop for Pat {
 #[test]
 fn test_pat_as_password() {
     setup_logging();
-    let pat = Pat::acquire();
+    let _pat = Pat::acquire();
     let mut client = SnowflakeTestClient::with_default_params();
     client
         .driver
         .connection_set_option_string(
             client.conn_handle.clone(),
             "password".to_string(),
-            pat.token_secret.clone(),
+            "invalid_password".to_string(),
         )
         .unwrap();
     client

@@ -25,9 +25,16 @@ FetchContent_Declare(
 
 FetchContent_MakeAvailable(picojson)
 
-if (SKIP_NEW_TESTS STREQUAL "TRUE")
+if (NOT DEFINED DRIVER_TYPE)
+  message(WARNING "DRIVER_TYPE not defined defaulting to NEW")
+  set(DRIVER_TYPE "NEW")
+endif()
+
+if (DRIVER_TYPE STREQUAL "OLD")
   set(CATCH_TAGS "~[new_odbc]")
-else()
+endif()
+
+if (DRIVER_TYPE STREQUAL "NEW")
   set(CATCH_TAGS "")
 endif()
 

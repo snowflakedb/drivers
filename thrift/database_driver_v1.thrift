@@ -1,7 +1,7 @@
 
 enum StatusCode {
   OK = 0,
-  UNKNOWN = 1,
+  AUTHENTICATION_ERROR = 1,
   NOT_IMPLEMENTED = 2,
   NOT_FOUND = 3,
   ALREADY_EXISTS = 4,
@@ -11,7 +11,12 @@ enum StatusCode {
   IO = 8,
   CANCELLED = 9,
   UNAUTHENTICATED = 10,
-  UNAUTHORIZED = 11
+  UNAUTHORIZED = 11,
+  GENERIC_ERROR = 12,
+  INTERNAL_ERROR = 13,
+  MISSING_PARAMETER = 14,
+  INVALID_PARAMETER_VALUE = 15,
+  LOGIN_ERROR = 16,
 }
 
 enum InfoCode {
@@ -33,12 +38,45 @@ struct ErrorDetail {
   2: required string value;
 }
 
+struct AuthenticationError {
+  1: required string detail;
+}
+
+struct GenericError {
+}
+
+struct InternalError {
+}
+
+struct LoginError {
+  1: required string message
+  2: required i32 code
+}
+
+struct MissingParameter {
+  1: required string parameter
+}
+
+struct InvalidParameterValue {
+  1: required string parameter
+  2: required string value
+  3: optional string explanation
+}
+
+union DriverError {
+  1: AuthenticationError authError;
+  2: GenericError genericError;
+  3: InternalError internalError;
+  4: MissingParameter missingParameter;
+  5: InvalidParameterValue invalidParameterValue;
+  6: LoginError loginError;
+}
+
 exception DriverException {
   1: required string message;
   2: required StatusCode status_code;
-  3: optional i32 vendor_code;
-  4: optional string sqlstate;
-  5: optional list<ErrorDetail> details;
+  3: required DriverError error;
+  4: required string report;
 }
 
 struct ExecuteResult {

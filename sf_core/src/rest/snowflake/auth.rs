@@ -109,25 +109,25 @@ pub struct AuthResponseMain {
     #[serde(rename = "idTokenValidityInSeconds")]
     pub _id_token_validity: Option<u64>,
     #[serde(rename = "displayUserName")]
-    pub _display_user_name: String,
+    pub _display_user_name: Option<String>,
     #[serde(rename = "serverVersion")]
-    pub _server_version: String,
+    pub _server_version: Option<String>,
     #[serde(rename = "firstLogin")]
-    pub _first_login: bool,
+    pub _first_login: Option<bool>,
     #[serde(rename = "remMeToken")]
     pub _rem_me_token: Option<String>,
     #[serde(rename = "remMeValidityInSeconds")]
-    pub _rem_me_validity: u64,
+    pub _rem_me_validity: Option<u64>,
     #[serde(rename = "healthCheckInterval")]
-    pub _health_check_interval: u64,
+    pub _health_check_interval: Option<u64>,
     #[serde(rename = "newClientForUpgrade")]
     pub _new_client_for_upgrade: Option<String>,
     #[serde(rename = "sessionId")]
-    pub _session_id: i64,
+    pub _session_id: Option<i64>,
     #[serde(rename = "parameters")]
     pub _parameters: Option<Vec<NameValueParameter>>,
     #[serde(rename = "sessionInfo")]
-    pub _session_info: AuthResponseSessionInfo,
+    pub _session_info: Option<AuthResponseSessionInfo>,
     #[serde(rename = "tokenUrl")]
     pub _token_url: Option<String>,
     #[serde(rename = "ssoUrl")]

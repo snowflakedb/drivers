@@ -5,7 +5,6 @@ mod read_arrow;
 mod write_arrow;
 
 extern crate sf_core;
-extern crate thiserror;
 extern crate thrift;
 extern crate tracing;
 extern crate tracing_subscriber;

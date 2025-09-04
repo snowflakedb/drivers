@@ -1,4 +1,4 @@
-use crate::api::OdbcError;
+use crate::api::{OdbcError, diagnostic::DiagnosticInfo};
 use crate::cdata_types::CDataType;
 use arrow::{array::RecordBatch, ffi_stream::ArrowArrayStreamReader};
 use odbc_sys as sql;
@@ -20,18 +20,19 @@ impl ToSqlReturn for OdbcResult<()> {
     fn to_sql_return(self) -> sql::SqlReturn {
         match self {
             Ok(_) => sql::SqlReturn::SUCCESS,
-            Err(OdbcError::NoMoreData) => sql::SqlReturn::NO_DATA,
-            Err(OdbcError::InvalidHandle) => sql::SqlReturn::INVALID_HANDLE,
+            Err(OdbcError::NoMoreData { .. }) => sql::SqlReturn::NO_DATA,
+            Err(OdbcError::InvalidHandle { .. }) => sql::SqlReturn::INVALID_HANDLE,
             Err(_) => sql::SqlReturn::ERROR,
         }
     }
-    fn to_sql_code(self) -> i16 {
+    fn to_sql_code(self) -> sql::RetCode {
         self.to_sql_return().0
     }
 }
 
 pub struct Environment {
     pub odbc_version: sql::Integer,
+    pub diagnostic_info: DiagnosticInfo,
 }
 
 pub enum ConnectionState {
@@ -46,6 +47,7 @@ pub enum ConnectionState {
 
 pub struct Connection {
     pub state: ConnectionState,
+    pub diagnostic_info: DiagnosticInfo,
 }
 
 #[derive(Debug, Clone)]
@@ -75,6 +77,7 @@ pub struct Statement<'a> {
     pub stmt_handle: StatementHandle,
     pub state: StatementState,
     pub parameter_bindings: HashMap<u16, ParameterBinding>,
+    pub diagnostic_info: DiagnosticInfo,
 }
 
 // Helper functions for handle conversion

@@ -1,4 +1,4 @@
-use crate::api::{OdbcError, OdbcResult, env_from_handle};
+use crate::api::{OdbcResult, env_from_handle, error::UnknownAttributeSnafu};
 use odbc_sys as sql;
 use tracing;
 
@@ -21,7 +21,7 @@ pub fn set_env_attribute(
     tracing::debug!("Setting environment attribute: {}", attribute);
 
     let env = env_from_handle(environment_handle);
-    let attr = to_env_attr(attribute).ok_or(OdbcError::UnknownAttribute(attribute))?;
+    let attr = to_env_attr(attribute).ok_or(UnknownAttributeSnafu { attribute }.build())?;
 
     match attr {
         sql::EnvironmentAttribute::OdbcVersion => {
@@ -32,7 +32,7 @@ pub fn set_env_attribute(
         }
         _ => {
             tracing::error!("Unhandled environment attribute: {:?}", attribute);
-            Err(OdbcError::UnknownAttribute(attribute))
+            UnknownAttributeSnafu { attribute }.fail()
         }
     }
 }
@@ -46,7 +46,7 @@ pub fn get_env_attribute(
     tracing::debug!("Getting environment attribute: {}", attribute);
 
     let env = env_from_handle(environment_handle);
-    let attr = to_env_attr(attribute).ok_or(OdbcError::UnknownAttribute(attribute))?;
+    let attr = to_env_attr(attribute).ok_or(UnknownAttributeSnafu { attribute }.build())?;
 
     match attr {
         sql::EnvironmentAttribute::OdbcVersion => {
@@ -60,7 +60,7 @@ pub fn get_env_attribute(
         }
         _ => {
             tracing::error!("Unhandled environment attribute: {:?}", attribute);
-            Err(OdbcError::UnknownAttribute(attribute))
+            UnknownAttributeSnafu { attribute }.fail()
         }
     }
 }

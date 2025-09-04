@@ -12,9 +12,8 @@ public class DriverException extends org.apache.thrift.TException implements org
 
   private static final org.apache.thrift.protocol.TField MESSAGE_FIELD_DESC = new org.apache.thrift.protocol.TField("message", org.apache.thrift.protocol.TType.STRING, (short)1);
   private static final org.apache.thrift.protocol.TField STATUS_CODE_FIELD_DESC = new org.apache.thrift.protocol.TField("status_code", org.apache.thrift.protocol.TType.I32, (short)2);
-  private static final org.apache.thrift.protocol.TField VENDOR_CODE_FIELD_DESC = new org.apache.thrift.protocol.TField("vendor_code", org.apache.thrift.protocol.TType.I32, (short)3);
-  private static final org.apache.thrift.protocol.TField SQLSTATE_FIELD_DESC = new org.apache.thrift.protocol.TField("sqlstate", org.apache.thrift.protocol.TType.STRING, (short)4);
-  private static final org.apache.thrift.protocol.TField DETAILS_FIELD_DESC = new org.apache.thrift.protocol.TField("details", org.apache.thrift.protocol.TType.LIST, (short)5);
+  private static final org.apache.thrift.protocol.TField ERROR_FIELD_DESC = new org.apache.thrift.protocol.TField("error", org.apache.thrift.protocol.TType.STRUCT, (short)3);
+  private static final org.apache.thrift.protocol.TField REPORT_FIELD_DESC = new org.apache.thrift.protocol.TField("report", org.apache.thrift.protocol.TType.STRING, (short)4);
 
   private static final org.apache.thrift.scheme.SchemeFactory STANDARD_SCHEME_FACTORY = new DriverExceptionStandardSchemeFactory();
   private static final org.apache.thrift.scheme.SchemeFactory TUPLE_SCHEME_FACTORY = new DriverExceptionTupleSchemeFactory();
@@ -25,9 +24,8 @@ public class DriverException extends org.apache.thrift.TException implements org
    * @see StatusCode
    */
   public @org.apache.thrift.annotation.Nullable StatusCode status_code; // required
-  public int vendor_code; // optional
-  public @org.apache.thrift.annotation.Nullable java.lang.String sqlstate; // optional
-  public @org.apache.thrift.annotation.Nullable java.util.List<ErrorDetail> details; // optional
+  public @org.apache.thrift.annotation.Nullable DriverError error; // required
+  public @org.apache.thrift.annotation.Nullable java.lang.String report; // required
 
   /** The set of fields this struct contains, along with convenience methods for finding and manipulating them. */
   public enum _Fields implements org.apache.thrift.TFieldIdEnum {
@@ -37,9 +35,8 @@ public class DriverException extends org.apache.thrift.TException implements org
      * @see StatusCode
      */
     STATUS_CODE((short)2, "status_code"),
-    VENDOR_CODE((short)3, "vendor_code"),
-    SQLSTATE((short)4, "sqlstate"),
-    DETAILS((short)5, "details");
+    ERROR((short)3, "error"),
+    REPORT((short)4, "report");
 
     private static final java.util.Map<java.lang.String, _Fields> byName = new java.util.HashMap<java.lang.String, _Fields>();
 
@@ -59,12 +56,10 @@ public class DriverException extends org.apache.thrift.TException implements org
           return MESSAGE;
         case 2: // STATUS_CODE
           return STATUS_CODE;
-        case 3: // VENDOR_CODE
-          return VENDOR_CODE;
-        case 4: // SQLSTATE
-          return SQLSTATE;
-        case 5: // DETAILS
-          return DETAILS;
+        case 3: // ERROR
+          return ERROR;
+        case 4: // REPORT
+          return REPORT;
         default:
           return null;
       }
@@ -108,9 +103,6 @@ public class DriverException extends org.apache.thrift.TException implements org
   }
 
   // isset id assignments
-  private static final int __VENDOR_CODE_ISSET_ID = 0;
-  private byte __isset_bitfield = 0;
-  private static final _Fields[] optionals = {_Fields.VENDOR_CODE,_Fields.SQLSTATE,_Fields.DETAILS};
   public static final java.util.Map<_Fields, org.apache.thrift.meta_data.FieldMetaData> metaDataMap;
   static {
     java.util.Map<_Fields, org.apache.thrift.meta_data.FieldMetaData> tmpMap = new java.util.EnumMap<_Fields, org.apache.thrift.meta_data.FieldMetaData>(_Fields.class);
@@ -118,13 +110,10 @@ public class DriverException extends org.apache.thrift.TException implements org
         new org.apache.thrift.meta_data.FieldValueMetaData(org.apache.thrift.protocol.TType.STRING)));
     tmpMap.put(_Fields.STATUS_CODE, new org.apache.thrift.meta_data.FieldMetaData("status_code", org.apache.thrift.TFieldRequirementType.REQUIRED, 
         new org.apache.thrift.meta_data.EnumMetaData(org.apache.thrift.protocol.TType.ENUM, StatusCode.class)));
-    tmpMap.put(_Fields.VENDOR_CODE, new org.apache.thrift.meta_data.FieldMetaData("vendor_code", org.apache.thrift.TFieldRequirementType.OPTIONAL, 
-        new org.apache.thrift.meta_data.FieldValueMetaData(org.apache.thrift.protocol.TType.I32)));
-    tmpMap.put(_Fields.SQLSTATE, new org.apache.thrift.meta_data.FieldMetaData("sqlstate", org.apache.thrift.TFieldRequirementType.OPTIONAL, 
+    tmpMap.put(_Fields.ERROR, new org.apache.thrift.meta_data.FieldMetaData("error", org.apache.thrift.TFieldRequirementType.REQUIRED, 
+        new org.apache.thrift.meta_data.StructMetaData(org.apache.thrift.protocol.TType.STRUCT, DriverError.class)));
+    tmpMap.put(_Fields.REPORT, new org.apache.thrift.meta_data.FieldMetaData("report", org.apache.thrift.TFieldRequirementType.REQUIRED, 
         new org.apache.thrift.meta_data.FieldValueMetaData(org.apache.thrift.protocol.TType.STRING)));
-    tmpMap.put(_Fields.DETAILS, new org.apache.thrift.meta_data.FieldMetaData("details", org.apache.thrift.TFieldRequirementType.OPTIONAL, 
-        new org.apache.thrift.meta_data.ListMetaData(org.apache.thrift.protocol.TType.LIST, 
-            new org.apache.thrift.meta_data.StructMetaData(org.apache.thrift.protocol.TType.STRUCT, ErrorDetail.class))));
     metaDataMap = java.util.Collections.unmodifiableMap(tmpMap);
     org.apache.thrift.meta_data.FieldMetaData.addStructMetaDataMap(DriverException.class, metaDataMap);
   }
@@ -134,34 +123,32 @@ public class DriverException extends org.apache.thrift.TException implements org
 
   public DriverException(
     java.lang.String message,
-    StatusCode status_code)
+    StatusCode status_code,
+    DriverError error,
+    java.lang.String report)
   {
     this();
     this.message = message;
     this.status_code = status_code;
+    this.error = error;
+    this.report = report;
   }
 
   /**
    * Performs a deep copy on <i>other</i>.
    */
   public DriverException(DriverException other) {
-    __isset_bitfield = other.__isset_bitfield;
     if (other.isSetMessage()) {
       this.message = other.message;
     }
     if (other.isSetStatus_code()) {
       this.status_code = other.status_code;
     }
-    this.vendor_code = other.vendor_code;
-    if (other.isSetSqlstate()) {
-      this.sqlstate = other.sqlstate;
+    if (other.isSetError()) {
+      this.error = new DriverError(other.error);
     }
-    if (other.isSetDetails()) {
-      java.util.List<ErrorDetail> __this__details = new java.util.ArrayList<ErrorDetail>(other.details.size());
-      for (ErrorDetail other_element : other.details) {
-        __this__details.add(new ErrorDetail(other_element));
-      }
-      this.details = __this__details;
+    if (other.isSetReport()) {
+      this.report = other.report;
     }
   }
 
@@ -174,10 +161,8 @@ public class DriverException extends org.apache.thrift.TException implements org
   public void clear() {
     this.message = null;
     this.status_code = null;
-    setVendor_codeIsSet(false);
-    this.vendor_code = 0;
-    this.sqlstate = null;
-    this.details = null;
+    this.error = null;
+    this.report = null;
   }
 
   @org.apache.thrift.annotation.Nullable
@@ -238,92 +223,53 @@ public class DriverException extends org.apache.thrift.TException implements org
     }
   }
 
-  public int getVendor_code() {
-    return this.vendor_code;
-  }
-
-  public DriverException setVendor_code(int vendor_code) {
-    this.vendor_code = vendor_code;
-    setVendor_codeIsSet(true);
-    return this;
-  }
-
-  public void unsetVendor_code() {
-    __isset_bitfield = org.apache.thrift.EncodingUtils.clearBit(__isset_bitfield, __VENDOR_CODE_ISSET_ID);
-  }
-
-  /** Returns true if field vendor_code is set (has been assigned a value) and false otherwise */
-  public boolean isSetVendor_code() {
-    return org.apache.thrift.EncodingUtils.testBit(__isset_bitfield, __VENDOR_CODE_ISSET_ID);
-  }
-
-  public void setVendor_codeIsSet(boolean value) {
-    __isset_bitfield = org.apache.thrift.EncodingUtils.setBit(__isset_bitfield, __VENDOR_CODE_ISSET_ID, value);
-  }
-
   @org.apache.thrift.annotation.Nullable
-  public java.lang.String getSqlstate() {
-    return this.sqlstate;
+  public DriverError getError() {
+    return this.error;
   }
 
-  public DriverException setSqlstate(@org.apache.thrift.annotation.Nullable java.lang.String sqlstate) {
-    this.sqlstate = sqlstate;
+  public DriverException setError(@org.apache.thrift.annotation.Nullable DriverError error) {
+    this.error = error;
     return this;
   }
 
-  public void unsetSqlstate() {
-    this.sqlstate = null;
+  public void unsetError() {
+    this.error = null;
   }
 
-  /** Returns true if field sqlstate is set (has been assigned a value) and false otherwise */
-  public boolean isSetSqlstate() {
-    return this.sqlstate != null;
+  /** Returns true if field error is set (has been assigned a value) and false otherwise */
+  public boolean isSetError() {
+    return this.error != null;
   }
 
-  public void setSqlstateIsSet(boolean value) {
+  public void setErrorIsSet(boolean value) {
     if (!value) {
-      this.sqlstate = null;
+      this.error = null;
     }
   }
 
-  public int getDetailsSize() {
-    return (this.details == null) ? 0 : this.details.size();
-  }
-
   @org.apache.thrift.annotation.Nullable
-  public java.util.Iterator<ErrorDetail> getDetailsIterator() {
-    return (this.details == null) ? null : this.details.iterator();
+  public java.lang.String getReport() {
+    return this.report;
   }
 
-  public void addToDetails(ErrorDetail elem) {
-    if (this.details == null) {
-      this.details = new java.util.ArrayList<ErrorDetail>();
-    }
-    this.details.add(elem);
-  }
-
-  @org.apache.thrift.annotation.Nullable
-  public java.util.List<ErrorDetail> getDetails() {
-    return this.details;
-  }
-
-  public DriverException setDetails(@org.apache.thrift.annotation.Nullable java.util.List<ErrorDetail> details) {
-    this.details = details;
+  public DriverException setReport(@org.apache.thrift.annotation.Nullable java.lang.String report) {
+    this.report = report;
     return this;
   }
 
-  public void unsetDetails() {
-    this.details = null;
+  public void unsetReport() {
+    this.report = null;
   }
 
-  /** Returns true if field details is set (has been assigned a value) and false otherwise */
-  public boolean isSetDetails() {
-    return this.details != null;
+  /** Returns true if field report is set (has been assigned a value) and false otherwise */
+  public boolean isSetReport() {
+    return this.report != null;
   }
 
-  public void setDetailsIsSet(boolean value) {
+  public void setReportIsSet(boolean value) {
     if (!value) {
-      this.details = null;
+      this.report = null;
     }
   }
 
@@ -346,27 +292,19 @@ public class DriverException extends org.apache.thrift.TException implements org
       }
       break;
 
-    case VENDOR_CODE:
+    case ERROR:
       if (value == null) {
-        unsetVendor_code();
+        unsetError();
       } else {
-        setVendor_code((java.lang.Integer)value);
+        setError((DriverError)value);
       }
       break;
 
-    case SQLSTATE:
+    case REPORT:
       if (value == null) {
-        unsetSqlstate();
+        unsetReport();
       } else {
-        setSqlstate((java.lang.String)value);
-      }
-      break;
-
-    case DETAILS:
-      if (value == null) {
-        unsetDetails();
-      } else {
-        setDetails((java.util.List<ErrorDetail>)value);
+        setReport((java.lang.String)value);
       }
       break;
 
@@ -383,14 +321,11 @@ public class DriverException extends org.apache.thrift.TException implements org
     case STATUS_CODE:
       return getStatus_code();
 
-    case VENDOR_CODE:
-      return getVendor_code();
+    case ERROR:
+      return getError();
 
-    case SQLSTATE:
-      return getSqlstate();
-
-    case DETAILS:
-      return getDetails();
+    case REPORT:
+      return getReport();
 
     }
     throw new java.lang.IllegalStateException();
@@ -408,12 +343,10 @@ public class DriverException extends org.apache.thrift.TException implements org
       return isSetMessage();
     case STATUS_CODE:
       return isSetStatus_code();
-    case VENDOR_CODE:
-      return isSetVendor_code();
-    case SQLSTATE:
-      return isSetSqlstate();
-    case DETAILS:
-      return isSetDetails();
+    case ERROR:
+      return isSetError();
+    case REPORT:
+      return isSetReport();
     }
     throw new java.lang.IllegalStateException();
   }
@@ -449,30 +382,21 @@ public class DriverException extends org.apache.thrift.TException implements org
         return false;
     }
 
-    boolean this_present_vendor_code = true && this.isSetVendor_code();
-    boolean that_present_vendor_code = true && that.isSetVendor_code();
-    if (this_present_vendor_code || that_present_vendor_code) {
-      if (!(this_present_vendor_code && that_present_vendor_code))
+    boolean this_present_error = true && this.isSetError();
+    boolean that_present_error = true && that.isSetError();
+    if (this_present_error || that_present_error) {
+      if (!(this_present_error && that_present_error))
         return false;
-      if (this.vendor_code != that.vendor_code)
-        return false;
-    }
-
-    boolean this_present_sqlstate = true && this.isSetSqlstate();
-    boolean that_present_sqlstate = true && that.isSetSqlstate();
-    if (this_present_sqlstate || that_present_sqlstate) {
-      if (!(this_present_sqlstate && that_present_sqlstate))
-        return false;
-      if (!this.sqlstate.equals(that.sqlstate))
+      if (!this.error.equals(that.error))
         return false;
     }
 
-    boolean this_present_details = true && this.isSetDetails();
-    boolean that_present_details = true && that.isSetDetails();
-    if (this_present_details || that_present_details) {
-      if (!(this_present_details && that_present_details))
+    boolean this_present_report = true && this.isSetReport();
+    boolean that_present_report = true && that.isSetReport();
+    if (this_present_report || that_present_report) {
+      if (!(this_present_report && that_present_report))
         return false;
-      if (!this.details.equals(that.details))
+      if (!this.report.equals(that.report))
         return false;
     }
 
@@ -491,17 +415,13 @@ public class DriverException extends org.apache.thrift.TException implements org
     if (isSetStatus_code())
       hashCode = hashCode * 8191 + status_code.getValue();
 
-    hashCode = hashCode * 8191 + ((isSetVendor_code()) ? 131071 : 524287);
-    if (isSetVendor_code())
-      hashCode = hashCode * 8191 + vendor_code;
+    hashCode = hashCode * 8191 + ((isSetError()) ? 131071 : 524287);
+    if (isSetError())
+      hashCode = hashCode * 8191 + error.hashCode();
 
-    hashCode = hashCode * 8191 + ((isSetSqlstate()) ? 131071 : 524287);
-    if (isSetSqlstate())
-      hashCode = hashCode * 8191 + sqlstate.hashCode();
-
-    hashCode = hashCode * 8191 + ((isSetDetails()) ? 131071 : 524287);
-    if (isSetDetails())
-      hashCode = hashCode * 8191 + details.hashCode();
+    hashCode = hashCode * 8191 + ((isSetReport()) ? 131071 : 524287);
+    if (isSetReport())
+      hashCode = hashCode * 8191 + report.hashCode();
 
     return hashCode;
   }
@@ -534,32 +454,22 @@ public class DriverException extends org.apache.thrift.TException implements org
         return lastComparison;
       }
     }
-    lastComparison = java.lang.Boolean.compare(isSetVendor_code(), other.isSetVendor_code());
+    lastComparison = java.lang.Boolean.compare(isSetError(), other.isSetError());
     if (lastComparison != 0) {
       return lastComparison;
     }
-    if (isSetVendor_code()) {
-      lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.vendor_code, other.vendor_code);
+    if (isSetError()) {
+      lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.error, other.error);
       if (lastComparison != 0) {
         return lastComparison;
       }
     }
-    lastComparison = java.lang.Boolean.compare(isSetSqlstate(), other.isSetSqlstate());
+    lastComparison = java.lang.Boolean.compare(isSetReport(), other.isSetReport());
     if (lastComparison != 0) {
       return lastComparison;
     }
-    if (isSetSqlstate()) {
-      lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.sqlstate, other.sqlstate);
-      if (lastComparison != 0) {
-        return lastComparison;
-      }
-    }
-    lastComparison = java.lang.Boolean.compare(isSetDetails(), other.isSetDetails());
-    if (lastComparison != 0) {
-      return lastComparison;
-    }
-    if (isSetDetails()) {
-      lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.details, other.details);
+    if (isSetReport()) {
+      lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.report, other.report);
       if (lastComparison != 0) {
         return lastComparison;
       }
@@ -603,32 +513,22 @@ public class DriverException extends org.apache.thrift.TException implements org
       sb.append(this.status_code);
     }
     first = false;
-    if (isSetVendor_code()) {
-      if (!first) sb.append(", ");
-      sb.append("vendor_code:");
-      sb.append(this.vendor_code);
-      first = false;
+    if (!first) sb.append(", ");
+    sb.append("error:");
+    if (this.error == null) {
+      sb.append("null");
+    } else {
+      sb.append(this.error);
     }
-    if (isSetSqlstate()) {
-      if (!first) sb.append(", ");
-      sb.append("sqlstate:");
-      if (this.sqlstate == null) {
-        sb.append("null");
-      } else {
-        sb.append(this.sqlstate);
-      }
-      first = false;
+    first = false;
+    if (!first) sb.append(", ");
+    sb.append("report:");
+    if (this.report == null) {
+      sb.append("null");
+    } else {
+      sb.append(this.report);
     }
-    if (isSetDetails()) {
-      if (!first) sb.append(", ");
-      sb.append("details:");
-      if (this.details == null) {
-        sb.append("null");
-      } else {
-        sb.append(this.details);
-      }
-      first = false;
-    }
+    first = false;
     sb.append(")");
     return sb.toString();
   }
@@ -640,6 +540,12 @@ public class DriverException extends org.apache.thrift.TException implements org
     }
     if (status_code == null) {
       throw new org.apache.thrift.protocol.TProtocolException("Required field 'status_code' was not present! Struct: " + toString());
+    }
+    if (error == null) {
+      throw new org.apache.thrift.protocol.TProtocolException("Required field 'error' was not present! Struct: " + toString());
+    }
+    if (report == null) {
+      throw new org.apache.thrift.protocol.TProtocolException("Required field 'report' was not present! Struct: " + toString());
     }
     // check for sub-struct validity
   }
@@ -654,8 +560,6 @@ public class DriverException extends org.apache.thrift.TException implements org
 
   private void readObject(java.io.ObjectInputStream in) throws java.io.IOException, java.lang.ClassNotFoundException {
     try {
-      // it doesn't seem like you should have to do this, but java serialization is wacky, and doesn't call the default constructor.
-      __isset_bitfield = 0;
       read(new org.apache.thrift.protocol.TCompactProtocol(new org.apache.thrift.transport.TIOStreamTransport(in)));
     } catch (org.apache.thrift.TException te) {
       throw new java.io.IOException(te);
@@ -698,37 +602,19 @@ public class DriverException extends org.apache.thrift.TException implements org
               org.apache.thrift.protocol.TProtocolUtil.skip(iprot, schemeField.type);
             }
             break;
-          case 3: // VENDOR_CODE
-            if (schemeField.type == org.apache.thrift.protocol.TType.I32) {
-              struct.vendor_code = iprot.readI32();
-              struct.setVendor_codeIsSet(true);
+          case 3: // ERROR
+            if (schemeField.type == org.apache.thrift.protocol.TType.STRUCT) {
+              struct.error = new DriverError();
+              struct.error.read(iprot);
+              struct.setErrorIsSet(true);
             } else { 
               org.apache.thrift.protocol.TProtocolUtil.skip(iprot, schemeField.type);
             }
             break;
-          case 4: // SQLSTATE
+          case 4: // REPORT
             if (schemeField.type == org.apache.thrift.protocol.TType.STRING) {
-              struct.sqlstate = iprot.readString();
-              struct.setSqlstateIsSet(true);
-            } else { 
-              org.apache.thrift.protocol.TProtocolUtil.skip(iprot, schemeField.type);
-            }
-            break;
-          case 5: // DETAILS
-            if (schemeField.type == org.apache.thrift.protocol.TType.LIST) {
-              {
-                org.apache.thrift.protocol.TList _list0 = iprot.readListBegin();
-                struct.details = new java.util.ArrayList<ErrorDetail>(_list0.size);
-                @org.apache.thrift.annotation.Nullable ErrorDetail _elem1;
-                for (int _i2 = 0; _i2 < _list0.size; ++_i2)
-                {
-                  _elem1 = new ErrorDetail();
-                  _elem1.read(iprot);
-                  struct.details.add(_elem1);
-                }
-                iprot.readListEnd();
-              }
-              struct.setDetailsIsSet(true);
+              struct.report = iprot.readString();
+              struct.setReportIsSet(true);
             } else { 
               org.apache.thrift.protocol.TProtocolUtil.skip(iprot, schemeField.type);
             }
@@ -759,31 +645,15 @@ public class DriverException extends org.apache.thrift.TException implements org
         oprot.writeI32(struct.status_code.getValue());
         oprot.writeFieldEnd();
       }
-      if (struct.isSetVendor_code()) {
-        oprot.writeFieldBegin(VENDOR_CODE_FIELD_DESC);
-        oprot.writeI32(struct.vendor_code);
+      if (struct.error != null) {
+        oprot.writeFieldBegin(ERROR_FIELD_DESC);
+        struct.error.write(oprot);
         oprot.writeFieldEnd();
       }
-      if (struct.sqlstate != null) {
-        if (struct.isSetSqlstate()) {
-          oprot.writeFieldBegin(SQLSTATE_FIELD_DESC);
-          oprot.writeString(struct.sqlstate);
-          oprot.writeFieldEnd();
-        }
-      }
-      if (struct.details != null) {
-        if (struct.isSetDetails()) {
-          oprot.writeFieldBegin(DETAILS_FIELD_DESC);
-          {
-            oprot.writeListBegin(new org.apache.thrift.protocol.TList(org.apache.thrift.protocol.TType.STRUCT, struct.details.size()));
-            for (ErrorDetail _iter3 : struct.details)
-            {
-              _iter3.write(oprot);
-            }
-            oprot.writeListEnd();
-          }
-          oprot.writeFieldEnd();
-        }
+      if (struct.report != null) {
+        oprot.writeFieldBegin(REPORT_FIELD_DESC);
+        oprot.writeString(struct.report);
+        oprot.writeFieldEnd();
       }
       oprot.writeFieldStop();
       oprot.writeStructEnd();
@@ -805,32 +675,8 @@ public class DriverException extends org.apache.thrift.TException implements org
       org.apache.thrift.protocol.TTupleProtocol oprot = (org.apache.thrift.protocol.TTupleProtocol) prot;
       oprot.writeString(struct.message);
       oprot.writeI32(struct.status_code.getValue());
-      java.util.BitSet optionals = new java.util.BitSet();
-      if (struct.isSetVendor_code()) {
-        optionals.set(0);
-      }
-      if (struct.isSetSqlstate()) {
-        optionals.set(1);
-      }
-      if (struct.isSetDetails()) {
-        optionals.set(2);
-      }
-      oprot.writeBitSet(optionals, 3);
-      if (struct.isSetVendor_code()) {
-        oprot.writeI32(struct.vendor_code);
-      }
-      if (struct.isSetSqlstate()) {
-        oprot.writeString(struct.sqlstate);
-      }
-      if (struct.isSetDetails()) {
-        {
-          oprot.writeI32(struct.details.size());
-          for (ErrorDetail _iter4 : struct.details)
-          {
-            _iter4.write(oprot);
-          }
-        }
-      }
+      struct.error.write(oprot);
+      oprot.writeString(struct.report);
     }
 
     @Override
@@ -840,29 +686,11 @@ public class DriverException extends org.apache.thrift.TException implements org
       struct.setMessageIsSet(true);
       struct.status_code = StatusCode.findByValue(iprot.readI32());
       struct.setStatus_codeIsSet(true);
-      java.util.BitSet incoming = iprot.readBitSet(3);
-      if (incoming.get(0)) {
-        struct.vendor_code = iprot.readI32();
-        struct.setVendor_codeIsSet(true);
-      }
-      if (incoming.get(1)) {
-        struct.sqlstate = iprot.readString();
-        struct.setSqlstateIsSet(true);
-      }
-      if (incoming.get(2)) {
-        {
-          org.apache.thrift.protocol.TList _list5 = iprot.readListBegin(org.apache.thrift.protocol.TType.STRUCT);
-          struct.details = new java.util.ArrayList<ErrorDetail>(_list5.size);
-          @org.apache.thrift.annotation.Nullable ErrorDetail _elem6;
-          for (int _i7 = 0; _i7 < _list5.size; ++_i7)
-          {
-            _elem6 = new ErrorDetail();
-            _elem6.read(iprot);
-            struct.details.add(_elem6);
-          }
-        }
-        struct.setDetailsIsSet(true);
-      }
+      struct.error = new DriverError();
+      struct.error.read(iprot);
+      struct.setErrorIsSet(true);
+      struct.report = iprot.readString();
+      struct.setReportIsSet(true);
     }
   }
 

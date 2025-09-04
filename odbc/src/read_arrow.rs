@@ -8,9 +8,10 @@ use arrow::{
 use odbc_sys as sql;
 
 use crate::cdata_types::{CDataType, Double, SBigInt, UBigInt};
+use std::fmt::Display;
 
-#[derive(Debug)]
 #[allow(dead_code)]
+#[derive(Debug)]
 pub enum ExtractError {
     UnsupportedArrowType(DataType),
     UnsupportedTargetType(CDataType),
@@ -18,6 +19,14 @@ pub enum ExtractError {
     ErrorParsingFieldMeta(Box<Field>, String),
     UnsupportedFieldMeta(FieldMeta, DataType),
     ConversionError(String),
+}
+
+impl std::error::Error for ExtractError {}
+
+impl Display for ExtractError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self)
+    }
 }
 
 fn get_value<T: ArrowPrimitiveType>(

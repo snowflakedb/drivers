@@ -31,7 +31,7 @@ pub struct StatusCode(pub i32);
 
 impl StatusCode {
   pub const OK: StatusCode = StatusCode(0);
-  pub const UNKNOWN: StatusCode = StatusCode(1);
+  pub const AUTHENTICATION_ERROR: StatusCode = StatusCode(1);
   pub const NOT_IMPLEMENTED: StatusCode = StatusCode(2);
   pub const NOT_FOUND: StatusCode = StatusCode(3);
   pub const ALREADY_EXISTS: StatusCode = StatusCode(4);
@@ -42,9 +42,14 @@ impl StatusCode {
   pub const CANCELLED: StatusCode = StatusCode(9);
   pub const UNAUTHENTICATED: StatusCode = StatusCode(10);
   pub const UNAUTHORIZED: StatusCode = StatusCode(11);
+  pub const GENERIC_ERROR: StatusCode = StatusCode(12);
+  pub const INTERNAL_ERROR: StatusCode = StatusCode(13);
+  pub const MISSING_PARAMETER: StatusCode = StatusCode(14);
+  pub const INVALID_PARAMETER_VALUE: StatusCode = StatusCode(15);
+  pub const LOGIN_ERROR: StatusCode = StatusCode(16);
   pub const ENUM_VALUES: &'static [Self] = &[
     Self::OK,
-    Self::UNKNOWN,
+    Self::AUTHENTICATION_ERROR,
     Self::NOT_IMPLEMENTED,
     Self::NOT_FOUND,
     Self::ALREADY_EXISTS,
@@ -55,6 +60,11 @@ impl StatusCode {
     Self::CANCELLED,
     Self::UNAUTHENTICATED,
     Self::UNAUTHORIZED,
+    Self::GENERIC_ERROR,
+    Self::INTERNAL_ERROR,
+    Self::MISSING_PARAMETER,
+    Self::INVALID_PARAMETER_VALUE,
+    Self::LOGIN_ERROR,
   ];
 }
 
@@ -73,7 +83,7 @@ impl From<i32> for StatusCode {
   fn from(i: i32) -> Self {
     match i {
       0 => StatusCode::OK,
-      1 => StatusCode::UNKNOWN,
+      1 => StatusCode::AUTHENTICATION_ERROR,
       2 => StatusCode::NOT_IMPLEMENTED,
       3 => StatusCode::NOT_FOUND,
       4 => StatusCode::ALREADY_EXISTS,
@@ -84,6 +94,11 @@ impl From<i32> for StatusCode {
       9 => StatusCode::CANCELLED,
       10 => StatusCode::UNAUTHENTICATED,
       11 => StatusCode::UNAUTHORIZED,
+      12 => StatusCode::GENERIC_ERROR,
+      13 => StatusCode::INTERNAL_ERROR,
+      14 => StatusCode::MISSING_PARAMETER,
+      15 => StatusCode::INVALID_PARAMETER_VALUE,
+      16 => StatusCode::LOGIN_ERROR,
       _ => StatusCode(i)
     }
   }
@@ -254,6 +269,479 @@ impl TSerializable for ErrorDetail {
 }
 
 //
+// AuthenticationError
+//
+
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct AuthenticationError {
+  pub detail: String,
+}
+
+impl AuthenticationError {
+  pub fn new(detail: String) -> AuthenticationError {
+    AuthenticationError {
+      detail,
+    }
+  }
+}
+
+impl TSerializable for AuthenticationError {
+  fn read_from_in_protocol(i_prot: &mut dyn TInputProtocol) -> thrift::Result<AuthenticationError> {
+    i_prot.read_struct_begin()?;
+    let mut f_1: Option<String> = None;
+    loop {
+      let field_ident = i_prot.read_field_begin()?;
+      if field_ident.field_type == TType::Stop {
+        break;
+      }
+      let field_id = field_id(&field_ident)?;
+      match field_id {
+        1 => {
+          let val = i_prot.read_string()?;
+          f_1 = Some(val);
+        },
+        _ => {
+          i_prot.skip(field_ident.field_type)?;
+        },
+      };
+      i_prot.read_field_end()?;
+    }
+    i_prot.read_struct_end()?;
+    verify_required_field_exists("AuthenticationError.detail", &f_1)?;
+    let ret = AuthenticationError {
+      detail: f_1.expect("auto-generated code should have checked for presence of required fields"),
+    };
+    Ok(ret)
+  }
+  fn write_to_out_protocol(&self, o_prot: &mut dyn TOutputProtocol) -> thrift::Result<()> {
+    let struct_ident = TStructIdentifier::new("AuthenticationError");
+    o_prot.write_struct_begin(&struct_ident)?;
+    o_prot.write_field_begin(&TFieldIdentifier::new("detail", TType::String, 1))?;
+    o_prot.write_string(&self.detail)?;
+    o_prot.write_field_end()?;
+    o_prot.write_field_stop()?;
+    o_prot.write_struct_end()
+  }
+}
+
+//
+// GenericError
+//
+
+#[derive(Clone, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct GenericError {
+}
+
+impl GenericError {
+  pub fn new() -> GenericError {
+    GenericError {}
+  }
+}
+
+impl TSerializable for GenericError {
+  fn read_from_in_protocol(i_prot: &mut dyn TInputProtocol) -> thrift::Result<GenericError> {
+    i_prot.read_struct_begin()?;
+    loop {
+      let field_ident = i_prot.read_field_begin()?;
+      if field_ident.field_type == TType::Stop {
+        break;
+      }
+      i_prot.skip(field_ident.field_type)?;
+      i_prot.read_field_end()?;
+    }
+    i_prot.read_struct_end()?;
+    let ret = GenericError {};
+    Ok(ret)
+  }
+  fn write_to_out_protocol(&self, o_prot: &mut dyn TOutputProtocol) -> thrift::Result<()> {
+    let struct_ident = TStructIdentifier::new("GenericError");
+    o_prot.write_struct_begin(&struct_ident)?;
+    o_prot.write_field_stop()?;
+    o_prot.write_struct_end()
+  }
+}
+
+//
+// InternalError
+//
+
+#[derive(Clone, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct InternalError {
+}
+
+impl InternalError {
+  pub fn new() -> InternalError {
+    InternalError {}
+  }
+}
+
+impl TSerializable for InternalError {
+  fn read_from_in_protocol(i_prot: &mut dyn TInputProtocol) -> thrift::Result<InternalError> {
+    i_prot.read_struct_begin()?;
+    loop {
+      let field_ident = i_prot.read_field_begin()?;
+      if field_ident.field_type == TType::Stop {
+        break;
+      }
+      i_prot.skip(field_ident.field_type)?;
+      i_prot.read_field_end()?;
+    }
+    i_prot.read_struct_end()?;
+    let ret = InternalError {};
+    Ok(ret)
+  }
+  fn write_to_out_protocol(&self, o_prot: &mut dyn TOutputProtocol) -> thrift::Result<()> {
+    let struct_ident = TStructIdentifier::new("InternalError");
+    o_prot.write_struct_begin(&struct_ident)?;
+    o_prot.write_field_stop()?;
+    o_prot.write_struct_end()
+  }
+}
+
+//
+// LoginError
+//
+
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct LoginError {
+  pub message: String,
+  pub code: i32,
+}
+
+impl LoginError {
+  pub fn new(message: String, code: i32) -> LoginError {
+    LoginError {
+      message,
+      code,
+    }
+  }
+}
+
+impl TSerializable for LoginError {
+  fn read_from_in_protocol(i_prot: &mut dyn TInputProtocol) -> thrift::Result<LoginError> {
+    i_prot.read_struct_begin()?;
+    let mut f_1: Option<String> = None;
+    let mut f_2: Option<i32> = None;
+    loop {
+      let field_ident = i_prot.read_field_begin()?;
+      if field_ident.field_type == TType::Stop {
+        break;
+      }
+      let field_id = field_id(&field_ident)?;
+      match field_id {
+        1 => {
+          let val = i_prot.read_string()?;
+          f_1 = Some(val);
+        },
+        2 => {
+          let val = i_prot.read_i32()?;
+          f_2 = Some(val);
+        },
+        _ => {
+          i_prot.skip(field_ident.field_type)?;
+        },
+      };
+      i_prot.read_field_end()?;
+    }
+    i_prot.read_struct_end()?;
+    verify_required_field_exists("LoginError.message", &f_1)?;
+    verify_required_field_exists("LoginError.code", &f_2)?;
+    let ret = LoginError {
+      message: f_1.expect("auto-generated code should have checked for presence of required fields"),
+      code: f_2.expect("auto-generated code should have checked for presence of required fields"),
+    };
+    Ok(ret)
+  }
+  fn write_to_out_protocol(&self, o_prot: &mut dyn TOutputProtocol) -> thrift::Result<()> {
+    let struct_ident = TStructIdentifier::new("LoginError");
+    o_prot.write_struct_begin(&struct_ident)?;
+    o_prot.write_field_begin(&TFieldIdentifier::new("message", TType::String, 1))?;
+    o_prot.write_string(&self.message)?;
+    o_prot.write_field_end()?;
+    o_prot.write_field_begin(&TFieldIdentifier::new("code", TType::I32, 2))?;
+    o_prot.write_i32(self.code)?;
+    o_prot.write_field_end()?;
+    o_prot.write_field_stop()?;
+    o_prot.write_struct_end()
+  }
+}
+
+//
+// MissingParameter
+//
+
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct MissingParameter {
+  pub parameter: String,
+}
+
+impl MissingParameter {
+  pub fn new(parameter: String) -> MissingParameter {
+    MissingParameter {
+      parameter,
+    }
+  }
+}
+
+impl TSerializable for MissingParameter {
+  fn read_from_in_protocol(i_prot: &mut dyn TInputProtocol) -> thrift::Result<MissingParameter> {
+    i_prot.read_struct_begin()?;
+    let mut f_1: Option<String> = None;
+    loop {
+      let field_ident = i_prot.read_field_begin()?;
+      if field_ident.field_type == TType::Stop {
+        break;
+      }
+      let field_id = field_id(&field_ident)?;
+      match field_id {
+        1 => {
+          let val = i_prot.read_string()?;
+          f_1 = Some(val);
+        },
+        _ => {
+          i_prot.skip(field_ident.field_type)?;
+        },
+      };
+      i_prot.read_field_end()?;
+    }
+    i_prot.read_struct_end()?;
+    verify_required_field_exists("MissingParameter.parameter", &f_1)?;
+    let ret = MissingParameter {
+      parameter: f_1.expect("auto-generated code should have checked for presence of required fields"),
+    };
+    Ok(ret)
+  }
+  fn write_to_out_protocol(&self, o_prot: &mut dyn TOutputProtocol) -> thrift::Result<()> {
+    let struct_ident = TStructIdentifier::new("MissingParameter");
+    o_prot.write_struct_begin(&struct_ident)?;
+    o_prot.write_field_begin(&TFieldIdentifier::new("parameter", TType::String, 1))?;
+    o_prot.write_string(&self.parameter)?;
+    o_prot.write_field_end()?;
+    o_prot.write_field_stop()?;
+    o_prot.write_struct_end()
+  }
+}
+
+//
+// InvalidParameterValue
+//
+
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct InvalidParameterValue {
+  pub parameter: String,
+  pub value: String,
+  pub explanation: Option<String>,
+}
+
+impl InvalidParameterValue {
+  pub fn new<F3>(parameter: String, value: String, explanation: F3) -> InvalidParameterValue where F3: Into<Option<String>> {
+    InvalidParameterValue {
+      parameter,
+      value,
+      explanation: explanation.into(),
+    }
+  }
+}
+
+impl TSerializable for InvalidParameterValue {
+  fn read_from_in_protocol(i_prot: &mut dyn TInputProtocol) -> thrift::Result<InvalidParameterValue> {
+    i_prot.read_struct_begin()?;
+    let mut f_1: Option<String> = None;
+    let mut f_2: Option<String> = None;
+    let mut f_3: Option<String> = None;
+    loop {
+      let field_ident = i_prot.read_field_begin()?;
+      if field_ident.field_type == TType::Stop {
+        break;
+      }
+      let field_id = field_id(&field_ident)?;
+      match field_id {
+        1 => {
+          let val = i_prot.read_string()?;
+          f_1 = Some(val);
+        },
+        2 => {
+          let val = i_prot.read_string()?;
+          f_2 = Some(val);
+        },
+        3 => {
+          let val = i_prot.read_string()?;
+          f_3 = Some(val);
+        },
+        _ => {
+          i_prot.skip(field_ident.field_type)?;
+        },
+      };
+      i_prot.read_field_end()?;
+    }
+    i_prot.read_struct_end()?;
+    verify_required_field_exists("InvalidParameterValue.parameter", &f_1)?;
+    verify_required_field_exists("InvalidParameterValue.value", &f_2)?;
+    let ret = InvalidParameterValue {
+      parameter: f_1.expect("auto-generated code should have checked for presence of required fields"),
+      value: f_2.expect("auto-generated code should have checked for presence of required fields"),
+      explanation: f_3,
+    };
+    Ok(ret)
+  }
+  fn write_to_out_protocol(&self, o_prot: &mut dyn TOutputProtocol) -> thrift::Result<()> {
+    let struct_ident = TStructIdentifier::new("InvalidParameterValue");
+    o_prot.write_struct_begin(&struct_ident)?;
+    o_prot.write_field_begin(&TFieldIdentifier::new("parameter", TType::String, 1))?;
+    o_prot.write_string(&self.parameter)?;
+    o_prot.write_field_end()?;
+    o_prot.write_field_begin(&TFieldIdentifier::new("value", TType::String, 2))?;
+    o_prot.write_string(&self.value)?;
+    o_prot.write_field_end()?;
+    if let Some(ref fld_var) = self.explanation {
+      o_prot.write_field_begin(&TFieldIdentifier::new("explanation", TType::String, 3))?;
+      o_prot.write_string(fld_var)?;
+      o_prot.write_field_end()?
+    }
+    o_prot.write_field_stop()?;
+    o_prot.write_struct_end()
+  }
+}
+
+//
+// DriverError
+//
+
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum DriverError {
+  AuthError(AuthenticationError),
+  GenericError(GenericError),
+  InternalError(InternalError),
+  MissingParameter(MissingParameter),
+  InvalidParameterValue(InvalidParameterValue),
+  LoginError(LoginError),
+}
+
+impl TSerializable for DriverError {
+  fn read_from_in_protocol(i_prot: &mut dyn TInputProtocol) -> thrift::Result<DriverError> {
+    let mut ret: Option<DriverError> = None;
+    let mut received_field_count = 0;
+    i_prot.read_struct_begin()?;
+    loop {
+      let field_ident = i_prot.read_field_begin()?;
+      if field_ident.field_type == TType::Stop {
+        break;
+      }
+      let field_id = field_id(&field_ident)?;
+      match field_id {
+        1 => {
+          let val = AuthenticationError::read_from_in_protocol(i_prot)?;
+          if ret.is_none() {
+            ret = Some(DriverError::AuthError(val));
+          }
+          received_field_count += 1;
+        },
+        2 => {
+          let val = GenericError::read_from_in_protocol(i_prot)?;
+          if ret.is_none() {
+            ret = Some(DriverError::GenericError(val));
+          }
+          received_field_count += 1;
+        },
+        3 => {
+          let val = InternalError::read_from_in_protocol(i_prot)?;
+          if ret.is_none() {
+            ret = Some(DriverError::InternalError(val));
+          }
+          received_field_count += 1;
+        },
+        4 => {
+          let val = MissingParameter::read_from_in_protocol(i_prot)?;
+          if ret.is_none() {
+            ret = Some(DriverError::MissingParameter(val));
+          }
+          received_field_count += 1;
+        },
+        5 => {
+          let val = InvalidParameterValue::read_from_in_protocol(i_prot)?;
+          if ret.is_none() {
+            ret = Some(DriverError::InvalidParameterValue(val));
+          }
+          received_field_count += 1;
+        },
+        6 => {
+          let val = LoginError::read_from_in_protocol(i_prot)?;
+          if ret.is_none() {
+            ret = Some(DriverError::LoginError(val));
+          }
+          received_field_count += 1;
+        },
+        _ => {
+          i_prot.skip(field_ident.field_type)?;
+          received_field_count += 1;
+        },
+      };
+      i_prot.read_field_end()?;
+    }
+    i_prot.read_struct_end()?;
+    if received_field_count == 0 {
+      Err(
+        thrift::Error::Protocol(
+          ProtocolError::new(
+            ProtocolErrorKind::InvalidData,
+            "received empty union from remote DriverError"
+          )
+        )
+      )
+    } else if received_field_count > 1 {
+      Err(
+        thrift::Error::Protocol(
+          ProtocolError::new(
+            ProtocolErrorKind::InvalidData,
+            "received multiple fields for union from remote DriverError"
+          )
+        )
+      )
+    } else {
+      Ok(ret.expect("return value should have been constructed"))
+    }
+  }
+  fn write_to_out_protocol(&self, o_prot: &mut dyn TOutputProtocol) -> thrift::Result<()> {
+    let struct_ident = TStructIdentifier::new("DriverError");
+    o_prot.write_struct_begin(&struct_ident)?;
+    match *self {
+      DriverError::AuthError(ref f) => {
+        o_prot.write_field_begin(&TFieldIdentifier::new("authError", TType::Struct, 1))?;
+        f.write_to_out_protocol(o_prot)?;
+        o_prot.write_field_end()?;
+      },
+      DriverError::GenericError(ref f) => {
+        o_prot.write_field_begin(&TFieldIdentifier::new("genericError", TType::Struct, 2))?;
+        f.write_to_out_protocol(o_prot)?;
+        o_prot.write_field_end()?;
+      },
+      DriverError::InternalError(ref f) => {
+        o_prot.write_field_begin(&TFieldIdentifier::new("internalError", TType::Struct, 3))?;
+        f.write_to_out_protocol(o_prot)?;
+        o_prot.write_field_end()?;
+      },
+      DriverError::MissingParameter(ref f) => {
+        o_prot.write_field_begin(&TFieldIdentifier::new("missingParameter", TType::Struct, 4))?;
+        f.write_to_out_protocol(o_prot)?;
+        o_prot.write_field_end()?;
+      },
+      DriverError::InvalidParameterValue(ref f) => {
+        o_prot.write_field_begin(&TFieldIdentifier::new("invalidParameterValue", TType::Struct, 5))?;
+        f.write_to_out_protocol(o_prot)?;
+        o_prot.write_field_end()?;
+      },
+      DriverError::LoginError(ref f) => {
+        o_prot.write_field_begin(&TFieldIdentifier::new("loginError", TType::Struct, 6))?;
+        f.write_to_out_protocol(o_prot)?;
+        o_prot.write_field_end()?;
+      },
+    }
+    o_prot.write_field_stop()?;
+    o_prot.write_struct_end()
+  }
+}
+
+//
 // DriverException
 //
 
@@ -261,19 +749,17 @@ impl TSerializable for ErrorDetail {
 pub struct DriverException {
   pub message: String,
   pub status_code: StatusCode,
-  pub vendor_code: Option<i32>,
-  pub sqlstate: Option<String>,
-  pub details: Option<Vec<ErrorDetail>>,
+  pub error: DriverError,
+  pub report: String,
 }
 
 impl DriverException {
-  pub fn new<F3, F4, F5>(message: String, status_code: StatusCode, vendor_code: F3, sqlstate: F4, details: F5) -> DriverException where F3: Into<Option<i32>>, F4: Into<Option<String>>, F5: Into<Option<Vec<ErrorDetail>>> {
+  pub fn new(message: String, status_code: StatusCode, error: DriverError, report: String) -> DriverException {
     DriverException {
       message,
       status_code,
-      vendor_code: vendor_code.into(),
-      sqlstate: sqlstate.into(),
-      details: details.into(),
+      error,
+      report,
     }
   }
 }
@@ -283,9 +769,8 @@ impl TSerializable for DriverException {
     i_prot.read_struct_begin()?;
     let mut f_1: Option<String> = None;
     let mut f_2: Option<StatusCode> = None;
-    let mut f_3: Option<i32> = None;
+    let mut f_3: Option<DriverError> = None;
     let mut f_4: Option<String> = None;
-    let mut f_5: Option<Vec<ErrorDetail>> = None;
     loop {
       let field_ident = i_prot.read_field_begin()?;
       if field_ident.field_type == TType::Stop {
@@ -302,22 +787,12 @@ impl TSerializable for DriverException {
           f_2 = Some(val);
         },
         3 => {
-          let val = i_prot.read_i32()?;
+          let val = DriverError::read_from_in_protocol(i_prot)?;
           f_3 = Some(val);
         },
         4 => {
           let val = i_prot.read_string()?;
           f_4 = Some(val);
-        },
-        5 => {
-          let list_ident = i_prot.read_list_begin()?;
-          let mut val: Vec<ErrorDetail> = Vec::with_capacity(list_ident.size as usize);
-          for _ in 0..list_ident.size {
-            let list_elem_0 = ErrorDetail::read_from_in_protocol(i_prot)?;
-            val.push(list_elem_0);
-          }
-          i_prot.read_list_end()?;
-          f_5 = Some(val);
         },
         _ => {
           i_prot.skip(field_ident.field_type)?;
@@ -328,12 +803,13 @@ impl TSerializable for DriverException {
     i_prot.read_struct_end()?;
     verify_required_field_exists("DriverException.message", &f_1)?;
     verify_required_field_exists("DriverException.status_code", &f_2)?;
+    verify_required_field_exists("DriverException.error", &f_3)?;
+    verify_required_field_exists("DriverException.report", &f_4)?;
     let ret = DriverException {
       message: f_1.expect("auto-generated code should have checked for presence of required fields"),
       status_code: f_2.expect("auto-generated code should have checked for presence of required fields"),
-      vendor_code: f_3,
-      sqlstate: f_4,
-      details: f_5,
+      error: f_3.expect("auto-generated code should have checked for presence of required fields"),
+      report: f_4.expect("auto-generated code should have checked for presence of required fields"),
     };
     Ok(ret)
   }
@@ -346,25 +822,12 @@ impl TSerializable for DriverException {
     o_prot.write_field_begin(&TFieldIdentifier::new("status_code", TType::I32, 2))?;
     self.status_code.write_to_out_protocol(o_prot)?;
     o_prot.write_field_end()?;
-    if let Some(fld_var) = self.vendor_code {
-      o_prot.write_field_begin(&TFieldIdentifier::new("vendor_code", TType::I32, 3))?;
-      o_prot.write_i32(fld_var)?;
-      o_prot.write_field_end()?
-    }
-    if let Some(ref fld_var) = self.sqlstate {
-      o_prot.write_field_begin(&TFieldIdentifier::new("sqlstate", TType::String, 4))?;
-      o_prot.write_string(fld_var)?;
-      o_prot.write_field_end()?
-    }
-    if let Some(ref fld_var) = self.details {
-      o_prot.write_field_begin(&TFieldIdentifier::new("details", TType::List, 5))?;
-      o_prot.write_list_begin(&TListIdentifier::new(TType::Struct, fld_var.len() as i32))?;
-      for e in fld_var {
-        e.write_to_out_protocol(o_prot)?;
-      }
-      o_prot.write_list_end()?;
-      o_prot.write_field_end()?
-    }
+    o_prot.write_field_begin(&TFieldIdentifier::new("error", TType::Struct, 3))?;
+    self.error.write_to_out_protocol(o_prot)?;
+    o_prot.write_field_end()?;
+    o_prot.write_field_begin(&TFieldIdentifier::new("report", TType::String, 4))?;
+    o_prot.write_string(&self.report)?;
+    o_prot.write_field_end()?;
     o_prot.write_field_stop()?;
     o_prot.write_struct_end()
   }
@@ -494,8 +957,8 @@ impl TSerializable for PartitionedResult {
           let list_ident = i_prot.read_list_begin()?;
           let mut val: Vec<Vec<u8>> = Vec::with_capacity(list_ident.size as usize);
           for _ in 0..list_ident.size {
-            let list_elem_1 = i_prot.read_bytes()?;
-            val.push(list_elem_1);
+            let list_elem_0 = i_prot.read_bytes()?;
+            val.push(list_elem_0);
           }
           i_prot.read_list_end()?;
           f_2 = Some(val);
@@ -6166,8 +6629,8 @@ impl DatabaseDriverConnectionGetInfoArgs {
           let list_ident = i_prot.read_list_begin()?;
           let mut val: Vec<InfoCode> = Vec::with_capacity(list_ident.size as usize);
           for _ in 0..list_ident.size {
-            let list_elem_2 = InfoCode::read_from_in_protocol(i_prot)?;
-            val.push(list_elem_2);
+            let list_elem_1 = InfoCode::read_from_in_protocol(i_prot)?;
+            val.push(list_elem_1);
           }
           i_prot.read_list_end()?;
           f_2 = Some(val);
@@ -6338,8 +6801,8 @@ impl DatabaseDriverConnectionGetObjectsArgs {
           let list_ident = i_prot.read_list_begin()?;
           let mut val: Vec<String> = Vec::with_capacity(list_ident.size as usize);
           for _ in 0..list_ident.size {
-            let list_elem_3 = i_prot.read_string()?;
-            val.push(list_elem_3);
+            let list_elem_2 = i_prot.read_string()?;
+            val.push(list_elem_2);
           }
           i_prot.read_list_end()?;
           f_6 = Some(val);

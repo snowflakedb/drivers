@@ -1,6 +1,8 @@
 use crate::api::{
     Connection, ConnectionState, Environment, OdbcError, OdbcResult, Statement, StatementState,
     conn_from_handle,
+    diagnostic::DiagnosticInfo,
+    error::{DisconnectedSnafu, InvalidHandleSnafu},
 };
 use odbc_sys as sql;
 use tracing;
@@ -8,7 +10,10 @@ use tracing;
 /// Allocate a new environment handle
 pub fn alloc_environment() -> OdbcResult<*mut Environment> {
     tracing::info!("Allocating new environment handle");
-    let env = Box::new(Environment { odbc_version: 3 });
+    let env = Box::new(Environment {
+        odbc_version: 3,
+        diagnostic_info: DiagnosticInfo::default(),
+    });
     Ok(Box::into_raw(env))
 }
 
@@ -17,6 +22,7 @@ pub fn alloc_connection() -> OdbcResult<*mut Connection> {
     tracing::info!("Allocating new connection handle");
     let dbc = Box::new(Connection {
         state: ConnectionState::Disconnected,
+        diagnostic_info: DiagnosticInfo::default(),
     });
     Ok(Box::into_raw(dbc))
 }
@@ -31,21 +37,22 @@ pub fn alloc_statement(input_handle: sql::Handle) -> OdbcResult<*mut Statement<'
             db_handle: _,
             conn_handle,
         } => {
-            let stmt_handle = client.statement_new(conn_handle.clone()).map_err(|e| {
-                OdbcError::ExecuteStatement(format!("Failed to create statement: {e:?}"))
-            })?;
+            let stmt_handle = client
+                .statement_new(conn_handle.clone())
+                .map_err(OdbcError::from_thrift_error)?;
 
             let stmt = Box::new(Statement {
                 conn,
                 stmt_handle,
                 state: StatementState::Created,
                 parameter_bindings: std::collections::HashMap::new(),
+                diagnostic_info: DiagnosticInfo::default(),
             });
             Ok(Box::into_raw(stmt))
         }
         ConnectionState::Disconnected => {
             tracing::error!("Cannot allocate statement: connection is disconnected");
-            Err(OdbcError::Disconnected)
+            DisconnectedSnafu.fail()
         }
     }
 }
@@ -53,7 +60,7 @@ pub fn alloc_statement(input_handle: sql::Handle) -> OdbcResult<*mut Statement<'
 /// Free an environment handle
 pub fn free_environment(handle: sql::Handle) -> OdbcResult<()> {
     if handle.is_null() {
-        return Err(OdbcError::InvalidHandle);
+        return InvalidHandleSnafu.fail();
     }
 
     tracing::info!("Freeing environment handle");
@@ -66,7 +73,7 @@ pub fn free_environment(handle: sql::Handle) -> OdbcResult<()> {
 /// Free a connection handle
 pub fn free_connection(handle: sql::Handle) -> OdbcResult<()> {
     if handle.is_null() {
-        return Err(OdbcError::InvalidHandle);
+        return InvalidHandleSnafu.fail();
     }
 
     tracing::info!("Freeing connection handle");
@@ -79,7 +86,7 @@ pub fn free_connection(handle: sql::Handle) -> OdbcResult<()> {
 /// Free a statement handle
 pub fn free_statement(handle: sql::Handle) -> OdbcResult<()> {
     if handle.is_null() {
-        return Err(OdbcError::InvalidHandle);
+        return InvalidHandleSnafu.fail();
     }
 
     tracing::info!("Freeing statement handle");
@@ -147,11 +154,11 @@ pub fn sql_alloc_handle(
                 "SQLAllocHandle: Desc handle type not implemented: {:?}",
                 handle_type
             );
-            Err(OdbcError::InvalidHandle)
+            InvalidHandleSnafu.fail()
         }
         _ => {
             tracing::error!("SQLAllocHandle: unknown handle type: {:?}", handle_type);
-            Err(OdbcError::InvalidHandle)
+            InvalidHandleSnafu.fail()
         }
     }
 }
@@ -159,7 +166,7 @@ pub fn sql_alloc_handle(
 /// Free handle implementation (moved from api.rs)
 pub fn sql_free_handle(handle_type: sql::HandleType, handle: sql::Handle) -> OdbcResult<()> {
     if handle.is_null() {
-        return Err(OdbcError::InvalidHandle);
+        return InvalidHandleSnafu.fail();
     }
 
     match handle_type {
@@ -177,8 +184,8 @@ pub fn sql_free_handle(handle_type: sql::HandleType, handle: sql::Handle) -> Odb
         }
         sql::HandleType::Desc => {
             // Not implemented yet
-            Err(OdbcError::InvalidHandle)
+            InvalidHandleSnafu.fail()
         }
-        _ => Err(OdbcError::InvalidHandle),
+        _ => InvalidHandleSnafu.fail(),
     }
 }
