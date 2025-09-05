@@ -1,6 +1,6 @@
 // Real TLS integration with CRL validation using rustls
 use crate::crl::config::{CertRevocationCheckMode, CrlConfig};
-use crate::crl::validator_real::RealCrlValidator;
+use crate::crl::validator_real::CrlValidator;
 use crate::crl::worker::CrlWorker;
 use rustls::client::WebPkiServerVerifier;
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
@@ -14,7 +14,7 @@ pub struct CrlServerCertVerifier {
     /// Standard webpki verifier for basic certificate validation
     webpki_verifier: Arc<WebPkiServerVerifier>,
     /// CRL validator for revocation checking
-    crl_validator: Arc<RealCrlValidator>,
+    crl_validator: Arc<CrlValidator>,
     /// CRL configuration
     crl_config: CrlConfig,
 }
@@ -45,7 +45,7 @@ impl CrlServerCertVerifier {
         let webpki_verifier = WebPkiServerVerifier::builder(Arc::new(root_store)).build()?;
 
         // Create CRL validator
-        let crl_validator = Arc::new(RealCrlValidator::new(crl_config.clone())?);
+        let crl_validator = Arc::new(CrlValidator::new(crl_config.clone())?);
 
         Ok(Self {
             webpki_verifier,

@@ -1,5 +1,5 @@
 use crate::crl::error::CrlError;
-use crate::crl::validator_real::RealCrlValidator;
+use crate::crl::validator_real::CrlValidator;
 use once_cell::sync::OnceCell;
 use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -16,7 +16,7 @@ pub struct CrlWorker {
 static GLOBAL_WORKER: OnceCell<CrlWorker> = OnceCell::new();
 
 impl CrlWorker {
-    pub fn global(validator: Arc<RealCrlValidator>) -> &'static CrlWorker {
+    pub fn global(validator: Arc<CrlValidator>) -> &'static CrlWorker {
         GLOBAL_WORKER.get_or_init(|| {
             let (tx, rx): (Sender<CrlWorkerRequest>, Receiver<CrlWorkerRequest>) = mpsc::channel();
 

@@ -1,13 +1,13 @@
 // CRL validation service for application-wide certificate validation
 use crate::crl::config::{CertRevocationCheckMode, CrlConfig};
 use crate::crl::error::CrlError;
-use crate::crl::validator_real::RealCrlValidator;
+use crate::crl::validator_real::CrlValidator;
 use crate::tls::cert_extractor::{CertificateInfo, TlsCertificateExtractor};
 use std::sync::Arc;
 
 /// Application-wide CRL validation service
 pub struct CrlValidationService {
-    validator: Arc<RealCrlValidator>,
+    validator: Arc<CrlValidator>,
     extractor: TlsCertificateExtractor,
     config: CrlConfig,
 }
@@ -15,7 +15,7 @@ pub struct CrlValidationService {
 impl CrlValidationService {
     /// Create a new CRL validation service
     pub fn new(config: CrlConfig) -> Result<Self, CrlError> {
-        let validator = Arc::new(RealCrlValidator::new(config.clone())?);
+        let validator = Arc::new(CrlValidator::new(config.clone())?);
         let extractor = TlsCertificateExtractor::new(validator.clone());
 
         Ok(Self {
@@ -139,7 +139,7 @@ impl std::fmt::Debug for CrlValidationService {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("CrlValidationService")
             .field("config", &self.config)
-            .field("validator", &"<RealCrlValidator>")
+            .field("validator", &"<CrlValidator>")
             .field("extractor", &"<TlsCertificateExtractor>")
             .finish()
     }

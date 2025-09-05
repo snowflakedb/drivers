@@ -4,7 +4,7 @@ mod disk_crl_tests {
         check_certificate_in_crl, extract_crl_distribution_points, get_certificate_serial_number,
     };
     use crate::crl::config::{CertRevocationCheckMode, CrlConfig};
-    use crate::crl::validator_real::RealCrlValidator;
+    use crate::crl::validator_real::CrlValidator;
     use std::fs;
     use std::io::Write;
     use tempfile::TempDir;
@@ -180,7 +180,7 @@ mod disk_crl_tests {
 
         // Write a tiny fake CRL file to disk cache
         let url = "http://example.com/fake.crl";
-        let fname = crate::crl::cache_simple::SimpleCrlCache::url_digest(url);
+        let fname = crate::crl::cache_simple::CrlCache::url_digest(url);
         let path = cache_dir.join(fname);
         let mut f = std::fs::File::create(&path).unwrap();
         let _ = f.write_all(&[0u8; 16]); // invalid CRL bytes, should not panic
@@ -192,7 +192,7 @@ mod disk_crl_tests {
             ..Default::default()
         };
 
-        let validator = RealCrlValidator::new(cfg).unwrap();
+        let validator = CrlValidator::new(cfg).unwrap();
 
         // Should not panic even with invalid cached bytes; will attempt network if needed
         let _ = validator.fetch_crl_with_cache(url).await;
@@ -209,7 +209,7 @@ mod disk_crl_tests {
             enable_disk_caching: true,
             ..Default::default()
         };
-        let validator = RealCrlValidator::new(cfg).unwrap();
+        let validator = CrlValidator::new(cfg).unwrap();
 
         // Call the helper indirectly via fetch path to avoid private method access
         // Simulate network fetch by writing file directly

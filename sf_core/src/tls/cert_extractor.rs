@@ -1,15 +1,15 @@
 // Certificate chain extraction from TLS connections
 use crate::crl::error::CrlError;
-use crate::crl::validator_real::RealCrlValidator;
+use crate::crl::validator_real::CrlValidator;
 use std::sync::Arc;
 
 /// Extract certificate chains from TLS connection and validate with CRL
 pub struct TlsCertificateExtractor {
-    crl_validator: Arc<RealCrlValidator>,
+    crl_validator: Arc<CrlValidator>,
 }
 
 impl TlsCertificateExtractor {
-    pub fn new(crl_validator: Arc<RealCrlValidator>) -> Self {
+    pub fn new(crl_validator: Arc<CrlValidator>) -> Self {
         Self { crl_validator }
     }
 
@@ -88,7 +88,7 @@ mod tests {
             ..Default::default()
         };
 
-        let validator = RealCrlValidator::new(config).unwrap();
+        let validator = CrlValidator::new(config).unwrap();
         let extractor = TlsCertificateExtractor::new(Arc::new(validator));
 
         // Test with empty certificate list
@@ -99,7 +99,7 @@ mod tests {
     #[test]
     fn test_certificate_info_extraction_invalid() {
         let config = CrlConfig::default();
-        let validator = RealCrlValidator::new(config).unwrap();
+        let validator = CrlValidator::new(config).unwrap();
         let extractor = TlsCertificateExtractor::new(Arc::new(validator));
 
         let invalid_cert = vec![0x30, 0x82, 0x01, 0x00];

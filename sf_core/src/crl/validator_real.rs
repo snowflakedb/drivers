@@ -1,5 +1,5 @@
 // Real CRL validator that actually parses certificates and validates against CRLs
-use crate::crl::cache_simple::SimpleCrlCache;
+use crate::crl::cache_simple::CrlCache;
 use crate::crl::certificate_parser::{
     check_certificate_in_crl, extract_crl_distribution_points, get_certificate_serial_number,
     is_short_lived_certificate,
@@ -51,15 +51,15 @@ pub enum ChainValidationResult {
     ChainError,
 }
 
-pub struct RealCrlValidator {
+pub struct CrlValidator {
     config: CrlConfig,
-    cache: Arc<SimpleCrlCache>,
+    cache: Arc<CrlCache>,
     client: Client,
 }
 
-impl std::fmt::Debug for RealCrlValidator {
+impl std::fmt::Debug for CrlValidator {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("RealCrlValidator")
+        f.debug_struct("CrlValidator")
             .field("config", &self.config)
             .field("cache", &"<SimpleCrlCache>")
             .field("client", &"<reqwest::Client>")
@@ -67,9 +67,9 @@ impl std::fmt::Debug for RealCrlValidator {
     }
 }
 
-impl RealCrlValidator {
+impl CrlValidator {
     pub fn new(config: CrlConfig) -> Result<Self, CrlError> {
-        let cache = SimpleCrlCache::global(config.enable_memory_caching, 100).clone();
+        let cache = CrlCache::global(config.clone(), 100).clone();
 
         let client = Client::builder()
             .timeout(std::time::Duration::from_secs(
@@ -366,14 +366,8 @@ impl RealCrlValidator {
         crl_url: &str,
         issuer_cert_der: Option<&[u8]>,
     ) -> CertificateStatus {
-        // Get URL-specific lock to prevent concurrent downloads
-        {
-            let url_lock = self.cache.get_url_lock(crl_url);
-            let _guard = url_lock.lock().unwrap();
-        }
-
         // Try to get CRL from memory cache first
-        match self.cache.get(crl_url) {
+        match self.cache.get_cached(crl_url) {
             Ok(Some(cached_crl)) => {
                 tracing::debug!("Found CRL in cache for {}", crl_url);
                 // If half-life passed but not expired, refresh in background
@@ -409,8 +403,8 @@ impl RealCrlValidator {
             }
         }
 
-        // Fetch CRL from URL or disk
-        match self.fetch_crl_with_cache(crl_url).await {
+        // Fetch CRL from URL or disk via cache
+        match self.cache.get(crl_url).await {
             Ok(crl_data) => {
                 if let Err(e) = self.verify_crl_signature_best_effort(&crl_data, issuer_cert_der) {
                     tracing::error!("CRL signature verification failed for {}: {}", crl_url, e);
@@ -451,6 +445,7 @@ impl RealCrlValidator {
     }
 
     /// Fetch CRL from disk cache or network and write to disk cache
+    #[allow(dead_code)]
     pub(crate) async fn fetch_crl_with_cache(&self, url: &str) -> Result<Vec<u8>, CrlError> {
         if self.config.enable_disk_caching
             && let Some(dir) = self.config.get_cache_dir()
@@ -459,7 +454,7 @@ impl RealCrlValidator {
                 source: e,
                 location: snafu::Location::new(file!(), line!(), 0),
             })?;
-            let file_name = crate::crl::cache_simple::SimpleCrlCache::url_digest(url);
+            let file_name = crate::crl::cache_simple::CrlCache::url_digest(url);
             let path = dir.join(file_name);
             if let Ok(bytes) = std::fs::read(&path) {
                 tracing::debug!("Loaded CRL from disk cache: {}", path.display());
@@ -505,6 +500,7 @@ impl RealCrlValidator {
     }
 
     /// Fetch CRL via network
+    #[allow(dead_code)]
     async fn fetch_crl_network(&self, url: &str) -> Result<Vec<u8>, CrlError> {
         tracing::debug!("Fetching CRL from: {url}");
         self.maybe_sleep_backoff(url).await;
@@ -558,12 +554,7 @@ impl RealCrlValidator {
             .ok_or_else(|| CrlError::InvalidCrlSignature {
                 location: snafu::Location::new(file!(), line!(), 0),
             })?;
-        let tbs = crl
-            .tbs_cert_list
-            .to_der()
-            .map_err(|_| CrlError::InvalidCrlSignature {
-                location: snafu::Location::new(file!(), line!(), 0),
-            })?;
+        let tbs = crate::tls::x509_utils::tbs_crl_der(crl_bytes)?;
 
         // If issuer certificate is not provided, skip verification (best-effort)
         let issuer_der = match issuer_cert_der {
@@ -744,7 +735,7 @@ impl RealCrlValidator {
                         && let Some(dir) = config.get_cache_dir()
                     {
                         let _ = std::fs::create_dir_all(&dir);
-                        let file_name = crate::crl::cache_simple::SimpleCrlCache::url_digest(&url);
+                        let file_name = crate::crl::cache_simple::CrlCache::url_digest(&url);
                         let path = dir.join(file_name);
                         let _ = std::fs::write(&path, &bytes);
                     }
@@ -791,6 +782,7 @@ impl RealCrlValidator {
         Self::write_crl_atomic_internal(path, data)
     }
 
+    #[allow(dead_code)]
     fn write_crl_atomic_internal(path: &Path, data: &[u8]) {
         let tmp = path.with_extension("tmp");
         if let Ok(mut f) = fs::File::create(&tmp) {
@@ -806,6 +798,7 @@ impl RealCrlValidator {
     }
 
     // --- Backoff (per-URL) -------------------------------------------------
+    #[allow(dead_code)]
     async fn maybe_sleep_backoff(&self, url: &str) {
         static STATE: OnceCell<Mutex<HashMap<String, (u32, Instant)>>> = OnceCell::new();
         let map = STATE.get_or_init(|| Mutex::new(HashMap::new()));
@@ -828,6 +821,7 @@ impl RealCrlValidator {
         }
     }
 
+    #[allow(dead_code)]
     fn record_backoff_failure(&self, url: &str) {
         static STATE: OnceCell<Mutex<HashMap<String, (u32, Instant)>>> = OnceCell::new();
         let map = STATE.get_or_init(|| Mutex::new(HashMap::new()));
@@ -837,6 +831,7 @@ impl RealCrlValidator {
         entry.1 = Instant::now();
     }
 
+    #[allow(dead_code)]
     fn record_backoff_success(&self, url: &str) {
         static STATE: OnceCell<Mutex<HashMap<String, (u32, Instant)>>> = OnceCell::new();
         let map = STATE.get_or_init(|| Mutex::new(HashMap::new()));
