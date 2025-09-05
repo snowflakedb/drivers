@@ -10,6 +10,9 @@ const PUT_GET_ROWSET_FIXED_LENGTH_STR: &str = "64";
 
 #[test]
 fn test_put_select() {
+    if std::env::var("RUN_E2E").ok().as_deref() != Some("1") {
+        return;
+    }
     let mut client = SnowflakeTestClient::connect_with_default_auth();
     let stage_name = "TEST_STAGE_PUT_SELECT";
     let filename = "test_put_select.csv";
@@ -38,6 +41,9 @@ fn test_put_select() {
 
 #[test]
 fn test_put_ls() {
+    if std::env::var("RUN_E2E").ok().as_deref() != Some("1") {
+        return;
+    }
     let mut client = SnowflakeTestClient::connect_with_default_auth();
     let stage_name = "TEST_STAGE_PUT_LS";
     let filename = "test_put_ls.csv";
@@ -69,6 +75,9 @@ fn test_put_ls() {
 
 #[test]
 fn test_get() {
+    if std::env::var("RUN_E2E").ok().as_deref() != Some("1") {
+        return;
+    }
     let mut client = SnowflakeTestClient::connect_with_default_auth();
     let stage_name = "TEST_STAGE_GET";
     let filename = "test_get.csv";
@@ -116,6 +125,9 @@ fn test_get() {
 
 #[test]
 fn test_put_get_rowset() {
+    if std::env::var("RUN_E2E").ok().as_deref() != Some("1") {
+        return;
+    }
     let mut client = SnowflakeTestClient::connect_with_default_auth();
     let stage_name = "TEST_STAGE_PUT_ROWSET";
     let filename = "test_put_get_rowset.csv";

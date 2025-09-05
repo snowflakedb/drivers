@@ -3,6 +3,95 @@ pub mod common;
 use common::arrow_result_helper::ArrowResultHelper;
 use common::test_utils::*;
 
+struct PrivateKeyFile {
+    path: String,
+}
+
+impl Drop for PrivateKeyFile {
+    fn drop(&mut self) {
+        std::fs::remove_file(self.path.clone()).unwrap();
+    }
+}
+
+fn get_private_key_file(parameters: &Parameters) -> PrivateKeyFile {
+    let private_key_contents = parameters.private_key_contents.clone().unwrap();
+    let private_key_contents = private_key_contents.join("\n");
+    let suffix = format!("{:x}", rand::random::<u32>());
+    let private_key_path = format!("rsa_key_{suffix}.p8");
+    std::fs::write(&private_key_path, private_key_contents).unwrap();
+    PrivateKeyFile { path: private_key_path }
+}
+
+#[test]
+fn test_private_key_auth() {
+    if std::env::var("RUN_E2E").ok().as_deref() != Some("1") {
+        return;
+    }
+    setup_logging();
+    let mut client = SnowflakeTestClient::with_default_params();
+    let private_key_file = get_private_key_file(&client.parameters);
+
+    client
+        .driver
+        .connection_set_option_string(
+            client.conn_handle.clone(),
+            "private_key_file".to_string(),
+            private_key_file.path.clone(),
+        )
+        .unwrap();
+
+    client
+        .driver
+        .connection_set_option_string(
+            client.conn_handle.clone(),
+            "private_key_password".to_string(),
+            client.parameters.private_key_password.clone().unwrap(),
+        )
+        .unwrap();
+
+    client
+        .driver
+        .connection_set_option_string(
+            client.conn_handle.clone(),
+            "authenticator".to_string(),
+            "SNOWFLAKE_JWT".to_string(),
+        )
+        .unwrap();
+
+    client
+        .driver
+        .connection_init(client.conn_handle.clone(), client.db_handle.clone())
+        .unwrap();
+
+    let result = client.execute_query("SELECT 1");
+
+    let mut arrow_helper = ArrowResultHelper::from_result(result);
+    arrow_helper.assert_equals_single_value(String::from("1"));
+}
+
+#[test]
+fn test_private_key_auth_no_private_key_file() {
+    if std::env::var("RUN_E2E").ok().as_deref() != Some("1") {
+        return;
+    }
+    setup_logging();
+    let mut client = SnowflakeTestClient::with_default_params();
+
+    client
+        .driver
+        .connection_set_option_string(
+            client.conn_handle.clone(),
+            "authenticator".to_string(),
+            "SNOWFLAKE_JWT".to_string(),
+        )
+        .unwrap();
+
+    let result = client
+        .driver
+        .connection_init(client.conn_handle.clone(), client.db_handle.clone());
+    assert!(result.is_err());
+}
+
 struct Pat {
     token_name: String,
     token_secret: String,
@@ -21,10 +110,7 @@ impl Pat {
         assert_eq!(result[0].len(), 2);
         let token_name = result[0][0].clone();
         let token_secret = result[0][1].clone();
-        Self {
-            token_name,
-            token_secret,
-        }
+        Self { token_name, token_secret }
     }
 }
 
@@ -41,6 +127,9 @@ impl Drop for Pat {
 
 #[test]
 fn test_pat_as_password() {
+    if std::env::var("RUN_E2E").ok().as_deref() != Some("1") {
+        return;
+    }
     setup_logging();
     let pat = Pat::acquire();
     let mut client = SnowflakeTestClient::with_default_params();
@@ -64,6 +153,9 @@ fn test_pat_as_password() {
 
 #[test]
 fn test_pat_as_token() {
+    if std::env::var("RUN_E2E").ok().as_deref() != Some("1") {
+        return;
+    }
     setup_logging();
     let pat = Pat::acquire();
     let mut client = SnowflakeTestClient::with_default_params();

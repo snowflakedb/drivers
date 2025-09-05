@@ -5,6 +5,9 @@ use common::test_utils::*;
 
 #[test]
 fn test_put_overwrite_true() {
+    if std::env::var("RUN_E2E").ok().as_deref() != Some("1") {
+        return;
+    }
     let mut client = SnowflakeTestClient::connect_with_default_auth();
     let stage_name = "TEST_STAGE_OVERWRITE_TRUE";
     let filename = "test_overwrite_true.csv";
@@ -64,6 +67,9 @@ fn test_put_overwrite_true() {
 
 #[test]
 fn test_put_overwrite_false() {
+    if std::env::var("RUN_E2E").ok().as_deref() != Some("1") {
+        return;
+    }
     let mut client = SnowflakeTestClient::connect_with_default_auth();
     let stage_name = "TEST_STAGE_OVERWRITE_FALSE";
     let filename = "test_overwrite_false.csv";
@@ -123,6 +129,9 @@ fn test_put_overwrite_false() {
 
 #[test]
 fn test_put_overwrite_false_multiple_files_mixed_status() {
+    if std::env::var("RUN_E2E").ok().as_deref() != Some("1") {
+        return;
+    }
     let mut client = SnowflakeTestClient::connect_with_default_auth();
     let stage_name = "TEST_STAGE_OVERWRITE_MIXED";
     let base_filename = "test_overwrite_mixed";

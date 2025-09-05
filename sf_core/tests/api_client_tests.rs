@@ -506,6 +506,9 @@ fn test_statement_read_partition() {
 
 #[test]
 fn test_snowflake_select_1() {
+    if std::env::var("RUN_E2E").ok().as_deref() != Some("1") {
+        return;
+    }
     let mut client = SnowflakeTestClient::connect_with_default_auth();
     let result = client.execute_query("SELECT 1");
 
@@ -515,6 +518,9 @@ fn test_snowflake_select_1() {
 
 #[test]
 fn test_create_temporary_stage() {
+    if std::env::var("RUN_E2E").ok().as_deref() != Some("1") {
+        return;
+    }
     let mut client = SnowflakeTestClient::connect_with_default_auth();
     let stage_name = "TEST_STAGE";
     let result = client.execute_query(&format!("create temporary stage {stage_name}"));

@@ -4,6 +4,9 @@ use std::fs;
 
 #[test]
 fn test_put_get_with_auto_compress_true() {
+    if std::env::var("RUN_E2E").ok().as_deref() != Some("1") {
+        return;
+    }
     let mut client = SnowflakeTestClient::connect_with_default_auth();
     let stage_name = "TEST_STAGE_PUT_GET_COMPRESS_TRUE";
     let filename = "test_put_get_compress_true.csv";
@@ -55,6 +58,9 @@ fn test_put_get_with_auto_compress_true() {
 
 #[test]
 fn test_put_get_with_auto_compress_false() {
+    if std::env::var("RUN_E2E").ok().as_deref() != Some("1") {
+        return;
+    }
     let mut client = SnowflakeTestClient::connect_with_default_auth();
     let stage_name = "TEST_STAGE_PUT_GET_COMPRESS_FALSE";
     let filename = "test_put_get_compress_false.csv";

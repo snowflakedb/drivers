@@ -12,6 +12,9 @@ use std::io::Write;
 
 #[test]
 fn test_put_source_compression_auto_detect_standard_types() {
+    if std::env::var("RUN_E2E").ok().as_deref() != Some("1") {
+        return;
+    }
     let mut client = SnowflakeTestClient::connect_with_default_auth();
     let stage_name = "TEST_STAGE_AUTO_DETECT_STANDARD";
     let temp_dir = tempfile::TempDir::new().unwrap();
@@ -102,6 +105,9 @@ fn test_put_source_compression_auto_detect_standard_types() {
 
 #[test]
 fn test_put_source_compression_auto_detect_raw_deflate() {
+    if std::env::var("RUN_E2E").ok().as_deref() != Some("1") {
+        return;
+    }
     let mut client = SnowflakeTestClient::connect_with_default_auth();
     let stage_name = "TEST_STAGE_AUTO_DETECT_RAW_DEFLATE";
     let filename = "test_raw_deflate.csv.raw_deflate";
@@ -136,6 +142,9 @@ fn test_put_source_compression_auto_detect_raw_deflate() {
 
 #[test]
 fn test_put_source_compression_auto_detect_none_no_auto_compress() {
+    if std::env::var("RUN_E2E").ok().as_deref() != Some("1") {
+        return;
+    }
     let mut client = SnowflakeTestClient::connect_with_default_auth();
     let stage_name = "TEST_STAGE_AUTO_DETECT_NONE_NO_AUTO_COMPRESS";
     let filename = "test_none.csv";
@@ -165,6 +174,9 @@ fn test_put_source_compression_auto_detect_none_no_auto_compress() {
 
 #[test]
 fn test_put_source_compression_auto_detect_none_with_auto_compress() {
+    if std::env::var("RUN_E2E").ok().as_deref() != Some("1") {
+        return;
+    }
     let mut client = SnowflakeTestClient::connect_with_default_auth();
     let stage_name = "TEST_STAGE_AUTO_DETECT_NONE_WITH_AUTO_COMPRESS";
     let filename = "test_none.csv";
@@ -194,6 +206,9 @@ fn test_put_source_compression_auto_detect_none_with_auto_compress() {
 
 #[test]
 fn test_put_source_compression_auto_detect_unsupported() {
+    if std::env::var("RUN_E2E").ok().as_deref() != Some("1") {
+        return;
+    }
     let mut client = SnowflakeTestClient::connect_with_default_auth();
     let stage_name = "TEST_STAGE_AUTO_DETECT_UNSUPPORTED";
     let filename = "test_auto_detect.csv.lz";
@@ -222,6 +237,9 @@ fn test_put_source_compression_auto_detect_unsupported() {
 
 #[test]
 fn test_put_source_compression_auto_detect_content_based() {
+    if std::env::var("RUN_E2E").ok().as_deref() != Some("1") {
+        return;
+    }
     let mut client = SnowflakeTestClient::connect_with_default_auth();
     let stage_name = "TEST_STAGE_AUTO_DETECT_CONTENT";
     let filename = "test_auto_detect_no_extension";
@@ -258,6 +276,9 @@ fn test_put_source_compression_auto_detect_content_based() {
 
 #[test]
 fn test_put_source_compression_explicit_standard_types() {
+    if std::env::var("RUN_E2E").ok().as_deref() != Some("1") {
+        return;
+    }
     let mut client = SnowflakeTestClient::connect_with_default_auth();
     let stage_name = "TEST_STAGE_EXPLICIT_COMPRESSION";
     let temp_dir = tempfile::TempDir::new().unwrap();
@@ -349,6 +370,9 @@ fn test_put_source_compression_explicit_standard_types() {
 
 #[test]
 fn test_put_source_compression_explicit_raw_deflate() {
+    if std::env::var("RUN_E2E").ok().as_deref() != Some("1") {
+        return;
+    }
     let mut client = SnowflakeTestClient::connect_with_default_auth();
     let stage_name = "TEST_STAGE_EXPLICIT_RAW_DEFLATE";
     let filename = "test_explicit_raw_deflate.dat";
@@ -386,6 +410,9 @@ fn test_put_source_compression_explicit_raw_deflate() {
 
 #[test]
 fn test_put_source_compression_explicit_none_no_auto_compress() {
+    if std::env::var("RUN_E2E").ok().as_deref() != Some("1") {
+        return;
+    }
     let mut client = SnowflakeTestClient::connect_with_default_auth();
     let stage_name = "TEST_STAGE_EXPLICIT_NONE_NO_AUTO_COMPRESS";
     let filename = "test_explicit_none.dat";
@@ -418,6 +445,9 @@ fn test_put_source_compression_explicit_none_no_auto_compress() {
 
 #[test]
 fn test_put_source_compression_explicit_with_auto_compress() {
+    if std::env::var("RUN_E2E").ok().as_deref() != Some("1") {
+        return;
+    }
     let mut client = SnowflakeTestClient::connect_with_default_auth();
     let stage_name = "TEST_STAGE_EXPLICIT_WITH_AUTO_COMPRESS";
     let filename = "test_explicit_with_auto.dat";
