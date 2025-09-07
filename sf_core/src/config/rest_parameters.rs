@@ -3,13 +3,9 @@ use std::fs;
 use crate::config::InvalidParameterValueSnafu;
 use crate::config::settings::Setting;
 use crate::config::settings::Settings;
-<<<<<<< HEAD
 use crate::config::{ConfigError, InvalidArgumentSnafu, MissingParameterSnafu};
 use crate::crl::config::CrlConfig;
-=======
-use crate::config::{ConfigError, InvalidArgumentSnafu, MissingParameterSnafu};
-use crate::crl::config::CrlConfig;
->>>>>>> 777c5b9 (Initial TLS and CRL libraries)
+use crate::tls::config::TlsConfig as InternalTlsConfig;
 use snafu::OptionExt;
 
 fn get_server_url(settings: &dyn Settings) -> Result<String, ConfigError> {
@@ -55,12 +51,15 @@ pub struct ClientInfo {
     pub os: String,
     pub os_version: String,
     pub ocsp_mode: Option<String>,
+    #[allow(dead_code)]
     pub crl_config: CrlConfig,
+    pub tls_config: InternalTlsConfig,
 }
 
 impl ClientInfo {
     pub fn from_settings(settings: &dyn Settings) -> Result<Self, ConfigError> {
         let crl_config = CrlConfig::from_settings(settings)?;
+        let tls_config = InternalTlsConfig::from_settings(settings)?;
 
         let client_info = ClientInfo {
             application: "PythonConnector".to_string(),
@@ -69,6 +68,7 @@ impl ClientInfo {
             os_version: "macOS-15.5-arm64-arm-64bit".to_string(),
             ocsp_mode: Some("FAIL_OPEN".to_string()),
             crl_config,
+            tls_config,
         };
         Ok(client_info)
     }

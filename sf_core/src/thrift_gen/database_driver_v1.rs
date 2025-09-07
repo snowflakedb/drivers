@@ -200,6 +200,60 @@ impl From<&InfoCode> for i32 {
   }
 }
 
+#[derive(Copy, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct CertRevocationCheckMode(pub i32);
+
+impl CertRevocationCheckMode {
+  pub const DISABLED: CertRevocationCheckMode = CertRevocationCheckMode(0);
+  pub const ENABLED: CertRevocationCheckMode = CertRevocationCheckMode(1);
+  pub const ADVISORY: CertRevocationCheckMode = CertRevocationCheckMode(2);
+  pub const ENUM_VALUES: &'static [Self] = &[
+    Self::DISABLED,
+    Self::ENABLED,
+    Self::ADVISORY,
+  ];
+}
+
+impl TSerializable for CertRevocationCheckMode {
+  #[allow(clippy::trivially_copy_pass_by_ref)]
+  fn write_to_out_protocol(&self, o_prot: &mut dyn TOutputProtocol) -> thrift::Result<()> {
+    o_prot.write_i32(self.0)
+  }
+  fn read_from_in_protocol(i_prot: &mut dyn TInputProtocol) -> thrift::Result<CertRevocationCheckMode> {
+    let enum_value = i_prot.read_i32()?;
+    Ok(CertRevocationCheckMode::from(enum_value))
+  }
+}
+
+impl From<i32> for CertRevocationCheckMode {
+  fn from(i: i32) -> Self {
+    match i {
+      0 => CertRevocationCheckMode::DISABLED,
+      1 => CertRevocationCheckMode::ENABLED,
+      2 => CertRevocationCheckMode::ADVISORY,
+      _ => CertRevocationCheckMode(i)
+    }
+  }
+}
+
+impl From<&i32> for CertRevocationCheckMode {
+  fn from(i: &i32) -> Self {
+    CertRevocationCheckMode::from(*i)
+  }
+}
+
+impl From<CertRevocationCheckMode> for i32 {
+  fn from(e: CertRevocationCheckMode) -> i32 {
+    e.0
+  }
+}
+
+impl From<&CertRevocationCheckMode> for i32 {
+  fn from(e: &CertRevocationCheckMode) -> i32 {
+    e.0
+  }
+}
+
 //
 // ErrorDetail
 //
@@ -1378,6 +1432,193 @@ impl TSerializable for ArrowArrayPtr {
 }
 
 //
+// TlsConfig
+//
+
+#[derive(Clone, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct TlsConfig {
+  pub crl_mode: Option<CertRevocationCheckMode>,
+  pub crl_disk_caching: Option<bool>,
+  pub crl_memory_caching: Option<bool>,
+  pub crl_cache_dir: Option<String>,
+  pub crl_validity_days: Option<i32>,
+  pub allow_certs_without_crl_url: Option<bool>,
+  pub crl_http_timeout_seconds: Option<i32>,
+  pub crl_connection_timeout_seconds: Option<i32>,
+  pub custom_root_store_path: Option<String>,
+  pub verify_hostname: Option<bool>,
+  pub verify_certificates: Option<bool>,
+}
+
+impl TlsConfig {
+  pub fn new<F1, F2, F3, F4, F5, F6, F7, F8, F9, F10, F11>(crl_mode: F1, crl_disk_caching: F2, crl_memory_caching: F3, crl_cache_dir: F4, crl_validity_days: F5, allow_certs_without_crl_url: F6, crl_http_timeout_seconds: F7, crl_connection_timeout_seconds: F8, custom_root_store_path: F9, verify_hostname: F10, verify_certificates: F11) -> TlsConfig where F1: Into<Option<CertRevocationCheckMode>>, F2: Into<Option<bool>>, F3: Into<Option<bool>>, F4: Into<Option<String>>, F5: Into<Option<i32>>, F6: Into<Option<bool>>, F7: Into<Option<i32>>, F8: Into<Option<i32>>, F9: Into<Option<String>>, F10: Into<Option<bool>>, F11: Into<Option<bool>> {
+    TlsConfig {
+      crl_mode: crl_mode.into(),
+      crl_disk_caching: crl_disk_caching.into(),
+      crl_memory_caching: crl_memory_caching.into(),
+      crl_cache_dir: crl_cache_dir.into(),
+      crl_validity_days: crl_validity_days.into(),
+      allow_certs_without_crl_url: allow_certs_without_crl_url.into(),
+      crl_http_timeout_seconds: crl_http_timeout_seconds.into(),
+      crl_connection_timeout_seconds: crl_connection_timeout_seconds.into(),
+      custom_root_store_path: custom_root_store_path.into(),
+      verify_hostname: verify_hostname.into(),
+      verify_certificates: verify_certificates.into(),
+    }
+  }
+}
+
+impl TSerializable for TlsConfig {
+  fn read_from_in_protocol(i_prot: &mut dyn TInputProtocol) -> thrift::Result<TlsConfig> {
+    i_prot.read_struct_begin()?;
+    let mut f_1: Option<CertRevocationCheckMode> = None;
+    let mut f_2: Option<bool> = None;
+    let mut f_3: Option<bool> = None;
+    let mut f_4: Option<String> = None;
+    let mut f_5: Option<i32> = None;
+    let mut f_6: Option<bool> = None;
+    let mut f_7: Option<i32> = None;
+    let mut f_8: Option<i32> = None;
+    let mut f_9: Option<String> = None;
+    let mut f_10: Option<bool> = None;
+    let mut f_11: Option<bool> = None;
+    loop {
+      let field_ident = i_prot.read_field_begin()?;
+      if field_ident.field_type == TType::Stop {
+        break;
+      }
+      let field_id = field_id(&field_ident)?;
+      match field_id {
+        1 => {
+          let val = CertRevocationCheckMode::read_from_in_protocol(i_prot)?;
+          f_1 = Some(val);
+        },
+        2 => {
+          let val = i_prot.read_bool()?;
+          f_2 = Some(val);
+        },
+        3 => {
+          let val = i_prot.read_bool()?;
+          f_3 = Some(val);
+        },
+        4 => {
+          let val = i_prot.read_string()?;
+          f_4 = Some(val);
+        },
+        5 => {
+          let val = i_prot.read_i32()?;
+          f_5 = Some(val);
+        },
+        6 => {
+          let val = i_prot.read_bool()?;
+          f_6 = Some(val);
+        },
+        7 => {
+          let val = i_prot.read_i32()?;
+          f_7 = Some(val);
+        },
+        8 => {
+          let val = i_prot.read_i32()?;
+          f_8 = Some(val);
+        },
+        9 => {
+          let val = i_prot.read_string()?;
+          f_9 = Some(val);
+        },
+        10 => {
+          let val = i_prot.read_bool()?;
+          f_10 = Some(val);
+        },
+        11 => {
+          let val = i_prot.read_bool()?;
+          f_11 = Some(val);
+        },
+        _ => {
+          i_prot.skip(field_ident.field_type)?;
+        },
+      };
+      i_prot.read_field_end()?;
+    }
+    i_prot.read_struct_end()?;
+    let ret = TlsConfig {
+      crl_mode: f_1,
+      crl_disk_caching: f_2,
+      crl_memory_caching: f_3,
+      crl_cache_dir: f_4,
+      crl_validity_days: f_5,
+      allow_certs_without_crl_url: f_6,
+      crl_http_timeout_seconds: f_7,
+      crl_connection_timeout_seconds: f_8,
+      custom_root_store_path: f_9,
+      verify_hostname: f_10,
+      verify_certificates: f_11,
+    };
+    Ok(ret)
+  }
+  fn write_to_out_protocol(&self, o_prot: &mut dyn TOutputProtocol) -> thrift::Result<()> {
+    let struct_ident = TStructIdentifier::new("TlsConfig");
+    o_prot.write_struct_begin(&struct_ident)?;
+    if let Some(ref fld_var) = self.crl_mode {
+      o_prot.write_field_begin(&TFieldIdentifier::new("crl_mode", TType::I32, 1))?;
+      fld_var.write_to_out_protocol(o_prot)?;
+      o_prot.write_field_end()?
+    }
+    if let Some(fld_var) = self.crl_disk_caching {
+      o_prot.write_field_begin(&TFieldIdentifier::new("crl_disk_caching", TType::Bool, 2))?;
+      o_prot.write_bool(fld_var)?;
+      o_prot.write_field_end()?
+    }
+    if let Some(fld_var) = self.crl_memory_caching {
+      o_prot.write_field_begin(&TFieldIdentifier::new("crl_memory_caching", TType::Bool, 3))?;
+      o_prot.write_bool(fld_var)?;
+      o_prot.write_field_end()?
+    }
+    if let Some(ref fld_var) = self.crl_cache_dir {
+      o_prot.write_field_begin(&TFieldIdentifier::new("crl_cache_dir", TType::String, 4))?;
+      o_prot.write_string(fld_var)?;
+      o_prot.write_field_end()?
+    }
+    if let Some(fld_var) = self.crl_validity_days {
+      o_prot.write_field_begin(&TFieldIdentifier::new("crl_validity_days", TType::I32, 5))?;
+      o_prot.write_i32(fld_var)?;
+      o_prot.write_field_end()?
+    }
+    if let Some(fld_var) = self.allow_certs_without_crl_url {
+      o_prot.write_field_begin(&TFieldIdentifier::new("allow_certs_without_crl_url", TType::Bool, 6))?;
+      o_prot.write_bool(fld_var)?;
+      o_prot.write_field_end()?
+    }
+    if let Some(fld_var) = self.crl_http_timeout_seconds {
+      o_prot.write_field_begin(&TFieldIdentifier::new("crl_http_timeout_seconds", TType::I32, 7))?;
+      o_prot.write_i32(fld_var)?;
+      o_prot.write_field_end()?
+    }
+    if let Some(fld_var) = self.crl_connection_timeout_seconds {
+      o_prot.write_field_begin(&TFieldIdentifier::new("crl_connection_timeout_seconds", TType::I32, 8))?;
+      o_prot.write_i32(fld_var)?;
+      o_prot.write_field_end()?
+    }
+    if let Some(ref fld_var) = self.custom_root_store_path {
+      o_prot.write_field_begin(&TFieldIdentifier::new("custom_root_store_path", TType::String, 9))?;
+      o_prot.write_string(fld_var)?;
+      o_prot.write_field_end()?
+    }
+    if let Some(fld_var) = self.verify_hostname {
+      o_prot.write_field_begin(&TFieldIdentifier::new("verify_hostname", TType::Bool, 10))?;
+      o_prot.write_bool(fld_var)?;
+      o_prot.write_field_end()?
+    }
+    if let Some(fld_var) = self.verify_certificates {
+      o_prot.write_field_begin(&TFieldIdentifier::new("verify_certificates", TType::Bool, 11))?;
+      o_prot.write_bool(fld_var)?;
+      o_prot.write_field_end()?
+    }
+    o_prot.write_field_stop()?;
+    o_prot.write_struct_end()
+  }
+}
+
+//
 // DatabaseDriver service client
 //
 
@@ -1449,6 +1690,9 @@ pub trait TDatabaseDriverSyncClient {
   /// Roll back any pending transactions.
   /// Corresponds to AdbcConnectionRollback.
   fn connection_rollback(&mut self, conn_handle: ConnectionHandle) -> thrift::Result<()>;
+  /// Set the TLS configuration on a connection in a single call.
+  /// Existing option-based APIs remain supported; this is additive.
+  fn connection_set_tls_config(&mut self, conn_handle: ConnectionHandle, tls_config: TlsConfig) -> thrift::Result<()>;
   /// Create a new statement.
   /// Corresponds to AdbcStatementNew.
   /// @return An opaque handle to the server-side statement object.
@@ -2068,6 +2312,33 @@ impl <C: TThriftClient + TDatabaseDriverSyncClientMarker> TDatabaseDriverSyncCli
       result.ok_or()
     }
   }
+  fn connection_set_tls_config(&mut self, conn_handle: ConnectionHandle, tls_config: TlsConfig) -> thrift::Result<()> {
+    (
+      {
+        self.increment_sequence_number();
+        let message_ident = TMessageIdentifier::new("connectionSetTlsConfig", TMessageType::Call, self.sequence_number());
+        let call_args = DatabaseDriverConnectionSetTlsConfigArgs { conn_handle, tls_config };
+        self.o_prot_mut().write_message_begin(&message_ident)?;
+        call_args.write_to_out_protocol(self.o_prot_mut())?;
+        self.o_prot_mut().write_message_end()?;
+        self.o_prot_mut().flush()
+      }
+    )?;
+    {
+      let message_ident = self.i_prot_mut().read_message_begin()?;
+      verify_expected_sequence_number(self.sequence_number(), message_ident.sequence_number)?;
+      verify_expected_service_call("connectionSetTlsConfig", &message_ident.name)?;
+      if message_ident.message_type == TMessageType::Exception {
+        let remote_error = thrift::Error::read_application_error_from_in_protocol(self.i_prot_mut())?;
+        self.i_prot_mut().read_message_end()?;
+        return Err(thrift::Error::Application(remote_error))
+      }
+      verify_expected_message_type(TMessageType::Reply, message_ident.message_type)?;
+      let result = DatabaseDriverConnectionSetTlsConfigResult::read_from_in_protocol(self.i_prot_mut())?;
+      self.i_prot_mut().read_message_end()?;
+      result.ok_or()
+    }
+  }
   fn statement_new(&mut self, conn_handle: ConnectionHandle) -> thrift::Result<StatementHandle> {
     (
       {
@@ -2547,6 +2818,9 @@ pub trait DatabaseDriverSyncHandler {
   /// Roll back any pending transactions.
   /// Corresponds to AdbcConnectionRollback.
   fn handle_connection_rollback(&self, conn_handle: ConnectionHandle) -> thrift::Result<()>;
+  /// Set the TLS configuration on a connection in a single call.
+  /// Existing option-based APIs remain supported; this is additive.
+  fn handle_connection_set_tls_config(&self, conn_handle: ConnectionHandle, tls_config: TlsConfig) -> thrift::Result<()>;
   /// Create a new statement.
   /// Corresponds to AdbcStatementNew.
   /// @return An opaque handle to the server-side statement object.
@@ -2671,6 +2945,9 @@ impl <H: DatabaseDriverSyncHandler> DatabaseDriverSyncProcessor<H> {
   }
   fn process_connection_rollback(&self, incoming_sequence_number: i32, i_prot: &mut dyn TInputProtocol, o_prot: &mut dyn TOutputProtocol) -> thrift::Result<()> {
     TDatabaseDriverProcessFunctions::process_connection_rollback(&self.handler, incoming_sequence_number, i_prot, o_prot)
+  }
+  fn process_connection_set_tls_config(&self, incoming_sequence_number: i32, i_prot: &mut dyn TInputProtocol, o_prot: &mut dyn TOutputProtocol) -> thrift::Result<()> {
+    TDatabaseDriverProcessFunctions::process_connection_set_tls_config(&self.handler, incoming_sequence_number, i_prot, o_prot)
   }
   fn process_statement_new(&self, incoming_sequence_number: i32, i_prot: &mut dyn TInputProtocol, o_prot: &mut dyn TOutputProtocol) -> thrift::Result<()> {
     TDatabaseDriverProcessFunctions::process_statement_new(&self.handler, incoming_sequence_number, i_prot, o_prot)
@@ -3922,6 +4199,66 @@ impl TDatabaseDriverProcessFunctions {
       },
     }
   }
+  pub fn process_connection_set_tls_config<H: DatabaseDriverSyncHandler>(handler: &H, incoming_sequence_number: i32, i_prot: &mut dyn TInputProtocol, o_prot: &mut dyn TOutputProtocol) -> thrift::Result<()> {
+    let args = DatabaseDriverConnectionSetTlsConfigArgs::read_from_in_protocol(i_prot)?;
+    match handler.handle_connection_set_tls_config(args.conn_handle, args.tls_config) {
+      Ok(_) => {
+        let message_ident = TMessageIdentifier::new("connectionSetTlsConfig", TMessageType::Reply, incoming_sequence_number);
+        o_prot.write_message_begin(&message_ident)?;
+        let ret = DatabaseDriverConnectionSetTlsConfigResult { e: None };
+        ret.write_to_out_protocol(o_prot)?;
+        o_prot.write_message_end()?;
+        o_prot.flush()
+      },
+      Err(e) => {
+        match e {
+          thrift::Error::User(usr_err) => {
+            if usr_err.downcast_ref::<DriverException>().is_some() {
+              let err = usr_err.downcast::<DriverException>().expect("downcast already checked");
+              let ret_err = DatabaseDriverConnectionSetTlsConfigResult{ e: Some(*err) };
+              let message_ident = TMessageIdentifier::new("connectionSetTlsConfig", TMessageType::Reply, incoming_sequence_number);
+              o_prot.write_message_begin(&message_ident)?;
+              ret_err.write_to_out_protocol(o_prot)?;
+              o_prot.write_message_end()?;
+              o_prot.flush()
+            } else {
+              let ret_err = {
+                ApplicationError::new(
+                  ApplicationErrorKind::Unknown,
+                  usr_err.to_string()
+                )
+              };
+              let message_ident = TMessageIdentifier::new("connectionSetTlsConfig", TMessageType::Exception, incoming_sequence_number);
+              o_prot.write_message_begin(&message_ident)?;
+              thrift::Error::write_application_error_to_out_protocol(&ret_err, o_prot)?;
+              o_prot.write_message_end()?;
+              o_prot.flush()
+            }
+          },
+          thrift::Error::Application(app_err) => {
+            let message_ident = TMessageIdentifier::new("connectionSetTlsConfig", TMessageType::Exception, incoming_sequence_number);
+            o_prot.write_message_begin(&message_ident)?;
+            thrift::Error::write_application_error_to_out_protocol(&app_err, o_prot)?;
+            o_prot.write_message_end()?;
+            o_prot.flush()
+          },
+          _ => {
+            let ret_err = {
+              ApplicationError::new(
+                ApplicationErrorKind::Unknown,
+                e.to_string()
+              )
+            };
+            let message_ident = TMessageIdentifier::new("connectionSetTlsConfig", TMessageType::Exception, incoming_sequence_number);
+            o_prot.write_message_begin(&message_ident)?;
+            thrift::Error::write_application_error_to_out_protocol(&ret_err, o_prot)?;
+            o_prot.write_message_end()?;
+            o_prot.flush()
+          },
+        }
+      },
+    }
+  }
   pub fn process_statement_new<H: DatabaseDriverSyncHandler>(handler: &H, incoming_sequence_number: i32, i_prot: &mut dyn TInputProtocol, o_prot: &mut dyn TOutputProtocol) -> thrift::Result<()> {
     let args = DatabaseDriverStatementNewArgs::read_from_in_protocol(i_prot)?;
     match handler.handle_statement_new(args.conn_handle) {
@@ -4887,6 +5224,9 @@ impl <H: DatabaseDriverSyncHandler> TProcessor for DatabaseDriverSyncProcessor<H
       },
       "connectionRollback" => {
         self.process_connection_rollback(message_ident.sequence_number, i_prot, o_prot)
+      },
+      "connectionSetTlsConfig" => {
+        self.process_connection_set_tls_config(message_ident.sequence_number, i_prot, o_prot)
       },
       "statementNew" => {
         self.process_statement_new(message_ident.sequence_number, i_prot, o_prot)
@@ -7426,6 +7766,121 @@ impl DatabaseDriverConnectionRollbackResult {
   }
   fn write_to_out_protocol(&self, o_prot: &mut dyn TOutputProtocol) -> thrift::Result<()> {
     let struct_ident = TStructIdentifier::new("DatabaseDriverConnectionRollbackResult");
+    o_prot.write_struct_begin(&struct_ident)?;
+    if let Some(ref fld_var) = self.e {
+      o_prot.write_field_begin(&TFieldIdentifier::new("e", TType::Struct, 1))?;
+      fld_var.write_to_out_protocol(o_prot)?;
+      o_prot.write_field_end()?
+    }
+    o_prot.write_field_stop()?;
+    o_prot.write_struct_end()
+  }
+}
+
+//
+// DatabaseDriverConnectionSetTlsConfigArgs
+//
+
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+struct DatabaseDriverConnectionSetTlsConfigArgs {
+  conn_handle: ConnectionHandle,
+  tls_config: TlsConfig,
+}
+
+impl DatabaseDriverConnectionSetTlsConfigArgs {
+  fn read_from_in_protocol(i_prot: &mut dyn TInputProtocol) -> thrift::Result<DatabaseDriverConnectionSetTlsConfigArgs> {
+    i_prot.read_struct_begin()?;
+    let mut f_1: Option<ConnectionHandle> = None;
+    let mut f_2: Option<TlsConfig> = None;
+    loop {
+      let field_ident = i_prot.read_field_begin()?;
+      if field_ident.field_type == TType::Stop {
+        break;
+      }
+      let field_id = field_id(&field_ident)?;
+      match field_id {
+        1 => {
+          let val = ConnectionHandle::read_from_in_protocol(i_prot)?;
+          f_1 = Some(val);
+        },
+        2 => {
+          let val = TlsConfig::read_from_in_protocol(i_prot)?;
+          f_2 = Some(val);
+        },
+        _ => {
+          i_prot.skip(field_ident.field_type)?;
+        },
+      };
+      i_prot.read_field_end()?;
+    }
+    i_prot.read_struct_end()?;
+    verify_required_field_exists("DatabaseDriverConnectionSetTlsConfigArgs.conn_handle", &f_1)?;
+    verify_required_field_exists("DatabaseDriverConnectionSetTlsConfigArgs.tls_config", &f_2)?;
+    let ret = DatabaseDriverConnectionSetTlsConfigArgs {
+      conn_handle: f_1.expect("auto-generated code should have checked for presence of required fields"),
+      tls_config: f_2.expect("auto-generated code should have checked for presence of required fields"),
+    };
+    Ok(ret)
+  }
+  fn write_to_out_protocol(&self, o_prot: &mut dyn TOutputProtocol) -> thrift::Result<()> {
+    let struct_ident = TStructIdentifier::new("connectionSetTlsConfig_args");
+    o_prot.write_struct_begin(&struct_ident)?;
+    o_prot.write_field_begin(&TFieldIdentifier::new("conn_handle", TType::Struct, 1))?;
+    self.conn_handle.write_to_out_protocol(o_prot)?;
+    o_prot.write_field_end()?;
+    o_prot.write_field_begin(&TFieldIdentifier::new("tls_config", TType::Struct, 2))?;
+    self.tls_config.write_to_out_protocol(o_prot)?;
+    o_prot.write_field_end()?;
+    o_prot.write_field_stop()?;
+    o_prot.write_struct_end()
+  }
+}
+
+//
+// DatabaseDriverConnectionSetTlsConfigResult
+//
+
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+struct DatabaseDriverConnectionSetTlsConfigResult {
+  e: Option<DriverException>,
+}
+
+impl DatabaseDriverConnectionSetTlsConfigResult {
+  fn ok_or(self) -> thrift::Result<()> {
+    if self.e.is_some() {
+      Err(thrift::Error::User(Box::new(self.e.unwrap())))
+    } else {
+      Ok(())
+    }
+  }
+  fn read_from_in_protocol(i_prot: &mut dyn TInputProtocol) -> thrift::Result<DatabaseDriverConnectionSetTlsConfigResult> {
+    i_prot.read_struct_begin()?;
+    let mut f_1: Option<DriverException> = None;
+    loop {
+      let field_ident = i_prot.read_field_begin()?;
+      if field_ident.field_type == TType::Stop {
+        break;
+      }
+      let field_id = field_id(&field_ident)?;
+      match field_id {
+        1 => {
+          let val = DriverException::read_from_in_protocol(i_prot)?;
+          f_1 = Some(val);
+        },
+        _ => {
+          i_prot.skip(field_ident.field_type)?;
+        },
+      };
+      i_prot.read_field_end()?;
+    }
+    i_prot.read_struct_end()?;
+    let ret = DatabaseDriverConnectionSetTlsConfigResult {
+      e: f_1,
+    };
+    Ok(ret)
+  }
+  fn write_to_out_protocol(&self, o_prot: &mut dyn TOutputProtocol) -> thrift::Result<()> {
+    let struct_ident = TStructIdentifier::new("DatabaseDriverConnectionSetTlsConfigResult");
     o_prot.write_struct_begin(&struct_ident)?;
     if let Some(ref fld_var) = self.e {
       o_prot.write_field_begin(&TFieldIdentifier::new("e", TType::Struct, 1))?;

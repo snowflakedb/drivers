@@ -13,11 +13,12 @@ use lazy_static::lazy_static;
 use thrift::protocol::{TInputProtocol, TOutputProtocol};
 
 use crate::thrift_gen::database_driver_v1::{
-    ArrowArrayPtr, ArrowSchemaPtr, AuthenticationError, ConnectionHandle, DatabaseDriverSyncClient,
-    DatabaseDriverSyncHandler, DatabaseDriverSyncProcessor, DatabaseHandle, DriverError,
-    DriverException, ExecuteResult, GenericError, InfoCode, InternalError, InvalidParameterValue,
-    LoginError, MissingParameter, PartitionedResult, StatementHandle, StatusCode,
-    TDatabaseDriverSyncClient,
+    ArrowArrayPtr, ArrowSchemaPtr, AuthenticationError, CertRevocationCheckMode as ThriftCrlMode,
+    ConnectionHandle, DatabaseDriverSyncClient, DatabaseDriverSyncHandler,
+    DatabaseDriverSyncProcessor, DatabaseHandle, DriverError, DriverException, ExecuteResult,
+    GenericError, InfoCode, InternalError, InvalidParameterValue, LoginError, MissingParameter,
+    PartitionedResult, StatementHandle, StatusCode, TDatabaseDriverSyncClient,
+    TlsConfig as ThriftTlsConfig,
 };
 
 use arrow::array::{RecordBatch, StructArray};
@@ -400,6 +401,86 @@ impl DatabaseDriverV1Server {
             None => Err(Self::invalid_argument("Statement handle not found")),
         }
     }
+
+    fn apply_tls_config(
+        &self,
+        handle: ConnectionHandle,
+        tls: ThriftTlsConfig,
+    ) -> thrift::Result<()> {
+        let handle = handle.into();
+        match CONN_HANDLE_MANAGER.get_obj(handle) {
+            Some(conn_ptr) => {
+                let mut conn = conn_ptr.lock().unwrap();
+
+                if let Some(mode) = tls.crl_mode {
+                    let mode_str = match mode {
+                        ThriftCrlMode::DISABLED => "DISABLED",
+                        ThriftCrlMode::ENABLED => "ENABLED",
+                        ThriftCrlMode::ADVISORY => "ADVISORY",
+                        _ => "DISABLED",
+                    };
+                    conn.settings.insert(
+                        "cert_revocation_check_mode".to_string(),
+                        Setting::String(mode_str.to_string()),
+                    );
+                }
+                if let Some(v) = tls.crl_disk_caching {
+                    conn.settings.insert(
+                        "enable_crl_disk_caching".to_string(),
+                        Setting::String(v.to_string()),
+                    );
+                }
+                if let Some(v) = tls.crl_memory_caching {
+                    conn.settings.insert(
+                        "enable_crl_memory_caching".to_string(),
+                        Setting::String(v.to_string()),
+                    );
+                }
+                if let Some(v) = tls.crl_cache_dir {
+                    conn.settings
+                        .insert("sf_crl_response_cache_dir".to_string(), Setting::String(v));
+                }
+                if let Some(v) = tls.crl_validity_days {
+                    conn.settings
+                        .insert("sf_crl_validity_time".to_string(), Setting::Int(v as i64));
+                }
+                if let Some(v) = tls.allow_certs_without_crl_url {
+                    conn.settings.insert(
+                        "allow_certificates_without_crl_url".to_string(),
+                        Setting::String(v.to_string()),
+                    );
+                }
+                if let Some(v) = tls.crl_http_timeout_seconds {
+                    conn.settings
+                        .insert("crl_http_timeout".to_string(), Setting::Int(v as i64));
+                }
+                if let Some(v) = tls.crl_connection_timeout_seconds {
+                    conn.settings
+                        .insert("crl_connection_timeout".to_string(), Setting::Int(v as i64));
+                }
+
+                if let Some(v) = tls.custom_root_store_path {
+                    conn.settings
+                        .insert("custom_root_store_path".to_string(), Setting::String(v));
+                }
+                if let Some(v) = tls.verify_hostname {
+                    conn.settings.insert(
+                        "verify_hostname".to_string(),
+                        Setting::String(v.to_string()),
+                    );
+                }
+                if let Some(v) = tls.verify_certificates {
+                    conn.settings.insert(
+                        "verify_certificates".to_string(),
+                        Setting::String(v.to_string()),
+                    );
+                }
+
+                Ok(())
+            }
+            None => Err(Self::invalid_argument("Connection handle not found")),
+        }
+    }
 }
 
 impl DatabaseDriverSyncHandler for DatabaseDriverV1Server {
@@ -581,6 +662,16 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1Server {
     #[instrument(name = "DatabaseDriverV1::connection_rollback", skip(self))]
     fn handle_connection_rollback(&self, _conn_handle: ConnectionHandle) -> thrift::Result<()> {
         todo!()
+    }
+
+    #[instrument(name = "DatabaseDriverV1::connection_set_tls_config", skip(self))]
+    fn handle_connection_set_tls_config(
+        &self,
+        conn_handle: ConnectionHandle,
+        tls_config: ThriftTlsConfig,
+    ) -> thrift::Result<()> {
+        tracing::debug!("Received connection_set_tls_config over Thrift");
+        self.apply_tls_config(conn_handle, tls_config)
     }
 
     #[instrument(name = "DatabaseDriverV1::statement_new", skip(self))]

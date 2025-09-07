@@ -119,6 +119,24 @@ class InfoCode(object):
     }
 
 
+class CertRevocationCheckMode(object):
+    DISABLED = 0
+    ENABLED = 1
+    ADVISORY = 2
+
+    _VALUES_TO_NAMES = {
+        0: "DISABLED",
+        1: "ENABLED",
+        2: "ADVISORY",
+    }
+
+    _NAMES_TO_VALUES = {
+        "DISABLED": 0,
+        "ENABLED": 1,
+        "ADVISORY": 2,
+    }
+
+
 class ErrorDetail(object):
     """
     Attributes:
@@ -1374,6 +1392,175 @@ class ArrowArrayPtr(object):
 
     def __ne__(self, other):
         return not (self == other)
+
+
+class TlsConfig(object):
+    """
+    Attributes:
+     - crl_mode
+     - crl_disk_caching
+     - crl_memory_caching
+     - crl_cache_dir
+     - crl_validity_days
+     - allow_certs_without_crl_url
+     - crl_http_timeout_seconds
+     - crl_connection_timeout_seconds
+     - custom_root_store_path
+     - verify_hostname
+     - verify_certificates
+
+    """
+    thrift_spec = None
+
+
+    def __init__(self, crl_mode =     0, crl_disk_caching = True, crl_memory_caching = True, crl_cache_dir = None, crl_validity_days = 10, allow_certs_without_crl_url = False, crl_http_timeout_seconds = 30, crl_connection_timeout_seconds = 10, custom_root_store_path = None, verify_hostname = True, verify_certificates = True,):
+        self.crl_mode = crl_mode
+        self.crl_disk_caching = crl_disk_caching
+        self.crl_memory_caching = crl_memory_caching
+        self.crl_cache_dir = crl_cache_dir
+        self.crl_validity_days = crl_validity_days
+        self.allow_certs_without_crl_url = allow_certs_without_crl_url
+        self.crl_http_timeout_seconds = crl_http_timeout_seconds
+        self.crl_connection_timeout_seconds = crl_connection_timeout_seconds
+        self.custom_root_store_path = custom_root_store_path
+        self.verify_hostname = verify_hostname
+        self.verify_certificates = verify_certificates
+
+    def read(self, iprot):
+        if iprot._fast_decode is not None and isinstance(iprot.trans, TTransport.CReadableTransport) and self.thrift_spec is not None:
+            iprot._fast_decode(self, iprot, [self.__class__, self.thrift_spec])
+            return
+        iprot.readStructBegin()
+        while True:
+            (fname, ftype, fid) = iprot.readFieldBegin()
+            if ftype == TType.STOP:
+                break
+            if fid == 1:
+                if ftype == TType.I32:
+                    self.crl_mode = iprot.readI32()
+                else:
+                    iprot.skip(ftype)
+            elif fid == 2:
+                if ftype == TType.BOOL:
+                    self.crl_disk_caching = iprot.readBool()
+                else:
+                    iprot.skip(ftype)
+            elif fid == 3:
+                if ftype == TType.BOOL:
+                    self.crl_memory_caching = iprot.readBool()
+                else:
+                    iprot.skip(ftype)
+            elif fid == 4:
+                if ftype == TType.STRING:
+                    self.crl_cache_dir = iprot.readString().decode('utf-8', errors='replace') if sys.version_info[0] == 2 else iprot.readString()
+                else:
+                    iprot.skip(ftype)
+            elif fid == 5:
+                if ftype == TType.I32:
+                    self.crl_validity_days = iprot.readI32()
+                else:
+                    iprot.skip(ftype)
+            elif fid == 6:
+                if ftype == TType.BOOL:
+                    self.allow_certs_without_crl_url = iprot.readBool()
+                else:
+                    iprot.skip(ftype)
+            elif fid == 7:
+                if ftype == TType.I32:
+                    self.crl_http_timeout_seconds = iprot.readI32()
+                else:
+                    iprot.skip(ftype)
+            elif fid == 8:
+                if ftype == TType.I32:
+                    self.crl_connection_timeout_seconds = iprot.readI32()
+                else:
+                    iprot.skip(ftype)
+            elif fid == 9:
+                if ftype == TType.STRING:
+                    self.custom_root_store_path = iprot.readString().decode('utf-8', errors='replace') if sys.version_info[0] == 2 else iprot.readString()
+                else:
+                    iprot.skip(ftype)
+            elif fid == 10:
+                if ftype == TType.BOOL:
+                    self.verify_hostname = iprot.readBool()
+                else:
+                    iprot.skip(ftype)
+            elif fid == 11:
+                if ftype == TType.BOOL:
+                    self.verify_certificates = iprot.readBool()
+                else:
+                    iprot.skip(ftype)
+            else:
+                iprot.skip(ftype)
+            iprot.readFieldEnd()
+        iprot.readStructEnd()
+
+    def write(self, oprot):
+        self.validate()
+        if oprot._fast_encode is not None and self.thrift_spec is not None:
+            oprot.trans.write(oprot._fast_encode(self, [self.__class__, self.thrift_spec]))
+            return
+        oprot.writeStructBegin('TlsConfig')
+        if self.crl_mode is not None:
+            oprot.writeFieldBegin('crl_mode', TType.I32, 1)
+            oprot.writeI32(self.crl_mode)
+            oprot.writeFieldEnd()
+        if self.crl_disk_caching is not None:
+            oprot.writeFieldBegin('crl_disk_caching', TType.BOOL, 2)
+            oprot.writeBool(self.crl_disk_caching)
+            oprot.writeFieldEnd()
+        if self.crl_memory_caching is not None:
+            oprot.writeFieldBegin('crl_memory_caching', TType.BOOL, 3)
+            oprot.writeBool(self.crl_memory_caching)
+            oprot.writeFieldEnd()
+        if self.crl_cache_dir is not None:
+            oprot.writeFieldBegin('crl_cache_dir', TType.STRING, 4)
+            oprot.writeString(self.crl_cache_dir.encode('utf-8') if sys.version_info[0] == 2 else self.crl_cache_dir)
+            oprot.writeFieldEnd()
+        if self.crl_validity_days is not None:
+            oprot.writeFieldBegin('crl_validity_days', TType.I32, 5)
+            oprot.writeI32(self.crl_validity_days)
+            oprot.writeFieldEnd()
+        if self.allow_certs_without_crl_url is not None:
+            oprot.writeFieldBegin('allow_certs_without_crl_url', TType.BOOL, 6)
+            oprot.writeBool(self.allow_certs_without_crl_url)
+            oprot.writeFieldEnd()
+        if self.crl_http_timeout_seconds is not None:
+            oprot.writeFieldBegin('crl_http_timeout_seconds', TType.I32, 7)
+            oprot.writeI32(self.crl_http_timeout_seconds)
+            oprot.writeFieldEnd()
+        if self.crl_connection_timeout_seconds is not None:
+            oprot.writeFieldBegin('crl_connection_timeout_seconds', TType.I32, 8)
+            oprot.writeI32(self.crl_connection_timeout_seconds)
+            oprot.writeFieldEnd()
+        if self.custom_root_store_path is not None:
+            oprot.writeFieldBegin('custom_root_store_path', TType.STRING, 9)
+            oprot.writeString(self.custom_root_store_path.encode('utf-8') if sys.version_info[0] == 2 else self.custom_root_store_path)
+            oprot.writeFieldEnd()
+        if self.verify_hostname is not None:
+            oprot.writeFieldBegin('verify_hostname', TType.BOOL, 10)
+            oprot.writeBool(self.verify_hostname)
+            oprot.writeFieldEnd()
+        if self.verify_certificates is not None:
+            oprot.writeFieldBegin('verify_certificates', TType.BOOL, 11)
+            oprot.writeBool(self.verify_certificates)
+            oprot.writeFieldEnd()
+        oprot.writeFieldStop()
+        oprot.writeStructEnd()
+
+    def validate(self):
+        return
+
+    def __repr__(self):
+        L = ['%s=%r' % (key, value)
+             for key, value in self.__dict__.items()]
+        return '%s(%s)' % (self.__class__.__name__, ', '.join(L))
+
+    def __eq__(self, other):
+        return isinstance(other, self.__class__) and self.__dict__ == other.__dict__
+
+    def __ne__(self, other):
+        return not (self == other)
 all_structs.append(ErrorDetail)
 ErrorDetail.thrift_spec = (
     None,  # 0
@@ -1472,6 +1659,21 @@ all_structs.append(ArrowArrayPtr)
 ArrowArrayPtr.thrift_spec = (
     None,  # 0
     (1, TType.STRING, 'value', 'BINARY', None, ),  # 1
+)
+all_structs.append(TlsConfig)
+TlsConfig.thrift_spec = (
+    None,  # 0
+    (1, TType.I32, 'crl_mode', None,     0, ),  # 1
+    (2, TType.BOOL, 'crl_disk_caching', None, True, ),  # 2
+    (3, TType.BOOL, 'crl_memory_caching', None, True, ),  # 3
+    (4, TType.STRING, 'crl_cache_dir', 'UTF8', None, ),  # 4
+    (5, TType.I32, 'crl_validity_days', None, 10, ),  # 5
+    (6, TType.BOOL, 'allow_certs_without_crl_url', None, False, ),  # 6
+    (7, TType.I32, 'crl_http_timeout_seconds', None, 30, ),  # 7
+    (8, TType.I32, 'crl_connection_timeout_seconds', None, 10, ),  # 8
+    (9, TType.STRING, 'custom_root_store_path', 'UTF8', None, ),  # 9
+    (10, TType.BOOL, 'verify_hostname', None, True, ),  # 10
+    (11, TType.BOOL, 'verify_certificates', None, True, ),  # 11
 )
 fix_spec(all_structs)
 del all_structs

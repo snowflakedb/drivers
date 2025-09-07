@@ -1,9 +1,6 @@
 // Real CRL validator that actually parses certificates and validates against CRLs
 use crate::crl::cache_simple::CrlCache;
-use crate::crl::certificate_parser::{
-    check_certificate_in_crl, extract_crl_distribution_points, get_certificate_serial_number,
-    is_short_lived_certificate,
-};
+use crate::crl::certificate_parser::is_short_lived_certificate;
 use crate::crl::config::{CertRevocationCheckMode, CrlConfig};
 use crate::crl::error::CrlError;
 use chrono::Utc;
@@ -28,7 +25,7 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 use x509_cert::Certificate as RcCertificate;
 use x509_cert::crl::CertificateList as RcCertificateList;
-use x509_cert::der::{Decode, Encode};
+use x509_cert::der::Decode;
 use x509_parser::prelude::FromDer;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -91,6 +88,15 @@ impl CrlValidator {
             cache,
             client,
         })
+    }
+    // Static helper to allow cache to reuse signature verification without creating a validator
+    pub(crate) fn verify_crl_signature_best_effort_static(
+        crl_bytes: &[u8],
+        issuer_cert_der: Option<&[u8]>,
+    ) -> Result<(), CrlError> {
+        // Delegate to instance method using a temporary minimal validator
+        let tmp = CrlValidator::new(CrlConfig::default())?;
+        tmp.verify_crl_signature_best_effort(crl_bytes, issuer_cert_der)
     }
 
     /// Main entry point for certificate revocation validation
@@ -239,68 +245,39 @@ impl CrlValidator {
                 }
             }
 
-            // Extract CRL distribution points
-            let crl_urls = match extract_crl_distribution_points(cert_der) {
-                Ok(urls) => urls,
-                Err(e) => {
-                    if self.config.allow_certificates_without_crl_url {
-                        tracing::debug!(
-                            "Certificate {} has no CRL distribution points, but allowing due to config",
-                            cert_idx
-                        );
-                        continue;
-                    } else {
-                        tracing::error!(
-                            "Certificate {} has no CRL distribution points: {}",
-                            cert_idx,
-                            e
-                        );
-                        chain_result = ChainValidationResult::ChainError;
-                        continue;
+            // Ask cache to check revocation holistically; it will extract URLs and check CRLs
+            let issuer_der = cert_chain.get(cert_idx + 1).map(|v| v.as_slice());
+            match self.cache.check_revocation(cert_der, issuer_der).await {
+                Ok(outcome) => {
+                    use crate::tls::revocation::RevocationOutcome;
+                    match outcome {
+                        RevocationOutcome::Revoked { .. } => {
+                            tracing::error!("Certificate {} is REVOKED", cert_idx);
+                            chain_result = ChainValidationResult::ChainRevoked;
+                            break;
+                        }
+                        RevocationOutcome::NotRevoked => {
+                            tracing::info!(
+                                "Certificate {} is NOT revoked according to CRL(s)",
+                                cert_idx
+                            );
+                        }
+                        RevocationOutcome::NotDetermined => {
+                            tracing::warn!(
+                                "Revocation status not determined for certificate {}",
+                                cert_idx
+                            );
+                            chain_result = ChainValidationResult::ChainError;
+                        }
                     }
                 }
-            };
-
-            // Get certificate serial number
-            let cert_serial = match get_certificate_serial_number(cert_der) {
-                Ok(serial) => serial,
                 Err(e) => {
                     tracing::error!(
-                        "Failed to get serial number for certificate {}: {}",
+                        "Error during revocation check for certificate {}: {}",
                         cert_idx,
                         e
                     );
                     chain_result = ChainValidationResult::ChainError;
-                    continue;
-                }
-            };
-
-            tracing::debug!(
-                "Certificate {} serial: {}",
-                cert_idx,
-                hex::encode(&cert_serial)
-            );
-
-            // Validate certificate against its CRL URLs
-            let issuer_der = cert_chain.get(cert_idx + 1).map(|v| v.as_slice());
-            let cert_status = self
-                .validate_certificate_against_crls(&cert_serial, &crl_urls, issuer_der)
-                .await;
-
-            match cert_status {
-                CertificateStatus::Revoked => {
-                    tracing::error!("Certificate {} is REVOKED", cert_idx);
-                    chain_result = ChainValidationResult::ChainRevoked;
-                    break; // Fail fast for revoked certificates
-                }
-                CertificateStatus::Error => {
-                    tracing::warn!("Error validating certificate {}", cert_idx);
-                    chain_result = ChainValidationResult::ChainError;
-                    // Continue checking other certificates
-                }
-                CertificateStatus::Unrevoked => {
-                    tracing::info!("Certificate {} is NOT revoked", cert_idx);
-                    // Continue with next certificate
                 }
             }
         }
@@ -322,127 +299,9 @@ impl CrlValidator {
         chain_result
     }
 
-    /// Validate a certificate against its CRL URLs
-    async fn validate_certificate_against_crls(
-        &self,
-        cert_serial: &[u8],
-        crl_urls: &[String],
-        issuer_cert_der: Option<&[u8]>,
-    ) -> CertificateStatus {
-        if crl_urls.is_empty() {
-            tracing::debug!("No CRL URLs to check");
-            return CertificateStatus::Unrevoked;
-        }
+    // Legacy methods retained temporarily (unused); safe to remove when callers are migrated
 
-        let mut results = Vec::new();
-
-        for url in crl_urls {
-            tracing::debug!("Checking certificate against CRL URL: {}", url);
-
-            let result = self
-                .validate_certificate_against_crl(cert_serial, url, issuer_cert_der)
-                .await;
-
-            // Fail fast for revoked certificates
-            if result == CertificateStatus::Revoked {
-                return result;
-            }
-
-            results.push(result);
-        }
-
-        // If any result was an error, return error
-        if results.contains(&CertificateStatus::Error) {
-            CertificateStatus::Error
-        } else {
-            CertificateStatus::Unrevoked
-        }
-    }
-
-    /// Validate a certificate against a specific CRL URL - REAL IMPLEMENTATION
-    async fn validate_certificate_against_crl(
-        &self,
-        cert_serial: &[u8],
-        crl_url: &str,
-        issuer_cert_der: Option<&[u8]>,
-    ) -> CertificateStatus {
-        // Try to get CRL from memory cache first
-        match self.cache.get_cached(crl_url) {
-            Ok(Some(cached_crl)) => {
-                tracing::debug!("Found CRL in cache for {}", crl_url);
-                // If half-life passed but not expired, refresh in background
-                if let Ok((_, crl)) =
-                    x509_parser::revocation_list::CertificateRevocationList::from_der(
-                        cached_crl.crl.as_slice(),
-                    )
-                {
-                    let this_update = crl.tbs_cert_list.this_update;
-                    if let Some(next_update) = crl.tbs_cert_list.next_update
-                        && let (Some(this_dt), Some(next_dt)) = (
-                            crate::crl::certificate_parser::asn1_time_to_datetime(&this_update),
-                            crate::crl::certificate_parser::asn1_time_to_datetime(&next_update),
-                        )
-                    {
-                        let midpoint = this_dt + (next_dt - this_dt) / 2;
-                        if Utc::now() > midpoint && Utc::now() <= next_dt {
-                            self.spawn_refresh(crl_url.to_string());
-                        }
-                    }
-                }
-                return self.check_certificate_in_cached_crl(
-                    cert_serial,
-                    &cached_crl,
-                    issuer_cert_der,
-                );
-            }
-            Ok(None) => {
-                tracing::debug!("No cached CRL found for {}", crl_url);
-            }
-            Err(e) => {
-                tracing::debug!("Error reading CRL from cache: {}", e);
-            }
-        }
-
-        // Fetch CRL from URL or disk via cache
-        match self.cache.get(crl_url).await {
-            Ok(crl_data) => {
-                if let Err(e) = self.verify_crl_signature_best_effort(&crl_data, issuer_cert_der) {
-                    tracing::error!("CRL signature verification failed for {}: {}", crl_url, e);
-                    return CertificateStatus::Error;
-                }
-                // Check certificate against the downloaded CRL
-                match check_certificate_in_crl(cert_serial, &crl_data) {
-                    Ok(is_revoked) => {
-                        if is_revoked {
-                            tracing::error!(
-                                "Certificate is REVOKED according to CRL from {}",
-                                crl_url
-                            );
-                            CertificateStatus::Revoked
-                        } else {
-                            tracing::info!(
-                                "Certificate is NOT revoked according to CRL from {}",
-                                crl_url
-                            );
-                            CertificateStatus::Unrevoked
-                        }
-                    }
-                    Err(e) => {
-                        tracing::error!(
-                            "Failed to check certificate in CRL from {}: {}",
-                            crl_url,
-                            e
-                        );
-                        CertificateStatus::Error
-                    }
-                }
-            }
-            Err(e) => {
-                tracing::error!("Failed to fetch CRL from {}: {}", crl_url, e);
-                CertificateStatus::Error
-            }
-        }
-    }
+    // removed legacy per-URL checker in favor of cache::check_revocation
 
     /// Fetch CRL from disk cache or network and write to disk cache
     #[allow(dead_code)]
@@ -750,32 +609,7 @@ impl CrlValidator {
         });
     }
 
-    /// Check certificate in cached CRL (placeholder for now)
-    fn check_certificate_in_cached_crl(
-        &self,
-        _cert_serial: &[u8],
-        _cached_crl: &crate::crl::cache_simple::CachedCrl,
-        _issuer_cert_der: Option<&[u8]>,
-    ) -> CertificateStatus {
-        let issuer = _issuer_cert_der;
-        if let Err(e) = self.verify_crl_signature_best_effort(&_cached_crl.crl, issuer) {
-            tracing::error!("Cached CRL signature verification failed: {}", e);
-            return CertificateStatus::Error;
-        }
-        match check_certificate_in_crl(_cert_serial, &_cached_crl.crl) {
-            Ok(is_revoked) => {
-                if is_revoked {
-                    CertificateStatus::Revoked
-                } else {
-                    CertificateStatus::Unrevoked
-                }
-            }
-            Err(e) => {
-                tracing::error!("Failed to check certificate in cached CRL: {}", e);
-                CertificateStatus::Error
-            }
-        }
-    }
+    // removed legacy cached CRL helper
 
     #[cfg(test)]
     pub(crate) fn write_crl_atomic(&self, path: &Path, data: &[u8]) {

@@ -117,6 +117,35 @@ struct ArrowArrayPtr {
   1: required binary value;
 }
 
+// --------------------------------------------------------------------------
+//  TLS Configuration (used by clients; additive, does not break existing APIs)
+// --------------------------------------------------------------------------
+
+enum CertRevocationCheckMode {
+  DISABLED = 0,
+  ENABLED = 1,
+  ADVISORY = 2,
+}
+
+struct TlsConfig {
+  // Certificate Revocation List settings
+  1: optional CertRevocationCheckMode crl_mode = CertRevocationCheckMode.DISABLED,
+  2: optional bool crl_disk_caching = true,
+  3: optional bool crl_memory_caching = true,
+  4: optional string crl_cache_dir,
+  5: optional i32 crl_validity_days = 10,
+  6: optional bool allow_certs_without_crl_url = false,
+  7: optional i32 crl_http_timeout_seconds = 30,
+  8: optional i32 crl_connection_timeout_seconds = 10,
+
+  // Root certificate store
+  9: optional string custom_root_store_path,
+
+  // General TLS settings
+  10: optional bool verify_hostname = true,
+  11: optional bool verify_certificates = true,
+}
+
 service DatabaseDriver {
 
   /**
@@ -245,6 +274,12 @@ service DatabaseDriver {
    * Corresponds to AdbcConnectionRollback.
    */
   void connectionRollback(1: ConnectionHandle conn_handle) throws (1: DriverException e);
+
+  /**
+   * Set the TLS configuration on a connection in a single call.
+   * Existing option-based APIs remain supported; this is additive.
+   */
+  void connectionSetTlsConfig(1: ConnectionHandle conn_handle, 2: TlsConfig tls_config) throws (1: DriverException e);
 
 
   // --------------------------------------------------------------------------

@@ -8,6 +8,7 @@ from .api_client.c_api import CORE_API
 from .cursor import Cursor
 from .exceptions import NotSupportedError, InterfaceError
 from .thrift_gen.database_driver_v1 import DatabaseDriver
+from .thrift_gen.database_driver_v1.ttypes import TlsConfig, CertRevocationCheckMode
 
 
 class Connection:
@@ -31,7 +32,78 @@ class Connection:
         self.db_handle = self.db_api.databaseNew()
         self.db_api.databaseInit(self.db_handle)
         self.conn_handle = self.db_api.connectionNew()
+
+        # Optional TLS config
+        tls_config = TlsConfig()
+        tls_configured = False
+
         for key, value in kwargs.items():
+            # First, capture TLS-related kwargs into TlsConfig; don't pass them as generic options
+            if key == "cert_revocation_check_mode" and isinstance(value, str):
+                mode = value.upper()
+                if mode == "ENABLED":
+                    tls_config.crl_mode = CertRevocationCheckMode.ENABLED
+                elif mode == "ADVISORY":
+                    tls_config.crl_mode = CertRevocationCheckMode.ADVISORY
+                else:
+                    tls_config.crl_mode = CertRevocationCheckMode.DISABLED
+                tls_configured = True
+                continue
+            if key == "enable_crl_disk_caching" and isinstance(value, str):
+                tls_config.crl_disk_caching = (value.lower() == "true")
+                tls_configured = True
+                continue
+            if key == "enable_crl_memory_caching" and isinstance(value, str):
+                tls_config.crl_memory_caching = (value.lower() == "true")
+                tls_configured = True
+                continue
+            if key == "sf_crl_response_cache_dir" and isinstance(value, str):
+                tls_config.crl_cache_dir = value
+                tls_configured = True
+                continue
+            if key == "sf_crl_validity_time" and isinstance(value, int):
+                tls_config.crl_validity_days = value
+                tls_configured = True
+                continue
+            if key == "allow_certificates_without_crl_url" and isinstance(value, str):
+                tls_config.allow_certs_without_crl_url = (value.lower() == "true")
+                tls_configured = True
+                continue
+            if key == "crl_http_timeout" and isinstance(value, int):
+                tls_config.crl_http_timeout_seconds = value
+                tls_configured = True
+                continue
+            if key == "crl_connection_timeout" and isinstance(value, int):
+                tls_config.crl_connection_timeout_seconds = value
+                tls_configured = True
+                continue
+            if key == "custom_root_store_path" and isinstance(value, str):
+                tls_config.custom_root_store_path = value
+                tls_configured = True
+                continue
+            if key == "verify_hostname" and isinstance(value, str):
+                tls_config.verify_hostname = (value.lower() == "true")
+                tls_configured = True
+                continue
+            if key == "verify_certificates" and isinstance(value, str):
+                tls_config.verify_certificates = (value.lower() == "true")
+                tls_configured = True
+                continue
+
+            # Snowflake-style aliases
+            if key == "insecure_mode" and isinstance(value, str):
+                insecure = (value.lower() == "true")
+                tls_config.verify_hostname = (not insecure)
+                tls_config.verify_certificates = (not insecure)
+                tls_configured = True
+                continue
+            if key == "ocsp_fail_open" and isinstance(value, str):
+                fail_open = (value.lower() == "true")
+                tls_config.crl_mode = CertRevocationCheckMode.ADVISORY if fail_open else CertRevocationCheckMode.ENABLED
+                tls_configured = True
+                continue
+
+            # Non-TLS options go through the generic setters
             if isinstance(value, int):
                 self.db_api.connectionSetOptionInt(self.conn_handle, key, value)
 
@@ -41,6 +113,8 @@ class Connection:
             if isinstance(value, float):
                 self.db_api.connectionSetOptionDouble(self.conn_handle, key, value)
 
+        if tls_configured:
+            self.db_api.connectionSetTlsConfig(self.conn_handle, tls_config)
         self.db_api.connectionInit(self.conn_handle, self.db_handle)
         self.kwargs = kwargs
         self._closed = False

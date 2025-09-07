@@ -202,6 +202,15 @@ public class DatabaseDriver {
     public void connectionRollback(ConnectionHandle conn_handle) throws DriverException, org.apache.thrift.TException;
 
     /**
+     * Set the TLS configuration on a connection in a single call.
+     * Existing option-based APIs remain supported; this is additive.
+     * 
+     * @param conn_handle
+     * @param tls_config
+     */
+    public void connectionSetTlsConfig(ConnectionHandle conn_handle, TlsConfig tls_config) throws DriverException, org.apache.thrift.TException;
+
+    /**
      * Create a new statement.
      * Corresponds to AdbcStatementNew.
      * @return An opaque handle to the server-side statement object.
@@ -386,6 +395,8 @@ public class DatabaseDriver {
     public void connectionCommit(ConnectionHandle conn_handle, org.apache.thrift.async.AsyncMethodCallback<Void> resultHandler) throws org.apache.thrift.TException;
 
     public void connectionRollback(ConnectionHandle conn_handle, org.apache.thrift.async.AsyncMethodCallback<Void> resultHandler) throws org.apache.thrift.TException;
+
+    public void connectionSetTlsConfig(ConnectionHandle conn_handle, TlsConfig tls_config, org.apache.thrift.async.AsyncMethodCallback<Void> resultHandler) throws org.apache.thrift.TException;
 
     public void statementNew(ConnectionHandle conn_handle, org.apache.thrift.async.AsyncMethodCallback<StatementHandle> resultHandler) throws org.apache.thrift.TException;
 
@@ -958,6 +969,31 @@ public class DatabaseDriver {
     {
       connectionRollback_result result = new connectionRollback_result();
       receiveBase(result, "connectionRollback");
+      if (result.e != null) {
+        throw result.e;
+      }
+      return;
+    }
+
+    @Override
+    public void connectionSetTlsConfig(ConnectionHandle conn_handle, TlsConfig tls_config) throws DriverException, org.apache.thrift.TException
+    {
+      send_connectionSetTlsConfig(conn_handle, tls_config);
+      recv_connectionSetTlsConfig();
+    }
+
+    public void send_connectionSetTlsConfig(ConnectionHandle conn_handle, TlsConfig tls_config) throws org.apache.thrift.TException
+    {
+      connectionSetTlsConfig_args args = new connectionSetTlsConfig_args();
+      args.setConn_handle(conn_handle);
+      args.setTls_config(tls_config);
+      sendBase("connectionSetTlsConfig", args);
+    }
+
+    public void recv_connectionSetTlsConfig() throws DriverException, org.apache.thrift.TException
+    {
+      connectionSetTlsConfig_result result = new connectionSetTlsConfig_result();
+      receiveBase(result, "connectionSetTlsConfig");
       if (result.e != null) {
         throw result.e;
       }
@@ -2162,6 +2198,45 @@ public class DatabaseDriver {
     }
 
     @Override
+    public void connectionSetTlsConfig(ConnectionHandle conn_handle, TlsConfig tls_config, org.apache.thrift.async.AsyncMethodCallback<Void> resultHandler) throws org.apache.thrift.TException {
+      checkReady();
+      connectionSetTlsConfig_call method_call = new connectionSetTlsConfig_call(conn_handle, tls_config, resultHandler, this, ___protocolFactory, ___transport);
+      this.___currentMethod = method_call;
+      ___manager.call(method_call);
+    }
+
+    public static class connectionSetTlsConfig_call extends org.apache.thrift.async.TAsyncMethodCall<Void> {
+      private ConnectionHandle conn_handle;
+      private TlsConfig tls_config;
+      public connectionSetTlsConfig_call(ConnectionHandle conn_handle, TlsConfig tls_config, org.apache.thrift.async.AsyncMethodCallback<Void> resultHandler, org.apache.thrift.async.TAsyncClient client, org.apache.thrift.protocol.TProtocolFactory protocolFactory, org.apache.thrift.transport.TNonblockingTransport transport) throws org.apache.thrift.TException {
+        super(client, protocolFactory, transport, resultHandler, false);
+        this.conn_handle = conn_handle;
+        this.tls_config = tls_config;
+      }
+
+      @Override
+      public void write_args(org.apache.thrift.protocol.TProtocol prot) throws org.apache.thrift.TException {
+        prot.writeMessageBegin(new org.apache.thrift.protocol.TMessage("connectionSetTlsConfig", org.apache.thrift.protocol.TMessageType.CALL, 0));
+        connectionSetTlsConfig_args args = new connectionSetTlsConfig_args();
+        args.setConn_handle(conn_handle);
+        args.setTls_config(tls_config);
+        args.write(prot);
+        prot.writeMessageEnd();
+      }
+
+      @Override
+      public Void getResult() throws DriverException, org.apache.thrift.TException {
+        if (getState() != org.apache.thrift.async.TAsyncMethodCall.State.RESPONSE_READ) {
+          throw new java.lang.IllegalStateException("Method call not finished!");
+        }
+        org.apache.thrift.transport.TMemoryInputTransport memoryTransport = new org.apache.thrift.transport.TMemoryInputTransport(getFrameBuffer().array());
+        org.apache.thrift.protocol.TProtocol prot = client.getProtocolFactory().getProtocol(memoryTransport);
+        (new Client(prot)).recv_connectionSetTlsConfig();
+        return null;
+      }
+    }
+
+    @Override
     public void statementNew(ConnectionHandle conn_handle, org.apache.thrift.async.AsyncMethodCallback<StatementHandle> resultHandler) throws org.apache.thrift.TException {
       checkReady();
       statementNew_call method_call = new statementNew_call(conn_handle, resultHandler, this, ___protocolFactory, ___transport);
@@ -2771,6 +2846,7 @@ public class DatabaseDriver {
       processMap.put("connectionGetTableTypes", new connectionGetTableTypes());
       processMap.put("connectionCommit", new connectionCommit());
       processMap.put("connectionRollback", new connectionRollback());
+      processMap.put("connectionSetTlsConfig", new connectionSetTlsConfig());
       processMap.put("statementNew", new statementNew());
       processMap.put("statementRelease", new statementRelease());
       processMap.put("statementSetSqlQuery", new statementSetSqlQuery());
@@ -3529,6 +3605,43 @@ public class DatabaseDriver {
       }
     }
 
+    public static class connectionSetTlsConfig<I extends Iface> extends org.apache.thrift.ProcessFunction<I, connectionSetTlsConfig_args, connectionSetTlsConfig_result> {
+      public connectionSetTlsConfig() {
+        super("connectionSetTlsConfig");
+      }
+
+      @Override
+      public connectionSetTlsConfig_args getEmptyArgsInstance() {
+        return new connectionSetTlsConfig_args();
+      }
+
+      @Override
+      public boolean isOneway() {
+        return false;
+      }
+
+      @Override
+      protected boolean rethrowUnhandledExceptions() {
+        return false;
+      }
+
+      @Override
+      public connectionSetTlsConfig_result getEmptyResultInstance() {
+        return new connectionSetTlsConfig_result();
+      }
+
+      @Override
+      public connectionSetTlsConfig_result getResult(I iface, connectionSetTlsConfig_args args) throws org.apache.thrift.TException {
+        connectionSetTlsConfig_result result = getEmptyResultInstance();
+        try {
+          iface.connectionSetTlsConfig(args.conn_handle, args.tls_config);
+        } catch (DriverException e) {
+          result.e = e;
+        }
+        return result;
+      }
+    }
+
     public static class statementNew<I extends Iface> extends org.apache.thrift.ProcessFunction<I, statementNew_args, statementNew_result> {
       public statementNew() {
         super("statementNew");
@@ -4118,6 +4231,7 @@ public class DatabaseDriver {
       processMap.put("connectionGetTableTypes", new connectionGetTableTypes());
       processMap.put("connectionCommit", new connectionCommit());
       processMap.put("connectionRollback", new connectionRollback());
+      processMap.put("connectionSetTlsConfig", new connectionSetTlsConfig());
       processMap.put("statementNew", new statementNew());
       processMap.put("statementRelease", new statementRelease());
       processMap.put("statementSetSqlQuery", new statementSetSqlQuery());
@@ -5639,6 +5753,81 @@ public class DatabaseDriver {
       @Override
       public void start(I iface, connectionRollback_args args, org.apache.thrift.async.AsyncMethodCallback<Void> resultHandler) throws org.apache.thrift.TException {
         iface.connectionRollback(args.conn_handle,resultHandler);
+      }
+    }
+
+    public static class connectionSetTlsConfig<I extends AsyncIface> extends org.apache.thrift.AsyncProcessFunction<I, connectionSetTlsConfig_args, Void, connectionSetTlsConfig_result> {
+      public connectionSetTlsConfig() {
+        super("connectionSetTlsConfig");
+      }
+
+      @Override
+      public connectionSetTlsConfig_result getEmptyResultInstance() {
+        return new connectionSetTlsConfig_result();
+      }
+
+      @Override
+      public connectionSetTlsConfig_args getEmptyArgsInstance() {
+        return new connectionSetTlsConfig_args();
+      }
+
+      @Override
+      public org.apache.thrift.async.AsyncMethodCallback<Void> getResultHandler(final org.apache.thrift.server.AbstractNonblockingServer.AsyncFrameBuffer fb, final int seqid) {
+        final org.apache.thrift.AsyncProcessFunction fcall = this;
+        return new org.apache.thrift.async.AsyncMethodCallback<Void>() { 
+          @Override
+          public void onComplete(Void o) {
+            connectionSetTlsConfig_result result = new connectionSetTlsConfig_result();
+            try {
+              fcall.sendResponse(fb, result, org.apache.thrift.protocol.TMessageType.REPLY,seqid);
+            } catch (org.apache.thrift.transport.TTransportException e) {
+              _LOGGER.error("TTransportException writing to internal frame buffer", e);
+              fb.close();
+            } catch (java.lang.Exception e) {
+              _LOGGER.error("Exception writing to internal frame buffer", e);
+              onError(e);
+            }
+          }
+          @Override
+          public void onError(java.lang.Exception e) {
+            byte msgType = org.apache.thrift.protocol.TMessageType.REPLY;
+            org.apache.thrift.TSerializable msg;
+            connectionSetTlsConfig_result result = new connectionSetTlsConfig_result();
+            if (e instanceof DriverException) {
+              result.e = (DriverException) e;
+              result.setEIsSet(true);
+              msg = result;
+            } else if (e instanceof org.apache.thrift.transport.TTransportException) {
+              _LOGGER.error("TTransportException inside handler", e);
+              fb.close();
+              return;
+            } else if (e instanceof org.apache.thrift.TApplicationException) {
+              _LOGGER.error("TApplicationException inside handler", e);
+              msgType = org.apache.thrift.protocol.TMessageType.EXCEPTION;
+              msg = (org.apache.thrift.TApplicationException)e;
+            } else {
+              _LOGGER.error("Exception inside handler", e);
+              msgType = org.apache.thrift.protocol.TMessageType.EXCEPTION;
+              msg = new org.apache.thrift.TApplicationException(org.apache.thrift.TApplicationException.INTERNAL_ERROR, e.getMessage());
+            }
+            try {
+              fcall.sendResponse(fb,msg,msgType,seqid);
+            } catch (java.lang.Exception ex) {
+              _LOGGER.error("Exception writing to internal frame buffer", ex);
+              fb.close();
+            }
+          }
+        };
+      }
+
+      @Override
+      public boolean isOneway() {
+        return false;
+      }
+
+      @Override
+      public void start(I iface, connectionSetTlsConfig_args args, org.apache.thrift.async.AsyncMethodCallback<Void> resultHandler) throws org.apache.thrift.TException {
+        iface.connectionSetTlsConfig(args.conn_handle, args.tls_config,resultHandler);
       }
     }
 
@@ -25446,6 +25635,880 @@ public class DatabaseDriver {
 
       @Override
       public void read(org.apache.thrift.protocol.TProtocol prot, connectionRollback_result struct) throws org.apache.thrift.TException {
+        org.apache.thrift.protocol.TTupleProtocol iprot = (org.apache.thrift.protocol.TTupleProtocol) prot;
+        java.util.BitSet incoming = iprot.readBitSet(1);
+        if (incoming.get(0)) {
+          struct.e = new DriverException();
+          struct.e.read(iprot);
+          struct.setEIsSet(true);
+        }
+      }
+    }
+
+    private static <S extends org.apache.thrift.scheme.IScheme> S scheme(org.apache.thrift.protocol.TProtocol proto) {
+      return (org.apache.thrift.scheme.StandardScheme.class.equals(proto.getScheme()) ? STANDARD_SCHEME_FACTORY : TUPLE_SCHEME_FACTORY).getScheme();
+    }
+  }
+
+  @SuppressWarnings({"cast", "rawtypes", "serial", "unchecked", "unused"})
+  public static class connectionSetTlsConfig_args implements org.apache.thrift.TBase<connectionSetTlsConfig_args, connectionSetTlsConfig_args._Fields>, java.io.Serializable, Cloneable, Comparable<connectionSetTlsConfig_args>   {
+    private static final org.apache.thrift.protocol.TStruct STRUCT_DESC = new org.apache.thrift.protocol.TStruct("connectionSetTlsConfig_args");
+
+    private static final org.apache.thrift.protocol.TField CONN_HANDLE_FIELD_DESC = new org.apache.thrift.protocol.TField("conn_handle", org.apache.thrift.protocol.TType.STRUCT, (short)1);
+    private static final org.apache.thrift.protocol.TField TLS_CONFIG_FIELD_DESC = new org.apache.thrift.protocol.TField("tls_config", org.apache.thrift.protocol.TType.STRUCT, (short)2);
+
+    private static final org.apache.thrift.scheme.SchemeFactory STANDARD_SCHEME_FACTORY = new connectionSetTlsConfig_argsStandardSchemeFactory();
+    private static final org.apache.thrift.scheme.SchemeFactory TUPLE_SCHEME_FACTORY = new connectionSetTlsConfig_argsTupleSchemeFactory();
+
+    public @org.apache.thrift.annotation.Nullable ConnectionHandle conn_handle; // required
+    public @org.apache.thrift.annotation.Nullable TlsConfig tls_config; // required
+
+    /** The set of fields this struct contains, along with convenience methods for finding and manipulating them. */
+    public enum _Fields implements org.apache.thrift.TFieldIdEnum {
+      CONN_HANDLE((short)1, "conn_handle"),
+      TLS_CONFIG((short)2, "tls_config");
+
+      private static final java.util.Map<java.lang.String, _Fields> byName = new java.util.HashMap<java.lang.String, _Fields>();
+
+      static {
+        for (_Fields field : java.util.EnumSet.allOf(_Fields.class)) {
+          byName.put(field.getFieldName(), field);
+        }
+      }
+
+      /**
+       * Find the _Fields constant that matches fieldId, or null if its not found.
+       */
+      @org.apache.thrift.annotation.Nullable
+      public static _Fields findByThriftId(int fieldId) {
+        switch(fieldId) {
+          case 1: // CONN_HANDLE
+            return CONN_HANDLE;
+          case 2: // TLS_CONFIG
+            return TLS_CONFIG;
+          default:
+            return null;
+        }
+      }
+
+      /**
+       * Find the _Fields constant that matches fieldId, throwing an exception
+       * if it is not found.
+       */
+      public static _Fields findByThriftIdOrThrow(int fieldId) {
+        _Fields fields = findByThriftId(fieldId);
+        if (fields == null) throw new java.lang.IllegalArgumentException("Field " + fieldId + " doesn't exist!");
+        return fields;
+      }
+
+      /**
+       * Find the _Fields constant that matches name, or null if its not found.
+       */
+      @org.apache.thrift.annotation.Nullable
+      public static _Fields findByName(java.lang.String name) {
+        return byName.get(name);
+      }
+
+      private final short _thriftId;
+      private final java.lang.String _fieldName;
+
+      _Fields(short thriftId, java.lang.String fieldName) {
+        _thriftId = thriftId;
+        _fieldName = fieldName;
+      }
+
+      @Override
+      public short getThriftFieldId() {
+        return _thriftId;
+      }
+
+      @Override
+      public java.lang.String getFieldName() {
+        return _fieldName;
+      }
+    }
+
+    // isset id assignments
+    public static final java.util.Map<_Fields, org.apache.thrift.meta_data.FieldMetaData> metaDataMap;
+    static {
+      java.util.Map<_Fields, org.apache.thrift.meta_data.FieldMetaData> tmpMap = new java.util.EnumMap<_Fields, org.apache.thrift.meta_data.FieldMetaData>(_Fields.class);
+      tmpMap.put(_Fields.CONN_HANDLE, new org.apache.thrift.meta_data.FieldMetaData("conn_handle", org.apache.thrift.TFieldRequirementType.DEFAULT, 
+          new org.apache.thrift.meta_data.StructMetaData(org.apache.thrift.protocol.TType.STRUCT, ConnectionHandle.class)));
+      tmpMap.put(_Fields.TLS_CONFIG, new org.apache.thrift.meta_data.FieldMetaData("tls_config", org.apache.thrift.TFieldRequirementType.DEFAULT, 
+          new org.apache.thrift.meta_data.StructMetaData(org.apache.thrift.protocol.TType.STRUCT, TlsConfig.class)));
+      metaDataMap = java.util.Collections.unmodifiableMap(tmpMap);
+      org.apache.thrift.meta_data.FieldMetaData.addStructMetaDataMap(connectionSetTlsConfig_args.class, metaDataMap);
+    }
+
+    public connectionSetTlsConfig_args() {
+    }
+
+    public connectionSetTlsConfig_args(
+      ConnectionHandle conn_handle,
+      TlsConfig tls_config)
+    {
+      this();
+      this.conn_handle = conn_handle;
+      this.tls_config = tls_config;
+    }
+
+    /**
+     * Performs a deep copy on <i>other</i>.
+     */
+    public connectionSetTlsConfig_args(connectionSetTlsConfig_args other) {
+      if (other.isSetConn_handle()) {
+        this.conn_handle = new ConnectionHandle(other.conn_handle);
+      }
+      if (other.isSetTls_config()) {
+        this.tls_config = new TlsConfig(other.tls_config);
+      }
+    }
+
+    @Override
+    public connectionSetTlsConfig_args deepCopy() {
+      return new connectionSetTlsConfig_args(this);
+    }
+
+    @Override
+    public void clear() {
+      this.conn_handle = null;
+      this.tls_config = null;
+    }
+
+    @org.apache.thrift.annotation.Nullable
+    public ConnectionHandle getConn_handle() {
+      return this.conn_handle;
+    }
+
+    public connectionSetTlsConfig_args setConn_handle(@org.apache.thrift.annotation.Nullable ConnectionHandle conn_handle) {
+      this.conn_handle = conn_handle;
+      return this;
+    }
+
+    public void unsetConn_handle() {
+      this.conn_handle = null;
+    }
+
+    /** Returns true if field conn_handle is set (has been assigned a value) and false otherwise */
+    public boolean isSetConn_handle() {
+      return this.conn_handle != null;
+    }
+
+    public void setConn_handleIsSet(boolean value) {
+      if (!value) {
+        this.conn_handle = null;
+      }
+    }
+
+    @org.apache.thrift.annotation.Nullable
+    public TlsConfig getTls_config() {
+      return this.tls_config;
+    }
+
+    public connectionSetTlsConfig_args setTls_config(@org.apache.thrift.annotation.Nullable TlsConfig tls_config) {
+      this.tls_config = tls_config;
+      return this;
+    }
+
+    public void unsetTls_config() {
+      this.tls_config = null;
+    }
+
+    /** Returns true if field tls_config is set (has been assigned a value) and false otherwise */
+    public boolean isSetTls_config() {
+      return this.tls_config != null;
+    }
+
+    public void setTls_configIsSet(boolean value) {
+      if (!value) {
+        this.tls_config = null;
+      }
+    }
+
+    @Override
+    public void setFieldValue(_Fields field, @org.apache.thrift.annotation.Nullable java.lang.Object value) {
+      switch (field) {
+      case CONN_HANDLE:
+        if (value == null) {
+          unsetConn_handle();
+        } else {
+          setConn_handle((ConnectionHandle)value);
+        }
+        break;
+
+      case TLS_CONFIG:
+        if (value == null) {
+          unsetTls_config();
+        } else {
+          setTls_config((TlsConfig)value);
+        }
+        break;
+
+      }
+    }
+
+    @org.apache.thrift.annotation.Nullable
+    @Override
+    public java.lang.Object getFieldValue(_Fields field) {
+      switch (field) {
+      case CONN_HANDLE:
+        return getConn_handle();
+
+      case TLS_CONFIG:
+        return getTls_config();
+
+      }
+      throw new java.lang.IllegalStateException();
+    }
+
+    /** Returns true if field corresponding to fieldID is set (has been assigned a value) and false otherwise */
+    @Override
+    public boolean isSet(_Fields field) {
+      if (field == null) {
+        throw new java.lang.IllegalArgumentException();
+      }
+
+      switch (field) {
+      case CONN_HANDLE:
+        return isSetConn_handle();
+      case TLS_CONFIG:
+        return isSetTls_config();
+      }
+      throw new java.lang.IllegalStateException();
+    }
+
+    @Override
+    public boolean equals(java.lang.Object that) {
+      if (that instanceof connectionSetTlsConfig_args)
+        return this.equals((connectionSetTlsConfig_args)that);
+      return false;
+    }
+
+    public boolean equals(connectionSetTlsConfig_args that) {
+      if (that == null)
+        return false;
+      if (this == that)
+        return true;
+
+      boolean this_present_conn_handle = true && this.isSetConn_handle();
+      boolean that_present_conn_handle = true && that.isSetConn_handle();
+      if (this_present_conn_handle || that_present_conn_handle) {
+        if (!(this_present_conn_handle && that_present_conn_handle))
+          return false;
+        if (!this.conn_handle.equals(that.conn_handle))
+          return false;
+      }
+
+      boolean this_present_tls_config = true && this.isSetTls_config();
+      boolean that_present_tls_config = true && that.isSetTls_config();
+      if (this_present_tls_config || that_present_tls_config) {
+        if (!(this_present_tls_config && that_present_tls_config))
+          return false;
+        if (!this.tls_config.equals(that.tls_config))
+          return false;
+      }
+
+      return true;
+    }
+
+    @Override
+    public int hashCode() {
+      int hashCode = 1;
+
+      hashCode = hashCode * 8191 + ((isSetConn_handle()) ? 131071 : 524287);
+      if (isSetConn_handle())
+        hashCode = hashCode * 8191 + conn_handle.hashCode();
+
+      hashCode = hashCode * 8191 + ((isSetTls_config()) ? 131071 : 524287);
+      if (isSetTls_config())
+        hashCode = hashCode * 8191 + tls_config.hashCode();
+
+      return hashCode;
+    }
+
+    @Override
+    public int compareTo(connectionSetTlsConfig_args other) {
+      if (!getClass().equals(other.getClass())) {
+        return getClass().getName().compareTo(other.getClass().getName());
+      }
+
+      int lastComparison = 0;
+
+      lastComparison = java.lang.Boolean.compare(isSetConn_handle(), other.isSetConn_handle());
+      if (lastComparison != 0) {
+        return lastComparison;
+      }
+      if (isSetConn_handle()) {
+        lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.conn_handle, other.conn_handle);
+        if (lastComparison != 0) {
+          return lastComparison;
+        }
+      }
+      lastComparison = java.lang.Boolean.compare(isSetTls_config(), other.isSetTls_config());
+      if (lastComparison != 0) {
+        return lastComparison;
+      }
+      if (isSetTls_config()) {
+        lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.tls_config, other.tls_config);
+        if (lastComparison != 0) {
+          return lastComparison;
+        }
+      }
+      return 0;
+    }
+
+    @org.apache.thrift.annotation.Nullable
+    @Override
+    public _Fields fieldForId(int fieldId) {
+      return _Fields.findByThriftId(fieldId);
+    }
+
+    @Override
+    public void read(org.apache.thrift.protocol.TProtocol iprot) throws org.apache.thrift.TException {
+      scheme(iprot).read(iprot, this);
+    }
+
+    @Override
+    public void write(org.apache.thrift.protocol.TProtocol oprot) throws org.apache.thrift.TException {
+      scheme(oprot).write(oprot, this);
+    }
+
+    @Override
+    public java.lang.String toString() {
+      java.lang.StringBuilder sb = new java.lang.StringBuilder("connectionSetTlsConfig_args(");
+      boolean first = true;
+
+      sb.append("conn_handle:");
+      if (this.conn_handle == null) {
+        sb.append("null");
+      } else {
+        sb.append(this.conn_handle);
+      }
+      first = false;
+      if (!first) sb.append(", ");
+      sb.append("tls_config:");
+      if (this.tls_config == null) {
+        sb.append("null");
+      } else {
+        sb.append(this.tls_config);
+      }
+      first = false;
+      sb.append(")");
+      return sb.toString();
+    }
+
+    public void validate() throws org.apache.thrift.TException {
+      // check for required fields
+      // check for sub-struct validity
+      if (conn_handle != null) {
+        conn_handle.validate();
+      }
+      if (tls_config != null) {
+        tls_config.validate();
+      }
+    }
+
+    private void writeObject(java.io.ObjectOutputStream out) throws java.io.IOException {
+      try {
+        write(new org.apache.thrift.protocol.TCompactProtocol(new org.apache.thrift.transport.TIOStreamTransport(out)));
+      } catch (org.apache.thrift.TException te) {
+        throw new java.io.IOException(te);
+      }
+    }
+
+    private void readObject(java.io.ObjectInputStream in) throws java.io.IOException, java.lang.ClassNotFoundException {
+      try {
+        read(new org.apache.thrift.protocol.TCompactProtocol(new org.apache.thrift.transport.TIOStreamTransport(in)));
+      } catch (org.apache.thrift.TException te) {
+        throw new java.io.IOException(te);
+      }
+    }
+
+    private static class connectionSetTlsConfig_argsStandardSchemeFactory implements org.apache.thrift.scheme.SchemeFactory {
+      @Override
+      public connectionSetTlsConfig_argsStandardScheme getScheme() {
+        return new connectionSetTlsConfig_argsStandardScheme();
+      }
+    }
+
+    private static class connectionSetTlsConfig_argsStandardScheme extends org.apache.thrift.scheme.StandardScheme<connectionSetTlsConfig_args> {
+
+      @Override
+      public void read(org.apache.thrift.protocol.TProtocol iprot, connectionSetTlsConfig_args struct) throws org.apache.thrift.TException {
+        org.apache.thrift.protocol.TField schemeField;
+        iprot.readStructBegin();
+        while (true)
+        {
+          schemeField = iprot.readFieldBegin();
+          if (schemeField.type == org.apache.thrift.protocol.TType.STOP) { 
+            break;
+          }
+          switch (schemeField.id) {
+            case 1: // CONN_HANDLE
+              if (schemeField.type == org.apache.thrift.protocol.TType.STRUCT) {
+                struct.conn_handle = new ConnectionHandle();
+                struct.conn_handle.read(iprot);
+                struct.setConn_handleIsSet(true);
+              } else { 
+                org.apache.thrift.protocol.TProtocolUtil.skip(iprot, schemeField.type);
+              }
+              break;
+            case 2: // TLS_CONFIG
+              if (schemeField.type == org.apache.thrift.protocol.TType.STRUCT) {
+                struct.tls_config = new TlsConfig();
+                struct.tls_config.read(iprot);
+                struct.setTls_configIsSet(true);
+              } else { 
+                org.apache.thrift.protocol.TProtocolUtil.skip(iprot, schemeField.type);
+              }
+              break;
+            default:
+              org.apache.thrift.protocol.TProtocolUtil.skip(iprot, schemeField.type);
+          }
+          iprot.readFieldEnd();
+        }
+        iprot.readStructEnd();
+
+        // check for required fields of primitive type, which can't be checked in the validate method
+        struct.validate();
+      }
+
+      @Override
+      public void write(org.apache.thrift.protocol.TProtocol oprot, connectionSetTlsConfig_args struct) throws org.apache.thrift.TException {
+        struct.validate();
+
+        oprot.writeStructBegin(STRUCT_DESC);
+        if (struct.conn_handle != null) {
+          oprot.writeFieldBegin(CONN_HANDLE_FIELD_DESC);
+          struct.conn_handle.write(oprot);
+          oprot.writeFieldEnd();
+        }
+        if (struct.tls_config != null) {
+          oprot.writeFieldBegin(TLS_CONFIG_FIELD_DESC);
+          struct.tls_config.write(oprot);
+          oprot.writeFieldEnd();
+        }
+        oprot.writeFieldStop();
+        oprot.writeStructEnd();
+      }
+
+    }
+
+    private static class connectionSetTlsConfig_argsTupleSchemeFactory implements org.apache.thrift.scheme.SchemeFactory {
+      @Override
+      public connectionSetTlsConfig_argsTupleScheme getScheme() {
+        return new connectionSetTlsConfig_argsTupleScheme();
+      }
+    }
+
+    private static class connectionSetTlsConfig_argsTupleScheme extends org.apache.thrift.scheme.TupleScheme<connectionSetTlsConfig_args> {
+
+      @Override
+      public void write(org.apache.thrift.protocol.TProtocol prot, connectionSetTlsConfig_args struct) throws org.apache.thrift.TException {
+        org.apache.thrift.protocol.TTupleProtocol oprot = (org.apache.thrift.protocol.TTupleProtocol) prot;
+        java.util.BitSet optionals = new java.util.BitSet();
+        if (struct.isSetConn_handle()) {
+          optionals.set(0);
+        }
+        if (struct.isSetTls_config()) {
+          optionals.set(1);
+        }
+        oprot.writeBitSet(optionals, 2);
+        if (struct.isSetConn_handle()) {
+          struct.conn_handle.write(oprot);
+        }
+        if (struct.isSetTls_config()) {
+          struct.tls_config.write(oprot);
+        }
+      }
+
+      @Override
+      public void read(org.apache.thrift.protocol.TProtocol prot, connectionSetTlsConfig_args struct) throws org.apache.thrift.TException {
+        org.apache.thrift.protocol.TTupleProtocol iprot = (org.apache.thrift.protocol.TTupleProtocol) prot;
+        java.util.BitSet incoming = iprot.readBitSet(2);
+        if (incoming.get(0)) {
+          struct.conn_handle = new ConnectionHandle();
+          struct.conn_handle.read(iprot);
+          struct.setConn_handleIsSet(true);
+        }
+        if (incoming.get(1)) {
+          struct.tls_config = new TlsConfig();
+          struct.tls_config.read(iprot);
+          struct.setTls_configIsSet(true);
+        }
+      }
+    }
+
+    private static <S extends org.apache.thrift.scheme.IScheme> S scheme(org.apache.thrift.protocol.TProtocol proto) {
+      return (org.apache.thrift.scheme.StandardScheme.class.equals(proto.getScheme()) ? STANDARD_SCHEME_FACTORY : TUPLE_SCHEME_FACTORY).getScheme();
+    }
+  }
+
+  @SuppressWarnings({"cast", "rawtypes", "serial", "unchecked", "unused"})
+  public static class connectionSetTlsConfig_result implements org.apache.thrift.TBase<connectionSetTlsConfig_result, connectionSetTlsConfig_result._Fields>, java.io.Serializable, Cloneable, Comparable<connectionSetTlsConfig_result>   {
+    private static final org.apache.thrift.protocol.TStruct STRUCT_DESC = new org.apache.thrift.protocol.TStruct("connectionSetTlsConfig_result");
+
+    private static final org.apache.thrift.protocol.TField E_FIELD_DESC = new org.apache.thrift.protocol.TField("e", org.apache.thrift.protocol.TType.STRUCT, (short)1);
+
+    private static final org.apache.thrift.scheme.SchemeFactory STANDARD_SCHEME_FACTORY = new connectionSetTlsConfig_resultStandardSchemeFactory();
+    private static final org.apache.thrift.scheme.SchemeFactory TUPLE_SCHEME_FACTORY = new connectionSetTlsConfig_resultTupleSchemeFactory();
+
+    public @org.apache.thrift.annotation.Nullable DriverException e; // required
+
+    /** The set of fields this struct contains, along with convenience methods for finding and manipulating them. */
+    public enum _Fields implements org.apache.thrift.TFieldIdEnum {
+      E((short)1, "e");
+
+      private static final java.util.Map<java.lang.String, _Fields> byName = new java.util.HashMap<java.lang.String, _Fields>();
+
+      static {
+        for (_Fields field : java.util.EnumSet.allOf(_Fields.class)) {
+          byName.put(field.getFieldName(), field);
+        }
+      }
+
+      /**
+       * Find the _Fields constant that matches fieldId, or null if its not found.
+       */
+      @org.apache.thrift.annotation.Nullable
+      public static _Fields findByThriftId(int fieldId) {
+        switch(fieldId) {
+          case 1: // E
+            return E;
+          default:
+            return null;
+        }
+      }
+
+      /**
+       * Find the _Fields constant that matches fieldId, throwing an exception
+       * if it is not found.
+       */
+      public static _Fields findByThriftIdOrThrow(int fieldId) {
+        _Fields fields = findByThriftId(fieldId);
+        if (fields == null) throw new java.lang.IllegalArgumentException("Field " + fieldId + " doesn't exist!");
+        return fields;
+      }
+
+      /**
+       * Find the _Fields constant that matches name, or null if its not found.
+       */
+      @org.apache.thrift.annotation.Nullable
+      public static _Fields findByName(java.lang.String name) {
+        return byName.get(name);
+      }
+
+      private final short _thriftId;
+      private final java.lang.String _fieldName;
+
+      _Fields(short thriftId, java.lang.String fieldName) {
+        _thriftId = thriftId;
+        _fieldName = fieldName;
+      }
+
+      @Override
+      public short getThriftFieldId() {
+        return _thriftId;
+      }
+
+      @Override
+      public java.lang.String getFieldName() {
+        return _fieldName;
+      }
+    }
+
+    // isset id assignments
+    public static final java.util.Map<_Fields, org.apache.thrift.meta_data.FieldMetaData> metaDataMap;
+    static {
+      java.util.Map<_Fields, org.apache.thrift.meta_data.FieldMetaData> tmpMap = new java.util.EnumMap<_Fields, org.apache.thrift.meta_data.FieldMetaData>(_Fields.class);
+      tmpMap.put(_Fields.E, new org.apache.thrift.meta_data.FieldMetaData("e", org.apache.thrift.TFieldRequirementType.DEFAULT, 
+          new org.apache.thrift.meta_data.StructMetaData(org.apache.thrift.protocol.TType.STRUCT, DriverException.class)));
+      metaDataMap = java.util.Collections.unmodifiableMap(tmpMap);
+      org.apache.thrift.meta_data.FieldMetaData.addStructMetaDataMap(connectionSetTlsConfig_result.class, metaDataMap);
+    }
+
+    public connectionSetTlsConfig_result() {
+    }
+
+    public connectionSetTlsConfig_result(
+      DriverException e)
+    {
+      this();
+      this.e = e;
+    }
+
+    /**
+     * Performs a deep copy on <i>other</i>.
+     */
+    public connectionSetTlsConfig_result(connectionSetTlsConfig_result other) {
+      if (other.isSetE()) {
+        this.e = new DriverException(other.e);
+      }
+    }
+
+    @Override
+    public connectionSetTlsConfig_result deepCopy() {
+      return new connectionSetTlsConfig_result(this);
+    }
+
+    @Override
+    public void clear() {
+      this.e = null;
+    }
+
+    @org.apache.thrift.annotation.Nullable
+    public DriverException getE() {
+      return this.e;
+    }
+
+    public connectionSetTlsConfig_result setE(@org.apache.thrift.annotation.Nullable DriverException e) {
+      this.e = e;
+      return this;
+    }
+
+    public void unsetE() {
+      this.e = null;
+    }
+
+    /** Returns true if field e is set (has been assigned a value) and false otherwise */
+    public boolean isSetE() {
+      return this.e != null;
+    }
+
+    public void setEIsSet(boolean value) {
+      if (!value) {
+        this.e = null;
+      }
+    }
+
+    @Override
+    public void setFieldValue(_Fields field, @org.apache.thrift.annotation.Nullable java.lang.Object value) {
+      switch (field) {
+      case E:
+        if (value == null) {
+          unsetE();
+        } else {
+          setE((DriverException)value);
+        }
+        break;
+
+      }
+    }
+
+    @org.apache.thrift.annotation.Nullable
+    @Override
+    public java.lang.Object getFieldValue(_Fields field) {
+      switch (field) {
+      case E:
+        return getE();
+
+      }
+      throw new java.lang.IllegalStateException();
+    }
+
+    /** Returns true if field corresponding to fieldID is set (has been assigned a value) and false otherwise */
+    @Override
+    public boolean isSet(_Fields field) {
+      if (field == null) {
+        throw new java.lang.IllegalArgumentException();
+      }
+
+      switch (field) {
+      case E:
+        return isSetE();
+      }
+      throw new java.lang.IllegalStateException();
+    }
+
+    @Override
+    public boolean equals(java.lang.Object that) {
+      if (that instanceof connectionSetTlsConfig_result)
+        return this.equals((connectionSetTlsConfig_result)that);
+      return false;
+    }
+
+    public boolean equals(connectionSetTlsConfig_result that) {
+      if (that == null)
+        return false;
+      if (this == that)
+        return true;
+
+      boolean this_present_e = true && this.isSetE();
+      boolean that_present_e = true && that.isSetE();
+      if (this_present_e || that_present_e) {
+        if (!(this_present_e && that_present_e))
+          return false;
+        if (!this.e.equals(that.e))
+          return false;
+      }
+
+      return true;
+    }
+
+    @Override
+    public int hashCode() {
+      int hashCode = 1;
+
+      hashCode = hashCode * 8191 + ((isSetE()) ? 131071 : 524287);
+      if (isSetE())
+        hashCode = hashCode * 8191 + e.hashCode();
+
+      return hashCode;
+    }
+
+    @Override
+    public int compareTo(connectionSetTlsConfig_result other) {
+      if (!getClass().equals(other.getClass())) {
+        return getClass().getName().compareTo(other.getClass().getName());
+      }
+
+      int lastComparison = 0;
+
+      lastComparison = java.lang.Boolean.compare(isSetE(), other.isSetE());
+      if (lastComparison != 0) {
+        return lastComparison;
+      }
+      if (isSetE()) {
+        lastComparison = org.apache.thrift.TBaseHelper.compareTo(this.e, other.e);
+        if (lastComparison != 0) {
+          return lastComparison;
+        }
+      }
+      return 0;
+    }
+
+    @org.apache.thrift.annotation.Nullable
+    @Override
+    public _Fields fieldForId(int fieldId) {
+      return _Fields.findByThriftId(fieldId);
+    }
+
+    @Override
+    public void read(org.apache.thrift.protocol.TProtocol iprot) throws org.apache.thrift.TException {
+      scheme(iprot).read(iprot, this);
+    }
+
+    public void write(org.apache.thrift.protocol.TProtocol oprot) throws org.apache.thrift.TException {
+      scheme(oprot).write(oprot, this);
+      }
+
+    @Override
+    public java.lang.String toString() {
+      java.lang.StringBuilder sb = new java.lang.StringBuilder("connectionSetTlsConfig_result(");
+      boolean first = true;
+
+      sb.append("e:");
+      if (this.e == null) {
+        sb.append("null");
+      } else {
+        sb.append(this.e);
+      }
+      first = false;
+      sb.append(")");
+      return sb.toString();
+    }
+
+    public void validate() throws org.apache.thrift.TException {
+      // check for required fields
+      // check for sub-struct validity
+    }
+
+    private void writeObject(java.io.ObjectOutputStream out) throws java.io.IOException {
+      try {
+        write(new org.apache.thrift.protocol.TCompactProtocol(new org.apache.thrift.transport.TIOStreamTransport(out)));
+      } catch (org.apache.thrift.TException te) {
+        throw new java.io.IOException(te);
+      }
+    }
+
+    private void readObject(java.io.ObjectInputStream in) throws java.io.IOException, java.lang.ClassNotFoundException {
+      try {
+        read(new org.apache.thrift.protocol.TCompactProtocol(new org.apache.thrift.transport.TIOStreamTransport(in)));
+      } catch (org.apache.thrift.TException te) {
+        throw new java.io.IOException(te);
+      }
+    }
+
+    private static class connectionSetTlsConfig_resultStandardSchemeFactory implements org.apache.thrift.scheme.SchemeFactory {
+      @Override
+      public connectionSetTlsConfig_resultStandardScheme getScheme() {
+        return new connectionSetTlsConfig_resultStandardScheme();
+      }
+    }
+
+    private static class connectionSetTlsConfig_resultStandardScheme extends org.apache.thrift.scheme.StandardScheme<connectionSetTlsConfig_result> {
+
+      @Override
+      public void read(org.apache.thrift.protocol.TProtocol iprot, connectionSetTlsConfig_result struct) throws org.apache.thrift.TException {
+        org.apache.thrift.protocol.TField schemeField;
+        iprot.readStructBegin();
+        while (true)
+        {
+          schemeField = iprot.readFieldBegin();
+          if (schemeField.type == org.apache.thrift.protocol.TType.STOP) { 
+            break;
+          }
+          switch (schemeField.id) {
+            case 1: // E
+              if (schemeField.type == org.apache.thrift.protocol.TType.STRUCT) {
+                struct.e = new DriverException();
+                struct.e.read(iprot);
+                struct.setEIsSet(true);
+              } else { 
+                org.apache.thrift.protocol.TProtocolUtil.skip(iprot, schemeField.type);
+              }
+              break;
+            default:
+              org.apache.thrift.protocol.TProtocolUtil.skip(iprot, schemeField.type);
+          }
+          iprot.readFieldEnd();
+        }
+        iprot.readStructEnd();
+
+        // check for required fields of primitive type, which can't be checked in the validate method
+        struct.validate();
+      }
+
+      @Override
+      public void write(org.apache.thrift.protocol.TProtocol oprot, connectionSetTlsConfig_result struct) throws org.apache.thrift.TException {
+        struct.validate();
+
+        oprot.writeStructBegin(STRUCT_DESC);
+        if (struct.e != null) {
+          oprot.writeFieldBegin(E_FIELD_DESC);
+          struct.e.write(oprot);
+          oprot.writeFieldEnd();
+        }
+        oprot.writeFieldStop();
+        oprot.writeStructEnd();
+      }
+
+    }
+
+    private static class connectionSetTlsConfig_resultTupleSchemeFactory implements org.apache.thrift.scheme.SchemeFactory {
+      @Override
+      public connectionSetTlsConfig_resultTupleScheme getScheme() {
+        return new connectionSetTlsConfig_resultTupleScheme();
+      }
+    }
+
+    private static class connectionSetTlsConfig_resultTupleScheme extends org.apache.thrift.scheme.TupleScheme<connectionSetTlsConfig_result> {
+
+      @Override
+      public void write(org.apache.thrift.protocol.TProtocol prot, connectionSetTlsConfig_result struct) throws org.apache.thrift.TException {
+        org.apache.thrift.protocol.TTupleProtocol oprot = (org.apache.thrift.protocol.TTupleProtocol) prot;
+        java.util.BitSet optionals = new java.util.BitSet();
+        if (struct.isSetE()) {
+          optionals.set(0);
+        }
+        oprot.writeBitSet(optionals, 1);
+        if (struct.isSetE()) {
+          struct.e.write(oprot);
+        }
+      }
+
+      @Override
+      public void read(org.apache.thrift.protocol.TProtocol prot, connectionSetTlsConfig_result struct) throws org.apache.thrift.TException {
         org.apache.thrift.protocol.TTupleProtocol iprot = (org.apache.thrift.protocol.TTupleProtocol) prot;
         java.util.BitSet incoming = iprot.readBitSet(1);
         if (incoming.get(0)) {

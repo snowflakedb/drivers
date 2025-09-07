@@ -44,6 +44,73 @@ impl CrlCache {
         })
     }
 
+    /// High-level revocation check API. Extracts CRL URLs from the cert, fetches/validates
+    /// CRLs and returns revocation outcome. Internals may evolve without changing this API.
+    pub async fn check_revocation(
+        &self,
+        cert_der: &[u8],
+        issuer_der: Option<&[u8]>,
+    ) -> Result<crate::tls::revocation::RevocationOutcome, crate::tls::revocation::RevocationError>
+    {
+        use crate::tls::revocation::{RevocationError, RevocationOutcome};
+
+        // Extract CRL URLs
+        let crl_urls = crate::crl::certificate_parser::extract_crl_distribution_points(cert_der)
+            .map_err(|e| RevocationError::Crl {
+                source: e,
+                location: snafu::Location::new(file!(), line!(), 0),
+            })?;
+        if crl_urls.is_empty() {
+            return Ok(RevocationOutcome::NotDetermined);
+        }
+
+        // Get certificate serial
+        let serial = crate::crl::certificate_parser::get_certificate_serial_number(cert_der)
+            .map_err(|e| RevocationError::Crl {
+                source: e,
+                location: snafu::Location::new(file!(), line!(), 0),
+            })?;
+
+        // For now, reuse existing validator logic minimally: download CRL bytes and test membership
+        for url in crl_urls.iter() {
+            let bytes = self.get(url).await.map_err(|e| RevocationError::Crl {
+                source: e,
+                location: snafu::Location::new(file!(), line!(), 0),
+            })?;
+
+            // Verify CRL signature best-effort with issuer when provided
+            if let Err(e) =
+                crate::crl::validator_real::CrlValidator::verify_crl_signature_best_effort_static(
+                    &bytes, issuer_der,
+                )
+            {
+                // Treat signature failure as NotDetermined for now; policy could fail closed
+                tracing::warn!(
+                    target: "sf_core::crl",
+                    "CRL signature verification failed for {}: {}",
+                    url,
+                    e
+                );
+                continue;
+            }
+
+            let is_revoked = crate::crl::certificate_parser::check_certificate_in_crl(
+                &serial, &bytes,
+            )
+            .map_err(|e| RevocationError::Crl {
+                source: e,
+                location: snafu::Location::new(file!(), line!(), 0),
+            })?;
+            if is_revoked {
+                return Ok(RevocationOutcome::Revoked {
+                    reason: None,
+                    revocation_time: None,
+                });
+            }
+        }
+        Ok(RevocationOutcome::NotRevoked)
+    }
+
     /// Global singleton cache accessor
     pub fn global(config: CrlConfig, memory_capacity: usize) -> &'static Arc<CrlCache> {
         static INSTANCE: OnceCell<Arc<CrlCache>> = OnceCell::new();
@@ -117,18 +184,40 @@ impl CrlCache {
             let file_name = Self::url_digest(url);
             let path = dir.join(file_name);
             if let Ok(bytes) = std::fs::read(&path) {
+                tracing::debug!(
+                    target: "sf_core::crl::cache",
+                    "Loaded CRL from disk cache: {} ({} bytes)",
+                    path.display(),
+                    bytes.len()
+                );
                 if let Ok((this_dt, next_dt_opt)) = crate::tls::x509_utils::crl_times(&bytes)
                     && let Some(next_dt) = next_dt_opt
                 {
                     if Utc::now() > next_dt {
+                        tracing::debug!(
+                            target: "sf_core::crl::cache",
+                            "Disk-cached CRL expired for {} - refreshing from network",
+                            url
+                        );
                         drop(guard);
                         let fresh = self.fetch(url).await?;
                         let _ = std::fs::write(&path, &fresh);
+                        tracing::debug!(
+                            target: "sf_core::crl::cache",
+                            "Wrote refreshed CRL to disk cache: {} ({} bytes)",
+                            path.display(),
+                            fresh.len()
+                        );
                         self.remember(url, &fresh);
                         return Ok(fresh);
                     }
                     let midpoint = this_dt + (next_dt - this_dt) / 2;
                     if Utc::now() > midpoint && Utc::now() <= next_dt {
+                        tracing::debug!(
+                            target: "sf_core::crl::cache",
+                            "CRL half-life passed for {}; scheduling background refresh",
+                            url
+                        );
                         self.spawn_refresh(url.to_string());
                     }
                 }
@@ -147,6 +236,12 @@ impl CrlCache {
             let file_name = Self::url_digest(url);
             let path = dir.join(file_name);
             let _ = std::fs::write(&path, &fetched);
+            tracing::debug!(
+                target: "sf_core::crl::cache",
+                "Persisted CRL to disk cache: {} ({} bytes)",
+                path.display(),
+                fetched.len()
+            );
         }
         self.remember(url, &fetched);
         Ok(fetched)
@@ -223,6 +318,12 @@ impl CrlCache {
                     let file_name = CrlCache::url_digest(&url);
                     let path = dir.join(file_name);
                     let _ = std::fs::write(&path, &bytes);
+                    tracing::debug!(
+                        target: "sf_core::crl::cache",
+                        "Background refresh wrote CRL to disk cache: {} ({} bytes)",
+                        path.display(),
+                        bytes.len()
+                    );
                 }
                 cache.remember(&url, &bytes);
             }

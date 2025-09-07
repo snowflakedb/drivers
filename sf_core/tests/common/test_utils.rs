@@ -83,6 +83,102 @@ impl Default for SnowflakeTestClient {
 }
 
 impl SnowflakeTestClient {
+    pub fn with_default_params_and_tls(
+        tls: Option<sf_core::thrift_gen::database_driver_v1::TlsConfig>,
+    ) -> Self {
+        setup_logging();
+        let parameters = get_parameters();
+        let mut driver = new_database_driver_v1_client();
+        let db_handle = driver.database_new().unwrap();
+        driver.database_init(db_handle.clone()).unwrap();
+
+        let conn_handle = driver.connection_new().unwrap();
+
+        if let Some(tls_cfg) = tls.clone() {
+            // Ensure TLS is applied before any init or request
+            driver
+                .connection_set_tls_config(conn_handle.clone(), tls_cfg)
+                .unwrap();
+        }
+
+        driver
+            .connection_set_option_string(
+                conn_handle.clone(),
+                "account".to_string(),
+                parameters.account_name.clone().unwrap(),
+            )
+            .unwrap();
+        driver
+            .connection_set_option_string(
+                conn_handle.clone(),
+                "user".to_string(),
+                parameters.user.clone().unwrap(),
+            )
+            .unwrap();
+        // Set optional parameters if specified
+        if let Some(database) = parameters.database.clone() {
+            driver
+                .connection_set_option_string(conn_handle.clone(), "database".to_string(), database)
+                .unwrap();
+        }
+
+        if let Some(schema) = parameters.schema.clone() {
+            driver
+                .connection_set_option_string(conn_handle.clone(), "schema".to_string(), schema)
+                .unwrap();
+        }
+
+        if let Some(warehouse) = parameters.warehouse.clone() {
+            driver
+                .connection_set_option_string(
+                    conn_handle.clone(),
+                    "warehouse".to_string(),
+                    warehouse,
+                )
+                .unwrap();
+        }
+
+        if let Some(host) = parameters.host.clone() {
+            driver
+                .connection_set_option_string(conn_handle.clone(), "host".to_string(), host)
+                .unwrap();
+        }
+
+        if let Some(role) = parameters.role.clone() {
+            driver
+                .connection_set_option_string(conn_handle.clone(), "role".to_string(), role)
+                .unwrap();
+        }
+
+        if let Some(server_url) = parameters.server_url.clone() {
+            driver
+                .connection_set_option_string(
+                    conn_handle.clone(),
+                    "server_url".to_string(),
+                    server_url,
+                )
+                .unwrap();
+        }
+
+        if let Some(port) = parameters.port {
+            driver
+                .connection_set_option_int(conn_handle.clone(), "port".to_string(), port)
+                .unwrap();
+        }
+
+        if let Some(protocol) = parameters.protocol.clone() {
+            driver
+                .connection_set_option_string(conn_handle.clone(), "protocol".to_string(), protocol)
+                .unwrap();
+        }
+
+        Self {
+            driver,
+            conn_handle,
+            db_handle,
+            parameters,
+        }
+    }
     pub fn with_default_params() -> Self {
         setup_logging();
         let parameters = get_parameters();

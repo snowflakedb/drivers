@@ -5,12 +5,15 @@ pub mod query_response;
 use crate::auth::{AuthError, Credentials, create_credentials};
 use crate::config::rest_parameters::ClientInfo;
 use crate::config::rest_parameters::{LoginParameters, QueryParameters};
-use crate::crl::config::CertRevocationCheckMode;
 use crate::rest::snowflake::auth::{
     AuthRequest, AuthRequestClientEnvironment, AuthRequestData, AuthResponse,
 };
 use crate::tls::TlsError;
+<<<<<<< HEAD
 use crate::tls::create_tls_client_with_config as create_tls_client;
+=======
+use crate::tls::create_tls_client_with_config;
+>>>>>>> 12acaa4 (cleanup CRL interfaces; expensive lookups still)
 use reqwest;
 use serde_json;
 use snafu::{Location, ResultExt, Snafu};
@@ -93,18 +96,13 @@ pub async fn snowflake_login(login_parameters: &LoginParameters) -> Result<Strin
         serde_json::to_string_pretty(&login_request).unwrap()
     );
 
-    // Create HTTP client with CRL validation if enabled
-    tracing::debug!("Creating HTTP client and preparing login request");
-    let client = if login_parameters.client_info.crl_config.check_mode
-        != CertRevocationCheckMode::Disabled
-    {
-        tracing::debug!("CRL validation enabled, creating TLS client with CRL support");
-        create_tls_client(login_parameters.client_info.crl_config.clone())
-            .context(CrlValidationSnafu)?
-    } else {
-        tracing::debug!("CRL validation disabled, using default client");
-        reqwest::Client::new()
-    };
+    // Create HTTP client using unified TlsConfig
+    tracing::debug!(
+        crl_mode = ?login_parameters.client_info.tls_config.crl_config.check_mode,
+        "Creating HTTP client and preparing login request"
+    );
+    let client = create_tls_client_with_config(login_parameters.client_info.tls_config.clone())
+        .context(CrlValidationSnafu)?;
     let login_url = format!("{}/session/v1/login-request", login_parameters.server_url);
 
     tracing::info!(login_url = %login_url, "Making Snowflake login request");
@@ -186,16 +184,8 @@ pub async fn snowflake_query(
 ) -> Result<query_response::Response, RestError> {
     let server_url = query_parameters.server_url;
 
-    let client = if query_parameters.client_info.crl_config.check_mode
-        != CertRevocationCheckMode::Disabled
-    {
-        tracing::debug!("CRL validation enabled, creating TLS client with CRL support");
-        create_tls_client(query_parameters.client_info.crl_config.clone())
-            .context(CrlValidationSnafu)?
-    } else {
-        tracing::debug!("CRL validation disabled, using default client for query");
-        reqwest::Client::new()
-    };
+    let client = create_tls_client_with_config(query_parameters.client_info.tls_config.clone())
+        .context(CrlValidationSnafu)?;
     let query_url = format!("{server_url}/queries/v1/query-request");
 
     let query_request = query_request::Request {

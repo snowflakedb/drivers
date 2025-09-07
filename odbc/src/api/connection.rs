@@ -6,6 +6,9 @@ use odbc_sys as sql;
 use sf_core::thrift_apis::DatabaseDriverV1;
 use sf_core::thrift_apis::client::create_client;
 use snafu::ResultExt;
+use sf_core::thrift_gen::database_driver_v1::{
+    CertRevocationCheckMode as ThriftCrlMode, TlsConfig as ThriftTlsConfig,
+};
 use std::collections::HashMap;
 use tracing;
 
@@ -44,11 +47,49 @@ pub fn driver_connect(
         .connection_new()
         .map_err(OdbcError::from_thrift_error)?;
 
+    // Optional TLS config built from connection string
+    let mut tls_config = ThriftTlsConfig::default();
+    let mut tls_configured = false;
+
     for (key, value) in connection_string_map {
         match key.as_str() {
             // TODO: Do it more generically
             "DRIVER" => {
                 // ignore
+            }
+            // TLS/CRL options in connection string
+            "TLS_VERIFY_HOSTNAME" => {
+                tls_config.verify_hostname = Some(value.to_lowercase() == "true");
+                tls_configured = true;
+            }
+            "TLS_VERIFY_CERTS" => {
+                tls_config.verify_certificates = Some(value.to_lowercase() == "true");
+                tls_configured = true;
+            }
+            "TLS_ROOTS_PEM" => {
+                tls_config.custom_root_store_path = Some(value);
+                tls_configured = true;
+            }
+            "CRL_MODE" => {
+                let m = value.to_uppercase();
+                tls_config.crl_mode = Some(match m.as_str() {
+                    "ENABLED" => ThriftCrlMode::ENABLED,
+                    "ADVISORY" => ThriftCrlMode::ADVISORY,
+                    _ => ThriftCrlMode::DISABLED,
+                });
+                tls_configured = true;
+            }
+            "CRL_HTTP_TIMEOUT" => {
+                if let Ok(v) = value.parse::<i32>() {
+                    tls_config.crl_http_timeout_seconds = Some(v);
+                    tls_configured = true;
+                }
+            }
+            "CRL_CONN_TIMEOUT" => {
+                if let Ok(v) = value.parse::<i32>() {
+                    tls_config.crl_connection_timeout_seconds = Some(v);
+                    tls_configured = true;
+                }
             }
             "ACCOUNT" => {
                 client
@@ -87,6 +128,22 @@ pub fn driver_connect(
                 client
                     .connection_set_option_string(conn_handle.clone(), "database".to_owned(), value)
                     .map_err(OdbcError::from_thrift_error)?;
+            }
+            // Snowflake-style aliases for TLS
+            "INSECUREMODE" => {
+                let insecure = value.to_lowercase() == "true";
+                tls_config.verify_hostname = Some(!insecure);
+                tls_config.verify_certificates = Some(!insecure);
+                tls_configured = true;
+            }
+            "OCSP_FAIL_OPEN" => {
+                let fail_open = value.to_lowercase() == "true";
+                tls_config.crl_mode = Some(if fail_open {
+                    ThriftCrlMode::ADVISORY
+                } else {
+                    ThriftCrlMode::ENABLED
+                });
+                tls_configured = true;
             }
             "WAREHOUSE" => {
                 client
@@ -143,6 +200,13 @@ pub fn driver_connect(
                 tracing::warn!("driver_connect: unknown connection string key: {:?}", key);
             }
         }
+    }
+
+    // Apply TLS config if the DSN included it
+    if tls_configured {
+        client
+            .connection_set_tls_config(conn_handle.clone(), tls_config)
+            .map_err(|e| OdbcError::ConnectionInit(format!("Failed to set TLS config: {e:?}")))?;
     }
 
     client
