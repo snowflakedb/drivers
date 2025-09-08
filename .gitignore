@@ -8,6 +8,9 @@ __pycache__/
 build/reports
 jdbc/.gradle
 jdbc/build
+jdbc/gradle/
+jdbc/gradlew
+jdbc/gradlew.bat
 odbc_tests/cmake-build
 parameters.json
 pep249_dbapi/build
