@@ -1,6 +1,6 @@
 // Certificate chain extraction from TLS connections
 use crate::crl::error::CrlError;
-use crate::crl::validator_real::CrlValidator;
+use crate::crl::validator::CrlValidator;
 use std::sync::Arc;
 
 /// Extract certificate chains from TLS connection and validate with CRL

@@ -1,5 +1,5 @@
 use crate::crl::error::CrlError;
-use crate::crl::validator_real::CrlValidator;
+use crate::crl::validator::CrlValidator;
 use once_cell::sync::OnceCell;
 use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, Sender};

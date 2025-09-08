@@ -119,7 +119,11 @@ mod integration_tests {
             check_mode: CertRevocationCheckMode::Disabled,
             ..Default::default()
         };
-        let client = crate::tls::create_tls_client(config).unwrap();
+        let client = crate::tls::create_tls_client_with_config(crate::tls::config::TlsConfig {
+            crl_config: config,
+            ..Default::default()
+        })
+        .unwrap();
         assert!(client.get("https://httpbin.org/get").build().is_ok());
 
         // Test enabled mode
@@ -127,7 +131,11 @@ mod integration_tests {
             check_mode: CertRevocationCheckMode::Enabled,
             ..Default::default()
         };
-        let client = crate::tls::create_tls_client(config).unwrap();
+        let client = crate::tls::create_tls_client_with_config(crate::tls::config::TlsConfig {
+            crl_config: config,
+            ..Default::default()
+        })
+        .unwrap();
         assert!(client.get("https://httpbin.org/get").build().is_ok());
 
         // Test advisory mode
@@ -135,7 +143,11 @@ mod integration_tests {
             check_mode: CertRevocationCheckMode::Advisory,
             ..Default::default()
         };
-        let client = crate::tls::create_tls_client(config).unwrap();
+        let client = crate::tls::create_tls_client_with_config(crate::tls::config::TlsConfig {
+            crl_config: config,
+            ..Default::default()
+        })
+        .unwrap();
         assert!(client.get("https://httpbin.org/get").build().is_ok());
     }
 

@@ -19,7 +19,7 @@ pub fn create_tls_client_with_config(tls_config: TlsConfig) -> Result<Client, Tl
 
     // Load custom root store if specified
     let custom_root_store = if let Some(ref path) = tls_config.custom_root_store_path {
-        tracing::info!(
+        tracing::debug!(
             "Loading custom root certificate store from: {}",
             path.display()
         );
@@ -47,26 +47,12 @@ pub fn create_tls_client_with_config(tls_config: TlsConfig) -> Result<Client, Tl
             })
         }
         CertRevocationCheckMode::Enabled | CertRevocationCheckMode::Advisory => {
-            tracing::info!(
+            tracing::debug!(
                 "CRL validation enabled, creating client with full TLS handshake validation"
             );
             create_crl_tls_client_with_root_store(tls_config.crl_config, custom_root_store)
         }
     }
-}
-
-/// Create a reqwest Client with CRL configuration (legacy API)
-///
-/// This is maintained for backwards compatibility. New code should use create_tls_client_with_config.
-/// - When CRL validation is DISABLED: Creates a standard client without CRL checking
-/// - When CRL validation is ENABLED/ADVISORY: Creates a client with custom rustls verifier
-///   that performs CRL validation during the TLS handshake
-pub fn create_tls_client(crl_config: CrlConfig) -> Result<Client, TlsError> {
-    let tls_config = TlsConfig {
-        crl_config,
-        ..Default::default()
-    };
-    create_tls_client_with_config(tls_config)
 }
 
 /// Create a standard reqwest client without CRL validation
@@ -168,6 +154,6 @@ pub fn create_root_store_from_pem(pem_data: &[u8]) -> Result<rustls::RootCertSto
         added += 1;
     }
 
-    tracing::info!("Created root store with {} certificates", added);
+    tracing::debug!("Created root store with {} certificates", added);
     Ok(root_store)
 }

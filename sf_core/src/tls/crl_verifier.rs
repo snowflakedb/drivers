@@ -1,6 +1,6 @@
 // Real TLS integration with CRL validation using rustls
 use crate::crl::config::{CertRevocationCheckMode, CrlConfig};
-use crate::crl::validator_real::CrlValidator;
+use crate::crl::validator::CrlValidator;
 use crate::crl::worker::CrlWorker;
 use rustls::client::WebPkiServerVerifier;
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};

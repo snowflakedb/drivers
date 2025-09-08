@@ -1,7 +1,7 @@
 // CRL validation service for application-wide certificate validation
 use crate::crl::config::{CertRevocationCheckMode, CrlConfig};
 use crate::crl::error::CrlError;
-use crate::crl::validator_real::CrlValidator;
+use crate::crl::validator::CrlValidator;
 use crate::tls::cert_extractor::{CertificateInfo, TlsCertificateExtractor};
 use std::sync::Arc;
 

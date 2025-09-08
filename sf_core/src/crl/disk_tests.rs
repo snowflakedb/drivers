@@ -4,7 +4,7 @@ mod disk_crl_tests {
         check_certificate_in_crl, extract_crl_distribution_points, get_certificate_serial_number,
     };
     use crate::crl::config::{CertRevocationCheckMode, CrlConfig};
-    use crate::crl::validator_real::CrlValidator;
+    use crate::crl::validator::CrlValidator;
     use std::fs;
     use std::io::Write;
     use tempfile::TempDir;

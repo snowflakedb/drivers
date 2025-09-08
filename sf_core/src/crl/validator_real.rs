@@ -3,9 +3,7 @@ use crate::crl::cache_simple::CrlCache;
 use crate::crl::certificate_parser::is_short_lived_certificate;
 use crate::crl::config::{CertRevocationCheckMode, CrlConfig};
 use crate::crl::error::CrlError;
-use chrono::Utc;
 use const_oid::ObjectIdentifier;
-use once_cell::sync::OnceCell;
 use openssl::hash::MessageDigest;
 use openssl::rsa::Padding as RsaPadding;
 use openssl::sign::Verifier as OpensslVerifier;
@@ -16,13 +14,11 @@ use ring::signature::{
     RSA_PKCS1_2048_8192_SHA384, RSA_PKCS1_2048_8192_SHA512, RSA_PSS_2048_8192_SHA256,
     RSA_PSS_2048_8192_SHA384, RSA_PSS_2048_8192_SHA512, UnparsedPublicKey,
 };
-use std::collections::HashMap;
 use std::fs;
 use std::io::Write;
 use std::path::Path;
 use std::sync::Arc;
-use std::sync::Mutex;
-use std::time::{Duration, Instant};
+// removed legacy backoff/disk helpers
 use x509_cert::Certificate as RcCertificate;
 use x509_cert::crl::CertificateList as RcCertificateList;
 use x509_cert::der::Decode;
@@ -51,7 +47,6 @@ pub enum ChainValidationResult {
 pub struct CrlValidator {
     config: CrlConfig,
     cache: Arc<CrlCache>,
-    client: Client,
 }
 
 impl std::fmt::Debug for CrlValidator {
@@ -68,7 +63,7 @@ impl CrlValidator {
     pub fn new(config: CrlConfig) -> Result<Self, CrlError> {
         let cache = CrlCache::global(config.clone(), 100).clone();
 
-        let client = Client::builder()
+        let _client = Client::builder()
             .timeout(std::time::Duration::from_secs(
                 config.http_timeout.num_seconds() as u64,
             ))
@@ -83,21 +78,9 @@ impl CrlValidator {
                 location: snafu::Location::new(file!(), line!(), 0),
             })?;
 
-        Ok(Self {
-            config,
-            cache,
-            client,
-        })
+        Ok(Self { config, cache })
     }
-    // Static helper to allow cache to reuse signature verification without creating a validator
-    pub(crate) fn verify_crl_signature_best_effort_static(
-        crl_bytes: &[u8],
-        issuer_cert_der: Option<&[u8]>,
-    ) -> Result<(), CrlError> {
-        // Delegate to instance method using a temporary minimal validator
-        let tmp = CrlValidator::new(CrlConfig::default())?;
-        tmp.verify_crl_signature_best_effort(crl_bytes, issuer_cert_der)
-    }
+    // Static verification moved to tls::x509_utils::verify_crl_signature_best_effort
 
     /// Main entry point for certificate revocation validation
     pub async fn validate_certificate_chains(
@@ -192,7 +175,7 @@ impl CrlValidator {
         }
     }
 
-    /// Validate a single certificate chain - REAL IMPLEMENTATION
+    /// Validate a single certificate chain
     async fn validate_certificate_chain(
         &self,
         cert_chain: &[Vec<u8>], // DER-encoded certificates
@@ -302,97 +285,6 @@ impl CrlValidator {
     // Legacy methods retained temporarily (unused); safe to remove when callers are migrated
 
     // removed legacy per-URL checker in favor of cache::check_revocation
-
-    /// Fetch CRL from disk cache or network and write to disk cache
-    #[allow(dead_code)]
-    pub(crate) async fn fetch_crl_with_cache(&self, url: &str) -> Result<Vec<u8>, CrlError> {
-        if self.config.enable_disk_caching
-            && let Some(dir) = self.config.get_cache_dir()
-        {
-            std::fs::create_dir_all(&dir).map_err(|e| CrlError::CacheDirectoryCreation {
-                source: e,
-                location: snafu::Location::new(file!(), line!(), 0),
-            })?;
-            let file_name = crate::crl::cache_simple::CrlCache::url_digest(url);
-            let path = dir.join(file_name);
-            if let Ok(bytes) = std::fs::read(&path) {
-                tracing::debug!("Loaded CRL from disk cache: {}", path.display());
-                // If expired, fetch fresh; if half-life passed, spawn refresh
-                if let Ok((_, crl)) =
-                    x509_parser::revocation_list::CertificateRevocationList::from_der(
-                        bytes.as_slice(),
-                    )
-                {
-                    if let Some(next_update) = crl.tbs_cert_list.next_update
-                        && let Some(next_dt) =
-                            crate::crl::certificate_parser::asn1_time_to_datetime(&next_update)
-                        && Utc::now() > next_dt
-                    {
-                        tracing::debug!("Disk-cached CRL expired, fetching fresh from network");
-                        let fresh = self.fetch_crl_network(url).await?;
-                        Self::write_crl_atomic_internal(&path, &fresh);
-                        return Ok(fresh);
-                    }
-                    let this_update = crl.tbs_cert_list.this_update;
-                    if let Some(next_update) = crl.tbs_cert_list.next_update
-                        && let (Some(this_dt), Some(next_dt)) = (
-                            crate::crl::certificate_parser::asn1_time_to_datetime(&this_update),
-                            crate::crl::certificate_parser::asn1_time_to_datetime(&next_update),
-                        )
-                    {
-                        let midpoint = this_dt + (next_dt - this_dt) / 2;
-                        if Utc::now() > midpoint && Utc::now() <= next_dt {
-                            self.spawn_refresh(url.to_string());
-                        }
-                    }
-                }
-                return Ok(bytes);
-            }
-
-            // Fallthrough to network; after download, write to disk
-            let bytes = self.fetch_crl_network(url).await?;
-            Self::write_crl_atomic_internal(&path, &bytes);
-            return Ok(bytes);
-        }
-        // No disk cache: fetch from network
-        self.fetch_crl_network(url).await
-    }
-
-    /// Fetch CRL via network
-    #[allow(dead_code)]
-    async fn fetch_crl_network(&self, url: &str) -> Result<Vec<u8>, CrlError> {
-        tracing::debug!("Fetching CRL from: {url}");
-        self.maybe_sleep_backoff(url).await;
-
-        let response = self
-            .client
-            .get(url)
-            .send()
-            .await
-            .map_err(|e| CrlError::CrlDownload {
-                url: url.to_string(),
-                source: e,
-                location: snafu::Location::new(file!(), line!(), 0),
-            })?;
-
-        if !response.status().is_success() {
-            tracing::error!("HTTP {} error for URL: {}", response.status(), url);
-            self.record_backoff_failure(url);
-            return Err(CrlError::CrlExpired {
-                location: snafu::Location::new(file!(), line!(), 0),
-            });
-        }
-
-        let crl_data = response.bytes().await.map_err(|e| CrlError::CrlDownload {
-            url: url.to_string(),
-            source: e,
-            location: snafu::Location::new(file!(), line!(), 0),
-        })?;
-
-        tracing::debug!("Downloaded CRL: {} bytes", crl_data.len());
-        self.record_backoff_success(url);
-        Ok(crl_data.to_vec())
-    }
 
     /// Best-effort CRL signature verification using the issuer public key from the chain
     /// Assumptions:
@@ -547,11 +439,9 @@ impl CrlValidator {
 
         // Fallback: RSASSA-PSS with arbitrary parameters using OpenSSL when OID is PSS
         if oid == oid_rsassa_pss {
-            // Build OpenSSL X509 from issuer cert and extract PKey
             if let Ok(issuer_x509) = X509::from_der(issuer_der)
                 && let Ok(pkey) = issuer_x509.public_key()
             {
-                // Configure PSS verifier with SHA-256/384/512 depending on params; default to SHA-256
                 let mut verifier =
                     OpensslVerifier::new(MessageDigest::sha256(), &pkey).map_err(|_| {
                         CrlError::InvalidCrlSignature {
@@ -563,7 +453,6 @@ impl CrlValidator {
                     .map_err(|_| CrlError::InvalidCrlSignature {
                         location: snafu::Location::new(file!(), line!(), 0),
                     })?;
-                // Best-effort: try common salt lengths; OpenSSL enforces PSS params if provided via ASN.1 in signature
                 verifier
                     .update(&tbs)
                     .map_err(|_| CrlError::InvalidCrlSignature {
@@ -577,36 +466,6 @@ impl CrlValidator {
         Err(CrlError::InvalidCrlSignature {
             location: snafu::Location::new(file!(), line!(), 0),
         })
-    }
-
-    fn spawn_refresh(&self, url: String) {
-        let client = self.client.clone();
-        let cache = self.cache.clone();
-        let config = self.config.clone();
-        tracing::debug!("Spawning background refresh for CRL: {}", url);
-        tokio::spawn(async move {
-            if let Ok(r) = client.get(&url).send().await {
-                if !r.status().is_success() {
-                    return;
-                }
-                if let Ok(bytes) = r.bytes().await.map(|b| b.to_vec()) {
-                    if config.enable_disk_caching
-                        && let Some(dir) = config.get_cache_dir()
-                    {
-                        let _ = std::fs::create_dir_all(&dir);
-                        let file_name = crate::crl::cache_simple::CrlCache::url_digest(&url);
-                        let path = dir.join(file_name);
-                        let _ = std::fs::write(&path, &bytes);
-                    }
-                    let cached = crate::crl::cache_simple::CachedCrl {
-                        crl: bytes.clone(),
-                        download_time: Utc::now(),
-                        url: url.clone(),
-                    };
-                    let _ = cache.put(cached);
-                }
-            }
-        });
     }
 
     // removed legacy cached CRL helper
@@ -632,44 +491,4 @@ impl CrlValidator {
     }
 
     // --- Backoff (per-URL) -------------------------------------------------
-    #[allow(dead_code)]
-    async fn maybe_sleep_backoff(&self, url: &str) {
-        static STATE: OnceCell<Mutex<HashMap<String, (u32, Instant)>>> = OnceCell::new();
-        let map = STATE.get_or_init(|| Mutex::new(HashMap::new()));
-        let (failures, last) = {
-            let guard = map.lock().unwrap();
-            guard.get(url).cloned().unwrap_or((0, Instant::now()))
-        };
-        if failures > 0 {
-            let base_ms = 100u64; // 100ms base
-            let cap_ms = 5_000u64; // 5s cap
-            let delay_ms = (base_ms.saturating_mul(1u64 << failures.min(5))).min(cap_ms);
-            let jitter = (rand::random::<u32>() % 100) as u64; // up to 100ms
-            let total_ms = delay_ms + jitter;
-            let elapsed = last.elapsed();
-            let needed = Duration::from_millis(total_ms);
-            if elapsed < needed {
-                let sleep_dur = needed - elapsed;
-                tokio::time::sleep(sleep_dur).await;
-            }
-        }
-    }
-
-    #[allow(dead_code)]
-    fn record_backoff_failure(&self, url: &str) {
-        static STATE: OnceCell<Mutex<HashMap<String, (u32, Instant)>>> = OnceCell::new();
-        let map = STATE.get_or_init(|| Mutex::new(HashMap::new()));
-        let mut guard = map.lock().unwrap();
-        let entry = guard.entry(url.to_string()).or_insert((0, Instant::now()));
-        entry.0 = entry.0.saturating_add(1);
-        entry.1 = Instant::now();
-    }
-
-    #[allow(dead_code)]
-    fn record_backoff_success(&self, url: &str) {
-        static STATE: OnceCell<Mutex<HashMap<String, (u32, Instant)>>> = OnceCell::new();
-        let map = STATE.get_or_init(|| Mutex::new(HashMap::new()));
-        let mut guard = map.lock().unwrap();
-        guard.remove(url);
-    }
 }

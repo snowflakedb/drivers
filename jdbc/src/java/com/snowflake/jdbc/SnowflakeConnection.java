@@ -4,6 +4,8 @@ import com.snowflake.jdbc.thrift_gen.ConnectionHandle;
 import com.snowflake.jdbc.thrift_gen.DatabaseDriver;
 import com.snowflake.jdbc.thrift_gen.DatabaseHandle;
 import com.snowflake.jdbc.thrift_gen.DriverException;
+import com.snowflake.jdbc.thrift_gen.TlsConfig;
+import com.snowflake.jdbc.thrift_gen.CertRevocationCheckMode;
 import org.apache.thrift.TException;
 
 import java.sql.*;
@@ -37,29 +39,114 @@ public class SnowflakeConnection implements Connection {
             this.databaseHandle = this.driverApi.databaseNew();
             this.driverApi.databaseInit(this.databaseHandle);
             this.connectionHandle = this.driverApi.connectionNew();
-            properties.forEach((key, value) -> {
+
+            // Build optional TLS config from properties
+            TlsConfig tlsConfig = new TlsConfig();
+            boolean tlsConfigured = false;
+
+            for (Map.Entry<Object, Object> entry : properties.entrySet()) {
+                Object key = entry.getKey();
+                Object value = entry.getValue();
                 if (!(key instanceof String)) {
-                    return;
+                    continue;
                 }
-
                 String keyStr = (String) key;
-                if (value instanceof String) {
-                    try {
-                        this.driverApi.connectionSetOptionString(this.connectionHandle, keyStr, (String)value);
-                    } catch (TException e) {
-                        throw new RuntimeException(e);
+
+                // TLS/CRL settings
+                if ("cert_revocation_check_mode".equalsIgnoreCase(keyStr) && value instanceof String) {
+                    String mode = ((String) value).toUpperCase();
+                    if ("ENABLED".equals(mode)) {
+                        tlsConfig.setCrl_mode(CertRevocationCheckMode.ENABLED);
+                    } else if ("ADVISORY".equals(mode)) {
+                        tlsConfig.setCrl_mode(CertRevocationCheckMode.ADVISORY);
+                    } else {
+                        tlsConfig.setCrl_mode(CertRevocationCheckMode.DISABLED);
                     }
+                    tlsConfigured = true;
+                    continue;
+                }
+                if ("enable_crl_disk_caching".equalsIgnoreCase(keyStr) && value instanceof String) {
+                    tlsConfig.setCrl_disk_caching(Boolean.parseBoolean((String) value));
+                    tlsConfigured = true;
+                    continue;
+                }
+                if ("enable_crl_memory_caching".equalsIgnoreCase(keyStr) && value instanceof String) {
+                    tlsConfig.setCrl_memory_caching(Boolean.parseBoolean((String) value));
+                    tlsConfigured = true;
+                    continue;
+                }
+                if ("sf_crl_response_cache_dir".equalsIgnoreCase(keyStr) && value instanceof String) {
+                    tlsConfig.setCrl_cache_dir((String) value);
+                    tlsConfigured = true;
+                    continue;
+                }
+                if ("sf_crl_validity_time".equalsIgnoreCase(keyStr) && value instanceof Integer) {
+                    tlsConfig.setCrl_validity_days((Integer) value);
+                    tlsConfigured = true;
+                    continue;
+                }
+                if ("allow_certificates_without_crl_url".equalsIgnoreCase(keyStr) && value instanceof String) {
+                    tlsConfig.setAllow_certs_without_crl_url(Boolean.parseBoolean((String) value));
+                    tlsConfigured = true;
+                    continue;
+                }
+                if ("crl_http_timeout".equalsIgnoreCase(keyStr) && value instanceof Integer) {
+                    tlsConfig.setCrl_http_timeout_seconds((Integer) value);
+                    tlsConfigured = true;
+                    continue;
+                }
+                if ("crl_connection_timeout".equalsIgnoreCase(keyStr) && value instanceof Integer) {
+                    tlsConfig.setCrl_connection_timeout_seconds((Integer) value);
+                    tlsConfigured = true;
+                    continue;
+                }
+                if ("custom_root_store_path".equalsIgnoreCase(keyStr) && value instanceof String) {
+                    tlsConfig.setCustom_root_store_path((String) value);
+                    tlsConfigured = true;
+                    continue;
+                }
+                if ("verify_hostname".equalsIgnoreCase(keyStr) && value instanceof String) {
+                    tlsConfig.setVerify_hostname(Boolean.parseBoolean((String) value));
+                    tlsConfigured = true;
+                    continue;
+                }
+                if ("verify_certificates".equalsIgnoreCase(keyStr) && value instanceof String) {
+                    tlsConfig.setVerify_certificates(Boolean.parseBoolean((String) value));
+                    tlsConfigured = true;
+                    continue;
                 }
 
-                if (value instanceof Integer) {
-                    try {
-                        this.driverApi.connectionSetOptionInt(this.connectionHandle, keyStr, (Integer)value);
-                    }
-                    catch (TException e) {
-                        throw new RuntimeException(e);
-                    }
+                // Snowflake-style aliases
+                if ("insecureMode".equalsIgnoreCase(keyStr) && value instanceof String) {
+                    boolean insecure = Boolean.parseBoolean((String) value);
+                    tlsConfig.setVerify_hostname(!insecure);
+                    tlsConfig.setVerify_certificates(!insecure);
+                    tlsConfigured = true;
+                    continue;
                 }
-            });
+                if ("ocspFailOpen".equalsIgnoreCase(keyStr) && value instanceof String) {
+                    boolean failOpen = Boolean.parseBoolean((String) value);
+                    tlsConfig.setCrl_mode(failOpen ? CertRevocationCheckMode.ADVISORY : CertRevocationCheckMode.ENABLED);
+                    tlsConfigured = true;
+                    continue;
+                }
+
+                // Non-TLS options go through the generic setters
+                try {
+                    if (value instanceof Integer) {
+                        this.driverApi.connectionSetOptionInt(this.connectionHandle, keyStr, (Integer) value);
+                    } else if (value instanceof String) {
+                        this.driverApi.connectionSetOptionString(this.connectionHandle, keyStr, (String) value);
+                    }
+                } catch (TException e) {
+                    throw new RuntimeException(e);
+                }
+            }
+
+            if (tlsConfigured) {
+                this.driverApi.connectionSetTlsConfig(this.connectionHandle, tlsConfig);
+            }
+            
             this.driverApi.connectionInit(this.connectionHandle, this.databaseHandle);
         } catch (TException e) {
             System.out.println("Exception " + e.getMessage());

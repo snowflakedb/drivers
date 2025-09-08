@@ -3,7 +3,7 @@ pub mod certificate_parser;
 pub mod config;
 pub mod error;
 pub mod service;
-pub mod validator_real;
+pub mod validator;
 pub mod worker;
 
 mod disk_tests;
@@ -17,5 +17,5 @@ pub use certificate_parser::{
 pub use config::{CertRevocationCheckMode, CrlConfig};
 pub use error::CrlError;
 pub use service::CrlValidationService;
-pub use validator_real::{CertificateStatus, ChainValidationResult, CrlValidator};
+pub use validator::{CertificateStatus, ChainValidationResult, CrlValidator};
 pub use worker::CrlWorker;
