@@ -183,7 +183,20 @@ def create_connection_with_adapter(adapter: ConnectorAdapter, **override_params)
     
     # Remove None values
     connection_params = {k: v for k, v in connection_params.items() if v is not None}
-    
+
+    # PAT fallback: if a token file is provided, prefer PROGRAMMATIC_ACCESS_TOKEN auth
+    pat_file = os.environ.get("SNOWFLAKE_TEST_PAT_TOKEN_FILE")
+    if pat_file and os.path.exists(pat_file):
+        try:
+            with open(pat_file, "r") as f:
+                token = f.read().strip()
+            # Remove password if present, switch to PAT authenticator
+            connection_params.pop("password", None)
+            connection_params["authenticator"] = "PROGRAMMATIC_ACCESS_TOKEN"
+            connection_params["token"] = token
+        except Exception:
+            pass
+
     # Apply overrides
     connection_params.update(override_params)
     
