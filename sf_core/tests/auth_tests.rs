@@ -24,9 +24,6 @@ fn get_private_key_file(parameters: &Parameters) -> PrivateKeyFile {
 
 #[test]
 fn test_private_key_auth() {
-    if std::env::var("RUN_E2E").ok().as_deref() != Some("1") {
-        return;
-    }
     setup_logging();
     let mut client = SnowflakeTestClient::with_default_params();
     let private_key_file = get_private_key_file(&client.parameters);
@@ -71,9 +68,6 @@ fn test_private_key_auth() {
 
 #[test]
 fn test_private_key_auth_no_private_key_file() {
-    if std::env::var("RUN_E2E").ok().as_deref() != Some("1") {
-        return;
-    }
     setup_logging();
     let mut client = SnowflakeTestClient::with_default_params();
 
@@ -127,9 +121,6 @@ impl Drop for Pat {
 
 #[test]
 fn test_pat_as_password() {
-    if std::env::var("RUN_E2E").ok().as_deref() != Some("1") {
-        return;
-    }
     setup_logging();
     let pat = Pat::acquire();
     let mut client = SnowflakeTestClient::with_default_params();
@@ -153,9 +144,6 @@ fn test_pat_as_password() {
 
 #[test]
 fn test_pat_as_token() {
-    if std::env::var("RUN_E2E").ok().as_deref() != Some("1") {
-        return;
-    }
     setup_logging();
     let pat = Pat::acquire();
     let mut client = SnowflakeTestClient::with_default_params();

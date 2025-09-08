@@ -7,9 +7,7 @@ use arrow::datatypes::Int32Type;
 
 #[test]
 fn test_statement_bind() {
-    if std::env::var("RUN_E2E").ok().as_deref() != Some("1") {
-        return;
-    }
+    setup_logging();
     setup_logging();
     let mut client = SnowflakeTestClient::connect_with_default_auth();
     let stmt = client.new_statement();
@@ -32,9 +30,7 @@ fn test_statement_bind() {
 
 #[test]
 fn test_statement_bind_multiple_params() {
-    if std::env::var("RUN_E2E").ok().as_deref() != Some("1") {
-        return;
-    }
+    setup_logging();
     setup_logging();
     let mut client = SnowflakeTestClient::connect_with_default_auth();
     let stmt = client.new_statement();

@@ -12,9 +12,7 @@ use std::io::Write;
 
 #[test]
 fn test_put_source_compression_auto_detect_standard_types() {
-    if std::env::var("RUN_E2E").ok().as_deref() != Some("1") {
-        return;
-    }
+    setup_logging();
     let mut client = SnowflakeTestClient::connect_with_default_auth();
     let stage_name = "TEST_STAGE_AUTO_DETECT_STANDARD";
     let temp_dir = tempfile::TempDir::new().unwrap();
