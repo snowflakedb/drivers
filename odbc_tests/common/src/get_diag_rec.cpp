@@ -14,10 +14,6 @@ std::vector<DiagRec> get_diag_rec(const HandleWrapper& wrapper) {
     SQLCHAR messageText[8096] = {0};
     SQLSMALLINT textLength = 0;
 
-    std::cout << "[get_diag_rec] nativeError: " << &nativeError << std::endl;
-    std::cout << "[get_diag_rec] sqlState: " << &sqlState << std::endl;
-    std::cout << "[get_diag_rec] messageText: " << (void*)messageText << std::endl;
-    std::cout << "[get_diag_rec] textLength: " << &textLength << std::endl;
 
     SQLRETURN ret = SQLGetDiagRec(wrapper.getType(), wrapper.getHandle(), recNumber, sqlState,
                                   &nativeError, messageText, sizeof(messageText), &textLength);
