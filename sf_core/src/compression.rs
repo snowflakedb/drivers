@@ -4,7 +4,7 @@ use std::io::{Read, Write};
 
 // PUT/GET compression
 pub fn compress_data(input_data: Vec<u8>) -> Result<Vec<u8>, CompressionError> {
-    // Use GzBuilder to create gzip with spaces filename and zeroed timestamp
+    // Use GzBuilder to create gzip with a zeroed timestamp for consistent normalization
     let mut encoder = GzBuilder::new()
         .mtime(0) // Set timestamp to 0 for consistent normalization
         .write(Vec::new(), Compression::best());
