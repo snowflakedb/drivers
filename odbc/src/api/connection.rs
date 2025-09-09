@@ -1,23 +1,12 @@
 use crate::api::{
-    ConnectionState, OdbcError, OdbcResult, conn_from_handle,
-    error::{InvalidPortSnafu, TextConversionFromUtf8Snafu, TextConversionUtf8Snafu},
+    ConnectionState, OdbcError, OdbcResult, api_utils::cstr_to_string, conn_from_handle,
+    error::InvalidPortSnafu,
 };
 use odbc_sys as sql;
 use sf_core::api_client;
 use snafu::ResultExt;
 use std::collections::HashMap;
 use tracing;
-
-/// Convert text pointer to String
-fn text_to_string(text: *const sql::Char, length: sql::Integer) -> Result<String, OdbcError> {
-    if length == sql::NTS as i32 {
-        let result = unsafe { std::ffi::CStr::from_ptr(text as *const i8).to_str() };
-        result.context(TextConversionUtf8Snafu {}).map(String::from)
-    } else {
-        let text_slice = unsafe { std::slice::from_raw_parts(text, length as usize) };
-        String::from_utf8(text_slice.to_vec()).context(TextConversionFromUtf8Snafu {})
-    }
-}
 
 /// Parse connection string into key-value pairs
 fn parse_connection_string(connection_string: &str) -> HashMap<String, String> {
@@ -38,7 +27,7 @@ pub fn driver_connect(
     in_string_length: sql::SmallInt,
 ) -> OdbcResult<()> {
     // Parse the connection string
-    let connection_string = text_to_string(in_connection_string, in_string_length as i32)?;
+    let connection_string = cstr_to_string(in_connection_string, in_string_length as i32)?;
     let connection_string_map = parse_connection_string(&connection_string);
     tracing::info!(
         "driver_connect: connection_string={:?}",

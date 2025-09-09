@@ -1,3 +1,4 @@
+use crate::api::api_utils::cstr_to_string;
 use crate::api::error::{
     ArrowBindingSnafu, DisconnectedSnafu, InvalidParameterNumberSnafu, TextConversionFromUtf8Snafu,
     TextConversionUtf8Snafu,
@@ -29,17 +30,6 @@ fn thrift_from_ffi_arrow_schema(raw: *mut FFI_ArrowSchema) -> ArrowSchemaPtr {
     ArrowSchemaPtr { value: vec }
 }
 
-/// Convert text pointer to String
-fn text_to_string(text: *const sql::Char, length: sql::Integer) -> Result<String, OdbcError> {
-    if length == sql::NTS as i32 {
-        let result = unsafe { std::ffi::CStr::from_ptr(text as *const i8).to_str() };
-        result.context(TextConversionUtf8Snafu {}).map(String::from)
-    } else {
-        let text_slice = unsafe { std::slice::from_raw_parts(text, length as usize) };
-        String::from_utf8(text_slice.to_vec()).context(TextConversionFromUtf8Snafu {})
-    }
-}
-
 /// Execute a SQL statement directly
 pub fn exec_direct(
     statement_handle: sql::Handle,
@@ -55,7 +45,7 @@ pub fn exec_direct(
             db_handle: _,
             conn_handle: _,
         } => {
-            let query = text_to_string(statement_text, text_length)?;
+            let query = cstr_to_string(statement_text, text_length)?;
 
             client
                 .statement_set_sql_query(stmt.stmt_handle.clone(), query.clone())
@@ -90,7 +80,7 @@ pub fn prepare(
             db_handle: _,
             conn_handle: _,
         } => {
-            let query = text_to_string(statement_text, text_length)?;
+            let query = cstr_to_string(statement_text, text_length)?;
             tracing::debug!("prepare: query = {}", query);
 
             // Set the SQL query for the statement
