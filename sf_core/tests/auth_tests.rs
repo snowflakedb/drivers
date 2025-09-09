@@ -19,13 +19,21 @@ fn get_private_key_file(parameters: &Parameters) -> PrivateKeyFile {
     let suffix = format!("{:x}", rand::random::<u32>());
     let private_key_path = format!("rsa_key_{suffix}.p8");
     std::fs::write(&private_key_path, private_key_contents).unwrap();
-    PrivateKeyFile { path: private_key_path }
+    PrivateKeyFile {
+        path: private_key_path,
+    }
 }
 
 #[test]
 fn test_private_key_auth() {
     setup_logging();
     let mut client = SnowflakeTestClient::with_default_params();
+    // Skip if no private key material provided
+    if client.parameters.private_key_contents.is_none()
+        || client.parameters.private_key_password.is_none()
+    {
+        return;
+    }
     let private_key_file = get_private_key_file(&client.parameters);
 
     client
@@ -104,7 +112,10 @@ impl Pat {
         assert_eq!(result[0].len(), 2);
         let token_name = result[0][0].clone();
         let token_secret = result[0][1].clone();
-        Self { token_name, token_secret }
+        Self {
+            token_name,
+            token_secret,
+        }
     }
 }
 
@@ -122,6 +133,10 @@ impl Drop for Pat {
 #[test]
 fn test_pat_as_password() {
     setup_logging();
+    // Skip this test when running with a PAT file, since PAT cannot create/modify PATs
+    if std::env::var("SNOWFLAKE_TEST_PAT_TOKEN_FILE").is_ok() {
+        return;
+    }
     let pat = Pat::acquire();
     let mut client = SnowflakeTestClient::with_default_params();
     client
@@ -145,6 +160,10 @@ fn test_pat_as_password() {
 #[test]
 fn test_pat_as_token() {
     setup_logging();
+    // Skip this test when running with a PAT file, since PAT cannot create/modify PATs
+    if std::env::var("SNOWFLAKE_TEST_PAT_TOKEN_FILE").is_ok() {
+        return;
+    }
     let pat = Pat::acquire();
     let mut client = SnowflakeTestClient::with_default_params();
     client

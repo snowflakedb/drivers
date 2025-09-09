@@ -72,10 +72,6 @@ zstd = "0.13.3"
 [features]
 e2e_tests = []
 
-
-## examples removed
-
 [[bin]]
 name = "tls_client"
 path = "src/bin/tls_client.rs"
->>>>>>> 96cc5ff (cleanup CRL interfaces; expensive lookups still)
