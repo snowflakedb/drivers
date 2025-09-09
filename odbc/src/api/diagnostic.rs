@@ -277,7 +277,6 @@ pub unsafe fn get_diag_rec(
         *native_error_ptr = record.native_error;
         *text_length_ptr = record.message_text.len() as sql::SmallInt;
     }
-    println!("[RUST] native_error_ptr: {:?}", native_error_ptr);
     Ok(())
 }
 
