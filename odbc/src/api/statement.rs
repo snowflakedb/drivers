@@ -1,8 +1,5 @@
 use crate::api::api_utils::cstr_to_string;
-use crate::api::error::{
-    ArrowBindingSnafu, DisconnectedSnafu, InvalidParameterNumberSnafu, TextConversionFromUtf8Snafu,
-    TextConversionUtf8Snafu,
-};
+use crate::api::error::{ArrowBindingSnafu, DisconnectedSnafu, InvalidParameterNumberSnafu};
 use crate::api::{
     ConnectionState, OdbcError, OdbcResult, ParameterBinding, StatementState, stmt_from_handle,
 };
