@@ -16,6 +16,5 @@ mod file_manager;
 pub mod handle_manager;
 pub mod logging;
 mod rest;
-mod test_utils;
 pub mod thrift_gen;
 mod transport;
