@@ -13,12 +13,12 @@ use lazy_static::lazy_static;
 use thrift::protocol::{TInputProtocol, TOutputProtocol};
 
 use crate::thrift_gen::database_driver_v1::{
-    ArrowArrayPtr, ArrowSchemaPtr, AuthenticationError, CertRevocationCheckMode as ThriftCrlMode,
-    ConnectionHandle, DatabaseDriverSyncClient, DatabaseDriverSyncHandler,
-    DatabaseDriverSyncProcessor, DatabaseHandle, DriverError, DriverException, ExecuteResult,
-    GenericError, InfoCode, InternalError, InvalidParameterValue, LoginError, MissingParameter,
-    PartitionedResult, StatementHandle, StatusCode, TDatabaseDriverSyncClient,
-    TlsConfig as ThriftTlsConfig,
+    ArrowArrayPtr, ArrowArrayStreamPtr, ArrowSchemaPtr, AuthenticationError,
+    CertRevocationCheckMode as ThriftCrlMode, ConnectionHandle, DatabaseDriverSyncClient,
+    DatabaseDriverSyncHandler, DatabaseDriverSyncProcessor, DatabaseHandle, DriverError,
+    DriverException, ExecuteResult, GenericError, InfoCode, InternalError, InvalidParameterValue,
+    LoginError, MissingParameter, PartitionedResult, StatementHandle, StatusCode,
+    TDatabaseDriverSyncClient, TlsConfig as ThriftTlsConfig,
 };
 
 use arrow::array::{RecordBatch, StructArray};
@@ -31,7 +31,6 @@ use thrift::{Error, OrderedFloat};
 use tracing::instrument;
 
 use crate::driver::StatementState;
-use crate::thrift_gen::database_driver_v1::ArrowArrayStreamPtr;
 
 impl From<Box<ArrowArrayStreamPtr>> for *mut FFI_ArrowArrayStream {
     fn from(ptr: Box<ArrowArrayStreamPtr>) -> Self {
@@ -215,16 +214,10 @@ impl ApiError {
                 ..
             } => DriverError::MissingParameter(MissingParameter::new(parameter.clone())),
             ApiError::InvalidArgument { .. } => DriverError::InternalError(InternalError::new()),
-            ApiError::FailedToLogin {
-                source: RestError::LoginError { message, code, .. },
-                ..
-            } => DriverError::LoginError(LoginError {
-                message: message.clone(),
-                code: *code,
-            }),
-            ApiError::FailedToLogin { source, .. } => {
-                DriverError::AuthError(AuthenticationError::new(source.to_string()))
+            ApiError::FailedToLogin { .. } => {
+                DriverError::AuthError(AuthenticationError::new("Login failed".to_string()))
             }
+
             ApiError::FailedToLockConnection { .. } => {
                 DriverError::InternalError(InternalError::new())
             }
@@ -270,6 +263,7 @@ where
     }
 }
 
+#[allow(clippy::result_large_err)]
 fn connection_init(
     conn_handle: ConnectionHandle,
     _db_handle: DatabaseHandle,

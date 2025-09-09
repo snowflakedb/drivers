@@ -3,7 +3,7 @@ use std::fs;
 use crate::config::InvalidParameterValueSnafu;
 use crate::config::settings::Setting;
 use crate::config::settings::Settings;
-use crate::config::{ConfigError, InvalidArgumentSnafu, MissingParameterSnafu};
+use crate::config::{ConfigError, MissingParameterSnafu};
 use crate::crl::config::CrlConfig;
 use crate::tls::config::TlsConfig as InternalTlsConfig;
 use snafu::OptionExt;

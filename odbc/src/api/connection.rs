@@ -3,12 +3,15 @@ use crate::api::{
     error::InvalidPortSnafu,
 };
 use odbc_sys as sql;
+<<<<<<< HEAD
 use sf_core::thrift_apis::DatabaseDriverV1;
 use sf_core::thrift_apis::client::create_client;
-use snafu::ResultExt;
+=======
+>>>>>>> cdf415c (cleanups after API changes)
 use sf_core::thrift_gen::database_driver_v1::{
     CertRevocationCheckMode as ThriftCrlMode, TlsConfig as ThriftTlsConfig,
 };
+use snafu::ResultExt;
 use std::collections::HashMap;
 use tracing;
 
@@ -206,7 +209,7 @@ pub fn driver_connect(
     if tls_configured {
         client
             .connection_set_tls_config(conn_handle.clone(), tls_config)
-            .map_err(|e| OdbcError::ConnectionInit(format!("Failed to set TLS config: {e:?}")))?;
+            .map_err(OdbcError::from_thrift_error)?;
     }
 
     client

@@ -9,11 +9,7 @@ use crate::rest::snowflake::auth::{
     AuthRequest, AuthRequestClientEnvironment, AuthRequestData, AuthResponse,
 };
 use crate::tls::TlsError;
-<<<<<<< HEAD
-use crate::tls::create_tls_client_with_config as create_tls_client;
-=======
 use crate::tls::create_tls_client_with_config;
->>>>>>> 12acaa4 (cleanup CRL interfaces; expensive lookups still)
 use reqwest;
 use serde_json;
 use snafu::{Location, ResultExt, Snafu};
@@ -153,11 +149,9 @@ pub async fn snowflake_login(login_parameters: &LoginParameters) -> Result<Strin
             .message
             .unwrap_or_else(|| "Unknown error".to_string());
         tracing::error!(message = %message, "Snowflake login failed");
-        let code = auth_response
-            ._code
-            .map(|c| c.parse::<i32>().unwrap_or(-1))
-            .unwrap_or(-1);
-        LoginSnafu { message, code }.fail()?;
+        InvalidResponseSnafu { message }
+            .fail()
+            .context(InvalidSnowflakeResponseSnafu)?;
     }
 
     // Extract and store the session token
