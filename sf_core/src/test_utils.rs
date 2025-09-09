@@ -1,4 +1,3 @@
-
 /// Sets up logging for tests
 #[cfg(test)]
 pub fn setup_logging() {

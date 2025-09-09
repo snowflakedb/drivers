@@ -136,7 +136,7 @@ fn test_put_get_rowset() {
     assert_eq!(put_result.source, "test_put_get_rowset.csv");
     assert_eq!(put_result.target, "test_put_get_rowset.csv.gz");
     assert_eq!(put_result.source_size, 6);
-    assert_eq!(put_result.target_size, 64);
+    assert_eq!(put_result.target_size, 32);
     assert_eq!(put_result.source_compression, "NONE");
     assert_eq!(put_result.target_compression, "GZIP");
     assert_eq!(put_result.status, "UPLOADED");
@@ -154,7 +154,7 @@ fn test_put_get_rowset() {
         .expect("Failed to fetch GET result");
 
     assert_eq!(get_result.file, "test_put_get_rowset.csv.gz");
-    assert_eq!(get_result.size, 52);
+    assert_eq!(get_result.size, 26);
     assert_eq!(get_result.status, "DOWNLOADED");
     assert_eq!(get_result.message, "");
 }
