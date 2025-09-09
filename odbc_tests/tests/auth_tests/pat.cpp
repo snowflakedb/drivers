@@ -7,6 +7,7 @@
 
 #include "Connection.hpp"
 #include "compatibility.hpp"
+#include "get_diag_rec.hpp"
 #include "require.hpp"
 
 using namespace Catch::Matchers;

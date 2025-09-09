@@ -1,3 +1,6 @@
+#ifndef GET_DIAG_REC_HPP
+#define GET_DIAG_REC_HPP
+
 #include <sql.h>
 
 #include <iostream>
@@ -13,3 +16,5 @@ struct DiagRec {
 };
 
 std::vector<DiagRec> get_diag_rec(const HandleWrapper& wrapper);
+
+#endif  // GET_DIAG_REC_HPP
