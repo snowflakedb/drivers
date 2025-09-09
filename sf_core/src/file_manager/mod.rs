@@ -98,8 +98,7 @@ fn preprocess_file_before_upload(
 
     // Compress the data if needed
     let target_compression = if data.auto_compress && source_compression == CompressionType::None {
-        file_buffer =
-            compress_data(file_buffer, data.filename.as_str()).context(CompressionSnafu)?;
+        file_buffer = compress_data(file_buffer).context(CompressionSnafu)?;
         target = format!("{}.gz", data.filename);
         CompressionType::Gzip
     } else {

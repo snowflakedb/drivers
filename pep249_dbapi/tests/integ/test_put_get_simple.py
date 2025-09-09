@@ -21,6 +21,8 @@ from .utils_put_get import (
     LS_ROW_NAME_IDX,
 )
 
+from ..connector_types import ConnectorType
+
 
 def test_put_select(cursor):
     stage_name = create_temporary_stage(cursor, "PYTEST_STAGE_PUT_SELECT")
@@ -96,7 +98,7 @@ def test_get(cursor):
         assert decompressed == original
 
 
-def test_put_get_rowset(cursor):
+def test_put_get_rowset(cursor, connector_type):
     stage_name = create_temporary_stage(cursor, "PYTEST_STAGE_PUT_ROWSET")
     filename = "test_put_get_rowset.csv"
 
@@ -113,7 +115,13 @@ def test_put_get_rowset(cursor):
         assert row[PUT_ROW_SOURCE_IDX] == "test_put_get_rowset.csv"
         assert row[PUT_ROW_TARGET_IDX] == "test_put_get_rowset.csv.gz"
         assert row[PUT_ROW_SOURCE_SIZE_IDX] == 6
-        assert row[PUT_ROW_TARGET_SIZE_IDX] == 64
+
+        # BREAKING CHANGE: changing the compression behavior reduces the size of a compressed file
+        if connector_type == ConnectorType.REFERENCE:
+            assert row[PUT_ROW_TARGET_SIZE_IDX] == 64
+        else:
+            assert row[PUT_ROW_TARGET_SIZE_IDX] == 32
+
         assert row[PUT_ROW_SOURCE_COMPRESSION_IDX] == "NONE"
         assert row[PUT_ROW_TARGET_COMPRESSION_IDX] == "GZIP"
         assert row[PUT_ROW_STATUS_IDX] == "UPLOADED"
@@ -126,6 +134,12 @@ def test_put_get_rowset(cursor):
         row = cursor.fetchone()
 
         assert row[GET_ROW_FILE_IDX] == "test_put_get_rowset.csv.gz"
-        assert row[GET_ROW_SIZE_IDX] == 52
+
+        # BREAKING CHANGE: changing the compression behavior reduces the size of a compressed file
+        if connector_type == ConnectorType.REFERENCE:
+            assert row[GET_ROW_SIZE_IDX] == 52
+        else:
+            assert row[GET_ROW_SIZE_IDX] == 26
+
         assert row[GET_ROW_STATUS_IDX] == "DOWNLOADED"
         assert row[GET_ROW_MESSAGE_IDX] == ""
