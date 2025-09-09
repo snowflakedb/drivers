@@ -99,7 +99,6 @@ class PrivateKeyAuthTest {
     }
 
     NEW_DRIVER_ONLY("BC#1: Native error code should be 0 when error originates from client side.") {
-      INFO("Message text: " << records[0].messageText);
       CHECK(records[0].nativeError == 0);
       CHECK_THAT(records[0].messageText,
                  ContainsSubstring("Missing required parameter: private_key_file"));
