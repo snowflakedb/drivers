@@ -49,8 +49,8 @@ struct InternalError {
 }
 
 struct LoginError {
-  1: required string message
-  2: required i32 code
+  1: required string message;
+  2: required i32 code;
 }
 
 struct MissingParameter {
