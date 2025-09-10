@@ -37,5 +37,6 @@ CONNECTION_STRING="SERVER=sfctest0.snowflakecomputing.com;ACCOUNT=sfctest0;UID=t
 # ./examples/odbc/run.sh put_file "DRIVER=${OLD_DRIVER};${MISSING_DB_CONNECTION_STRING}"
 
 # # Python logging
-# python ./examples/python/select_1.py
+echo "--- Python ---"
+./examples/python/run.sh select_1
 

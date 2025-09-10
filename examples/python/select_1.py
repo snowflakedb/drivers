@@ -1,6 +1,4 @@
-import sys
 import os
-sys.path.append("pep249_dbapi")
 import pep249_dbapi
 
 # Configure logging
@@ -32,4 +30,4 @@ with conn:
     cursor = conn.cursor()
     cursor.execute("SELECT 1")
     result = cursor.fetchone()
-    print(result)
+    print(result[0])
