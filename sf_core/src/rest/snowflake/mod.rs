@@ -172,6 +172,7 @@ pub async fn snowflake_query(
     sql: String,
     parameter_bindings: Option<HashMap<String, query_request::BindParameter>>,
 ) -> Result<query_response::Response, RestError> {
+    tracing::info!("Running snowflake query: {}", sql);
     let server_url = query_parameters.server_url;
 
     let client = reqwest::Client::new();
@@ -223,6 +224,7 @@ pub async fn snowflake_query(
     // tracing::debug!("Request accept: {:?}", request.accept());
     // tracing::debug!("Request accept-encoding: {:?}", request.accept_encoding());
 
+    tracing::info!("Executing query request");
     let response = client.execute(request).await.context(CommunicationSnafu {
         context: "Failed to execute query request",
     })?;
@@ -243,6 +245,7 @@ pub async fn snowflake_query(
             .fail()
             .context(SnowflakeResponseSnafu)
     } else {
+        tracing::info!("Snowflake query completed successfully");
         Ok(query_response)
     }
 }

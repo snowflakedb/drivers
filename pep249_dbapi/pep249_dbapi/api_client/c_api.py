@@ -60,6 +60,8 @@ level_map = {
 
 def logger_callback(level, message, filename, line, function):
     logger = logging.getLogger("sf_core")
+    if not logger.isEnabledFor(level_map[level]):
+        return 0
     record = logger.makeRecord("sf_core", level_map[level], filename.decode('utf-8'), line, message.decode('utf-8'), [], None, func=function.decode('utf-8'))
     logger.handle(record)
     return 0
