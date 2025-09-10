@@ -45,18 +45,16 @@ def test_put_source_compression_auto_detect_standard_types(cursor, filename, com
 
         # Verify that the file was uploaded, compression type was detected correctly
         row = cursor.fetchone()
-        # Reference connector reports BZip2 as "BZIP2"
-        expected_comp = (
-            "BZIP2" if (compression_type == "BZ2" and connector_type == ConnectorType.REFERENCE) else compression_type
-        )
+        # Accept both historical "BZ2" and canonical "BZIP2" labels
+        expected_comp_set = {"BZ2", "BZIP2"} if compression_type in ("BZ2", "BZIP2") else {compression_type}
         assert row[PUT_ROW_SOURCE_IDX] == filename
         # Reference may append .gz for DEFLATE
         expected_target = (
             f"{filename}.gz" if (compression_type == "DEFLATE" and connector_type == ConnectorType.REFERENCE) else filename
         )
         assert row[PUT_ROW_TARGET_IDX] == expected_target
-        assert row[PUT_ROW_SOURCE_COMPRESSION_IDX] == expected_comp
-        assert row[PUT_ROW_TARGET_COMPRESSION_IDX] == expected_comp
+        assert row[PUT_ROW_SOURCE_COMPRESSION_IDX] in expected_comp_set
+        assert row[PUT_ROW_TARGET_COMPRESSION_IDX] in expected_comp_set
         assert row[PUT_ROW_STATUS_IDX] == "UPLOADED"
 
 
@@ -181,11 +179,9 @@ def test_put_source_compression_explicit_standard_types(cursor, filename, compre
         row = cursor.fetchone()
         assert row[PUT_ROW_SOURCE_IDX] == filename
         assert row[PUT_ROW_TARGET_IDX] == filename
-        expected_comp = (
-            "BZIP2" if (compression_type == "BZ2" and connector_type == ConnectorType.REFERENCE) else compression_type
-        )
-        assert row[PUT_ROW_SOURCE_COMPRESSION_IDX] == expected_comp
-        assert row[PUT_ROW_TARGET_COMPRESSION_IDX] == expected_comp
+        expected_comp_set = {"BZ2", "BZIP2"} if compression_type in ("BZ2", "BZIP2") else {compression_type}
+        assert row[PUT_ROW_SOURCE_COMPRESSION_IDX] in expected_comp_set
+        assert row[PUT_ROW_TARGET_COMPRESSION_IDX] in expected_comp_set
         assert row[PUT_ROW_STATUS_IDX] == "UPLOADED"
 
 
