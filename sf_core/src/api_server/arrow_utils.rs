@@ -1,4 +1,4 @@
-use crate::rest::snowflake::query_response::RowType;
+use super::query_types::RowType;
 use arrow::array::{Array, Int64Array, StringArray};
 use arrow::datatypes::{DataType, Field, Schema};
 use arrow::error::ArrowError;
@@ -7,67 +7,51 @@ use snafu::{Location, ResultExt, Snafu};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-/// Maps Snowflake data types to Arrow data types
-/// Only supports TEXT and FIXED (with scale 0) types
-fn snowflake_type_to_arrow_type(row_type: &RowType) -> Result<DataType, ArrowUtilsError> {
-    match row_type.type_.to_uppercase().as_str() {
-        "TEXT" => Ok(DataType::Utf8),
-        "FIXED" if row_type.scale == Some(0) => Ok(DataType::Int64),
-        _ => UnsupportedTypeSnafu {
-            snowflake_type: format!("{} (scale: {:?})", row_type.type_, row_type.scale),
-        }
-        .fail(),
-    }
-}
-
 /// Creates an Arrow Field from a RowType, embedding Snowflake-like metadata
-pub fn create_field(row_type: &RowType) -> Result<Field, ArrowUtilsError> {
-    let arrow_type = snowflake_type_to_arrow_type(row_type)?;
-
-    let mut metadata: HashMap<String, String> = HashMap::new();
-    let logical_type = row_type.type_.to_uppercase();
-    metadata.insert("logicalType".to_string(), logical_type.clone());
-
-    match logical_type.as_str() {
-        "TEXT" => {
+pub fn create_field(row_type: &RowType) -> Field {
+    match row_type {
+        RowType::Text {
+            name,
+            nullable,
+            length,
+            byte_length,
+        } => {
+            let arrow_type = DataType::Utf8;
+            let mut metadata = HashMap::new();
+            metadata.insert("logicalType".to_string(), "TEXT".to_string());
             metadata.insert("physicalType".to_string(), "LOB".to_string());
-            if let Some(len) = row_type.length {
-                metadata.insert("charLength".to_string(), len.to_string());
-            }
-            if let Some(byte_len) = row_type.byte_length {
-                metadata.insert("byteLength".to_string(), byte_len.to_string());
-            }
+            metadata.insert("charLength".to_string(), length.to_string());
+            metadata.insert("byteLength".to_string(), byte_length.to_string());
+            Field::new(name, arrow_type, *nullable).with_metadata(metadata)
         }
-        "FIXED" => {
-            let scale = row_type.scale.unwrap_or(0);
+        RowType::Fixed {
+            name,
+            nullable,
+            precision,
+            scale,
+        } => {
+            let arrow_type = DataType::Int64;
+            let mut metadata = HashMap::new();
+            metadata.insert("logicalType".to_string(), "FIXED".to_string());
             metadata.insert("scale".to_string(), scale.to_string());
-            if let Some(precision) = row_type.precision {
-                metadata.insert("precision".to_string(), precision.to_string());
-                metadata.insert(
-                    "physicalType".to_string(),
-                    physical_type_from_precision_signed(precision),
-                );
-            } else {
-                metadata.insert("physicalType".to_string(), "SB8".to_string());
-            }
+            metadata.insert("precision".to_string(), precision.to_string());
+            metadata.insert(
+                "physicalType".to_string(),
+                physical_type_from_precision_signed(*precision),
+            );
+            Field::new(name, arrow_type, *nullable).with_metadata(metadata)
         }
-        _ => UnsupportedTypeSnafu {
-            snowflake_type: format!("{} (scale: {:?})", row_type.type_, row_type.scale),
-        }
-        .fail()?,
     }
-
-    Ok(Field::new(&row_type.name, arrow_type, row_type.nullable).with_metadata(metadata))
 }
 
 /// Creates an Arrow array from column values and data type
 fn create_column_array(
     values: Vec<&str>,
-    data_type: &DataType,
+    row_type: &RowType,
 ) -> Result<Arc<dyn Array>, ArrowUtilsError> {
-    match data_type {
-        DataType::Utf8 => Ok(Arc::new(StringArray::from(values))),
-        DataType::Int64 => {
+    match row_type {
+        RowType::Text { .. } => Ok(Arc::new(StringArray::from(values))),
+        RowType::Fixed { .. } => {
             // Convert string values to i64 and return parsing error if any value is invalid
             let int_values: Result<Vec<i64>, ArrowUtilsError> = values
                 .into_iter()
@@ -79,10 +63,6 @@ fn create_column_array(
                 .collect();
             Ok(Arc::new(Int64Array::from(int_values?)))
         }
-        _ => UnsupportedTypeSnafu {
-            snowflake_type: format!("{data_type:?}"),
-        }
-        .fail(),
     }
 }
 
@@ -100,10 +80,9 @@ pub fn convert_string_rowset_to_arrow_reader(
     let columns: Result<Vec<Arc<dyn Array>>, ArrowUtilsError> = row_types
         .iter()
         .enumerate()
-        .map(|(col_idx, _row_type)| {
+        .map(|(col_idx, row_type)| {
             let values: Vec<&str> = rowset.iter().map(|row| row[col_idx].as_str()).collect();
-            let data_type = schema.field(col_idx).data_type();
-            create_column_array(values, data_type)
+            create_column_array(values, row_type)
         })
         .collect();
 
@@ -114,8 +93,7 @@ pub fn convert_string_rowset_to_arrow_reader(
 
 /// Creates an Arrow Schema from a list of RowType definitions
 pub fn create_schema(row_types: &[RowType]) -> Result<Arc<Schema>, ArrowUtilsError> {
-    let fields: Result<Vec<Field>, ArrowUtilsError> = row_types.iter().map(create_field).collect();
-    let fields = fields?;
+    let fields: Vec<Field> = row_types.iter().map(create_field).collect();
     Ok(Arc::new(Schema::new(fields)))
 }
 
@@ -158,26 +136,17 @@ pub enum ArrowUtilsError {
         #[snafu(implicit)]
         location: Location,
     },
-    #[snafu(display(
-        "Unsupported Snowflake type: {snowflake_type}. Only TEXT and FIXED with scale 0 are supported"
-    ))]
-    UnsupportedType {
-        snowflake_type: String,
-        #[snafu(implicit)]
-        location: Location,
-    },
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::rest::snowflake::query_response::RowType;
     use arrow::array::{Int64Array, StringArray};
     use arrow::record_batch::RecordBatchReader;
 
     #[test]
     fn test_string_rowset_translation_with_metadata_small() {
-        // Build a Snowflake-like rowset with elegant text and small integer sizes
+        // Build a Snowflake-like rowset
         let rowset = vec![
             vec!["alpha.txt".to_string(), "7".to_string()], // SB1
             vec!["beta.md".to_string(), "123".to_string()], // SB2
@@ -188,7 +157,7 @@ mod tests {
         // Describe columns via RowType
         let row_types = vec![
             RowType::text("col_text", false, 16, 64),
-            RowType::fixed("col_fixed", false, 5, 0),
+            RowType::fixed("col_fixed", false, 5, 0).unwrap(),
         ];
 
         // Convert to Arrow reader
@@ -248,7 +217,7 @@ mod tests {
 
     #[test]
     fn test_string_rowset_translation_with_metadata_large() {
-        // Build a Snowflake-like rowset with elegant text and varying integer sizes
+        // Build a Snowflake-like rowset
         let rowset = vec![
             vec!["alpha/report.csv".to_string(), "7".to_string()], // SB1
             vec!["beta/readme.md".to_string(), "123".to_string()], // SB2
@@ -263,7 +232,7 @@ mod tests {
         // Describe columns via RowType
         let row_types = vec![
             RowType::text("col_text", false, 64, 256),
-            RowType::fixed("col_fixed", false, 19, 0),
+            RowType::fixed("col_fixed", false, 19, 0).unwrap(),
         ];
 
         // Convert to Arrow reader

@@ -1,4 +1,5 @@
-use crate::arrow_utils::{
+use super::query_types::RowType;
+use crate::api_server::arrow_utils::{
     boxed_arrow_reader, convert_string_rowset_to_arrow_reader, create_schema,
 };
 use crate::chunks::ChunkReader;
@@ -8,7 +9,7 @@ use crate::rest;
 use arrow::array::{Array, Int64Array, RecordBatchReader, StringArray};
 use arrow::error::ArrowError;
 use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
-use rest::snowflake::query_response::{self, QueryResponseError, RowType};
+use rest::snowflake::query_response::{self, QueryResponseError};
 use snafu::{Location, ResultExt, Snafu};
 use std::sync::Arc;
 
@@ -69,10 +70,16 @@ fn read_batches(
 
         Ok(Box::new(reader_result))
     } else if let (Some(rowset), Some(rowtype)) = (&data.rowset, &data.row_type) {
+        let row_types = rowtype
+            .iter()
+            .map(|rt| rt.try_into())
+            .collect::<Result<Vec<_>, _>>()
+            .context(RowTypeParsingSnafu)?;
+
         // Validate column counts before converting
         if !rowset.is_empty() {
             let num_columns_rowset = rowset.first().unwrap().len();
-            let num_columns_rowtype = rowtype.len();
+            let num_columns_rowtype = row_types.len();
             if num_columns_rowset != num_columns_rowtype {
                 return ColumnCountMismatchSnafu {
                     rowtype_count: num_columns_rowtype,
@@ -81,7 +88,7 @@ fn read_batches(
                 .fail();
             }
         }
-        convert_string_rowset_to_arrow_reader(rowset, rowtype).context(RowsetConversionSnafu)
+        convert_string_rowset_to_arrow_reader(rowset, &row_types).context(RowsetConversionSnafu)
     } else {
         MissingRowsetOrRowtypeSnafu.fail()
     }
@@ -167,7 +174,7 @@ fn build_generic_text_rowtype(name: &str) -> RowType {
 }
 
 fn build_generic_fixed_rowtype(name: &str) -> RowType {
-    RowType::fixed(name, false, PUT_GET_ROWSET_FIXED_LENGTH, 0)
+    RowType::fixed_with_scale_zero(name, false, PUT_GET_ROWSET_FIXED_LENGTH)
 }
 
 #[derive(Debug, Snafu)]
@@ -232,6 +239,12 @@ pub enum ReadBatchesError {
         #[snafu(implicit)]
         location: Location,
     },
+    #[snafu(display("Failed to parse rowtype"))]
+    RowTypeParsing {
+        source: QueryResponseError,
+        #[snafu(implicit)]
+        location: Location,
+    },
     #[snafu(display("Failed to decode base64 rowset"))]
     Base64Decoding {
         source: base64::DecodeError,
@@ -246,7 +259,7 @@ pub enum ReadBatchesError {
     },
     #[snafu(display("Failed to convert rowset to Arrow format"))]
     RowsetConversion {
-        source: crate::arrow_utils::ArrowUtilsError,
+        source: crate::api_server::arrow_utils::ArrowUtilsError,
         #[snafu(implicit)]
         location: Location,
     },

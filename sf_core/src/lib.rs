@@ -4,7 +4,6 @@ extern crate tracing_subscriber;
 
 pub mod api_client;
 pub mod api_server;
-pub mod arrow_utils;
 mod auth;
 pub mod c_api;
 mod chunks;
