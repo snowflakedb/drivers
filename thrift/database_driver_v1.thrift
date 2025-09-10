@@ -117,10 +117,6 @@ struct ArrowArrayPtr {
   1: required binary value;
 }
 
-// --------------------------------------------------------------------------
-//  TLS Configuration (used by clients; additive, does not break existing APIs)
-// --------------------------------------------------------------------------
-
 enum CertRevocationCheckMode {
   DISABLED = 0,
   ENABLED = 1,
