@@ -6,6 +6,7 @@ pub use crate::logging::error::LogError;
 use crate::logging::opentelemetry::init_tracer;
 use tracing::level_filters::LevelFilter;
 use tracing_opentelemetry::OpenTelemetryLayer;
+use tracing_subscriber::EnvFilter;
 use tracing_subscriber::Layer;
 use tracing_subscriber::Registry;
 use tracing_subscriber::layer::SubscriberExt;
@@ -66,7 +67,12 @@ where
         Some(
             tracing_subscriber::fmt::layer()
                 .with_writer(std::io::stderr)
-                .with_filter(LevelFilter::ERROR),
+                .with_filter(
+                    EnvFilter::builder()
+                        .with_default_directive(LevelFilter::ERROR.into())
+                        .from_env()
+                        .unwrap(),
+                ),
         )
     } else {
         None

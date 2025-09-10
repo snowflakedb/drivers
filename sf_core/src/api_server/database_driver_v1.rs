@@ -679,6 +679,7 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
         &self,
         stmt_handle: StatementHandle,
     ) -> thrift::Result<ExecuteResult> {
+        tracing::debug!("Executing statement: {:?}", stmt_handle.clone());
         let handle = stmt_handle.into();
         let stmt_ptr = STMT_HANDLE_MANAGER
             .get_obj(handle)

@@ -1,5 +1,6 @@
 import os
 import pep249_dbapi
+import time
 
 # Configure logging
 import logging
@@ -31,3 +32,5 @@ with conn:
     cursor.execute("SELECT 1")
     result = cursor.fetchone()
     print(result[0])
+
+time.sleep(5)
