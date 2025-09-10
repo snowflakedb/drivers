@@ -149,9 +149,12 @@ pub async fn snowflake_login(login_parameters: &LoginParameters) -> Result<Strin
             .message
             .unwrap_or_else(|| "Unknown error".to_string());
         tracing::error!(message = %message, "Snowflake login failed");
-        InvalidResponseSnafu { message }
-            .fail()
-            .context(InvalidSnowflakeResponseSnafu)?;
+        let code = auth_response
+            ._code
+            .as_deref()
+            .and_then(|c| c.parse::<i32>().ok())
+            .unwrap_or(-1);
+        LoginSnafu { message, code }.fail()?;
     }
 
     // Extract and store the session token
@@ -302,6 +305,13 @@ pub enum RestError {
     #[snafu(display("TLS client creation failed"))]
     CrlValidation {
         source: TlsError,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Login error: {message}, code: {code}"))]
+    LoginError {
+        message: String,
+        code: i32,
         #[snafu(implicit)]
         location: Location,
     },

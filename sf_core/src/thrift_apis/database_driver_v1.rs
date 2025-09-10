@@ -214,8 +214,15 @@ impl ApiError {
                 ..
             } => DriverError::MissingParameter(MissingParameter::new(parameter.clone())),
             ApiError::InvalidArgument { .. } => DriverError::InternalError(InternalError::new()),
-            ApiError::FailedToLogin { .. } => {
-                DriverError::AuthError(AuthenticationError::new("Login failed".to_string()))
+            ApiError::FailedToLogin {
+                source: RestError::LoginError { message, code, .. },
+                ..
+            } => DriverError::LoginError(LoginError {
+                message: message.clone(),
+                code: *code,
+            }),
+            ApiError::FailedToLogin { source, .. } => {
+                DriverError::AuthError(AuthenticationError::new(source.to_string()))
             }
 
             ApiError::FailedToLockConnection { .. } => {

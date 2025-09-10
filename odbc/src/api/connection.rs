@@ -3,11 +3,8 @@ use crate::api::{
     error::InvalidPortSnafu,
 };
 use odbc_sys as sql;
-<<<<<<< HEAD
 use sf_core::thrift_apis::DatabaseDriverV1;
 use sf_core::thrift_apis::client::create_client;
-=======
->>>>>>> cdf415c (cleanups after API changes)
 use sf_core::thrift_gen::database_driver_v1::{
     CertRevocationCheckMode as ThriftCrlMode, TlsConfig as ThriftTlsConfig,
 };
