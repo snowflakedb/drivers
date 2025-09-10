@@ -48,7 +48,9 @@ pub unsafe extern "C" fn SQLExecDirect(
     statement_text: *const sql::Char,
     text_length: sql::Integer,
 ) -> sql::RetCode {
-    api::statement::exec_direct(statement_handle, statement_text, text_length).to_sql_code()
+    let result = api::statement::exec_direct(statement_handle, statement_text, text_length);
+    api::diagnostic::set_diag_info_from_result(sql::HandleType::Stmt, statement_handle, &result);
+    result.to_sql_code()
 }
 
 /// # Safety
@@ -154,15 +156,16 @@ pub unsafe extern "C" fn SQLGetData(
     buffer_length: sql::Len,
     str_len_or_ind_ptr: *mut sql::Len,
 ) -> sql::RetCode {
-    api::data::get_data(
+    let result = api::data::get_data(
         statement_handle,
         col_or_param_num,
         target_type,
         target_value_ptr,
         buffer_length,
         str_len_or_ind_ptr,
-    )
-    .to_sql_code()
+    );
+    api::diagnostic::set_diag_info_from_result(sql::HandleType::Stmt, statement_handle, &result);
+    result.to_sql_code()
 }
 
 /// # Safety

@@ -274,8 +274,12 @@ pub unsafe fn get_diag_rec(
             message_text,
             buffer_length as sql::Len,
         )?;
-        *native_error_ptr = record.native_error;
-        *text_length_ptr = record.message_text.len() as sql::SmallInt;
+        if !native_error_ptr.is_null() {
+            *native_error_ptr = record.native_error;
+        }
+        if !text_length_ptr.is_null() {
+            *text_length_ptr = record.message_text.len() as sql::SmallInt;
+        }
     }
     Ok(())
 }

@@ -163,7 +163,7 @@ pub enum OdbcError {
         location: Location,
     },
 
-    #[snafu(display("[Core] {message}\n report: {report}"))]
+    #[snafu(display("{message}\nReport:\n{report}"))]
     ThriftDriverException {
         message: String,
         report: String,

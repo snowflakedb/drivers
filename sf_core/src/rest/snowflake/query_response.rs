@@ -12,7 +12,7 @@ pub struct Response {
     #[serde(rename = "message")]
     pub message: Option<String>,
     #[serde(rename = "code")]
-    _code: Option<String>,
+    pub code: Option<String>,
     #[serde(rename = "success")]
     pub success: bool,
 }

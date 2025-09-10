@@ -35,7 +35,6 @@ struct EmptyLayer;
 impl Layer<Registry> for EmptyLayer {}
 
 pub fn init(config: LoggingConfig) -> Result<(), LogError> {
-    eprintln!("Initializing logging");
     init_logging::<EmptyLayer>(config, None)
 }
 

@@ -24,6 +24,7 @@ pub fn string_to_cstr(
     unsafe {
         let length = min(string.len(), buffer_length as usize);
         std::ptr::copy_nonoverlapping(string.as_ptr() as *const sql::Char, buffer, length);
+        *buffer.add(length) = sql::Char::default();
     }
     Ok(())
 }

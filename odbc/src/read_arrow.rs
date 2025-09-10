@@ -250,11 +250,9 @@ impl WriteValue<&str> for Buffer<sql::Char> {
             unsafe { std::ptr::write(self.str_len_or_ind, value.len() as sql::Len) };
         }
         unsafe {
-            std::ptr::copy_nonoverlapping(
-                value.as_ptr() as *const sql::Char,
-                self.data,
-                std::cmp::min(self.len, value.len()),
-            )
+            let length = std::cmp::min(self.len, value.len());
+            std::ptr::copy_nonoverlapping(value.as_ptr() as *const sql::Char, self.data, length);
+            std::ptr::write(self.data.add(length), sql::Char::default());
         };
     }
 }

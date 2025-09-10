@@ -136,7 +136,7 @@ pub async fn snowflake_login(login_parameters: &LoginParameters) -> Result<Strin
 
     let auth_response = read_response_json::<AuthResponse>(response)
         .await
-        .context(InvalidSnowflakeResponseSnafu)?;
+        .context(SnowflakeResponseSnafu)?;
 
     if !auth_response.success {
         let message = auth_response
@@ -161,7 +161,7 @@ pub async fn snowflake_login(login_parameters: &LoginParameters) -> Result<Strin
             message: "Login response missing token".to_string(),
         }
         .fail()
-        .context(InvalidSnowflakeResponseSnafu)?
+        .context(SnowflakeResponseSnafu)?
     }
 }
 
@@ -229,15 +229,19 @@ pub async fn snowflake_query(
 
     let query_response = read_response_json::<query_response::Response>(response)
         .await
-        .context(InvalidSnowflakeResponseSnafu)?;
+        .context(SnowflakeResponseSnafu)?;
 
     if !query_response.success {
         let message = query_response
             .message
             .unwrap_or_else(|| "Unknown error".to_string());
-        InvalidResponseSnafu { message }
+        let code = query_response
+            .code
+            .map(|c| c.parse::<i32>().unwrap_or(-1))
+            .unwrap_or(-1);
+        ErrorResponseSnafu { message, code }
             .fail()
-            .context(InvalidSnowflakeResponseSnafu)
+            .context(SnowflakeResponseSnafu)
     } else {
         Ok(query_response)
     }
@@ -274,8 +278,8 @@ pub enum RestError {
         #[snafu(implicit)]
         location: Location,
     },
-    #[snafu(display("Invalid Snowflake response"))]
-    InvalidSnowflakeResponse {
+    #[snafu(display("Snowflake response was not successful"))]
+    SnowflakeResponse {
         source: SnowflakeResponseError,
         #[snafu(implicit)]
         location: Location,
@@ -325,7 +329,16 @@ pub enum SnowflakeResponseError {
         #[snafu(implicit)]
         location: Location,
     },
-    #[snafu(display("{message}"))]
+
+    #[snafu(display("Snowflake responded with error(code={code}): {message}"))]
+    ErrorResponse {
+        message: String,
+        code: i32,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("Snowflake responded with invalid response"))]
     InvalidResponse {
         message: String,
         #[snafu(implicit)]
