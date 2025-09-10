@@ -2,7 +2,6 @@ use crate::c_api::SfCoreApi;
 use crate::thrift_apis::ThriftApi;
 
 mod handle_transport;
-pub mod helpers;
 
 pub fn create_client<T: ThriftApi>() -> T::ClientInterface {
     let span = tracing::info_span!(target: "database_driver", "DatabaseDriverV1Client");

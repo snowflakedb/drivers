@@ -1,6 +1,6 @@
 use crate::chunks::ChunkDownloadData;
-use crate::{file_manager, query_types};
 use crate::file_manager::SourceCompressionParam;
+use crate::{file_manager, query_types};
 use serde::Deserialize;
 use snafu::{OptionExt, Snafu};
 use std::collections::HashMap;
