@@ -2,14 +2,15 @@ pub mod common;
 use common::arrow_result_helper::ArrowResultHelper;
 use common::test_utils::*;
 
-use sf_core::api_client::new_database_driver_v1_client;
+use sf_core::thrift_apis::DatabaseDriverV1;
+use sf_core::thrift_apis::client::create_client;
 use sf_core::thrift_gen::database_driver_v1::InfoCode;
 
 #[test]
 #[ignore]
 fn test_connection_init() {
     setup_logging();
-    let mut client = new_database_driver_v1_client();
+    let mut client = create_client::<DatabaseDriverV1>();
 
     let db = client.database_new().unwrap();
     client.database_init(db.clone()).unwrap();
@@ -24,7 +25,7 @@ fn test_connection_init() {
 #[ignore]
 fn test_connection_get_info() {
     setup_logging();
-    let mut client = new_database_driver_v1_client();
+    let mut client = create_client::<DatabaseDriverV1>();
 
     let db = client.database_new().unwrap();
     client.database_init(db.clone()).unwrap();
@@ -45,7 +46,7 @@ fn test_connection_get_info() {
 #[ignore]
 fn test_connection_get_objects() {
     setup_logging();
-    let mut client = new_database_driver_v1_client();
+    let mut client = create_client::<DatabaseDriverV1>();
 
     let db = client.database_new().unwrap();
     client.database_init(db.clone()).unwrap();
@@ -73,7 +74,7 @@ fn test_connection_get_objects() {
 #[ignore]
 fn test_connection_get_table_schema() {
     setup_logging();
-    let mut client = new_database_driver_v1_client();
+    let mut client = create_client::<DatabaseDriverV1>();
 
     let db = client.database_new().unwrap();
     client.database_init(db.clone()).unwrap();
@@ -98,7 +99,7 @@ fn test_connection_get_table_schema() {
 #[ignore]
 fn test_connection_get_table_types() {
     setup_logging();
-    let mut client = new_database_driver_v1_client();
+    let mut client = create_client::<DatabaseDriverV1>();
 
     let db = client.database_new().unwrap();
     client.database_init(db.clone()).unwrap();
@@ -116,7 +117,7 @@ fn test_connection_get_table_types() {
 #[ignore]
 fn test_connection_commit() {
     setup_logging();
-    let mut client = new_database_driver_v1_client();
+    let mut client = create_client::<DatabaseDriverV1>();
 
     let db = client.database_new().unwrap();
     client.database_init(db.clone()).unwrap();
@@ -134,7 +135,7 @@ fn test_connection_commit() {
 #[ignore]
 fn test_connection_rollback() {
     setup_logging();
-    let mut client = new_database_driver_v1_client();
+    let mut client = create_client::<DatabaseDriverV1>();
 
     let db = client.database_new().unwrap();
     client.database_init(db.clone()).unwrap();
@@ -152,7 +153,7 @@ fn test_connection_rollback() {
 #[ignore]
 fn test_connection_lifecycle() {
     setup_logging();
-    let mut client = new_database_driver_v1_client();
+    let mut client = create_client::<DatabaseDriverV1>();
 
     // Setup database
     let db = client.database_new().unwrap();
@@ -198,7 +199,7 @@ fn test_connection_lifecycle() {
 #[ignore]
 fn test_statement_new_and_release() {
     setup_logging();
-    let mut client = new_database_driver_v1_client();
+    let mut client = create_client::<DatabaseDriverV1>();
 
     let db = client.database_new().unwrap();
     client.database_init(db.clone()).unwrap();
@@ -217,7 +218,7 @@ fn test_statement_new_and_release() {
 #[ignore]
 fn test_statement_set_sql_query() {
     setup_logging();
-    let mut client = new_database_driver_v1_client();
+    let mut client = create_client::<DatabaseDriverV1>();
 
     let db = client.database_new().unwrap();
     client.database_init(db.clone()).unwrap();
@@ -239,7 +240,7 @@ fn test_statement_set_sql_query() {
 #[ignore]
 fn test_statement_set_substrait_plan() {
     setup_logging();
-    let mut client = new_database_driver_v1_client();
+    let mut client = create_client::<DatabaseDriverV1>();
 
     let db = client.database_new().unwrap();
     client.database_init(db.clone()).unwrap();
@@ -262,7 +263,7 @@ fn test_statement_set_substrait_plan() {
 #[ignore]
 fn test_statement_prepare() {
     setup_logging();
-    let mut client = new_database_driver_v1_client();
+    let mut client = create_client::<DatabaseDriverV1>();
 
     let db = client.database_new().unwrap();
     client.database_init(db.clone()).unwrap();
@@ -285,7 +286,7 @@ fn test_statement_prepare() {
 #[ignore]
 fn test_statement_set_option_string() {
     setup_logging();
-    let mut client = new_database_driver_v1_client();
+    let mut client = create_client::<DatabaseDriverV1>();
 
     let db = client.database_new().unwrap();
     client.database_init(db.clone()).unwrap();
@@ -307,7 +308,7 @@ fn test_statement_set_option_string() {
 #[ignore]
 fn test_statement_set_option_bytes() {
     setup_logging();
-    let mut client = new_database_driver_v1_client();
+    let mut client = create_client::<DatabaseDriverV1>();
 
     let db = client.database_new().unwrap();
     client.database_init(db.clone()).unwrap();
@@ -330,7 +331,7 @@ fn test_statement_set_option_bytes() {
 #[ignore]
 fn test_statement_set_option_int() {
     setup_logging();
-    let mut client = new_database_driver_v1_client();
+    let mut client = create_client::<DatabaseDriverV1>();
 
     let db = client.database_new().unwrap();
     client.database_init(db.clone()).unwrap();
@@ -352,7 +353,7 @@ fn test_statement_set_option_int() {
 #[ignore]
 fn test_statement_set_option_double() {
     setup_logging();
-    let mut client = new_database_driver_v1_client();
+    let mut client = create_client::<DatabaseDriverV1>();
 
     let db = client.database_new().unwrap();
     client.database_init(db.clone()).unwrap();
@@ -374,7 +375,7 @@ fn test_statement_set_option_double() {
 #[ignore]
 fn test_statement_get_parameter_schema() {
     setup_logging();
-    let mut client = new_database_driver_v1_client();
+    let mut client = create_client::<DatabaseDriverV1>();
 
     let db = client.database_new().unwrap();
     client.database_init(db.clone()).unwrap();
@@ -399,7 +400,7 @@ fn test_statement_get_parameter_schema() {
 #[ignore]
 fn test_statement_bind_stream() {
     setup_logging();
-    let mut client = new_database_driver_v1_client();
+    let mut client = create_client::<DatabaseDriverV1>();
 
     let db = client.database_new().unwrap();
     client.database_init(db.clone()).unwrap();
@@ -427,7 +428,7 @@ fn test_statement_bind_stream() {
 #[ignore]
 fn test_statement_execute_query() {
     setup_logging();
-    let mut client = new_database_driver_v1_client();
+    let mut client = create_client::<DatabaseDriverV1>();
 
     let db = client.database_new().unwrap();
     client.database_init(db.clone()).unwrap();
@@ -451,7 +452,7 @@ fn test_statement_execute_query() {
 #[ignore]
 fn test_statement_execute_partitions() {
     setup_logging();
-    let mut client = new_database_driver_v1_client();
+    let mut client = create_client::<DatabaseDriverV1>();
 
     let db = client.database_new().unwrap();
     client.database_init(db.clone()).unwrap();
@@ -477,7 +478,7 @@ fn test_statement_execute_partitions() {
 #[ignore]
 fn test_statement_read_partition() {
     setup_logging();
-    let mut client = new_database_driver_v1_client();
+    let mut client = create_client::<DatabaseDriverV1>();
 
     let db = client.database_new().unwrap();
     client.database_init(db.clone()).unwrap();

@@ -1,4 +1,3 @@
-use super::query_types::RowType;
 use arrow::array::{Array, Int64Array, StringArray};
 use arrow::datatypes::{DataType, Field, Schema};
 use arrow::error::ArrowError;
@@ -6,6 +5,8 @@ use arrow::record_batch::RecordBatch;
 use snafu::{Location, ResultExt, Snafu};
 use std::collections::HashMap;
 use std::sync::Arc;
+
+use crate::query_types::RowType;
 
 /// Creates an Arrow Field from a RowType, embedding Snowflake-like metadata
 pub fn create_field(row_type: &RowType) -> Field {

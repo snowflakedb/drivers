@@ -1,9 +1,10 @@
-use crate::api_server::database_driver_v1::DatabaseDriverV1;
 use crate::handle_manager::Handle;
 use crate::logging;
-use crate::transport::{TRANSPORT_HANDLE_MANAGER, ThriftTransport};
+use crate::thrift_apis::{
+    DatabaseDriverV1,
+    server::{create_new_api, destroy_api, flush_api, read_from_api, write_to_api},
+};
 use std::fmt::Debug;
-use std::sync::Mutex;
 
 #[repr(C)]
 pub enum SfCoreApi {
@@ -48,19 +49,23 @@ pub extern "C" fn sf_core_init_logger(callback: logging::CLogCallback) -> u32 {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn sf_core_api_init(api: SfCoreApi) -> CApiHandle {
-    let handle = TRANSPORT_HANDLE_MANAGER.add_handle(match api {
-        SfCoreApi::DatabaseDriverApiV1 => {
-            Mutex::new(ThriftTransport::new(DatabaseDriverV1::processor()))
-        }
-    });
-
-    CApiHandle::from_handle(handle)
+    // TODO pass the error to the caller
+    let handle = match api {
+        SfCoreApi::DatabaseDriverApiV1 => create_new_api::<DatabaseDriverV1>(),
+    };
+    if let Err(e) = &handle {
+        eprintln!("Failed to create API: {e:?}");
+    }
+    CApiHandle::from_handle(handle.unwrap())
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn sf_core_api_destroy(api: CApiHandle) {
     let handle = api.to_handle();
-    TRANSPORT_HANDLE_MANAGER.delete_handle(handle);
+    let result = destroy_api(handle);
+    if let Err(e) = result {
+        eprintln!("Failed to destroy API: {e:?}");
+    }
 }
 
 /// # Safety
@@ -68,15 +73,14 @@ pub extern "C" fn sf_core_api_destroy(api: CApiHandle) {
 /// The caller must ensure that `buf` is valid for reads of `len` bytes.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sf_core_api_write(api: CApiHandle, buf: *mut u8, len: usize) -> usize {
-    let tt_ptr = TRANSPORT_HANDLE_MANAGER
-        .get_obj(api.to_handle())
-        .expect("Thrift transport not found");
-    let mut tt = tt_ptr
-        .lock()
-        .expect("Failed to lock Thrift transport mutex");
-
-    tt.write(unsafe { std::slice::from_raw_parts(buf, len) })
-        .expect("Failed to write to Thrift transport")
+    // TODO pass the error to the caller
+    let result = write_to_api(api.to_handle(), unsafe {
+        std::slice::from_raw_parts(buf, len)
+    });
+    if let Err(e) = &result {
+        eprintln!("Failed to write to API: {e:?}");
+    }
+    result.unwrap_or(0)
 }
 
 /// # Safety
@@ -84,24 +88,21 @@ pub unsafe extern "C" fn sf_core_api_write(api: CApiHandle, buf: *mut u8, len: u
 /// The caller must ensure that `buf` is valid for writes of `len` bytes.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sf_core_api_read(api: CApiHandle, buf: *mut u8, len: usize) -> usize {
-    let tt_ptr = TRANSPORT_HANDLE_MANAGER
-        .get_obj(api.to_handle())
-        .expect("Thrift transport not found");
-    let mut tt = tt_ptr
-        .lock()
-        .expect("Failed to lock Thrift transport mutex");
-
-    tt.read(unsafe { std::slice::from_raw_parts_mut(buf, len) })
-        .expect("Failed to read from Thrift transport")
+    // TODO pass the error to the caller
+    let result = read_from_api(api.to_handle(), unsafe {
+        std::slice::from_raw_parts_mut(buf, len)
+    });
+    if let Err(e) = &result {
+        eprintln!("Failed to read from API: {e:?}");
+    }
+    result.unwrap_or(0)
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn sf_core_api_flush(api: CApiHandle) {
-    let tt_ptr = TRANSPORT_HANDLE_MANAGER
-        .get_obj(api.to_handle())
-        .expect("Thrift transport not found");
-    let mut tt = tt_ptr
-        .lock()
-        .expect("Failed to lock Thrift transport mutex");
-    tt.flush().expect("Failed to flush Thrift transport");
+    // TODO pass the error to the caller
+    let result = flush_api(api.to_handle());
+    if let Err(e) = &result {
+        eprintln!("Failed to flush API: {e:?}");
+    }
 }

@@ -1,7 +1,8 @@
-use super::query_types::RowType;
-use crate::api_server::arrow_utils::{
+use crate::query_types::RowType;
+use crate::arrow_utils::{
     boxed_arrow_reader, convert_string_rowset_to_arrow_reader, create_schema,
 };
+use crate::arrow_utils::ArrowUtilsError;
 use crate::chunks::ChunkReader;
 use crate::file_manager;
 use crate::file_manager::{DownloadResult, UploadResult, download_files, upload_files};
@@ -259,7 +260,7 @@ pub enum ReadBatchesError {
     },
     #[snafu(display("Failed to convert rowset to Arrow format"))]
     RowsetConversion {
-        source: crate::api_server::arrow_utils::ArrowUtilsError,
+        source: ArrowUtilsError,
         #[snafu(implicit)]
         location: Location,
     },

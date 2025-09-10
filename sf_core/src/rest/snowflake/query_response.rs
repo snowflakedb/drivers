@@ -1,6 +1,5 @@
-use crate::api_server::query_types;
 use crate::chunks::ChunkDownloadData;
-use crate::file_manager;
+use crate::{file_manager, query_types};
 use crate::file_manager::SourceCompressionParam;
 use serde::Deserialize;
 use snafu::{OptionExt, Snafu};

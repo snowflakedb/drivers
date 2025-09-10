@@ -1,12 +1,7 @@
 use std::io::{Read, Write};
-use std::sync::Mutex;
 use thrift::protocol::{TCompactInputProtocol, TCompactOutputProtocol};
 use thrift::server::TProcessor;
 use tracing::{Level, event, span, trace};
-
-use crate::handle_manager::HandleManager;
-
-pub static TRANSPORT_HANDLE_MANAGER: HandleManager<Mutex<ThriftTransport>> = HandleManager::new();
 
 pub struct ThriftTransport {
     id: u64,

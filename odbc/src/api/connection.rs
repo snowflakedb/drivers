@@ -3,7 +3,8 @@ use crate::api::{
     error::InvalidPortSnafu,
 };
 use odbc_sys as sql;
-use sf_core::api_client;
+use sf_core::thrift_apis::DatabaseDriverV1;
+use sf_core::thrift_apis::client::create_client;
 use snafu::ResultExt;
 use std::collections::HashMap;
 use tracing;
@@ -35,7 +36,7 @@ pub fn driver_connect(
     );
 
     let connection = conn_from_handle(connection_handle);
-    let mut client = api_client::new_database_driver_v1_client();
+    let mut client = create_client::<DatabaseDriverV1>();
     let db_handle = client
         .database_new()
         .map_err(OdbcError::from_thrift_error)?;

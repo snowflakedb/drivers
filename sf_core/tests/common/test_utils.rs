@@ -4,7 +4,8 @@ extern crate tracing_subscriber;
 
 use arrow::array::{Array, ArrowPrimitiveType, PrimitiveArray, StructArray};
 use flate2::read::GzDecoder;
-use sf_core::api_client::new_database_driver_v1_client;
+use sf_core::thrift_apis::DatabaseDriverV1;
+use sf_core::thrift_apis::client::create_client;
 use sf_core::thrift_gen::database_driver_v1::{ArrowArrayPtr, ArrowSchemaPtr, ExecuteResult};
 use std::fs;
 use tracing::Level;
@@ -90,7 +91,7 @@ impl SnowflakeTestClient {
     pub fn with_default_params() -> Self {
         setup_logging();
         let parameters = get_parameters();
-        let mut driver = new_database_driver_v1_client();
+        let mut driver = create_client::<DatabaseDriverV1>();
         let db_handle = driver.database_new().unwrap();
         driver.database_init(db_handle.clone()).unwrap();
 

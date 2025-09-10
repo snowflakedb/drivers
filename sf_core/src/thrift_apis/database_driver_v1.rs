@@ -1,20 +1,23 @@
-use crate::api_server::query::process_query_response;
+use crate::apis::database_driver_v1::query::process_query_response;
 use crate::config::ConfigError;
 use crate::config::rest_parameters::{LoginParameters, QueryParameters};
 use crate::config::settings::Setting;
 use crate::driver::{Connection, Database, Statement};
 use crate::handle_manager::{Handle, HandleManager};
 use crate::rest::snowflake::{RestError, snowflake_query};
+use crate::thrift_apis::ThriftApi;
 use snafu;
 use snafu::{Location, Report, ResultExt, location};
 extern crate lazy_static;
 use lazy_static::lazy_static;
+use thrift::protocol::{TInputProtocol, TOutputProtocol};
 
 use crate::thrift_gen::database_driver_v1::{
-    ArrowArrayPtr, ArrowSchemaPtr, AuthenticationError, ConnectionHandle,
+    ArrowArrayPtr, ArrowSchemaPtr, AuthenticationError, ConnectionHandle, DatabaseDriverSyncClient,
     DatabaseDriverSyncHandler, DatabaseDriverSyncProcessor, DatabaseHandle, DriverError,
     DriverException, ExecuteResult, GenericError, InfoCode, InternalError, InvalidParameterValue,
     LoginError, MissingParameter, PartitionedResult, StatementHandle, StatusCode,
+    TDatabaseDriverSyncClient,
 };
 
 use arrow::array::{RecordBatch, StructArray};
@@ -28,6 +31,25 @@ use tracing::instrument;
 
 use crate::driver::StatementState;
 use crate::thrift_gen::database_driver_v1::ArrowArrayStreamPtr;
+
+impl From<Box<ArrowArrayStreamPtr>> for *mut FFI_ArrowArrayStream {
+    fn from(ptr: Box<ArrowArrayStreamPtr>) -> Self {
+        unsafe { std::ptr::read(ptr.value.as_ptr() as *const *mut FFI_ArrowArrayStream) }
+    }
+}
+#[allow(clippy::from_over_into)]
+impl Into<*mut FFI_ArrowSchema> for ArrowSchemaPtr {
+    fn into(self) -> *mut FFI_ArrowSchema {
+        unsafe { std::ptr::read(self.value.as_ptr() as *const *mut FFI_ArrowSchema) }
+    }
+}
+
+#[allow(clippy::from_over_into)]
+impl Into<*mut FFI_ArrowArray> for ArrowArrayPtr {
+    fn into(self) -> *mut FFI_ArrowArray {
+        unsafe { std::ptr::read(self.value.as_ptr() as *const *mut FFI_ArrowArray) }
+    }
+}
 
 impl From<Handle> for DatabaseHandle {
     fn from(handle: Handle) -> Self {
@@ -98,9 +120,29 @@ lazy_static! {
     static ref CONN_HANDLE_MANAGER: HandleManager<Mutex<Connection>> = HandleManager::new();
     static ref STMT_HANDLE_MANAGER: HandleManager<Mutex<Statement>> = HandleManager::new();
 }
-pub struct DatabaseDriverV1 {}
 
-impl Default for DatabaseDriverV1 {
+pub struct DatabaseDriverV1 {}
+pub struct DatabaseDriverV1Server {}
+
+impl ThriftApi for DatabaseDriverV1 {
+    type ClientInterface = Box<dyn TDatabaseDriverSyncClient + Send>;
+    fn client(
+        input_protocol: impl TInputProtocol + Send + 'static,
+        output_protocol: impl TOutputProtocol + Send + 'static,
+    ) -> Self::ClientInterface {
+        Box::new(DatabaseDriverSyncClient::new(
+            input_protocol,
+            output_protocol,
+        ))
+    }
+    fn server() -> Box<dyn TProcessor + Send + Sync> {
+        Box::new(DatabaseDriverSyncProcessor::new(
+            DatabaseDriverV1Server::new(),
+        ))
+    }
+}
+
+impl Default for DatabaseDriverV1Server {
     fn default() -> Self {
         Self::new()
     }
@@ -263,7 +305,7 @@ fn connection_init(
     }
 }
 
-impl DatabaseDriverV1 {
+impl DatabaseDriverV1Server {
     /// Helper to create a standard DriverException with commonly used defaults
     fn driver_error(message: impl Into<String>, status: StatusCode) -> Error {
         Error::from(DriverException::new(
@@ -304,12 +346,8 @@ impl DatabaseDriverV1 {
         f(guard)
     }
 
-    pub fn new() -> DatabaseDriverV1 {
-        DatabaseDriverV1 {}
-    }
-
-    pub fn processor() -> Box<dyn TProcessor + Send + Sync> {
-        Box::new(DatabaseDriverSyncProcessor::new(DatabaseDriverV1::new()))
+    pub fn new() -> DatabaseDriverV1Server {
+        DatabaseDriverV1Server {}
     }
 
     pub fn database_set_option(
@@ -364,7 +402,7 @@ impl DatabaseDriverV1 {
     }
 }
 
-impl DatabaseDriverSyncHandler for DatabaseDriverV1 {
+impl DatabaseDriverSyncHandler for DatabaseDriverV1Server {
     #[instrument(name = "DatabaseDriverV1::database_new", skip(self))]
     fn handle_database_new(&self) -> thrift::Result<DatabaseHandle> {
         let handle = DB_HANDLE_MANAGER.add_handle(Mutex::new(Database::new()));
@@ -765,4 +803,174 @@ where
         DriverError::GenericError(GenericError::new()),
         generate_error_report(error),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{test_utils::setup_logging, thrift_apis::client::create_client};
+
+    // Database operation tests
+    #[test]
+    fn test_database_new_and_release() {
+        setup_logging();
+        let mut client = create_client::<DatabaseDriverV1>();
+
+        let db = client.database_new().unwrap();
+        client.database_release(db).unwrap();
+    }
+
+    #[test]
+    fn test_database_set_option_string() {
+        setup_logging();
+        let mut client = create_client::<DatabaseDriverV1>();
+
+        let db = client.database_new().unwrap();
+        client
+            .database_set_option_string(
+                db.clone(),
+                "test_option".to_string(),
+                "test_value".to_string(),
+            )
+            .unwrap();
+        client.database_release(db).unwrap();
+    }
+
+    #[test]
+    fn test_database_set_option_bytes() {
+        setup_logging();
+        let mut client = create_client::<DatabaseDriverV1>();
+
+        let db = client.database_new().unwrap();
+        let test_bytes = vec![1, 2, 3, 4, 5];
+        client
+            .database_set_option_bytes(db.clone(), "test_option".to_string(), test_bytes)
+            .unwrap();
+        client.database_release(db).unwrap();
+    }
+
+    #[test]
+    fn test_database_set_option_int() {
+        setup_logging();
+        let mut client = create_client::<DatabaseDriverV1>();
+
+        let db = client.database_new().unwrap();
+        client
+            .database_set_option_int(db.clone(), "test_option".to_string(), 42)
+            .unwrap();
+        client.database_release(db).unwrap();
+    }
+
+    #[test]
+    fn test_database_set_option_double() {
+        setup_logging();
+        let mut client = create_client::<DatabaseDriverV1>();
+
+        let db = client.database_new().unwrap();
+        client
+            .database_set_option_double(
+                db.clone(),
+                "test_option".to_string(),
+                std::f64::consts::PI.into(),
+            )
+            .unwrap();
+        client.database_release(db).unwrap();
+    }
+
+    #[test]
+    fn test_database_init() {
+        setup_logging();
+        let mut client = create_client::<DatabaseDriverV1>();
+
+        let db = client.database_new().unwrap();
+        client.database_init(db.clone()).unwrap();
+        client.database_release(db).unwrap();
+    }
+
+    #[test]
+    fn test_database_lifecycle() {
+        setup_logging();
+        let mut client = create_client::<DatabaseDriverV1>();
+
+        // Create database
+        let db = client.database_new().unwrap();
+
+        // Set various options
+        client
+            .database_set_option_string(db.clone(), "driver".to_string(), "test_driver".to_string())
+            .unwrap();
+        client
+            .database_set_option_int(db.clone(), "timeout".to_string(), 30)
+            .unwrap();
+
+        // Initialize database
+        client.database_init(db.clone()).unwrap();
+
+        // Release database
+        client.database_release(db).unwrap();
+    }
+
+    // Connection operation tests
+    #[test]
+    fn test_connection_new_and_release() {
+        setup_logging();
+        let mut client = create_client::<DatabaseDriverV1>();
+
+        let conn = client.connection_new().unwrap();
+
+        client.connection_release(conn).unwrap();
+    }
+
+    #[test]
+    fn test_connection_set_option_string() {
+        setup_logging();
+        let mut client = create_client::<DatabaseDriverV1>();
+
+        let conn = client.connection_new().unwrap();
+        client
+            .connection_set_option_string(
+                conn.clone(),
+                "username".to_string(),
+                "test_user".to_string(),
+            )
+            .unwrap();
+        client.connection_release(conn).unwrap();
+    }
+
+    #[test]
+    fn test_connection_set_option_bytes() {
+        setup_logging();
+        let mut client = create_client::<DatabaseDriverV1>();
+
+        let conn = client.connection_new().unwrap();
+        let test_bytes = vec![0xDE, 0xAD, 0xBE, 0xEF];
+        client
+            .connection_set_option_bytes(conn.clone(), "cert".to_string(), test_bytes)
+            .unwrap();
+        client.connection_release(conn).unwrap();
+    }
+
+    #[test]
+    fn test_connection_set_option_int() {
+        setup_logging();
+        let mut client = create_client::<DatabaseDriverV1>();
+
+        let conn = client.connection_new().unwrap();
+        client
+            .connection_set_option_int(conn.clone(), "port".to_string(), 5432)
+            .unwrap();
+        client.connection_release(conn).unwrap();
+    }
+
+    #[test]
+    fn test_connection_set_option_double() {
+        setup_logging();
+        let mut client = create_client::<DatabaseDriverV1>();
+
+        let conn = client.connection_new().unwrap();
+        client
+            .connection_set_option_double(conn.clone(), "timeout_seconds".to_string(), 30.5.into())
+            .unwrap();
+        client.connection_release(conn).unwrap();
+    }
 }
