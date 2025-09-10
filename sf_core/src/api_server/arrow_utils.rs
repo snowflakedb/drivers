@@ -56,7 +56,7 @@ fn create_column_array(
             let int_values: Result<Vec<i64>, ArrowUtilsError> = values
                 .into_iter()
                 .map(|v| {
-                    v.parse::<i64>().context(InvalidIntegerSnafu {
+                    v.parse::<i64>().context(IntegerParsingSnafu {
                         value: v.to_string(),
                     })
                 })
@@ -130,7 +130,7 @@ pub enum ArrowUtilsError {
         location: Location,
     },
     #[snafu(display("Failed to parse integer value: {value}"))]
-    InvalidInteger {
+    IntegerParsing {
         value: String,
         source: std::num::ParseIntError,
         #[snafu(implicit)]
