@@ -136,14 +136,47 @@ This is a **stub implementation** providing the complete JDBC interface structur
 - Performance optimizations
 - Advanced JDBC features
 
-## Development
+## Testing
+
+JDBC tests are written in Java using JUnit and built with Gradle.
+
+### Prerequisites
+
+Before running tests, ensure you have:
+- Built Rust components: `sf_core` and `jdbc_bridge`
+- Set up credentials (see main [README.md](../README.md) for setup instructions)
+- Java 8+
+- Gradle 6.0+
 
 ### Running Tests
 
 ```bash
-cd jdbc
+cd jdbc/
+
+# Build and run all tests
 ./gradlew test
+
+# Run with verbose output
+./gradlew test --info
+
+# Run specific test class
+./gradlew test --tests SnowflakeDriverTest
+
+# Run specific test method
+./gradlew test --tests SnowflakeQueryTest.testSimpleQuery
+
+# Clean and rebuild
+./gradlew clean build test
 ```
+
+### Requirements
+
+- Java 8+
+- Gradle 6.0+
+- Built Rust components: `sf_core` and `jdbc_bridge`
+- Parameters: `parameters.json` (see main [README.md](../README.md) for setup instructions)
+
+## Development
 
 ### Adding Features
 

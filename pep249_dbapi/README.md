@@ -164,57 +164,52 @@ class MyCursor(BaseCursor):
 
 ## Testing
 
-Run the test suite:
+### Quick Start
 
 ```bash
-pytest
+cd pep249_dbapi/
+
+# Install dependencies and run all tests
+make setup
+make test
 ```
 
-Run with coverage:
+### Detailed Commands
 
 ```bash
-pytest --cov=pep249_dbapi --cov-report=html
+# Setup environment (installs uv, syncs dependencies)
+make setup
+
+# Run all tests (unit, integration, e2e) - recommended
+make test
+
+# Run specific test types
+make test tests/unit/          # Unit tests only
+make test tests/integ/         # Integration tests only  
+make test tests/e2e/           # End-to-end tests only
+
+# Run with specific Python version
+make test PYTHON_VERSION=3.12
+
+# Run specific tests with pytest arguments
+make test -- -k test_connection --maxfail=1
+make test PYTEST_ARGS="-k test_connection --maxfail=1"
+
+# Fast local testing (skip tox isolation)
+make test-local
+
+# Sequential testing (for debugging race conditions)
+make test-local-sequential
+
+# Compare universal vs reference driver
+make compare-local
+make compare-local REFERENCE_DRIVER_VERSION=3.18.0
 ```
 
-## Development
-
-Setup virtual env:
-```bash
-python -m venv .venv
-source .venv/bin/activate
-```
-
-Install in development mode:
-
-```bash
-pip install -e .[dev]
-```
-
-Run code formatting:
-
-```bash
-black pep249_dbapi tests
-```
-
-Run linting:
-
-```bash
-flake8 pep249_dbapi tests
-```
-
-Run type checking:
-
-```bash
-mypy pep249_dbapi
-```
-
-## License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
+### Requirements
+- Python 3.9+
+- Rust core library: `../target/debug/libsf_core.{so,dylib}` (auto-built if missing)
+- Credentials: `../parameters.json` (see main [README.md](../README.md) for setup instructions)
 
 ## References
 
