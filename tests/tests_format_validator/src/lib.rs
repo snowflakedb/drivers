@@ -1,3 +1,6 @@
+pub mod breaking_changes_processor;
+pub mod breaking_changes_utils;
+pub mod driver_handlers;
 pub mod feature_parser;
 pub mod step_finder;
 pub mod test_discovery;

@@ -1,3 +1,6 @@
+mod breaking_changes_processor;
+mod breaking_changes_utils;
+mod driver_handlers;
 mod feature_parser;
 mod step_finder;
 mod test_discovery;
@@ -23,12 +26,26 @@ struct Args {
     /// Verbose output
     #[arg(short, long)]
     verbose: bool,
+
+    /// Output results as JSON
+    #[arg(short, long)]
+    json: bool,
 }
 
 fn main() -> anyhow::Result<()> {
     let args = Args::parse();
 
     let validator = GherkinValidator::new(args.workspace, args.features)?;
+
+    if args.json {
+        // JSON output mode - includes Breaking Changes processing
+        let enhanced_results = validator.validate_all_with_breaking_changes()?;
+        let json_output = serde_json::to_string_pretty(&enhanced_results)?;
+        println!("{json_output}");
+        return Ok(());
+    }
+
+    // Regular text output mode
     let results = validator.validate_all_features()?;
     let orphan_results = validator.find_orphaned_tests()?;
 

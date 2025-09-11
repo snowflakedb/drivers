@@ -1,7 +1,8 @@
 use crate::utils::{to_pascal_case, to_snake_case};
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Language {
     Rust,
     Odbc,
@@ -45,6 +46,8 @@ impl TestDiscovery {
                 "python" | "pep249" => languages.push(Language::Python),
                 "csharp" | "dotnet" => languages.push(Language::CSharp),
                 "javascript" | "nodejs" | "js" => languages.push(Language::JavaScript),
+                // Note: _not_needed tags are NOT included here - they explicitly exclude tests
+                // Default behavior: if feature has driver tag but scenario doesn't, it's TODO
                 _ => {} // Unknown tag, ignore
             }
         }

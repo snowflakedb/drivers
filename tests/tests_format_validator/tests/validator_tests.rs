@@ -465,6 +465,406 @@ fn should_ignore_braces_in_strings() -> Result<()> {
     Ok(())
 }
 
+// ===== Breaking Change Detection Tests =====
+
+#[test]
+fn should_detect_simple_breaking_change_annotations_in_cpp() -> Result<()> {
+    let workspace = TestWorkspace::new()?;
+
+    // Create feature with Breaking Change annotation
+    workspace.create_feature_file(
+        "auth",
+        "simple_breaking_change",
+        TestImplementations::create_simple_breaking_change_feature(),
+    )?;
+
+    // Create C++ test with Breaking Change macros
+    workspace.create_cpp_test(
+        "auth",
+        "simple_breaking_change",
+        TestImplementations::create_cpp_test_with_simple_breaking_change(),
+    )?;
+
+    let validator = workspace.get_validator()?;
+
+    let enhanced_results = validator.validate_all_with_breaking_changes()?;
+
+    // Check Breaking Change report
+    let breaking_changes_report = &enhanced_results.breaking_changes_report;
+
+    assert!(
+        !breaking_changes_report
+            .breaking_change_descriptions
+            .is_empty(),
+        "Should find Breaking Change descriptions"
+    );
+    assert!(
+        !breaking_changes_report
+            .breaking_changes_by_language
+            .is_empty(),
+        "Should find Breaking Changes by language"
+    );
+
+    // Check ODBC Breaking Changes
+    let odbc_breaking_changes = breaking_changes_report
+        .breaking_changes_by_language
+        .get("odbc");
+    assert!(
+        odbc_breaking_changes.is_some(),
+        "Should find ODBC Breaking Changes"
+    );
+
+    let odbc_breaking_changes = odbc_breaking_changes.unwrap();
+    assert_eq!(
+        odbc_breaking_changes.len(),
+        1,
+        "Should find exactly one Breaking Change"
+    );
+
+    let breaking_change = &odbc_breaking_changes[0];
+    assert_eq!(
+        breaking_change.breaking_change_id, "BC#1",
+        "Should find BC#1"
+    );
+    assert_eq!(
+        breaking_change.implementations.len(),
+        1,
+        "Should find one implementation"
+    );
+
+    let impl_info = &breaking_change.implementations[0];
+    assert_eq!(
+        impl_info.test_method,
+        "should authenticate using private key"
+    );
+    assert!(impl_info.test_file.contains("simple_breaking_change.cpp"));
+    assert!(
+        impl_info.test_line > 0,
+        "Should have valid test line number"
+    );
+
+    // Should have both new and old behavior
+    assert!(
+        impl_info.new_behaviour_file.is_some(),
+        "Should find new behavior"
+    );
+    assert!(
+        impl_info.new_behaviour_line.is_some(),
+        "Should find new behavior line"
+    );
+    assert!(
+        impl_info.old_behaviour_file.is_some(),
+        "Should find old behavior"
+    );
+    assert!(
+        impl_info.old_behaviour_line.is_some(),
+        "Should find old behavior line"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn should_detect_cross_file_breaking_change_in_helper_methods() -> Result<()> {
+    let workspace = TestWorkspace::new()?;
+
+    // Create feature with Breaking Change annotation
+    workspace.create_feature_file(
+        "auth",
+        "cross_file_breaking_change",
+        TestImplementations::create_cross_file_breaking_change_feature(),
+    )?;
+
+    // Create main C++ test that calls helper methods
+    workspace.create_cpp_test(
+        "auth",
+        "cross_file_breaking_change",
+        TestImplementations::create_cpp_test_with_cross_file_breaking_change(),
+    )?;
+
+    // Create common helper file with Breaking Change implementations
+    workspace.create_cpp_common_file(
+        "auth_helpers",
+        TestImplementations::create_cpp_common_helper_with_breaking_change(),
+    )?;
+
+    let validator = workspace.get_validator()?;
+    let enhanced_results = validator.validate_all_with_breaking_changes()?;
+
+    // Check Breaking Change report
+    let breaking_changes_report = &enhanced_results.breaking_changes_report;
+    let odbc_breaking_changes = breaking_changes_report
+        .breaking_changes_by_language
+        .get("odbc");
+    assert!(
+        odbc_breaking_changes.is_some(),
+        "Should find ODBC Breaking Changes"
+    );
+
+    let odbc_breaking_changes = odbc_breaking_changes.unwrap();
+    assert_eq!(odbc_breaking_changes.len(), 2, "Should find BC#2 and BC#3");
+
+    // Check that both Breaking Changes are found
+    let breaking_change_ids: Vec<&str> = odbc_breaking_changes
+        .iter()
+        .map(|b| b.breaking_change_id.as_str())
+        .collect();
+    assert!(breaking_change_ids.contains(&"BC#2"), "Should find BC#2");
+    assert!(breaking_change_ids.contains(&"BC#3"), "Should find BC#3");
+
+    // Check that implementations point to the helper file
+    for breaking_change in odbc_breaking_changes {
+        let impl_info = &breaking_change.implementations[0];
+        assert_eq!(
+            impl_info.test_method,
+            "should authenticate using private key with helper"
+        );
+        assert!(
+            impl_info
+                .test_file
+                .contains("cross_file_breaking_change.cpp")
+        );
+
+        // Breaking Change should be found in the helper file
+        if let Some(new_file) = &impl_info.new_behaviour_file {
+            assert!(
+                new_file.contains("auth_helpers.cpp"),
+                "New behavior should be in helper file"
+            );
+        }
+        if let Some(old_file) = &impl_info.old_behaviour_file {
+            assert!(
+                old_file.contains("auth_helpers.cpp"),
+                "Old behavior should be in helper file"
+            );
+        }
+    }
+
+    Ok(())
+}
+
+#[test]
+fn should_detect_nested_helper_method_breaking_change() -> Result<()> {
+    let workspace = TestWorkspace::new()?;
+
+    // Create feature with Breaking Change annotation
+    workspace.create_feature_file(
+        "auth",
+        "nested_breaking_change",
+        TestImplementations::create_nested_breaking_change_feature(),
+    )?;
+
+    // Create C++ test with nested helper calls
+    workspace.create_cpp_test(
+        "auth",
+        "nested_breaking_change",
+        TestImplementations::create_cpp_test_with_nested_breaking_change(),
+    )?;
+
+    let validator = workspace.get_validator()?;
+    let enhanced_results = validator.validate_all_with_breaking_changes()?;
+
+    // Check Breaking Change report
+    let breaking_changes_report = &enhanced_results.breaking_changes_report;
+    let odbc_breaking_changes = breaking_changes_report
+        .breaking_changes_by_language
+        .get("odbc");
+    assert!(
+        odbc_breaking_changes.is_some(),
+        "Should find ODBC Breaking Changes"
+    );
+
+    let odbc_breaking_changes = odbc_breaking_changes.unwrap();
+    assert_eq!(odbc_breaking_changes.len(), 1, "Should find BC#4");
+
+    let breaking_change = &odbc_breaking_changes[0];
+    assert_eq!(breaking_change.breaking_change_id, "BC#4");
+
+    let impl_info = &breaking_change.implementations[0];
+    assert_eq!(impl_info.test_method, "should handle nested authentication");
+
+    // Should find the Breaking Change in the deeply nested helper method
+    assert!(
+        impl_info.new_behaviour_line.is_some(),
+        "Should find Breaking Change in nested helper"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn should_only_find_breaking_changes_for_scenarios_with_breaking_change_annotation() -> Result<()> {
+    let workspace = TestWorkspace::new()?;
+
+    // Create feature with mixed scenarios - some with Breaking Change, some without
+    workspace.create_feature_file(
+        "auth",
+        "mixed_breaking_change",
+        TestImplementations::create_mixed_breaking_change_feature(),
+    )?;
+
+    // Create C++ test with Breaking Changes in both scenarios
+    workspace.create_cpp_test(
+        "auth",
+        "mixed_breaking_change",
+        TestImplementations::create_cpp_test_with_mixed_breaking_change(),
+    )?;
+
+    let validator = workspace.get_validator()?;
+    let enhanced_results = validator.validate_all_with_breaking_changes()?;
+
+    // Check Breaking Change report
+    let breaking_changes_report = &enhanced_results.breaking_changes_report;
+    let odbc_breaking_changes = breaking_changes_report
+        .breaking_changes_by_language
+        .get("odbc");
+    assert!(
+        odbc_breaking_changes.is_some(),
+        "Should find ODBC Breaking Changes"
+    );
+
+    let odbc_breaking_changes = odbc_breaking_changes.unwrap();
+    // Should now find Breaking Changes for both scenarios since both have @odbc annotation
+    assert_eq!(
+        odbc_breaking_changes.len(),
+        2,
+        "Should find BC#5 and BC#6 (both scenarios have @odbc)"
+    );
+
+    // Sort by Breaking Change ID to ensure consistent order
+    let mut sorted_breaking_changes = odbc_breaking_changes.clone();
+    sorted_breaking_changes.sort_by(|a, b| a.breaking_change_id.cmp(&b.breaking_change_id));
+
+    assert_eq!(sorted_breaking_changes[0].breaking_change_id, "BC#5");
+    assert_eq!(
+        sorted_breaking_changes[0].implementations[0].test_method,
+        "should authenticate with breaking_change annotation"
+    );
+
+    assert_eq!(sorted_breaking_changes[1].breaking_change_id, "BC#6");
+    assert_eq!(
+        sorted_breaking_changes[1].implementations[0].test_method,
+        "should authenticate without breaking_change annotation"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn should_find_correct_line_numbers_for_breaking_change_locations() -> Result<()> {
+    let workspace = TestWorkspace::new()?;
+
+    // Create feature with Breaking Change annotation
+    workspace.create_feature_file(
+        "auth",
+        "line_numbers",
+        TestImplementations::create_line_numbers_breaking_change_feature(),
+    )?;
+
+    // Create C++ test with specific line arrangements
+    workspace.create_cpp_test(
+        "auth",
+        "line_numbers",
+        TestImplementations::create_cpp_test_with_specific_line_numbers(),
+    )?;
+
+    let validator = workspace.get_validator()?;
+    let enhanced_results = validator.validate_all_with_breaking_changes()?;
+
+    // Check Breaking Change report
+    let breaking_changes_report = &enhanced_results.breaking_changes_report;
+    let odbc_breaking_changes = breaking_changes_report
+        .breaking_changes_by_language
+        .get("odbc");
+    assert!(
+        odbc_breaking_changes.is_some(),
+        "Should find ODBC Breaking Changes"
+    );
+
+    let odbc_breaking_changes = odbc_breaking_changes.unwrap();
+    assert_eq!(odbc_breaking_changes.len(), 1, "Should find BC#7");
+
+    let breaking_change = &odbc_breaking_changes[0];
+    let impl_info = &breaking_change.implementations[0];
+
+    // Check that line numbers are accurate
+    assert_eq!(impl_info.test_line, 3, "Test should start at line 3"); // TEST_CASE line
+    assert_eq!(
+        impl_info.new_behaviour_line.unwrap(),
+        7,
+        "NEW_DRIVER_ONLY should be at line 7"
+    );
+    assert_eq!(
+        impl_info.old_behaviour_line.unwrap(),
+        12,
+        "OLD_DRIVER_ONLY should be at line 12"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn should_handle_multiple_breaking_changes_in_single_test_method() -> Result<()> {
+    let workspace = TestWorkspace::new()?;
+
+    // Create feature with Breaking Change annotation
+    workspace.create_feature_file(
+        "auth",
+        "multiple_breaking_changes",
+        TestImplementations::create_multiple_breaking_changes_feature(),
+    )?;
+
+    // Create C++ test with multiple Breaking Change macros
+    workspace.create_cpp_test(
+        "auth",
+        "multiple_breaking_changes",
+        TestImplementations::create_cpp_test_with_multiple_breaking_changes(),
+    )?;
+
+    let validator = workspace.get_validator()?;
+    let enhanced_results = validator.validate_all_with_breaking_changes()?;
+
+    // Check Breaking Change report
+    let breaking_changes_report = &enhanced_results.breaking_changes_report;
+    let odbc_breaking_changes = breaking_changes_report
+        .breaking_changes_by_language
+        .get("odbc");
+    assert!(
+        odbc_breaking_changes.is_some(),
+        "Should find ODBC Breaking Changes"
+    );
+
+    let odbc_breaking_changes = odbc_breaking_changes.unwrap();
+    assert_eq!(
+        odbc_breaking_changes.len(),
+        3,
+        "Should find BC#8, BC#9, and BC#10"
+    );
+
+    // All Breaking Changes should point to the same test method
+    for breaking_change in odbc_breaking_changes {
+        assert_eq!(
+            breaking_change.implementations[0].test_method,
+            "should handle multiple authentication methods"
+        );
+        assert!(
+            breaking_change.implementations[0].test_line > 0,
+            "Should have valid test line"
+        );
+    }
+
+    // Check specific Breaking Change IDs
+    let breaking_change_ids: Vec<&str> = odbc_breaking_changes
+        .iter()
+        .map(|b| b.breaking_change_id.as_str())
+        .collect();
+    assert!(breaking_change_ids.contains(&"BC#8"), "Should find BC#8");
+    assert!(breaking_change_ids.contains(&"BC#9"), "Should find BC#9");
+    assert!(breaking_change_ids.contains(&"BC#10"), "Should find BC#10");
+
+    Ok(())
+}
+
 // ===== Helper Structs and Test Data =====
 
 /// Helper to create a temporary workspace with features and test files
@@ -488,6 +888,13 @@ impl TestWorkspace {
         fs::create_dir_all(workspace_root.join("jdbc/src/test/java/e2e/query"))?;
         fs::create_dir_all(workspace_root.join("odbc_tests/tests/e2e/auth"))?;
         fs::create_dir_all(workspace_root.join("odbc_tests/tests/e2e/query"))?;
+
+        // Create BreakingChanges.md file for tests
+        let breaking_change_file = workspace_root.join("odbc_tests/BreakingChanges.md");
+        fs::write(
+            breaking_change_file,
+            Self::create_test_breaking_change_descriptions(),
+        )?;
 
         Ok(Self {
             _temp_dir: temp_dir,
@@ -534,8 +941,50 @@ impl TestWorkspace {
         Ok(())
     }
 
+    fn create_cpp_common_file(&self, name: &str, content: &str) -> Result<()> {
+        let common_dir = self.workspace_root.join("odbc_tests/common/src");
+        fs::create_dir_all(&common_dir)?;
+        let file_path = common_dir.join(format!("{}.cpp", name));
+        fs::write(file_path, content)?;
+
+        // Also create the header file
+        let header_dir = self.workspace_root.join("odbc_tests/common/include");
+        fs::create_dir_all(&header_dir)?;
+        let header_path = header_dir.join(format!("{}.hpp", name));
+        let header_content = format!(
+            "#pragma once\n\nvoid validate_breaking_change_successful_authentication();\nvoid validate_nested_authentication();\n"
+        );
+        fs::write(header_path, header_content)?;
+        Ok(())
+    }
+
     fn get_validator(&self) -> Result<GherkinValidator> {
         GherkinValidator::new(self.workspace_root.clone(), self.features_dir.clone())
+    }
+
+    fn create_test_breaking_change_descriptions() -> &'static str {
+        r#"# Business Change Requests (Breaking Changes)
+
+## 1: Simple authentication Breaking Change for testing basic Breaking Change detection
+
+## 2: Cross-file Breaking Change for testing helper method detection
+
+## 3: Additional cross-file Breaking Change for comprehensive testing
+
+## 4: Nested helper method Breaking Change for testing deep call chains
+
+## 5: Mixed scenario Breaking Change for testing annotation filtering
+
+## 6: Non-Breaking Change scenario test (should not be found)
+
+## 7: Line number accuracy Breaking Change for testing precise location tracking
+
+## 8: First multiple Breaking Change for testing multiple Breaking Changes in single method
+
+## 9: Second multiple Breaking Change for testing multiple Breaking Changes in single method
+
+## 10: Third multiple Breaking Change for testing multiple Breaking Changes in single method
+"#
     }
 }
 
@@ -1020,5 +1469,276 @@ fn test_with_braces_in_strings() {
     assert!(result.is_success());
 }
 "##
+    }
+
+    // ===== Breaking Change Test Data =====
+
+    fn create_simple_breaking_change_feature() -> &'static str {
+        r#"@odbc
+Feature: Simple Breaking Change Test
+
+  @odbc
+  Scenario: should authenticate using private key
+    Given I have a private key file
+    When I attempt to authenticate
+    Then authentication should succeed
+"#
+    }
+
+    fn create_cpp_test_with_simple_breaking_change() -> &'static str {
+        r#"#include <catch2/catch.hpp>
+
+TEST_CASE("should authenticate using private key") {
+    // Given I have a private key file
+    auto private_key = setup_private_key();
+
+    // When I attempt to authenticate
+    NEW_DRIVER_ONLY("BC#1") {
+        auto result = authenticate_with_new_method(private_key);
+        REQUIRE(result.is_success());
+    }
+
+    OLD_DRIVER_ONLY("BC#1") {
+        auto result = authenticate_with_old_method(private_key);
+        REQUIRE(result.is_success());
+    }
+
+    // Then authentication should succeed
+    REQUIRE(authentication_successful());
+}
+"#
+    }
+
+    fn create_cross_file_breaking_change_feature() -> &'static str {
+        r#"@odbc
+Feature: Cross File Breaking Change Test
+
+  @odbc
+  Scenario: should authenticate using private key with helper
+    Given I have authentication setup
+    When I call helper methods
+    Then authentication should be validated
+"#
+    }
+
+    fn create_cpp_test_with_cross_file_breaking_change() -> &'static str {
+        r#"#include <catch2/catch.hpp>
+#include "../../../common/include/auth_helpers.hpp"
+
+TEST_CASE("should authenticate using private key with helper") {
+    // Given I have authentication setup
+    auto auth_setup = create_auth_setup();
+
+    // When I call helper methods
+    validate_breaking_change_successful_authentication();
+
+    // Then authentication should be validated
+    REQUIRE(auth_setup.is_validated());
+}
+"#
+    }
+
+    fn create_cpp_common_helper_with_breaking_change() -> &'static str {
+        r#"#include "auth_helpers.hpp"
+
+void validate_breaking_change_successful_authentication() {
+    // BC#2: Successful authentication validation
+    OLD_DRIVER_ONLY("BC#2") {
+        INFO("Successfully authenticated with private key - old driver behavior");
+        // Add any old driver specific validations here
+    }
+
+    NEW_DRIVER_ONLY("BC#2") {
+        INFO("Successfully authenticated with private key - new driver behavior");
+        // Add any new driver specific validations here
+    }
+
+    // BC#3: Additional successful authentication validation
+    NEW_DRIVER_ONLY("BC#3") {
+        INFO("Additional validation for successful authentication");
+        // Add any additional validations here
+    }
+}
+
+void validate_nested_authentication() {
+    deep_nested_auth_helper();
+}
+
+void deep_nested_auth_helper() {
+    NEW_DRIVER_ONLY("BC#4") {
+        INFO("Deep nested authentication check");
+    }
+}
+"#
+    }
+
+    fn create_nested_breaking_change_feature() -> &'static str {
+        r#"@odbc
+Feature: Nested Breaking Change Test
+
+  @odbc
+  Scenario: should handle nested authentication
+    Given I have nested authentication setup
+    When I call nested helper methods
+    Then deep authentication should work
+"#
+    }
+
+    fn create_cpp_test_with_nested_breaking_change() -> &'static str {
+        r#"#include <catch2/catch.hpp>
+
+TEST_CASE("should handle nested authentication") {
+    // Given I have nested authentication setup
+    auto setup = create_nested_setup();
+
+    // When I call nested helper methods
+    first_level_helper();
+
+    // Then deep authentication should work
+    REQUIRE(setup.is_deeply_authenticated());
+}
+
+void first_level_helper() {
+    second_level_helper();
+}
+
+void second_level_helper() {
+    third_level_helper();
+}
+
+void third_level_helper() {
+    NEW_DRIVER_ONLY("BC#4") {
+        INFO("Nested Breaking Change validation in third level");
+    }
+}
+"#
+    }
+
+    fn create_mixed_breaking_change_feature() -> &'static str {
+        r#"@odbc
+Feature: Mixed Breaking Change Test
+
+  @odbc
+  Scenario: should authenticate with breaking_change annotation
+    Given I have authentication data
+    When I authenticate
+    Then it should succeed with Breaking Change
+
+  @odbc
+  Scenario: should authenticate without breaking_change annotation
+    Given I have authentication data
+    When I authenticate
+    Then it should succeed normally
+"#
+    }
+
+    fn create_cpp_test_with_mixed_breaking_change() -> &'static str {
+        r#"#include <catch2/catch.hpp>
+
+TEST_CASE("should authenticate with breaking_change annotation") {
+    // Given I have authentication data
+    auto auth_data = setup_auth_data();
+
+    // When I authenticate
+    NEW_DRIVER_ONLY("BC#5") {
+        auto result = authenticate_new_way(auth_data);
+        REQUIRE(result.is_success());
+    }
+
+    // Then it should succeed with Breaking Change
+    REQUIRE(authentication_with_breaking_change_succeeded());
+}
+
+TEST_CASE("should authenticate without breaking_change annotation") {
+    // Given I have authentication data
+    auto auth_data = setup_auth_data();
+
+    // When I authenticate
+    NEW_DRIVER_ONLY("BC#6") {
+        // This Breaking Change should now be found since scenario has @odbc
+        auto result = authenticate_normally(auth_data);
+        REQUIRE(result.is_success());
+    }
+
+    // Then it should succeed normally
+    REQUIRE(normal_authentication_succeeded());
+}
+"#
+    }
+
+    fn create_line_numbers_breaking_change_feature() -> &'static str {
+        r#"@odbc
+Feature: Line Numbers Breaking Change Test
+
+  @odbc
+  Scenario: should test specific line numbers
+    Given I have line number test setup
+    When I check specific lines
+    Then line numbers should be accurate
+"#
+    }
+
+    fn create_cpp_test_with_specific_line_numbers() -> &'static str {
+        r#"#include <catch2/catch.hpp>
+
+TEST_CASE("should test specific line numbers") {
+    // Given I have line number test setup
+    auto setup = create_line_test_setup();
+    
+    NEW_DRIVER_ONLY("BC#7") {
+        INFO("This NEW_DRIVER_ONLY should be at line 8");
+        REQUIRE(setup.is_valid());
+    }
+    
+    OLD_DRIVER_ONLY("BC#7") {
+        INFO("This OLD_DRIVER_ONLY should be at line 13");
+        REQUIRE(setup.is_valid_old_way());
+    }
+    
+    // Then line numbers should be accurate
+    REQUIRE(line_numbers_are_correct());
+}
+"#
+    }
+
+    fn create_multiple_breaking_changes_feature() -> &'static str {
+        r#"@odbc
+Feature: Multiple Breaking Changes Test
+
+  @odbc
+  Scenario: should handle multiple authentication methods
+    Given I have multiple authentication options
+    When I test each method
+    Then all methods should work with their respective Breaking Changes
+"#
+    }
+
+    fn create_cpp_test_with_multiple_breaking_changes() -> &'static str {
+        r#"#include <catch2/catch.hpp>
+
+TEST_CASE("should handle multiple authentication methods") {
+    // Given I have multiple authentication options
+    auto auth_options = setup_multiple_auth_options();
+
+    // When I test each method
+    NEW_DRIVER_ONLY("BC#8") {
+        auto result1 = test_first_method(auth_options);
+        REQUIRE(result1.is_success());
+    }
+
+    NEW_DRIVER_ONLY("BC#9") {
+        auto result2 = test_second_method(auth_options);
+        REQUIRE(result2.is_success());
+    }
+
+    OLD_DRIVER_ONLY("BC#10") {
+        auto result3 = test_third_method_old_way(auth_options);
+        REQUIRE(result3.is_success());
+    }
+
+    // Then all methods should work with their respective Breaking Changes
+    REQUIRE(all_authentication_methods_work());
+}
+"#
     }
 }

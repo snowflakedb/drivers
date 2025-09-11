@@ -1,7 +1,10 @@
 use anyhow::{Context, Result};
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
+use crate::breaking_changes_processor::BreakingChangesProcessor;
 use crate::feature_parser::Feature;
 use crate::step_finder::StepFinder;
 use crate::test_discovery::{Language, TestDiscovery};
@@ -12,13 +15,13 @@ pub struct GherkinValidator {
     discovery: TestDiscovery,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ValidationResult {
     pub feature_file: PathBuf,
     pub validations: Vec<LanguageValidation>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct LanguageValidation {
     pub language: Language,
     pub test_file_found: bool,
@@ -29,7 +32,7 @@ pub struct LanguageValidation {
     pub missing_steps_by_method: Vec<MethodValidation>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct MethodValidation {
     pub method_name: String,
     pub scenario_name: String,
@@ -37,16 +40,49 @@ pub struct MethodValidation {
     pub line_number: Option<usize>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct OrphanValidation {
     pub language: Language,
     pub orphaned_files: Vec<OrphanedTestFile>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct OrphanedTestFile {
     pub file_path: PathBuf,
     pub orphaned_methods: Vec<String>,
+}
+
+// Breaking Changes related structures
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct BreakingChangeInfo {
+    pub breaking_change_id: String,
+    pub description: String,
+    pub implementations: Vec<BreakingChangeImplementation>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct BreakingChangeImplementation {
+    pub test_method: String,
+    pub test_file: String,
+    pub test_line: usize,
+    pub new_behaviour_file: Option<String>,
+    pub new_behaviour_line: Option<usize>,
+    pub old_behaviour_file: Option<String>,
+    pub old_behaviour_line: Option<usize>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct BreakingChangesReport {
+    pub breaking_change_descriptions: HashMap<String, String>,
+    pub breaking_changes_by_language: HashMap<String, Vec<BreakingChangeInfo>>,
+}
+
+// Enhanced validation result that includes Breaking Changes information
+#[derive(Debug, Serialize, Deserialize)]
+pub struct EnhancedValidationResult {
+    pub validation_results: Vec<ValidationResult>,
+    pub orphan_results: Vec<OrphanValidation>,
+    pub breaking_changes_report: BreakingChangesReport,
 }
 
 impl GherkinValidator {
@@ -499,5 +535,67 @@ impl GherkinValidator {
 
         // Require exact match after normalization - no partial matches allowed
         norm_impl == norm_feature
+    }
+
+    pub fn validate_all_with_breaking_changes(&self) -> Result<EnhancedValidationResult> {
+        let validation_results = self.validate_all_features()?;
+        let orphan_results = self.find_orphaned_tests()?;
+
+        // Create feature info map from parsed features
+        let mut features = HashMap::new();
+
+        // Parse all feature files
+        for entry in WalkDir::new(&self.features_dir)
+            .into_iter()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().extension().is_some_and(|ext| ext == "feature"))
+        {
+            if let Ok(feature) = Feature::parse_from_file(entry.path()) {
+                // Extract Breaking Change scenarios (scenarios with @{driver}_breaking_change annotations)
+                // Include scenarios with driver tags that might have Breaking Change implementations
+                // We'll check for actual Breaking Change implementations during processing
+                let breaking_change_scenarios = feature
+                    .scenarios
+                    .iter()
+                    .filter(|scenario| {
+                        scenario.tags.iter().any(|tag| {
+                            matches!(
+                                tag.as_str(),
+                                "odbc"
+                                    | "jdbc"
+                                    | "python"
+                                    | "pep249"
+                                    | "core"
+                                    | "csharp"
+                                    | "dotnet"
+                                    | "javascript"
+                                    | "nodejs"
+                                    | "js"
+                            )
+                        })
+                    })
+                    .map(|s| s.name.clone())
+                    .collect();
+
+                features.insert(
+                    feature.name.clone(),
+                    crate::breaking_changes_processor::FeatureInfo {
+                        breaking_change_scenarios,
+                    },
+                );
+            }
+        }
+
+        // Process Breaking Changes
+        let breaking_changes_processor =
+            BreakingChangesProcessor::new(self._workspace_root.clone());
+        let breaking_changes_report =
+            breaking_changes_processor.process_breaking_changes(&features)?;
+
+        Ok(EnhancedValidationResult {
+            validation_results,
+            orphan_results,
+            breaking_changes_report,
+        })
     }
 }

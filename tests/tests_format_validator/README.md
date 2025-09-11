@@ -18,6 +18,9 @@ cargo run -- --workspace /path/to/workspace --features /path/to/features
 # Run with verbose output
 cargo run -- --verbose
 
+# Run with JSON output (includes Breaking Change data)
+cargo run -- --json
+
 # Show help
 cargo run -- --help
 ```
