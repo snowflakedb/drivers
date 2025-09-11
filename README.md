@@ -20,7 +20,7 @@ This will create a `parameters.json` file in the project root containing test cr
 
 **Alternative:** If you don't have 1Password CLI installed you can provide encryption password via environment variable:
 ```bash
-PARAMETERS_SECRET=<encyrption-password> ./scripts/decode_secrets.sh 
+PARAMETERS_SECRET=<encryption-password> ./scripts/decode_secrets.sh 
 ```
 
 **Alternative:** If you want provide different credentials that the standard ones, you can provide parameters.json yourself:
