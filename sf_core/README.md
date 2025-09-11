@@ -4,7 +4,7 @@ The core Rust library that powers the universal driver. This library provides th
 
 ## Testing
 
-### Prerequites
+### Prerequisites
 
 See [Prerequisites](../README.md#prerequisites) section in the top-level README for required setup steps.
 
