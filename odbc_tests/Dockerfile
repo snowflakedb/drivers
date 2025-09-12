@@ -1,7 +1,8 @@
 FROM ubuntu:22.04
 
 # Install dependencies
-RUN apt-get update && apt-get install -y unixodbc unixodbc-dev curl odbcinst wget build-essential git gdb
+RUN apt-get update && apt-get install -y unixodbc unixodbc-dev curl odbcinst wget build-essential git gdb \
+    zlib1g-dev
 
 # Install CMake
 RUN wget https://github.com/Kitware/CMake/releases/download/v4.0.3/cmake-4.0.3-linux-aarch64.sh && \

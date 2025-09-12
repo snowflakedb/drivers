@@ -15,12 +15,12 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        
+
       - name: Install dependencies
         run: |
           set -x
           sudo apt-get update
-          sudo apt-get install -y unixodbc unixodbc-dev curl odbcinst
+          sudo apt-get install -y unixodbc unixodbc-dev curl odbcinst zlib1g-dev
           wget https://github.com/Kitware/CMake/releases/download/v4.0.3/cmake-4.0.3-linux-x86_64.sh
           sudo sh cmake-4.0.3-linux-x86_64.sh --skip-license --prefix=/usr/local
           sudo rm cmake-4.0.3-linux-x86_64.sh
@@ -57,7 +57,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y unixodbc-dev build-essential
+          sudo apt-get install -y unixodbc-dev build-essential zlib1g-dev
           wget https://github.com/Kitware/CMake/releases/download/v4.0.3/cmake-4.0.3-linux-x86_64.sh
           sudo sh cmake-4.0.3-linux-x86_64.sh --skip-license --prefix=/usr/local
           sudo rm cmake-4.0.3-linux-x86_64.sh
