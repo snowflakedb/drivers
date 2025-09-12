@@ -131,12 +131,12 @@ TEST_CASE("PUT then GET returns expected rowset metadata", "[put_get][odbc]") {
     compare_compression_type(get_data<SQL_C_CHAR>(stmt, PUT_ROW_TARGET_COMPRESSION_IDX), "GZIP");
     CHECK(get_data<SQL_C_CHAR>(stmt, PUT_ROW_STATUS_IDX) == "UPLOADED");
 
-    OLD_DRIVER_ONLY("BC#5: Encryption field is no longer included in the result") {
+    OLD_DRIVER_ONLY("BC#3: Encryption field is no longer included in the result") {
       CHECK(get_data<SQL_C_CHAR>(stmt, 8) == "ENCRYPTED");
       CHECK(get_data<SQL_C_CHAR>(stmt, 9) == "");
     }
 
-    NEW_DRIVER_ONLY("BC#5: Encryption field is no longer included in the result") {
+    NEW_DRIVER_ONLY("BC#3: Encryption field is no longer included in the result") {
       CHECK(get_data<SQL_C_CHAR>(stmt, PUT_ROW_MESSAGE_IDX) == "");  // 8
     }
   }
@@ -162,12 +162,12 @@ TEST_CASE("PUT then GET returns expected rowset metadata", "[put_get][odbc]") {
 
     CHECK(get_data<SQL_C_CHAR>(stmt, GET_ROW_STATUS_IDX) == "DOWNLOADED");
 
-    OLD_DRIVER_ONLY("BC#5: Encryption field is no longer included in the result") {
+    OLD_DRIVER_ONLY("BC#3: Encryption field is no longer included in the result") {
       CHECK(get_data<SQL_C_CHAR>(stmt, 4) == "DECRYPTED");
       CHECK(get_data<SQL_C_CHAR>(stmt, 5) == "");
     }
 
-    NEW_DRIVER_ONLY("BC#5: Encryption field is no longer included in the result") {
+    NEW_DRIVER_ONLY("BC#3: Encryption field is no longer included in the result") {
       CHECK(get_data<SQL_C_CHAR>(stmt, GET_ROW_MESSAGE_IDX) == "");  // 4
     }
   }
