@@ -325,6 +325,8 @@ impl Data {
             })?
             .clone();
 
+        // TODO: We should support other names for existing compression types that were supported in Python Connector,
+        // like "BR" and "X-BR" for Brotli etc.
         let source_compression = match source_compression_string.to_uppercase().as_str() {
             "AUTO_DETECT" => SourceCompressionParam::AutoDetect,
             "GZIP" => SourceCompressionParam::Gzip,
