@@ -16,19 +16,18 @@ from .utils_put_get import (
     PUT_ROW_TARGET_COMPRESSION_IDX,
     PUT_ROW_STATUS_IDX,
 )
-from ..connector_types import ConnectorType
 
 
 @pytest.mark.parametrize(
     "filename,compression_type",
     [
         ("test_gzip.csv.gz", "GZIP"),
-        ("test_bzip2.csv.bz2", "BZ2"),
+        ("test_bzip2.csv.bz2", "BZIP2"),
         ("test_brotli.csv.br", "BROTLI"),
         ("test_zstd.csv.zst", "ZSTD"),
     ],
 )
-def test_put_source_compression_auto_detect_standard_types(cursor, filename, compression_type, connector_type):
+def test_put_source_compression_auto_detect_standard_types(cursor, filename, compression_type):
     stage_name = create_temporary_stage(cursor, "PYTEST_STAGE_AUTO_DETECT_STANDARD")
     content = b"1,2,3\n"
 
@@ -43,24 +42,19 @@ def test_put_source_compression_auto_detect_standard_types(cursor, filename, com
             f"PUT 'file://{as_file_uri(path)}' @{stage_name} SOURCE_COMPRESSION=AUTO_DETECT"
         )
 
-        # Verify that the file was uploaded, compression type was detected correctly
+        # Verify that the file was uploaded, compression type was detected correctly and the file was not compressed again
         row = cursor.fetchone()
-        expected_comp = compression_type
         assert row[PUT_ROW_SOURCE_IDX] == filename
-        # Reference may append .gz for DEFLATE
-        expected_target = (
-            f"{filename}.gz" if (compression_type == "DEFLATE" and connector_type == ConnectorType.REFERENCE) else filename
-        )
-        assert row[PUT_ROW_TARGET_IDX] == expected_target
-        assert row[PUT_ROW_SOURCE_COMPRESSION_IDX] == expected_comp
-        assert row[PUT_ROW_TARGET_COMPRESSION_IDX] == expected_comp
+        assert row[PUT_ROW_TARGET_IDX] == filename
+        assert row[PUT_ROW_SOURCE_COMPRESSION_IDX] == compression_type
+        assert row[PUT_ROW_TARGET_COMPRESSION_IDX] == compression_type
         assert row[PUT_ROW_STATUS_IDX] == "UPLOADED"
 
 
-def test_put_source_compression_auto_detect_raw_deflate(cursor, connector_type):
-    stage_name = create_temporary_stage(cursor, "PYTEST_STAGE_AUTO_DETECT_RAW_DEFLATE")
-    filename = "test_raw_deflate.csv.raw_deflate"
-    content = b"rawdeflatedata"
+def test_put_source_compression_auto_detect_deflate(cursor):
+    stage_name = create_temporary_stage(cursor, "PYTEST_STAGE_AUTO_DETECT_DEFLATE")
+    filename = "test_deflate.csv.deflate"
+    content = b"1,2,3\n"
 
     # Create a temporary file and compress it
     with tempfile.TemporaryDirectory() as tmp:
@@ -72,13 +66,21 @@ def test_put_source_compression_auto_detect_raw_deflate(cursor, connector_type):
         cursor.execute(
             f"PUT 'file://{as_file_uri(path)}' @{stage_name} SOURCE_COMPRESSION=AUTO_DETECT"
         )
-        # Verify that the file was uploaded, compression type was detected correctly
-        row = cursor.fetchone()
+
+    row = cursor.fetchone()
+
+    if OLD_DRIVER_ONLY("BC#2"):
         assert row[PUT_ROW_SOURCE_IDX] == filename
-        expected_target = f"{filename}.gz" if connector_type == ConnectorType.REFERENCE else filename
-        assert row[PUT_ROW_TARGET_IDX] == expected_target
-        assert row[PUT_ROW_SOURCE_COMPRESSION_IDX] == "RAW_DEFLATE"
-        assert row[PUT_ROW_TARGET_COMPRESSION_IDX] == "RAW_DEFLATE"
+        assert row[PUT_ROW_TARGET_IDX] == filename + ".gz"
+        assert row[PUT_ROW_SOURCE_COMPRESSION_IDX] == "NONE"
+        assert row[PUT_ROW_TARGET_COMPRESSION_IDX] == "GZIP"
+        assert row[PUT_ROW_STATUS_IDX] == "UPLOADED"
+
+    if NEW_DRIVER_ONLY("BC#2"):
+        assert row[PUT_ROW_SOURCE_IDX] == filename
+        assert row[PUT_ROW_TARGET_IDX] == filename
+        assert row[PUT_ROW_SOURCE_COMPRESSION_IDX] == "DEFLATE"
+        assert row[PUT_ROW_TARGET_COMPRESSION_IDX] == "DEFLATE"
         assert row[PUT_ROW_STATUS_IDX] == "UPLOADED"
 
 
@@ -132,13 +134,12 @@ def test_put_source_compression_auto_detect_none_with_auto_compress(cursor):
     "filename,compression_type",
     [
         ("test_gzip.csv", "GZIP"),
-        ("test_bzip2.csv", "BZ2"),
-        ("test_brotli.csv", "BROTLI"),
+        ("test_bzip2.csv", "BZIP2"),
         ("test_zstd.csv", "ZSTD"),
         ("test_deflate.csv", "DEFLATE"),
     ],
 )
-def test_put_source_compression_explicit_standard_types(cursor, filename, compression_type, connector_type):
+def test_put_source_compression_explicit_standard_types(cursor, filename, compression_type):
     stage_name = create_temporary_stage(cursor, "PYTEST_STAGE_EXPLICIT_COMPRESSION")
 
     # Create a temporary file and compress it with the specified compression type, but without the extension
@@ -152,13 +153,12 @@ def test_put_source_compression_explicit_standard_types(cursor, filename, compre
             f"PUT 'file://{as_file_uri(path)}' @{stage_name} SOURCE_COMPRESSION={compression_type}"
         )
 
-        # Verify that the file was uploaded, compression type was detected correctly
+        # Verify that the file was uploaded, compression type was detected correctly and the file was not compressed again
         row = cursor.fetchone()
         assert row[PUT_ROW_SOURCE_IDX] == filename
         assert row[PUT_ROW_TARGET_IDX] == filename
-        expected_comp = compression_type
-        assert row[PUT_ROW_SOURCE_COMPRESSION_IDX] == expected_comp
-        assert row[PUT_ROW_TARGET_COMPRESSION_IDX] == expected_comp
+        assert row[PUT_ROW_SOURCE_COMPRESSION_IDX] == compression_type
+        assert row[PUT_ROW_TARGET_COMPRESSION_IDX] == compression_type
         assert row[PUT_ROW_STATUS_IDX] == "UPLOADED"
 
 

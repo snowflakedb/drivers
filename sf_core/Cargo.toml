@@ -69,8 +69,9 @@ bzip2 = "0.6.0"
 brotli = "8.0.2"
 zstd = "0.13.3"
 
-[features]
-e2e_tests = []
+[[test]]
+name = "e2e_tests"
+path = "tests/e2e/mod.rs"
 
 [[bin]]
 name = "tls_client"

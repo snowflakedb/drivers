@@ -183,9 +183,7 @@ def create_connection_with_adapter(adapter: ConnectorAdapter, **override_params)
     
     # Remove None values
     connection_params = {k: v for k, v in connection_params.items() if v is not None}
-
-    # PAT support removed: tests use password/authenticator from parameters only
-
+    
     # Apply overrides
     connection_params.update(override_params)
     

@@ -105,7 +105,6 @@ inline std::string get_connection_string() {
   auto params = get_test_parameters("testconnection");
   std::stringstream ss;
   read_default_params(ss, params);
-  // Password-based authentication only; PAT support removed
   add_param_required<std::string>(ss, params, "SNOWFLAKE_TEST_PASSWORD", "PWD");
   return ss.str();
 }
