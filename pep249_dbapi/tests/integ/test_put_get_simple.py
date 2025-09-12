@@ -21,7 +21,6 @@ from .utils_put_get import (
     LS_ROW_NAME_IDX,
 )
 
-from ..connector_types import ConnectorType
 from ..utils import NEW_DRIVER_ONLY, OLD_DRIVER_ONLY
 
 
@@ -99,7 +98,7 @@ def test_get(cursor):
         assert decompressed == original
 
 
-def test_put_get_rowset(cursor, connector_type):
+def test_put_get_rowset(cursor):
     stage_name = create_temporary_stage(cursor, "PYTEST_STAGE_PUT_ROWSET")
     filename = "test_put_get_rowset.csv"
 
@@ -117,10 +116,10 @@ def test_put_get_rowset(cursor, connector_type):
         assert row[PUT_ROW_TARGET_IDX] == "test_put_get_rowset.csv.gz"
         assert row[PUT_ROW_SOURCE_SIZE_IDX] == 6
 
-        if OLD_DRIVER_ONLY("BC#1: header of a gzip-compressed file does not contain filename"):
+        if OLD_DRIVER_ONLY("BC#1"):
             assert row[PUT_ROW_TARGET_SIZE_IDX] == 64
         
-        if NEW_DRIVER_ONLY("BC#1: header of a gzip-compressed file does not contain filename"):
+        if NEW_DRIVER_ONLY("BC#1"):
             assert row[PUT_ROW_TARGET_SIZE_IDX] == 32
 
         assert row[PUT_ROW_SOURCE_COMPRESSION_IDX] == "NONE"
@@ -136,10 +135,10 @@ def test_put_get_rowset(cursor, connector_type):
 
         assert row[GET_ROW_FILE_IDX] == "test_put_get_rowset.csv.gz"
 
-        # BREAKING CHANGE: changing the compression behavior reduces the size of a compressed file
-        if connector_type == ConnectorType.REFERENCE:
+        if OLD_DRIVER_ONLY("BC#1"):
             assert row[GET_ROW_SIZE_IDX] == 52
-        else:
+        
+        if NEW_DRIVER_ONLY("BC#1"):
             assert row[GET_ROW_SIZE_IDX] == 26
 
         assert row[GET_ROW_STATUS_IDX] == "DOWNLOADED"

@@ -69,14 +69,14 @@ def test_put_source_compression_auto_detect_deflate(cursor):
 
     row = cursor.fetchone()
 
-    if OLD_DRIVER_ONLY("BC#2: DEFLATE compression type option is now correctly auto-detected"):
+    if OLD_DRIVER_ONLY("BC#2"):
         assert row[PUT_ROW_SOURCE_IDX] == filename
         assert row[PUT_ROW_TARGET_IDX] == filename + ".gz"
         assert row[PUT_ROW_SOURCE_COMPRESSION_IDX] == "NONE"
         assert row[PUT_ROW_TARGET_COMPRESSION_IDX] == "GZIP"
         assert row[PUT_ROW_STATUS_IDX] == "UPLOADED"
 
-    if NEW_DRIVER_ONLY("BC#2: DEFLATE compression type option is now correctly auto-detected"):
+    if NEW_DRIVER_ONLY("BC#2"):
         assert row[PUT_ROW_SOURCE_IDX] == filename
         assert row[PUT_ROW_TARGET_IDX] == filename
         assert row[PUT_ROW_SOURCE_COMPRESSION_IDX] == "DEFLATE"
@@ -172,14 +172,14 @@ def test_put_source_compression_explicit_brotli(cursor):
         path = write_binary_file(tmpdir, filename, b"brotli")
 
         # Upload the brotli file to the stage with the specified compression type
-        if OLD_DRIVER_ONLY("BC#3: BROTLI compression type option is now supported"):
+        if OLD_DRIVER_ONLY("BC#3"):
             # Old driver should reject unsupported SOURCE_COMPRESSION
             with pytest.raises(Exception):
                 cursor.execute(
                     f"PUT 'file://{as_file_uri(path)}' @{stage_name} SOURCE_COMPRESSION=BROTLI"
                 )
 
-        if NEW_DRIVER_ONLY("BC#3: BROTLI compression type option is now supported"):
+        if NEW_DRIVER_ONLY("BC#3"):
             cursor.execute(
                 f"PUT 'file://{as_file_uri(path)}' @{stage_name} SOURCE_COMPRESSION=BROTLI"
             )
