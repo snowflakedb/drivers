@@ -126,7 +126,6 @@ inline void compare_compression_type(const std::string& compression_type,
     std::string exp_comp_type_lower = expected_compression_type;
     std::transform(exp_comp_type_lower.begin(), exp_comp_type_lower.end(),
                    exp_comp_type_lower.begin(), [](unsigned char c) { return std::tolower(c); });
-    ;
     CHECK(compression_type == exp_comp_type_lower);
   }
 }
