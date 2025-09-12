@@ -1,4 +1,3 @@
-
 #ifndef GET_DATA_HPP
 #define GET_DATA_HPP
 
@@ -11,8 +10,8 @@
 #include "MetaOfSqlCTypes.hpp"
 
 template <int SQL_C_TYPE>
-typename MetaOfSqlCType<SQL_C_TYPE>::type get_data(const StatementHandleWrapper& stmt,
-                                                   SQLUSMALLINT col) {
+inline typename MetaOfSqlCType<SQL_C_TYPE>::type get_data(const StatementHandleWrapper& stmt,
+                                                          SQLUSMALLINT col) {
   typename MetaOfSqlCType<SQL_C_TYPE>::type value;
   SQLLEN indicator;
   SQLRETURN ret = SQLGetData(stmt.getHandle(), col, SQL_C_TYPE, &value, sizeof(value), &indicator);
@@ -22,7 +21,7 @@ typename MetaOfSqlCType<SQL_C_TYPE>::type get_data(const StatementHandleWrapper&
 
 // Template specialization for SQL_C_CHAR to return std::string
 template <>
-std::string get_data<SQL_C_CHAR>(const StatementHandleWrapper& stmt, SQLUSMALLINT col) {
+inline std::string get_data<SQL_C_CHAR>(const StatementHandleWrapper& stmt, SQLUSMALLINT col) {
   char buffer[1000];
   SQLLEN indicator;
   SQLRETURN ret = SQLGetData(stmt.getHandle(), col, SQL_C_CHAR, buffer, sizeof(buffer), &indicator);
