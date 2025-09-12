@@ -25,7 +25,7 @@ impl std::error::Error for ExtractError {}
 
 impl Display for ExtractError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self)
+        write!(f, "{self:?}")
     }
 }
 
