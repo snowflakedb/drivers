@@ -23,7 +23,7 @@ fn test_put_source_compression_auto_detect_standard_types() {
     // Test cases for standard compression types that follow the same pattern
     let test_cases = [
         ("test_gzip.csv.gz", "GZIP"),
-        ("test_bzip2.csv.bz2", "BZ2"),
+        ("test_bzip2.csv.bz2", "BZIP2"),
         ("test_brotli.csv.br", "BROTLI"),
         ("test_zstd.csv.zst", "ZSTD"),
         ("test_deflate.csv.deflate", "DEFLATE"),
@@ -41,7 +41,7 @@ fn test_put_source_compression_auto_detect_standard_types() {
                 encoder.write_all(content.as_bytes()).unwrap();
                 encoder.finish().unwrap();
             }
-            "BZ2" => {
+            "BZIP2" => {
                 let mut encoder = bzip2::write::BzEncoder::new(file, bzip2::Compression::default());
                 encoder.write_all(content.as_bytes()).unwrap();
                 encoder.finish().unwrap();
@@ -269,7 +269,7 @@ fn test_put_source_compression_explicit_standard_types() {
     // Test cases for explicitly specified compression types
     let test_cases = [
         ("test_explicit_gzip.dat", "GZIP"),
-        ("test_explicit_bzip2.dat", "BZ2"),
+        ("test_explicit_bzip2.dat", "BZIP2"),
         ("test_explicit_brotli.dat", "BROTLI"),
         ("test_explicit_zstd.dat", "ZSTD"),
         ("test_explicit_deflate.dat", "DEFLATE"),
@@ -287,7 +287,7 @@ fn test_put_source_compression_explicit_standard_types() {
                 encoder.write_all(content.as_bytes()).unwrap();
                 encoder.finish().unwrap();
             }
-            "BZ2" => {
+            "BZIP2" => {
                 let mut encoder = bzip2::write::BzEncoder::new(file, bzip2::Compression::default());
                 encoder.write_all(content.as_bytes()).unwrap();
                 encoder.finish().unwrap();

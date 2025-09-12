@@ -16,7 +16,7 @@ impl CompressionType {
     pub fn get_snowflake_representation(&self) -> &str {
         match self {
             CompressionType::Gzip => "GZIP",
-            CompressionType::Bzip2 => "BZ2",
+            CompressionType::Bzip2 => "BZIP2",
             CompressionType::Brotli => "BROTLI",
             CompressionType::Zstd => "ZSTD",
             CompressionType::Deflate => "DEFLATE",
