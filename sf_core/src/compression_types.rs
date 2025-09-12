@@ -101,6 +101,7 @@ fn try_guess_compression_type_from_filename(
     }
 }
 
+// TODO: DEFLATE cannot be detected by the infer crate - we might need a custom implementation for that
 fn try_guess_compression_type_from_buffer(
     file_buffer: &[u8],
 ) -> Result<Option<CompressionType>, CompressionTypeError> {

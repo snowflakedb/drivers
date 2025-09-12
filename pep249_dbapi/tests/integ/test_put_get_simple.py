@@ -22,6 +22,7 @@ from .utils_put_get import (
 )
 
 from ..connector_types import ConnectorType
+from ..utils import NEW_DRIVER_ONLY, OLD_DRIVER_ONLY, select_by_driver
 
 
 def test_put_select(cursor):
@@ -116,10 +117,10 @@ def test_put_get_rowset(cursor, connector_type):
         assert row[PUT_ROW_TARGET_IDX] == "test_put_get_rowset.csv.gz"
         assert row[PUT_ROW_SOURCE_SIZE_IDX] == 6
 
-        # BREAKING CHANGE: changing the compression behavior reduces the size of a compressed file
-        if connector_type == ConnectorType.REFERENCE:
+        if OLD_DRIVER_ONLY("BC#1: header of a gzip-compressed file does not contain filename"):
             assert row[PUT_ROW_TARGET_SIZE_IDX] == 64
-        else:
+        
+        if NEW_DRIVER_ONLY("BC#1: header of a gzip-compressed file does not contain filename"):
             assert row[PUT_ROW_TARGET_SIZE_IDX] == 32
 
         assert row[PUT_ROW_SOURCE_COMPRESSION_IDX] == "NONE"

@@ -5,6 +5,7 @@ pytest configuration and fixtures for PEP 249 tests.
 import pytest
 
 from .connector_factory import ConnectorFactory, create_connection_with_adapter
+from .utils import set_current_connector
 from .connector_types import ConnectorType
 
 
@@ -80,6 +81,8 @@ def cursor(connection):
 def pytest_runtest_setup(item):
     """Skip tests based on connector type and markers."""
     connector_type = item.config.getoption("--connector")
+    # Set the current connector for driver-gated helpers
+    set_current_connector(connector_type)
     
     if connector_type == "universal" and item.get_closest_marker("skip_universal"):
         pytest.skip("Skipping test for universal driver")

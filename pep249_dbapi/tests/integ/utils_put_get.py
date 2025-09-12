@@ -66,7 +66,7 @@ def compress_bytes(data: bytes, comp: str) -> bytes:
         with gzip.GzipFile(fileobj=buf, mode="wb") as gz:
             gz.write(data)
         return buf.getvalue()
-    if comp == "BZ2":
+    if comp == "BZIP2":
         return bz2.compress(data)
     if comp == "DEFLATE":
         return zlib.compress(data)
@@ -74,4 +74,3 @@ def compress_bytes(data: bytes, comp: str) -> bytes:
         return brotli.compress(data)
     if comp == "ZSTD":
         return zstd.ZstdCompressor().compress(data)
-    pytest.skip(f"Unsupported compression type in test: {comp}")

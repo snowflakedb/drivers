@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pytest
 
+from ..utils import NEW_DRIVER_ONLY, OLD_DRIVER_ONLY
 from .utils_put_get import (
     write_text_file,
     write_binary_file,
@@ -21,10 +22,9 @@ from .utils_put_get import (
     "filename,compression_type",
     [
         ("test_gzip.csv.gz", "GZIP"),
-        ("test_bzip2.csv.bz2", "BZ2"),
+        ("test_bzip2.csv.bz2", "BZIP2"),
         ("test_brotli.csv.br", "BROTLI"),
         ("test_zstd.csv.zst", "ZSTD"),
-        ("test_deflate.csv.deflate", "DEFLATE"),
     ],
 )
 def test_put_source_compression_auto_detect_standard_types(cursor, filename, compression_type):
@@ -51,27 +51,36 @@ def test_put_source_compression_auto_detect_standard_types(cursor, filename, com
         assert row[PUT_ROW_STATUS_IDX] == "UPLOADED"
 
 
-def test_put_source_compression_auto_detect_raw_deflate(cursor):
-    stage_name = create_temporary_stage(cursor, "PYTEST_STAGE_AUTO_DETECT_RAW_DEFLATE")
-    filename = "test_raw_deflate.csv.raw_deflate"
+def test_put_source_compression_auto_detect_deflate(cursor):
+    stage_name = create_temporary_stage(cursor, "PYTEST_STAGE_AUTO_DETECT_DEFLATE")
+    filename = "test_deflate.csv.deflate"
+    content = b"1,2,3\n"
 
-    # Create a temporary file with .raw_deflate extension
-    # Since raw deflate data does not have any headers, we rely on extension for compression type detection
+    # Create a temporary file and compress it
     with tempfile.TemporaryDirectory() as tmp:
         tmpdir = Path(tmp)
-        path = write_binary_file(tmpdir, filename, b"rawdeflatedata")
+        comp_bytes = compress_bytes(content, "DEFLATE")
+        path = write_binary_file(tmpdir, filename, comp_bytes)
 
-        # Upload the raw deflate file to the stage with AUTO_DETECT
+        # Upload the compressed file to the stage with AUTO_DETECT
         cursor.execute(
             f"PUT 'file://{as_file_uri(path)}' @{stage_name} SOURCE_COMPRESSION=AUTO_DETECT"
         )
 
-        # Verify that the file was uploaded, compression type was detected correctly and the file was not compressed again
-        row = cursor.fetchone()
+    row = cursor.fetchone()
+
+    if OLD_DRIVER_ONLY("BC#2: DEFLATE compression type option is now correctly auto-detected"):
+        assert row[PUT_ROW_SOURCE_IDX] == filename
+        assert row[PUT_ROW_TARGET_IDX] == filename + ".gz"
+        assert row[PUT_ROW_SOURCE_COMPRESSION_IDX] == "NONE"
+        assert row[PUT_ROW_TARGET_COMPRESSION_IDX] == "GZIP"
+        assert row[PUT_ROW_STATUS_IDX] == "UPLOADED"
+
+    if NEW_DRIVER_ONLY("BC#2: DEFLATE compression type option is now correctly auto-detected"):
         assert row[PUT_ROW_SOURCE_IDX] == filename
         assert row[PUT_ROW_TARGET_IDX] == filename
-        assert row[PUT_ROW_SOURCE_COMPRESSION_IDX] == "RAW_DEFLATE"
-        assert row[PUT_ROW_TARGET_COMPRESSION_IDX] == "RAW_DEFLATE"
+        assert row[PUT_ROW_SOURCE_COMPRESSION_IDX] == "DEFLATE"
+        assert row[PUT_ROW_TARGET_COMPRESSION_IDX] == "DEFLATE"
         assert row[PUT_ROW_STATUS_IDX] == "UPLOADED"
 
 
@@ -125,8 +134,7 @@ def test_put_source_compression_auto_detect_none_with_auto_compress(cursor):
     "filename,compression_type",
     [
         ("test_gzip.csv", "GZIP"),
-        ("test_bzip2.csv", "BZ2"),
-        ("test_brotli.csv", "BROTLI"),
+        ("test_bzip2.csv", "BZIP2"),
         ("test_zstd.csv", "ZSTD"),
         ("test_deflate.csv", "DEFLATE"),
     ],
@@ -152,6 +160,36 @@ def test_put_source_compression_explicit_standard_types(cursor, filename, compre
         assert row[PUT_ROW_SOURCE_COMPRESSION_IDX] == compression_type
         assert row[PUT_ROW_TARGET_COMPRESSION_IDX] == compression_type
         assert row[PUT_ROW_STATUS_IDX] == "UPLOADED"
+
+
+def test_put_source_compression_explicit_brotli(cursor):
+    stage_name = create_temporary_stage(cursor, "PYTEST_STAGE_EXPLICIT_BROTLI")
+    filename = "test_explicit_brotli"
+
+    # Create a temporary file without the .brotli extension
+    with tempfile.TemporaryDirectory() as tmp:
+        tmpdir = Path(tmp)
+        path = write_binary_file(tmpdir, filename, b"brotli")
+
+        # Upload the brotli file to the stage with the specified compression type
+        if OLD_DRIVER_ONLY("BC#3: BROTLI compression type option is now supported"):
+            # Old driver should reject unsupported SOURCE_COMPRESSION
+            with pytest.raises(Exception):
+                cursor.execute(
+                    f"PUT 'file://{as_file_uri(path)}' @{stage_name} SOURCE_COMPRESSION=BROTLI"
+                )
+
+        if NEW_DRIVER_ONLY("BC#3: BROTLI compression type option is now supported"):
+            cursor.execute(
+                f"PUT 'file://{as_file_uri(path)}' @{stage_name} SOURCE_COMPRESSION=BROTLI"
+            )
+            # Verify that the file was uploaded, compression type was detected correctly and the file was not compressed again
+            row = cursor.fetchone()
+            assert row[PUT_ROW_SOURCE_IDX] == filename
+            assert row[PUT_ROW_TARGET_IDX] == filename
+            assert row[PUT_ROW_SOURCE_COMPRESSION_IDX] == "BROTLI"
+            assert row[PUT_ROW_TARGET_COMPRESSION_IDX] == "BROTLI"
+            assert row[PUT_ROW_STATUS_IDX] == "UPLOADED"
 
 
 def test_put_source_compression_explicit_raw_deflate(cursor):
