@@ -4,7 +4,7 @@ use crate::config::rest_parameters::{LoginParameters, QueryParameters};
 use crate::config::settings::Setting;
 use crate::driver::{Connection, Database, Statement};
 use crate::handle_manager::{Handle, HandleManager};
-use crate::rest::snowflake::{RestError, snowflake_query};
+use crate::rest::snowflake::{RestError, snowflake_query_with_client};
 use crate::thrift_apis::ThriftApi;
 use snafu;
 use snafu::{Location, Report, ResultExt, location};
@@ -276,17 +276,31 @@ fn connection_init(
     let handle = conn_handle.into();
     match CONN_HANDLE_MANAGER.get_obj(handle) {
         Some(conn_ptr) => {
-            // Create a blocking runtime for the login process
             let rt = tokio::runtime::Runtime::new().context(FailedToCreateRuntimeSnafu)?;
-            // .map_err(|e| internal_error(format!("Failed to create runtime: {e}")))?;
 
-            let login_parameters =
-                LoginParameters::from_settings(&conn_ptr.lock().unwrap().settings)
-                    .context(ConfigurationSnafu)?;
+            let (login_parameters, http_client) = {
+                let mut conn = conn_ptr.lock().unwrap();
+                let tls_cfg = conn.build_tls_config_from_settings();
+                let client = crate::tls::create_tls_client_with_config(tls_cfg).map_err(|e| {
+                    ApiError::InvalidArgument {
+                        argument: format!("Invalid TLS config: {:?}", e),
+                        location: location!(),
+                    }
+                })?;
+                conn.set_http_client(client.clone());
+                (
+                    LoginParameters::from_settings(&conn.settings).context(ConfigurationSnafu)?,
+                    client,
+                )
+            };
 
             let login_result = rt
                 .block_on(async {
-                    crate::rest::snowflake::snowflake_login(&login_parameters).await
+                    crate::rest::snowflake::snowflake_login_with_client(
+                        &http_client,
+                        &login_parameters,
+                    )
+                    .await
                 })
                 .context(FailedToLoginSnafu)?;
 
@@ -468,7 +482,8 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1Server {
 
     #[instrument(name = "DatabaseDriverV1::connection_new", skip(self))]
     fn handle_connection_new(&self) -> thrift::Result<ConnectionHandle> {
-        let handle = CONN_HANDLE_MANAGER.add_handle(Mutex::new(Connection::new()));
+        let handle = CONN_HANDLE_MANAGER
+            .add_handle(Mutex::new(Connection::new(&Mutex::new(Database::new()))));
         Ok(ConnectionHandle::from(handle))
     }
 
@@ -743,7 +758,13 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1Server {
         };
 
         let response = rt
-            .block_on(snowflake_query(
+            .block_on(snowflake_query_with_client(
+                &{
+                    let conn = stmt.conn.lock().unwrap();
+                    conn.http_client
+                        .clone()
+                        .unwrap_or_else(reqwest::Client::new)
+                },
                 query_parameters,
                 session_token,
                 query,
@@ -779,6 +800,38 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1Server {
         _partition_descriptor: Vec<u8>,
     ) -> thrift::Result<i64> {
         todo!()
+    }
+
+    #[instrument(name = "DatabaseDriverV1::connection_set_tls_config", skip(self))]
+    fn handle_connection_set_tls_config(
+        &self,
+        conn_handle: ConnectionHandle,
+        tls_config: Box<crate::thrift_gen::database_driver_v1::TlsConfig>,
+    ) -> thrift::Result<()> {
+        let handle = conn_handle.into();
+        match CONN_HANDLE_MANAGER.get_obj(handle) {
+            Some(conn_ptr) => {
+                let mut conn = conn_ptr.lock().unwrap();
+                if let Some(path) = tls_config.custom_root_store_path.clone() {
+                    conn.settings
+                        .insert("custom_root_store_path".to_string(), Setting::String(path));
+                }
+                if let Some(v) = tls_config.verify_hostname {
+                    conn.settings.insert(
+                        "verify_hostname".to_string(),
+                        Setting::String(v.to_string()),
+                    );
+                }
+                if let Some(v) = tls_config.verify_certificates {
+                    conn.settings.insert(
+                        "verify_certificates".to_string(),
+                        Setting::String(v.to_string()),
+                    );
+                }
+                Ok(())
+            }
+            None => Err(Self::invalid_argument("Connection handle not found")),
+        }
     }
 }
 
@@ -972,5 +1025,33 @@ mod tests {
             .connection_set_option_double(conn.clone(), "timeout_seconds".to_string(), 30.5.into())
             .unwrap();
         client.connection_release(conn).unwrap();
+    }
+
+    #[test]
+    fn test_connection_set_tls_config_and_init() {
+        setup_logging();
+        let mut client = create_client::<DatabaseDriverV1>();
+
+        let db = client.database_new().unwrap();
+        let conn = client.connection_new().unwrap();
+
+        // Provide a minimal TLS config; keep verification enabled and no custom roots.
+        let tls = crate::thrift_gen::database_driver_v1::TlsConfig::new(
+            None::<String>,
+            Some(true),
+            Some(true),
+        );
+
+        client
+            .connection_set_tls_config(conn.clone(), Box::new(tls))
+            .expect("connection_set_tls_config ok");
+
+        // Should be able to initialize (perform login) with the configured client
+        client
+            .connection_init(conn.clone(), db.clone())
+            .expect("connection_init ok");
+
+        client.connection_release(conn).unwrap();
+        client.database_release(db).unwrap();
     }
 }

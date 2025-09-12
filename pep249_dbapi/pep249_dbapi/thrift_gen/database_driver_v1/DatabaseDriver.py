@@ -112,6 +112,18 @@ class Iface(object):
         """
         pass
 
+    def connectionSetTlsConfig(self, conn_handle, tls_config):
+        """
+        Set TLS configuration for a connection.
+        Only minimal fields are supported in this iteration.
+
+        Parameters:
+         - conn_handle
+         - tls_config
+
+        """
+        pass
+
     def connectionSetOptionString(self, conn_handle, key, value):
         """
         Set a string-valued option for a connection.
@@ -756,6 +768,43 @@ class Client(Iface):
         if result.e is not None:
             raise result.e
         raise TApplicationException(TApplicationException.MISSING_RESULT, "connectionNew failed: unknown result")
+
+    def connectionSetTlsConfig(self, conn_handle, tls_config):
+        """
+        Set TLS configuration for a connection.
+        Only minimal fields are supported in this iteration.
+
+        Parameters:
+         - conn_handle
+         - tls_config
+
+        """
+        self.send_connectionSetTlsConfig(conn_handle, tls_config)
+        self.recv_connectionSetTlsConfig()
+
+    def send_connectionSetTlsConfig(self, conn_handle, tls_config):
+        self._oprot.writeMessageBegin('connectionSetTlsConfig', TMessageType.CALL, self._seqid)
+        args = connectionSetTlsConfig_args()
+        args.conn_handle = conn_handle
+        args.tls_config = tls_config
+        args.write(self._oprot)
+        self._oprot.writeMessageEnd()
+        self._oprot.trans.flush()
+
+    def recv_connectionSetTlsConfig(self):
+        iprot = self._iprot
+        (fname, mtype, rseqid) = iprot.readMessageBegin()
+        if mtype == TMessageType.EXCEPTION:
+            x = TApplicationException()
+            x.read(iprot)
+            iprot.readMessageEnd()
+            raise x
+        result = connectionSetTlsConfig_result()
+        result.read(iprot)
+        iprot.readMessageEnd()
+        if result.e is not None:
+            raise result.e
+        return
 
     def connectionSetOptionString(self, conn_handle, key, value):
         """
@@ -1812,6 +1861,7 @@ class Processor(Iface, TProcessor):
         self._processMap["databaseInit"] = Processor.process_databaseInit
         self._processMap["databaseRelease"] = Processor.process_databaseRelease
         self._processMap["connectionNew"] = Processor.process_connectionNew
+        self._processMap["connectionSetTlsConfig"] = Processor.process_connectionSetTlsConfig
         self._processMap["connectionSetOptionString"] = Processor.process_connectionSetOptionString
         self._processMap["connectionSetOptionBytes"] = Processor.process_connectionSetOptionBytes
         self._processMap["connectionSetOptionInt"] = Processor.process_connectionSetOptionInt
@@ -2065,6 +2115,32 @@ class Processor(Iface, TProcessor):
             msg_type = TMessageType.EXCEPTION
             result = TApplicationException(TApplicationException.INTERNAL_ERROR, 'Internal error')
         oprot.writeMessageBegin("connectionNew", msg_type, seqid)
+        result.write(oprot)
+        oprot.writeMessageEnd()
+        oprot.trans.flush()
+
+    def process_connectionSetTlsConfig(self, seqid, iprot, oprot):
+        args = connectionSetTlsConfig_args()
+        args.read(iprot)
+        iprot.readMessageEnd()
+        result = connectionSetTlsConfig_result()
+        try:
+            self._handler.connectionSetTlsConfig(args.conn_handle, args.tls_config)
+            msg_type = TMessageType.REPLY
+        except TTransport.TTransportException:
+            raise
+        except DriverException as e:
+            msg_type = TMessageType.REPLY
+            result.e = e
+        except TApplicationException as ex:
+            logging.exception('TApplication exception in handler')
+            msg_type = TMessageType.EXCEPTION
+            result = ex
+        except Exception:
+            logging.exception('Unexpected exception in handler')
+            msg_type = TMessageType.EXCEPTION
+            result = TApplicationException(TApplicationException.INTERNAL_ERROR, 'Internal error')
+        oprot.writeMessageBegin("connectionSetTlsConfig", msg_type, seqid)
         result.write(oprot)
         oprot.writeMessageEnd()
         oprot.trans.flush()
@@ -3882,6 +3958,148 @@ class connectionNew_result(object):
 all_structs.append(connectionNew_result)
 connectionNew_result.thrift_spec = (
     (0, TType.STRUCT, 'success', [ConnectionHandle, None], None, ),  # 0
+    (1, TType.STRUCT, 'e', [DriverException, None], None, ),  # 1
+)
+
+
+class connectionSetTlsConfig_args(object):
+    """
+    Attributes:
+     - conn_handle
+     - tls_config
+
+    """
+    thrift_spec = None
+
+
+    def __init__(self, conn_handle = None, tls_config = None,):
+        self.conn_handle = conn_handle
+        self.tls_config = tls_config
+
+    def read(self, iprot):
+        if iprot._fast_decode is not None and isinstance(iprot.trans, TTransport.CReadableTransport) and self.thrift_spec is not None:
+            iprot._fast_decode(self, iprot, [self.__class__, self.thrift_spec])
+            return
+        iprot.readStructBegin()
+        while True:
+            (fname, ftype, fid) = iprot.readFieldBegin()
+            if ftype == TType.STOP:
+                break
+            if fid == 1:
+                if ftype == TType.STRUCT:
+                    self.conn_handle = ConnectionHandle()
+                    self.conn_handle.read(iprot)
+                else:
+                    iprot.skip(ftype)
+            elif fid == 2:
+                if ftype == TType.STRUCT:
+                    self.tls_config = TlsConfig()
+                    self.tls_config.read(iprot)
+                else:
+                    iprot.skip(ftype)
+            else:
+                iprot.skip(ftype)
+            iprot.readFieldEnd()
+        iprot.readStructEnd()
+
+    def write(self, oprot):
+        self.validate()
+        if oprot._fast_encode is not None and self.thrift_spec is not None:
+            oprot.trans.write(oprot._fast_encode(self, [self.__class__, self.thrift_spec]))
+            return
+        oprot.writeStructBegin('connectionSetTlsConfig_args')
+        if self.conn_handle is not None:
+            oprot.writeFieldBegin('conn_handle', TType.STRUCT, 1)
+            self.conn_handle.write(oprot)
+            oprot.writeFieldEnd()
+        if self.tls_config is not None:
+            oprot.writeFieldBegin('tls_config', TType.STRUCT, 2)
+            self.tls_config.write(oprot)
+            oprot.writeFieldEnd()
+        oprot.writeFieldStop()
+        oprot.writeStructEnd()
+
+    def validate(self):
+        return
+
+    def __repr__(self):
+        L = ['%s=%r' % (key, value)
+             for key, value in self.__dict__.items()]
+        return '%s(%s)' % (self.__class__.__name__, ', '.join(L))
+
+    def __eq__(self, other):
+        return isinstance(other, self.__class__) and self.__dict__ == other.__dict__
+
+    def __ne__(self, other):
+        return not (self == other)
+all_structs.append(connectionSetTlsConfig_args)
+connectionSetTlsConfig_args.thrift_spec = (
+    None,  # 0
+    (1, TType.STRUCT, 'conn_handle', [ConnectionHandle, None], None, ),  # 1
+    (2, TType.STRUCT, 'tls_config', [TlsConfig, None], None, ),  # 2
+)
+
+
+class connectionSetTlsConfig_result(object):
+    """
+    Attributes:
+     - e
+
+    """
+    thrift_spec = None
+
+
+    def __init__(self, e = None,):
+        self.e = e
+
+    def read(self, iprot):
+        if iprot._fast_decode is not None and isinstance(iprot.trans, TTransport.CReadableTransport) and self.thrift_spec is not None:
+            iprot._fast_decode(self, iprot, [self.__class__, self.thrift_spec])
+            return
+        iprot.readStructBegin()
+        while True:
+            (fname, ftype, fid) = iprot.readFieldBegin()
+            if ftype == TType.STOP:
+                break
+            if fid == 1:
+                if ftype == TType.STRUCT:
+                    self.e = DriverException.read(iprot)
+                else:
+                    iprot.skip(ftype)
+            else:
+                iprot.skip(ftype)
+            iprot.readFieldEnd()
+        iprot.readStructEnd()
+
+    def write(self, oprot):
+        self.validate()
+        if oprot._fast_encode is not None and self.thrift_spec is not None:
+            oprot.trans.write(oprot._fast_encode(self, [self.__class__, self.thrift_spec]))
+            return
+        oprot.writeStructBegin('connectionSetTlsConfig_result')
+        if self.e is not None:
+            oprot.writeFieldBegin('e', TType.STRUCT, 1)
+            self.e.write(oprot)
+            oprot.writeFieldEnd()
+        oprot.writeFieldStop()
+        oprot.writeStructEnd()
+
+    def validate(self):
+        return
+
+    def __repr__(self):
+        L = ['%s=%r' % (key, value)
+             for key, value in self.__dict__.items()]
+        return '%s(%s)' % (self.__class__.__name__, ', '.join(L))
+
+    def __eq__(self, other):
+        return isinstance(other, self.__class__) and self.__dict__ == other.__dict__
+
+    def __ne__(self, other):
+        return not (self == other)
+all_structs.append(connectionSetTlsConfig_result)
+connectionSetTlsConfig_result.thrift_spec = (
+    None,  # 0
     (1, TType.STRUCT, 'e', [DriverException, None], None, ),  # 1
 )
 

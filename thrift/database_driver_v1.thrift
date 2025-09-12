@@ -170,6 +170,12 @@ service DatabaseDriver {
   ConnectionHandle connectionNew() throws (1: DriverException e);
 
   /**
+   * Set TLS configuration for a connection.
+   * Only minimal fields are supported in this iteration.
+   */
+  void connectionSetTlsConfig(1: ConnectionHandle conn_handle, 2: TlsConfig tls_config) throws (1: DriverException e);
+
+  /**
    * Set a string-valued option for a connection.
    * Corresponds to AdbcConnectionSetOption.
    */
@@ -348,4 +354,16 @@ service DatabaseDriver {
    * @return An Arrow IPC stream for the requested partition.
    */
   i64 statementReadPartition(1: StatementHandle stmt_handle, 2: binary partition_descriptor) throws (1: DriverException e);
+}
+
+/** Minimal TLS configuration passed from clients to the core. */
+struct TlsConfig {
+  /** Optional path to a PEM bundle of root CAs to trust. */
+  1: optional string custom_root_store_path
+
+  /** Whether to verify hostnames; defaults to true if unset. */
+  2: optional bool verify_hostname
+
+  /** Whether to verify certificates; defaults to true if unset. */
+  3: optional bool verify_certificates
 }

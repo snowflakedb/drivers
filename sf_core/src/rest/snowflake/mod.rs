@@ -61,8 +61,11 @@ pub fn auth_request_data(login_parameters: &LoginParameters) -> Result<AuthReque
     Ok(data)
 }
 
-#[tracing::instrument(skip(login_parameters), fields(account_name, login_name))]
-pub async fn snowflake_login(login_parameters: &LoginParameters) -> Result<String, RestError> {
+#[tracing::instrument(skip(login_parameters, client), fields(account_name, login_name))]
+pub async fn snowflake_login_with_client(
+    client: &reqwest::Client,
+    login_parameters: &LoginParameters,
+) -> Result<String, RestError> {
     tracing::info!("Starting Snowflake login process");
 
     // Record key fields in the span
@@ -90,9 +93,8 @@ pub async fn snowflake_login(login_parameters: &LoginParameters) -> Result<Strin
         serde_json::to_string_pretty(&login_request).unwrap()
     );
 
-    // Create HTTP client
-    tracing::debug!("Creating HTTP client and preparing login request");
-    let client = reqwest::Client::new();
+    // Use provided HTTP client
+    tracing::debug!("Preparing login request with provided HTTP client");
     let login_url = format!("{}/session/v1/login-request", login_parameters.server_url);
 
     tracing::info!(login_url = %login_url, "Making Snowflake login request");
@@ -165,8 +167,18 @@ pub async fn snowflake_login(login_parameters: &LoginParameters) -> Result<Strin
     }
 }
 
-#[tracing::instrument(skip(query_parameters, session_token, parameter_bindings), fields(sql))]
-pub async fn snowflake_query(
+#[tracing::instrument(skip(login_parameters), fields(account_name, login_name))]
+pub async fn snowflake_login(login_parameters: &LoginParameters) -> Result<String, RestError> {
+    let client = reqwest::Client::new();
+    snowflake_login_with_client(&client, login_parameters).await
+}
+
+#[tracing::instrument(
+    skip(client, query_parameters, session_token, parameter_bindings),
+    fields(sql)
+)]
+pub async fn snowflake_query_with_client(
+    client: &reqwest::Client,
     query_parameters: QueryParameters,
     session_token: String,
     sql: String,
@@ -174,7 +186,6 @@ pub async fn snowflake_query(
 ) -> Result<query_response::Response, RestError> {
     let server_url = query_parameters.server_url;
 
-    let client = reqwest::Client::new();
     let query_url = format!("{server_url}/queries/v1/query-request");
 
     let query_request = query_request::Request {
@@ -241,6 +252,24 @@ pub async fn snowflake_query(
     } else {
         Ok(query_response)
     }
+}
+
+#[tracing::instrument(skip(query_parameters, session_token, parameter_bindings), fields(sql))]
+pub async fn snowflake_query(
+    query_parameters: QueryParameters,
+    session_token: String,
+    sql: String,
+    parameter_bindings: Option<HashMap<String, query_request::BindParameter>>,
+) -> Result<query_response::Response, RestError> {
+    let client = reqwest::Client::new();
+    snowflake_query_with_client(
+        &client,
+        query_parameters,
+        session_token,
+        sql,
+        parameter_bindings,
+    )
+    .await
 }
 
 async fn read_response_json<T>(response: reqwest::Response) -> Result<T, SnowflakeResponseError>
