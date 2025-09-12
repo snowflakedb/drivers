@@ -20,7 +20,7 @@ pub struct CachedCrl {
     pub url: String,
 }
 
-/// Simple in-memory cache for CRLs
+/// Simple (interface) to Cache for CRLs
 #[derive(Debug)]
 pub struct CrlCache {
     config: CrlConfig,
@@ -309,7 +309,7 @@ impl CrlCache {
         hex::encode(digest)
     }
 
-    /// Public: get CRL bytes for URL. Fetch and put if missing. Disk is left to higher layers.
+    /// Public: get CRL bytes for URL. Fetch and put if missing.
     pub async fn get(&self, url: &str) -> Result<Vec<u8>, CrlError> {
         let span = tracing::span!(tracing::Level::DEBUG, "crl_get", url = url);
         let _enter = span.enter();
