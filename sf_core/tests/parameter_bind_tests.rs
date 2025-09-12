@@ -8,7 +8,6 @@ use arrow::datatypes::Int32Type;
 #[test]
 fn test_statement_bind() {
     setup_logging();
-    setup_logging();
     let mut client = SnowflakeTestClient::connect_with_default_auth();
     let stmt = client.new_statement();
     client
@@ -30,7 +29,6 @@ fn test_statement_bind() {
 
 #[test]
 fn test_statement_bind_multiple_params() {
-    setup_logging();
     setup_logging();
     let mut client = SnowflakeTestClient::connect_with_default_auth();
     let stmt = client.new_statement();

@@ -5,7 +5,6 @@ use std::fs;
 
 #[test]
 fn test_put_ls_wildcard_question_mark() {
-    setup_logging();
     let mut client = SnowflakeTestClient::connect_with_default_auth();
     let stage_name = "TEST_STAGE_PUT_WILDCARD_QUESTION_MARK";
     let base_name = "test_put_wildcard_question_mark";
@@ -70,7 +69,6 @@ fn test_put_ls_wildcard_question_mark() {
 
 #[test]
 fn test_put_ls_wildcard_star() {
-    setup_logging();
     let mut client = SnowflakeTestClient::connect_with_default_auth();
     let stage_name = "TEST_STAGE_PUT_WILDCARD_STAR";
     let base_name = "test_put_wildcard_star";
@@ -140,7 +138,6 @@ fn test_put_ls_wildcard_star() {
 
 #[test]
 fn test_put_get_regexp() {
-    setup_logging();
     let mut client = SnowflakeTestClient::connect_with_default_auth();
     let stage_name = "TEST_STAGE_PUT_GET_REGEXP";
     let base_name = "data";

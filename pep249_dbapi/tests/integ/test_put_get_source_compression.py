@@ -24,7 +24,7 @@ from ..connector_types import ConnectorType
     [
         ("test_gzip.csv.gz", "GZIP"),
         ("test_bzip2.csv.bz2", "BZ2"),
-        pytest.param("test_brotli.csv.br", "BROTLI", marks=pytest.mark.skip_reference),
+        ("test_brotli.csv.br", "BROTLI"),
         ("test_zstd.csv.zst", "ZSTD"),
     ],
 )
@@ -45,16 +45,15 @@ def test_put_source_compression_auto_detect_standard_types(cursor, filename, com
 
         # Verify that the file was uploaded, compression type was detected correctly
         row = cursor.fetchone()
-        # Accept both historical "BZ2" and canonical "BZIP2" labels
-        expected_comp_set = {"BZ2", "BZIP2"} if compression_type in ("BZ2", "BZIP2") else {compression_type}
+        expected_comp = compression_type
         assert row[PUT_ROW_SOURCE_IDX] == filename
         # Reference may append .gz for DEFLATE
         expected_target = (
             f"{filename}.gz" if (compression_type == "DEFLATE" and connector_type == ConnectorType.REFERENCE) else filename
         )
         assert row[PUT_ROW_TARGET_IDX] == expected_target
-        assert row[PUT_ROW_SOURCE_COMPRESSION_IDX] in expected_comp_set
-        assert row[PUT_ROW_TARGET_COMPRESSION_IDX] in expected_comp_set
+        assert row[PUT_ROW_SOURCE_COMPRESSION_IDX] == expected_comp
+        assert row[PUT_ROW_TARGET_COMPRESSION_IDX] == expected_comp
         assert row[PUT_ROW_STATUS_IDX] == "UPLOADED"
 
 
@@ -73,23 +72,6 @@ def test_put_source_compression_auto_detect_raw_deflate(cursor, connector_type):
         cursor.execute(
             f"PUT 'file://{as_file_uri(path)}' @{stage_name} SOURCE_COMPRESSION=AUTO_DETECT"
         )
-
-<<<<<<< HEAD
-    row = cursor.fetchone()
-
-    if OLD_DRIVER_ONLY("BC#2"):
-        assert row[PUT_ROW_SOURCE_IDX] == filename
-        assert row[PUT_ROW_TARGET_IDX] == filename + ".gz"
-        assert row[PUT_ROW_SOURCE_COMPRESSION_IDX] == "NONE"
-        assert row[PUT_ROW_TARGET_COMPRESSION_IDX] == "GZIP"
-        assert row[PUT_ROW_STATUS_IDX] == "UPLOADED"
-
-    if NEW_DRIVER_ONLY("BC#2"):
-        assert row[PUT_ROW_SOURCE_IDX] == filename
-        assert row[PUT_ROW_TARGET_IDX] == filename
-        assert row[PUT_ROW_SOURCE_COMPRESSION_IDX] == "DEFLATE"
-        assert row[PUT_ROW_TARGET_COMPRESSION_IDX] == "DEFLATE"
-=======
         # Verify that the file was uploaded, compression type was detected correctly
         row = cursor.fetchone()
         assert row[PUT_ROW_SOURCE_IDX] == filename
@@ -97,7 +79,6 @@ def test_put_source_compression_auto_detect_raw_deflate(cursor, connector_type):
         assert row[PUT_ROW_TARGET_IDX] == expected_target
         assert row[PUT_ROW_SOURCE_COMPRESSION_IDX] == "RAW_DEFLATE"
         assert row[PUT_ROW_TARGET_COMPRESSION_IDX] == "RAW_DEFLATE"
->>>>>>> cf849e5 (bz2 vs bzip2)
         assert row[PUT_ROW_STATUS_IDX] == "UPLOADED"
 
 
@@ -151,12 +132,8 @@ def test_put_source_compression_auto_detect_none_with_auto_compress(cursor):
     "filename,compression_type",
     [
         ("test_gzip.csv", "GZIP"),
-<<<<<<< HEAD
-        ("test_bzip2.csv", "BZIP2"),
-=======
         ("test_bzip2.csv", "BZ2"),
-        pytest.param("test_brotli.csv", "BROTLI", marks=pytest.mark.skip_reference),
->>>>>>> cf849e5 (bz2 vs bzip2)
+        ("test_brotli.csv", "BROTLI"),
         ("test_zstd.csv", "ZSTD"),
         ("test_deflate.csv", "DEFLATE"),
     ],
@@ -179,9 +156,9 @@ def test_put_source_compression_explicit_standard_types(cursor, filename, compre
         row = cursor.fetchone()
         assert row[PUT_ROW_SOURCE_IDX] == filename
         assert row[PUT_ROW_TARGET_IDX] == filename
-        expected_comp_set = {"BZ2", "BZIP2"} if compression_type in ("BZ2", "BZIP2") else {compression_type}
-        assert row[PUT_ROW_SOURCE_COMPRESSION_IDX] in expected_comp_set
-        assert row[PUT_ROW_TARGET_COMPRESSION_IDX] in expected_comp_set
+        expected_comp = compression_type
+        assert row[PUT_ROW_SOURCE_COMPRESSION_IDX] == expected_comp
+        assert row[PUT_ROW_TARGET_COMPRESSION_IDX] == expected_comp
         assert row[PUT_ROW_STATUS_IDX] == "UPLOADED"
 
 

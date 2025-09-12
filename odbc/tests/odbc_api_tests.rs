@@ -69,12 +69,13 @@
 //     assert_eq!(ret, sql::SqlReturn::SUCCESS);
 // }
 
-use sf_core::api_client::new_database_driver_v1_client;
+use sf_core::thrift_apis::DatabaseDriverV1;
+use sf_core::thrift_apis::client::create_client;
 use sf_core::thrift_gen::database_driver_v1::{CertRevocationCheckMode, TlsConfig};
 
 #[test]
 fn smoke_connection_set_tls_config() {
-    let mut client = new_database_driver_v1_client();
+    let mut client = create_client::<DatabaseDriverV1>();
     let db = client.database_new().expect("database_new ok");
     client.database_init(db).expect("database_init ok");
     let conn = client.connection_new().expect("connection_new ok");

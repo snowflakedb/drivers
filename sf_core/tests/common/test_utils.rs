@@ -88,7 +88,7 @@ impl SnowflakeTestClient {
     ) -> Self {
         setup_logging();
         let parameters = get_parameters();
-        let mut driver = new_database_driver_v1_client();
+        let mut driver = create_client::<DatabaseDriverV1>();
         let db_handle = driver.database_new().unwrap();
         driver.database_init(db_handle.clone()).unwrap();
 
@@ -270,46 +270,14 @@ impl SnowflakeTestClient {
         setup_logging();
         let mut client = Self::with_default_params();
 
-        // Prefer PAT from file if provided; otherwise fall back to password auth
-        if let Ok(pat_path) = std::env::var("SNOWFLAKE_TEST_PAT_TOKEN_FILE") {
-            if let Ok(token) = std::fs::read_to_string(pat_path) {
-                let token = token.trim().to_string();
-                client
-                    .driver
-                    .connection_set_option_string(
-                        client.conn_handle.clone(),
-                        "authenticator".to_string(),
-                        "PROGRAMMATIC_ACCESS_TOKEN".to_string(),
-                    )
-                    .unwrap();
-                client
-                    .driver
-                    .connection_set_option_string(
-                        client.conn_handle.clone(),
-                        "token".to_string(),
-                        token,
-                    )
-                    .unwrap();
-            } else {
-                client
-                    .driver
-                    .connection_set_option_string(
-                        client.conn_handle.clone(),
-                        "password".to_string(),
-                        client.parameters.password.clone().unwrap(),
-                    )
-                    .unwrap();
-            }
-        } else {
-            client
-                .driver
-                .connection_set_option_string(
-                    client.conn_handle.clone(),
-                    "password".to_string(),
-                    client.parameters.password.clone().unwrap(),
-                )
-                .unwrap();
-        }
+        client
+            .driver
+            .connection_set_option_string(
+                client.conn_handle.clone(),
+                "password".to_string(),
+                client.parameters.password.clone().unwrap(),
+            )
+            .unwrap();
 
         client
             .driver

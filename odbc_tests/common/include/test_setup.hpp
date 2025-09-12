@@ -105,21 +105,7 @@ inline std::string get_connection_string() {
   auto params = get_test_parameters("testconnection");
   std::stringstream ss;
   read_default_params(ss, params);
-  // PAT-aware: if SNOWFLAKE_TEST_PAT_TOKEN_FILE is set and readable, use PAT authenticator
-  const char* pat_path_env = std::getenv("SNOWFLAKE_TEST_PAT_TOKEN_FILE");
-  if (pat_path_env != nullptr) {
-    std::ifstream pat_file(pat_path_env);
-    if (pat_file.good()) {
-      std::string token;
-      std::getline(pat_file, token);
-      if (!token.empty()) {
-        ss << "AUTHENTICATOR=PROGRAMMATIC_ACCESS_TOKEN;";
-        ss << "TOKEN=" << token << ";";
-        return ss.str();
-      }
-    }
-  }
-  // Fallback to password-based authentication
+  // Password-based authentication only; PAT support removed
   add_param_required<std::string>(ss, params, "SNOWFLAKE_TEST_PASSWORD", "PWD");
   return ss.str();
 }

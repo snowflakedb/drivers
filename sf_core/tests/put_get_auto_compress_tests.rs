@@ -4,7 +4,6 @@ use std::fs;
 
 #[test]
 fn test_put_get_with_auto_compress_true() {
-    setup_logging();
     let mut client = SnowflakeTestClient::connect_with_default_auth();
     let stage_name = "TEST_STAGE_PUT_GET_COMPRESS_TRUE";
     let filename = "test_put_get_compress_true.csv";
@@ -56,7 +55,6 @@ fn test_put_get_with_auto_compress_true() {
 
 #[test]
 fn test_put_get_with_auto_compress_false() {
-    setup_logging();
     let mut client = SnowflakeTestClient::connect_with_default_auth();
     let stage_name = "TEST_STAGE_PUT_GET_COMPRESS_FALSE";
     let filename = "test_put_get_compress_false.csv";

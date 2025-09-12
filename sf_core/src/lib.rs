@@ -22,4 +22,3 @@ mod test_utils;
 pub mod thrift_apis;
 pub mod thrift_gen;
 pub mod tls;
-mod transport;
