@@ -22,7 +22,7 @@ from .utils_put_get import (
 )
 
 from ..connector_types import ConnectorType
-from ..utils import NEW_DRIVER_ONLY, OLD_DRIVER_ONLY, select_by_driver
+from ..utils import NEW_DRIVER_ONLY, OLD_DRIVER_ONLY
 
 
 def test_put_select(cursor):
