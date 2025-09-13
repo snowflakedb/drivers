@@ -30,7 +30,6 @@ impl CrlValidator {
         if !self.config.enabled {
             return Err(CrlError::Disabled);
         }
-        // Placeholder: fail-open behavior for now
         Ok(RevocationOutcome::Unknown)
     }
 }
