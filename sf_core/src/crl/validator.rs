@@ -1,60 +1,91 @@
-use super::config::{CertRevocationCheckMode, CrlConfig};
+use super::config::CrlConfig;
+use crate::crl::cache::CrlCache;
+use crate::crl::certificate_parser::is_short_lived_certificate;
+use crate::crl::error::CrlError;
+use std::sync::Arc;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RevocationOutcome {
-    NotRevoked,
-    Revoked,
-    Unknown,
-}
-
-#[derive(thiserror::Error, Debug)]
-pub enum CrlError {
-    #[error("CRL validation disabled")]
-    Disabled,
-}
-
+#[derive(Debug)]
 pub struct CrlValidator {
     pub config: CrlConfig,
+    cache: Arc<CrlCache>,
 }
 
 impl CrlValidator {
-    pub fn new(config: CrlConfig) -> Self {
-        Self { config }
+    pub fn new(config: CrlConfig) -> Result<Self, CrlError> {
+        let cache = CrlCache::global(config.clone()).clone();
+        Ok(Self { config, cache })
     }
 
-    pub fn check_certificate_revocation(
+    /// Validate provided certificate chains. Returns Ok(()) if at least one chain is unrevoked.
+    pub async fn validate_certificate_chains(
         &self,
-        _cert_der: &[u8],
-        _issuer_der: Option<&[u8]>,
-    ) -> Result<RevocationOutcome, CrlError> {
-        match self.config.check_mode {
-            CertRevocationCheckMode::Disabled => Err(CrlError::Disabled),
-            _ => Ok(RevocationOutcome::Unknown),
+        cert_chains: &[Vec<Vec<u8>>],
+    ) -> Result<(), CrlError> {
+        if cert_chains.is_empty() {
+            return Ok(());
         }
-    }
-}
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+        // Iterate chains; pass if any chain validates without revocations
+        for chain in cert_chains {
+            if self.validate_certificate_chain(chain).await? {
+                return Ok(());
+            }
+        }
 
-    #[test]
-    fn disabled_returns_error() {
-        let v = CrlValidator::new(CrlConfig {
-            check_mode: CertRevocationCheckMode::Disabled,
-            ..Default::default()
-        });
-        let res = v.check_certificate_revocation(&[], None);
-        assert!(matches!(res, Err(CrlError::Disabled)));
+        // No fully valid chain found
+        Err(CrlError::AllChainsRevoked {
+            location: snafu::Location::new(file!(), line!(), 0),
+        })
     }
 
-    #[test]
-    fn enabled_returns_unknown() {
-        let v = CrlValidator::new(CrlConfig {
-            check_mode: CertRevocationCheckMode::Enabled,
-            ..Default::default()
-        });
-        let res = v.check_certificate_revocation(&[], None).unwrap();
-        assert_eq!(res, RevocationOutcome::Unknown);
+    /// Returns true if chain is unrevoked and without errors; errors mark chain invalid
+    async fn validate_certificate_chain(&self, chain: &[Vec<u8>]) -> Result<bool, CrlError> {
+        if chain.is_empty() {
+            return Ok(true);
+        }
+        // Check all but root
+        let mut had_error = false;
+        for (idx, cert_der) in chain.iter().enumerate() {
+            if idx == chain.len() - 1 {
+                break;
+            }
+
+            // Skip short-lived
+            if matches!(is_short_lived_certificate(cert_der), Ok(true)) {
+                continue;
+            }
+
+            let issuer_der = chain.get(idx + 1).map(|v| v.as_slice());
+            match self.cache.check_revocation(cert_der, issuer_der).await {
+                Ok(outcome) => {
+                    use crate::tls::revocation::RevocationOutcome;
+                    match outcome {
+                        RevocationOutcome::Revoked { .. } => {
+                            // Chain is definitively revoked
+                            return Ok(false);
+                        }
+                        RevocationOutcome::NotDetermined => {
+                            // Missing CRL URL scenario
+                            if self.config.allow_certificates_without_crl_url {
+                                tracing::warn!(
+                                    target: "sf_core::crl",
+                                    "Certificate missing CRL distribution points; allowing due to config"
+                                );
+                            } else {
+                                had_error = true;
+                            }
+                        }
+                        RevocationOutcome::NotRevoked => {
+                            // proceed to next cert
+                        }
+                    }
+                }
+                Err(_) => {
+                    // Remember non-deterministic error for this chain
+                    had_error = true;
+                }
+            }
+        }
+        Ok(!had_error)
     }
 }

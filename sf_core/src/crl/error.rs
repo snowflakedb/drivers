@@ -1,6 +1,7 @@
 use snafu::{Location, Snafu};
 
 #[derive(Snafu, Debug)]
+#[snafu(visibility(pub))]
 pub enum CrlError {
     #[snafu(display("Failed to download CRL from URL: {url}"))]
     CrlDownload {
@@ -48,6 +49,11 @@ pub enum CrlError {
         #[snafu(implicit)]
         location: Location,
     },
+    #[snafu(display("All certificate chains are revoked"))]
+    AllChainsRevoked {
+        #[snafu(implicit)]
+        location: Location,
+    },
     #[snafu(display("Certificate has no CRL distribution points"))]
     NoCrlDistributionPoints {
         #[snafu(implicit)]
@@ -62,6 +68,18 @@ pub enum CrlError {
     },
     #[snafu(display("HTTP timeout while fetching CRL"))]
     HttpTimeout {
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Mutex poisoned: {message}"))]
+    MutexPoisoned {
+        message: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Failed to build HTTP client for CRL requests"))]
+    HttpClientBuild {
+        source: reqwest::Error,
         #[snafu(implicit)]
         location: Location,
     },

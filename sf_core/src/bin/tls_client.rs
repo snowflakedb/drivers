@@ -111,6 +111,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("Target URL: {}", url);
 
     let mut tls_config = TlsConfig {
+        crl_config: sf_core::crl::config::CrlConfig::default(),
         custom_root_store_path: matches.get_one::<String>("cert-store").map(PathBuf::from),
         verify_hostname: !matches.get_flag("no-verify-hostname"),
         verify_certificates: !matches.get_flag("no-verify-certs"),

@@ -1,7 +1,9 @@
+use crate::crl::config::CrlConfig;
 use std::path::PathBuf;
 
 #[derive(Debug, Clone)]
 pub struct TlsConfig {
+    pub crl_config: CrlConfig,
     pub custom_root_store_path: Option<PathBuf>,
     pub verify_hostname: bool,
     pub verify_certificates: bool,
@@ -10,6 +12,7 @@ pub struct TlsConfig {
 impl TlsConfig {
     pub fn insecure() -> Self {
         Self {
+            crl_config: CrlConfig::default(),
             custom_root_store_path: None,
             verify_hostname: false,
             verify_certificates: false,
@@ -40,6 +43,7 @@ impl TlsConfig {
 impl Default for TlsConfig {
     fn default() -> Self {
         Self {
+            crl_config: CrlConfig::default(),
             custom_root_store_path: None,
             verify_hostname: true,
             verify_certificates: true,

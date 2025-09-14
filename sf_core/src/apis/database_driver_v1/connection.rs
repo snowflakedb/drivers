@@ -13,9 +13,12 @@ pub fn connection_init(conn_handle: Handle, _db_handle: Handle) -> Result<(), Ap
             // Create a blocking runtime for the login process
             let rt = tokio::runtime::Runtime::new().context(RuntimeCreationSnafu)?;
 
-            let login_parameters =
-                LoginParameters::from_settings(&conn_ptr.lock().unwrap().settings)
-                    .context(ConfigurationSnafu)?;
+            let settings_guard = conn_ptr
+                .lock()
+                .map_err(|_| ConnectionLockingSnafu {}.build())?;
+            let login_parameters = LoginParameters::from_settings(&settings_guard.settings)
+                .context(ConfigurationSnafu)?;
+            drop(settings_guard);
 
             let login_result = rt
                 .block_on(async {
