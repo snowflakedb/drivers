@@ -31,14 +31,6 @@ class Connection:
         self.db_handle = self.db_api.databaseNew()
         self.db_api.databaseInit(self.db_handle)
         self.conn_handle = self.db_api.connectionNew()
-        # Apply TLS config if provided
-        tls_cfg = {}
-        if "custom_root_store_path" in kwargs:
-            tls_cfg["custom_root_store_path"] = kwargs["custom_root_store_path"]
-        if "verify_hostname" in kwargs:
-            tls_cfg["verify_hostname"] = bool(kwargs["verify_hostname"])  # noqa: FBT003
-        if "verify_certificates" in kwargs:
-            tls_cfg["verify_certificates"] = bool(kwargs["verify_certificates"])  # noqa: FBT003
         # TLS config is set via per-option APIs in the core now; no direct TLS config RPC
         for key, value in kwargs.items():
             if isinstance(value, int):
