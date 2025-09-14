@@ -1,5 +1,6 @@
 use crate::tls::config::TlsConfig;
 use reqwest::Client;
+use std::sync::Arc;
 
 #[derive(thiserror::Error, Debug)]
 pub enum TlsError {
@@ -38,11 +39,15 @@ pub fn create_tls_client_with_config(cfg: TlsConfig) -> Result<Client, TlsError>
     }
 
     let tls = rustls::ClientConfig::builder()
-        .with_root_certificates(std::sync::Arc::new(root_store))
+        .with_root_certificates(Arc::new(root_store))
         .with_no_client_auth();
 
-    Client::builder()
-        .use_preconfigured_tls(tls)
-        .build()
-        .map_err(TlsError::ClientBuild)
+    // Hostname verification control: rustls doesn't expose toggling directly.
+    // When disabled, allow invalid hostnames at reqwest layer.
+    let mut builder = Client::builder().use_preconfigured_tls(tls.clone());
+    if !cfg.verify_hostname {
+        builder = builder.danger_accept_invalid_hostnames(true);
+    }
+
+    builder.build().map_err(TlsError::ClientBuild)
 }

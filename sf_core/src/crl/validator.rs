@@ -1,4 +1,4 @@
-use super::config::CrlConfig;
+use super::config::{CertRevocationCheckMode, CrlConfig};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RevocationOutcome {
@@ -27,7 +27,7 @@ impl CrlValidator {
         _cert_der: &[u8],
         _issuer_der: Option<&[u8]>,
     ) -> Result<RevocationOutcome, CrlError> {
-        if !self.config.enabled {
+        if !self.config.enabled || matches!(self.config.mode, CertRevocationCheckMode::Disabled) {
             return Err(CrlError::Disabled);
         }
         Ok(RevocationOutcome::Unknown)
@@ -40,14 +40,22 @@ mod tests {
 
     #[test]
     fn disabled_returns_error() {
-        let v = CrlValidator::new(CrlConfig { enabled: false });
+        let v = CrlValidator::new(CrlConfig {
+            enabled: false,
+            mode: CertRevocationCheckMode::Disabled,
+            outcome_cache_capacity: 10_000,
+        });
         let res = v.check_certificate_revocation(&[], None);
         assert!(matches!(res, Err(CrlError::Disabled)));
     }
 
     #[test]
     fn enabled_returns_unknown() {
-        let v = CrlValidator::new(CrlConfig { enabled: true });
+        let v = CrlValidator::new(CrlConfig {
+            enabled: true,
+            mode: CertRevocationCheckMode::Advisory,
+            outcome_cache_capacity: 10_000,
+        });
         let res = v.check_certificate_revocation(&[], None).unwrap();
         assert_eq!(res, RevocationOutcome::Unknown);
     }
