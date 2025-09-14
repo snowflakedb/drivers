@@ -5,8 +5,13 @@ use std::path::PathBuf;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum CertRevocationCheckMode {
+    /// Default - disables CRL checking (TLS handshake still in place)
     Disabled,
+    /// Fails the connection if certificate is revoked or there is other revocation status check issue
     Enabled,
+    /// Fails the request for revoked certificate only. In case of any other problems
+    /// (like connection issues with CRL endpoints, CRL parsing errors etc) assumes
+    /// that the certificate is not revoked and allows to connect.
     Advisory,
 }
 
@@ -51,7 +56,6 @@ impl CrlConfig {
             p
         })
     }
-
     pub fn get_cache_dir(&self) -> Option<PathBuf> {
         self.cache_dir.clone().or_else(Self::default_cache_dir)
     }

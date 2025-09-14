@@ -318,4 +318,6 @@ impl CrlCache {
         guard.remove(url);
         Ok(())
     }
+
+    // keep only one definition of check_revocation; duplicate removed
 }

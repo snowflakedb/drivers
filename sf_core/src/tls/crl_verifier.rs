@@ -63,7 +63,6 @@ impl ServerCertVerifier for CrlServerCertVerifier {
             chain.push(i.as_ref().to_vec());
         }
         let chains = vec![chain];
-        // Use shared Tokio runtime to avoid per-handshake runtimes
         let res = shared_runtime().block_on(async {
             self.crl_validator
                 .validate_certificate_chains(&chains)
