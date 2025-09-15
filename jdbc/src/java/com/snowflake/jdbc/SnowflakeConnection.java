@@ -37,29 +37,69 @@ public class SnowflakeConnection implements Connection {
             this.databaseHandle = this.driverApi.databaseNew();
             this.driverApi.databaseInit(this.databaseHandle);
             this.connectionHandle = this.driverApi.connectionNew();
-            properties.forEach((key, value) -> {
+
+            // Apply options (including TLS/CRL) via per-option APIs
+            for (Map.Entry<Object, Object> entry : properties.entrySet()) {
+                Object key = entry.getKey();
+                Object value = entry.getValue();
                 if (!(key instanceof String)) {
-                    return;
+                    continue;
                 }
-
                 String keyStr = (String) key;
-                if (value instanceof String) {
-                    try {
-                        this.driverApi.connectionSetOptionString(this.connectionHandle, keyStr, (String)value);
-                    } catch (TException e) {
-                        throw new RuntimeException(e);
-                    }
-                }
 
-                if (value instanceof Integer) {
-                    try {
-                        this.driverApi.connectionSetOptionInt(this.connectionHandle, keyStr, (Integer)value);
+                try {
+                    // TLS/CRL normalized mappings
+                    if ("insecureMode".equalsIgnoreCase(keyStr) && value instanceof String) {
+                        boolean insecure = Boolean.parseBoolean((String) value);
+                        this.driverApi.connectionSetOptionString(this.connectionHandle, "verify_hostname", Boolean.toString(!insecure));
+                        this.driverApi.connectionSetOptionString(this.connectionHandle, "verify_certificates", Boolean.toString(!insecure));
+                        continue;
                     }
-                    catch (TException e) {
-                        throw new RuntimeException(e);
+                    if ("ocspFailOpen".equalsIgnoreCase(keyStr) && value instanceof String) {
+                        boolean failOpen = Boolean.parseBoolean((String) value);
+                        this.driverApi.connectionSetOptionString(this.connectionHandle, "crl_mode", failOpen ? "ADVISORY" : "ENABLED");
+                        continue;
                     }
+                    if ("cert_revocation_check_mode".equalsIgnoreCase(keyStr) && value instanceof String) {
+                        this.driverApi.connectionSetOptionString(this.connectionHandle, "crl_mode", ((String) value).toUpperCase());
+                        continue;
+                    }
+                    if ("custom_root_store_path".equalsIgnoreCase(keyStr) && value instanceof String) {
+                        this.driverApi.connectionSetOptionString(this.connectionHandle, "custom_root_store_path", (String) value);
+                        continue;
+                    }
+                    if ("verify_hostname".equalsIgnoreCase(keyStr) && value instanceof String) {
+                        this.driverApi.connectionSetOptionString(this.connectionHandle, "verify_hostname", (String) value);
+                        continue;
+                    }
+                    if ("verify_certificates".equalsIgnoreCase(keyStr) && value instanceof String) {
+                        this.driverApi.connectionSetOptionString(this.connectionHandle, "verify_certificates", (String) value);
+                        continue;
+                    }
+                    if ("crl_http_timeout".equalsIgnoreCase(keyStr) && value instanceof Integer) {
+                        this.driverApi.connectionSetOptionInt(this.connectionHandle, "crl_http_timeout", (Integer) value);
+                        continue;
+                    }
+                    if ("crl_connection_timeout".equalsIgnoreCase(keyStr) && value instanceof Integer) {
+                        this.driverApi.connectionSetOptionInt(this.connectionHandle, "crl_connection_timeout", (Integer) value);
+                        continue;
+                    }
+                    if ("crl_outcome_cache_capacity".equalsIgnoreCase(keyStr) && value instanceof Integer) {
+                        this.driverApi.connectionSetOptionInt(this.connectionHandle, "crl_outcome_cache_capacity", (Integer) value);
+                        continue;
+                    }
+
+                    // Generic options
+                    if (value instanceof Integer) {
+                        this.driverApi.connectionSetOptionInt(this.connectionHandle, keyStr, (Integer) value);
+                    } else if (value instanceof String) {
+                        this.driverApi.connectionSetOptionString(this.connectionHandle, keyStr, (String) value);
+                    }
+                } catch (TException e) {
+                    throw new RuntimeException(e);
                 }
-            });
+            }
+            
             this.driverApi.connectionInit(this.connectionHandle, this.databaseHandle);
         } catch (TException e) {
             System.out.println("Exception " + e.getMessage());

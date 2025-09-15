@@ -45,6 +45,8 @@ struct CrlMetrics {
     get_ms: Histogram<u64>,
     fetch_total: Counter<u64>,
     fetch_ms: Histogram<u64>,
+    #[allow(dead_code)]
+    fetch_error_total: Counter<u64>,
 }
 
 impl CrlMetrics {
@@ -54,6 +56,7 @@ impl CrlMetrics {
             get_ms: meter.u64_histogram("crl_get_ms").build(),
             fetch_total: meter.u64_counter("crl_fetch_total").build(),
             fetch_ms: meter.u64_histogram("crl_fetch_ms").build(),
+            fetch_error_total: meter.u64_counter("crl_fetch_error_total").build(),
         }
     }
 }
@@ -465,5 +468,16 @@ impl CrlCache {
         })?;
         guard.remove(url);
         Ok(())
+    }
+
+    // Reserved for future metrics-based backoff tracking
+    #[allow(dead_code)]
+    fn record_backoff_failure(&self, url: &str) {
+        let mut guard = self.backoff.lock().unwrap();
+        let entry = guard
+            .entry(url.to_string())
+            .or_insert((0, std::time::Instant::now()));
+        entry.0 = entry.0.saturating_add(1);
+        entry.1 = std::time::Instant::now();
     }
 }

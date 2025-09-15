@@ -246,7 +246,6 @@ service DatabaseDriver {
    */
   void connectionRollback(1: ConnectionHandle conn_handle) throws (1: DriverException e);
 
-
   // --------------------------------------------------------------------------
   //  Statement Operations
   // --------------------------------------------------------------------------

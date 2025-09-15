@@ -114,6 +114,37 @@ pub fn driver_connect(
                     },
                 )?;
             }
+            // Snowflake-style aliases for TLS
+            "INSECUREMODE" => {
+                let insecure = value.to_lowercase() == "true";
+                let verify_hostname = if insecure { "false" } else { "true" };
+                let verify_certificates = if insecure { "false" } else { "true" };
+                DatabaseDriverClient::connection_set_option_string(
+                    ConnectionSetOptionStringRequest {
+                        conn_handle: Some(conn_handle),
+                        key: "verify_hostname".to_owned(),
+                        value: verify_hostname.to_string(),
+                    },
+                )?;
+                DatabaseDriverClient::connection_set_option_string(
+                    ConnectionSetOptionStringRequest {
+                        conn_handle: Some(conn_handle),
+                        key: "verify_certificates".to_owned(),
+                        value: verify_certificates.to_string(),
+                    },
+                )?;
+            }
+            "OCSP_FAIL_OPEN" => {
+                let _fail_open = value.to_lowercase() == "true";
+                let mode = if _fail_open { "ADVISORY" } else { "ENABLED" };
+                DatabaseDriverClient::connection_set_option_string(
+                    ConnectionSetOptionStringRequest {
+                        conn_handle: Some(conn_handle),
+                        key: "crl_mode".to_owned(),
+                        value: mode.to_string(),
+                    },
+                )?;
+            }
             "WAREHOUSE" => {
                 DatabaseDriverClient::connection_set_option_string(
                     ConnectionSetOptionStringRequest {
@@ -195,7 +226,7 @@ pub fn driver_connect(
                     },
                 )?;
             }
-            "TLS_VERIFY_CERTIFICATES" => {
+            "TLS_VERIFY_CERTIFICATES" | "TLS_VERIFY_CERTS" => {
                 DatabaseDriverClient::connection_set_option_string(
                     ConnectionSetOptionStringRequest {
                         conn_handle: Some(conn_handle),
@@ -222,6 +253,36 @@ pub fn driver_connect(
                         value: value.to_uppercase(),
                     },
                 )?;
+            }
+            "CRL_HTTP_TIMEOUT" => {
+                let secs: i64 = value.parse().context(InvalidPortSnafu {
+                    port: value.clone(),
+                })?;
+                DatabaseDriverClient::connection_set_option_int(ConnectionSetOptionIntRequest {
+                    conn_handle: Some(conn_handle),
+                    key: "crl_http_timeout".to_owned(),
+                    value: secs,
+                })?;
+            }
+            "CRL_CONN_TIMEOUT" => {
+                let secs: i64 = value.parse().context(InvalidPortSnafu {
+                    port: value.clone(),
+                })?;
+                DatabaseDriverClient::connection_set_option_int(ConnectionSetOptionIntRequest {
+                    conn_handle: Some(conn_handle),
+                    key: "crl_connection_timeout".to_owned(),
+                    value: secs,
+                })?;
+            }
+            "CRL_OUTCOME_CACHE_CAPACITY" => {
+                let cap: i64 = value.parse().context(InvalidPortSnafu {
+                    port: value.clone(),
+                })?;
+                DatabaseDriverClient::connection_set_option_int(ConnectionSetOptionIntRequest {
+                    conn_handle: Some(conn_handle),
+                    key: "crl_outcome_cache_capacity".to_owned(),
+                    value: cap,
+                })?;
             }
             _ => {
                 tracing::warn!("driver_connect: unknown connection string key: {:?}", key);

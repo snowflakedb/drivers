@@ -18,6 +18,3 @@ pub trait ArrowDeserialize: Sized {
         Ok(result_vec)
     }
 }
-
-// Re-export the derive macro
-pub use arrow_deserialize_macro::ArrowDeserialize;

@@ -1,7 +1,7 @@
 pub mod common;
-use crate::common::test_utils::shared_test_data_dir;
-use common::arrow_result_helper::ArrowResultHelper;
+use crate::common::arrow_result_helper::ArrowResultHelper;
 use common::put_get_common::*;
+use common::test_utils::{SnowflakeTestClient, shared_test_data_dir};
 use std::path::PathBuf;
 
 #[test]

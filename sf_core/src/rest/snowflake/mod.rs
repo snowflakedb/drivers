@@ -8,12 +8,21 @@ use crate::config::rest_parameters::{LoginParameters, QueryParameters};
 use crate::rest::snowflake::auth::{
     AuthRequest, AuthRequestClientEnvironment, AuthRequestData, AuthResponse,
 };
+use crate::tls::TlsError;
+use crate::tls::create_tls_client_with_config;
 use reqwest;
 use serde_json;
 use snafu::{Location, ResultExt, Snafu};
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tracing;
+
+fn tls_error_to_rest_error(error: TlsError) -> RestError {
+    RestError::CrlValidation {
+        source: Box::new(error),
+        location: snafu::Location::new(file!(), line!(), 0),
+    }
+}
 
 pub fn user_agent(client_info: &ClientInfo) -> String {
     format!(
@@ -61,11 +70,8 @@ pub fn auth_request_data(login_parameters: &LoginParameters) -> Result<AuthReque
     Ok(data)
 }
 
-#[tracing::instrument(skip(login_parameters, client), fields(account_name, login_name))]
-pub async fn snowflake_login_with_client(
-    client: &reqwest::Client,
-    login_parameters: &LoginParameters,
-) -> Result<String, RestError> {
+#[tracing::instrument(skip(login_parameters), fields(account_name, login_name))]
+pub async fn snowflake_login(login_parameters: &LoginParameters) -> Result<String, RestError> {
     tracing::info!("Starting Snowflake login process");
 
     // Record key fields in the span
@@ -93,8 +99,13 @@ pub async fn snowflake_login_with_client(
         serde_json::to_string_pretty(&login_request).unwrap()
     );
 
-    // Use provided HTTP client
-    tracing::debug!("Preparing login request with provided HTTP client");
+    // Create HTTP client using unified TlsConfig
+    tracing::debug!(
+        crl_mode = ?login_parameters.client_info.tls_config.crl_config.check_mode,
+        "Creating HTTP client and preparing login request"
+    );
+    let client = create_tls_client_with_config(login_parameters.client_info.tls_config.clone())
+        .map_err(tls_error_to_rest_error)?;
     let login_url = format!("{}/session/v1/login-request", login_parameters.server_url);
 
     tracing::info!(login_url = %login_url, "Making Snowflake login request");
@@ -147,7 +158,8 @@ pub async fn snowflake_login_with_client(
         tracing::error!(message = %message, "Snowflake login failed");
         let code = auth_response
             ._code
-            .map(|c| c.parse::<i32>().unwrap_or(-1))
+            .as_deref()
+            .and_then(|c| c.parse::<i32>().ok())
             .unwrap_or(-1);
         LoginSnafu { message, code }.fail()?;
     }
@@ -167,18 +179,8 @@ pub async fn snowflake_login_with_client(
     }
 }
 
-#[tracing::instrument(skip(login_parameters), fields(account_name, login_name))]
-pub async fn snowflake_login(login_parameters: &LoginParameters) -> Result<String, RestError> {
-    let client = reqwest::Client::new();
-    snowflake_login_with_client(&client, login_parameters).await
-}
-
-#[tracing::instrument(
-    skip(client, query_parameters, session_token, parameter_bindings),
-    fields(sql)
-)]
-pub async fn snowflake_query_with_client(
-    client: &reqwest::Client,
+#[tracing::instrument(skip(query_parameters, session_token, parameter_bindings), fields(sql))]
+pub async fn snowflake_query(
     query_parameters: QueryParameters,
     session_token: String,
     sql: String,
@@ -186,6 +188,8 @@ pub async fn snowflake_query_with_client(
 ) -> Result<query_response::Response, RestError> {
     let server_url = query_parameters.server_url;
 
+    let client = create_tls_client_with_config(query_parameters.client_info.tls_config.clone())
+        .map_err(tls_error_to_rest_error)?;
     let query_url = format!("{server_url}/queries/v1/query-request");
 
     let query_request = query_request::Request {
@@ -254,24 +258,6 @@ pub async fn snowflake_query_with_client(
     }
 }
 
-#[tracing::instrument(skip(query_parameters, session_token, parameter_bindings), fields(sql))]
-pub async fn snowflake_query(
-    query_parameters: QueryParameters,
-    session_token: String,
-    sql: String,
-    parameter_bindings: Option<HashMap<String, query_request::BindParameter>>,
-) -> Result<query_response::Response, RestError> {
-    let client = reqwest::Client::new();
-    snowflake_query_with_client(
-        &client,
-        query_parameters,
-        session_token,
-        sql,
-        parameter_bindings,
-    )
-    .await
-}
-
 async fn read_response_json<T>(response: reqwest::Response) -> Result<T, SnowflakeResponseError>
 where
     T: serde::de::DeserializeOwned,
@@ -323,7 +309,12 @@ pub enum RestError {
         #[snafu(implicit)]
         location: Location,
     },
-
+    #[snafu(display("TLS client creation failed"))]
+    CrlValidation {
+        source: Box<TlsError>,
+        #[snafu(implicit)]
+        location: Location,
+    },
     #[snafu(display("Login error: {message}, code: {code}"))]
     LoginError {
         message: String,

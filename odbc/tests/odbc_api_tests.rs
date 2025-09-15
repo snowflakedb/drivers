@@ -68,3 +68,39 @@
 //     let ret = unsafe { SQLFreeHandle(sql::HandleType::Env, env_handle) };
 //     assert_eq!(ret, sql::SqlReturn::SUCCESS);
 // }
+
+use sf_core::thrift_apis::DatabaseDriverV1;
+use sf_core::thrift_apis::client::create_client;
+
+#[test]
+fn smoke_connection_set_tls_config() {
+    let mut client = create_client::<DatabaseDriverV1>();
+    let db = client.database_new().expect("database_new ok");
+    client.database_init(db.clone()).expect("database_init ok");
+    let conn = client.connection_new().expect("connection_new ok");
+
+    // Option-based TLS/CRL configuration
+    client
+        .connection_set_option_string(
+            conn.clone(),
+            "verify_hostname".to_string(),
+            "true".to_string(),
+        )
+        .expect("set verify_hostname");
+    client
+        .connection_set_option_string(
+            conn.clone(),
+            "verify_certificates".to_string(),
+            "true".to_string(),
+        )
+        .expect("set verify_certificates");
+    client
+        .connection_set_option_string(conn.clone(), "crl_mode".to_string(), "ENABLED".to_string())
+        .expect("set crl_mode");
+    client
+        .connection_set_option_int(conn.clone(), "crl_http_timeout".to_string(), 30)
+        .expect("set crl_http_timeout");
+    client
+        .connection_set_option_int(conn.clone(), "crl_connection_timeout".to_string(), 10)
+        .expect("set crl_connection_timeout");
+}

@@ -107,7 +107,8 @@ impl BreakingChangesProcessor {
                 .into_iter()
                 .filter_map(|e| e.ok())
                 .filter(|e| {
-                    e.path().is_file() && e.path().to_string_lossy().ends_with(&ext[1..]) // Remove * from *.cpp
+                    e.path().is_file() && e.path().to_string_lossy().ends_with(&ext[1..])
+                    // Remove * from *.cpp
                 })
             {
                 test_files.push(entry.path().to_path_buf());
