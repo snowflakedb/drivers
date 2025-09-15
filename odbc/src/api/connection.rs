@@ -140,33 +140,30 @@ pub fn driver_connect(
                     .map_err(OdbcError::from_thrift_error)?;
             }
             "TLS_CUSTOM_ROOT_STORE_PATH" => {
-                let tls = sf_core::thrift_gen::database_driver_v1::TlsConfig {
-                    custom_root_store_path: Some(value),
-                    verify_hostname: None,
-                    verify_certificates: None,
-                };
                 client
-                    .connection_set_tls_config(conn_handle.clone(), Box::new(tls))
+                    .connection_set_option_string(
+                        conn_handle.clone(),
+                        "custom_root_store_path".to_owned(),
+                        value,
+                    )
                     .map_err(OdbcError::from_thrift_error)?;
             }
             "TLS_VERIFY_HOSTNAME" => {
-                let tls = sf_core::thrift_gen::database_driver_v1::TlsConfig {
-                    custom_root_store_path: None,
-                    verify_hostname: Some(value.to_lowercase() == "true"),
-                    verify_certificates: None,
-                };
                 client
-                    .connection_set_tls_config(conn_handle.clone(), Box::new(tls))
+                    .connection_set_option_string(
+                        conn_handle.clone(),
+                        "verify_hostname".to_owned(),
+                        value,
+                    )
                     .map_err(OdbcError::from_thrift_error)?;
             }
             "TLS_VERIFY_CERTIFICATES" => {
-                let tls = sf_core::thrift_gen::database_driver_v1::TlsConfig {
-                    custom_root_store_path: None,
-                    verify_hostname: None,
-                    verify_certificates: Some(value.to_lowercase() == "true"),
-                };
                 client
-                    .connection_set_tls_config(conn_handle.clone(), Box::new(tls))
+                    .connection_set_option_string(
+                        conn_handle.clone(),
+                        "verify_certificates".to_owned(),
+                        value,
+                    )
                     .map_err(OdbcError::from_thrift_error)?;
             }
             _ => {

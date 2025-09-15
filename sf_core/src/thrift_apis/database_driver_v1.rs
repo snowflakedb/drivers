@@ -280,7 +280,7 @@ fn connection_init(
 
             let (login_parameters, http_client) = {
                 let mut conn = conn_ptr.lock().unwrap();
-                let tls_cfg = conn.build_tls_config_from_settings();
+                let tls_cfg = crate::tls::TlsConfig::from_settings(&conn.settings);
                 let client = crate::tls::create_tls_client_with_config(tls_cfg).map_err(|e| {
                     ApiError::InvalidArgument {
                         argument: format!("Invalid TLS config: {:?}", e),
@@ -808,30 +808,12 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1Server {
         conn_handle: ConnectionHandle,
         tls_config: Box<crate::thrift_gen::database_driver_v1::TlsConfig>,
     ) -> thrift::Result<()> {
-        let handle = conn_handle.into();
-        match CONN_HANDLE_MANAGER.get_obj(handle) {
-            Some(conn_ptr) => {
-                let mut conn = conn_ptr.lock().unwrap();
-                if let Some(path) = tls_config.custom_root_store_path.clone() {
-                    conn.settings
-                        .insert("custom_root_store_path".to_string(), Setting::String(path));
-                }
-                if let Some(v) = tls_config.verify_hostname {
-                    conn.settings.insert(
-                        "verify_hostname".to_string(),
-                        Setting::String(v.to_string()),
-                    );
-                }
-                if let Some(v) = tls_config.verify_certificates {
-                    conn.settings.insert(
-                        "verify_certificates".to_string(),
-                        Setting::String(v.to_string()),
-                    );
-                }
-                Ok(())
-            }
-            None => Err(Self::invalid_argument("Connection handle not found")),
-        }
+        // Prefer using connection_set_option_* APIs instead of this method.
+        let _ = conn_handle;
+        let _ = tls_config;
+        Err(Self::invalid_argument(
+            "connection_set_tls_config is deprecated; use connection_set_option_* for TLS settings",
+        ))
     }
 }
 
@@ -1036,15 +1018,21 @@ mod tests {
         let conn = client.connection_new().unwrap();
 
         // Provide a minimal TLS config; keep verification enabled and no custom roots.
-        let tls = crate::thrift_gen::database_driver_v1::TlsConfig::new(
-            None::<String>,
-            Some(true),
-            Some(true),
-        );
-
+        // Use connection_set_option_* instead of connection_set_tls_config
         client
-            .connection_set_tls_config(conn.clone(), Box::new(tls))
-            .expect("connection_set_tls_config ok");
+            .connection_set_option_string(
+                conn.clone(),
+                "verify_hostname".to_string(),
+                "true".to_string(),
+            )
+            .unwrap();
+        client
+            .connection_set_option_string(
+                conn.clone(),
+                "verify_certificates".to_string(),
+                "true".to_string(),
+            )
+            .unwrap();
 
         // Should be able to initialize (perform login) with the configured client
         client

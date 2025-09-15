@@ -20,24 +20,4 @@ impl Connection {
     pub fn set_http_client(&mut self, client: reqwest::Client) {
         self.http_client = Some(client);
     }
-
-    pub fn build_tls_config_from_settings(&self) -> crate::tls::TlsConfig {
-        let mut cfg = crate::tls::TlsConfig::default();
-        if let Some(crate::config::settings::Setting::String(path)) =
-            self.settings.get("custom_root_store_path")
-        {
-            cfg.custom_root_store_path = Some(std::path::PathBuf::from(path));
-        }
-        if let Some(crate::config::settings::Setting::String(v)) =
-            self.settings.get("verify_hostname")
-        {
-            cfg.verify_hostname = v.to_lowercase() == "true";
-        }
-        if let Some(crate::config::settings::Setting::String(v)) =
-            self.settings.get("verify_certificates")
-        {
-            cfg.verify_certificates = v.to_lowercase() == "true";
-        }
-        cfg
-    }
 }

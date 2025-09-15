@@ -22,8 +22,8 @@ pub fn create_tls_client_with_config(cfg: TlsConfig) -> Result<Client, TlsError>
             .map_err(TlsError::ClientBuild);
     }
 
-    // Install rustls provider (idempotent)
-    let _ = rustls::crypto::ring::default_provider().install_default();
+    // Install aws-lc-rs provider (idempotent)
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
 
     let mut root_store = rustls::RootCertStore::empty();
     if let Some(pem_path) = cfg.custom_root_store_path.as_ref() {
