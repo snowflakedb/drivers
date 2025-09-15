@@ -1,3 +1,4 @@
+// TLS configuration that includes CRL settings and other TLS options
 use crate::crl::config::CrlConfig;
 use std::path::PathBuf;
 
@@ -8,6 +9,8 @@ pub struct TlsConfig {
     pub verify_hostname: bool,
     pub verify_certificates: bool,
 }
+
+// Default impl below (single impl)
 
 impl TlsConfig {
     pub fn insecure() -> Self {
