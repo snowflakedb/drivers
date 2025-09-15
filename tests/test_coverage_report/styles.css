@@ -91,31 +91,89 @@ tr:nth-child(even) {
     padding: 12px 0;
     background-color: #e2e8f0;
     border-left: 6px solid #4a5568;
-    padding-left: 16px;
+    padding-left: 40px;
     margin-left: -12px;
     margin-right: -12px;
     text-transform: uppercase;
     letter-spacing: 0.5px;
-    text-align: center;
+    text-align: left;
+    cursor: pointer;
+    position: relative;
+    user-select: none;
+    transition: background-color 0.2s ease;
+}
+
+.folder-name:hover {
+    background-color: #d1d5db;
+}
+
+.folder-name::before {
+    content: "▼";
+    position: absolute;
+    left: 16px;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 0.8em;
+    color: #4a5568;
+    transition: transform 0.2s ease;
+}
+
+.folder-name.collapsed::before {
+    transform: translateY(-50%) rotate(-90deg);
 }
 .feature-name {
     font-weight: bold;
-    font-size: 1.1em;
-    color: #2c3e50;
-    padding: 8px 0;
-    background-color: #f8f9fa;
-    border-left: 4px solid #007bff;
-    padding-left: 20px;  /* Increased to show indentation under folder */
-    margin-left: -12px;
-    margin-right: -12px;
+    font-size: 1.15em;
+    color: #1a202c;
+    padding: 12px 0;
+    padding-left: 48px;  /* Increased to accommodate expand icon */
+    position: relative;
+    cursor: pointer;
+    user-select: none;
+    transition: all 0.2s ease;
 }
+
+/* Feature row styling - applies to entire row */
+tr.feature-row {
+    background: linear-gradient(135deg, #e3f2fd 0%, #f8f9fa 100%);
+    border-top: 1px solid #e0e0e0;
+    border-bottom: 1px solid #e0e0e0;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+}
+
+tr.feature-row td:first-child {
+    border-left: 6px solid #2196f3;
+    margin-left: -12px;
+    padding-left: 6px;
+}
+
+tr.feature-row:hover {
+    background: linear-gradient(135deg, #bbdefb 0%, #e3f2fd 100%);
+}
+
+.feature-name::before {
+    content: "▼";
+    position: absolute;
+    left: 24px;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 0.7em;
+    color: #2196f3;
+    transition: transform 0.2s ease;
+}
+
+.feature-name.collapsed::before {
+    transform: translateY(-50%) rotate(-90deg);
+}
+
 .feature-name a {
     color: #2c3e50;
     text-decoration: none;
     cursor: pointer;
 }
+
 .feature-name a:hover {
-    color: #007bff;
+    color: #1976d2;
     text-decoration: underline;
 }
 .test-name {
@@ -151,6 +209,111 @@ tr:nth-child(even) {
     padding: 8px 0;
     text-align: center;
 }
+
+/* Collapsible content styles */
+.category-content {
+    transition: max-height 0.3s ease-out, opacity 0.2s ease-out;
+    overflow: hidden;
+    max-height: 1000px;
+    opacity: 1;
+}
+
+.category-content.collapsed {
+    max-height: 0;
+    opacity: 0;
+    transition: max-height 0.3s ease-in, opacity 0.2s ease-in;
+}
+
+.feature-content {
+    transition: max-height 0.3s ease-out, opacity 0.2s ease-out;
+    overflow: hidden;
+    max-height: 500px;
+    opacity: 1;
+}
+
+.feature-content.collapsed {
+    max-height: 0;
+    opacity: 0;
+    transition: max-height 0.3s ease-in, opacity 0.2s ease-in;
+}
+
+/* Expand/Collapse All Controls */
+.expand-collapse-controls {
+    margin: 20px 0;
+    text-align: right;
+    padding: 10px 0;
+    border-bottom: 1px solid #e0e0e0;
+}
+
+.expand-collapse-btn {
+    background: #f8f9fa;
+    border: 1px solid #dee2e6;
+    padding: 8px 16px;
+    margin-left: 8px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.9em;
+    color: #495057;
+    transition: all 0.2s ease;
+    user-select: none;
+}
+
+.expand-collapse-btn:hover {
+    background: #e9ecef;
+    border-color: #adb5bd;
+    color: #212529;
+}
+
+.expand-collapse-btn:active {
+    background: #dee2e6;
+    transform: translateY(1px);
+}
+
+/* Status Legend */
+.status-legend {
+    background: #f8f9fa;
+    border: 1px solid #dee2e6;
+    border-radius: 6px;
+    padding: 12px 16px;
+    margin: 15px 0;
+    font-size: 0.9em;
+    color: #495057;
+}
+
+.status-legend h4 {
+    margin: 0 0 8px 0;
+    font-size: 0.95em;
+    color: #343a40;
+    font-weight: 600;
+}
+
+.legend-items {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    align-items: center;
+}
+
+.legend-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.85em;
+}
+
+.legend-symbol {
+    font-weight: bold;
+    font-size: 1.1em;
+    min-width: 20px;
+    text-align: center;
+}
+
+.legend-symbol.tick { color: #28a745; }
+.legend-symbol.cross { color: #dc3545; }
+.legend-symbol.todo { color: #ffc107; }
+.legend-symbol.na { color: #6c757d; }
+.legend-symbol.bc { color: #28a745; }
+.legend-symbol.bc sup { color: #DAA520; font-weight: bold; }
 .test-row {
     border-bottom: 1px solid #e9ecef;
 }

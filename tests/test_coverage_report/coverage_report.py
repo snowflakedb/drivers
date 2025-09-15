@@ -667,6 +667,91 @@ class CoverageReportGenerator:
                             firstTabContent.classList.add('active');
                         }}
                     }});
+                    
+                    // Expand/Collapse functionality
+                    function toggleCategory(categoryId) {{
+                        const categoryHeader = document.querySelector(`[onclick*="${{categoryId}}"]`);
+                        const categoryRows = document.querySelectorAll(`[data-category="${{categoryId}}"]`);
+                        
+                        if (categoryHeader.classList.contains('collapsed')) {{
+                            // Expand
+                            categoryHeader.classList.remove('collapsed');
+                            categoryRows.forEach(row => {{
+                                row.style.display = '';
+                                row.classList.remove('collapsed');
+                            }});
+                        }} else {{
+                            // Collapse
+                            categoryHeader.classList.add('collapsed');
+                            categoryRows.forEach(row => {{
+                                row.style.display = 'none';
+                                row.classList.add('collapsed');
+                            }});
+                        }}
+                    }}
+                    
+                    function toggleFeature(featureId) {{
+                        const featureHeader = document.querySelector(`[onclick*="${{featureId}}"]`);
+                        const featureRows = document.querySelectorAll(`[data-feature="${{featureId}}"]`);
+                        
+                        if (featureHeader.classList.contains('collapsed')) {{
+                            // Expand
+                            featureHeader.classList.remove('collapsed');
+                            featureRows.forEach(row => {{
+                                row.style.display = '';
+                                row.classList.remove('collapsed');
+                            }});
+                        }} else {{
+                            // Collapse
+                            featureHeader.classList.add('collapsed');
+                            featureRows.forEach(row => {{
+                                row.style.display = 'none';
+                                row.classList.add('collapsed');
+                            }});
+                        }}
+                    }}
+                    
+                    function expandAll() {{
+                        // Expand all categories
+                        const categoryHeaders = document.querySelectorAll('.folder-name');
+                        categoryHeaders.forEach(header => {{
+                            header.classList.remove('collapsed');
+                        }});
+                        
+                        // Expand all features
+                        const featureHeaders = document.querySelectorAll('.feature-name');
+                        featureHeaders.forEach(header => {{
+                            header.classList.remove('collapsed');
+                        }});
+                        
+                        // Show all rows
+                        const allCollapsibleRows = document.querySelectorAll('[data-category], [data-feature]');
+                        allCollapsibleRows.forEach(row => {{
+                            row.style.display = '';
+                            row.classList.remove('collapsed');
+                        }});
+                    }}
+                    
+                    function collapseAll() {{
+                        // Collapse all categories
+                        const categoryHeaders = document.querySelectorAll('.folder-name');
+                        categoryHeaders.forEach(header => {{
+                            header.classList.add('collapsed');
+                        }});
+                        
+                        // Collapse all features
+                        const featureHeaders = document.querySelectorAll('.feature-name');
+                        featureHeaders.forEach(header => {{
+                            header.classList.add('collapsed');
+                        }});
+                        
+                        // Hide all rows
+                        const allCollapsibleRows = document.querySelectorAll('[data-category], [data-feature]');
+                        allCollapsibleRows.forEach(row => {{
+                            row.style.display = 'none';
+                            row.classList.add('collapsed');
+                        }});
+                    }}
                 </script>
             </head>
             <body>
@@ -704,8 +789,12 @@ class CoverageReportGenerator:
             # Folder header row - span across all columns
             folder_display = folder.replace('_', ' ').title()
             colspan = len(languages) + 1  # +1 for the feature column
-            folder_cell = f'<td colspan="{colspan}"><div class="folder-name">{folder_display}</div></td>'
+            folder_id = f"category-{folder.lower().replace('_', '-')}"
+            folder_cell = f'<td colspan="{colspan}"><div class="folder-name" onclick="toggleCategory(\'{folder_id}\')">{folder_display}</div></td>'
             rows.append(f'<tr>{folder_cell}</tr>')
+            
+            # Start category content wrapper
+            category_rows = []
             
             for feature_name, feature_data in folder_features.items():
                 formatted_name = self.format_feature_name(feature_name, feature_data['path'])
@@ -715,8 +804,8 @@ class CoverageReportGenerator:
                 # Generate unique ID for this feature (same as in detailed breakdown)
                 feature_id = f"feature-{feature_name.replace('_', '-').replace(' ', '-').lower()}"
                 
-                # Feature header row (indented under folder) with link to detailed breakdown
-                feature_cells = [f'<td><div class="feature-name"><a href="#" onclick="showTab(\'details-tab\'); expandToFeature(\'{feature_id}\'); setTimeout(() => document.getElementById(\'{feature_id}\').scrollIntoView({{behavior: \'smooth\'}}), 100); return false;">{formatted_name}</a></div></td>']
+                # Feature header row with collapsible functionality
+                feature_cells = [f'<td><div class="feature-name" onclick="toggleFeature(\'{feature_id}\')">{formatted_name}</div></td>']
                 
                 # Add status cells for each language at feature level
                 for lang in languages:
@@ -779,9 +868,10 @@ class CoverageReportGenerator:
                         # Fallback to not applicable
                         feature_cells.append('<td><div class="test-status"><span class="status-na">-</span></div></td>')
                 
-                rows.append(f'<tr>{"".join(feature_cells)}</tr>')
+                category_rows.append(f'<tr class="feature-row">{"".join(feature_cells)}</tr>')
                 
-                # Individual test rows
+                # Individual test rows - collect in feature content
+                feature_test_rows = []
                 for i, scenario_info in enumerate(scenarios_with_annotations if scenarios_with_annotations else [{'name': s, 'breaking_change_info': None, 'expected_drivers': [], 'tags': []} for s in scenarios]):
                     scenario = scenario_info['name'] if isinstance(scenario_info, dict) else scenario_info
                     breaking_change_info = scenario_info.get('breaking_change_info') if isinstance(scenario_info, dict) else None
@@ -942,12 +1032,48 @@ class CoverageReportGenerator:
                                     # Not applicable for this driver
                                     status_cells.append('<td><div class="test-status"><span class="status-na">-</span></div></td>')
                     
-                    rows.append(f'<tr class="{row_class}">{test_cell}{"".join(status_cells)}</tr>')
+                    category_rows.append(f'<tr class="{row_class} feature-content" data-feature="{feature_id}">{test_cell}{"".join(status_cells)}</tr>')
+            
+            # Add all category rows with proper data attributes
+            for row in category_rows:
+                if 'feature-row' in row:
+                    rows.append(row.replace('<tr class="feature-row">', f'<tr class="feature-row" data-category="{folder_id}">'))
+                else:
+                    rows.append(row.replace('<tr class="', f'<tr class="').replace('">', f'" data-category="{folder_id}">'))
         
         rows_html = '\n'.join(f'                    {row}' for row in rows)
         
         return dedent(f"""
             <h2>📊 Coverage Overview</h2>
+            <div class="expand-collapse-controls">
+                <span class="expand-collapse-btn" onclick="expandAll()">📖 Expand All</span>
+                <span class="expand-collapse-btn" onclick="collapseAll()">📕 Collapse All</span>
+            </div>
+            <div class="status-legend">
+                <h4>📋 Statuses</h4>
+                <div class="legend-items">
+                    <div class="legend-item">
+                        <span class="legend-symbol tick">✓</span>
+                        <span>Implemented</span>
+                    </div>
+                    <div class="legend-item">
+                        <span class="legend-symbol cross">✗</span>
+                        <span>Test format errors</span>
+                    </div>
+                    <div class="legend-item">
+                        <span class="legend-symbol todo">TODO</span>
+                        <span>To be implemented</span>
+                    </div>
+                    <div class="legend-item">
+                        <span class="legend-symbol na">-</span>
+                        <span>Not Applicable</span>
+                    </div>
+                    <div class="legend-item">
+                        <span class="legend-symbol bc">✓<sup>1,2</sup></span>
+                        <span>Breaking Change</span>
+                    </div>
+                </div>
+            </div>
             <table>
                 <thead>
                     <tr>{"".join(header_cells)}</tr>
