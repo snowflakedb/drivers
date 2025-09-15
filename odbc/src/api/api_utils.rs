@@ -21,9 +21,15 @@ pub fn string_to_cstr(
     buffer: *mut sql::Char,
     buffer_length: sql::Len,
 ) -> OdbcResult<()> {
+    if buffer.is_null() || buffer_length <= 0 {
+        return Ok(());
+    }
     unsafe {
-        let length = min(string.len(), buffer_length as usize);
+        let max_len = (buffer_length - 1) as usize; // reserve space for NUL terminator
+        let length = min(string.len(), max_len);
         std::ptr::copy_nonoverlapping(string.as_ptr() as *const sql::Char, buffer, length);
+        // NUL terminate
+        *buffer.add(length) = 0;
     }
     Ok(())
 }

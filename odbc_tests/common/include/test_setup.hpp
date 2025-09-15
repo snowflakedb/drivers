@@ -10,7 +10,22 @@
 #include <catch2/catch_test_macros.hpp>
 
 inline std::string get_driver_path() {
-  // DRIVER_PATH from environment variable
+  // Prefer a driver name if provided/installed via ODBCINSTINI, otherwise fall back to path
+  const char* driver_name_env_value = std::getenv("DRIVER_NAME");
+  if (driver_name_env_value != nullptr && driver_name_env_value[0] != '\0') {
+    std::string driver_name = std::string(driver_name_env_value);
+    INFO("Driver name: " << driver_name);
+    return driver_name;
+  }
+
+  const char* odbcinstini_env_value = std::getenv("ODBCINSTINI");
+  if (odbcinstini_env_value != nullptr && odbcinstini_env_value[0] != '\0') {
+    // We expect an entry named [SnowflakeUD] in the provided odbcinst.ini
+    INFO("Using driver name 'SnowflakeUD' from ODBCINSTINI=" << odbcinstini_env_value);
+    return std::string("SnowflakeUD");
+  }
+
+  // Fallback: DRIVER_PATH from environment variable
   const char* driver_path_env_value = std::getenv("DRIVER_PATH");
   REQUIRE(driver_path_env_value != nullptr);
   std::string driver_path = std::string(driver_path_env_value);

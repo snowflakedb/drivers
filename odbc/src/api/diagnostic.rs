@@ -266,16 +266,20 @@ pub unsafe fn get_diag_rec(
         .records
         .get((rec_number - 1) as usize)
         .unwrap();
-    let length: sql::Len = 5;
+    let length: sql::Len = 6; // 5 chars + NUL
     unsafe {
-        api_utils::string_to_cstr(record.sql_state.as_str(), sql_state, length)?;
+        // Copy only first 5 chars of SQLSTATE and NUL terminate
+        let state = &record.sql_state.as_str()[..5.min(record.sql_state.as_str().len())];
+        api_utils::string_to_cstr(state, sql_state, length)?;
         api_utils::string_to_cstr(
             &record.message_text,
             message_text,
             buffer_length as sql::Len,
         )?;
         *native_error_ptr = record.native_error;
-        *text_length_ptr = record.message_text.len() as sql::SmallInt;
+        let max_msg_len = (buffer_length - 1).max(0) as usize;
+        let written = std::cmp::min(record.message_text.len(), max_msg_len);
+        *text_length_ptr = written as sql::SmallInt;
     }
     Ok(())
 }
