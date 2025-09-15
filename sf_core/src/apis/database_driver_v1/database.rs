@@ -1,47 +1,40 @@
-use std::sync::Mutex;
-
-use super::Handle;
-use super::Setting;
-use super::error::*;
+use super::error::ApiError;
 use super::global_state::DB_HANDLE_MANAGER;
+use super::{Handle, Setting};
+use std::sync::Mutex;
 
 pub fn database_new() -> Handle {
     DB_HANDLE_MANAGER.add_handle(Mutex::new(Database::new()))
 }
 
+#[allow(clippy::result_large_err)]
 pub fn database_set_option(db_handle: Handle, key: String, value: Setting) -> Result<(), ApiError> {
-    let handle = db_handle;
-    match DB_HANDLE_MANAGER.get_obj(handle) {
+    match DB_HANDLE_MANAGER.get_obj(db_handle) {
         Some(db_ptr) => {
-            let mut db = db_ptr.lock().map_err(|_| DatabaseLockingSnafu {}.build())?;
+            let mut db = db_ptr.lock().unwrap();
             db.settings.insert(key, value);
             Ok(())
         }
-        None => InvalidArgumentSnafu {
+        None => Err(ApiError::InvalidArgument {
             argument: "Database handle not found".to_string(),
-        }
-        .fail(),
+            location: snafu::location!(),
+        }),
     }
 }
 
-pub fn database_init(db_handle: Handle) -> Result<(), ApiError> {
-    let handle = db_handle;
-    match DB_HANDLE_MANAGER.get_obj(handle) {
-        Some(_db_ptr) => Ok(()),
-        None => InvalidArgumentSnafu {
-            argument: "Database handle not found".to_string(),
-        }
-        .fail(),
-    }
+#[allow(clippy::result_large_err)]
+pub fn database_init(_db_handle: Handle) -> Result<(), ApiError> {
+    Ok(())
 }
 
+#[allow(clippy::result_large_err)]
 pub fn database_release(db_handle: Handle) -> Result<(), ApiError> {
     match DB_HANDLE_MANAGER.delete_handle(db_handle) {
         true => Ok(()),
-        false => InvalidArgumentSnafu {
+        false => Err(ApiError::InvalidArgument {
             argument: "Failed to release database handle".to_string(),
-        }
-        .fail(),
+            location: snafu::location!(),
+        }),
     }
 }
 

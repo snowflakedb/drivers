@@ -98,3 +98,14 @@ impl CrlValidator {
         Ok(!had_error)
     }
 }
+
+#[cfg(test)]
+impl CrlValidator {
+    pub(crate) async fn fetch_crl_with_cache(&self, url: &str) -> Result<Vec<u8>, CrlError> {
+        self.cache.get(url).await
+    }
+
+    pub(crate) fn write_crl_atomic(&self, _path: &std::path::Path, _data: &[u8]) {
+        // test-only helper; noop in this branch
+    }
+}
