@@ -2,11 +2,9 @@ use super::super::common::test_utils::*;
 
 #[test]
 fn should_authenticate_using_private_file_with_password() {
-    //Given Authentication is set to JWT
+    //Given Authentication is set to JWT and private file with password is provided
     let mut client = SnowflakeTestClient::with_default_params();
     set_auth_to_jwt(&mut client);
-
-    //And Private file with password is provided
     let _private_key_file = set_private_key_file(&mut client);
     set_private_key_password(&mut client);
 
@@ -14,8 +12,7 @@ fn should_authenticate_using_private_file_with_password() {
     let result = client.connect();
 
     //Then Login is successful and simple query can be executed
-    result.unwrap();
-    client.verify_simple_query();
+    client.verify_simple_query(result);
 }
 
 #[test]
@@ -28,42 +25,44 @@ fn should_fail_jwt_authentication_when_no_private_file_provided() {
     let result = client.connect();
 
     //Then There is error returned
-    assert!(result.is_err());
+    client.assert_missing_parameter_error(result);
+}
+
+#[test]
+fn should_fail_jwt_authentication_when_invalid_private_key_provided() {
+    //Given Authentication is set to JWT and invalid private key file is provided
+    let mut client = SnowflakeTestClient::with_default_params();
+    set_auth_to_jwt(&mut client);
+    let _invalid_private_key_file = set_invalid_private_key_file(&mut client);
+
+    //When Trying to Connect
+    let result = client.connect();
+
+    //Then There is error returned
+    client.assert_login_error(result);
 }
 
 fn set_auth_to_jwt(client: &mut SnowflakeTestClient) {
-    client
-        .driver
-        .connection_set_option_string(
-            client.conn_handle.clone(),
-            "authenticator".to_string(),
-            "SNOWFLAKE_JWT".to_string(),
-        )
-        .unwrap();
+    client.set_connection_option("authenticator", "SNOWFLAKE_JWT");
 }
 
 fn set_private_key_file(client: &mut SnowflakeTestClient) -> PrivateKeyFile {
     let private_key_file = get_private_key_file(&client.parameters);
-    client
-        .driver
-        .connection_set_option_string(
-            client.conn_handle.clone(),
-            "private_key_file".to_string(),
-            private_key_file.path.clone(),
-        )
-        .unwrap();
+    client.set_connection_option("private_key_file", &private_key_file.path);
     private_key_file
 }
 
+fn set_invalid_private_key_file(client: &mut SnowflakeTestClient) -> PrivateKeyFile {
+    let invalid_private_key_file = get_invalid_private_key_file();
+    client.set_connection_option("private_key_file", &invalid_private_key_file.path);
+    invalid_private_key_file
+}
+
 fn set_private_key_password(client: &mut SnowflakeTestClient) {
-    client
-        .driver
-        .connection_set_option_string(
-            client.conn_handle.clone(),
-            "private_key_password".to_string(),
-            client.parameters.private_key_password.clone().unwrap(),
-        )
-        .unwrap();
+    client.set_connection_option(
+        "private_key_password",
+        &client.parameters.private_key_password.clone().unwrap(),
+    );
 }
 
 struct PrivateKeyFile {
@@ -76,13 +75,29 @@ impl Drop for PrivateKeyFile {
     }
 }
 
-fn get_private_key_file(parameters: &Parameters) -> PrivateKeyFile {
-    let private_key_contents = parameters.private_key_contents.clone().unwrap();
-    let private_key_contents = private_key_contents.join("\n");
+fn create_private_key_file(key_lines: Vec<String>, file_prefix: &str) -> PrivateKeyFile {
+    let key_content = key_lines.join("\n") + "\n";
     let suffix = format!("{:x}", rand::random::<u32>());
-    let private_key_path = format!("rsa_key_{suffix}.p8");
-    std::fs::write(&private_key_path, private_key_contents).unwrap();
-    PrivateKeyFile {
-        path: private_key_path,
-    }
+    let key_path = format!("{file_prefix}_{suffix}.p8");
+
+    std::fs::write(&key_path, key_content).expect("Failed to write private key file");
+
+    PrivateKeyFile { path: key_path }
+}
+
+fn create_private_key_file_from_option(
+    key_lines: Option<Vec<String>>,
+    file_prefix: &str,
+) -> PrivateKeyFile {
+    let key_contents = key_lines.unwrap();
+    create_private_key_file(key_contents, file_prefix)
+}
+
+fn get_private_key_file(parameters: &Parameters) -> PrivateKeyFile {
+    create_private_key_file_from_option(parameters.private_key_contents.clone(), "rsa_key")
+}
+
+fn get_invalid_private_key_file() -> PrivateKeyFile {
+    let params = get_parameters();
+    create_private_key_file_from_option(params.private_key_invalid.clone(), "invalid_rsa_key")
 }

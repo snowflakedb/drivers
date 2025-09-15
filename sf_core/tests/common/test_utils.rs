@@ -47,6 +47,8 @@ pub struct Parameters {
     pub private_key_contents: Option<Vec<String>>,
     #[serde(rename = "SNOWFLAKE_TEST_PRIVATE_KEY_PASSWORD")]
     pub private_key_password: Option<String>,
+    #[serde(rename = "SNOWFLAKE_TEST_PRIVATE_KEY_INVALID")]
+    pub private_key_invalid: Option<Vec<String>>,
 }
 
 /// Parses and returns the test parameters from the configured parameter file
@@ -228,8 +230,66 @@ impl SnowflakeTestClient {
             .connection_init(self.conn_handle.clone(), self.db_handle.clone())
     }
 
-    pub fn verify_simple_query(&mut self) {
+    pub fn set_connection_option(&mut self, option_name: &str, option_value: &str) {
+        self.driver
+            .connection_set_option_string(
+                self.conn_handle.clone(),
+                option_name.to_string(),
+                option_value.to_string(),
+            )
+            .unwrap();
+    }
+
+    pub fn verify_simple_query(&mut self, connection_result: thrift::Result<()>) {
+        connection_result.expect("Login failed");
         let _result = self.execute_query("SELECT 1");
+    }
+
+    pub fn assert_login_error(&self, result: thrift::Result<()>) {
+        use sf_core::thrift_gen::database_driver_v1::{DriverError, DriverException};
+
+        let error = result.expect_err("Expected error");
+        let driver_exception = match error {
+            thrift::Error::User(user_error) => user_error
+                .downcast_ref::<DriverException>()
+                .expect("Expected DriverException")
+                .clone(),
+            _ => panic!("Expected User error containing DriverException"),
+        };
+
+        match &driver_exception.error {
+            DriverError::LoginError(login_error) => {
+                assert!(
+                    !login_error.message.is_empty(),
+                    "Login error message should not be empty"
+                );
+                assert!(login_error.code != 0, "Login error code should not be zero");
+            }
+            other => panic!("Expected LoginError, got: {other:?}"),
+        }
+    }
+
+    pub fn assert_missing_parameter_error(&self, result: thrift::Result<()>) {
+        use sf_core::thrift_gen::database_driver_v1::{DriverError, DriverException};
+
+        let error = result.expect_err("Expected error");
+        let driver_exception = match error {
+            thrift::Error::User(user_error) => user_error
+                .downcast_ref::<DriverException>()
+                .expect("Expected DriverException")
+                .clone(),
+            _ => panic!("Expected User error containing DriverException"),
+        };
+
+        match &driver_exception.error {
+            DriverError::MissingParameter(missing_param) => {
+                assert!(
+                    !missing_param.parameter.is_empty(),
+                    "Missing parameter name should not be empty"
+                );
+            }
+            other => panic!("Expected MissingParameter, got: {other:?}"),
+        }
     }
 }
 
