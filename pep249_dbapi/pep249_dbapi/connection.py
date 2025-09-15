@@ -39,8 +39,7 @@ class Connection:
             tls_cfg["verify_hostname"] = bool(kwargs["verify_hostname"])  # noqa: FBT003
         if "verify_certificates" in kwargs:
             tls_cfg["verify_certificates"] = bool(kwargs["verify_certificates"])  # noqa: FBT003
-        if tls_cfg:
-            self.db_api.connectionSetTlsConfig(self.conn_handle, tls_cfg)
+        # TLS config is set via per-option APIs in the core now; no direct TLS config RPC
         for key, value in kwargs.items():
             if isinstance(value, int):
                 self.db_api.connectionSetOptionInt(self.conn_handle, key, value)

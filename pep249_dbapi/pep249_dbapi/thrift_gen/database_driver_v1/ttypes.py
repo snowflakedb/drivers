@@ -1374,89 +1374,6 @@ class ArrowArrayPtr(object):
 
     def __ne__(self, other):
         return not (self == other)
-
-
-class TlsConfig(object):
-    """
-    Minimal TLS configuration passed from clients to the core.
-
-    Attributes:
-     - custom_root_store_path: Optional path to a PEM bundle of root CAs to trust.
-     - verify_hostname: Whether to verify hostnames; defaults to true if unset.
-     - verify_certificates: Whether to verify certificates; defaults to true if unset.
-
-    """
-    thrift_spec = None
-
-
-    def __init__(self, custom_root_store_path = None, verify_hostname = None, verify_certificates = None,):
-        self.custom_root_store_path = custom_root_store_path
-        self.verify_hostname = verify_hostname
-        self.verify_certificates = verify_certificates
-
-    def read(self, iprot):
-        if iprot._fast_decode is not None and isinstance(iprot.trans, TTransport.CReadableTransport) and self.thrift_spec is not None:
-            iprot._fast_decode(self, iprot, [self.__class__, self.thrift_spec])
-            return
-        iprot.readStructBegin()
-        while True:
-            (fname, ftype, fid) = iprot.readFieldBegin()
-            if ftype == TType.STOP:
-                break
-            if fid == 1:
-                if ftype == TType.STRING:
-                    self.custom_root_store_path = iprot.readString().decode('utf-8', errors='replace') if sys.version_info[0] == 2 else iprot.readString()
-                else:
-                    iprot.skip(ftype)
-            elif fid == 2:
-                if ftype == TType.BOOL:
-                    self.verify_hostname = iprot.readBool()
-                else:
-                    iprot.skip(ftype)
-            elif fid == 3:
-                if ftype == TType.BOOL:
-                    self.verify_certificates = iprot.readBool()
-                else:
-                    iprot.skip(ftype)
-            else:
-                iprot.skip(ftype)
-            iprot.readFieldEnd()
-        iprot.readStructEnd()
-
-    def write(self, oprot):
-        self.validate()
-        if oprot._fast_encode is not None and self.thrift_spec is not None:
-            oprot.trans.write(oprot._fast_encode(self, [self.__class__, self.thrift_spec]))
-            return
-        oprot.writeStructBegin('TlsConfig')
-        if self.custom_root_store_path is not None:
-            oprot.writeFieldBegin('custom_root_store_path', TType.STRING, 1)
-            oprot.writeString(self.custom_root_store_path.encode('utf-8') if sys.version_info[0] == 2 else self.custom_root_store_path)
-            oprot.writeFieldEnd()
-        if self.verify_hostname is not None:
-            oprot.writeFieldBegin('verify_hostname', TType.BOOL, 2)
-            oprot.writeBool(self.verify_hostname)
-            oprot.writeFieldEnd()
-        if self.verify_certificates is not None:
-            oprot.writeFieldBegin('verify_certificates', TType.BOOL, 3)
-            oprot.writeBool(self.verify_certificates)
-            oprot.writeFieldEnd()
-        oprot.writeFieldStop()
-        oprot.writeStructEnd()
-
-    def validate(self):
-        return
-
-    def __repr__(self):
-        L = ['%s=%r' % (key, value)
-             for key, value in self.__dict__.items()]
-        return '%s(%s)' % (self.__class__.__name__, ', '.join(L))
-
-    def __eq__(self, other):
-        return isinstance(other, self.__class__) and self.__dict__ == other.__dict__
-
-    def __ne__(self, other):
-        return not (self == other)
 all_structs.append(ErrorDetail)
 ErrorDetail.thrift_spec = (
     None,  # 0
@@ -1555,13 +1472,6 @@ all_structs.append(ArrowArrayPtr)
 ArrowArrayPtr.thrift_spec = (
     None,  # 0
     (1, TType.STRING, 'value', 'BINARY', None, ),  # 1
-)
-all_structs.append(TlsConfig)
-TlsConfig.thrift_spec = (
-    None,  # 0
-    (1, TType.STRING, 'custom_root_store_path', 'UTF8', None, ),  # 1
-    (2, TType.BOOL, 'verify_hostname', None, None, ),  # 2
-    (3, TType.BOOL, 'verify_certificates', None, None, ),  # 3
 )
 fix_spec(all_structs)
 del all_structs

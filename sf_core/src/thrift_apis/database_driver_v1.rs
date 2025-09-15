@@ -482,8 +482,7 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1Server {
 
     #[instrument(name = "DatabaseDriverV1::connection_new", skip(self))]
     fn handle_connection_new(&self) -> thrift::Result<ConnectionHandle> {
-        let handle = CONN_HANDLE_MANAGER
-            .add_handle(Mutex::new(Connection::new(&Mutex::new(Database::new()))));
+        let handle = CONN_HANDLE_MANAGER.add_handle(Mutex::new(Connection::new()));
         Ok(ConnectionHandle::from(handle))
     }
 
@@ -801,20 +800,6 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1Server {
     ) -> thrift::Result<i64> {
         todo!()
     }
-
-    #[instrument(name = "DatabaseDriverV1::connection_set_tls_config", skip(self))]
-    fn handle_connection_set_tls_config(
-        &self,
-        conn_handle: ConnectionHandle,
-        tls_config: Box<crate::thrift_gen::database_driver_v1::TlsConfig>,
-    ) -> thrift::Result<()> {
-        // Prefer using connection_set_option_* APIs instead of this method.
-        let _ = conn_handle;
-        let _ = tls_config;
-        Err(Self::invalid_argument(
-            "connection_set_tls_config is deprecated; use connection_set_option_* for TLS settings",
-        ))
-    }
 }
 
 // TODO: Implement a function that prints a SNAFU error with location info for easier debugging
@@ -1007,39 +992,5 @@ mod tests {
             .connection_set_option_double(conn.clone(), "timeout_seconds".to_string(), 30.5.into())
             .unwrap();
         client.connection_release(conn).unwrap();
-    }
-
-    #[test]
-    fn test_connection_set_tls_config_and_init() {
-        setup_logging();
-        let mut client = create_client::<DatabaseDriverV1>();
-
-        let db = client.database_new().unwrap();
-        let conn = client.connection_new().unwrap();
-
-        // Provide a minimal TLS config; keep verification enabled and no custom roots.
-        // Use connection_set_option_* instead of connection_set_tls_config
-        client
-            .connection_set_option_string(
-                conn.clone(),
-                "verify_hostname".to_string(),
-                "true".to_string(),
-            )
-            .unwrap();
-        client
-            .connection_set_option_string(
-                conn.clone(),
-                "verify_certificates".to_string(),
-                "true".to_string(),
-            )
-            .unwrap();
-
-        // Should be able to initialize (perform login) with the configured client
-        client
-            .connection_init(conn.clone(), db.clone())
-            .expect("connection_init ok");
-
-        client.connection_release(conn).unwrap();
-        client.database_release(db).unwrap();
     }
 }

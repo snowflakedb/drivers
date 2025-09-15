@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct TlsConfig {
     pub custom_root_store_path: Option<PathBuf>,
     pub verify_hostname: bool,
@@ -34,5 +34,15 @@ impl TlsConfig {
             cfg.verify_certificates = v.to_lowercase() == "true";
         }
         cfg
+    }
+}
+
+impl Default for TlsConfig {
+    fn default() -> Self {
+        Self {
+            custom_root_store_path: None,
+            verify_hostname: true,
+            verify_certificates: true,
+        }
     }
 }
