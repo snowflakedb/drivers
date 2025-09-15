@@ -16,7 +16,7 @@ pub enum ApiError {
     RuntimeCreation {
         #[snafu(implicit)]
         location: Location,
-        // source: std::io::Error,
+        source: std::io::Error,
     },
     #[snafu(display("Configuration error: {source}"))]
     Configuration {
