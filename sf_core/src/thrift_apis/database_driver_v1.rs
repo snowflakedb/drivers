@@ -138,8 +138,8 @@ impl ThriftApi for DatabaseDriverV1 {
 fn to_driver_error(error: &ApiError) -> DriverError {
     match error {
         ApiError::GenericError { .. } => DriverError::GenericError(GenericError::new()),
-        ApiError::FailedToCreateRuntime { .. } => DriverError::InternalError(InternalError::new()),
-        ApiError::ConfigurationError {
+        ApiError::RuntimeCreation { .. } => DriverError::InternalError(InternalError::new()),
+        ApiError::Configuration {
             source:
                 ConfigError::InvalidParameterValue {
                     parameter,
@@ -153,23 +153,25 @@ fn to_driver_error(error: &ApiError) -> DriverError {
             value.clone(),
             explanation.clone(),
         )),
-        ApiError::ConfigurationError {
+        ApiError::Configuration {
             source: ConfigError::MissingParameter { parameter, .. },
             ..
         } => DriverError::MissingParameter(MissingParameter::new(parameter.clone())),
         ApiError::InvalidArgument { .. } => DriverError::InternalError(InternalError::new()),
-        ApiError::FailedToLogin {
+        ApiError::Login {
             source: RestError::LoginError { message, code, .. },
             ..
         } => DriverError::LoginError(LoginError {
             message: message.clone(),
             code: *code,
         }),
-        ApiError::FailedToLogin { source, .. } => {
+        ApiError::Login { source, .. } => {
             DriverError::AuthError(AuthenticationError::new(source.to_string()))
         }
-        ApiError::FailedToLockConnection { .. } => DriverError::InternalError(InternalError::new()),
-        ApiError::FailedToProcessQueryResponse { .. } => {
+        ApiError::ConnectionLocking { .. } => DriverError::InternalError(InternalError::new()),
+        ApiError::StatementLocking { .. } => DriverError::InternalError(InternalError::new()),
+        ApiError::DatabaseLocking { .. } => DriverError::InternalError(InternalError::new()),
+        ApiError::QueryResponseProcessing { .. } => {
             DriverError::InternalError(InternalError::new())
         }
     }

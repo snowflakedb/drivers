@@ -11,8 +11,7 @@ pub fn connection_init(conn_handle: Handle, _db_handle: Handle) -> Result<(), Ap
     match CONN_HANDLE_MANAGER.get_obj(conn_handle) {
         Some(conn_ptr) => {
             // Create a blocking runtime for the login process
-            let rt = tokio::runtime::Runtime::new()
-                .map_err(|_| FailedToCreateRuntimeSnafu {}.build())?;
+            let rt = tokio::runtime::Runtime::new().context(RuntimeCreationSnafu)?;
 
             let login_parameters =
                 LoginParameters::from_settings(&conn_ptr.lock().unwrap().settings)
@@ -22,11 +21,11 @@ pub fn connection_init(conn_handle: Handle, _db_handle: Handle) -> Result<(), Ap
                 .block_on(async {
                     crate::rest::snowflake::snowflake_login(&login_parameters).await
                 })
-                .context(FailedToLoginSnafu)?;
+                .context(LoginSnafu)?;
 
             conn_ptr
                 .lock()
-                .map_err(|_| FailedToLockConnectionSnafu {}.build())?
+                .map_err(|_| ConnectionLockingSnafu {}.build())?
                 .session_token = Some(login_result);
             Ok(())
         }
@@ -42,7 +41,7 @@ pub fn connection_set_option(handle: Handle, key: String, value: Setting) -> Res
         Some(conn_ptr) => {
             let mut conn = conn_ptr
                 .lock()
-                .map_err(|_| FailedToLockConnectionSnafu {}.build())?;
+                .map_err(|_| ConnectionLockingSnafu {}.build())?;
             conn.settings.insert(key, value);
             Ok(())
         }

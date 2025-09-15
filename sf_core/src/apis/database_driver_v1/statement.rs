@@ -53,7 +53,7 @@ pub fn statement_set_option(handle: Handle, key: String, value: Setting) -> Resu
         Some(stmt_ptr) => {
             let mut stmt = stmt_ptr
                 .lock()
-                .map_err(|_| FailedToLockConnectionSnafu {}.build())?;
+                .map_err(|_| StatementLockingSnafu {}.build())?;
             stmt.settings.insert(key, value);
             Ok(())
         }
@@ -70,7 +70,7 @@ pub fn statement_set_sql_query(stmt_handle: Handle, query: String) -> Result<(),
         Some(stmt_ptr) => {
             let mut stmt = stmt_ptr
                 .lock()
-                .map_err(|_| FailedToLockConnectionSnafu {}.build())?;
+                .map_err(|_| StatementLockingSnafu {}.build())?;
             stmt.query = Some(query);
             Ok(())
         }
@@ -153,7 +153,7 @@ pub fn statement_execute_query(stmt_handle: Handle) -> Result<ExecuteResult, Api
 
     let mut stmt = stmt_ptr
         .lock()
-        .map_err(|_| FailedToLockConnectionSnafu {}.build())?;
+        .map_err(|_| StatementLockingSnafu {}.build())?;
     let query = stmt.query.take().ok_or_else(|| {
         InvalidArgumentSnafu {
             argument: "Query not found".to_string(),
@@ -162,13 +162,13 @@ pub fn statement_execute_query(stmt_handle: Handle) -> Result<ExecuteResult, Api
     })?;
 
     // Create a blocking runtime for the async operations
-    let rt = tokio::runtime::Runtime::new().map_err(|_| FailedToCreateRuntimeSnafu {}.build())?;
+    let rt = tokio::runtime::Runtime::new().context(RuntimeCreationSnafu)?;
 
     let (query_parameters, session_token) = {
         let conn = stmt
             .conn
             .lock()
-            .map_err(|_| FailedToLockConnectionSnafu {}.build())?;
+            .map_err(|_| ConnectionLockingSnafu {}.build())?;
         (
             QueryParameters::from_settings(&conn.settings).context(ConfigurationSnafu)?,
             conn.session_token.clone().ok_or_else(|| {
@@ -192,11 +192,11 @@ pub fn statement_execute_query(stmt_handle: Handle) -> Result<ExecuteResult, Api
                 .build()
             })?,
         ))
-        .context(FailedToLoginSnafu)?;
+        .context(LoginSnafu)?;
 
     let response_reader = rt
         .block_on(process_query_response(&response.data))
-        .context(FailedToProcessQueryResponseSnafu)?;
+        .context(QueryResponseProcessingSnafu)?;
 
     let rowset_stream = Box::new(FFI_ArrowArrayStream::new(response_reader));
 

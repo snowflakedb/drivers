@@ -13,13 +13,13 @@ pub enum ApiError {
         location: Location,
     },
     #[snafu(display("Failed to create runtime"))]
-    FailedToCreateRuntime {
+    RuntimeCreation {
         #[snafu(implicit)]
         location: Location,
         // source: std::io::Error,
     },
     #[snafu(display("Configuration error: {source}"))]
-    ConfigurationError {
+    Configuration {
         #[snafu(implicit)]
         location: Location,
         source: ConfigError,
@@ -31,18 +31,28 @@ pub enum ApiError {
         location: Location,
     },
     #[snafu(display("Failed to login: {source}"))]
-    FailedToLogin {
+    Login {
         #[snafu(implicit)]
         location: Location,
         source: RestError,
     },
     #[snafu(display("Failed to lock connection"))]
-    FailedToLockConnection {
+    ConnectionLocking {
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Failed to lock statement"))]
+    StatementLocking {
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Failed to lock database"))]
+    DatabaseLocking {
         #[snafu(implicit)]
         location: Location,
     },
     #[snafu(display("Failed to process query response: {source}"))]
-    FailedToProcessQueryResponse {
+    QueryResponseProcessing {
         #[snafu(implicit)]
         location: Location,
         #[snafu(source(from(QueryResponseProcessingError, Box::new)))]

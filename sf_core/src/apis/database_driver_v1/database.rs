@@ -13,9 +13,7 @@ pub fn database_set_option(db_handle: Handle, key: String, value: Setting) -> Re
     let handle = db_handle;
     match DB_HANDLE_MANAGER.get_obj(handle) {
         Some(db_ptr) => {
-            let mut db = db_ptr
-                .lock()
-                .map_err(|_| FailedToLockConnectionSnafu {}.build())?;
+            let mut db = db_ptr.lock().map_err(|_| DatabaseLockingSnafu {}.build())?;
             db.settings.insert(key, value);
             Ok(())
         }
