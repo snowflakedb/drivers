@@ -74,3 +74,32 @@ def compress_bytes(data: bytes, comp: str) -> bytes:
         return brotli.compress(data)
     if comp == "ZSTD":
         return zstd.ZstdCompressor().compress(data)
+
+
+# Shared test-data helpers
+def repo_root() -> Path:
+    # tests live at repo_root/tests/... in this project layout
+    # Walk up until we find a Cargo.toml at the root directory
+    p = Path(__file__).resolve()
+    for _ in range(6):
+        if (p.parent / "Cargo.toml").exists():
+            return p.parent
+        p = p.parent
+    # Fallback to cwd
+    return Path.cwd()
+
+
+def test_data_dir() -> Path:
+    return repo_root() / "tests" / "test_data"
+
+
+def ensure_test_data_generated(path: Path | None = None) -> Path:
+    data_dir = path or test_data_dir()
+    if not data_dir.exists() or not any(data_dir.iterdir()):
+        gen = repo_root() / "tests" / "utils" / "generate_test_data.py"
+        if not gen.exists():
+            raise RuntimeError(f"Missing generator script: {gen}")
+        import subprocess, sys
+
+        subprocess.check_call([sys.executable, str(gen), "--out-dir", str(data_dir)])
+    return data_dir

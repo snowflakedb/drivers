@@ -3,9 +3,9 @@ from pathlib import Path
 
 from .utils_put_get import (
     as_file_uri,
-    write_text_file,
     decompress_gzip_file,
     create_temporary_stage,
+    ensure_test_data_generated,
     PUT_ROW_SOURCE_IDX,
     PUT_ROW_TARGET_IDX,
     PUT_ROW_SOURCE_SIZE_IDX,
@@ -26,16 +26,13 @@ from ..utils import NEW_DRIVER_ONLY, OLD_DRIVER_ONLY
 
 def test_put_select(cursor):
     stage_name = create_temporary_stage(cursor, "PYTEST_STAGE_PUT_SELECT")
+    data_dir = ensure_test_data_generated()
+    file_path = data_dir / "test_put_select.csv"
 
-    # Create temporary CSV file
-    with tempfile.TemporaryDirectory() as tmpdir:
-        tmpdir_path = Path(tmpdir)
-        file_path = write_text_file(tmpdir_path, "test_put_select.csv", "1,2,3\n")
-
-        # Upload the file to the stage
-        cursor.execute(
-            f"PUT 'file://{as_file_uri(file_path)}' @{stage_name}"
-        )
+    # Upload the file to the stage
+    cursor.execute(
+        f"PUT 'file://{as_file_uri(file_path)}' @{stage_name}"
+    )
 
         # Query the staged file and verify the content
         select_sql = f"SELECT $1, $2, $3 FROM @{stage_name}"
@@ -47,16 +44,13 @@ def test_put_select(cursor):
 def test_put_ls(cursor):
     stage_name = create_temporary_stage(cursor, "PYTEST_STAGE_PUT_LS")
     filename = "test_put_ls.csv"
+    data_dir = ensure_test_data_generated()
+    file_path = data_dir / filename
 
-    # Create temporary CSV file
-    with tempfile.TemporaryDirectory() as tmpdir:
-        tmpdir_path = Path(tmpdir)
-        file_path = write_text_file(tmpdir_path, filename, "1,2,3\n")
-
-        # Upload the file to the stage
-        cursor.execute(
-            f"PUT 'file://{as_file_uri(file_path)}' @{stage_name}"
-        )
+    # Upload the file to the stage
+    cursor.execute(
+        f"PUT 'file://{as_file_uri(file_path)}' @{stage_name}"
+    )
 
         # List stage contents and verify the gzipped file is present
         expected_filename = f"{stage_name.lower()}/{filename}.gz"
@@ -69,18 +63,16 @@ def test_put_ls(cursor):
 def test_get(cursor):
     stage_name = create_temporary_stage(cursor, "PYTEST_STAGE_GET")
     filename = "test_get.csv"
+    data_dir = ensure_test_data_generated()
+    file_path = data_dir / filename
 
-    # Create temporary CSV file
-    with tempfile.TemporaryDirectory() as tmpdir:
-        tmpdir_path = Path(tmpdir)
-        file_path = write_text_file(tmpdir_path, filename, "1,2,3\n")
+    # Upload the file to the stage
+    cursor.execute(
+        f"PUT 'file://{as_file_uri(file_path)}' @{stage_name}"
+    )
 
-        # Upload the file to the stage
-        cursor.execute(
-            f"PUT 'file://{as_file_uri(file_path)}' @{stage_name}"
-        )
-
-        download_dir = tmpdir_path / "download"
+    with tempfile.TemporaryDirectory() as tmp:
+        download_dir = Path(tmp) / "download"
         download_dir.mkdir(parents=True, exist_ok=True)
 
         # Download with GET into local directory
@@ -101,32 +93,31 @@ def test_get(cursor):
 def test_put_get_rowset(cursor):
     stage_name = create_temporary_stage(cursor, "PYTEST_STAGE_PUT_ROWSET")
     filename = "test_put_get_rowset.csv"
+    data_dir = ensure_test_data_generated()
+    file_path = data_dir / filename
 
-    # Create temporary CSV file
-    with tempfile.TemporaryDirectory() as tmpdir:
-        tmpdir_path = Path(tmpdir)
-        file_path = write_text_file(tmpdir_path, filename, "1,2,3\n")
+    # Upload the file to the stage
+    cursor.execute(f"PUT 'file://{as_file_uri(file_path)}' @{stage_name}")
 
-        # Upload the file to the stage
-        cursor.execute(f"PUT 'file://{as_file_uri(file_path)}' @{stage_name}")
+    # Verify the upload result
+    row = cursor.fetchone()
+    assert row[PUT_ROW_SOURCE_IDX] == "test_put_get_rowset.csv"
+    assert row[PUT_ROW_TARGET_IDX] == "test_put_get_rowset.csv.gz"
+    assert row[PUT_ROW_SOURCE_SIZE_IDX] == 6
 
-        # Verify the upload result
-        row = cursor.fetchone()
-        assert row[PUT_ROW_SOURCE_IDX] == "test_put_get_rowset.csv"
-        assert row[PUT_ROW_TARGET_IDX] == "test_put_get_rowset.csv.gz"
-        assert row[PUT_ROW_SOURCE_SIZE_IDX] == 6
+    if OLD_DRIVER_ONLY("BC#1"):
+        assert row[PUT_ROW_TARGET_SIZE_IDX] == 64
+    
+    if NEW_DRIVER_ONLY("BC#1"):
+        assert row[PUT_ROW_TARGET_SIZE_IDX] == 32
 
-        if OLD_DRIVER_ONLY("BC#1"):
-            assert row[PUT_ROW_TARGET_SIZE_IDX] == 64
-        
-        if NEW_DRIVER_ONLY("BC#1"):
-            assert row[PUT_ROW_TARGET_SIZE_IDX] == 32
+    assert row[PUT_ROW_SOURCE_COMPRESSION_IDX] == "NONE"
+    assert row[PUT_ROW_TARGET_COMPRESSION_IDX] == "GZIP"
+    assert row[PUT_ROW_STATUS_IDX] == "UPLOADED"
+    assert row[PUT_ROW_MESSAGE_IDX] == ""
 
-        assert row[PUT_ROW_SOURCE_COMPRESSION_IDX] == "NONE"
-        assert row[PUT_ROW_TARGET_COMPRESSION_IDX] == "GZIP"
-        assert row[PUT_ROW_STATUS_IDX] == "UPLOADED"
-        assert row[PUT_ROW_MESSAGE_IDX] == ""
-
+    with tempfile.TemporaryDirectory() as tmp:
+        tmpdir_path = Path(tmp)
         # Download the file from the stage
         cursor.execute(f"GET @{stage_name}/{filename} 'file://{as_file_uri(tmpdir_path)}/'")
 
