@@ -142,7 +142,24 @@ pub fn verify_crl_signature_best_effort(
         }
     }
 
-    // Verify signature using OpenSSL
+    // Verify signature
+    let spk_bytes = issuer_cert
+        .tbs_certificate
+        .subject_public_key_info
+        .subject_public_key
+        .as_bytes()
+        .ok_or_else(|| CrlError::InvalidCrlSignature {
+            location: snafu::Location::new(file!(), line!(), 0),
+        })?;
+    // First, try verification using aws-lc-rs (ring-compatible API)
+    let try_verify = |alg: &'static dyn aws_lc_rs::signature::VerificationAlgorithm| {
+        aws_lc_rs::signature::UnparsedPublicKey::new(alg, spk_bytes).verify(&tbs, sig)
+    };
+    use aws_lc_rs::signature::{
+        ECDSA_P256_SHA256_ASN1, ECDSA_P384_SHA384_ASN1, ED25519, RSA_PKCS1_2048_8192_SHA256,
+        RSA_PKCS1_2048_8192_SHA384, RSA_PKCS1_2048_8192_SHA512, RSA_PSS_2048_8192_SHA256,
+        RSA_PSS_2048_8192_SHA384, RSA_PSS_2048_8192_SHA512,
+    };
     let oid = crl.signature_algorithm.oid;
     let oid_sha256_rsa = ObjectIdentifier::new_unwrap("1.2.840.113549.1.1.11");
     let oid_sha384_rsa = ObjectIdentifier::new_unwrap("1.2.840.113549.1.1.12");
@@ -152,6 +169,38 @@ pub fn verify_crl_signature_best_effort(
     let oid_ecdsa_sha384 = ObjectIdentifier::new_unwrap("1.2.840.10045.4.3.3");
     let oid_ed25519 = ObjectIdentifier::new_unwrap("1.3.101.112");
 
+    // Try aws-lc-rs first
+    let ring_like = if oid == oid_sha256_rsa {
+        try_verify(&RSA_PKCS1_2048_8192_SHA256)
+    } else if oid == oid_sha384_rsa {
+        try_verify(&RSA_PKCS1_2048_8192_SHA384)
+    } else if oid == oid_sha512_rsa {
+        try_verify(&RSA_PKCS1_2048_8192_SHA512)
+    } else if oid == oid_rsassa_pss {
+        try_verify(&RSA_PSS_2048_8192_SHA256)
+            .or_else(|_| try_verify(&RSA_PSS_2048_8192_SHA384))
+            .or_else(|_| try_verify(&RSA_PSS_2048_8192_SHA512))
+    } else if oid == oid_ecdsa_sha256 {
+        try_verify(&ECDSA_P256_SHA256_ASN1)
+    } else if oid == oid_ecdsa_sha384 {
+        try_verify(&ECDSA_P384_SHA384_ASN1)
+    } else if oid == oid_ed25519 {
+        try_verify(&ED25519)
+    } else {
+        try_verify(&RSA_PKCS1_2048_8192_SHA256)
+            .or_else(|_| try_verify(&RSA_PKCS1_2048_8192_SHA384))
+            .or_else(|_| try_verify(&RSA_PKCS1_2048_8192_SHA512))
+            .or_else(|_| try_verify(&RSA_PSS_2048_8192_SHA256))
+            .or_else(|_| try_verify(&RSA_PSS_2048_8192_SHA384))
+            .or_else(|_| try_verify(&RSA_PSS_2048_8192_SHA512))
+            .or_else(|_| try_verify(&ECDSA_P256_SHA256_ASN1))
+            .or_else(|_| try_verify(&ECDSA_P384_SHA384_ASN1))
+    };
+    if ring_like.is_ok() {
+        return Ok(());
+    }
+
+    // OpenSSL-based verification for common algorithms (RSA PKCS#1, RSA-PSS, ECDSA, Ed25519)
     let verify_pkcs1 = |md: openssl::hash::MessageDigest| -> bool {
         if let Ok(issuer_x509) = openssl::x509::X509::from_der(issuer_der)
             && let Ok(pkey) = issuer_x509.public_key()
@@ -220,6 +269,7 @@ pub fn verify_crl_signature_best_effort(
     } else if oid == oid_ed25519 {
         verify_ed25519()
     } else {
+        // Try a set of common algorithms as a fallback
         verify_pkcs1(openssl::hash::MessageDigest::sha256())
             || verify_pkcs1(openssl::hash::MessageDigest::sha384())
             || verify_pkcs1(openssl::hash::MessageDigest::sha512())
@@ -233,7 +283,6 @@ pub fn verify_crl_signature_best_effort(
     if verified {
         return Ok(());
     }
-
     Err(CrlError::InvalidCrlSignature {
         location: snafu::Location::new(file!(), line!(), 0),
     })
