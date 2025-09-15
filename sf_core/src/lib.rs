@@ -11,7 +11,6 @@ mod chunks;
 mod compression;
 mod compression_types;
 mod config;
-pub mod driver;
 mod file_manager;
 pub mod handle_manager;
 pub mod logging;
