@@ -82,6 +82,7 @@ pub fn statement_set_sql_query(stmt_handle: Handle, query: String) -> Result<(),
 }
 
 pub fn statement_prepare(_stmt_handle: Handle) -> Result<(), ApiError> {
+    // TODO: Implement statement preparation logic if required.
     Ok(())
 }
 
