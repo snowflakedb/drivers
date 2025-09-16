@@ -5,6 +5,7 @@ add_odbc_test(put_get_tests
   test_put_get_overwrite.cpp
   test_put_get_wildcards.cpp
   test_put_get_auto_compress.cpp
+  test_put_get_source_compression.cpp
 )
 
 
