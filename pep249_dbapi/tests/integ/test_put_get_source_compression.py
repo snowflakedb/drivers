@@ -1,15 +1,10 @@
-import tempfile
-from pathlib import Path
-
 import pytest
 
 from ..utils import NEW_DRIVER_ONLY, OLD_DRIVER_ONLY
 from .utils_put_get import (
-    write_text_file,
-    write_binary_file,
     as_file_uri,
     create_temporary_stage,
-    compress_bytes,
+    shared_test_data_dir,
     PUT_ROW_SOURCE_IDX,
     PUT_ROW_TARGET_IDX,
     PUT_ROW_SOURCE_COMPRESSION_IDX,
@@ -18,54 +13,33 @@ from .utils_put_get import (
 )
 
 
-@pytest.mark.parametrize(
-    "filename,compression_type",
-    [
-        ("test_gzip.csv.gz", "GZIP"),
-        ("test_bzip2.csv.bz2", "BZIP2"),
-        ("test_brotli.csv.br", "BROTLI"),
-        ("test_zstd.csv.zst", "ZSTD"),
-    ],
-)
-def test_put_source_compression_auto_detect_standard_types(cursor, filename, compression_type):
+@pytest.mark.parametrize("compression_type", ["GZIP", "BZIP2", "BROTLI", "ZSTD"])
+def test_put_source_compression_auto_detect_standard_types(cursor, compression_type):
     stage_name = create_temporary_stage(cursor, "PYTEST_STAGE_AUTO_DETECT_STANDARD")
-    content = b"1,2,3\n"
+    filename, file_path = compressed_test_file(compression_type)
 
-    # Create a temporary file and compress it
-    with tempfile.TemporaryDirectory() as tmp:
-        tmpdir = Path(tmp)
-        comp_bytes = compress_bytes(content, compression_type)
-        path = write_binary_file(tmpdir, filename, comp_bytes)
+    # Upload the compressed file to the stage with AUTO_DETECT
+    cursor.execute(
+        f"PUT 'file://{as_file_uri(file_path)}' @{stage_name} SOURCE_COMPRESSION=AUTO_DETECT"
+    )
 
-        # Upload the compressed file to the stage with AUTO_DETECT
-        cursor.execute(
-            f"PUT 'file://{as_file_uri(path)}' @{stage_name} SOURCE_COMPRESSION=AUTO_DETECT"
-        )
-
-        # Verify that the file was uploaded, compression type was detected correctly and the file was not compressed again
-        row = cursor.fetchone()
-        assert row[PUT_ROW_SOURCE_IDX] == filename
-        assert row[PUT_ROW_TARGET_IDX] == filename
-        assert row[PUT_ROW_SOURCE_COMPRESSION_IDX] == compression_type
-        assert row[PUT_ROW_TARGET_COMPRESSION_IDX] == compression_type
-        assert row[PUT_ROW_STATUS_IDX] == "UPLOADED"
+    # Verify that the file was uploaded, compression type was detected correctly and the file was not compressed again
+    row = cursor.fetchone()
+    assert row[PUT_ROW_SOURCE_IDX] == filename
+    assert row[PUT_ROW_TARGET_IDX] == filename
+    assert row[PUT_ROW_SOURCE_COMPRESSION_IDX] == compression_type
+    assert row[PUT_ROW_TARGET_COMPRESSION_IDX] == compression_type
+    assert row[PUT_ROW_STATUS_IDX] == "UPLOADED"
 
 
 def test_put_source_compression_auto_detect_deflate(cursor):
     stage_name = create_temporary_stage(cursor, "PYTEST_STAGE_AUTO_DETECT_DEFLATE")
-    filename = "test_deflate.csv.deflate"
-    content = b"1,2,3\n"
+    filename, file_path = compressed_test_file("DEFLATE")
 
-    # Create a temporary file and compress it
-    with tempfile.TemporaryDirectory() as tmp:
-        tmpdir = Path(tmp)
-        comp_bytes = compress_bytes(content, "DEFLATE")
-        path = write_binary_file(tmpdir, filename, comp_bytes)
-
-        # Upload the compressed file to the stage with AUTO_DETECT
-        cursor.execute(
-            f"PUT 'file://{as_file_uri(path)}' @{stage_name} SOURCE_COMPRESSION=AUTO_DETECT"
-        )
+    # Upload the compressed file to the stage with AUTO_DETECT
+    cursor.execute(
+        f"PUT 'file://{as_file_uri(file_path)}' @{stage_name} SOURCE_COMPRESSION=AUTO_DETECT"
+    )
 
     row = cursor.fetchone()
 
@@ -86,176 +60,136 @@ def test_put_source_compression_auto_detect_deflate(cursor):
 
 def test_put_source_compression_auto_detect_none_no_auto_compress(cursor):
     stage_name = create_temporary_stage(cursor, "PYTEST_STAGE_AUTO_DETECT_NONE_NO_AUTO_COMPRESS")
-    filename = "test_none.csv"
+    filename, file_path = compressed_test_file("NONE")
 
-    # Create a temporary file with .csv extension
-    with tempfile.TemporaryDirectory() as tmp:
-        tmpdir = Path(tmp)
-        path = write_text_file(tmpdir, filename, "1,2,3\n")
+    # Upload the file to the stage with AUTO_DETECT and AUTO_COMPRESS=FALSE
+    cursor.execute(
+        f"PUT 'file://{as_file_uri(file_path)}' @{stage_name} SOURCE_COMPRESSION=AUTO_DETECT AUTO_COMPRESS=FALSE"
+    )
 
-        # Upload the file to the stage with AUTO_DETECT and AUTO_COMPRESS=FALSE
-        cursor.execute(
-            f"PUT 'file://{as_file_uri(path)}' @{stage_name} SOURCE_COMPRESSION=AUTO_DETECT AUTO_COMPRESS=FALSE"
-        )
-
-        # Verify that the file was uploaded, compression type was detected as "NONE" correctly and the file was not compressed
-        row = cursor.fetchone()
-        assert row[PUT_ROW_SOURCE_IDX] == filename
-        assert row[PUT_ROW_TARGET_IDX] == filename
-        assert row[PUT_ROW_SOURCE_COMPRESSION_IDX] == "NONE"
-        assert row[PUT_ROW_TARGET_COMPRESSION_IDX] == "NONE"
-        assert row[PUT_ROW_STATUS_IDX] == "UPLOADED"
+    # Verify that the file was uploaded, compression type was detected as "NONE" correctly and the file was not compressed
+    row = cursor.fetchone()
+    assert row[PUT_ROW_SOURCE_IDX] == filename
+    assert row[PUT_ROW_TARGET_IDX] == filename
+    assert row[PUT_ROW_SOURCE_COMPRESSION_IDX] == "NONE"
+    assert row[PUT_ROW_TARGET_COMPRESSION_IDX] == "NONE"
+    assert row[PUT_ROW_STATUS_IDX] == "UPLOADED"
 
 
 def test_put_source_compression_auto_detect_none_with_auto_compress(cursor):
     stage_name = create_temporary_stage(cursor, "PYTEST_STAGE_AUTO_DETECT_NONE_WITH_AUTO_COMPRESS")
-    filename = "test_none.csv"
+    filename, file_path = compressed_test_file("NONE")
 
-    # Create a temporary file with .csv extension
-    with tempfile.TemporaryDirectory() as tmp:
-        tmpdir = Path(tmp)
-        path = write_text_file(tmpdir, filename, "1,2,3\n")
+    # Upload the file to the stage with AUTO_DETECT and AUTO_COMPRESS=TRUE
+    cursor.execute(
+        f"PUT 'file://{as_file_uri(file_path)}' @{stage_name} SOURCE_COMPRESSION=AUTO_DETECT AUTO_COMPRESS=TRUE"
+    )
 
-        # Upload the file to the stage with AUTO_DETECT and AUTO_COMPRESS=TRUE
-        cursor.execute(
-            f"PUT 'file://{as_file_uri(path)}' @{stage_name} SOURCE_COMPRESSION=AUTO_DETECT AUTO_COMPRESS=TRUE"
-        )
-
-        # Verify that the file was uploaded, compression type was detected as "NONE" correctly and the file was compressed to gzip
-        row = cursor.fetchone()
-        assert row[PUT_ROW_SOURCE_IDX] == filename
-        assert row[PUT_ROW_TARGET_IDX] == f"{filename}.gz"
-        assert row[PUT_ROW_SOURCE_COMPRESSION_IDX] == "NONE"
-        assert row[PUT_ROW_TARGET_COMPRESSION_IDX] == "GZIP"
-        assert row[PUT_ROW_STATUS_IDX] == "UPLOADED"
+    # Verify that the file was uploaded, compression type was detected as "NONE" correctly and the file was compressed to gzip
+    row = cursor.fetchone()
+    assert row[PUT_ROW_SOURCE_IDX] == filename
+    assert row[PUT_ROW_TARGET_IDX] == f"{filename}.gz"
+    assert row[PUT_ROW_SOURCE_COMPRESSION_IDX] == "NONE"
+    assert row[PUT_ROW_TARGET_COMPRESSION_IDX] == "GZIP"
+    assert row[PUT_ROW_STATUS_IDX] == "UPLOADED"
 
 
-@pytest.mark.parametrize(
-    "filename,compression_type",
-    [
-        ("test_gzip.csv", "GZIP"),
-        ("test_bzip2.csv", "BZIP2"),
-        ("test_zstd.csv", "ZSTD"),
-        ("test_deflate.csv", "DEFLATE"),
-    ],
-)
-def test_put_source_compression_explicit_standard_types(cursor, filename, compression_type):
+@pytest.mark.parametrize("compression_type", ["GZIP", "BZIP2", "ZSTD", "DEFLATE", "RAW_DEFLATE"])
+def test_put_source_compression_explicit_standard_types(cursor, compression_type):
     stage_name = create_temporary_stage(cursor, "PYTEST_STAGE_EXPLICIT_COMPRESSION")
+    filename, file_path = compressed_test_file(compression_type)
 
-    # Create a temporary file and compress it with the specified compression type, but without the extension
-    with tempfile.TemporaryDirectory() as tmp:
-        tmpdir = Path(tmp)
-        comp_bytes = compress_bytes(b"1,2,3\n", compression_type)
-        path = write_binary_file(tmpdir, filename, comp_bytes)
+    # Upload the compressed file to the stage with the specified compression type
+    cursor.execute(
+        f"PUT 'file://{as_file_uri(file_path)}' @{stage_name} SOURCE_COMPRESSION={compression_type}"
+    )
 
-        # Upload the compressed file to the stage with the specified compression type
-        cursor.execute(
-            f"PUT 'file://{as_file_uri(path)}' @{stage_name} SOURCE_COMPRESSION={compression_type}"
-        )
-
-        # Verify that the file was uploaded, compression type was detected correctly and the file was not compressed again
-        row = cursor.fetchone()
-        assert row[PUT_ROW_SOURCE_IDX] == filename
-        assert row[PUT_ROW_TARGET_IDX] == filename
-        assert row[PUT_ROW_SOURCE_COMPRESSION_IDX] == compression_type
-        assert row[PUT_ROW_TARGET_COMPRESSION_IDX] == compression_type
-        assert row[PUT_ROW_STATUS_IDX] == "UPLOADED"
+    # Verify that the file was uploaded, compression type was detected correctly and the file was not compressed again
+    row = cursor.fetchone()
+    assert row[PUT_ROW_SOURCE_IDX] == filename
+    assert row[PUT_ROW_TARGET_IDX] == filename
+    assert row[PUT_ROW_SOURCE_COMPRESSION_IDX] == compression_type
+    assert row[PUT_ROW_TARGET_COMPRESSION_IDX] == compression_type
+    assert row[PUT_ROW_STATUS_IDX] == "UPLOADED"
 
 
 def test_put_source_compression_explicit_brotli(cursor):
     stage_name = create_temporary_stage(cursor, "PYTEST_STAGE_EXPLICIT_BROTLI")
-    filename = "test_explicit_brotli"
+    filename, file_path = compressed_test_file("BROTLI")
 
-    # Create a temporary file without the .brotli extension
-    with tempfile.TemporaryDirectory() as tmp:
-        tmpdir = Path(tmp)
-        path = write_binary_file(tmpdir, filename, b"brotli")
-
-        # Upload the brotli file to the stage with the specified compression type
-        if OLD_DRIVER_ONLY("BC#3"):
-            # Old driver should reject unsupported SOURCE_COMPRESSION
-            with pytest.raises(Exception):
-                cursor.execute(
-                    f"PUT 'file://{as_file_uri(path)}' @{stage_name} SOURCE_COMPRESSION=BROTLI"
-                )
-
-        if NEW_DRIVER_ONLY("BC#3"):
+    if OLD_DRIVER_ONLY("BC#3"):
+        with pytest.raises(Exception):
             cursor.execute(
-                f"PUT 'file://{as_file_uri(path)}' @{stage_name} SOURCE_COMPRESSION=BROTLI"
+                f"PUT 'file://{as_file_uri(file_path)}' @{stage_name} SOURCE_COMPRESSION=BROTLI"
             )
-            # Verify that the file was uploaded, compression type was detected correctly and the file was not compressed again
-            row = cursor.fetchone()
-            assert row[PUT_ROW_SOURCE_IDX] == filename
-            assert row[PUT_ROW_TARGET_IDX] == filename
-            assert row[PUT_ROW_SOURCE_COMPRESSION_IDX] == "BROTLI"
-            assert row[PUT_ROW_TARGET_COMPRESSION_IDX] == "BROTLI"
-            assert row[PUT_ROW_STATUS_IDX] == "UPLOADED"
 
-
-def test_put_source_compression_explicit_raw_deflate(cursor):
-    stage_name = create_temporary_stage(cursor, "PYTEST_STAGE_EXPLICIT_RAW_DEFLATE")
-    filename = "test_explicit_raw_deflate"
-
-    # Create a temporary file without the .raw_deflate extension
-    with tempfile.TemporaryDirectory() as tmp:
-        tmpdir = Path(tmp)
-        path = write_binary_file(tmpdir, filename, b"rawdeflatedata")
-
-        # Upload the raw deflate file to the stage with the specified compression type
+    if NEW_DRIVER_ONLY("BC#3"):
         cursor.execute(
-            f"PUT 'file://{as_file_uri(path)}' @{stage_name} SOURCE_COMPRESSION=RAW_DEFLATE"
+            f"PUT 'file://{as_file_uri(file_path)}' @{stage_name} SOURCE_COMPRESSION=BROTLI"
         )
-
-        # Verify that the file was uploaded, compression type was detected correctly and the file was not compressed again
         row = cursor.fetchone()
         assert row[PUT_ROW_SOURCE_IDX] == filename
         assert row[PUT_ROW_TARGET_IDX] == filename
-        assert row[PUT_ROW_SOURCE_COMPRESSION_IDX] == "RAW_DEFLATE"
-        assert row[PUT_ROW_TARGET_COMPRESSION_IDX] == "RAW_DEFLATE"
+        assert row[PUT_ROW_SOURCE_COMPRESSION_IDX] == "BROTLI"
+        assert row[PUT_ROW_TARGET_COMPRESSION_IDX] == "BROTLI"
         assert row[PUT_ROW_STATUS_IDX] == "UPLOADED"
 
 
 def test_put_source_compression_explicit_none_no_auto_compress(cursor):
     stage_name = create_temporary_stage(cursor, "PYTEST_STAGE_EXPLICIT_NONE_NO_AUTO_COMPRESS")
-    filename = "test_explicit_none.csv.gz"
+    filename, file_path = compressed_test_file("NONE")
 
-    # Create a temporary uncompressed file with the wrong .gz extension
-    with tempfile.TemporaryDirectory() as tmp:
-        tmpdir = Path(tmp)
-        path = write_text_file(tmpdir, filename, "1,2,3\n")
+    cursor.execute(
+        f"PUT 'file://{as_file_uri(file_path)}' @{stage_name} SOURCE_COMPRESSION=NONE AUTO_COMPRESS=FALSE"
+    )
 
-        # Upload the uncompressed file to the stage with NONE compression type and AUTO_COMPRESS=FALSE
-        cursor.execute(
-            f"PUT 'file://{as_file_uri(path)}' @{stage_name} SOURCE_COMPRESSION=NONE AUTO_COMPRESS=FALSE"
-        )
-
-        # Verify that the file was uploaded, compression type was set to NONE and the file was not compressed
-        row = cursor.fetchone()
-        assert row[PUT_ROW_SOURCE_IDX] == filename
-        assert row[PUT_ROW_TARGET_IDX] == filename
-        assert row[PUT_ROW_SOURCE_COMPRESSION_IDX] == "NONE"
-        assert row[PUT_ROW_TARGET_COMPRESSION_IDX] == "NONE"
-        assert row[PUT_ROW_STATUS_IDX] == "UPLOADED"
+    row = cursor.fetchone()
+    assert row[PUT_ROW_SOURCE_IDX] == filename
+    assert row[PUT_ROW_TARGET_IDX] == filename
+    assert row[PUT_ROW_SOURCE_COMPRESSION_IDX] == "NONE"
+    assert row[PUT_ROW_TARGET_COMPRESSION_IDX] == "NONE"
+    assert row[PUT_ROW_STATUS_IDX] == "UPLOADED"
 
 
 def test_put_source_compression_explicit_with_auto_compress(cursor):
     stage_name = create_temporary_stage(cursor, "PYTEST_STAGE_EXPLICIT_WITH_AUTO_COMPRESS")
-    filename = "test_explicit_with_auto.csv.gz"
+    filename, file_path = compressed_test_file("NONE")
 
-    # Create a temporary uncompressed file with the wrong .gz extension
-    with tempfile.TemporaryDirectory() as tmp:
-        tmpdir = Path(tmp)
-        path = write_text_file(tmpdir, filename, "1,2,3\n")
+    cursor.execute(
+        f"PUT 'file://{as_file_uri(file_path)}' @{stage_name} SOURCE_COMPRESSION=NONE AUTO_COMPRESS=TRUE"
+    )
 
-        # Upload the uncompressed file to the stage with NONE compression type and AUTO_COMPRESS=TRUE
-        cursor.execute(
-            f"PUT 'file://{as_file_uri(path)}' @{stage_name} SOURCE_COMPRESSION=NONE AUTO_COMPRESS=TRUE"
-        )
+    row = cursor.fetchone()
+    assert row[PUT_ROW_SOURCE_IDX] == filename
+    assert row[PUT_ROW_TARGET_IDX] == f"{filename}.gz"
+    assert row[PUT_ROW_SOURCE_COMPRESSION_IDX] == "NONE"
+    assert row[PUT_ROW_TARGET_COMPRESSION_IDX] == "GZIP"
+    assert row[PUT_ROW_STATUS_IDX] == "UPLOADED"
 
-        # Verify that the file was uploaded, compression type was set to NONE and the file was compressed to gzip
-        row = cursor.fetchone()
-        assert row[PUT_ROW_SOURCE_IDX] == filename
-        assert row[PUT_ROW_TARGET_IDX] == f"{filename}.gz"
-        assert row[PUT_ROW_SOURCE_COMPRESSION_IDX] == "NONE"
-        assert row[PUT_ROW_TARGET_COMPRESSION_IDX] == "GZIP"
-        assert row[PUT_ROW_STATUS_IDX] == "UPLOADED"
+
+def compression_tests_dir():
+    return shared_test_data_dir() / "compression"
+
+
+def compressed_test_file(compression_type: str):
+    ct = compression_type.upper()
+    base = compression_tests_dir()
+    if ct == "GZIP":
+        fn = "test_data.csv.gz"
+    elif ct == "BZIP2":
+        fn = "test_data.csv.bz2"
+    elif ct == "BROTLI":
+        fn = "test_data.csv.br"
+    elif ct == "ZSTD":
+        fn = "test_data.csv.zst"
+    elif ct == "DEFLATE":
+        fn = "test_data.csv.deflate"
+    elif ct == "RAW_DEFLATE":
+        fn = "test_data.csv.raw_deflate"
+    elif ct == "LZMA":
+        fn = "test_data.csv.xz"
+    elif ct == "NONE":
+        fn = "test_data.csv"
+    else:
+        raise ValueError(f"Unsupported compression type: {compression_type}")
+    return fn, base / fn

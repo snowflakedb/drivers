@@ -3,6 +3,9 @@ pytest configuration and fixtures for PEP 249 tests.
 """
 
 import pytest
+from pathlib import Path
+
+from .integ.utils_put_get import ensure_test_data_generated, shared_test_data_dir
 
 from .connector_factory import ConnectorFactory, create_connection_with_adapter
 from .utils import set_current_connector
@@ -33,11 +36,19 @@ def connector_type(request):
     return ConnectorType.from_string(connector_str)
 
 
+@pytest.fixture(scope="session", autouse=True)
+def generate_shared_test_data():
+    """Generate shared put/get test data once per test session."""
+    data_dir = shared_test_data_dir()
+    ensure_test_data_generated(data_dir)
+    return data_dir
+
+
 @pytest.fixture(scope="session")
 def connector_adapter(request, connector_type):
     """Create the appropriate connector adapter based on command line option."""
     reference_package = request.config.getoption("--reference-package")
-    
+
     try:
         if connector_type == ConnectorType.REFERENCE:
             return ConnectorFactory.create_adapter(connector_type, package_name=reference_package)
@@ -57,6 +68,7 @@ def connection(connector_adapter):
 @pytest.fixture
 def connection_factory(connector_adapter):
     """Factory function for creating connections with custom parameters."""
+
     def _create_connection(**override_params):
         """Create a connection with custom parameters.
         
@@ -67,7 +79,7 @@ def connection_factory(connector_adapter):
             conn = connection_factory(account="test_account", user="test_user")
         """
         return create_connection_with_adapter(connector_adapter, **override_params)
-    
+
     return _create_connection
 
 
@@ -83,7 +95,7 @@ def pytest_runtest_setup(item):
     connector_type = item.config.getoption("--connector")
     # Set the current connector for driver-gated helpers
     set_current_connector(connector_type)
-    
+
     if connector_type == "universal" and item.get_closest_marker("skip_universal"):
         pytest.skip("Skipping test for universal driver")
     elif connector_type == "reference" and item.get_closest_marker("skip_reference"):

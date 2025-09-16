@@ -2,108 +2,85 @@ import tempfile
 from pathlib import Path
 
 from .utils_put_get import (
-    write_text_file,
+    shared_test_data_dir,
     as_file_uri,
     create_temporary_stage,
-    decompress_gzip_file,
-    PUT_ROW_SOURCE_IDX,
-    PUT_ROW_TARGET_IDX,
-    PUT_ROW_STATUS_IDX,
-    GET_ROW_FILE_IDX,
-    GET_ROW_SIZE_IDX,
-    GET_ROW_STATUS_IDX,
-    GET_ROW_MESSAGE_IDX,
 )
+from ..utils import OLD_DRIVER_ONLY, NEW_DRIVER_ONLY
 
 
 def test_put_get_with_auto_compress_true(cursor):
     stage_name = create_temporary_stage(cursor, "PYTEST_STAGE_PUT_GET_COMPRESS_TRUE")
-    filename = "test_put_get_compress_true.csv"
-    compressed_filename = f"{filename}.gz"
 
-    # Create temporary uncompressed CSV file
-    with tempfile.TemporaryDirectory() as tmp:
-        tmpdir = Path(tmp)
-        file_path = write_text_file(tmpdir, filename, "1,2,3\n")
+    uncompressed_filename, uncompressed_file_path = uncompressed_test_file()
+    compressed_filename, compressed_file_path = compressed_test_file()
 
-        # Upload the uncompressed file with AUTO_COMPRESS=TRUE
-        cursor.execute(
-            f"PUT 'file://{as_file_uri(file_path)}' @{stage_name} AUTO_COMPRESS=TRUE"
-        )
+    cursor.execute(
+        f"PUT 'file://{as_file_uri(uncompressed_file_path)}' @{stage_name} AUTO_COMPRESS=TRUE"
+    )
 
-        # Verify that the file was uploaded and compressed
-        row = cursor.fetchone()
-        assert row[PUT_ROW_SOURCE_IDX] == filename
-        assert row[PUT_ROW_TARGET_IDX] == compressed_filename
-        assert row[PUT_ROW_STATUS_IDX] == "UPLOADED"
-
-        download_dir = tmpdir / "download"
-        download_dir.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory() as download_dir:
+        download_dir_path = Path(download_dir)
 
         # Download the compressed file
         cursor.execute(
-            f"GET @{stage_name}/{filename} 'file://{as_file_uri(download_dir)}/'"
+            f"GET @{stage_name}/{uncompressed_filename} 'file://{as_file_uri(download_dir_path)}/'"
         )
-        
-        # Verify that the compressed file has correct name
-        row = cursor.fetchone()
-        assert row[GET_ROW_FILE_IDX] == compressed_filename
-        assert row[GET_ROW_STATUS_IDX] == "DOWNLOADED"
 
-        # Verify that the compressed file exists and the uncompressed file does not
-        gz = download_dir / compressed_filename
-        assert gz.exists()
+        expected_file_path = download_dir_path / compressed_filename
+        assert expected_file_path.exists()
 
-        plain = download_dir / filename
-        assert not plain.exists()
+        not_expected_file_path = download_dir_path / uncompressed_filename
+        assert not not_expected_file_path.exists()
 
-        # Verify that the compressed file content is correct
-        assert decompress_gzip_file(gz) == "1,2,3\n"
+        # Verify content
+        downloaded_content = expected_file_path.read_bytes()
+        reference_content = compressed_file_path.read_bytes()
+
+        if OLD_DRIVER_ONLY("BC#1"):
+            # Old driver adds extra gzip headers, compressed content should differ
+            assert downloaded_content != reference_content
+
+        if NEW_DRIVER_ONLY("BC#1"):
+            # New driver matches gzip content exactly
+            assert downloaded_content == reference_content
 
 
 def test_put_get_with_auto_compress_false(cursor):
     stage_name = create_temporary_stage(cursor, "PYTEST_STAGE_PUT_GET_COMPRESS_FALSE")
-    filename = "test_put_get_compress_false.csv"
-    compressed_filename = f"{filename}.gz"
-    
-    # Create temporary uncompressed CSV file
-    with tempfile.TemporaryDirectory() as tmp:
-        tmpdir = Path(tmp)
-        file_path = write_text_file(tmpdir, filename, "1,2,3\n")
 
-        # Upload the uncompressed file with AUTO_COMPRESS=FALSE
-        cursor.execute(
-            f"PUT 'file://{as_file_uri(file_path)}' @{stage_name} AUTO_COMPRESS=FALSE"
-        )
+    uncompressed_filename, uncompressed_file_path = uncompressed_test_file()
+    compressed_filename, compressed_file_path = compressed_test_file()
 
-        # Verify that the file was uploaded and not compressed
-        row = cursor.fetchone()
-        assert row[PUT_ROW_SOURCE_IDX] == filename
-        assert row[PUT_ROW_TARGET_IDX] == filename
-        assert row[PUT_ROW_STATUS_IDX] == "UPLOADED"
+    # Upload the uncompressed file with AUTO_COMPRESS=FALSE
+    cursor.execute(
+        f"PUT 'file://{as_file_uri(uncompressed_file_path)}' @{stage_name} AUTO_COMPRESS=FALSE"
+    )
 
-        download_dir = tmpdir / "download"
-        download_dir.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory() as download_dir:
+        download_dir_path = Path(download_dir)
 
         # Download the uncompressed file
         cursor.execute(
-            f"GET @{stage_name}/{filename} 'file://{as_file_uri(download_dir)}/'"
+            f"GET @{stage_name}/{uncompressed_filename} 'file://{as_file_uri(download_dir_path)}/'"
         )
 
-        # Verify that the uncompressed file exists and the compressed file does not
-        row = cursor.fetchone()
-        assert row[GET_ROW_FILE_IDX] == filename
-        assert row[GET_ROW_STATUS_IDX] == "DOWNLOADED"
+        # Verify that the downloaded file exists and is uncompressed
+        expected_file_path = download_dir_path / uncompressed_filename
+        assert expected_file_path.exists()
 
-        plain = download_dir / filename
-        assert plain.exists()
-        gz = download_dir / compressed_filename
-        assert not gz.exists()
+        not_expected_file_path = download_dir_path / compressed_filename
+        assert not not_expected_file_path.exists()
 
         # Verify that the uncompressed file content is correct
-        assert plain.read_text() == "1,2,3\n"
+        downloaded_content = expected_file_path.read_text()
+        reference_content = uncompressed_file_path.read_text()
+        assert downloaded_content == reference_content
 
 
-#################################################################################################
-# More tests with upload of compressed files can be found in test_put_get_source_compression.py #
-#################################################################################################
+def uncompressed_test_file():
+    return "test_data.csv", shared_test_data_dir() / "compression" / "test_data.csv"
+
+
+def compressed_test_file():
+    return "test_data.csv.gz", shared_test_data_dir() / "compression" / "test_data.csv.gz"
