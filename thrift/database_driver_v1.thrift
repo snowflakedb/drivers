@@ -349,5 +349,3 @@ service DatabaseDriver {
    */
   i64 statementReadPartition(1: StatementHandle stmt_handle, 2: binary partition_descriptor) throws (1: DriverException e);
 }
-
-// Note: TLS settings are set via connectionSetOption* APIs; direct TLS config RPC removed.

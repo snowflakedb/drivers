@@ -1,15 +1,20 @@
-use crate::apis::database_driver_v1::query::process_query_response;
-use crate::config::ConfigError;
-use crate::config::rest_parameters::{LoginParameters, QueryParameters};
-use crate::config::settings::Setting;
-use crate::driver::{Connection, Database, Statement};
-use crate::handle_manager::{Handle, HandleManager};
-use crate::rest::snowflake::{RestError, snowflake_query_with_client};
+use crate::apis::database_driver_v1::ApiError;
+use crate::apis::database_driver_v1::Handle;
+use crate::apis::database_driver_v1::Setting;
+use crate::apis::database_driver_v1::error::ConfigError;
+use crate::apis::database_driver_v1::error::RestError;
+use crate::apis::database_driver_v1::{
+    connection_init, connection_new, connection_release, connection_set_option,
+};
+use crate::apis::database_driver_v1::{
+    database_init, database_new, database_release, database_set_option,
+};
+use crate::apis::database_driver_v1::{
+    statement_bind, statement_execute_query, statement_new, statement_prepare, statement_release,
+    statement_set_option, statement_set_sql_query,
+};
 use crate::thrift_apis::ThriftApi;
-use snafu;
-use snafu::{Location, Report, ResultExt, location};
-extern crate lazy_static;
-use lazy_static::lazy_static;
+use snafu::{self, Report};
 use thrift::protocol::{TInputProtocol, TOutputProtocol};
 
 use crate::thrift_gen::database_driver_v1::{
@@ -20,17 +25,13 @@ use crate::thrift_gen::database_driver_v1::{
     TDatabaseDriverSyncClient,
 };
 
-use arrow::array::{RecordBatch, StructArray};
+use crate::thrift_gen::database_driver_v1::ArrowArrayStreamPtr;
 use arrow::ffi::{FFI_ArrowArray, FFI_ArrowSchema};
 use arrow::ffi_stream::FFI_ArrowArrayStream;
 use std::mem::size_of;
-use std::sync::{Mutex, MutexGuard};
 use thrift::server::TProcessor;
 use thrift::{Error, OrderedFloat};
 use tracing::instrument;
-
-use crate::driver::StatementState;
-use crate::thrift_gen::database_driver_v1::ArrowArrayStreamPtr;
 
 impl From<Box<ArrowArrayStreamPtr>> for *mut FFI_ArrowArrayStream {
     fn from(ptr: Box<ArrowArrayStreamPtr>) -> Self {
@@ -115,12 +116,6 @@ impl From<StatementHandle> for Handle {
     }
 }
 
-lazy_static! {
-    static ref DB_HANDLE_MANAGER: HandleManager<Mutex<Database>> = HandleManager::new();
-    static ref CONN_HANDLE_MANAGER: HandleManager<Mutex<Connection>> = HandleManager::new();
-    static ref STMT_HANDLE_MANAGER: HandleManager<Mutex<Statement>> = HandleManager::new();
-}
-
 pub struct DatabaseDriverV1 {}
 pub struct DatabaseDriverV1Server {}
 
@@ -136,97 +131,48 @@ impl ThriftApi for DatabaseDriverV1 {
         ))
     }
     fn server() -> Box<dyn TProcessor + Send + Sync> {
-        Box::new(DatabaseDriverSyncProcessor::new(
-            DatabaseDriverV1Server::new(),
-        ))
+        Box::new(DatabaseDriverSyncProcessor::new(DatabaseDriverV1Server {}))
     }
 }
 
-impl Default for DatabaseDriverV1Server {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-use snafu::Snafu;
-
-#[derive(Debug, Snafu)]
-pub enum ApiError {
-    #[snafu(display("Generic error"))]
-    GenericError {
-        #[snafu(implicit)]
-        location: Location,
-    },
-    #[snafu(display("Failed to create runtime"))]
-    FailedToCreateRuntime {
-        #[snafu(implicit)]
-        location: Location,
-        source: std::io::Error,
-    },
-    #[snafu(display("Configuration error: {source}"))]
-    ConfigurationError {
-        #[snafu(implicit)]
-        location: Location,
-        source: ConfigError,
-    },
-    #[snafu(display("Invalid argument: {argument}"))]
-    InvalidArgument {
-        argument: String,
-        #[snafu(implicit)]
-        location: Location,
-    },
-    #[snafu(display("Failed to login: {source}"))]
-    FailedToLogin {
-        #[snafu(implicit)]
-        location: Location,
-        source: RestError,
-    },
-    #[snafu(display("Failed to lock connection"))]
-    FailedToLockConnection {
-        #[snafu(implicit)]
-        location: Location,
-    },
-}
-
-impl ApiError {
-    fn to_driver_error(&self) -> DriverError {
-        match self {
-            ApiError::GenericError { .. } => DriverError::GenericError(GenericError::new()),
-            ApiError::FailedToCreateRuntime { .. } => {
-                DriverError::InternalError(InternalError::new())
-            }
-            ApiError::ConfigurationError {
-                source:
-                    ConfigError::InvalidParameterValue {
-                        parameter,
-                        value,
-                        explanation,
-                        ..
-                    },
-                ..
-            } => DriverError::InvalidParameterValue(InvalidParameterValue::new(
-                parameter.clone(),
-                value.clone(),
-                explanation.clone(),
-            )),
-            ApiError::ConfigurationError {
-                source: ConfigError::MissingParameter { parameter, .. },
-                ..
-            } => DriverError::MissingParameter(MissingParameter::new(parameter.clone())),
-            ApiError::InvalidArgument { .. } => DriverError::InternalError(InternalError::new()),
-            ApiError::FailedToLogin {
-                source: RestError::LoginError { message, code, .. },
-                ..
-            } => DriverError::LoginError(LoginError {
-                message: message.clone(),
-                code: *code,
-            }),
-            ApiError::FailedToLogin { source, .. } => {
-                DriverError::AuthError(AuthenticationError::new(source.to_string()))
-            }
-            ApiError::FailedToLockConnection { .. } => {
-                DriverError::InternalError(InternalError::new())
-            }
+fn to_driver_error(error: &ApiError) -> DriverError {
+    match error {
+        ApiError::GenericError { .. } => DriverError::GenericError(GenericError::new()),
+        ApiError::RuntimeCreation { .. } => DriverError::InternalError(InternalError::new()),
+        ApiError::Configuration {
+            source:
+                ConfigError::InvalidParameterValue {
+                    parameter,
+                    value,
+                    explanation,
+                    ..
+                },
+            ..
+        } => DriverError::InvalidParameterValue(InvalidParameterValue::new(
+            parameter.clone(),
+            value.clone(),
+            explanation.clone(),
+        )),
+        ApiError::Configuration {
+            source: ConfigError::MissingParameter { parameter, .. },
+            ..
+        } => DriverError::MissingParameter(MissingParameter::new(parameter.clone())),
+        ApiError::InvalidArgument { .. } => DriverError::InternalError(InternalError::new()),
+        ApiError::Login {
+            source: RestError::LoginError { message, code, .. },
+            ..
+        } => DriverError::LoginError(LoginError {
+            message: message.clone(),
+            code: *code,
+        }),
+        ApiError::Login { source, .. } => {
+            DriverError::AuthError(AuthenticationError::new(source.to_string()))
+        }
+        ApiError::ConnectionLocking { .. } => DriverError::InternalError(InternalError::new()),
+        ApiError::StatementLocking { .. } => DriverError::InternalError(InternalError::new()),
+        ApiError::DatabaseLocking { .. } => DriverError::InternalError(InternalError::new()),
+        ApiError::QueryResponseProcessing { .. } => {
+            DriverError::InternalError(InternalError::new())
         }
     }
 }
@@ -244,7 +190,7 @@ fn status_code_of_driver_error(error: &DriverError) -> StatusCode {
 
 impl From<ApiError> for thrift::Error {
     fn from(error: ApiError) -> Self {
-        let driver_error = error.to_driver_error();
+        let driver_error = to_driver_error(&error);
         let message = error.to_string();
         let report = Report::from_error(error).to_string();
         Error::from(DriverException::new(
@@ -256,170 +202,23 @@ impl From<ApiError> for thrift::Error {
     }
 }
 
-trait ToThriftResult {
-    fn to_thrift(self) -> thrift::Result<()>;
+trait ToThriftResult<T> {
+    fn to_thrift(self) -> thrift::Result<T>;
 }
 
-impl<E> ToThriftResult for Result<(), E>
+impl<E, V> ToThriftResult<V> for Result<V, E>
 where
     E: Into<thrift::Error>,
 {
-    fn to_thrift(self) -> thrift::Result<()> {
+    fn to_thrift(self) -> thrift::Result<V> {
         self.map_err(|e| e.into())
-    }
-}
-
-fn connection_init(
-    conn_handle: ConnectionHandle,
-    _db_handle: DatabaseHandle,
-) -> Result<(), ApiError> {
-    let handle = conn_handle.into();
-    match CONN_HANDLE_MANAGER.get_obj(handle) {
-        Some(conn_ptr) => {
-            let rt = tokio::runtime::Runtime::new().context(FailedToCreateRuntimeSnafu)?;
-
-            let (login_parameters, http_client) = {
-                let mut conn = conn_ptr.lock().unwrap();
-                let tls_cfg = crate::tls::TlsConfig::from_settings(&conn.settings);
-                let client = crate::tls::create_tls_client_with_config(tls_cfg).map_err(|e| {
-                    ApiError::InvalidArgument {
-                        argument: format!("Invalid TLS config: {:?}", e),
-                        location: location!(),
-                    }
-                })?;
-                conn.set_http_client(client.clone());
-                (
-                    LoginParameters::from_settings(&conn.settings).context(ConfigurationSnafu)?,
-                    client,
-                )
-            };
-
-            let login_result = rt
-                .block_on(async {
-                    crate::rest::snowflake::snowflake_login_with_client(
-                        &http_client,
-                        &login_parameters,
-                    )
-                    .await
-                })
-                .context(FailedToLoginSnafu)?;
-
-            conn_ptr
-                .lock()
-                .map_err(|_| ApiError::FailedToLockConnection {
-                    location: location!(),
-                })?
-                .session_token = Some(login_result);
-            Ok(())
-        }
-        None => Err(ApiError::InvalidArgument {
-            argument: "Connection handle not found".to_string(),
-            location: location!(),
-        }),
-    }
-}
-
-impl DatabaseDriverV1Server {
-    /// Helper to create a standard DriverException with commonly used defaults
-    fn driver_error(message: impl Into<String>, status: StatusCode) -> Error {
-        Error::from(DriverException::new(
-            message.into(),
-            status,
-            DriverError::GenericError(GenericError::new()),
-            "".to_string(),
-        ))
-    }
-
-    /// Helper to create an invalid argument error
-    fn invalid_argument(message: impl Into<String>) -> Error {
-        Self::driver_error(message, StatusCode::INVALID_ARGUMENT)
-    }
-
-    /// Helper to create an invalid state error
-    fn invalid_state(message: impl Into<String>) -> Error {
-        Self::driver_error(message, StatusCode::INVALID_STATE)
-    }
-
-    /// Helper to create an unknown error
-    fn internal_error(message: impl Into<String>) -> Error {
-        Self::driver_error(message, StatusCode::GENERIC_ERROR)
-    }
-
-    fn with_statement<T>(
-        &self,
-        handle: StatementHandle,
-        f: impl FnOnce(MutexGuard<Statement>) -> Result<T, Error>,
-    ) -> Result<T, Error> {
-        let handle = handle.into();
-        let stmt = STMT_HANDLE_MANAGER
-            .get_obj(handle)
-            .ok_or_else(|| Self::invalid_argument("Statement handle not found"))?;
-        let guard = stmt
-            .lock()
-            .map_err(|_| Self::invalid_state("Statement cannot be locked"))?;
-        f(guard)
-    }
-
-    pub fn new() -> DatabaseDriverV1Server {
-        DatabaseDriverV1Server {}
-    }
-
-    pub fn database_set_option(
-        &self,
-        db_handle: DatabaseHandle,
-        key: String,
-        value: Setting,
-    ) -> thrift::Result<()> {
-        let handle = db_handle.into();
-        match DB_HANDLE_MANAGER.get_obj(handle) {
-            Some(db_ptr) => {
-                let mut db = db_ptr.lock().unwrap();
-                db.settings.insert(key, value);
-                Ok(())
-            }
-            None => Err(Self::invalid_argument("Database handle not found")),
-        }
-    }
-
-    fn connection_set_option(
-        &self,
-        handle: ConnectionHandle,
-        key: String,
-        value: Setting,
-    ) -> thrift::Result<()> {
-        let handle = handle.into();
-        match CONN_HANDLE_MANAGER.get_obj(handle) {
-            Some(conn_ptr) => {
-                let mut conn = conn_ptr.lock().unwrap();
-                conn.settings.insert(key, value);
-                Ok(())
-            }
-            None => Err(Self::invalid_argument("Connection handle not found")),
-        }
-    }
-
-    fn statement_set_option(
-        &self,
-        handle: StatementHandle,
-        key: String,
-        value: Setting,
-    ) -> thrift::Result<()> {
-        let handle = handle.into();
-        match STMT_HANDLE_MANAGER.get_obj(handle) {
-            Some(stmt_ptr) => {
-                let mut stmt = stmt_ptr.lock().unwrap();
-                stmt.settings.insert(key, value);
-                Ok(())
-            }
-            None => Err(Self::invalid_argument("Statement handle not found")),
-        }
     }
 }
 
 impl DatabaseDriverSyncHandler for DatabaseDriverV1Server {
     #[instrument(name = "DatabaseDriverV1::database_new", skip(self))]
     fn handle_database_new(&self) -> thrift::Result<DatabaseHandle> {
-        let handle = DB_HANDLE_MANAGER.add_handle(Mutex::new(Database::new()));
+        let handle = database_new();
         Ok(DatabaseHandle::from(handle))
     }
 
@@ -430,7 +229,7 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1Server {
         key: String,
         value: String,
     ) -> thrift::Result<()> {
-        self.database_set_option(db_handle, key, Setting::String(value))
+        database_set_option(db_handle.into(), key, Setting::String(value)).to_thrift()
     }
 
     #[instrument(name = "DatabaseDriverV1::database_set_option_bytes", skip(self))]
@@ -440,7 +239,7 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1Server {
         key: String,
         value: Vec<u8>,
     ) -> thrift::Result<()> {
-        self.database_set_option(db_handle, key, Setting::Bytes(value))
+        database_set_option(db_handle.into(), key, Setting::Bytes(value)).to_thrift()
     }
 
     #[instrument(name = "DatabaseDriverV1::database_set_option_int", skip(self))]
@@ -450,7 +249,7 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1Server {
         key: String,
         value: i64,
     ) -> thrift::Result<()> {
-        self.database_set_option(db_handle, key, Setting::Int(value))
+        database_set_option(db_handle.into(), key, Setting::Int(value)).to_thrift()
     }
 
     #[instrument(name = "DatabaseDriverV1::database_set_option_double", skip(self))]
@@ -460,29 +259,22 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1Server {
         key: String,
         value: OrderedFloat<f64>,
     ) -> thrift::Result<()> {
-        self.database_set_option(db_handle, key, Setting::Double(value.into_inner()))
+        database_set_option(db_handle.into(), key, Setting::Double(value.into_inner())).to_thrift()
     }
 
     #[instrument(name = "DatabaseDriverV1::database_init", skip(self))]
     fn handle_database_init(&self, db_handle: DatabaseHandle) -> thrift::Result<()> {
-        let handle = db_handle.into();
-        match DB_HANDLE_MANAGER.get_obj(handle) {
-            Some(_db_ptr) => Ok(()),
-            None => Err(Self::invalid_argument("Database handle not found")),
-        }
+        database_init(db_handle.into()).to_thrift()
     }
 
     #[instrument(name = "DatabaseDriverV1::database_release", skip(self))]
     fn handle_database_release(&self, db_handle: DatabaseHandle) -> thrift::Result<()> {
-        match DB_HANDLE_MANAGER.delete_handle(db_handle.into()) {
-            true => Ok(()),
-            false => Err(Self::invalid_argument("Failed to release database handle")),
-        }
+        database_release(db_handle.into()).to_thrift()
     }
 
     #[instrument(name = "DatabaseDriverV1::connection_new", skip(self))]
     fn handle_connection_new(&self) -> thrift::Result<ConnectionHandle> {
-        let handle = CONN_HANDLE_MANAGER.add_handle(Mutex::new(Connection::new()));
+        let handle = connection_new();
         Ok(ConnectionHandle::from(handle))
     }
 
@@ -493,7 +285,7 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1Server {
         key: String,
         value: String,
     ) -> thrift::Result<()> {
-        self.connection_set_option(conn_handle, key, Setting::String(value))
+        connection_set_option(conn_handle.into(), key, Setting::String(value)).to_thrift()
     }
 
     #[instrument(name = "DatabaseDriverV1::connection_set_option_bytes", skip(self))]
@@ -503,7 +295,7 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1Server {
         key: String,
         value: Vec<u8>,
     ) -> thrift::Result<()> {
-        self.connection_set_option(conn_handle, key, Setting::Bytes(value))
+        connection_set_option(conn_handle.into(), key, Setting::Bytes(value)).to_thrift()
     }
 
     #[instrument(name = "DatabaseDriverV1::connection_set_option_int", skip(self))]
@@ -513,7 +305,7 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1Server {
         key: String,
         value: i64,
     ) -> thrift::Result<()> {
-        self.connection_set_option(conn_handle, key, Setting::Int(value))
+        connection_set_option(conn_handle.into(), key, Setting::Int(value)).to_thrift()
     }
 
     #[instrument(name = "DatabaseDriverV1::connection_set_option_double", skip(self))]
@@ -523,7 +315,8 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1Server {
         key: String,
         value: OrderedFloat<f64>,
     ) -> thrift::Result<()> {
-        self.connection_set_option(conn_handle, key, Setting::Double(value.into_inner()))
+        connection_set_option(conn_handle.into(), key, Setting::Double(value.into_inner()))
+            .to_thrift()
     }
 
     #[instrument(name = "DatabaseDriverV1::connection_init", skip(self))]
@@ -532,24 +325,19 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1Server {
         conn_handle: ConnectionHandle,
         db_handle: DatabaseHandle,
     ) -> thrift::Result<()> {
-        connection_init(conn_handle, db_handle).to_thrift()
+        connection_init(conn_handle.into(), db_handle.into()).to_thrift()
     }
 
     #[instrument(name = "DatabaseDriverV1::connection_release", skip(self))]
     fn handle_connection_release(&self, conn_handle: ConnectionHandle) -> thrift::Result<()> {
-        match CONN_HANDLE_MANAGER.delete_handle(conn_handle.into()) {
-            true => Ok(()),
-            false => Err(Self::invalid_argument(
-                "Failed to release connection handle",
-            )),
-        }
+        connection_release(conn_handle.into()).to_thrift()
     }
 
     #[instrument(name = "DatabaseDriverV1::connection_get_info", skip(self))]
     fn handle_connection_get_info(
         &self,
-        _conn_handle: ConnectionHandle,
-        _info_codes: Vec<InfoCode>,
+        conn_handle: ConnectionHandle,
+        info_codes: Vec<InfoCode>,
     ) -> thrift::Result<Vec<u8>> {
         todo!()
     }
@@ -557,13 +345,13 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1Server {
     #[instrument(name = "DatabaseDriverV1::connection_get_objects", skip(self))]
     fn handle_connection_get_objects(
         &self,
-        _conn_handle: ConnectionHandle,
-        _depth: i32,
-        _catalog: String,
-        _db_schema: String,
-        _table_name: String,
-        _table_type: Vec<String>,
-        _column_name: String,
+        conn_handle: ConnectionHandle,
+        depth: i32,
+        catalog: String,
+        db_schema: String,
+        table_name: String,
+        table_type: Vec<String>,
+        column_name: String,
     ) -> thrift::Result<Vec<u8>> {
         todo!()
     }
@@ -571,10 +359,10 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1Server {
     #[instrument(name = "DatabaseDriverV1::connection_get_table_schema", skip(self))]
     fn handle_connection_get_table_schema(
         &self,
-        _conn_handle: ConnectionHandle,
-        _catalog: String,
-        _db_schema: String,
-        _table_name: String,
+        conn_handle: ConnectionHandle,
+        catalog: String,
+        db_schema: String,
+        table_name: String,
     ) -> thrift::Result<Vec<u8>> {
         todo!()
     }
@@ -582,18 +370,18 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1Server {
     #[instrument(name = "DatabaseDriverV1::connection_get_table_types", skip(self))]
     fn handle_connection_get_table_types(
         &self,
-        _conn_handle: ConnectionHandle,
+        conn_handle: ConnectionHandle,
     ) -> thrift::Result<Vec<u8>> {
         todo!()
     }
 
     #[instrument(name = "DatabaseDriverV1::connection_commit", skip(self))]
-    fn handle_connection_commit(&self, _conn_handle: ConnectionHandle) -> thrift::Result<()> {
+    fn handle_connection_commit(&self, conn_handle: ConnectionHandle) -> thrift::Result<()> {
         todo!()
     }
 
     #[instrument(name = "DatabaseDriverV1::connection_rollback", skip(self))]
-    fn handle_connection_rollback(&self, _conn_handle: ConnectionHandle) -> thrift::Result<()> {
+    fn handle_connection_rollback(&self, conn_handle: ConnectionHandle) -> thrift::Result<()> {
         todo!()
     }
 
@@ -602,23 +390,14 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1Server {
         &self,
         conn_handle: ConnectionHandle,
     ) -> thrift::Result<StatementHandle> {
-        let handle = conn_handle.into();
-        match CONN_HANDLE_MANAGER.get_obj(handle) {
-            Some(conn_ptr) => {
-                let stmt = Mutex::new(Statement::new(conn_ptr));
-                let handle = STMT_HANDLE_MANAGER.add_handle(stmt);
-                Ok(handle.into())
-            }
-            None => Err(Self::invalid_argument("Connection handle not found")),
-        }
+        let handle =
+            statement_new(conn_handle.into()).map_err(|e: ApiError| thrift::Error::from(e))?;
+        Ok(handle.into())
     }
 
     #[instrument(name = "DatabaseDriverV1::statement_release", skip(self))]
     fn handle_statement_release(&self, stmt_handle: StatementHandle) -> thrift::Result<()> {
-        match STMT_HANDLE_MANAGER.delete_handle(stmt_handle.into()) {
-            true => Ok(()),
-            false => Err(Self::invalid_argument("Failed to release statement handle")),
-        }
+        statement_release(stmt_handle.into()).to_thrift()
     }
 
     #[instrument(name = "DatabaseDriverV1::statement_set_sql_query", skip(self))]
@@ -627,29 +406,21 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1Server {
         stmt_handle: StatementHandle,
         query: String,
     ) -> thrift::Result<()> {
-        let handle = stmt_handle.into();
-        match STMT_HANDLE_MANAGER.get_obj(handle) {
-            Some(stmt_ptr) => {
-                let mut stmt = stmt_ptr.lock().unwrap();
-                stmt.query = Some(query);
-                Ok(())
-            }
-            None => Err(Self::invalid_argument("Statement handle not found")),
-        }
+        statement_set_sql_query(stmt_handle.into(), query).to_thrift()
     }
 
     #[instrument(name = "DatabaseDriverV1::statement_set_substrait_plan", skip(self))]
     fn handle_statement_set_substrait_plan(
         &self,
-        _stmt_handle: StatementHandle,
-        _plan: Vec<u8>,
+        stmt_handle: StatementHandle,
+        plan: Vec<u8>,
     ) -> thrift::Result<()> {
         todo!()
     }
 
     #[instrument(name = "DatabaseDriverV1::statement_prepare", skip(self))]
-    fn handle_statement_prepare(&self, _stmt_handle: StatementHandle) -> thrift::Result<()> {
-        Ok(())
+    fn handle_statement_prepare(&self, stmt_handle: StatementHandle) -> thrift::Result<()> {
+        statement_prepare(stmt_handle.into()).to_thrift()
     }
 
     #[instrument(name = "DatabaseDriverV1::statement_set_option_string", skip(self))]
@@ -659,7 +430,7 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1Server {
         key: String,
         value: String,
     ) -> thrift::Result<()> {
-        self.statement_set_option(stmt_handle, key, Setting::String(value))
+        statement_set_option(stmt_handle.into(), key, Setting::String(value)).to_thrift()
     }
 
     #[instrument(name = "DatabaseDriverV1::statement_set_option_bytes", skip(self))]
@@ -669,7 +440,7 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1Server {
         key: String,
         value: Vec<u8>,
     ) -> thrift::Result<()> {
-        self.statement_set_option(stmt_handle, key, Setting::Bytes(value))
+        statement_set_option(stmt_handle.into(), key, Setting::Bytes(value)).to_thrift()
     }
 
     #[instrument(name = "DatabaseDriverV1::statement_set_option_int", skip(self))]
@@ -679,7 +450,7 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1Server {
         key: String,
         value: i64,
     ) -> thrift::Result<()> {
-        self.statement_set_option(stmt_handle, key, Setting::Int(value))
+        statement_set_option(stmt_handle.into(), key, Setting::Int(value)).to_thrift()
     }
 
     #[instrument(name = "DatabaseDriverV1::statement_set_option_double", skip(self))]
@@ -689,13 +460,14 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1Server {
         key: String,
         value: OrderedFloat<f64>,
     ) -> thrift::Result<()> {
-        self.statement_set_option(stmt_handle, key, Setting::Double(value.into_inner()))
+        statement_set_option(stmt_handle.into(), key, Setting::Double(value.into_inner()))
+            .to_thrift()
     }
 
     #[instrument(name = "DatabaseDriverV1::statement_get_parameter_schema", skip(self))]
     fn handle_statement_get_parameter_schema(
         &self,
-        _stmt_handle: StatementHandle,
+        stmt_handle: StatementHandle,
     ) -> thrift::Result<ArrowSchemaPtr> {
         todo!()
     }
@@ -707,21 +479,14 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1Server {
         schema: ArrowSchemaPtr,
         array: ArrowArrayPtr,
     ) -> thrift::Result<()> {
-        let schema = unsafe { FFI_ArrowSchema::from_raw(schema.into()) };
-        let array = unsafe { FFI_ArrowArray::from_raw(array.into()) };
-        let array = unsafe { arrow::ffi::from_ffi(array, &schema) }
-            .map_err(|e| Self::internal_error(format!("Failed to convert ArrowArray: {e}")))?;
-        let record_batch = RecordBatch::from(StructArray::from(array));
-        self.with_statement(stmt_handle, |mut stmt| {
-            stmt.bind_parameters(record_batch).map_err(snafu_to_thrift)
-        })
+        unsafe { statement_bind(stmt_handle.into(), schema.into(), array.into()).to_thrift() }
     }
 
     #[instrument(name = "DatabaseDriverV1::statement_bind_stream", skip(self))]
     fn handle_statement_bind_stream(
         &self,
-        _stmt_handle: StatementHandle,
-        _stream: Vec<u8>,
+        stmt_handle: StatementHandle,
+        stream: Vec<u8>,
     ) -> thrift::Result<()> {
         todo!()
     }
@@ -731,63 +496,18 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1Server {
         &self,
         stmt_handle: StatementHandle,
     ) -> thrift::Result<ExecuteResult> {
-        let handle = stmt_handle.into();
-        let stmt_ptr = STMT_HANDLE_MANAGER
-            .get_obj(handle)
-            .ok_or_else(|| Self::invalid_argument("Statement handle not found"))?;
-
-        let mut stmt = stmt_ptr.lock().unwrap();
-        let query = stmt
-            .query
-            .take()
-            .ok_or_else(|| Self::invalid_argument("Query not found"))?;
-
-        // Run within the async runtime
-        let rt = tokio::runtime::Runtime::new()
-            .map_err(|e| Self::internal_error(format!("Failed to create runtime: {e}")))?;
-
-        let (query_parameters, session_token) = {
-            let conn = stmt.conn.lock().unwrap();
-            (
-                QueryParameters::from_settings(&conn.settings).map_err(snafu_to_thrift)?,
-                conn.session_token
-                    .clone()
-                    .ok_or_else(|| Self::invalid_argument("Session token not found"))?,
-            )
-        };
-
-        let response = rt
-            .block_on(snowflake_query_with_client(
-                &{
-                    let conn = stmt.conn.lock().unwrap();
-                    conn.http_client
-                        .clone()
-                        .unwrap_or_else(reqwest::Client::new)
-                },
-                query_parameters,
-                session_token,
-                query,
-                stmt.get_query_parameter_bindings()
-                    .map_err(snafu_to_thrift)?,
-            ))
-            .map_err(snafu_to_thrift)?;
-
-        let response_reader = rt
-            .block_on(process_query_response(&response.data))
-            .map_err(snafu_to_thrift)?;
-
-        let rowset_stream = Box::new(FFI_ArrowArrayStream::new(response_reader));
-
-        // Serialize pointer into integer
-        let stream_ptr = Box::into_raw(rowset_stream);
-        stmt.state = StatementState::Executed;
-        Ok(ExecuteResult::new(Box::new(stream_ptr.into()), 0))
+        let result = statement_execute_query(stmt_handle.into()).to_thrift()?;
+        let stream_ptr: ArrowArrayStreamPtr = Box::into_raw(result.stream).into();
+        Ok(ExecuteResult::new(
+            Box::new(stream_ptr),
+            result.rows_affected,
+        ))
     }
 
     #[instrument(name = "DatabaseDriverV1::statement_execute_partitions", skip(self))]
     fn handle_statement_execute_partitions(
         &self,
-        _stmt_handle: StatementHandle,
+        stmt_handle: StatementHandle,
     ) -> thrift::Result<PartitionedResult> {
         todo!()
     }
@@ -795,34 +515,11 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1Server {
     #[instrument(name = "DatabaseDriverV1::statement_read_partition", skip(self))]
     fn handle_statement_read_partition(
         &self,
-        _stmt_handle: StatementHandle,
-        _partition_descriptor: Vec<u8>,
+        stmt_handle: StatementHandle,
+        partition_descriptor: Vec<u8>,
     ) -> thrift::Result<i64> {
         todo!()
     }
-}
-
-// TODO: Implement a function that prints a SNAFU error with location info for easier debugging
-pub fn generate_error_report<E>(error: E) -> String
-where
-    E: std::error::Error + Send + Sync + 'static,
-{
-    // Convert the given error into a snafu::Report.
-    let report = Report::from_error(error);
-    // Use `to_string()` to get the human-readable report string.
-    report.to_string()
-}
-
-pub fn snafu_to_thrift<E>(error: E) -> Error
-where
-    E: std::error::Error + Send + Sync + 'static,
-{
-    Error::from(DriverException::new(
-        error.to_string(),
-        StatusCode::GENERIC_ERROR,
-        DriverError::GenericError(GenericError::new()),
-        generate_error_report(error),
-    ))
 }
 
 #[cfg(test)]

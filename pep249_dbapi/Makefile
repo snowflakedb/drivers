@@ -66,15 +66,16 @@ TOX_REFERENCE_ENV = py$(PYTHON_ID)-integ-reference
 check-env-or-build:
 	@echo "Using CORE_PATH: $(DETECTED_CORE_PATH)"
 	@echo "Using PARAMETER_PATH: $(DETECTED_PARAMETER_PATH)"
+	cd .. && cargo build --package sf_core || { \
+		echo "Failed to build Rust core library"; \
+		echo "Make sure Rust toolchain is installed: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"; \
+		exit 1; \
+	}
 	@if [ ! -f "$(DETECTED_CORE_PATH)" ]; then \
-		echo "Rust core library not found, building..."; \
-		cd .. && cargo build --package sf_core || { \
-			echo "Failed to build Rust core library"; \
-			echo "Make sure Rust toolchain is installed: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"; \
-			exit 1; \
-		}; \
-		echo "Rust core library built successfully"; \
+		echo "Error: Core library not found at $(DETECTED_CORE_PATH)"; \
+		exit 1; \
 	fi
+
 
 # CI: fail fast if environment not properly set up
 check-env-or-fail:
