@@ -16,19 +16,6 @@ fn should_authenticate_using_private_file_with_password() {
 }
 
 #[test]
-fn should_fail_jwt_authentication_when_no_private_file_provided() {
-    //Given Authentication is set to JWT
-    let mut client = SnowflakeTestClient::with_default_params();
-    set_auth_to_jwt(&mut client);
-
-    //When Trying to Connect with no private file provided
-    let result = client.connect();
-
-    //Then There is error returned
-    client.assert_missing_parameter_error(result);
-}
-
-#[test]
 fn should_fail_jwt_authentication_when_invalid_private_key_provided() {
     //Given Authentication is set to JWT and invalid private key file is provided
     let mut client = SnowflakeTestClient::with_default_params();

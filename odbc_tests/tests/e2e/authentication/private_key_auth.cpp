@@ -39,18 +39,6 @@ class PrivateKeyAuthTest {
     return ss.str();
   }
 
-  std::string get_jwt_connection_string_without_private_key() {
-    auto params = get_test_parameters("testconnection");
-    std::stringstream ss;
-    ss << "DRIVER=" << get_driver_path() << ";";
-    add_param_required<std::string>(ss, params, "SNOWFLAKE_TEST_HOST", "SERVER");
-    add_param_required<std::string>(ss, params, "SNOWFLAKE_TEST_ACCOUNT", "ACCOUNT");
-    add_param_required<std::string>(ss, params, "SNOWFLAKE_TEST_USER", "UID");
-    ss << "AUTHENTICATOR=SNOWFLAKE_JWT;";
-    // Deliberately omit PRIV_KEY_FILE parameter
-    return ss.str();
-  }
-
   std::string read_invalid_private_key(const picojson::object& params) {
     auto it = params.find("SNOWFLAKE_TEST_PRIVATE_KEY_INVALID");
     if (it == params.end()) {
@@ -138,26 +126,6 @@ class PrivateKeyAuthTest {
     CHECK(records[0].sqlState == "28000");
     REQUIRE(!records[0].messageText.empty());
   }
-
-  void verify_connection_fails_with_missing_private_key_error(
-      ConnectionHandleWrapper& dbc, const std::string& connection_string) {
-    attempt_connection_expect_error(dbc, connection_string);
-
-    auto records = get_diag_rec(dbc);
-    REQUIRE(records.size() == 1);  // Expecting one error record
-    CHECK(records[0].sqlState == "28000");
-    using Catch::Matchers::ContainsSubstring;
-    OLD_DRIVER_ONLY("BC#1") {
-      CHECK(records[0].nativeError == 20032);
-      CHECK_THAT(records[0].messageText, ContainsSubstring("Required setting 'PRIV_KEY_FILE'"));
-    }
-
-    NEW_DRIVER_ONLY("BC#1") {
-      CHECK(records[0].nativeError == 0);
-      CHECK_THAT(records[0].messageText,
-                 ContainsSubstring("Missing required parameter: private_key_file"));
-    }
-  }
 };
 
 TEST_CASE("should authenticate using private file with password", "[private_key_auth]") {
@@ -175,20 +143,6 @@ TEST_CASE("should authenticate using private file with password", "[private_key_
   test.verify_simple_query_execution(dbc);
 
   SQLDisconnect(dbc.getHandle());
-}
-
-TEST_CASE("should fail JWT authentication when no private file provided", "[private_key_auth]") {
-  PrivateKeyAuthTest test;
-
-  // Given Authentication is set to JWT
-  auto env = test.setup_environment();
-  auto dbc = test.get_connection_handle(env);
-
-  // When Trying to Connect with no private file provided
-  std::string connection_string = test.get_jwt_connection_string_without_private_key();
-
-  // Then There is error returned
-  test.verify_connection_fails_with_missing_private_key_error(dbc, connection_string);
 }
 
 TEST_CASE("should fail JWT authentication when invalid private key provided",

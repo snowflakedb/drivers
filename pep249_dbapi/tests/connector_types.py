@@ -10,6 +10,7 @@ class ConnectorType(Enum):
     
     UNIVERSAL = "universal"  # Universal driver implementation
     REFERENCE = "reference"  # Old Snowflake Python connector
+    INTEGRATION = "integration"  # Integration tests
     
     def __str__(self) -> str:
         return self.value

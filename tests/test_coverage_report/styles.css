@@ -457,6 +457,25 @@ tr.feature-row:hover {
     margin: 15px 0;
     overflow: hidden;
 }
+
+.test-level-section {
+    border: 1px solid #e0e0e0;
+    border-radius: 4px;
+    margin: 10px 0;
+    overflow: hidden;
+    background-color: #fafafa;
+}
+
+.test-level-header {
+    background-color: #f8f9fa !important;
+    border-bottom: 1px solid #e0e0e0;
+    font-size: 0.95em;
+    font-weight: 600;
+}
+
+.test-level-header .expandable-title {
+    color: #495057;
+}
 .expandable-header {
     background: #f8f9fa;
     padding: 15px 20px;
@@ -630,4 +649,29 @@ tr.feature-row:hover {
     margin: 0;
     color: #6c757d;
     line-height: 1.5;
+}
+
+/* Test Level Labels */
+.test-level-e2e {
+    display: inline-block;
+    background-color: #007bff;
+    color: white;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 0.8em;
+    font-weight: 500;
+    margin-left: 6px;
+    vertical-align: middle;
+}
+
+.test-level-integration {
+    display: inline-block;
+    background-color: #28a745;
+    color: white;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 0.8em;
+    font-weight: 500;
+    margin-left: 6px;
+    vertical-align: middle;
 }

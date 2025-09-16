@@ -3,7 +3,7 @@ import os
 from contextlib import contextmanager
 from typing import Optional
 
-from .auth_helpers import verify_simple_query_execution, verify_login_error, verify_missing_parameter_error
+from .auth_helpers import verify_simple_query_execution, verify_login_error
 from ...connector_factory import get_test_parameters
 
 
@@ -28,21 +28,6 @@ class TestPrivateKeyAuthentication:
         with connection:
             verify_simple_query_execution(connection)
 
-    def test_should_fail_jwt_authentication_when_no_private_file_provided(
-        self, connection_factory
-    ):
-        # Given Authentication is set to JWT
-        authenticator="SNOWFLAKE_JWT"
-
-        # When Trying to Connect with no private file provided
-        exception = None
-        try:
-            connection_factory(authenticator=authenticator)
-        except Exception as e:
-            exception = e
-
-        # Then There is error returned
-        verify_missing_parameter_error(exception)
 
     def test_should_fail_jwt_authentication_when_invalid_private_key_provided(
         self, connection_factory

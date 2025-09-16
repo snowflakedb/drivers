@@ -16,7 +16,7 @@ use validator::GherkinValidator;
 #[command(about = "Validates Gherkin features against test implementations")]
 struct Args {
     /// Path to features directory
-    #[arg(short, long, default_value = "tests/e2e")]
+    #[arg(short, long, default_value = "tests/definitions")]
     features: PathBuf,
 
     /// Workspace root path

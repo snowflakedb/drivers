@@ -53,7 +53,7 @@ class CoverageReportGenerator:
         """Run the tests format validator and parse its output."""
         try:
             # Run the validator from the validator directory with workspace and features parameters
-            features_path = str(self.workspace_root / "tests" / "e2e")
+            features_path = str(self.workspace_root / "tests" / "definitions")
             workspace_path = str(self.workspace_root)
             result = subprocess.run(
                 ["cargo", "run", "--bin", "tests_format_validator", "--", 
@@ -264,12 +264,18 @@ class CoverageReportGenerator:
             return False
         
         # Check if scenario has the driver tag (already implemented)
-        has_driver_tag = f'@{driver_lower}' in tag_strings
+        # Handle both old format (@driver) and new format (@driver_e2e, @driver_int)
+        has_driver_tag = (f'@{driver_lower}' in tag_strings or 
+                         f'@{driver_lower}_e2e' in tag_strings or 
+                         f'@{driver_lower}_int' in tag_strings)
         if has_driver_tag:
             return False
         
         # Check if feature has the driver tag
-        feature_has_driver = f'@{driver_lower}' in feature_tag_strings
+        # Handle both old format (@driver) and new format (@driver_e2e, @driver_int)
+        feature_has_driver = (f'@{driver_lower}' in feature_tag_strings or 
+                             f'@{driver_lower}_e2e' in feature_tag_strings or 
+                             f'@{driver_lower}_int' in feature_tag_strings)
         
         # If feature has no driver annotation, it's TODO by default
         if not feature_has_driver:
@@ -280,6 +286,19 @@ class CoverageReportGenerator:
             return True
         
         return False
+    
+    def _has_driver_tag_in_scenario(self, scenario_info: Dict, driver: str) -> bool:
+        """Check if scenario has driver tag in new format (@driver_e2e, @driver_int) or old format (@driver)."""
+        tags = scenario_info.get('tags', [])
+        return self._has_driver_tag_in_tags(tags, driver)
+    
+    def _has_driver_tag_in_tags(self, tags: List[str], driver: str) -> bool:
+        """Check if tags contain driver tag in new format (@driver_e2e, @driver_int) or old format (@driver)."""
+        tag_strings = [tag.lower() for tag in tags]
+        driver_lower = driver.lower()
+        return (f'@{driver_lower}' in tag_strings or 
+                f'@{driver_lower}_e2e' in tag_strings or 
+                f'@{driver_lower}_int' in tag_strings)
     
     def is_scenario_excluded_for_driver(self, scenario_info: Dict, driver: str) -> bool:
         """
@@ -388,6 +407,88 @@ class CoverageReportGenerator:
         
         return ' '.join(formatted_words)
     
+    def _convert_validator_data_to_features(self, validator_data: Dict) -> Dict:
+        """Convert validator JSON data to the features format expected by the report generator."""
+        features = {}
+        
+        for validation_result in validator_data.get('validation_results', []):
+            feature_file_path = validation_result.get('feature_file', '')
+            
+            # Extract feature name from path
+            feature_name = Path(feature_file_path).stem
+            
+            # Initialize feature data
+            features[feature_name] = {
+                'path': feature_file_path,
+                'languages': {}
+            }
+            
+            # Process each language validation
+            for validation in validation_result.get('validations', []):
+                language = validation.get('language', '')
+                test_file_found = validation.get('test_file_found', False)
+                test_file_path = validation.get('test_file_path', '')
+                missing_steps = validation.get('missing_steps', [])
+                implemented_steps = validation.get('implemented_steps', [])
+                
+                # Determine implementation status
+                is_implemented = test_file_found and len(missing_steps) == 0 and len(implemented_steps) > 0
+                status = '✅' if is_implemented else '❌'
+                
+                # Convert absolute path to relative path
+                relative_path = test_file_path
+                if test_file_path.startswith('./'):
+                    relative_path = test_file_path[2:]  # Remove ./ prefix
+                elif test_file_path.startswith(str(self.workspace_root)):
+                    relative_path = Path(test_file_path).relative_to(self.workspace_root)
+                
+                features[feature_name]['languages'][language] = {
+                    'implemented': is_implemented,
+                    'status': status,
+                    'path': str(relative_path),
+                    'missing_steps': missing_steps,
+                    'implemented_steps': implemented_steps
+                }
+        
+        return features
+    
+    def _get_integration_test_file_path(self, language: str, feature_file_path: str) -> Path:
+        """Get the integration test file path for a given language and feature."""
+        from pathlib import Path
+        
+        # Extract feature info from the feature file path
+        feature_path = Path(feature_file_path)
+        feature_name = feature_path.stem
+        
+        # Get the subdirectory (e.g., authentication, query)
+        if len(feature_path.parts) >= 2:
+            subdir = feature_path.parts[-2]  # Get parent directory name
+        else:
+            subdir = None
+        
+        # Map language to integration test paths
+        if language.lower() == 'core':
+            # Rust integration tests
+            if subdir:
+                return self.workspace_root / f"sf_core/tests/integration/{subdir}/{feature_name}.rs"
+            else:
+                return self.workspace_root / f"sf_core/tests/integration/{feature_name}.rs"
+        elif language.lower() == 'python':
+            # Python integration tests
+            if subdir:
+                return self.workspace_root / f"pep249_dbapi/tests/integ/{subdir}/test_{feature_name}.py"
+            else:
+                return self.workspace_root / f"pep249_dbapi/tests/integ/test_{feature_name}.py"
+        elif language.lower() == 'odbc':
+            # ODBC integration tests
+            if subdir:
+                return self.workspace_root / f"odbc_tests/tests/integration/{subdir}/{feature_name}.cpp"
+            else:
+                return self.workspace_root / f"odbc_tests/tests/integration/{feature_name}.cpp"
+        else:
+            # Fallback - return a non-existent path
+            return self.workspace_root / "non_existent_path"
+    
     def extract_test_methods_with_lines(self, file_path: str, scenario_names: List[str]) -> Dict[str, int]:
         """Extract test method line numbers from a test file for given scenarios."""
         return self.feature_parser.extract_test_methods_with_lines(file_path, scenario_names)
@@ -426,7 +527,7 @@ class CoverageReportGenerator:
         for feature_name, feature_data in features.items():
             # Extract folder from path
             path_parts = Path(feature_data['path']).parts
-            if len(path_parts) >= 3 and path_parts[-3] == 'e2e':
+            if len(path_parts) >= 3 and path_parts[-3] == 'definitions':
                 folder = path_parts[-2]  # Get the folder name (auth, query, etc.)
             else:
                 folder = 'other'  # Fallback for unexpected paths
@@ -774,7 +875,7 @@ class CoverageReportGenerator:
         for feature_name, feature_data in features.items():
             # Extract folder from path
             path_parts = Path(feature_data['path']).parts
-            if len(path_parts) >= 3 and path_parts[-3] == 'e2e':
+            if len(path_parts) >= 3 and path_parts[-3] == 'definitions':
                 folder = path_parts[-2]  # Get the folder name (auth, query, etc.)
             else:
                 folder = 'other'  # Fallback for unexpected paths
@@ -825,7 +926,7 @@ class CoverageReportGenerator:
                         # Check if there are actual Breaking Change implementations for this driver and scenario
                         breaking_change_ids_for_this_driver = self._get_breaking_change_ids_for_scenario(scenario_info, breaking_change_driver_check, features)
                         is_breaking_change_for_this_driver = bool(breaking_change_ids_for_this_driver)
-                        has_driver_tag = f'@{lang.lower()}' in [tag.lower() for tag in scenario_info.get('tags', [])]
+                        has_driver_tag = self._has_driver_tag_in_scenario(scenario_info, lang.lower())
                         
                         if is_todo_for_driver or is_breaking_change_for_this_driver or has_driver_tag:
                             has_relevant_scenarios = True
@@ -842,7 +943,7 @@ class CoverageReportGenerator:
                                     scenario_name = scenario_info['name']
                                     if 'scenarios' in lang_data and scenario_name in lang_data['scenarios']:
                                         scenario_implemented = lang_data['scenarios'][scenario_name]
-                                    elif lang_data['status'] == '✅' and f'@{lang.lower()}' in [tag.lower() for tag in scenario_info.get('tags', [])]:
+                                    elif lang_data['status'] == '✅' and self._has_driver_tag_in_scenario(scenario_info, lang.lower()):
                                         # Only consider implemented if the scenario has the driver tag AND the feature is implemented
                                         scenario_implemented = True
                                 
@@ -883,7 +984,16 @@ class CoverageReportGenerator:
                     
                     # Test name cell with link to detailed breakdown
                     test_class = "test-name last-test" if is_last_test else "test-name"
-                    test_cell = f'<td><div class="{test_class}">• <a href="#" onclick="showTab(\'details-tab\'); expandToFeature(\'{feature_id}\'); setTimeout(() => document.getElementById(\'{feature_id}\').scrollIntoView({{behavior: \'smooth\'}}), 100); return false;">{scenario}</a></div></td>'
+                    
+                    # Determine test level for inline label
+                    has_int_tag = any(tag.endswith('_int') for tag in tags)
+                    test_level_label = '<span class="test-level-integration">Integration</span>' if has_int_tag else '<span class="test-level-e2e">E2E</span>'
+                    
+                    # Create unique scenario ID for navigation (same logic as detailed breakdown)
+                    scenario_clean = scenario.lower().replace(' ', '-').replace('(', '').replace(')', '').replace("'", '').replace('"', '')
+                    scenario_id = f"scenario-{feature_id}-{scenario_clean}"
+                    
+                    test_cell = f'<td><div class="{test_class}">• <a href="#" onclick="showTab(\'details-tab\'); expandToFeature(\'{feature_id}\'); setTimeout(() => document.getElementById(\'{scenario_id}\').scrollIntoView({{behavior: \'smooth\', block: \'center\'}}), 200); return false;">{scenario} {test_level_label}</a></div></td>'
                     
                     # Status cells for each language
                     status_cells = []
@@ -895,7 +1005,7 @@ class CoverageReportGenerator:
                             # Check scenario implementation status
                             scenario_implemented = False
                             # Only consider a scenario implemented if it has the driver tag
-                            if f'@{lang.lower()}' in [tag.lower() for tag in tags]:
+                            if self._has_driver_tag_in_tags(tags, lang.lower()):
                                 if 'scenarios' in lang_data and scenario in lang_data['scenarios']:
                                     # Use specific scenario data if available and scenario has the tag
                                     scenario_implemented = lang_data['scenarios'][scenario]
@@ -955,7 +1065,7 @@ class CoverageReportGenerator:
                             elif scenario_implemented:
                                 # Regular implemented scenario
                                 status_cells.append('<td><div class="test-status"><span class="tick-icon">✓</span></div></td>')
-                            elif f'@{lang.lower()}' in [tag.lower() for tag in tags]:
+                            elif self._has_driver_tag_in_tags(tags, lang.lower()):
                                 # Has driver tag but not implemented
                                 status_cells.append('<td><div class="test-status"><span class="status-fail">✗</span></div></td>')
                             else:
@@ -1110,7 +1220,7 @@ class CoverageReportGenerator:
                     breaking_change_ids_for_this_driver = self._get_breaking_change_ids_for_scenario(scenario_info, lang.lower(), features)
                     is_breaking_change_for_this_driver = bool(breaking_change_ids_for_this_driver)
                     is_todo_for_driver = self.is_scenario_todo_for_driver(scenario_info, lang)
-                    has_driver_implementation = f'@{lang.lower()}' in [tag.lower() for tag in tags]
+                    has_driver_implementation = self._has_driver_tag_in_tags(tags, lang.lower())
                     
                     # Count as expected if:
                     # 1. Has driver tag (@{lang})
@@ -1127,7 +1237,7 @@ class CoverageReportGenerator:
                         if data_key in feature_data['languages']:
                             lang_data = feature_data['languages'][data_key]
                             # Only consider a scenario implemented if it has the driver tag
-                            if f'@{lang.lower()}' in [tag.lower() for tag in scenario_info.get('tags', [])]:
+                            if self._has_driver_tag_in_scenario(scenario_info, lang.lower()):
                                 if 'scenarios' in lang_data and scenario in lang_data['scenarios']:
                                     # Use specific scenario data if available and scenario has the tag
                                     scenario_implemented = lang_data['scenarios'][scenario]
@@ -1185,7 +1295,7 @@ class CoverageReportGenerator:
         for feature_name, feature_data in features.items():
             # Extract folder from path
             path_parts = Path(feature_data['path']).parts
-            if len(path_parts) >= 3 and path_parts[-3] == 'e2e':
+            if len(path_parts) >= 3 and path_parts[-3] == 'definitions':
                 folder = path_parts[-2]  # Get the folder name (auth, query, etc.)
             else:
                 folder = 'other'  # Fallback for unexpected paths
@@ -1204,22 +1314,48 @@ class CoverageReportGenerator:
             for feature_name, feature_data in folder_features.items():
                 formatted_name = self.format_feature_name(feature_name, feature_data['path'])
                 
+                # Generate unique ID for this feature (needed for scenario navigation)
+                feature_id = f"feature-{feature_name.replace('_', '-').replace(' ', '-').lower()}"
+                
                 # Get scenarios with annotations for this feature
                 scenarios_with_annotations = self.get_feature_scenarios_with_annotations(feature_data['path'])
             
-                # Build scenario-based implementation status
-                scenario_sections = []
+                # Group scenarios by test level (e2e vs integration)
+                e2e_scenarios = []
+                integration_scenarios = []
+                
                 if scenarios_with_annotations:
                     for scenario_info in scenarios_with_annotations:
+                        tags = scenario_info['tags']
+                        # Check if scenario has integration tags
+                        has_int_tag = any(tag.endswith('_int') for tag in tags)
+                        
+                        if has_int_tag:
+                            integration_scenarios.append(scenario_info)
+                        else:
+                            e2e_scenarios.append(scenario_info)
+                
+                # Build scenario list with inline E2E/Integration labels
+                scenario_items = []
+                
+                # Process scenarios if we have any with annotations
+                if scenarios_with_annotations:
+                    # Process all scenarios (e2e first, then integration)
+                    # Use the categorized scenarios only - this ensures each scenario appears once with proper labels
+                    for scenario_info in e2e_scenarios + integration_scenarios:
                         scenario = scenario_info['name']
                         breaking_change_info = scenario_info['breaking_change_info']
                         expected_drivers = scenario_info['expected_drivers']
                         tags = scenario_info['tags']
+                    
+                        # Determine test level for inline label
+                        has_int_tag = any(tag.endswith('_int') for tag in tags)
+                        test_level_label = ' <span class="test-level-integration">Integration</span>' if has_int_tag else ' <span class="test-level-e2e">E2E</span>'
                         
                         # Build implementation status for this specific scenario
                         impl_items = []
-                        # Use display languages but map to data keys for lookup
                         display_languages = [lang for lang in languages if self.get_language_data_key(lang) in feature_data['languages']]
+                        
                         for lang in sorted(display_languages):
                             data_key = self.get_language_data_key(lang)
                             lang_data = feature_data['languages'][data_key]
@@ -1227,20 +1363,29 @@ class CoverageReportGenerator:
                             # Check if this specific scenario is implemented in this language
                             scenario_implemented = False
                             line_info = ""
+                            actual_file_path = None
                             
-                            if lang_data['implemented'] and 'path' in lang_data:
-                                # Convert relative path to absolute path
-                                file_path = self.workspace_root / lang_data['path']
-                                if file_path.exists():
-                                    method_lines = self.extract_test_methods_with_lines(str(file_path), [scenario])
-                                    if method_lines and scenario in method_lines:
-                                        scenario_implemented = True
-                                        line_info = f" (line {method_lines[scenario]})"
+                            # Determine the correct file path based on test level
+                            if has_int_tag:
+                                # Integration test - look in integration directories
+                                actual_file_path = self._get_integration_test_file_path(lang, feature_data['path'])
+                            else:
+                                # E2E test - use the path from validator data
+                                if lang_data['implemented'] and 'path' in lang_data:
+                                    actual_file_path = self.workspace_root / lang_data['path']
                             
-                            # Check if this is a Breaking Change for this driver by looking at actual Breaking Change implementations
+                            if actual_file_path and actual_file_path.exists():
+                                method_lines = self.extract_test_methods_with_lines(str(actual_file_path), [scenario])
+                                if method_lines and scenario in method_lines:
+                                    scenario_implemented = True
+                                    line_info = f" (line {method_lines[scenario]})"
+                                    # Update the display path for integration tests
+                                    if has_int_tag:
+                                        relative_path = actual_file_path.relative_to(self.workspace_root)
+                                        lang_data['path'] = str(relative_path)
+                            
+                            # Check if this is a Breaking Change for this driver
                             breaking_change_driver_check = self.get_language_data_key(lang).lower() if lang == 'core' else lang.lower()
-                            
-                            # Check if there are actual Breaking Change implementations for this driver and scenario
                             breaking_change_ids_for_this_driver = self._get_breaking_change_ids_for_scenario(scenario_info, breaking_change_driver_check, features)
                             is_breaking_change_for_this_driver = bool(breaking_change_ids_for_this_driver)
                             
@@ -1248,39 +1393,30 @@ class CoverageReportGenerator:
                             is_todo_for_driver = self.is_scenario_todo_for_driver(scenario_info, lang)
                             
                             # Determine badge class and status text based on annotations
-                            # Prioritize expected status over Breaking Change status
                             if is_todo_for_driver:
-                                # This scenario is expected (in progress) for this driver - prioritize this over Breaking Change
                                 badge_class = 'lang-in-progress'
                                 status_text = 'TODO'
                             elif is_breaking_change_for_this_driver:
-                                # This is a Breaking Change scenario for this specific driver
                                 badge_class = 'lang-breaking_change'
-                                # Create clickable Breaking Change numbers for superscript display
-                                breaking_change_driver_check = self.get_language_data_key(lang).lower() if lang == 'core' else lang.lower()
                                 breaking_change_links = []
                                 for breaking_change_id in breaking_change_ids_for_this_driver:
-                                    # Extract number from BC#1 format
                                     if breaking_change_id.startswith('BC#'):
-                                        number = breaking_change_id[3:]  # Remove 'BC#' prefix
+                                        number = breaking_change_id[3:]
                                         breaking_change_section_id = f'breaking_change-{breaking_change_driver_check}-{breaking_change_id.lower().replace("#", "")}'
                                         breaking_change_links.append(f'<a href="#" onclick="navigateToBreakingChange(\'{breaking_change_section_id}\'); return false;" class="breaking_change-superscript-link">{number}</a>')
-                                
                                 superscript_links = ','.join(breaking_change_links)
                                 status_text = f'✓<sup>{superscript_links}</sup>'
                             elif scenario_implemented:
-                                # Regular implemented scenario
                                 badge_class = 'lang-implemented'
                                 status_text = '✅'
-                            elif f'@{lang.lower()}' in [tag.lower() for tag in tags]:
-                                # Has driver tag but not implemented
+                            elif self._has_driver_tag_in_tags(tags, lang.lower()):
                                 badge_class = 'lang-failed'
                                 status_text = '❌ MISSING'
                             else:
-                                # Not applicable for this driver
                                 badge_class = 'lang-na'
                                 status_text = '-'
                             
+                            # Add this language's implementation status
                             impl_items.append(dedent(f"""
                                 <li>
                                     <span class="lang-badge {badge_class}">{lang.title()}</span>
@@ -1291,16 +1427,20 @@ class CoverageReportGenerator:
                         
                         impl_html = '\n                        '.join(impl_items)
                         
-                        scenario_section = dedent(f"""
-                            <div class="scenario-section">
-                                <h5 class="scenario-title">📝 {scenario}</h5>
+                        # Create unique scenario ID for navigation
+                        scenario_clean = scenario.lower().replace(' ', '-').replace('(', '').replace(')', '').replace("'", '').replace('"', '')
+                        scenario_id = f"scenario-{feature_id}-{scenario_clean}"
+                        
+                        scenario_item = dedent(f"""
+                            <div class="scenario-section" id="{scenario_id}">
+                                <h5 class="scenario-title">📝 {scenario}{test_level_label}</h5>
                                 <ul class="implementation-list">
                                     {impl_html}
                                 </ul>
                             </div>
                         """).strip()
                         
-                        scenario_sections.append(scenario_section)
+                        scenario_items.append(scenario_item)
                 else:
                     # Fallback: show overall implementation status if no scenarios found
                     # Use the old method for backward compatibility
@@ -1335,7 +1475,7 @@ class CoverageReportGenerator:
                                 """).strip())
                             
                             impl_html = '\n                            '.join(impl_items)
-                            scenario_sections.append(dedent(f"""
+                            scenario_items.append(dedent(f"""
                                 <div class="scenario-section">
                                     <h5 class="scenario-title">📝 {scenario}</h5>
                                     <ul class="implementation-list">
@@ -1360,7 +1500,7 @@ class CoverageReportGenerator:
                             """).strip())
                         
                         impl_html = '\n                        '.join(impl_items)
-                        scenario_sections.append(dedent(f"""
+                        scenario_items.append(dedent(f"""
                             <div class="scenario-section">
                                 <h5 class="scenario-title">📝 Overall Feature Implementation</h5>
                                 <ul class="implementation-list">
@@ -1369,10 +1509,7 @@ class CoverageReportGenerator:
                             </div>
                         """).strip())
                 
-                scenarios_html = '\n                    '.join(scenario_sections)
-                
-                # Generate unique ID for this feature
-                feature_id = f"feature-{feature_name.replace('_', '-').replace(' ', '-').lower()}"
+                scenarios_html = '\n                    '.join(scenario_items)
                 
                 feature_section = dedent(f"""
                     <div class="expandable-section" id="{feature_id}">
@@ -1419,6 +1556,115 @@ class CoverageReportGenerator:
             {sections_html}
         """).strip()
 
+    def _generate_test_level_section(self, section_title: str, scenarios: List, feature_data: Dict, languages: List[str]) -> str:
+        """Generate HTML for a test level section (E2E or Integration) with expandable/collapsible functionality."""
+        from textwrap import dedent
+        
+        scenario_items = []
+        for scenario_info in scenarios:
+            scenario = scenario_info['name']
+            breaking_change_info = scenario_info['breaking_change_info']
+            expected_drivers = scenario_info['expected_drivers']
+            tags = scenario_info['tags']
+            
+            # Build implementation status for this specific scenario
+            impl_items = []
+            # Use display languages but map to data keys for lookup
+            display_languages = [lang for lang in languages if self.get_language_data_key(lang) in feature_data['languages']]
+            for lang in sorted(display_languages):
+                data_key = self.get_language_data_key(lang)
+                lang_data = feature_data['languages'][data_key]
+                
+                # Check if this specific scenario is implemented in this language
+                scenario_implemented = False
+                line_info = ""
+                
+                if lang_data['implemented'] and 'path' in lang_data:
+                    # Convert relative path to absolute path
+                    file_path = self.workspace_root / lang_data['path']
+                    if file_path.exists():
+                        method_lines = self.extract_test_methods_with_lines(str(file_path), [scenario])
+                        if method_lines and scenario in method_lines:
+                            scenario_implemented = True
+                            line_info = f" (line {method_lines[scenario]})"
+                
+                # Check if this is a Breaking Change for this driver by looking at actual Breaking Change implementations
+                breaking_change_driver_check = self.get_language_data_key(lang).lower() if lang == 'core' else lang.lower()
+                
+                # Check if there are actual Breaking Change implementations for this driver and scenario
+                breaking_change_ids_for_this_driver = self._get_breaking_change_ids_for_scenario(scenario_info, breaking_change_driver_check, feature_data)
+                is_breaking_change_for_this_driver = bool(breaking_change_ids_for_this_driver)
+                
+                # Check if this scenario is expected (in progress) for this driver
+                is_todo_for_driver = self.is_scenario_todo_for_driver(scenario_info, lang)
+                
+                # Determine badge class and status text based on annotations
+                if is_todo_for_driver:
+                    badge_class = 'lang-in-progress'
+                    status_text = 'TODO'
+                elif is_breaking_change_for_this_driver:
+                    badge_class = 'lang-breaking_change'
+                    # Create clickable Breaking Change numbers for superscript display
+                    breaking_change_driver_check = self.get_language_data_key(lang).lower() if lang == 'core' else lang.lower()
+                    breaking_change_links = []
+                    for breaking_change_id in breaking_change_ids_for_this_driver:
+                        # Extract number from BC#1 format
+                        if breaking_change_id.startswith('BC#'):
+                            number = breaking_change_id[3:]  # Remove 'BC#' prefix
+                            breaking_change_section_id = f'breaking_change-{breaking_change_driver_check}-{breaking_change_id.lower().replace("#", "")}'
+                            breaking_change_links.append(f'<a href="#" onclick="navigateToBreakingChange(\'{breaking_change_section_id}\'); return false;" class="breaking_change-superscript-link">{number}</a>')
+                    
+                    superscript_links = ','.join(breaking_change_links)
+                    status_text = f'✓<sup>{superscript_links}</sup>'
+                elif scenario_implemented:
+                    badge_class = 'lang-implemented'
+                    status_text = '✅'
+                elif f'@{lang.lower()}' in [tag.lower() for tag in tags]:
+                    # Has driver tag but not implemented
+                    badge_class = 'lang-failed'
+                    status_text = '❌ MISSING'
+                else:
+                    # Not applicable for this driver
+                    badge_class = 'lang-na'
+                    status_text = '-'
+                
+                impl_items.append(dedent(f"""
+                    <li>
+                        <span class="lang-badge {badge_class}">{lang.title()}</span>
+                        {status_text}
+                        {f'<span class="path-info">{lang_data["path"]}{line_info}</span>' if scenario_implemented else ''}
+                    </li>
+                """).strip())
+            
+            impl_html = '\n                        '.join(impl_items)
+            
+            scenario_item = dedent(f"""
+                <div class="scenario-section">
+                    <h5 class="scenario-title">📝 {scenario}</h5>
+                    <ul class="implementation-list">
+                        {impl_html}
+                    </ul>
+                </div>
+            """).strip()
+            
+            scenario_items.append(scenario_item)
+        
+        scenarios_html = '\n                    '.join(scenario_items)
+        
+        return dedent(f"""
+            <div class="test-level-section">
+                <div class="expandable-header test-level-header" onclick="toggleSection(this)">
+                    <div class="expandable-title">🧪 {section_title}</div>
+                    <div class="expandable-toggle">▶</div>
+                </div>
+                <div class="expandable-content">
+                    <div class="expandable-inner">
+                        {scenarios_html}
+                    </div>
+                </div>
+            </div>
+        """).strip()
+
     def _generate_missing_implementations_html(self, features: Dict, languages: List[str]) -> str:
         """Generate the missing implementations section HTML grouped by driver."""
         from textwrap import dedent
@@ -1449,7 +1695,7 @@ class CoverageReportGenerator:
                         if data_key in feature_data['languages']:
                             lang_data = feature_data['languages'][data_key]
                             # Only consider a scenario implemented if it has the driver tag
-                            if f'@{lang.lower()}' in [tag.lower() for tag in scenario_info.get('tags', [])]:
+                            if self._has_driver_tag_in_scenario(scenario_info, lang.lower()):
                                 if 'scenarios' in lang_data and scenario in lang_data['scenarios']:
                                     # Use specific scenario data if available and scenario has the tag
                                     scenario_implemented = lang_data['scenarios'][scenario]
@@ -1813,11 +2059,14 @@ def main():
     generator = CoverageReportGenerator(args.workspace)
     
     print("Generating test coverage report...")
-    features = generator.run_validator()
+    validator_data = generator.validator.get_validator_data()
     
-    if not features:
+    if not validator_data or 'validation_results' not in validator_data:
         print("No features found or validator failed to run.")
         sys.exit(1)
+    
+    # Convert validator data to features format
+    features = generator._convert_validator_data_to_features(validator_data)
     
     # Generate report based on format
     if args.format == 'table':

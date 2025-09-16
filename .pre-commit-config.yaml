@@ -32,7 +32,7 @@ repos:
     -   id: tests-format-validator
         name: Tests format validator
         description: Validate that test implementations match Gherkin feature scenarios
-        entry: bash -c 'cd tests/tests_format_validator && cargo run --bin tests_format_validator -- --workspace $(pwd)/../.. --features $(pwd)/../e2e'
+        entry: bash -c 'cd tests/tests_format_validator && cargo run --bin tests_format_validator -- --workspace $(pwd)/../.. --features $(pwd)/../definitions'
         pass_filenames: false
         language: system
 

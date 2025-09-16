@@ -50,7 +50,11 @@ fn should_pass_validation_when_all_steps_are_implemented() -> Result<()> {
 
     // Both languages should pass
     for validation in &result.validations {
-        assert!(validation.test_file_found);
+        assert!(
+            validation.test_file_found,
+            "Language {:?} should find test file",
+            validation.language
+        );
         assert!(
             validation.missing_steps.is_empty(),
             "Language {:?} should have no missing steps, but missing: {:?}",
@@ -878,7 +882,7 @@ impl TestWorkspace {
     fn new() -> Result<Self> {
         let temp_dir = TempDir::new()?;
         let workspace_root = temp_dir.path().to_path_buf();
-        let features_dir = workspace_root.join("tests/e2e");
+        let features_dir = workspace_root.join("tests/definitions");
 
         // Create directory structure
         fs::create_dir_all(&features_dir)?;
@@ -924,9 +928,10 @@ impl TestWorkspace {
     fn create_java_test(&self, subdir: &str, name: &str, content: &str) -> Result<()> {
         let test_path = self
             .workspace_root
-            .join("jdbc/src/test/java/e2e")
+            .join("jdbc/src/test/java/com/snowflake/jdbc/integration")
             .join(subdir)
             .join(format!("{}Test.java", name));
+        fs::create_dir_all(test_path.parent().unwrap())?;
         fs::write(test_path, content)?;
         Ok(())
     }
@@ -993,10 +998,10 @@ struct TestImplementations;
 
 impl TestImplementations {
     fn create_complete_login_feature() -> &'static str {
-        r#"@core @jdbc @odbc
+        r#"@core_e2e @jdbc_int @odbc_e2e
 Feature: User Login
 
-  @core @jdbc @odbc
+  @core_e2e @jdbc_int @odbc_e2e
   Scenario: Successful login with valid credentials
     Given I have valid credentials
     When I attempt to login
@@ -1069,10 +1074,10 @@ TEST_CASE("Successful login with valid credentials") {
     }
 
     fn create_missing_file_feature() -> &'static str {
-        r#"@core @jdbc
+        r#"@core_e2e @jdbc_int
 Feature: Missing File Test
 
-  @core @jdbc
+  @core_e2e @jdbc_int
   Scenario: Test missing file scenario
     Given I have test data
     When I perform an action
@@ -1081,10 +1086,10 @@ Feature: Missing File Test
     }
 
     fn create_missing_function_feature() -> &'static str {
-        r#"@core @jdbc
+        r#"@core_e2e @jdbc_int
 Feature: Missing Function Test
 
-  @core @jdbc  
+  @core_e2e @jdbc_int  
   Scenario: Test missing function scenario
     Given I have test setup
     When I execute the function
@@ -1130,10 +1135,10 @@ public class MissingFunctionTest {
     }
 
     fn create_missing_step_feature() -> &'static str {
-        r#"@core @jdbc
+        r#"@core_e2e @jdbc_int
 Feature: Missing Step Test
 
-  @core @jdbc
+  @core_e2e @jdbc_int
   Scenario: Test missing step scenario
     Given I have valid credentials
     When I attempt to login
@@ -1184,16 +1189,16 @@ public class MissingStepTest {
     }
 
     fn create_mixed_scenarios_feature() -> &'static str {
-        r#"@core @jdbc
+        r#"@core_e2e @jdbc_int
 Feature: Mixed Scenarios Test
 
-  @core @jdbc
+  @core_e2e @jdbc_int
   Scenario: Complete scenario
     Given I have order data
     When I fetch orders
     Then I should get order list
 
-  @core @jdbc
+  @core_e2e @jdbc_int
   Scenario: Incomplete scenario
     Given I have order data
     When I fetch orders
@@ -1305,10 +1310,10 @@ fn orphaned_test_function() {
     }
 
     fn create_nested_blocks_feature() -> &'static str {
-        r#"@core @jdbc @odbc
+        r#"@core_e2e @jdbc_int @odbc_e2e
 Feature: Nested Blocks Test
 
-  @core @jdbc @odbc
+  @core_e2e @jdbc_int @odbc_e2e
   Scenario: Test with nested control structures
     Given I have test data
     When I process data with nested logic
@@ -1417,10 +1422,10 @@ TEST_CASE("Test with nested control structures") {
     }
 
     fn create_string_braces_feature() -> &'static str {
-        r#"@core @jdbc
+        r#"@core_e2e @jdbc_int
 Feature: String Braces Test
 
-  @core @jdbc
+  @core_e2e @jdbc_int
   Scenario: Test with braces in strings
     Given I have JSON data with braces
     When I process strings containing braces

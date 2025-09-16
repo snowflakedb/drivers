@@ -16,6 +16,6 @@ cd "$SCRIPT_DIR"
 # Run the validator with project-specific paths
 cargo run -- \
     --workspace "$PROJECT_ROOT" \
-    --features "$PROJECT_ROOT/tests/e2e"
+    --features "$PROJECT_ROOT/tests/definitions"
 
 

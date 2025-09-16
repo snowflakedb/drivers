@@ -235,10 +235,15 @@ impl GherkinValidator {
     }
 
     fn get_test_directories_for_language(&self, language: &Language) -> Vec<PathBuf> {
+        // Only check e2e tests for orphaned tests as per requirements
         match language {
             Language::Rust => vec![self._workspace_root.join("sf_core/tests/e2e")],
-            Language::Jdbc => vec![self._workspace_root.join("jdbc/src/test/java/e2e")],
+            Language::Jdbc => vec![
+                self._workspace_root
+                    .join("jdbc/src/test/java/com/snowflake/jdbc/e2e"),
+            ],
             Language::Odbc => vec![self._workspace_root.join("odbc_tests/tests/e2e")],
+            Language::Python => vec![self._workspace_root.join("pep249_dbapi/tests/e2e")],
             _ => vec![],
         }
     }
@@ -419,9 +424,22 @@ impl GherkinValidator {
             } else {
                 // Validate specific scenarios - check test methods FIRST
                 for scenario in language_specific_scenarios {
+                    // Determine the test level for this scenario
+                    let test_level = TestDiscovery::get_test_level(&scenario.tags);
+
+                    // Find the appropriate test file based on test level
+                    let scenario_test_file = self.discovery.find_test_file_with_path_and_level(
+                        feature_path,
+                        &language,
+                        test_level,
+                    );
+
+                    let actual_test_file_path =
+                        scenario_test_file.as_ref().unwrap_or(&test_file_path);
+
                     // First, check if test method exists for this scenario
                     let test_methods_with_lines = step_finder
-                        .find_test_methods_with_lines(&test_file_path, &scenario.name)?;
+                        .find_test_methods_with_lines(actual_test_file_path, &scenario.name)?;
 
                     if test_methods_with_lines.is_empty() {
                         warnings.push(format!(
@@ -434,8 +452,8 @@ impl GherkinValidator {
 
                     // For each test method found, check if it implements all scenario steps
                     for (method_name, line_number) in test_methods_with_lines {
-                        let method_steps =
-                            step_finder.find_steps_in_method(&test_file_path, &method_name)?;
+                        let method_steps = step_finder
+                            .find_steps_in_method(actual_test_file_path, &method_name)?;
                         let scenario_steps: Vec<String> = scenario
                             .steps
                             .iter()
@@ -559,8 +577,9 @@ impl GherkinValidator {
                     .iter()
                     .filter(|scenario| {
                         scenario.tags.iter().any(|tag| {
+                            let tag_str = tag.as_str();
                             matches!(
-                                tag.as_str(),
+                                tag_str,
                                 "odbc"
                                     | "jdbc"
                                     | "python"
@@ -571,7 +590,15 @@ impl GherkinValidator {
                                     | "javascript"
                                     | "nodejs"
                                     | "js"
-                            )
+                            ) || tag_str.starts_with("odbc_")
+                                || tag_str.starts_with("jdbc_")
+                                || tag_str.starts_with("python_")
+                                || tag_str.starts_with("core_")
+                                || tag_str.starts_with("csharp_")
+                                || tag_str.starts_with("dotnet_")
+                                || tag_str.starts_with("javascript_")
+                                || tag_str.starts_with("nodejs_")
+                                || tag_str.starts_with("js_")
                         })
                     })
                     .map(|s| s.name.clone())

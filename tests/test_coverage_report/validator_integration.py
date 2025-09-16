@@ -35,7 +35,7 @@ class ValidatorIntegration:
             result = subprocess.run([
                 str(validator_binary.resolve()),
                 "--workspace", str(self.workspace_root),
-                "--features", str(self.workspace_root / "tests" / "e2e"),
+                "--features", str(self.workspace_root / "tests" / "definitions"),
                 "--json"
             ], capture_output=True, text=True)
             

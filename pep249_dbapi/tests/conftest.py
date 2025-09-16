@@ -16,7 +16,7 @@ def pytest_addoption(parser):
         "--connector",
         action="store",
         default="universal",
-        choices=["universal", "reference"],
+        choices=["universal", "reference", "integration"],
         help="Which connector implementation to test against (default: universal)"
     )
     parser.addoption(
@@ -78,6 +78,33 @@ def cursor(connection):
     """Create a test cursor from a connection."""
     with connection.cursor() as cursor:
         yield cursor
+
+
+@pytest.fixture
+def int_test_connection_factory():
+    """Factory function for creating integration test connections"""
+    adapter = ConnectorFactory.create_adapter(ConnectorType.INTEGRATION)
+    
+    def _create_connection(**override_params):
+        """Create an integration test connection with custom parameters.
+        
+        Args:
+            **override_params: Parameters to override integration defaults
+            
+        Example:
+            conn = int_test_connection_factory(authenticator="SNOWFLAKE_JWT")
+        """
+        return create_connection_with_adapter(adapter, **override_params)
+    
+    return _create_connection
+
+
+@pytest.fixture
+def integration_connection():
+    """Create a test connection using integration test parameters."""
+    adapter = ConnectorFactory.create_adapter(ConnectorType.INTEGRATION)
+    with create_connection_with_adapter(adapter) as conn:
+        yield conn
 
 
 def pytest_runtest_setup(item):

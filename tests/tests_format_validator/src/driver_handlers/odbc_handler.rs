@@ -64,18 +64,45 @@ impl BaseDriverHandler for OdbcHandler {
 
     fn extract_test_methods(&self, content: &str) -> Vec<TestMethod> {
         let mut methods = Vec::new();
-        // Match both TEST_CASE("name") and TEST_CASE("name", "tag")
-        let test_case_re =
-            Regex::new(r#"TEST_CASE\s*\(\s*"([^"]+)"\s*(?:,\s*"[^"]*"\s*)?\)"#).unwrap();
+        let lines: Vec<&str> = content.lines().collect();
+        let test_name_re = Regex::new(r#""([^"]+)""#).unwrap();
 
-        for (line_num, line) in content.lines().enumerate() {
-            if let Some(captures) = test_case_re.captures(line) {
-                if let Some(test_name) = captures.get(1) {
-                    methods.push(TestMethod {
-                        name: test_name.as_str().to_string(),
-                        line: line_num + 1,
-                    });
+        let mut i = 0;
+        while i < lines.len() {
+            let line = lines[i].trim();
+
+            // Look for TEST_CASE start
+            if line.starts_with("TEST_CASE(") {
+                let start_line = i;
+                let mut test_case_content = String::new();
+                let mut found_closing_paren = false;
+
+                // Collect the TEST_CASE declaration (might be multi-line)
+                let mut j = i;
+                while j < lines.len() && !found_closing_paren {
+                    let current_line = lines[j].trim();
+                    test_case_content.push_str(current_line);
+                    test_case_content.push(' ');
+
+                    if current_line.contains(')') && current_line.contains('{') {
+                        found_closing_paren = true;
+                    }
+                    j += 1;
                 }
+
+                // Extract test name from the collected content
+                if let Some(captures) = test_name_re.captures(&test_case_content) {
+                    if let Some(test_name) = captures.get(1) {
+                        methods.push(TestMethod {
+                            name: test_name.as_str().to_string(),
+                            line: start_line + 1,
+                        });
+                    }
+                }
+
+                i = j;
+            } else {
+                i += 1;
             }
         }
 
@@ -149,16 +176,41 @@ impl BaseDriverHandler for OdbcHandler {
 
         let mut in_method = false;
         let mut brace_count = 0;
+        let mut in_test_case_declaration = false;
 
         for (line_num, line) in lines.iter().enumerate() {
             let line = line.trim();
 
-            // Check for method start (definitions only, not calls)
-            let is_test_case = line.contains(&format!("TEST_CASE(\"{method_name}\""));
+            // Check for TEST_CASE start (might be multi-line)
+            if line.starts_with("TEST_CASE(") {
+                if line.contains(&format!("\"{method_name}\"")) {
+                    // Method name is on the same line
+                    in_method = true;
+                } else {
+                    // Method name might be on next line
+                    in_test_case_declaration = true;
+                }
+                brace_count += line.matches('{').count() as i32 - line.matches('}').count() as i32;
+                continue;
+            }
+
+            // Handle multi-line TEST_CASE declaration
+            if in_test_case_declaration {
+                if line.contains(&format!("\"{method_name}\"")) {
+                    in_method = true;
+                }
+                brace_count += line.matches('{').count() as i32 - line.matches('}').count() as i32;
+                if line.contains('{') {
+                    in_test_case_declaration = false;
+                }
+                continue;
+            }
+
+            // Check for regular void method start
             let is_void_method = line.contains(&format!("void {method_name}("))
                 || line.contains(&format!("void {method_name}()"));
 
-            if !line.starts_with("//") && (is_test_case || is_void_method) && !in_method {
+            if !line.starts_with("//") && is_void_method && !in_method {
                 in_method = true;
                 brace_count += line.matches('{').count() as i32 - line.matches('}').count() as i32;
                 continue;

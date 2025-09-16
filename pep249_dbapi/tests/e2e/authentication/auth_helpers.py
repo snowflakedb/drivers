@@ -16,9 +16,3 @@ def verify_login_error(exception):
         assert exception.error.loginError.message.strip() != "", "Login error message should not be empty"
 
 
-def verify_missing_parameter_error(exception):
-    """Verify that an exception contains a valid missing parameter error."""
-    assert exception is not None
-    assert str(exception).strip() != "", "Missing parameter error message should not be empty"
-    assert hasattr(exception, 'error') and exception.error.missingParameter is not None, "Expected missing parameter error"
-    assert exception.error.missingParameter.parameter.strip() != "", "Missing parameter name should not be empty"

@@ -71,6 +71,10 @@ brotli = "8.0.2"
 zstd = "0.13.3"
 
 [[test]]
+name = "integration_tests"
+path = "tests/integration/mod.rs"
+
+[[test]]
 name = "e2e_tests"
 path = "tests/e2e/mod.rs"
 

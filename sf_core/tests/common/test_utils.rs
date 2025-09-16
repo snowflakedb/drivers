@@ -98,84 +98,104 @@ impl SnowflakeTestClient {
         driver.database_init(db_handle.clone()).unwrap();
 
         let conn_handle = driver.connection_new().unwrap();
-        driver
-            .connection_set_option_string(
-                conn_handle.clone(),
-                "account".to_string(),
-                parameters.account_name.clone().unwrap(),
-            )
-            .unwrap();
-        driver
-            .connection_set_option_string(
-                conn_handle.clone(),
-                "user".to_string(),
-                parameters.user.clone().unwrap(),
-            )
-            .unwrap();
-        // Set optional parameters if specified
-        if let Some(database) = parameters.database.clone() {
-            driver
-                .connection_set_option_string(conn_handle.clone(), "database".to_string(), database)
-                .unwrap();
-        }
 
-        if let Some(schema) = parameters.schema.clone() {
-            driver
-                .connection_set_option_string(conn_handle.clone(), "schema".to_string(), schema)
-                .unwrap();
-        }
-
-        if let Some(warehouse) = parameters.warehouse.clone() {
-            driver
-                .connection_set_option_string(
-                    conn_handle.clone(),
-                    "warehouse".to_string(),
-                    warehouse,
-                )
-                .unwrap();
-        }
-
-        if let Some(host) = parameters.host.clone() {
-            driver
-                .connection_set_option_string(conn_handle.clone(), "host".to_string(), host)
-                .unwrap();
-        }
-
-        if let Some(role) = parameters.role.clone() {
-            driver
-                .connection_set_option_string(conn_handle.clone(), "role".to_string(), role)
-                .unwrap();
-        }
-
-        if let Some(server_url) = parameters.server_url.clone() {
-            driver
-                .connection_set_option_string(
-                    conn_handle.clone(),
-                    "server_url".to_string(),
-                    server_url,
-                )
-                .unwrap();
-        }
-
-        if let Some(port) = parameters.port {
-            driver
-                .connection_set_option_int(conn_handle.clone(), "port".to_string(), port)
-                .unwrap();
-        }
-
-        if let Some(protocol) = parameters.protocol.clone() {
-            driver
-                .connection_set_option_string(conn_handle.clone(), "protocol".to_string(), protocol)
-                .unwrap();
-        }
-
-        Self {
+        let mut client = Self {
             driver,
             conn_handle,
             db_handle,
             parameters,
+        };
+
+        // Set connection options using the helper method
+        client.set_connection_option("account", &client.parameters.account_name.clone().unwrap());
+        client.set_connection_option("user", &client.parameters.user.clone().unwrap());
+
+        // Set optional parameters if specified
+        if let Some(database) = client.parameters.database.clone() {
+            client.set_connection_option("database", &database);
         }
+
+        if let Some(schema) = client.parameters.schema.clone() {
+            client.set_connection_option("schema", &schema);
+        }
+
+        if let Some(warehouse) = client.parameters.warehouse.clone() {
+            client.set_connection_option("warehouse", &warehouse);
+        }
+
+        if let Some(host) = client.parameters.host.clone() {
+            client.set_connection_option("host", &host);
+        }
+
+        if let Some(role) = client.parameters.role.clone() {
+            client.set_connection_option("role", &role);
+        }
+
+        if let Some(server_url) = client.parameters.server_url.clone() {
+            client.set_connection_option("server_url", &server_url);
+        }
+
+        if let Some(port) = client.parameters.port {
+            client.set_connection_option_int("port", port);
+        }
+
+        if let Some(protocol) = client.parameters.protocol.clone() {
+            client.set_connection_option("protocol", &protocol);
+        }
+
+        client
     }
+
+    /// Creates a test client with integration test parameters
+    pub fn with_int_test_params() -> Self {
+        setup_logging();
+
+        // Create test parameters for integration tests
+        let test_parameters = Parameters {
+            account_name: Some("test_account".to_string()),
+            user: Some("test_user".to_string()),
+            password: Some("test_password".to_string()),
+            database: Some("test_database".to_string()),
+            schema: Some("test_schema".to_string()),
+            warehouse: Some("test_warehouse".to_string()),
+            host: Some("localhost".to_string()),
+            role: Some("test_role".to_string()),
+            server_url: Some("http://localhost:8090".to_string()),
+            port: Some(8090),
+            protocol: Some("http".to_string()),
+            private_key_contents: None,
+            private_key_password: None,
+            private_key_invalid: None,
+        };
+
+        let mut driver = create_client::<DatabaseDriverV1>();
+        let db_handle = driver.database_new().unwrap();
+        driver.database_init(db_handle.clone()).unwrap();
+
+        let conn_handle = driver.connection_new().unwrap();
+
+        let mut client = Self {
+            driver,
+            conn_handle,
+            db_handle,
+            parameters: test_parameters,
+        };
+
+        // Set connection options using the helper method
+        client.set_connection_option("account", &client.parameters.account_name.clone().unwrap());
+        client.set_connection_option("user", &client.parameters.user.clone().unwrap());
+        client.set_connection_option("database", &client.parameters.database.clone().unwrap());
+        client.set_connection_option("schema", &client.parameters.schema.clone().unwrap());
+        client.set_connection_option("warehouse", &client.parameters.warehouse.clone().unwrap());
+        client.set_connection_option("host", &client.parameters.host.clone().unwrap());
+        client.set_connection_option("role", &client.parameters.role.clone().unwrap());
+        client.set_connection_option("server_url", &client.parameters.server_url.clone().unwrap());
+        client.set_connection_option_int("port", client.parameters.port.unwrap());
+        client.set_connection_option("protocol", &client.parameters.protocol.clone().unwrap());
+
+        client
+    }
+
     /// Creates a new test client with Snowflake connection established
     pub fn connect_with_default_auth() -> Self {
         setup_logging();
@@ -236,6 +256,16 @@ impl SnowflakeTestClient {
                 self.conn_handle.clone(),
                 option_name.to_string(),
                 option_value.to_string(),
+            )
+            .unwrap();
+    }
+
+    pub fn set_connection_option_int(&mut self, option_name: &str, option_value: i64) {
+        self.driver
+            .connection_set_option_int(
+                self.conn_handle.clone(),
+                option_name.to_string(),
+                option_value,
             )
             .unwrap();
     }
