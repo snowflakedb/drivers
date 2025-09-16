@@ -690,4 +690,126 @@ mod tests {
             .unwrap();
         client.connection_release(conn).unwrap();
     }
+
+    #[test]
+    fn test_connection_set_tls_config_and_init() {
+        setup_logging();
+        let mut client = create_client::<DatabaseDriverV1>();
+
+        let db = client.database_new().unwrap();
+        client.database_init(db.clone()).unwrap();
+        let conn = client.connection_new().unwrap();
+
+        // Provide a minimal TLS config; keep verification enabled and no custom roots.
+        // Use connection_set_option_* instead of connection_set_tls_config
+        client
+            .connection_set_option_string(
+                conn.clone(),
+                "verify_hostname".to_string(),
+                "true".to_string(),
+            )
+            .unwrap();
+        client
+            .connection_set_option_string(
+                conn.clone(),
+                "verify_certificates".to_string(),
+                "true".to_string(),
+            )
+            .unwrap();
+
+        // Load parameters.json and set required connection options
+        #[derive(serde::Deserialize)]
+        struct ParamsFile {
+            testconnection: Params,
+        }
+        #[derive(serde::Deserialize)]
+        struct Params {
+            #[serde(rename = "SNOWFLAKE_TEST_ACCOUNT")]
+            account: String,
+            #[serde(rename = "SNOWFLAKE_TEST_USER")]
+            user: String,
+            #[serde(rename = "SNOWFLAKE_TEST_PASSWORD")]
+            password: String,
+            #[serde(rename = "SNOWFLAKE_TEST_DATABASE")]
+            database: Option<String>,
+            #[serde(rename = "SNOWFLAKE_TEST_SCHEMA")]
+            schema: Option<String>,
+            #[serde(rename = "SNOWFLAKE_TEST_WAREHOUSE")]
+            warehouse: Option<String>,
+            #[serde(rename = "SNOWFLAKE_TEST_HOST")]
+            host: Option<String>,
+            #[serde(rename = "SNOWFLAKE_TEST_ROLE")]
+            role: Option<String>,
+            #[serde(rename = "SNOWFLAKE_TEST_SERVER_URL")]
+            server_url: Option<String>,
+            #[serde(rename = "SNOWFLAKE_TEST_PORT")]
+            port: Option<i64>,
+            #[serde(rename = "SNOWFLAKE_TEST_PROTOCOL")]
+            protocol: Option<String>,
+        }
+        let params_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("parameters.json");
+        let params_str = std::fs::read_to_string(params_path).unwrap();
+        let params: Params = serde_json::from_str::<ParamsFile>(&params_str)
+            .unwrap()
+            .testconnection;
+
+        client
+            .connection_set_option_string(conn.clone(), "account".into(), params.account)
+            .unwrap();
+        client
+            .connection_set_option_string(conn.clone(), "user".into(), params.user)
+            .unwrap();
+        client
+            .connection_set_option_string(conn.clone(), "password".into(), params.password)
+            .unwrap();
+        if let Some(v) = params.database {
+            client
+                .connection_set_option_string(conn.clone(), "database".into(), v)
+                .unwrap();
+        }
+        if let Some(v) = params.schema {
+            client
+                .connection_set_option_string(conn.clone(), "schema".into(), v)
+                .unwrap();
+        }
+        if let Some(v) = params.warehouse {
+            client
+                .connection_set_option_string(conn.clone(), "warehouse".into(), v)
+                .unwrap();
+        }
+        if let Some(v) = params.role {
+            client
+                .connection_set_option_string(conn.clone(), "role".into(), v)
+                .unwrap();
+        }
+        if let Some(v) = params.server_url {
+            client
+                .connection_set_option_string(conn.clone(), "server_url".into(), v)
+                .unwrap();
+        }
+        if let Some(v) = params.host {
+            client
+                .connection_set_option_string(conn.clone(), "host".into(), v)
+                .unwrap();
+        }
+        if let Some(v) = params.protocol {
+            client
+                .connection_set_option_string(conn.clone(), "protocol".into(), v)
+                .unwrap();
+        }
+        if let Some(v) = params.port {
+            client
+                .connection_set_option_int(conn.clone(), "port".into(), v)
+                .unwrap();
+        }
+
+        client
+            .connection_init(conn.clone(), db.clone())
+            .expect("connection_init ok");
+
+        client.connection_release(conn).unwrap();
+        client.database_release(db).unwrap();
+    }
 }
