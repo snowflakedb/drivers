@@ -1,0 +1,46 @@
+name: Validate generated test data
+
+on:
+  pull_request:
+  push:
+    branches: [ main ]
+
+jobs:
+  validate:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install generator dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install brotli zstandard
+
+      - name: Run all generator scripts
+        run: |
+          set -euo pipefail
+          echo "Running generators in tests/scripts -> tests/generated_test_data"
+          for script in tests/scripts/*.py; do
+            echo "Running $script"
+            python "$script" --out-dir tests/generated_test_data
+          done
+
+      - name: Check for uncommitted changes in generated test data
+        run: |
+          set -euo pipefail
+          git status --porcelain=v1 -- tests/generated_test_data || true
+          if [[ -n "$(git status --porcelain=v1 -- tests/generated_test_data)" ]]; then
+            echo "Detected differences in tests/generated_test_data after regeneration." >&2
+            echo "Please run the generator scripts locally and commit updated files." >&2
+            echo
+            git --no-pager diff -- tests/generated_test_data | sed -n '1,200p'
+            exit 1
+          fi
+          echo "Generated test data matches repository."
+
