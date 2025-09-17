@@ -4,6 +4,7 @@ use common::arrow_result_helper::ArrowResultHelper;
 use common::put_get_common::*;
 use common::test_utils::*;
 use std::fs;
+use std::path::PathBuf;
 
 const PUT_GET_ROWSET_TEXT_LENGTH_STR: &str = "10000";
 const PUT_GET_ROWSET_FIXED_LENGTH_STR: &str = "64";
@@ -12,11 +13,8 @@ const PUT_GET_ROWSET_FIXED_LENGTH_STR: &str = "64";
 fn test_put_select() {
     let mut client = SnowflakeTestClient::connect_with_default_auth();
     let stage_name = "TEST_STAGE_PUT_SELECT";
-    let filename = "test_put_select.csv";
 
-    // Create test file with CSV data
-    let temp_dir = tempfile::TempDir::new().unwrap();
-    let test_file_path = create_test_file(temp_dir.path(), filename, "1,2,3\n");
+    let (_filename, test_file_path) = test_file();
 
     // Setup stage and upload file
     client.create_temporary_stage(stage_name);
@@ -40,11 +38,8 @@ fn test_put_select() {
 fn test_put_ls() {
     let mut client = SnowflakeTestClient::connect_with_default_auth();
     let stage_name = "TEST_STAGE_PUT_LS";
-    let filename = "test_put_ls.csv";
 
-    // Setup test environment
-    let temp_dir = tempfile::TempDir::new().unwrap();
-    let test_file_path = create_test_file(temp_dir.path(), filename, "1,2,3\n");
+    let (filename, test_file_path) = test_file();
 
     // Set up stage and upload file
     client.create_temporary_stage(stage_name);
@@ -56,7 +51,7 @@ fn test_put_ls() {
     client.execute_query(&put_sql);
 
     // Verify file was uploaded with LS command
-    let expected_filename = format!("{}/test_put_ls.csv.gz", stage_name.to_lowercase()); // File is compressed by default
+    let expected_filename = format!("{}/{filename}.gz", stage_name.to_lowercase());
     let ls_result = client.execute_query(&format!("LS @{stage_name}"));
     let result_vector = ArrowResultHelper::from_result(ls_result)
         .transform_into_array::<String>()
@@ -71,11 +66,8 @@ fn test_put_ls() {
 fn test_get() {
     let mut client = SnowflakeTestClient::connect_with_default_auth();
     let stage_name = "TEST_STAGE_GET";
-    let filename = "test_get.csv";
 
-    // Set up test environment
-    let temp_dir = tempfile::TempDir::new().unwrap();
-    let test_file_path = create_test_file(temp_dir.path(), filename, "1,2,3\n");
+    let (filename, test_file_path) = test_file();
 
     // Setup stage and upload file
     client.create_temporary_stage(stage_name);
@@ -87,18 +79,18 @@ fn test_get() {
     client.execute_query(&put_sql);
 
     // Create directory for download
-    let download_dir = temp_dir.path().join("download");
-    fs::create_dir_all(&download_dir).unwrap();
+    let download_dir = tempfile::TempDir::new().unwrap();
+    let download_dir_path = download_dir.path();
 
     // Download file using GET
     let get_sql = format!(
         "GET @{stage_name}/{filename} file://{}/",
-        download_dir.to_str().unwrap().replace("\\", "/")
+        download_dir_path.to_str().unwrap().replace("\\", "/")
     );
     client.execute_query(&get_sql);
 
     // Verify the downloaded file exists and content matches
-    let expected_file_path = download_dir.join("test_get.csv.gz");
+    let expected_file_path = download_dir_path.join(format!("{filename}.gz"));
     assert!(
         expected_file_path.exists(),
         "Downloaded gzipped file should exist at {expected_file_path:?}",
@@ -118,11 +110,8 @@ fn test_get() {
 fn test_put_get_rowset() {
     let mut client = SnowflakeTestClient::connect_with_default_auth();
     let stage_name = "TEST_STAGE_PUT_ROWSET";
-    let filename = "test_put_get_rowset.csv";
 
-    // Set up test environment
-    let temp_dir = tempfile::TempDir::new().unwrap();
-    let test_file_path = create_test_file(temp_dir.path(), filename, "1,2,3\n");
+    let (filename, test_file_path) = test_file();
 
     // Setup stage and upload file
     client.create_temporary_stage(stage_name);
@@ -150,8 +139,8 @@ fn test_put_get_rowset() {
         .fetch_one()
         .expect("Failed to fetch PUT result");
 
-    assert_eq!(put_result.source, "test_put_get_rowset.csv");
-    assert_eq!(put_result.target, "test_put_get_rowset.csv.gz");
+    assert_eq!(put_result.source, "test_data.csv");
+    assert_eq!(put_result.target, "test_data.csv.gz");
     assert_eq!(put_result.source_size, 6);
     assert_eq!(put_result.target_size, 32);
     assert_eq!(put_result.source_compression, "NONE");
@@ -159,9 +148,13 @@ fn test_put_get_rowset() {
     assert_eq!(put_result.status, "UPLOADED");
     assert_eq!(put_result.message, "");
 
+    // Create directory for download
+    let download_dir = tempfile::TempDir::new().unwrap();
+    let download_dir_path = download_dir.path();
+
     let get_sql = format!(
         "GET @{stage_name}/{filename} file://{}/",
-        temp_dir.path().to_str().unwrap().replace("\\", "/")
+        download_dir_path.to_str().unwrap().replace("\\", "/")
     );
     let get_data = client.execute_query(&get_sql);
     let mut arrow_helper = ArrowResultHelper::from_result(get_data);
@@ -179,7 +172,7 @@ fn test_put_get_rowset() {
         .fetch_one()
         .expect("Failed to fetch GET result");
 
-    assert_eq!(get_result.file, "test_put_get_rowset.csv.gz");
+    assert_eq!(get_result.file, "test_data.csv.gz");
     assert_eq!(get_result.size, 26);
     assert_eq!(get_result.status, "DOWNLOADED");
     assert_eq!(get_result.message, "");
@@ -210,4 +203,11 @@ fn check_fixed_field(field: &Field, name: &str) {
         Some(&PUT_GET_ROWSET_FIXED_LENGTH_STR.to_string())
     );
     assert_eq!(m0.get("physicalType"), Some(&"SB8".to_string()));
+}
+
+fn test_file() -> (String, PathBuf) {
+    (
+        "test_data.csv".to_string(),
+        shared_test_data_dir().join("basic").join("test_data.csv"),
+    )
 }
