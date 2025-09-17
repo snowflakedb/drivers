@@ -11,6 +11,7 @@
 #include "get_data.hpp"
 #include "put_get_utils.hpp"
 
+using namespace pg_utils;
 namespace fs = std::filesystem;
 
 static std::string to_lower_copy(const std::string& s) {
@@ -20,16 +21,16 @@ static std::string to_lower_copy(const std::string& s) {
   return out;
 }
 
-using namespace pg_utils;
+static std::pair<std::string, fs::path> basic_test_file() {
+  return {"test_data.csv", shared_test_data_dir() / "basic" / "test_data.csv"};
+}
 
 TEST_CASE("PUT then SELECT from stage", "[put_get][odbc]") {
   Connection conn;
   const std::string stage = pg_utils::create_stage(conn, "ODBCTST_PUT_SELECT");
 
-  // Create test file with CSV data
-  fs::path tmp = fs::temp_directory_path() / (std::string("odbc_put_get_") + random_hex());
-  fs::create_directories(tmp);
-  fs::path file = write_text_file(tmp, "test_put_select.csv", "1,2,3\n");
+  // Use shared test data
+  auto [filename, file] = basic_test_file();
 
   // Setup stage and upload file
   std::string put_sql = "PUT 'file://" + as_file_uri(file) + "' @" + stage;
@@ -50,12 +51,7 @@ TEST_CASE("PUT then SELECT from stage", "[put_get][odbc]") {
 TEST_CASE("PUT then LS shows gz file", "[put_get][odbc]") {
   Connection conn;
   const std::string stage = pg_utils::create_stage(conn, "ODBCTST_PUT_LS");
-  const std::string filename = "test_put_ls.csv";
-
-  // Setup test environment
-  fs::path tmp = fs::temp_directory_path() / (std::string("odbc_put_get_") + random_hex());
-  fs::create_directories(tmp);
-  fs::path file = write_text_file(tmp, filename, "1,2,3\n");
+  auto [filename, file] = basic_test_file();
 
   // Upload file
   std::string put_sql = "PUT 'file://" + as_file_uri(file) + "' @" + stage;
@@ -74,19 +70,14 @@ TEST_CASE("PUT then LS shows gz file", "[put_get][odbc]") {
 TEST_CASE("GET downloads file to directory", "[put_get][odbc]") {
   Connection conn;
   const std::string stage = pg_utils::create_stage(conn, "ODBCTST_GET");
-  const std::string filename = "test_get.csv";
-
-  // Set up test environment
-  fs::path tmp = fs::temp_directory_path() / (std::string("odbc_put_get_") + random_hex());
-  fs::create_directories(tmp);
-  fs::path file = write_text_file(tmp, filename, "1,2,3\n");
+  auto [filename, file] = basic_test_file();
 
   // PUT file
   std::string put_sql = "PUT 'file://" + as_file_uri(file) + "' @" + stage;
   conn.execute(put_sql);
 
   // GET into download dir
-  fs::path download_dir = tmp / "download";
+  fs::path download_dir = fs::temp_directory_path() / (std::string("odbc_put_get_") + random_hex());
   fs::create_directories(download_dir);
   {
     std::string get_sql =
@@ -111,12 +102,7 @@ TEST_CASE("GET downloads file to directory", "[put_get][odbc]") {
 TEST_CASE("PUT then GET returns expected rowset metadata", "[put_get][odbc]") {
   Connection conn;
   const std::string stage = pg_utils::create_stage(conn, "ODBCTST_PUT_ROWSET");
-  const std::string filename = "test_put_get_rowset.csv";
-
-  // Set up test environment
-  fs::path tmp = fs::temp_directory_path() / (std::string("odbc_put_get_") + random_hex());
-  fs::create_directories(tmp);
-  fs::path file = write_text_file(tmp, filename, "1,2,3\n");
+  auto [filename, file] = basic_test_file();
 
   {
     // Upload file
@@ -142,7 +128,7 @@ TEST_CASE("PUT then GET returns expected rowset metadata", "[put_get][odbc]") {
   }
 
   // Create directory for download
-  fs::path download_dir = tmp / "download";
+  fs::path download_dir = fs::temp_directory_path() / (std::string("odbc_put_get_") + random_hex());
   fs::create_directories(download_dir);
   {
     // Download file

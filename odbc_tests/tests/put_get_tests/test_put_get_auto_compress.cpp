@@ -11,19 +11,21 @@
 #include "put_get_utils.hpp"
 
 namespace fs = std::filesystem;
-
 using namespace pg_utils;
+
+static std::pair<std::string, fs::path> uncompressed_test_file() {
+  return {"test_data.csv", shared_test_data_dir() / "compression" / "test_data.csv"};
+}
+
+static std::pair<std::string, fs::path> compressed_test_file() {
+  return {"test_data.csv.gz", shared_test_data_dir() / "compression" / "test_data.csv.gz"};
+}
 
 TEST_CASE("PUT+GET with AUTO_COMPRESS=TRUE", "[put_get][odbc]") {
   Connection conn;
   const std::string stage = pg_utils::create_stage(conn, "ODBCTST_COMPRESS_TRUE");
-  const std::string filename = "test_put_get_compress_true.csv";
-  const std::string compressed = filename + ".gz";
-
-  // Create test file with CSV data
-  fs::path tmp = fs::temp_directory_path() / (std::string("odbc_put_get_") + random_hex());
-  fs::create_directories(tmp);
-  fs::path file = write_text_file(tmp, filename, "1,2,3\n");
+  auto [filename, file] = uncompressed_test_file();
+  auto [compressed, file_gz] = compressed_test_file();
 
   // PUT with AUTO_COMPRESS=TRUE
   {
@@ -39,7 +41,7 @@ TEST_CASE("PUT+GET with AUTO_COMPRESS=TRUE", "[put_get][odbc]") {
   }
 
   // Create directory for download
-  fs::path download_dir = tmp / "download";
+  fs::path download_dir = fs::temp_directory_path() / (std::string("odbc_put_get_") + random_hex());
   fs::create_directories(download_dir);
   {
     // Download file using GET
@@ -54,24 +56,22 @@ TEST_CASE("PUT+GET with AUTO_COMPRESS=TRUE", "[put_get][odbc]") {
   // Verify the downloaded file exists and content matches
   REQUIRE(fs::exists(download_dir / compressed));
   REQUIRE(!fs::exists(download_dir / filename));
-  // Decompress and verify content
-  std::string decompressed = decompress_gzip_file(download_dir / compressed);
-  std::ifstream ifs(file);
-  std::string original_content((std::istreambuf_iterator<char>(ifs)),
+  // Compare compressed bytes (compat layer differences handled by OLD/NEW guards)
+  std::ifstream dl(download_dir / compressed, std::ios::binary);
+  std::string downloaded_bytes((std::istreambuf_iterator<char>(dl)),
                                std::istreambuf_iterator<char>());
-  CHECK(decompressed == original_content);
+  std::ifstream ref(file_gz, std::ios::binary);
+  std::string reference_bytes((std::istreambuf_iterator<char>(ref)),
+                              std::istreambuf_iterator<char>());
+  OLD_DRIVER_ONLY("BC#1") { CHECK(downloaded_bytes != reference_bytes); }
+  NEW_DRIVER_ONLY("BC#1") { CHECK(downloaded_bytes == reference_bytes); }
 }
 
 TEST_CASE("PUT+GET with AUTO_COMPRESS=FALSE", "[put_get][odbc]") {
   Connection conn;
   const std::string stage = pg_utils::create_stage(conn, "ODBCTST_COMPRESS_FALSE");
-  const std::string filename = "test_put_get_compress_false.csv";
-  const std::string compressed = filename + ".gz";
-
-  // Create test file with CSV data
-  fs::path tmp = fs::temp_directory_path() / (std::string("odbc_put_get_") + random_hex());
-  fs::create_directories(tmp);
-  fs::path file = write_text_file(tmp, filename, "1,2,3\n");
+  auto [filename, file] = uncompressed_test_file();
+  auto [compressed, file_gz] = compressed_test_file();
 
   // PUT with AUTO_COMPRESS=FALSE
   {
@@ -87,7 +87,7 @@ TEST_CASE("PUT+GET with AUTO_COMPRESS=FALSE", "[put_get][odbc]") {
   }
 
   // Create directory for download
-  fs::path download_dir = tmp / "download";
+  fs::path download_dir = fs::temp_directory_path() / (std::string("odbc_put_get_") + random_hex());
   fs::create_directories(download_dir);
   {
     // Download file using GET

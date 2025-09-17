@@ -13,26 +13,17 @@
 namespace fs = std::filesystem;
 using namespace pg_utils;
 
+static fs::path wildcard_tests_dir() { return shared_test_data_dir() / "wildcard"; }
+
 TEST_CASE("PUT with ? wildcard and LS", "[put_get][odbc]") {
   Connection conn;
   // Setup stage
   const std::string stage = pg_utils::create_stage(conn, "ODBCTST_WILDCARD_Q");
-  const std::string base = "test_put_wildcard_question_mark";
-
-  // Set up test environment
-  fs::path tmp = fs::temp_directory_path() / (std::string("odbc_put_get_") + random_hex());
-  fs::create_directories(tmp);
-
-  // Create matching files
-  for (int i = 1; i <= 5; ++i)
-    write_text_file(tmp, base + "_" + std::to_string(i) + ".csv", "1,2,3\n");
-  // Create non-matching files
-  write_text_file(tmp, base + "_10.csv", "1,2,3\n");
-  write_text_file(tmp, base + "_abc.csv", "1,2,3\n");
+  fs::path wildcard_dir = wildcard_tests_dir();
 
   {
     // Upload files
-    const std::string pattern = as_file_uri(tmp) + "/" + base + "_?.csv";
+    const std::string pattern = as_file_uri(wildcard_dir) + "/pattern_?.csv";
     conn.execute("PUT 'file://" + pattern + "' @" + stage);
   }
 
@@ -49,13 +40,10 @@ TEST_CASE("PUT with ? wildcard and LS", "[put_get][odbc]") {
       all += get_data<SQL_C_CHAR>(stmt, LS_ROW_NAME_IDX) + "\n";
     }
 
-    for (int i = 1; i <= 5; ++i) {
-      CHECK(all.find(base + "_" + std::to_string(i) + ".csv.gz") != std::string::npos);
-    }
-    CHECK(all.find(base + ".csv.gz") == std::string::npos);
-    CHECK(all.find(base + "_test.txt.gz") == std::string::npos);
-    CHECK(all.find(base + "_10.csv.gz") == std::string::npos);
-    CHECK(all.find(base + "_abc.csv.gz") == std::string::npos);
+    CHECK(all.find("pattern_1.csv.gz") != std::string::npos);
+    CHECK(all.find("pattern_2.csv.gz") != std::string::npos);
+    CHECK(all.find("pattern_10.csv.gz") == std::string::npos);
+    CHECK(all.find("patternabc.csv.gz") == std::string::npos);
   }
 }
 
@@ -63,25 +51,11 @@ TEST_CASE("PUT with * wildcard and LS", "[put_get][odbc]") {
   Connection conn;
   // Setup stage
   const std::string stage = pg_utils::create_stage(conn, "ODBCTST_WILDCARD_STAR");
-  const std::string base = "test_put_wildcard_star";
-
-  // Set up test environment
-  fs::path tmp = fs::temp_directory_path() / (std::string("odbc_put_get_") + random_hex());
-  fs::create_directories(tmp);
-
-  // Create matching files
-  for (int i = 1; i <= 5; ++i) {
-    write_text_file(tmp,
-                    base + "_" + std::to_string(i) + std::to_string(i) + std::to_string(i) + ".csv",
-                    "1,2,3\n");
-  }
-  // Create non-matching files
-  write_text_file(tmp, base + ".csv", "1,2,3\n");
-  write_text_file(tmp, base + "_test.txt", "1,2,3\n");
+  fs::path wildcard_dir = wildcard_tests_dir();
 
   {
     // Upload files
-    const std::string pattern = as_file_uri(tmp) + "/" + base + "_*.csv";
+    const std::string pattern = as_file_uri(wildcard_dir) + "/pattern_*.csv";
     conn.execute("PUT 'file://" + pattern + "' @" + stage);
   }
 
@@ -97,12 +71,10 @@ TEST_CASE("PUT with * wildcard and LS", "[put_get][odbc]") {
       all += get_data<SQL_C_CHAR>(stmt, LS_ROW_NAME_IDX) + "\n";
     }
 
-    for (int i = 1; i <= 5; ++i) {
-      CHECK(all.find(base + "_" + std::to_string(i) + std::to_string(i) + std::to_string(i) +
-                     ".csv.gz") != std::string::npos);
-    }
-    CHECK(all.find(base + ".csv.gz") == std::string::npos);
-    CHECK(all.find(base + "_test.txt.gz") == std::string::npos);
+    CHECK(all.find("pattern_1.csv.gz") != std::string::npos);
+    CHECK(all.find("pattern_2.csv.gz") != std::string::npos);
+    CHECK(all.find("pattern_10.csv.gz") != std::string::npos);
+    CHECK(all.find("patternabc.csv.gz") == std::string::npos);
   }
 }
 
@@ -110,33 +82,14 @@ TEST_CASE("GET with PATTERN regexp filters files", "[put_get][odbc]") {
   Connection conn;
   // Setup stage
   const std::string stage = pg_utils::create_stage(conn, "ODBCTST_REGEXP_GET");
-  const std::string base = "data";
-
-  // Set up test environment
-  fs::path tmp = fs::temp_directory_path() / (std::string("odbc_put_get_") + random_hex());
-  fs::create_directories(tmp);
-
-  // Create and upload test files that match the regexp pattern
-  for (int i = 1; i <= 5; ++i) {
-    fs::path p = write_text_file(tmp, base + "_" + std::to_string(i) + ".csv", "1,2,3\n");
-    conn.execute("PUT 'file://" + as_file_uri(p) + "' @" + stage);
+  fs::path wildcard_dir = wildcard_tests_dir();
+  for (const auto& name : {"pattern_1.csv", "pattern_2.csv", "pattern_10.csv", "patternabc.csv"}) {
+    conn.execute("PUT 'file://" + as_file_uri(wildcard_dir / name) + "' @" + stage);
   }
 
-  // Create files that should NOT match the regexp pattern and upload them
-  write_text_file(tmp, base + "_10.csv", "1,2,3\n");
-  write_text_file(tmp, base + "_abc.csv", "1,2,3\n");
-  {
-    fs::path p = tmp / (base + "_10.csv");
-    conn.execute("PUT 'file://" + as_file_uri(p) + "' @" + stage);
-  }
-  {
-    fs::path p = tmp / (base + "_abc.csv");
-    conn.execute("PUT 'file://" + as_file_uri(p) + "' @" + stage);
-  }
-
-  fs::path download_dir = tmp / "download";
+  fs::path download_dir = fs::temp_directory_path() / (std::string("odbc_put_get_") + random_hex());
   fs::create_directories(download_dir);
-  const std::string get_pattern = R"(.*/data_.\.csv\.gz)";
+  const std::string get_pattern = R"(.*/pattern_.\.csv\.gz)";
 
   {
     // Download the files from the stage using a pattern
@@ -145,10 +98,8 @@ TEST_CASE("GET with PATTERN regexp filters files", "[put_get][odbc]") {
   }
 
   // Verify that the matching files were downloaded and the non-matching files were not downloaded
-  for (int i = 1; i <= 5; ++i) {
-    fs::path expected = download_dir / (base + "_" + std::to_string(i) + ".csv.gz");
-    REQUIRE(fs::exists(expected));
-  }
-  REQUIRE(!fs::exists(download_dir / (base + "_10.csv.gz")));
-  REQUIRE(!fs::exists(download_dir / (base + "_abc.csv.gz")));
+  CHECK(fs::exists(download_dir / "pattern_1.csv.gz"));
+  CHECK(fs::exists(download_dir / "pattern_2.csv.gz"));
+  CHECK(!fs::exists(download_dir / "pattern_10.csv.gz"));
+  CHECK(!fs::exists(download_dir / "patternabc.csv.gz"));
 }
