@@ -65,10 +65,10 @@ def generate_compression(root: Path) -> list[Path]:
 
     # Compressed variants of base
     gzip_path = out_dir / f"{base_name}.gz"
-    gz_bytes = gzip.compress(BASE_CSV_CONTENT, mtime=0)
-    write_file(gzip_path, gz_bytes)
-    # Debug: print deterministic hex dump of gzip bytes for CI vs local comparison
-    print(f"GZIP_HEX {gzip_path}: {gz_bytes.hex()}")
+    gz_ba = bytearray(gzip.compress(BASE_CSV_CONTENT, mtime=0))
+    # Force gzip header OS byte to 0xFF ("unknown") for deterministic output across platforms
+    gz_ba[9] = 0xFF
+    write_file(gzip_path, bytes(gz_ba))
     created.append(gzip_path)
 
     bz2_path = out_dir / f"{base_name}.bz2"
