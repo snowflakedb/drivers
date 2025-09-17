@@ -41,51 +41,6 @@ class ConnectorAdapter(ABC):
         pass
 
 
-class IntegrationConnectorAdapter(ConnectorAdapter):
-    """Adapter for integration tests"""
-    
-    def __init__(self):
-        """Initialize the integration adapter."""
-        self._universal_adapter = UniversalConnectorAdapter()
-    
-    def connect(self, **kwargs):
-        """Create a connection using integration test parameters."""
-        integration_params = {
-            "account": "test_account",
-            "user": "test_user",
-            "password": "test_password",
-            "database": "test_database",
-            "schema": "test_schema",
-            "warehouse": "test_warehouse",
-            "role": "test_role",
-            "host": "localhost",
-            "port": 8090,
-            "protocol": "http",
-            "server_url": "http://localhost:8090",
-        }
-        
-        # Allow overriding any parameter
-        integration_params.update(kwargs)
-        
-        # Use the universal adapter with integration parameters
-        return self._universal_adapter.connect(**integration_params)
-    
-    @property
-    def name(self) -> str:
-        """Return the name of this connector implementation."""
-        return "Integration Test Connector"
-    
-    @property
-    def version(self) -> str:
-        """Return the version of this connector implementation."""
-        return f"integration-{self._universal_adapter.version}"
-    
-    @property
-    def connector_type(self) -> ConnectorType:
-        """Return the connector type enum."""
-        return ConnectorType.INTEGRATION
-
-
 class UniversalConnectorAdapter(ConnectorAdapter):
     """Adapter for the universal driver implementation."""
     
@@ -150,7 +105,6 @@ class ConnectorFactory:
     _adapters = {
         ConnectorType.UNIVERSAL: UniversalConnectorAdapter,
         ConnectorType.REFERENCE: ReferenceConnectorAdapter,
-        ConnectorType.INTEGRATION: IntegrationConnectorAdapter,
     }
     
     @classmethod
@@ -168,8 +122,7 @@ class ConnectorFactory:
         """Get a list of available connector types and their descriptions."""
         return {
             ConnectorType.UNIVERSAL: "Universal driver implementation",
-            ConnectorType.REFERENCE: "Old Snowflake connector implementation",
-            ConnectorType.INTEGRATION: "Integration test adapter"
+            ConnectorType.REFERENCE: "Old Snowflake connector implementation"
         }
 
 

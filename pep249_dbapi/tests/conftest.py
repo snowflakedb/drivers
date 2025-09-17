@@ -16,7 +16,7 @@ def pytest_addoption(parser):
         "--connector",
         action="store",
         default="universal",
-        choices=["universal", "reference", "integration"],
+        choices=["universal", "reference"],
         help="Which connector implementation to test against (default: universal)"
     )
     parser.addoption(
@@ -81,30 +81,31 @@ def cursor(connection):
 
 
 @pytest.fixture
-def int_test_connection_factory():
-    """Factory function for creating integration test connections"""
-    adapter = ConnectorFactory.create_adapter(ConnectorType.INTEGRATION)
-    
+def int_test_connection_factory(connector_adapter):
+    """Factory function for creating connections with integration test parameters."""
     def _create_connection(**override_params):
-        """Create an integration test connection with custom parameters.
-        
-        Args:
-            **override_params: Parameters to override integration defaults
-            
-        Example:
-            conn = int_test_connection_factory(authenticator="SNOWFLAKE_JWT")
+        """Create a connection with integration test parameters.
         """
-        return create_connection_with_adapter(adapter, **override_params)
+        # Default integration test parameters
+        integration_params = {
+            "account": "test_account",
+            "user": "test_user", 
+            "password": "test_password",
+            "database": "test_database",
+            "schema": "test_schema",
+            "warehouse": "test_warehouse",
+            "role": "test_role",
+            "host": "localhost",
+            "port": 8090,
+            "protocol": "http",
+            "server_url": "http://localhost:8090",
+        }
+        
+        integration_params.update(override_params)
+        
+        return create_connection_with_adapter(connector_adapter, **integration_params)
     
     return _create_connection
-
-
-@pytest.fixture
-def integration_connection():
-    """Create a test connection using integration test parameters."""
-    adapter = ConnectorFactory.create_adapter(ConnectorType.INTEGRATION)
-    with create_connection_with_adapter(adapter) as conn:
-        yield conn
 
 
 def pytest_runtest_setup(item):
