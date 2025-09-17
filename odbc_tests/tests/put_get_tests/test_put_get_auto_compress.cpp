@@ -14,11 +14,11 @@ namespace fs = std::filesystem;
 using namespace pg_utils;
 
 static std::pair<std::string, fs::path> uncompressed_test_file() {
-  return {"test_data.csv", test_data_dir() / "compression" / "test_data.csv"};
+  return {"test_data.csv", shared_test_data_dir() / "compression" / "test_data.csv"};
 }
 
 static std::pair<std::string, fs::path> compressed_test_file() {
-  return {"test_data.csv.gz", test_data_dir() / "compression" / "test_data.csv.gz"};
+  return {"test_data.csv.gz", shared_test_data_dir() / "compression" / "test_data.csv.gz"};
 }
 
 TEST_CASE("PUT+GET with AUTO_COMPRESS=TRUE", "[put_get][odbc]") {

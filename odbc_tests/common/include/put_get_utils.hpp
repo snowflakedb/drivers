@@ -65,14 +65,14 @@ inline std::string random_hex(size_t num_bytes = 8) {
 }
 
 // Shared test data directory: repo_root/tests/test_data
-inline std::filesystem::path test_data_dir() {
+inline std::filesystem::path shared_test_data_dir() {
   // This header lives under repo_root/odbc_tests/common/include
   // Go up two levels to repo_root, then into tests/test_data
   std::filesystem::path p = std::filesystem::current_path();
   // Try to locate a Cargo.toml at repo root to anchor
   for (int i = 0; i < 6; ++i) {
     if (std::filesystem::exists(p / "Cargo.toml")) {
-      return p / "tests" / "test_data";
+      return p / "tests" / "generated_test_data";
     }
     p = p.parent_path();
     if (p.empty()) break;

@@ -16,11 +16,11 @@ namespace fs = std::filesystem;
 using namespace pg_utils;
 
 static std::pair<std::string, fs::path> original_test_file() {
-  return {"test_data.csv", test_data_dir() / "overwrite" / "original" / "test_data.csv"};
+  return {"test_data.csv", shared_test_data_dir() / "overwrite" / "original" / "test_data.csv"};
 }
 
 static std::pair<std::string, fs::path> updated_test_file() {
-  return {"test_data.csv", test_data_dir() / "overwrite" / "updated" / "test_data.csv"};
+  return {"test_data.csv", shared_test_data_dir() / "overwrite" / "updated" / "test_data.csv"};
 }
 
 TEST_CASE("PUT overwrite true", "[put_get][odbc]") {

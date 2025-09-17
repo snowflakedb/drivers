@@ -106,13 +106,17 @@ fn test_put_get_with_auto_compress_false() {
 fn uncompressed_test_file() -> (String, PathBuf) {
     (
         "test_data.csv".to_string(),
-        test_data_dir().join("compression").join("test_data.csv"),
+        shared_test_data_dir()
+            .join("compression")
+            .join("test_data.csv"),
     )
 }
 
 fn compressed_test_file() -> (String, PathBuf) {
     (
         "test_data.csv.gz".to_string(),
-        test_data_dir().join("compression").join("test_data.csv.gz"),
+        shared_test_data_dir()
+            .join("compression")
+            .join("test_data.csv.gz"),
     )
 }

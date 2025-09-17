@@ -10,7 +10,7 @@
 namespace fs = std::filesystem;
 using namespace pg_utils;
 
-static fs::path compression_tests_dir() { return test_data_dir() / "compression"; }
+static fs::path compression_tests_dir() { return shared_test_data_dir() / "compression"; }
 
 static std::pair<std::string, fs::path> test_file(const std::string& compression_type) {
   if (compression_type == "GZIP") {

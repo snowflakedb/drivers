@@ -241,7 +241,7 @@ fn test_put_source_compression_explicit_with_auto_compress() {
 }
 
 fn compression_tests_dir() -> PathBuf {
-    test_data_dir().join("compression")
+    shared_test_data_dir().join("compression")
 }
 
 fn test_file(compression_type: &str) -> (String, PathBuf) {

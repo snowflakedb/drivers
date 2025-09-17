@@ -106,7 +106,7 @@ fn test_put_overwrite_false() {
 fn original_test_file() -> (String, PathBuf) {
     (
         "test_data.csv".to_string(),
-        test_data_dir()
+        shared_test_data_dir()
             .join("overwrite")
             .join("original/test_data.csv"),
     )
@@ -115,7 +115,7 @@ fn original_test_file() -> (String, PathBuf) {
 fn updated_test_file() -> (String, PathBuf) {
     (
         "test_data.csv".to_string(),
-        test_data_dir()
+        shared_test_data_dir()
             .join("overwrite")
             .join("updated/test_data.csv"),
     )

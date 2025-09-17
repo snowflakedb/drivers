@@ -5,8 +5,6 @@ pytest configuration and fixtures for PEP 249 tests.
 import pytest
 from pathlib import Path
 
-from .integ.utils_put_get import ensure_test_data_generated, shared_test_data_dir
-
 from .connector_factory import ConnectorFactory, create_connection_with_adapter
 from .utils import set_current_connector
 from .connector_types import ConnectorType
@@ -34,14 +32,6 @@ def connector_type(request):
     """Get the connector type from command line option."""
     connector_str = request.config.getoption("--connector")
     return ConnectorType.from_string(connector_str)
-
-
-@pytest.fixture(scope="session", autouse=True)
-def generate_shared_test_data():
-    """Generate shared put/get test data once per test session."""
-    data_dir = shared_test_data_dir()
-    ensure_test_data_generated(data_dir)
-    return data_dir
 
 
 @pytest.fixture(scope="session")

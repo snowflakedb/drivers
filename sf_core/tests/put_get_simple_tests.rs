@@ -208,6 +208,6 @@ fn check_fixed_field(field: &Field, name: &str) {
 fn test_file() -> (String, PathBuf) {
     (
         "test_data.csv".to_string(),
-        test_data_dir().join("basic").join("test_data.csv"),
+        shared_test_data_dir().join("basic").join("test_data.csv"),
     )
 }

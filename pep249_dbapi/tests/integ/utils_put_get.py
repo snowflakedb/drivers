@@ -54,13 +54,4 @@ def repo_root() -> Path:
 
 
 def shared_test_data_dir() -> Path:
-    return repo_root() / "tests" / "test_data"
-
-
-def ensure_test_data_generated(path: Path | None = None) -> Path:
-    data_dir = path or shared_test_data_dir()
-    if not data_dir.exists() or not any(data_dir.iterdir()):
-        raise RuntimeError(
-            f"Test data not found in {data_dir}. Please run generate_put_get_test_data.py in test/tes_data/utils to create it.")
-
-    return data_dir
+    return repo_root() / "tests" / "generated_test_data"

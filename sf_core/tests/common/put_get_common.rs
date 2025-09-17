@@ -29,6 +29,6 @@ pub fn repo_root() -> PathBuf {
 }
 
 /// Path to shared test data directory: repo_root/tests/test_data
-pub fn test_data_dir() -> PathBuf {
-    repo_root().join("tests").join("test_data")
+pub fn shared_test_data_dir() -> PathBuf {
+    repo_root().join("tests").join("generated_test_data")
 }
