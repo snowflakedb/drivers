@@ -1,4 +1,5 @@
 import gzip
+import subprocess
 from pathlib import Path
 import uuid
 import io
@@ -40,37 +41,20 @@ def create_temporary_stage(cursor, prefix: str) -> str:
     return stage_name
 
 
-def write_text_file(dir_path: Path, filename: str, content: str) -> Path:
-    dir_path.mkdir(parents=True, exist_ok=True)
-    file_path = dir_path / filename
-    file_path.write_text(content)
-    return file_path
+# Shared test-data helpers
+def repo_root() -> Path:
+    result = subprocess.run(
+        ["git", "rev-parse", "--show-toplevel"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if result.returncode == 0:
+        root = result.stdout.strip()
+        if root:
+            return Path(root)
+    raise RuntimeError("Failed to determine repository root")
 
 
-def write_binary_file(dir_path: Path, filename: str, data: bytes) -> Path:
-    dir_path.mkdir(parents=True, exist_ok=True)
-    file_path = dir_path / filename
-    file_path.write_bytes(data)
-    return file_path
-
-
-def decompress_gzip_file(path: Path) -> str:
-    with gzip.open(path, "rt", encoding="utf-8") as f:
-        return f.read()
-
-
-def compress_bytes(data: bytes, comp: str) -> bytes:
-    comp = comp.upper()
-    if comp == "GZIP":
-        buf = io.BytesIO()
-        with gzip.GzipFile(fileobj=buf, mode="wb") as gz:
-            gz.write(data)
-        return buf.getvalue()
-    if comp == "BZIP2":
-        return bz2.compress(data)
-    if comp == "DEFLATE":
-        return zlib.compress(data)
-    if comp == "BROTLI":
-        return brotli.compress(data)
-    if comp == "ZSTD":
-        return zstd.ZstdCompressor().compress(data)
+def shared_test_data_dir() -> Path:
+    return repo_root() / "tests" / "generated_test_data"
