@@ -128,8 +128,8 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description="Generate put/get test data catalog")
     parser.add_argument(
         "--out-dir",
-        default=str(Path("tests/test_data").absolute()),
-        help="Directory to write generated files (default: tests/test_data)",
+        default=str(Path("tests/generated_test_data").absolute()),
+        help="Directory to write generated files (default: tests/generated_test_data)",
     )
     args = parser.parse_args(argv)
 
@@ -146,7 +146,7 @@ def main(argv=None):
     for p in sorted(created):
         try:
             rel = p.relative_to(Path.cwd())
-        except Exception:
+        except ValueError:
             rel = p
         print(f" - {rel}")
 

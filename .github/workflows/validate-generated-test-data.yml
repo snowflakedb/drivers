@@ -7,7 +7,7 @@ on:
 
 jobs:
   validate:
-    runs-on: macos-latest
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -25,10 +25,10 @@ jobs:
       - name: Run all generator scripts
         run: |
           set -euo pipefail
-          echo "Running generators in tests/scripts -> tests/generated_test_data"
-          for script in tests/scripts/*.py; do
-            echo "Running $script"
-            python "$script" --out-dir tests/generated_test_data
+          echo "Running generators in tests/test_data_generators -> tests/generated_test_data"
+          for generator in tests/test_data_generators/*.py; do
+            echo "Running generator"
+            python "$generator" --out-dir tests/generated_test_data
           done
 
       - name: Check for uncommitted changes in generated test data
