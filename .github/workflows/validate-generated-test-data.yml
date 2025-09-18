@@ -25,21 +25,21 @@ jobs:
       - name: Run all generator scripts
         run: |
           set -euo pipefail
-          echo "Running generators in tests/test_data_generators -> tests/generated_test_data"
-          for generator in tests/test_data_generators/*.py; do
+          echo "Running generators in tests/test_data/test_data_generators -> tests/test_data/generated_test_data"
+          for generator in tests/test_data/test_data_generators/*.py; do
             echo "Running generator"
-            python "$generator" --out-dir tests/generated_test_data
+            python "$generator" --out-dir tests/test_data/generated_test_data
           done
 
       - name: Check for uncommitted changes in generated test data
         run: |
           set -euo pipefail
-          git status --porcelain=v1 -- tests/generated_test_data || true
-          if [[ -n "$(git status --porcelain=v1 -- tests/generated_test_data)" ]]; then
-            echo "Detected differences in tests/generated_test_data after regeneration." >&2
+          git status --porcelain=v1 -- tests/test_data/generated_test_data || true
+          if [[ -n "$(git status --porcelain=v1 -- tests/test_data/generated_test_data)" ]]; then
+            echo "Detected differences in tests/test_data/generated_test_data after regeneration." >&2
             echo "Please run the generator scripts locally and commit updated files." >&2
             echo
-            git --no-pager diff -- tests/generated_test_data | sed -n '1,200p'
+            git --no-pager diff -- tests/test_data/generated_test_data | sed -n '1,200p'
             exit 1
           fi
           echo "Generated test data matches repository."
