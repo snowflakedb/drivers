@@ -1,14 +1,8 @@
-import gzip
-import subprocess
-from pathlib import Path
-import uuid
-import io
-import pytest
-import bz2
-import zlib
 import brotli
+import pytest
+import uuid
 import zstandard as zstd
-
+from pathlib import Path
 from pep249_dbapi.cursor import Cursor
 
 GET_ROW_FILE_IDX = 0
@@ -39,22 +33,3 @@ def create_temporary_stage(cursor, prefix: str) -> str:
     stage_name = f"{prefix}_{uuid.uuid4().hex}".upper()
     cursor.execute(f"CREATE TEMPORARY STAGE {stage_name}")
     return stage_name
-
-
-# Shared test-data helpers
-def repo_root() -> Path:
-    result = subprocess.run(
-        ["git", "rev-parse", "--show-toplevel"],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
-    if result.returncode == 0:
-        root = result.stdout.strip()
-        if root:
-            return Path(root)
-    raise RuntimeError("Failed to determine repository root")
-
-
-def shared_test_data_dir() -> Path:
-    return repo_root() / "tests" / "generated_test_data"

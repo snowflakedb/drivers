@@ -66,46 +66,6 @@ inline std::string random_hex(size_t num_bytes = 8) {
   return ss.str();
 }
 
-inline std::filesystem::path repo_root() {
-  const char* cmd = "git rev-parse --show-toplevel";
-#ifdef _WIN32
-  FILE* pipe = _popen(cmd, "r");
-#else
-  FILE* pipe = popen(cmd, "r");
-#endif
-  if (!pipe) {
-    throw std::runtime_error("Failed to determine repository root: unable to start git command");
-  }
-
-  std::array<char, 256> buffer{};
-  std::string output;
-  while (fgets(buffer.data(), static_cast<int>(buffer.size()), pipe) != nullptr) {
-    output.append(buffer.data());
-  }
-
-#ifdef _WIN32
-  int rc = _pclose(pipe);
-#else
-  int rc = pclose(pipe);
-#endif
-
-  // Trim trailing whitespace/newlines
-  while (!output.empty() && std::isspace(static_cast<unsigned char>(output.back()))) {
-    output.pop_back();
-  }
-
-  if (rc == 0 && !output.empty()) {
-    return std::filesystem::path(output);
-  }
-
-  throw std::runtime_error("Failed to determine repository root");
-}
-
-// Shared test data directory: repo_root/tests/generated_test_data
-inline std::filesystem::path shared_test_data_dir() {
-  return repo_root() / "tests" / "generated_test_data";
-}
-
 // Write a text file with given content and return the path
 inline std::filesystem::path write_text_file(const std::filesystem::path& dir,
                                              const std::string& filename,

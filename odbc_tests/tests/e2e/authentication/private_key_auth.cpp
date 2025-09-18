@@ -15,6 +15,7 @@
 #include "get_diag_rec.hpp"
 #include "macros.hpp"
 #include "test_setup.hpp"
+#include "utils.hpp"
 
 std::string get_private_key_path_for_auth(picojson::object& params) {
   auto private_key = read_private_key(params);
@@ -37,36 +38,6 @@ std::string get_jwt_connection_string_with_private_key() {
   return ss.str();
 }
 
-std::string read_invalid_private_key(const picojson::object& params) {
-  auto it = params.find("SNOWFLAKE_TEST_PRIVATE_KEY_INVALID");
-  if (it == params.end()) {
-    FAIL(
-        "Required parameter 'SNOWFLAKE_TEST_PRIVATE_KEY_INVALID' is missing in the test "
-        "parameters.");
-  }
-
-  if (!it->second.is<picojson::array>()) {
-    FAIL("Parameter 'SNOWFLAKE_TEST_PRIVATE_KEY_INVALID' is not of expected type.");
-  }
-
-  auto private_key_lines = it->second.get<picojson::array>();
-  std::stringstream private_key_stream;
-  for (const auto& line : private_key_lines) {
-    private_key_stream << line.get<std::string>() << "\n";
-  }
-  return private_key_stream.str();
-}
-
-std::string get_invalid_private_key_path_for_auth(picojson::object& params) {
-  auto invalid_private_key = read_invalid_private_key(params);
-  const std::string path = "./invalid_rsa_key_auth.p8";
-  std::ofstream file(path, std::ios::out | std::ios::trunc);
-  REQUIRE(file.is_open());
-  file << invalid_private_key;
-  file.close();
-  return path;
-}
-
 std::string get_jwt_connection_string_with_invalid_private_key() {
   auto params = get_test_parameters("testconnection");
   std::stringstream ss;
@@ -74,7 +45,7 @@ std::string get_jwt_connection_string_with_invalid_private_key() {
   add_param_optional<std::string>(ss, params, "SNOWFLAKE_TEST_PRIVATE_KEY_PASSWORD",
                                   "PRIV_KEY_FILE_PWD");
   ss << "AUTHENTICATOR=SNOWFLAKE_JWT;";
-  ss << "PRIV_KEY_FILE=" << get_invalid_private_key_path_for_auth(params) << ";";
+  ss << "PRIV_KEY_FILE=" << test_utils::test_data_file_path("invalid_rsa_key.p8").string() << ";";
   return ss.str();
 }
 

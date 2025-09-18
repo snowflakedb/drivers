@@ -8,6 +8,8 @@ use sf_core::thrift_apis::DatabaseDriverV1;
 use sf_core::thrift_apis::client::create_client;
 use sf_core::thrift_gen::database_driver_v1::{ArrowArrayPtr, ArrowSchemaPtr, ExecuteResult};
 use std::fs;
+use std::path::PathBuf;
+use std::process::Command;
 use tracing::Level;
 use tracing_subscriber::EnvFilter;
 
@@ -47,8 +49,6 @@ pub struct Parameters {
     pub private_key_contents: Option<Vec<String>>,
     #[serde(rename = "SNOWFLAKE_TEST_PRIVATE_KEY_PASSWORD")]
     pub private_key_password: Option<String>,
-    #[serde(rename = "SNOWFLAKE_TEST_PRIVATE_KEY_INVALID")]
-    pub private_key_invalid: Option<Vec<String>>,
 }
 
 /// Parses and returns the test parameters from the configured parameter file
@@ -165,7 +165,6 @@ impl SnowflakeTestClient {
             protocol: Some("http".to_string()),
             private_key_contents: None,
             private_key_password: None,
-            private_key_invalid: None,
         };
 
         let mut driver = create_client::<DatabaseDriverV1>();
@@ -295,7 +294,13 @@ impl SnowflakeTestClient {
                 );
                 assert!(login_error.code != 0, "Login error code should not be zero");
             }
-            other => panic!("Expected LoginError, got: {other:?}"),
+            DriverError::AuthError(auth_error) => {
+                assert!(
+                    !auth_error.detail.is_empty(),
+                    "Auth error detail should not be empty"
+                );
+            }
+            other => panic!("Expected LoginError or AuthError, got: {other:?}"),
         }
     }
 
@@ -415,4 +420,29 @@ where
         },
     };
     (schema, array)
+}
+
+/// Returns repository root path
+pub fn repo_root() -> PathBuf {
+    if let Ok(output) = Command::new("git")
+        .arg("rev-parse")
+        .arg("--show-toplevel")
+        .output()
+        && output.status.success()
+        && let Ok(stdout) = String::from_utf8(output.stdout)
+    {
+        let root = stdout.trim();
+        if !root.is_empty() {
+            return PathBuf::from(root);
+        }
+    }
+    panic!("Failed to determine repository root");
+}
+
+/// Path to shared test data directory: repo_root/tests/test_data
+pub fn shared_test_data_dir() -> PathBuf {
+    repo_root()
+        .join("tests")
+        .join("test_data")
+        .join("generated_test_data")
 }

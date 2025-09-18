@@ -4,7 +4,6 @@ from pathlib import Path
 from .utils_put_get import (
     as_file_uri,
     create_temporary_stage,
-    shared_test_data_dir,
     PUT_ROW_SOURCE_IDX,
     PUT_ROW_TARGET_IDX,
     PUT_ROW_SOURCE_SIZE_IDX,
@@ -19,8 +18,9 @@ from .utils_put_get import (
     GET_ROW_MESSAGE_IDX,
     LS_ROW_NAME_IDX,
 )
+from ..utils import shared_test_data_dir
 
-from ..utils import NEW_DRIVER_ONLY, OLD_DRIVER_ONLY
+from ..compatibility import NEW_DRIVER_ONLY, OLD_DRIVER_ONLY
 
 
 def test_put_select(cursor):

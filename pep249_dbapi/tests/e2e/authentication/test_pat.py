@@ -1,7 +1,6 @@
 import pytest
 import random
 from contextlib import contextmanager
-from typing import Optional
 
 from .auth_helpers import verify_simple_query_execution, verify_login_error
 from ...connector_factory import get_test_parameters

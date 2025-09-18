@@ -11,5 +11,5 @@ pep249_dbapi/reports
 jdbc/.gradle
 jdbc/build
 odbc_tests/cmake-build
-*rsa_key.p8
+rsa_key.p8
 universal_driver_e2e_test_coverage.html

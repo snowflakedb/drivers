@@ -1,16 +1,16 @@
 import pytest
 
-from ..utils import NEW_DRIVER_ONLY, OLD_DRIVER_ONLY
+from ..compatibility import NEW_DRIVER_ONLY, OLD_DRIVER_ONLY
 from .utils_put_get import (
     as_file_uri,
     create_temporary_stage,
-    shared_test_data_dir,
     PUT_ROW_SOURCE_IDX,
     PUT_ROW_TARGET_IDX,
     PUT_ROW_SOURCE_COMPRESSION_IDX,
     PUT_ROW_TARGET_COMPRESSION_IDX,
     PUT_ROW_STATUS_IDX,
 )
+from ..utils import shared_test_data_dir
 
 
 @pytest.mark.parametrize("compression_type", ["GZIP", "BZIP2", "BROTLI", "ZSTD"])

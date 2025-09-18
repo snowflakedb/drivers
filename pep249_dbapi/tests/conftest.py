@@ -6,7 +6,7 @@ import pytest
 from pathlib import Path
 
 from .connector_factory import ConnectorFactory, create_connection_with_adapter
-from .utils import set_current_connector
+from .compatibility import set_current_connector
 from .connector_types import ConnectorType
 
 

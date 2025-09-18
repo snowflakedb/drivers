@@ -1,4 +1,5 @@
 use super::super::common::test_utils::*;
+use std::fs;
 
 #[test]
 fn should_authenticate_using_private_file_with_password() {
@@ -85,6 +86,18 @@ fn get_private_key_file(parameters: &Parameters) -> PrivateKeyFile {
 }
 
 fn get_invalid_private_key_file() -> PrivateKeyFile {
-    let params = get_parameters();
-    create_private_key_file_from_option(params.private_key_invalid.clone(), "invalid_rsa_key")
+    let invalid_key_path = repo_root()
+        .join("tests")
+        .join("test_data")
+        .join("invalid_rsa_key.p8");
+
+    let key_content = fs::read_to_string(&invalid_key_path).unwrap_or_else(|_| {
+        panic!(
+            "Failed to read invalid private key file: {}",
+            invalid_key_path.display()
+        )
+    });
+
+    let invalid_key_lines: Vec<String> = key_content.lines().map(|s| s.to_string()).collect();
+    create_private_key_file(invalid_key_lines, "invalid_rsa_key")
 }

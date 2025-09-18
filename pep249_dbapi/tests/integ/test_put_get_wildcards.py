@@ -4,8 +4,8 @@ from pathlib import Path
 from .utils_put_get import (
     as_file_uri,
     create_temporary_stage,
-    shared_test_data_dir,
 )
+from ..utils import shared_test_data_dir
 
 
 def test_put_ls_wildcard_question_mark(cursor):

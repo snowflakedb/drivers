@@ -1,10 +1,10 @@
 from .utils_put_get import (
     as_file_uri,
     create_temporary_stage,
-    shared_test_data_dir,
     PUT_ROW_SOURCE_IDX,
     PUT_ROW_STATUS_IDX,
 )
+from ..utils import shared_test_data_dir
 
 
 def test_put_overwrite_true(cursor):

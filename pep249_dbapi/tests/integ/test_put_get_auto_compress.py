@@ -2,11 +2,11 @@ import tempfile
 from pathlib import Path
 
 from .utils_put_get import (
-    shared_test_data_dir,
     as_file_uri,
     create_temporary_stage,
 )
-from ..utils import OLD_DRIVER_ONLY, NEW_DRIVER_ONLY
+from ..utils import shared_test_data_dir
+from ..compatibility import OLD_DRIVER_ONLY, NEW_DRIVER_ONLY
 
 
 def test_put_get_with_auto_compress_true(cursor):

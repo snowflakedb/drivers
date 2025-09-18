@@ -1,25 +1,20 @@
-from typing import Any, Optional
+import subprocess
+from pathlib import Path
 
 
-_current_connector: Optional[str] = None  # "universal" or "reference"
+def repo_root() -> Path:
+    result = subprocess.run(
+        ["git", "rev-parse", "--show-toplevel"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if result.returncode == 0:
+        root = result.stdout.strip()
+        if root:
+            return Path(root)
+    raise RuntimeError("Failed to determine repository root")
 
 
-def set_current_connector(name: str) -> None:
-    global _current_connector
-    _current_connector = name
-
-
-def is_new_driver() -> bool:
-    return _current_connector == "universal"
-
-
-def is_old_driver() -> bool:
-    return _current_connector == "reference"
-
-
-def NEW_DRIVER_ONLY(bc_id: str) -> bool:
-    return is_new_driver()
-
-
-def OLD_DRIVER_ONLY(bc_id: str) -> bool:
-    return is_old_driver()
+def shared_test_data_dir() -> Path:
+    return repo_root() / "tests" / "test_data" / "generated_test_data"

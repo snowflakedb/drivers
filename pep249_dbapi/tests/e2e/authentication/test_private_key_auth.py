@@ -1,10 +1,10 @@
-import tempfile
 import os
+import tempfile
 from contextlib import contextmanager
-from typing import Optional
 
 from .auth_helpers import verify_simple_query_execution, verify_login_error
 from ...connector_factory import get_test_parameters
+from ...utils import repo_root
 
 
 class TestPrivateKeyAuthentication:
@@ -13,11 +13,10 @@ class TestPrivateKeyAuthentication:
         self, connection_factory
     ):
         # Given Authentication is set to JWT and private file with password is provided
-        private_key_context = private_key_file_for_test(valid=True)
         private_key_password = get_private_key_password()
 
         # When Trying to Connect
-        with private_key_context as private_key_file:
+        with create_valid_key_file() as private_key_file:
             connection = connection_factory(
                 authenticator="SNOWFLAKE_JWT",
                 private_key_file=private_key_file,
@@ -33,16 +32,15 @@ class TestPrivateKeyAuthentication:
         self, connection_factory
     ):
         # Given Authentication is set to JWT and invalid private key file is provided
-        invalid_key_context = private_key_file_for_test(valid=False)
-
+        invalid_private_key_file = get_invalid_key_file_path()
+        
         # When Trying to Connect
         exception = None
         try:
-            with invalid_key_context as invalid_private_key_file:
-                connection_factory(
-                    authenticator="SNOWFLAKE_JWT",
-                    private_key_file=invalid_private_key_file,
-                )
+            connection_factory(
+                authenticator="SNOWFLAKE_JWT",
+                private_key_file=invalid_private_key_file,
+            )
         except Exception as e:
             exception = e
 
@@ -50,65 +48,36 @@ class TestPrivateKeyAuthentication:
         verify_login_error(exception)
 
 
-class PrivateKeyHelper:
+@contextmanager
+def create_valid_key_file():
+    """Create a temporary valid private key file and clean it up automatically."""
+    test_params = get_test_parameters()
+    private_key_contents = test_params.get("SNOWFLAKE_TEST_PRIVATE_KEY_CONTENTS")
 
-    def __init__(self):
-        self.key_file: Optional[tempfile.NamedTemporaryFile] = None
-
-    def create_valid_key_file(self) -> str:
-        test_params = get_test_parameters()
-        private_key_contents = test_params.get("SNOWFLAKE_TEST_PRIVATE_KEY_CONTENTS")
-
-        if not private_key_contents:
-            raise RuntimeError(
-                "SNOWFLAKE_TEST_PRIVATE_KEY_CONTENTS not found in test parameters"
-            )
-
-        self.key_file = tempfile.NamedTemporaryFile(
-            mode="w", suffix=".p8", delete=False
+    if not private_key_contents:
+        raise RuntimeError(
+            "SNOWFLAKE_TEST_PRIVATE_KEY_CONTENTS not found in test parameters"
         )
 
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".p8", delete=False) as key_file:
         key_content = "\n".join(private_key_contents) + "\n"
-        self.key_file.write(key_content)
-        self.key_file.flush()
+        key_file.write(key_content)
+        key_file.flush()
+        temp_path = key_file.name
+    
+    try:
+        yield temp_path
+    finally:
+        try:
+            os.unlink(temp_path)
+        except Exception:
+            # Ignore cleanup errors in tests
+            pass
 
-        return self.key_file.name
 
-    def create_invalid_key_file(self) -> str:
-        test_params = get_test_parameters()
-        invalid_key_contents = test_params.get("SNOWFLAKE_TEST_PRIVATE_KEY_INVALID")
-
-        if not invalid_key_contents:
-            raise RuntimeError(
-                "SNOWFLAKE_TEST_PRIVATE_KEY_INVALID not found in test parameters"
-            )
-
-        self.key_file = tempfile.NamedTemporaryFile(
-            mode="w", suffix=".p8", delete=False
-        )
-
-        key_content = "\n".join(invalid_key_contents) + "\n"
-        self.key_file.write(key_content)
-        self.key_file.flush()
-
-        return self.key_file.name
-
-    def cleanup(self):
-        if self.key_file:
-            try:
-                self.key_file.close()
-                os.unlink(self.key_file.name)
-            except Exception:
-                # Ignore cleanup errors in tests
-                pass
-            finally:
-                self.key_file = None
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self.cleanup()
+def get_invalid_key_file_path() -> str:
+    """Return the path to the shared invalid private key file."""
+    return str(repo_root() / "tests" / "test_data" / "invalid_rsa_key.p8")
 
 
 def get_private_key_password() -> str:
@@ -123,11 +92,3 @@ def get_private_key_password() -> str:
     return password
 
 
-@contextmanager
-def private_key_file_for_test(valid: bool = True):
-    with PrivateKeyHelper() as key_manager:
-        if valid:
-            key_file_path = key_manager.create_valid_key_file()
-        else:
-            key_file_path = key_manager.create_invalid_key_file()
-        yield key_file_path
