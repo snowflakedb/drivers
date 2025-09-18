@@ -11,6 +11,7 @@
 #include "Connection.hpp"
 #include "get_data.hpp"
 #include "put_get_utils.hpp"
+#include "utils.hpp"
 
 namespace fs = std::filesystem;
 using namespace pg_utils;

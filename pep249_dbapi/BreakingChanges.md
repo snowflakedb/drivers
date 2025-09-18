@@ -5,3 +5,5 @@
 ## 2: DEFLATE compression type option is now correctly auto-detected
 
 ## 3: BROTLI compression type option is now supported
+
+## 4: Error structure changed

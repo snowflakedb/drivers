@@ -128,8 +128,8 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description="Generate put/get test data catalog")
     parser.add_argument(
         "--out-dir",
-        default=str(Path("tests/generated_test_data").absolute()),
-        help="Directory to write generated files (default: tests/generated_test_data)",
+        default=str(Path("tests/test_data/generated_test_data").absolute()),
+        help="Directory to write generated files (default: tests/test_data/generated_test_data)",
     )
     args = parser.parse_args(argv)
 

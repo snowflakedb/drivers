@@ -1,3 +1,6 @@
+from ...compatibility import OLD_DRIVER_ONLY, NEW_DRIVER_ONLY
+
+
 class TestPrivateKeyAuthentication:
 
     def test_should_fail_jwt_authentication_when_no_private_file_provided(
@@ -17,8 +20,14 @@ class TestPrivateKeyAuthentication:
         self._verify_missing_parameter_error(exception)
     
     def _verify_missing_parameter_error(self, exception):
-        """Verify that an exception contains a valid missing parameter error."""
         assert exception is not None
         assert str(exception).strip() != "", "Missing parameter error message should not be empty"
-        assert hasattr(exception, 'error') and exception.error.missingParameter is not None, "Expected missing parameter error"
-        assert exception.error.missingParameter.parameter.strip() != "", "Missing parameter name should not be empty"
+        if NEW_DRIVER_ONLY("BC#4"):
+            assert hasattr(exception, 'error') and exception.error.missingParameter is not None, "Expected missing parameter error"
+            assert exception.error.missingParameter.parameter.strip() != "", "Missing parameter name should not be empty"
+        if OLD_DRIVER_ONLY("BC#4"):
+            assert isinstance(exception, TypeError), "Old driver throws TypeError for missing private key"
+            error_msg = str(exception).lower()
+            assert any(keyword in error_msg for keyword in ['private', 'key', 'missing']), \
+                f"Expected error related to missing private key parameters, got: {exception}"
+
