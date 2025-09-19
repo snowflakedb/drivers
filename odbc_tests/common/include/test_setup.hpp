@@ -15,14 +15,17 @@ inline std::string get_driver_path() {
   if (driver_name_env_value != nullptr && driver_name_env_value[0] != '\0') {
     std::string driver_name = std::string(driver_name_env_value);
     INFO("Driver name: " << driver_name);
-    return driver_name;
+    // Return braced name so the Driver Manager resolves installed driver entry
+    return "{" + driver_name + "}";
   }
 
   const char* odbcinstini_env_value = std::getenv("ODBCINSTINI");
   if (odbcinstini_env_value != nullptr && odbcinstini_env_value[0] != '\0') {
-    // We expect an entry named [SnowflakeUD] in the provided odbcinst.ini
-    INFO("Using driver name 'SnowflakeUD' from ODBCINSTINI=" << odbcinstini_env_value);
-    return std::string("SnowflakeUD");
+    // Do not silently default to a driver name when ODBCINSTINI is set.
+    // Require DRIVER_NAME to be explicitly provided to avoid misconfigurations.
+    FAIL(
+        "ODBCINSTINI is set but DRIVER_NAME is not. Set DRIVER_NAME to the expected "
+        "installed driver name or unset ODBCINSTINI to use DRIVER_PATH.");
   }
 
   // Fallback: DRIVER_PATH from environment variable
