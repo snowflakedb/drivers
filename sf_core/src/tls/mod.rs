@@ -1,5 +1,6 @@
 pub mod client;
 pub mod config;
+pub mod revocation;
 pub mod x509_utils;
 
 pub use client::create_tls_client_with_config;
