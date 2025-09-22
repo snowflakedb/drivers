@@ -221,17 +221,174 @@ impl BaseDriverHandler for PythonHandler {
         // Consider it a match if at least 2 significant words match
         matching_words >= 2
     }
+
+    fn find_breaking_changes_in_function(
+        &self,
+        content: &str,
+        function_name: &str,
+        file_path: &Path,
+    ) -> Result<HashMap<String, BreakingChangeLocation>> {
+        // Use the internal implementation for Python standalone functions
+        self.find_breaking_changes_in_function_internal(content, function_name, file_path)
+    }
 }
 
 impl PythonHandler {
+    fn find_breaking_changes_in_function_internal(
+        &self,
+        content: &str,
+        function_name: &str,
+        file_path: &Path,
+    ) -> Result<HashMap<String, BreakingChangeLocation>> {
+        let mut breaking_changes: HashMap<String, BreakingChangeLocation> = HashMap::new();
+        let lines: Vec<&str> = content.lines().collect();
+        let mut in_function = false;
+
+        // Find the function start
+        for (line_num, line) in lines.iter().enumerate() {
+            let trimmed = line.trim();
+            if trimmed.starts_with(&format!("def {}(", function_name)) {
+                in_function = true;
+                continue;
+            }
+
+            if in_function {
+                let indent_level = line.len() - line.trim_start().len();
+
+                // If we hit a line with same or less indentation that starts with def/class, we're out of the function
+                if indent_level == 0
+                    && (trimmed.starts_with("def ") || trimmed.starts_with("class "))
+                    && !trimmed.starts_with(&format!("def {}(", function_name))
+                {
+                    break;
+                }
+
+                // Look for Breaking Change patterns in Python: NEW_DRIVER_ONLY("BC#X") or OLD_DRIVER_ONLY("BC#X")
+                if let Some(breaking_change_id) = self.extract_breaking_change_from_line(trimmed) {
+                    // Determine if this is NEW or OLD driver behavior
+                    let is_new_driver = trimmed.contains("NEW_DRIVER_ONLY");
+
+                    let location = if is_new_driver {
+                        BreakingChangeLocation {
+                            new_behaviour_file: Some(
+                                file_path
+                                    .strip_prefix(&self.workspace_root)
+                                    .unwrap_or(file_path)
+                                    .to_string_lossy()
+                                    .to_string(),
+                            ),
+                            new_behaviour_line: Some(line_num + 1),
+                            old_behaviour_file: None,
+                            old_behaviour_line: None,
+                        }
+                    } else {
+                        BreakingChangeLocation {
+                            new_behaviour_file: None,
+                            new_behaviour_line: None,
+                            old_behaviour_file: Some(
+                                file_path
+                                    .strip_prefix(&self.workspace_root)
+                                    .unwrap_or(file_path)
+                                    .to_string_lossy()
+                                    .to_string(),
+                            ),
+                            old_behaviour_line: Some(line_num + 1),
+                        }
+                    };
+
+                    // Merge with existing entry if it exists (to handle both NEW and OLD driver patterns)
+                    if let Some(existing_location) = breaking_changes.get_mut(&breaking_change_id) {
+                        // Merge the new information with the existing entry
+                        if is_new_driver {
+                            existing_location.new_behaviour_file = location.new_behaviour_file;
+                            existing_location.new_behaviour_line = location.new_behaviour_line;
+                        } else {
+                            existing_location.old_behaviour_file = location.old_behaviour_file;
+                            existing_location.old_behaviour_line = location.old_behaviour_line;
+                        }
+                    } else {
+                        // First time seeing this breaking change ID
+                        breaking_changes.insert(breaking_change_id, location);
+                    }
+                }
+            }
+        }
+
+        Ok(breaking_changes)
+    }
+
     fn extract_method_call_from_line(&self, line: &str) -> Option<String> {
-        // Look for self._method_name() calls
-        let method_call_re = Regex::new(r"self\.(_\w+)\s*\(").unwrap();
-        if let Some(captures) = method_call_re.captures(line) {
+        // Look for self._method_name() calls (class methods)
+        let class_method_re = Regex::new(r"self\.(_\w+)\s*\(").unwrap();
+        if let Some(captures) = class_method_re.captures(line) {
             if let Some(method_name) = captures.get(1) {
                 return Some(method_name.as_str().to_string());
             }
         }
+
+        // Look for standalone function calls like function_name()
+        let function_call_re = Regex::new(r"(\w+)\s*\(").unwrap();
+        if let Some(captures) = function_call_re.captures(line) {
+            if let Some(function_name) = captures.get(1) {
+                let func_name = function_name.as_str();
+                // Only consider functions that are likely test helpers (not built-ins or common functions)
+                if func_name.len() > 3
+                    && !matches!(
+                        func_name,
+                        "print"
+                            | "len"
+                            | "str"
+                            | "int"
+                            | "float"
+                            | "bool"
+                            | "list"
+                            | "dict"
+                            | "set"
+                            | "tuple"
+                            | "range"
+                            | "enumerate"
+                            | "zip"
+                            | "map"
+                            | "filter"
+                            | "sorted"
+                            | "reversed"
+                            | "max"
+                            | "min"
+                            | "sum"
+                            | "any"
+                            | "all"
+                            | "open"
+                            | "format"
+                            | "join"
+                            | "split"
+                            | "replace"
+                            | "strip"
+                            | "lower"
+                            | "upper"
+                            | "startswith"
+                            | "endswith"
+                            | "find"
+                            | "index"
+                            | "count"
+                            | "append"
+                            | "extend"
+                            | "insert"
+                            | "remove"
+                            | "pop"
+                            | "clear"
+                            | "copy"
+                            | "get"
+                            | "keys"
+                            | "values"
+                            | "items"
+                            | "update"
+                    )
+                {
+                    return Some(func_name.to_string());
+                }
+            }
+        }
+
         None
     }
 

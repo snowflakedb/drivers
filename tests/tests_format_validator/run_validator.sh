@@ -17,5 +17,3 @@ cd "$SCRIPT_DIR"
 cargo run -- \
     --workspace "$PROJECT_ROOT" \
     --features "$PROJECT_ROOT/tests/definitions"
-
-

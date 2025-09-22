@@ -33,6 +33,17 @@ pub trait BaseDriverHandler {
         file_path: &Path,
     ) -> Result<HashMap<String, BreakingChangeLocation>>;
 
+    /// Find all Breaking Changes within a standalone function (for Python)
+    fn find_breaking_changes_in_function(
+        &self,
+        _content: &str,
+        _function_name: &str,
+        _file_path: &Path,
+    ) -> Result<HashMap<String, BreakingChangeLocation>> {
+        // Default implementation does nothing (only Python needs this)
+        Ok(HashMap::new())
+    }
+
     /// Check if a test method name matches a scenario name
     fn method_matches_scenario(&self, method_name: &str, scenario_name: &str) -> bool {
         let method_normalized = method_name

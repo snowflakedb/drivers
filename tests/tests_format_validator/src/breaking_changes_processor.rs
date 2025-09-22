@@ -1,4 +1,5 @@
 use anyhow::Result;
+use regex::Regex;
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -317,11 +318,18 @@ impl BreakingChangesProcessor {
             }
             processed_methods.insert(helper_method.clone());
 
-            // Find Breaking Changes directly in this helper method
+            // Find Breaking Changes directly in this helper method (class methods)
             if let Ok(method_breaking_changes) =
                 handler.find_breaking_changes_in_method(content, helper_method, test_file)
             {
                 all_breaking_changes.extend(method_breaking_changes);
+            }
+
+            // Also check for Breaking Changes in standalone functions (for Python)
+            if let Ok(function_breaking_changes) =
+                handler.find_breaking_changes_in_function(content, helper_method, test_file)
+            {
+                all_breaking_changes.extend(function_breaking_changes);
             }
 
             // Find nested helper method calls within this helper method
@@ -347,18 +355,60 @@ impl BreakingChangesProcessor {
         }
 
         // Then, look for Breaking Changes in cross-file helper methods (e.g., common library)
-        self.find_breaking_changes_in_cross_file_methods(
-            helper_methods,
-            handler,
-            all_breaking_changes,
-            processed_methods,
-        )?;
+        if handler
+            .get_test_file_extensions()
+            .contains(&"*.py".to_string())
+        {
+            // For Python, follow imports to find helper functions
+            self.find_python_imported_helpers(
+                content,
+                helper_methods,
+                test_file,
+                handler,
+                all_breaking_changes,
+                processed_methods,
+            )?;
+        } else {
+            self.find_odbc_included_helpers(
+                content,
+                helper_methods,
+                test_file,
+                handler,
+                all_breaking_changes,
+                processed_methods,
+            )?;
+        }
 
         Ok(())
     }
 
     /// Find Breaking Changes in cross-file helper methods (e.g., common library)
     fn find_breaking_changes_in_cross_file_methods(
+        &self,
+        helper_methods: &[String],
+        handler: &dyn BaseDriverHandler,
+        all_breaking_changes: &mut HashMap<
+            String,
+            crate::driver_handlers::base_handler::BreakingChangeLocation,
+        >,
+        processed_methods: &mut HashSet<String>,
+    ) -> Result<()> {
+        if handler
+            .get_test_file_extensions()
+            .contains(&"*.py".to_string())
+        {
+            Ok(())
+        } else {
+            self.find_odbc_cross_file_methods(
+                helper_methods,
+                handler,
+                all_breaking_changes,
+                processed_methods,
+            )
+        }
+    }
+
+    fn find_odbc_cross_file_methods(
         &self,
         helper_methods: &[String],
         handler: &dyn BaseDriverHandler,
@@ -429,6 +479,248 @@ impl BreakingChangesProcessor {
             }
         }
         Ok(())
+    }
+
+    /// Find Breaking Changes in Python helper functions by following imports
+    fn find_python_imported_helpers(
+        &self,
+        test_file_content: &str,
+        helper_methods: &[String],
+        test_file: &Path,
+        handler: &dyn BaseDriverHandler,
+        all_breaking_changes: &mut HashMap<
+            String,
+            crate::driver_handlers::base_handler::BreakingChangeLocation,
+        >,
+        processed_methods: &mut HashSet<String>,
+    ) -> Result<()> {
+        // Parse import statements from the test file to find where helper functions come from
+        let import_map = self.parse_python_imports(test_file_content, test_file)?;
+
+        // Use separate tracking for cross-file methods
+        let mut cross_file_processed = HashSet::new();
+
+        for helper_method in helper_methods {
+            if cross_file_processed.contains(helper_method) {
+                continue;
+            }
+
+            // Check if this helper method is imported from another file
+            if let Some(helper_file_path) = import_map.get(helper_method) {
+                if helper_file_path.exists() {
+                    if let Ok(helper_content) = fs::read_to_string(helper_file_path) {
+                        // Check if the helper method is defined in this file
+                        if helper_content.contains(&format!("def {}(", helper_method)) {
+                            cross_file_processed.insert(helper_method.clone());
+                            processed_methods.insert(helper_method.clone());
+
+                            // Find Breaking Changes in this imported helper function
+                            if let Ok(method_breaking_changes) = handler
+                                .find_breaking_changes_in_function(
+                                    &helper_content,
+                                    helper_method,
+                                    helper_file_path,
+                                )
+                            {
+                                all_breaking_changes.extend(method_breaking_changes);
+                            }
+
+                            // Also check for nested calls within this helper function
+                            let nested_helper_methods =
+                                handler.extract_helper_method_calls(&helper_content, helper_method);
+                            if !nested_helper_methods.is_empty() {
+                                // Recursively process nested helper methods
+                                self.find_python_imported_helpers(
+                                    &helper_content,
+                                    &nested_helper_methods,
+                                    helper_file_path,
+                                    handler,
+                                    all_breaking_changes,
+                                    processed_methods,
+                                )?;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Parse Python import statements and return a map of function name -> file path
+    fn parse_python_imports(
+        &self,
+        content: &str,
+        test_file: &Path,
+    ) -> Result<HashMap<String, PathBuf>> {
+        let mut import_map = HashMap::new();
+
+        if let Some(test_dir) = test_file.parent() {
+            for line in content.lines() {
+                let trimmed = line.trim();
+
+                // Handle "from .module import function1, function2" patterns
+                if let Some(captures) = Regex::new(r"from\s+(\.[\w.]*)\s+import\s+(.+)")
+                    .unwrap()
+                    .captures(trimmed)
+                {
+                    if let (Some(module_path), Some(imports)) = (captures.get(1), captures.get(2)) {
+                        let module_str = module_path.as_str();
+
+                        // Convert relative import to file path
+                        let helper_file = if module_str.starts_with('.') {
+                            // Relative import like ".auth_helpers"
+                            let module_name = module_str.trim_start_matches('.');
+                            if module_name.is_empty() {
+                                continue; // Skip malformed imports
+                            }
+                            test_dir.join(format!("{}.py", module_name))
+                        } else {
+                            continue; // Skip absolute imports for now
+                        };
+
+                        // Parse imported function names
+                        for func in imports.as_str().split(',') {
+                            let func_name = func.trim();
+                            if !func_name.is_empty() && helper_file.exists() {
+                                import_map.insert(func_name.to_string(), helper_file.clone());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(import_map)
+    }
+
+    /// Find Breaking Changes in ODBC helper functions by following includes (same pattern as Python imports)
+    fn find_odbc_included_helpers(
+        &self,
+        test_file_content: &str,
+        helper_methods: &[String],
+        test_file: &Path,
+        handler: &dyn BaseDriverHandler,
+        all_breaking_changes: &mut HashMap<
+            String,
+            crate::driver_handlers::base_handler::BreakingChangeLocation,
+        >,
+        processed_methods: &mut HashSet<String>,
+    ) -> Result<()> {
+        // Parse include statements from the test file to find where helper functions come from
+        let include_map = self.parse_odbc_includes(test_file_content, test_file)?;
+
+        // Use separate tracking for cross-file methods
+        let mut cross_file_processed = HashSet::new();
+
+        for helper_method in helper_methods {
+            if cross_file_processed.contains(helper_method) {
+                continue;
+            }
+
+            // Check if this helper method is included from another file
+            if let Some(helper_file_path) = include_map.get(helper_method) {
+                if helper_file_path.exists() {
+                    if let Ok(helper_content) = fs::read_to_string(helper_file_path) {
+                        // Check if the helper method is defined in this file
+                        if self.method_exists_in_content(&helper_content, helper_method) {
+                            cross_file_processed.insert(helper_method.clone());
+                            processed_methods.insert(helper_method.clone());
+
+                            // Find Breaking Changes in this included helper function
+                            if let Ok(method_breaking_changes) = handler
+                                .find_breaking_changes_in_method(
+                                    &helper_content,
+                                    helper_method,
+                                    helper_file_path,
+                                )
+                            {
+                                all_breaking_changes.extend(method_breaking_changes);
+                            }
+
+                            // Also check for nested calls within this helper function
+                            let nested_helper_methods =
+                                handler.extract_helper_method_calls(&helper_content, helper_method);
+                            if !nested_helper_methods.is_empty() {
+                                // Recursively process nested helper methods
+                                self.find_odbc_included_helpers(
+                                    &helper_content,
+                                    &nested_helper_methods,
+                                    helper_file_path,
+                                    handler,
+                                    all_breaking_changes,
+                                    processed_methods,
+                                )?;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Parse ODBC include statements and return a map of function name -> file path
+    fn parse_odbc_includes(
+        &self,
+        content: &str,
+        _test_file: &Path,
+    ) -> Result<HashMap<String, PathBuf>> {
+        let mut include_map = HashMap::new();
+
+        // ODBC common directories
+        let common_include_dir = self
+            .workspace_root
+            .join("odbc_tests")
+            .join("common")
+            .join("include");
+        let common_src_dir = self
+            .workspace_root
+            .join("odbc_tests")
+            .join("common")
+            .join("src");
+
+        for line in content.lines() {
+            let trimmed = line.trim();
+
+            // Handle #include "header.hpp" patterns
+            if let Some(captures) = Regex::new(r#"#include\s+"([^"]+\.hpp?)""#)
+                .unwrap()
+                .captures(trimmed)
+            {
+                if let Some(header_name) = captures.get(1) {
+                    let header_file = header_name.as_str();
+
+                    // Look for the header in common/include
+                    let header_path = common_include_dir.join(header_file);
+                    if header_path.exists() {
+                        // Find corresponding .cpp file in common/src
+                        let cpp_name = header_file.replace(".hpp", ".cpp").replace(".h", ".cpp");
+                        let cpp_path = common_src_dir.join(cpp_name);
+
+                        if cpp_path.exists() {
+                            // Read the header to find function declarations
+                            if let Ok(header_content) = fs::read_to_string(&header_path) {
+                                // Extract function names from header declarations
+                                // Look for function declarations like: void functionName( or std::vector<Type> functionName(
+                                let function_regex = Regex::new(r"(?:void|int|bool|std::\w+(?:<[^>]+>)?|SQLRETURN|[\w:]+(?:<[^>]+>)?)\s+(\w+)\s*\(").unwrap();
+                                for func_captures in function_regex.captures_iter(&header_content) {
+                                    if let Some(function_name) = func_captures.get(1) {
+                                        let func_name = function_name.as_str();
+                                        // Map function name to the .cpp implementation file
+                                        include_map.insert(func_name.to_string(), cpp_path.clone());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(include_map)
     }
 
     /// Check if a method exists in the given content
