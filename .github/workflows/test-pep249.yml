@@ -141,12 +141,12 @@ jobs:
         run: make setup
         working-directory: pep249_dbapi
 
-      - name: Run reference integration tests
+      - name: Run reference tests
         env:
           CORE_PATH: ${{ github.workspace }}/target/debug/libsf_core.so
           PARAMETER_PATH: ${{ github.workspace }}/parameters.json
           REFERENCE_DRIVER_VERSION: ${{ env.PYTHON_REFERENCE_DRIVER_VERSION }}
-        run: make ci-test-integ-reference PYTHON_VERSION=${{ env.REFERENCE_PYTHON_VERSION }}
+        run: make ci-test-reference PYTHON_VERSION=${{ env.REFERENCE_PYTHON_VERSION }}
         working-directory: pep249_dbapi
 
       - name: Upload test results as GitHub artifact
@@ -185,7 +185,7 @@ jobs:
         run: make setup
         working-directory: pep249_dbapi
 
-      - name: Compare integration test results
+      - name: Compare test results
         env:
           UNIVERSAL_TEST_REPORTS_DIR: ${{ github.workspace }}/universal-results
           REFERENCE_TEST_REPORTS_DIR: ${{ github.workspace }}/reference-results

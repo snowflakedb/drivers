@@ -84,8 +84,7 @@ def cursor(connection):
 def int_test_connection_factory(connector_adapter):
     """Factory function for creating connections with integration test parameters."""
     def _create_connection(**override_params):
-        """Create a connection with integration test parameters.
-        """
+        """Create a connection with integration test parameters."""
         # Default integration test parameters
         integration_params = {
             "account": "test_account",

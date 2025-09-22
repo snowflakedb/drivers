@@ -1,10 +1,12 @@
-import os
+import pytest
 import tempfile
 from contextlib import contextmanager
+from pathlib import Path
 
 from .auth_helpers import verify_simple_query_execution, verify_login_error
 from ...connector_factory import get_test_parameters
 from ...utils import repo_root
+from ...compatibility import OLD_DRIVER_ONLY, NEW_DRIVER_ONLY
 
 
 class TestPrivateKeyAuthentication:
@@ -17,10 +19,10 @@ class TestPrivateKeyAuthentication:
 
         # When Trying to Connect
         with create_valid_key_file() as private_key_file:
-            connection = connection_factory(
-                authenticator="SNOWFLAKE_JWT",
-                private_key_file=private_key_file,
-                private_key_password=private_key_password,
+            connection = create_jwt_connection(
+                connection_factory,
+                private_key_file,
+                private_key_password
             )
 
         # Then Login is successful and simple query can be executed
@@ -35,18 +37,33 @@ class TestPrivateKeyAuthentication:
         invalid_private_key_file = get_invalid_key_file_path()
         
         # When Trying to Connect
-        exception = None
-        try:
-            connection_factory(
-                authenticator="SNOWFLAKE_JWT",
-                private_key_file=invalid_private_key_file,
+        with pytest.raises(Exception) as exception:
+            create_jwt_connection(
+                connection_factory,
+                invalid_private_key_file,
             )
-        except Exception as e:
-            exception = e
 
         # Then There is error returned
         verify_login_error(exception)
 
+
+def create_jwt_connection(connection_factory, private_key_file, private_key_password=None):
+    if OLD_DRIVER_ONLY("BC#5"):
+        kwargs = {
+            "authenticator": "SNOWFLAKE_JWT",
+            "private_key_file": private_key_file,
+        }
+        if private_key_password:
+            kwargs["private_key_file_pwd"] = private_key_password
+    elif NEW_DRIVER_ONLY("BC#5"):
+        kwargs = {
+            "authenticator": "SNOWFLAKE_JWT", 
+            "private_key_file": private_key_file,
+        }
+        if private_key_password:
+            kwargs["private_key_password"] = private_key_password
+    
+    return connection_factory(**kwargs)
 
 @contextmanager
 def create_valid_key_file():
@@ -59,20 +76,10 @@ def create_valid_key_file():
             "SNOWFLAKE_TEST_PRIVATE_KEY_CONTENTS not found in test parameters"
         )
 
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".p8", delete=False) as key_file:
-        key_content = "\n".join(private_key_contents) + "\n"
-        key_file.write(key_content)
-        key_file.flush()
-        temp_path = key_file.name
-    
-    try:
-        yield temp_path
-    finally:
-        try:
-            os.unlink(temp_path)
-        except Exception:
-            # Ignore cleanup errors in tests
-            pass
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        key_file = Path(tmp_dir) / "key.p8"
+        key_file.write_text("\n".join(private_key_contents) + "\n")
+        yield str(key_file)
 
 
 def get_invalid_key_file_path() -> str:
@@ -90,5 +97,3 @@ def get_private_key_password() -> str:
         )
 
     return password
-
-

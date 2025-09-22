@@ -1,6 +1,5 @@
 import pytest
 import random
-from contextlib import contextmanager
 
 from .auth_helpers import verify_simple_query_execution, verify_login_error
 from ...connector_factory import get_test_parameters
@@ -8,8 +7,12 @@ from ...connector_factory import get_test_parameters
 
 @pytest.fixture
 def pat_token(connection_factory):
-    with pat_token_for_test(connection_factory) as token:
+    pat_token = PAT(connection_factory)
+    try:
+        token = pat_token.acquire_token()
         yield token
+    finally:
+        pat_token.cleanup()
 
 
 class TestPATAuthentication:
@@ -45,11 +48,8 @@ class TestPATAuthentication:
         invalid_token = get_invalid_pat_token()
 
         # When Trying to Connect
-        exception = None
-        try:
+        with pytest.raises(Exception) as exception:
             connection_factory(authenticator=authenticator, token=invalid_token)
-        except Exception as e:
-            exception = e
 
         # Then There is error returned
         verify_login_error(exception)
@@ -101,19 +101,6 @@ class PAT:
     def __enter__(self):
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self.cleanup()
-
 
 def get_invalid_pat_token() -> str:
     return "invalid_token_12345"
-
-
-@contextmanager
-def pat_token_for_test(connection_factory):
-    pat_token = PAT(connection_factory)
-    try:
-        token = pat_token.acquire_token()
-        yield token
-    finally:
-        pat_token.cleanup()

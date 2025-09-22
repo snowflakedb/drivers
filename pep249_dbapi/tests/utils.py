@@ -5,8 +5,7 @@ from pathlib import Path
 def repo_root() -> Path:
     result = subprocess.run(
         ["git", "rev-parse", "--show-toplevel"],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output = True,
         text=True,
     )
     if result.returncode == 0:

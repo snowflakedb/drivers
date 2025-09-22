@@ -50,7 +50,7 @@ make compare-local REFERENCE_DRIVER_VERSION=3.18.0  # Use specific reference ver
 | `make test-local-sequential` | Direct pytest (no parallel)                  | Debugging test interactions - searching for race conditions in tests              |
 | `make test-local-tox-sequential` | Tox without parallel                         | Debugging in isolated environment - searching for race conditions in tests        
 | `make test-integ-local-tox` | Integration tests only                       | Used mainly in `make compare-local`. Can be replaced with `make test tests/integ` |
-| `make test-reference-local` | Reference driver testing (integration tests) | Testing whether new changes introduced regression / BCRs                          |
+| `make test-reference-local-tox` | Reference driver testing (integration + e2e tests) | Testing whether new changes introduced regression / BCRs                          |
 
 ### Generic Runners
 
@@ -65,7 +65,7 @@ make compare-local REFERENCE_DRIVER_VERSION=3.18.0  # Use specific reference ver
 | Command | Description | When to Use |
 |---------|-------------|-------------|
 | `make ci-test-all` | Full CI testing with XML reports | GitHub Actions |
-| `make ci-test-integ-reference` | Reference driver CI testing | Comparison baseline |
+| `make ci-test-reference` | Reference driver CI testing | Comparison baseline |
 | `make ci-compare-artifacts` | Compare downloaded CI reports | CI comparison step |
 
 
@@ -113,7 +113,7 @@ def test_custom_db(connection_factory):
 
 ## Comparison
 
-`make compare-local` runs integration tests on both drivers and compares results. The comparison automatically filters to only compare integration tests for fair comparison (universal runs unit+integ, reference only integ).
+`make compare-local` runs integration and e2e tests on both drivers and compares results. Both drivers run the same test suites (integ + e2e) for fair comparison.
 
 Report sections:
 - **Regressions from passing**: Reference passed, universal failed (we do not support something yet)

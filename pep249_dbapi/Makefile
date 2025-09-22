@@ -15,7 +15,7 @@ DEFAULT_PARAMETER_PATH := $(shell cd .. && pwd)/parameters.json
 SHELL := bash
 .ONESHELL:  # Execute each recipe in a single shell (needed for multi-line commands)
 
-.PHONY: check-env-or-build check-env-or-fail setup build-wheel test test-local test-local-sequential test-local-tox test-local-tox-sequential test-all-local-tox test-integ-local-tox test-e2e-local-tox test-reference-local-tox test-all test-integ-reference compare compare-local compare-artifacts clean clean-reports run-with-setup run-with-uv run-with-tox
+.PHONY: check-env-or-build check-env-or-fail setup build-wheel test test-local test-local-sequential test-local-tox test-local-tox-sequential test-all-local-tox test-integ-local-tox test-e2e-local-tox test-reference-local-tox test-all ci-test-reference compare compare-local compare-artifacts clean clean-reports run-with-setup run-with-uv run-with-tox
 
 
 # ===== Reusable Command Components =====
@@ -58,7 +58,7 @@ PYTEST_REPORT_JSON_REFERENCE = $(PYTEST_REPORT_JSON_FLAGS)$(REFERENCE_REPORT_JSO
 TOX_ALL_ENV = py$(PYTHON_ID)-all
 TOX_INTEG_ENV = py$(PYTHON_ID)-integ
 TOX_E2E_ENV = py$(PYTHON_ID)-e2e
-TOX_REFERENCE_ENV = py$(PYTHON_ID)-integ-reference
+TOX_REFERENCE_ENV = py$(PYTHON_ID)-reference
 
 
 
@@ -164,7 +164,7 @@ ci-test-all: check-env-or-fail
 	  --junitxml=$(UNIVERSAL_REPORT_XML_PATH) \
 	  $(PYTEST_ARGS)
 
-ci-test-integ-reference: check-env-or-fail
+ci-test-reference: check-env-or-fail
 	mkdir -p $(REPORTS_DIR)
 	uv run tox -e $(TOX_REFERENCE_ENV) -- \
 	  $(PYTEST_REPORT_JSON_REFERENCE) \
@@ -181,7 +181,7 @@ compare:
 	  --fail-on-regressions $(FAIL_ON_REGRESSIONS)
 
 compare-local:
-	$(MAKE) test-integ-local-tox || true  # Continue especially if tests fail
+	$(MAKE) test-all-local-tox || true  # Continue especially if tests fail
 	$(MAKE) test-reference-local-tox || true
 	$(MAKE) compare
 
