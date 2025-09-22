@@ -15,6 +15,8 @@ env:
   PYTHON_REFERENCE_DRIVER_VERSION: "3.17.2"
   # Python version to run reference tests and comparison
   REFERENCE_PYTHON_VERSION: "3.13"
+  # OS version for consistent naming across jobs
+  REFERENCE_OS_VERSION: "ubuntu-latest"
 
 jobs:
   # Build Rust core library once and share across Python jobs
@@ -160,20 +162,20 @@ jobs:
         run: make setup
         working-directory: pep249_dbapi
 
-      - name: Run reference tests
+      - name: Run reference integration tests
         env:
           CORE_PATH: ${{ github.workspace }}/target/debug/libsf_core.so
           PARAMETER_PATH: ${{ github.workspace }}/parameters.json
           REFERENCE_DRIVER_VERSION: ${{ env.PYTHON_REFERENCE_DRIVER_VERSION }}
-        run: make ci-test-reference PYTHON_VERSION=${{ env.REFERENCE_PYTHON_VERSION }}
+        run: make ci-test-integ-reference PYTHON_VERSION=${{ env.REFERENCE_PYTHON_VERSION }} OS_VERSION=${{ env.REFERENCE_OS_VERSION }}
         working-directory: pep249_dbapi
 
       - name: Upload test results as GitHub artifact
         uses: actions/upload-artifact@v4
         if: always()  # Upload test results even if tests fail (needed for comparison)
         with:
-          name: results-reference-${{ env.REFERENCE_PYTHON_VERSION }}
-          path: pep249_dbapi/reports/*-${{ env.REFERENCE_PYTHON_VERSION }}.*
+          name: results-reference-${{ env.REFERENCE_OS_VERSION }}-${{ env.REFERENCE_PYTHON_VERSION }}
+          path: pep249_dbapi/reports/*-${{ env.REFERENCE_OS_VERSION }}-${{ env.REFERENCE_PYTHON_VERSION }}.*
 
   # Compare results between connectors
   pep249_compare_results:
@@ -191,24 +193,24 @@ jobs:
       - name: Download universal test results
         uses: actions/download-artifact@v4
         with: 
-          name: results-universal-ubuntu-latest-${{ env.REFERENCE_PYTHON_VERSION }}
+          name: results-universal-${{ env.REFERENCE_OS_VERSION }}-${{ env.REFERENCE_PYTHON_VERSION }}
           path: ${{ github.workspace }}/universal-results
       
       - name: Download reference test results
         uses: actions/download-artifact@v4
         with: 
-          name: results-reference-${{ env.REFERENCE_PYTHON_VERSION }}
+          name: results-reference-${{ env.REFERENCE_OS_VERSION }}-${{ env.REFERENCE_PYTHON_VERSION }}
           path: ${{ github.workspace }}/reference-results
 
       - name: Setup dependencies
         run: make setup
         working-directory: pep249_dbapi
 
-      - name: Compare test results
+      - name: Compare integration test results
         env:
           UNIVERSAL_TEST_REPORTS_DIR: ${{ github.workspace }}/universal-results
           REFERENCE_TEST_REPORTS_DIR: ${{ github.workspace }}/reference-results
           FAIL_ON_REGRESSIONS: "0"   # set to "1" when ready to for a strong requirement on compliance with old driver
         run: |
-          make ci-compare-artifacts PYTHON_VERSION=${{ env.REFERENCE_PYTHON_VERSION }} | tee -a $GITHUB_STEP_SUMMARY
+          make ci-compare-artifacts PYTHON_VERSION=${{ env.REFERENCE_PYTHON_VERSION }} OS_VERSION=${{ env.REFERENCE_OS_VERSION }} | tee -a $GITHUB_STEP_SUMMARY
         working-directory: pep249_dbapi

@@ -1,4 +1,4 @@
-# Override these at command line: make test PYTHON_VERSION=3.12 PYTEST_ARGS="-k test_connection"
+# Override these at command line: make test PYTHON_VERSION=3.12 OS_VERSION=windows-latest PYTEST_ARGS="-k test_connection"
 PYTHON_VERSION ?= $(shell python3 -c 'import sys;print(f"{sys.version_info.major}.{sys.version_info.minor}")')
 # 3.11 -> 311 for tox env names
 PYTHON_ID := $(subst .,,$(PYTHON_VERSION))
@@ -6,6 +6,7 @@ REPORTS_DIR ?= reports
 REFERENCE_DRIVER_VERSION ?= 3.17.2
 PYTEST_ARGS ?=
 FAIL_ON_REGRESSIONS ?= 0
+OS_VERSION ?= ubuntu-latest
 
 # Absolute paths to avoid relative path issues across different working directories
 DEFAULT_CORE_PATH_MACOS := $(shell cd .. && pwd)/target/debug/libsf_core.dylib
@@ -42,10 +43,10 @@ DETECTED_PARAMETER_PATH := $(shell \
 LOCAL_ENV = CORE_PATH=$(DETECTED_CORE_PATH) PARAMETER_PATH=$(DETECTED_PARAMETER_PATH)
 
 # Report file paths
-UNIVERSAL_REPORT_JSON_PATH = $(REPORTS_DIR)/universal-$(PYTHON_VERSION).json
-REFERENCE_REPORT_JSON_PATH = $(REPORTS_DIR)/reference-$(PYTHON_VERSION).json
-UNIVERSAL_REPORT_XML_PATH = $(REPORTS_DIR)/universal-$(PYTHON_VERSION).xml
-REFERENCE_REPORT_XML_PATH = $(REPORTS_DIR)/reference-$(PYTHON_VERSION).xml
+UNIVERSAL_REPORT_JSON_PATH = $(REPORTS_DIR)/universal-$(OS_VERSION)-$(PYTHON_VERSION).json
+REFERENCE_REPORT_JSON_PATH = $(REPORTS_DIR)/reference-$(OS_VERSION)-$(PYTHON_VERSION).json
+UNIVERSAL_REPORT_XML_PATH = $(REPORTS_DIR)/universal-$(OS_VERSION)-$(PYTHON_VERSION).xml
+REFERENCE_REPORT_XML_PATH = $(REPORTS_DIR)/reference-$(OS_VERSION)-$(PYTHON_VERSION).xml
 
 # Common pytest report flags
 PYTEST_PARALLEL = -n auto
@@ -176,6 +177,7 @@ ci-test-reference: check-env-or-fail
 compare:
 	python3 ci/reference_tests/compare_reports.py \
 	  --py $(PYTHON_VERSION) \
+	  --os $(OS_VERSION) \
 	  --universal $(UNIVERSAL_REPORT_JSON_PATH) \
 	  --reference $(REFERENCE_REPORT_JSON_PATH) \
 	  --fail-on-regressions $(FAIL_ON_REGRESSIONS)
@@ -189,8 +191,9 @@ compare-local:
 ci-compare-artifacts:
 	python3 ci/reference_tests/compare_reports.py \
 	  --py $(PYTHON_VERSION) \
-	  --universal $(UNIVERSAL_TEST_REPORTS_DIR)/universal-$(PYTHON_VERSION).json \
-	  --reference $(REFERENCE_TEST_REPORTS_DIR)/reference-$(PYTHON_VERSION).json \
+	  --os $(OS_VERSION) \
+	  --universal $(UNIVERSAL_TEST_REPORTS_DIR)/universal-$(OS_VERSION)-$(PYTHON_VERSION).json \
+	  --reference $(REFERENCE_TEST_REPORTS_DIR)/reference-$(OS_VERSION)-$(PYTHON_VERSION).json \
 	  --fail-on-regressions $(FAIL_ON_REGRESSIONS)
 
 clean-reports:

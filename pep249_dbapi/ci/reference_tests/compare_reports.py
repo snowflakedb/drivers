@@ -76,6 +76,7 @@ def format_test_list(title: str, test_ids: Iterable[str], limit: int = 80) -> st
 def main():
     parser = argparse.ArgumentParser(description="Compare test results between universal and reference drivers")
     parser.add_argument("--py", required=True, help="Python version label, e.g. 3.12")
+    parser.add_argument("--os", required=True, help="OS version label, e.g. ubuntu-latest")
     parser.add_argument("--universal", required=True, help="Path to universal driver JSON report")
     parser.add_argument("--reference", required=True, help="Path to reference driver JSON report")
     parser.add_argument("--summary", default="", help="Path to GITHUB_STEP_SUMMARY (optional)")
@@ -111,7 +112,7 @@ def main():
     reference_only_skipped = reference_skipped - universal_skipped
 
     # Generate report=
-    header = f"## Universal vs Reference — Python {args.py}\n"
+    header = f"## Universal vs Reference — Python {args.py} on {args.os}\n"
     summary_stats = (
         f"- Universal (all tests): {len(all_universal_outcomes)} tests\n"
         f"- Universal (matched with reference tests): {len(universal_outcomes)} | "
