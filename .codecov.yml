@@ -10,8 +10,6 @@ flag_management:
 flags:
   rust:
     paths: ["sf_core/"]
-  thrift:
-    paths: [ "thrift/" ]
   jdbc:
     paths: ["jdbc/", "jdbc_bridge/"]
   python:
@@ -37,14 +35,12 @@ coverage:
   status:
     project:
       rust:    { <<: *component, flags: [rust] }
-      thrift:  { <<: *component, flags: [thrift] }
       python:  { <<: *component, flags: [python] }
       jdbc:    { <<: *component, flags: [jdbc] }
       odbc:    { <<: *component, flags: [odbc] }
         
     patch:
       rust:    { <<: *patch-component, flags: [rust] }
-      thrift:  { <<: *patch-component, flags: [thrift] }
       python:  { <<: *patch-component, flags: [python] }
       jdbc:    { <<: *patch-component, flags: [jdbc] }
       odbc:    { <<: *patch-component, flags: [odbc] }

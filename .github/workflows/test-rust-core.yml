@@ -9,8 +9,13 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  coverage:
-    runs-on: ubuntu-latest
+  rust_tests:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest]
+        rust-version: ['stable']
+    runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -28,16 +33,18 @@ jobs:
         env:
           PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
 
-      - name: Run coverage
+      - name: Run tests with coverage
         run: |
           export PARAMETER_PATH=$(pwd)/parameters.json
-          cargo llvm-cov --workspace --all-targets --all-features --output-path ./lcov.info
+          cargo llvm-cov --workspace --all-targets --all-features --lcov --output-path ./lcov.info
 
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v5
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
         with:
-          token: ${{ secrets.CODECOV_TOKEN }} # Not required for public repos
-          files: ./lcov.info
+          flags: rust
+          name: rust-${{ runner.os }}-${{ matrix.rust-version }}
           fail_ci_if_error: false
 
   format:
