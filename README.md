@@ -1,5 +1,7 @@
 # universal-driver
 
+[![codecov](https://codecov.io/gh/{{REPOSITORY}}/branch/main/graph/badge.svg)](https://codecov.io/gh/{{REPOSITORY}})
+
 # Running Tests
 
 This project contains multiple test suites across different driver implementations. Before running any tests, you'll need to set up common credentials and build the required components.

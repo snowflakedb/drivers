@@ -10,15 +10,20 @@ env:
 
 jobs:
   jdbc_tests:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest]
+        java-version: ['8']
+    runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Java
+      - name: Set up Java ${{ matrix.java-version }}
         uses: actions/setup-java@v4
         with:
-          java-version: '8'
+          java-version: ${{ matrix.java-version }}
           distribution: 'temurin'
 
       - name: Decode secrets
@@ -40,4 +45,14 @@ jobs:
           export PARAMETER_PATH=$(pwd)/parameters.json
           export CORE_PATH=$(pwd)/target/debug/libjdbc_bridge.so
           cd jdbc
-          ./gradlew test --stacktrace
+          ./gradlew test jacocoTestReport --stacktrace
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v5
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+        with:
+          files: ./jdbc/build/reports/jacoco/test/jacocoTestReport.xml
+          flags: jdbc
+          name: jdbc-${{ runner.os }}-java${{ matrix.java-version }}
+          fail_ci_if_error: false
