@@ -6,14 +6,14 @@ NEW_DRIVER="/Users/jszczerbinski/git/universal-driver-wt/NO-SNOW-dev-platform-de
 
 CONNECTION_STRING="SERVER=sfctest0.snowflakecomputing.com;ACCOUNT=sfctest0;UID=test_universal;PWD=${PASSWORD};DATABASE=testdb_universal;SCHEMA=PUBLIC"
 
-# # Select 1
+# Select 1
 # echo "--- New driver ---"
 # ./examples/odbc/run.sh select_1 "DRIVER=${NEW_DRIVER};${CONNECTION_STRING}"
 
 # echo "--- Old driver ---"
 # ./examples/odbc/run.sh select_1 "DRIVER=${OLD_DRIVER};${CONNECTION_STRING}"
 
-# # Put file
+# Put file
 # echo "--- New driver ---"
 # ./examples/odbc/run.sh put_file "DRIVER=${NEW_DRIVER};${CONNECTION_STRING}"
 
@@ -37,6 +37,6 @@ CONNECTION_STRING="SERVER=sfctest0.snowflakecomputing.com;ACCOUNT=sfctest0;UID=t
 # ./examples/odbc/run.sh put_file "DRIVER=${OLD_DRIVER};${MISSING_DB_CONNECTION_STRING}"
 
 # # Python logging
-echo "--- Python ---"
-./examples/python/run.sh select_1
+# echo "--- Python ---"
+# ./examples/python/run.sh select_1
 
