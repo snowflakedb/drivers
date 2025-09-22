@@ -1,5 +1,6 @@
 import pytest
 import random
+import logging
 
 from .auth_helpers import verify_simple_query_execution, verify_login_error
 from ...connector_factory import get_test_parameters
@@ -92,7 +93,8 @@ class PAT:
                     with connection.cursor() as cursor:
                         sql = f"ALTER USER IF EXISTS {user} REMOVE PROGRAMMATIC ACCESS TOKEN {self._token_name}"
                         cursor.execute(sql)
-            except Exception:
+            except Exception as e:
+                logging.warning(f"Failed to cleanup PAT token {self._token_name}: {e}")
                 pass
             finally:
                 self._token_name = None
