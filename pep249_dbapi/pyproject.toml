@@ -46,6 +46,7 @@ test = [
     "pytest-xdist",
     "pytest-json-report",
     "pytest-split",
+    "pytest-cov",
     "hypothesis",
     "tox>=4.14",
     "tox-uv>=1.8",

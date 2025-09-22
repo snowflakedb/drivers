@@ -43,8 +43,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        os: [ubuntu-latest]
         py: ["3.9", "3.10", "3.11", "3.12", "3.13"]
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
     steps:
       - uses: actions/checkout@v4
@@ -83,19 +84,38 @@ jobs:
         run: make setup
         working-directory: pep249_dbapi
 
-      - name: Run all tests
+      - name: Run all tests with coverage
         env:
           CORE_PATH: ${{ github.workspace }}/target/debug/libsf_core.so
           PARAMETER_PATH: ${{ github.workspace }}/parameters.json
           REFERENCE_DRIVER_VERSION: ${{ env.PYTHON_REFERENCE_DRIVER_VERSION }}
-        run: make ci-test-all PYTHON_VERSION=${{ matrix.py }}
+        run: |
+          mkdir -p reports
+          PYTHON_ID="${{ matrix.py }}"
+          PYTHON_ID=${PYTHON_ID//./}  # Remove dots: 3.9 -> 39
+          uv run tox -e py${PYTHON_ID}-all -- \
+            --json-report --json-report-file=reports/universal-${{ matrix.os }}-${{ matrix.py }}.json \
+            --junitxml=reports/universal-${{ matrix.os }}-${{ matrix.py }}.xml \
+            --cov=pep249_dbapi \
+            --cov-report=xml:reports/coverage-${{ matrix.os }}-${{ matrix.py }}.xml \
+            --cov-report=html:reports/coverage-${{ matrix.os }}-${{ matrix.py }}-html
         working-directory: pep249_dbapi
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v5
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+        with:
+          files: ./pep249_dbapi/reports/coverage-${{ matrix.os }}-${{ matrix.py }}.xml
+          flags: python
+          name: python-${{ matrix.os }}-py${{ matrix.py }}
+          fail_ci_if_error: false
 
       - name: Upload test results as GitHub artifact
         uses: actions/upload-artifact@v4
         with:
-          name: results-universal-${{ matrix.py }}
-          path: pep249_dbapi/reports/*-${{ matrix.py }}.*
+          name: results-universal-${{ matrix.os }}-${{ matrix.py }}
+          path: pep249_dbapi/reports/*-${{ matrix.os }}-${{ matrix.py }}.*
 
   # Integration tests only with reference connector (for comparison)
   pep249_tests_reference:
@@ -171,7 +191,7 @@ jobs:
       - name: Download universal test results
         uses: actions/download-artifact@v4
         with: 
-          name: results-universal-${{ env.REFERENCE_PYTHON_VERSION }}
+          name: results-universal-ubuntu-latest-${{ env.REFERENCE_PYTHON_VERSION }}
           path: ${{ github.workspace }}/universal-results
       
       - name: Download reference test results
