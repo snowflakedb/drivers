@@ -1,6 +1,6 @@
 # universal-driver
 
-[![codecov](https://codecov.io/gh/{{REPOSITORY}}/branch/main/graph/badge.svg)](https://codecov.io/gh/{{REPOSITORY}})
+[![codecov](https://codecov.io/gh/acme/universal-driver/branch/main/graph/badge.svg)](https://codecov.io/gh/acme/universal-driver)
 
 # Running Tests
 

@@ -1,6 +1,7 @@
 plugins {
     id 'java-library'
     id 'maven-publish'
+    id 'jacoco'
 }
 
 group = 'com.snowflake'
@@ -108,5 +109,23 @@ test {
         showExceptions true
         showCauses true
         showStackTraces true
+    }
+}
+
+jacoco {
+    toolVersion = "0.8.11"
+}
+
+test {
+    useJUnit()
+    finalizedBy jacocoTestReport
+}
+
+jacocoTestReport {
+    dependsOn test
+    reports {
+        xml.required = true
+        html.required = true
+        csv.required = false
     }
 }
