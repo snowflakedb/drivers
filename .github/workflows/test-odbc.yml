@@ -72,7 +72,7 @@ jobs:
           PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
 
       - name: Build Rust ODBC driver
-        run: RUSTFLAGS="-C instrument-coverage" cargo build --package odbc
+        run: RUSTFLAGS="-C instrument-coverage" cargo build
 
       - name: Build and run ODBC tests
         run: |
