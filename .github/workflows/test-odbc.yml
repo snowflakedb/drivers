@@ -71,31 +71,8 @@ jobs:
         env:
           PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
 
-      - name: Debug and Build Rust ODBC driver
-        run: |
-          echo "=== DEBUG INFO ==="
-          echo "RUSTFLAGS environment: $RUSTFLAGS"
-          echo "Cargo version: $(cargo --version)"
-          echo "Rustc version: $(rustc --version)"
-          echo ""
-          echo "=== SF_CORE CRATE CONFIG ==="
-          grep -A 5 "\[lib\]" sf_core/Cargo.toml
-          echo ""
-          echo "=== ODBC CRATE CONFIG ==="
-          grep -A 5 "\[lib\]" odbc/Cargo.toml
-          echo ""
-          echo "=== ODBC DEPENDENCIES ==="
-          grep -A 10 "\[dependencies\]" odbc/Cargo.toml
-          echo ""
-          echo "=== DEPENDENCY TREE ==="
-          cargo tree --package odbc
-          echo ""
-          echo "=== ATTEMPTING ACTUAL BUILD ==="
-          echo "Building sf_core first to see what happens..."
-          RUSTFLAGS="-C instrument-coverage" cargo build --package sf_core --verbose || true
-          echo ""
-          echo "Now trying odbc build..."
-          RUSTFLAGS="-C instrument-coverage" cargo build --package odbc --verbose
+      - name: Build Rust ODBC driver
+        run: RUSTFLAGS="-C instrument-coverage" cargo build --package odbc
 
       - name: Build and run ODBC tests
         run: |
@@ -115,8 +92,13 @@ jobs:
           
           # Generate coverage report from C++ test execution
           cd ..
-          ~/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/x86_64-unknown-linux-gnu/bin/llvm-profdata merge -sparse odbc_tests/odbc-*.profraw -o coverage.profdata
-          ~/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/x86_64-unknown-linux-gnu/bin/llvm-cov export target/debug/libsfodbc.so \
+          echo "=== Finding LLVM tools ==="
+          find ~/.rustup -name "llvm-profdata" -type f 2>/dev/null || echo "llvm-profdata not found in ~/.rustup"
+          find ~/.rustup -name "llvm-cov" -type f 2>/dev/null || echo "llvm-cov not found in ~/.rustup"
+          echo ""
+          echo "=== Using rustup to run LLVM tools ==="
+          rustup run stable llvm-profdata merge -sparse odbc_tests/odbc-*.profraw -o coverage.profdata
+          rustup run stable llvm-cov export target/debug/libsfodbc.so \
               -instr-profile=coverage.profdata \
               -format=lcov > lcov.info
 
