@@ -14,7 +14,7 @@ try:
         raise ValueError("CORE_PATH environment variable not set")
     core = ctypes.CDLL(os.environ["CORE_PATH"])
 except OSError as e:
-    print(f"Error loading library {e}")
+    print(f"Error loading core library {e}")
 
 core.sf_core_api_init.argtypes = [ctypes.c_uint]
 core.sf_core_api_init.restype = CAPIHandle
@@ -32,6 +32,16 @@ LOGGER_CALLBACK = ctypes.CFUNCTYPE(ctypes.c_uint32, ctypes.c_uint32, ctypes.c_ch
 core.sf_core_init_logger.argtypes = [LOGGER_CALLBACK]
 core.sf_core_init_logger.restype = ctypes.c_uint32
 
+core.sf_core_api_call_proto.restype = ctypes.c_uint32
+core.sf_core_api_call_proto.argtypes = [
+    ctypes.c_char_p,  # const char* api
+    ctypes.c_char_p,  # const char* method
+    ctypes.POINTER(ctypes.c_ubyte),  # const char* request
+    ctypes.c_size_t,  # size_t request_len
+    ctypes.POINTER(ctypes.POINTER(ctypes.c_ubyte)),  # char* const* response
+    ctypes.POINTER(ctypes.c_size_t)  # size_t* response_len
+]
+
 def sf_core_api_read(channel, buf, len):
     core.sf_core_api_read(channel, buf, len)
 
@@ -46,6 +56,9 @@ def sf_core_api_init(api_id):
         raise ValueError(f"Invalid API ID: {api_id}")
     return core.sf_core_api_init(api_id.value)
 
+def sf_core_api_call_proto(api, method, request, request_len, response, response_len):
+    return core.sf_core_api_call_proto(api, method, request, request_len, response, response_len)
+
 def sf_core_init_logger(callback):
     core.sf_core_init_logger(callback)
 
@@ -55,10 +68,11 @@ level_map = {
     1: logging.WARNING,
     2: logging.INFO,
     3: logging.DEBUG,
-    4: logging.NOTSET,
 }
 
 def logger_callback(level, message, filename, line, function):
+    if level not in level_map:
+        return 0
     logger = logging.getLogger("sf_core")
     record = logger.makeRecord("sf_core", level_map[level], filename.decode('utf-8'), line, message.decode('utf-8'), [], None, func=function.decode('utf-8'))
     logger.handle(record)

@@ -1,5 +1,6 @@
 from ...compatibility import OLD_DRIVER_ONLY, NEW_DRIVER_ONLY
-from pep249_dbapi.thrift_gen.database_driver_v1.ttypes import DriverException
+from pep249_dbapi.protobuf_gen.proto_exception import ProtoApplicationException
+from pep249_dbapi.protobuf_gen.database_driver_v1_pb2 import DriverException
 import snowflake.connector.errors
 
 
@@ -14,13 +15,15 @@ def verify_simple_query_execution(connection):
 
 def verify_login_error(exception):
     """Verify that an exception contains a valid login error with code and message."""
+    print(exception.value)
     assert exception is not None
     assert str(exception).strip() != "", "Login error message should not be empty"
 
     if NEW_DRIVER_ONLY("BC#4"):
-        assert isinstance(exception.value, DriverException), f"Expected DriverException, got: {type(exception.value)}"
-        assert exception.value.error.loginError.code != 0, "Login error code should not be zero"
-        assert exception.value.error.loginError.message.strip() != "", "Login error message should not be empty"
+        assert isinstance(exception.value.api_error_pb, DriverException), f"Expected DriverException, got: {type(exception.value)}"
+        assert exception.value.error.WhichOneof("error_type") == "login_error", "Expected login error"
+        assert exception.value.error.login_error.code != 0, "Login error code should not be zero"
+        assert exception.value.error.login_error.message.strip() != "", "Login error message should not be empty"
 
     if OLD_DRIVER_ONLY("BC#4"):
         # Reference driver uses DatabaseError from snowflake.connector.errors

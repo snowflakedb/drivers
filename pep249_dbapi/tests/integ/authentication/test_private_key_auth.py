@@ -21,8 +21,8 @@ class TestPrivateKeyAuthentication:
         assert exception is not None
         assert str(exception.value).strip() != "", "Missing parameter error message should not be empty"
         if NEW_DRIVER_ONLY("BC#4"):
-            assert hasattr(exception.value, 'error') and exception.value.error.missingParameter is not None, "Expected missing parameter error"
-            assert exception.value.error.missingParameter.parameter.strip() != "", "Missing parameter name should not be empty"
+            assert hasattr(exception.value, 'error') and exception.value.error.missing_parameter is not None, "Expected missing parameter error"
+            assert exception.value.error.missing_parameter.parameter.strip() != "", "Missing parameter name should not be empty"
         if OLD_DRIVER_ONLY("BC#4"):
             assert isinstance(exception.value, TypeError), "Old driver throws TypeError for missing private key"
             error_msg = str(exception.value).lower()

@@ -27,6 +27,7 @@ requires-python = ">=3.9"
 dependencies = [
     "thrift>=0.17.0",
     "pyarrow>=19.0.0",
+    "protobuf>=6.32.1",
 ]
 
 [project.urls]

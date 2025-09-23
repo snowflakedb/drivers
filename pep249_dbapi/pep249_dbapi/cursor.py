@@ -5,6 +5,7 @@ This module defines the Cursor class as specified in PEP 249.
 """
 from .exceptions import NotSupportedError
 import pyarrow
+from .protobuf_gen.database_driver_v1_pb2 import *
 
 class Cursor:
     """
@@ -96,9 +97,9 @@ class Cursor:
         Raises:
             NotSupportedError: If not implemented
         """
-        stmt_handle = self.connection.db_api.statementNew(self.connection.conn_handle)
-        self.connection.db_api.statementSetSqlQuery(stmt_handle, operation)
-        self.execute_result = self.connection.db_api.statementExecuteQuery(stmt_handle)
+        stmt_handle = self.connection.db_api.statement_new(StatementNewRequest(conn_handle=self.connection.conn_handle)).stmt_handle
+        self.connection.db_api.statement_set_sql_query(StatementSetSqlQueryRequest(stmt_handle=stmt_handle, query=operation))
+        self.execute_result = self.connection.db_api.statement_execute_query(StatementExecuteQueryRequest(stmt_handle=stmt_handle)).result
         # Reset streaming state for a new result
         self._reader = None
         self._current_batch = None

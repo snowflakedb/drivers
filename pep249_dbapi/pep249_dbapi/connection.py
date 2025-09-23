@@ -3,8 +3,8 @@ PEP 249 Database API 2.0 Connection Objects
 
 This module defines the Connection class as specified in PEP 249.
 """
-from .api_client.client_api import client_api_init
-from .api_client.c_api import CORE_API
+from .api_client.client_api import database_driver_client
+from .protobuf_gen.database_driver_v1_pb2 import *
 from .cursor import Cursor
 from .exceptions import NotSupportedError, InterfaceError
 from .thrift_gen.database_driver_v1 import DatabaseDriver
@@ -27,10 +27,10 @@ class Connection:
             port: Port number
             **kwargs: Additional connection parameters
         """
-        self.db_api: DatabaseDriver.Client  = client_api_init(CORE_API.DATABASE_DRIVER_API_V1)
-        self.db_handle = self.db_api.databaseNew()
-        self.db_api.databaseInit(self.db_handle)
-        self.conn_handle = self.db_api.connectionNew()
+        self.db_api = database_driver_client()
+        self.db_handle = self.db_api.database_new(DatabaseNewRequest()).db_handle
+        self.db_api.database_init(DatabaseInitRequest(db_handle=self.db_handle))
+        self.conn_handle = self.db_api.connection_new(ConnectionNewRequest()).conn_handle
         # Apply TLS config if provided
         tls_cfg = {}
         if "custom_root_store_path" in kwargs:
@@ -42,15 +42,15 @@ class Connection:
         # TLS config is set via per-option APIs in the core now; no direct TLS config RPC
         for key, value in kwargs.items():
             if isinstance(value, int):
-                self.db_api.connectionSetOptionInt(self.conn_handle, key, value)
+                self.db_api.connection_set_option_int(ConnectionSetOptionIntRequest(conn_handle=self.conn_handle, key=key, value=value))
 
             if isinstance(value, str):
-                self.db_api.connectionSetOptionString(self.conn_handle, key, value)
+                self.db_api.connection_set_option_string(ConnectionSetOptionStringRequest(conn_handle=self.conn_handle, key=key, value=value))
 
             if isinstance(value, float):
-                self.db_api.connectionSetOptionDouble(self.conn_handle, key, value)
+                self.db_api.connection_set_option_double(ConnectionSetOptionDoubleRequest(conn_handle=self.conn_handle, key=key, value=value))
 
-        self.db_api.connectionInit(self.conn_handle, self.db_handle)
+        self.db_api.connection_init(ConnectionInitRequest(conn_handle=self.conn_handle, db_handle=self.db_handle))
         self.kwargs = kwargs
         self._closed = False
         self._autocommit = False
