@@ -4,7 +4,6 @@ on:
   push:
     branches: [ "main" ]
   pull_request:
-    branches: [ "main" ]
 
 concurrency:
   # older builds for the same pull request number or branch should be cancelled
