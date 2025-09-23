@@ -100,9 +100,5 @@ class PAT:
                 self._token_name = None
                 self._token_secret = None
 
-    def __enter__(self):
-        return self
-
-
 def get_invalid_pat_token() -> str:
     return "invalid_token_12345"
