@@ -74,10 +74,6 @@ jobs:
       - name: Install llvm-cov
         run: cargo +stable install cargo-llvm-cov
 
-      - name: Build sf_core without instrumentation
-        run: |
-          cargo build --package sf_core
-
       - name: Build ODBC with coverage instrumentation
         run: |
           RUSTFLAGS="-C instrument-coverage" cargo build --package odbc
