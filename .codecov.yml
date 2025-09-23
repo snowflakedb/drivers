@@ -9,9 +9,9 @@ flag_management:
 
 flags:
   rust:
-    paths: ["sf_core/"]
+    paths: ["sf_core/", "jdbc_bridge/"]
   jdbc:
-    paths: ["jdbc/", "jdbc_bridge/"]
+    paths: ["jdbc/"]
   python:
     paths: ["pep249_dbapi/"]
   odbc:
