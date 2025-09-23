@@ -15,6 +15,7 @@ pub mod crl;
 mod file_manager;
 pub mod handle_manager;
 pub mod logging;
+pub mod protobuf_apis;
 pub mod protobuf_gen;
 pub mod query_types;
 pub mod rest;

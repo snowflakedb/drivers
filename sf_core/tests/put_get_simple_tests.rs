@@ -11,7 +11,7 @@ const PUT_GET_ROWSET_FIXED_LENGTH_STR: &str = "64";
 
 #[test]
 fn test_put_select() {
-    let mut client = SnowflakeTestClient::connect_with_default_auth();
+    let client = SnowflakeTestClient::connect_with_default_auth();
     let stage_name = "TEST_STAGE_PUT_SELECT";
 
     let (_filename, test_file_path) = test_file();
@@ -36,7 +36,7 @@ fn test_put_select() {
 
 #[test]
 fn test_put_ls() {
-    let mut client = SnowflakeTestClient::connect_with_default_auth();
+    let client = SnowflakeTestClient::connect_with_default_auth();
     let stage_name = "TEST_STAGE_PUT_LS";
 
     let (filename, test_file_path) = test_file();
@@ -64,7 +64,7 @@ fn test_put_ls() {
 
 #[test]
 fn test_get() {
-    let mut client = SnowflakeTestClient::connect_with_default_auth();
+    let client = SnowflakeTestClient::connect_with_default_auth();
     let stage_name = "TEST_STAGE_GET";
 
     let (filename, test_file_path) = test_file();
@@ -108,7 +108,7 @@ fn test_get() {
 
 #[test]
 fn test_put_get_rowset() {
-    let mut client = SnowflakeTestClient::connect_with_default_auth();
+    let client = SnowflakeTestClient::connect_with_default_auth();
     let stage_name = "TEST_STAGE_PUT_ROWSET";
 
     let (filename, test_file_path) = test_file();

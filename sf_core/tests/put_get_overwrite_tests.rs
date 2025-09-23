@@ -6,7 +6,7 @@ use std::path::PathBuf;
 
 #[test]
 fn test_put_overwrite_true() {
-    let mut client = SnowflakeTestClient::connect_with_default_auth();
+    let client = SnowflakeTestClient::connect_with_default_auth();
     let stage_name = "TEST_STAGE_OVERWRITE_TRUE";
 
     let (filename, original_file_path) = original_test_file();
@@ -56,7 +56,7 @@ fn test_put_overwrite_true() {
 
 #[test]
 fn test_put_overwrite_false() {
-    let mut client = SnowflakeTestClient::connect_with_default_auth();
+    let client = SnowflakeTestClient::connect_with_default_auth();
     let stage_name = "TEST_STAGE_OVERWRITE_FALSE";
     let (filename, original_file_path) = original_test_file();
 

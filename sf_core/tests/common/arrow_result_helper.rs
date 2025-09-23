@@ -7,6 +7,7 @@ use super::arrow_extract_value::{ArrowExtractError, ArrowExtractValue, extract_a
 use arrow::ffi_stream::ArrowArrayStreamReader;
 use arrow::ffi_stream::FFI_ArrowArrayStream;
 use arrow::record_batch::RecordBatchReader;
+use sf_core::protobuf_gen::database_driver_v1::ExecuteResult;
 use std::fmt::Debug;
 use std::sync::Arc;
 
@@ -17,8 +18,8 @@ pub struct ArrowResultHelper {
 
 impl ArrowResultHelper {
     /// Creates a new Arrow result helper from an ExecuteResult
-    pub fn from_result(result: sf_core::thrift_gen::database_driver_v1::ExecuteResult) -> Self {
-        let stream_ptr: *mut FFI_ArrowArrayStream = result.stream.into();
+    pub fn from_result(result: ExecuteResult) -> Self {
+        let stream_ptr: *mut FFI_ArrowArrayStream = result.stream.unwrap().into();
         let stream: FFI_ArrowArrayStream = unsafe { FFI_ArrowArrayStream::from_raw(stream_ptr) };
         let reader = ArrowArrayStreamReader::try_new(stream).unwrap();
         Self { reader }

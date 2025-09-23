@@ -5,8 +5,8 @@ use super::super::common::test_utils::*;
 fn should_authenticate_using_pat_as_password() {
     //Given Authentication is set to password and valid PAT token is provided
     let pat = Pat::acquire();
-    let mut client = SnowflakeTestClient::with_default_params();
-    set_pat_as_password(&mut client, &pat.token_secret);
+    let client = SnowflakeTestClient::with_default_params();
+    set_pat_as_password(&client, &pat.token_secret);
 
     //When Trying to Connect
     let result = client.connect();
@@ -19,9 +19,9 @@ fn should_authenticate_using_pat_as_password() {
 fn should_authenticate_using_pat_as_token() {
     //Given Authentication is set to Programmatic Access Token and valid PAT token is provided
     let pat = Pat::acquire();
-    let mut client = SnowflakeTestClient::with_default_params();
-    set_auth_to_programmatic_access_token(&mut client);
-    set_pat_token(&mut client, &pat.token_secret);
+    let client = SnowflakeTestClient::with_default_params();
+    set_auth_to_programmatic_access_token(&client);
+    set_pat_token(&client, &pat.token_secret);
 
     //When Trying to Connect
     let result = client.connect();
@@ -33,9 +33,9 @@ fn should_authenticate_using_pat_as_token() {
 #[test]
 fn should_fail_pat_authentication_when_invalid_token_provided() {
     //Given Authentication is set to Programmatic Access Token and invalid PAT token is provided
-    let mut client = SnowflakeTestClient::with_default_params();
-    set_auth_to_programmatic_access_token(&mut client);
-    set_invalid_pat_token(&mut client);
+    let client = SnowflakeTestClient::with_default_params();
+    set_auth_to_programmatic_access_token(&client);
+    set_invalid_pat_token(&client);
 
     //When Trying to Connect
     let result = client.connect();
@@ -52,7 +52,7 @@ struct Pat {
 impl Pat {
     fn acquire() -> Self {
         let name = format!("pat_{:x}", rand::random::<u32>());
-        let mut client = SnowflakeTestClient::connect_with_default_auth();
+        let client = SnowflakeTestClient::connect_with_default_auth();
         let user = client.parameters.user.clone().unwrap();
         let role = client.parameters.role.clone().unwrap();
         let result = client.execute_query(&format!("ALTER USER IF EXISTS {user} ADD PROGRAMMATIC ACCESS TOKEN {name} ROLE_RESTRICTION = {role}"));
@@ -71,7 +71,7 @@ impl Pat {
 
 impl Drop for Pat {
     fn drop(&mut self) {
-        let mut client = SnowflakeTestClient::connect_with_default_auth();
+        let client = SnowflakeTestClient::connect_with_default_auth();
         let user = client.parameters.user.clone().unwrap();
         client.execute_query(&format!(
             "ALTER USER IF EXISTS {user} REMOVE PROGRAMMATIC ACCESS TOKEN {}",
@@ -80,18 +80,18 @@ impl Drop for Pat {
     }
 }
 
-fn set_auth_to_programmatic_access_token(client: &mut SnowflakeTestClient) {
+fn set_auth_to_programmatic_access_token(client: &SnowflakeTestClient) {
     client.set_connection_option("authenticator", "PROGRAMMATIC_ACCESS_TOKEN");
 }
 
-fn set_pat_as_password(client: &mut SnowflakeTestClient, token_secret: &str) {
+fn set_pat_as_password(client: &SnowflakeTestClient, token_secret: &str) {
     client.set_connection_option("password", token_secret);
 }
 
-fn set_pat_token(client: &mut SnowflakeTestClient, token_secret: &str) {
+fn set_pat_token(client: &SnowflakeTestClient, token_secret: &str) {
     client.set_connection_option("token", token_secret);
 }
 
-fn set_invalid_pat_token(client: &mut SnowflakeTestClient) {
+fn set_invalid_pat_token(client: &SnowflakeTestClient) {
     client.set_connection_option("token", "invalid_token_12345");
 }

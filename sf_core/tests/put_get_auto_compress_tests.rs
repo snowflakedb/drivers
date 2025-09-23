@@ -6,7 +6,7 @@ use std::path::PathBuf;
 
 #[test]
 fn test_put_get_with_auto_compress_true() {
-    let mut client = SnowflakeTestClient::connect_with_default_auth();
+    let client = SnowflakeTestClient::connect_with_default_auth();
     let stage_name = "TEST_STAGE_PUT_GET_COMPRESS_TRUE";
 
     // Use shared test data from repository
@@ -55,7 +55,7 @@ fn test_put_get_with_auto_compress_true() {
 
 #[test]
 fn test_put_get_with_auto_compress_false() {
-    let mut client = SnowflakeTestClient::connect_with_default_auth();
+    let client = SnowflakeTestClient::connect_with_default_auth();
     let stage_name = "TEST_STAGE_PUT_GET_COMPRESS_FALSE";
 
     // Use shared test data from repository

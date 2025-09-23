@@ -1,10 +1,13 @@
 use crate::handle_manager::Handle;
 use crate::logging;
+use crate::protobuf_apis::call_proto;
 use crate::thrift_apis::{
     DatabaseDriverV1,
     server::{create_new_api, destroy_api, flush_api, read_from_api, write_to_api},
 };
+use proto_utils::ProtoError;
 use std::fmt::Debug;
+use std::os::raw::c_char;
 
 #[repr(C)]
 pub enum SfCoreApi {
@@ -104,5 +107,49 @@ pub extern "C" fn sf_core_api_flush(api: CApiHandle) {
     let result = flush_api(api.to_handle());
     if let Err(e) = &result {
         eprintln!("Failed to flush API: {e:?}");
+    }
+}
+
+fn write_buffer(vec: Vec<u8>, buffer: *mut *const u8, len: *mut usize) {
+    unsafe {
+        *buffer = vec.as_ptr();
+        *len = vec.len();
+        std::mem::forget(vec);
+    }
+}
+
+/// # Safety
+/// This function dereferences raw pointers `api`, `method`, `request`, `response`, and `response_len`.
+/// The caller must ensure that `api`, `method`, `request`, `response`, and `response_len` are valid.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sf_core_api_call_proto(
+    api: *const c_char,
+    method: *const c_char,
+    request: *mut u8,
+    request_len: usize,
+    response: *mut *const u8,
+    response_len: *mut usize,
+) -> usize {
+    unsafe {
+        let api = std::ffi::CStr::from_ptr(api).to_string_lossy().to_string();
+        let method = std::ffi::CStr::from_ptr(method)
+            .to_string_lossy()
+            .to_string();
+        let message = std::slice::from_raw_parts(request, request_len);
+        let result = call_proto(&api, &method, message);
+        match result {
+            Ok(response_vec) => {
+                write_buffer(response_vec, response, response_len);
+                0
+            }
+            Err(ProtoError::Application(error_vec)) => {
+                write_buffer(error_vec, response, response_len);
+                1
+            }
+            Err(ProtoError::Transport(e)) => {
+                write_buffer(e.as_bytes().to_vec(), response, response_len);
+                2
+            }
+        }
     }
 }

@@ -6,7 +6,7 @@ use std::path::PathBuf;
 
 #[test]
 fn test_put_source_compression_auto_detect_standard_types() {
-    let mut client = SnowflakeTestClient::connect_with_default_auth();
+    let client = SnowflakeTestClient::connect_with_default_auth();
     let stage_name = "TEST_STAGE_AUTO_DETECT_STANDARD";
 
     // Setup stage once for all tests
@@ -58,7 +58,7 @@ fn test_put_source_compression_auto_detect_standard_types() {
 
 #[test]
 fn test_put_source_compression_auto_detect_none_no_auto_compress() {
-    let mut client = SnowflakeTestClient::connect_with_default_auth();
+    let client = SnowflakeTestClient::connect_with_default_auth();
     let stage_name = "TEST_STAGE_AUTO_DETECT_NONE_NO_AUTO_COMPRESS";
 
     let (filename, file_path) = test_file("NONE");
@@ -84,7 +84,7 @@ fn test_put_source_compression_auto_detect_none_no_auto_compress() {
 
 #[test]
 fn test_put_source_compression_auto_detect_none_with_auto_compress() {
-    let mut client = SnowflakeTestClient::connect_with_default_auth();
+    let client = SnowflakeTestClient::connect_with_default_auth();
     let stage_name = "TEST_STAGE_AUTO_DETECT_NONE_WITH_AUTO_COMPRESS";
 
     let (filename, file_path) = test_file("NONE");
@@ -110,7 +110,7 @@ fn test_put_source_compression_auto_detect_none_with_auto_compress() {
 
 #[test]
 fn test_put_source_compression_auto_detect_unsupported() {
-    let mut client = SnowflakeTestClient::connect_with_default_auth();
+    let client = SnowflakeTestClient::connect_with_default_auth();
     let stage_name = "TEST_STAGE_AUTO_DETECT_UNSUPPORTED";
 
     let (_filename, file_path) = test_file("LZMA");
@@ -135,7 +135,7 @@ fn test_put_source_compression_auto_detect_unsupported() {
 
 #[test]
 fn test_put_source_compression_explicit_standard_types() {
-    let mut client = SnowflakeTestClient::connect_with_default_auth();
+    let client = SnowflakeTestClient::connect_with_default_auth();
     let stage_name = "TEST_STAGE_EXPLICIT_COMPRESSION";
 
     // Setup stage once for all tests
@@ -186,7 +186,7 @@ fn test_put_source_compression_explicit_standard_types() {
 
 #[test]
 fn test_put_source_compression_explicit_none_no_auto_compress() {
-    let mut client = SnowflakeTestClient::connect_with_default_auth();
+    let client = SnowflakeTestClient::connect_with_default_auth();
     let stage_name = "TEST_STAGE_EXPLICIT_NONE_NO_AUTO_COMPRESS";
 
     let (filename, file_path) = test_file("NONE");
@@ -214,7 +214,7 @@ fn test_put_source_compression_explicit_none_no_auto_compress() {
 
 #[test]
 fn test_put_source_compression_explicit_with_auto_compress() {
-    let mut client = SnowflakeTestClient::connect_with_default_auth();
+    let client = SnowflakeTestClient::connect_with_default_auth();
     let stage_name = "TEST_STAGE_EXPLICIT_WITH_AUTO_COMPRESS";
 
     let (filename, file_path) = test_file("NONE");

@@ -4,7 +4,7 @@ use super::super::common::test_utils::*;
 #[test]
 fn should_process_one_million_row_result_set() {
     // Given Snowflake client is logged in
-    let mut client = SnowflakeTestClient::connect_with_default_auth();
+    let client = SnowflakeTestClient::connect_with_default_auth();
 
     // When Query "SELECT seq8() as id FROM TABLE(GENERATOR(ROWCOUNT => 1000000)) v ORDER BY id" is executed
     let result = client.execute_query(

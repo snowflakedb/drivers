@@ -74,7 +74,7 @@ async fn upload_to_s3(
         .metadata("x-amz-key", &encryption_result.metadata.encrypted_key)
         .metadata("x-amz-matdesc", mat_desc);
 
-    tracing::debug!("PUT object request: {:?}", put_object_request);
+    tracing::trace!("PUT object request: {:?}", put_object_request);
 
     // Upload to S3 (with optional encryption metadata)
     let result = put_object_request
