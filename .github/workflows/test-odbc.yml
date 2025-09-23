@@ -33,7 +33,7 @@ jobs:
         env:
           PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
 
-      - name: Run ODBC tests
+      - name: Run Old ODBC tests
         run: |
           export DRIVER_PATH=/usr/lib/snowflake/odbc/lib/libSnowflake.so
           export PARAMETER_PATH=$(pwd)/parameters.json
@@ -48,7 +48,11 @@ jobs:
           ctest -C Debug --test-dir cmake-build --output-on-failure
 
   odbc_tests:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -56,7 +60,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y unixodbc-dev build-essential zlib1g-dev
+          sudo apt-get install -y unixodbc-dev build-essential zlib1g-dev lcov
           wget https://github.com/Kitware/CMake/releases/download/v4.0.3/cmake-4.0.3-linux-x86_64.sh
           sudo sh cmake-4.0.3-linux-x86_64.sh --skip-license --prefix=/usr/local
           sudo rm cmake-4.0.3-linux-x86_64.sh
@@ -67,14 +71,19 @@ jobs:
         env:
           PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
 
-      - name: Build Rust ODBC driver
-        run: cargo build
+      - name: Install llvm-cov
+        run: cargo +stable install cargo-llvm-cov
 
-      - name: Build and run ODBC tests
+      - name: Build Rust ODBC driver with coverage instrumentation
+        run: |
+          RUSTFLAGS="-C instrument-coverage" cargo build --package odbc
+
+      - name: Build and run C++ tests
         run: |
           ls -l target/debug/
           export DRIVER_PATH=$(pwd)/target/debug/libsfodbc.so
           export PARAMETER_PATH=$(pwd)/parameters.json
+          export LLVM_PROFILE_FILE="odbc-%p-%m.profraw"
           cd odbc_tests
           mkdir -p cmake-build
           cmake -B cmake-build \
@@ -84,3 +93,17 @@ jobs:
               .
           cmake --build cmake-build -- -j $(nproc)
           ctest -C Debug --test-dir cmake-build --output-on-failure
+
+      - name: Process coverage data
+        run: |
+          cargo llvm-cov --package odbc --no-run --lcov --output-path ./lcov.info
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v5
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+        with:
+          files: ./lcov.info
+          flags: odbc
+          name: odbc-${{ runner.os }}
+          fail_ci_if_error: false
