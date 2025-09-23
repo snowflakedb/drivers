@@ -1,0 +1,500 @@
+syntax = "proto3";
+
+package database_driver_v1;
+
+import "google/protobuf/descriptor.proto";
+
+extend google.protobuf.ServiceOptions {
+  optional string service_error = 412312;
+}
+
+extend google.protobuf.MethodOptions {
+  optional string method_error = 412312;
+}
+
+// Status codes corresponding to Thrift StatusCode enum
+enum StatusCode {
+  STATUS_CODE_UNSPECIFIED = 0;
+  STATUS_CODE_OK = 1;
+  STATUS_CODE_AUTHENTICATION_ERROR = 2;
+  STATUS_CODE_NOT_IMPLEMENTED = 3;
+  STATUS_CODE_NOT_FOUND = 4;
+  STATUS_CODE_ALREADY_EXISTS = 5;
+  STATUS_CODE_INVALID_ARGUMENT = 6;
+  STATUS_CODE_INVALID_STATE = 7;
+  STATUS_CODE_INVALID_DATA = 8;
+  STATUS_CODE_IO = 9;
+  STATUS_CODE_CANCELLED = 10;
+  STATUS_CODE_UNAUTHENTICATED = 11;
+  STATUS_CODE_UNAUTHORIZED = 12;
+  STATUS_CODE_GENERIC_ERROR = 13;
+  STATUS_CODE_INTERNAL_ERROR = 14;
+  STATUS_CODE_MISSING_PARAMETER = 15;
+  STATUS_CODE_INVALID_PARAMETER_VALUE = 16;
+  STATUS_CODE_LOGIN_ERROR = 17;
+}
+
+// Info codes corresponding to Thrift InfoCode enum
+enum InfoCode {
+  INFO_CODE_UNSPECIFIED = 0;
+  INFO_CODE_VENDOR_NAME = 1;
+  INFO_CODE_VENDOR_VERSION = 2;
+  INFO_CODE_VENDOR_ARROW_VERSION = 3;
+  INFO_CODE_VENDOR_SQL = 101;
+  INFO_CODE_VENDOR_SUBSTRAIT = 102;
+  INFO_CODE_VENDOR_SUBSTRAIT_MIN_VERSION = 103;
+  INFO_CODE_VENDOR_SUBSTRAIT_MAX_VERSION = 104;
+  INFO_CODE_DRIVER_NAME = 201;
+  INFO_CODE_DRIVER_VERSION = 202;
+  INFO_CODE_DRIVER_ARROW_VERSION = 203;
+  INFO_CODE_DRIVER_ADBC_VERSION = 204;
+}
+
+// Error detail message
+message ErrorDetail {
+  string key = 1;
+  string value = 2;
+}
+
+// Authentication error details
+message AuthenticationError {
+  string detail = 1;
+}
+
+// Generic error (empty message)
+message GenericError {
+}
+
+// Internal error (empty message)
+message InternalError {
+}
+
+// Login error details
+message LoginError {
+  string message = 1;
+  int32 code = 2;
+}
+
+// Missing parameter error
+message MissingParameter {
+  string parameter = 1;
+}
+
+// Invalid parameter value error
+message InvalidParameterValue {
+  string parameter = 1;
+  string value = 2;
+  optional string explanation = 3;
+}
+
+// Driver error union (using oneof)
+message DriverError {
+  oneof error_type {
+    AuthenticationError auth_error = 1;
+    GenericError generic_error = 2;
+    InternalError internal_error = 3;
+    MissingParameter missing_parameter = 4;
+    InvalidParameterValue invalid_parameter_value = 5;
+    LoginError login_error = 6;
+  }
+}
+
+// Driver exception
+message DriverException {
+  string message = 1;
+  StatusCode status_code = 2;
+  DriverError error = 3;
+  string report = 4;
+}
+
+// Execute result
+message ExecuteResult {
+  ArrowArrayStreamPtr stream = 1;
+  int64 rows_affected = 2;
+}
+
+// Partitioned result
+message PartitionedResult {
+  int64 schema = 1;
+  repeated bytes partitions = 2;
+  int64 rows_affected = 3;
+}
+
+// Database handle
+message DatabaseHandle {
+  int64 id = 1;
+  int64 magic = 2;
+}
+
+// Connection handle
+message ConnectionHandle {
+  int64 id = 1;
+  int64 magic = 2;
+}
+
+// Statement handle
+message StatementHandle {
+  int64 id = 1;
+  int64 magic = 2;
+}
+
+// Arrow array stream pointer
+message ArrowArrayStreamPtr {
+  bytes value = 1;
+}
+
+// Arrow schema pointer
+message ArrowSchemaPtr {
+  bytes value = 1;
+}
+
+// Arrow array pointer
+message ArrowArrayPtr {
+  bytes value = 1;
+}
+
+// Database service requests and responses
+
+message DatabaseNewRequest {
+}
+
+message DatabaseNewResponse {
+  DatabaseHandle db_handle = 1;
+}
+
+message DatabaseSetOptionStringRequest {
+  DatabaseHandle db_handle = 1;
+  string key = 2;
+  string value = 3;
+}
+
+message DatabaseSetOptionStringResponse {
+}
+
+message DatabaseSetOptionBytesRequest {
+  DatabaseHandle db_handle = 1;
+  string key = 2;
+  bytes value = 3;
+}
+
+message DatabaseSetOptionBytesResponse {
+}
+
+message DatabaseSetOptionIntRequest {
+  DatabaseHandle db_handle = 1;
+  string key = 2;
+  int64 value = 3;
+}
+
+message DatabaseSetOptionIntResponse {
+}
+
+message DatabaseSetOptionDoubleRequest {
+  DatabaseHandle db_handle = 1;
+  string key = 2;
+  double value = 3;
+}
+
+message DatabaseSetOptionDoubleResponse {
+}
+
+message DatabaseInitRequest {
+  DatabaseHandle db_handle = 1;
+}
+
+message DatabaseInitResponse {
+}
+
+message DatabaseReleaseRequest {
+  DatabaseHandle db_handle = 1;
+}
+
+message DatabaseReleaseResponse {
+}
+
+// Connection service requests and responses
+
+message ConnectionNewRequest {
+}
+
+message ConnectionNewResponse {
+  ConnectionHandle conn_handle = 1;
+}
+
+message ConnectionSetOptionStringRequest {
+  ConnectionHandle conn_handle = 1;
+  string key = 2;
+  string value = 3;
+}
+
+message ConnectionSetOptionStringResponse {
+}
+
+message ConnectionSetOptionBytesRequest {
+  ConnectionHandle conn_handle = 1;
+  string key = 2;
+  bytes value = 3;
+}
+
+message ConnectionSetOptionBytesResponse {
+}
+
+message ConnectionSetOptionIntRequest {
+  ConnectionHandle conn_handle = 1;
+  string key = 2;
+  int64 value = 3;
+}
+
+message ConnectionSetOptionIntResponse {
+}
+
+message ConnectionSetOptionDoubleRequest {
+  ConnectionHandle conn_handle = 1;
+  string key = 2;
+  double value = 3;
+}
+
+message ConnectionSetOptionDoubleResponse {
+}
+
+message ConnectionInitRequest {
+  ConnectionHandle conn_handle = 1;
+  DatabaseHandle db_handle = 2;
+}
+
+message ConnectionInitResponse {
+}
+
+message ConnectionReleaseRequest {
+  ConnectionHandle conn_handle = 1;
+}
+
+message ConnectionReleaseResponse {
+}
+
+message ConnectionGetInfoRequest {
+  ConnectionHandle conn_handle = 1;
+  repeated InfoCode info_codes = 2;
+}
+
+message ConnectionGetInfoResponse {
+  bytes info_data = 1;
+}
+
+message ConnectionGetObjectsRequest {
+  ConnectionHandle conn_handle = 1;
+  int32 depth = 2;
+  optional string catalog = 3;
+  optional string db_schema = 4;
+  optional string table_name = 5;
+  repeated string table_type = 6;
+  optional string column_name = 7;
+}
+
+message ConnectionGetObjectsResponse {
+  bytes objects_data = 1;
+}
+
+message ConnectionGetTableSchemaRequest {
+  ConnectionHandle conn_handle = 1;
+  optional string catalog = 2;
+  optional string db_schema = 3;
+  string table_name = 4;
+}
+
+message ConnectionGetTableSchemaResponse {
+  bytes schema_data = 1;
+}
+
+message ConnectionGetTableTypesRequest {
+  ConnectionHandle conn_handle = 1;
+}
+
+message ConnectionGetTableTypesResponse {
+  bytes table_types_data = 1;
+}
+
+message ConnectionCommitRequest {
+  ConnectionHandle conn_handle = 1;
+}
+
+message ConnectionCommitResponse {
+}
+
+message ConnectionRollbackRequest {
+  ConnectionHandle conn_handle = 1;
+}
+
+message ConnectionRollbackResponse {
+}
+
+// Statement service requests and responses
+
+message StatementNewRequest {
+  ConnectionHandle conn_handle = 1;
+}
+
+message StatementNewResponse {
+  StatementHandle stmt_handle = 1;
+}
+
+message StatementReleaseRequest {
+  StatementHandle stmt_handle = 1;
+}
+
+message StatementReleaseResponse {
+}
+
+message StatementSetSqlQueryRequest {
+  StatementHandle stmt_handle = 1;
+  string query = 2;
+}
+
+message StatementSetSqlQueryResponse {
+}
+
+message StatementSetSubstraitPlanRequest {
+  StatementHandle stmt_handle = 1;
+  bytes plan = 2;
+}
+
+message StatementSetSubstraitPlanResponse {
+}
+
+message StatementPrepareRequest {
+  StatementHandle stmt_handle = 1;
+}
+
+message StatementPrepareResponse {
+}
+
+message StatementSetOptionStringRequest {
+  StatementHandle stmt_handle = 1;
+  string key = 2;
+  string value = 3;
+}
+
+message StatementSetOptionStringResponse {
+}
+
+message StatementSetOptionBytesRequest {
+  StatementHandle stmt_handle = 1;
+  string key = 2;
+  bytes value = 3;
+}
+
+message StatementSetOptionBytesResponse {
+}
+
+message StatementSetOptionIntRequest {
+  StatementHandle stmt_handle = 1;
+  string key = 2;
+  int64 value = 3;
+}
+
+message StatementSetOptionIntResponse {
+}
+
+message StatementSetOptionDoubleRequest {
+  StatementHandle stmt_handle = 1;
+  string key = 2;
+  double value = 3;
+}
+
+message StatementSetOptionDoubleResponse {
+}
+
+message StatementGetParameterSchemaRequest {
+  StatementHandle stmt_handle = 1;
+}
+
+message StatementGetParameterSchemaResponse {
+  ArrowSchemaPtr schema = 1;
+}
+
+message StatementBindRequest {
+  StatementHandle stmt_handle = 1;
+  ArrowSchemaPtr schema = 2;
+  ArrowArrayPtr array = 3;
+}
+
+message StatementBindResponse {
+}
+
+message StatementBindStreamRequest {
+  StatementHandle stmt_handle = 1;
+  bytes stream = 2;
+}
+
+message StatementBindStreamResponse {
+}
+
+message StatementExecuteQueryRequest {
+  StatementHandle stmt_handle = 1;
+}
+
+message StatementExecuteQueryResponse {
+  ExecuteResult result = 1;
+}
+
+message StatementExecutePartitionsRequest {
+  StatementHandle stmt_handle = 1;
+}
+
+message StatementExecutePartitionsResponse {
+  PartitionedResult result = 1;
+}
+
+message StatementReadPartitionRequest {
+  StatementHandle stmt_handle = 1;
+  bytes partition_descriptor = 2;
+}
+
+message StatementReadPartitionResponse {
+  int64 partition_stream = 1;
+}
+
+// Database Driver service definition
+service DatabaseDriver {
+  option (service_error) = "DriverException";
+  // Database operations
+  rpc DatabaseNew(DatabaseNewRequest) returns (DatabaseNewResponse);
+  rpc DatabaseSetOptionString(DatabaseSetOptionStringRequest) returns (DatabaseSetOptionStringResponse);
+  rpc DatabaseSetOptionBytes(DatabaseSetOptionBytesRequest) returns (DatabaseSetOptionBytesResponse);
+  rpc DatabaseSetOptionInt(DatabaseSetOptionIntRequest) returns (DatabaseSetOptionIntResponse);
+  rpc DatabaseSetOptionDouble(DatabaseSetOptionDoubleRequest) returns (DatabaseSetOptionDoubleResponse);
+  rpc DatabaseInit(DatabaseInitRequest) returns (DatabaseInitResponse);
+  rpc DatabaseRelease(DatabaseReleaseRequest) returns (DatabaseReleaseResponse);
+
+  // Connection operations
+  rpc ConnectionNew(ConnectionNewRequest) returns (ConnectionNewResponse);
+  rpc ConnectionSetOptionString(ConnectionSetOptionStringRequest) returns (ConnectionSetOptionStringResponse);
+  rpc ConnectionSetOptionBytes(ConnectionSetOptionBytesRequest) returns (ConnectionSetOptionBytesResponse);
+  rpc ConnectionSetOptionInt(ConnectionSetOptionIntRequest) returns (ConnectionSetOptionIntResponse);
+  rpc ConnectionSetOptionDouble(ConnectionSetOptionDoubleRequest) returns (ConnectionSetOptionDoubleResponse);
+  rpc ConnectionInit(ConnectionInitRequest) returns (ConnectionInitResponse);
+  rpc ConnectionRelease(ConnectionReleaseRequest) returns (ConnectionReleaseResponse);
+  rpc ConnectionGetInfo(ConnectionGetInfoRequest) returns (ConnectionGetInfoResponse);
+  rpc ConnectionGetObjects(ConnectionGetObjectsRequest) returns (ConnectionGetObjectsResponse);
+  rpc ConnectionGetTableSchema(ConnectionGetTableSchemaRequest) returns (ConnectionGetTableSchemaResponse);
+  rpc ConnectionGetTableTypes(ConnectionGetTableTypesRequest) returns (ConnectionGetTableTypesResponse);
+  rpc ConnectionCommit(ConnectionCommitRequest) returns (ConnectionCommitResponse);
+  rpc ConnectionRollback(ConnectionRollbackRequest) returns (ConnectionRollbackResponse);
+
+  // Statement operations
+  rpc StatementNew(StatementNewRequest) returns (StatementNewResponse);
+  rpc StatementRelease(StatementReleaseRequest) returns (StatementReleaseResponse);
+  rpc StatementSetSqlQuery(StatementSetSqlQueryRequest) returns (StatementSetSqlQueryResponse);
+  rpc StatementSetSubstraitPlan(StatementSetSubstraitPlanRequest) returns (StatementSetSubstraitPlanResponse);
+  rpc StatementPrepare(StatementPrepareRequest) returns (StatementPrepareResponse);
+  rpc StatementSetOptionString(StatementSetOptionStringRequest) returns (StatementSetOptionStringResponse);
+  rpc StatementSetOptionBytes(StatementSetOptionBytesRequest) returns (StatementSetOptionBytesResponse);
+  rpc StatementSetOptionInt(StatementSetOptionIntRequest) returns (StatementSetOptionIntResponse);
+  rpc StatementSetOptionDouble(StatementSetOptionDoubleRequest) returns (StatementSetOptionDoubleResponse);
+  rpc StatementGetParameterSchema(StatementGetParameterSchemaRequest) returns (StatementGetParameterSchemaResponse);
+  rpc StatementBind(StatementBindRequest) returns (StatementBindResponse);
+  rpc StatementBindStream(StatementBindStreamRequest) returns (StatementBindStreamResponse);
+  rpc StatementExecuteQuery(StatementExecuteQueryRequest) returns (StatementExecuteQueryResponse);
+  rpc StatementExecutePartitions(StatementExecutePartitionsRequest) returns (StatementExecutePartitionsResponse);
+  rpc StatementReadPartition(StatementReadPartitionRequest) returns (StatementReadPartitionResponse);
+}
