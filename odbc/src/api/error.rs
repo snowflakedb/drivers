@@ -8,9 +8,20 @@ use crate::{
 use arrow::error::ArrowError;
 use lazy_static::lazy_static;
 use odbc_sys as sql;
-use sf_core::thrift_gen::database_driver_v1::{
-    DriverError, DriverException, InvalidParameterValue, LoginError, MissingParameter, StatusCode,
+use proto_utils::ProtoError;
+use sf_core::{
+    protobuf_gen::database_driver_v1::{
+        GenericError, InvalidParameterValue as ProtoInvalidParameterValue,
+        LoginError as ProtoLoginError, MissingParameter as ProtoMissingParameter,
+        driver_error::ErrorType,
+    },
+    thrift_gen::database_driver_v1::{
+        DriverError as ThriftDriverError, DriverException, InvalidParameterValue, LoginError,
+        MissingParameter, StatusCode,
+    },
 };
+
+use sf_core::protobuf_gen::database_driver_v1::DriverException as ProtoDriverException;
 use snafu::{Location, Snafu, location};
 
 #[derive(Snafu, Debug)]
@@ -57,6 +68,12 @@ pub enum OdbcError {
 
     #[snafu(display("Statement not executed"))]
     StatementNotExecuted {
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("Statement is in error state"))]
+    StatementErrorState {
         #[snafu(implicit)]
         location: Location,
     },
@@ -163,12 +180,19 @@ pub enum OdbcError {
         location: Location,
     },
 
+    #[snafu(display("Error while creating arrow array stream reader: {source}"))]
+    ArrowArrayStreamReaderCreation {
+        source: ArrowError,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
     #[snafu(display("[Core] {message}\n report: {report}"))]
     ThriftDriverException {
         message: String,
         report: String,
         status_code: StatusCode,
-        error: Box<DriverError>,
+        error: Box<ThriftDriverError>,
         #[snafu(implicit)]
         location: Location,
     },
@@ -179,6 +203,44 @@ pub enum OdbcError {
         #[snafu(implicit)]
         location: Location,
     },
+
+    #[snafu(display("[Core] {message}\n report: {report}"))]
+    ProtoDriverException {
+        message: String,
+        report: String,
+        status_code: i32,
+        error: Box<ErrorType>,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("[Core] Protocol transport error: {message}"))]
+    ProtoTransport {
+        message: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("[Core] Required field missing: {message}"))]
+    ProtoRequiredFieldMissing {
+        message: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
+}
+
+pub trait Required<T>: Sized {
+    fn required(self, message: &str) -> Result<T, OdbcError>;
+}
+
+impl<T> Required<T> for Option<T> {
+    #[track_caller]
+    fn required(self, message: &str) -> Result<T, OdbcError> {
+        self.ok_or_else(|| OdbcError::ProtoRequiredFieldMissing {
+            message: message.to_string(),
+            location: location!(),
+        })
+    }
 }
 
 lazy_static! {
@@ -233,10 +295,11 @@ impl OdbcError {
             OdbcError::ThriftDriverException { error, .. } => {
                 // Map DriverException StatusCode to appropriate SQL states
                 match *error.clone() {
-                    DriverError::AuthError(_) => SqlState::InvalidAuthorizationSpecification,
-                    DriverError::GenericError(_) => SqlState::GeneralError,
-                    DriverError::InvalidParameterValue(InvalidParameterValue {
-                        parameter, ..
+                    ThriftDriverError::AuthError(_) => SqlState::InvalidAuthorizationSpecification,
+                    ThriftDriverError::GenericError(_) => SqlState::GeneralError,
+                    ThriftDriverError::InvalidParameterValue(InvalidParameterValue {
+                        parameter,
+                        ..
                     }) => {
                         if AUTHENTICATOR_PARAMETERS.contains(&parameter.to_uppercase()) {
                             SqlState::InvalidAuthorizationSpecification
@@ -244,26 +307,56 @@ impl OdbcError {
                             SqlState::InvalidConnectionStringAttribute
                         }
                     }
-                    DriverError::MissingParameter(MissingParameter { parameter }) => {
+                    ThriftDriverError::MissingParameter(MissingParameter { parameter }) => {
                         if AUTHENTICATOR_PARAMETERS.contains(&parameter.to_uppercase()) {
                             SqlState::InvalidAuthorizationSpecification
                         } else {
                             SqlState::InvalidConnectionStringAttribute
                         }
                     }
-                    DriverError::InternalError(_) => SqlState::GeneralError,
-                    DriverError::LoginError(_) => SqlState::InvalidAuthorizationSpecification,
+                    ThriftDriverError::InternalError(_) => SqlState::GeneralError,
+                    ThriftDriverError::LoginError(_) => SqlState::InvalidAuthorizationSpecification,
                 }
             }
             OdbcError::ArrowBinding { .. } => SqlState::GeneralError,
             OdbcError::ThriftCommunication { .. } => SqlState::ClientUnableToEstablishConnection,
+            OdbcError::ProtoDriverException { error, .. } => match *error.clone() {
+                ErrorType::AuthError(_) => SqlState::InvalidAuthorizationSpecification,
+                ErrorType::GenericError(_) => SqlState::GeneralError,
+                ErrorType::InvalidParameterValue(ProtoInvalidParameterValue {
+                    parameter, ..
+                }) => {
+                    if AUTHENTICATOR_PARAMETERS.contains(&parameter.to_uppercase()) {
+                        SqlState::InvalidAuthorizationSpecification
+                    } else {
+                        SqlState::InvalidConnectionStringAttribute
+                    }
+                }
+                ErrorType::MissingParameter(ProtoMissingParameter { parameter }) => {
+                    if AUTHENTICATOR_PARAMETERS.contains(&parameter.to_uppercase()) {
+                        SqlState::InvalidAuthorizationSpecification
+                    } else {
+                        SqlState::InvalidConnectionStringAttribute
+                    }
+                }
+                ErrorType::InternalError(_) => SqlState::GeneralError,
+                ErrorType::LoginError(_) => SqlState::InvalidAuthorizationSpecification,
+            },
+            OdbcError::ProtoTransport { .. } => SqlState::ClientUnableToEstablishConnection,
+            OdbcError::ProtoRequiredFieldMissing { .. } => SqlState::GeneralError,
+            OdbcError::ArrowArrayStreamReaderCreation { .. } => SqlState::GeneralError,
+            OdbcError::StatementErrorState { .. } => SqlState::GeneralError,
         }
     }
 
     pub fn to_native_error(&self) -> sql::Integer {
         match self {
             OdbcError::ThriftDriverException { error, .. } => match *error.clone() {
-                DriverError::LoginError(LoginError { code, .. }) => code,
+                ThriftDriverError::LoginError(LoginError { code, .. }) => code,
+                _ => 0,
+            },
+            OdbcError::ProtoDriverException { error, .. } => match *error.clone() {
+                ErrorType::LoginError(ProtoLoginError { code, .. }) => code,
                 _ => 0,
             },
             _ => 0,
@@ -272,6 +365,7 @@ impl OdbcError {
 
     /// Convert a thrift::Error into the appropriate OdbcError variant
     #[track_caller]
+    #[allow(dead_code)]
     pub fn from_thrift_error(error: thrift::Error) -> Self {
         match error {
             thrift::Error::User(boxed_error) => {
@@ -296,5 +390,32 @@ impl OdbcError {
             }
             .build(),
         }
+    }
+
+    #[track_caller]
+    pub fn from_protobuf_error(error: ProtoError<ProtoDriverException>) -> OdbcError {
+        let location = location!();
+        match error {
+            ProtoError::Application(driver_exception) => OdbcError::ProtoDriverException {
+                message: driver_exception.message,
+                status_code: driver_exception.status_code,
+                error: Box::new(
+                    driver_exception
+                        .error
+                        .and_then(|error| error.error_type)
+                        .unwrap_or(ErrorType::GenericError(GenericError {})),
+                ),
+                location,
+                report: driver_exception.report,
+            },
+            ProtoError::Transport(message) => OdbcError::ProtoTransport { message, location },
+        }
+    }
+}
+
+impl From<ProtoError<ProtoDriverException>> for OdbcError {
+    #[track_caller]
+    fn from(error: ProtoError<ProtoDriverException>) -> Self {
+        OdbcError::from_protobuf_error(error)
     }
 }

@@ -2718,6 +2718,7 @@ dependencies = [
  "arrow",
  "lazy_static",
  "odbc-sys",
+ "proto_utils",
  "sf_core",
  "snafu 0.8.7",
  "thrift",

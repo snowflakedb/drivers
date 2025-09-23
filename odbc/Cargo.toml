@@ -17,5 +17,7 @@ odbc-sys = "0.25.1"
 lazy_static = "1.5.0"
 arrow = { version = "56.0.0", features = ["ffi"] }
 
+proto_utils = { path = "../proto_utils" }
+
 [[test]]
 name = "odbc_api_tests"

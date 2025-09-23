@@ -1,10 +1,11 @@
+use crate::api::error::Required;
 use crate::api::{
-    ConnectionState, OdbcError, OdbcResult, api_utils::cstr_to_string, conn_from_handle,
+    ConnectionState, OdbcResult, api_utils::cstr_to_string, conn_from_handle,
     error::InvalidPortSnafu,
 };
 use odbc_sys as sql;
-use sf_core::thrift_apis::DatabaseDriverV1;
-use sf_core::thrift_apis::client::create_client;
+use sf_core::protobuf_apis::database_driver_v1::DatabaseDriverClient;
+use sf_core::protobuf_gen::database_driver_v1::*;
 use snafu::ResultExt;
 use std::collections::HashMap;
 use tracing;
@@ -36,13 +37,12 @@ pub fn driver_connect(
     );
 
     let connection = conn_from_handle(connection_handle);
-    let mut client = create_client::<DatabaseDriverV1>();
-    let db_handle = client
-        .database_new()
-        .map_err(OdbcError::from_thrift_error)?;
-    let conn_handle = client
-        .connection_new()
-        .map_err(OdbcError::from_thrift_error)?;
+    let db_handle = DatabaseDriverClient::database_new(DatabaseNewRequest {})?
+        .db_handle
+        .required("Database handle is required")?;
+    let conn_handle = DatabaseDriverClient::connection_new(ConnectionNewRequest {})?
+        .conn_handle
+        .required("Connection handle is required")?;
 
     for (key, value) in connection_string_map {
         match key.as_str() {
@@ -51,139 +51,177 @@ pub fn driver_connect(
                 // ignore
             }
             "ACCOUNT" => {
-                client
-                    .connection_set_option_string(conn_handle.clone(), "account".to_owned(), value)
-                    .map_err(OdbcError::from_thrift_error)?;
+                DatabaseDriverClient::connection_set_option_string(
+                    ConnectionSetOptionStringRequest {
+                        conn_handle: Some(conn_handle),
+                        key: "account".to_owned(),
+                        value,
+                    },
+                )?;
             }
             "SERVER" => {
-                client
-                    .connection_set_option_string(conn_handle.clone(), "host".to_owned(), value)
-                    .map_err(OdbcError::from_thrift_error)?;
+                DatabaseDriverClient::connection_set_option_string(
+                    ConnectionSetOptionStringRequest {
+                        conn_handle: Some(conn_handle),
+                        key: "host".to_owned(),
+                        value,
+                    },
+                )?;
             }
             "PWD" => {
-                client
-                    .connection_set_option_string(conn_handle.clone(), "password".to_owned(), value)
-                    .map_err(OdbcError::from_thrift_error)?;
+                DatabaseDriverClient::connection_set_option_string(
+                    ConnectionSetOptionStringRequest {
+                        conn_handle: Some(conn_handle),
+                        key: "password".to_owned(),
+                        value,
+                    },
+                )?;
             }
             "UID" => {
-                client
-                    .connection_set_option_string(conn_handle.clone(), "user".to_owned(), value)
-                    .map_err(OdbcError::from_thrift_error)?;
+                DatabaseDriverClient::connection_set_option_string(
+                    ConnectionSetOptionStringRequest {
+                        conn_handle: Some(conn_handle),
+                        key: "user".to_owned(),
+                        value,
+                    },
+                )?;
             }
             "PORT" => {
                 let port_int: i64 = value.parse().context(InvalidPortSnafu {
                     port: value.clone(),
                 })?;
-                client
-                    .connection_set_option_int(conn_handle.clone(), "port".to_owned(), port_int)
-                    .map_err(OdbcError::from_thrift_error)?;
+                DatabaseDriverClient::connection_set_option_int(ConnectionSetOptionIntRequest {
+                    conn_handle: Some(conn_handle),
+                    key: "port".to_owned(),
+                    value: port_int,
+                })?;
             }
             "PROTOCOL" => {
-                client
-                    .connection_set_option_string(conn_handle.clone(), "protocol".to_owned(), value)
-                    .map_err(OdbcError::from_thrift_error)?;
+                DatabaseDriverClient::connection_set_option_string(
+                    ConnectionSetOptionStringRequest {
+                        conn_handle: Some(conn_handle),
+                        key: "protocol".to_owned(),
+                        value,
+                    },
+                )?;
             }
             "DATABASE" => {
-                client
-                    .connection_set_option_string(conn_handle.clone(), "database".to_owned(), value)
-                    .map_err(OdbcError::from_thrift_error)?;
+                DatabaseDriverClient::connection_set_option_string(
+                    ConnectionSetOptionStringRequest {
+                        conn_handle: Some(conn_handle),
+                        key: "database".to_owned(),
+                        value,
+                    },
+                )?;
             }
             "WAREHOUSE" => {
-                client
-                    .connection_set_option_string(
-                        conn_handle.clone(),
-                        "warehouse".to_owned(),
+                DatabaseDriverClient::connection_set_option_string(
+                    ConnectionSetOptionStringRequest {
+                        conn_handle: Some(conn_handle),
+                        key: "warehouse".to_owned(),
                         value,
-                    )
-                    .map_err(OdbcError::from_thrift_error)?;
+                    },
+                )?;
             }
             "ROLE" => {
-                client
-                    .connection_set_option_string(conn_handle.clone(), "role".to_owned(), value)
-                    .map_err(OdbcError::from_thrift_error)?;
+                DatabaseDriverClient::connection_set_option_string(
+                    ConnectionSetOptionStringRequest {
+                        conn_handle: Some(conn_handle),
+                        key: "role".to_owned(),
+                        value,
+                    },
+                )?;
             }
             "SCHEMA" => {
-                client
-                    .connection_set_option_string(conn_handle.clone(), "schema".to_owned(), value)
-                    .map_err(OdbcError::from_thrift_error)?;
+                DatabaseDriverClient::connection_set_option_string(
+                    ConnectionSetOptionStringRequest {
+                        conn_handle: Some(conn_handle),
+                        key: "schema".to_owned(),
+                        value,
+                    },
+                )?;
             }
             "PRIV_KEY_FILE" => {
-                client
-                    .connection_set_option_string(
-                        conn_handle.clone(),
-                        "private_key_file".to_owned(),
+                DatabaseDriverClient::connection_set_option_string(
+                    ConnectionSetOptionStringRequest {
+                        conn_handle: Some(conn_handle),
+                        key: "private_key_file".to_owned(),
                         value,
-                    )
-                    .map_err(OdbcError::from_thrift_error)?;
+                    },
+                )?;
             }
             "AUTHENTICATOR" => {
-                client
-                    .connection_set_option_string(
-                        conn_handle.clone(),
-                        "authenticator".to_owned(),
+                DatabaseDriverClient::connection_set_option_string(
+                    ConnectionSetOptionStringRequest {
+                        conn_handle: Some(conn_handle),
+                        key: "authenticator".to_owned(),
                         value,
-                    )
-                    .map_err(OdbcError::from_thrift_error)?;
+                    },
+                )?;
             }
             "PRIV_KEY_FILE_PWD" => {
-                client
-                    .connection_set_option_string(
-                        conn_handle.clone(),
-                        "private_key_password".to_owned(),
+                DatabaseDriverClient::connection_set_option_string(
+                    ConnectionSetOptionStringRequest {
+                        conn_handle: Some(conn_handle),
+                        key: "private_key_password".to_owned(),
                         value,
-                    )
-                    .map_err(OdbcError::from_thrift_error)?;
+                    },
+                )?;
             }
             "TOKEN" => {
-                client
-                    .connection_set_option_string(conn_handle.clone(), "token".to_owned(), value)
-                    .map_err(OdbcError::from_thrift_error)?;
+                DatabaseDriverClient::connection_set_option_string(
+                    ConnectionSetOptionStringRequest {
+                        conn_handle: Some(conn_handle),
+                        key: "token".to_owned(),
+                        value,
+                    },
+                )?;
             }
             "TLS_CUSTOM_ROOT_STORE_PATH" => {
-                client
-                    .connection_set_option_string(
-                        conn_handle.clone(),
-                        "custom_root_store_path".to_owned(),
+                DatabaseDriverClient::connection_set_option_string(
+                    ConnectionSetOptionStringRequest {
+                        conn_handle: Some(conn_handle),
+                        key: "custom_root_store_path".to_owned(),
                         value,
-                    )
-                    .map_err(OdbcError::from_thrift_error)?;
+                    },
+                )?;
             }
             "TLS_VERIFY_HOSTNAME" => {
-                client
-                    .connection_set_option_string(
-                        conn_handle.clone(),
-                        "verify_hostname".to_owned(),
+                DatabaseDriverClient::connection_set_option_string(
+                    ConnectionSetOptionStringRequest {
+                        conn_handle: Some(conn_handle),
+                        key: "verify_hostname".to_owned(),
                         value,
-                    )
-                    .map_err(OdbcError::from_thrift_error)?;
+                    },
+                )?;
             }
             "TLS_VERIFY_CERTIFICATES" => {
-                client
-                    .connection_set_option_string(
-                        conn_handle.clone(),
-                        "verify_certificates".to_owned(),
+                DatabaseDriverClient::connection_set_option_string(
+                    ConnectionSetOptionStringRequest {
+                        conn_handle: Some(conn_handle),
+                        key: "verify_certificates".to_owned(),
                         value,
-                    )
-                    .map_err(OdbcError::from_thrift_error)?;
+                    },
+                )?;
             }
             // CRL settings via options
             "CRL_ENABLED" => {
-                client
-                    .connection_set_option_string(
-                        conn_handle.clone(),
-                        "crl_enabled".to_owned(),
+                DatabaseDriverClient::connection_set_option_string(
+                    ConnectionSetOptionStringRequest {
+                        conn_handle: Some(conn_handle),
+                        key: "crl_enabled".to_owned(),
                         value,
-                    )
-                    .map_err(OdbcError::from_thrift_error)?;
+                    },
+                )?;
             }
             "CRL_MODE" => {
-                client
-                    .connection_set_option_string(
-                        conn_handle.clone(),
-                        "crl_mode".to_owned(),
-                        value.to_uppercase(),
-                    )
-                    .map_err(OdbcError::from_thrift_error)?;
+                DatabaseDriverClient::connection_set_option_string(
+                    ConnectionSetOptionStringRequest {
+                        conn_handle: Some(conn_handle),
+                        key: "crl_mode".to_owned(),
+                        value: value.to_uppercase(),
+                    },
+                )?;
             }
             _ => {
                 tracing::warn!("driver_connect: unknown connection string key: {:?}", key);
@@ -191,12 +229,12 @@ pub fn driver_connect(
         }
     }
 
-    client
-        .connection_init(conn_handle.clone(), db_handle.clone())
-        .map_err(OdbcError::from_thrift_error)?;
+    DatabaseDriverClient::connection_init(ConnectionInitRequest {
+        conn_handle: Some(conn_handle),
+        db_handle: Some(db_handle),
+    })?;
 
     connection.state = ConnectionState::Connected {
-        client,
         db_handle,
         conn_handle,
     };

@@ -2,9 +2,8 @@ use crate::api::{OdbcError, diagnostic::DiagnosticInfo};
 use crate::cdata_types::CDataType;
 use arrow::{array::RecordBatch, ffi_stream::ArrowArrayStreamReader};
 use odbc_sys as sql;
-use sf_core::thrift_gen::database_driver_v1::{
-    ConnectionHandle as TConnectionHandle, DatabaseHandle as TDatabaseHandle, ExecuteResult,
-    StatementHandle, TDatabaseDriverSyncClient,
+use sf_core::protobuf_gen::database_driver_v1::{
+    ConnectionHandle as TConnectionHandle, DatabaseHandle as TDatabaseHandle, StatementHandle,
 };
 use std::collections::HashMap;
 
@@ -38,7 +37,6 @@ pub struct Environment {
 pub enum ConnectionState {
     Disconnected,
     Connected {
-        client: Box<dyn TDatabaseDriverSyncClient + Send>,
         #[allow(dead_code)]
         db_handle: TDatabaseHandle,
         conn_handle: TConnectionHandle,
@@ -62,7 +60,8 @@ pub struct ParameterBinding {
 pub enum StatementState {
     Created,
     Executed {
-        result: ExecuteResult,
+        reader: ArrowArrayStreamReader,
+        rows_affected: i64,
     },
     Fetching {
         reader: ArrowArrayStreamReader,
@@ -70,12 +69,74 @@ pub enum StatementState {
         batch_idx: usize,
     },
     Done,
+    Error,
+}
+
+pub struct State<T> {
+    current_state: Option<T>,
+}
+
+/// # Safety
+/// All public functions assume that the state is not None and leave object with current state set.
+impl<T> State<T> {
+    pub fn new(initial_state: T) -> Self {
+        Self {
+            current_state: Some(initial_state),
+        }
+    }
+
+    /// # Safety
+    /// This function assumes that the state is not None, make sure to call set after taking.
+    fn take(&mut self) -> T {
+        self.current_state.take().unwrap()
+    }
+
+    fn set(&mut self, state: T) {
+        self.current_state = Some(state);
+    }
+
+    pub fn transition_or_err<R, E>(
+        &mut self,
+        f: impl Fn(T) -> Result<(T, R), (T, E)>,
+    ) -> Result<R, E> {
+        let state: T = self.take();
+        match f(state) {
+            Ok((next_state, result)) => {
+                self.set(next_state);
+                Ok(result)
+            }
+            Err((next_state, error)) => {
+                self.set(next_state);
+                Err(error)
+            }
+        }
+    }
+
+    pub fn as_ref(&self) -> &T {
+        self.current_state.as_ref().unwrap()
+    }
+}
+
+impl<T> From<T> for State<T> {
+    fn from(state: T) -> Self {
+        Self::new(state)
+    }
+}
+
+pub trait WithState<T, R> {
+    fn with_state(self, state: T) -> R;
+}
+
+impl<T, R, E> WithState<T, Result<R, (T, E)>> for Result<R, E> {
+    fn with_state(self, state: T) -> Result<R, (T, E)> {
+        self.map_err(|e| (state, e))
+    }
 }
 
 pub struct Statement<'a> {
     pub conn: &'a mut Connection,
     pub stmt_handle: StatementHandle,
-    pub state: StatementState,
+    pub state: State<StatementState>,
     pub parameter_bindings: HashMap<u16, ParameterBinding>,
     pub diagnostic_info: DiagnosticInfo,
 }

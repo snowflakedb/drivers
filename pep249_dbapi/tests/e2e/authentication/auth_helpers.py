@@ -15,6 +15,7 @@ def verify_simple_query_execution(connection):
 
 def verify_login_error(exception):
     """Verify that an exception contains a valid login error with code and message."""
+    # Debug information about the exception can be seen when tests fail
     assert exception is not None
     assert str(exception).strip() != "", "Login error message should not be empty"
 

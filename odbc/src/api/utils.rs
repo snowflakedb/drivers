@@ -21,9 +21,9 @@ pub fn row_count(statement_handle: sql::Handle, row_count_ptr: *mut sql::Len) ->
     let stmt = stmt_from_handle(statement_handle);
     let row_count_ptr = row_count_ptr as *mut i32;
 
-    match &mut stmt.state {
-        StatementState::Executed { result } => unsafe {
-            std::ptr::write(row_count_ptr, result.rows_affected as i32);
+    match stmt.state.as_ref() {
+        StatementState::Executed { rows_affected, .. } => unsafe {
+            std::ptr::write(row_count_ptr, *rows_affected as i32);
         },
         _ => unsafe {
             std::ptr::write(row_count_ptr, 0);

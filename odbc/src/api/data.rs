@@ -1,15 +1,11 @@
 use crate::api::error::{
     ArrowReadSnafu, DataNotFetchedSnafu, ExecutionDoneSnafu, FetchDataSnafu, NoMoreDataSnafu,
-    StatementNotExecutedSnafu,
+    StatementErrorStateSnafu, StatementNotExecutedSnafu,
 };
-use crate::api::{OdbcResult, StatementState, stmt_from_handle};
+use crate::api::{OdbcResult, StatementState, WithState, stmt_from_handle};
 use crate::cdata_types::{CDataType, Double, Real, SBigInt, UBigInt};
 use crate::read_arrow::{Buffer, ExtractError, ReadArrowValue, Value};
-use arrow::{
-    array::Array,
-    datatypes::Field,
-    ffi_stream::{ArrowArrayStreamReader, FFI_ArrowArrayStream},
-};
+use arrow::{array::Array, datatypes::Field};
 use odbc_sys as sql;
 use snafu::ResultExt;
 use tracing;
@@ -91,63 +87,76 @@ fn read_arrow_value(
 pub fn fetch(statement_handle: sql::Handle) -> OdbcResult<()> {
     tracing::debug!("fetch called");
     let stmt = stmt_from_handle(statement_handle);
-
-    match &mut stmt.state {
-        StatementState::Executed { result } => {
-            let stream_ptr: *mut FFI_ArrowArrayStream = result.stream.clone().into();
-            let stream: FFI_ArrowArrayStream =
-                unsafe { FFI_ArrowArrayStream::from_raw(stream_ptr) };
-            let mut reader = ArrowArrayStreamReader::try_new(stream).context(FetchDataSnafu)?;
-
-            match reader.next() {
-                Some(record_batch_result) => {
-                    let record_batch = record_batch_result.context(FetchDataSnafu)?;
-                    tracing::debug!(
-                        "fetch: fetched record_batch with {} rows",
-                        record_batch.num_rows()
-                    );
-                    stmt.state = StatementState::Fetching {
-                        reader,
-                        record_batch,
-                        batch_idx: 0,
-                    };
-                    Ok(())
-                }
-                None => {
-                    tracing::debug!("fetch: no more data available");
-                    stmt.state = StatementState::Done;
-                    NoMoreDataSnafu.fail()
-                }
+    stmt.state.transition_or_err(|state| match state {
+        StatementState::Executed { mut reader, .. } => match reader.next() {
+            Some(record_batch_result) => {
+                let record_batch = record_batch_result
+                    .context(FetchDataSnafu)
+                    .with_state(StatementState::Error)?;
+                tracing::debug!(
+                    "fetch: fetched record_batch with {} rows",
+                    record_batch.num_rows()
+                );
+                let next_state = StatementState::Fetching {
+                    reader,
+                    record_batch,
+                    batch_idx: 0,
+                };
+                Ok((next_state, ()))
             }
-        }
+            None => {
+                tracing::debug!("fetch: no more data available");
+                NoMoreDataSnafu.fail().with_state(StatementState::Done)
+            }
+        },
         StatementState::Fetching {
-            reader,
+            mut reader,
             record_batch,
             batch_idx,
         } => {
-            *batch_idx += 1;
-            if *batch_idx < record_batch.num_rows() {
-                return Ok(());
-            }
-            match reader.next() {
-                Some(new_record_batch_result) => {
-                    let new_record_batch = new_record_batch_result.context(FetchDataSnafu)?;
-                    *record_batch = new_record_batch;
-                    *batch_idx = 0;
-                    Ok(())
-                }
-                None => {
-                    tracing::debug!("fetch: no more data available");
-                    stmt.state = StatementState::Done;
-                    NoMoreDataSnafu.fail()
+            let new_batch_idx = batch_idx + 1;
+            if new_batch_idx < record_batch.num_rows() {
+                Ok((
+                    StatementState::Fetching {
+                        reader,
+                        record_batch,
+                        batch_idx: new_batch_idx,
+                    },
+                    (),
+                ))
+            } else {
+                match reader.next() {
+                    Some(new_record_batch_result) => {
+                        let new_record_batch = new_record_batch_result
+                            .context(FetchDataSnafu)
+                            .with_state(StatementState::Error)?;
+                        let next_state = StatementState::Fetching {
+                            reader,
+                            record_batch: new_record_batch,
+                            batch_idx: 0,
+                        };
+                        Ok((next_state, ()))
+                    }
+                    None => {
+                        tracing::debug!("fetch: no more data available");
+                        NoMoreDataSnafu.fail().with_state(StatementState::Done)
+                    }
                 }
             }
         }
-        _ => {
+        state @ StatementState::Error => {
+            tracing::error!("fetch: statement error");
+            StatementErrorStateSnafu.fail().with_state(state)
+        }
+        state @ StatementState::Done => {
+            tracing::debug!("fetch: statement execution is done");
+            ExecutionDoneSnafu.fail().with_state(state)
+        }
+        state @ StatementState::Created => {
             tracing::error!("fetch: statement not executed");
-            StatementNotExecutedSnafu.fail()
+            StatementNotExecutedSnafu.fail().with_state(state)
         }
-    }
+    })
 }
 
 /// Get data from a specific column
@@ -161,8 +170,7 @@ pub fn get_data(
 ) -> OdbcResult<()> {
     tracing::debug!("get_data: statement_handle={:?}", statement_handle);
     let stmt = stmt_from_handle(statement_handle);
-
-    match &mut stmt.state {
+    match stmt.state.as_ref() {
         StatementState::Fetching {
             reader: _,
             record_batch,
@@ -189,9 +197,17 @@ pub fn get_data(
             tracing::debug!("get_data: statement execution is done");
             ExecutionDoneSnafu.fail()
         }
-        _ => {
+        StatementState::Created => {
             tracing::error!("get_data: data not fetched yet");
             DataNotFetchedSnafu.fail()
+        }
+        StatementState::Error => {
+            tracing::error!("get_data: statement error");
+            StatementErrorStateSnafu.fail()
+        }
+        StatementState::Executed { .. } => {
+            tracing::error!("get_data: statement not executed");
+            StatementNotExecutedSnafu.fail()
         }
     }
 }

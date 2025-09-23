@@ -1,17 +1,23 @@
 use crate::api::api_utils::cstr_to_string;
-use crate::api::error::{ArrowBindingSnafu, DisconnectedSnafu, InvalidParameterNumberSnafu};
-use crate::api::{
-    ConnectionState, OdbcError, OdbcResult, ParameterBinding, StatementState, stmt_from_handle,
+use crate::api::error::{
+    ArrowArrayStreamReaderCreationSnafu, ArrowBindingSnafu, DisconnectedSnafu,
+    InvalidParameterNumberSnafu, Required,
 };
+use crate::api::{ConnectionState, OdbcResult, ParameterBinding, StatementState, stmt_from_handle};
 use crate::cdata_types::CDataType;
 use crate::write_arrow::odbc_bindings_to_arrow_bindings;
 use arrow::ffi::{FFI_ArrowArray, FFI_ArrowSchema};
+use arrow::ffi_stream::{ArrowArrayStreamReader, FFI_ArrowArrayStream};
 use odbc_sys as sql;
-use sf_core::thrift_gen::database_driver_v1::{ArrowArrayPtr, ArrowSchemaPtr};
+use sf_core::protobuf_apis::database_driver_v1::DatabaseDriverClient;
+use sf_core::protobuf_gen::database_driver_v1::{
+    ArrowArrayPtr, ArrowSchemaPtr, StatementBindRequest, StatementExecuteQueryRequest,
+    StatementExecuteQueryResponse, StatementPrepareRequest, StatementSetSqlQueryRequest,
+};
 use snafu::ResultExt;
 use tracing;
 
-fn thrift_from_ffi_arrow_array(raw: *mut FFI_ArrowArray) -> ArrowArrayPtr {
+fn protobuf_from_ffi_arrow_array(raw: *mut FFI_ArrowArray) -> ArrowArrayPtr {
     let len = std::mem::size_of::<*mut FFI_ArrowArray>();
     let buf_ptr = std::ptr::addr_of!(raw) as *const u8;
     let slice = unsafe { std::slice::from_raw_parts(buf_ptr, len) };
@@ -19,7 +25,7 @@ fn thrift_from_ffi_arrow_array(raw: *mut FFI_ArrowArray) -> ArrowArrayPtr {
     ArrowArrayPtr { value: vec }
 }
 
-fn thrift_from_ffi_arrow_schema(raw: *mut FFI_ArrowSchema) -> ArrowSchemaPtr {
+fn protobuf_from_ffi_arrow_schema(raw: *mut FFI_ArrowSchema) -> ArrowSchemaPtr {
     let len = std::mem::size_of::<*mut FFI_ArrowSchema>();
     let buf_ptr = std::ptr::addr_of!(raw) as *const u8;
     let slice = unsafe { std::slice::from_raw_parts(buf_ptr, len) };
@@ -38,21 +44,22 @@ pub fn exec_direct(
 
     match &mut stmt.conn.state {
         ConnectionState::Connected {
-            client,
             db_handle: _,
             conn_handle: _,
         } => {
             let query = cstr_to_string(statement_text, text_length)?;
 
-            client
-                .statement_set_sql_query(stmt.stmt_handle.clone(), query.clone())
-                .map_err(OdbcError::from_thrift_error)?;
+            DatabaseDriverClient::statement_set_sql_query(StatementSetSqlQueryRequest {
+                stmt_handle: Some(stmt.stmt_handle),
+                query,
+            })?;
 
-            let result = client
-                .statement_execute_query(stmt.stmt_handle.clone())
-                .map_err(OdbcError::from_thrift_error)?;
+            let response =
+                DatabaseDriverClient::statement_execute_query(StatementExecuteQueryRequest {
+                    stmt_handle: Some(stmt.stmt_handle),
+                })?;
 
-            stmt.state = StatementState::Executed { result };
+            stmt.state = create_execute_state(response)?.into();
             Ok(())
         }
         ConnectionState::Disconnected => {
@@ -73,7 +80,6 @@ pub fn prepare(
 
     match &mut stmt.conn.state {
         ConnectionState::Connected {
-            client,
             db_handle: _,
             conn_handle: _,
         } => {
@@ -81,14 +87,15 @@ pub fn prepare(
             tracing::debug!("prepare: query = {}", query);
 
             // Set the SQL query for the statement
-            client
-                .statement_set_sql_query(stmt.stmt_handle.clone(), query.clone())
-                .map_err(OdbcError::from_thrift_error)?;
+            DatabaseDriverClient::statement_set_sql_query(StatementSetSqlQueryRequest {
+                stmt_handle: Some(stmt.stmt_handle),
+                query,
+            })?;
 
             // Call the prepare method on the statement
-            client
-                .statement_prepare(stmt.stmt_handle.clone())
-                .map_err(OdbcError::from_thrift_error)?;
+            DatabaseDriverClient::statement_prepare(StatementPrepareRequest {
+                stmt_handle: Some(stmt.stmt_handle),
+            })?;
 
             tracing::info!("prepare: Successfully prepared statement");
             Ok(())
@@ -107,7 +114,6 @@ pub fn execute(statement_handle: sql::Handle) -> OdbcResult<()> {
 
     match &mut stmt.conn.state {
         ConnectionState::Connected {
-            client,
             db_handle: _,
             conn_handle: _,
         } => {
@@ -122,24 +128,23 @@ pub fn execute(statement_handle: sql::Handle) -> OdbcResult<()> {
                     .context(ArrowBindingSnafu {})?;
 
                 // Bind parameters to statement
-                client
-                    .statement_bind(
-                        stmt.stmt_handle.clone(),
-                        thrift_from_ffi_arrow_schema(Box::into_raw(schema)),
-                        thrift_from_ffi_arrow_array(Box::into_raw(array)),
-                    )
-                    .map_err(OdbcError::from_thrift_error)?;
+                DatabaseDriverClient::statement_bind(StatementBindRequest {
+                    stmt_handle: Some(stmt.stmt_handle),
+                    schema: Some(protobuf_from_ffi_arrow_schema(Box::into_raw(schema))),
+                    array: Some(protobuf_from_ffi_arrow_array(Box::into_raw(array))),
+                })?;
 
                 tracing::info!("Successfully bound parameters");
             }
 
             // Execute the prepared statement
-            let result = client
-                .statement_execute_query(stmt.stmt_handle.clone())
-                .map_err(OdbcError::from_thrift_error)?;
+            let response =
+                DatabaseDriverClient::statement_execute_query(StatementExecuteQueryRequest {
+                    stmt_handle: Some(stmt.stmt_handle),
+                })?;
 
             tracing::info!("execute: Successfully executed statement");
-            stmt.state = StatementState::Executed { result };
+            stmt.state = create_execute_state(response)?.into();
             Ok(())
         }
         ConnectionState::Disconnected => {
@@ -147,6 +152,20 @@ pub fn execute(statement_handle: sql::Handle) -> OdbcResult<()> {
             DisconnectedSnafu.fail()
         }
     }
+}
+
+fn create_execute_state(response: StatementExecuteQueryResponse) -> OdbcResult<StatementState> {
+    let result = response.result.required("Execute result is required")?;
+    let stream_ptr: *mut FFI_ArrowArrayStream =
+        result.stream.required("Stream is required")?.into();
+    let stream = unsafe { FFI_ArrowArrayStream::from_raw(stream_ptr) };
+    let reader =
+        ArrowArrayStreamReader::try_new(stream).context(ArrowArrayStreamReaderCreationSnafu {})?;
+    let rows_affected = result.rows_affected;
+    Ok(StatementState::Executed {
+        reader,
+        rows_affected,
+    })
 }
 
 /// Bind a parameter to a prepared statement

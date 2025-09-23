@@ -1,10 +1,12 @@
 use crate::api::{
-    Connection, ConnectionState, Environment, OdbcError, OdbcResult, Statement, StatementState,
+    Connection, ConnectionState, Environment, OdbcResult, Statement, StatementState,
     conn_from_handle,
     diagnostic::DiagnosticInfo,
-    error::{DisconnectedSnafu, InvalidHandleSnafu},
+    error::{DisconnectedSnafu, InvalidHandleSnafu, Required},
 };
 use odbc_sys as sql;
+use sf_core::protobuf_apis::database_driver_v1::DatabaseDriverClient;
+use sf_core::protobuf_gen::database_driver_v1::StatementNewRequest;
 use tracing;
 
 /// Allocate a new environment handle
@@ -33,18 +35,20 @@ pub fn alloc_statement(input_handle: sql::Handle) -> OdbcResult<*mut Statement<'
     let conn = conn_from_handle(input_handle);
     match &mut conn.state {
         ConnectionState::Connected {
-            client,
             db_handle: _,
             conn_handle,
         } => {
-            let stmt_handle = client
-                .statement_new(conn_handle.clone())
-                .map_err(OdbcError::from_thrift_error)?;
+            let response = DatabaseDriverClient::statement_new(StatementNewRequest {
+                conn_handle: Some(*conn_handle),
+            })?;
+            let stmt_handle = response
+                .stmt_handle
+                .required("Statement handle is required")?;
 
             let stmt = Box::new(Statement {
                 conn,
                 stmt_handle,
-                state: StatementState::Created,
+                state: StatementState::Created.into(),
                 parameter_bindings: std::collections::HashMap::new(),
                 diagnostic_info: DiagnosticInfo::default(),
             });
