@@ -71,14 +71,36 @@ jobs:
         env:
           PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
 
-      - name: Install llvm-cov
-        run: cargo +stable install cargo-llvm-cov
-
-      - name: Build ODBC with coverage instrumentation
+      - name: Debug and Build Rust ODBC driver
         run: |
-          RUSTFLAGS="-C instrument-coverage" cargo build --package odbc
+          echo "=== DEBUG INFO ==="
+          echo "RUSTFLAGS environment: $RUSTFLAGS"
+          echo "Cargo version: $(cargo --version)"
+          echo "Rustc version: $(rustc --version)"
+          echo ""
+          echo "=== SF_CORE CRATE CONFIG ==="
+          grep -A 5 "\[lib\]" sf_core/Cargo.toml
+          echo ""
+          echo "=== ODBC CRATE CONFIG ==="
+          grep -A 5 "\[lib\]" odbc/Cargo.toml
+          echo ""
+          echo "=== ODBC DEPENDENCIES ==="
+          grep -A 10 "\[dependencies\]" odbc/Cargo.toml
+          echo ""
+          echo "=== BUILD PLAN (DRY RUN) ==="
+          RUSTFLAGS="-C instrument-coverage" cargo build --package odbc --verbose --dry-run
+          echo ""
+          echo "=== DEPENDENCY TREE ==="
+          cargo tree --package odbc
+          echo ""
+          echo "=== ATTEMPTING ACTUAL BUILD ==="
+          echo "Building sf_core first to see what happens..."
+          RUSTFLAGS="-C instrument-coverage" cargo build --package sf_core --verbose || true
+          echo ""
+          echo "Now trying odbc build..."
+          RUSTFLAGS="-C instrument-coverage" cargo build --package odbc --verbose
 
-      - name: Build and run C++ tests
+      - name: Build and run ODBC tests
         run: |
           ls -l target/debug/
           export DRIVER_PATH=$(pwd)/target/debug/libsfodbc.so
@@ -93,10 +115,13 @@ jobs:
               .
           cmake --build cmake-build -- -j $(nproc)
           ctest -C Debug --test-dir cmake-build --output-on-failure
-
-      - name: Generate coverage report
-        run: |
-          cargo llvm-cov --package odbc --no-run --lcov --output-path ./lcov.info
+          
+          # Generate coverage report from C++ test execution
+          cd ..
+          ~/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/x86_64-unknown-linux-gnu/bin/llvm-profdata merge -sparse odbc_tests/odbc-*.profraw -o coverage.profdata
+          ~/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/x86_64-unknown-linux-gnu/bin/llvm-cov export target/debug/libsfodbc.so \
+              -instr-profile=coverage.profdata \
+              -format=lcov > lcov.info
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
