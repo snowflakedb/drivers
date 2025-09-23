@@ -87,9 +87,6 @@ jobs:
           echo "=== ODBC DEPENDENCIES ==="
           grep -A 10 "\[dependencies\]" odbc/Cargo.toml
           echo ""
-          echo "=== BUILD PLAN (DRY RUN) ==="
-          RUSTFLAGS="-C instrument-coverage" cargo build --package odbc --verbose --dry-run
-          echo ""
           echo "=== DEPENDENCY TREE ==="
           cargo tree --package odbc
           echo ""
