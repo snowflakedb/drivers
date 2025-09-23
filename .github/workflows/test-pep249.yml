@@ -31,7 +31,9 @@ jobs:
           sudo apt-get update
 
       - name: Build Rust core library
-        run: cargo build --package sf_core
+        run: |
+          # Explicitly disable coverage instrumentation for dynamic library build
+          RUSTFLAGS="" cargo build --package sf_core
 
       - name: Upload Rust artifacts
         uses: actions/upload-artifact@v4
@@ -167,7 +169,7 @@ jobs:
           CORE_PATH: ${{ github.workspace }}/target/debug/libsf_core.so
           PARAMETER_PATH: ${{ github.workspace }}/parameters.json
           REFERENCE_DRIVER_VERSION: ${{ env.PYTHON_REFERENCE_DRIVER_VERSION }}
-        run: make ci-test-integ-reference PYTHON_VERSION=${{ env.REFERENCE_PYTHON_VERSION }} OS_VERSION=${{ env.REFERENCE_OS_VERSION }}
+        run: make ci-test-reference PYTHON_VERSION=${{ env.REFERENCE_PYTHON_VERSION }} OS_VERSION=${{ env.REFERENCE_OS_VERSION }}
         working-directory: pep249_dbapi
 
       - name: Upload test results as GitHub artifact
