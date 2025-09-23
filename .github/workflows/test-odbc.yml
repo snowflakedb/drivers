@@ -74,11 +74,15 @@ jobs:
       - name: Install llvm-cov
         run: cargo +stable install cargo-llvm-cov
 
-      - name: Build Rust ODBC driver with coverage instrumentation
+      - name: Build sf_core without instrumentation
+        run: |
+          cargo build --package sf_core
+
+      - name: Build ODBC with coverage instrumentation
         run: |
           RUSTFLAGS="-C instrument-coverage" cargo build --package odbc
 
-      - name: Build and run C++ tests
+      - name: Run C++ tests
         run: |
           ls -l target/debug/
           export DRIVER_PATH=$(pwd)/target/debug/libsfodbc.so
@@ -94,7 +98,7 @@ jobs:
           cmake --build cmake-build -- -j $(nproc)
           ctest -C Debug --test-dir cmake-build --output-on-failure
 
-      - name: Process coverage data
+      - name: Generate coverage report
         run: |
           cargo llvm-cov --package odbc --no-run --lcov --output-path ./lcov.info
 
