@@ -1,4 +1,4 @@
-name: Validate generated test data
+name: Validate generated data
 
 on:
   pull_request:
@@ -6,7 +6,7 @@ on:
     branches: [ main ]
 
 jobs:
-  validate:
+  test-data:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -43,4 +43,30 @@ jobs:
             exit 1
           fi
           echo "Generated test data matches repository."
+
+  thrift:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Generate thrift
+        uses: ./.github/actions/generate-thrift
+
+      - name: Check thrift files are up-to-date
+        run: git diff --exit-code
+        
+  proto:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Generate proto
+        run: |
+          ./scripts/generate_proto.sh
+          cargo fmt --all --
+
+      - name: Check proto files are up-to-date
+        run: git diff --exit-code
 

@@ -30,6 +30,10 @@ jwt = { version = "0.16.0", features = ["openssl"] }
 infer = "0.19.0"
 lazy_static = "1.5.0"
 
+# Proto
+prost = "0.14.1"
+proto_utils = { path = "../proto_utils" }
+
 # AWS SDK dependencies
 aws-sdk-s3 = "1.103.0"
 aws-config = "1.8.5"

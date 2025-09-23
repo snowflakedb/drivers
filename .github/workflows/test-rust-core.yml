@@ -64,18 +64,6 @@ jobs:
       - name: Run clippy
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
   
-  thrift:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Generate thrift
-        uses: ./.github/actions/generate-thrift
-
-      - name: Check thrift files are up-to-date
-        run: git diff --exit-code
-        
   test:
     runs-on: ubuntu-latest
     steps:
