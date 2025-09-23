@@ -95,90 +95,14 @@ jobs:
           
           # Generate coverage report from C++ test execution
           cd ..
-          echo "=========================================="
-          echo "=== COMPREHENSIVE COVERAGE DEBUGGING ==="
-          echo "=========================================="
-          echo ""
-          echo "=== CURRENT WORKING DIRECTORY ==="
-          pwd
-          ls -la
-          echo ""
-          echo "=== SEARCHING FOR PROFRAW FILES ==="
-          find . -name "*.profraw" -type f -exec ls -la {} \; 2>/dev/null || echo "No .profraw files found in current directory tree"
-          echo ""
-          echo "=== CHECKING ODBC_TESTS DIRECTORY ==="
-          ls -la odbc_tests/ || echo "odbc_tests directory not found"
-          find odbc_tests/ -name "*.profraw" -type f -exec ls -la {} \; 2>/dev/null || echo "No .profraw files in odbc_tests/"
-          echo ""
-          echo "=== LLVM_PROFILE_FILE ENVIRONMENT ==="
-          echo "LLVM_PROFILE_FILE was set to: odbc-%p-%m.profraw"
-          echo ""
-          echo "=== SEARCHING ENTIRE SYSTEM FOR PROFRAW ==="
-          find /home/runner/work/universal-driver/ -name "*.profraw" -type f -exec ls -la {} \; 2>/dev/null || echo "No .profraw files found anywhere in work directory"
-          echo ""
-          echo "=== FINDING LLVM TOOLS ==="
-          find ~/.rustup -name "llvm-profdata" -type f 2>/dev/null | while read tool; do
-            echo "Found llvm-profdata at: $tool"
-            ls -la "$tool"
-            "$tool" --version || echo "Failed to get version"
-          done
-          find ~/.rustup -name "llvm-cov" -type f 2>/dev/null | while read tool; do
-            echo "Found llvm-cov at: $tool"
-            ls -la "$tool"
-            "$tool" --version || echo "Failed to get version"
-          done
-          echo ""
-          echo "=== SETTING TOOL PATHS ==="
           LLVM_PROFDATA=$(find ~/.rustup -name "llvm-profdata" -type f 2>/dev/null | head -1)
           LLVM_COV=$(find ~/.rustup -name "llvm-cov" -type f 2>/dev/null | head -1)
-          echo "LLVM_PROFDATA: $LLVM_PROFDATA"
-          echo "LLVM_COV: $LLVM_COV"
-          echo ""
-          if [ -n "$LLVM_PROFDATA" ] && [ -n "$LLVM_COV" ]; then
-            echo "=== TESTING LLVM TOOLS ==="
-            echo "Testing llvm-profdata..."
-            $LLVM_PROFDATA --help | head -5 || echo "llvm-profdata help failed"
-            echo "Testing llvm-cov..."
-            $LLVM_COV --help | head -5 || echo "llvm-cov help failed"
-            echo ""
-            echo "=== ATTEMPTING COVERAGE GENERATION ==="
-            echo "Looking for profraw files matching: odbc_tests/odbc-*.profraw"
-            ls -la odbc_tests/odbc-*.profraw 2>/dev/null || echo "No files match odbc_tests/odbc-*.profraw pattern"
-            echo ""
-            echo "Running merge command..."
-            $LLVM_PROFDATA merge -sparse odbc_tests/odbc-*.profraw -o coverage.profdata || {
-              echo "Merge failed, trying alternative profraw locations..."
-              find . -name "odbc-*.profraw" -type f | while read f; do echo "Found: $f"; done
-              echo "Trying to merge any odbc profraw files found..."
-              find . -name "odbc-*.profraw" -type f | xargs $LLVM_PROFDATA merge -sparse -o coverage.profdata || echo "Alternative merge also failed"
-            }
-            echo ""
-            if [ -f coverage.profdata ]; then
-              echo "coverage.profdata created successfully!"
-              ls -la coverage.profdata
-              echo "Running llvm-cov export..."
-              $LLVM_COV export target/debug/libsfodbc.so \
-                  -instr-profile=coverage.profdata \
-                  -format=lcov > lcov.info || echo "llvm-cov export failed"
-              echo ""
-              if [ -f lcov.info ]; then
-                echo "lcov.info created successfully!"
-                ls -la lcov.info
-                echo "First 10 lines of lcov.info:"
-                head -10 lcov.info
-              else
-                echo "lcov.info was not created"
-              fi
-            else
-              echo "coverage.profdata was not created"
-            fi
-          else
-            echo "❌ LLVM tools not found!"
-          fi
-          echo ""
-          echo "=== FINAL FILE LISTING ==="
-          ls -la coverage.* lcov.* 2>/dev/null || echo "No coverage/lcov files found"
-          echo "=========================================="
+          find . -name "odbc-*.profraw" -type f | xargs $LLVM_PROFDATA merge -sparse -o coverage.profdata
+          $LLVM_COV export target/debug/libsfodbc.so \
+              -instr-profile=coverage.profdata \
+              -format=lcov \
+              -sources=$(pwd)/odbc \
+              -sources=$(pwd)/sf_core > lcov.info
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
