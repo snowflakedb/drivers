@@ -74,10 +74,15 @@ jobs:
       - name: Install llvm-cov
         run: cargo +stable install cargo-llvm-cov
 
-      - name: Build Rust ODBC driver
-        run: cargo build
+      - name: Build sf_core without instrumentation
+        run: |
+          cargo build --package sf_core
 
-      - name: Build and run ODBC tests
+      - name: Build ODBC with coverage instrumentation
+        run: |
+          RUSTFLAGS="-C instrument-coverage" cargo build --package odbc
+
+      - name: Build and run C++ tests
         run: |
           ls -l target/debug/
           export DRIVER_PATH=$(pwd)/target/debug/libsfodbc.so
