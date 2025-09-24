@@ -1,3 +1,15 @@
+use snafu::{Location, Snafu};
+
+#[derive(Snafu, Debug)]
+#[snafu(visibility(pub))]
+pub enum QueryTypesError {
+    #[snafu(display("Invalid fixed type: scale must be 0"))]
+    InvalidFixedScale {
+        #[snafu(implicit)]
+        location: Location,
+    },
+}
+
 pub enum RowType {
     Fixed {
         name: String,
@@ -14,9 +26,16 @@ pub enum RowType {
 }
 
 impl RowType {
-    pub fn fixed(name: &str, nullable: bool, precision: u64, scale: u64) -> Result<Self, String> {
+    pub fn fixed(
+        name: &str,
+        nullable: bool,
+        precision: u64,
+        scale: u64,
+    ) -> Result<Self, QueryTypesError> {
         if scale != 0 {
-            return Err("Fixed types are supported only for scale equal to 0.".to_string());
+            return Err(QueryTypesError::InvalidFixedScale {
+                location: snafu::Location::new(file!(), line!(), 0),
+            });
         }
         Ok(RowType::Fixed {
             name: name.to_string(),

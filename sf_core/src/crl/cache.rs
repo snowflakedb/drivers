@@ -26,8 +26,6 @@ pub struct CrlCache {
     http_client: reqwest::Client,
 }
 
-// Outcome memoization removed for now; can be reintroduced if needed
-
 #[derive(Debug, Clone)]
 struct CrlMetrics {
     get_total: Counter<u64>,
@@ -65,27 +63,37 @@ impl CrlCache {
         use crate::tls::revocation::{RevocationError, RevocationOutcome};
         // Extract CRL URLs
         let crl_urls = crate::crl::certificate_parser::extract_crl_distribution_points(cert_der)
-            .map_err(|e| RevocationError::Crl(format!("{e:?}")))?;
+            .map_err(|e| RevocationError::Crl {
+                message: format!("{e:?}"),
+                location: snafu::Location::new(file!(), line!(), 0),
+            })?;
         if crl_urls.is_empty() {
             return Ok(RevocationOutcome::NotDetermined);
         }
         // Get certificate serial
         let serial = crate::crl::certificate_parser::get_certificate_serial_number(cert_der)
-            .map_err(|e| RevocationError::Crl(format!("{e:?}")))?;
+            .map_err(|e| RevocationError::Crl {
+                message: format!("{e:?}"),
+                location: snafu::Location::new(file!(), line!(), 0),
+            })?;
         // Try URLs
         for url in crl_urls.iter() {
-            let bytes = self
-                .get(url)
-                .await
-                .map_err(|e| RevocationError::Crl(format!("{e:?}")))?;
+            let bytes = self.get(url).await.map_err(|e| RevocationError::Crl {
+                message: format!("{e:?}"),
+                location: snafu::Location::new(file!(), line!(), 0),
+            })?;
             if let Err(_e) =
                 crate::tls::x509_utils::verify_crl_signature_best_effort(&bytes, issuer_der)
             {
                 continue;
             }
-            let is_revoked =
-                crate::crl::certificate_parser::check_certificate_in_crl(&serial, &bytes)
-                    .map_err(|e| RevocationError::Crl(format!("{e:?}")))?;
+            let is_revoked = crate::crl::certificate_parser::check_certificate_in_crl(
+                &serial, &bytes,
+            )
+            .map_err(|e| RevocationError::Crl {
+                message: format!("{e:?}"),
+                location: snafu::Location::new(file!(), line!(), 0),
+            })?;
             if is_revoked {
                 return Ok(RevocationOutcome::Revoked {
                     reason: None,

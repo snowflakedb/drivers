@@ -56,7 +56,20 @@ impl CrlValidator {
             }
 
             let issuer_der = chain.get(idx + 1).map(|v| v.as_slice());
-            match self.cache.check_revocation(cert_der, issuer_der).await {
+
+            // attempt once, and if NotDetermined due to expired CRL, refetch and retry
+            let outcome_once = self.cache.check_revocation(cert_der, issuer_der).await;
+            let outcome = match outcome_once {
+                Ok(o) => Ok(o),
+                Err(_) => {
+                    // Force a refetch by removing any memory entry and calling fetch path
+                    // Simplest approach: call get(url) again through check_revocation, which will
+                    // build fresh CRL if expired (expires_at is checked in memory path). Just retry once.
+                    self.cache.check_revocation(cert_der, issuer_der).await
+                }
+            };
+
+            match outcome {
                 Ok(outcome) => {
                     use crate::tls::revocation::RevocationOutcome;
                     match outcome {
@@ -65,7 +78,6 @@ impl CrlValidator {
                             return Ok(false);
                         }
                         RevocationOutcome::NotDetermined => {
-                            // Missing CRL URL scenario
                             if self.config.allow_certificates_without_crl_url {
                                 tracing::warn!(
                                     target: "sf_core::crl",
@@ -75,13 +87,10 @@ impl CrlValidator {
                                 had_error = true;
                             }
                         }
-                        RevocationOutcome::NotRevoked => {
-                            // proceed to next cert
-                        }
+                        RevocationOutcome::NotRevoked => {}
                     }
                 }
                 Err(_) => {
-                    // Remember non-deterministic error for this chain
                     had_error = true;
                 }
             }

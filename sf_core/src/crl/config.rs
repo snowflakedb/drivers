@@ -26,7 +26,6 @@ pub struct CrlConfig {
     pub allow_certificates_without_crl_url: bool,
     pub http_timeout: Duration,
     pub connection_timeout: Duration,
-    pub outcome_cache_capacity: usize,
 }
 
 impl Default for CrlConfig {
@@ -40,7 +39,6 @@ impl Default for CrlConfig {
             allow_certificates_without_crl_url: false,
             http_timeout: Duration::seconds(30),
             connection_timeout: Duration::seconds(10),
-            outcome_cache_capacity: 10_000,
         }
     }
 }
@@ -93,10 +91,6 @@ impl CrlConfig {
             .get_int("crl_connection_timeout")
             .map(Duration::seconds)
             .unwrap_or(Duration::seconds(10));
-        let outcome_cache_capacity = settings
-            .get_int("crl_outcome_cache_capacity")
-            .map(|v| if v <= 0 { 10_000 } else { v as usize })
-            .unwrap_or(10_000);
         Ok(Self {
             check_mode,
             enable_disk_caching,
@@ -106,7 +100,6 @@ impl CrlConfig {
             allow_certificates_without_crl_url,
             http_timeout,
             connection_timeout,
-            outcome_cache_capacity,
         })
     }
 }

@@ -185,15 +185,6 @@ pub fn driver_connect(
                     )
                     .map_err(OdbcError::from_thrift_error)?;
             }
-            "CRL_OUTCOME_CACHE_CAPACITY" => {
-                client
-                    .connection_set_option_string(
-                        conn_handle.clone(),
-                        "crl_outcome_cache_capacity".to_owned(),
-                        value,
-                    )
-                    .map_err(OdbcError::from_thrift_error)?;
-            }
             _ => {
                 tracing::warn!("driver_connect: unknown connection string key: {:?}", key);
             }

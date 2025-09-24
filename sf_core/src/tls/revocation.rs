@@ -8,8 +8,15 @@ pub enum RevocationOutcome {
     NotDetermined,
 }
 
-#[derive(thiserror::Error, Debug)]
+use snafu::{Location, Snafu};
+
+#[derive(Snafu, Debug)]
+#[snafu(visibility(pub))]
 pub enum RevocationError {
-    #[error("CRL error: {0}")]
-    Crl(String),
+    #[snafu(display("CRL error: {message}"))]
+    Crl {
+        message: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
 }
