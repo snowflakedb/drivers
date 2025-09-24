@@ -102,9 +102,11 @@ jobs:
               -instr-profile=coverage.profdata \
               -format=lcov \
               -sources=$(pwd)/odbc \
-              -sources=$(pwd)/sf_core \
-              -ignore-filename-regex=".*/tests/common/.*" \
-              -ignore-filename-regex=".*/tests/tests_format_validator/.*" > lcov.info
+              -sources=$(pwd)/sf_core > lcov_raw.info
+          
+          # Filter out test files from coverage report
+          grep -v "tests/common/" lcov_raw.info | grep -v "tests/tests_format_validator/" > lcov.info
+          echo "Filtered coverage report to exclude test directories"
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
