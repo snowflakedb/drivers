@@ -104,16 +104,16 @@ jobs:
               -sources=$(pwd)/odbc \
               -sources=$(pwd)/sf_core > lcov_raw.info
           
-          # Debug: Show what files are in the raw coverage before filtering
-          echo "=== FILES IN RAW COVERAGE ==="
-          grep "^SF:" lcov_raw.info | head -20
+          # Debug: Show ALL test files in the raw coverage
+          echo "=== TEST FILES IN RAW COVERAGE ==="
+          grep "^SF:" lcov_raw.info | grep -v "/.cargo/registry/" | grep "/tests/"
           
           # Filter out test files from coverage report
           grep -v "tests/common/" lcov_raw.info | grep -v "tests/tests_format_validator/" > lcov.info
           
-          # Debug: Show what files remain after filtering
-          echo "=== FILES AFTER FILTERING ==="
-          grep "^SF:" lcov.info | head -20
+          # Debug: Show ALL test files after filtering
+          echo "=== TEST FILES AFTER FILTERING ==="
+          grep "^SF:" lcov.info | grep -v "/.cargo/registry/" | grep "/tests/"
           
           echo "=== FILTERING STATS ==="
           echo "Raw coverage lines: $(wc -l < lcov_raw.info)"
