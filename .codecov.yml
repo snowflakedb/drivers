@@ -5,7 +5,7 @@ codecov:
 
 flag_management:
   default_rules:
-    carryforward: true
+    carryforward: false
     carryforward_mode: "all"
 
 flags:
