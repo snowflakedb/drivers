@@ -1,6 +1,7 @@
 codecov:
   notify:
     wait_for_ci: true
+    require_ci_to_pass: true
 
 flag_management:
   default_rules:
@@ -21,11 +22,13 @@ x-component: &component
   target: auto
   threshold: 2%
   base: auto
+  if_ci_failed: error
 
 x-patch-component: &patch-component
   target: 75%
   threshold: 5%
   base: auto
+  if_ci_failed: error
 
 coverage:
   precision: 2
@@ -39,7 +42,7 @@ coverage:
         <<: *component
         flags: [rust, python, jdbc, odbc]
         flag_coverage_not_uploaded_behavior: exclude
-      # Individual component statuses  
+      # Individual component statuses
       rust:    { <<: *component, flags: [rust] }
       python:  { <<: *component, flags: [python] }
       jdbc:    { <<: *component, flags: [jdbc] }
@@ -76,7 +79,11 @@ ignore:
   # Specific test paths to exclude
   - "sf_core/tests/"
   - "tests/tests_format_validator/"
+  - "tests/tests_format_validator/**"
   - "**/tests_format_validator/"
+  - "**/tests_format_validator/**"
+  - "tests/tests_format_validator/src/"
+  - "tests/tests_format_validator/src/**"
   
   # Build artifacts
   - "**/target/"
