@@ -27,6 +27,7 @@ dependencies {
     implementation 'org.apache.arrow:arrow-memory-core:17.0.0'
     implementation 'org.apache.arrow:arrow-memory-netty:17.0.0'
     implementation 'org.apache.arrow:arrow-c-data:17.0.0'
+    implementation 'com.google.protobuf:protobuf-java:4.32.1'
 }
 
 sourceSets {
@@ -101,6 +102,8 @@ test {
     useJUnit()
     if (JavaVersion.current().isJava9Compatible()) {
         jvmArgs '--add-opens=java.base/java.nio=org.apache.arrow.memory.core,ALL-UNNAMED'
+    }
+    if (JavaVersion.current().isCompatibleWith(JavaVersion.VERSION_19)) {
         jvmArgs '--enable-native-access=ALL-UNNAMED'
     }
     testLogging {
@@ -109,6 +112,22 @@ test {
         showExceptions true
         showCauses true
         showStackTraces true
+    }
+    // Set CORE_PATH environment variable for tests
+    def libPath = file('../target/debug').exists() ? '../target/debug' : '../target/release'
+    def libName = System.getProperty('os.name').toLowerCase().contains('mac') ? 'libjdbc_bridge.dylib' : 
+                  System.getProperty('os.name').toLowerCase().contains('windows') ? 'jdbc_bridge.dll' : 
+                  'libjdbc_bridge.so'
+    environment 'CORE_PATH', file("${libPath}/${libName}").absolutePath
+    environment 'PARAMETER_PATH', file('../parameters.json').absolutePath
+    
+    // Set library path for dependencies
+    if (System.getProperty('os.name').toLowerCase().contains('mac')) {
+        // Find aws-lc-fips libraries
+        def awsLcPath = fileTree(dir: '../target/debug/build', include: '**/libaws_lc_fips_0_13_8_*.dylib').files.first()?.parentFile?.absolutePath
+        if (awsLcPath != null) {
+            environment 'DYLD_LIBRARY_PATH', "${awsLcPath}:${libPath}"
+        }
     }
 }
 

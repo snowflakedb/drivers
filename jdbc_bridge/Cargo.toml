@@ -9,6 +9,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 sf_core = { path = "../sf_core" }
+proto_utils = { path = "../proto_utils" }
 tracing-subscriber = { version = "0.3.19", features = ["fmt", "env-filter"] }
 tracing = "0.1.41"
 

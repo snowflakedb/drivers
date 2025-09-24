@@ -44,6 +44,22 @@ pub(super) fn camel_to_snake_case(s: &str) -> String {
     result
 }
 
+/// Convert snake_case string to PascalCase
+/// e.g., "database_driver_v1" -> "DatabaseDriverV1"
+pub(super) fn snake_to_pascal_case(name: &str) -> String {
+    name.split('_')
+        .map(|word| {
+            let mut chars = word.chars();
+            match chars.next() {
+                None => String::new(),
+                Some(first) => {
+                    first.to_uppercase().collect::<String>() + &chars.as_str().to_lowercase()
+                }
+            }
+        })
+        .collect()
+}
+
 pub(super) fn run_protoc(input_file: PathBuf) -> Result<FileDescriptorSet, Whatever> {
     let output_dir = tempfile::tempdir().whatever_context("Failed to create temp directory")?;
     let input_filename = input_file

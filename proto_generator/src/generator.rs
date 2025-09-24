@@ -133,8 +133,13 @@ impl GenerationResult {
 
     pub fn write_generated_files(&self, base_path: &Path) -> Result<(), Whatever> {
         for (path, file) in &self.files {
-            std::fs::write(base_path.join(path), &file.content)
-                .whatever_context("Failed to write file")?;
+            let full_path = base_path.join(path);
+            // Create parent directories if they don't exist
+            if let Some(parent) = full_path.parent() {
+                std::fs::create_dir_all(parent)
+                    .whatever_context("Failed to create parent directories")?;
+            }
+            std::fs::write(&full_path, &file.content).whatever_context("Failed to write file")?;
         }
         Ok(())
     }
@@ -243,6 +248,10 @@ impl GeneratorOption {
             let file_path = base_path.join(path);
 
             // Create directory if it doesn't exist
+            if let Some(parent) = file_path.parent() {
+                std::fs::create_dir_all(parent)
+                    .whatever_context("Failed to create parent directories")?;
+            }
             std::fs::write(&file_path, &file.content).whatever_context("Failed to write file")?;
             println!("Generated: {}", file_path.display());
         }

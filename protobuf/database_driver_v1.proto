@@ -1,6 +1,7 @@
 syntax = "proto3";
 
 package database_driver_v1;
+option java_package = "com.snowflake.unicore.protobuf_gen";
 
 import "google/protobuf/descriptor.proto";
 

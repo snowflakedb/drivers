@@ -1,6 +1,7 @@
 package com.snowflake.jdbc;
 
-import com.snowflake.jdbc.thrift_gen.ExecuteResult;
+import com.snowflake.unicore.protobuf_gen.DatabaseDriverV1.ExecuteResult;
+import com.google.protobuf.ByteString;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -44,9 +45,10 @@ public class SnowflakeResultSet implements ResultSet {
     private ArrowReader reader;
     private BufferAllocator allocator;
 
-    public SnowflakeResultSet(SnowflakeStatement statement, ExecuteResult result) throws IOException {
+    public SnowflakeResultSet(SnowflakeStatement statement, ExecuteResult result) {
         this.statement = statement;
-        long ptr = Long.reverseBytes(result.stream.value.getLong());
+        ByteString stream_ptr_bytes = result.getStream().getValue();
+        long ptr = ByteBuffer.wrap(stream_ptr_bytes.toByteArray()).order(ByteOrder.LITTLE_ENDIAN).getLong();
         this.stream = ArrowArrayStream.wrap(ptr);
         this.allocator = new RootAllocator(Long.MAX_VALUE);
         this.reader = Data.importArrayStream(this.allocator, this.stream);

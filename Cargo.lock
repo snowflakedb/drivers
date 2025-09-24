@@ -2267,6 +2267,7 @@ name = "jdbc_bridge"
 version = "0.1.0"
 dependencies = [
  "jni",
+ "proto_utils",
  "sf_core",
  "tracing",
  "tracing-subscriber",
@@ -3180,6 +3181,7 @@ dependencies = [
  "serde_json",
  "snafu 0.7.5",
  "tempfile",
+ "walkdir",
 ]
 
 [[package]]

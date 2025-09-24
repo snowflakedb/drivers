@@ -1,10 +1,14 @@
 package com.snowflake.jdbc;
 
-import com.snowflake.jdbc.thrift_gen.ExecuteResult;
-import com.snowflake.jdbc.thrift_gen.StatementHandle;
-import org.apache.thrift.TException;
+import com.snowflake.unicore.protobuf_gen.DatabaseDriverService;
+import com.snowflake.unicore.protobuf_gen.DatabaseDriverV1.StatementHandle;
+import com.snowflake.unicore.protobuf_gen.DatabaseDriverV1.ExecuteResult;
+import com.snowflake.unicore.protobuf_gen.DatabaseDriverV1.StatementNewRequest;
+import com.snowflake.unicore.protobuf_gen.DatabaseDriverV1.StatementSetSqlQueryRequest;
+import com.snowflake.unicore.protobuf_gen.DatabaseDriverV1.StatementExecuteQueryRequest;
+import com.snowflake.unicore.protobuf_gen.DatabaseDriverV1.StatementExecuteQueryResponse;
+import com.snowflake.unicore.ProtobufApis;
 
-import java.io.IOException;
 import java.sql.*;
 
 /**
@@ -24,9 +28,13 @@ public class SnowflakeStatement implements Statement {
     
     public SnowflakeStatement(SnowflakeConnection connection) {
         this.connection = connection;
+        StatementNewRequest statementNewRequest =
+            StatementNewRequest.newBuilder()
+                .setConnHandle(connection.connectionHandle)
+                .build();
         try {
-            this.statementHandle = this.connection.driverApi.statementNew(this.connection.connectionHandle);
-        } catch (TException e) {
+            this.statementHandle = ProtobufApis.databaseDriverV1.statementNew(statementNewRequest).getStmtHandle();
+        } catch (DatabaseDriverService.ServiceException e) {
             throw new RuntimeException(e);
         }
     }
@@ -34,18 +42,26 @@ public class SnowflakeStatement implements Statement {
     @Override
     public ResultSet executeQuery(String sql) throws SQLException {
         checkClosed();
+        StatementSetSqlQueryRequest statementSetSqlQueryRequest =
+            StatementSetSqlQueryRequest.newBuilder()
+                .setStmtHandle(statementHandle)
+                .setQuery(sql)
+                .build();
         try {
-            this.connection.driverApi.statementSetSqlQuery(this.statementHandle, sql);
-        } catch (TException e) {
+            ProtobufApis.databaseDriverV1.statementSetSqlQuery(statementSetSqlQueryRequest);
+        } catch(DatabaseDriverService.ServiceException e) {
             throw new RuntimeException(e);
         }
 
+        StatementExecuteQueryRequest statementExecuteQueryRequest =
+            StatementExecuteQueryRequest.newBuilder()
+                .setStmtHandle(statementHandle)
+                .build();
         try {
-            ExecuteResult result = this.connection.driverApi.statementExecuteQuery(this.statementHandle);
-            return new SnowflakeResultSet(this, result);
-        } catch (TException e) {
-            throw new RuntimeException(e);
-        } catch (IOException e) {
+            StatementExecuteQueryResponse result = ProtobufApis.databaseDriverV1.statementExecuteQuery(statementExecuteQueryRequest);
+            ExecuteResult executeResult = result.getResult();
+            return new SnowflakeResultSet(this, executeResult);
+        } catch (DatabaseDriverService.ServiceException e) {
             throw new RuntimeException(e);
         }
     }

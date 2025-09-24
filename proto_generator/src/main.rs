@@ -1,6 +1,6 @@
 use clap::{Arg, ArgMatches, Command};
 use proto_generator::{CodeGenerator, GenerationResult, GeneratorContext};
-use proto_generator::{JsonGenerator, PythonGenerator, RustGenerator};
+use proto_generator::{JavaGenerator, JsonGenerator, PythonGenerator, RustGenerator};
 use snafu::Whatever;
 use std::path::{Path, PathBuf};
 
@@ -10,7 +10,8 @@ lazy_static! {
     static ref generators: Vec<Box<dyn CodeGenerator + Sync>> = vec![
         Box::new(RustGenerator::new()),
         Box::new(JsonGenerator::new()),
-        Box::new(PythonGenerator::new())
+        Box::new(PythonGenerator::new()),
+        Box::new(JavaGenerator::new())
     ];
 }
 
