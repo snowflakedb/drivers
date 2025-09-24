@@ -72,18 +72,29 @@ comment:
 ignore:
   # Test files and documentation
   - "tests/"
+  - "tests/**/*"
+  - "**/tests/"
+  - "**/tests/**/*"
   - "**/*.md"
   - "odbc_tests/"
+  - "odbc_tests/**/*"
   - "scripts/"
   
-  # Specific test paths to exclude
+  # Specific test paths to exclude - COMPLETE EXCLUSION
   - "sf_core/tests/"
+  - "sf_core/tests/**"
+  - "tests/common/"
+  - "tests/common/**"
+  - "**/tests/common/"
+  - "**/tests/common/**"
   - "tests/tests_format_validator/"
   - "tests/tests_format_validator/**"
   - "**/tests_format_validator/"
   - "**/tests_format_validator/**"
   - "tests/tests_format_validator/src/"
   - "tests/tests_format_validator/src/**"
+  - "**/tests_format_validator/src/"
+  - "**/tests_format_validator/src/**"
   
   # Build artifacts
   - "**/target/"
