@@ -32,7 +32,6 @@ jobs:
 
       - name: Build Rust core library
         run: |
-          # Explicitly disable coverage instrumentation for dynamic library build
           RUSTFLAGS="" cargo build --package sf_core
 
       - name: Upload Rust artifacts
@@ -191,7 +190,7 @@ jobs:
         uses: astral-sh/setup-uv@v4
         with:
           version: "0.5.11"
-      
+
       - name: Download universal test results
         uses: actions/download-artifact@v4
         with: 

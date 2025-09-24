@@ -34,12 +34,24 @@ coverage:
 
   status:
     project:
+      # Overall status waits for all expected coverage flags
+      default:
+        <<: *component
+        flags: [rust, python, jdbc, odbc]
+        flag_coverage_not_uploaded_behavior: exclude
+      # Individual component statuses  
       rust:    { <<: *component, flags: [rust] }
       python:  { <<: *component, flags: [python] }
       jdbc:    { <<: *component, flags: [jdbc] }
       odbc:    { <<: *component, flags: [odbc] }
         
     patch:
+      # Overall patch status waits for all expected coverage flags
+      default:
+        <<: *patch-component
+        flags: [rust, python, jdbc, odbc]
+        flag_coverage_not_uploaded_behavior: exclude
+      # Individual component statuses
       rust:    { <<: *patch-component, flags: [rust] }
       python:  { <<: *patch-component, flags: [python] }
       jdbc:    { <<: *patch-component, flags: [jdbc] }
@@ -48,7 +60,7 @@ coverage:
 comment:
   layout: "header,diff,flags,tree"
   behavior: default
-  require_changes: true
+  require_changes: false
   require_base: true
   require_head: true
   branches: ["main", "develop"]
@@ -60,6 +72,11 @@ ignore:
   - "**/*.md"
   - "odbc_tests/"
   - "scripts/"
+  
+  # Specific test paths to exclude
+  - "sf_core/tests/"
+  - "tests/tests_format_validator/"
+  - "**/tests_format_validator/"
   
   # Build artifacts
   - "**/target/"
