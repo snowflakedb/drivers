@@ -2,19 +2,18 @@ use std::env;
 use std::path::PathBuf;
 
 fn main() {
-    // Always include an rpath relative to the loaded library location so colocated deps work
+    // Loader-relative rpath so colocated deps resolve at runtime
     if cfg!(target_os = "macos") {
         println!("cargo:rustc-link-arg=-Wl,-rpath,@loader_path");
     } else if cfg!(target_os = "linux") {
         println!("cargo:rustc-link-arg=-Wl,-rpath,$ORIGIN");
     }
 
-    // Best-effort: add rpath to AWS-LC artifacts if present in target dir layout
-    // target/debug/build/aws-lc-fips-sys-*/out/build/artifacts
+    // Best-effort: add absolute rpath to aws-lc artifacts dir if present
     if let Ok(out_dir) = env::var("OUT_DIR") {
-        // OUT_DIR typically looks like: target/debug/build/sf_core-<hash>/out
+        // OUT_DIR typically looks like: target/debug/build/odbc-<hash>/out
         let mut p = PathBuf::from(out_dir);
-        // Walk up the directory tree until we find the "build" directory.
+        // Walk up the directory tree until we find the "build" directory
         while let Some(component) = p.file_name() {
             if component == "build" {
                 break;
@@ -31,7 +30,6 @@ fn main() {
                 if name.starts_with("aws-lc-fips-sys-") {
                     let artifacts_abs = entry.path().join("out/build/artifacts");
                     if artifacts_abs.is_dir() {
-                        // Compute relative path from the produced dylib location to artifacts dir.
                         println!(
                             "cargo:rustc-link-arg=-Wl,-rpath,{}",
                             artifacts_abs.display()

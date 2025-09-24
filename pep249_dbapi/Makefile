@@ -7,17 +7,18 @@ REFERENCE_DRIVER_VERSION ?= 3.17.2
 PYTEST_ARGS ?=
 FAIL_ON_REGRESSIONS ?= 0
 
+# Project root (absolute)
+PROJECT_ROOT := $(abspath ..)
+
 # Library search paths (for dependent native libs)
-# Default search locations
-DEFAULT_LIB_DEBUG := $(shell cd .. && pwd)/target/debug
-DEFAULT_LIB_DEPS := $(shell cd .. && pwd)/target/debug/deps
+# Default search locations derived from PROJECT_ROOT
+DEFAULT_LIB_DEBUG := $(PROJECT_ROOT)/target/debug
+DEFAULT_LIB_DEPS := $(DEFAULT_LIB_DEBUG)/deps
 
 # Absolute paths to avoid relative path issues across different working directories
-# Derive all core-related paths from DEFAULT_LIB_DEBUG (../target/debug)
+# Derive all core-related paths from DEFAULT_LIB_DEBUG
 DEFAULT_CORE_PATH_MACOS := $(DEFAULT_LIB_DEBUG)/libsf_core.dylib
 DEFAULT_CORE_PATH_LINUX := $(DEFAULT_LIB_DEBUG)/libsf_core.so
-# Project root is two levels up from DEFAULT_LIB_DEBUG (../target/debug -> ../..)
-PROJECT_ROOT := $(abspath $(DEFAULT_LIB_DEBUG)/../..)
 DEFAULT_PARAMETER_PATH := $(PROJECT_ROOT)/parameters.json
 
 SHELL := bash
