@@ -80,13 +80,11 @@ ignore:
   - "odbc_tests/**/*"
   - "scripts/"
   
-  # Specific test paths to exclude - COMPREHENSIVE WILDCARDS
-  - "sf_core/tests/**"
-  - "**/sf_core/tests/**"
-  - "tests/common/**"
-  - "**/tests/common/**"
-  - "tests/tests_format_validator/**"
-  - "**/tests_format_validator/**"
+  # Exclude ALL test directories at ANY depth level
+  - "**/tests/**"
+  - "tests/**"
+  - "**/test/**"
+  - "test/**"
   
   # Build artifacts
   - "**/target/"
