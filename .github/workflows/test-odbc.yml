@@ -104,20 +104,20 @@ jobs:
               -sources=$(pwd)/odbc \
               -sources=$(pwd)/sf_core > lcov_raw.info
           
-          # Debug: Show ALL test files in the raw coverage
-          echo "=== TEST FILES IN RAW COVERAGE ==="
-          grep "^SF:" lcov_raw.info | grep -v "/.cargo/registry/" | grep "/tests/"
-          
-          # Filter out test files from coverage report
-          grep -v "tests/common/" lcov_raw.info | grep -v "tests/tests_format_validator/" > lcov.info
-          
-          # Debug: Show ALL test files after filtering
-          echo "=== TEST FILES AFTER FILTERING ==="
-          grep "^SF:" lcov.info | grep -v "/.cargo/registry/" | grep "/tests/"
-          
-          echo "=== FILTERING STATS ==="
+          # Filter out ALL test directories and files inside them
+          echo "=== COVERAGE FILTERING DEBUG ==="
           echo "Raw coverage lines: $(wc -l < lcov_raw.info)"
+          
+          # Show what test files are being removed
+          echo "=== TEST FILES BEING REMOVED ==="
+          grep "/tests/" lcov_raw.info | grep "^SF:" || echo "No test files found to remove"
+          
+          # Apply the filter
+          grep -v "/tests/" lcov_raw.info > lcov.info
+          
+          echo "=== FILTERING RESULTS ==="
           echo "Filtered coverage lines: $(wc -l < lcov.info)"
+          echo "Lines removed: $(($(wc -l < lcov_raw.info) - $(wc -l < lcov.info)))"
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
