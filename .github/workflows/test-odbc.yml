@@ -103,9 +103,8 @@ jobs:
               -format=lcov \
               -sources=$(pwd)/odbc \
               -sources=$(pwd)/sf_core \
-              -ignore-filename-regex=".*/(tests|test)/" \
-              -ignore-filename-regex=".*/tests_format_validator/" \
-              -ignore-filename-regex=".*/common/" > lcov.info
+              -ignore-filename-regex=".*/tests/common/.*" \
+              -ignore-filename-regex=".*/tests/tests_format_validator/.*" > lcov.info
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
