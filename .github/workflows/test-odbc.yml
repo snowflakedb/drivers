@@ -4,6 +4,7 @@ on:
   push:
     branches: [ "main" ]
   pull_request:
+    branches: [ "main" ]
 
 env:
   CARGO_TERM_COLOR: always
@@ -75,7 +76,7 @@ jobs:
         run: rustup component add llvm-tools-preview
 
       - name: Build Rust ODBC driver
-        run: RUSTFLAGS="-C instrument-coverage" cargo build -p odbc --lib
+        run: RUSTFLAGS="-C instrument-coverage" cargo build
 
       - name: Build and run ODBC tests
         run: |
