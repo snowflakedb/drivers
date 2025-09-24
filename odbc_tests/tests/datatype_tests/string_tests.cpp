@@ -14,11 +14,13 @@
 
 #include "Connection.hpp"
 #include "HandleWrapper.hpp"
+#include "Schema.hpp"
 #include "macros.hpp"
 #include "test_setup.hpp"
 
 TEST_CASE("Test string basic query", "[datatype][string]") {
   Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
   conn.execute("DROP TABLE IF EXISTS test_string_basic");
   conn.execute("CREATE TABLE test_string_basic (str_col VARCHAR(1000))");
   conn.execute("INSERT INTO test_string_basic (str_col) VALUES ('Hello World')");
@@ -42,6 +44,7 @@ TEST_CASE("Test string basic query", "[datatype][string]") {
 
 TEST_CASE("Test basic string binding", "[datatype][string]") {
   Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
   conn.execute("DROP TABLE IF EXISTS test_string_basic_binding");
   conn.execute("CREATE TABLE test_string_basic_binding (str_col VARCHAR(1000))");
   auto stmt = conn.createStatement();

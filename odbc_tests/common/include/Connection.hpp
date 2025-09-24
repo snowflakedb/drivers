@@ -1,3 +1,6 @@
+#ifndef CONNECTION_HPP
+#define CONNECTION_HPP
+
 #include <sql.h>
 #include <sqlext.h>
 
@@ -58,3 +61,5 @@ class Connection {
   EnvironmentHandleWrapper env;
   ConnectionHandleWrapper dbc;
 };
+
+#endif  // CONNECTION_HPP

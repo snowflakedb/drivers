@@ -19,12 +19,14 @@
 
 #include "Connection.hpp"
 #include "HandleWrapper.hpp"
+#include "Schema.hpp"
 #include "get_data.hpp"
 #include "macros.hpp"
 #include "test_setup.hpp"
 
 TEST_CASE("Test decimal conversion", "[datatype][number]") {
   Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
   conn.execute("DROP TABLE IF EXISTS test_number");
   conn.execute(
       "CREATE TABLE test_number (num0 NUMBER, num10 NUMBER(10,1), dec20 DECIMAL(20,2), numeric30 "
@@ -150,6 +152,7 @@ void test_string_at_limits(Connection& conn) {
 
 TEST_CASE("Test at limits", "[datatype][number]") {
   Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
   test_at_limits<SQL_C_LONG>(conn);
   test_at_limits<SQL_C_SLONG>(conn);
   test_at_limits<SQL_C_ULONG>(conn);
