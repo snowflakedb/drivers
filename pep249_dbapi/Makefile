@@ -7,10 +7,18 @@ REFERENCE_DRIVER_VERSION ?= 3.17.2
 PYTEST_ARGS ?=
 FAIL_ON_REGRESSIONS ?= 0
 
+# Library search paths (for dependent native libs)
+# Default search locations
+DEFAULT_LIB_DEBUG := $(shell cd .. && pwd)/target/debug
+DEFAULT_LIB_DEPS := $(shell cd .. && pwd)/target/debug/deps
+
 # Absolute paths to avoid relative path issues across different working directories
-DEFAULT_CORE_PATH_MACOS := $(shell cd .. && pwd)/target/debug/libsf_core.dylib
-DEFAULT_CORE_PATH_LINUX := $(shell cd .. && pwd)/target/debug/libsf_core.so
-DEFAULT_PARAMETER_PATH := $(shell cd .. && pwd)/parameters.json
+# Derive all core-related paths from DEFAULT_LIB_DEBUG (../target/debug)
+DEFAULT_CORE_PATH_MACOS := $(DEFAULT_LIB_DEBUG)/libsf_core.dylib
+DEFAULT_CORE_PATH_LINUX := $(DEFAULT_LIB_DEBUG)/libsf_core.so
+# Project root is two levels up from DEFAULT_LIB_DEBUG (../target/debug -> ../..)
+PROJECT_ROOT := $(abspath $(DEFAULT_LIB_DEBUG)/../..)
+DEFAULT_PARAMETER_PATH := $(PROJECT_ROOT)/parameters.json
 
 SHELL := bash
 .ONESHELL:  # Execute each recipe in a single shell (needed for multi-line commands)

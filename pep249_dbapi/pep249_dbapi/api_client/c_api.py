@@ -11,7 +11,9 @@ class CAPIHandle(ctypes.Structure):
 try:
     import os
     if "CORE_PATH" not in os.environ:
-        raise ValueError("CORE_PATH environment variable not set")
+        raise ImportError(
+            "CORE_PATH environment variable not set. Set CORE_PATH to the built core library, e.g. ../target/debug/libsf_core.dylib"
+        )
     core = ctypes.CDLL(os.environ["CORE_PATH"])
 except OSError as e:
     print(f"Error loading library {e}")
