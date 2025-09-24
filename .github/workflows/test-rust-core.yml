@@ -42,22 +42,7 @@ jobs:
       - name: Run tests with coverage
         run: |
           export PARAMETER_PATH=$(pwd)/parameters.json
-          cargo llvm-cov --workspace --all-targets --all-features --lcov --output-path ./lcov_raw.info
-          
-          # Filter out ALL test directories and files inside them
-          echo "=== RUST COVERAGE FILTERING DEBUG ==="
-          echo "Raw coverage lines: $(wc -l < lcov_raw.info)"
-          
-          # Show what test files are being removed
-          echo "=== TEST FILES BEING REMOVED ==="
-          grep -E "(tests/|/tests/|test/|/test/)" lcov_raw.info | grep "^SF:" || echo "No test files found to remove"
-          
-          # Apply comprehensive test filtering
-          grep -v "/tests/" lcov_raw.info | grep -v "tests/" | grep -v "/test/" | grep -v "test/" > lcov.info
-          
-          echo "=== FILTERING RESULTS ==="
-          echo "Filtered coverage lines: $(wc -l < lcov.info)"
-          echo "Lines removed: $(($(wc -l < lcov_raw.info) - $(wc -l < lcov.info)))"
+          cargo llvm-cov --package sf_core --all-features --lcov --output-path ./lcov.info
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
