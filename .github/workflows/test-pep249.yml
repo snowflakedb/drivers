@@ -125,7 +125,9 @@ jobs:
           $LLVM_COV export ${{ github.workspace }}/target/debug/libsf_core.so \
               -instr-profile=rust-coverage.profdata \
               -format=lcov \
-              -sources=${{ github.workspace }}/sf_core/src > reports/rust-coverage-${{ matrix.os }}-${{ matrix.py }}.lcov
+              -sources=${{ github.workspace }}/sf_core/src \
+              -ignore-filename-regex='.*/(tests|test_utils).*' \
+              -ignore-filename-regex='.*/tests_format_validator.*' > reports/rust-coverage-${{ matrix.os }}-${{ matrix.py }}.lcov
         working-directory: pep249_dbapi
 
       - name: Upload Python coverage to Codecov

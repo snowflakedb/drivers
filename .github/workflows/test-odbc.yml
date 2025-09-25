@@ -103,7 +103,9 @@ jobs:
               -instr-profile=coverage.profdata \
               -format=lcov \
               -sources=$(pwd)/odbc/src \
-              -sources=$(pwd)/sf_core/src > lcov.info
+              -sources=$(pwd)/sf_core/src \
+              -ignore-filename-regex='.*/(tests|test_utils).*' \
+              -ignore-filename-regex='.*/tests_format_validator.*' > lcov.info
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
