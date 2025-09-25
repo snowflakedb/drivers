@@ -110,7 +110,7 @@ jobs:
               -ignore-filename-regex='.*/tests_format_validator.*' > odbc-driver-${{ matrix.os }}.lcov
           
           # Generate sf_core coverage from ODBC tests
-          $LLVM_COV export target/debug/libsfodbc.so \
+          $LLVM_COV export target/debug/libsf_core.so \
               -instr-profile=odbc-coverage.profdata \
               -format=lcov \
               -sources=$(pwd)/sf_core/src \
