@@ -36,7 +36,6 @@ jobs:
 
       - name: Build Rust core library with coverage instrumentation
         run: |
-          # Build with coverage instrumentation to capture Rust coverage from Python tests
           RUSTFLAGS="-C instrument-coverage" cargo build --package sf_core
 
       - name: Upload Rust artifacts
@@ -110,18 +109,34 @@ jobs:
             --cov-report=html:reports/coverage-${{ matrix.os }}-${{ matrix.py }}-html
           
           # Generate Rust coverage report from Python test execution
+          echo "=== RUST COVERAGE DEBUG ==="
           LLVM_PROFDATA=$(find ~/.rustup -name "llvm-profdata" -type f 2>/dev/null | head -1)
           LLVM_COV=$(find ~/.rustup -name "llvm-cov" -type f 2>/dev/null | head -1)
+          echo "LLVM_PROFDATA: $LLVM_PROFDATA"
+          echo "LLVM_COV: $LLVM_COV"
+          echo "Searching for profraw files..."
+          find . -name "python-rust-*.profraw" -type f || echo "No profraw files found"
+          
           if [ -n "$LLVM_PROFDATA" ] && [ -n "$LLVM_COV" ]; then
             echo "Processing Rust coverage from Python tests..."
-            find . -name "python-rust-*.profraw" -type f | xargs $LLVM_PROFDATA merge -sparse -o rust-coverage.profdata 2>/dev/null || echo "No Rust coverage data found"
-            if [ -f rust-coverage.profdata ]; then
-              $LLVM_COV export ${{ github.workspace }}/target/debug/libsf_core.so \
-                  -instr-profile=rust-coverage.profdata \
-                  -format=lcov \
-                  -sources=${{ github.workspace }}/sf_core > reports/rust-coverage-${{ matrix.os }}-${{ matrix.py }}.lcov
-              echo "Rust coverage report generated: rust-coverage-${{ matrix.os }}-${{ matrix.py }}.lcov"
+            if find . -name "python-rust-*.profraw" -type f | head -1 | grep -q .; then
+              find . -name "python-rust-*.profraw" -type f | xargs $LLVM_PROFDATA merge -sparse -o rust-coverage.profdata
+              if [ -f rust-coverage.profdata ]; then
+                $LLVM_COV export ${{ github.workspace }}/target/debug/libsf_core.so \
+                    -instr-profile=rust-coverage.profdata \
+                    -format=lcov \
+                    -sources=${{ github.workspace }}/sf_core > reports/rust-coverage-${{ matrix.os }}-${{ matrix.py }}.lcov
+                echo "Rust coverage report generated: rust-coverage-${{ matrix.os }}-${{ matrix.py }}.lcov"
+              else
+                echo "Failed to create rust-coverage.profdata"
+              fi
+            else
+              echo "No profraw files found - creating empty coverage file"
+              touch reports/rust-coverage-${{ matrix.os }}-${{ matrix.py }}.lcov
             fi
+          else
+            echo "LLVM tools not found - creating empty coverage file"
+            touch reports/rust-coverage-${{ matrix.os }}-${{ matrix.py }}.lcov
           fi
         working-directory: pep249_dbapi
 
@@ -137,7 +152,7 @@ jobs:
 
       - name: Upload Rust coverage to Codecov
         uses: codecov/codecov-action@v5
-        if: hashFiles('./pep249_dbapi/reports/rust-coverage-*.lcov') != ''
+        if: always()
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
         with:
