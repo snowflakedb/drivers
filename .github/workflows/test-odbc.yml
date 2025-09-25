@@ -96,9 +96,6 @@ jobs:
 
       - name: Generate coverage reports
         run: |
-          # Create separate directories for coverage reports
-          mkdir -p coverage/odbc coverage/core
-          
           # Process raw coverage data
           LLVM_PROFDATA=$(find ~/.rustup -name "llvm-profdata" -type f 2>/dev/null | head -1)
           LLVM_COV=$(find ~/.rustup -name "llvm-cov" -type f 2>/dev/null | head -1)
@@ -110,7 +107,7 @@ jobs:
               -format=lcov \
               -sources=$(pwd)/odbc/src \
               -ignore-filename-regex='.*/(tests|test_utils).*' \
-              -ignore-filename-regex='.*/tests_format_validator.*' > coverage/odbc/odbc-driver-${{ matrix.os }}.lcov
+              -ignore-filename-regex='.*/tests_format_validator.*' > odbc-driver-${{ matrix.os }}.lcov
           
           # Generate sf_core coverage from ODBC tests
           $LLVM_COV export target/debug/libsfodbc.so \
@@ -118,16 +115,17 @@ jobs:
               -format=lcov \
               -sources=$(pwd)/sf_core/src \
               -ignore-filename-regex='.*/(tests|test_utils).*' \
-              -ignore-filename-regex='.*/tests_format_validator.*' > coverage/core/core-from-odbc-${{ matrix.os }}.lcov
+              -ignore-filename-regex='.*/tests_format_validator.*' > core-from-odbc-${{ matrix.os }}.lcov
 
       - name: Upload ODBC driver coverage to Codecov
         uses: codecov/codecov-action@v5
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
         with:
-          files: ./coverage/odbc/odbc-driver-${{ matrix.os }}.lcov
+          files: ./odbc-driver-${{ matrix.os }}.lcov
           flags: odbc
           name: odbc-driver-${{ matrix.os }}
+          disable_search: true
           fail_ci_if_error: false
 
       - name: Upload Core from ODBC coverage to Codecov
@@ -135,7 +133,8 @@ jobs:
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
         with:
-          files: ./coverage/core/core-from-odbc-${{ matrix.os }}.lcov
+          files: ./core-from-odbc-${{ matrix.os }}.lcov
           flags: core-from-odbc
           name: core-from-odbc-${{ matrix.os }}
+          disable_search: true
           fail_ci_if_error: false

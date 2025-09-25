@@ -108,14 +108,14 @@ jobs:
           REFERENCE_DRIVER_VERSION: ${{ env.PYTHON_REFERENCE_DRIVER_VERSION }}
           LLVM_PROFILE_FILE: "python-rust-%p-%m.profraw"
         run: |
-          mkdir -p reports/python reports/core
+          mkdir -p reports
           PYTHON_ID="${{ matrix.py }}"
           PYTHON_ID=${PYTHON_ID//./}  # Remove dots: 3.9 -> 39
           uv run tox -e py${PYTHON_ID}-all -- \
             --json-report --json-report-file=reports/universal-${{ matrix.os }}-${{ matrix.py }}.json \
             --junitxml=reports/universal-${{ matrix.os }}-${{ matrix.py }}.xml \
             --cov=pep249_dbapi \
-            --cov-report=xml:reports/python/coverage-${{ matrix.os }}-${{ matrix.py }}.xml \
+            --cov-report=xml:reports/coverage-${{ matrix.os }}-${{ matrix.py }}.xml \
             --cov-report=html:reports/coverage-${{ matrix.os }}-${{ matrix.py }}-html
           
           # Generate coverage report from Python test execution
@@ -127,7 +127,7 @@ jobs:
               -format=lcov \
               -sources=${{ github.workspace }}/sf_core/src \
               -ignore-filename-regex='.*/(tests|test_utils).*' \
-              -ignore-filename-regex='.*/tests_format_validator.*' > reports/core/core-from-python-${{ matrix.os }}-${{ matrix.py }}.lcov
+              -ignore-filename-regex='.*/tests_format_validator.*' > reports/core-from-python-${{ matrix.os }}-${{ matrix.py }}.lcov
         working-directory: pep249_dbapi
 
       - name: Upload Python coverage to Codecov
@@ -135,9 +135,10 @@ jobs:
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
         with:
-          files: ./pep249_dbapi/reports/python/coverage-${{ matrix.os }}-${{ matrix.py }}.xml
+          files: ./pep249_dbapi/reports/coverage-${{ matrix.os }}-${{ matrix.py }}.xml
           flags: python
           name: python-${{ matrix.os }}-py${{ matrix.py }}
+          disable_search: true
           fail_ci_if_error: false
 
       - name: Upload Core from Python coverage to Codecov
@@ -146,9 +147,10 @@ jobs:
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
         with:
-          files: ./pep249_dbapi/reports/core/core-from-python-${{ matrix.os }}-${{ matrix.py }}.lcov
+          files: ./pep249_dbapi/reports/core-from-python-${{ matrix.os }}-${{ matrix.py }}.lcov
           flags: core-from-python
           name: core-from-python-${{ matrix.os }}-py${{ matrix.py }}
+          disable_search: true
           fail_ci_if_error: false
 
       - name: Upload test results as GitHub artifact
@@ -157,8 +159,6 @@ jobs:
           name: results-universal-${{ matrix.os }}-${{ matrix.py }}
           path: |
             pep249_dbapi/reports/*-${{ matrix.os }}-${{ matrix.py }}.*
-            pep249_dbapi/reports/python/
-            pep249_dbapi/reports/core/
 
   # Integration tests only with reference connector (for comparison)
   pep249_tests_reference:
