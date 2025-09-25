@@ -80,17 +80,11 @@ ignore:
   - "odbc_tests/**/*"
   - "scripts/"
   
-  # Exclude ALL test directories and specific test files
-  - "**/tests/**"
-  - "tests/**"
-  - "**/test/**" 
-  - "test/**"
-  - "**/tests_format_validator/**"
-  - "tests_format_validator/**"
-  - "**/sf_core/tests/**"
+  # Specific test paths to exclude
   - "sf_core/tests/**"
   - "**/tests/common/**"
   - "tests/common/**"
+  - "tests/tests_format_validator/**"
   
   # Build artifacts
   - "**/target/"

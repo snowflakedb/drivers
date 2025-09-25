@@ -99,18 +99,11 @@ jobs:
           LLVM_PROFDATA=$(find ~/.rustup -name "llvm-profdata" -type f 2>/dev/null | head -1)
           LLVM_COV=$(find ~/.rustup -name "llvm-cov" -type f 2>/dev/null | head -1)
           find . -name "odbc-*.profraw" -type f | xargs $LLVM_PROFDATA merge -sparse -o coverage.profdata
-           $LLVM_COV export target/debug/libsfodbc.so \
-               -instr-profile=coverage.profdata \
-               -format=lcov \
-               -sources=$(pwd)/odbc/src \
-               -sources=$(pwd)/sf_core/src > lcov_raw.info
-           
-           # Filter out ALL test files aggressively
-           grep -v "/tests/" lcov_raw.info | \
-           grep -v "/test/" | \
-           grep -v "tests_format_validator" | \
-           grep -v "sf_core/tests" | \
-           grep -v "tests/common" > lcov.info
+          $LLVM_COV export target/debug/libsfodbc.so \
+              -instr-profile=coverage.profdata \
+              -format=lcov \
+              -sources=$(pwd)/odbc \
+              -sources=$(pwd)/sf_core > lcov.info
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
