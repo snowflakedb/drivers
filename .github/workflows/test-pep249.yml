@@ -80,6 +80,9 @@ jobs:
 
       - name: Set up Python ${{ matrix.py }}
         run: uv python install ${{ matrix.py }}
+        
+      - name: Install LLVM tools for coverage
+        run: rustup component add llvm-tools-preview
 
       - name: Download Rust artifacts
         uses: actions/download-artifact@v4
@@ -125,10 +128,15 @@ jobs:
           
           # Generate Rust coverage report from Python test execution
           echo "=== RUST COVERAGE DEBUG ==="
-          LLVM_PROFDATA=$(rustup which llvm-profdata 2>/dev/null || echo "")
-          LLVM_COV=$(rustup which llvm-cov 2>/dev/null || echo "")
+          # Try rustup which first, then fall back to find if needed
+          LLVM_PROFDATA=$(rustup which llvm-profdata 2>/dev/null || find ~/.rustup -name "llvm-profdata" -type f 2>/dev/null | head -1 || echo "")
+          LLVM_COV=$(rustup which llvm-cov 2>/dev/null || find ~/.rustup -name "llvm-cov" -type f 2>/dev/null | head -1 || echo "")
           echo "LLVM_PROFDATA: $LLVM_PROFDATA"
           echo "LLVM_COV: $LLVM_COV"
+          
+          # Additional debugging info
+          echo "Checking rustup component installation:"
+          rustup component list | grep llvm-tools || echo "llvm-tools-preview not installed"
           echo "Searching for profraw files..."
           find . -name "python-rust-*.profraw" -type f || echo "No profraw files found"
           echo "All profraw files in working directory:"
