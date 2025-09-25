@@ -39,16 +39,26 @@ coverage:
   round: down
   range: "60...90"
 
-  components:
-    rust-core:
-      - "sf_core/**"
-    python:
-      - "pep249_dbapi/**"
-    jdbc:
-      - "jdbc/**"
-      - "jdbc_bridge/**"
-    odbc:
-      - "odbc/**"
+  # Define logical components for the UI (new format)
+  component_management:
+    individual_components:
+      - component_id: rust-core
+        name: "Rust Core"
+        paths:
+          - "sf_core/**"
+      - component_id: python  
+        name: "Python Driver"
+        paths:
+          - "pep249_dbapi/**"
+      - component_id: jdbc
+        name: "JDBC Driver"
+        paths:
+          - "jdbc/**"
+          - "jdbc_bridge/**"
+      - component_id: odbc
+        name: "ODBC Driver"
+        paths:
+          - "odbc/**"
 
   status:
     project:
@@ -90,6 +100,15 @@ comment:
   require_base: true
   require_head: true
   branches: ["main", "develop"]
+  # Only show current flags, not historical ones
+  flags:
+    - rust-core
+    - core-from-python
+    - core-from-odbc
+    - core-combined
+    - python
+    - jdbc
+    - odbc
   show_carryforward_flags: true
 
 ignore:
