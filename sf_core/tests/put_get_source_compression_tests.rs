@@ -1,4 +1,5 @@
 pub mod common;
+use crate::common::test_utils::shared_test_data_dir;
 use common::arrow_result_helper::ArrowResultHelper;
 use common::put_get_common::*;
 use std::path::PathBuf;

@@ -13,6 +13,8 @@ fn connection_init_with_tls_options_succeeds() {
     client.set_connection_option("password", &password);
 
     // When I initialize the connection
+    let result = client.connect();
+
     // Then the login succeeds
-    client.connect().unwrap();
+    client.verify_simple_query(result);
 }

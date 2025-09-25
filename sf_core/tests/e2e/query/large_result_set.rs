@@ -1,5 +1,5 @@
-use super::super::common::arrow_result_helper::ArrowResultHelper;
-use super::super::common::test_utils::*;
+use crate::common::arrow_result_helper::ArrowResultHelper;
+use crate::common::test_utils::*;
 
 #[test]
 fn should_process_one_million_row_result_set() {

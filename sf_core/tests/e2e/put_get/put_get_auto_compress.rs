@@ -1,7 +1,7 @@
-use super::super::common::test_utils::*;
-use crate::common::put_get_common::{
-    assert_file_exists, get_file_from_stage, upload_file_to_stage_with_options,
-};
+use crate::common::put_get_common::assert_file_exists;
+use crate::common::put_get_common::get_file_from_stage;
+use crate::common::put_get_common::upload_file_to_stage_with_options;
+use crate::common::test_utils::*;
 use std::fs;
 use std::path::PathBuf;
 

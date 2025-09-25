@@ -275,7 +275,9 @@ impl SnowflakeTestClient {
     }
 
     pub fn create_temporary_stage(&self, stage_name: &str) {
-        self.execute_query(&format!("create temporary stage {stage_name}"));
+        self.execute_query(&format!(
+            "create temporary stage if not exists {stage_name}"
+        ));
     }
 
     pub fn connect(&self) -> Result<(), String> {

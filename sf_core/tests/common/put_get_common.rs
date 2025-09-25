@@ -1,7 +1,5 @@
 pub use super::arrow_deserialize::ArrowDeserialize;
-pub use super::test_utils::{
-    SnowflakeTestClient, decompress_gzipped_file, repo_root, shared_test_data_dir,
-};
+pub use super::test_utils::SnowflakeTestClient;
 use sf_core::protobuf_gen::database_driver_v1::ExecuteResult;
 use std::path::Path;
 

@@ -1,4 +1,4 @@
-use super::super::common::test_utils::*;
+use crate::common::test_utils::*;
 use std::fs;
 
 #[test]
