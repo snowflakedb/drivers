@@ -13,7 +13,7 @@ from .utils_put_get import (
 from ..utils import shared_test_data_dir
 
 
-@pytest.mark.parametrize("compression_type", ["GZIP", "BZIP2", "BROTLI", "ZSTD"])
+@pytest.mark.parametrize("compression_type", ["GZIP", "BZIP2", "BROTLI", "ZSTD", "PARQUET", "ORC"])
 def test_put_source_compression_auto_detect_standard_types(cursor, compression_type):
     stage_name = create_temporary_stage(cursor, "PYTEST_STAGE_AUTO_DETECT_STANDARD")
     filename, file_path = compressed_test_file(compression_type)
@@ -94,7 +94,7 @@ def test_put_source_compression_auto_detect_none_with_auto_compress(cursor):
     assert row[PUT_ROW_STATUS_IDX] == "UPLOADED"
 
 
-@pytest.mark.parametrize("compression_type", ["GZIP", "BZIP2", "ZSTD", "DEFLATE", "RAW_DEFLATE"])
+@pytest.mark.parametrize("compression_type", ["GZIP", "BZIP2", "ZSTD", "DEFLATE", "RAW_DEFLATE", "PARQUET", "ORC"])
 def test_put_source_compression_explicit_standard_types(cursor, compression_type):
     stage_name = create_temporary_stage(cursor, "PYTEST_STAGE_EXPLICIT_COMPRESSION")
     filename, file_path = compressed_test_file(compression_type)
@@ -188,6 +188,10 @@ def compressed_test_file(compression_type: str):
         fn = "test_data.csv.raw_deflate"
     elif ct == "LZMA":
         fn = "test_data.csv.xz"
+    elif ct == "PARQUET":
+        fn = "test_data.csv.parquet"
+    elif ct == "ORC":
+        fn = "test_data.csv.orc"
     elif ct == "NONE":
         fn = "test_data.csv"
     else:

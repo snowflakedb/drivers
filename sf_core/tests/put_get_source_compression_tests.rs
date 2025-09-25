@@ -15,7 +15,9 @@ fn test_put_source_compression_auto_detect_standard_types() {
     // Test cases for standard compression types
     // RAW_DEFLATE is currently not auto-detected as it is not auto-detected in any existing drivers
     // TODO: Revisit while when we test more drivers, especially Go driver
-    let test_cases = ["GZIP", "BZIP2", "BROTLI", "ZSTD", "DEFLATE"];
+    let test_cases = [
+        "GZIP", "BZIP2", "BROTLI", "ZSTD", "DEFLATE", "PARQUET", "ORC",
+    ];
 
     for expected_compression in test_cases {
         let (filename, file_path) = test_file(expected_compression);
@@ -142,7 +144,16 @@ fn test_put_source_compression_explicit_standard_types() {
     client.create_temporary_stage(stage_name);
 
     // Test cases for explicitly specified compression types
-    let test_cases = ["GZIP", "BZIP2", "BROTLI", "ZSTD", "DEFLATE", "RAW_DEFLATE"];
+    let test_cases = [
+        "GZIP",
+        "BZIP2",
+        "BROTLI",
+        "ZSTD",
+        "DEFLATE",
+        "RAW_DEFLATE",
+        "PARQUET",
+        "ORC",
+    ];
 
     for compression_type in test_cases {
         let (filename, test_file_path) = test_file(compression_type);
@@ -273,6 +284,14 @@ fn test_file(compression_type: &str) -> (String, PathBuf) {
         "LZMA" => (
             "test_data.csv.xz".to_string(),
             compression_tests_dir().join("test_data.csv.xz"),
+        ),
+        "PARQUET" => (
+            "test_data.csv.parquet".to_string(),
+            compression_tests_dir().join("test_data.csv.parquet"),
+        ),
+        "ORC" => (
+            "test_data.csv.orc".to_string(),
+            compression_tests_dir().join("test_data.csv.orc"),
         ),
         "NONE" => (
             "test_data.csv".to_string(),

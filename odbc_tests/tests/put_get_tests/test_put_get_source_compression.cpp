@@ -30,6 +30,10 @@ static std::pair<std::string, fs::path> test_file(const std::string& compression
     return {"test_data.csv.raw_deflate", compression_tests_dir() / "test_data.csv.raw_deflate"};
   } else if (compression_type == "LZMA") {
     return {"test_data.csv.xz", compression_tests_dir() / "test_data.csv.xz"};
+  } else if (compression_type == "PARQUET") {
+    return {"test_data.csv.parquet", compression_tests_dir() / "test_data.csv.parquet"};
+  } else if (compression_type == "ORC") {
+    return {"test_data.csv.orc", compression_tests_dir() / "test_data.csv.orc"};
   } else if (compression_type == "NONE") {
     return {"test_data.csv", compression_tests_dir() / "test_data.csv"};
   }
@@ -41,7 +45,7 @@ TEST_CASE("PUT SOURCE_COMPRESSION=AUTO_DETECT standard types", "[put_get][odbc]"
   Connection conn;
   const std::string stage = create_stage(conn, "ODBCTST_SC_AUTO_DETECT_STD");
 
-  for (const std::string comp : {"GZIP", "BZIP2", "BROTLI", "ZSTD"}) {
+  for (const std::string comp : {"GZIP", "BZIP2", "BROTLI", "ZSTD", "PARQUET", "ORC"}) {
     auto [filename, file] = test_file(comp);
     auto stmt = conn.execute_fetch("PUT 'file://" + as_file_uri(file) + "' @" + stage +
                                    " SOURCE_COMPRESSION=AUTO_DETECT");
@@ -103,7 +107,8 @@ TEST_CASE("PUT SOURCE_COMPRESSION= explicit standard types", "[put_get][odbc]") 
   Connection conn;
   const std::string stage = create_stage(conn, "ODBCTST_SC_EXPLICIT_STD");
 
-  for (const std::string comp : {"GZIP", "BZIP2", "ZSTD", "DEFLATE", "RAW_DEFLATE"}) {
+  for (const std::string comp :
+       {"GZIP", "BZIP2", "ZSTD", "DEFLATE", "RAW_DEFLATE", "PARQUET", "ORC"}) {
     auto [filename, file] = test_file(comp);
     auto stmt = conn.execute_fetch("PUT 'file://" + as_file_uri(file) + "' @" + stage +
                                    " SOURCE_COMPRESSION=" + comp);
