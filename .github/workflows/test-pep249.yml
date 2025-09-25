@@ -4,6 +4,7 @@ on:
   push:
     branches: [ "main" ]
   pull_request:
+    branches: [ "main" ]
 
 concurrency:
   # older builds for the same pull request number or branch should be cancelled
@@ -30,9 +31,13 @@ jobs:
         run: |
           sudo apt-get update
 
-      - name: Build Rust core library
+      - name: Install LLVM tools for coverage
+        run: rustup component add llvm-tools-preview
+
+      - name: Build Rust core library with coverage instrumentation
         run: |
-          RUSTFLAGS="" cargo build --package sf_core
+          # Build with coverage instrumentation to capture Rust coverage from Python tests
+          RUSTFLAGS="-C instrument-coverage" cargo build --package sf_core
 
       - name: Upload Rust artifacts
         uses: actions/upload-artifact@v4
@@ -92,6 +97,7 @@ jobs:
           CORE_PATH: ${{ github.workspace }}/target/debug/libsf_core.so
           PARAMETER_PATH: ${{ github.workspace }}/parameters.json
           REFERENCE_DRIVER_VERSION: ${{ env.PYTHON_REFERENCE_DRIVER_VERSION }}
+          LLVM_PROFILE_FILE: "python-rust-%p-%m.profraw"
         run: |
           mkdir -p reports
           PYTHON_ID="${{ matrix.py }}"
@@ -102,9 +108,24 @@ jobs:
             --cov=pep249_dbapi \
             --cov-report=xml:reports/coverage-${{ matrix.os }}-${{ matrix.py }}.xml \
             --cov-report=html:reports/coverage-${{ matrix.os }}-${{ matrix.py }}-html
+          
+          # Generate Rust coverage report from Python test execution
+          LLVM_PROFDATA=$(find ~/.rustup -name "llvm-profdata" -type f 2>/dev/null | head -1)
+          LLVM_COV=$(find ~/.rustup -name "llvm-cov" -type f 2>/dev/null | head -1)
+          if [ -n "$LLVM_PROFDATA" ] && [ -n "$LLVM_COV" ]; then
+            echo "Processing Rust coverage from Python tests..."
+            find . -name "python-rust-*.profraw" -type f | xargs $LLVM_PROFDATA merge -sparse -o rust-coverage.profdata 2>/dev/null || echo "No Rust coverage data found"
+            if [ -f rust-coverage.profdata ]; then
+              $LLVM_COV export ${{ github.workspace }}/target/debug/libsf_core.so \
+                  -instr-profile=rust-coverage.profdata \
+                  -format=lcov \
+                  -sources=${{ github.workspace }}/sf_core > reports/rust-coverage-${{ matrix.os }}-${{ matrix.py }}.lcov
+              echo "Rust coverage report generated: rust-coverage-${{ matrix.os }}-${{ matrix.py }}.lcov"
+            fi
+          fi
         working-directory: pep249_dbapi
 
-      - name: Upload coverage to Codecov
+      - name: Upload Python coverage to Codecov
         uses: codecov/codecov-action@v5
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
@@ -114,11 +135,24 @@ jobs:
           name: python-${{ matrix.os }}-py${{ matrix.py }}
           fail_ci_if_error: false
 
+      - name: Upload Rust coverage to Codecov
+        uses: codecov/codecov-action@v5
+        if: hashFiles('./pep249_dbapi/reports/rust-coverage-*.lcov') != ''
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+        with:
+          files: ./pep249_dbapi/reports/rust-coverage-${{ matrix.os }}-${{ matrix.py }}.lcov
+          flags: rust
+          name: rust-from-python-${{ matrix.os }}-py${{ matrix.py }}
+          fail_ci_if_error: false
+
       - name: Upload test results as GitHub artifact
         uses: actions/upload-artifact@v4
         with:
           name: results-universal-${{ matrix.os }}-${{ matrix.py }}
-          path: pep249_dbapi/reports/*-${{ matrix.os }}-${{ matrix.py }}.*
+          path: |
+            pep249_dbapi/reports/*-${{ matrix.os }}-${{ matrix.py }}.*
+            pep249_dbapi/reports/rust-coverage-${{ matrix.os }}-${{ matrix.py }}.lcov
 
   # Integration tests only with reference connector (for comparison)
   pep249_tests_reference:
@@ -163,7 +197,7 @@ jobs:
         run: make setup
         working-directory: pep249_dbapi
 
-      - name: Run reference integration tests
+      - name: Run reference tests
         env:
           CORE_PATH: ${{ github.workspace }}/target/debug/libsf_core.so
           PARAMETER_PATH: ${{ github.workspace }}/parameters.json
@@ -193,13 +227,13 @@ jobs:
 
       - name: Download universal test results
         uses: actions/download-artifact@v4
-        with: 
+        with:
           name: results-universal-${{ env.REFERENCE_OS_VERSION }}-${{ env.REFERENCE_PYTHON_VERSION }}
           path: ${{ github.workspace }}/universal-results
-      
+
       - name: Download reference test results
         uses: actions/download-artifact@v4
-        with: 
+        with:
           name: results-reference-${{ env.REFERENCE_OS_VERSION }}-${{ env.REFERENCE_PYTHON_VERSION }}
           path: ${{ github.workspace }}/reference-results
 
@@ -207,7 +241,7 @@ jobs:
         run: make setup
         working-directory: pep249_dbapi
 
-      - name: Compare integration test results
+      - name: Compare test results
         env:
           UNIVERSAL_TEST_REPORTS_DIR: ${{ github.workspace }}/universal-results
           REFERENCE_TEST_REPORTS_DIR: ${{ github.workspace }}/reference-results
