@@ -101,59 +101,17 @@ jobs:
           LLVM_COV=$(find ~/.rustup -name "llvm-cov" -type f 2>/dev/null | head -1)
           find . -name "odbc-*.profraw" -type f | xargs $LLVM_PROFDATA merge -sparse -o odbc-coverage.profdata
           
-          # List actual ODBC source files to understand what we should include
-          echo "=== Actual ODBC source files ==="
-          find $(pwd)/odbc/src -name "*.rs" | head -10
-          
-          # Create a minimal ODBC coverage report with only existing ODBC files
-          echo "TN:" > odbc-driver-temp.lcov
-          
-          # For each ODBC source file, check if it has coverage data
-          for odbc_file in $(find $(pwd)/odbc/src -name "*.rs"); do
-            echo "Checking coverage for: $odbc_file"
-            if $LLVM_COV export target/debug/libsfodbc.so -instr-profile=odbc-coverage.profdata -format=lcov | grep -q "SF:$odbc_file"; then
-              echo "Found coverage for $odbc_file"
-              $LLVM_COV export target/debug/libsfodbc.so -instr-profile=odbc-coverage.profdata -format=lcov | awk -v file="$odbc_file" '
-                /^SF:/ { if ($0 == "SF:" file) { in_file = 1; print } else { in_file = 0 } }
-                /^[^S]/ { if (in_file) print }
-              ' >> odbc-driver-temp.lcov
-            fi
-          done
-          
-          echo "end_of_record" >> odbc-driver-temp.lcov
-          
-          # Filter out any remaining sf_core references from the LCOV file
-          if grep -q "sf_core" odbc-driver-temp.lcov; then
-            echo "ERROR: sf_core found in ODBC report! Creating empty report."
-            echo "# ODBC-only coverage report - sf_core excluded" > odbc-driver-${{ matrix.os }}.lcov
-          else
-            echo "Good: No sf_core found in ODBC report."
-            cp odbc-driver-temp.lcov odbc-driver-${{ matrix.os }}.lcov
-          fi
-          
-          # Debug: Check what files are actually in the ODBC report
-          echo "=== Files in ODBC report ==="
-          grep "^SF:" odbc-driver-${{ matrix.os }}.lcov | head -10
-          echo "=== Checking if sf_core files are present ==="
-          if grep -q "sf_core" odbc-driver-${{ matrix.os }}.lcov; then
-            echo "ERROR: sf_core files still found in ODBC report!"
-            grep "sf_core" odbc-driver-${{ matrix.os }}.lcov | head -5
-            echo "=== Creating empty ODBC report instead ==="
-            echo "TN:" > odbc-driver-${{ matrix.os }}.lcov
-            echo "end_of_record" >> odbc-driver-${{ matrix.os }}.lcov
-          else
-            echo "Good: No sf_core files found in ODBC report."
-          fi
-          echo "=== Final ODBC report content ==="
-          head -20 odbc-driver-${{ matrix.os }}.lcov
+           # Generate ODBC driver coverage
+           $LLVM_COV export target/debug/libsfodbc.so \
+               -instr-profile=odbc-coverage.profdata \
+               -format=lcov \
+               -sources=$(pwd)/odbc/src > odbc-driver-${{ matrix.os }}.lcov
           
           # Generate sf_core coverage from ODBC tests
           $LLVM_COV export target/debug/libsf_core.so \
               -instr-profile=odbc-coverage.profdata \
               -format=lcov \
-              -sources=$(pwd)/sf_core/src \
-              -ignore-filename-regex='.*/(tests|test_utils).*' \
-              -ignore-filename-regex='.*/tests_format_validator.*' > core-from-odbc-${{ matrix.os }}.lcov
+              -sources=$(pwd)/sf_core/src > core-from-odbc-${{ matrix.os }}.lcov
 
       - name: Upload ODBC driver coverage to Codecov
         uses: codecov/codecov-action@v5
@@ -172,7 +130,7 @@ jobs:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
         with:
           files: ./core-from-odbc-${{ matrix.os }}.lcov
-          flags: core-from-odbc
-          name: core-from-odbc-${{ matrix.os }}
+          flags: rust-core
+          name: rust-core-${{ matrix.os }}
           disable_search: true
           fail_ci_if_error: false

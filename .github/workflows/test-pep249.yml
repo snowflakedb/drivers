@@ -118,16 +118,14 @@ jobs:
             --cov-report=xml:reports/coverage-${{ matrix.os }}-${{ matrix.py }}.xml \
             --cov-report=html:reports/coverage-${{ matrix.os }}-${{ matrix.py }}-html
           
-          # Generate coverage report from Python test execution
+          # Generate sf_core coverage from Python test execution
           LLVM_PROFDATA=$(find ~/.rustup -name "llvm-profdata" -type f 2>/dev/null | head -1)
           LLVM_COV=$(find ~/.rustup -name "llvm-cov" -type f 2>/dev/null | head -1)
-          find . -name "*.profraw" -type f | xargs $LLVM_PROFDATA merge -sparse -o core-from-python.profdata
+          find . -name "*.profraw" -type f | xargs $LLVM_PROFDATA merge -sparse -o rust-core.profdata
           $LLVM_COV export ${{ github.workspace }}/target/debug/libsf_core.so \
-              -instr-profile=core-from-python.profdata \
+              -instr-profile=rust-core.profdata \
               -format=lcov \
-              -sources=${{ github.workspace }}/sf_core/src \
-              -ignore-filename-regex='.*/(tests|test_utils).*' \
-              -ignore-filename-regex='.*/tests_format_validator.*' > reports/core-from-python-${{ matrix.os }}-${{ matrix.py }}.lcov
+              -sources=${{ github.workspace }}/sf_core/src > reports/rust-core-${{ matrix.os }}-${{ matrix.py }}.lcov
         working-directory: pep249_dbapi
 
       - name: Upload Python coverage to Codecov
@@ -141,15 +139,15 @@ jobs:
           disable_search: true
           fail_ci_if_error: false
 
-      - name: Upload Core from Python coverage to Codecov
+      - name: Upload Rust Core coverage to Codecov
         uses: codecov/codecov-action@v5
         if: success()
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
         with:
-          files: ./pep249_dbapi/reports/core-from-python-${{ matrix.os }}-${{ matrix.py }}.lcov
-          flags: core-from-python
-          name: core-from-python-${{ matrix.os }}-py${{ matrix.py }}
+          files: ./pep249_dbapi/reports/rust-core-${{ matrix.os }}-${{ matrix.py }}.lcov
+          flags: rust-core
+          name: rust-core-${{ matrix.os }}-py${{ matrix.py }}
           disable_search: true
           fail_ci_if_error: false
 

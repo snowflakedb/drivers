@@ -10,11 +10,7 @@ flag_management:
 
 flags:
   rust-core:
-    paths: ["sf_core/"]
-  core-from-python:
-    paths: ["sf_core/"]
-  core-from-odbc:
-    paths: ["sf_core/"]
+    paths: ["sf_core/", "pep249_dbapi/", "odbc/"]
   jdbc:
     paths: ["jdbc/", "jdbc_bridge/"]
   python:
@@ -68,14 +64,13 @@ coverage:
         threshold: 1%
         base: auto
         if_ci_failed: error
-        flags: [rust-core, core-from-python, core-from-odbc, python, jdbc, odbc]
+        flags: [rust-core, python, jdbc, odbc]
         flag_coverage_not_uploaded_behavior: include
         wait_for_ci: true
         require_ci_to_pass: true
 
       # Individual component statuses
       rust-core:        { <<: *component, flags: [rust-core] }
-      core-combined:    { <<: *component, flags: [rust-core, core-from-python, core-from-odbc] }
       python:           { <<: *component, flags: [python] }
       jdbc:             { <<: *component, flags: [jdbc] }
       odbc:             { <<: *component, flags: [odbc] }
@@ -84,11 +79,10 @@ coverage:
       # Overall patch status waits for all expected coverage flags
       default:
         <<: *patch-component
-        flags: [rust-core, core-from-python, core-from-odbc, python, jdbc, odbc]
+        flags: [rust-core, python, jdbc, odbc]
         flag_coverage_not_uploaded_behavior: include
       # Individual component statuses
       rust-core:        { <<: *patch-component, flags: [rust-core] }
-      core-combined:    { <<: *patch-component, flags: [rust-core, core-from-python, core-from-odbc] }
       python:           { <<: *patch-component, flags: [python] }
       jdbc:             { <<: *patch-component, flags: [jdbc] }
       odbc:             { <<: *patch-component, flags: [odbc] }
@@ -103,9 +97,6 @@ comment:
   # Only show current flags, not historical ones
   flags:
     - rust-core
-    - core-from-python
-    - core-from-odbc
-    - core-combined
     - python
     - jdbc
     - odbc
