@@ -20,7 +20,6 @@ env:
   REFERENCE_OS_VERSION: "ubuntu-latest"
 
 jobs:
-  # Build Rust core library once and share across Python jobs
   build_rust_core:
     runs-on: ubuntu-latest
     steps:
@@ -36,7 +35,6 @@ jobs:
 
       - name: Build Rust core library with coverage instrumentation
         env:
-          # Set up coverage instrumentation for the library build
           LLVM_PROFILE_FILE: "sf_core_lib_build-%p-%m.profraw"
         run: |
           RUSTFLAGS="-C instrument-coverage" cargo build --package sf_core
@@ -49,7 +47,6 @@ jobs:
             target/debug/libsf_core.so
             *.profraw
 
-  # Combined unit + integration tests with universal connector
   pep249_tests:
     needs: build_rust_core
     strategy:
@@ -109,12 +106,7 @@ jobs:
           CORE_PATH: ${{ github.workspace }}/target/debug/libsf_core.so
           PARAMETER_PATH: ${{ github.workspace }}/parameters.json
           REFERENCE_DRIVER_VERSION: ${{ env.PYTHON_REFERENCE_DRIVER_VERSION }}
-          # Set LLVM_PROFILE_FILE so Rust library generates coverage data when loaded by Python
           LLVM_PROFILE_FILE: "python-rust-%p-%m.profraw"
-          # Ensure coverage data is written immediately and persists across process boundaries
-          LLVM_PROFILE_SUMMARY_PERIOD: "1"
-          # Force coverage to be written on exit
-          LLVM_PROFILE_ON_EXIT: "1"
         run: |
           mkdir -p reports
           PYTHON_ID="${{ matrix.py }}"
@@ -127,45 +119,11 @@ jobs:
             --cov-report=html:reports/coverage-${{ matrix.os }}-${{ matrix.py }}-html
           
           # Generate Rust coverage report from Python test execution
-          echo "=== RUST COVERAGE DEBUG ==="
-          # Try rustup which first, then fall back to find if needed
-          LLVM_PROFDATA=$(rustup which llvm-profdata 2>/dev/null || find ~/.rustup -name "llvm-profdata" -type f 2>/dev/null | head -1 || echo "")
-          LLVM_COV=$(rustup which llvm-cov 2>/dev/null || find ~/.rustup -name "llvm-cov" -type f 2>/dev/null | head -1 || echo "")
-          echo "LLVM_PROFDATA: $LLVM_PROFDATA"
-          echo "LLVM_COV: $LLVM_COV"
-          
-          # Additional debugging info
-          echo "Checking rustup component installation:"
-          rustup component list | grep llvm-tools || echo "llvm-tools-preview not installed"
-          echo "Searching for profraw files..."
-          find . -name "python-rust-*.profraw" -type f || echo "No profraw files found"
-          echo "All profraw files in working directory:"
-          find . -name "*.profraw" -type f || echo "No profraw files found at all"
-          echo "Profraw files with details:"
-          find . -name "*.profraw" -type f -exec ls -la {} \; || echo "No profraw files to list"
-          
-          if [ -n "$LLVM_PROFDATA" ] && [ -n "$LLVM_COV" ]; then
-            echo "Processing Rust coverage from Python tests..."
-            # Merge all profraw files (from both build and test execution)
-            if find . -name "*.profraw" -type f | head -1 | grep -q .; then
-              find . -name "*.profraw" -type f -print0 | xargs -0 -r $LLVM_PROFDATA merge -sparse -o rust-coverage.profdata
-              if [ -f rust-coverage.profdata ]; then
-                $LLVM_COV export ${{ github.workspace }}/target/debug/libsf_core.so \
-                    -instr-profile=rust-coverage.profdata \
-                    -format=lcov \
-                    -sources=${{ github.workspace }}/sf_core > reports/rust-coverage-${{ matrix.os }}-${{ matrix.py }}.lcov
-                echo "Rust coverage report generated: rust-coverage-${{ matrix.os }}-${{ matrix.py }}.lcov"
-              else
-                echo "Failed to create rust-coverage.profdata"
-              fi
-            else
-              echo "No profraw files found - creating empty coverage file"
-              touch reports/rust-coverage-${{ matrix.os }}-${{ matrix.py }}.lcov
-            fi
-          else
-            echo "LLVM tools not found - creating empty coverage file"
-            touch reports/rust-coverage-${{ matrix.os }}-${{ matrix.py }}.lcov
-          fi
+          find . -name "*.profraw" -type f -print0 | xargs -0 -r $(rustup which llvm-profdata) merge -sparse -o rust-coverage.profdata
+          $(rustup which llvm-cov) export ${{ github.workspace }}/target/debug/libsf_core.so \
+              -instr-profile=rust-coverage.profdata \
+              -format=lcov \
+              -sources=${{ github.workspace }}/sf_core > reports/rust-coverage-${{ matrix.os }}-${{ matrix.py }}.lcov
         working-directory: pep249_dbapi
 
       - name: Upload Python coverage to Codecov
@@ -180,7 +138,7 @@ jobs:
 
       - name: Upload Rust coverage to Codecov
         uses: codecov/codecov-action@v5
-        if: always()
+        if: success()
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
         with:
