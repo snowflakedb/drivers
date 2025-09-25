@@ -102,8 +102,8 @@ jobs:
           $LLVM_COV export target/debug/libsfodbc.so \
               -instr-profile=coverage.profdata \
               -format=lcov \
-              -sources=$(pwd)/odbc \
-              -sources=$(pwd)/sf_core > lcov.info
+              -sources=$(pwd)/odbc/src \
+              -sources=$(pwd)/sf_core/src > lcov.info
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
