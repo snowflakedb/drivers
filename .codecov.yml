@@ -9,8 +9,12 @@ flag_management:
     carryforward_mode: "all"
 
 flags:
-  rust:
+  rust-core:
     paths: ["sf_core/"]
+  core-from-python:
+    paths: ["sf_core/", "pep249_dbapi/"]
+  core-from-odbc:
+    paths: ["sf_core/", "odbc/"]
   jdbc:
     paths: ["jdbc/", "jdbc_bridge/"]
   python:
@@ -40,25 +44,27 @@ coverage:
       # Overall status waits for all expected coverage flags
       default:
         <<: *component
-        flags: [rust, python, jdbc, odbc]
-        flag_coverage_not_uploaded_behavior: exclude
+        flags: [rust-core, core-from-python, core-from-odbc, python, jdbc, odbc]
+        flag_coverage_not_uploaded_behavior: include
       # Individual component statuses
-      rust:    { <<: *component, flags: [rust] }
-      python:  { <<: *component, flags: [python] }
-      jdbc:    { <<: *component, flags: [jdbc] }
-      odbc:    { <<: *component, flags: [odbc] }
+      rust-core:        { <<: *component, flags: [rust-core] }
+      rust-combined:    { <<: *component, flags: [rust-core, core-from-python, core-from-odbc] }
+      python:           { <<: *component, flags: [python] }
+      jdbc:             { <<: *component, flags: [jdbc] }
+      odbc:             { <<: *component, flags: [odbc] }
         
     patch:
       # Overall patch status waits for all expected coverage flags
       default:
         <<: *patch-component
-        flags: [rust, python, jdbc, odbc]
-        flag_coverage_not_uploaded_behavior: exclude
+        flags: [rust-core, core-from-python, core-from-odbc, python, jdbc, odbc]
+        flag_coverage_not_uploaded_behavior: include
       # Individual component statuses
-      rust:    { <<: *patch-component, flags: [rust] }
-      python:  { <<: *patch-component, flags: [python] }
-      jdbc:    { <<: *patch-component, flags: [jdbc] }
-      odbc:    { <<: *patch-component, flags: [odbc] }
+      rust-core:        { <<: *patch-component, flags: [rust-core] }
+      rust-combined:    { <<: *patch-component, flags: [rust-core, core-from-python, core-from-odbc] }
+      python:           { <<: *patch-component, flags: [python] }
+      jdbc:             { <<: *patch-component, flags: [jdbc] }
+      odbc:             { <<: *patch-component, flags: [odbc] }
 
 comment:
   layout: "header,diff,flags,tree"

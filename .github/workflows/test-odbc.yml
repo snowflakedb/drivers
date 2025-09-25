@@ -93,26 +93,46 @@ jobs:
               .
           cmake --build cmake-build -- -j $(nproc)
           ctest -C Debug --test-dir cmake-build --output-on-failure
-          
-          # Generate coverage report from C++ test execution
-          cd ..
+
+      - name: Generate coverage reports
+        run: |
+          # Process raw coverage data
           LLVM_PROFDATA=$(find ~/.rustup -name "llvm-profdata" -type f 2>/dev/null | head -1)
           LLVM_COV=$(find ~/.rustup -name "llvm-cov" -type f 2>/dev/null | head -1)
-          find . -name "odbc-*.profraw" -type f | xargs $LLVM_PROFDATA merge -sparse -o coverage.profdata
+          find . -name "odbc-*.profraw" -type f | xargs $LLVM_PROFDATA merge -sparse -o odbc-coverage.profdata
+          
+          # Generate ODBC driver coverage
           $LLVM_COV export target/debug/libsfodbc.so \
-              -instr-profile=coverage.profdata \
+              -instr-profile=odbc-coverage.profdata \
               -format=lcov \
               -sources=$(pwd)/odbc/src \
+              -ignore-filename-regex='.*/(tests|test_utils).*' \
+              -ignore-filename-regex='.*/tests_format_validator.*' > odbc-driver.lcov
+          
+          # Generate sf_core coverage from ODBC tests
+          $LLVM_COV export target/debug/libsfodbc.so \
+              -instr-profile=odbc-coverage.profdata \
+              -format=lcov \
               -sources=$(pwd)/sf_core/src \
               -ignore-filename-regex='.*/(tests|test_utils).*' \
-              -ignore-filename-regex='.*/tests_format_validator.*' > lcov.info
+              -ignore-filename-regex='.*/tests_format_validator.*' > core-from-odbc.lcov
 
-      - name: Upload coverage to Codecov
+      - name: Upload ODBC driver coverage to Codecov
         uses: codecov/codecov-action@v5
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
         with:
-          files: ./lcov.info
+          files: ./odbc-driver.lcov
           flags: odbc
-          name: odbc-${{ runner.os }}
+          name: odbc-driver-${{ runner.os }}
+          fail_ci_if_error: false
+
+      - name: Upload Core from ODBC coverage to Codecov
+        uses: codecov/codecov-action@v5
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+        with:
+          files: ./core-from-odbc.lcov
+          flags: core-from-odbc
+          name: core-from-odbc-${{ runner.os }}
           fail_ci_if_error: false

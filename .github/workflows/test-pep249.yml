@@ -121,13 +121,13 @@ jobs:
           # Generate coverage report from Python test execution
           LLVM_PROFDATA=$(find ~/.rustup -name "llvm-profdata" -type f 2>/dev/null | head -1)
           LLVM_COV=$(find ~/.rustup -name "llvm-cov" -type f 2>/dev/null | head -1)
-          find . -name "*.profraw" -type f | xargs $LLVM_PROFDATA merge -sparse -o rust-coverage.profdata
+          find . -name "*.profraw" -type f | xargs $LLVM_PROFDATA merge -sparse -o core-from-python.profdata
           $LLVM_COV export ${{ github.workspace }}/target/debug/libsf_core.so \
-              -instr-profile=rust-coverage.profdata \
+              -instr-profile=core-from-python.profdata \
               -format=lcov \
               -sources=${{ github.workspace }}/sf_core/src \
               -ignore-filename-regex='.*/(tests|test_utils).*' \
-              -ignore-filename-regex='.*/tests_format_validator.*' > reports/rust-coverage-${{ matrix.os }}-${{ matrix.py }}.lcov
+              -ignore-filename-regex='.*/tests_format_validator.*' > reports/core-from-python-${{ matrix.os }}-${{ matrix.py }}.lcov
         working-directory: pep249_dbapi
 
       - name: Upload Python coverage to Codecov
@@ -140,15 +140,15 @@ jobs:
           name: python-${{ matrix.os }}-py${{ matrix.py }}
           fail_ci_if_error: false
 
-      - name: Upload Rust coverage to Codecov
+      - name: Upload Core from Python coverage to Codecov
         uses: codecov/codecov-action@v5
         if: success()
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
         with:
-          files: ./pep249_dbapi/reports/rust-coverage-${{ matrix.os }}-${{ matrix.py }}.lcov
-          flags: rust
-          name: rust-from-python-${{ matrix.os }}-py${{ matrix.py }}
+          files: ./pep249_dbapi/reports/core-from-python-${{ matrix.os }}-${{ matrix.py }}.lcov
+          flags: core-from-python
+          name: core-from-python-${{ matrix.os }}-py${{ matrix.py }}
           fail_ci_if_error: false
 
       - name: Upload test results as GitHub artifact
@@ -157,7 +157,7 @@ jobs:
           name: results-universal-${{ matrix.os }}-${{ matrix.py }}
           path: |
             pep249_dbapi/reports/*-${{ matrix.os }}-${{ matrix.py }}.*
-            pep249_dbapi/reports/rust-coverage-${{ matrix.os }}-${{ matrix.py }}.lcov
+            pep249_dbapi/reports/core-from-python-${{ matrix.os }}-${{ matrix.py }}.lcov
 
   # Integration tests only with reference connector (for comparison)
   pep249_tests_reference:
