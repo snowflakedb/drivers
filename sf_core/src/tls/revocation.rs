@@ -19,4 +19,16 @@ pub enum RevocationError {
         #[snafu(implicit)]
         location: Location,
     },
+    #[snafu(display("Failed to extract CRL distribution points"))]
+    DistributionPoints {
+        source: crate::crl::error::CrlError,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("CRL operation failed: {source}"))]
+    CrlOperation {
+        source: crate::crl::error::CrlError,
+        #[snafu(implicit)]
+        location: Location,
+    },
 }

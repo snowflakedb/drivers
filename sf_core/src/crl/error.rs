@@ -12,7 +12,7 @@ pub enum CrlError {
     },
     #[snafu(display("Failed to parse CRL data"))]
     CrlParsing {
-        source: x509_parser::error::X509Error,
+        source: x509_parser::nom::Err<x509_parser::error::X509Error>,
         #[snafu(implicit)]
         location: Location,
     },

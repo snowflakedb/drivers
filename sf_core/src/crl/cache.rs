@@ -60,40 +60,30 @@ impl CrlCache {
         issuer_der: Option<&[u8]>,
     ) -> Result<crate::tls::revocation::RevocationOutcome, crate::tls::revocation::RevocationError>
     {
-        use crate::tls::revocation::{RevocationError, RevocationOutcome};
+        use crate::tls::revocation::RevocationOutcome;
         // Extract CRL URLs
         let crl_urls = crate::crl::certificate_parser::extract_crl_distribution_points(cert_der)
-            .map_err(|e| RevocationError::Crl {
-                message: format!("{e:?}"),
-                location: snafu::Location::new(file!(), line!(), 0),
-            })?;
+            .context(crate::tls::revocation::DistributionPointsSnafu)?;
         if crl_urls.is_empty() {
             return Ok(RevocationOutcome::NotDetermined);
         }
         // Get certificate serial
         let serial = crate::crl::certificate_parser::get_certificate_serial_number(cert_der)
-            .map_err(|e| RevocationError::Crl {
-                message: format!("{e:?}"),
-                location: snafu::Location::new(file!(), line!(), 0),
-            })?;
+            .context(crate::tls::revocation::CrlOperationSnafu)?;
         // Try URLs
         for url in crl_urls.iter() {
-            let bytes = self.get(url).await.map_err(|e| RevocationError::Crl {
-                message: format!("{e:?}"),
-                location: snafu::Location::new(file!(), line!(), 0),
-            })?;
+            let bytes = self
+                .get(url)
+                .await
+                .context(crate::tls::revocation::CrlOperationSnafu)?;
             if let Err(_e) =
                 crate::tls::x509_utils::verify_crl_signature_best_effort(&bytes, issuer_der)
             {
                 continue;
             }
-            let is_revoked = crate::crl::certificate_parser::check_certificate_in_crl(
-                &serial, &bytes,
-            )
-            .map_err(|e| RevocationError::Crl {
-                message: format!("{e:?}"),
-                location: snafu::Location::new(file!(), line!(), 0),
-            })?;
+            let is_revoked =
+                crate::crl::certificate_parser::check_certificate_in_crl(&serial, &bytes)
+                    .context(crate::tls::revocation::CrlOperationSnafu)?;
             if is_revoked {
                 return Ok(RevocationOutcome::Revoked {
                     reason: None,
@@ -117,10 +107,7 @@ impl CrlCache {
                 config.connection_timeout.num_seconds() as u64,
             ))
             .build()
-            .map_err(|e| CrlError::HttpClientBuild {
-                source: e,
-                location: snafu::Location::new(file!(), line!(), 0),
-            })?;
+            .context(crate::crl::error::HttpClientBuildSnafu)?;
 
         Ok(Self {
             config,
