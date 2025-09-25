@@ -12,9 +12,9 @@ flags:
   rust-core:
     paths: ["sf_core/"]
   core-from-python:
-    paths: ["sf_core/", "pep249_dbapi/"]
+    paths: ["sf_core/"]
   core-from-odbc:
-    paths: ["sf_core/", "odbc/"]
+    paths: ["sf_core/"]
   jdbc:
     paths: ["jdbc/", "jdbc_bridge/"]
   python:
@@ -43,7 +43,10 @@ coverage:
     project:
       # Overall status waits for all expected coverage flags
       default:
-        <<: *component
+        target: auto
+        threshold: 1%
+        base: auto
+        if_ci_failed: error
         flags: [rust-core, core-from-python, core-from-odbc, python, jdbc, odbc]
         flag_coverage_not_uploaded_behavior: include
       # Individual component statuses
