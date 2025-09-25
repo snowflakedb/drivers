@@ -17,10 +17,23 @@ pub struct CachedCrl {
     pub expires_at: DateTime<Utc>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct OutcomeKey {
+    serial: Vec<u8>,
+    issuer_hash: Vec<u8>,
+}
+
+#[derive(Debug, Clone)]
+struct OutcomeEntry {
+    outcome: crate::tls::revocation::RevocationOutcome,
+    expires_at: DateTime<Utc>,
+}
+
 #[derive(Debug)]
 pub struct CrlCache {
     config: CrlConfig,
     memory_cache: Option<Arc<Mutex<HashMap<String, CachedCrl>>>>,
+    outcome_cache: Option<Arc<Mutex<HashMap<OutcomeKey, OutcomeEntry>>>>,
     url_locks: Arc<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>,
     backoff: Arc<Mutex<HashMap<String, (u32, std::time::Instant)>>>,
     http_client: reqwest::Client,
@@ -54,6 +67,39 @@ fn metrics() -> &'static CrlMetrics {
 }
 
 impl CrlCache {
+    fn outcome_get(&self, key: &OutcomeKey) -> Option<crate::tls::revocation::RevocationOutcome> {
+        if let Some(cache) = &self.outcome_cache
+            && let Ok(mut guard) = cache.lock()
+        {
+            if let Some(entry) = guard.get(key)
+                && Utc::now() <= entry.expires_at
+            {
+                return Some(entry.outcome.clone());
+            }
+            guard.remove(key);
+        }
+        None
+    }
+
+    fn outcome_put(
+        &self,
+        key: OutcomeKey,
+        outcome: crate::tls::revocation::RevocationOutcome,
+        expires_at: DateTime<Utc>,
+    ) {
+        if let Some(cache) = &self.outcome_cache
+            && let Ok(mut guard) = cache.lock()
+        {
+            guard.insert(
+                key,
+                OutcomeEntry {
+                    outcome,
+                    expires_at,
+                },
+            );
+        }
+    }
+
     pub async fn check_revocation(
         &self,
         cert_der: &[u8],
@@ -70,13 +116,32 @@ impl CrlCache {
         // Get certificate serial
         let serial = crate::crl::certificate_parser::get_certificate_serial_number(cert_der)
             .context(crate::tls::revocation::CrlOperationSnafu)?;
+        // Outcome cache lookup if issuer is known
+        if let Some(issuer) = issuer_der
+            && let Some(issuer_hash) = crate::tls::x509_utils::subject_der_hash(issuer)
+        {
+            let key = OutcomeKey {
+                serial: serial.clone(),
+                issuer_hash,
+            };
+            if let Some(hit) = self.outcome_get(&key) {
+                return Ok(hit);
+            }
+        }
         // Try URLs
         let mut any_verified = false;
+        let mut min_expires: Option<DateTime<Utc>> = None;
         for url in crl_urls.iter() {
             let bytes = self
                 .get(url)
                 .await
                 .context(crate::tls::revocation::CrlOperationSnafu)?;
+            if let Ok(Some(dt)) = crate::tls::x509_utils::extract_crl_next_update(&bytes) {
+                min_expires = Some(match min_expires {
+                    Some(cur) => cur.min(dt),
+                    None => dt,
+                });
+            }
             if let Err(_e) =
                 crate::tls::x509_utils::verify_crl_signature_best_effort(&bytes, issuer_der)
             {
@@ -87,17 +152,41 @@ impl CrlCache {
                 crate::crl::certificate_parser::check_certificate_in_crl(&serial, &bytes)
                     .context(crate::tls::revocation::CrlOperationSnafu)?;
             if is_revoked {
-                return Ok(RevocationOutcome::Revoked {
+                let outcome = RevocationOutcome::Revoked {
                     reason: None,
                     revocation_time: None,
-                });
+                };
+                if let Some(issuer) = issuer_der
+                    && let Some(issuer_hash) = crate::tls::x509_utils::subject_der_hash(issuer)
+                {
+                    let key = OutcomeKey {
+                        serial: serial.clone(),
+                        issuer_hash,
+                    };
+                    let expires_at =
+                        min_expires.unwrap_or_else(|| Utc::now() + self.config.validity_time);
+                    self.outcome_put(key, outcome.clone(), expires_at);
+                }
+                return Ok(outcome);
             }
         }
         if !any_verified {
             return Ok(RevocationOutcome::NotDetermined);
         }
-        Ok(RevocationOutcome::NotRevoked)
+        let outcome = RevocationOutcome::NotRevoked;
+        if let Some(issuer) = issuer_der
+            && let Some(issuer_hash) = crate::tls::x509_utils::subject_der_hash(issuer)
+        {
+            let key = OutcomeKey {
+                serial,
+                issuer_hash,
+            };
+            let expires_at = min_expires.unwrap_or_else(|| Utc::now() + self.config.validity_time);
+            self.outcome_put(key, outcome.clone(), expires_at);
+        }
+        Ok(outcome)
     }
+
     pub fn new(config: CrlConfig) -> Result<Self, CrlError> {
         let memory_cache = if config.enable_memory_caching {
             Some(Arc::new(Mutex::new(HashMap::new())))
@@ -115,8 +204,13 @@ impl CrlCache {
             .context(crate::crl::error::HttpClientBuildSnafu)?;
 
         Ok(Self {
-            config,
+            config: config.clone(),
             memory_cache,
+            outcome_cache: if config.enable_memory_caching {
+                Some(Arc::new(Mutex::new(HashMap::new())))
+            } else {
+                None
+            },
             url_locks: Arc::new(Mutex::new(HashMap::new())),
             backoff: Arc::new(Mutex::new(HashMap::new())),
             http_client,
@@ -137,6 +231,7 @@ impl CrlCache {
                             CrlCache {
                                 config: CrlConfig::default(),
                                 memory_cache: None,
+                                outcome_cache: None,
                                 url_locks: Arc::new(Mutex::new(HashMap::new())),
                                 backoff: Arc::new(Mutex::new(HashMap::new())),
                                 http_client: reqwest::Client::new(),
