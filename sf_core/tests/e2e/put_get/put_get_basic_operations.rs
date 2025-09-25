@@ -1,9 +1,10 @@
 use super::super::common::test_utils::*;
 use crate::common::arrow_result_helper::ArrowResultHelper;
-use crate::common::put_get_common::{GetResult, PutResult};
+use crate::common::put_get_common::{
+    GetResult, PutResult, assert_file_exists, get_file_from_stage, upload_file_to_stage,
+};
 use arrow::datatypes::Field;
-use sf_core::protobuf_gen::database_driver_v1::ExecuteResult;
-use std::{fs, path::Path};
+use std::fs;
 
 #[test]
 fn should_select_data_from_file_uploaded_to_stage() {
@@ -56,13 +57,11 @@ fn should_get_file_uploaded_to_stage() {
     let (_get_result, download_dir) = get_file_from_stage(&client, stage_name, &filename);
 
     // Then File should be downloaded
-    let expected_file_path = download_dir.path().join(format!("{filename}.gz"));
-    assert!(
-        expected_file_path.exists(),
-        "Downloaded gzipped file should exist at {expected_file_path:?}",
-    );
+    let gzipped_filename = format!("{filename}.gz");
+    assert_file_exists(&download_dir, &gzipped_filename);
 
     // And Have correct content
+    let expected_file_path = download_dir.path().join(&gzipped_filename);
     let decompressed_content =
         decompress_gzipped_file(&expected_file_path).expect("Failed to decompress downloaded file");
     let original_content = fs::read_to_string(&test_file_path).unwrap();
@@ -173,34 +172,6 @@ fn test_file() -> (String, std::path::PathBuf) {
         "test_data.csv".to_string(),
         shared_test_data_dir().join("basic").join("test_data.csv"),
     )
-}
-
-fn upload_file_to_stage(
-    client: &SnowflakeTestClient,
-    stage_name: &str,
-    test_file_path: &Path,
-) -> ExecuteResult {
-    client.create_temporary_stage(stage_name);
-    let put_sql = format!(
-        "PUT 'file://{}' @{stage_name}",
-        test_file_path.to_str().unwrap().replace("\\", "/")
-    );
-    client.execute_query(&put_sql)
-}
-
-fn get_file_from_stage(
-    client: &SnowflakeTestClient,
-    stage_name: &str,
-    filename: &str,
-) -> (ExecuteResult, tempfile::TempDir) {
-    let download_dir = tempfile::TempDir::new().unwrap();
-    let download_dir_path = download_dir.path();
-    let get_sql = format!(
-        "GET @{stage_name}/{filename} file://{}/",
-        download_dir_path.to_str().unwrap().replace("\\", "/")
-    );
-    let get_result = client.execute_query(&get_sql);
-    (get_result, download_dir)
 }
 
 fn check_text_field(field: &Field, name: &str) {

@@ -1,7 +1,6 @@
 pub mod common;
 use common::arrow_result_helper::ArrowResultHelper;
 use common::put_get_common::*;
-use common::test_utils::*;
 use std::path::PathBuf;
 
 #[test]
