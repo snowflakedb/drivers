@@ -49,7 +49,9 @@ coverage:
         if_ci_failed: error
         flags: [rust-core, core-from-python, core-from-odbc, python, jdbc, odbc]
         flag_coverage_not_uploaded_behavior: include
-        after_n_builds: 6  # Wait for all 6 flag uploads before processing
+        wait_for_ci: true
+        require_ci_to_pass: true
+
       # Individual component statuses
       rust-core:        { <<: *component, flags: [rust-core] }
       rust-combined:    { <<: *component, flags: [rust-core, core-from-python, core-from-odbc] }
