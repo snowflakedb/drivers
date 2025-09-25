@@ -11,10 +11,22 @@ import lzma
 import zstandard as zstd
 from pathlib import Path
 
+import pyarrow as pa
+import pyarrow.parquet as pq
+import pyarrow.orc as pa_orc
+
 # Current catalog structure and exact file contents to generate:
 # - tests/test_data/basic/test_data.csv                 -> b"1,2,3\n"
 # - tests/test_data/compression/test_data.csv           -> b"1,2,3\n" and compressed variants of this file:
-#       test_data.csv.gz, .bz2, .br, .zst, .deflate, .raw_deflate
+#       test_data.csv.gz, .bz2, .br, .zst, .deflate, .raw_deflate, .parquet, .orc
+PARQUET_ORC_TABLE = pa.table(
+    {
+        "c1": pa.array([1], type=pa.int32()),
+        "c2": pa.array([2], type=pa.int32()),
+        "c3": pa.array([3], type=pa.int32()),
+    }
+)
+
 # - tests/test_data/overwrite/original/test_data.csv    -> b"original,test,data\n"
 # - tests/test_data/overwrite/updated/test_data.csv     -> b"updated,test,data\n"
 # - tests/test_data/wildcard/pattern_1.csv              -> b"0\n"
@@ -94,6 +106,14 @@ def generate_compression(root: Path) -> list[Path]:
     lzma_path = out_dir / f"{base_name}.xz"
     write_file(lzma_path, lzma.compress(BASE_CSV_CONTENT))
     created.append(lzma_path)
+
+    parquet_path = out_dir / f"{base_name}.parquet"
+    pq.write_table(PARQUET_ORC_TABLE, parquet_path, compression="NONE", use_dictionary=False)
+    created.append(parquet_path)
+
+    orc_path = out_dir / f"{base_name}.orc"
+    pa_orc.write_table(PARQUET_ORC_TABLE, orc_path)
+    created.append(orc_path)
 
     return created
 
