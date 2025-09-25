@@ -1,7 +1,9 @@
 use chrono::{DateTime, Utc};
 use snafu::{Location, ResultExt, Snafu};
 // Small helpers to centralize dual x509 crate usage
-use crate::crl::error::CrlError;
+use crate::crl::error::{
+    CertificateParseSnafu, CrlError, CrlListParseSnafu, CrlParsingSnafu, CrlToDerSnafu,
+};
 use const_oid::ObjectIdentifier;
 use x509_cert::crl::CertificateList as RcCertificateList;
 use x509_cert::der::{Decode, Encode};
@@ -64,9 +66,7 @@ pub fn verify_crl_signature_best_effort(
     crl_der: &[u8],
     issuer_der: Option<&[u8]>,
 ) -> Result<(), CrlError> {
-    let crl = RcCertificateList::from_der(crl_der).map_err(|_| CrlError::InvalidCrlSignature {
-        location: snafu::Location::new(file!(), line!(), 0),
-    })?;
+    let crl = RcCertificateList::from_der(crl_der).context(CrlListParseSnafu)?;
     let sig = crl
         .signature
         .as_bytes()
@@ -79,11 +79,8 @@ pub fn verify_crl_signature_best_effort(
         Some(v) => v,
         None => return Ok(()),
     };
-    let issuer_cert = x509_cert::Certificate::from_der(issuer_der).map_err(|_| {
-        CrlError::InvalidCrlSignature {
-            location: snafu::Location::new(file!(), line!(), 0),
-        }
-    })?;
+    let issuer_cert =
+        x509_cert::Certificate::from_der(issuer_der).context(CertificateParseSnafu)?;
     if issuer_cert.tbs_certificate.subject != crl.tbs_cert_list.issuer {
         return Err(CrlError::CrlIssuerMismatch {
             location: snafu::Location::new(file!(), line!(), 0),
@@ -290,14 +287,8 @@ pub fn verify_crl_signature_best_effort(
 
 /// Return canonical DER of the CRL's TBS (to-be-signed) part
 pub fn tbs_crl_der(crl_der: &[u8]) -> Result<Vec<u8>, CrlError> {
-    let crl = RcCertificateList::from_der(crl_der).map_err(|_| CrlError::InvalidCrlSignature {
-        location: snafu::Location::new(file!(), line!(), 0),
-    })?;
-    crl.tbs_cert_list
-        .to_der()
-        .map_err(|_| CrlError::InvalidCrlSignature {
-            location: snafu::Location::new(file!(), line!(), 0),
-        })
+    let crl = RcCertificateList::from_der(crl_der).context(CrlListParseSnafu)?;
+    crl.tbs_cert_list.to_der().context(CrlToDerSnafu)
 }
 
 /// Extract thisUpdate and nextUpdate from a CRL, converted to chrono
@@ -312,10 +303,7 @@ pub fn crl_times(
 > {
     use x509_parser::prelude::FromDer;
     let (_, crl) = x509_parser::revocation_list::CertificateRevocationList::from_der(crl_der)
-        .map_err(|e| CrlError::CrlParsing {
-            source: e,
-            location: snafu::Location::new(file!(), line!(), 0),
-        })?;
+        .context(CrlParsingSnafu)?;
     let this_dt =
         crate::crl::certificate_parser::asn1_time_to_datetime(&crl.tbs_cert_list.this_update)
             .ok_or_else(|| CrlError::CrlParsing {

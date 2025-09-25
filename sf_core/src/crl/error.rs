@@ -83,4 +83,22 @@ pub enum CrlError {
         #[snafu(implicit)]
         location: Location,
     },
+    #[snafu(display("Failed to parse CRL using x509-cert"))]
+    CrlListParse {
+        source: x509_cert::der::Error,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Failed to encode CRL TBS to DER"))]
+    CrlToDer {
+        source: x509_cert::der::Error,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Failed to parse certificate using x509-cert"))]
+    CertificateParse {
+        source: x509_cert::der::Error,
+        #[snafu(implicit)]
+        location: Location,
+    },
 }
