@@ -71,6 +71,7 @@ impl CrlCache {
         let serial = crate::crl::certificate_parser::get_certificate_serial_number(cert_der)
             .context(crate::tls::revocation::CrlOperationSnafu)?;
         // Try URLs
+        let mut any_verified = false;
         for url in crl_urls.iter() {
             let bytes = self
                 .get(url)
@@ -81,6 +82,7 @@ impl CrlCache {
             {
                 continue;
             }
+            any_verified = true;
             let is_revoked =
                 crate::crl::certificate_parser::check_certificate_in_crl(&serial, &bytes)
                     .context(crate::tls::revocation::CrlOperationSnafu)?;
@@ -90,6 +92,9 @@ impl CrlCache {
                     revocation_time: None,
                 });
             }
+        }
+        if !any_verified {
+            return Ok(RevocationOutcome::NotDetermined);
         }
         Ok(RevocationOutcome::NotRevoked)
     }
@@ -223,15 +228,16 @@ impl CrlCache {
                         return Ok(bytes);
                     }
                     // Stale on disk; proceed to network
-                    tracing::debug!(target: "sf_core::crl", "Disk cache entry expired for {}, refetching", url);
+                    tracing::debug!(target: "sf_core::crl", "Disk cache entry expired for {url}, refetching");
                 }
                 Err(e) => {
                     // It's ok if disk cache miss; only warn on unexpected errors
                     if e.kind() != std::io::ErrorKind::NotFound {
                         tracing::debug!(
                             target: "sf_core::crl",
-                            "Failed to read CRL cache from disk at {}: {}",
-                            path.display(), e
+                            path = %path.display(),
+                            error = %e,
+                            "Failed to read CRL cache from disk"
                         );
                     }
                 }
@@ -246,8 +252,9 @@ impl CrlCache {
             if let Err(e) = std::fs::create_dir_all(&dir) {
                 tracing::warn!(
                     target: "sf_core::crl",
-                    "Failed to create CRL cache directory {}: {}",
-                    dir.display(), e
+                    dir = %dir.display(),
+                    error = %e,
+                    "Failed to create CRL cache directory"
                 );
             }
             let file_name = Self::url_digest(url);
@@ -255,8 +262,9 @@ impl CrlCache {
             if let Err(e) = std::fs::write(&path, &fetched) {
                 tracing::warn!(
                     target: "sf_core::crl",
-                    "Failed to write CRL cache to disk at {}: {}",
-                    path.display(), e
+                    path = %path.display(),
+                    error = %e,
+                    "Failed to write CRL cache to disk"
                 );
             }
         }
@@ -272,8 +280,7 @@ impl CrlCache {
         }) {
             tracing::warn!(
                 target: "sf_core::crl",
-                "Failed to put CRL into memory cache for url {}: {}",
-                url, e
+                "Failed to put CRL into memory cache for url {url}: {e}"
             );
         }
         let ms = start.elapsed().as_millis() as u64;

@@ -53,11 +53,8 @@ pub fn extract_crl_distribution_points(cert_der: &[u8]) -> Result<Vec<String>, C
         return Ok(Vec::new());
     }
 
-    tracing::debug!(
-        "Found {} CRL distribution points: {:?}",
-        crl_urls.len(),
-        crl_urls
-    );
+    let count = crl_urls.len();
+    tracing::debug!("Found {count} CRL distribution points: {crl_urls:?}");
     Ok(crl_urls)
 }
 
@@ -84,10 +81,8 @@ pub fn is_short_lived_certificate(cert_der: &[u8]) -> Result<bool, CrlError> {
     let is_short_lived = validity_period_seconds <= seven_days_seconds;
 
     if is_short_lived {
-        tracing::info!(
-            "Certificate is short-lived ({} days), skipping CRL check",
-            validity_period_seconds / (24 * 60 * 60)
-        );
+        let days = validity_period_seconds / (24 * 60 * 60);
+        tracing::info!("Certificate is short-lived ({days} days), skipping CRL check");
     }
 
     Ok(is_short_lived)
@@ -114,7 +109,7 @@ pub fn check_certificate_in_crl(cert_serial: &[u8], crl_der: &[u8]) -> Result<bo
             })?;
 
         if now > next_update_time {
-            tracing::warn!("CRL has expired (next update was {})", next_update_time);
+            tracing::warn!("CRL has expired (next update was {next_update_time})");
             return Err(CrlError::CrlExpired {
                 location: Location::new(file!(), line!(), 0),
             });
@@ -124,18 +119,14 @@ pub fn check_certificate_in_crl(cert_serial: &[u8], crl_der: &[u8]) -> Result<bo
     // Check if certificate is in the revoked list
     for revoked_cert in crl.iter_revoked_certificates() {
         if revoked_cert.raw_serial() == cert_serial {
-            tracing::warn!(
-                "Certificate with serial {:?} found in CRL revocation list",
-                hex::encode(cert_serial)
-            );
+            let serial_hex = hex::encode(cert_serial);
+            tracing::warn!("Certificate with serial {serial_hex} found in CRL revocation list");
             return Ok(true); // Certificate is revoked
         }
     }
 
-    tracing::debug!(
-        "Certificate with serial {:?} not found in CRL revocation list",
-        hex::encode(cert_serial)
-    );
+    let serial_hex = hex::encode(cert_serial);
+    tracing::debug!("Certificate with serial {serial_hex} not found in CRL revocation list");
     Ok(false) // Certificate is not revoked
 }
 

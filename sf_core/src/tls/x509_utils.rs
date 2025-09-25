@@ -60,8 +60,8 @@ pub fn extract_crl_next_update(crl_der: &[u8]) -> Result<Option<DateTime<Utc>>, 
     Ok(None)
 }
 
-/// Best-effort CRL signature verification using issuer public key
-/// Returns Ok(()) if verification passes or issuer is None; Err otherwise.
+// Best-effort CRL signature verification using issuer public key
+// Returns Ok(()) if verification passes or issuer is None; Err otherwise.
 pub fn verify_crl_signature_best_effort(
     crl_der: &[u8],
     issuer_der: Option<&[u8]>,
@@ -285,13 +285,13 @@ pub fn verify_crl_signature_best_effort(
     })
 }
 
-/// Return canonical DER of the CRL's TBS (to-be-signed) part
+// Return canonical DER of the CRL's TBS (to-be-signed) part
 pub fn tbs_crl_der(crl_der: &[u8]) -> Result<Vec<u8>, CrlError> {
     let crl = RcCertificateList::from_der(crl_der).context(CrlListParseSnafu)?;
     crl.tbs_cert_list.to_der().context(CrlToDerSnafu)
 }
 
-/// Extract thisUpdate and nextUpdate from a CRL, converted to chrono
+// Extract thisUpdate and nextUpdate from a CRL, converted to chrono
 pub fn crl_times(
     crl_der: &[u8],
 ) -> Result<
@@ -326,7 +326,7 @@ pub fn crl_times(
     Ok((this_dt, next_dt_opt))
 }
 
-/// Extract issuer SKID if present
+// Extract issuer SKID if present
 pub fn extract_issuer_skid(issuer_der: &[u8]) -> Option<Vec<u8>> {
     if let Ok((_, issuer)) = x509_parser::certificate::X509Certificate::from_der(issuer_der) {
         for ext in issuer.extensions() {
@@ -341,7 +341,7 @@ pub fn extract_issuer_skid(issuer_der: &[u8]) -> Option<Vec<u8>> {
     None
 }
 
-/// Stable hash of the issuer Subject DER (not its string form)
+// Stable hash of the issuer Subject DER (not its string form)
 pub fn subject_der_hash(issuer_der: &[u8]) -> Option<Vec<u8>> {
     use x509_cert::der::Encode;
     let cert = x509_cert::Certificate::from_der(issuer_der).ok()?;
