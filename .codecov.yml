@@ -39,6 +39,17 @@ coverage:
   round: down
   range: "60...90"
 
+  components:
+    rust-core:
+      - "sf_core/**"
+    python:
+      - "pep249_dbapi/**"
+    jdbc:
+      - "jdbc/**"
+      - "jdbc_bridge/**"
+    odbc:
+      - "odbc/**"
+
   status:
     project:
       # Overall status waits for all expected coverage flags
@@ -54,7 +65,7 @@ coverage:
 
       # Individual component statuses
       rust-core:        { <<: *component, flags: [rust-core] }
-      rust-combined:    { <<: *component, flags: [rust-core, core-from-python, core-from-odbc] }
+      core-combined:    { <<: *component, flags: [rust-core, core-from-python, core-from-odbc] }
       python:           { <<: *component, flags: [python] }
       jdbc:             { <<: *component, flags: [jdbc] }
       odbc:             { <<: *component, flags: [odbc] }
@@ -67,7 +78,7 @@ coverage:
         flag_coverage_not_uploaded_behavior: include
       # Individual component statuses
       rust-core:        { <<: *patch-component, flags: [rust-core] }
-      rust-combined:    { <<: *patch-component, flags: [rust-core, core-from-python, core-from-odbc] }
+      core-combined:    { <<: *patch-component, flags: [rust-core, core-from-python, core-from-odbc] }
       python:           { <<: *patch-component, flags: [python] }
       jdbc:             { <<: *patch-component, flags: [jdbc] }
       odbc:             { <<: *patch-component, flags: [odbc] }

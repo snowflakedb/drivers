@@ -101,14 +101,19 @@ jobs:
           LLVM_COV=$(find ~/.rustup -name "llvm-cov" -type f 2>/dev/null | head -1)
           find . -name "odbc-*.profraw" -type f | xargs $LLVM_PROFDATA merge -sparse -o odbc-coverage.profdata
           
-          # Generate ODBC driver coverage (exclude sf_core paths)
+          # Generate ODBC driver coverage (ODBC-only, explicitly exclude sf_core)
           $LLVM_COV export target/debug/libsfodbc.so \
               -instr-profile=odbc-coverage.profdata \
               -format=lcov \
               -sources=$(pwd)/odbc/src \
               -ignore-filename-regex='.*/(tests|test_utils).*' \
               -ignore-filename-regex='.*/tests_format_validator.*' \
-              -ignore-filename-regex='.*/sf_core/.*' > odbc-driver-${{ matrix.os }}.lcov
+              -ignore-filename-regex='.*/sf_core/.*' \
+              -ignore-filename-regex='.*/target/.*' > odbc-driver-${{ matrix.os }}.lcov
+          
+          # Debug: Check what files are actually in the ODBC report
+          echo "=== Files in ODBC report ==="
+          grep "^SF:" odbc-driver-${{ matrix.os }}.lcov | head -10
           
           # Generate sf_core coverage from ODBC tests
           $LLVM_COV export target/debug/libsf_core.so \

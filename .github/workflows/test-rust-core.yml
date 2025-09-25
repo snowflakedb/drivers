@@ -49,8 +49,8 @@ jobs:
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
         with:
-          flags: rust
-          name: rust-${{ runner.os }}-${{ matrix.rust-version }}
+          flags: rust-core
+          name: rust-core-${{ runner.os }}-${{ matrix.rust-version }}
           fail_ci_if_error: false
 
   format:
