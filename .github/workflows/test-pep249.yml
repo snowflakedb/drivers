@@ -118,9 +118,11 @@ jobs:
             --cov-report=xml:reports/coverage-${{ matrix.os }}-${{ matrix.py }}.xml \
             --cov-report=html:reports/coverage-${{ matrix.os }}-${{ matrix.py }}-html
           
-          # Generate Rust coverage report from Python test execution
-          find . -name "*.profraw" -type f -print0 | xargs -0 -r $(rustup which llvm-profdata) merge -sparse -o rust-coverage.profdata
-          $(rustup which llvm-cov) export ${{ github.workspace }}/target/debug/libsf_core.so \
+          # Generate coverage report from Python test execution
+          LLVM_PROFDATA=$(find ~/.rustup -name "llvm-profdata" -type f 2>/dev/null | head -1)
+          LLVM_COV=$(find ~/.rustup -name "llvm-cov" -type f 2>/dev/null | head -1)
+          find . -name "*.profraw" -type f | xargs $LLVM_PROFDATA merge -sparse -o rust-coverage.profdata
+          $LLVM_COV export ${{ github.workspace }}/target/debug/libsf_core.so \
               -instr-profile=rust-coverage.profdata \
               -format=lcov \
               -sources=${{ github.workspace }}/sf_core > reports/rust-coverage-${{ matrix.os }}-${{ matrix.py }}.lcov
