@@ -192,6 +192,52 @@ impl CrlCache {
             return Ok(mem.crl);
         }
 
+        // Disk cache fallback before network fetch
+        if self.config.enable_disk_caching
+            && let Some(dir) = self.config.get_cache_dir()
+        {
+            let file_name = Self::url_digest(url);
+            let path = dir.join(file_name);
+            match std::fs::read(&path) {
+                Ok(bytes) => {
+                    // Determine expiration based on CRL nextUpdate
+                    let expires_at = match crate::tls::x509_utils::extract_crl_next_update(&bytes) {
+                        Ok(Some(dt)) => dt,
+                        _ => Utc::now() + self.config.validity_time,
+                    };
+                    if Utc::now() <= expires_at {
+                        // Populate memory cache for subsequent lookups; ignore errors
+                        let _ = self.put(CachedCrl {
+                            crl: bytes.clone(),
+                            download_time: Utc::now(),
+                            url: url.to_string(),
+                            expires_at,
+                        });
+                        let ms = start.elapsed().as_millis() as u64;
+                        metrics()
+                            .get_ms
+                            .record(ms, &[KeyValue::new("source", "disk")]);
+                        metrics()
+                            .get_total
+                            .add(1, &[KeyValue::new("source", "disk")]);
+                        return Ok(bytes);
+                    }
+                    // Stale on disk; proceed to network
+                    tracing::debug!(target: "sf_core::crl", "Disk cache entry expired for {}, refetching", url);
+                }
+                Err(e) => {
+                    // It's ok if disk cache miss; only warn on unexpected errors
+                    if e.kind() != std::io::ErrorKind::NotFound {
+                        tracing::debug!(
+                            target: "sf_core::crl",
+                            "Failed to read CRL cache from disk at {}: {}",
+                            path.display(), e
+                        );
+                    }
+                }
+            }
+        }
+
         // Fetch and optionally persist while holding the per-URL lock to avoid duplicate downloads
         let fetched = self.fetch(url).await?;
         if self.config.enable_disk_caching
@@ -318,6 +364,4 @@ impl CrlCache {
         guard.remove(url);
         Ok(())
     }
-
-    // keep only one definition of check_revocation; duplicate removed
 }
