@@ -2,12 +2,24 @@ version: "v1"
 
 coverage:
   status:
-    project: off
+    project:
+      default:
+        target: auto
+        threshold: 20%
+        if_ci_failed: error
     patch: off
 
 flag_management:
   default_rules:
     carryforward: false
+    carryforward_mode: "all"
+    statuses:
+      - type: project
+        target: auto
+        threshold: 20%
+      - type: patch
+        target: 75%
+        threshold: 20%
   individual_flags:
     - name: rust-core
       paths: 
