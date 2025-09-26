@@ -1,91 +1,62 @@
-codecov:
-  notify:
-    wait_for_ci: true
-    require_ci_to_pass: true
+# Codecov Configuration
+version: "v1"
+
+coverage:
+  status:
+    project: off
+    patch: off
 
 flag_management:
   default_rules:
-    carryforward: false
-    carryforward_mode: "all"
-
-flags:
-  rust-core:
-    paths: ["sf_core/", "pep249_dbapi/", "odbc/"]
-  jdbc:
-    paths: ["jdbc/", "jdbc_bridge/"]
-  python:
-    paths: ["pep249_dbapi/"]
-  odbc:
-    paths: ["odbc/"]
-
-x-component: &component
-  target: auto
-  threshold: 2%
-  base: auto
-  if_ci_failed: error
-
-x-patch-component: &patch-component
-  target: 75%
-  threshold: 5%
-  base: auto
-  if_ci_failed: error
-
-coverage:
-  precision: 2
-  round: down
-  range: "60...90"
-
-  # Define logical components for the UI (new format)
-  component_management:
-    individual_components:
-      - component_id: rust-core
-        name: "Rust Core"
-        paths:
-          - "sf_core/**"
-      - component_id: python  
-        name: "Python Driver"
-        paths:
-          - "pep249_dbapi/**"
-      - component_id: jdbc
-        name: "JDBC Driver"
-        paths:
-          - "jdbc/**"
-          - "jdbc_bridge/**"
-      - component_id: odbc
-        name: "ODBC Driver"
-        paths:
-          - "odbc/**"
-
-  status:
-    project:
-      # Overall status waits for all expected coverage flags
-      default:
+    carryforward: true
+    statuses:
+      - type: project
         target: auto
-        threshold: 1%
-        base: auto
-        if_ci_failed: error
-        flags: [rust-core, python, jdbc, odbc]
-        flag_coverage_not_uploaded_behavior: include
-        wait_for_ci: true
-        require_ci_to_pass: true
-
-      # Individual component statuses
-      rust-core:        { <<: *component, flags: [rust-core] }
-      python:           { <<: *component, flags: [python] }
-      jdbc:             { <<: *component, flags: [jdbc] }
-      odbc:             { <<: *component, flags: [odbc] }
-        
-    patch:
-      # Overall patch status waits for all expected coverage flags
-      default:
-        <<: *patch-component
-        flags: [rust-core, python, jdbc, odbc]
-        flag_coverage_not_uploaded_behavior: include
-      # Individual component statuses
-      rust-core:        { <<: *patch-component, flags: [rust-core] }
-      python:           { <<: *patch-component, flags: [python] }
-      jdbc:             { <<: *patch-component, flags: [jdbc] }
-      odbc:             { <<: *patch-component, flags: [odbc] }
+        threshold: 5%
+      - type: patch
+        target: 90%
+  individual_flags: # exceptions to the default rules above, stated flag by flag
+    - name: rust-core
+      paths: 
+        - sf_core/
+      carryforward: true
+      statuses:
+        - type: project
+          target: auto
+          threshold: 5%
+        - type: patch
+          target: 75%
+    - name: python
+      paths: 
+        - pep249_dbapi/
+      carryforward: true
+      statuses:
+        - type: project
+          target: auto
+          threshold: 5%
+        - type: patch
+          target: 85%
+    - name: jdbc
+      paths: 
+        - jdbc/
+        - jdbc_bridge/
+      carryforward: true
+      statuses:
+        - type: project
+          target: auto
+          threshold: 5%
+        - type: patch
+          target: 80%
+    - name: odbc
+      paths: 
+        - odbc/
+      carryforward: true
+      statuses:
+        - type: project
+          target: auto
+          threshold: 5%
+        - type: patch
+          target: 80%
 
 comment:
   layout: "header,diff,flags,tree"
@@ -94,68 +65,25 @@ comment:
   require_base: true
   require_head: true
   branches: ["main", "develop"]
-  # Only show current flags, not historical ones
-  flags:
-    - rust-core
-    - python
-    - jdbc
-    - odbc
-  show_carryforward_flags: true
 
 ignore:
-  # Test files and documentation
   - "tests/"
   - "tests/**/*"
   - "**/tests/"
-  - "**/tests/**/*"
-  - "**/*.md"
-  - "odbc_tests/"
-  - "odbc_tests/**/*"
+  - "**/test_utils.rs"
+  - "**/test_*.rs"
+  - "**/*_test.rs"
+  - "**/tests_format_validator/**"
+  - "test_data/"
+  - "proto_generator/"
+  - "proto_utils/"
   - "scripts/"
-  
-  # Specific test paths to exclude
-  - "sf_core/tests/**"
-  - "**/tests/common/**"
-  - "tests/common/**"
-  - "tests/tests_format_validator/**"
-  
-  # Build artifacts
-  - "**/target/"
-  - "**/build/"
-  
-  # Configuration files
-  - "**/*.toml"
-  - "**/*.lock"
-  
-  # Python artifacts
-  - "**/__pycache__/"
-  - "**/*.pyc"
-  - "**/*.pyo"
-  - "**/.pytest_cache/"
-  - "**/.tox/"
-  - "**/dist/"
-  - "**/*.egg-info/"
-  
-  # Generated code
-  - "**/thrift_gen/"
-  - "**/gen-*/"
-  
-  # Java/Gradle artifacts
-  - "**/.gradle/"
-  - "**/gradlew*"
-  - "**/*.class"
-  
-  # CMake artifacts
-  - "**/CMakeCache.txt"
-  - "**/CMakeFiles/"
-  - "**/cmake_install.cmake"
-  - "**/cmake-build/"
-  
-  # IDE and OS files
-  - "**/.idea/"
-  - "**/.vscode/"
-  - "**/.DS_Store"
-  - "**/*.swp"
-
-github_checks:
-  annotations: true
+  - "*.md"
+  - "README*"
+  - "Dockerfile*"
+  - "*.yml"
+  - "*.yaml"
+  - "*.toml"
+  - "*.json"
+  - "*.sh"
+  - ".github/"
