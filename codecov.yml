@@ -28,19 +28,6 @@ flags:
   rust-core:
     carryforward: false
 
-x-component: &component
-  target: auto
-  threshold: 2%
-  base: auto
-  if_ci_failed: error
-
-x-patch-component: &patch-component
-  target: 75%
-  threshold: 5%
-  base: auto
-  if_ci_failed: error
-  informational: true
-
 coverage:
   precision: 2
   round: down
@@ -50,24 +37,75 @@ coverage:
     project:
       # Overall status waits for all expected coverage flags
       default:
-        <<: *component
+        target: auto
+        threshold: 2%
+        base: auto
+        if_ci_failed: error
         flags: [rust, python, jdbc, odbc]
         flag_coverage_not_uploaded_behavior: exclude
-      rust:    { <<: *component, flags: [rust] }
-      python:  { <<: *component, flags: [python] }
-      jdbc:    { <<: *component, flags: [jdbc] }
-      odbc:    { <<: *component, flags: [odbc] }
+      rust:
+        target: auto
+        threshold: 2%
+        base: auto
+        if_ci_failed: error
+        flags: [rust]
+      python:
+        target: auto
+        threshold: 2%
+        base: auto
+        if_ci_failed: error
+        flags: [python]
+      jdbc:
+        target: auto
+        threshold: 2%
+        base: auto
+        if_ci_failed: error
+        flags: [jdbc]
+      odbc:
+        target: auto
+        threshold: 2%
+        base: auto
+        if_ci_failed: error
+        flags: [odbc]
         
     patch:
       # Overall patch status waits for all expected coverage flags
       default:
-        <<: *patch-component
+        target: 75%
+        threshold: 5%
+        base: auto
+        if_ci_failed: error
+        informational: true
         flags: [rust, python, jdbc, odbc]
         flag_coverage_not_uploaded_behavior: exclude
-      rust:    { <<: *patch-component, flags: [rust] }
-      python:  { <<: *patch-component, flags: [python] }
-      jdbc:    { <<: *patch-component, flags: [jdbc] }
-      odbc:    { <<: *patch-component, flags: [odbc] }
+      rust:
+        target: 75%
+        threshold: 5%
+        base: auto
+        if_ci_failed: error
+        informational: true
+        flags: [rust]
+      python:
+        target: 75%
+        threshold: 5%
+        base: auto
+        if_ci_failed: error
+        informational: true
+        flags: [python]
+      jdbc:
+        target: 75%
+        threshold: 5%
+        base: auto
+        if_ci_failed: error
+        informational: true
+        flags: [jdbc]
+      odbc:
+        target: 75%
+        threshold: 5%
+        base: auto
+        if_ci_failed: error
+        informational: true
+        flags: [odbc]
 
 comment:
   layout: "header,diff,flags,tree"
