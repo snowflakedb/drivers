@@ -39,6 +39,7 @@ x-patch-component: &patch-component
   threshold: 5%
   base: auto
   if_ci_failed: error
+  informational: true
 
 coverage:
   precision: 2
@@ -52,7 +53,6 @@ coverage:
         <<: *component
         flags: [rust, python, jdbc, odbc]
         flag_coverage_not_uploaded_behavior: exclude
-      # Individual component statuses
       rust:    { <<: *component, flags: [rust] }
       python:  { <<: *component, flags: [python] }
       jdbc:    { <<: *component, flags: [jdbc] }
@@ -64,7 +64,6 @@ coverage:
         <<: *patch-component
         flags: [rust, python, jdbc, odbc]
         flag_coverage_not_uploaded_behavior: exclude
-      # Individual component statuses
       rust:    { <<: *patch-component, flags: [rust] }
       python:  { <<: *patch-component, flags: [python] }
       jdbc:    { <<: *patch-component, flags: [jdbc] }

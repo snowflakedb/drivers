@@ -54,32 +54,71 @@ jobs:
         run: cargo check --workspace
 
       - name: Build
-        run: cargo build --workspace
+        run: RUSTFLAGS="-C instrument-coverage" cargo build --workspace
 
       - name: Decode secrets
         run: ./scripts/decode_secrets.sh
         env:
           PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
 
-      - name: Test
+      - name: Run tests and collect coverage
         run: |
+          echo "=== Debug: Starting test and coverage collection ==="
           export PARAMETER_PATH=$(pwd)/parameters.json
-          export RUSTFLAGS="-C instrument-coverage"
           export LLVM_PROFILE_FILE="rust-%p-%m.profraw"
+          
+          echo "Environment variables:"
+          echo "PARAMETER_PATH: $PARAMETER_PATH"
+          echo "LLVM_PROFILE_FILE: $LLVM_PROFILE_FILE"
+          
+          echo "=== Running tests ==="
           cargo test --workspace
-
-      - name: Collect coverage
-        run: |
-          # Generate coverage report from test execution
+          
+          echo "=== Debug: After tests, checking for profraw files ==="
+          find . -name "*.profraw" -type f | head -10
+          
+          echo "=== Finding LLVM tools ==="
           LLVM_PROFDATA=$(find ~/.rustup -name "llvm-profdata" -type f 2>/dev/null | head -1)
           LLVM_COV=$(find ~/.rustup -name "llvm-cov" -type f 2>/dev/null | head -1)
+          
+          echo "LLVM_PROFDATA: $LLVM_PROFDATA"
+          echo "LLVM_COV: $LLVM_COV"
+          
+          if [ -z "$LLVM_PROFDATA" ] || [ -z "$LLVM_COV" ]; then
+            echo "ERROR: LLVM tools not found!"
+            exit 1
+          fi
+          
+          echo "=== Merging profraw files ==="
+          PROFRAW_FILES=$(find . -name "rust-*.profraw" -type f)
+          echo "Found profraw files: $PROFRAW_FILES"
+          
+          if [ -z "$PROFRAW_FILES" ]; then
+            echo "ERROR: No rust-*.profraw files found!"
+            exit 1
+          fi
+          
           find . -name "rust-*.profraw" -type f | xargs $LLVM_PROFDATA merge -sparse -o coverage.profdata
           
+          echo "=== Finding sf_core binaries ==="
           SF_CORE_BINARIES=$(find target/debug/deps -name "sf_core-*" -type f -executable 2>/dev/null)
+          echo "Found sf_core binaries: $SF_CORE_BINARIES"
+          
+          if [ -z "$SF_CORE_BINARIES" ]; then
+            echo "ERROR: No sf_core binaries found!"
+            echo "Listing target/debug/deps:"
+            ls -la target/debug/deps/ | grep sf_core || echo "No sf_core files found"
+            exit 1
+          fi
+          
+          echo "=== Generating coverage report ==="
           $LLVM_COV export $SF_CORE_BINARIES \
               -instr-profile=coverage.profdata \
               -format=lcov \
               -sources=$(pwd)/sf_core > lcov-${{ matrix.os }}-${{ matrix.rust-version }}.info
+          
+          echo "=== Coverage report generated ==="
+          ls -la lcov-${{ matrix.os }}-${{ matrix.rust-version }}.info
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
