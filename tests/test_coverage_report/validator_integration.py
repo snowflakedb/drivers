@@ -10,6 +10,7 @@ import json
 import subprocess
 from pathlib import Path
 from typing import Dict, Optional
+import os
 
 
 class ValidatorIntegration:
@@ -27,8 +28,15 @@ class ValidatorIntegration:
             return self._validator_cache
         
         try:
-            validator_binary = self.validator_path / "target" / "debug" / "tests_format_validator"
+            validator_binary = self.validator_path / "target" / "release" / "tests_format_validator"
             if not validator_binary.exists():
+                print("Validator binary not found, building...")
+                self._build_validator()
+            elif self._needs_rebuild(validator_binary):
+                print("Validator source code changed, rebuilding...")
+                # Clear cache before rebuilding since results will be different
+                self._validator_cache = None
+                self._breaking_change_cache = None
                 self._build_validator()
             
             # Run validator with JSON output
@@ -77,14 +85,44 @@ class ValidatorIntegration:
     def _build_validator(self):
         """Build the Rust validator if it doesn't exist."""
         print("Building Rust validator...")
+        # Use release build for better performance and parallel compilation
         build_result = subprocess.run(
-            ["cargo", "build"],
+            ["cargo", "build", "--release", "-j", "4"],
             cwd=self.validator_path,
             capture_output=True,
             text=True
         )
         if build_result.returncode != 0:
             raise RuntimeError(f"Failed to build validator: {build_result.stderr}")
+    
+    def _needs_rebuild(self, validator_binary: Path) -> bool:
+        """Check if the validator binary needs to be rebuilt based on source file changes."""
+        if not validator_binary.exists():
+            return True
+        
+        # Get binary modification time
+        binary_mtime = validator_binary.stat().st_mtime
+        
+        # Check key source files that would require a rebuild
+        source_files_to_check = [
+            self.validator_path / "Cargo.toml",
+            self.validator_path / "Cargo.lock",
+            self.validator_path / "src",
+        ]
+        
+        for source_path in source_files_to_check:
+            if source_path.exists():
+                if source_path.is_file():
+                    # Single file - check its modification time
+                    if source_path.stat().st_mtime > binary_mtime:
+                        return True
+                elif source_path.is_dir():
+                    # Directory - check all Rust files recursively
+                    for rust_file in source_path.rglob("*.rs"):
+                        if rust_file.stat().st_mtime > binary_mtime:
+                            return True
+        
+        return False
     
     def _parse_validator_output(self, validation_results: Dict) -> Dict:
         """Parse validator output into features dictionary."""

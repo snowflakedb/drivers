@@ -10,19 +10,35 @@ import re
 from pathlib import Path
 from typing import Dict, List, Optional
 
+# Pre-compile regex patterns for better performance
+TEST_CASE_PATTERN = re.compile(r'TEST_CASE\s*\(\s*"([^"]+)"')
+CPP_METHOD_PATTERN = re.compile(r'void\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(')
+RUST_FUNCTION_PATTERN = re.compile(r'fn\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(')
+PYTHON_TEST_PATTERN = re.compile(r'def\s+(test_[a-zA-Z_][a-zA-Z0-9_]*)\s*\(')
+
 
 class FeatureParser:
     """Parses Gherkin feature files and extracts test information."""
     
     def __init__(self, workspace_root: Path):
         self.workspace_root = workspace_root
+        self._file_cache = {}  # Cache for file contents to avoid re-reading
+    
+    def clear_cache(self):
+        """Clear the file cache to free memory."""
+        self._file_cache.clear()
     
     def get_feature_scenarios(self, feature_path: str) -> List[str]:
         """Extract scenario names from a feature file."""
         try:
             full_path = self.workspace_root / feature_path
-            with open(full_path, 'r', encoding='utf-8') as f:
-                content = f.read()
+            # Use cached content if available
+            if str(full_path) in self._file_cache:
+                content = self._file_cache[str(full_path)]
+            else:
+                with open(full_path, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                self._file_cache[str(full_path)] = content
             
             scenarios = []
             for line in content.split('\n'):
@@ -44,8 +60,13 @@ class FeatureParser:
         
         try:
             full_path = self.workspace_root / feature_path
-            with open(full_path, 'r', encoding='utf-8') as f:
-                content = f.read()
+            # Use cached content if available
+            if str(full_path) in self._file_cache:
+                content = self._file_cache[str(full_path)]
+            else:
+                with open(full_path, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                self._file_cache[str(full_path)] = content
             
             lines = content.split('\n')
             current_tags = []
@@ -134,8 +155,13 @@ class FeatureParser:
         methods = {}
         
         try:
-            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
-                content = f.read()
+            # Use cached content if available to avoid re-reading files
+            if file_path in self._file_cache:
+                content = self._file_cache[file_path]
+            else:
+                with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                    content = f.read()
+                self._file_cache[file_path] = content
             
             lines = content.split('\n')
             
@@ -143,7 +169,7 @@ class FeatureParser:
                 line_stripped = line.strip()
                 
                 # Look for TEST_CASE definitions (C++)
-                test_case_match = re.search(r'TEST_CASE\s*\(\s*"([^"]+)"', line_stripped)
+                test_case_match = TEST_CASE_PATTERN.search(line_stripped)
                 if test_case_match:
                     test_name = test_case_match.group(1)
                     # Check if this test matches any of our scenarios
@@ -153,7 +179,7 @@ class FeatureParser:
                             break
                 
                 # Look for C++ method definitions
-                method_match = re.search(r'void\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(', line_stripped)
+                method_match = CPP_METHOD_PATTERN.search(line_stripped)
                 if method_match:
                     method_name = method_match.group(1)
                     for scenario in scenario_names:
@@ -162,13 +188,13 @@ class FeatureParser:
                             break
                 
                 # Look for Rust test functions (fn test_name() after #[test])
-                rust_test_match = re.search(r'fn\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(', line_stripped)
+                rust_test_match = RUST_FUNCTION_PATTERN.search(line_stripped)
                 if rust_test_match:
                     method_name = rust_test_match.group(1)
-                    # Check if previous line has #[test] attribute (look back a few lines for #[test])
+                    # Check if previous line has #[test] or #[rstest] attribute (look back a few lines)
                     is_test_function = False
                     for j in range(max(0, i-5), i):  # Look back up to 5 lines
-                        if j < len(lines) and '#[test]' in lines[j]:
+                        if j < len(lines) and ('#[test]' in lines[j] or '#[rstest]' in lines[j]):
                             is_test_function = True
                             break
                     
@@ -179,7 +205,7 @@ class FeatureParser:
                                 break
                 
                 # Look for Python test functions (def test_name():)
-                python_test_match = re.search(r'def\s+(test_[a-zA-Z_][a-zA-Z0-9_]*)\s*\(', line_stripped)
+                python_test_match = PYTHON_TEST_PATTERN.search(line_stripped)
                 if python_test_match:
                     method_name = python_test_match.group(1)
                     for scenario in scenario_names:

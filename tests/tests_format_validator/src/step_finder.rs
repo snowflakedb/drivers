@@ -132,11 +132,36 @@ impl MethodBoundaryFinder {
                     }
                 }
                 "#[test]" => {
-                    // Rust: #[test] followed by fn method_name
-                    if trimmed == "#[test]" && i + 1 < lines.len() {
-                        if let Some(captures) = fn_regex.captures(lines[i + 1]) {
-                            let method_name = captures[1].to_string();
-                            methods.push((method_name, i + 2)); // +2: next line, 1-indexed
+                    // Rust: #[test], #[rstest], or #[test_case] followed by fn method_name
+                    if (trimmed == "#[test]"
+                        || trimmed.starts_with("#[rstest")
+                        || trimmed.starts_with("#[test_case"))
+                        && i + 1 < lines.len()
+                    {
+                        // For #[rstest] or #[test_case], we might need to skip multiple lines of case annotations
+                        let mut search_idx = i + 1;
+                        while search_idx < lines.len() {
+                            let search_line = lines[search_idx].trim();
+                            // Skip #[case(...)] lines for rstest and #[test_case(...)] lines for test_case
+                            if search_line.starts_with("#[case")
+                                || search_line.starts_with("#[test_case")
+                            {
+                                search_idx += 1;
+                                continue;
+                            }
+                            // Skip empty lines and comments
+                            if search_line.is_empty() || search_line.starts_with("//") {
+                                search_idx += 1;
+                                continue;
+                            }
+                            // Look for the function declaration
+                            if let Some(captures) = fn_regex.captures(search_line) {
+                                let method_name = captures[1].to_string();
+                                methods.push((method_name, search_idx + 1)); // +1 for 1-indexed
+                                break;
+                            }
+                            // If we find something that's not a case or comment, stop searching
+                            break;
                         }
                     }
                 }
@@ -198,6 +223,8 @@ impl MethodBoundaryFinder {
             }
             // Look for test annotation
             else if trimmed == self.config.test_annotation
+                || (self.config.test_annotation == "#[test]"
+                    && (trimmed.starts_with("#[rstest") || trimmed.starts_with("#[test_case")))
                 || (self.config.test_annotation.contains("pytest")
                     && trimmed.starts_with("@pytest"))
                 || (self.config.test_annotation == "TEST_CASE("
@@ -213,7 +240,32 @@ impl MethodBoundaryFinder {
                     }
                 } else {
                     // Look ahead for the method declaration
-                    for (j, method_line) in lines.iter().enumerate().skip(i + 1).take(4) {
+                    let search_limit = if self.config.test_annotation == "#[test]"
+                        && (trimmed.starts_with("#[rstest") || trimmed.starts_with("#[test_case"))
+                    {
+                        // For #[rstest] or #[test_case], we might need to look further ahead due to #[case] or #[test_case] lines
+                        20
+                    } else {
+                        4
+                    };
+
+                    for (j, method_line) in lines.iter().enumerate().skip(i + 1).take(search_limit)
+                    {
+                        let method_line_trimmed = method_line.trim();
+
+                        // Skip #[case] lines for rstest and #[test_case] lines for test_case
+                        if self.config.test_annotation == "#[test]"
+                            && (method_line_trimmed.starts_with("#[case")
+                                || method_line_trimmed.starts_with("#[test_case"))
+                        {
+                            continue;
+                        }
+
+                        // Skip empty lines and comments
+                        if method_line_trimmed.is_empty() || method_line_trimmed.starts_with("//") {
+                            continue;
+                        }
+
                         let pattern = (self.config.method_pattern)(method_name);
                         if self.config.test_annotation == "#[test]" {
                             // Rust uses regex pattern

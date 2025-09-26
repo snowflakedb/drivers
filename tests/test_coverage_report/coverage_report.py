@@ -38,6 +38,7 @@ class CoverageReportGenerator:
         self.workspace_root = Path(workspace_root).resolve()  # Convert to absolute path
         self.validator_path = self.workspace_root / "tests" / "tests_format_validator"
         self._validator_breaking_change_cache = None  # Cache for validator JSON output
+        self._css_cache = None  # Cache for CSS content
         
         # Initialize modular components
         self.validator = ValidatorIntegration(self.workspace_root)
@@ -582,11 +583,16 @@ class CoverageReportGenerator:
     
     def _get_html_styles(self) -> str:
         """Get CSS styles for the HTML report."""
+        # Use cached CSS if available
+        if self._css_cache is not None:
+            return self._css_cache
+            
         # Read CSS from external file
         css_file = Path(__file__).parent / 'styles.css'
         try:
             with open(css_file, 'r', encoding='utf-8') as f:
-                return f.read()
+                self._css_cache = f.read()
+                return self._css_cache
         except FileNotFoundError:
             # Fallback to basic inline styles if CSS file is missing
             return '''
@@ -1360,29 +1366,24 @@ class CoverageReportGenerator:
                             data_key = self.get_language_data_key(lang)
                             lang_data = feature_data['languages'][data_key]
                             
-                            # Check if this specific scenario is implemented in this language
-                            scenario_implemented = False
+                            # Use the overall feature implementation status from Coverage Overview
+                            # This ensures consistency with the validator's rstest detection
+                            scenario_implemented = lang_data['implemented']
                             line_info = ""
-                            actual_file_path = None
                             
-                            # Determine the correct file path based on test level
+                            # Still determine file path for display purposes
+                            actual_file_path = None
                             if has_int_tag:
                                 # Integration test - look in integration directories
                                 actual_file_path = self._get_integration_test_file_path(lang, feature_data['path'])
+                                if actual_file_path and actual_file_path.exists():
+                                    # Update the display path for integration tests
+                                    relative_path = actual_file_path.relative_to(self.workspace_root)
+                                    lang_data['path'] = str(relative_path)
                             else:
                                 # E2E test - use the path from validator data
                                 if lang_data['implemented'] and 'path' in lang_data:
                                     actual_file_path = self.workspace_root / lang_data['path']
-                            
-                            if actual_file_path and actual_file_path.exists():
-                                method_lines = self.extract_test_methods_with_lines(str(actual_file_path), [scenario])
-                                if method_lines and scenario in method_lines:
-                                    scenario_implemented = True
-                                    line_info = f" (line {method_lines[scenario]})"
-                                    # Update the display path for integration tests
-                                    if has_int_tag:
-                                        relative_path = actual_file_path.relative_to(self.workspace_root)
-                                        lang_data['path'] = str(relative_path)
                             
                             # Check if this is a Breaking Change for this driver
                             breaking_change_driver_check = self.get_language_data_key(lang).lower() if lang == 'core' else lang.lower()
