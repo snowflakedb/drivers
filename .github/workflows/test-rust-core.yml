@@ -45,7 +45,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install dependencies
-        run: cargo +stable install cargo-llvm-cov
+        run: cargo +stable install cargo-tarpaulin
 
       - name: Check
         run: cargo check --package sf_core
@@ -61,7 +61,7 @@ jobs:
       - name: Run tests with coverage
         run: |
           export PARAMETER_PATH=$(pwd)/parameters.json
-          cargo llvm-cov --package sf_core --all-features --lcov --output-path ./lcov-${{ matrix.os }}-${{ matrix.rust-version }}.info
+          cargo tarpaulin --package sf_core --all-features --out lcov --output-dir . --lcov-filename lcov-${{ matrix.os }}-${{ matrix.rust-version }}.info
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
