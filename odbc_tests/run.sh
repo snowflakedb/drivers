@@ -20,5 +20,5 @@ pushd odbc_tests
             .
     fi
     cmake --build cmake-build -- -j 16
-    ctest -C Debug --test-dir cmake-build --output-on-failure "$@"
+    ctest -j $(nproc) -C Debug --test-dir cmake-build --output-on-failure "$@"
 popd

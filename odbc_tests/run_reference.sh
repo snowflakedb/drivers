@@ -47,7 +47,7 @@ docker run --rm \
         
         # Run tests
         echo 'Running ODBC reference tests...'
-        ctest -C Debug --test-dir cmake-build-reference --output-on-failure \"\$@\"
+        ctest -j \$(nproc) -C Debug --test-dir cmake-build-reference --output-on-failure \"\$@\"
     " -- "$@"
 
 echo "ODBC reference tests completed!"

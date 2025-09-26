@@ -46,7 +46,7 @@ jobs:
               -D DRIVER_TYPE=OLD \
               .
           cmake --build cmake-build -- -j $(nproc)
-          ctest -C Debug --test-dir cmake-build --output-on-failure
+          ctest -j $(nproc) -C Debug --test-dir cmake-build --output-on-failure
 
   odbc_tests:
     strategy:
@@ -92,7 +92,7 @@ jobs:
               -D DRIVER_TYPE=NEW \
               .
           cmake --build cmake-build -- -j $(nproc)
-          ctest -C Debug --test-dir cmake-build --output-on-failure
+          ctest -j $(nproc) -C Debug --test-dir cmake-build --output-on-failure
           
           # Generate coverage report from C++ test execution
           cd ..
