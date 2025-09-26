@@ -68,6 +68,7 @@ jobs:
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
         with:
+          files: ./lcov-${{ matrix.os }}-${{ matrix.rust-version }}.info
           flags: rust-core
           name: rust-${{ runner.os }}-${{ matrix.rust-version }}
           fail_ci_if_error: false

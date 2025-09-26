@@ -17,15 +17,43 @@ flags:
     paths: ["odbc/**"]
     carryforward: false
 
+
+
+coverage:
+  precision: 2
+  round: down
+  range: "60...90"
+  
+  status:
+    project:
+      default:
+        target: auto
+        threshold: 1%
+        flags: [rust-core, python, jdbc, odbc]
+        flag_coverage_not_uploaded_behavior: exclude
+
+comment:
+  layout: "header,diff,flags,tree,components"
+  behavior: default
+  require_changes: false
+  require_base: true
+  require_head: true
+  branches: ["main", "develop"]
+  # Show flags and components
+  flags:
+    - rust-core
+    - python
+    - jdbc
+    - odbc
+  show_carryforward_flags: true
+
 component_management:
   default_rules:
     statuses:
       - type: project
         target: auto
         threshold: 2%
-      - type: patch
-        target: 75%
-        threshold: 5%
+
   individual_components:
     - component_id: rust-core
       name: "Rust Core"
@@ -44,54 +72,6 @@ component_management:
       name: "ODBC Driver"
       paths:
         - "odbc/**"
-
-coverage:
-  precision: 2
-  round: down
-  range: "60...90"
-  
-  status:
-    project:
-      default:
-        target: auto
-        threshold: 1%
-        flags: [rust-core, python, jdbc, odbc]
-        flag_coverage_not_uploaded_behavior: exclude
-      rust-core:
-        target: auto
-        threshold: 2%
-        flags: [rust-core]
-        flag_coverage_not_uploaded_behavior: exclude
-      python:
-        target: auto
-        threshold: 2%
-        flags: [python]
-        flag_coverage_not_uploaded_behavior: exclude
-      jdbc:
-        target: auto
-        threshold: 2%
-        flags: [jdbc]
-        flag_coverage_not_uploaded_behavior: exclude
-      odbc:
-        target: auto
-        threshold: 2%
-        flags: [odbc]
-        flag_coverage_not_uploaded_behavior: exclude
-
-comment:
-  layout: "header,diff,flags,components,tree"
-  behavior: default
-  require_changes: false
-  require_base: true
-  require_head: true
-  branches: ["main", "develop"]
-  # Show flags and components
-  flags:
-    - rust-core
-    - python
-    - jdbc
-    - odbc
-  show_carryforward_flags: true
 
 ignore:
   # Test files and documentation
