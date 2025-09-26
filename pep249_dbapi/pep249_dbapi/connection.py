@@ -31,32 +31,15 @@ class Connection:
         self.db_handle = self.db_api.database_new(DatabaseNewRequest()).db_handle
         self.db_api.database_init(DatabaseInitRequest(db_handle=self.db_handle))
         self.conn_handle = self.db_api.connection_new(ConnectionNewRequest()).conn_handle
-        
-        # Apply TLS config via per-option settings if provided
-        if "verify_hostname" in kwargs:
-            self.db_api.connection_set_option_string(ConnectionSetOptionStringRequest(conn_handle=self.conn_handle, key="verify_hostname", value=str(bool(kwargs["verify_hostname"]))))
-        if "verify_certificates" in kwargs:
-            self.db_api.connection_set_option_string(ConnectionSetOptionStringRequest(conn_handle=self.conn_handle, key="verify_certificates", value=str(bool(kwargs["verify_certificates"]))))
-        if "custom_root_store_path" in kwargs:
-            self.db_api.connection_set_option_string(ConnectionSetOptionStringRequest(conn_handle=self.conn_handle, key="custom_root_store_path", value=kwargs["custom_root_store_path"]))
-        
-        # CRL options via per-option settings
-        if "crl_enabled" in kwargs:
-            self.db_api.connection_set_option_string(ConnectionSetOptionStringRequest(conn_handle=self.conn_handle, key="crl_enabled", value=str(bool(kwargs["crl_enabled"]))))
-        if "crl_mode" in kwargs:
-            self.db_api.connection_set_option_string(ConnectionSetOptionStringRequest(conn_handle=self.conn_handle, key="crl_mode", value=str(kwargs["crl_mode"]).upper()))
-        if "crl_outcome_cache_capacity" in kwargs:
-            self.db_api.connection_set_option_string(ConnectionSetOptionStringRequest(conn_handle=self.conn_handle, key="crl_outcome_cache_capacity", value=str(kwargs["crl_outcome_cache_capacity"])))
-        
         for key, value in kwargs.items():
             if isinstance(value, int):
                 self.db_api.connection_set_option_int(ConnectionSetOptionIntRequest(conn_handle=self.conn_handle, key=key, value=value))
-            elif isinstance(value, str):
+
+            if isinstance(value, str):
                 self.db_api.connection_set_option_string(ConnectionSetOptionStringRequest(conn_handle=self.conn_handle, key=key, value=value))
-            elif isinstance(value, float):
+
+            if isinstance(value, float):
                 self.db_api.connection_set_option_double(ConnectionSetOptionDoubleRequest(conn_handle=self.conn_handle, key=key, value=value))
-            elif isinstance(value, bytes):
-                self.db_api.connection_set_option_bytes(ConnectionSetOptionBytesRequest(conn_handle=self.conn_handle, key=key, value=value))
 
         self.db_api.connection_init(ConnectionInitRequest(conn_handle=self.conn_handle, db_handle=self.db_handle))
         self.kwargs = kwargs

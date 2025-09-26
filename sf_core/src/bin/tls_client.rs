@@ -1,6 +1,3 @@
-// TLS Client Command Line Tool with CRL Support
-// Usage: cargo run --bin tls_client -- [options] <url>
-
 use clap::{Arg, Command};
 use sf_core::tls::config::TlsConfig;
 use sf_core::tls::create_tls_client_with_config;
@@ -13,7 +10,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let matches = Command::new("tls_client")
         .version("1.0")
         .author("Snowflake Universal Driver Team")
-        .about("TLS client with certificate revocation checking support")
+        .about("Minimal TLS client")
         .arg(
             Arg::new("url")
                 .help("URL to connect to")
@@ -71,7 +68,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .value_parser(["GET", "POST", "HEAD", "OPTIONS"]),
         )
         .arg(
-            Arg::new("headers")
+            Arg::new("header")
                 .long("header")
                 .short('H')
                 .help("Add HTTP header (format: 'Name: Value')")
@@ -137,7 +134,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         _ => unreachable!(),
     };
 
-    if let Some(headers) = matches.get_many::<String>("headers") {
+    if let Some(headers) = matches.get_many::<String>("header") {
         for header in headers {
             if let Some((name, value)) = header.split_once(':') {
                 let name = name.trim();

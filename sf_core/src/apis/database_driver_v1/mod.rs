@@ -7,7 +7,6 @@ mod statement;
 
 pub use crate::config::settings::Setting;
 pub use crate::handle_manager::Handle;
-pub use connection::Connection;
 pub use connection::connection_init;
 pub use connection::connection_new;
 pub use connection::connection_release;
@@ -17,7 +16,6 @@ pub use database::database_new;
 pub use database::database_release;
 pub use database::database_set_option;
 pub use error::ApiError;
-pub use global_state::CONN_HANDLE_MANAGER;
 pub use statement::statement_bind;
 pub use statement::statement_execute_query;
 pub use statement::statement_new;

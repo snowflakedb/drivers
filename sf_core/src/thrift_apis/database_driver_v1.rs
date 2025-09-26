@@ -3,7 +3,9 @@ use crate::apis::database_driver_v1::Handle;
 use crate::apis::database_driver_v1::Setting;
 use crate::apis::database_driver_v1::error::ConfigError;
 use crate::apis::database_driver_v1::error::RestError;
-use crate::apis::database_driver_v1::{connection_init, connection_release, connection_set_option};
+use crate::apis::database_driver_v1::{
+    connection_init, connection_new, connection_release, connection_set_option,
+};
 use crate::apis::database_driver_v1::{
     database_init, database_new, database_release, database_set_option,
 };
@@ -272,7 +274,7 @@ impl DatabaseDriverSyncHandler for DatabaseDriverV1Server {
 
     #[instrument(name = "DatabaseDriverV1::connection_new", skip(self))]
     fn handle_connection_new(&self) -> thrift::Result<ConnectionHandle> {
-        let handle = crate::apis::database_driver_v1::connection_new();
+        let handle = connection_new();
         Ok(ConnectionHandle::from(handle))
     }
 

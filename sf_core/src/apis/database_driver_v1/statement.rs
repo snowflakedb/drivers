@@ -1,4 +1,3 @@
-#![allow(clippy::result_large_err)]
 use snafu::ResultExt;
 use std::sync::{Mutex, MutexGuard};
 
