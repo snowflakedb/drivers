@@ -7,7 +7,9 @@ pub mod types;
 pub use self::types::*;
 
 use crate::compression::{CompressionError, compress_data};
-use crate::compression_types::{CompressionType, CompressionTypeError, try_guess_compression_type};
+use crate::compression_types::{
+    CompressionTypeError, SupportedCompressionType, try_guess_compression_type,
+};
 use encryption::{EncryptionError, decrypt_file_data, encrypt_file_data};
 use file_transfer::{DownloadFileError, UploadFileError, download_from_s3, upload_to_s3_or_skip};
 use path_expansion::{PathExpansionError, expand_filenames};
@@ -66,14 +68,8 @@ pub async fn upload_single_file(data: SingleUploadData) -> Result<UploadResult, 
         target: file_metadata.target,
         source_size: file_metadata.source_size,
         target_size: file_metadata.target_size,
-        source_compression: file_metadata
-            .source_compression
-            .get_snowflake_representation()
-            .to_string(),
-        target_compression: file_metadata
-            .target_compression
-            .get_snowflake_representation()
-            .to_string(),
+        source_compression: file_metadata.source_compression.get_name().to_string(),
+        target_compression: file_metadata.target_compression.get_name().to_string(),
         status,
         message: "".to_string(),
     })
@@ -97,13 +93,14 @@ fn preprocess_file_before_upload(
     let mut target = data.filename.clone();
 
     // Compress the data if needed
-    let target_compression = if data.auto_compress && source_compression == CompressionType::None {
-        file_buffer = compress_data(file_buffer).context(CompressionSnafu)?;
-        target = format!("{}.gz", data.filename);
-        CompressionType::Gzip
-    } else {
-        source_compression.clone()
-    };
+    let target_compression =
+        if data.auto_compress && source_compression == SupportedCompressionType::None {
+            file_buffer = compress_data(file_buffer).context(CompressionSnafu)?;
+            target = format!("{}.gz", data.filename);
+            SupportedCompressionType::Gzip
+        } else {
+            source_compression.clone()
+        };
 
     // Encrypt the data
     let encryption_result = encrypt_file_data(file_buffer.as_slice(), &data.encryption_material)
@@ -129,16 +126,16 @@ fn get_source_compression(
     filename: &str,
     file_buffer: &[u8],
     source_compression: &SourceCompressionParam,
-) -> Result<CompressionType, CompressionTypeError> {
+) -> Result<SupportedCompressionType, CompressionTypeError> {
     match source_compression {
         SourceCompressionParam::AutoDetect => try_guess_compression_type(filename, file_buffer),
-        SourceCompressionParam::None => Ok(CompressionType::None),
-        SourceCompressionParam::Gzip => Ok(CompressionType::Gzip),
-        SourceCompressionParam::Bzip2 => Ok(CompressionType::Bzip2),
-        SourceCompressionParam::Brotli => Ok(CompressionType::Brotli),
-        SourceCompressionParam::Zstd => Ok(CompressionType::Zstd),
-        SourceCompressionParam::Deflate => Ok(CompressionType::Deflate),
-        SourceCompressionParam::RawDeflate => Ok(CompressionType::RawDeflate),
+        SourceCompressionParam::None => Ok(SupportedCompressionType::None),
+        SourceCompressionParam::Gzip => Ok(SupportedCompressionType::Gzip),
+        SourceCompressionParam::Bzip2 => Ok(SupportedCompressionType::Bzip2),
+        SourceCompressionParam::Brotli => Ok(SupportedCompressionType::Brotli),
+        SourceCompressionParam::Zstd => Ok(SupportedCompressionType::Zstd),
+        SourceCompressionParam::Deflate => Ok(SupportedCompressionType::Deflate),
+        SourceCompressionParam::RawDeflate => Ok(SupportedCompressionType::RawDeflate),
     }
 }
 

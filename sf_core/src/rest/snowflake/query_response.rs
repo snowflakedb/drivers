@@ -1,4 +1,7 @@
 use crate::chunks::ChunkDownloadData;
+use crate::compression_types::{
+    BROTLI_NAME, BZIP2_NAME, DEFLATE_NAME, GZIP_NAME, NONE_NAME, RAW_DEFLATE_NAME, ZSTD_NAME,
+};
 use crate::file_manager::SourceCompressionParam;
 use crate::{file_manager, query_types};
 use serde::Deserialize;
@@ -329,13 +332,13 @@ impl Data {
         // like "BR" and "X-BR" for Brotli etc.
         let source_compression = match source_compression_string.to_uppercase().as_str() {
             "AUTO_DETECT" => SourceCompressionParam::AutoDetect,
-            "GZIP" => SourceCompressionParam::Gzip,
-            "BZIP2" => SourceCompressionParam::Bzip2,
-            "BROTLI" => SourceCompressionParam::Brotli,
-            "ZSTD" => SourceCompressionParam::Zstd,
-            "DEFLATE" => SourceCompressionParam::Deflate,
-            "RAW_DEFLATE" => SourceCompressionParam::RawDeflate,
-            "NONE" => SourceCompressionParam::None,
+            GZIP_NAME => SourceCompressionParam::Gzip,
+            BZIP2_NAME => SourceCompressionParam::Bzip2,
+            BROTLI_NAME => SourceCompressionParam::Brotli,
+            ZSTD_NAME => SourceCompressionParam::Zstd,
+            DEFLATE_NAME => SourceCompressionParam::Deflate,
+            RAW_DEFLATE_NAME => SourceCompressionParam::RawDeflate,
+            NONE_NAME => SourceCompressionParam::None,
             _ => InvalidFormatSnafu {
                 message: format!("Unknown source compression type: {source_compression_string}"),
             }

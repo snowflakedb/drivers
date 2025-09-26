@@ -1,4 +1,4 @@
-use crate::compression_types::CompressionType;
+use crate::compression_types::SupportedCompressionType;
 use serde::{Deserialize, Serialize};
 
 // Dedicated file transfer types
@@ -44,8 +44,8 @@ pub struct UploadMetadata {
     pub target: String,
     pub source_size: i64,
     pub target_size: i64,
-    pub source_compression: CompressionType,
-    pub target_compression: CompressionType,
+    pub source_compression: SupportedCompressionType,
+    pub target_compression: SupportedCompressionType,
 }
 
 // Result types for file operations
