@@ -1,5 +1,6 @@
+use crate::crl::error::{CrlIssuerMismatchSnafu, InvalidCrlSignatureSnafu};
 use chrono::{DateTime, Utc};
-use snafu::{Location, ResultExt, Snafu};
+use snafu::{Location, OptionExt, ResultExt, Snafu};
 // Small helpers to centralize dual x509 crate usage
 use crate::crl::error::{
     CertificateParseSnafu, CrlError, CrlListParseSnafu, CrlParsingSnafu, CrlToDerSnafu,
@@ -67,12 +68,7 @@ pub fn verify_crl_signature_best_effort(
     issuer_der: Option<&[u8]>,
 ) -> Result<(), CrlError> {
     let crl = RcCertificateList::from_der(crl_der).context(CrlListParseSnafu)?;
-    let sig = crl
-        .signature
-        .as_bytes()
-        .ok_or_else(|| CrlError::InvalidCrlSignature {
-            location: snafu::Location::new(file!(), line!(), 0),
-        })?;
+    let sig = crl.signature.as_bytes().context(InvalidCrlSignatureSnafu)?;
     let tbs = tbs_crl_der(crl_der)?;
 
     let issuer_der = match issuer_der {
@@ -82,9 +78,7 @@ pub fn verify_crl_signature_best_effort(
     let issuer_cert =
         x509_cert::Certificate::from_der(issuer_der).context(CertificateParseSnafu)?;
     if issuer_cert.tbs_certificate.subject != crl.tbs_cert_list.issuer {
-        return Err(CrlError::CrlIssuerMismatch {
-            location: snafu::Location::new(file!(), line!(), 0),
-        });
+        return CrlIssuerMismatchSnafu {}.fail();
     }
 
     // Enforce AKID/SKID and critical extension policy
@@ -104,16 +98,12 @@ pub fn verify_crl_signature_best_effort(
                 crl_akid = akid.key_identifier.as_ref().map(|kid| kid.0);
             }
             if ext.oid == oid_delta {
-                return Err(CrlError::InvalidCrlSignature {
-                    location: snafu::Location::new(file!(), line!(), 0),
-                });
+                return InvalidCrlSignatureSnafu {}.fail();
             }
             if ext.critical {
                 let known = ext.oid == oid_akid || ext.oid == oid_idp || ext.oid == oid_crl_number;
                 if !known {
-                    return Err(CrlError::InvalidCrlSignature {
-                        location: snafu::Location::new(file!(), line!(), 0),
-                    });
+                    return InvalidCrlSignatureSnafu {}.fail();
                 }
             }
         }
@@ -132,9 +122,7 @@ pub fn verify_crl_signature_best_effort(
             if let Some(skid) = issuer_skid
                 && skid != akid_key
             {
-                return Err(CrlError::InvalidCrlSignature {
-                    location: snafu::Location::new(file!(), line!(), 0),
-                });
+                return InvalidCrlSignatureSnafu {}.fail();
             }
         }
     }
@@ -145,9 +133,7 @@ pub fn verify_crl_signature_best_effort(
         .subject_public_key_info
         .subject_public_key
         .as_bytes()
-        .ok_or_else(|| CrlError::InvalidCrlSignature {
-            location: snafu::Location::new(file!(), line!(), 0),
-        })?;
+        .context(InvalidCrlSignatureSnafu)?;
     // First, try verification using aws-lc-rs (ring-compatible API)
     let try_verify = |alg: &'static dyn aws_lc_rs::signature::VerificationAlgorithm| {
         aws_lc_rs::signature::UnparsedPublicKey::new(alg, spk_bytes).verify(&tbs, sig)
@@ -280,9 +266,7 @@ pub fn verify_crl_signature_best_effort(
     if verified {
         return Ok(());
     }
-    Err(CrlError::InvalidCrlSignature {
-        location: snafu::Location::new(file!(), line!(), 0),
-    })
+    InvalidCrlSignatureSnafu {}.fail()
 }
 
 // Return canonical DER of the CRL's TBS (to-be-signed) part
