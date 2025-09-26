@@ -1,6 +1,0 @@
----
-description: rules for code refactors
-alwaysApply: true
----
-
-While doing large code refactors, check if the code compiles after making each major change, to avoid having to deal with lots of compilation issues at the end of the refactor.

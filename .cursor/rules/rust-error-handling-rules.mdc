@@ -1,8 +1,7 @@
 ---
 description: rules for writing and editing rust error handling code
-globs: **/*.rs
+alwaysApply: false
 ---
-
 # Rust Error Handling Rules with Snafu
 
 

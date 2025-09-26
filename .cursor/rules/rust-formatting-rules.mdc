@@ -1,8 +1,7 @@
 ---
 description: rules for formatting rust code
-globs: **/*.rs
+alwaysApply: false
 ---
-
 # Rust Macros
 
 When using `format!` or `assert!` macros in Rust, always put variables inside brackets when possible.
