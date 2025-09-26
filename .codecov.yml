@@ -3,60 +3,68 @@ version: "v1"
 
 coverage:
   status:
-    project: off
-    patch: off
+    project:
+      default:
+        target: auto
+        threshold: "5%"  # Allow up to 5% coverage drop
+        if_ci_failed: error
+    patch:
+      default:
+        target: 75
+        threshold: "5%"  # Allow up to 5% coverage drop
+        if_ci_failed: error
 
 flag_management:
   default_rules:
-    carryforward: true
+    carryforward: false
     statuses:
       - type: project
         target: auto
-        threshold: 5%
+        threshold: "5%"
       - type: patch
-        target: 90%
+        target: 90
   individual_flags: # exceptions to the default rules above, stated flag by flag
     - name: rust-core
       paths: 
         - sf_core/
-      carryforward: true
+      carryforward: false
       statuses:
         - type: project
           target: auto
-          threshold: 5%
+          threshold: "5%"
         - type: patch
-          target: 75%
+          target: 75
     - name: python
       paths: 
         - pep249_dbapi/
-      carryforward: true
+      carryforward: false
       statuses:
         - type: project
           target: auto
-          threshold: 5%
+          threshold: "5%"
         - type: patch
-          target: 85%
+          target: 85
     - name: jdbc
       paths: 
         - jdbc/
         - jdbc_bridge/
-      carryforward: true
+      carryforward: false
       statuses:
         - type: project
           target: auto
-          threshold: 5%
+          threshold: "5%"
         - type: patch
-          target: 80%
+          target: 80
     - name: odbc
       paths: 
         - odbc/
-      carryforward: true
+      carryforward: false
       statuses:
         - type: project
           target: auto
-          threshold: 5%
+          threshold: "5%"
         - type: patch
-          target: 80%
+          target: 80
 
 comment:
   layout: "header,diff,flags,tree"
