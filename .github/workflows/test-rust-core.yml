@@ -48,10 +48,10 @@ jobs:
         run: cargo +stable install cargo-llvm-cov
 
       - name: Check
-        run: cargo check --workspace
+        run: cargo check --package sf_core
 
       - name: Build
-        run: cargo build --workspace
+        run: cargo build --package sf_core
 
       - name: Decode secrets
         run: ./scripts/decode_secrets.sh
@@ -68,7 +68,7 @@ jobs:
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
         with:
-          flags: rust
+          flags: rust-core
           name: rust-${{ runner.os }}-${{ matrix.rust-version }}
           fail_ci_if_error: false
 

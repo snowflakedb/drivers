@@ -3,117 +3,94 @@ codecov:
     wait_for_ci: true
     require_ci_to_pass: true
 
-flag_management:
-  default_rules:
-    carryforward: false
-    carryforward_mode: "all"
-
 flags:
-  rust:
-    paths: ["sf_core/"]
-    carryforward: false
-  jdbc:
-    paths: ["jdbc/", "jdbc_bridge/"]
+  rust-core:
+    paths: ["sf_core/**"]
     carryforward: false
   python:
-    paths: ["pep249_dbapi/"]
+    paths: ["pep249_dbapi/**"]
+    carryforward: false
+  jdbc:
+    paths: ["jdbc/**", "jdbc_bridge/**"]
     carryforward: false
   odbc:
-    paths: ["odbc/"]
+    paths: ["odbc/**"]
     carryforward: false
-  core-from-odbc:
-    carryforward: false
-  core-from-python:
-    carryforward: false
-  rust-core:
-    carryforward: false
+
+component_management:
+  default_rules:
+    statuses:
+      - type: project
+        target: auto
+        threshold: 2%
+      - type: patch
+        target: 75%
+        threshold: 5%
+  individual_components:
+    - component_id: rust-core
+      name: "Rust Core"
+      paths:
+        - "sf_core/**"
+    - component_id: python
+      name: "Python Driver"
+      paths:
+        - "pep249_dbapi/**"
+    - component_id: jdbc
+      name: "JDBC Driver"
+      paths:
+        - "jdbc/**"
+        - "jdbc_bridge/**"
+    - component_id: odbc
+      name: "ODBC Driver"
+      paths:
+        - "odbc/**"
 
 coverage:
   precision: 2
   round: down
   range: "60...90"
-
+  
   status:
     project:
-      # Overall status waits for all expected coverage flags
       default:
         target: auto
-        threshold: 2%
-        base: auto
-        if_ci_failed: error
-        flags: [rust, python, jdbc, odbc]
+        threshold: 1%
+        flags: [rust-core, python, jdbc, odbc]
         flag_coverage_not_uploaded_behavior: exclude
-      rust:
+      rust-core:
         target: auto
         threshold: 2%
-        base: auto
-        if_ci_failed: error
-        flags: [rust]
+        flags: [rust-core]
+        flag_coverage_not_uploaded_behavior: exclude
       python:
         target: auto
         threshold: 2%
-        base: auto
-        if_ci_failed: error
         flags: [python]
-      jdbc:
-        target: auto
-        threshold: 2%
-        base: auto
-        if_ci_failed: error
-        flags: [jdbc]
-      odbc:
-        target: auto
-        threshold: 2%
-        base: auto
-        if_ci_failed: error
-        flags: [odbc]
-        
-    patch:
-      # Overall patch status waits for all expected coverage flags
-      default:
-        target: 75%
-        threshold: 5%
-        base: auto
-        if_ci_failed: error
-        informational: true
-        flags: [rust, python, jdbc, odbc]
         flag_coverage_not_uploaded_behavior: exclude
-      rust:
-        target: 75%
-        threshold: 5%
-        base: auto
-        if_ci_failed: error
-        informational: true
-        flags: [rust]
-      python:
-        target: 75%
-        threshold: 5%
-        base: auto
-        if_ci_failed: error
-        informational: true
-        flags: [python]
       jdbc:
-        target: 75%
-        threshold: 5%
-        base: auto
-        if_ci_failed: error
-        informational: true
+        target: auto
+        threshold: 2%
         flags: [jdbc]
+        flag_coverage_not_uploaded_behavior: exclude
       odbc:
-        target: 75%
-        threshold: 5%
-        base: auto
-        if_ci_failed: error
-        informational: true
+        target: auto
+        threshold: 2%
         flags: [odbc]
+        flag_coverage_not_uploaded_behavior: exclude
 
 comment:
-  layout: "header,diff,flags,tree"
+  layout: "header,diff,flags,components,tree"
   behavior: default
   require_changes: false
   require_base: true
   require_head: true
   branches: ["main", "develop"]
+  # Show flags and components
+  flags:
+    - rust-core
+    - python
+    - jdbc
+    - odbc
   show_carryforward_flags: true
 
 ignore:
