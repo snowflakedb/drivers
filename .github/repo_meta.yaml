@@ -1,8 +1,0 @@
-point_of_contact: @snowflakedb/client
-distributed: false
-modified: true
-legal_exception: false
-production: true
-code_owners_file_present: true
-jira_project_issue_type: Bug
-jira_area: Developer Platform
