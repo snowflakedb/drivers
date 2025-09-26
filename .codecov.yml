@@ -11,12 +11,22 @@ flag_management:
 flags:
   rust:
     paths: ["sf_core/"]
+    carryforward: false
   jdbc:
     paths: ["jdbc/", "jdbc_bridge/"]
+    carryforward: false
   python:
     paths: ["pep249_dbapi/"]
+    carryforward: false
   odbc:
     paths: ["odbc/"]
+    carryforward: false
+  core-from-odbc:
+    carryforward: false
+  core-from-python:
+    carryforward: false
+  rust-core:
+    carryforward: false
 
 x-component: &component
   target: auto

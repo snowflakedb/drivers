@@ -44,10 +44,11 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install unixodbc
+      - name: Install dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y unixodbc-dev
+          cargo +stable install cargo-llvm-cov
 
       - name: Check
         run: cargo check --workspace
@@ -60,19 +61,20 @@ jobs:
         env:
           PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
 
-      - name: Test and collect coverage
+      - name: Test
         run: |
           export PARAMETER_PATH=$(pwd)/parameters.json
           export RUSTFLAGS="-C instrument-coverage"
           export LLVM_PROFILE_FILE="rust-%p-%m.profraw"
-          cargo test --package sf_core --all-features
-          
-          # Generate coverage report from Rust test execution
+          cargo test --workspace
+
+      - name: Collect coverage
+        run: |
+          # Generate coverage report from test execution
           LLVM_PROFDATA=$(find ~/.rustup -name "llvm-profdata" -type f 2>/dev/null | head -1)
           LLVM_COV=$(find ~/.rustup -name "llvm-cov" -type f 2>/dev/null | head -1)
           find . -name "rust-*.profraw" -type f | xargs $LLVM_PROFDATA merge -sparse -o coverage.profdata
           
-          # Find sf_core test binaries
           SF_CORE_BINARIES=$(find target/debug/deps -name "sf_core-*" -type f -executable 2>/dev/null)
           $LLVM_COV export $SF_CORE_BINARIES \
               -instr-profile=coverage.profdata \
