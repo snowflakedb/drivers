@@ -8,51 +8,22 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  CMAKE_VERSION: "4.0.3"
 
 jobs:
-  setup_cmake:
-    runs-on: ubuntu-latest
-    outputs:
-      cmake-cache-key: cmake-${{ env.CMAKE_VERSION }}-${{ runner.os }}
-    steps:
-      - name: Cache CMake
-        id: cmake-cache
-        uses: actions/cache@v4
-        with:
-          path: /usr/local/bin/cmake
-          key: cmake-${{ env.CMAKE_VERSION }}-${{ runner.os }}
-
-      - name: Install CMake
-        if: steps.cmake-cache.outputs.cache-hit != 'true'
-        run: |
-          wget https://github.com/Kitware/CMake/releases/download/v${{ env.CMAKE_VERSION }}/cmake-${{ env.CMAKE_VERSION }}-linux-x86_64.sh
-          sudo sh cmake-${{ env.CMAKE_VERSION }}-linux-x86_64.sh --skip-license --prefix=/usr/local
-          sudo rm cmake-${{ env.CMAKE_VERSION }}-linux-x86_64.sh
-
   odbc_tests_reference:
-    needs: setup_cmake
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
-      - name: Restore CMake cache
-        uses: actions/cache@v4
-        with:
-          path: /usr/local/bin/cmake
-          key: ${{ needs.setup_cmake.outputs.cmake-cache-key }}
-
-      - name: Setup CMake PATH
-        run: |
-          sudo ln -sf /usr/local/bin/cmake /usr/bin/cmake
-          echo "/usr/local/bin" >> $GITHUB_PATH
 
       - name: Install dependencies
         run: |
           set -x
           sudo apt-get update
           sudo apt-get install -y unixodbc unixodbc-dev curl odbcinst zlib1g-dev
+          wget https://github.com/Kitware/CMake/releases/download/v4.0.3/cmake-4.0.3-linux-x86_64.sh
+          sudo sh cmake-4.0.3-linux-x86_64.sh --skip-license --prefix=/usr/local
+          sudo rm cmake-4.0.3-linux-x86_64.sh
           cmake --version
           curl -O https://sfc-repo.snowflakecomputing.com/odbc/linux/3.9.0/snowflake-odbc-3.9.0.x86_64.deb
           sudo dpkg -i snowflake-odbc-3.9.0.x86_64.deb
@@ -78,7 +49,6 @@ jobs:
           ctest -C Debug --test-dir cmake-build --output-on-failure
 
   odbc_tests:
-    needs: setup_cmake
     strategy:
       fail-fast: false
       matrix:
@@ -88,32 +58,13 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Cache Rust dependencies
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-odbc-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-odbc-cargo-
-
-      - name: Restore CMake cache
-        uses: actions/cache@v4
-        with:
-          path: /usr/local/bin/cmake
-          key: ${{ needs.setup_cmake.outputs.cmake-cache-key }}
-
-      - name: Setup CMake PATH
-        run: |
-          sudo ln -sf /usr/local/bin/cmake /usr/bin/cmake
-          echo "/usr/local/bin" >> $GITHUB_PATH
-
       - name: Install dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y unixodbc-dev build-essential zlib1g-dev lcov
+          wget https://github.com/Kitware/CMake/releases/download/v4.0.3/cmake-4.0.3-linux-x86_64.sh
+          sudo sh cmake-4.0.3-linux-x86_64.sh --skip-license --prefix=/usr/local
+          sudo rm cmake-4.0.3-linux-x86_64.sh
           cmake --version
 
       - name: Decode secrets
