@@ -61,7 +61,8 @@ jobs:
       - name: Run tests with coverage
         run: |
           export PARAMETER_PATH=$(pwd)/parameters.json
-          cargo tarpaulin --package sf_core --all-features --out lcov --output-dir . --lcov-filename lcov-${{ matrix.os }}-${{ matrix.rust-version }}.info
+          cargo tarpaulin --packages sf_core --all-features --out lcov --output-dir .
+          mv lcov.info lcov-${{ matrix.os }}-${{ matrix.rust-version }}.info
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
