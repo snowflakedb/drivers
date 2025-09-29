@@ -77,6 +77,10 @@ jobs:
 
       - name: Install dependencies
         run: |
+          # Set up PATH first to prioritize /usr/local/bin
+          echo "/usr/local/bin" >> $GITHUB_PATH
+          export PATH="/usr/local/bin:$PATH"
+          
           sudo apt-get update
           sudo apt-get install -y unixodbc-dev build-essential zlib1g-dev lcov
           
@@ -86,6 +90,7 @@ jobs:
             sudo sh cmake-4.0.3-linux-x86_64.sh --skip-license --prefix=/usr/local
             sudo rm cmake-4.0.3-linux-x86_64.sh
           fi
+          
           cmake --version
 
       - name: Decode secrets
