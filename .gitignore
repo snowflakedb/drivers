@@ -18,3 +18,4 @@ pep249_dbapi/snowflake_pep249_dbapi.egg-info/
 rsa_key.p8
 universal_driver_e2e_test_coverage.html
 sf_core/src/bin
+.vscode

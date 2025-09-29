@@ -328,7 +328,7 @@ impl Data {
         let source_compression = match source_compression_string.to_uppercase().as_str() {
             "AUTO_DETECT" => SourceCompressionParam::AutoDetect,
             "GZIP" => SourceCompressionParam::Gzip,
-            "BZ2" => SourceCompressionParam::Bzip2,
+            "BZIP2" => SourceCompressionParam::Bzip2,
             "BROTLI" => SourceCompressionParam::Brotli,
             "ZSTD" => SourceCompressionParam::Zstd,
             "DEFLATE" => SourceCompressionParam::Deflate,
