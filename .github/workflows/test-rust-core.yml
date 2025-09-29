@@ -44,14 +44,28 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install dependencies
-        run: cargo +stable install cargo-tarpaulin
+      - name: Cache Rust dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
 
-      - name: Check
-        run: cargo check --package sf_core
+      - name: Cache tarpaulin
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-tarpaulin
+          key: tarpaulin-${{ runner.os }}
 
-      - name: Build
-        run: cargo build --package sf_core
+      - name: Install tarpaulin
+        run: |
+          if ! command -v cargo-tarpaulin &> /dev/null; then
+            cargo install cargo-tarpaulin
+          fi
 
       - name: Decode secrets
         run: ./scripts/decode_secrets.sh
@@ -61,7 +75,7 @@ jobs:
       - name: Run tests with coverage
         run: |
           export PARAMETER_PATH=$(pwd)/parameters.json
-          cargo tarpaulin --packages sf_core --all-features --out lcov --output-dir .
+          cargo tarpaulin --packages sf_core --all-features --skip-clean --no-fail-fast --out lcov --output-dir .
           mv lcov.info lcov-${{ matrix.os }}-${{ matrix.rust-version }}.info
 
       - name: Upload coverage to Codecov
