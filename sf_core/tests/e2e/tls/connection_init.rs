@@ -6,7 +6,6 @@ fn connection_init_with_tls_options_succeeds() {
     let client = SnowflakeTestClient::with_default_params();
     client.set_connection_option("verify_hostname", "true");
     client.set_connection_option("verify_certificates", "true");
-    client.set_connection_option("custom_root_store_path", "true");
     let password = client.parameters.password.clone().unwrap();
 
     // And connection parameters (account, user, password, host) are set

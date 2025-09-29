@@ -5,7 +5,7 @@ use crate::config::settings::Setting;
 use crate::config::settings::Settings;
 use crate::config::{ConfigError, MissingParameterSnafu};
 use crate::crl::config::CrlConfig;
-use crate::tls::config::TlsConfig as InternalTlsConfig;
+use crate::tls::config::TlsConfig;
 use snafu::OptionExt;
 
 fn get_server_url(settings: &dyn Settings) -> Result<String, ConfigError> {
@@ -53,13 +53,13 @@ pub struct ClientInfo {
     pub ocsp_mode: Option<String>,
     #[allow(dead_code)]
     pub crl_config: CrlConfig,
-    pub tls_config: InternalTlsConfig,
+    pub tls_config: TlsConfig,
 }
 
 impl ClientInfo {
     pub fn from_settings(settings: &dyn Settings) -> Result<Self, ConfigError> {
         let crl_config = CrlConfig::from_settings(settings)?;
-        let tls_config = InternalTlsConfig::from_settings_dyn(settings);
+        let tls_config = TlsConfig::from_settings(settings)?;
 
         let client_info = ClientInfo {
             application: "PythonConnector".to_string(),

@@ -1,4 +1,6 @@
 // TLS configuration that includes CRL settings and other TLS options
+use crate::config::ConfigError;
+use crate::config::settings::Settings;
 use crate::crl::config::{CertRevocationCheckMode, CrlConfig};
 use std::path::PathBuf;
 
@@ -32,24 +34,30 @@ impl TlsConfig {
         }
     }
 
-    pub fn from_settings(
-        settings: &std::collections::HashMap<String, crate::config::settings::Setting>,
-    ) -> Self {
-        let mut cfg = TlsConfig::default();
-        if let Some(crate::config::settings::Setting::String(path)) =
-            settings.get("custom_root_store_path")
-        {
-            cfg.custom_root_store_path = Some(std::path::PathBuf::from(path));
-        }
-        if let Some(crate::config::settings::Setting::String(v)) = settings.get("verify_hostname") {
-            cfg.verify_hostname = v.to_lowercase() == "true";
-        }
-        if let Some(crate::config::settings::Setting::String(v)) =
-            settings.get("verify_certificates")
-        {
-            cfg.verify_certificates = v.to_lowercase() == "true";
-        }
-        cfg
+    /// Build TlsConfig from generic Settings
+    pub fn from_settings(settings: &dyn Settings) -> Result<Self, ConfigError> {
+        let crl_config = CrlConfig::from_settings(settings)?;
+
+        let custom_root_store_path = settings
+            .get_string("custom_root_store_path")
+            .map(PathBuf::from);
+
+        let verify_hostname = settings
+            .get_string("verify_hostname")
+            .map(|s| s.to_lowercase() == "true")
+            .unwrap_or(true);
+
+        let verify_certificates = settings
+            .get_string("verify_certificates")
+            .map(|s| s.to_lowercase() == "true")
+            .unwrap_or(true);
+
+        Ok(Self {
+            crl_config,
+            custom_root_store_path,
+            verify_hostname,
+            verify_certificates,
+        })
     }
 }
 
@@ -64,19 +72,4 @@ impl Default for TlsConfig {
     }
 }
 
-impl TlsConfig {
-    /// Build TlsConfig from generic Settings trait object
-    pub fn from_settings_dyn(settings: &dyn crate::config::settings::Settings) -> Self {
-        let mut cfg = TlsConfig::default();
-        if let Some(path) = settings.get_string("custom_root_store_path") {
-            cfg.custom_root_store_path = Some(PathBuf::from(path));
-        }
-        if let Some(v) = settings.get_string("verify_hostname") {
-            cfg.verify_hostname = v.to_lowercase() == "true";
-        }
-        if let Some(v) = settings.get_string("verify_certificates") {
-            cfg.verify_certificates = v.to_lowercase() == "true";
-        }
-        cfg
-    }
-}
+impl TlsConfig {}

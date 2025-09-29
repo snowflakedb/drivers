@@ -94,10 +94,7 @@ pub async fn snowflake_login(login_parameters: &LoginParameters) -> Result<Strin
         data: auth_request_data,
     };
 
-    tracing::debug!(
-        "Login request: {}",
-        serde_json::to_string_pretty(&login_request).unwrap()
-    );
+    tracing::debug!(login_request = %serde_json::to_string_pretty(&login_request).unwrap(), "Login request");
 
     // Create HTTP client using unified TlsConfig
     tracing::debug!(
@@ -209,7 +206,7 @@ pub async fn snowflake_query(
     };
 
     let json_payload = serde_json::to_string_pretty(&query_request).unwrap();
-    tracing::debug!("JSON Body Sent:\n{}", json_payload);
+    tracing::debug!("JSON Body Sent:\n{json_payload}");
 
     let request = client
         .post(&query_url)
@@ -228,11 +225,11 @@ pub async fn snowflake_query(
         .build()
         .context(RequestConstructionSnafu { request: "query" })?;
 
-    tracing::debug!("Query request: {:?}", request);
-    tracing::debug!("Request headers: {:?}", request.headers());
-    tracing::debug!("Request method: {:?}", request.method());
-    tracing::debug!("Request url: {:?}", request.url());
-    tracing::debug!("Request version: {:?}", request.version());
+    tracing::debug!(?request, "Query request");
+    tracing::debug!(headers = ?request.headers(), "Request headers");
+    tracing::debug!(method = ?request.method(), "Request method");
+    tracing::debug!(url = %request.url(), "Request url");
+    tracing::debug!(version = ?request.version(), "Request version");
     // tracing::debug!("Request content-length: {:?}", request.content_length());
     // tracing::debug!("Request content-type: {:?}", request.content_type());
     // tracing::debug!("Request accept: {:?}", request.accept());
@@ -275,7 +272,7 @@ where
 
     let response_text = response_text.context(ResponseTextSnafu)?;
 
-    tracing::debug!("Response text: {}", response_text);
+    tracing::debug!("Response text: {response_text}");
     let response_data: T = serde_json::from_str(&response_text).context(ResponseFormatSnafu)?;
 
     Ok(response_data)

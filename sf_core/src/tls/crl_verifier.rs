@@ -1,7 +1,7 @@
 // Real TLS integration with CRL validation using rustls
 use crate::crl::config::{CertRevocationCheckMode, CrlConfig};
 use crate::crl::validator::CrlValidator;
-use lazy_static::lazy_static;
+use crate::crl::worker::CrlWorker;
 use rustls::client::WebPkiServerVerifier;
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
@@ -77,11 +77,8 @@ impl ServerCertVerifier for CrlServerCertVerifier {
             chain.push(i.as_ref().to_vec());
         }
         let chains = vec![chain];
-        let res = shared_runtime().block_on(async {
-            self.crl_validator
-                .validate_certificate_chains(&chains)
-                .await
-        });
+        let worker = CrlWorker::global(self.crl_validator.clone());
+        let res = worker.validate(chains);
 
         match res {
             Ok(()) => Ok(ServerCertVerified::assertion()),
@@ -121,24 +118,4 @@ impl ServerCertVerifier for CrlServerCertVerifier {
         // Delegate to webpki verifier
         self.webpki_verifier.supported_verify_schemes()
     }
-}
-
-fn shared_runtime() -> &'static tokio::runtime::Runtime {
-    lazy_static! {
-        static ref SHARED_RUNTIME: tokio::runtime::Runtime = match tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-        {
-            Ok(rt) => rt,
-            Err(e) => {
-                // Fall back to a minimal runtime to avoid panic in TLS handshake path
-                tracing::error!(target: "sf_core::tls", "Failed to create shared CRL runtime: {e}");
-                tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                    .unwrap()
-            }
-        };
-    }
-    &SHARED_RUNTIME
 }
