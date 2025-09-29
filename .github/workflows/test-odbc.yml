@@ -24,6 +24,12 @@ jobs:
           wget https://github.com/Kitware/CMake/releases/download/v4.0.3/cmake-4.0.3-linux-x86_64.sh
           sudo sh cmake-4.0.3-linux-x86_64.sh --skip-license --prefix=/usr/local
           sudo rm cmake-4.0.3-linux-x86_64.sh
+          
+          # Override system cmake and update PATH
+          sudo ln -sf /usr/local/bin/cmake /usr/bin/cmake
+          echo "/usr/local/bin" >> $GITHUB_PATH
+          export PATH="/usr/local/bin:$PATH"
+          
           cmake --version
           curl -O https://sfc-repo.snowflakecomputing.com/odbc/linux/3.9.0/snowflake-odbc-3.9.0.x86_64.deb
           sudo dpkg -i snowflake-odbc-3.9.0.x86_64.deb
@@ -69,42 +75,29 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-odbc-cargo-
 
-      - name: Cache CMake
-        uses: actions/cache@v4
-        with:
-          path: /usr/local/bin/cmake
-          key: cmake-4.0.3-${{ runner.os }}
-
-      - name: Install dependencies
+      - name: Install dependencies and setup CMake 4.0.3
         run: |
-          # Set up PATH first to prioritize /usr/local/bin
-          echo "/usr/local/bin" >> $GITHUB_PATH
-          export PATH="/usr/local/bin:$PATH"
-          
           sudo apt-get update
           sudo apt-get install -y unixodbc-dev build-essential zlib1g-dev lcov
           
-          # Only install CMake if not cached
-          if [ ! -f /usr/local/bin/cmake ]; then
-            wget https://github.com/Kitware/CMake/releases/download/v4.0.3/cmake-4.0.3-linux-x86_64.sh
-            sudo sh cmake-4.0.3-linux-x86_64.sh --skip-license --prefix=/usr/local
-            sudo rm cmake-4.0.3-linux-x86_64.sh
-          fi
+          # Install CMake 4.0.3 and ensure it's used everywhere
+          wget https://github.com/Kitware/CMake/releases/download/v4.0.3/cmake-4.0.3-linux-x86_64.sh
+          sudo sh cmake-4.0.3-linux-x86_64.sh --skip-license --prefix=/usr/local
+          sudo rm cmake-4.0.3-linux-x86_64.sh
           
+          # Override system cmake by creating symlink and updating PATH
+          sudo ln -sf /usr/local/bin/cmake /usr/bin/cmake
+          echo "/usr/local/bin" >> $GITHUB_PATH
+          export PATH="/usr/local/bin:$PATH"
+          
+          # Verify CMake version
           cmake --version
+          which cmake
 
       - name: Decode secrets
         run: ./scripts/decode_secrets.sh
         env:
           PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
-
-      - name: Cache C++ build artifacts
-        uses: actions/cache@v4
-        with:
-          path: odbc_tests/cmake-build
-          key: ${{ runner.os }}-odbc-cpp-${{ hashFiles('odbc_tests/**/*.cpp', 'odbc_tests/**/*.hpp', 'odbc_tests/CMakeLists.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-odbc-cpp-
 
       - name: Install LLVM tools for coverage
         run: rustup component add llvm-tools-preview
