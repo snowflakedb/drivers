@@ -35,15 +35,15 @@ mod integration_tests {
 
         fn with_crl_enabled(mut self) -> Self {
             self.settings.insert(
-                "cert_revocation_check_mode".to_string(),
+                "crl_check_mode".to_string(),
                 Setting::String("ENABLED".to_string()),
             );
             self.settings.insert(
-                "enable_crl_disk_caching".to_string(),
+                "crl_enable_disk_caching".to_string(),
                 Setting::String("true".to_string()),
             );
             self.settings
-                .insert("sf_crl_validity_time".to_string(), Setting::Int(7));
+                .insert("crl_validity_time".to_string(), Setting::Int(7));
             self
         }
     }
@@ -168,16 +168,13 @@ mod integration_tests {
         let mut settings = MockSettings::new();
 
         // Simulate parsing connection string parameters
+        settings.set("crl_check_mode", Setting::String("ADVISORY".to_string()));
         settings.set(
-            "cert_revocation_check_mode",
-            Setting::String("ADVISORY".to_string()),
-        );
-        settings.set(
-            "enable_crl_disk_caching",
+            "crl_enable_disk_caching",
             Setting::String("false".to_string()),
         );
         settings.set(
-            "allow_certificates_without_crl_url",
+            "crl_allow_certificates_without_crl_url",
             Setting::String("true".to_string()),
         );
         settings.set("crl_http_timeout", Setting::Int(45));

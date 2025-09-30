@@ -1,4 +1,5 @@
 use crate::crl::error::{CrlError, CrlParsingSnafu};
+use chrono::TimeZone;
 use snafu::Location;
 use snafu::ResultExt;
 use x509_parser::extensions::{GeneralName, ParsedExtension};
@@ -58,8 +59,11 @@ pub fn extract_crl_distribution_points(cert_der: &[u8]) -> Result<Vec<String>, C
     Ok(crl_urls)
 }
 
-/// Check if a certificate is short-lived (validity period <= 7 days)
-pub fn is_short_lived_certificate(cert_der: &[u8]) -> Result<bool, CrlError> {
+/// Check if a certificate is short-lived using configured threshold (default 10 days)
+pub fn is_short_lived_certificate_with_threshold(
+    cert_der: &[u8],
+    threshold_days: i64,
+) -> Result<bool, CrlError> {
     let (_, cert) =
         x509_parser::certificate::X509Certificate::from_der(cert_der).context(CrlParsingSnafu)?;
 
@@ -76,9 +80,9 @@ pub fn is_short_lived_certificate(cert_der: &[u8]) -> Result<bool, CrlError> {
         })?;
 
     let validity_period_seconds = (not_after_dt - not_before_dt).num_seconds();
-    let seven_days_seconds = 7 * 24 * 60 * 60; // 7 days in seconds
+    let threshold_seconds = threshold_days * 24 * 60 * 60;
 
-    let is_short_lived = validity_period_seconds <= seven_days_seconds;
+    let is_short_lived = validity_period_seconds <= threshold_seconds;
 
     if is_short_lived {
         let days = validity_period_seconds / (24 * 60 * 60);
@@ -86,6 +90,14 @@ pub fn is_short_lived_certificate(cert_der: &[u8]) -> Result<bool, CrlError> {
     }
 
     Ok(is_short_lived)
+}
+
+/// Use CA/B BR short-lived threshold: 10 days until 2026-03-15, then 7 days
+pub fn is_short_lived_certificate(cert_der: &[u8]) -> Result<bool, CrlError> {
+    let now = chrono::Utc::now();
+    let cutoff = chrono::Utc.with_ymd_and_hms(2026, 3, 15, 0, 0, 0).unwrap();
+    let threshold_days = if now < cutoff { 10 } else { 7 };
+    is_short_lived_certificate_with_threshold(cert_der, threshold_days)
 }
 
 /// Get certificate serial number as bytes for CRL comparison

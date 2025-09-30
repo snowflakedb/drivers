@@ -45,7 +45,6 @@ struct CrlMetrics {
     get_ms: Histogram<u64>,
     fetch_total: Counter<u64>,
     fetch_ms: Histogram<u64>,
-    #[allow(dead_code)]
     fetch_error_total: Counter<u64>,
 }
 
@@ -70,6 +69,24 @@ fn metrics() -> &'static CrlMetrics {
 }
 
 impl CrlCache {
+    fn record_revocation_outcome(
+        &self,
+        serial: &[u8],
+        issuer_der: Option<&[u8]>,
+        min_expires: Option<DateTime<Utc>>,
+        outcome: &crate::tls::revocation::RevocationOutcome,
+    ) {
+        if let Some(issuer) = issuer_der
+            && let Some(issuer_hash) = crate::tls::x509_utils::subject_der_hash(issuer)
+        {
+            let key = OutcomeKey {
+                serial: serial.to_owned(),
+                issuer_hash,
+            };
+            let expires_at = min_expires.unwrap_or_else(|| Utc::now() + self.config.validity_time);
+            self.outcome_put(key, outcome.clone(), expires_at);
+        }
+    }
     fn outcome_get(&self, key: &OutcomeKey) -> Option<crate::tls::revocation::RevocationOutcome> {
         if let Some(cache) = &self.outcome_cache
             && let Ok(mut guard) = cache.lock()
@@ -159,17 +176,7 @@ impl CrlCache {
                     reason: None,
                     revocation_time: None,
                 };
-                if let Some(issuer) = issuer_der
-                    && let Some(issuer_hash) = crate::tls::x509_utils::subject_der_hash(issuer)
-                {
-                    let key = OutcomeKey {
-                        serial: serial.clone(),
-                        issuer_hash,
-                    };
-                    let expires_at =
-                        min_expires.unwrap_or_else(|| Utc::now() + self.config.validity_time);
-                    self.outcome_put(key, outcome.clone(), expires_at);
-                }
+                self.record_revocation_outcome(&serial, issuer_der, min_expires, &outcome);
                 return Ok(outcome);
             }
         }
@@ -177,16 +184,7 @@ impl CrlCache {
             return Ok(RevocationOutcome::NotDetermined);
         }
         let outcome = RevocationOutcome::NotRevoked;
-        if let Some(issuer) = issuer_der
-            && let Some(issuer_hash) = crate::tls::x509_utils::subject_der_hash(issuer)
-        {
-            let key = OutcomeKey {
-                serial,
-                issuer_hash,
-            };
-            let expires_at = min_expires.unwrap_or_else(|| Utc::now() + self.config.validity_time);
-            self.outcome_put(key, outcome.clone(), expires_at);
-        }
+        self.record_revocation_outcome(&serial, issuer_der, min_expires, &outcome);
         Ok(outcome)
     }
 
@@ -272,6 +270,16 @@ impl CrlCache {
         if let Some(memory) = &self.memory_cache
             && let Ok(mut cache) = memory.lock()
         {
+            if let Some(prev) = cache.get(&cached_crl.url)
+                && let Ok(Some(prev_dt)) =
+                    crate::tls::x509_utils::extract_crl_next_update(&prev.crl)
+                && let Ok(Some(new_dt)) =
+                    crate::tls::x509_utils::extract_crl_next_update(&cached_crl.crl)
+                && new_dt < prev_dt
+            {
+                // Older CRL, ignore
+                return Ok(());
+            }
             cache.insert(cached_crl.url.clone(), cached_crl);
         }
         Ok(())
@@ -407,20 +415,36 @@ impl CrlCache {
     async fn fetch(&self, url: &str) -> Result<Vec<u8>, CrlError> {
         let start = std::time::Instant::now();
         self.maybe_sleep_backoff(url).await?;
-        let resp = self
-            .http_client
-            .get(url)
-            .send()
-            .await
-            .context(CrlDownloadSnafu {
-                url: url.to_string(),
-            })?;
-        let resp = resp.error_for_status().context(CrlDownloadSnafu {
-            url: url.to_string(),
-        })?;
-        let bytes = resp.bytes().await.context(CrlDownloadSnafu {
-            url: url.to_string(),
-        })?;
+        let resp = match self.http_client.get(url).send().await {
+            Ok(r) => r,
+            Err(e) => {
+                metrics().fetch_error_total.add(1, &[]);
+                self.record_backoff_failure(url);
+                return Err(e).context(CrlDownloadSnafu {
+                    url: url.to_string(),
+                });
+            }
+        };
+        let resp = match resp.error_for_status() {
+            Ok(r) => r,
+            Err(e) => {
+                metrics().fetch_error_total.add(1, &[]);
+                self.record_backoff_failure(url);
+                return Err(e).context(CrlDownloadSnafu {
+                    url: url.to_string(),
+                });
+            }
+        };
+        let bytes = match resp.bytes().await {
+            Ok(b) => b,
+            Err(e) => {
+                metrics().fetch_error_total.add(1, &[]);
+                self.record_backoff_failure(url);
+                return Err(e).context(CrlDownloadSnafu {
+                    url: url.to_string(),
+                });
+            }
+        };
         self.record_backoff_success(url)?;
         let ms = start.elapsed().as_millis() as u64;
         metrics().fetch_ms.record(ms, &[]);
@@ -470,8 +494,6 @@ impl CrlCache {
         Ok(())
     }
 
-    // Reserved for future metrics-based backoff tracking
-    #[allow(dead_code)]
     fn record_backoff_failure(&self, url: &str) {
         let mut guard = self.backoff.lock().unwrap();
         let entry = guard

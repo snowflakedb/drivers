@@ -51,7 +51,6 @@ pub struct ClientInfo {
     pub os: String,
     pub os_version: String,
     pub ocsp_mode: Option<String>,
-    #[allow(dead_code)]
     pub crl_config: CrlConfig,
     pub tls_config: TlsConfig,
 }

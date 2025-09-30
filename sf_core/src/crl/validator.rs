@@ -1,6 +1,5 @@
 use super::config::CrlConfig;
 use crate::crl::cache::CrlCache;
-use crate::crl::certificate_parser::is_short_lived_certificate;
 use crate::crl::error::CrlError;
 use std::sync::Arc;
 
@@ -50,8 +49,11 @@ impl CrlValidator {
                 break;
             }
 
-            // Skip short-lived
-            if matches!(is_short_lived_certificate(cert_der), Ok(true)) {
+            // Skip short-lived per CA/B BR (10 days until 2026-03-15, then 7 days)
+            if matches!(
+                crate::crl::certificate_parser::is_short_lived_certificate(cert_der),
+                Ok(true)
+            ) {
                 continue;
             }
 

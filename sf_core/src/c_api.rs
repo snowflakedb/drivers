@@ -130,26 +130,33 @@ pub unsafe extern "C" fn sf_core_api_call_proto(
     response: *mut *const u8,
     response_len: *mut usize,
 ) -> usize {
-    unsafe {
+    // Prevent unwinding across the FFI boundary. Any panic will be converted to a transport error.
+    let result = std::panic::catch_unwind(|| unsafe {
         let api = std::ffi::CStr::from_ptr(api).to_string_lossy().to_string();
         let method = std::ffi::CStr::from_ptr(method)
             .to_string_lossy()
             .to_string();
         let message = std::slice::from_raw_parts(request, request_len);
-        let result = call_proto(&api, &method, message);
-        match result {
-            Ok(response_vec) => {
-                write_buffer(response_vec, response, response_len);
-                0
-            }
-            Err(ProtoError::Application(error_vec)) => {
-                write_buffer(error_vec, response, response_len);
-                1
-            }
-            Err(ProtoError::Transport(e)) => {
-                write_buffer(e.as_bytes().to_vec(), response, response_len);
-                2
-            }
+        call_proto(&api, &method, message)
+    });
+
+    match result {
+        Ok(Ok(response_vec)) => {
+            write_buffer(response_vec, response, response_len);
+            0
+        }
+        Ok(Err(ProtoError::Application(error_vec))) => {
+            write_buffer(error_vec, response, response_len);
+            1
+        }
+        Ok(Err(ProtoError::Transport(e))) => {
+            write_buffer(e.as_bytes().to_vec(), response, response_len);
+            2
+        }
+        Err(_) => {
+            let msg = b"sf_core panic in sf_core_api_call_proto".to_vec();
+            unsafe { write_buffer(msg, response, response_len) };
+            2
         }
     }
 }
