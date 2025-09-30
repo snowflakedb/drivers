@@ -1,7 +1,8 @@
+use crate::common::file_utils::shared_test_data_dir;
 use crate::common::put_get_common::assert_file_exists;
 use crate::common::put_get_common::get_file_from_stage;
 use crate::common::put_get_common::upload_to_stage_with_options;
-use crate::common::test_utils::*;
+use crate::common::snowflake_test_client::SnowflakeTestClient;
 use std::fs;
 use std::path::PathBuf;
 

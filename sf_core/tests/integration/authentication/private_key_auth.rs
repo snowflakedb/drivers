@@ -1,4 +1,4 @@
-use crate::common::test_utils::*;
+use crate::common::snowflake_test_client::SnowflakeTestClient;
 
 #[test]
 fn should_fail_jwt_authentication_when_no_private_file_provided() {

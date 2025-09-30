@@ -1,8 +1,9 @@
 use crate::common::arrow_result_helper::ArrowResultHelper;
+use crate::common::file_utils::shared_test_data_dir;
 use crate::common::put_get_common::PutResult;
 use crate::common::put_get_common::upload_to_stage;
 use crate::common::put_get_common::upload_to_stage_with_options;
-use crate::common::test_utils::*;
+use crate::common::snowflake_test_client::SnowflakeTestClient;
 use std::path::PathBuf;
 
 #[test]

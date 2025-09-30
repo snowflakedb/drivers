@@ -1,10 +1,11 @@
 use crate::common::arrow_result_helper::ArrowResultHelper;
+use crate::common::file_utils::{decompress_gzipped_file, shared_test_data_dir};
 use crate::common::put_get_common::GetResult;
 use crate::common::put_get_common::PutResult;
 use crate::common::put_get_common::assert_file_exists;
 use crate::common::put_get_common::get_file_from_stage;
 use crate::common::put_get_common::upload_to_stage;
-use crate::common::test_utils::*;
+use crate::common::snowflake_test_client::SnowflakeTestClient;
 use arrow::datatypes::Field;
 use std::fs;
 

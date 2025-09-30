@@ -1,5 +1,5 @@
 use super::super::common::arrow_result_helper::ArrowResultHelper;
-use super::super::common::test_utils::*;
+use crate::common::snowflake_test_client::SnowflakeTestClient;
 
 #[test]
 fn should_authenticate_using_pat_as_password() {

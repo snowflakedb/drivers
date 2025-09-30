@@ -1,5 +1,5 @@
 use crate::common::arrow_result_helper::ArrowResultHelper;
-use crate::common::test_utils::*;
+use crate::common::snowflake_test_client::SnowflakeTestClient;
 
 #[test]
 fn should_process_one_million_row_result_set() {

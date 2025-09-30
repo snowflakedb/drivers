@@ -1,4 +1,4 @@
-use super::super::common::test_utils::*;
+use crate::common::snowflake_test_client::SnowflakeTestClient;
 
 #[test]
 fn connection_init_with_tls_options_succeeds() {

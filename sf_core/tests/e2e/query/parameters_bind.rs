@@ -1,5 +1,5 @@
 use crate::common::arrow_result_helper::ArrowResultHelper;
-use crate::common::test_utils::*;
+use crate::common::snowflake_test_client::SnowflakeTestClient;
 use arrow::datatypes::Int32Type;
 
 #[test]

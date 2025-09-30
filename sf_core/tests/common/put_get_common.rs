@@ -1,5 +1,5 @@
 pub use super::arrow_deserialize::ArrowDeserialize;
-pub use super::test_utils::SnowflakeTestClient;
+use crate::common::snowflake_test_client::SnowflakeTestClient;
 use sf_core::protobuf_gen::database_driver_v1::ExecuteResult;
 
 // Structured types for Snowflake command results using our arrow_deserialize macro
