@@ -3,9 +3,9 @@ description: rules for running tests
 alwaysApply: false
 ---
 
-# Environmental Variables
+# Environment Variables
 
-When you run tests that require connecting to Snowflake manually, define environmental variable:
+When you run tests that require connecting to Snowflake manually, define environment variable:
 PARAMETER_PATH=/[project_location]/parameters.json
 
 Where [project_location] is the path to your project root.
