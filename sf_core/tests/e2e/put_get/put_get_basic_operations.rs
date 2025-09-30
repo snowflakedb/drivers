@@ -3,7 +3,7 @@ use crate::common::put_get_common::GetResult;
 use crate::common::put_get_common::PutResult;
 use crate::common::put_get_common::assert_file_exists;
 use crate::common::put_get_common::get_file_from_stage;
-use crate::common::put_get_common::upload_file_to_stage;
+use crate::common::put_get_common::upload_to_stage;
 use crate::common::test_utils::*;
 use arrow::datatypes::Field;
 use std::fs;
@@ -14,7 +14,7 @@ fn should_select_data_from_file_uploaded_to_stage() {
     let client = SnowflakeTestClient::connect_with_default_auth();
     let stage_name = "TEST_STAGE_SELECT";
     let (_filename, test_file_path) = test_file();
-    upload_file_to_stage(&client, stage_name, &test_file_path);
+    upload_to_stage(&client, stage_name, test_file_path.to_str().unwrap());
 
     // When File data is queried using Select command
     let select_sql = format!("select $1, $2, $3 from @{stage_name}");
@@ -31,7 +31,7 @@ fn should_list_file_uploaded_to_stage() {
     let client = SnowflakeTestClient::connect_with_default_auth();
     let stage_name = "TEST_STAGE_LS";
     let (filename, test_file_path) = test_file();
-    upload_file_to_stage(&client, stage_name, &test_file_path);
+    upload_to_stage(&client, stage_name, test_file_path.to_str().unwrap());
 
     // When Stage content is listed using LS command
     let ls_result = client.execute_query(&format!("LS @{stage_name}"));
@@ -53,7 +53,7 @@ fn should_get_file_uploaded_to_stage() {
     let client = SnowflakeTestClient::connect_with_default_auth();
     let stage_name = "TEST_STAGE_GET";
     let (filename, test_file_path) = test_file();
-    upload_file_to_stage(&client, stage_name, &test_file_path);
+    upload_to_stage(&client, stage_name, test_file_path.to_str().unwrap());
 
     // When File is downloaded using GET command
     let (_get_result, download_dir) = get_file_from_stage(&client, stage_name, &filename);
@@ -81,7 +81,7 @@ fn should_return_correct_rowset_for_put() {
     // When File is uploaded to stage
     let stage_name = "TEST_STAGE_PUT_ROWSET";
     let (_filename, test_file_path) = test_file();
-    let put_data = upload_file_to_stage(&client, stage_name, &test_file_path);
+    let put_data = upload_to_stage(&client, stage_name, test_file_path.to_str().unwrap());
 
     // Then Rowset for PUT command should be correct
     let mut arrow_helper = ArrowResultHelper::from_result(put_data);
@@ -105,7 +105,7 @@ fn should_return_correct_rowset_for_get() {
     let client = SnowflakeTestClient::connect_with_default_auth();
     let stage_name = "TEST_STAGE_GET_ROWSET";
     let (filename, test_file_path) = test_file();
-    upload_file_to_stage(&client, stage_name, &test_file_path);
+    upload_to_stage(&client, stage_name, test_file_path.to_str().unwrap());
 
     // When File is downloaded using GET command
     let (get_result, _download_dir) = get_file_from_stage(&client, stage_name, &filename);
@@ -130,7 +130,7 @@ fn should_return_correct_column_metadata_for_put() {
     // When File is uploaded to stage
     let stage_name = "TEST_STAGE_PUT_COLUMN_METADATA";
     let (_filename, test_file_path) = test_file();
-    let put_data = upload_file_to_stage(&client, stage_name, &test_file_path);
+    let put_data = upload_to_stage(&client, stage_name, test_file_path.to_str().unwrap());
 
     // Then Column metadata for PUT command should be correct
     let arrow_helper = ArrowResultHelper::from_result(put_data);
@@ -153,7 +153,7 @@ fn should_return_correct_column_metadata_for_get() {
     let client = SnowflakeTestClient::connect_with_default_auth();
     let stage_name = "TEST_STAGE_GET_COLUMN_METADATA";
     let (filename, test_file_path) = test_file();
-    upload_file_to_stage(&client, stage_name, &test_file_path);
+    upload_to_stage(&client, stage_name, test_file_path.to_str().unwrap());
 
     // When File is downloaded using GET command
     let (get_result, _download_dir) = get_file_from_stage(&client, stage_name, &filename);

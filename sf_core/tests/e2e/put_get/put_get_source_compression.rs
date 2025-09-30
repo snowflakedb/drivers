@@ -1,7 +1,7 @@
 use crate::common::arrow_result_helper::ArrowResultHelper;
 use crate::common::put_get_common::PutResult;
 use crate::common::put_get_common::SnowflakeTestClient;
-use crate::common::put_get_common::upload_file_to_stage_with_options;
+use crate::common::put_get_common::upload_to_stage_with_options;
 use crate::common::test_utils::shared_test_data_dir;
 use sf_core::protobuf_gen::database_driver_v1::ExecuteResult;
 use std::path::PathBuf;
@@ -26,10 +26,10 @@ fn should_auto_detect_standard_compression_types_when_source_compression_set_to_
     let test_file_path = get_test_data_path(filename);
 
     // When File is uploaded with SOURCE_COMPRESSION set to AUTO_DETECT
-    let put_data = upload_file_to_stage_with_options(
+    let put_data = upload_to_stage_with_options(
         &client,
         &stage_name,
-        &test_file_path,
+        test_file_path.to_str().unwrap(),
         "SOURCE_COMPRESSION=AUTO_DETECT",
     );
 
@@ -65,10 +65,10 @@ fn should_upload_compressed_files_with_source_compression_set_to_explicit_types(
     let test_file_path = get_test_data_path(filename);
 
     // When File is uploaded with SOURCE_COMPRESSION set to explicit type
-    let put_result = upload_file_to_stage_with_options(
+    let put_result = upload_to_stage_with_options(
         &client,
         &stage_name,
-        &test_file_path,
+        test_file_path.to_str().unwrap(),
         &format!("SOURCE_COMPRESSION={}", compression),
     );
 
@@ -88,10 +88,10 @@ fn should_not_compress_file_when_source_compression_set_to_auto_detect_and_auto_
     let test_file_path = get_test_data_path(filename);
 
     // When File is uploaded with SOURCE_COMPRESSION set to AUTO_DETECT and AUTO_COMPRESS set to FALSE
-    let put_result = upload_file_to_stage_with_options(
+    let put_result = upload_to_stage_with_options(
         &client,
         stage_name,
-        &test_file_path,
+        test_file_path.to_str().unwrap(),
         "SOURCE_COMPRESSION=AUTO_DETECT AUTO_COMPRESS=FALSE",
     );
 
@@ -110,10 +110,10 @@ fn should_not_compress_file_when_source_compression_set_to_none_and_auto_compres
     let test_file_path = get_test_data_path(filename);
 
     // When File is uploaded with SOURCE_COMPRESSION set to NONE and AUTO_COMPRESS set to FALSE
-    let put_result = upload_file_to_stage_with_options(
+    let put_result = upload_to_stage_with_options(
         &client,
         stage_name,
-        &test_file_path,
+        test_file_path.to_str().unwrap(),
         "SOURCE_COMPRESSION=NONE AUTO_COMPRESS=FALSE",
     );
 
@@ -133,10 +133,10 @@ fn should_compress_uncompressed_file_when_source_compression_set_to_auto_detect_
     let test_file_path = get_test_data_path(filename);
 
     // When File is uploaded with SOURCE_COMPRESSION set to AUTO_DETECT and AUTO_COMPRESS set to TRUE
-    let put_result = upload_file_to_stage_with_options(
+    let put_result = upload_to_stage_with_options(
         &client,
         stage_name,
-        &test_file_path,
+        test_file_path.to_str().unwrap(),
         "SOURCE_COMPRESSION=AUTO_DETECT AUTO_COMPRESS=TRUE",
     );
 
@@ -157,10 +157,10 @@ fn should_compress_uncompressed_file_when_source_compression_set_to_none_and_aut
     let test_file_path = get_test_data_path(filename);
 
     // When File is uploaded with SOURCE_COMPRESSION set to NONE and AUTO_COMPRESS set to TRUE
-    let put_result = upload_file_to_stage_with_options(
+    let put_result = upload_to_stage_with_options(
         &client,
         stage_name,
-        &test_file_path,
+        test_file_path.to_str().unwrap(),
         "SOURCE_COMPRESSION=NONE AUTO_COMPRESS=TRUE",
     );
 

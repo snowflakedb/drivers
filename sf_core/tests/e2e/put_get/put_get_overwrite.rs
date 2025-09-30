@@ -1,7 +1,7 @@
 use crate::common::arrow_result_helper::ArrowResultHelper;
 use crate::common::put_get_common::PutResult;
-use crate::common::put_get_common::upload_file_to_stage;
-use crate::common::put_get_common::upload_file_to_stage_with_options;
+use crate::common::put_get_common::upload_to_stage;
+use crate::common::put_get_common::upload_to_stage_with_options;
 use crate::common::test_utils::*;
 use std::path::PathBuf;
 
@@ -14,10 +14,10 @@ fn should_overwrite_file_when_overwrite_is_set_to_true() {
 
     // When Updated file is uploaded with OVERWRITE set to true
     let (filename, updated_file_path) = updated_test_file();
-    let overwrite_put_result = upload_file_to_stage_with_options(
+    let overwrite_put_result = upload_to_stage_with_options(
         &client,
         stage_name,
-        &updated_file_path,
+        updated_file_path.to_str().unwrap(),
         "OVERWRITE=TRUE",
     );
 
@@ -37,10 +37,10 @@ fn should_not_overwrite_file_when_overwrite_is_set_to_false() {
 
     // When Updated file is uploaded with OVERWRITE set to false
     let (filename, updated_file_path) = updated_test_file();
-    let no_overwrite_put_result = upload_file_to_stage_with_options(
+    let no_overwrite_put_result = upload_to_stage_with_options(
         &client,
         stage_name,
-        &updated_file_path,
+        updated_file_path.to_str().unwrap(),
         "OVERWRITE=FALSE",
     );
 
@@ -92,8 +92,11 @@ fn assert_stage_content(
 
 fn upload_original_file(client: &SnowflakeTestClient, stage_name: &str) {
     let (filename, original_reference_file_path) = original_test_file();
-    let original_put_results =
-        upload_file_to_stage(client, stage_name, &original_reference_file_path);
+    let original_put_results = upload_to_stage(
+        client,
+        stage_name,
+        original_reference_file_path.to_str().unwrap(),
+    );
     let mut arrow_helper = ArrowResultHelper::from_result(original_put_results);
     let first_result: PutResult = arrow_helper
         .fetch_one()

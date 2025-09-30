@@ -1,6 +1,6 @@
 use crate::common::put_get_common::assert_file_exists;
 use crate::common::put_get_common::get_file_from_stage;
-use crate::common::put_get_common::upload_file_to_stage_with_options;
+use crate::common::put_get_common::upload_to_stage_with_options;
 use crate::common::test_utils::*;
 use std::fs;
 use std::path::PathBuf;
@@ -14,10 +14,10 @@ fn should_compress_the_file_before_uploading_to_stage_when_auto_compress_set_to_
     let (compressed_filename, compressed_reference_file_path) = compressed_test_file();
 
     // When File is uploaded to stage with AUTO_COMPRESS set to true
-    upload_file_to_stage_with_options(
+    upload_to_stage_with_options(
         &client,
         stage_name,
-        &uncompressed_reference_file_path,
+        uncompressed_reference_file_path.to_str().unwrap(),
         "AUTO_COMPRESS=TRUE",
     );
 
@@ -44,10 +44,10 @@ fn should_not_compress_the_file_before_uploading_to_stage_when_auto_compress_set
     let (compressed_filename, _compressed_reference_file_path) = compressed_test_file();
 
     // When File is uploaded to stage with AUTO_COMPRESS set to false
-    upload_file_to_stage_with_options(
+    upload_to_stage_with_options(
         &client,
         stage_name,
-        &uncompressed_reference_file_path,
+        uncompressed_reference_file_path.to_str().unwrap(),
         "AUTO_COMPRESS=FALSE",
     );
 
