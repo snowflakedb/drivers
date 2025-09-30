@@ -108,6 +108,13 @@ setup:
 	else \
 		echo "uv already installed: $$(uv --version)"; \
 	fi
+	@if ! command -v cmake >/dev/null 2>&1; then \
+		echo "Error: cmake not found. Please install cmake and try again."; \
+		echo "Visit: https://cmake.org/install/"; \
+		exit 1; \
+	else \
+		echo "cmake already installed: $$(cmake --version | head -1)"; \
+	fi
 	uv sync --all-extras
 	mkdir -p $(REPORTS_DIR)
 
