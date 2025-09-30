@@ -233,6 +233,47 @@ impl SnowflakeTestClient {
         response.stmt_handle.unwrap()
     }
 
+    pub fn execute_statement_query(&self, stmt: &StatementHandle) -> ExecuteResult {
+        DatabaseDriverClient::statement_execute_query(StatementExecuteQueryRequest {
+            stmt_handle: Some(*stmt),
+        })
+        .unwrap()
+        .result
+        .unwrap()
+    }
+
+    pub fn set_sql_query(&self, stmt: &StatementHandle, query: &str) {
+        DatabaseDriverClient::statement_set_sql_query(StatementSetSqlQueryRequest {
+            stmt_handle: Some(*stmt),
+            query: query.to_string(),
+        })
+        .unwrap();
+    }
+
+    pub fn bind_parameters<T: ArrowPrimitiveType>(
+        &self,
+        stmt: &StatementHandle,
+        params: &[T::Native],
+    ) where
+        PrimitiveArray<T>: From<Vec<T::Native>>,
+    {
+        let (schema, array) = create_param_bindings::<T>(params);
+
+        DatabaseDriverClient::statement_bind(StatementBindRequest {
+            stmt_handle: Some(*stmt),
+            schema: Some(schema),
+            array: Some(array),
+        })
+        .unwrap();
+    }
+
+    pub fn release_statement(&self, stmt: &StatementHandle) {
+        DatabaseDriverClient::statement_release(StatementReleaseRequest {
+            stmt_handle: Some(*stmt),
+        })
+        .unwrap();
+    }
+
     /// Executes a SQL query and returns the result
     pub fn execute_query(&self, sql: &str) -> ExecuteResult {
         let stmt_handle = self.new_statement();

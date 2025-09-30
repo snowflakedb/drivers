@@ -47,6 +47,15 @@ impl ArrowExtractValue for i64 {
     }
 }
 
+impl ArrowExtractValue for i32 {
+    fn extract_int8(value: i8) -> Result<i32, ArrowExtractError> {
+        Ok(value as i32)
+    }
+    fn extract_int64(value: i64) -> Result<i32, ArrowExtractError> {
+        Ok(value as i32)
+    }
+}
+
 pub fn extract_arrow_value<T: ArrowExtractValue>(
     column: &dyn Array,
     row_idx: usize,
