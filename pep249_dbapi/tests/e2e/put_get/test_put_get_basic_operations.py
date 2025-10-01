@@ -39,6 +39,7 @@ def test_should_select_data_from_file_uploaded_to_stage(connection):
         row = cursor.fetchone()
         assert row == ("1", "2", "3")
 
+
 def test_should_list_file_uploaded_to_stage(connection):
     """Test that should list file uploaded to stage."""
     test_file_path = shared_test_data_dir() / "compression" / "test_data.csv"
@@ -106,7 +107,6 @@ def test_should_get_file_uploaded_to_stage(connection):
                 content = f.read().strip()
                 assert content == "1,2,3"
 
-@pytest.mark.skip(reason="Skipping this test as it is not implemented yet (cursor.description is not supported)")
 def test_should_return_correct_rowset_for_put(connection):
     """Test that should return correct rowset for PUT."""
     test_file_path = shared_test_data_dir() / "compression" / "test_data.csv"
@@ -171,7 +171,7 @@ def test_should_return_correct_rowset_for_get(connection):
             assert get_result[2] == "DOWNLOADED"  # status
             assert get_result[3] == ""  # message
 
-@pytest.mark.skip(reason="cursor.description not implemented in new driver")
+# @pytest.mark.skip(reason="cursor.description not implemented in new driver")
 def test_should_return_correct_column_metadata_for_put(connection):
     """Test that should return correct column metadata for PUT."""
     test_file_path = shared_test_data_dir() / "compression" / "test_data.csv"
@@ -180,17 +180,20 @@ def test_should_return_correct_column_metadata_for_put(connection):
     with connection.cursor() as cursor:
         stage_name = create_temporary_stage(cursor, "TEST_STAGE_PUT_COLUMN_METADATA")
         
-        # When File is uploaded to stage - execute directly to check metadata
-        file_uri = test_file_path.as_posix().replace("\\", "/")
-        put_command = f"PUT 'file://{file_uri}' @{stage_name} AUTO_COMPRESS=TRUE OVERWRITE=TRUE"
-        cursor.execute(put_command)
+        # When File is uploaded to stage using helper function
+        upload_result = upload_file_to_stage(
+            cursor,
+            stage_name,
+            test_file_path,
+            auto_compress=True,
+            overwrite=True
+        )
         
         # Then Column metadata for PUT command should be correct
         columns = cursor.description
         assert len(columns) == 8, "PUT command should return 8 columns"
         
         # Verify upload was successful
-        upload_result = cursor.fetchone()
         assert upload_result[6] == "UPLOADED"  # status
         
         # Verify column names and types
@@ -210,7 +213,7 @@ def test_should_return_correct_column_metadata_for_put(connection):
             assert actual_name == expected_name, f"Column {i} should be named '{expected_name}', got '{actual_name}'"
 
 
-@pytest.mark.skip(reason="cursor.description not implemented in new driver")
+# @pytest.mark.skip(reason="cursor.description not implemented in new driver")
 def test_should_return_correct_column_metadata_for_get(connection):
     """Test that should return correct column metadata for GET."""
     test_file_path = shared_test_data_dir() / "compression" / "test_data.csv"
@@ -230,22 +233,18 @@ def test_should_return_correct_column_metadata_for_get(connection):
         
         assert upload_result[6] == "UPLOADED"  # status column
         
-        # When File is downloaded using GET command - execute directly to check metadata
+        # When File is downloaded using GET command using helper function
         with tempfile.TemporaryDirectory() as temp_dir:
             download_dir = Path(temp_dir)
             
-            # Execute GET command directly to check column metadata
-            download_uri = download_dir.as_posix().replace("\\", "/")
-            get_command = f"GET @{stage_name}/{filename} 'file://{download_uri}/'"
-            cursor.execute(get_command)
+            get_result = get_file_from_stage(cursor, stage_name, filename, download_dir)
             
             # Then Column metadata for GET command should be correct
             columns = cursor.description
             assert len(columns) == 4, "GET command should return 4 columns"
             
             # Verify download was successful
-            get_result = cursor.fetchone()
-            assert get_result[2] == "DOWNLOADED"  # status
+            assert get_result[2] == "DOWNLOADED"
             
             # Verify column names
             expected_columns = [
