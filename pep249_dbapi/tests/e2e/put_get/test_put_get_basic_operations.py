@@ -97,12 +97,10 @@ def test_should_get_file_uploaded_to_stage(connection):
             
             # Then File should be downloaded
             assert get_result[2] == "DOWNLOADED"  # status
-            
-            # Verify file was actually downloaded
             downloaded_file = download_dir / (filename + ".gz")
             assert downloaded_file.exists()
             
-            # Verify content by decompressing and reading
+            # And Have correct content
             with gzip.open(downloaded_file, 'rt') as f:
                 content = f.read().strip()
                 assert content == "1,2,3"
@@ -180,7 +178,7 @@ def test_should_return_correct_column_metadata_for_put(connection):
     with connection.cursor() as cursor:
         stage_name = create_temporary_stage(cursor, "TEST_STAGE_PUT_COLUMN_METADATA")
         
-        # When File is uploaded to stage using helper function
+        # When File is uploaded to stage
         upload_result = upload_file_to_stage(
             cursor,
             stage_name,
@@ -233,7 +231,7 @@ def test_should_return_correct_column_metadata_for_get(connection):
         
         assert upload_result[6] == "UPLOADED"  # status column
         
-        # When File is downloaded using GET command using helper function
+        # When File is downloaded using GET command
         with tempfile.TemporaryDirectory() as temp_dir:
             download_dir = Path(temp_dir)
             
@@ -257,4 +255,3 @@ def test_should_return_correct_column_metadata_for_get(connection):
             for i, expected_name in enumerate(expected_columns):
                 actual_name = columns[i][0].lower()  # Column name is first element
                 assert actual_name == expected_name, f"Column {i} should be named '{expected_name}', got '{actual_name}'"
-
