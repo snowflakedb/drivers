@@ -1,7 +1,5 @@
 from tests.compatibility import NEW_DRIVER_ONLY, OLD_DRIVER_ONLY
 import pytest
-import random
-import logging
 import tempfile
 import gzip
 from pathlib import Path
@@ -105,6 +103,7 @@ def test_should_get_file_uploaded_to_stage(connection):
                 content = f.read().strip()
                 assert content == "1,2,3"
 
+
 def test_should_return_correct_rowset_for_put(connection):
     """Test that should return correct rowset for PUT."""
     test_file_path = shared_test_data_dir() / "compression" / "test_data.csv"
@@ -134,6 +133,7 @@ def test_should_return_correct_rowset_for_put(connection):
         assert upload_result[5] == "GZIP"  # target_compression
         assert upload_result[6] == "UPLOADED"  # status
         assert upload_result[7] == ""  # message
+
 
 def test_should_return_correct_rowset_for_get(connection):
     """Test that should return correct rowset for GET."""
@@ -169,7 +169,8 @@ def test_should_return_correct_rowset_for_get(connection):
             assert get_result[2] == "DOWNLOADED"  # status
             assert get_result[3] == ""  # message
 
-# @pytest.mark.skip(reason="cursor.description not implemented in new driver")
+
+@pytest.mark.skip(reason="cursor.description not implemented in new driver")
 def test_should_return_correct_column_metadata_for_put(connection):
     """Test that should return correct column metadata for PUT."""
     test_file_path = shared_test_data_dir() / "compression" / "test_data.csv"
@@ -211,7 +212,7 @@ def test_should_return_correct_column_metadata_for_put(connection):
             assert actual_name == expected_name, f"Column {i} should be named '{expected_name}', got '{actual_name}'"
 
 
-# @pytest.mark.skip(reason="cursor.description not implemented in new driver")
+@pytest.mark.skip(reason="cursor.description not implemented in new driver")
 def test_should_return_correct_column_metadata_for_get(connection):
     """Test that should return correct column metadata for GET."""
     test_file_path = shared_test_data_dir() / "compression" / "test_data.csv"
