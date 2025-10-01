@@ -1,4 +1,4 @@
-@core @python_e2e
+@core @python
 Feature: PUT/GET basic operations
 
   @core_e2e @python_e2e
