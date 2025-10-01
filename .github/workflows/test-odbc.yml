@@ -11,7 +11,15 @@ env:
 
 jobs:
   odbc_tests_reference:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-latest-arm64
+    runs-on: ${{ matrix.runner }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -25,9 +33,18 @@ jobs:
           sudo sh cmake-4.0.3-linux-x86_64.sh --skip-license --prefix=/usr/local
           sudo rm cmake-4.0.3-linux-x86_64.sh
           cmake --version
-          curl -O https://sfc-repo.snowflakecomputing.com/odbc/linux/3.9.0/snowflake-odbc-3.9.0.x86_64.deb
-          sudo dpkg -i snowflake-odbc-3.9.0.x86_64.deb
-          sudo sed -i 's,ODBCInstLib=.*,ODBCInstLib=/usr/lib/x86_64-linux-gnu/libodbcinst.so.2,g' /usr/lib/snowflake/odbc/lib/simba.snowflake.ini
+          if [ "${{ matrix.arch }}" = "amd64" ]; then
+            curl -O https://sfc-repo.snowflakecomputing.com/odbc/linux/3.9.0/snowflake-odbc-3.9.0.x86_64.deb
+            sudo dpkg -i snowflake-odbc-3.9.0.x86_64.deb
+          else
+            curl -O https://sfc-repo.snowflakecomputing.com/odbc/linux/3.9.0/snowflake-odbc-3.9.0.aarch64.deb
+            sudo dpkg -i snowflake-odbc-3.9.0.aarch64.deb
+          fi
+          if [ "${{ matrix.arch }}" = "amd64" ]; then
+            sudo sed -i 's,ODBCInstLib=.*,ODBCInstLib=/usr/lib/x86_64-linux-gnu/libodbcinst.so.2,g' /usr/lib/snowflake/odbc/lib/simba.snowflake.ini
+          else
+            sudo sed -i 's,ODBCInstLib=.*,ODBCInstLib=/usr/lib/aarch64-linux-gnu/libodbcinst.so.2,g' /usr/lib/snowflake/odbc/lib/simba.snowflake.ini
+          fi
 
       - name: Decode secrets
         run: ./scripts/decode_secrets.sh
@@ -40,11 +57,19 @@ jobs:
           export PARAMETER_PATH=$(pwd)/parameters.json
           cd odbc_tests/
           mkdir -p cmake-build
-          cmake -B cmake-build \
-              -D ODBC_LIBRARY="/usr/lib/x86_64-linux-gnu/libodbc.so" \
-              -D ODBC_INCLUDE_DIR="/usr/include" \
-              -D DRIVER_TYPE=OLD \
-              .
+          if [ "${{ matrix.arch }}" = "amd64" ]; then
+            cmake -B cmake-build \
+                -D ODBC_LIBRARY="/usr/lib/x86_64-linux-gnu/libodbc.so" \
+                -D ODBC_INCLUDE_DIR="/usr/include" \
+                -D DRIVER_TYPE=OLD \
+                .
+          else
+            cmake -B cmake-build \
+                -D ODBC_LIBRARY="/usr/lib/aarch64-linux-gnu/libodbc.so" \
+                -D ODBC_INCLUDE_DIR="/usr/include" \
+                -D DRIVER_TYPE=OLD \
+                .
+          fi
           cmake --build cmake-build -- -j $(nproc)
           ctest -j $(nproc) -C Debug --test-dir cmake-build --output-on-failure
 
@@ -52,8 +77,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest]
-    runs-on: ${{ matrix.os }}
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-latest-arm64
+    runs-on: ${{ matrix.runner }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -86,11 +115,19 @@ jobs:
           export LLVM_PROFILE_FILE="odbc-%p-%m.profraw"
           cd odbc_tests
           mkdir -p cmake-build
-          cmake -B cmake-build \
-              -D ODBC_LIBRARY="/usr/lib/x86_64-linux-gnu/libodbc.so" \
-              -D ODBC_INCLUDE_DIR="/usr/include" \
-              -D DRIVER_TYPE=NEW \
-              .
+          if [ "${{ matrix.arch }}" = "amd64" ]; then
+            cmake -B cmake-build \
+                -D ODBC_LIBRARY="/usr/lib/x86_64-linux-gnu/libodbc.so" \
+                -D ODBC_INCLUDE_DIR="/usr/include" \
+                -D DRIVER_TYPE=NEW \
+                .
+          else
+            cmake -B cmake-build \
+                -D ODBC_LIBRARY="/usr/lib/aarch64-linux-gnu/libodbc.so" \
+                -D ODBC_INCLUDE_DIR="/usr/include" \
+                -D DRIVER_TYPE=NEW \
+                .
+          fi
           cmake --build cmake-build -- -j $(nproc)
           ctest -j $(nproc) -C Debug --test-dir cmake-build --output-on-failure
           
@@ -103,14 +140,14 @@ jobs:
               -instr-profile=coverage.profdata \
               -format=lcov \
               -sources=$(pwd)/odbc \
-              -sources=$(pwd)/sf_core > lcov-${{ matrix.os }}-odbc-stable.info
+              -sources=$(pwd)/sf_core > lcov-${{ runner.os }}-${{ matrix.arch }}-odbc-stable.info
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
         with:
-          files: ./lcov-${{ matrix.os }}-odbc-stable.info
+          files: ./lcov-${{ runner.os }}-${{ matrix.arch }}-odbc-stable.info
           flags: odbc
-          name: odbc-${{ runner.os }}
+          name: odbc-${{ runner.os }}-${{ matrix.arch }}
           fail_ci_if_error: false

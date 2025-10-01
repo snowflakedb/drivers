@@ -37,9 +37,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest]
-        rust-version: ['stable']
-    runs-on: ${{ matrix.os }}
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+            rust-version: stable
+          - arch: arm64
+            runner: ubuntu-latest-arm64
+            rust-version: stable
+    runs-on: ${{ matrix.runner }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -51,15 +56,15 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-${{ matrix.arch }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-cargo-
+            ${{ runner.os }}-${{ matrix.arch }}-cargo-
 
       - name: Cache tarpaulin
         uses: actions/cache@v4
         with:
           path: ~/.cargo/bin/cargo-tarpaulin
-          key: tarpaulin-${{ runner.os }}
+          key: tarpaulin-${{ runner.os }}-${{ matrix.arch }}
 
       - name: Install tarpaulin
         run: |
@@ -81,16 +86,16 @@ jobs:
         run: |
           export PARAMETER_PATH=$(pwd)/parameters.json
           cargo tarpaulin --packages sf_core --all-features --skip-clean --no-fail-fast --out lcov --output-dir .
-          mv lcov.info lcov-${{ matrix.os }}-${{ matrix.rust-version }}.info
+          mv lcov.info lcov-${{ runner.os }}-${{ matrix.arch }}-${{ matrix.rust-version }}.info
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
         with:
-          files: ./lcov-${{ matrix.os }}-${{ matrix.rust-version }}.info
+          files: ./lcov-${{ runner.os }}-${{ matrix.arch }}-${{ matrix.rust-version }}.info
           flags: rust-core
-          name: rust-${{ runner.os }}-${{ matrix.rust-version }}
+          name: rust-${{ runner.os }}-${{ matrix.arch }}-${{ matrix.rust-version }}
           fail_ci_if_error: false
 
 

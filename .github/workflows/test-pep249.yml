@@ -21,7 +21,15 @@ env:
 jobs:
   # Build Rust core library once and share across Python jobs
   build_rust_core:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-latest-arm64
+    runs-on: ${{ matrix.runner }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -37,7 +45,7 @@ jobs:
       - name: Upload Rust artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: rust-core-library
+          name: rust-core-library-${{ matrix.arch }}
           path: target/debug/libsf_core.so
 
   # Combined unit + integration tests with universal connector
@@ -46,9 +54,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest]
         py: ["3.9", "3.10", "3.11", "3.12", "3.13"]
-    runs-on: ${{ matrix.os }}
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
     if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
     steps:
       - uses: actions/checkout@v4
@@ -64,10 +76,10 @@ jobs:
         uses: actions/cache@v4
         with:
           path: /tmp/.uv-cache
-          key: uv-${{ runner.os }}-${{ matrix.py }}-${{ hashFiles('pep249_dbapi/uv.lock', 'pep249_dbapi/pyproject.toml', 'pep249_dbapi/tox.ini') }}
+          key: uv-${{ runner.os }}-${{ matrix.arch }}-${{ matrix.py }}-${{ hashFiles('pep249_dbapi/uv.lock', 'pep249_dbapi/pyproject.toml', 'pep249_dbapi/tox.ini') }}
           restore-keys: |
-            uv-${{ runner.os }}-${{ matrix.py }}-
-            uv-${{ runner.os }}-
+            uv-${{ runner.os }}-${{ matrix.arch }}-${{ matrix.py }}-
+            uv-${{ runner.os }}-${{ matrix.arch }}-
 
       - name: Set up Python ${{ matrix.py }}
         run: uv python install ${{ matrix.py }}
@@ -75,7 +87,7 @@ jobs:
       - name: Download Rust artifacts
         uses: actions/download-artifact@v4
         with:
-          name: rust-core-library
+          name: rust-core-library-${{ matrix.arch }}
           path: target/debug/
 
       - name: Decode secrets
@@ -97,11 +109,11 @@ jobs:
           PYTHON_ID="${{ matrix.py }}"
           PYTHON_ID=${PYTHON_ID//./}  # Remove dots: 3.9 -> 39
           uv run tox -e py${PYTHON_ID}-all -- \
-            --json-report --json-report-file=reports/universal-${{ matrix.os }}-${{ matrix.py }}.json \
-            --junitxml=reports/universal-${{ matrix.os }}-${{ matrix.py }}.xml \
+            --json-report --json-report-file=reports/universal-${{ runner.os }}-${{ matrix.arch }}-${{ matrix.py }}.json \
+            --junitxml=reports/universal-${{ runner.os }}-${{ matrix.arch }}-${{ matrix.py }}.xml \
             --cov=pep249_dbapi \
-            --cov-report=xml:reports/coverage-${{ matrix.os }}-${{ matrix.py }}.xml \
-            --cov-report=html:reports/coverage-${{ matrix.os }}-${{ matrix.py }}-html
+            --cov-report=xml:reports/coverage-${{ runner.os }}-${{ matrix.arch }}-${{ matrix.py }}.xml \
+            --cov-report=html:reports/coverage-${{ runner.os }}-${{ matrix.arch }}-${{ matrix.py }}-html
         working-directory: pep249_dbapi
 
       - name: Upload coverage to Codecov
@@ -109,21 +121,29 @@ jobs:
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
         with:
-          files: ./pep249_dbapi/reports/coverage-${{ matrix.os }}-${{ matrix.py }}.xml
+          files: ./pep249_dbapi/reports/coverage-${{ runner.os }}-${{ matrix.arch }}-${{ matrix.py }}.xml
           flags: python
-          name: python-${{ matrix.os }}-py${{ matrix.py }}
+          name: python-${{ runner.os }}-${{ matrix.arch }}-py${{ matrix.py }}
           fail_ci_if_error: false
 
       - name: Upload test results as GitHub artifact
         uses: actions/upload-artifact@v4
         with:
-          name: results-universal-${{ matrix.os }}-${{ matrix.py }}
-          path: pep249_dbapi/reports/*-${{ matrix.os }}-${{ matrix.py }}.*
+          name: results-universal-${{ runner.os }}-${{ matrix.arch }}-${{ matrix.py }}
+          path: pep249_dbapi/reports/*-${{ runner.os }}-${{ matrix.arch }}-${{ matrix.py }}.*
 
   # Integration tests only with reference connector (for comparison)
   pep249_tests_reference:
     needs: build_rust_core
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-latest-arm64
+    runs-on: ${{ matrix.runner }}
     if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
     continue-on-error: true  # Reference tests expected to fail due to behavioral differences
     steps:
@@ -140,10 +160,10 @@ jobs:
         uses: actions/cache@v4
         with:
           path: /tmp/.uv-cache
-          key: uv-${{ runner.os }}-${{ env.REFERENCE_PYTHON_VERSION }}-${{ hashFiles('pep249_dbapi/uv.lock', 'pep249_dbapi/pyproject.toml', 'pep249_dbapi/tox.ini') }}
+          key: uv-${{ runner.os }}-${{ matrix.arch }}-${{ env.REFERENCE_PYTHON_VERSION }}-${{ hashFiles('pep249_dbapi/uv.lock', 'pep249_dbapi/pyproject.toml', 'pep249_dbapi/tox.ini') }}
           restore-keys: |
-            uv-${{ runner.os }}-${{ env.REFERENCE_PYTHON_VERSION }}-
-            uv-${{ runner.os }}-
+            uv-${{ runner.os }}-${{ matrix.arch }}-${{ env.REFERENCE_PYTHON_VERSION }}-
+            uv-${{ runner.os }}-${{ matrix.arch }}-
 
       - name: Set up Python ${{ env.REFERENCE_PYTHON_VERSION }}
         run: uv python install ${{ env.REFERENCE_PYTHON_VERSION }}
@@ -151,7 +171,7 @@ jobs:
       - name: Download Rust artifacts
         uses: actions/download-artifact@v4
         with:
-          name: rust-core-library
+          name: rust-core-library-${{ matrix.arch }}
           path: target/debug/
 
       - name: Decode secrets
@@ -168,21 +188,29 @@ jobs:
           CORE_PATH: ${{ github.workspace }}/target/debug/libsf_core.so
           PARAMETER_PATH: ${{ github.workspace }}/parameters.json
           REFERENCE_DRIVER_VERSION: ${{ env.PYTHON_REFERENCE_DRIVER_VERSION }}
-        run: make ci-test-reference PYTHON_VERSION=${{ env.REFERENCE_PYTHON_VERSION }} OS_VERSION=${{ env.REFERENCE_OS_VERSION }}
+        run: make ci-test-reference PYTHON_VERSION=${{ env.REFERENCE_PYTHON_VERSION }} OS_VERSION=${{ runner.os }}
         working-directory: pep249_dbapi
 
       - name: Upload test results as GitHub artifact
         uses: actions/upload-artifact@v4
         if: always()  # Upload test results even if tests fail (needed for comparison)
         with:
-          name: results-reference-${{ env.REFERENCE_OS_VERSION }}-${{ env.REFERENCE_PYTHON_VERSION }}
-          path: pep249_dbapi/reports/*-${{ env.REFERENCE_OS_VERSION }}-${{ env.REFERENCE_PYTHON_VERSION }}.*
+          name: results-reference-${{ runner.os }}-${{ matrix.arch }}-${{ env.REFERENCE_PYTHON_VERSION }}
+          path: pep249_dbapi/reports/*-${{ runner.os }}-${{ matrix.arch }}-${{ env.REFERENCE_PYTHON_VERSION }}.*
 
   # Compare results between connectors
   pep249_compare_results:
     needs: [pep249_tests, pep249_tests_reference]
     if: always()  # Run comparison even if reference tests fail (we want to see the differences)
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-latest-arm64
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
 
@@ -194,13 +222,13 @@ jobs:
       - name: Download universal test results
         uses: actions/download-artifact@v4
         with: 
-          name: results-universal-${{ env.REFERENCE_OS_VERSION }}-${{ env.REFERENCE_PYTHON_VERSION }}
+          name: results-universal-${{ runner.os }}-${{ matrix.arch }}-${{ env.REFERENCE_PYTHON_VERSION }}
           path: ${{ github.workspace }}/universal-results
       
       - name: Download reference test results
         uses: actions/download-artifact@v4
         with: 
-          name: results-reference-${{ env.REFERENCE_OS_VERSION }}-${{ env.REFERENCE_PYTHON_VERSION }}
+          name: results-reference-${{ runner.os }}-${{ matrix.arch }}-${{ env.REFERENCE_PYTHON_VERSION }}
           path: ${{ github.workspace }}/reference-results
 
       - name: Setup dependencies
@@ -213,5 +241,5 @@ jobs:
           REFERENCE_TEST_REPORTS_DIR: ${{ github.workspace }}/reference-results
           FAIL_ON_REGRESSIONS: "0"   # set to "1" when ready to for a strong requirement on compliance with old driver
         run: |
-          make ci-compare-artifacts PYTHON_VERSION=${{ env.REFERENCE_PYTHON_VERSION }} OS_VERSION=${{ env.REFERENCE_OS_VERSION }} | tee -a $GITHUB_STEP_SUMMARY
+          make ci-compare-artifacts PYTHON_VERSION=${{ env.REFERENCE_PYTHON_VERSION }} OS_VERSION=${{ runner.os }} | tee -a $GITHUB_STEP_SUMMARY
         working-directory: pep249_dbapi
