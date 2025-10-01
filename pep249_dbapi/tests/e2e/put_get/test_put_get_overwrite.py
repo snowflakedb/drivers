@@ -1,8 +1,4 @@
-import pytest
-import tempfile
-from pathlib import Path
-
-from tests.e2e.put_get.put_get_helper import create_temporary_stage, upload_file_to_stage, get_file_from_stage
+from tests.e2e.put_get.put_get_helper import create_temporary_stage, upload_file_to_stage
 from tests.utils import shared_test_data_dir
 
 
@@ -47,7 +43,6 @@ def test_should_overwrite_file_when_overwrite_is_set_to_true(connection):
 def test_should_not_overwrite_file_when_overwrite_is_set_to_false(connection):
     original_file_path = shared_test_data_dir() / "overwrite" / "original" / "test_data.csv"
     updated_file_path = shared_test_data_dir() / "overwrite" / "updated" / "test_data.csv"
-    filename = "test_data.csv"
 
     # Given File is uploaded to stage
     with connection.cursor() as cursor:

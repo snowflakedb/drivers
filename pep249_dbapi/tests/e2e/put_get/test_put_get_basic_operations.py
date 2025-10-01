@@ -1,4 +1,3 @@
-from tests.compatibility import NEW_DRIVER_ONLY, OLD_DRIVER_ONLY
 import pytest
 import tempfile
 import gzip
