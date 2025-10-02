@@ -3760,6 +3760,7 @@ dependencies = [
  "jwt",
  "lazy_static",
  "lru",
+ "num-traits",
  "once_cell",
  "openssl",
  "opentelemetry",

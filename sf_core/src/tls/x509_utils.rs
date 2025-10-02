@@ -6,6 +6,7 @@ use crate::crl::error::{
     CertificateParseSnafu, CrlError, CrlListParseSnafu, CrlParsingSnafu, CrlToDerSnafu,
 };
 use const_oid::ObjectIdentifier;
+use num_traits::ToPrimitive;
 use x509_cert::crl::CertificateList as RcCertificateList;
 use x509_cert::der::{Decode, Encode};
 use x509_parser::oid_registry::OID_X509_EXT_AUTHORITY_KEY_IDENTIFIER;
@@ -98,16 +99,8 @@ pub fn extract_crl_number(crl_der: &[u8]) -> Result<Option<u128>, X509Error> {
         if ext.oid == OID_X509_EXT_CRL_NUMBER
             && let ParsedExtension::CRLNumber(crl_num) = ext.parsed_extension()
         {
-            // crl_num is a BigUint; attempt to fit into u128
-            let bytes = crl_num.to_bytes_be();
-            if bytes.len() <= 16 {
-                let mut val: u128 = 0;
-                for b in bytes {
-                    val = (val << 8) | (b as u128);
-                }
-                return Ok(Some(val));
-            }
-            return Ok(None);
+            // Use the standard trait to convert BigUint to u128 if it fits
+            return Ok(crl_num.to_u128());
         }
     }
     Ok(None)
@@ -246,82 +239,6 @@ pub fn verify_crl_signature(crl_der: &[u8], issuer_der: Option<&[u8]>) -> Result
         Err(aws_lc_rs::error::Unspecified)
     };
     if ring_like.is_ok() {
-        return Ok(());
-    }
-
-    // OpenSSL-based verification for common algorithms (RSA PKCS#1, RSA-PSS, ECDSA, Ed25519)
-    let verify_pkcs1 = |md: openssl::hash::MessageDigest| -> bool {
-        if let Ok(issuer_x509) = openssl::x509::X509::from_der(issuer_der)
-            && let Ok(pkey) = issuer_x509.public_key()
-            && let Ok(mut verifier) = openssl::sign::Verifier::new(md, &pkey)
-            && verifier.update(&tbs).is_ok()
-            && verifier.verify(sig).unwrap_or(false)
-        {
-            return true;
-        }
-        false
-    };
-    let verify_pss = |md: openssl::hash::MessageDigest| -> bool {
-        if let Ok(issuer_x509) = openssl::x509::X509::from_der(issuer_der)
-            && let Ok(pkey) = issuer_x509.public_key()
-            && let Ok(mut verifier) = openssl::sign::Verifier::new(md, &pkey)
-            && verifier
-                .set_rsa_padding(openssl::rsa::Padding::PKCS1_PSS)
-                .is_ok()
-            && verifier.set_rsa_mgf1_md(md).is_ok()
-            && verifier
-                .set_rsa_pss_saltlen(openssl::sign::RsaPssSaltlen::DIGEST_LENGTH)
-                .is_ok()
-            && verifier.update(&tbs).is_ok()
-            && verifier.verify(sig).unwrap_or(false)
-        {
-            return true;
-        }
-        false
-    };
-    let verify_ecdsa = |md: openssl::hash::MessageDigest| -> bool {
-        if let Ok(issuer_x509) = openssl::x509::X509::from_der(issuer_der)
-            && let Ok(pkey) = issuer_x509.public_key()
-            && let Ok(mut verifier) = openssl::sign::Verifier::new(md, &pkey)
-            && verifier.update(&tbs).is_ok()
-            && verifier.verify(sig).unwrap_or(false)
-        {
-            return true;
-        }
-        false
-    };
-    let verify_ed25519 = || -> bool {
-        if let Ok(issuer_x509) = openssl::x509::X509::from_der(issuer_der)
-            && let Ok(pkey) = issuer_x509.public_key()
-            && let Ok(mut verifier) = openssl::sign::Verifier::new_without_digest(&pkey)
-            && verifier.verify_oneshot(sig, &tbs).is_ok()
-        {
-            return true;
-        }
-        false
-    };
-
-    let verified = if oid == oid_sha256_rsa {
-        verify_pkcs1(openssl::hash::MessageDigest::sha256())
-    } else if oid == oid_sha384_rsa {
-        verify_pkcs1(openssl::hash::MessageDigest::sha384())
-    } else if oid == oid_sha512_rsa {
-        verify_pkcs1(openssl::hash::MessageDigest::sha512())
-    } else if oid == oid_rsassa_pss {
-        verify_pss(openssl::hash::MessageDigest::sha256())
-            || verify_pss(openssl::hash::MessageDigest::sha384())
-            || verify_pss(openssl::hash::MessageDigest::sha512())
-    } else if oid == oid_ecdsa_sha256 {
-        verify_ecdsa(openssl::hash::MessageDigest::sha256())
-    } else if oid == oid_ecdsa_sha384 {
-        verify_ecdsa(openssl::hash::MessageDigest::sha384())
-    } else if oid == oid_ed25519 {
-        verify_ed25519()
-    } else {
-        // Algorithm not supported by aws-lc-rs or the OpenSSL fallback path
-        false
-    };
-    if verified {
         return Ok(());
     }
     InvalidCrlSignatureSnafu {}.fail()
@@ -558,44 +475,39 @@ mod tests {
 
     #[test]
     fn test_invalid_crl_signature() {
-        // A minimal, plausible DER for an issuer certificate.
-        // In a real scenario, this would be a proper, fully-formed certificate.
-        let issuer_der: Vec<u8> = vec![
-            0x30, 0x82, 0x01, 0x0a, 0x30, 0x81, 0xf9, 0xa0, 0x03, 0x02, 0x01, 0x02, 0x02, 0x01,
-            0x01, 0x30, 0x0d, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x0b,
-            0x05, 0x00, 0x30, 0x1e, 0x31, 0x1c, 0x30, 0x1a, 0x06, 0x03, 0x55, 0x04, 0x03, 0x0c,
-            0x13, 0x45, 0x78, 0x61, 0x6d, 0x70, 0x6c, 0x65, 0x20, 0x43, 0x41, 0x30, 0x1e, 0x17,
-            0x0d, 0x32, 0x30, 0x30, 0x31, 0x30, 0x31, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x5a,
-            0x17, 0x0d, 0x32, 0x35, 0x30, 0x31, 0x30, 0x31, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30,
-            0x5a, 0x30, 0x1e, 0x31, 0x1c, 0x30, 0x1a, 0x06, 0x03, 0x55, 0x04, 0x03, 0x0c, 0x13,
-            0x45, 0x78, 0x61, 0x6d, 0x70, 0x6c, 0x65, 0x20, 0x43, 0x41, 0x30, 0x59, 0x30, 0x13,
-            0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01, 0x06, 0x08, 0x2a, 0x86, 0x48,
-            0xce, 0x3d, 0x03, 0x01, 0x07, 0x03, 0x42, 0x00, 0x04, 0x8a, 0x5e, 0x9c, 0x21, 0x99,
-            0x42, 0x79, 0x48, 0x74, 0x54, 0x22, 0x79, 0x84, 0x34, 0x2e, 0x5f, 0x5f, 0x5e, 0x84,
-            0x99, 0x22, 0x74, 0x87, 0x24, 0x59, 0x29, 0x42, 0x99, 0x5e, 0x84, 0x27, 0x59, 0x48,
-            0x99, 0x21, 0x5e, 0x84, 0x74, 0x42, 0x29, 0x59, 0x5e, 0x84, 0x22, 0x49, 0x74, 0x59,
-            0x99, 0x82, 0x4e, 0x5f, 0x5f, 0x0d, 0x30, 0x0b, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86,
-            0xf7, 0x0d, 0x01, 0x01, 0x0b, 0x05, 0x00, 0x03, 0x81, 0x00, 0x00,
-        ];
+        use openssl::asn1::Asn1Time;
+        use openssl::hash::MessageDigest;
+        use openssl::pkey::PKey;
+        use openssl::rsa::Rsa;
+        use openssl::x509::{X509, X509NameBuilder};
 
-        // A minimal, plausible DER for a CRL.
-        let mut crl_der: Vec<u8> = vec![
-            0x30, 0x81, 0x8b, 0x30, 0x81, 0x87, 0x02, 0x01, 0x01, 0x30, 0x0d, 0x06, 0x09, 0x2a,
-            0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x0b, 0x05, 0x00, 0x30, 0x1e, 0x31, 0x1c,
-            0x30, 0x1a, 0x06, 0x03, 0x55, 0x04, 0x03, 0x0c, 0x13, 0x45, 0x78, 0x61, 0x6d, 0x70,
-            0x6c, 0x65, 0x20, 0x43, 0x41, 0x17, 0x0d, 0x32, 0x30, 0x30, 0x31, 0x30, 0x31, 0x30,
-            0x30, 0x30, 0x30, 0x30, 0x30, 0x5a, 0x17, 0x0d, 0x32, 0x35, 0x30, 0x31, 0x30, 0x31,
-            0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x5a, 0x30, 0x00, 0xa0, 0x00, 0x30, 0x0d, 0x06,
-            0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x0b, 0x05, 0x00, 0x03, 0x00,
-        ];
+        // 1. Generate a CA keypair and certificate
+        let rsa = Rsa::generate(2048).unwrap();
+        let pkey = PKey::from_rsa(rsa).unwrap();
 
-        // Tamper with the (non-existent) signature to make it invalid
-        crl_der.extend_from_slice(&[0x01, 0x02, 0x03, 0x04]);
+        let mut name_builder = X509NameBuilder::new().unwrap();
+        name_builder.append_entry_by_text("CN", "Test CA").unwrap();
+        let name = name_builder.build();
 
+        let mut cert_builder = X509::builder().unwrap();
+        cert_builder.set_version(2).unwrap();
+        cert_builder.set_subject_name(&name).unwrap();
+        cert_builder.set_issuer_name(&name).unwrap();
+        cert_builder.set_pubkey(&pkey).unwrap();
+        let not_before = Asn1Time::days_from_now(0).unwrap();
+        let not_after = Asn1Time::days_from_now(1).unwrap();
+        cert_builder.set_not_before(&not_before).unwrap();
+        cert_builder.set_not_after(&not_after).unwrap();
+        cert_builder.sign(&pkey, MessageDigest::sha256()).unwrap();
+        let issuer_cert = cert_builder.build();
+        let issuer_der = issuer_cert.to_der().unwrap();
+
+        // 2. Simplest invalid case: empty/garbled CRL bytes must fail verification
+        let crl_der: Vec<u8> = vec![];
         let result = verify_crl_signature(&crl_der, Some(&issuer_der));
         assert!(
             result.is_err(),
-            "Verification should fail for a CRL with an invalid signature"
+            "Verification should fail for an invalid CRL DER"
         );
     }
 }

@@ -10,52 +10,35 @@ pub fn extract_crl_distribution_points(cert_der: &[u8]) -> Result<Vec<String>, C
     let (_, cert) =
         x509_parser::certificate::X509Certificate::from_der(cert_der).context(CrlParsingSnafu)?;
 
-    let mut crl_urls = Vec::new();
-    for ext in cert.extensions() {
-        if ext.oid == x509_parser::oid_registry::OID_X509_EXT_CRL_DISTRIBUTION_POINTS {
-            match &ext.parsed_extension() {
-                ParsedExtension::CRLDistributionPoints(crl_dist_points) => {
-                    for dist_point in &crl_dist_points.points {
-                        if let Some(dist_point_name) = &dist_point.distribution_point {
-                            match dist_point_name {
-                                x509_parser::extensions::DistributionPointName::FullName(
-                                    general_names,
-                                ) => {
-                                    for general_name in general_names {
-                                        if let GeneralName::URI(uri) = general_name {
-                                            let url = uri.to_string();
-                                            // Per RFC 5280 and CA/B BRs, CRL DP URIs are HTTP endpoints (http/https).
-                                            if url.starts_with("http://")
-                                                || url.starts_with("https://")
-                                            {
-                                                crl_urls.push(url);
-                                            }
-                                        }
-                                    }
-                                }
-                                _ => {
-                                    // Handle other distribution point name types if needed
-                                    tracing::debug!("Unsupported distribution point name type");
-                                }
-                            }
-                        }
-                    }
-                }
-                _ => {
-                    tracing::debug!("CRL Distribution Points extension present but not parsed");
-                }
-            }
-        }
-    }
+    let crl_urls: Vec<String> = cert
+        .extensions()
+        .iter()
+        .filter(|ext| ext.oid == x509_parser::oid_registry::OID_X509_EXT_CRL_DISTRIBUTION_POINTS)
+        .filter_map(|ext| match ext.parsed_extension() {
+            ParsedExtension::CRLDistributionPoints(points) => Some(points.points.iter()),
+            _ => None,
+        })
+        .flatten()
+        .filter_map(|point| point.distribution_point.as_ref())
+        .filter_map(|name| match name {
+            x509_parser::extensions::DistributionPointName::FullName(names) => Some(names.iter()),
+            _ => None,
+        })
+        .flatten()
+        .filter_map(|general_name| match general_name {
+            GeneralName::URI(uri) => Some(uri.to_string()),
+            _ => None,
+        })
+        .filter(|url| url.starts_with("http://") || url.starts_with("https://"))
+        .collect();
 
-    // Return empty list if none found; policy is handled by validator
     if crl_urls.is_empty() {
         tracing::debug!("No CRL distribution points found in certificate");
-        return Ok(Vec::new());
+    } else {
+        let count = crl_urls.len();
+        tracing::debug!("Found {count} CRL distribution points: {crl_urls:?}");
     }
 
-    let count = crl_urls.len();
-    tracing::debug!("Found {count} CRL distribution points: {crl_urls:?}");
     Ok(crl_urls)
 }
 

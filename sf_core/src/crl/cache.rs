@@ -165,38 +165,30 @@ impl CrlCache {
                     None => dt,
                 });
             }
-            let mut verified =
-                crate::tls::x509_utils::verify_crl_signature(&bytes, issuer_der).is_ok();
-            if !verified && let Some(cands) = issuer_candidates {
-                for cand in cands {
-                    if crate::tls::x509_utils::verify_crl_signature(&bytes, Some(cand)).is_ok() {
-                        verified = true;
-                        break;
+
+            match self
+                .verify_and_check_crl(&bytes, &serial, issuer_der, issuer_candidates)
+                .await
+            {
+                Ok(Some(outcome)) => {
+                    self.record_revocation_outcome(&serial, issuer_der, min_expires, &outcome);
+                    return Ok(outcome);
+                }
+                Ok(None) => {
+                    // Not revoked in this CRL, continue
+                    any_verified = true;
+                    let full_coverage = match crate::tls::x509_utils::extract_crl_idp_scope(&bytes)
+                    {
+                        Ok(Some(scope)) => !scope.has_only_some_reasons && !scope.only_attribute,
+                        _ => true,
+                    };
+                    if full_coverage {
+                        any_full_coverage = true;
                     }
                 }
-            }
-            if !verified {
-                continue;
-            }
-            any_verified = true;
-            // Determine coverage scope
-            let full_coverage = match crate::tls::x509_utils::extract_crl_idp_scope(&bytes) {
-                Ok(Some(scope)) => !scope.has_only_some_reasons && !scope.only_attribute,
-                _ => true,
-            };
-            if full_coverage {
-                any_full_coverage = true;
-            }
-            let is_revoked =
-                crate::crl::certificate_parser::check_certificate_in_crl(&serial, &bytes)
-                    .context(crate::tls::revocation::CrlOperationSnafu)?;
-            if is_revoked {
-                let outcome = RevocationOutcome::Revoked {
-                    reason: None,
-                    revocation_time: None,
-                };
-                self.record_revocation_outcome(&serial, issuer_der, min_expires, &outcome);
-                return Ok(outcome);
+                Err(_) => {
+                    // Error with this CRL, continue to the next one
+                }
             }
         }
         if !any_verified {
@@ -210,6 +202,41 @@ impl CrlCache {
         };
         self.record_revocation_outcome(&serial, issuer_der, min_expires, &outcome);
         Ok(outcome)
+    }
+
+    async fn verify_and_check_crl(
+        &self,
+        crl_bytes: &[u8],
+        serial: &[u8],
+        issuer_der: Option<&[u8]>,
+        issuer_candidates: Option<&[&[u8]]>,
+    ) -> Result<Option<crate::tls::revocation::RevocationOutcome>, CrlError> {
+        use crate::tls::revocation::RevocationOutcome;
+        let mut verified =
+            crate::tls::x509_utils::verify_crl_signature(crl_bytes, issuer_der).is_ok();
+        if !verified && let Some(cands) = issuer_candidates {
+            for cand in cands {
+                if crate::tls::x509_utils::verify_crl_signature(crl_bytes, Some(cand)).is_ok() {
+                    verified = true;
+                    break;
+                }
+            }
+        }
+
+        if !verified {
+            return Ok(None);
+        }
+
+        let is_revoked =
+            crate::crl::certificate_parser::check_certificate_in_crl(serial, crl_bytes)?;
+        if is_revoked {
+            Ok(Some(RevocationOutcome::Revoked {
+                reason: None,
+                revocation_time: None,
+            }))
+        } else {
+            Ok(None)
+        }
     }
 
     pub fn new(config: CrlConfig) -> Result<Self, CrlError> {
@@ -290,24 +317,25 @@ impl CrlCache {
         Ok(None)
     }
 
+    fn should_replace_cached_crl(&self, prev: &CachedCrl, new: &CachedCrl) -> bool {
+        if let (Some(prev_num), Some(new_num)) = (prev.crl_number, new.crl_number) {
+            return new_num > prev_num;
+        }
+        if let Ok(Some(prev_dt)) = crate::tls::x509_utils::extract_crl_next_update(&prev.crl)
+            && let Ok(Some(new_dt)) = crate::tls::x509_utils::extract_crl_next_update(&new.crl)
+        {
+            return new_dt > prev_dt;
+        }
+        true // Default to replacing if comparison is not possible
+    }
+
     pub fn put(&self, cached_crl: CachedCrl) -> Result<(), CrlError> {
         if let Some(memory) = &self.memory_cache
             && let Ok(mut cache) = memory.lock()
         {
             if let Some(prev) = cache.get(&cached_crl.url)
-                && let (Some(prev_num), Some(new_num)) = (prev.crl_number, cached_crl.crl_number)
-                && new_num <= prev_num
+                && !self.should_replace_cached_crl(prev, &cached_crl)
             {
-                // Older or same-number CRL, ignore
-                return Ok(());
-            } else if let Some(prev) = cache.get(&cached_crl.url)
-                && let Ok(Some(prev_dt)) =
-                    crate::tls::x509_utils::extract_crl_next_update(&prev.crl)
-                && let Ok(Some(new_dt)) =
-                    crate::tls::x509_utils::extract_crl_next_update(&cached_crl.crl)
-                && new_dt < prev_dt
-            {
-                // No crlNumber case: prefer fresher nextUpdate
                 return Ok(());
             }
             cache.insert(cached_crl.url.clone(), cached_crl);
@@ -315,75 +343,50 @@ impl CrlCache {
         Ok(())
     }
 
-    pub async fn get(&self, url: &str) -> Result<Vec<u8>, CrlError> {
-        let start = std::time::Instant::now();
-        if let Some(mem) = self.get_cached(url)? {
-            let ms = start.elapsed().as_millis() as u64;
-            metrics()
-                .get_ms
-                .record(ms, &[KeyValue::new("source", "memory")]);
-            metrics()
-                .get_total
-                .add(1, &[KeyValue::new("source", "memory")]);
-            return Ok(mem.crl);
+    async fn get_from_memory_cache(&self, url: &str) -> Result<Option<CachedCrl>, CrlError> {
+        if let Some(memory) = &self.memory_cache
+            && let Ok(mut cache) = memory.lock()
+        {
+            if let Some(entry) = cache.get(url)
+                && Utc::now() <= entry.expires_at
+            {
+                return Ok(Some(entry.clone()));
+            }
+            cache.remove(url);
         }
-        let lock = self.get_url_lock(url)?;
-        let _guard = lock.lock().await;
-        if let Some(mem) = self.get_cached(url)? {
-            return Ok(mem.crl);
-        }
+        Ok(None)
+    }
 
-        // Disk cache fallback before network fetch
+    async fn get_from_disk_cache(&self, url: &str) -> Result<Option<Vec<u8>>, CrlError> {
         if self.config.enable_disk_caching
             && let Some(dir) = self.config.get_cache_dir()
         {
             let file_name = Self::url_digest(url);
             let path = dir.join(file_name);
-            match std::fs::read(&path) {
-                Ok(bytes) => {
-                    // Determine expiration based on CRL nextUpdate
-                    let expires_at = match crate::tls::x509_utils::extract_crl_next_update(&bytes) {
-                        Ok(Some(dt)) => dt,
-                        _ => Utc::now() + self.config.validity_time,
-                    };
-                    if Utc::now() <= expires_at {
-                        // Populate memory cache for subsequent lookups; ignore errors
-                        let _ = self.put(CachedCrl {
-                            crl: bytes.clone(),
-                            download_time: Utc::now(),
-                            url: url.to_string(),
-                            expires_at,
-                            crl_number: crate::tls::x509_utils::extract_crl_number(&bytes)
-                                .ok()
-                                .flatten(),
-                        });
-                        let ms = start.elapsed().as_millis() as u64;
-                        metrics()
-                            .get_ms
-                            .record(ms, &[KeyValue::new("source", "disk")]);
-                        metrics()
-                            .get_total
-                            .add(1, &[KeyValue::new("source", "disk")]);
-                        return Ok(bytes);
-                    }
-                    // Stale on disk; proceed to network
-                    tracing::debug!(target: "sf_core::crl", "Disk cache entry expired for {url}, refetching");
+            if let Ok(bytes) = std::fs::read(&path) {
+                let expires_at = match crate::tls::x509_utils::extract_crl_next_update(&bytes) {
+                    Ok(Some(dt)) => dt,
+                    _ => Utc::now() + self.config.validity_time,
+                };
+                if Utc::now() <= expires_at {
+                    let _ = self.put(CachedCrl {
+                        crl: bytes.clone(),
+                        download_time: Utc::now(),
+                        url: url.to_string(),
+                        expires_at,
+                        crl_number: crate::tls::x509_utils::extract_crl_number(&bytes)
+                            .ok()
+                            .flatten(),
+                    });
+                    return Ok(Some(bytes));
                 }
-                Err(e) => {
-                    // It's ok if disk cache miss; only warn on unexpected errors
-                    if e.kind() != std::io::ErrorKind::NotFound {
-                        tracing::debug!(
-                            target: "sf_core::crl",
-                            path = %path.display(),
-                            error = %e,
-                            "Failed to read CRL cache from disk"
-                        );
-                    }
-                }
+                tracing::debug!(target: "sf_core::crl", "Disk cache entry expired for {url}, refetching");
             }
         }
+        Ok(None)
+    }
 
-        // Fetch and optionally persist while holding the per-URL lock to avoid duplicate downloads
+    async fn fetch_from_network_and_cache(&self, url: &str) -> Result<Vec<u8>, CrlError> {
         let fetched = self.fetch(url).await?;
         if self.config.enable_disk_caching
             && let Some(dir) = self.config.get_cache_dir()
@@ -425,6 +428,39 @@ impl CrlCache {
                 "Failed to put CRL into memory cache for url {url}: {e}"
             );
         }
+        Ok(fetched)
+    }
+
+    pub async fn get(&self, url: &str) -> Result<Vec<u8>, CrlError> {
+        let start = std::time::Instant::now();
+        if let Some(mem) = self.get_from_memory_cache(url).await? {
+            let ms = start.elapsed().as_millis() as u64;
+            metrics()
+                .get_ms
+                .record(ms, &[KeyValue::new("source", "memory")]);
+            metrics()
+                .get_total
+                .add(1, &[KeyValue::new("source", "memory")]);
+            return Ok(mem.crl);
+        }
+        let lock = self.get_url_lock(url)?;
+        let _guard = lock.lock().await;
+        if let Some(mem) = self.get_from_memory_cache(url).await? {
+            return Ok(mem.crl);
+        }
+
+        if let Some(disk) = self.get_from_disk_cache(url).await? {
+            let ms = start.elapsed().as_millis() as u64;
+            metrics()
+                .get_ms
+                .record(ms, &[KeyValue::new("source", "disk")]);
+            metrics()
+                .get_total
+                .add(1, &[KeyValue::new("source", "disk")]);
+            return Ok(disk);
+        }
+
+        let fetched = self.fetch_from_network_and_cache(url).await?;
         let ms = start.elapsed().as_millis() as u64;
         metrics()
             .get_ms

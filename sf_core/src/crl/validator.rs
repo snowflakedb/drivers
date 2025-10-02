@@ -42,84 +42,76 @@ impl CrlValidator {
         if chain.is_empty() {
             return Ok(true);
         }
-        // Check all but root
-        let mut had_error = false;
-        for (idx, cert_der) in chain.iter().enumerate() {
-            if idx == chain.len() - 1 {
-                break;
-            }
 
-            // Skip short-lived per CA/B BR (10 days until 2026-03-15, then 7 days)
-            if matches!(
-                crate::crl::certificate_parser::is_short_lived_certificate(cert_der),
-                Ok(true)
-            ) {
-                continue;
-            }
-
-            let issuer_der = chain.get(idx + 1).map(|v| v.as_slice());
-
-            // IDP scope is enforced during CRL fetch/application where CRL bytes are available
-
-            // attempt once, and if NotDetermined due to expired CRL, refetch and retry
-            let issuer_candidates: Vec<&[u8]> =
-                chain.iter().skip(idx + 1).map(|v| v.as_slice()).collect();
-            let outcome_once = self
-                .cache
-                .check_revocation(cert_der, issuer_der, Some(&issuer_candidates))
-                .await;
-            let outcome = match outcome_once {
-                Ok(o) => Ok(o),
-                Err(e) => {
-                    let should_retry = matches!(
-                        e,
-                        crate::tls::revocation::RevocationError::CrlOperation {
-                            source: crate::crl::error::CrlError::CrlExpired { .. },
-                            ..
-                        }
-                    );
-                    if should_retry {
-                        tracing::debug!(target: "sf_core::crl", "CRL expired, attempting refetch");
-                        // Force a refetch by removing any memory entry and calling fetch path
-                        // Simplest approach: call get(url) again through check_revocation, which will
-                        // build fresh CRL if expired (expires_at is checked in memory path). Just retry once.
-                        self.cache
-                            .check_revocation(cert_der, issuer_der, Some(&issuer_candidates))
-                            .await
-                    } else {
-                        Err(e)
-                    }
-                }
-            };
-
-            match outcome {
-                Ok(outcome) => {
-                    use crate::tls::revocation::RevocationOutcome;
-                    match outcome {
-                        RevocationOutcome::Revoked { .. } => {
-                            // Chain is definitively revoked
-                            return Ok(false);
-                        }
-                        RevocationOutcome::NotDetermined => {
-                            if self.config.allow_certificates_without_crl_url {
-                                tracing::warn!(
-                                    target: "sf_core::crl",
-                                    "Certificate missing CRL distribution points; allowing due to config"
-                                );
-                            } else {
-                                had_error = true;
-                            }
-                        }
-                        RevocationOutcome::NotRevoked => {}
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!(target: "sf_core::crl", error = %e, "CRL check failed for one certificate in the chain");
-                    had_error = true;
-                }
+        for (idx, cert_der) in chain.iter().enumerate().take(chain.len() - 1) {
+            let issuers = &chain[idx + 1..];
+            if !self.validate_single_certificate(cert_der, issuers).await? {
+                return Ok(false);
             }
         }
-        Ok(!had_error)
+
+        Ok(true)
+    }
+
+    async fn validate_single_certificate(
+        &self,
+        cert_der: &[u8],
+        issuers: &[Vec<u8>],
+    ) -> Result<bool, CrlError> {
+        if matches!(
+            crate::crl::certificate_parser::is_short_lived_certificate(cert_der),
+            Ok(true)
+        ) {
+            return Ok(true);
+        }
+
+        let issuer_der = issuers.first().map(|v| v.as_slice());
+        let issuer_candidates: Vec<&[u8]> = issuers.iter().map(|v| v.as_slice()).collect();
+
+        let outcome = match self
+            .cache
+            .check_revocation(cert_der, issuer_der, Some(&issuer_candidates))
+            .await
+        {
+            Ok(o) => Ok(o),
+            Err(e) => {
+                let should_retry = matches!(
+                    e,
+                    crate::tls::revocation::RevocationError::CrlOperation {
+                        source: crate::crl::error::CrlError::CrlExpired { .. },
+                        ..
+                    }
+                );
+                if should_retry {
+                    tracing::debug!(target: "sf_core::crl", "CRL expired, attempting refetch");
+                    self.cache
+                        .check_revocation(cert_der, issuer_der, Some(&issuer_candidates))
+                        .await
+                } else {
+                    Err(e)
+                }
+            }
+        };
+
+        match outcome {
+            Ok(crate::tls::revocation::RevocationOutcome::Revoked { .. }) => Ok(false),
+            Ok(crate::tls::revocation::RevocationOutcome::NotDetermined) => {
+                if self.config.allow_certificates_without_crl_url {
+                    tracing::warn!(
+                        target: "sf_core::crl",
+                        "Certificate missing CRL distribution points; allowing due to config"
+                    );
+                    Ok(true)
+                } else {
+                    Ok(false)
+                }
+            }
+            Ok(crate::tls::revocation::RevocationOutcome::NotRevoked) => Ok(true),
+            Err(e) => {
+                tracing::warn!(target: "sf_core::crl", error = %e, "CRL check failed for one certificate in the chain");
+                Ok(false)
+            }
+        }
     }
 }
 
