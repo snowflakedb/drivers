@@ -166,13 +166,10 @@ impl CrlCache {
                 });
             }
             let mut verified =
-                crate::tls::x509_utils::verify_crl_signature_best_effort(&bytes, issuer_der)
-                    .is_ok();
+                crate::tls::x509_utils::verify_crl_signature(&bytes, issuer_der).is_ok();
             if !verified && let Some(cands) = issuer_candidates {
                 for cand in cands {
-                    if crate::tls::x509_utils::verify_crl_signature_best_effort(&bytes, Some(cand))
-                        .is_ok()
-                    {
+                    if crate::tls::x509_utils::verify_crl_signature(&bytes, Some(cand)).is_ok() {
                         verified = true;
                         break;
                     }

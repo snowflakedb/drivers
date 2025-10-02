@@ -155,7 +155,7 @@ pub unsafe extern "C" fn sf_core_api_call_proto(
         }
         Err(_) => {
             let msg = b"sf_core panic in sf_core_api_call_proto".to_vec();
-            unsafe { write_buffer(msg, response, response_len) };
+            write_buffer(msg, response, response_len);
             2
         }
     }

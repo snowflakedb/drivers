@@ -205,4 +205,58 @@ mod tests {
         let result = check_certificate_in_crl(&cert_serial, &invalid_crl);
         assert!(result.is_err());
     }
+
+    /// Generate a real self-signed certificate with a 5-day validity
+    /// and assert short-lived detection works with default and custom thresholds
+    #[test]
+    fn test_short_lived_certificate_logic() {
+        use openssl::asn1::Asn1Time;
+        use openssl::hash::MessageDigest;
+        use openssl::pkey::PKey;
+        use openssl::rsa::Rsa;
+        use openssl::x509::{X509, X509NameBuilder};
+
+        // Generate keypair
+        let rsa = Rsa::generate(2048).expect("rsa");
+        let pkey = PKey::from_rsa(rsa).expect("pkey");
+
+        // Subject/issuer
+        let mut name_builder = X509NameBuilder::new().expect("name");
+        name_builder
+            .append_entry_by_text("CN", "testcn")
+            .expect("cn");
+        let name = name_builder.build();
+
+        // Build self-signed cert valid for 5 days
+        let mut builder = X509::builder().expect("builder");
+        builder.set_version(2).expect("ver");
+        builder.set_subject_name(&name).expect("subj");
+        builder.set_issuer_name(&name).expect("iss");
+        builder.set_pubkey(&pkey).expect("pub");
+        let not_before = Asn1Time::days_from_now(0).expect("nb");
+        let not_after = Asn1Time::days_from_now(5).expect("na");
+        builder.set_not_before(&not_before).expect("set nb");
+        builder.set_not_after(&not_after).expect("set na");
+        builder.sign(&pkey, MessageDigest::sha256()).expect("sign");
+        let cert = builder.build();
+        let cert_der = cert.to_der().expect("der");
+
+        // Default policy (10 days until 2026-03-15, then 7 days) should treat 5 days as short-lived
+        assert!(
+            is_short_lived_certificate(&cert_der).unwrap(),
+            "Certificate with 5-day validity should be short-lived"
+        );
+
+        // Threshold 6: still short-lived
+        assert!(
+            is_short_lived_certificate_with_threshold(&cert_der, 6).unwrap(),
+            "Should be short-lived with a 6-day threshold"
+        );
+
+        // Threshold 4: not short-lived
+        assert!(
+            !is_short_lived_certificate_with_threshold(&cert_der, 4).unwrap(),
+            "Should not be short-lived with a 4-day threshold"
+        );
+    }
 }

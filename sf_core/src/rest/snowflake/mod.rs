@@ -8,7 +8,7 @@ use crate::config::rest_parameters::{LoginParameters, QueryParameters};
 use crate::rest::snowflake::auth::{
     AuthRequest, AuthRequestClientEnvironment, AuthRequestData, AuthResponse,
 };
-use crate::tls::TlsError;
+use crate::tls::error::TlsError;
 use reqwest;
 use serde_json;
 use snafu::{Location, ResultExt, Snafu};

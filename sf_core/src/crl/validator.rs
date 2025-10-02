@@ -70,13 +70,25 @@ impl CrlValidator {
                 .await;
             let outcome = match outcome_once {
                 Ok(o) => Ok(o),
-                Err(_) => {
-                    // Force a refetch by removing any memory entry and calling fetch path
-                    // Simplest approach: call get(url) again through check_revocation, which will
-                    // build fresh CRL if expired (expires_at is checked in memory path). Just retry once.
-                    self.cache
-                        .check_revocation(cert_der, issuer_der, Some(&issuer_candidates))
-                        .await
+                Err(e) => {
+                    let should_retry = matches!(
+                        e,
+                        crate::tls::revocation::RevocationError::CrlOperation {
+                            source: crate::crl::error::CrlError::CrlExpired { .. },
+                            ..
+                        }
+                    );
+                    if should_retry {
+                        tracing::debug!(target: "sf_core::crl", "CRL expired, attempting refetch");
+                        // Force a refetch by removing any memory entry and calling fetch path
+                        // Simplest approach: call get(url) again through check_revocation, which will
+                        // build fresh CRL if expired (expires_at is checked in memory path). Just retry once.
+                        self.cache
+                            .check_revocation(cert_der, issuer_der, Some(&issuer_candidates))
+                            .await
+                    } else {
+                        Err(e)
+                    }
                 }
             };
 
@@ -101,7 +113,8 @@ impl CrlValidator {
                         RevocationOutcome::NotRevoked => {}
                     }
                 }
-                Err(_) => {
+                Err(e) => {
+                    tracing::warn!(target: "sf_core::crl", error = %e, "CRL check failed for one certificate in the chain");
                     had_error = true;
                 }
             }

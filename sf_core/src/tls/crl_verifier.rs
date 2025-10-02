@@ -63,11 +63,19 @@ impl ServerCertVerifier for CrlServerCertVerifier {
         let res = CrlWorker::global(Arc::clone(&self.crl_validator)).validate(chains);
         match res {
             Ok(_) => Ok(ServerCertVerified::assertion()),
-            Err(_) => match self.crl_config.check_mode {
+            Err(e) => match self.crl_config.check_mode {
                 CertRevocationCheckMode::Enabled => {
-                    Err(TlsError::General("CRL validation failed".to_string()))
+                    tracing::error!(target: "sf_core::crl", error = %e, "CRL validation failed");
+                    Err(TlsError::General(format!("CRL validation failed: {e}")))
                 }
-                CertRevocationCheckMode::Advisory => Ok(ServerCertVerified::assertion()),
+                CertRevocationCheckMode::Advisory => {
+                    tracing::warn!(
+                        target: "sf_core::crl",
+                        error = %e,
+                        "CRL validation failed in advisory mode; allowing connection"
+                    );
+                    Ok(ServerCertVerified::assertion())
+                }
                 CertRevocationCheckMode::Disabled => Ok(ServerCertVerified::assertion()),
             },
         }

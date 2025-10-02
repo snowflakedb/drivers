@@ -115,10 +115,7 @@ pub fn extract_crl_number(crl_der: &[u8]) -> Result<Option<u128>, X509Error> {
 
 // Best-effort CRL signature verification using issuer public key
 // Returns Ok(()) if verification passes or issuer is None; Err otherwise.
-pub fn verify_crl_signature_best_effort(
-    crl_der: &[u8],
-    issuer_der: Option<&[u8]>,
-) -> Result<(), CrlError> {
+pub fn verify_crl_signature(crl_der: &[u8], issuer_der: Option<&[u8]>) -> Result<(), CrlError> {
     let crl = RcCertificateList::from_der(crl_der).context(CrlListParseSnafu)?;
     let sig = crl.signature.as_bytes().context(InvalidCrlSignatureSnafu)?;
     let tbs = tbs_crl_der(crl_der)?;
@@ -185,8 +182,6 @@ pub fn verify_crl_signature_best_effort(
             for ext in parsed_crl.tbs_cert_list.extensions() {
                 if let ParsedExtension::IssuingDistributionPoint(idp) = ext.parsed_extension() {
                     let IssuingDistributionPoint {
-                        only_contains_user_certs,
-                        only_contains_ca_certs,
                         only_contains_attribute_certs,
                         only_some_reasons,
                         ..
@@ -236,6 +231,7 @@ pub fn verify_crl_signature_best_effort(
     } else if oid == oid_sha512_rsa {
         try_verify(&RSA_PKCS1_2048_8192_SHA512)
     } else if oid == oid_rsassa_pss {
+        // A compliant client MUST check PSS parameters; for now, we accept common hashes
         try_verify(&RSA_PSS_2048_8192_SHA256)
             .or_else(|_| try_verify(&RSA_PSS_2048_8192_SHA384))
             .or_else(|_| try_verify(&RSA_PSS_2048_8192_SHA512))
@@ -246,14 +242,8 @@ pub fn verify_crl_signature_best_effort(
     } else if oid == oid_ed25519 {
         try_verify(&ED25519)
     } else {
-        try_verify(&RSA_PKCS1_2048_8192_SHA256)
-            .or_else(|_| try_verify(&RSA_PKCS1_2048_8192_SHA384))
-            .or_else(|_| try_verify(&RSA_PKCS1_2048_8192_SHA512))
-            .or_else(|_| try_verify(&RSA_PSS_2048_8192_SHA256))
-            .or_else(|_| try_verify(&RSA_PSS_2048_8192_SHA384))
-            .or_else(|_| try_verify(&RSA_PSS_2048_8192_SHA512))
-            .or_else(|_| try_verify(&ECDSA_P256_SHA256_ASN1))
-            .or_else(|_| try_verify(&ECDSA_P384_SHA384_ASN1))
+        // Unsupported algorithm
+        Err(aws_lc_rs::error::Unspecified)
     };
     if ring_like.is_ok() {
         return Ok(());
@@ -328,16 +318,8 @@ pub fn verify_crl_signature_best_effort(
     } else if oid == oid_ed25519 {
         verify_ed25519()
     } else {
-        // Try a set of common algorithms as a fallback
-        verify_pkcs1(openssl::hash::MessageDigest::sha256())
-            || verify_pkcs1(openssl::hash::MessageDigest::sha384())
-            || verify_pkcs1(openssl::hash::MessageDigest::sha512())
-            || verify_pss(openssl::hash::MessageDigest::sha256())
-            || verify_pss(openssl::hash::MessageDigest::sha384())
-            || verify_pss(openssl::hash::MessageDigest::sha512())
-            || verify_ecdsa(openssl::hash::MessageDigest::sha256())
-            || verify_ecdsa(openssl::hash::MessageDigest::sha384())
-            || verify_ed25519()
+        // Algorithm not supported by aws-lc-rs or the OpenSSL fallback path
+        false
     };
     if verified {
         return Ok(());
@@ -572,5 +554,48 @@ mod tests {
         let chains = build_candidate_chains(&ee, &inters);
         assert_eq!(chains.len(), 1);
         assert_eq!(chains[0].len(), 1);
+    }
+
+    #[test]
+    fn test_invalid_crl_signature() {
+        // A minimal, plausible DER for an issuer certificate.
+        // In a real scenario, this would be a proper, fully-formed certificate.
+        let issuer_der: Vec<u8> = vec![
+            0x30, 0x82, 0x01, 0x0a, 0x30, 0x81, 0xf9, 0xa0, 0x03, 0x02, 0x01, 0x02, 0x02, 0x01,
+            0x01, 0x30, 0x0d, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x0b,
+            0x05, 0x00, 0x30, 0x1e, 0x31, 0x1c, 0x30, 0x1a, 0x06, 0x03, 0x55, 0x04, 0x03, 0x0c,
+            0x13, 0x45, 0x78, 0x61, 0x6d, 0x70, 0x6c, 0x65, 0x20, 0x43, 0x41, 0x30, 0x1e, 0x17,
+            0x0d, 0x32, 0x30, 0x30, 0x31, 0x30, 0x31, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x5a,
+            0x17, 0x0d, 0x32, 0x35, 0x30, 0x31, 0x30, 0x31, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30,
+            0x5a, 0x30, 0x1e, 0x31, 0x1c, 0x30, 0x1a, 0x06, 0x03, 0x55, 0x04, 0x03, 0x0c, 0x13,
+            0x45, 0x78, 0x61, 0x6d, 0x70, 0x6c, 0x65, 0x20, 0x43, 0x41, 0x30, 0x59, 0x30, 0x13,
+            0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01, 0x06, 0x08, 0x2a, 0x86, 0x48,
+            0xce, 0x3d, 0x03, 0x01, 0x07, 0x03, 0x42, 0x00, 0x04, 0x8a, 0x5e, 0x9c, 0x21, 0x99,
+            0x42, 0x79, 0x48, 0x74, 0x54, 0x22, 0x79, 0x84, 0x34, 0x2e, 0x5f, 0x5f, 0x5e, 0x84,
+            0x99, 0x22, 0x74, 0x87, 0x24, 0x59, 0x29, 0x42, 0x99, 0x5e, 0x84, 0x27, 0x59, 0x48,
+            0x99, 0x21, 0x5e, 0x84, 0x74, 0x42, 0x29, 0x59, 0x5e, 0x84, 0x22, 0x49, 0x74, 0x59,
+            0x99, 0x82, 0x4e, 0x5f, 0x5f, 0x0d, 0x30, 0x0b, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86,
+            0xf7, 0x0d, 0x01, 0x01, 0x0b, 0x05, 0x00, 0x03, 0x81, 0x00, 0x00,
+        ];
+
+        // A minimal, plausible DER for a CRL.
+        let mut crl_der: Vec<u8> = vec![
+            0x30, 0x81, 0x8b, 0x30, 0x81, 0x87, 0x02, 0x01, 0x01, 0x30, 0x0d, 0x06, 0x09, 0x2a,
+            0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x0b, 0x05, 0x00, 0x30, 0x1e, 0x31, 0x1c,
+            0x30, 0x1a, 0x06, 0x03, 0x55, 0x04, 0x03, 0x0c, 0x13, 0x45, 0x78, 0x61, 0x6d, 0x70,
+            0x6c, 0x65, 0x20, 0x43, 0x41, 0x17, 0x0d, 0x32, 0x30, 0x30, 0x31, 0x30, 0x31, 0x30,
+            0x30, 0x30, 0x30, 0x30, 0x30, 0x5a, 0x17, 0x0d, 0x32, 0x35, 0x30, 0x31, 0x30, 0x31,
+            0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x5a, 0x30, 0x00, 0xa0, 0x00, 0x30, 0x0d, 0x06,
+            0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x0b, 0x05, 0x00, 0x03, 0x00,
+        ];
+
+        // Tamper with the (non-existent) signature to make it invalid
+        crl_der.extend_from_slice(&[0x01, 0x02, 0x03, 0x04]);
+
+        let result = verify_crl_signature(&crl_der, Some(&issuer_der));
+        assert!(
+            result.is_err(),
+            "Verification should fail for a CRL with an invalid signature"
+        );
     }
 }
