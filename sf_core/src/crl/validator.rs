@@ -59,15 +59,24 @@ impl CrlValidator {
 
             let issuer_der = chain.get(idx + 1).map(|v| v.as_slice());
 
+            // IDP scope is enforced during CRL fetch/application where CRL bytes are available
+
             // attempt once, and if NotDetermined due to expired CRL, refetch and retry
-            let outcome_once = self.cache.check_revocation(cert_der, issuer_der).await;
+            let issuer_candidates: Vec<&[u8]> =
+                chain.iter().skip(idx + 1).map(|v| v.as_slice()).collect();
+            let outcome_once = self
+                .cache
+                .check_revocation(cert_der, issuer_der, Some(&issuer_candidates))
+                .await;
             let outcome = match outcome_once {
                 Ok(o) => Ok(o),
                 Err(_) => {
                     // Force a refetch by removing any memory entry and calling fetch path
                     // Simplest approach: call get(url) again through check_revocation, which will
                     // build fresh CRL if expired (expires_at is checked in memory path). Just retry once.
-                    self.cache.check_revocation(cert_der, issuer_der).await
+                    self.cache
+                        .check_revocation(cert_der, issuer_der, Some(&issuer_candidates))
+                        .await
                 }
             };
 

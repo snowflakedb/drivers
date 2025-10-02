@@ -107,6 +107,19 @@ pub fn get_certificate_serial_number(cert_der: &[u8]) -> Result<Vec<u8>, CrlErro
     Ok(cert.serial.to_bytes_be())
 }
 
+/// Determine if a certificate is a CA certificate (BasicConstraints CA=true)
+pub fn is_ca_certificate(cert_der: &[u8]) -> Result<bool, CrlError> {
+    let (_, cert) =
+        x509_parser::certificate::X509Certificate::from_der(cert_der).context(CrlParsingSnafu)?;
+    for ext in cert.extensions() {
+        if let ParsedExtension::BasicConstraints(bc) = ext.parsed_extension() {
+            return Ok(bc.ca);
+        }
+    }
+    // If BasicConstraints missing, treat as end-entity by default per common practice
+    Ok(false)
+}
+
 /// Parse and validate a CRL, checking if a certificate serial number is revoked
 pub fn check_certificate_in_crl(cert_serial: &[u8], crl_der: &[u8]) -> Result<bool, CrlError> {
     use x509_parser::revocation_list::CertificateRevocationList;
@@ -126,6 +139,13 @@ pub fn check_certificate_in_crl(cert_serial: &[u8], crl_der: &[u8]) -> Result<bo
                 location: Location::new(file!(), line!(), 0),
             });
         }
+    }
+
+    // Enforce IDP scope basics (attribute-only rejection). CA/user scoping is enforced by caller when both cert and CRL are known
+    if let Ok(Some(idp)) = crate::tls::x509_utils::extract_crl_idp_scope(crl_der)
+        && idp.only_attribute
+    {
+        return Ok(false);
     }
 
     // Check if certificate is in the revoked list

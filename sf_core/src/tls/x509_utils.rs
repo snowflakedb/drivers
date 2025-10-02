@@ -8,6 +8,8 @@ use crate::crl::error::{
 use const_oid::ObjectIdentifier;
 use x509_cert::crl::CertificateList as RcCertificateList;
 use x509_cert::der::{Decode, Encode};
+use x509_parser::oid_registry::OID_X509_EXT_AUTHORITY_KEY_IDENTIFIER;
+use x509_parser::oid_registry::OID_X509_EXT_CRL_NUMBER;
 use x509_parser::prelude::FromDer;
 use x509_parser::prelude::*;
 
@@ -57,6 +59,56 @@ pub fn extract_crl_next_update(crl_der: &[u8]) -> Result<Option<DateTime<Utc>>, 
             return Ok(Some(dt));
         }
         return Ok(None);
+    }
+    Ok(None)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct IdpScope {
+    pub only_user: bool,
+    pub only_ca: bool,
+    pub only_attribute: bool,
+    pub indirect_crl: bool,
+    pub has_only_some_reasons: bool,
+}
+
+pub fn extract_crl_idp_scope(crl_der: &[u8]) -> Result<Option<IdpScope>, X509Error> {
+    if let Ok((_, crl)) = x509_parser::revocation_list::CertificateRevocationList::from_der(crl_der)
+    {
+        for ext in crl.tbs_cert_list.extensions() {
+            if let ParsedExtension::IssuingDistributionPoint(idp) = ext.parsed_extension() {
+                return Ok(Some(IdpScope {
+                    only_user: idp.only_contains_user_certs,
+                    only_ca: idp.only_contains_ca_certs,
+                    only_attribute: idp.only_contains_attribute_certs,
+                    indirect_crl: idp.indirect_crl,
+                    has_only_some_reasons: idp.only_some_reasons.is_some(),
+                }));
+            }
+        }
+    }
+    Ok(None)
+}
+
+// Extract crlNumber as a big integer represented in u128 if it fits
+pub fn extract_crl_number(crl_der: &[u8]) -> Result<Option<u128>, X509Error> {
+    let (_, crl) = x509_parser::revocation_list::CertificateRevocationList::from_der(crl_der)
+        .context(CrlParseSnafu)?;
+    for ext in crl.tbs_cert_list.extensions() {
+        if ext.oid == OID_X509_EXT_CRL_NUMBER
+            && let ParsedExtension::CRLNumber(crl_num) = ext.parsed_extension()
+        {
+            // crl_num is a BigUint; attempt to fit into u128
+            let bytes = crl_num.to_bytes_be();
+            if bytes.len() <= 16 {
+                let mut val: u128 = 0;
+                for b in bytes {
+                    val = (val << 8) | (b as u128);
+                }
+                return Ok(Some(val));
+            }
+            return Ok(None);
+        }
     }
     Ok(None)
 }
@@ -398,6 +450,21 @@ pub fn issuer_der_hash(cert_der: &[u8]) -> Option<Vec<u8>> {
     None
 }
 
+// Extract Authority Key Identifier (AKID) from a certificate (keyIdentifier form)
+pub fn extract_akid_from_cert(cert_der: &[u8]) -> Option<Vec<u8>> {
+    if let Ok((_, cert)) = x509_parser::certificate::X509Certificate::from_der(cert_der) {
+        for ext in cert.extensions() {
+            if ext.oid == OID_X509_EXT_AUTHORITY_KEY_IDENTIFIER
+                && let ParsedExtension::AuthorityKeyIdentifier(akid) = ext.parsed_extension()
+                && let Some(kid) = &akid.key_identifier
+            {
+                return Some(kid.0.to_vec());
+            }
+        }
+    }
+    None
+}
+
 // Build candidate chains from an end-entity and a list of intermediates.
 // Each chain is a vector of cert DER bytes from EE up to last found parent.
 pub fn build_candidate_chains(end_entity: &[u8], intermediates: &[Vec<u8>]) -> Vec<Vec<Vec<u8>>> {
@@ -430,6 +497,18 @@ pub fn build_candidate_chains(end_entity: &[u8], intermediates: &[Vec<u8>]) -> V
         {
             nexts.extend(v.clone());
         }
+        // Prefer parents whose SKID matches child's AKID
+        let child_akid = extract_akid_from_cert(last);
+        nexts.sort_by_key(|cand| {
+            let skid = extract_skid(cand).ok().flatten();
+            match (&child_akid, skid) {
+                (Some(a), Some(s)) if *a == s => 0,
+                (Some(_), Some(_)) => 1,
+                (Some(_), None) => 2,
+                (None, Some(_)) => 3,
+                (None, None) => 4,
+            }
+        });
         // Allow multiple parents with the same subject (cross-signed). Avoid cycles via path check below.
         if nexts.is_empty() {
             chains.push(path.clone());

@@ -15,6 +15,7 @@ pub struct CachedCrl {
     pub download_time: DateTime<Utc>,
     pub url: String,
     pub expires_at: DateTime<Utc>,
+    pub crl_number: Option<u128>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -124,6 +125,7 @@ impl CrlCache {
         &self,
         cert_der: &[u8],
         issuer_der: Option<&[u8]>,
+        issuer_candidates: Option<&[&[u8]]>,
     ) -> Result<crate::tls::revocation::RevocationOutcome, crate::tls::revocation::RevocationError>
     {
         use crate::tls::revocation::RevocationOutcome;
@@ -150,6 +152,7 @@ impl CrlCache {
         }
         // Try URLs
         let mut any_verified = false;
+        let mut any_full_coverage = false;
         let mut min_expires: Option<DateTime<Utc>> = None;
         for url in crl_urls.iter() {
             let bytes = self
@@ -162,12 +165,31 @@ impl CrlCache {
                     None => dt,
                 });
             }
-            if let Err(_e) =
+            let mut verified =
                 crate::tls::x509_utils::verify_crl_signature_best_effort(&bytes, issuer_der)
-            {
+                    .is_ok();
+            if !verified && let Some(cands) = issuer_candidates {
+                for cand in cands {
+                    if crate::tls::x509_utils::verify_crl_signature_best_effort(&bytes, Some(cand))
+                        .is_ok()
+                    {
+                        verified = true;
+                        break;
+                    }
+                }
+            }
+            if !verified {
                 continue;
             }
             any_verified = true;
+            // Determine coverage scope
+            let full_coverage = match crate::tls::x509_utils::extract_crl_idp_scope(&bytes) {
+                Ok(Some(scope)) => !scope.has_only_some_reasons && !scope.only_attribute,
+                _ => true,
+            };
+            if full_coverage {
+                any_full_coverage = true;
+            }
             let is_revoked =
                 crate::crl::certificate_parser::check_certificate_in_crl(&serial, &bytes)
                     .context(crate::tls::revocation::CrlOperationSnafu)?;
@@ -183,7 +205,12 @@ impl CrlCache {
         if !any_verified {
             return Ok(RevocationOutcome::NotDetermined);
         }
-        let outcome = RevocationOutcome::NotRevoked;
+        // If we verified only partial coverage CRLs, absence does not prove non-revocation
+        let outcome = if any_full_coverage {
+            RevocationOutcome::NotRevoked
+        } else {
+            RevocationOutcome::NotDetermined
+        };
         self.record_revocation_outcome(&serial, issuer_der, min_expires, &outcome);
         Ok(outcome)
     }
@@ -271,13 +298,19 @@ impl CrlCache {
             && let Ok(mut cache) = memory.lock()
         {
             if let Some(prev) = cache.get(&cached_crl.url)
+                && let (Some(prev_num), Some(new_num)) = (prev.crl_number, cached_crl.crl_number)
+                && new_num <= prev_num
+            {
+                // Older or same-number CRL, ignore
+                return Ok(());
+            } else if let Some(prev) = cache.get(&cached_crl.url)
                 && let Ok(Some(prev_dt)) =
                     crate::tls::x509_utils::extract_crl_next_update(&prev.crl)
                 && let Ok(Some(new_dt)) =
                     crate::tls::x509_utils::extract_crl_next_update(&cached_crl.crl)
                 && new_dt < prev_dt
             {
-                // Older CRL, ignore
+                // No crlNumber case: prefer fresher nextUpdate
                 return Ok(());
             }
             cache.insert(cached_crl.url.clone(), cached_crl);
@@ -323,6 +356,9 @@ impl CrlCache {
                             download_time: Utc::now(),
                             url: url.to_string(),
                             expires_at,
+                            crl_number: crate::tls::x509_utils::extract_crl_number(&bytes)
+                                .ok()
+                                .flatten(),
                         });
                         let ms = start.elapsed().as_millis() as u64;
                         metrics()
@@ -383,6 +419,9 @@ impl CrlCache {
             download_time: Utc::now(),
             url: url.to_string(),
             expires_at,
+            crl_number: crate::tls::x509_utils::extract_crl_number(&fetched)
+                .ok()
+                .flatten(),
         }) {
             tracing::warn!(
                 target: "sf_core::crl",
@@ -501,5 +540,80 @@ impl CrlCache {
             .or_insert((0, std::time::Instant::now()));
         entry.0 = entry.0.saturating_add(1);
         entry.1 = std::time::Instant::now();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_config() -> CrlConfig {
+        CrlConfig {
+            enable_memory_caching: true,
+            enable_disk_caching: false,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn put_prefers_higher_crl_number() {
+        let cache = CrlCache::new(test_config()).expect("cache");
+        let url = "http://example/crl".to_string();
+        let future = Utc::now() + chrono::Duration::hours(1);
+
+        let high = CachedCrl {
+            crl: vec![],
+            download_time: Utc::now(),
+            url: url.clone(),
+            expires_at: future,
+            crl_number: Some(11),
+        };
+        let low = CachedCrl {
+            crl: vec![],
+            download_time: Utc::now(),
+            url: url.clone(),
+            expires_at: future,
+            crl_number: Some(10),
+        };
+
+        cache.put(low).expect("put low");
+        cache.put(high).expect("put high");
+        let got = cache.get_cached(&url).expect("ok").expect("present");
+        assert_eq!(got.crl_number, Some(11));
+    }
+
+    #[test]
+    fn put_ignores_lower_or_equal_crl_number() {
+        let cache = CrlCache::new(test_config()).expect("cache");
+        let url = "http://example/crl".to_string();
+        let future = Utc::now() + chrono::Duration::hours(1);
+
+        let high = CachedCrl {
+            crl: vec![],
+            download_time: Utc::now(),
+            url: url.clone(),
+            expires_at: future,
+            crl_number: Some(20),
+        };
+        let eq = CachedCrl {
+            crl: vec![],
+            download_time: Utc::now(),
+            url: url.clone(),
+            expires_at: future,
+            crl_number: Some(20),
+        };
+        let low = CachedCrl {
+            crl: vec![],
+            download_time: Utc::now(),
+            url: url.clone(),
+            expires_at: future,
+            crl_number: Some(19),
+        };
+
+        cache.put(high).expect("put high");
+        cache.put(eq).expect("put eq");
+        cache.put(low).expect("put low");
+        let got = cache.get_cached(&url).expect("ok").expect("present");
+        assert_eq!(got.crl_number, Some(20));
     }
 }
