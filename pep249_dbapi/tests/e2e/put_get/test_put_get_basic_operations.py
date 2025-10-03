@@ -138,7 +138,9 @@ def test_should_return_correct_rowset_for_get(connection):
             assert get_result[3] == ""
 
 
-@pytest.mark.skip(reason="cursor.description not implemented in new driver")
+@pytest.mark.skip(
+    reason="SNOW-2391324 cursor.description not implemented in new driver"
+)
 def test_should_return_correct_column_metadata_for_put(connection):
     """Test that should return correct column metadata for PUT."""
     test_file_path = shared_test_data_dir() / "compression" / "test_data.csv"
@@ -176,7 +178,9 @@ def test_should_return_correct_column_metadata_for_put(connection):
             ), f"Column {i} should be named '{expected_name}', got '{actual_name}'"
 
 
-@pytest.mark.skip(reason="cursor.description not implemented in new driver")
+@pytest.mark.skip(
+    reason="SNOW-2391324 cursor.description not implemented in new driver"
+)
 def test_should_return_correct_column_metadata_for_get(connection):
     """Test that should return correct column metadata for GET."""
     test_file_path = shared_test_data_dir() / "compression" / "test_data.csv"
