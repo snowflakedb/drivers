@@ -13,10 +13,10 @@ from tests.utils import shared_test_data_dir
 
 
 def test_should_select_data_from_file_uploaded_to_stage(connection):
-    """Test that should select data from file uploaded to stage."""
     test_file_path = shared_test_data_dir() / "compression" / "test_data.csv"
 
     with connection.cursor() as cursor:
+
         # Given File is uploaded to stage
         stage_name, _ = create_temporary_stage_and_upload_file(
             cursor,
@@ -25,6 +25,7 @@ def test_should_select_data_from_file_uploaded_to_stage(connection):
             auto_compress=True,
             overwrite=True,
         )
+
         # When File data is queried using Select command
         select_sql = f"SELECT $1, $2, $3 FROM @{stage_name}"
         cursor.execute(select_sql)
@@ -35,15 +36,16 @@ def test_should_select_data_from_file_uploaded_to_stage(connection):
 
 
 def test_should_list_file_uploaded_to_stage(connection):
-    """Test that should list file uploaded to stage."""
     test_file_path = shared_test_data_dir() / "compression" / "test_data.csv"
     filename = test_file_path.name
 
     with connection.cursor() as cursor:
+
         # Given File is uploaded to stage
         stage_name, _ = create_temporary_stage_and_upload_file(
             cursor, "TEST_STAGE_LS", test_file_path, auto_compress=True, overwrite=True
         )
+
         # When Stage content is listed using LS command
         files = list_stage_contents(cursor, stage_name)
 
@@ -54,16 +56,17 @@ def test_should_list_file_uploaded_to_stage(connection):
 
 
 def test_should_get_file_uploaded_to_stage(connection):
-    """Test that should get file uploaded to stage."""
     test_file_path = shared_test_data_dir() / "compression" / "test_data.csv"
     filename = test_file_path.name
 
     with connection.cursor() as cursor:
+
         # Given File is uploaded to stage
         stage_name, _ = create_temporary_stage_and_upload_file(
             cursor, "TEST_STAGE_GET", test_file_path, auto_compress=True, overwrite=True
         )
         with tempfile.TemporaryDirectory() as temp_dir:
+
             # When File is downloaded using GET command
             download_dir = Path(temp_dir)
 
@@ -81,12 +84,13 @@ def test_should_get_file_uploaded_to_stage(connection):
 
 
 def test_should_return_correct_rowset_for_put(connection):
-    """Test that should return correct rowset for PUT."""
     test_file_path = shared_test_data_dir() / "compression" / "test_data.csv"
 
     with connection.cursor() as cursor:
+
         # Given Snowflake client is logged in
         assert cursor is not None
+
         # When File is uploaded to stage
         _, upload_result = create_temporary_stage_and_upload_file(
             cursor,
@@ -95,6 +99,7 @@ def test_should_return_correct_rowset_for_put(connection):
             auto_compress=True,
             overwrite=True,
         )
+
         # Then Rowset for PUT command should be correct
         assert upload_result[0] == "test_data.csv"
         assert upload_result[1] == "test_data.csv.gz"
@@ -110,11 +115,11 @@ def test_should_return_correct_rowset_for_put(connection):
 
 
 def test_should_return_correct_rowset_for_get(connection):
-    """Test that should return correct rowset for GET."""
     test_file_path = shared_test_data_dir() / "compression" / "test_data.csv"
     filename = test_file_path.name
 
     with connection.cursor() as cursor:
+
         # Given File is uploaded to stage
         stage_name, _ = create_temporary_stage_and_upload_file(
             cursor,
@@ -124,6 +129,7 @@ def test_should_return_correct_rowset_for_get(connection):
             overwrite=True,
         )
         with tempfile.TemporaryDirectory() as temp_dir:
+
             # When File is downloaded using GET command
             download_dir = Path(temp_dir)
             get_result = get_file_from_stage(cursor, stage_name, filename, download_dir)
@@ -142,12 +148,13 @@ def test_should_return_correct_rowset_for_get(connection):
     reason="SNOW-2391324 cursor.description not implemented in new driver"
 )
 def test_should_return_correct_column_metadata_for_put(connection):
-    """Test that should return correct column metadata for PUT."""
     test_file_path = shared_test_data_dir() / "compression" / "test_data.csv"
 
     with connection.cursor() as cursor:
+
         # Given Snowflake client is logged in
         assert cursor is not None
+
         # When File is uploaded to stage
         _, upload_result = create_temporary_stage_and_upload_file(
             cursor,
@@ -156,6 +163,7 @@ def test_should_return_correct_column_metadata_for_put(connection):
             auto_compress=True,
             overwrite=True,
         )
+
         # Then Column metadata for PUT command should be correct
         columns = cursor.description
         assert len(columns) == 8, "PUT command should return 8 columns"
@@ -182,11 +190,11 @@ def test_should_return_correct_column_metadata_for_put(connection):
     reason="SNOW-2391324 cursor.description not implemented in new driver"
 )
 def test_should_return_correct_column_metadata_for_get(connection):
-    """Test that should return correct column metadata for GET."""
     test_file_path = shared_test_data_dir() / "compression" / "test_data.csv"
     filename = test_file_path.name
 
     with connection.cursor() as cursor:
+
         # Given File is uploaded to stage
         stage_name, _ = create_temporary_stage_and_upload_file(
             cursor,
@@ -196,6 +204,7 @@ def test_should_return_correct_column_metadata_for_get(connection):
             overwrite=True,
         )
         with tempfile.TemporaryDirectory() as temp_dir:
+
             # When File is downloaded using GET command
             download_dir = Path(temp_dir)
 

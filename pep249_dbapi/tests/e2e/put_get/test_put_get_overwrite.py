@@ -14,6 +14,7 @@ def test_should_overwrite_file_when_overwrite_is_set_to_true(connection):
     )
 
     with connection.cursor() as cursor:
+
         # Given File is uploaded to stage
         assert cursor is not None
         stage_name, _ = create_temporary_stage_and_upload_file(
@@ -28,6 +29,7 @@ def test_should_overwrite_file_when_overwrite_is_set_to_true(connection):
         updated_upload_result = upload_file_to_stage(
             cursor, stage_name, updated_file_path, auto_compress=False, overwrite=True
         )
+
         # Then UPLOADED status is returned
         assert updated_upload_result[6] == "UPLOADED"
 
@@ -48,6 +50,7 @@ def test_should_not_overwrite_file_when_overwrite_is_set_to_false(connection):
     )
 
     with connection.cursor() as cursor:
+
         # Given File is uploaded to stage
         stage_name, _ = create_temporary_stage_and_upload_file(
             cursor,
@@ -61,6 +64,7 @@ def test_should_not_overwrite_file_when_overwrite_is_set_to_false(connection):
         updated_upload_result = upload_file_to_stage(
             cursor, stage_name, updated_file_path, auto_compress=False, overwrite=False
         )
+
         # Then SKIPPED status is returned
         assert updated_upload_result[6] == "SKIPPED"
 

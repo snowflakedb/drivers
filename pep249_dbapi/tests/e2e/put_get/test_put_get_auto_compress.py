@@ -12,14 +12,15 @@ from tests.utils import shared_test_data_dir
 def test_should_compress_the_file_before_uploading_to_stage_when_auto_compress_set_to_true(
     connection,
 ):
-    """Test that should compress the file before uploading to stage when AUTO_COMPRESS set to true."""
     uncompressed_file_path = shared_test_data_dir() / "compression" / "test_data.csv"
     compressed_file_path = shared_test_data_dir() / "compression" / "test_data.csv.gz"
     uncompressed_filename = "test_data.csv"
     compressed_filename = "test_data.csv.gz"
     with connection.cursor() as cursor:
+
         # Given Snowflake client is logged in
         assert cursor is not None
+
         # When File is uploaded to stage with AUTO_COMPRESS set to true
         stage_name, _ = create_temporary_stage_and_upload_file(
             cursor,
@@ -30,6 +31,7 @@ def test_should_compress_the_file_before_uploading_to_stage_when_auto_compress_s
         )
 
         with tempfile.TemporaryDirectory() as temp_dir:
+
             # Then Only compressed file should be downloaded
             download_dir = Path(temp_dir)
 
@@ -59,14 +61,15 @@ def test_should_compress_the_file_before_uploading_to_stage_when_auto_compress_s
 def test_should_not_compress_the_file_before_uploading_to_stage_when_auto_compress_set_to_false(
     connection,
 ):
-    """Test that should not compress the file before uploading to stage when AUTO_COMPRESS set to false."""
     uncompressed_file_path = shared_test_data_dir() / "compression" / "test_data.csv"
     uncompressed_filename = "test_data.csv"
     compressed_filename = "test_data.csv.gz"
 
     with connection.cursor() as cursor:
+
         # Given Snowflake client is logged in
         assert cursor is not None
+
         # When File is uploaded to stage with AUTO_COMPRESS set to false
         stage_name, _ = create_temporary_stage_and_upload_file(
             cursor,
@@ -77,6 +80,7 @@ def test_should_not_compress_the_file_before_uploading_to_stage_when_auto_compre
         )
 
         with tempfile.TemporaryDirectory() as temp_dir:
+
             # Then Only uncompressed file should be downloaded
             download_dir = Path(temp_dir)
             get_result = get_file_from_stage(
