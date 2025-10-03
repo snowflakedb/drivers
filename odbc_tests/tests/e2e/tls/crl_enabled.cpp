@@ -2,8 +2,8 @@
 
 #include "../../../common/include/Connection.hpp"
 
-// Scenario: connect and select with CRL enabled
-TEST_CASE("connect and select with CRL enabled") {
+// Scenario: Should connect and select with CRL enabled
+TEST_CASE("Should connect and select with CRL enabled") {
   // Given Snowflake client is logged in
   auto params = get_test_parameters("testconnection");
   std::stringstream ss;
@@ -16,7 +16,7 @@ TEST_CASE("connect and select with CRL enabled") {
   Connection conn(ss.str());
   auto stmt = conn.execute_fetch("SELECT 1");
 
-  // Then the request attempt should complete
+  // Then the request attempt should be successful
   SQLLEN value = 0;
   SQLGetData(stmt.getHandle(), 1, SQL_C_SLONG, &value, 0, nullptr);
   REQUIRE(value == 1);

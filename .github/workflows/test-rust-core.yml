@@ -40,6 +40,8 @@ jobs:
         os: [ubuntu-latest]
         rust-version: ['stable']
     runs-on: ${{ matrix.os }}
+    env:
+      E2E_TLS_SERVER: https://snowflakecomputing.com
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4

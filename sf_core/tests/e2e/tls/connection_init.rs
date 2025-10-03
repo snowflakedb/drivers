@@ -1,7 +1,7 @@
 use crate::common::snowflake_test_client::SnowflakeTestClient;
 
 #[test]
-fn connection_init_with_tls_options_succeeds() {
+fn should_initialize_connection_with_tls_options() {
     // Given TLS certificate and hostname verification are enabled
     let client = SnowflakeTestClient::with_default_params();
     client.set_connection_option("verify_hostname", "true");
@@ -11,9 +11,9 @@ fn connection_init_with_tls_options_succeeds() {
     // And connection parameters (account, user, password, host) are set
     client.set_connection_option("password", &password);
 
-    // When I initialize the connection
+    // When Connection is initialized
     let result = client.connect();
 
-    // Then the login succeeds
+    // Then Login should succeed
     client.verify_simple_query(result);
 }

@@ -29,7 +29,10 @@ impl LanguageConfig {
     fn rust() -> Self {
         Self {
             test_annotation: "#[test]",
-            method_pattern: |method_name| format!(r"fn\s+{}\s*\(", regex::escape(method_name)),
+            // Allow optional async before fn
+            method_pattern: |method_name| {
+                format!(r"(?:async\s+)?fn\s+{}\s*\(", regex::escape(method_name))
+            },
             method_end_patterns: &[
                 // Empty - rely purely on brace counting for Rust
             ],
@@ -107,8 +110,10 @@ impl MethodBoundaryFinder {
         // Pre-compile regexes outside the loop
         let test_method_regex = Regex::new(r"def\s+(test_\w+)\s*\(")?;
         let catch2_regex = Regex::new(r#"TEST_CASE\s*\(\s*"([^"]+)""#)?;
-        let fn_regex = Regex::new(r"fn\s+(\w+)")?;
+        // Rust: support optional async before fn
+        let fn_regex = Regex::new(r"(?:async\s+)?fn\s+(\w+)")?;
         let method_regex = Regex::new(r"(?:public\s+)?(?:void\s+)?(\w+)\s*\(")?;
+        let rust_test_attr_regex = Regex::new(r"^#\[\s*(?:[a-zA-Z0-9_]+::)?test(?:\(.*\))?\s*\]$")?;
 
         for (i, line) in lines.iter().enumerate() {
             let trimmed = line.trim();
@@ -132,36 +137,38 @@ impl MethodBoundaryFinder {
                     }
                 }
                 "#[test]" => {
-                    // Rust: #[test], #[rstest], or #[test_case] followed by fn method_name
-                    if (trimmed == "#[test]"
+                    // Rust: any test attribute (#[test], #[tokio::test], #[tokio::test(...)], #[rstest], #[test_case]) followed by (async)? fn
+                    let is_rust_attr = rust_test_attr_regex.is_match(trimmed)
                         || trimmed.starts_with("#[rstest")
-                        || trimmed.starts_with("#[test_case"))
-                        && i + 1 < lines.len()
-                    {
-                        // For #[rstest] or #[test_case], we might need to skip multiple lines of case annotations
+                        || trimmed.starts_with("#[test_case");
+                    if is_rust_attr && i + 1 < lines.len() {
+                        // Allow more lookahead for rstest/test_case due to case lines
+                        let lookahead = if trimmed.starts_with("#[rstest")
+                            || trimmed.starts_with("#[test_case")
+                        {
+                            20
+                        } else {
+                            8
+                        };
                         let mut search_idx = i + 1;
-                        while search_idx < lines.len() {
+                        let end_idx = (i + 1 + lookahead).min(lines.len());
+                        while search_idx < end_idx {
                             let search_line = lines[search_idx].trim();
-                            // Skip #[case(...)] lines for rstest and #[test_case(...)] lines for test_case
+                            // Skip case annotations and blanks/comments
                             if search_line.starts_with("#[case")
                                 || search_line.starts_with("#[test_case")
+                                || search_line.is_empty()
+                                || search_line.starts_with("//")
                             {
                                 search_idx += 1;
                                 continue;
                             }
-                            // Skip empty lines and comments
-                            if search_line.is_empty() || search_line.starts_with("//") {
-                                search_idx += 1;
-                                continue;
-                            }
-                            // Look for the function declaration
                             if let Some(captures) = fn_regex.captures(search_line) {
                                 let method_name = captures[1].to_string();
                                 methods.push((method_name, search_idx + 1)); // +1 for 1-indexed
                                 break;
                             }
-                            // If we find something that's not a case or comment, stop searching
-                            break;
+                            search_idx += 1;
                         }
                     }
                 }
@@ -208,6 +215,9 @@ impl MethodBoundaryFinder {
         let mut method_start_line: Option<usize> = None;
         let mut method_end_line: Option<usize> = None;
 
+        // Regex to detect Rust test attributes like #[test], #[tokio::test], #[tokio::test(...)]
+        let rust_test_attr_regex = Regex::new(r"^#\[\s*(?:[a-zA-Z0-9_]+::)?test(?:\(.*\))?\s*\]$")?;
+
         // Find the method start
         for (i, line) in lines.iter().enumerate() {
             let trimmed = line.trim();
@@ -229,7 +239,10 @@ impl MethodBoundaryFinder {
                     && trimmed.starts_with("@pytest"))
                 || (self.config.test_annotation == "TEST_CASE("
                     && trimmed.starts_with("TEST_CASE("))
+                || (self.config.test_annotation == "#[test]"
+                    && rust_test_attr_regex.is_match(trimmed))
             {
+                // Rust special-case: generic test attribute matched above
                 // For C++, the TEST_CASE line itself contains the method name
                 if self.config.test_annotation == "TEST_CASE(" {
                     let pattern = (self.config.method_pattern)(method_name);
@@ -298,7 +311,7 @@ impl MethodBoundaryFinder {
         // Find the method end - handle nested blocks properly
         let mut brace_depth = 0;
         let mut found_opening_brace = false;
-        let search_limit = start_idx + 50; // Limit search to avoid scanning entire file
+        let search_limit = start_idx + 500; // Allow larger bodies (async runtimes, long setups)
 
         // First, check if the method start line itself contains the opening brace
         let start_line = lines[start_idx].trim();
@@ -499,7 +512,23 @@ impl MethodBoundaryFinder {
         comment_prefix: &str,
     ) -> Result<Vec<String>> {
         if let Some((start_idx, end_idx)) = self.find_method_boundaries(content, method_name)? {
-            self.extract_steps_from_boundaries_generic(content, start_idx, end_idx, comment_prefix)
+            let steps = self.extract_steps_from_boundaries_generic(
+                content,
+                start_idx,
+                end_idx,
+                comment_prefix,
+            )?;
+            if steps.is_empty() {
+                // Fallback: search from method start to file end (handles async blocks/macros)
+                let lines: Vec<&str> = content.lines().collect();
+                return self.extract_steps_from_boundaries_generic(
+                    content,
+                    start_idx,
+                    lines.len(),
+                    comment_prefix,
+                );
+            }
+            Ok(steps)
         } else {
             Ok(vec![]) // Method not found
         }

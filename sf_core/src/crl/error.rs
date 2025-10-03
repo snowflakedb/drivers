@@ -21,6 +21,12 @@ pub enum CrlError {
         #[snafu(implicit)]
         location: Location,
     },
+    #[snafu(display("Unsupported CRL signature algorithm: {oid}"))]
+    UnsupportedSignatureAlgorithm {
+        oid: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
     #[snafu(display("CRL issuer does not match certificate issuer"))]
     CrlIssuerMismatch {
         #[snafu(implicit)]

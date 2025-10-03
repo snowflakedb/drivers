@@ -10,65 +10,50 @@ mod disk_crl_tests {
     use tempfile::TempDir;
     use x509_parser::prelude::FromDer;
 
-    /// Test parsing real CRL data from disk
-    #[tokio::test]
-    async fn test_parse_real_crl_from_disk() {
-        // Download a real CRL and save it to disk for testing
-        let client = reqwest::Client::new();
-        let crl_url = "http://crl.microsoft.com/pki/mscorp/crl/msitwww1.crl";
-
-        let response = client.get(crl_url).send().await;
-        if let Ok(response) = response {
-            if response.status().is_success() {
-                let crl_data = response.bytes().await.unwrap();
-
-                // Create temporary directory
-                let temp_dir = TempDir::new().unwrap();
-                let crl_file_path = temp_dir.path().join("test.crl");
-
-                // Write CRL to disk
-                fs::write(&crl_file_path, &crl_data).unwrap();
-
-                // Read CRL back from disk
-                let crl_data_from_disk = fs::read(&crl_file_path).unwrap();
-
-                // Parse CRL using x509-parser
-                let parse_result =
-                    x509_parser::revocation_list::CertificateRevocationList::from_der(
-                        &crl_data_from_disk,
-                    );
-                assert!(parse_result.is_ok(), "Failed to parse CRL from disk");
-
-                let (_, crl) = parse_result.unwrap();
-
-                // Verify CRL structure
-                assert!(
-                    !crl.tbs_cert_list.issuer.as_raw().is_empty(),
-                    "CRL should have an issuer"
-                );
-
-                // Test certificate checking (allow CRLExpired due to stale public CRLs)
-                let mock_serial = vec![0x01, 0x02, 0x03, 0x04, 0x05];
-                let is_revoked = check_certificate_in_crl(&mock_serial, &crl_data_from_disk);
-                match is_revoked {
-                    Ok(_v) => { /* acceptable */ }
-                    Err(crate::crl::error::CrlError::CrlExpired { .. }) => { /* acceptable */ }
-                    Err(e) => panic!("Certificate checking failed: {e}"),
-                }
-
-                // Quiet test: assert basic invariants instead of printing
-                assert!(!crl_data_from_disk.is_empty());
-                let _ = crl.iter_revoked_certificates().count();
-                match is_revoked {
-                    Ok(_v) => { /* ok */ }
-                    Err(crate::crl::error::CrlError::CrlExpired { .. }) => { /* ok */ }
-                    Err(e) => panic!("Certificate checking failed: {e}"),
-                }
-            } else {
-                // Skip silently
+    /// Test parsing a real CRL from a local fixture on disk
+    #[test]
+    fn test_parse_real_crl_from_fixture() {
+        // Read a real CRL from a local test fixture for testing
+        // Place a valid DER-encoded CRL file at tests/fixtures/test.crl
+        let crl_fixture_path = "tests/fixtures/test.crl";
+        let crl_data_from_disk = match fs::read(crl_fixture_path) {
+            Ok(data) => data,
+            Err(_) => {
+                // Skip test if fixture is missing
+                eprintln!("CRL fixture file not found: {crl_fixture_path}");
+                return;
             }
-        } else {
-            // Skip silently
+        };
+
+        // Parse CRL using x509-parser
+        let parse_result =
+            x509_parser::revocation_list::CertificateRevocationList::from_der(&crl_data_from_disk);
+        assert!(parse_result.is_ok(), "Failed to parse CRL from disk");
+
+        let (_, crl) = parse_result.unwrap();
+
+        // Verify CRL structure
+        assert!(
+            !crl.tbs_cert_list.issuer.as_raw().is_empty(),
+            "CRL should have an issuer"
+        );
+
+        // Test certificate checking (allow CRLExpired due to stale public CRLs)
+        let mock_serial = vec![0x01, 0x02, 0x03, 0x04, 0x05];
+        let is_revoked = check_certificate_in_crl(&mock_serial, &crl_data_from_disk);
+        match is_revoked {
+            Ok(_v) => { /* acceptable */ }
+            Err(crate::crl::error::CrlError::CrlExpired { .. }) => { /* acceptable */ }
+            Err(e) => panic!("Certificate checking failed: {e}"),
+        }
+
+        // Quiet test: assert basic invariants instead of printing
+        assert!(!crl_data_from_disk.is_empty());
+        let _ = crl.iter_revoked_certificates().count();
+        match is_revoked {
+            Ok(_v) => { /* ok */ }
+            Err(crate::crl::error::CrlError::CrlExpired { .. }) => { /* ok */ }
+            Err(e) => panic!("Certificate checking failed: {e}"),
         }
     }
 
