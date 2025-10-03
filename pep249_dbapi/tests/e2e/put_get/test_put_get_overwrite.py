@@ -1,6 +1,6 @@
 from tests.e2e.put_get.put_get_helper import (
+    create_temporary_stage_and_upload_file,
     upload_file_to_stage,
-    put_get_test_setup,
 )
 from tests.utils import shared_test_data_dir
 
@@ -16,7 +16,7 @@ def test_should_overwrite_file_when_overwrite_is_set_to_true(connection):
     with connection.cursor() as cursor:
         # Given File is uploaded to stage
         assert cursor is not None
-        stage_name, _ = put_get_test_setup(
+        stage_name, _ = create_temporary_stage_and_upload_file(
             cursor,
             "TEST_PUT_GET_OVERWRITE_TRUE",
             original_file_path,
@@ -49,7 +49,7 @@ def test_should_not_overwrite_file_when_overwrite_is_set_to_false(connection):
 
     with connection.cursor() as cursor:
         # Given File is uploaded to stage
-        stage_name, _ = put_get_test_setup(
+        stage_name, _ = create_temporary_stage_and_upload_file(
             cursor,
             "TEST_PUT_GET_OVERWRITE_FALSE",
             original_file_path,

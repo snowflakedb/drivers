@@ -18,7 +18,7 @@ def create_temporary_stage(cursor, prefix: str) -> str:
         str: The name of the created temporary stage
     """
     stage_name = f"{prefix}_{uuid.uuid4().hex}".upper()
-    cursor.execute(f"CREATE TEMPORARY STAGE {stage_name}")
+    cursor.execute(f"CREATE TEMPORARY STAGE IF NOT EXISTS {stage_name}")
     return stage_name
 
 
@@ -99,7 +99,7 @@ def get_file_from_stage(cursor, stage_name: str, filename: str, download_dir: Pa
     return cursor.fetchone()
 
 
-def put_get_test_setup(
+def create_temporary_stage_and_upload_file(
     cursor,
     stage_prefix: str,
     file_path: Path,

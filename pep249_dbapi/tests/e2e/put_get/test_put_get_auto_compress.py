@@ -4,7 +4,7 @@ from pathlib import Path
 from tests.compatibility import NEW_DRIVER_ONLY, OLD_DRIVER_ONLY
 from tests.e2e.put_get.put_get_helper import (
     get_file_from_stage,
-    put_get_test_setup,
+    create_temporary_stage_and_upload_file,
 )
 from tests.utils import shared_test_data_dir
 
@@ -21,7 +21,7 @@ def test_should_compress_the_file_before_uploading_to_stage_when_auto_compress_s
         # Given Snowflake client is logged in
         assert cursor is not None
         # When File is uploaded to stage with AUTO_COMPRESS set to true
-        stage_name, _ = put_get_test_setup(
+        stage_name, _ = create_temporary_stage_and_upload_file(
             cursor,
             "TEST_PUT_GET_AUTO_COMPRESS_TRUE",
             uncompressed_file_path,
@@ -30,6 +30,7 @@ def test_should_compress_the_file_before_uploading_to_stage_when_auto_compress_s
         )
 
         with tempfile.TemporaryDirectory() as temp_dir:
+            # Then Only compressed file should be downloaded
             download_dir = Path(temp_dir)
 
             get_result = get_file_from_stage(
@@ -38,7 +39,6 @@ def test_should_compress_the_file_before_uploading_to_stage_when_auto_compress_s
 
             assert get_result[2] == "DOWNLOADED"
 
-            # Then Only compressed file should be downloaded
             expected_file_path = download_dir / compressed_filename
             assert expected_file_path.exists()
 
@@ -68,7 +68,7 @@ def test_should_not_compress_the_file_before_uploading_to_stage_when_auto_compre
         # Given Snowflake client is logged in
         assert cursor is not None
         # When File is uploaded to stage with AUTO_COMPRESS set to false
-        stage_name, _ = put_get_test_setup(
+        stage_name, _ = create_temporary_stage_and_upload_file(
             cursor,
             "TEST_PUT_GET_AUTO_COMPRESS_FALSE",
             uncompressed_file_path,
@@ -77,15 +77,14 @@ def test_should_not_compress_the_file_before_uploading_to_stage_when_auto_compre
         )
 
         with tempfile.TemporaryDirectory() as temp_dir:
+            # Then Only uncompressed file should be downloaded
             download_dir = Path(temp_dir)
-
             get_result = get_file_from_stage(
                 cursor, stage_name, uncompressed_filename, download_dir
             )
 
             assert get_result[2] == "DOWNLOADED"
 
-            # Then Only uncompressed file should be downloaded
             expected_file_path = download_dir / uncompressed_filename
             assert expected_file_path.exists()
 

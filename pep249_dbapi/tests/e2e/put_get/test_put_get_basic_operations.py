@@ -7,7 +7,7 @@ from tests.compatibility import NEW_DRIVER_ONLY, OLD_DRIVER_ONLY
 from tests.e2e.put_get.put_get_helper import (
     list_stage_contents,
     get_file_from_stage,
-    put_get_test_setup,
+    create_temporary_stage_and_upload_file,
 )
 from tests.utils import shared_test_data_dir
 
@@ -18,7 +18,7 @@ def test_should_select_data_from_file_uploaded_to_stage(connection):
 
     with connection.cursor() as cursor:
         # Given File is uploaded to stage
-        stage_name, _ = put_get_test_setup(
+        stage_name, _ = create_temporary_stage_and_upload_file(
             cursor,
             "TEST_STAGE_SELECT",
             test_file_path,
@@ -41,7 +41,7 @@ def test_should_list_file_uploaded_to_stage(connection):
 
     with connection.cursor() as cursor:
         # Given File is uploaded to stage
-        stage_name, _ = put_get_test_setup(
+        stage_name, _ = create_temporary_stage_and_upload_file(
             cursor, "TEST_STAGE_LS", test_file_path, auto_compress=True, overwrite=True
         )
         # When Stage content is listed using LS command
@@ -60,11 +60,11 @@ def test_should_get_file_uploaded_to_stage(connection):
 
     with connection.cursor() as cursor:
         # Given File is uploaded to stage
-        stage_name, _ = put_get_test_setup(
+        stage_name, _ = create_temporary_stage_and_upload_file(
             cursor, "TEST_STAGE_GET", test_file_path, auto_compress=True, overwrite=True
         )
-        # When File is downloaded using GET command
         with tempfile.TemporaryDirectory() as temp_dir:
+            # When File is downloaded using GET command
             download_dir = Path(temp_dir)
 
             get_result = get_file_from_stage(cursor, stage_name, filename, download_dir)
@@ -88,7 +88,7 @@ def test_should_return_correct_rowset_for_put(connection):
         # Given Snowflake client is logged in
         assert cursor is not None
         # When File is uploaded to stage
-        _, upload_result = put_get_test_setup(
+        _, upload_result = create_temporary_stage_and_upload_file(
             cursor,
             "TEST_STAGE_PUT_ROWSET",
             test_file_path,
@@ -116,17 +116,16 @@ def test_should_return_correct_rowset_for_get(connection):
 
     with connection.cursor() as cursor:
         # Given File is uploaded to stage
-        stage_name, _ = put_get_test_setup(
+        stage_name, _ = create_temporary_stage_and_upload_file(
             cursor,
             "TEST_STAGE_GET_ROWSET",
             test_file_path,
             auto_compress=True,
             overwrite=True,
         )
-        # When File is downloaded using GET command
         with tempfile.TemporaryDirectory() as temp_dir:
+            # When File is downloaded using GET command
             download_dir = Path(temp_dir)
-
             get_result = get_file_from_stage(cursor, stage_name, filename, download_dir)
 
             # Then Rowset for GET command should be correct
@@ -148,7 +147,7 @@ def test_should_return_correct_column_metadata_for_put(connection):
         # Given Snowflake client is logged in
         assert cursor is not None
         # When File is uploaded to stage
-        _, upload_result = put_get_test_setup(
+        _, upload_result = create_temporary_stage_and_upload_file(
             cursor,
             "TEST_STAGE_PUT_COLUMN_METADATA",
             test_file_path,
@@ -185,15 +184,15 @@ def test_should_return_correct_column_metadata_for_get(connection):
 
     with connection.cursor() as cursor:
         # Given File is uploaded to stage
-        stage_name, _ = put_get_test_setup(
+        stage_name, _ = create_temporary_stage_and_upload_file(
             cursor,
             "TEST_STAGE_GET_COLUMN_METADATA",
             test_file_path,
             auto_compress=True,
             overwrite=True,
         )
-        # When File is downloaded using GET command
         with tempfile.TemporaryDirectory() as temp_dir:
+            # When File is downloaded using GET command
             download_dir = Path(temp_dir)
 
             get_result = get_file_from_stage(cursor, stage_name, filename, download_dir)
