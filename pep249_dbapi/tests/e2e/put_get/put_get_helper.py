@@ -3,31 +3,7 @@ Helper functions for PUT/GET operations in e2e tests.
 """
 
 import uuid
-from contextlib import contextmanager
 from pathlib import Path
-from typing import NamedTuple
-
-
-class UploadResult(NamedTuple):
-    """Result from PUT command with named fields for better readability."""
-
-    source: str
-    target: str
-    source_size: int
-    target_size: int
-    source_compression: str
-    target_compression: str
-    status: str
-    message: str
-
-
-class DownloadResult(NamedTuple):
-    """Result from GET command with named fields for better readability."""
-
-    file: str
-    size: int
-    status: str
-    message: str
 
 
 def create_temporary_stage(cursor, prefix: str) -> str:
@@ -65,7 +41,7 @@ def upload_file_to_stage(
     file_path: Path,
     auto_compress: bool = True,
     overwrite: bool = True,
-) -> UploadResult:
+):
     """
     Upload a file to an existing Snowflake stage.
 
@@ -77,7 +53,7 @@ def upload_file_to_stage(
         overwrite: Whether to overwrite existing files (default: True)
 
     Returns:
-        UploadResult: Named tuple with upload result fields
+        Raw result row from the PUT command
     """
     file_uri = as_file_uri(file_path)
     options_str = (
@@ -85,8 +61,7 @@ def upload_file_to_stage(
     )
     put_command = f"PUT 'file://{file_uri}' @{stage_name} {options_str}"
     cursor.execute(put_command)
-    raw_result = cursor.fetchone()
-    return UploadResult(*raw_result)
+    return cursor.fetchone()
 
 
 def list_stage_contents(cursor, stage_name: str) -> list:
@@ -105,9 +80,7 @@ def list_stage_contents(cursor, stage_name: str) -> list:
     return cursor.fetchall()
 
 
-def get_file_from_stage(
-    cursor, stage_name: str, filename: str, download_dir: Path
-) -> DownloadResult:
+def get_file_from_stage(cursor, stage_name: str, filename: str, download_dir: Path):
     """
     Download a file from a Snowflake stage.
 
@@ -118,46 +91,43 @@ def get_file_from_stage(
         download_dir: Local directory to download the file to
 
     Returns:
-        DownloadResult: Named tuple with download result fields
+        Raw result row from the GET command
     """
     download_uri = as_file_uri(download_dir)
     get_command = f"GET @{stage_name}/{filename} 'file://{download_uri}/'"
     cursor.execute(get_command)
-    raw_result = cursor.fetchone()
-    return DownloadResult(*raw_result)
+    return cursor.fetchone()
 
 
-@contextmanager
 def put_get_test_setup(
-    connection,
+    cursor,
     stage_prefix: str,
     file_path: Path,
     auto_compress: bool = True,
     overwrite: bool = True,
 ):
     """
-    Context manager that provides cursor, temporary stage, and uploads file for PUT/GET tests.
+    Function that creates temporary stage and uploads file for PUT/GET tests.
 
     Args:
-        connection: Database connection object
+        cursor: Database cursor to use for operations
         stage_prefix: Prefix for the temporary stage name
         file_path: Path to file to upload to the stage
         auto_compress: Whether to enable auto compression for upload (default: True)
         overwrite: Whether to overwrite existing files for upload (default: True)
 
-    Yields:
-        tuple: (cursor, stage_name, upload_result)
+    Returns:
+        tuple: (stage_name, upload_result)
 
     Note:
         Upload is automatically validated for success.
     """
-    with connection.cursor() as cursor:
-        stage_name = create_temporary_stage(cursor, stage_prefix)
-        upload_result = upload_file_to_stage(
-            cursor, stage_name, file_path, auto_compress, overwrite
-        )
-        assert (
-            upload_result.status == "UPLOADED"
-        ), f"File upload failed. Status: {upload_result.status}"
+    stage_name = create_temporary_stage(cursor, stage_prefix)
+    upload_result = upload_file_to_stage(
+        cursor, stage_name, file_path, auto_compress, overwrite
+    )
+    assert (
+        upload_result[6] == "UPLOADED"
+    ), f"File upload failed. Status: {upload_result[6]}"
 
-        yield cursor, stage_name, upload_result
+    return stage_name, upload_result

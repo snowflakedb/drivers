@@ -17,15 +17,17 @@ def test_should_compress_the_file_before_uploading_to_stage_when_auto_compress_s
     compressed_file_path = shared_test_data_dir() / "compression" / "test_data.csv.gz"
     uncompressed_filename = "test_data.csv"
     compressed_filename = "test_data.csv.gz"
-    # Given Snowflake client is logged in
-    # When File is uploaded to stage with AUTO_COMPRESS set to true
-    with put_get_test_setup(
-        connection,
-        "TEST_PUT_GET_AUTO_COMPRESS_TRUE",
-        uncompressed_file_path,
-        auto_compress=True,
-        overwrite=True,
-    ) as (cursor, stage_name, upload_result):
+    with connection.cursor() as cursor:
+        # Given Snowflake client is logged in
+        assert cursor is not None
+        # When File is uploaded to stage with AUTO_COMPRESS set to true
+        stage_name, _ = put_get_test_setup(
+            cursor,
+            "TEST_PUT_GET_AUTO_COMPRESS_TRUE",
+            uncompressed_file_path,
+            auto_compress=True,
+            overwrite=True,
+        )
 
         with tempfile.TemporaryDirectory() as temp_dir:
             download_dir = Path(temp_dir)
@@ -34,7 +36,7 @@ def test_should_compress_the_file_before_uploading_to_stage_when_auto_compress_s
                 cursor, stage_name, uncompressed_filename, download_dir
             )
 
-            assert get_result.status == "DOWNLOADED"
+            assert get_result[2] == "DOWNLOADED"
 
             # Then Only compressed file should be downloaded
             expected_file_path = download_dir / compressed_filename
@@ -62,15 +64,17 @@ def test_should_not_compress_the_file_before_uploading_to_stage_when_auto_compre
     uncompressed_filename = "test_data.csv"
     compressed_filename = "test_data.csv.gz"
 
-    # Given Snowflake client is logged in
-    # When File is uploaded to stage with AUTO_COMPRESS set to false
-    with put_get_test_setup(
-        connection,
-        "TEST_PUT_GET_AUTO_COMPRESS_FALSE",
-        uncompressed_file_path,
-        auto_compress=False,
-        overwrite=True,
-    ) as (cursor, stage_name, upload_result):
+    with connection.cursor() as cursor:
+        # Given Snowflake client is logged in
+        assert cursor is not None
+        # When File is uploaded to stage with AUTO_COMPRESS set to false
+        stage_name, _ = put_get_test_setup(
+            cursor,
+            "TEST_PUT_GET_AUTO_COMPRESS_FALSE",
+            uncompressed_file_path,
+            auto_compress=False,
+            overwrite=True,
+        )
 
         with tempfile.TemporaryDirectory() as temp_dir:
             download_dir = Path(temp_dir)
@@ -79,7 +83,7 @@ def test_should_not_compress_the_file_before_uploading_to_stage_when_auto_compre
                 cursor, stage_name, uncompressed_filename, download_dir
             )
 
-            assert get_result.status == "DOWNLOADED"
+            assert get_result[2] == "DOWNLOADED"
 
             # Then Only uncompressed file should be downloaded
             expected_file_path = download_dir / uncompressed_filename
