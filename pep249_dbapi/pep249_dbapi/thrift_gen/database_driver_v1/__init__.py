@@ -1,1 +1,1 @@
-__all__ = ['ttypes', 'constants', 'DatabaseDriver']
+__all__ = ["ttypes", "constants", "DatabaseDriver"]

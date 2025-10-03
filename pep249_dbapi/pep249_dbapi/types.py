@@ -12,12 +12,12 @@ import time
 def Date(year, month, day):
     """
     Construct an object holding a date value.
-    
+
     Args:
         year: Year
         month: Month
         day: Day
-        
+
     Returns:
         datetime.date: Date object
     """
@@ -27,12 +27,12 @@ def Date(year, month, day):
 def Time(hour, minute, second):
     """
     Construct an object holding a time value.
-    
+
     Args:
         hour: Hour
         minute: Minute
         second: Second
-        
+
     Returns:
         datetime.time: Time object
     """
@@ -42,7 +42,7 @@ def Time(hour, minute, second):
 def Timestamp(year, month, day, hour, minute, second):
     """
     Construct an object holding a timestamp value.
-    
+
     Args:
         year: Year
         month: Month
@@ -50,7 +50,7 @@ def Timestamp(year, month, day, hour, minute, second):
         hour: Hour
         minute: Minute
         second: Second
-        
+
     Returns:
         datetime.datetime: Timestamp object
     """
@@ -60,10 +60,10 @@ def Timestamp(year, month, day, hour, minute, second):
 def DateFromTicks(ticks):
     """
     Construct an object holding a date value from the given ticks value.
-    
+
     Args:
         ticks: Seconds since the epoch
-        
+
     Returns:
         datetime.date: Date object
     """
@@ -73,10 +73,10 @@ def DateFromTicks(ticks):
 def TimeFromTicks(ticks):
     """
     Construct an object holding a time value from the given ticks value.
-    
+
     Args:
         ticks: Seconds since the epoch
-        
+
     Returns:
         datetime.time: Time object
     """
@@ -86,10 +86,10 @@ def TimeFromTicks(ticks):
 def TimestampFromTicks(ticks):
     """
     Construct an object holding a timestamp value from the given ticks value.
-    
+
     Args:
         ticks: Seconds since the epoch
-        
+
     Returns:
         datetime.datetime: Timestamp object
     """
@@ -99,15 +99,15 @@ def TimestampFromTicks(ticks):
 def Binary(string):
     """
     Construct an object capable of holding a binary (long) string value.
-    
+
     Args:
         string: Binary data
-        
+
     Returns:
         bytes: Binary object
     """
     if isinstance(string, str):
-        return string.encode('utf-8')
+        return string.encode("utf-8")
     return bytes(string)
 
 
@@ -116,12 +116,13 @@ class DBAPITypeObject:
     """
     Base class for type objects that support comparison with database types.
     """
+
     def __init__(self, *values):
         self.values = values
-    
+
     def __eq__(self, other):
         return other in self.values
-    
+
     def __ne__(self, other):
         return other not in self.values
 
@@ -129,6 +130,8 @@ class DBAPITypeObject:
 # Type objects for describing database column types
 STRING = DBAPITypeObject("STRING", "VARCHAR", "CHAR", "TEXT")
 BINARY = DBAPITypeObject("BINARY", "VARBINARY", "BLOB")
-NUMBER = DBAPITypeObject("NUMBER", "INTEGER", "INT", "FLOAT", "DOUBLE", "DECIMAL", "NUMERIC")
+NUMBER = DBAPITypeObject(
+    "NUMBER", "INTEGER", "INT", "FLOAT", "DOUBLE", "DECIMAL", "NUMERIC"
+)
 DATETIME = DBAPITypeObject("DATETIME", "DATE", "TIME", "TIMESTAMP")
-ROWID = DBAPITypeObject("ROWID", "OID") 
+ROWID = DBAPITypeObject("ROWID", "OID")

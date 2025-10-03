@@ -18,7 +18,9 @@ def pat_token(connection_factory):
 
 class TestPATAuthentication:
 
-    def test_should_authenticate_using_pat_as_password(self, connection_factory, pat_token):
+    def test_should_authenticate_using_pat_as_password(
+        self, connection_factory, pat_token
+    ):
         # Given Authentication is set to password and valid PAT token is provided
         password = pat_token
 
@@ -29,7 +31,9 @@ class TestPATAuthentication:
         with connection:
             verify_simple_query_execution(connection)
 
-    def test_should_authenticate_using_pat_as_token(self, connection_factory, pat_token):
+    def test_should_authenticate_using_pat_as_token(
+        self, connection_factory, pat_token
+    ):
         # Given Authentication is set to Programmatic Access Token and valid PAT token is provided
         authenticator = "PROGRAMMATIC_ACCESS_TOKEN"
         token = pat_token
@@ -99,6 +103,7 @@ class PAT:
             finally:
                 self._token_name = None
                 self._token_secret = None
+
 
 def get_invalid_pat_token() -> str:
     return "invalid_token_12345"

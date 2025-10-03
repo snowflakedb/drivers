@@ -68,12 +68,12 @@ class TestCursorMethods:
 
 class TestCursorContextManager:
     """Test Cursor context manager functionality."""
-    
+
     def test_context_manager_entry(self, cursor):
         """Test entering cursor context manager."""
         with cursor as c:
             assert c is cursor
-    
+
     def test_context_manager_exit(self, cursor):
         """Test exiting cursor context manager."""
         with cursor:
@@ -105,9 +105,11 @@ class TestCursorDatabaseQueries:
     @pytest.mark.parametrize("data_size", [1000, 10000])
     def test_large_result(self, cursor, data_size):
         """Test large result."""
-        cursor.execute(f"SELECT seq8() as id FROM TABLE(GENERATOR(ROWCOUNT => {data_size})) v ORDER BY id")
+        cursor.execute(
+            f"SELECT seq8() as id FROM TABLE(GENERATOR(ROWCOUNT => {data_size})) v ORDER BY id"
+        )
         rows = cursor.fetchall()
         assert len(rows) == data_size
 
-        for (i, row) in enumerate(rows):
+        for i, row in enumerate(rows):
             assert row == (i,)

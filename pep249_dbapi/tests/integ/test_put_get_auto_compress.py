@@ -83,4 +83,7 @@ def uncompressed_test_file():
 
 
 def compressed_test_file():
-    return "test_data.csv.gz", shared_test_data_dir() / "compression" / "test_data.csv.gz"
+    return (
+        "test_data.csv.gz",
+        shared_test_data_dir() / "compression" / "test_data.csv.gz",
+    )

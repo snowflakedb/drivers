@@ -3,6 +3,7 @@ PEP 249 Database API 2.0 Connection Objects
 
 This module defines the Connection class as specified in PEP 249.
 """
+
 from .api_client.client_api import database_driver_client
 from .protobuf_gen.database_driver_v1_pb2 import *
 from .cursor import Cursor
@@ -14,11 +15,11 @@ class Connection:
     """
     Connection objects represent a database connection.
     """
-    
+
     def __init__(self, **kwargs):
         """
         Initialize a new connection object.
-        
+
         Args:
             database: Database name
             user: Username
@@ -30,18 +31,36 @@ class Connection:
         self.db_api = database_driver_client()
         self.db_handle = self.db_api.database_new(DatabaseNewRequest()).db_handle
         self.db_api.database_init(DatabaseInitRequest(db_handle=self.db_handle))
-        self.conn_handle = self.db_api.connection_new(ConnectionNewRequest()).conn_handle
+        self.conn_handle = self.db_api.connection_new(
+            ConnectionNewRequest()
+        ).conn_handle
         for key, value in kwargs.items():
             if isinstance(value, int):
-                self.db_api.connection_set_option_int(ConnectionSetOptionIntRequest(conn_handle=self.conn_handle, key=key, value=value))
+                self.db_api.connection_set_option_int(
+                    ConnectionSetOptionIntRequest(
+                        conn_handle=self.conn_handle, key=key, value=value
+                    )
+                )
 
             if isinstance(value, str):
-                self.db_api.connection_set_option_string(ConnectionSetOptionStringRequest(conn_handle=self.conn_handle, key=key, value=value))
+                self.db_api.connection_set_option_string(
+                    ConnectionSetOptionStringRequest(
+                        conn_handle=self.conn_handle, key=key, value=value
+                    )
+                )
 
             if isinstance(value, float):
-                self.db_api.connection_set_option_double(ConnectionSetOptionDoubleRequest(conn_handle=self.conn_handle, key=key, value=value))
+                self.db_api.connection_set_option_double(
+                    ConnectionSetOptionDoubleRequest(
+                        conn_handle=self.conn_handle, key=key, value=value
+                    )
+                )
 
-        self.db_api.connection_init(ConnectionInitRequest(conn_handle=self.conn_handle, db_handle=self.db_handle))
+        self.db_api.connection_init(
+            ConnectionInitRequest(
+                conn_handle=self.conn_handle, db_handle=self.db_handle
+            )
+        )
         self.kwargs = kwargs
         self._closed = False
         self._autocommit = False
@@ -90,11 +109,11 @@ class Connection:
             Connection: Self
         """
         return self
-    
+
     def __exit__(self, exc_type, exc_val, exc_tb):
         """
         Exit the runtime context for the connection.
-        
+
         If an exception occurred, rollback the transaction.
         Otherwise, commit the transaction.
         """
@@ -110,70 +129,70 @@ class Connection:
                 self.rollback()
             except NotSupportedError:
                 pass  # rollback not implemented
-        
+
         self.close()
-    
+
     # Optional methods that some databases might support
     def cancel(self):
         """
         Cancel a long-running operation on the connection.
-        
+
         Raises:
             NotSupportedError: If not implemented
         """
         raise NotSupportedError("cancel is not implemented")
-    
+
     def ping(self):
         """
         Check if the connection to the server is still alive.
-        
+
         Returns:
             bool: True if connection is alive, False otherwise
-            
+
         Raises:
             NotSupportedError: If not implemented
         """
         raise NotSupportedError("ping is not implemented")
-    
+
     def set_autocommit(self, autocommit):
         """
         Set the autocommit mode.
-        
+
         Args:
             autocommit (bool): True to enable autocommit, False to disable
-            
+
         Raises:
             NotSupportedError: If not implemented
         """
         raise NotSupportedError("set_autocommit is not implemented")
-    
+
     def get_autocommit(self):
         """
         Get the current autocommit mode.
-        
+
         Returns:
             bool: Current autocommit setting
-            
+
         Raises:
             NotSupportedError: If not implemented
         """
         raise NotSupportedError("get_autocommit is not implemented")
-    
+
     @property
     def autocommit(self):
         """
         Get/set autocommit mode as a property.
-        
+
         Returns:
             bool: Current autocommit setting
         """
         return self._autocommit
-    
+
     @autocommit.setter
     def autocommit(self, value):
         """
         Set autocommit mode.
-        
+
         Args:
             value (bool): Autocommit setting
         """

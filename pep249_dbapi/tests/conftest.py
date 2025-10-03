@@ -17,13 +17,13 @@ def pytest_addoption(parser):
         action="store",
         default="universal",
         choices=["universal", "reference"],
-        help="Which connector implementation to test against (default: universal)"
+        help="Which connector implementation to test against (default: universal)",
     )
     parser.addoption(
         "--reference-package",
         action="store",
         default="snowflake.connector",
-        help="Package name for reference connector (default: snowflake.connector)"
+        help="Package name for reference connector (default: snowflake.connector)",
     )
 
 
@@ -41,7 +41,9 @@ def connector_adapter(request, connector_type):
 
     try:
         if connector_type == ConnectorType.REFERENCE:
-            return ConnectorFactory.create_adapter(connector_type, package_name=reference_package)
+            return ConnectorFactory.create_adapter(
+                connector_type, package_name=reference_package
+            )
         else:
             return ConnectorFactory.create_adapter(connector_type)
     except ImportError as e:
@@ -61,10 +63,10 @@ def connection_factory(connector_adapter):
 
     def _create_connection(**override_params):
         """Create a connection with custom parameters.
-        
+
         Args:
             **override_params: Parameters to override defaults
-            
+
         Example:
             conn = connection_factory(account="test_account", user="test_user")
         """
@@ -83,12 +85,13 @@ def cursor(connection):
 @pytest.fixture
 def int_test_connection_factory(connector_adapter):
     """Factory function for creating connections with integration test parameters."""
+
     def _create_connection(**override_params):
         """Create a connection with integration test parameters."""
         # Default integration test parameters
         integration_params = {
             "account": "test_account",
-            "user": "test_user", 
+            "user": "test_user",
             "password": "test_password",
             "database": "test_database",
             "schema": "test_schema",
@@ -99,11 +102,11 @@ def int_test_connection_factory(connector_adapter):
             "protocol": "http",
             "server_url": "http://localhost:8090",
         }
-        
+
         integration_params.update(override_params)
-        
+
         return create_connection_with_adapter(connector_adapter, **integration_params)
-    
+
     return _create_connection
 
 

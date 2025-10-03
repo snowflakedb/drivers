@@ -14,9 +14,7 @@ def test_put_ls_wildcard_question_mark(cursor):
 
     # Upload using ? pattern: should match pattern_1.csv and pattern_2.csv, but not pattern_10.csv or patternabc.csv
     pattern = f"{as_file_uri(wildcard_dir)}/pattern_?.csv"
-    cursor.execute(
-        f"PUT 'file://{pattern}' @{stage_name}"
-    )
+    cursor.execute(f"PUT 'file://{pattern}' @{stage_name}")
 
     # List the files in the stage
     cursor.execute(f"LS @{stage_name}")
@@ -35,9 +33,7 @@ def test_put_ls_wildcard_star(cursor):
 
     # Upload using * pattern: should match pattern_1.csv, pattern_2.csv, pattern_10.csv
     pattern = f"{as_file_uri(wildcard_dir)}/pattern_*.csv"
-    cursor.execute(
-        f"PUT 'file://{pattern}' @{stage_name}"
-    )
+    cursor.execute(f"PUT 'file://{pattern}' @{stage_name}")
 
     # List the files in the stage
     cursor.execute(f"LS @{stage_name}")

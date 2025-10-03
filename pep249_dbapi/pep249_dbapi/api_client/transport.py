@@ -1,11 +1,16 @@
 from thrift.transport.TTransport import TTransportBase
 import ctypes
 
-from pep249_dbapi.api_client.c_api import sf_core_api_read, sf_core_api_write, sf_core_api_flush
+from pep249_dbapi.api_client.c_api import (
+    sf_core_api_read,
+    sf_core_api_write,
+    sf_core_api_flush,
+)
 
 
 class CoreTransport(TTransportBase):
     """Base class for Thrift transport layer."""
+
     def __init__(self, channel):
         self.channel = channel
 
@@ -19,11 +24,10 @@ class CoreTransport(TTransportBase):
         pass
 
     def read(self, sz):
-        py_buffer = bytearray(b'\0' * sz)
+        py_buffer = bytearray(b"\0" * sz)
         c_buffer = (ctypes.c_char * sz).from_buffer(py_buffer)
         sf_core_api_read(self.channel, c_buffer, sz)
         return py_buffer
-
 
     def write(self, buf):
         py_buffer = bytearray(buf)
@@ -33,5 +37,3 @@ class CoreTransport(TTransportBase):
 
     def flush(self):
         sf_core_api_flush(self.channel)
-
-

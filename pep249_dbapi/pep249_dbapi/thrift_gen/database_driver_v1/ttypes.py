@@ -6,7 +6,13 @@
 #  options string: py
 #
 
-from thrift.Thrift import TType, TMessageType, TFrozenDict, TException, TApplicationException
+from thrift.Thrift import (
+    TType,
+    TMessageType,
+    TFrozenDict,
+    TException,
+    TApplicationException,
+)
 from thrift.protocol.TProtocol import TProtocolException
 from thrift.TRecursive import fix_spec
 from uuid import UUID
@@ -14,6 +20,7 @@ from uuid import UUID
 import sys
 
 from thrift.transport import TTransport
+
 all_structs = []
 
 
@@ -126,15 +133,23 @@ class ErrorDetail(object):
      - value
 
     """
+
     thrift_spec = None
 
-
-    def __init__(self, key = None, value = None,):
+    def __init__(
+        self,
+        key=None,
+        value=None,
+    ):
         self.key = key
         self.value = value
 
     def read(self, iprot):
-        if iprot._fast_decode is not None and isinstance(iprot.trans, TTransport.CReadableTransport) and self.thrift_spec is not None:
+        if (
+            iprot._fast_decode is not None
+            and isinstance(iprot.trans, TTransport.CReadableTransport)
+            and self.thrift_spec is not None
+        ):
             iprot._fast_decode(self, iprot, [self.__class__, self.thrift_spec])
             return
         iprot.readStructBegin()
@@ -144,12 +159,20 @@ class ErrorDetail(object):
                 break
             if fid == 1:
                 if ftype == TType.STRING:
-                    self.key = iprot.readString().decode('utf-8', errors='replace') if sys.version_info[0] == 2 else iprot.readString()
+                    self.key = (
+                        iprot.readString().decode("utf-8", errors="replace")
+                        if sys.version_info[0] == 2
+                        else iprot.readString()
+                    )
                 else:
                     iprot.skip(ftype)
             elif fid == 2:
                 if ftype == TType.STRING:
-                    self.value = iprot.readString().decode('utf-8', errors='replace') if sys.version_info[0] == 2 else iprot.readString()
+                    self.value = (
+                        iprot.readString().decode("utf-8", errors="replace")
+                        if sys.version_info[0] == 2
+                        else iprot.readString()
+                    )
                 else:
                     iprot.skip(ftype)
             else:
@@ -160,31 +183,36 @@ class ErrorDetail(object):
     def write(self, oprot):
         self.validate()
         if oprot._fast_encode is not None and self.thrift_spec is not None:
-            oprot.trans.write(oprot._fast_encode(self, [self.__class__, self.thrift_spec]))
+            oprot.trans.write(
+                oprot._fast_encode(self, [self.__class__, self.thrift_spec])
+            )
             return
-        oprot.writeStructBegin('ErrorDetail')
+        oprot.writeStructBegin("ErrorDetail")
         if self.key is not None:
-            oprot.writeFieldBegin('key', TType.STRING, 1)
-            oprot.writeString(self.key.encode('utf-8') if sys.version_info[0] == 2 else self.key)
+            oprot.writeFieldBegin("key", TType.STRING, 1)
+            oprot.writeString(
+                self.key.encode("utf-8") if sys.version_info[0] == 2 else self.key
+            )
             oprot.writeFieldEnd()
         if self.value is not None:
-            oprot.writeFieldBegin('value', TType.STRING, 2)
-            oprot.writeString(self.value.encode('utf-8') if sys.version_info[0] == 2 else self.value)
+            oprot.writeFieldBegin("value", TType.STRING, 2)
+            oprot.writeString(
+                self.value.encode("utf-8") if sys.version_info[0] == 2 else self.value
+            )
             oprot.writeFieldEnd()
         oprot.writeFieldStop()
         oprot.writeStructEnd()
 
     def validate(self):
         if self.key is None:
-            raise TProtocolException(message='Required field key is unset!')
+            raise TProtocolException(message="Required field key is unset!")
         if self.value is None:
-            raise TProtocolException(message='Required field value is unset!')
+            raise TProtocolException(message="Required field value is unset!")
         return
 
     def __repr__(self):
-        L = ['%s=%r' % (key, value)
-             for key, value in self.__dict__.items()]
-        return '%s(%s)' % (self.__class__.__name__, ', '.join(L))
+        L = ["%s=%r" % (key, value) for key, value in self.__dict__.items()]
+        return "%s(%s)" % (self.__class__.__name__, ", ".join(L))
 
     def __eq__(self, other):
         return isinstance(other, self.__class__) and self.__dict__ == other.__dict__
@@ -199,14 +227,21 @@ class AuthenticationError(object):
      - detail
 
     """
+
     thrift_spec = None
 
-
-    def __init__(self, detail = None,):
+    def __init__(
+        self,
+        detail=None,
+    ):
         self.detail = detail
 
     def read(self, iprot):
-        if iprot._fast_decode is not None and isinstance(iprot.trans, TTransport.CReadableTransport) and self.thrift_spec is not None:
+        if (
+            iprot._fast_decode is not None
+            and isinstance(iprot.trans, TTransport.CReadableTransport)
+            and self.thrift_spec is not None
+        ):
             iprot._fast_decode(self, iprot, [self.__class__, self.thrift_spec])
             return
         iprot.readStructBegin()
@@ -216,7 +251,11 @@ class AuthenticationError(object):
                 break
             if fid == 1:
                 if ftype == TType.STRING:
-                    self.detail = iprot.readString().decode('utf-8', errors='replace') if sys.version_info[0] == 2 else iprot.readString()
+                    self.detail = (
+                        iprot.readString().decode("utf-8", errors="replace")
+                        if sys.version_info[0] == 2
+                        else iprot.readString()
+                    )
                 else:
                     iprot.skip(ftype)
             else:
@@ -227,25 +266,28 @@ class AuthenticationError(object):
     def write(self, oprot):
         self.validate()
         if oprot._fast_encode is not None and self.thrift_spec is not None:
-            oprot.trans.write(oprot._fast_encode(self, [self.__class__, self.thrift_spec]))
+            oprot.trans.write(
+                oprot._fast_encode(self, [self.__class__, self.thrift_spec])
+            )
             return
-        oprot.writeStructBegin('AuthenticationError')
+        oprot.writeStructBegin("AuthenticationError")
         if self.detail is not None:
-            oprot.writeFieldBegin('detail', TType.STRING, 1)
-            oprot.writeString(self.detail.encode('utf-8') if sys.version_info[0] == 2 else self.detail)
+            oprot.writeFieldBegin("detail", TType.STRING, 1)
+            oprot.writeString(
+                self.detail.encode("utf-8") if sys.version_info[0] == 2 else self.detail
+            )
             oprot.writeFieldEnd()
         oprot.writeFieldStop()
         oprot.writeStructEnd()
 
     def validate(self):
         if self.detail is None:
-            raise TProtocolException(message='Required field detail is unset!')
+            raise TProtocolException(message="Required field detail is unset!")
         return
 
     def __repr__(self):
-        L = ['%s=%r' % (key, value)
-             for key, value in self.__dict__.items()]
-        return '%s(%s)' % (self.__class__.__name__, ', '.join(L))
+        L = ["%s=%r" % (key, value) for key, value in self.__dict__.items()]
+        return "%s(%s)" % (self.__class__.__name__, ", ".join(L))
 
     def __eq__(self, other):
         return isinstance(other, self.__class__) and self.__dict__ == other.__dict__
@@ -257,9 +299,12 @@ class AuthenticationError(object):
 class GenericError(object):
     thrift_spec = None
 
-
     def read(self, iprot):
-        if iprot._fast_decode is not None and isinstance(iprot.trans, TTransport.CReadableTransport) and self.thrift_spec is not None:
+        if (
+            iprot._fast_decode is not None
+            and isinstance(iprot.trans, TTransport.CReadableTransport)
+            and self.thrift_spec is not None
+        ):
             iprot._fast_decode(self, iprot, [self.__class__, self.thrift_spec])
             return
         iprot.readStructBegin()
@@ -275,9 +320,11 @@ class GenericError(object):
     def write(self, oprot):
         self.validate()
         if oprot._fast_encode is not None and self.thrift_spec is not None:
-            oprot.trans.write(oprot._fast_encode(self, [self.__class__, self.thrift_spec]))
+            oprot.trans.write(
+                oprot._fast_encode(self, [self.__class__, self.thrift_spec])
+            )
             return
-        oprot.writeStructBegin('GenericError')
+        oprot.writeStructBegin("GenericError")
         oprot.writeFieldStop()
         oprot.writeStructEnd()
 
@@ -285,9 +332,8 @@ class GenericError(object):
         return
 
     def __repr__(self):
-        L = ['%s=%r' % (key, value)
-             for key, value in self.__dict__.items()]
-        return '%s(%s)' % (self.__class__.__name__, ', '.join(L))
+        L = ["%s=%r" % (key, value) for key, value in self.__dict__.items()]
+        return "%s(%s)" % (self.__class__.__name__, ", ".join(L))
 
     def __eq__(self, other):
         return isinstance(other, self.__class__) and self.__dict__ == other.__dict__
@@ -299,9 +345,12 @@ class GenericError(object):
 class InternalError(object):
     thrift_spec = None
 
-
     def read(self, iprot):
-        if iprot._fast_decode is not None and isinstance(iprot.trans, TTransport.CReadableTransport) and self.thrift_spec is not None:
+        if (
+            iprot._fast_decode is not None
+            and isinstance(iprot.trans, TTransport.CReadableTransport)
+            and self.thrift_spec is not None
+        ):
             iprot._fast_decode(self, iprot, [self.__class__, self.thrift_spec])
             return
         iprot.readStructBegin()
@@ -317,9 +366,11 @@ class InternalError(object):
     def write(self, oprot):
         self.validate()
         if oprot._fast_encode is not None and self.thrift_spec is not None:
-            oprot.trans.write(oprot._fast_encode(self, [self.__class__, self.thrift_spec]))
+            oprot.trans.write(
+                oprot._fast_encode(self, [self.__class__, self.thrift_spec])
+            )
             return
-        oprot.writeStructBegin('InternalError')
+        oprot.writeStructBegin("InternalError")
         oprot.writeFieldStop()
         oprot.writeStructEnd()
 
@@ -327,9 +378,8 @@ class InternalError(object):
         return
 
     def __repr__(self):
-        L = ['%s=%r' % (key, value)
-             for key, value in self.__dict__.items()]
-        return '%s(%s)' % (self.__class__.__name__, ', '.join(L))
+        L = ["%s=%r" % (key, value) for key, value in self.__dict__.items()]
+        return "%s(%s)" % (self.__class__.__name__, ", ".join(L))
 
     def __eq__(self, other):
         return isinstance(other, self.__class__) and self.__dict__ == other.__dict__
@@ -345,15 +395,23 @@ class LoginError(object):
      - code
 
     """
+
     thrift_spec = None
 
-
-    def __init__(self, message = None, code = None,):
+    def __init__(
+        self,
+        message=None,
+        code=None,
+    ):
         self.message = message
         self.code = code
 
     def read(self, iprot):
-        if iprot._fast_decode is not None and isinstance(iprot.trans, TTransport.CReadableTransport) and self.thrift_spec is not None:
+        if (
+            iprot._fast_decode is not None
+            and isinstance(iprot.trans, TTransport.CReadableTransport)
+            and self.thrift_spec is not None
+        ):
             iprot._fast_decode(self, iprot, [self.__class__, self.thrift_spec])
             return
         iprot.readStructBegin()
@@ -363,7 +421,11 @@ class LoginError(object):
                 break
             if fid == 1:
                 if ftype == TType.STRING:
-                    self.message = iprot.readString().decode('utf-8', errors='replace') if sys.version_info[0] == 2 else iprot.readString()
+                    self.message = (
+                        iprot.readString().decode("utf-8", errors="replace")
+                        if sys.version_info[0] == 2
+                        else iprot.readString()
+                    )
                 else:
                     iprot.skip(ftype)
             elif fid == 2:
@@ -379,15 +441,21 @@ class LoginError(object):
     def write(self, oprot):
         self.validate()
         if oprot._fast_encode is not None and self.thrift_spec is not None:
-            oprot.trans.write(oprot._fast_encode(self, [self.__class__, self.thrift_spec]))
+            oprot.trans.write(
+                oprot._fast_encode(self, [self.__class__, self.thrift_spec])
+            )
             return
-        oprot.writeStructBegin('LoginError')
+        oprot.writeStructBegin("LoginError")
         if self.message is not None:
-            oprot.writeFieldBegin('message', TType.STRING, 1)
-            oprot.writeString(self.message.encode('utf-8') if sys.version_info[0] == 2 else self.message)
+            oprot.writeFieldBegin("message", TType.STRING, 1)
+            oprot.writeString(
+                self.message.encode("utf-8")
+                if sys.version_info[0] == 2
+                else self.message
+            )
             oprot.writeFieldEnd()
         if self.code is not None:
-            oprot.writeFieldBegin('code', TType.I32, 2)
+            oprot.writeFieldBegin("code", TType.I32, 2)
             oprot.writeI32(self.code)
             oprot.writeFieldEnd()
         oprot.writeFieldStop()
@@ -395,15 +463,14 @@ class LoginError(object):
 
     def validate(self):
         if self.message is None:
-            raise TProtocolException(message='Required field message is unset!')
+            raise TProtocolException(message="Required field message is unset!")
         if self.code is None:
-            raise TProtocolException(message='Required field code is unset!')
+            raise TProtocolException(message="Required field code is unset!")
         return
 
     def __repr__(self):
-        L = ['%s=%r' % (key, value)
-             for key, value in self.__dict__.items()]
-        return '%s(%s)' % (self.__class__.__name__, ', '.join(L))
+        L = ["%s=%r" % (key, value) for key, value in self.__dict__.items()]
+        return "%s(%s)" % (self.__class__.__name__, ", ".join(L))
 
     def __eq__(self, other):
         return isinstance(other, self.__class__) and self.__dict__ == other.__dict__
@@ -418,14 +485,21 @@ class MissingParameter(object):
      - parameter
 
     """
+
     thrift_spec = None
 
-
-    def __init__(self, parameter = None,):
+    def __init__(
+        self,
+        parameter=None,
+    ):
         self.parameter = parameter
 
     def read(self, iprot):
-        if iprot._fast_decode is not None and isinstance(iprot.trans, TTransport.CReadableTransport) and self.thrift_spec is not None:
+        if (
+            iprot._fast_decode is not None
+            and isinstance(iprot.trans, TTransport.CReadableTransport)
+            and self.thrift_spec is not None
+        ):
             iprot._fast_decode(self, iprot, [self.__class__, self.thrift_spec])
             return
         iprot.readStructBegin()
@@ -435,7 +509,11 @@ class MissingParameter(object):
                 break
             if fid == 1:
                 if ftype == TType.STRING:
-                    self.parameter = iprot.readString().decode('utf-8', errors='replace') if sys.version_info[0] == 2 else iprot.readString()
+                    self.parameter = (
+                        iprot.readString().decode("utf-8", errors="replace")
+                        if sys.version_info[0] == 2
+                        else iprot.readString()
+                    )
                 else:
                     iprot.skip(ftype)
             else:
@@ -446,25 +524,30 @@ class MissingParameter(object):
     def write(self, oprot):
         self.validate()
         if oprot._fast_encode is not None and self.thrift_spec is not None:
-            oprot.trans.write(oprot._fast_encode(self, [self.__class__, self.thrift_spec]))
+            oprot.trans.write(
+                oprot._fast_encode(self, [self.__class__, self.thrift_spec])
+            )
             return
-        oprot.writeStructBegin('MissingParameter')
+        oprot.writeStructBegin("MissingParameter")
         if self.parameter is not None:
-            oprot.writeFieldBegin('parameter', TType.STRING, 1)
-            oprot.writeString(self.parameter.encode('utf-8') if sys.version_info[0] == 2 else self.parameter)
+            oprot.writeFieldBegin("parameter", TType.STRING, 1)
+            oprot.writeString(
+                self.parameter.encode("utf-8")
+                if sys.version_info[0] == 2
+                else self.parameter
+            )
             oprot.writeFieldEnd()
         oprot.writeFieldStop()
         oprot.writeStructEnd()
 
     def validate(self):
         if self.parameter is None:
-            raise TProtocolException(message='Required field parameter is unset!')
+            raise TProtocolException(message="Required field parameter is unset!")
         return
 
     def __repr__(self):
-        L = ['%s=%r' % (key, value)
-             for key, value in self.__dict__.items()]
-        return '%s(%s)' % (self.__class__.__name__, ', '.join(L))
+        L = ["%s=%r" % (key, value) for key, value in self.__dict__.items()]
+        return "%s(%s)" % (self.__class__.__name__, ", ".join(L))
 
     def __eq__(self, other):
         return isinstance(other, self.__class__) and self.__dict__ == other.__dict__
@@ -481,16 +564,25 @@ class InvalidParameterValue(object):
      - explanation
 
     """
+
     thrift_spec = None
 
-
-    def __init__(self, parameter = None, value = None, explanation = None,):
+    def __init__(
+        self,
+        parameter=None,
+        value=None,
+        explanation=None,
+    ):
         self.parameter = parameter
         self.value = value
         self.explanation = explanation
 
     def read(self, iprot):
-        if iprot._fast_decode is not None and isinstance(iprot.trans, TTransport.CReadableTransport) and self.thrift_spec is not None:
+        if (
+            iprot._fast_decode is not None
+            and isinstance(iprot.trans, TTransport.CReadableTransport)
+            and self.thrift_spec is not None
+        ):
             iprot._fast_decode(self, iprot, [self.__class__, self.thrift_spec])
             return
         iprot.readStructBegin()
@@ -500,17 +592,29 @@ class InvalidParameterValue(object):
                 break
             if fid == 1:
                 if ftype == TType.STRING:
-                    self.parameter = iprot.readString().decode('utf-8', errors='replace') if sys.version_info[0] == 2 else iprot.readString()
+                    self.parameter = (
+                        iprot.readString().decode("utf-8", errors="replace")
+                        if sys.version_info[0] == 2
+                        else iprot.readString()
+                    )
                 else:
                     iprot.skip(ftype)
             elif fid == 2:
                 if ftype == TType.STRING:
-                    self.value = iprot.readString().decode('utf-8', errors='replace') if sys.version_info[0] == 2 else iprot.readString()
+                    self.value = (
+                        iprot.readString().decode("utf-8", errors="replace")
+                        if sys.version_info[0] == 2
+                        else iprot.readString()
+                    )
                 else:
                     iprot.skip(ftype)
             elif fid == 3:
                 if ftype == TType.STRING:
-                    self.explanation = iprot.readString().decode('utf-8', errors='replace') if sys.version_info[0] == 2 else iprot.readString()
+                    self.explanation = (
+                        iprot.readString().decode("utf-8", errors="replace")
+                        if sys.version_info[0] == 2
+                        else iprot.readString()
+                    )
                 else:
                     iprot.skip(ftype)
             else:
@@ -521,35 +625,46 @@ class InvalidParameterValue(object):
     def write(self, oprot):
         self.validate()
         if oprot._fast_encode is not None and self.thrift_spec is not None:
-            oprot.trans.write(oprot._fast_encode(self, [self.__class__, self.thrift_spec]))
+            oprot.trans.write(
+                oprot._fast_encode(self, [self.__class__, self.thrift_spec])
+            )
             return
-        oprot.writeStructBegin('InvalidParameterValue')
+        oprot.writeStructBegin("InvalidParameterValue")
         if self.parameter is not None:
-            oprot.writeFieldBegin('parameter', TType.STRING, 1)
-            oprot.writeString(self.parameter.encode('utf-8') if sys.version_info[0] == 2 else self.parameter)
+            oprot.writeFieldBegin("parameter", TType.STRING, 1)
+            oprot.writeString(
+                self.parameter.encode("utf-8")
+                if sys.version_info[0] == 2
+                else self.parameter
+            )
             oprot.writeFieldEnd()
         if self.value is not None:
-            oprot.writeFieldBegin('value', TType.STRING, 2)
-            oprot.writeString(self.value.encode('utf-8') if sys.version_info[0] == 2 else self.value)
+            oprot.writeFieldBegin("value", TType.STRING, 2)
+            oprot.writeString(
+                self.value.encode("utf-8") if sys.version_info[0] == 2 else self.value
+            )
             oprot.writeFieldEnd()
         if self.explanation is not None:
-            oprot.writeFieldBegin('explanation', TType.STRING, 3)
-            oprot.writeString(self.explanation.encode('utf-8') if sys.version_info[0] == 2 else self.explanation)
+            oprot.writeFieldBegin("explanation", TType.STRING, 3)
+            oprot.writeString(
+                self.explanation.encode("utf-8")
+                if sys.version_info[0] == 2
+                else self.explanation
+            )
             oprot.writeFieldEnd()
         oprot.writeFieldStop()
         oprot.writeStructEnd()
 
     def validate(self):
         if self.parameter is None:
-            raise TProtocolException(message='Required field parameter is unset!')
+            raise TProtocolException(message="Required field parameter is unset!")
         if self.value is None:
-            raise TProtocolException(message='Required field value is unset!')
+            raise TProtocolException(message="Required field value is unset!")
         return
 
     def __repr__(self):
-        L = ['%s=%r' % (key, value)
-             for key, value in self.__dict__.items()]
-        return '%s(%s)' % (self.__class__.__name__, ', '.join(L))
+        L = ["%s=%r" % (key, value) for key, value in self.__dict__.items()]
+        return "%s(%s)" % (self.__class__.__name__, ", ".join(L))
 
     def __eq__(self, other):
         return isinstance(other, self.__class__) and self.__dict__ == other.__dict__
@@ -569,10 +684,18 @@ class DriverError(object):
      - loginError
 
     """
+
     thrift_spec = None
 
-
-    def __init__(self, authError = None, genericError = None, internalError = None, missingParameter = None, invalidParameterValue = None, loginError = None,):
+    def __init__(
+        self,
+        authError=None,
+        genericError=None,
+        internalError=None,
+        missingParameter=None,
+        invalidParameterValue=None,
+        loginError=None,
+    ):
         self.authError = authError
         self.genericError = genericError
         self.internalError = internalError
@@ -581,7 +704,11 @@ class DriverError(object):
         self.loginError = loginError
 
     def read(self, iprot):
-        if iprot._fast_decode is not None and isinstance(iprot.trans, TTransport.CReadableTransport) and self.thrift_spec is not None:
+        if (
+            iprot._fast_decode is not None
+            and isinstance(iprot.trans, TTransport.CReadableTransport)
+            and self.thrift_spec is not None
+        ):
             iprot._fast_decode(self, iprot, [self.__class__, self.thrift_spec])
             return
         iprot.readStructBegin()
@@ -633,31 +760,33 @@ class DriverError(object):
     def write(self, oprot):
         self.validate()
         if oprot._fast_encode is not None and self.thrift_spec is not None:
-            oprot.trans.write(oprot._fast_encode(self, [self.__class__, self.thrift_spec]))
+            oprot.trans.write(
+                oprot._fast_encode(self, [self.__class__, self.thrift_spec])
+            )
             return
-        oprot.writeStructBegin('DriverError')
+        oprot.writeStructBegin("DriverError")
         if self.authError is not None:
-            oprot.writeFieldBegin('authError', TType.STRUCT, 1)
+            oprot.writeFieldBegin("authError", TType.STRUCT, 1)
             self.authError.write(oprot)
             oprot.writeFieldEnd()
         if self.genericError is not None:
-            oprot.writeFieldBegin('genericError', TType.STRUCT, 2)
+            oprot.writeFieldBegin("genericError", TType.STRUCT, 2)
             self.genericError.write(oprot)
             oprot.writeFieldEnd()
         if self.internalError is not None:
-            oprot.writeFieldBegin('internalError', TType.STRUCT, 3)
+            oprot.writeFieldBegin("internalError", TType.STRUCT, 3)
             self.internalError.write(oprot)
             oprot.writeFieldEnd()
         if self.missingParameter is not None:
-            oprot.writeFieldBegin('missingParameter', TType.STRUCT, 4)
+            oprot.writeFieldBegin("missingParameter", TType.STRUCT, 4)
             self.missingParameter.write(oprot)
             oprot.writeFieldEnd()
         if self.invalidParameterValue is not None:
-            oprot.writeFieldBegin('invalidParameterValue', TType.STRUCT, 5)
+            oprot.writeFieldBegin("invalidParameterValue", TType.STRUCT, 5)
             self.invalidParameterValue.write(oprot)
             oprot.writeFieldEnd()
         if self.loginError is not None:
-            oprot.writeFieldBegin('loginError', TType.STRUCT, 6)
+            oprot.writeFieldBegin("loginError", TType.STRUCT, 6)
             self.loginError.write(oprot)
             oprot.writeFieldEnd()
         oprot.writeFieldStop()
@@ -667,9 +796,8 @@ class DriverError(object):
         return
 
     def __repr__(self):
-        L = ['%s=%r' % (key, value)
-             for key, value in self.__dict__.items()]
-        return '%s(%s)' % (self.__class__.__name__, ', '.join(L))
+        L = ["%s=%r" % (key, value) for key, value in self.__dict__.items()]
+        return "%s(%s)" % (self.__class__.__name__, ", ".join(L))
 
     def __eq__(self, other):
         return isinstance(other, self.__class__) and self.__dict__ == other.__dict__
@@ -687,14 +815,20 @@ class DriverException(TException):
      - report
 
     """
+
     thrift_spec = None
 
-
-    def __init__(self, message = None, status_code = None, error = None, report = None,):
-        super(DriverException, self).__setattr__('message', message)
-        super(DriverException, self).__setattr__('status_code', status_code)
-        super(DriverException, self).__setattr__('error', error)
-        super(DriverException, self).__setattr__('report', report)
+    def __init__(
+        self,
+        message=None,
+        status_code=None,
+        error=None,
+        report=None,
+    ):
+        super(DriverException, self).__setattr__("message", message)
+        super(DriverException, self).__setattr__("status_code", status_code)
+        super(DriverException, self).__setattr__("error", error)
+        super(DriverException, self).__setattr__("report", report)
 
     def __setattr__(self, *args):
         raise TypeError("can't modify immutable instance")
@@ -703,11 +837,22 @@ class DriverException(TException):
         raise TypeError("can't modify immutable instance")
 
     def __hash__(self):
-        return hash(self.__class__) ^ hash((self.message, self.status_code, self.error, self.report, ))
+        return hash(self.__class__) ^ hash(
+            (
+                self.message,
+                self.status_code,
+                self.error,
+                self.report,
+            )
+        )
 
     @classmethod
     def read(cls, iprot):
-        if iprot._fast_decode is not None and isinstance(iprot.trans, TTransport.CReadableTransport) and cls.thrift_spec is not None:
+        if (
+            iprot._fast_decode is not None
+            and isinstance(iprot.trans, TTransport.CReadableTransport)
+            and cls.thrift_spec is not None
+        ):
             return iprot._fast_decode(None, iprot, [cls, cls.thrift_spec])
         iprot.readStructBegin()
         message = None
@@ -720,7 +865,11 @@ class DriverException(TException):
                 break
             if fid == 1:
                 if ftype == TType.STRING:
-                    message = iprot.readString().decode('utf-8', errors='replace') if sys.version_info[0] == 2 else iprot.readString()
+                    message = (
+                        iprot.readString().decode("utf-8", errors="replace")
+                        if sys.version_info[0] == 2
+                        else iprot.readString()
+                    )
                 else:
                     iprot.skip(ftype)
             elif fid == 2:
@@ -736,7 +885,11 @@ class DriverException(TException):
                     iprot.skip(ftype)
             elif fid == 4:
                 if ftype == TType.STRING:
-                    report = iprot.readString().decode('utf-8', errors='replace') if sys.version_info[0] == 2 else iprot.readString()
+                    report = (
+                        iprot.readString().decode("utf-8", errors="replace")
+                        if sys.version_info[0] == 2
+                        else iprot.readString()
+                    )
                 else:
                     iprot.skip(ftype)
             else:
@@ -753,46 +906,53 @@ class DriverException(TException):
     def write(self, oprot):
         self.validate()
         if oprot._fast_encode is not None and self.thrift_spec is not None:
-            oprot.trans.write(oprot._fast_encode(self, [self.__class__, self.thrift_spec]))
+            oprot.trans.write(
+                oprot._fast_encode(self, [self.__class__, self.thrift_spec])
+            )
             return
-        oprot.writeStructBegin('DriverException')
+        oprot.writeStructBegin("DriverException")
         if self.message is not None:
-            oprot.writeFieldBegin('message', TType.STRING, 1)
-            oprot.writeString(self.message.encode('utf-8') if sys.version_info[0] == 2 else self.message)
+            oprot.writeFieldBegin("message", TType.STRING, 1)
+            oprot.writeString(
+                self.message.encode("utf-8")
+                if sys.version_info[0] == 2
+                else self.message
+            )
             oprot.writeFieldEnd()
         if self.status_code is not None:
-            oprot.writeFieldBegin('status_code', TType.I32, 2)
+            oprot.writeFieldBegin("status_code", TType.I32, 2)
             oprot.writeI32(self.status_code)
             oprot.writeFieldEnd()
         if self.error is not None:
-            oprot.writeFieldBegin('error', TType.STRUCT, 3)
+            oprot.writeFieldBegin("error", TType.STRUCT, 3)
             self.error.write(oprot)
             oprot.writeFieldEnd()
         if self.report is not None:
-            oprot.writeFieldBegin('report', TType.STRING, 4)
-            oprot.writeString(self.report.encode('utf-8') if sys.version_info[0] == 2 else self.report)
+            oprot.writeFieldBegin("report", TType.STRING, 4)
+            oprot.writeString(
+                self.report.encode("utf-8") if sys.version_info[0] == 2 else self.report
+            )
             oprot.writeFieldEnd()
         oprot.writeFieldStop()
         oprot.writeStructEnd()
 
     def validate(self):
         if self.message is None:
-            raise TProtocolException(message='Required field message is unset!')
+            raise TProtocolException(message="Required field message is unset!")
         if self.status_code is None:
-            raise TProtocolException(message='Required field status_code is unset!')
+            raise TProtocolException(message="Required field status_code is unset!")
         if self.error is None:
-            raise TProtocolException(message='Required field error is unset!')
+            raise TProtocolException(message="Required field error is unset!")
         if self.report is None:
-            raise TProtocolException(message='Required field report is unset!')
+            raise TProtocolException(message="Required field report is unset!")
         return
 
     def __str__(self):
         return repr(self)
 
     def __repr__(self):
-        L = ['%s=%r' % (key, value)
-             for key, value in self.__dict__.items()]
-        return '%s(%s)' % (self.__class__.__name__, ', '.join(L))
+        L = ["%s=%r" % (key, value) for key, value in self.__dict__.items()]
+        return "%s(%s)" % (self.__class__.__name__, ", ".join(L))
 
     def __eq__(self, other):
         return isinstance(other, self.__class__) and self.__dict__ == other.__dict__
@@ -808,15 +968,23 @@ class ExecuteResult(object):
      - rows_affected
 
     """
+
     thrift_spec = None
 
-
-    def __init__(self, stream = None, rows_affected = None,):
+    def __init__(
+        self,
+        stream=None,
+        rows_affected=None,
+    ):
         self.stream = stream
         self.rows_affected = rows_affected
 
     def read(self, iprot):
-        if iprot._fast_decode is not None and isinstance(iprot.trans, TTransport.CReadableTransport) and self.thrift_spec is not None:
+        if (
+            iprot._fast_decode is not None
+            and isinstance(iprot.trans, TTransport.CReadableTransport)
+            and self.thrift_spec is not None
+        ):
             iprot._fast_decode(self, iprot, [self.__class__, self.thrift_spec])
             return
         iprot.readStructBegin()
@@ -843,15 +1011,17 @@ class ExecuteResult(object):
     def write(self, oprot):
         self.validate()
         if oprot._fast_encode is not None and self.thrift_spec is not None:
-            oprot.trans.write(oprot._fast_encode(self, [self.__class__, self.thrift_spec]))
+            oprot.trans.write(
+                oprot._fast_encode(self, [self.__class__, self.thrift_spec])
+            )
             return
-        oprot.writeStructBegin('ExecuteResult')
+        oprot.writeStructBegin("ExecuteResult")
         if self.stream is not None:
-            oprot.writeFieldBegin('stream', TType.STRUCT, 1)
+            oprot.writeFieldBegin("stream", TType.STRUCT, 1)
             self.stream.write(oprot)
             oprot.writeFieldEnd()
         if self.rows_affected is not None:
-            oprot.writeFieldBegin('rows_affected', TType.I64, 2)
+            oprot.writeFieldBegin("rows_affected", TType.I64, 2)
             oprot.writeI64(self.rows_affected)
             oprot.writeFieldEnd()
         oprot.writeFieldStop()
@@ -859,15 +1029,14 @@ class ExecuteResult(object):
 
     def validate(self):
         if self.stream is None:
-            raise TProtocolException(message='Required field stream is unset!')
+            raise TProtocolException(message="Required field stream is unset!")
         if self.rows_affected is None:
-            raise TProtocolException(message='Required field rows_affected is unset!')
+            raise TProtocolException(message="Required field rows_affected is unset!")
         return
 
     def __repr__(self):
-        L = ['%s=%r' % (key, value)
-             for key, value in self.__dict__.items()]
-        return '%s(%s)' % (self.__class__.__name__, ', '.join(L))
+        L = ["%s=%r" % (key, value) for key, value in self.__dict__.items()]
+        return "%s(%s)" % (self.__class__.__name__, ", ".join(L))
 
     def __eq__(self, other):
         return isinstance(other, self.__class__) and self.__dict__ == other.__dict__
@@ -884,16 +1053,25 @@ class PartitionedResult(object):
      - rows_affected
 
     """
+
     thrift_spec = None
 
-
-    def __init__(self, schema = None, partitions = None, rows_affected = None,):
+    def __init__(
+        self,
+        schema=None,
+        partitions=None,
+        rows_affected=None,
+    ):
         self.schema = schema
         self.partitions = partitions
         self.rows_affected = rows_affected
 
     def read(self, iprot):
-        if iprot._fast_decode is not None and isinstance(iprot.trans, TTransport.CReadableTransport) and self.thrift_spec is not None:
+        if (
+            iprot._fast_decode is not None
+            and isinstance(iprot.trans, TTransport.CReadableTransport)
+            and self.thrift_spec is not None
+        ):
             iprot._fast_decode(self, iprot, [self.__class__, self.thrift_spec])
             return
         iprot.readStructBegin()
@@ -929,22 +1107,24 @@ class PartitionedResult(object):
     def write(self, oprot):
         self.validate()
         if oprot._fast_encode is not None and self.thrift_spec is not None:
-            oprot.trans.write(oprot._fast_encode(self, [self.__class__, self.thrift_spec]))
+            oprot.trans.write(
+                oprot._fast_encode(self, [self.__class__, self.thrift_spec])
+            )
             return
-        oprot.writeStructBegin('PartitionedResult')
+        oprot.writeStructBegin("PartitionedResult")
         if self.schema is not None:
-            oprot.writeFieldBegin('schema', TType.I64, 1)
+            oprot.writeFieldBegin("schema", TType.I64, 1)
             oprot.writeI64(self.schema)
             oprot.writeFieldEnd()
         if self.partitions is not None:
-            oprot.writeFieldBegin('partitions', TType.LIST, 2)
+            oprot.writeFieldBegin("partitions", TType.LIST, 2)
             oprot.writeListBegin(TType.STRING, len(self.partitions))
             for iter6 in self.partitions:
                 oprot.writeBinary(iter6)
             oprot.writeListEnd()
             oprot.writeFieldEnd()
         if self.rows_affected is not None:
-            oprot.writeFieldBegin('rows_affected', TType.I64, 3)
+            oprot.writeFieldBegin("rows_affected", TType.I64, 3)
             oprot.writeI64(self.rows_affected)
             oprot.writeFieldEnd()
         oprot.writeFieldStop()
@@ -952,17 +1132,16 @@ class PartitionedResult(object):
 
     def validate(self):
         if self.schema is None:
-            raise TProtocolException(message='Required field schema is unset!')
+            raise TProtocolException(message="Required field schema is unset!")
         if self.partitions is None:
-            raise TProtocolException(message='Required field partitions is unset!')
+            raise TProtocolException(message="Required field partitions is unset!")
         if self.rows_affected is None:
-            raise TProtocolException(message='Required field rows_affected is unset!')
+            raise TProtocolException(message="Required field rows_affected is unset!")
         return
 
     def __repr__(self):
-        L = ['%s=%r' % (key, value)
-             for key, value in self.__dict__.items()]
-        return '%s(%s)' % (self.__class__.__name__, ', '.join(L))
+        L = ["%s=%r" % (key, value) for key, value in self.__dict__.items()]
+        return "%s(%s)" % (self.__class__.__name__, ", ".join(L))
 
     def __eq__(self, other):
         return isinstance(other, self.__class__) and self.__dict__ == other.__dict__
@@ -978,15 +1157,23 @@ class DatabaseHandle(object):
      - magic
 
     """
+
     thrift_spec = None
 
-
-    def __init__(self, id = None, magic = None,):
+    def __init__(
+        self,
+        id=None,
+        magic=None,
+    ):
         self.id = id
         self.magic = magic
 
     def read(self, iprot):
-        if iprot._fast_decode is not None and isinstance(iprot.trans, TTransport.CReadableTransport) and self.thrift_spec is not None:
+        if (
+            iprot._fast_decode is not None
+            and isinstance(iprot.trans, TTransport.CReadableTransport)
+            and self.thrift_spec is not None
+        ):
             iprot._fast_decode(self, iprot, [self.__class__, self.thrift_spec])
             return
         iprot.readStructBegin()
@@ -1012,15 +1199,17 @@ class DatabaseHandle(object):
     def write(self, oprot):
         self.validate()
         if oprot._fast_encode is not None and self.thrift_spec is not None:
-            oprot.trans.write(oprot._fast_encode(self, [self.__class__, self.thrift_spec]))
+            oprot.trans.write(
+                oprot._fast_encode(self, [self.__class__, self.thrift_spec])
+            )
             return
-        oprot.writeStructBegin('DatabaseHandle')
+        oprot.writeStructBegin("DatabaseHandle")
         if self.id is not None:
-            oprot.writeFieldBegin('id', TType.I64, 1)
+            oprot.writeFieldBegin("id", TType.I64, 1)
             oprot.writeI64(self.id)
             oprot.writeFieldEnd()
         if self.magic is not None:
-            oprot.writeFieldBegin('magic', TType.I64, 2)
+            oprot.writeFieldBegin("magic", TType.I64, 2)
             oprot.writeI64(self.magic)
             oprot.writeFieldEnd()
         oprot.writeFieldStop()
@@ -1028,15 +1217,14 @@ class DatabaseHandle(object):
 
     def validate(self):
         if self.id is None:
-            raise TProtocolException(message='Required field id is unset!')
+            raise TProtocolException(message="Required field id is unset!")
         if self.magic is None:
-            raise TProtocolException(message='Required field magic is unset!')
+            raise TProtocolException(message="Required field magic is unset!")
         return
 
     def __repr__(self):
-        L = ['%s=%r' % (key, value)
-             for key, value in self.__dict__.items()]
-        return '%s(%s)' % (self.__class__.__name__, ', '.join(L))
+        L = ["%s=%r" % (key, value) for key, value in self.__dict__.items()]
+        return "%s(%s)" % (self.__class__.__name__, ", ".join(L))
 
     def __eq__(self, other):
         return isinstance(other, self.__class__) and self.__dict__ == other.__dict__
@@ -1052,15 +1240,23 @@ class ConnectionHandle(object):
      - magic
 
     """
+
     thrift_spec = None
 
-
-    def __init__(self, id = None, magic = None,):
+    def __init__(
+        self,
+        id=None,
+        magic=None,
+    ):
         self.id = id
         self.magic = magic
 
     def read(self, iprot):
-        if iprot._fast_decode is not None and isinstance(iprot.trans, TTransport.CReadableTransport) and self.thrift_spec is not None:
+        if (
+            iprot._fast_decode is not None
+            and isinstance(iprot.trans, TTransport.CReadableTransport)
+            and self.thrift_spec is not None
+        ):
             iprot._fast_decode(self, iprot, [self.__class__, self.thrift_spec])
             return
         iprot.readStructBegin()
@@ -1086,15 +1282,17 @@ class ConnectionHandle(object):
     def write(self, oprot):
         self.validate()
         if oprot._fast_encode is not None and self.thrift_spec is not None:
-            oprot.trans.write(oprot._fast_encode(self, [self.__class__, self.thrift_spec]))
+            oprot.trans.write(
+                oprot._fast_encode(self, [self.__class__, self.thrift_spec])
+            )
             return
-        oprot.writeStructBegin('ConnectionHandle')
+        oprot.writeStructBegin("ConnectionHandle")
         if self.id is not None:
-            oprot.writeFieldBegin('id', TType.I64, 1)
+            oprot.writeFieldBegin("id", TType.I64, 1)
             oprot.writeI64(self.id)
             oprot.writeFieldEnd()
         if self.magic is not None:
-            oprot.writeFieldBegin('magic', TType.I64, 2)
+            oprot.writeFieldBegin("magic", TType.I64, 2)
             oprot.writeI64(self.magic)
             oprot.writeFieldEnd()
         oprot.writeFieldStop()
@@ -1102,15 +1300,14 @@ class ConnectionHandle(object):
 
     def validate(self):
         if self.id is None:
-            raise TProtocolException(message='Required field id is unset!')
+            raise TProtocolException(message="Required field id is unset!")
         if self.magic is None:
-            raise TProtocolException(message='Required field magic is unset!')
+            raise TProtocolException(message="Required field magic is unset!")
         return
 
     def __repr__(self):
-        L = ['%s=%r' % (key, value)
-             for key, value in self.__dict__.items()]
-        return '%s(%s)' % (self.__class__.__name__, ', '.join(L))
+        L = ["%s=%r" % (key, value) for key, value in self.__dict__.items()]
+        return "%s(%s)" % (self.__class__.__name__, ", ".join(L))
 
     def __eq__(self, other):
         return isinstance(other, self.__class__) and self.__dict__ == other.__dict__
@@ -1126,15 +1323,23 @@ class StatementHandle(object):
      - magic
 
     """
+
     thrift_spec = None
 
-
-    def __init__(self, id = None, magic = None,):
+    def __init__(
+        self,
+        id=None,
+        magic=None,
+    ):
         self.id = id
         self.magic = magic
 
     def read(self, iprot):
-        if iprot._fast_decode is not None and isinstance(iprot.trans, TTransport.CReadableTransport) and self.thrift_spec is not None:
+        if (
+            iprot._fast_decode is not None
+            and isinstance(iprot.trans, TTransport.CReadableTransport)
+            and self.thrift_spec is not None
+        ):
             iprot._fast_decode(self, iprot, [self.__class__, self.thrift_spec])
             return
         iprot.readStructBegin()
@@ -1160,15 +1365,17 @@ class StatementHandle(object):
     def write(self, oprot):
         self.validate()
         if oprot._fast_encode is not None and self.thrift_spec is not None:
-            oprot.trans.write(oprot._fast_encode(self, [self.__class__, self.thrift_spec]))
+            oprot.trans.write(
+                oprot._fast_encode(self, [self.__class__, self.thrift_spec])
+            )
             return
-        oprot.writeStructBegin('StatementHandle')
+        oprot.writeStructBegin("StatementHandle")
         if self.id is not None:
-            oprot.writeFieldBegin('id', TType.I64, 1)
+            oprot.writeFieldBegin("id", TType.I64, 1)
             oprot.writeI64(self.id)
             oprot.writeFieldEnd()
         if self.magic is not None:
-            oprot.writeFieldBegin('magic', TType.I64, 2)
+            oprot.writeFieldBegin("magic", TType.I64, 2)
             oprot.writeI64(self.magic)
             oprot.writeFieldEnd()
         oprot.writeFieldStop()
@@ -1176,15 +1383,14 @@ class StatementHandle(object):
 
     def validate(self):
         if self.id is None:
-            raise TProtocolException(message='Required field id is unset!')
+            raise TProtocolException(message="Required field id is unset!")
         if self.magic is None:
-            raise TProtocolException(message='Required field magic is unset!')
+            raise TProtocolException(message="Required field magic is unset!")
         return
 
     def __repr__(self):
-        L = ['%s=%r' % (key, value)
-             for key, value in self.__dict__.items()]
-        return '%s(%s)' % (self.__class__.__name__, ', '.join(L))
+        L = ["%s=%r" % (key, value) for key, value in self.__dict__.items()]
+        return "%s(%s)" % (self.__class__.__name__, ", ".join(L))
 
     def __eq__(self, other):
         return isinstance(other, self.__class__) and self.__dict__ == other.__dict__
@@ -1199,14 +1405,21 @@ class ArrowArrayStreamPtr(object):
      - value
 
     """
+
     thrift_spec = None
 
-
-    def __init__(self, value = None,):
+    def __init__(
+        self,
+        value=None,
+    ):
         self.value = value
 
     def read(self, iprot):
-        if iprot._fast_decode is not None and isinstance(iprot.trans, TTransport.CReadableTransport) and self.thrift_spec is not None:
+        if (
+            iprot._fast_decode is not None
+            and isinstance(iprot.trans, TTransport.CReadableTransport)
+            and self.thrift_spec is not None
+        ):
             iprot._fast_decode(self, iprot, [self.__class__, self.thrift_spec])
             return
         iprot.readStructBegin()
@@ -1227,11 +1440,13 @@ class ArrowArrayStreamPtr(object):
     def write(self, oprot):
         self.validate()
         if oprot._fast_encode is not None and self.thrift_spec is not None:
-            oprot.trans.write(oprot._fast_encode(self, [self.__class__, self.thrift_spec]))
+            oprot.trans.write(
+                oprot._fast_encode(self, [self.__class__, self.thrift_spec])
+            )
             return
-        oprot.writeStructBegin('ArrowArrayStreamPtr')
+        oprot.writeStructBegin("ArrowArrayStreamPtr")
         if self.value is not None:
-            oprot.writeFieldBegin('value', TType.STRING, 1)
+            oprot.writeFieldBegin("value", TType.STRING, 1)
             oprot.writeBinary(self.value)
             oprot.writeFieldEnd()
         oprot.writeFieldStop()
@@ -1239,13 +1454,12 @@ class ArrowArrayStreamPtr(object):
 
     def validate(self):
         if self.value is None:
-            raise TProtocolException(message='Required field value is unset!')
+            raise TProtocolException(message="Required field value is unset!")
         return
 
     def __repr__(self):
-        L = ['%s=%r' % (key, value)
-             for key, value in self.__dict__.items()]
-        return '%s(%s)' % (self.__class__.__name__, ', '.join(L))
+        L = ["%s=%r" % (key, value) for key, value in self.__dict__.items()]
+        return "%s(%s)" % (self.__class__.__name__, ", ".join(L))
 
     def __eq__(self, other):
         return isinstance(other, self.__class__) and self.__dict__ == other.__dict__
@@ -1260,14 +1474,21 @@ class ArrowSchemaPtr(object):
      - value
 
     """
+
     thrift_spec = None
 
-
-    def __init__(self, value = None,):
+    def __init__(
+        self,
+        value=None,
+    ):
         self.value = value
 
     def read(self, iprot):
-        if iprot._fast_decode is not None and isinstance(iprot.trans, TTransport.CReadableTransport) and self.thrift_spec is not None:
+        if (
+            iprot._fast_decode is not None
+            and isinstance(iprot.trans, TTransport.CReadableTransport)
+            and self.thrift_spec is not None
+        ):
             iprot._fast_decode(self, iprot, [self.__class__, self.thrift_spec])
             return
         iprot.readStructBegin()
@@ -1288,11 +1509,13 @@ class ArrowSchemaPtr(object):
     def write(self, oprot):
         self.validate()
         if oprot._fast_encode is not None and self.thrift_spec is not None:
-            oprot.trans.write(oprot._fast_encode(self, [self.__class__, self.thrift_spec]))
+            oprot.trans.write(
+                oprot._fast_encode(self, [self.__class__, self.thrift_spec])
+            )
             return
-        oprot.writeStructBegin('ArrowSchemaPtr')
+        oprot.writeStructBegin("ArrowSchemaPtr")
         if self.value is not None:
-            oprot.writeFieldBegin('value', TType.STRING, 1)
+            oprot.writeFieldBegin("value", TType.STRING, 1)
             oprot.writeBinary(self.value)
             oprot.writeFieldEnd()
         oprot.writeFieldStop()
@@ -1300,13 +1523,12 @@ class ArrowSchemaPtr(object):
 
     def validate(self):
         if self.value is None:
-            raise TProtocolException(message='Required field value is unset!')
+            raise TProtocolException(message="Required field value is unset!")
         return
 
     def __repr__(self):
-        L = ['%s=%r' % (key, value)
-             for key, value in self.__dict__.items()]
-        return '%s(%s)' % (self.__class__.__name__, ', '.join(L))
+        L = ["%s=%r" % (key, value) for key, value in self.__dict__.items()]
+        return "%s(%s)" % (self.__class__.__name__, ", ".join(L))
 
     def __eq__(self, other):
         return isinstance(other, self.__class__) and self.__dict__ == other.__dict__
@@ -1321,14 +1543,21 @@ class ArrowArrayPtr(object):
      - value
 
     """
+
     thrift_spec = None
 
-
-    def __init__(self, value = None,):
+    def __init__(
+        self,
+        value=None,
+    ):
         self.value = value
 
     def read(self, iprot):
-        if iprot._fast_decode is not None and isinstance(iprot.trans, TTransport.CReadableTransport) and self.thrift_spec is not None:
+        if (
+            iprot._fast_decode is not None
+            and isinstance(iprot.trans, TTransport.CReadableTransport)
+            and self.thrift_spec is not None
+        ):
             iprot._fast_decode(self, iprot, [self.__class__, self.thrift_spec])
             return
         iprot.readStructBegin()
@@ -1349,11 +1578,13 @@ class ArrowArrayPtr(object):
     def write(self, oprot):
         self.validate()
         if oprot._fast_encode is not None and self.thrift_spec is not None:
-            oprot.trans.write(oprot._fast_encode(self, [self.__class__, self.thrift_spec]))
+            oprot.trans.write(
+                oprot._fast_encode(self, [self.__class__, self.thrift_spec])
+            )
             return
-        oprot.writeStructBegin('ArrowArrayPtr')
+        oprot.writeStructBegin("ArrowArrayPtr")
         if self.value is not None:
-            oprot.writeFieldBegin('value', TType.STRING, 1)
+            oprot.writeFieldBegin("value", TType.STRING, 1)
             oprot.writeBinary(self.value)
             oprot.writeFieldEnd()
         oprot.writeFieldStop()
@@ -1361,117 +1592,314 @@ class ArrowArrayPtr(object):
 
     def validate(self):
         if self.value is None:
-            raise TProtocolException(message='Required field value is unset!')
+            raise TProtocolException(message="Required field value is unset!")
         return
 
     def __repr__(self):
-        L = ['%s=%r' % (key, value)
-             for key, value in self.__dict__.items()]
-        return '%s(%s)' % (self.__class__.__name__, ', '.join(L))
+        L = ["%s=%r" % (key, value) for key, value in self.__dict__.items()]
+        return "%s(%s)" % (self.__class__.__name__, ", ".join(L))
 
     def __eq__(self, other):
         return isinstance(other, self.__class__) and self.__dict__ == other.__dict__
 
     def __ne__(self, other):
         return not (self == other)
+
+
 all_structs.append(ErrorDetail)
 ErrorDetail.thrift_spec = (
     None,  # 0
-    (1, TType.STRING, 'key', 'UTF8', None, ),  # 1
-    (2, TType.STRING, 'value', 'UTF8', None, ),  # 2
+    (
+        1,
+        TType.STRING,
+        "key",
+        "UTF8",
+        None,
+    ),  # 1
+    (
+        2,
+        TType.STRING,
+        "value",
+        "UTF8",
+        None,
+    ),  # 2
 )
 all_structs.append(AuthenticationError)
 AuthenticationError.thrift_spec = (
     None,  # 0
-    (1, TType.STRING, 'detail', 'UTF8', None, ),  # 1
+    (
+        1,
+        TType.STRING,
+        "detail",
+        "UTF8",
+        None,
+    ),  # 1
 )
 all_structs.append(GenericError)
-GenericError.thrift_spec = (
-)
+GenericError.thrift_spec = ()
 all_structs.append(InternalError)
-InternalError.thrift_spec = (
-)
+InternalError.thrift_spec = ()
 all_structs.append(LoginError)
 LoginError.thrift_spec = (
     None,  # 0
-    (1, TType.STRING, 'message', 'UTF8', None, ),  # 1
-    (2, TType.I32, 'code', None, None, ),  # 2
+    (
+        1,
+        TType.STRING,
+        "message",
+        "UTF8",
+        None,
+    ),  # 1
+    (
+        2,
+        TType.I32,
+        "code",
+        None,
+        None,
+    ),  # 2
 )
 all_structs.append(MissingParameter)
 MissingParameter.thrift_spec = (
     None,  # 0
-    (1, TType.STRING, 'parameter', 'UTF8', None, ),  # 1
+    (
+        1,
+        TType.STRING,
+        "parameter",
+        "UTF8",
+        None,
+    ),  # 1
 )
 all_structs.append(InvalidParameterValue)
 InvalidParameterValue.thrift_spec = (
     None,  # 0
-    (1, TType.STRING, 'parameter', 'UTF8', None, ),  # 1
-    (2, TType.STRING, 'value', 'UTF8', None, ),  # 2
-    (3, TType.STRING, 'explanation', 'UTF8', None, ),  # 3
+    (
+        1,
+        TType.STRING,
+        "parameter",
+        "UTF8",
+        None,
+    ),  # 1
+    (
+        2,
+        TType.STRING,
+        "value",
+        "UTF8",
+        None,
+    ),  # 2
+    (
+        3,
+        TType.STRING,
+        "explanation",
+        "UTF8",
+        None,
+    ),  # 3
 )
 all_structs.append(DriverError)
 DriverError.thrift_spec = (
     None,  # 0
-    (1, TType.STRUCT, 'authError', [AuthenticationError, None], None, ),  # 1
-    (2, TType.STRUCT, 'genericError', [GenericError, None], None, ),  # 2
-    (3, TType.STRUCT, 'internalError', [InternalError, None], None, ),  # 3
-    (4, TType.STRUCT, 'missingParameter', [MissingParameter, None], None, ),  # 4
-    (5, TType.STRUCT, 'invalidParameterValue', [InvalidParameterValue, None], None, ),  # 5
-    (6, TType.STRUCT, 'loginError', [LoginError, None], None, ),  # 6
+    (
+        1,
+        TType.STRUCT,
+        "authError",
+        [AuthenticationError, None],
+        None,
+    ),  # 1
+    (
+        2,
+        TType.STRUCT,
+        "genericError",
+        [GenericError, None],
+        None,
+    ),  # 2
+    (
+        3,
+        TType.STRUCT,
+        "internalError",
+        [InternalError, None],
+        None,
+    ),  # 3
+    (
+        4,
+        TType.STRUCT,
+        "missingParameter",
+        [MissingParameter, None],
+        None,
+    ),  # 4
+    (
+        5,
+        TType.STRUCT,
+        "invalidParameterValue",
+        [InvalidParameterValue, None],
+        None,
+    ),  # 5
+    (
+        6,
+        TType.STRUCT,
+        "loginError",
+        [LoginError, None],
+        None,
+    ),  # 6
 )
 all_structs.append(DriverException)
 DriverException.thrift_spec = (
     None,  # 0
-    (1, TType.STRING, 'message', 'UTF8', None, ),  # 1
-    (2, TType.I32, 'status_code', None, None, ),  # 2
-    (3, TType.STRUCT, 'error', [DriverError, None], None, ),  # 3
-    (4, TType.STRING, 'report', 'UTF8', None, ),  # 4
+    (
+        1,
+        TType.STRING,
+        "message",
+        "UTF8",
+        None,
+    ),  # 1
+    (
+        2,
+        TType.I32,
+        "status_code",
+        None,
+        None,
+    ),  # 2
+    (
+        3,
+        TType.STRUCT,
+        "error",
+        [DriverError, None],
+        None,
+    ),  # 3
+    (
+        4,
+        TType.STRING,
+        "report",
+        "UTF8",
+        None,
+    ),  # 4
 )
 all_structs.append(ExecuteResult)
 ExecuteResult.thrift_spec = (
     None,  # 0
-    (1, TType.STRUCT, 'stream', [ArrowArrayStreamPtr, None], None, ),  # 1
-    (2, TType.I64, 'rows_affected', None, None, ),  # 2
+    (
+        1,
+        TType.STRUCT,
+        "stream",
+        [ArrowArrayStreamPtr, None],
+        None,
+    ),  # 1
+    (
+        2,
+        TType.I64,
+        "rows_affected",
+        None,
+        None,
+    ),  # 2
 )
 all_structs.append(PartitionedResult)
 PartitionedResult.thrift_spec = (
     None,  # 0
-    (1, TType.I64, 'schema', None, None, ),  # 1
-    (2, TType.LIST, 'partitions', (TType.STRING, 'BINARY', False), None, ),  # 2
-    (3, TType.I64, 'rows_affected', None, None, ),  # 3
+    (
+        1,
+        TType.I64,
+        "schema",
+        None,
+        None,
+    ),  # 1
+    (
+        2,
+        TType.LIST,
+        "partitions",
+        (TType.STRING, "BINARY", False),
+        None,
+    ),  # 2
+    (
+        3,
+        TType.I64,
+        "rows_affected",
+        None,
+        None,
+    ),  # 3
 )
 all_structs.append(DatabaseHandle)
 DatabaseHandle.thrift_spec = (
     None,  # 0
-    (1, TType.I64, 'id', None, None, ),  # 1
-    (2, TType.I64, 'magic', None, None, ),  # 2
+    (
+        1,
+        TType.I64,
+        "id",
+        None,
+        None,
+    ),  # 1
+    (
+        2,
+        TType.I64,
+        "magic",
+        None,
+        None,
+    ),  # 2
 )
 all_structs.append(ConnectionHandle)
 ConnectionHandle.thrift_spec = (
     None,  # 0
-    (1, TType.I64, 'id', None, None, ),  # 1
-    (2, TType.I64, 'magic', None, None, ),  # 2
+    (
+        1,
+        TType.I64,
+        "id",
+        None,
+        None,
+    ),  # 1
+    (
+        2,
+        TType.I64,
+        "magic",
+        None,
+        None,
+    ),  # 2
 )
 all_structs.append(StatementHandle)
 StatementHandle.thrift_spec = (
     None,  # 0
-    (1, TType.I64, 'id', None, None, ),  # 1
-    (2, TType.I64, 'magic', None, None, ),  # 2
+    (
+        1,
+        TType.I64,
+        "id",
+        None,
+        None,
+    ),  # 1
+    (
+        2,
+        TType.I64,
+        "magic",
+        None,
+        None,
+    ),  # 2
 )
 all_structs.append(ArrowArrayStreamPtr)
 ArrowArrayStreamPtr.thrift_spec = (
     None,  # 0
-    (1, TType.STRING, 'value', 'BINARY', None, ),  # 1
+    (
+        1,
+        TType.STRING,
+        "value",
+        "BINARY",
+        None,
+    ),  # 1
 )
 all_structs.append(ArrowSchemaPtr)
 ArrowSchemaPtr.thrift_spec = (
     None,  # 0
-    (1, TType.STRING, 'value', 'BINARY', None, ),  # 1
+    (
+        1,
+        TType.STRING,
+        "value",
+        "BINARY",
+        None,
+    ),  # 1
 )
 all_structs.append(ArrowArrayPtr)
 ArrowArrayPtr.thrift_spec = (
     None,  # 0
-    (1, TType.STRING, 'value', 'BINARY', None, ),  # 1
+    (
+        1,
+        TType.STRING,
+        "value",
+        "BINARY",
+        None,
+    ),  # 1
 )
 fix_spec(all_structs)
 del all_structs

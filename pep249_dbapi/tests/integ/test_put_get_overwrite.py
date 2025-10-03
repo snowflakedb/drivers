@@ -13,9 +13,7 @@ def test_put_overwrite_true(cursor):
     _, updated = updated_test_file()
 
     # Upload the file to the stage
-    cursor.execute(
-        f"PUT 'file://{as_file_uri(original)}' @{stage_name}"
-    )
+    cursor.execute(f"PUT 'file://{as_file_uri(original)}' @{stage_name}")
 
     # Verify that the file was uploaded
     row = cursor.fetchone()
@@ -23,9 +21,7 @@ def test_put_overwrite_true(cursor):
     assert row[PUT_ROW_STATUS_IDX] == "UPLOADED"
 
     # Upload again with changed content and OVERWRITE=TRUE
-    cursor.execute(
-        f"PUT 'file://{as_file_uri(updated)}' @{stage_name} OVERWRITE=TRUE"
-    )
+    cursor.execute(f"PUT 'file://{as_file_uri(updated)}' @{stage_name} OVERWRITE=TRUE")
 
     # Verify that the file was uploaded
     row = cursor.fetchone()
@@ -44,9 +40,7 @@ def test_put_overwrite_false(cursor):
     _, updated = updated_test_file()
 
     # Upload the file to the stage
-    cursor.execute(
-        f"PUT 'file://{as_file_uri(original)}' @{stage_name}"
-    )
+    cursor.execute(f"PUT 'file://{as_file_uri(original)}' @{stage_name}")
 
     # Verify that the file was uploaded
     row = cursor.fetchone()
@@ -54,9 +48,7 @@ def test_put_overwrite_false(cursor):
     assert row[PUT_ROW_STATUS_IDX] == "UPLOADED"
 
     # Try to upload changed content with OVERWRITE=FALSE
-    cursor.execute(
-        f"PUT 'file://{as_file_uri(updated)}' @{stage_name} OVERWRITE=FALSE"
-    )
+    cursor.execute(f"PUT 'file://{as_file_uri(updated)}' @{stage_name} OVERWRITE=FALSE")
 
     # Verify that the file was not uploaded
     row = cursor.fetchone()

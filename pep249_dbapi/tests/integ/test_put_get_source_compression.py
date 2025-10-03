@@ -59,7 +59,9 @@ def test_put_source_compression_auto_detect_deflate(cursor):
 
 
 def test_put_source_compression_auto_detect_none_no_auto_compress(cursor):
-    stage_name = create_temporary_stage(cursor, "PYTEST_STAGE_AUTO_DETECT_NONE_NO_AUTO_COMPRESS")
+    stage_name = create_temporary_stage(
+        cursor, "PYTEST_STAGE_AUTO_DETECT_NONE_NO_AUTO_COMPRESS"
+    )
     filename, file_path = compressed_test_file("NONE")
 
     # Upload the file to the stage with AUTO_DETECT and AUTO_COMPRESS=FALSE
@@ -77,7 +79,9 @@ def test_put_source_compression_auto_detect_none_no_auto_compress(cursor):
 
 
 def test_put_source_compression_auto_detect_none_with_auto_compress(cursor):
-    stage_name = create_temporary_stage(cursor, "PYTEST_STAGE_AUTO_DETECT_NONE_WITH_AUTO_COMPRESS")
+    stage_name = create_temporary_stage(
+        cursor, "PYTEST_STAGE_AUTO_DETECT_NONE_WITH_AUTO_COMPRESS"
+    )
     filename, file_path = compressed_test_file("NONE")
 
     # Upload the file to the stage with AUTO_DETECT and AUTO_COMPRESS=TRUE
@@ -94,7 +98,9 @@ def test_put_source_compression_auto_detect_none_with_auto_compress(cursor):
     assert row[PUT_ROW_STATUS_IDX] == "UPLOADED"
 
 
-@pytest.mark.parametrize("compression_type", ["GZIP", "BZIP2", "ZSTD", "DEFLATE", "RAW_DEFLATE"])
+@pytest.mark.parametrize(
+    "compression_type", ["GZIP", "BZIP2", "ZSTD", "DEFLATE", "RAW_DEFLATE"]
+)
 def test_put_source_compression_explicit_standard_types(cursor, compression_type):
     stage_name = create_temporary_stage(cursor, "PYTEST_STAGE_EXPLICIT_COMPRESSION")
     filename, file_path = compressed_test_file(compression_type)
@@ -136,7 +142,9 @@ def test_put_source_compression_explicit_brotli(cursor):
 
 
 def test_put_source_compression_explicit_none_no_auto_compress(cursor):
-    stage_name = create_temporary_stage(cursor, "PYTEST_STAGE_EXPLICIT_NONE_NO_AUTO_COMPRESS")
+    stage_name = create_temporary_stage(
+        cursor, "PYTEST_STAGE_EXPLICIT_NONE_NO_AUTO_COMPRESS"
+    )
     filename, file_path = compressed_test_file("NONE")
 
     cursor.execute(
@@ -152,7 +160,9 @@ def test_put_source_compression_explicit_none_no_auto_compress(cursor):
 
 
 def test_put_source_compression_explicit_with_auto_compress(cursor):
-    stage_name = create_temporary_stage(cursor, "PYTEST_STAGE_EXPLICIT_WITH_AUTO_COMPRESS")
+    stage_name = create_temporary_stage(
+        cursor, "PYTEST_STAGE_EXPLICIT_WITH_AUTO_COMPRESS"
+    )
     filename, file_path = compressed_test_file("NONE")
 
     cursor.execute(

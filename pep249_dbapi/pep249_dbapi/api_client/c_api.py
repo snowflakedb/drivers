@@ -2,14 +2,18 @@ from enum import Enum
 import ctypes
 import logging
 
+
 class CORE_API(Enum):
     DATABASE_DRIVER_API_V1 = 1
+
 
 class CAPIHandle(ctypes.Structure):
     _fields_ = [("id", ctypes.c_int64), ("magic", ctypes.c_int64)]
 
+
 try:
     import os
+
     if "CORE_PATH" not in os.environ:
         raise ImportError(
             "CORE_PATH environment variable not set. Set CORE_PATH to the built core library, e.g. ../target/debug/libsf_core.dylib"
@@ -30,7 +34,14 @@ core.sf_core_api_read.argtypes = [CAPIHandle, ctypes.c_char_p, ctypes.c_size_t]
 core.sf_core_api_flush.restype = None
 core.sf_core_api_flush.argtypes = [CAPIHandle]
 
-LOGGER_CALLBACK = ctypes.CFUNCTYPE(ctypes.c_uint32, ctypes.c_uint32, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint32, ctypes.c_char_p)
+LOGGER_CALLBACK = ctypes.CFUNCTYPE(
+    ctypes.c_uint32,
+    ctypes.c_uint32,
+    ctypes.c_char_p,
+    ctypes.c_char_p,
+    ctypes.c_uint32,
+    ctypes.c_char_p,
+)
 core.sf_core_init_logger.argtypes = [LOGGER_CALLBACK]
 core.sf_core_init_logger.restype = ctypes.c_uint32
 
@@ -41,28 +52,37 @@ core.sf_core_api_call_proto.argtypes = [
     ctypes.POINTER(ctypes.c_ubyte),  # const char* request
     ctypes.c_size_t,  # size_t request_len
     ctypes.POINTER(ctypes.POINTER(ctypes.c_ubyte)),  # char* const* response
-    ctypes.POINTER(ctypes.c_size_t)  # size_t* response_len
+    ctypes.POINTER(ctypes.c_size_t),  # size_t* response_len
 ]
+
 
 def sf_core_api_read(channel, buf, len):
     core.sf_core_api_read(channel, buf, len)
 
+
 def sf_core_api_write(channel, buf, len):
     core.sf_core_api_write(channel, buf, len)
 
+
 def sf_core_api_flush(channel):
     core.sf_core_api_flush(channel)
+
 
 def sf_core_api_init(api_id):
     if api_id not in CORE_API:
         raise ValueError(f"Invalid API ID: {api_id}")
     return core.sf_core_api_init(api_id.value)
 
+
 def sf_core_api_call_proto(api, method, request, request_len, response, response_len):
-    return core.sf_core_api_call_proto(api, method, request, request_len, response, response_len)
+    return core.sf_core_api_call_proto(
+        api, method, request, request_len, response, response_len
+    )
+
 
 def sf_core_init_logger(callback):
     core.sf_core_init_logger(callback)
+
 
 level_map = {
     # sf_core level -> python logging level
@@ -72,15 +92,27 @@ level_map = {
     3: logging.DEBUG,
 }
 
+
 def logger_callback(level, message, filename, line, function):
     if level not in level_map:
         return 0
     logger = logging.getLogger("sf_core")
-    record = logger.makeRecord("sf_core", level_map[level], filename.decode('utf-8'), line, message.decode('utf-8'), [], None, func=function.decode('utf-8'))
+    record = logger.makeRecord(
+        "sf_core",
+        level_map[level],
+        filename.decode("utf-8"),
+        line,
+        message.decode("utf-8"),
+        [],
+        None,
+        func=function.decode("utf-8"),
+    )
     logger.handle(record)
     return 0
 
+
 c_logger_callback = LOGGER_CALLBACK(logger_callback)
+
 
 def register_default_logger_callback():
     """

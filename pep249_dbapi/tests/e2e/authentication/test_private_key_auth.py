@@ -20,22 +20,19 @@ class TestPrivateKeyAuthentication:
         # When Trying to Connect
         with create_valid_key_file() as private_key_file:
             connection = create_jwt_connection(
-                connection_factory,
-                private_key_file,
-                private_key_password
+                connection_factory, private_key_file, private_key_password
             )
 
         # Then Login is successful and simple query can be executed
         with connection:
             verify_simple_query_execution(connection)
 
-
     def test_should_fail_jwt_authentication_when_invalid_private_key_provided(
         self, connection_factory
     ):
         # Given Authentication is set to JWT and invalid private key file is provided
         invalid_private_key_file = get_invalid_key_file_path()
-        
+
         # When Trying to Connect
         with pytest.raises(Exception) as exception:
             create_jwt_connection(
@@ -47,7 +44,9 @@ class TestPrivateKeyAuthentication:
         verify_login_error(exception)
 
 
-def create_jwt_connection(connection_factory, private_key_file, private_key_password=None):
+def create_jwt_connection(
+    connection_factory, private_key_file, private_key_password=None
+):
     if OLD_DRIVER_ONLY("BC#5"):
         kwargs = {
             "authenticator": "SNOWFLAKE_JWT",
@@ -57,13 +56,14 @@ def create_jwt_connection(connection_factory, private_key_file, private_key_pass
             kwargs["private_key_file_pwd"] = private_key_password
     elif NEW_DRIVER_ONLY("BC#5"):
         kwargs = {
-            "authenticator": "SNOWFLAKE_JWT", 
+            "authenticator": "SNOWFLAKE_JWT",
             "private_key_file": private_key_file,
         }
         if private_key_password:
             kwargs["private_key_password"] = private_key_password
-    
+
     return connection_factory(**kwargs)
+
 
 @contextmanager
 def create_valid_key_file():

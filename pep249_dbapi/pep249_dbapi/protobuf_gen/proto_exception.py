@@ -1,6 +1,7 @@
 class ProtoException(Exception):
     pass
 
+
 class ProtoApplicationException(ProtoException):
     def __init__(self, error, *args, **kwargs):
         self.api_error_pb = error
@@ -10,7 +11,9 @@ class ProtoApplicationException(ProtoException):
         try:
             return getattr(self.api_error_pb, name)
         except AttributeError:
-            raise AttributeError(f"'{type(self).__name__}' underlying protobuf object has no attribute '{name}'")
+            raise AttributeError(
+                f"'{type(self).__name__}' underlying protobuf object has no attribute '{name}'"
+            )
 
 
 class ProtoTransportException(ProtoException):

@@ -28,9 +28,7 @@ def test_put_select(cursor):
     _, file_path = uncompressed_test_file()
 
     # Upload the file to the stage
-    cursor.execute(
-        f"PUT 'file://{as_file_uri(file_path)}' @{stage_name}"
-    )
+    cursor.execute(f"PUT 'file://{as_file_uri(file_path)}' @{stage_name}")
 
     # Query the staged file and verify the content
     select_sql = f"SELECT $1, $2, $3 FROM @{stage_name}"
@@ -44,9 +42,7 @@ def test_put_ls(cursor):
     filename, file_path = uncompressed_test_file()
 
     # Upload the file to the stage
-    cursor.execute(
-        f"PUT 'file://{as_file_uri(file_path)}' @{stage_name}"
-    )
+    cursor.execute(f"PUT 'file://{as_file_uri(file_path)}' @{stage_name}")
 
     # List stage contents and verify the gzipped file is present
     expected_filename = f"{stage_name.lower()}/{filename}.gz"
@@ -62,9 +58,7 @@ def test_get(cursor):
     _, compressed_file_path = compressed_test_file()
 
     # Upload the file to the stage
-    cursor.execute(
-        f"PUT 'file://{as_file_uri(file_path)}' @{stage_name}"
-    )
+    cursor.execute(f"PUT 'file://{as_file_uri(file_path)}' @{stage_name}")
 
     with tempfile.TemporaryDirectory() as tmp:
         download_dir = Path(tmp) / "download"
@@ -119,7 +113,9 @@ def test_put_get_rowset(cursor):
     with tempfile.TemporaryDirectory() as tmp:
         tmpdir_path = Path(tmp)
         # Download the file from the stage
-        cursor.execute(f"GET @{stage_name}/{filename} 'file://{as_file_uri(tmpdir_path)}/'")
+        cursor.execute(
+            f"GET @{stage_name}/{filename} 'file://{as_file_uri(tmpdir_path)}/'"
+        )
 
         # Verify the download result
         row = cursor.fetchone()
@@ -141,4 +137,7 @@ def uncompressed_test_file():
 
 
 def compressed_test_file():
-    return "test_data.csv.gz", shared_test_data_dir() / "compression" / "test_data.csv.gz"
+    return (
+        "test_data.csv.gz",
+        shared_test_data_dir() / "compression" / "test_data.csv.gz",
+    )
