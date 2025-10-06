@@ -70,6 +70,28 @@ fn metrics() -> &'static CrlMetrics {
 }
 
 impl CrlCache {
+    // Decide if a CRL with the given IDP scope applies to the target certificate and URL
+    fn crl_applicable_for_cert(
+        scope_opt: Option<crate::tls::x509_utils::IdpScope>,
+        is_ca_cert: bool,
+        url: &str,
+    ) -> bool {
+        if let Some(scope) = scope_opt {
+            if let Some(uris) = &scope.dp_uris {
+                // BRs: CRL partitioned by DP must include a URI that matches cert CRLDP; empty URIs (RelativeName) are non-compliant for DP matching
+                if uris.is_empty() || !uris.iter().any(|u| u == url) {
+                    return false;
+                }
+            }
+            if scope.only_ca && !is_ca_cert {
+                return false;
+            }
+            if scope.only_user && is_ca_cert {
+                return false;
+            }
+        }
+        true
+    }
     fn record_revocation_outcome(
         &self,
         serial: &[u8],
@@ -150,6 +172,10 @@ impl CrlCache {
                 return Ok(hit);
             }
         }
+        // Determine if target certificate is a CA certificate for IDP scope checks
+        let is_ca_cert =
+            crate::crl::certificate_parser::is_ca_certificate(cert_der).unwrap_or(false);
+
         // Try URLs
         let mut any_verified = false;
         let mut any_full_coverage = false;
@@ -159,6 +185,13 @@ impl CrlCache {
                 .get(url)
                 .await
                 .context(crate::tls::revocation::CrlOperationSnafu)?;
+            // Full IDP scope: DP URIs and flag constraints
+            let scope = crate::tls::x509_utils::extract_crl_idp_scope(&bytes)
+                .ok()
+                .flatten();
+            if !Self::crl_applicable_for_cert(scope.clone(), is_ca_cert, url) {
+                continue;
+            }
             if let Ok(Some(dt)) = crate::tls::x509_utils::extract_crl_next_update(&bytes) {
                 min_expires = Some(match min_expires {
                     Some(cur) => cur.min(dt),
@@ -177,10 +210,9 @@ impl CrlCache {
                 Ok(None) => {
                     // Not revoked in this CRL, continue
                     any_verified = true;
-                    let full_coverage = match crate::tls::x509_utils::extract_crl_idp_scope(&bytes)
-                    {
-                        Ok(Some(scope)) => !scope.has_only_some_reasons && !scope.only_attribute,
-                        _ => true,
+                    let full_coverage = match &scope {
+                        Some(scope) => !scope.has_only_some_reasons && !scope.only_attribute,
+                        None => true,
                     };
                     if full_coverage {
                         any_full_coverage = true;
@@ -588,6 +620,86 @@ mod tests {
             enable_disk_caching: false,
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn crl_applicability_enforces_dp_and_type() {
+        // EE cert case, DP URI must match when present
+        let is_ca = false;
+        let url = "http://example/crl";
+        let scope_match = crate::tls::x509_utils::IdpScope {
+            only_user: true,
+            only_ca: false,
+            only_attribute: false,
+            indirect_crl: false,
+            has_only_some_reasons: false,
+            dp_uris: Some(vec![url.to_string()]),
+        };
+        let scope_mismatch = crate::tls::x509_utils::IdpScope {
+            dp_uris: Some(vec!["http://other".into()]),
+            ..scope_match.clone()
+        };
+        let scope_relname = crate::tls::x509_utils::IdpScope {
+            dp_uris: Some(vec![]),
+            ..scope_match.clone()
+        };
+        let scope_type_mismatch = crate::tls::x509_utils::IdpScope {
+            only_user: false,
+            only_ca: true,
+            dp_uris: None,
+            ..scope_match.clone()
+        };
+
+        assert!(CrlCache::crl_applicable_for_cert(
+            Some(scope_match.clone()),
+            is_ca,
+            url
+        ));
+        assert!(!CrlCache::crl_applicable_for_cert(
+            Some(scope_mismatch),
+            is_ca,
+            url
+        ));
+        assert!(!CrlCache::crl_applicable_for_cert(
+            Some(scope_relname),
+            is_ca,
+            url
+        ));
+        assert!(!CrlCache::crl_applicable_for_cert(
+            Some(scope_type_mismatch),
+            is_ca,
+            url
+        ));
+
+        // CA cert case: only_user should reject
+        let is_ca = true;
+        let scope_only_user = crate::tls::x509_utils::IdpScope {
+            only_user: true,
+            only_ca: false,
+            dp_uris: None,
+            ..scope_match.clone()
+        };
+        assert!(!CrlCache::crl_applicable_for_cert(
+            Some(scope_only_user),
+            is_ca,
+            url
+        ));
+
+        // No DP (None) and no type flags => applicable
+        let is_ca = false;
+        let scope_no_dp = crate::tls::x509_utils::IdpScope {
+            only_user: false,
+            only_ca: false,
+            only_attribute: false,
+            indirect_crl: false,
+            has_only_some_reasons: false,
+            dp_uris: None,
+        };
+        assert!(CrlCache::crl_applicable_for_cert(
+            Some(scope_no_dp),
+            is_ca,
+            url
+        ));
     }
 
     #[test]

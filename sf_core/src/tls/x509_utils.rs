@@ -64,13 +64,15 @@ pub fn extract_crl_next_update(crl_der: &[u8]) -> Result<Option<DateTime<Utc>>, 
     Ok(None)
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IdpScope {
     pub only_user: bool,
     pub only_ca: bool,
     pub only_attribute: bool,
     pub indirect_crl: bool,
     pub has_only_some_reasons: bool,
+    // None => no distributionPoint; Some(vec) => DP present; empty vec means RelativeName (no URIs)
+    pub dp_uris: Option<Vec<String>>,
 }
 
 pub fn extract_crl_idp_scope(crl_der: &[u8]) -> Result<Option<IdpScope>, X509Error> {
@@ -78,12 +80,34 @@ pub fn extract_crl_idp_scope(crl_der: &[u8]) -> Result<Option<IdpScope>, X509Err
     {
         for ext in crl.tbs_cert_list.extensions() {
             if let ParsedExtension::IssuingDistributionPoint(idp) = ext.parsed_extension() {
+                let only_user = idp.only_contains_user_certs;
+                let only_ca = idp.only_contains_ca_certs;
+                let only_attribute = idp.only_contains_attribute_certs;
+                let indirect_crl = idp.indirect_crl;
+                let has_only_some_reasons = idp.only_some_reasons.is_some();
+                let dp_uris = match &idp.distribution_point {
+                    Some(x509_parser::extensions::DistributionPointName::FullName(names)) => {
+                        let uris: Vec<String> = names
+                            .iter()
+                            .filter_map(|gn| match gn {
+                                x509_parser::extensions::GeneralName::URI(u) => Some(u.to_string()),
+                                _ => None,
+                            })
+                            .collect();
+                        Some(uris)
+                    }
+                    Some(
+                        x509_parser::extensions::DistributionPointName::NameRelativeToCRLIssuer(_),
+                    ) => Some(Vec::new()),
+                    None => None,
+                };
                 return Ok(Some(IdpScope {
-                    only_user: idp.only_contains_user_certs,
-                    only_ca: idp.only_contains_ca_certs,
-                    only_attribute: idp.only_contains_attribute_certs,
-                    indirect_crl: idp.indirect_crl,
-                    has_only_some_reasons: idp.only_some_reasons.is_some(),
+                    only_user,
+                    only_ca,
+                    only_attribute,
+                    indirect_crl,
+                    has_only_some_reasons,
+                    dp_uris,
                 }));
             }
         }
@@ -509,5 +533,37 @@ mod tests {
             result.is_err(),
             "Verification should fail for an invalid CRL DER"
         );
+    }
+
+    #[test]
+    fn idp_scope_no_idp() {
+        // Invalid/empty CRL DER: function returns Ok(None) (not an error)
+        let der = vec![];
+        let res = extract_crl_idp_scope(&der);
+        assert!(res.is_ok());
+        assert!(res.unwrap().is_none());
+    }
+
+    #[test]
+    fn idp_scope_with_fullname_uris() {
+        // This is a structural test; we synthesize an IDP scope to validate struct handling
+        let scope = IdpScope {
+            only_user: false,
+            only_ca: true,
+            only_attribute: false,
+            indirect_crl: false,
+            has_only_some_reasons: false,
+            dp_uris: Some(vec!["http://example/crl".to_string()]),
+        };
+        assert!(
+            scope
+                .dp_uris
+                .as_ref()
+                .unwrap()
+                .iter()
+                .any(|u| u == "http://example/crl")
+        );
+        assert!(scope.only_ca);
+        assert!(!scope.only_user);
     }
 }
