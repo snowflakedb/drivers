@@ -27,8 +27,12 @@ impl CrlServerCertVerifier {
                 s
             }
         };
-        let webpki_verifier = WebPkiServerVerifier::builder(Arc::new(root_store)).build()?;
-        let crl_validator = Arc::new(CrlValidator::new(crl_config.clone())?);
+        let root_store = Arc::new(root_store);
+        let webpki_verifier = WebPkiServerVerifier::builder(root_store.clone()).build()?;
+        let crl_validator = Arc::new(CrlValidator::new_with_root_store(
+            crl_config.clone(),
+            Some(root_store.clone()),
+        )?);
         Ok(Self {
             webpki_verifier,
             crl_validator,

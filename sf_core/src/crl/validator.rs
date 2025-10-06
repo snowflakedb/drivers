@@ -7,12 +7,29 @@ use std::sync::Arc;
 pub struct CrlValidator {
     pub config: CrlConfig,
     cache: Arc<CrlCache>,
+    root_store: Option<Arc<rustls::RootCertStore>>, // used to verify CRL signatures for top-most intermediates
 }
 
 impl CrlValidator {
     pub fn new(config: CrlConfig) -> Result<Self, CrlError> {
         let cache = CrlCache::global(config.clone()).clone();
-        Ok(Self { config, cache })
+        Ok(Self {
+            config,
+            cache,
+            root_store: None,
+        })
+    }
+
+    pub fn new_with_root_store(
+        config: CrlConfig,
+        root_store: Option<Arc<rustls::RootCertStore>>,
+    ) -> Result<Self, CrlError> {
+        let cache = CrlCache::global(config.clone()).clone();
+        Ok(Self {
+            config,
+            cache,
+            root_store,
+        })
     }
 
     /// Validate provided certificate chains. Returns Ok(()) if at least one chain is unrevoked.
@@ -70,7 +87,12 @@ impl CrlValidator {
 
         let outcome = match self
             .cache
-            .check_revocation(cert_der, issuer_der, Some(&issuer_candidates))
+            .check_revocation(
+                cert_der,
+                issuer_der,
+                Some(&issuer_candidates),
+                self.root_store.as_deref(),
+            )
             .await
         {
             Ok(o) => Ok(o),
@@ -85,7 +107,12 @@ impl CrlValidator {
                 if should_retry {
                     tracing::debug!(target: "sf_core::crl", "CRL expired, attempting refetch");
                     self.cache
-                        .check_revocation(cert_der, issuer_der, Some(&issuer_candidates))
+                        .check_revocation(
+                            cert_der,
+                            issuer_der,
+                            Some(&issuer_candidates),
+                            self.root_store.as_deref(),
+                        )
                         .await
                 } else {
                     Err(e)

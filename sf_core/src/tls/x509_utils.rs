@@ -130,16 +130,16 @@ pub fn extract_crl_number(crl_der: &[u8]) -> Result<Option<u128>, X509Error> {
     Ok(None)
 }
 
-// Best-effort CRL signature verification using issuer public key
+// CRL signature verification using issuer public key
 // Returns Ok(()) if verification passes or issuer is None; Err otherwise.
 pub fn verify_crl_signature(crl_der: &[u8], issuer_der: Option<&[u8]>) -> Result<(), CrlError> {
     let crl = RcCertificateList::from_der(crl_der).context(CrlListParseSnafu)?;
-    let sig = crl.signature.as_bytes().context(InvalidCrlSignatureSnafu)?;
-    let tbs = tbs_crl_der(crl_der)?;
+    let _sig = crl.signature.as_bytes().context(InvalidCrlSignatureSnafu)?;
+    let _tbs = tbs_crl_der(crl_der)?;
 
     let issuer_der = match issuer_der {
         Some(v) => v,
-        None => return Ok(()),
+        None => return InvalidCrlSignatureSnafu {}.fail(),
     };
     let issuer_cert =
         x509_cert::Certificate::from_der(issuer_der).context(CertificateParseSnafu)?;
@@ -215,17 +215,48 @@ pub fn verify_crl_signature(crl_der: &[u8], issuer_der: Option<&[u8]>) -> Result
         }
     }
 
-    // Verify signature
-    let spk_bytes = issuer_cert
+    // Delegate to shared SPKI-based verifier
+    use x509_cert::der::Encode;
+    let subject_der = issuer_cert
+        .tbs_certificate
+        .subject
+        .to_der()
+        .context(CrlToDerSnafu)?;
+    let spki_der = issuer_cert
         .tbs_certificate
         .subject_public_key_info
+        .to_der()
+        .context(CrlToDerSnafu)?;
+    verify_crl_sig_with_name_and_spki(crl_der, subject_der.as_slice(), spki_der.as_slice())
+}
+
+// Verify CRL signature using a trust anchor (subject DER + SPKI DER)
+pub fn verify_crl_signature_with_anchor(
+    crl_der: &[u8],
+    anchor_subject_der: &[u8],
+    anchor_spki_der: &[u8],
+) -> Result<(), CrlError> {
+    verify_crl_sig_with_name_and_spki(crl_der, anchor_subject_der, anchor_spki_der)
+}
+
+// Shared verifier using issuer Name DER and SPKI DER
+fn verify_crl_sig_with_name_and_spki(
+    crl_der: &[u8],
+    issuer_name_der: &[u8],
+    spki_der: &[u8],
+) -> Result<(), CrlError> {
+    let crl = RcCertificateList::from_der(crl_der).context(CrlListParseSnafu)?;
+    let issuer_name = x509_cert::name::Name::from_der(issuer_name_der).context(CrlToDerSnafu)?;
+    if issuer_name != crl.tbs_cert_list.issuer {
+        return CrlIssuerMismatchSnafu {}.fail();
+    }
+    let spki =
+        x509_cert::spki::SubjectPublicKeyInfoRef::from_der(spki_der).context(CrlToDerSnafu)?;
+    let spk_bytes = spki
         .subject_public_key
         .as_bytes()
         .context(InvalidCrlSignatureSnafu)?;
-    // First, try verification using aws-lc-rs (ring-compatible API)
-    let try_verify = |alg: &'static dyn aws_lc_rs::signature::VerificationAlgorithm| {
-        aws_lc_rs::signature::UnparsedPublicKey::new(alg, spk_bytes).verify(&tbs, sig)
-    };
+
     use aws_lc_rs::signature::{
         ECDSA_P256_SHA256_ASN1, ECDSA_P384_SHA384_ASN1, ED25519, RSA_PKCS1_2048_8192_SHA256,
         RSA_PKCS1_2048_8192_SHA384, RSA_PKCS1_2048_8192_SHA512, RSA_PSS_2048_8192_SHA256,
@@ -240,7 +271,12 @@ pub fn verify_crl_signature(crl_der: &[u8], issuer_der: Option<&[u8]>) -> Result
     let oid_ecdsa_sha384 = ObjectIdentifier::new_unwrap("1.2.840.10045.4.3.3");
     let oid_ed25519 = ObjectIdentifier::new_unwrap("1.3.101.112");
 
-    // Try aws-lc-rs first
+    let tbs = tbs_crl_der(crl_der)?;
+    let sig_bytes = crl.signature.as_bytes().context(InvalidCrlSignatureSnafu)?;
+    let try_verify = |alg: &'static dyn aws_lc_rs::signature::VerificationAlgorithm| {
+        aws_lc_rs::signature::UnparsedPublicKey::new(alg, spk_bytes).verify(&tbs, sig_bytes)
+    };
+
     let ring_like = if oid == oid_sha256_rsa {
         try_verify(&RSA_PKCS1_2048_8192_SHA256)
     } else if oid == oid_sha384_rsa {
@@ -248,7 +284,6 @@ pub fn verify_crl_signature(crl_der: &[u8], issuer_der: Option<&[u8]>) -> Result
     } else if oid == oid_sha512_rsa {
         try_verify(&RSA_PKCS1_2048_8192_SHA512)
     } else if oid == oid_rsassa_pss {
-        // A compliant client MUST check PSS parameters; for now, we accept common hashes
         try_verify(&RSA_PSS_2048_8192_SHA256)
             .or_else(|_| try_verify(&RSA_PSS_2048_8192_SHA384))
             .or_else(|_| try_verify(&RSA_PSS_2048_8192_SHA512))
@@ -259,12 +294,65 @@ pub fn verify_crl_signature(crl_der: &[u8], issuer_der: Option<&[u8]>) -> Result
     } else if oid == oid_ed25519 {
         try_verify(&ED25519)
     } else {
-        // Unsupported algorithm
         Err(aws_lc_rs::error::Unspecified)
     };
     if ring_like.is_ok() {
         return Ok(());
     }
+    InvalidCrlSignatureSnafu {}.fail()
+}
+
+pub fn verify_crl_signature_against_roots(
+    crl_der: &[u8],
+    root_store: Option<&rustls::RootCertStore>,
+) -> Result<(), CrlError> {
+    // Parse CRL once
+    let crl = RcCertificateList::from_der(crl_der).context(CrlListParseSnafu)?;
+    let crl_issuer_der = crl.tbs_cert_list.issuer.to_der().context(CrlToDerSnafu)?;
+
+    // Helper to try a slice of anchors (subject, spki)
+    fn try_anchors(crl_der: &[u8], crl_issuer_der: &[u8], anchors: &[(Vec<u8>, Vec<u8>)]) -> bool {
+        for (subject_der, spki_der) in anchors {
+            if subject_der.as_slice() == crl_issuer_der
+                && verify_crl_sig_with_name_and_spki(crl_der, subject_der, spki_der).is_ok()
+            {
+                return true;
+            }
+        }
+        false
+    }
+
+    // Choose store = provided or default
+    let anchors: Vec<(Vec<u8>, Vec<u8>)> = if let Some(store) = root_store {
+        // Build anchors from provided RootCertStore (TrustAnchor structs)
+        store
+            .roots
+            .iter()
+            .map(|a| {
+                (
+                    a.subject.as_ref().to_vec(),
+                    a.subject_public_key_info.as_ref().to_vec(),
+                )
+            })
+            .collect()
+    } else {
+        // Default to webpki roots
+        use webpki_roots::TLS_SERVER_ROOTS;
+        TLS_SERVER_ROOTS
+            .iter()
+            .map(|a| {
+                (
+                    a.subject.as_ref().to_vec(),
+                    a.subject_public_key_info.as_ref().to_vec(),
+                )
+            })
+            .collect()
+    };
+
+    if try_anchors(crl_der, &crl_issuer_der, &anchors) {
+        return Ok(());
+    }
+
     InvalidCrlSignatureSnafu {}.fail()
 }
 
@@ -533,6 +621,14 @@ mod tests {
             result.is_err(),
             "Verification should fail for an invalid CRL DER"
         );
+    }
+
+    #[test]
+    fn test_verify_crl_signature_against_default_roots_invalid_der() {
+        // Empty/garbled CRL DER should not verify against default roots
+        let crl_der: Vec<u8> = vec![];
+        let res = verify_crl_signature_against_roots(&crl_der, None);
+        assert!(res.is_err());
     }
 
     #[test]

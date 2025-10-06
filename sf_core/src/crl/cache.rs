@@ -1,5 +1,5 @@
 use crate::crl::config::CrlConfig;
-use crate::crl::error::{CrlDownloadSnafu, CrlError, MutexPoisonedSnafu};
+use crate::crl::error::{CrlDownloadSnafu, CrlError, InvalidCrlSignatureSnafu, MutexPoisonedSnafu};
 use chrono::{DateTime, Utc};
 use once_cell::sync::OnceCell;
 use opentelemetry::metrics::{Counter, Histogram, Meter};
@@ -8,6 +8,7 @@ use sha2::{Digest, Sha256};
 use snafu::ResultExt;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use tokio_stream::StreamExt;
 
 #[derive(Debug, Clone)]
 pub struct CachedCrl {
@@ -38,6 +39,13 @@ pub struct CrlCache {
     url_locks: Arc<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>,
     backoff: Arc<Mutex<HashMap<String, (u32, std::time::Instant)>>>,
     http_client: reqwest::Client,
+    // Scheduler control channel to wake DelayQueue loop on updates
+    scheduler_tx: OnceCell<tokio::sync::mpsc::Sender<SchedulerMsg>>,
+}
+
+#[derive(Debug)]
+enum SchedulerMsg {
+    Schedule(String),
 }
 
 #[derive(Debug, Clone)]
@@ -70,6 +78,132 @@ fn metrics() -> &'static CrlMetrics {
 }
 
 impl CrlCache {
+    // Compute remaining duration until half-life. None if expired or invalid.
+    fn compute_half_life_duration(
+        entry: &CachedCrl,
+        now: DateTime<Utc>,
+    ) -> Option<std::time::Duration> {
+        if now >= entry.expires_at {
+            return None;
+        }
+        let total_ms = (entry.expires_at - entry.download_time).num_milliseconds();
+        if total_ms <= 0 {
+            return None;
+        }
+        let half_ms = total_ms / 2;
+        let half_time = entry.download_time + chrono::Duration::milliseconds(half_ms);
+        if now >= half_time {
+            Some(std::time::Duration::from_secs(0))
+        } else {
+            (half_time - now).to_std().ok()
+        }
+    }
+
+    // Whether we should refresh now based on half-life rule
+    fn should_refresh_at_half_life(entry: &CachedCrl, now: DateTime<Utc>) -> bool {
+        if now >= entry.expires_at {
+            return false;
+        }
+        let total_ms = (entry.expires_at - entry.download_time).num_milliseconds();
+        if total_ms <= 0 {
+            return false;
+        }
+        let half_ms = total_ms / 2;
+        let half_time = entry.download_time + chrono::Duration::milliseconds(half_ms);
+        now >= half_time
+    }
+    // Spawn a singleton scheduler using DelayQueue keyed to CRL half-life deadlines.
+    fn spawn_background_refresher(this: Arc<Self>) {
+        use tokio_util::time::DelayQueue;
+        // Only spawn if memory caching is enabled; otherwise there's nothing to scan
+        if this.memory_cache.is_none() {
+            return;
+        }
+
+        let thread_name = "crl-refresh".to_string();
+        let _ = std::thread::Builder::new()
+            .name(thread_name)
+            .spawn(move || {
+                let rt = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .expect("Failed to create CRL refresh runtime");
+                rt.block_on(async move {
+                    // control channel to receive schedule updates
+                    let (tx, mut rx) = tokio::sync::mpsc::channel::<SchedulerMsg>(128);
+                    // publish tx to instance so put()/fetch can notify (OnceCell ensures set once)
+                    let _ = this.scheduler_tx.set(tx);
+
+                    let mut dq: DelayQueue<String> = DelayQueue::new();
+                    let mut keys: HashMap<String, tokio_util::time::delay_queue::Key> = HashMap::new();
+
+                    // Seed existing entries
+                    if let Some(memory) = &this.memory_cache
+                        && let Ok(cache) = memory.lock()
+                    {
+                        for (url, entry) in cache.iter() {
+                            if let Some(dur) = Self::compute_half_life_duration(entry, Utc::now()) {
+                                let key = dq.insert(url.clone(), dur);
+                                keys.insert(url.clone(), key);
+                            }
+                        }
+                    }
+
+                    loop {
+                        tokio::select! {
+                            // Next scheduled refresh
+                            maybe_item = dq.next(), if !dq.is_empty() => {
+                                if let Some(expired) = maybe_item { // a url is due
+                                    let url = expired.into_inner();
+                                    let me = this.clone();
+                                    // refresh with per-URL lock and then reschedule based on new data
+                                    let url_for_task = url.clone();
+                                    let _ = tokio::spawn(async move {
+                                        let lock = match me.get_url_lock(&url_for_task) { Ok(l) => l, Err(_) => return };
+                                        let _guard = lock.lock().await;
+                                        // Check current cache entry and validity
+                                        if let Ok(Some(entry)) = me.get_from_memory_cache(&url_for_task).await
+                                            && Utc::now() < entry.expires_at
+                                        {
+                                            let _ = me.fetch_from_network_and_cache(&url_for_task).await;
+                                        }
+                                    }).await;
+                                    // After refresh, look up updated entry and reschedule
+                                    if let Ok(Some(entry)) = this.get_from_memory_cache(&url).await
+                                        && let Some(dur) = Self::compute_half_life_duration(&entry, Utc::now())
+                                    {
+                                        let key = dq.insert(url.clone(), dur);
+                                        keys.insert(url.clone(), key);
+                                    } else {
+                                        keys.remove(&url);
+                                    }
+                                }
+                            }
+                            // Updates from cache changes
+                            Some(msg) = rx.recv() => {
+                                match msg {
+                                    SchedulerMsg::Schedule(url) => {
+                                        if let Ok(Some(entry)) = this.get_from_memory_cache(&url).await
+                                            && let Some(dur) = Self::compute_half_life_duration(&entry, Utc::now())
+                                        {
+                                            // replace existing schedule if any
+                                            if let Some(old) = keys.remove(&url) { let _ = dq.remove(&old); }
+                                            let key = dq.insert(url.clone(), dur);
+                                            keys.insert(url, key);
+                                        }
+                                    }
+                                }
+                            }
+                            else => {
+                                // If nothing scheduled yet, idle briefly to avoid busy loop
+                                tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+                            }
+                        }
+                    }
+                });
+            });
+    }
+
     // Decide if a CRL with the given IDP scope applies to the target certificate and URL
     fn crl_applicable_for_cert(
         scope_opt: Option<crate::tls::x509_utils::IdpScope>,
@@ -148,19 +282,17 @@ impl CrlCache {
         cert_der: &[u8],
         issuer_der: Option<&[u8]>,
         issuer_candidates: Option<&[&[u8]]>,
+        root_store: Option<&rustls::RootCertStore>,
     ) -> Result<crate::tls::revocation::RevocationOutcome, crate::tls::revocation::RevocationError>
     {
         use crate::tls::revocation::RevocationOutcome;
-        // Extract CRL URLs
         let crl_urls = crate::crl::certificate_parser::extract_crl_distribution_points(cert_der)
             .context(crate::tls::revocation::DistributionPointsSnafu)?;
         if crl_urls.is_empty() {
             return Ok(RevocationOutcome::NotDetermined);
         }
-        // Get certificate serial
         let serial = crate::crl::certificate_parser::get_certificate_serial_number(cert_der)
             .context(crate::tls::revocation::CrlOperationSnafu)?;
-        // Outcome cache lookup if issuer is known
         if let Some(issuer) = issuer_der
             && let Some(issuer_hash) = crate::tls::x509_utils::subject_der_hash(issuer)
         {
@@ -172,11 +304,8 @@ impl CrlCache {
                 return Ok(hit);
             }
         }
-        // Determine if target certificate is a CA certificate for IDP scope checks
         let is_ca_cert =
             crate::crl::certificate_parser::is_ca_certificate(cert_der).unwrap_or(false);
-
-        // Try URLs
         let mut any_verified = false;
         let mut any_full_coverage = false;
         let mut min_expires: Option<DateTime<Utc>> = None;
@@ -185,7 +314,6 @@ impl CrlCache {
                 .get(url)
                 .await
                 .context(crate::tls::revocation::CrlOperationSnafu)?;
-            // Full IDP scope: DP URIs and flag constraints
             let scope = crate::tls::x509_utils::extract_crl_idp_scope(&bytes)
                 .ok()
                 .flatten();
@@ -198,9 +326,8 @@ impl CrlCache {
                     None => dt,
                 });
             }
-
             match self
-                .verify_and_check_crl(&bytes, &serial, issuer_der, issuer_candidates)
+                .verify_and_check_crl(&bytes, &serial, issuer_der, issuer_candidates, root_store)
                 .await
             {
                 Ok(Some(outcome)) => {
@@ -208,7 +335,6 @@ impl CrlCache {
                     return Ok(outcome);
                 }
                 Ok(None) => {
-                    // Not revoked in this CRL, continue
                     any_verified = true;
                     let full_coverage = match &scope {
                         Some(scope) => !scope.has_only_some_reasons && !scope.only_attribute,
@@ -218,15 +344,12 @@ impl CrlCache {
                         any_full_coverage = true;
                     }
                 }
-                Err(_) => {
-                    // Error with this CRL, continue to the next one
-                }
+                Err(_) => {}
             }
         }
         if !any_verified {
             return Ok(RevocationOutcome::NotDetermined);
         }
-        // If we verified only partial coverage CRLs, absence does not prove non-revocation
         let outcome = if any_full_coverage {
             RevocationOutcome::NotRevoked
         } else {
@@ -242,6 +365,7 @@ impl CrlCache {
         serial: &[u8],
         issuer_der: Option<&[u8]>,
         issuer_candidates: Option<&[&[u8]]>,
+        root_store: Option<&rustls::RootCertStore>,
     ) -> Result<Option<crate::tls::revocation::RevocationOutcome>, CrlError> {
         use crate::tls::revocation::RevocationOutcome;
         let mut verified =
@@ -254,9 +378,15 @@ impl CrlCache {
                 }
             }
         }
+        // If still not verified, try configured root store or default roots
+        if !verified {
+            verified =
+                crate::tls::x509_utils::verify_crl_signature_against_roots(crl_bytes, root_store)
+                    .is_ok();
+        }
 
         if !verified {
-            return Ok(None);
+            return InvalidCrlSignatureSnafu {}.fail();
         }
 
         let is_revoked =
@@ -298,6 +428,7 @@ impl CrlCache {
             url_locks: Arc::new(Mutex::new(HashMap::new())),
             backoff: Arc::new(Mutex::new(HashMap::new())),
             http_client,
+            scheduler_tx: OnceCell::new(),
         })
     }
 
@@ -319,12 +450,16 @@ impl CrlCache {
                                 url_locks: Arc::new(Mutex::new(HashMap::new())),
                                 backoff: Arc::new(Mutex::new(HashMap::new())),
                                 http_client: reqwest::Client::new(),
+                                scheduler_tx: OnceCell::new(),
                             }
                         }
                     }
                 }
             };
-            Arc::new(cache)
+            let arc = Arc::new(cache);
+            // Start background refresh worker once
+            CrlCache::spawn_background_refresher(arc.clone());
+            arc
         })
     }
 
@@ -364,6 +499,7 @@ impl CrlCache {
     }
 
     pub fn put(&self, cached_crl: CachedCrl) -> Result<(), CrlError> {
+        let url_key = cached_crl.url.clone();
         if let Some(memory) = &self.memory_cache
             && let Ok(mut cache) = memory.lock()
         {
@@ -372,7 +508,15 @@ impl CrlCache {
             {
                 return Ok(());
             }
-            cache.insert(cached_crl.url.clone(), cached_crl);
+            cache.insert(url_key.clone(), cached_crl);
+        }
+        // Notify scheduler to (re)schedule this URL
+        if let Some(tx) = self.scheduler_tx.get()
+            && let Some(memory) = &self.memory_cache
+            && let Ok(cache) = memory.lock()
+            && let Some(entry) = cache.get(&url_key)
+        {
+            let _ = tx.try_send(SchedulerMsg::Schedule(entry.url.clone()));
         }
         Ok(())
     }
@@ -613,6 +757,8 @@ impl CrlCache {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::runtime::Builder;
+    use tokio::time::timeout;
 
     fn test_config() -> CrlConfig {
         CrlConfig {
@@ -762,5 +908,68 @@ mod tests {
         cache.put(low).expect("put low");
         let got = cache.get_cached(&url).expect("ok").expect("present");
         assert_eq!(got.crl_number, Some(20));
+    }
+
+    #[test]
+    fn half_life_helpers_work_before_and_after_threshold() {
+        let now = Utc::now();
+        let entry = CachedCrl {
+            crl: vec![],
+            download_time: now - chrono::Duration::hours(1),
+            url: "http://example/crl".to_string(),
+            expires_at: now + chrono::Duration::hours(1),
+            crl_number: Some(1),
+        };
+        // Half-life is exactly `now`
+        let before =
+            CrlCache::compute_half_life_duration(&entry, now - chrono::Duration::seconds(1));
+        assert!(before.is_some());
+        assert!(before.unwrap() > std::time::Duration::from_millis(0));
+        assert!(!CrlCache::should_refresh_at_half_life(
+            &entry,
+            now - chrono::Duration::seconds(1)
+        ));
+
+        let at = CrlCache::compute_half_life_duration(&entry, now);
+        assert_eq!(at, Some(std::time::Duration::from_secs(0)));
+        assert!(CrlCache::should_refresh_at_half_life(&entry, now));
+
+        let after =
+            CrlCache::compute_half_life_duration(&entry, now + chrono::Duration::seconds(1));
+        assert_eq!(after, Some(std::time::Duration::from_secs(0)));
+        assert!(CrlCache::should_refresh_at_half_life(
+            &entry,
+            now + chrono::Duration::seconds(1)
+        ));
+    }
+
+    #[test]
+    fn scheduler_is_notified_on_put() {
+        let cache = CrlCache::new(test_config()).expect("cache");
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<SchedulerMsg>(1);
+        // Set scheduler sender for test
+        let _ = cache.scheduler_tx.set(tx);
+
+        let url = "http://example/crl".to_string();
+        let entry = CachedCrl {
+            crl: vec![1, 2, 3],
+            download_time: Utc::now(),
+            url: url.clone(),
+            expires_at: Utc::now() + chrono::Duration::hours(1),
+            crl_number: Some(1),
+        };
+        cache.put(entry).expect("put");
+
+        // Await a notification briefly
+        let rt = Builder::new_current_thread().enable_all().build().unwrap();
+        rt.block_on(async {
+            let msg = timeout(std::time::Duration::from_millis(200), rx.recv())
+                .await
+                .expect("timed out");
+            match msg {
+                Some(SchedulerMsg::Schedule(u)) => assert_eq!(u, url),
+                other => panic!("unexpected msg: {:?}", other),
+            }
+        });
     }
 }
