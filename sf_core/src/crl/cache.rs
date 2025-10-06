@@ -321,10 +321,12 @@ impl CrlCache {
         if let (Some(prev_num), Some(new_num)) = (prev.crl_number, new.crl_number) {
             return new_num > prev_num;
         }
-        if let Ok(Some(prev_dt)) = crate::tls::x509_utils::extract_crl_next_update(&prev.crl)
-            && let Ok(Some(new_dt)) = crate::tls::x509_utils::extract_crl_next_update(&new.crl)
-        {
-            return new_dt > prev_dt;
+        // Prefer comparing thisUpdate when crlNumber is absent, as it reflects issuance time
+        if let (Ok((prev_this, _)), Ok((new_this, _))) = (
+            crate::tls::x509_utils::crl_times(&prev.crl),
+            crate::tls::x509_utils::crl_times(&new.crl),
+        ) {
+            return new_this > prev_this;
         }
         true // Default to replacing if comparison is not possible
     }

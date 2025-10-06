@@ -47,22 +47,8 @@ pub fn is_short_lived_certificate_with_threshold(
     cert_der: &[u8],
     threshold_days: i64,
 ) -> Result<bool, CrlError> {
-    let (_, cert) =
-        x509_parser::certificate::X509Certificate::from_der(cert_der).context(CrlParsingSnafu)?;
-
-    let validity = &cert.validity;
-    let not_before_dt =
-        asn1_time_to_datetime(&validity.not_before).ok_or_else(|| CrlError::CrlParsing {
-            source: x509_parser::nom::Err::Failure(x509_parser::error::X509Error::InvalidDate),
-            location: Location::new(file!(), line!(), 0),
-        })?;
-    let not_after_dt =
-        asn1_time_to_datetime(&validity.not_after).ok_or_else(|| CrlError::CrlParsing {
-            source: x509_parser::nom::Err::Failure(x509_parser::error::X509Error::InvalidDate),
-            location: Location::new(file!(), line!(), 0),
-        })?;
-
-    let validity_period_seconds = (not_after_dt - not_before_dt).num_seconds();
+    let validity_inclusive = get_certificate_validity_duration_inclusive(cert_der)?;
+    let validity_period_seconds = validity_inclusive.num_seconds();
     let threshold_seconds = threshold_days * 24 * 60 * 60;
 
     let is_short_lived = validity_period_seconds <= threshold_seconds;
@@ -76,10 +62,14 @@ pub fn is_short_lived_certificate_with_threshold(
 }
 
 /// Use CA/B BR short-lived threshold: 10 days until 2026-03-15, then 7 days
+/// Determined based on the certificate's notBefore date (issuance)
 pub fn is_short_lived_certificate(cert_der: &[u8]) -> Result<bool, CrlError> {
-    let now = chrono::Utc::now();
+    // CA/B BR transition date
     let cutoff = chrono::Utc.with_ymd_and_hms(2026, 3, 15, 0, 0, 0).unwrap();
-    let threshold_days = if now < cutoff { 10 } else { 7 };
+
+    let not_before_dt = get_certificate_not_before(cert_der)?;
+
+    let threshold_days = if not_before_dt < cutoff { 10 } else { 7 };
     is_short_lived_certificate_with_threshold(cert_der, threshold_days)
 }
 
@@ -88,6 +78,47 @@ pub fn get_certificate_serial_number(cert_der: &[u8]) -> Result<Vec<u8>, CrlErro
     let (_, cert) =
         x509_parser::certificate::X509Certificate::from_der(cert_der).context(CrlParsingSnafu)?;
     Ok(cert.serial.to_bytes_be())
+}
+
+/// Get the certificate's notBefore timestamp as chrono::DateTime<Utc>
+pub fn get_certificate_not_before(
+    cert_der: &[u8],
+) -> Result<chrono::DateTime<chrono::Utc>, CrlError> {
+    let (_, cert) =
+        x509_parser::certificate::X509Certificate::from_der(cert_der).context(CrlParsingSnafu)?;
+    asn1_time_to_datetime(&cert.validity.not_before).ok_or_else(|| CrlError::CrlParsing {
+        source: x509_parser::nom::Err::Failure(x509_parser::error::X509Error::InvalidDate),
+        location: Location::new(file!(), line!(), 0),
+    })
+}
+
+/// Get the certificate's notAfter timestamp as chrono::DateTime<Utc>
+pub fn get_certificate_not_after(
+    cert_der: &[u8],
+) -> Result<chrono::DateTime<chrono::Utc>, CrlError> {
+    let (_, cert) =
+        x509_parser::certificate::X509Certificate::from_der(cert_der).context(CrlParsingSnafu)?;
+    asn1_time_to_datetime(&cert.validity.not_after).ok_or_else(|| CrlError::CrlParsing {
+        source: x509_parser::nom::Err::Failure(x509_parser::error::X509Error::InvalidDate),
+        location: Location::new(file!(), line!(), 0),
+    })
+}
+
+/// Get (notBefore, notAfter) as chrono::DateTime<Utc>
+pub fn get_certificate_validity(
+    cert_der: &[u8],
+) -> Result<(chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>), CrlError> {
+    let not_before = get_certificate_not_before(cert_der)?;
+    let not_after = get_certificate_not_after(cert_der)?;
+    Ok((not_before, not_after))
+}
+
+/// Get the inclusive certificate validity duration (RFC 5280 §4.1.2.5)
+pub fn get_certificate_validity_duration_inclusive(
+    cert_der: &[u8],
+) -> Result<chrono::Duration, CrlError> {
+    let (not_before, not_after) = get_certificate_validity(cert_der)?;
+    Ok((not_after + chrono::Duration::seconds(1)) - not_before)
 }
 
 /// Determine if a certificate is a CA certificate (BasicConstraints CA=true)
@@ -99,7 +130,7 @@ pub fn is_ca_certificate(cert_der: &[u8]) -> Result<bool, CrlError> {
             return Ok(bc.ca);
         }
     }
-    // If BasicConstraints missing, treat as end-entity by default per common practice
+    // If BasicConstraints missing, treat as end-entity per RFC 5280 Section 4.2.1.9
     Ok(false)
 }
 
