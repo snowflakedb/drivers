@@ -1,10 +1,10 @@
-@core
+@core @python
 Feature: PUT/GET wildcards
   TODO: scenarios list are not complete, there should be more cases implemented, i.e.:
   - nested directories
   - wildcard matches many files with the same name
 
-  @core_e2e
+  @core_e2e @python_e2e
   Scenario: should upload files that match wildcard question mark pattern
     Given Files matching wildcard pattern
     And Files not matching wildcard pattern
@@ -12,7 +12,7 @@ Feature: PUT/GET wildcards
     Then Files matching wildcard pattern are uploaded
     And Files not matching wildcard pattern are not uploaded
 
-  @core_e2e
+  @core_e2e @python_e2e
   Scenario: should upload files that match wildcard star pattern
     Given Files matching wildcard pattern
     And Files not matching wildcard pattern
@@ -20,7 +20,7 @@ Feature: PUT/GET wildcards
     Then Files matching wildcard pattern are uploaded
     And Files not matching wildcard pattern are not uploaded
 
-  @core_e2e
+  @core_e2e @python_e2e
   Scenario: should download files that are matching wildcard pattern
     Given Files matching wildcard pattern are uploaded
     And Files not matching wildcard pattern are uploaded

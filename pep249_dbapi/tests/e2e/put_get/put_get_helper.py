@@ -4,6 +4,7 @@ Helper functions for PUT/GET operations in e2e tests.
 
 import uuid
 from pathlib import Path
+from typing import List
 
 
 def create_temporary_stage(cursor, prefix: str) -> str:
@@ -99,6 +100,54 @@ def get_file_from_stage(cursor, stage_name: str, filename: str, download_dir: Pa
     return cursor.fetchone()
 
 
+def upload_files_with_wildcard(
+    cursor,
+    stage_name: str,
+    wildcard_pattern: str,
+    auto_compress: bool = True,
+    overwrite: bool = True,
+):
+    """
+    Upload files matching a wildcard pattern to a Snowflake stage.
+
+    Args:
+        cursor: Database cursor to execute the command
+        stage_name: Name of the existing stage to upload to
+        wildcard_pattern: Wildcard pattern for files to upload (e.g., 'pattern_?.csv')
+        auto_compress: Whether to enable auto compression (default: True)
+        overwrite: Whether to overwrite existing files (default: True)
+
+    Returns:
+        list: List of result rows from the PUT command (one per uploaded file)
+    """
+    options_str = (
+        f"AUTO_COMPRESS={str(auto_compress).upper()} OVERWRITE={str(overwrite).upper()}"
+    )
+    put_command = f"PUT 'file://{wildcard_pattern}' @{stage_name} {options_str}"
+    cursor.execute(put_command)
+    return cursor.fetchall()
+
+
+def get_files_with_wildcard(cursor, stage_name: str, pattern: str, download_dir: Path):
+    """
+    Download files matching a regex pattern from a Snowflake stage.
+
+    Args:
+        cursor: Database cursor to execute the command
+        stage_name: Name of the stage to download from
+        pattern: Regex pattern for files to download (e.g., '.*pattern_.\\.csv\\.gz')
+        download_dir: Local directory to download files to
+
+    Note:
+        This function executes the GET command but does not return results.
+        Check the download_dir for downloaded files after calling this function.
+    """
+    get_command = (
+        f"GET @{stage_name} 'file://{as_file_uri(download_dir)}/' PATTERN='{pattern}'"
+    )
+    cursor.execute(get_command)
+
+
 def create_temporary_stage_and_upload_file(
     cursor,
     stage_prefix: str,
@@ -131,3 +180,176 @@ def create_temporary_stage_and_upload_file(
     ), f"File upload failed. Status: {upload_result[6]}"
 
     return stage_name, upload_result
+
+
+def create_temporary_stage_and_upload_multiple_files(
+    cursor,
+    stage_prefix: str,
+    wildcard_pattern: str,
+    auto_compress: bool = True,
+    overwrite: bool = True,
+):
+    """
+    Function that creates temporary stage and uploads multiple files using wildcard pattern.
+
+    Args:
+        cursor: Database cursor to use for operations
+        stage_prefix: Prefix for the temporary stage name
+        wildcard_pattern: Wildcard pattern for files to upload (e.g., '/path/to/files/*.csv')
+        auto_compress: Whether to enable auto compression for upload (default: True)
+        overwrite: Whether to overwrite existing files for upload (default: True)
+
+    Returns:
+        tuple: (stage_name, upload_results)
+
+    Note:
+        All uploads are automatically validated for success.
+    """
+    stage_name = create_temporary_stage(cursor, stage_prefix)
+    upload_results = upload_files_with_wildcard(
+        cursor, stage_name, wildcard_pattern, auto_compress, overwrite
+    )
+    for upload_result in upload_results:
+        assert (
+            upload_result[6] == "UPLOADED"
+        ), f"File upload failed. Status: {upload_result[6]}"
+
+    return stage_name, upload_results
+
+
+def create_test_file(directory: Path, filename: str, content: str = "1,2,3\n") -> Path:
+    """
+    Create a test file with specified content.
+
+    Args:
+        directory: Directory where the file should be created
+        filename: Name of the file to create
+        content: Content to write to the file (default: "1,2,3\n")
+
+    Returns:
+        Path: Path to the created file
+    """
+    directory.mkdir(parents=True, exist_ok=True)
+    file_path = directory / filename
+    file_path.write_text(content)
+    return file_path
+
+
+def create_test_files(
+    directory: Path, filenames: List[str], content: str = "1,2,3\n"
+) -> List[Path]:
+    """
+    Create multiple test files with the same content.
+
+    Args:
+        directory: Directory where files should be created
+        filenames: List of filenames to create
+        content: Content to write to each file (default: "1,2,3\n")
+
+    Returns:
+        List[Path]: List of paths to the created files
+    """
+    return [create_test_file(directory, filename, content) for filename in filenames]
+
+
+def create_matching_files(
+    directory: Path, base_file_name: str, count: int = 5
+) -> List[str]:
+    """
+    Create matching test files with numbered suffixes.
+
+    Args:
+        directory: Directory where files should be created
+        base_file_name: Base name for the files (e.g., "test_put_wildcard")
+        count: Number of files to create (default: 5)
+
+    Returns:
+        List[str]: List of created filenames
+    """
+    matching_files = [f"{base_file_name}_{i}.csv" for i in range(1, count + 1)]
+    create_test_files(directory, matching_files)
+    return matching_files
+
+
+def get_compression_test_file_path(compression_type: str) -> Path:
+    """
+    Get the path for a test file with the specified compression type.
+
+    Args:
+        compression_type: Compression type (GZIP, BZIP2, BROTLI, ZSTD, DEFLATE, RAW_DEFLATE, NONE, LZMA)
+
+    Returns:
+        Path: Path to the test file
+
+    Raises:
+        ValueError: If compression type is not supported
+    """
+    from tests.utils import shared_test_data_dir
+
+    compression_map = {
+        "GZIP": "test_data.csv.gz",
+        "BZIP2": "test_data.csv.bz2",
+        "BROTLI": "test_data.csv.br",
+        "ZSTD": "test_data.csv.zst",
+        "DEFLATE": "test_data.csv.deflate",
+        "RAW_DEFLATE": "test_data.csv.raw_deflate",
+        "NONE": "test_data.csv",
+        "LZMA": "test_data.csv.xz",
+    }
+
+    filename = compression_map.get(compression_type.upper())
+    if not filename:
+        raise ValueError(f"Unsupported compression type: {compression_type}")
+
+    return shared_test_data_dir() / "compression" / filename
+
+
+def create_stage_and_get_compression_file(
+    cursor, stage_prefix: str, compression_type: str
+):
+    """
+    Create a temporary stage and get the compression test file path.
+
+    Args:
+        cursor: Database cursor to use
+        stage_prefix: Prefix for the temporary stage name
+        compression_type: Compression type (GZIP, BZIP2, BROTLI, ZSTD, DEFLATE, RAW_DEFLATE, NONE, LZMA)
+
+    Returns:
+        tuple: (stage_name, test_file_path)
+    """
+    stage_name = create_temporary_stage(cursor, stage_prefix)
+    test_file_path = get_compression_test_file_path(compression_type)
+    return stage_name, test_file_path
+
+
+def assert_put_compression_result(
+    result,
+    expected_source: str,
+    expected_source_compression: str,
+    expected_target: str,
+    expected_target_compression: str,
+):
+    """
+    Assert that PUT result matches expected compression values.
+
+    Args:
+        result: PUT command result row
+        expected_source: Expected source filename
+        expected_source_compression: Expected source compression type
+        expected_target: Expected target filename
+        expected_target_compression: Expected target compression type
+    """
+    assert (
+        result[0] == expected_source
+    ), f"Source should be '{expected_source}', got '{result[0]}'"
+    assert (
+        result[1] == expected_target
+    ), f"Target should be '{expected_target}', got '{result[1]}'"
+    assert (
+        result[4] == expected_source_compression
+    ), f"Source compression should be '{expected_source_compression}', got '{result[4]}'"
+    assert (
+        result[5] == expected_target_compression
+    ), f"Target compression should be '{expected_target_compression}', got '{result[5]}'"
+    assert result[6] == "UPLOADED", f"Status should be 'UPLOADED', got '{result[6]}'"
