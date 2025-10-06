@@ -5,6 +5,7 @@ from tests.e2e.put_get.put_get_helper import (
     create_stage_and_get_compression_file,
     assert_put_compression_result,
 )
+from tests.compatibility import NEW_DRIVER_ONLY, OLD_DRIVER_ONLY
 
 
 @pytest.mark.parametrize(
@@ -35,13 +36,24 @@ def test_should_auto_detect_standard_compression_types_when_source_compression_s
         result = cursor.fetchone()
 
         # Then Target compression has correct type and all PUT results are correct
-        assert_put_compression_result(
-            result,
-            filename,
-            expected_compression,
-            filename,
-            expected_compression,
-        )
+        if expected_compression == "DEFLATE" and OLD_DRIVER_ONLY("BC#2"):
+            expected_target = f"{filename}.gz"
+            assert_put_compression_result(
+                result,
+                filename,
+                "NONE",
+                expected_target,
+                "GZIP",
+            )
+        else:
+            # Old driver supports BROTLI with AUTO_DETECT
+            assert_put_compression_result(
+                result,
+                filename,
+                expected_compression,
+                filename,
+                expected_compression,
+            )
 
 
 @pytest.mark.parametrize(
@@ -69,13 +81,21 @@ def test_should_upload_compressed_files_with_source_compression_set_to_explicit_
 
         # When File is uploaded with SOURCE_COMPRESSION set to explicit type
         put_command = f"PUT 'file://{as_file_uri(test_file_path)}' @{stage_name} SOURCE_COMPRESSION={compression}"
-        cursor.execute(put_command)
-        result = cursor.fetchone()
 
-        # Then Target compression has correct type and all PUT results are correct
-        assert_put_compression_result(
-            result, filename, compression, filename, compression
-        )
+        if compression == "BROTLI" and OLD_DRIVER_ONLY("BC#3"):
+            # BC#3: BROTLI compression type option is now supported
+            with pytest.raises(Exception) as exc_info:
+                cursor.execute(put_command)
+            assert "253007" in str(exc_info.value)
+            assert "Feature is not supported" in str(exc_info.value)
+        else:
+            cursor.execute(put_command)
+            result = cursor.fetchone()
+
+            # Then Target compression has correct type and all PUT results are correct
+            assert_put_compression_result(
+                result, filename, compression, filename, compression
+            )
 
 
 def test_should_not_compress_file_when_source_compression_set_to_auto_detect_and_auto_compress_set_to_false(
@@ -186,4 +206,9 @@ def test_should_return_error_for_unsupported_compression_type(connection):
         with pytest.raises(Exception) as exc_info:
             cursor.execute(put_command)
 
-        assert "Unsupported compression type" in str(exc_info.value)
+        if NEW_DRIVER_ONLY("BC#4"):
+            assert "Unsupported compression type" in str(exc_info.value)
+
+        if OLD_DRIVER_ONLY("BC#4"):
+            assert "253007" in str(exc_info.value)
+            assert "Feature is not supported" in str(exc_info.value)
