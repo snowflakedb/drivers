@@ -99,18 +99,24 @@ impl CrlCache {
         }
     }
 
-    // Whether we should refresh now based on half-life rule
-    fn should_refresh_at_half_life(entry: &CachedCrl, now: DateTime<Utc>) -> bool {
-        if now >= entry.expires_at {
-            return false;
+    // Reschedule a URL in the delay queue based on current cache state
+    async fn reschedule_url(
+        &self,
+        dq: &mut tokio_util::time::DelayQueue<String>,
+        keys: &mut HashMap<String, tokio_util::time::delay_queue::Key>,
+        url: &str,
+    ) {
+        if let Ok(Some(entry)) = self.get_from_memory_cache(url).await
+            && let Some(dur) = Self::compute_half_life_duration(&entry, Utc::now())
+        {
+            if let Some(old) = keys.remove(url) {
+                let _ = dq.remove(&old);
+            }
+            let key = dq.insert(url.to_string(), dur);
+            keys.insert(url.to_string(), key);
+        } else {
+            keys.remove(url);
         }
-        let total_ms = (entry.expires_at - entry.download_time).num_milliseconds();
-        if total_ms <= 0 {
-            return false;
-        }
-        let half_ms = total_ms / 2;
-        let half_time = entry.download_time + chrono::Duration::milliseconds(half_ms);
-        now >= half_time
     }
     // Spawn a singleton scheduler using DelayQueue keyed to CRL half-life deadlines.
     fn spawn_background_refresher(this: Arc<Self>) {
@@ -169,28 +175,14 @@ impl CrlCache {
                                         }
                                     }).await;
                                     // After refresh, look up updated entry and reschedule
-                                    if let Ok(Some(entry)) = this.get_from_memory_cache(&url).await
-                                        && let Some(dur) = Self::compute_half_life_duration(&entry, Utc::now())
-                                    {
-                                        let key = dq.insert(url.clone(), dur);
-                                        keys.insert(url.clone(), key);
-                                    } else {
-                                        keys.remove(&url);
-                                    }
+                                    this.reschedule_url(&mut dq, &mut keys, &url).await;
                                 }
                             }
                             // Updates from cache changes
                             Some(msg) = rx.recv() => {
                                 match msg {
                                     SchedulerMsg::Schedule(url) => {
-                                        if let Ok(Some(entry)) = this.get_from_memory_cache(&url).await
-                                            && let Some(dur) = Self::compute_half_life_duration(&entry, Utc::now())
-                                        {
-                                            // replace existing schedule if any
-                                            if let Some(old) = keys.remove(&url) { let _ = dq.remove(&old); }
-                                            let key = dq.insert(url.clone(), dur);
-                                            keys.insert(url, key);
-                                        }
+                                        this.reschedule_url(&mut dq, &mut keys, &url).await;
                                     }
                                 }
                             }
@@ -925,22 +917,26 @@ mod tests {
             CrlCache::compute_half_life_duration(&entry, now - chrono::Duration::seconds(1));
         assert!(before.is_some());
         assert!(before.unwrap() > std::time::Duration::from_millis(0));
-        assert!(!CrlCache::should_refresh_at_half_life(
-            &entry,
-            now - chrono::Duration::seconds(1)
-        ));
+        assert!(
+            CrlCache::compute_half_life_duration(&entry, now - chrono::Duration::seconds(1))
+                .unwrap()
+                > std::time::Duration::from_millis(0)
+        );
 
         let at = CrlCache::compute_half_life_duration(&entry, now);
         assert_eq!(at, Some(std::time::Duration::from_secs(0)));
-        assert!(CrlCache::should_refresh_at_half_life(&entry, now));
+        assert_eq!(
+            CrlCache::compute_half_life_duration(&entry, now),
+            Some(std::time::Duration::from_secs(0))
+        );
 
         let after =
             CrlCache::compute_half_life_duration(&entry, now + chrono::Duration::seconds(1));
         assert_eq!(after, Some(std::time::Duration::from_secs(0)));
-        assert!(CrlCache::should_refresh_at_half_life(
-            &entry,
-            now + chrono::Duration::seconds(1)
-        ));
+        assert_eq!(
+            CrlCache::compute_half_life_duration(&entry, now + chrono::Duration::seconds(1)),
+            Some(std::time::Duration::from_secs(0))
+        );
     }
 
     #[test]
