@@ -133,7 +133,7 @@ def test_should_download_files_that_are_matching_wildcard_pattern(connection):
                 download_dir = Path(download_temp_dir)
 
                 # When Files are downloaded using command with wildcard
-                pattern = rf".*/{base_file_name}_.\.csv\.gz"
+                pattern = f".*/{base_file_name}_.\\.csv\\.gz"
                 get_files_with_wildcard(cursor, stage_name, pattern, download_dir)
 
                 # Then Files matching wildcard pattern are downloaded
