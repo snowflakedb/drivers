@@ -32,7 +32,7 @@ impl CrlWorker {
                         while let Ok(req) = rx.recv() {
                             let res = match validator.validate_certificate_chain(&req.chain).await {
                                 Ok(true) => Ok(()),
-                                Ok(false) => Err(CrlError::AllChainsRevoked {
+                                Ok(false) => Err(CrlError::ChainRevoked {
                                     location: snafu::Location::new(file!(), line!(), 0),
                                 }),
                                 Err(e) => Err(e),

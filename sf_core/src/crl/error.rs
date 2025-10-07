@@ -60,8 +60,8 @@ pub enum CrlError {
         #[snafu(implicit)]
         location: Location,
     },
-    #[snafu(display("All certificate chains are revoked"))]
-    AllChainsRevoked {
+    #[snafu(display("Certificate chain is revoked or indeterminate"))]
+    ChainRevoked {
         #[snafu(implicit)]
         location: Location,
     },
