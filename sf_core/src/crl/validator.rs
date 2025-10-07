@@ -32,41 +32,28 @@ impl CrlValidator {
         })
     }
 
-    /// Validate provided certificate chains. Returns Ok(()) if at least one chain is unrevoked.
-    pub async fn validate_certificate_chains(
-        &self,
-        cert_chains: &[Vec<Vec<u8>>],
-    ) -> Result<(), CrlError> {
-        if cert_chains.is_empty() {
-            return Ok(());
-        }
-
-        // Iterate chains; pass if any chain validates without revocations
-        for chain in cert_chains {
-            if self.validate_certificate_chain(chain).await? {
-                return Ok(());
-            }
-        }
-
-        // No fully valid chain found
-        Err(CrlError::AllChainsRevoked {
-            location: snafu::Location::new(file!(), line!(), 0),
-        })
-    }
-
     /// Returns true if chain is unrevoked and without errors; errors mark chain invalid
-    async fn validate_certificate_chain(&self, chain: &[Vec<u8>]) -> Result<bool, CrlError> {
+    pub(crate) async fn validate_certificate_chain(
+        &self,
+        chain: &[Vec<u8>],
+    ) -> Result<bool, CrlError> {
         if chain.is_empty() {
             return Ok(true);
         }
 
-        for (idx, cert_der) in chain.iter().enumerate().take(chain.len() - 1) {
-            let issuers = &chain[idx + 1..];
-            if !self.validate_single_certificate(cert_der, issuers).await? {
+        for (idx, cert_der) in chain.iter().enumerate() {
+            let issuers = if idx + 1 < chain.len() {
+                &chain[idx + 1..]
+            } else {
+                &[]
+            };
+            if !self
+                .validate_single_certificate(cert_der, issuers, idx == 0)
+                .await?
+            {
                 return Ok(false);
             }
         }
-
         Ok(true)
     }
 
@@ -74,6 +61,7 @@ impl CrlValidator {
         &self,
         cert_der: &[u8],
         issuers: &[Vec<u8>],
+        is_end_entity: bool,
     ) -> Result<bool, CrlError> {
         if matches!(
             crate::crl::certificate_parser::is_short_lived_certificate(cert_der),
@@ -82,15 +70,27 @@ impl CrlValidator {
             return Ok(true);
         }
 
-        let issuer_der = issuers.first().map(|v| v.as_slice());
-        let issuer_candidates: Vec<&[u8]> = issuers.iter().map(|v| v.as_slice()).collect();
+        // For non-top certs, the next certificate(s) act as issuer candidates.
+        // For the top cert (no issuers), rely on the configured root store for CRL signature verification.
+        let (issuer_der, issuer_candidates) = if issuers.is_empty() {
+            (None, Vec::new())
+        } else {
+            (
+                issuers.first().map(|v| v.as_slice()),
+                issuers.iter().map(|v| v.as_slice()).collect(),
+            )
+        };
 
         let outcome = match self
             .cache
             .check_revocation(
                 cert_der,
                 issuer_der,
-                Some(&issuer_candidates),
+                if issuer_candidates.is_empty() {
+                    None
+                } else {
+                    Some(&issuer_candidates)
+                },
                 self.root_store.as_deref(),
             )
             .await
@@ -121,7 +121,14 @@ impl CrlValidator {
         };
 
         match outcome {
-            Ok(crate::tls::revocation::RevocationOutcome::Revoked { .. }) => Ok(false),
+            Ok(crate::tls::revocation::RevocationOutcome::Revoked { .. }) => {
+                if is_end_entity {
+                    return Err(CrlError::EndEntityRevoked {
+                        location: snafu::Location::new(file!(), line!(), 0),
+                    });
+                }
+                Ok(false)
+            }
             Ok(crate::tls::revocation::RevocationOutcome::NotDetermined) => {
                 if self.config.allow_certificates_without_crl_url {
                     tracing::warn!(

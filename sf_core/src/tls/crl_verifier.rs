@@ -50,39 +50,69 @@ impl ServerCertVerifier for CrlServerCertVerifier {
         ocsp_response: &[u8],
         now: UnixTime,
     ) -> Result<ServerCertVerified, TlsError> {
-        self.webpki_verifier.verify_server_cert(
-            end_entity,
-            intermediates,
-            server_name,
-            ocsp_response,
-            now,
-        )?;
+        // Helper closure to re-validate a path with fixed verifier inputs
+        let verify_path = |inters: &[rustls::pki_types::CertificateDer<'_>]| {
+            self.webpki_verifier.verify_server_cert(
+                end_entity,
+                inters,
+                server_name,
+                ocsp_response,
+                now,
+            )
+        };
+
+        // Validate the handshake path
+        verify_path(intermediates)?;
         if self.crl_config.check_mode == CertRevocationCheckMode::Disabled {
             return Ok(ServerCertVerified::assertion());
         }
 
+        // Build chains, anchor each with webpki, then CRL-check one-by-one
+        let worker = CrlWorker::global(Arc::clone(&self.crl_validator));
+        let mut last_err: Option<crate::crl::error::CrlError> = None;
         let inters: Vec<Vec<u8>> = intermediates.iter().map(|c| c.as_ref().to_vec()).collect();
-        let chains = crate::tls::x509_utils::build_candidate_chains(end_entity.as_ref(), &inters);
 
-        let res = CrlWorker::global(Arc::clone(&self.crl_validator)).validate(chains);
-        match res {
-            Ok(_) => Ok(ServerCertVerified::assertion()),
-            Err(e) => match self.crl_config.check_mode {
-                CertRevocationCheckMode::Enabled => {
-                    tracing::error!(target: "sf_core::crl", error = %e, "CRL validation failed");
-                    Err(TlsError::General(format!("CRL validation failed: {e}")))
+        // Chains vector will always contain at least one chain, and all chains will have at least one element.
+        let chains = crate::tls::x509_utils::build_candidate_chains(end_entity.as_ref(), &inters);
+        for chain in chains.iter() {
+            // Re-validate this exact path anchors with webpki/rustls
+            let inters_der = to_cert_der(&chain[1..]);
+            if verify_path(&inters_der).is_err() {
+                continue;
+            }
+
+            // CRL-check this anchored chain
+            match worker.validate(chain.clone()) {
+                Ok(_) => return Ok(ServerCertVerified::assertion()),
+                Err(e) => {
+                    if matches!(e, crate::crl::error::CrlError::EndEntityRevoked { .. }) {
+                        tracing::error!(target: "sf_core::crl", "CRL validation failed: end-entity certificate revoked");
+                        return Err(TlsError::General(
+                            "CRL validation failed: end-entity certificate revoked".to_string(),
+                        ));
+                    }
+                    last_err = Some(e)
                 }
-                CertRevocationCheckMode::Advisory => {
-                    tracing::warn!(
-                        target: "sf_core::crl",
-                        error = %e,
-                        "CRL validation failed in advisory mode; allowing connection"
-                    );
-                    Ok(ServerCertVerified::assertion())
-                }
-                CertRevocationCheckMode::Disabled => Ok(ServerCertVerified::assertion()),
-            },
+            }
         }
+
+        // No anchored-and-unrevoked chain found
+        if self.crl_config.check_mode == CertRevocationCheckMode::Advisory {
+            if let Some(e) = last_err {
+                tracing::warn!(
+                    target: "sf_core::crl",
+                    error = %e,
+                    "CRL validation failed in advisory mode; allowing connection"
+                );
+            }
+            return Ok(ServerCertVerified::assertion());
+        }
+        if let Some(e) = last_err {
+            tracing::error!(target: "sf_core::crl", error = %e, "CRL validation failed");
+            return Err(TlsError::General(format!("CRL validation failed: {e}")));
+        }
+        tracing::error!(target: "sf_core::crl", "CRL validation failed");
+        Err(TlsError::General("CRL validation failed".to_string()))
     }
 
     fn verify_tls12_signature(
@@ -108,4 +138,11 @@ impl ServerCertVerifier for CrlServerCertVerifier {
     fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
         self.webpki_verifier.supported_verify_schemes()
     }
+}
+
+// Convert a slice of DER byte vectors into rustls CertificateDer wrappers (zero-copy)
+fn to_cert_der<'a>(ders: &'a [Vec<u8>]) -> Vec<rustls::pki_types::CertificateDer<'a>> {
+    ders.iter()
+        .map(|v| rustls::pki_types::CertificateDer::from(v.as_slice()))
+        .collect()
 }

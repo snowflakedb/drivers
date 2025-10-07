@@ -370,11 +370,16 @@ impl CrlCache {
                 }
             }
         }
-        // If still not verified, try configured root store or default roots
-        if !verified {
-            verified =
-                crate::tls::x509_utils::verify_crl_signature_against_roots(crl_bytes, root_store)
-                    .is_ok();
+        // If still not verified, try configured root store to resolve a matching anchor and verify via its SPKI
+        if !verified
+            && let Some(store) = root_store
+            && let Some((sub_der, spki_der)) =
+                crate::tls::x509_utils::resolve_anchor_issuer_key(crl_bytes, store)
+        {
+            verified = crate::tls::x509_utils::verify_crl_sig_with_name_and_spki(
+                crl_bytes, sub_der, spki_der,
+            )
+            .is_ok();
         }
 
         if !verified {

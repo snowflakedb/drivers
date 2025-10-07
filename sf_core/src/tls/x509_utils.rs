@@ -136,6 +136,8 @@ pub fn verify_crl_signature(crl_der: &[u8], issuer_der: Option<&[u8]>) -> Result
     let crl = RcCertificateList::from_der(crl_der).context(CrlListParseSnafu)?;
     let _sig = crl.signature.as_bytes().context(InvalidCrlSignatureSnafu)?;
     let _tbs = tbs_crl_der(crl_der)?;
+    // Common CRL preflight checks (critical extensions policy, attribute-only rejection)
+    crl_preflight_checks(crl_der)?;
 
     let issuer_der = match issuer_der {
         Some(v) => v,
@@ -147,30 +149,18 @@ pub fn verify_crl_signature(crl_der: &[u8], issuer_der: Option<&[u8]>) -> Result
         return CrlIssuerMismatchSnafu {}.fail();
     }
 
-    // Enforce AKID/SKID and critical extension policy
+    // Enforce AKID/SKID consistency (only when issuer certificate is present)
     if let Ok((_, parsed_crl)) =
         x509_parser::revocation_list::CertificateRevocationList::from_der(crl_der)
     {
-        use x509_parser::extensions::{IssuingDistributionPoint, ParsedExtension};
+        use x509_parser::extensions::ParsedExtension;
         let oid_akid = x509_parser::oid_registry::OID_X509_EXT_AUTHORITY_KEY_IDENTIFIER;
-        let oid_idp = x509_parser::oid_registry::OID_X509_EXT_ISSUER_DISTRIBUTION_POINT;
-        let oid_crl_number = x509_parser::oid_registry::OID_X509_EXT_CRL_NUMBER;
-        let oid_delta = x509_parser::oid_registry::OID_X509_EXT_DELTA_CRL_INDICATOR;
         let mut crl_akid: Option<&[u8]> = None;
         for ext in parsed_crl.tbs_cert_list.extensions() {
             if ext.oid == oid_akid
                 && let ParsedExtension::AuthorityKeyIdentifier(akid) = ext.parsed_extension()
             {
                 crl_akid = akid.key_identifier.as_ref().map(|kid| kid.0);
-            }
-            if ext.oid == oid_delta {
-                return InvalidCrlSignatureSnafu {}.fail();
-            }
-            if ext.critical {
-                let known = ext.oid == oid_akid || ext.oid == oid_idp || ext.oid == oid_crl_number;
-                if !known {
-                    return InvalidCrlSignatureSnafu {}.fail();
-                }
             }
         }
         if let Some(akid_key) = crl_akid
@@ -189,28 +179,6 @@ pub fn verify_crl_signature(crl_der: &[u8], issuer_der: Option<&[u8]>) -> Result
                 && skid != akid_key
             {
                 return InvalidCrlSignatureSnafu {}.fail();
-            }
-        }
-
-        // Enforce basic IssuingDistributionPoint scope if present
-        if let Ok((_, parsed_crl)) =
-            x509_parser::revocation_list::CertificateRevocationList::from_der(crl_der)
-        {
-            for ext in parsed_crl.tbs_cert_list.extensions() {
-                if let ParsedExtension::IssuingDistributionPoint(idp) = ext.parsed_extension() {
-                    let IssuingDistributionPoint {
-                        only_contains_attribute_certs,
-                        only_some_reasons,
-                        ..
-                    } = idp;
-                    // Reject attribute-only CRLs
-                    if *only_contains_attribute_certs {
-                        return InvalidCrlSignatureSnafu {}.fail();
-                    }
-                    // If only CA certs are covered and target is EE (typical), allow; if only user certs and issuer is CA, also fine.
-                    // For precise enforcement we'd need BasicConstraints from the target cert; skip strict check here.
-                    let _ = only_some_reasons;
-                }
             }
         }
     }
@@ -236,11 +204,13 @@ pub fn verify_crl_signature_with_anchor(
     anchor_subject_der: &[u8],
     anchor_spki_der: &[u8],
 ) -> Result<(), CrlError> {
+    // Apply the same preflight checks as the issuer-cert path for parity
+    crl_preflight_checks(crl_der)?;
     verify_crl_sig_with_name_and_spki(crl_der, anchor_subject_der, anchor_spki_der)
 }
 
 // Shared verifier using issuer Name DER and SPKI DER
-fn verify_crl_sig_with_name_and_spki(
+pub fn verify_crl_sig_with_name_and_spki(
     crl_der: &[u8],
     issuer_name_der: &[u8],
     spki_der: &[u8],
@@ -302,58 +272,49 @@ fn verify_crl_sig_with_name_and_spki(
     InvalidCrlSignatureSnafu {}.fail()
 }
 
-pub fn verify_crl_signature_against_roots(
-    crl_der: &[u8],
-    root_store: Option<&rustls::RootCertStore>,
-) -> Result<(), CrlError> {
-    // Parse CRL once
-    let crl = RcCertificateList::from_der(crl_der).context(CrlListParseSnafu)?;
-    let crl_issuer_der = crl.tbs_cert_list.issuer.to_der().context(CrlToDerSnafu)?;
-
-    // Helper to try a slice of anchors (subject, spki)
-    fn try_anchors(crl_der: &[u8], crl_issuer_der: &[u8], anchors: &[(Vec<u8>, Vec<u8>)]) -> bool {
-        for (subject_der, spki_der) in anchors {
-            if subject_der.as_slice() == crl_issuer_der
-                && verify_crl_sig_with_name_and_spki(crl_der, subject_der, spki_der).is_ok()
-            {
-                return true;
+// Common CRL preflight checks shared by both issuer-cert and trust-anchor verification paths
+fn crl_preflight_checks(crl_der: &[u8]) -> Result<(), CrlError> {
+    use x509_parser::extensions::ParsedExtension;
+    let (_, parsed_crl) =
+        x509_parser::revocation_list::CertificateRevocationList::from_der(crl_der)
+            .context(CrlParsingSnafu)?;
+    let oid_akid = x509_parser::oid_registry::OID_X509_EXT_AUTHORITY_KEY_IDENTIFIER;
+    let oid_idp = x509_parser::oid_registry::OID_X509_EXT_ISSUER_DISTRIBUTION_POINT;
+    let oid_crl_number = x509_parser::oid_registry::OID_X509_EXT_CRL_NUMBER;
+    let oid_delta = x509_parser::oid_registry::OID_X509_EXT_DELTA_CRL_INDICATOR;
+    for ext in parsed_crl.tbs_cert_list.extensions() {
+        if ext.oid == oid_delta {
+            return crate::crl::error::CrlPolicyViolationSnafu {}.fail();
+        }
+        if ext.critical {
+            let known = ext.oid == oid_akid || ext.oid == oid_idp || ext.oid == oid_crl_number;
+            if !known {
+                return crate::crl::error::CrlPolicyViolationSnafu {}.fail();
             }
         }
-        false
+        if let ParsedExtension::IssuingDistributionPoint(idp) = ext.parsed_extension()
+            && idp.only_contains_attribute_certs
+        {
+            return crate::crl::error::CrlPolicyViolationSnafu {}.fail();
+        }
     }
+    Ok(())
+}
 
-    // Choose store = provided or default
-    let anchors: Vec<(Vec<u8>, Vec<u8>)> = if let Some(store) = root_store {
-        // Build anchors from provided RootCertStore (TrustAnchor structs)
-        store
-            .roots
-            .iter()
-            .map(|a| {
-                (
-                    a.subject.as_ref().to_vec(),
-                    a.subject_public_key_info.as_ref().to_vec(),
-                )
-            })
-            .collect()
-    } else {
-        // Default to webpki roots
-        use webpki_roots::TLS_SERVER_ROOTS;
-        TLS_SERVER_ROOTS
-            .iter()
-            .map(|a| {
-                (
-                    a.subject.as_ref().to_vec(),
-                    a.subject_public_key_info.as_ref().to_vec(),
-                )
-            })
-            .collect()
-    };
-
-    if try_anchors(crl_der, &crl_issuer_der, &anchors) {
-        return Ok(());
+pub fn resolve_anchor_issuer_key<'a>(
+    crl_der: &[u8],
+    root_store: &'a rustls::RootCertStore,
+) -> Option<(&'a [u8], &'a [u8])> {
+    if let Ok(crl) = RcCertificateList::from_der(crl_der)
+        && let Ok(crl_issuer_der) = crl.tbs_cert_list.issuer.to_der()
+    {
+        for a in root_store.roots.iter() {
+            if a.subject.as_ref() == crl_issuer_der.as_slice() {
+                return Some((a.subject.as_ref(), a.subject_public_key_info.as_ref()));
+            }
+        }
     }
-
-    InvalidCrlSignatureSnafu {}.fail()
+    None
 }
 
 // Return canonical DER of the CRL's TBS (to-be-signed) part
@@ -624,11 +585,11 @@ mod tests {
     }
 
     #[test]
-    fn test_verify_crl_signature_against_default_roots_invalid_der() {
-        // Empty/garbled CRL DER should not verify against default roots
+    fn test_resolve_anchor_issuer_key_invalid_der() {
         let crl_der: Vec<u8> = vec![];
-        let res = verify_crl_signature_against_roots(&crl_der, None);
-        assert!(res.is_err());
+        let store = rustls::RootCertStore::empty();
+        let res = resolve_anchor_issuer_key(&crl_der, &store);
+        assert!(res.is_none());
     }
 
     #[test]

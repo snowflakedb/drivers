@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, Sender};
 
 pub struct CrlWorkerRequest {
-    pub cert_chains: Vec<Vec<Vec<u8>>>,
+    pub chain: Vec<Vec<u8>>,
     pub reply: mpsc::Sender<Result<(), CrlError>>,
 }
 
@@ -30,9 +30,13 @@ impl CrlWorker {
 
                     rt.block_on(async move {
                         while let Ok(req) = rx.recv() {
-                            let res = validator
-                                .validate_certificate_chains(&req.cert_chains)
-                                .await;
+                            let res = match validator.validate_certificate_chain(&req.chain).await {
+                                Ok(true) => Ok(()),
+                                Ok(false) => Err(CrlError::AllChainsRevoked {
+                                    location: snafu::Location::new(file!(), line!(), 0),
+                                }),
+                                Err(e) => Err(e),
+                            };
                             let _ = req.reply.send(res);
                         }
                     });
@@ -43,10 +47,10 @@ impl CrlWorker {
         })
     }
 
-    pub fn validate(&self, cert_chains: Vec<Vec<Vec<u8>>>) -> Result<(), CrlError> {
+    pub fn validate(&self, chain: Vec<Vec<u8>>) -> Result<(), CrlError> {
         let (reply_tx, reply_rx) = mpsc::channel();
         let msg = CrlWorkerRequest {
-            cert_chains,
+            chain,
             reply: reply_tx,
         };
         self.tx.send(msg).expect("CRL worker channel closed");
