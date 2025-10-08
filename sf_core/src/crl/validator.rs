@@ -2,6 +2,7 @@ use super::config::CrlConfig;
 use crate::crl::cache::CrlCache;
 use crate::crl::error::CrlError;
 use std::sync::Arc;
+use x509_cert::der::{Decode, Encode};
 
 #[derive(Debug)]
 pub struct CrlValidator {
@@ -41,20 +42,45 @@ impl CrlValidator {
             return Ok(true);
         }
 
-        for (idx, cert_der) in chain.iter().enumerate() {
-            let issuers = if idx + 1 < chain.len() {
-                &chain[idx + 1..]
-            } else {
-                &[]
+        if chain.len() == 1 {
+            return self.validate_single_certificate(&chain[0], &[], true).await;
+        }
+
+        for (idx, pair) in chain.windows(2).enumerate() {
+            let [cert, parent] = pair else {
+                continue;
             };
+            let issuers = &chain[idx + 1..];
             if !self
-                .validate_single_certificate(cert_der, issuers, idx == 0)
+                .validate_single_certificate(cert, issuers, idx == 0)
                 .await?
             {
                 return Ok(false);
             }
+            if self.is_anchor(parent) {
+                return Ok(true);
+            }
         }
-        Ok(true)
+
+        // Validate the top-most certificate (no further issuers)
+        self.validate_single_certificate(chain.last().unwrap(), &[], false)
+            .await
+    }
+
+    fn is_anchor(&self, cert_der: &[u8]) -> bool {
+        let store = match self.root_store.as_deref() {
+            Some(s) => s,
+            None => return false,
+        };
+        if let Ok(cert) = x509_cert::Certificate::from_der(cert_der)
+            && let Ok(subject_der) = cert.tbs_certificate.subject.to_der()
+        {
+            return store
+                .roots
+                .iter()
+                .any(|a| a.subject.as_ref() == subject_der.as_slice());
+        }
+        false
     }
 
     async fn validate_single_certificate(

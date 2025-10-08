@@ -6,6 +6,7 @@ use std::sync::mpsc::{self, Receiver, Sender};
 
 pub struct CrlWorkerRequest {
     pub chain: Vec<Vec<u8>>,
+    pub validator: Arc<CrlValidator>,
     pub reply: mpsc::Sender<Result<(), CrlError>>,
 }
 
@@ -16,7 +17,7 @@ pub struct CrlWorker {
 static GLOBAL_WORKER: OnceCell<CrlWorker> = OnceCell::new();
 
 impl CrlWorker {
-    pub fn global(validator: Arc<CrlValidator>) -> &'static CrlWorker {
+    pub fn global() -> &'static CrlWorker {
         GLOBAL_WORKER.get_or_init(|| {
             let (tx, rx): (Sender<CrlWorkerRequest>, Receiver<CrlWorkerRequest>) = mpsc::channel();
 
@@ -30,13 +31,14 @@ impl CrlWorker {
 
                     rt.block_on(async move {
                         while let Ok(req) = rx.recv() {
-                            let res = match validator.validate_certificate_chain(&req.chain).await {
-                                Ok(true) => Ok(()),
-                                Ok(false) => Err(CrlError::ChainRevoked {
-                                    location: snafu::Location::new(file!(), line!(), 0),
-                                }),
-                                Err(e) => Err(e),
-                            };
+                            let res =
+                                match req.validator.validate_certificate_chain(&req.chain).await {
+                                    Ok(true) => Ok(()),
+                                    Ok(false) => Err(CrlError::ChainRevoked {
+                                        location: snafu::Location::new(file!(), line!(), 0),
+                                    }),
+                                    Err(e) => Err(e),
+                                };
                             let _ = req.reply.send(res);
                         }
                     });
@@ -47,10 +49,15 @@ impl CrlWorker {
         })
     }
 
-    pub fn validate(&self, chain: Vec<Vec<u8>>) -> Result<(), CrlError> {
+    pub fn validate(
+        &self,
+        validator: Arc<CrlValidator>,
+        chain: Vec<Vec<u8>>,
+    ) -> Result<(), CrlError> {
         let (reply_tx, reply_rx) = mpsc::channel();
         let msg = CrlWorkerRequest {
             chain,
+            validator,
             reply: reply_tx,
         };
         self.tx.send(msg).expect("CRL worker channel closed");

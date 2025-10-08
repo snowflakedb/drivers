@@ -99,6 +99,23 @@ impl CrlCache {
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn test_put_outcome(
+        &self,
+        serial: &[u8],
+        issuer_der: &[u8],
+        outcome: crate::tls::revocation::RevocationOutcome,
+        expires_at: DateTime<Utc>,
+    ) {
+        if let Some(issuer_hash) = crate::tls::x509_utils::subject_der_hash(issuer_der) {
+            let key = OutcomeKey {
+                serial: serial.to_vec(),
+                issuer_hash,
+            };
+            self.outcome_put(key, outcome, expires_at);
+        }
+    }
+
     // Reschedule a URL in the delay queue based on current cache state
     async fn reschedule_url(
         &self,
@@ -278,11 +295,7 @@ impl CrlCache {
     ) -> Result<crate::tls::revocation::RevocationOutcome, crate::tls::revocation::RevocationError>
     {
         use crate::tls::revocation::RevocationOutcome;
-        let crl_urls = crate::crl::certificate_parser::extract_crl_distribution_points(cert_der)
-            .context(crate::tls::revocation::DistributionPointsSnafu)?;
-        if crl_urls.is_empty() {
-            return Ok(RevocationOutcome::NotDetermined);
-        }
+        // Check outcome cache first for a definitive answer (e.g., EE revoked), regardless of CRLDP presence
         let serial = crate::crl::certificate_parser::get_certificate_serial_number(cert_der)
             .context(crate::tls::revocation::CrlOperationSnafu)?;
         if let Some(issuer) = issuer_der
@@ -295,6 +308,11 @@ impl CrlCache {
             if let Some(hit) = self.outcome_get(&key) {
                 return Ok(hit);
             }
+        }
+        let crl_urls = crate::crl::certificate_parser::extract_crl_distribution_points(cert_der)
+            .context(crate::tls::revocation::DistributionPointsSnafu)?;
+        if crl_urls.is_empty() {
+            return Ok(RevocationOutcome::NotDetermined);
         }
         let is_ca_cert =
             crate::crl::certificate_parser::is_ca_certificate(cert_der).unwrap_or(false);
@@ -465,6 +483,21 @@ impl CrlCache {
         hasher.update(url.as_bytes());
         let digest = hasher.finalize();
         hex::encode(digest)
+    }
+
+    #[cfg(test)]
+    pub fn clear_caches_for_tests(&self) {
+        if let Some(memory) = &self.memory_cache
+            && let Ok(mut cache) = memory.lock()
+        {
+            cache.clear();
+        }
+        if let Some(outcomes) = &self.outcome_cache
+            && let Ok(mut cache) = outcomes.lock()
+        {
+            cache.clear();
+        }
+        // backoff/url_locks are not critical for test isolation
     }
 
     pub fn get_cached(&self, url: &str) -> Result<Option<CachedCrl>, CrlError> {

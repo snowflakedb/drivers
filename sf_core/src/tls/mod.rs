@@ -3,6 +3,8 @@ pub mod config;
 pub mod crl_verifier;
 pub mod error;
 pub mod revocation;
+#[cfg(test)]
+pub mod test_helpers;
 pub mod x509_utils;
 
 pub use client::create_tls_client_with_config;

@@ -585,6 +585,33 @@ mod tests {
     }
 
     #[test]
+    fn anchored_top_intermediate_anchor_spki_crl_verify_positive_if_anchor_matches() {
+        // Load CRL fixture; skip if missing
+        let path = std::path::Path::new("tests/fixtures/test.crl");
+        let crl_bytes = match std::fs::read(path) {
+            Ok(b) => b,
+            Err(_) => return, // skip if fixture unavailable
+        };
+
+        // Build default root store (webpki_roots)
+        let mut store = rustls::RootCertStore::empty();
+        store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+
+        // Try to resolve anchor by CRL issuer subject
+        let anchor = super::resolve_anchor_issuer_key(&crl_bytes, &store);
+
+        if let Some((subject_der, spki_der)) = anchor {
+            // If an anchor matches, verify CRL signature using that anchor's SPKI
+            let ok =
+                super::verify_crl_sig_with_name_and_spki(&crl_bytes, subject_der, spki_der).is_ok();
+            assert!(ok, "CRL signature should verify with matched anchor SPKI");
+        } else {
+            // No matching anchor for this fixture's issuer; skip positive assertion
+            eprintln!("No matching root anchor for CRL issuer; skipping positive SPKI verify");
+        }
+    }
+
+    #[test]
     fn test_resolve_anchor_issuer_key_invalid_der() {
         let crl_der: Vec<u8> = vec![];
         let store = rustls::RootCertStore::empty();
