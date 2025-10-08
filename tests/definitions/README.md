@@ -12,28 +12,25 @@ This directory contains Gherkin feature files that define test scenarios for the
 
 ## Annotations
 
-### Language and Test Type Tags
-- `@{driver}_{test_type}` - Specifies which drivers and test types should implement the test
-  - **Drivers**: `core`, `odbc`, `python`
-  - **Test Types**: `e2e` (end-to-end), `int` (integration)
-  - **Examples**: `@core_e2e`, `@odbc_int`, `@python_e2e`
+### Feature Level
+- **Required**: `@{driver}` - Specifies which drivers should implement this feature
+  - **Example**: `@core @python`
+- **Exclusions**: `@{driver}_not_needed` - Excludes ALL scenarios in this feature for the specified driver
+  - **Example**: `@python_not_needed` means no Python tests needed for this feature
 
-### Breaking Change Detection
-- Breaking Changes are automatically detected from test implementations for scenarios with regular driver tags
-
-**Breaking Change Behavior:**
-- Breaking Changes are detected by finding `NEW_DRIVER_ONLY("{Breaking Change_ID}")` and `OLD_DRIVER_ONLY("{Breaking Change_ID}")` annotations in test code
-- Breaking Change descriptions are loaded from `{driver}/BreakingChanges.md` files
-- HTML Report: Shows green checkmark with superscript Breaking Change numbers (e.g., `✓¹'²`) for scenarios with Breaking Changes
-- Breaking Change tab shows detailed breakdown of all Breaking Changes for each driver
-
-### Exclusion Tags
-- `@{driver}_not_needed` - Explicitly excludes a scenario for a driver (e.g., `@python_not_needed`, `@odbc_not_needed`)
-
-**Default Behavior:**
+**Feature Level Behavior:**
 - **If feature has NO driver annotation**: All scenarios marked as "TODO" by default
-- **If feature has driver annotation but scenario doesn't**: Scenario marked as "TODO"
 - **Feature-level exclusion**: `@{driver}_not_needed` on feature excludes ALL scenarios for that driver
+
+### Scenario Level  
+- **Test Types**: `@{driver}_{test_type}` - Specifies driver and test type
+  - **Test Types**: `_e2e` (end-to-end), `_int` (integration)
+  - **Examples**: `@core_e2e`, `@python_int`
+- **Exclusions**: `@{driver}_not_needed` - Excludes scenario for specific driver
+  - **Example**: `@python_not_needed`
+
+**Scenario Level Behavior:**
+- **If feature has driver annotation but scenario doesn't**: Scenario marked as "TODO"
 - **Scenario-level exclusion**: `@{driver}_not_needed` on scenario excludes only that scenario
 - HTML Report: Shows "-" when excluded, "TODO" when expected but not implemented
 - Coverage calculations include TODO scenarios as expected implementations

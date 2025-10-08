@@ -70,3 +70,12 @@ jobs:
       - name: Check proto files are up-to-date
         run: git diff --exit-code
 
+  tests-format-validator:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Run tests format validator
+        run: |
+          cargo run --bin tests_format_validator --manifest-path tests/tests_format_validator/Cargo.toml
