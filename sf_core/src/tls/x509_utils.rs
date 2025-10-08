@@ -228,9 +228,9 @@ pub fn verify_crl_sig_with_name_and_spki(
         .context(InvalidCrlSignatureSnafu)?;
 
     use aws_lc_rs::signature::{
-        ECDSA_P256_SHA256_ASN1, ECDSA_P384_SHA384_ASN1, ED25519, RSA_PKCS1_2048_8192_SHA256,
-        RSA_PKCS1_2048_8192_SHA384, RSA_PKCS1_2048_8192_SHA512, RSA_PSS_2048_8192_SHA256,
-        RSA_PSS_2048_8192_SHA384, RSA_PSS_2048_8192_SHA512,
+        ECDSA_P256_SHA256_ASN1, ECDSA_P384_SHA384_ASN1, ECDSA_P521_SHA512_ASN1, ED25519,
+        RSA_PKCS1_2048_8192_SHA256, RSA_PKCS1_2048_8192_SHA384, RSA_PKCS1_2048_8192_SHA512,
+        RSA_PSS_2048_8192_SHA256, RSA_PSS_2048_8192_SHA384, RSA_PSS_2048_8192_SHA512,
     };
     let oid = crl.signature_algorithm.oid;
     let oid_sha256_rsa = ObjectIdentifier::new_unwrap("1.2.840.113549.1.1.11");
@@ -239,6 +239,7 @@ pub fn verify_crl_sig_with_name_and_spki(
     let oid_rsassa_pss = ObjectIdentifier::new_unwrap("1.2.840.113549.1.1.10");
     let oid_ecdsa_sha256 = ObjectIdentifier::new_unwrap("1.2.840.10045.4.3.2");
     let oid_ecdsa_sha384 = ObjectIdentifier::new_unwrap("1.2.840.10045.4.3.3");
+    let oid_ecdsa_sha512 = ObjectIdentifier::new_unwrap("1.2.840.10045.4.3.4");
     let oid_ed25519 = ObjectIdentifier::new_unwrap("1.3.101.112");
 
     let tbs = tbs_crl_der(crl_der)?;
@@ -261,6 +262,8 @@ pub fn verify_crl_sig_with_name_and_spki(
         try_verify(&ECDSA_P256_SHA256_ASN1)
     } else if oid == oid_ecdsa_sha384 {
         try_verify(&ECDSA_P384_SHA384_ASN1)
+    } else if oid == oid_ecdsa_sha512 {
+        try_verify(&ECDSA_P521_SHA512_ASN1)
     } else if oid == oid_ed25519 {
         try_verify(&ED25519)
     } else {

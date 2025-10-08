@@ -57,6 +57,7 @@ impl CrlValidator {
             {
                 return Ok(false);
             }
+            // This shouldn't be necessary since the chains we pass in are anchored, but let's be safe.
             if self.is_anchor(parent) {
                 return Ok(true);
             }
