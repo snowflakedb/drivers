@@ -557,7 +557,7 @@ mod tests {
         );
 
         // Trust store contains both roots so both chains anchor
-        let mut root_store = th::make_root_store_from(&[root_a.clone(), root_b.clone()]);
+        let root_store = th::make_root_store_from(&[root_a.clone(), root_b.clone()]);
 
         let crl_cfg = crate::crl::config::CrlConfig {
             check_mode: crate::crl::config::CertRevocationCheckMode::Enabled,
