@@ -106,7 +106,7 @@ def test_should_return_correct_rowset_for_put(connection):
         assert upload_result[2] == 6
         if OLD_DRIVER_ONLY("BC#1"):
             assert upload_result[3] == 48
-        if NEW_DRIVER_ONLY("BC#1"):
+        elif NEW_DRIVER_ONLY("BC#1"):
             assert upload_result[3] == 32
         assert upload_result[4] == "NONE"
         assert upload_result[5] == "GZIP"
@@ -138,7 +138,7 @@ def test_should_return_correct_rowset_for_get(connection):
             assert get_result[0] == "test_data.csv.gz"
             if OLD_DRIVER_ONLY("BC#1"):
                 assert get_result[1] == 42
-            if NEW_DRIVER_ONLY("BC#1"):
+            elif NEW_DRIVER_ONLY("BC#1"):
                 assert get_result[1] == 26
             assert get_result[2] == "DOWNLOADED"
             assert get_result[3] == ""

@@ -54,7 +54,7 @@ def test_should_compress_the_file_before_uploading_to_stage_when_auto_compress_s
             if OLD_DRIVER_ONLY("BC#1"):
                 assert downloaded_content != reference_content
 
-            if NEW_DRIVER_ONLY("BC#1"):
+            elif NEW_DRIVER_ONLY("BC#1"):
                 assert downloaded_content == reference_content
 
 

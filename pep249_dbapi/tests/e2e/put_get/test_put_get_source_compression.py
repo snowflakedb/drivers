@@ -36,17 +36,25 @@ def test_should_auto_detect_standard_compression_types_when_source_compression_s
         result = cursor.fetchone()
 
         # Then Target compression has correct type and all PUT results are correct
-        if expected_compression == "DEFLATE" and OLD_DRIVER_ONLY("BC#2"):
-            expected_target = f"{filename}.gz"
-            assert_put_compression_result(
-                result,
-                filename,
-                "NONE",
-                expected_target,
-                "GZIP",
-            )
+        if expected_compression == "DEFLATE":
+            if OLD_DRIVER_ONLY("BC#2"):
+                expected_target = f"{filename}.gz"
+                assert_put_compression_result(
+                    result,
+                    filename,
+                    "NONE",
+                    expected_target,
+                    "GZIP",
+                )
+            elif NEW_DRIVER_ONLY("BC#2"):
+                assert_put_compression_result(
+                    result,
+                    filename,
+                    expected_compression,
+                    filename,
+                    expected_compression,
+                )
         else:
-            # Old driver supports BROTLI with AUTO_DETECT
             assert_put_compression_result(
                 result,
                 filename,
@@ -82,12 +90,18 @@ def test_should_upload_compressed_files_with_source_compression_set_to_explicit_
         # When File is uploaded with SOURCE_COMPRESSION set to explicit type
         put_command = f"PUT 'file://{as_file_uri(test_file_path)}' @{stage_name} SOURCE_COMPRESSION={compression}"
 
-        if compression == "BROTLI" and OLD_DRIVER_ONLY("BC#3"):
-            # BC#3: BROTLI compression type option is now supported
-            with pytest.raises(Exception) as exc_info:
+        if compression == "BROTLI":
+            if OLD_DRIVER_ONLY("BC#3"):
+                with pytest.raises(Exception) as exc_info:
+                    cursor.execute(put_command)
+                assert "253007" in str(exc_info.value)
+                assert "Feature is not supported" in str(exc_info.value)
+            elif NEW_DRIVER_ONLY("BC#3"):
                 cursor.execute(put_command)
-            assert "253007" in str(exc_info.value)
-            assert "Feature is not supported" in str(exc_info.value)
+                result = cursor.fetchone()
+                assert_put_compression_result(
+                    result, filename, compression, filename, compression
+                )
         else:
             cursor.execute(put_command)
             result = cursor.fetchone()
