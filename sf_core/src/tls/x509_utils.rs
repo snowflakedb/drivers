@@ -501,6 +501,100 @@ pub fn build_candidate_chains(end_entity: &[u8], intermediates: &[Vec<u8>]) -> V
     chains
 }
 
+// Streaming anchor predicate used during DFS building.
+// The predicate is invoked on the current path (EE..current_parent); when it returns true,
+// the current path is accepted as a completed anchored chain and the branch stops.
+pub fn build_candidate_chains_with_filter<F>(
+    end_entity: &[u8],
+    intermediates: &[Vec<u8>],
+    mut is_anchored: F,
+) -> Vec<Vec<Vec<u8>>>
+where
+    F: FnMut(&[rustls::pki_types::CertificateDer<'_>]) -> bool,
+{
+    use std::collections::HashMap;
+    let mut results: Vec<Vec<Vec<u8>>> = Vec::new();
+    let mut current: Vec<Vec<u8>> = vec![end_entity.to_vec()];
+
+    let mut by_subject: HashMap<Vec<u8>, Vec<Vec<u8>>> = HashMap::new();
+    for der in intermediates {
+        if let Some(k) = subject_der_hash(der) {
+            by_subject.entry(k).or_default().push(der.clone());
+        }
+    }
+
+    fn dfs_with_filter<F>(
+        out: &mut Vec<Vec<Vec<u8>>>,
+        path: &mut Vec<Vec<u8>>,
+        max_depth: usize,
+        by_subject: &HashMap<Vec<u8>, Vec<Vec<u8>>>,
+        is_anchored: &mut F,
+    ) where
+        F: FnMut(&[rustls::pki_types::CertificateDer<'_>]) -> bool,
+    {
+        // If we have at least one intermediate, allow the predicate to decide anchoring now.
+        if path.len() >= 2 {
+            let ders: Vec<rustls::pki_types::CertificateDer<'_>> = path[1..]
+                .iter()
+                .map(|v| rustls::pki_types::CertificateDer::from(v.as_slice()))
+                .collect();
+            if is_anchored(&ders) {
+                out.push(path.clone());
+                return;
+            }
+        }
+
+        if path.len() > max_depth + 1 {
+            // Depth limit reached without filter acceptance; do not add
+            return;
+        }
+
+        let last = path.last().unwrap();
+        let mut nexts: Vec<Vec<u8>> = Vec::new();
+        if let Some(issuer_key) = issuer_der_hash(last)
+            && let Some(v) = by_subject.get(&issuer_key)
+        {
+            nexts.extend(v.clone());
+        }
+        // Prefer parents whose SKID matches child's AKID
+        let child_akid = extract_akid_from_cert(last);
+        nexts.sort_by_key(|cand| {
+            let skid = extract_skid(cand).ok().flatten();
+            match (&child_akid, skid) {
+                (Some(a), Some(s)) if *a == s => 0,
+                (Some(_), Some(_)) => 1,
+                (Some(_), None) => 2,
+                (None, Some(_)) => 3,
+                (None, None) => 4,
+            }
+        });
+
+        if nexts.is_empty() {
+            // Leaf without acceptance: do not add
+            return;
+        }
+
+        for n in nexts {
+            let n_key = subject_der_hash(&n);
+            if path.iter().any(|p| subject_der_hash(p) == n_key) {
+                continue;
+            }
+            path.push(n);
+            dfs_with_filter(out, path, max_depth, by_subject, is_anchored);
+            path.pop();
+        }
+    }
+
+    dfs_with_filter(
+        &mut results,
+        &mut current,
+        intermediates.len(),
+        &by_subject,
+        &mut is_anchored,
+    );
+    results
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -522,7 +616,9 @@ mod tests {
         let ee = make_cert("EE", "CA1");
         let i1 = make_cert("CA1", "ROOT");
         let inters = vec![i1.clone()];
-        let chains = build_candidate_chains(&ee, &inters);
+        // Anchor predicate: accept as soon as there is at least one intermediate
+        let chains =
+            build_candidate_chains_with_filter(&ee, &inters, |inters_der| !inters_der.is_empty());
         assert_eq!(chains.len(), 1);
         assert_eq!(chains[0].len(), 2);
     }
@@ -533,7 +629,8 @@ mod tests {
         let i1a = make_cert("CA1", "ROOTA");
         let i1b = make_cert("CA1", "ROOTB");
         let inters = vec![i1a, i1b];
-        let chains = build_candidate_chains(&ee, &inters);
+        let chains =
+            build_candidate_chains_with_filter(&ee, &inters, |inters_der| !inters_der.is_empty());
         assert!(chains.len() >= 2);
     }
 
@@ -541,9 +638,10 @@ mod tests {
     fn builds_leaf_only_when_no_parents() {
         let ee = make_cert("EE", "CA1");
         let inters: Vec<Vec<u8>> = vec![];
-        let chains = build_candidate_chains(&ee, &inters);
-        assert_eq!(chains.len(), 1);
-        assert_eq!(chains[0].len(), 1);
+        let chains =
+            build_candidate_chains_with_filter(&ee, &inters, |inters_der| !inters_der.is_empty());
+        // No parents => cannot anchor => no chains kept
+        assert_eq!(chains.len(), 0);
     }
 
     #[test]
