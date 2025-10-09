@@ -442,67 +442,7 @@ pub fn extract_akid_from_cert(cert_der: &[u8]) -> Option<Vec<u8>> {
 
 // Build candidate chains from an end-entity and a list of intermediates.
 // Each chain is a vector of cert DER bytes from EE up to last found parent.
-pub fn build_candidate_chains(end_entity: &[u8], intermediates: &[Vec<u8>]) -> Vec<Vec<Vec<u8>>> {
-    use std::collections::HashMap;
-    let mut chains: Vec<Vec<Vec<u8>>> = Vec::new();
-    let mut current: Vec<Vec<u8>> = vec![end_entity.to_vec()];
-
-    // Index intermediates by subject hash for quick parent lookup
-    let mut by_subject: HashMap<Vec<u8>, Vec<Vec<u8>>> = HashMap::new();
-    for der in intermediates {
-        if let Some(k) = subject_der_hash(der) {
-            by_subject.entry(k).or_default().push(der.clone());
-        }
-    }
-
-    fn dfs(
-        chains: &mut Vec<Vec<Vec<u8>>>,
-        path: &mut Vec<Vec<u8>>,
-        max_depth: usize,
-        by_subject: &HashMap<Vec<u8>, Vec<Vec<u8>>>,
-    ) {
-        if path.len() > max_depth + 1 {
-            chains.push(path.clone());
-            return;
-        }
-        let last = path.last().unwrap();
-        let mut nexts: Vec<Vec<u8>> = Vec::new();
-        if let Some(issuer_key) = issuer_der_hash(last)
-            && let Some(v) = by_subject.get(&issuer_key)
-        {
-            nexts.extend(v.clone());
-        }
-        // Prefer parents whose SKID matches child's AKID
-        let child_akid = extract_akid_from_cert(last);
-        nexts.sort_by_key(|cand| {
-            let skid = extract_skid(cand).ok().flatten();
-            match (&child_akid, skid) {
-                (Some(a), Some(s)) if *a == s => 0,
-                (Some(_), Some(_)) => 1,
-                (Some(_), None) => 2,
-                (None, Some(_)) => 3,
-                (None, None) => 4,
-            }
-        });
-        // Allow multiple parents with the same subject (cross-signed). Avoid cycles via path check below.
-        if nexts.is_empty() {
-            chains.push(path.clone());
-        } else {
-            for n in nexts {
-                let n_key = subject_der_hash(&n);
-                if path.iter().any(|p| subject_der_hash(p) == n_key) {
-                    continue;
-                }
-                path.push(n);
-                dfs(chains, path, max_depth, by_subject);
-                path.pop();
-            }
-        }
-    }
-
-    dfs(&mut chains, &mut current, intermediates.len(), &by_subject);
-    chains
-}
+// (unfiltered variant removed; use build_candidate_chains_with_filter)
 
 // Streaming anchor predicate used during DFS building.
 // The predicate is invoked on the current path (EE..current_parent); when it returns true,
