@@ -1,12 +1,11 @@
 import pytest
+from pathlib import Path
 
 from tests.e2e.put_get.put_get_helper import (
     as_file_uri,
-    create_stage_and_get_compression_file,
-    assert_put_compression_result,
+    create_temporary_stage,
 )
 from tests.compatibility import NEW_DRIVER_ONLY, OLD_DRIVER_ONLY
-
 
 @pytest.mark.parametrize(
     "expected_compression,filename",
@@ -96,20 +95,18 @@ def test_should_upload_compressed_files_with_source_compression_set_to_explicit_
                     cursor.execute(put_command)
                 assert "253007" in str(exc_info.value)
                 assert "Feature is not supported" in str(exc_info.value)
+                return
             elif NEW_DRIVER_ONLY("BC#3"):
                 cursor.execute(put_command)
                 result = cursor.fetchone()
-                assert_put_compression_result(
-                    result, filename, compression, filename, compression
-                )
         else:
             cursor.execute(put_command)
             result = cursor.fetchone()
 
-            # Then Target compression has correct type and all PUT results are correct
-            assert_put_compression_result(
-                result, filename, compression, filename, compression
-            )
+        # Then Target compression has correct type and all PUT results are correct
+        assert_put_compression_result(
+            result, filename, compression, filename, compression
+        )
 
 
 def test_should_not_compress_file_when_source_compression_set_to_auto_detect_and_auto_compress_set_to_false(
@@ -226,3 +223,87 @@ def test_should_return_error_for_unsupported_compression_type(connection):
         if OLD_DRIVER_ONLY("BC#4"):
             assert "253007" in str(exc_info.value)
             assert "Feature is not supported" in str(exc_info.value)
+
+
+def get_compression_test_file_path(compression_type: str) -> Path:
+    """
+    Get the path for a test file with the specified compression type.
+
+    Args:
+        compression_type: Compression type (GZIP, BZIP2, BROTLI, ZSTD, DEFLATE, RAW_DEFLATE, NONE, LZMA)
+
+    Returns:
+        Path: Path to the test file
+
+    Raises:
+        ValueError: If compression type is not supported
+    """
+    from tests.utils import shared_test_data_dir
+
+    compression_map = {
+        "GZIP": "test_data.csv.gz",
+        "BZIP2": "test_data.csv.bz2",
+        "BROTLI": "test_data.csv.br",
+        "ZSTD": "test_data.csv.zst",
+        "DEFLATE": "test_data.csv.deflate",
+        "RAW_DEFLATE": "test_data.csv.raw_deflate",
+        "NONE": "test_data.csv",
+        "LZMA": "test_data.csv.xz",
+    }
+
+    filename = compression_map.get(compression_type.upper())
+    if not filename:
+        raise ValueError(f"Unsupported compression type: {compression_type}")
+
+    return shared_test_data_dir() / "compression" / filename
+
+
+def create_stage_and_get_compression_file(
+        cursor, stage_prefix: str, compression_type: str
+):
+    """
+    Create a temporary stage and get the compression test file path.
+
+    Args:
+        cursor: Database cursor to use
+        stage_prefix: Prefix for the temporary stage name
+        compression_type: Compression type (GZIP, BZIP2, BROTLI, ZSTD, DEFLATE, RAW_DEFLATE, NONE, LZMA)
+
+    Returns:
+        tuple: (stage_name, test_file_path)
+    """
+    stage_name = create_temporary_stage(cursor, stage_prefix)
+    test_file_path = get_compression_test_file_path(compression_type)
+    return stage_name, test_file_path
+
+
+def assert_put_compression_result(
+        result,
+        expected_source: str,
+        expected_source_compression: str,
+        expected_target: str,
+        expected_target_compression: str,
+):
+    """
+    Assert that PUT result matches expected compression values.
+
+    Args:
+        result: PUT command result row
+        expected_source: Expected source filename
+        expected_source_compression: Expected source compression type
+        expected_target: Expected target filename
+        expected_target_compression: Expected target compression type
+    """
+    assert (
+            result[0] == expected_source
+    ), f"Source should be '{expected_source}', got '{result[0]}'"
+    assert (
+            result[1] == expected_target
+    ), f"Target should be '{expected_target}', got '{result[1]}'"
+    assert (
+            result[4] == expected_source_compression
+    ), f"Source compression should be '{expected_source_compression}', got '{result[4]}'"
+    assert (
+            result[5] == expected_target_compression
+    ), f"Target compression should be '{expected_target_compression}', got '{result[5]}'"
+    assert result[6] == "UPLOADED", f"Status should be 'UPLOADED', got '{result[6]}'"
