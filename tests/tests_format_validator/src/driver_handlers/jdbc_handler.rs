@@ -1,5 +1,5 @@
-use super::base_handler::{BaseDriverHandler, BreakingChangeLocation, TestMethod};
-use crate::breaking_changes_utils::parse_breaking_changes_descriptions as parse_breaking_changes_descriptions_util;
+use super::base_handler::{BaseDriverHandler, BehaviorDifferenceLocation, TestMethod};
+use crate::behavior_differences_utils::parse_behavior_differences_descriptions as parse_behavior_differences_descriptions_util;
 use anyhow::{Context, Result};
 use regex::Regex;
 use std::collections::HashMap;
@@ -18,12 +18,14 @@ impl JdbcHandler {
 }
 
 impl BaseDriverHandler for JdbcHandler {
-    fn supports_breaking_changes(&self) -> bool {
+    fn supports_behavior_differences(&self) -> bool {
         true
     }
 
-    fn get_breaking_changes_file_path(&self) -> PathBuf {
-        self.workspace_root.join("jdbc").join("BreakingChanges.md")
+    fn get_behavior_differences_file_path(&self) -> PathBuf {
+        self.workspace_root
+            .join("jdbc")
+            .join("BehaviorDifferences.yaml")
     }
 
     fn get_test_directory(&self) -> PathBuf {
@@ -38,20 +40,20 @@ impl BaseDriverHandler for JdbcHandler {
         vec!["*.java".to_string()]
     }
 
-    fn parse_breaking_changes_descriptions(&self) -> Result<HashMap<String, String>> {
-        let breaking_change_file_path = self.get_breaking_changes_file_path();
-        if !breaking_change_file_path.exists() {
+    fn parse_behavior_differences_descriptions(&self) -> Result<HashMap<String, String>> {
+        let behavior_difference_file_path = self.get_behavior_differences_file_path();
+        if !behavior_difference_file_path.exists() {
             return Ok(HashMap::new());
         }
 
-        let content = fs::read_to_string(&breaking_change_file_path).with_context(|| {
+        let content = fs::read_to_string(&behavior_difference_file_path).with_context(|| {
             format!(
-                "Failed to read Breaking Change file: {}",
-                breaking_change_file_path.display()
+                "Failed to read Behavior Difference file: {}",
+                behavior_difference_file_path.display()
             )
         })?;
 
-        parse_breaking_changes_descriptions_util(&content)
+        parse_behavior_differences_descriptions_util(&content)
     }
 
     fn extract_test_methods(&self, content: &str) -> Vec<TestMethod> {
@@ -133,15 +135,15 @@ impl BaseDriverHandler for JdbcHandler {
         helper_calls
     }
 
-    fn find_breaking_changes_in_method(
+    fn find_behavior_differences_in_method(
         &self,
         content: &str,
         method_name: &str,
         file_path: &Path,
-    ) -> Result<HashMap<String, BreakingChangeLocation>> {
+    ) -> Result<HashMap<String, BehaviorDifferenceLocation>> {
         let mut breaking_changes = HashMap::new();
 
-        // First, look for Breaking Changes directly in the method
+        // First, look for Behavior Differences directly in the method
         self.find_direct_breaking_changes_in_method(
             content,
             method_name,
@@ -149,7 +151,7 @@ impl BaseDriverHandler for JdbcHandler {
             &mut breaking_changes,
         )?;
 
-        // Then, look for helper method calls and search for Breaking Changes in those methods
+        // Then, look for helper method calls and search for Behavior Differences in those methods
         let helper_calls = self.extract_helper_method_calls(content, method_name);
         for helper_method in helper_calls {
             // Search for the helper method in the same file first
@@ -189,7 +191,7 @@ impl BaseDriverHandler for JdbcHandler {
 
 impl JdbcHandler {
     fn extract_breaking_change_id(&self, breaking_change_reference: &str) -> String {
-        // Extract Breaking Change ID from reference (e.g., "BC#1" -> "BC#1")
+        // Extract Behavior Difference ID from reference (e.g., "BD#1" -> "BD#1")
         breaking_change_reference.to_string()
     }
 
@@ -198,7 +200,7 @@ impl JdbcHandler {
         content: &str,
         method_name: &str,
         file_path: &Path,
-        breaking_changes: &mut HashMap<String, BreakingChangeLocation>,
+        breaking_changes: &mut HashMap<String, BehaviorDifferenceLocation>,
     ) -> Result<()> {
         let lines: Vec<&str> = content.lines().collect();
         let mut in_method = false;
@@ -225,7 +227,7 @@ impl JdbcHandler {
                     break;
                 }
 
-                // Look for Breaking Change annotations in Java comments
+                // Look for Behavior Difference annotations in Java comments
                 let new_driver_re =
                     Regex::new(r#"//\s*NEW_DRIVER_ONLY\s*\(\s*"([^"]+)"\s*\)"#).unwrap();
                 let old_driver_re =
@@ -239,7 +241,7 @@ impl JdbcHandler {
 
                         let breaking_change_location = breaking_changes
                             .entry(breaking_change_id)
-                            .or_insert_with(|| BreakingChangeLocation {
+                            .or_insert_with(|| BehaviorDifferenceLocation {
                                 new_behaviour_file: None,
                                 new_behaviour_line: None,
                                 old_behaviour_file: None,
@@ -265,7 +267,7 @@ impl JdbcHandler {
 
                         let breaking_change_location = breaking_changes
                             .entry(breaking_change_id)
-                            .or_insert_with(|| BreakingChangeLocation {
+                            .or_insert_with(|| BehaviorDifferenceLocation {
                                 new_behaviour_file: None,
                                 new_behaviour_line: None,
                                 old_behaviour_file: None,
@@ -291,7 +293,7 @@ impl JdbcHandler {
     fn search_breaking_changes_in_helper_files(
         &self,
         helper_method: &str,
-        breaking_changes: &mut HashMap<String, BreakingChangeLocation>,
+        breaking_changes: &mut HashMap<String, BehaviorDifferenceLocation>,
     ) -> Result<()> {
         // Search for helper method in common directory
         let common_dir = self.get_test_directory().join("common");
@@ -307,7 +309,7 @@ impl JdbcHandler {
         {
             let helper_file_path = entry.path();
             if let Ok(helper_content) = fs::read_to_string(helper_file_path) {
-                // Search for Breaking Changes in the helper method
+                // Search for Behavior Differences in the helper method
                 self.find_direct_breaking_changes_in_method(
                     &helper_content,
                     helper_method,

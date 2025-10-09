@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
-use crate::breaking_changes_processor::BreakingChangesProcessor;
+use crate::behavior_differences_processor::BehaviorDifferencesProcessor;
 use crate::feature_parser::Feature;
 use crate::step_finder::StepFinder;
 use crate::test_discovery::{Language, TestDiscovery};
@@ -52,16 +52,16 @@ pub struct OrphanedTestFile {
     pub orphaned_methods: Vec<String>,
 }
 
-// Breaking Changes related structures
+// Behavior Differences related structures
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct BreakingChangeInfo {
-    pub breaking_change_id: String,
+pub struct BehaviorDifferenceInfo {
+    pub behavior_difference_id: String,
     pub description: String,
-    pub implementations: Vec<BreakingChangeImplementation>,
+    pub implementations: Vec<BehaviorDifferenceImplementation>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct BreakingChangeImplementation {
+pub struct BehaviorDifferenceImplementation {
     pub test_method: String,
     pub test_file: String,
     pub test_line: usize,
@@ -72,17 +72,17 @@ pub struct BreakingChangeImplementation {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct BreakingChangesReport {
-    pub breaking_change_descriptions: HashMap<String, String>,
-    pub breaking_changes_by_language: HashMap<String, Vec<BreakingChangeInfo>>,
+pub struct BehaviorDifferencesReport {
+    pub behavior_difference_descriptions: HashMap<String, String>,
+    pub behavior_differences_by_language: HashMap<String, Vec<BehaviorDifferenceInfo>>,
 }
 
-// Enhanced validation result that includes Breaking Changes information
+// Enhanced validation result that includes Behavior Differences information
 #[derive(Debug, Serialize, Deserialize)]
 pub struct EnhancedValidationResult {
     pub validation_results: Vec<ValidationResult>,
     pub orphan_results: Vec<OrphanValidation>,
-    pub breaking_changes_report: BreakingChangesReport,
+    pub behavior_differences_report: BehaviorDifferencesReport,
 }
 
 impl GherkinValidator {
@@ -569,10 +569,10 @@ impl GherkinValidator {
             .filter(|e| e.path().extension().is_some_and(|ext| ext == "feature"))
         {
             if let Ok(feature) = Feature::parse_from_file(entry.path()) {
-                // Extract Breaking Change scenarios (scenarios with @{driver}_breaking_change annotations)
-                // Include scenarios with driver tags that might have Breaking Change implementations
-                // We'll check for actual Breaking Change implementations during processing
-                let breaking_change_scenarios = feature
+                // Extract Behavior Difference scenarios (scenarios with @{driver}_behavior_difference annotations)
+                // Include scenarios with driver tags that might have Behavior Difference implementations
+                // We'll check for actual Behavior Difference implementations during processing
+                let behavior_difference_scenarios = feature
                     .scenarios
                     .iter()
                     .filter(|scenario| {
@@ -606,23 +606,23 @@ impl GherkinValidator {
 
                 features.insert(
                     feature.name.clone(),
-                    crate::breaking_changes_processor::FeatureInfo {
-                        breaking_change_scenarios,
+                    crate::behavior_differences_processor::FeatureInfo {
+                        behavior_difference_scenarios,
                     },
                 );
             }
         }
 
-        // Process Breaking Changes
-        let breaking_changes_processor =
-            BreakingChangesProcessor::new(self._workspace_root.clone());
-        let breaking_changes_report =
-            breaking_changes_processor.process_breaking_changes(&features)?;
+        // Process Behavior Differences
+        let behavior_differences_processor =
+            BehaviorDifferencesProcessor::new(self._workspace_root.clone());
+        let behavior_differences_report =
+            behavior_differences_processor.process_behavior_differences(&features)?;
 
         Ok(EnhancedValidationResult {
             validation_results,
             orphan_results,
-            breaking_changes_report,
+            behavior_differences_report,
         })
     }
 }

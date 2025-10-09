@@ -37,7 +37,7 @@ def test_should_auto_detect_standard_compression_types_when_source_compression_s
 
         # Then Target compression has correct type and all PUT results are correct
         if expected_compression == "DEFLATE":
-            if OLD_DRIVER_ONLY("BC#2"):
+            if OLD_DRIVER_ONLY("BD#2"):
                 expected_target = f"{filename}.gz"
                 assert_put_compression_result(
                     result,
@@ -46,7 +46,7 @@ def test_should_auto_detect_standard_compression_types_when_source_compression_s
                     expected_target,
                     "GZIP",
                 )
-            elif NEW_DRIVER_ONLY("BC#2"):
+            elif NEW_DRIVER_ONLY("BD#2"):
                 assert_put_compression_result(
                     result,
                     filename,
@@ -91,13 +91,13 @@ def test_should_upload_compressed_files_with_source_compression_set_to_explicit_
         put_command = f"PUT 'file://{as_file_uri(test_file_path)}' @{stage_name} SOURCE_COMPRESSION={compression}"
 
         if compression == "BROTLI":
-            if OLD_DRIVER_ONLY("BC#3"):
+            if OLD_DRIVER_ONLY("BD#3"):
                 with pytest.raises(Exception) as exc_info:
                     cursor.execute(put_command)
                 assert "253007" in str(exc_info.value)
                 assert "Feature is not supported" in str(exc_info.value)
                 return
-            elif NEW_DRIVER_ONLY("BC#3"):
+            elif NEW_DRIVER_ONLY("BD#3"):
                 cursor.execute(put_command)
                 result = cursor.fetchone()
         else:
@@ -218,10 +218,10 @@ def test_should_return_error_for_unsupported_compression_type(connection):
         with pytest.raises(Exception) as exc_info:
             cursor.execute(put_command)
 
-        if NEW_DRIVER_ONLY("BC#4"):
+        if NEW_DRIVER_ONLY("BD#4"):
             assert "Unsupported compression type" in str(exc_info.value)
 
-        if OLD_DRIVER_ONLY("BC#4"):
+        if OLD_DRIVER_ONLY("BD#4"):
             assert "253007" in str(exc_info.value)
             assert "Feature is not supported" in str(exc_info.value)
 

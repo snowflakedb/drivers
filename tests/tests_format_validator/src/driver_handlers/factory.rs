@@ -20,13 +20,13 @@ impl DriverHandlerFactory {
             Language::Odbc => Box::new(OdbcHandler::new(self.workspace_root.clone())),
             Language::Python => Box::new(PythonHandler::new(self.workspace_root.clone())),
             Language::Jdbc => Box::new(JdbcHandler::new(self.workspace_root.clone())),
-            // Other languages don't support Breaking Changes yet
+            // Other languages don't support Behavior Differences yet
             _ => Box::new(NoOpHandler::new()),
         }
     }
 }
 
-/// No-op handler for languages that don't support Breaking Changes
+/// No-op handler for languages that don't support Behavior Differences
 struct NoOpHandler;
 
 impl NoOpHandler {
@@ -36,11 +36,11 @@ impl NoOpHandler {
 }
 
 impl BaseDriverHandler for NoOpHandler {
-    fn supports_breaking_changes(&self) -> bool {
+    fn supports_behavior_differences(&self) -> bool {
         false
     }
 
-    fn get_breaking_changes_file_path(&self) -> PathBuf {
+    fn get_behavior_differences_file_path(&self) -> PathBuf {
         PathBuf::new()
     }
 
@@ -52,7 +52,7 @@ impl BaseDriverHandler for NoOpHandler {
         vec![]
     }
 
-    fn parse_breaking_changes_descriptions(
+    fn parse_behavior_differences_descriptions(
         &self,
     ) -> anyhow::Result<std::collections::HashMap<String, String>> {
         Ok(std::collections::HashMap::new())
@@ -66,13 +66,13 @@ impl BaseDriverHandler for NoOpHandler {
         vec![]
     }
 
-    fn find_breaking_changes_in_method(
+    fn find_behavior_differences_in_method(
         &self,
         _content: &str,
         _method_name: &str,
         _file_path: &std::path::Path,
     ) -> anyhow::Result<
-        std::collections::HashMap<String, super::base_handler::BreakingChangeLocation>,
+        std::collections::HashMap<String, super::base_handler::BehaviorDifferenceLocation>,
     > {
         Ok(std::collections::HashMap::new())
     }

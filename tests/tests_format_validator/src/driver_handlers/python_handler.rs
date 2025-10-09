@@ -1,5 +1,5 @@
-use super::base_handler::{BaseDriverHandler, BreakingChangeLocation, TestMethod};
-use crate::breaking_changes_utils::parse_breaking_changes_descriptions as parse_breaking_changes_descriptions_util;
+use super::base_handler::{BaseDriverHandler, BehaviorDifferenceLocation, TestMethod};
+use crate::behavior_differences_utils::parse_behavior_differences_descriptions as parse_behavior_differences_descriptions_util;
 use anyhow::{Context, Result};
 use regex::Regex;
 use std::collections::HashMap;
@@ -17,14 +17,14 @@ impl PythonHandler {
 }
 
 impl BaseDriverHandler for PythonHandler {
-    fn supports_breaking_changes(&self) -> bool {
+    fn supports_behavior_differences(&self) -> bool {
         true
     }
 
-    fn get_breaking_changes_file_path(&self) -> PathBuf {
+    fn get_behavior_differences_file_path(&self) -> PathBuf {
         self.workspace_root
             .join("pep249_dbapi")
-            .join("BreakingChanges.md")
+            .join("BehaviorDifferences.yaml")
     }
 
     fn get_test_directory(&self) -> PathBuf {
@@ -35,20 +35,20 @@ impl BaseDriverHandler for PythonHandler {
         vec!["*.py".to_string()]
     }
 
-    fn parse_breaking_changes_descriptions(&self) -> Result<HashMap<String, String>> {
-        let breaking_change_file_path = self.get_breaking_changes_file_path();
-        if !breaking_change_file_path.exists() {
+    fn parse_behavior_differences_descriptions(&self) -> Result<HashMap<String, String>> {
+        let behavior_difference_file_path = self.get_behavior_differences_file_path();
+        if !behavior_difference_file_path.exists() {
             return Ok(HashMap::new());
         }
 
-        let content = fs::read_to_string(&breaking_change_file_path).with_context(|| {
+        let content = fs::read_to_string(&behavior_difference_file_path).with_context(|| {
             format!(
-                "Failed to read Breaking Change file: {}",
-                breaking_change_file_path.display()
+                "Failed to read Behavior Difference file: {}",
+                behavior_difference_file_path.display()
             )
         })?;
 
-        parse_breaking_changes_descriptions_util(&content)
+        parse_behavior_differences_descriptions_util(&content)
     }
 
     fn extract_test_methods(&self, content: &str) -> Vec<TestMethod> {
@@ -111,13 +111,13 @@ impl BaseDriverHandler for PythonHandler {
         helper_calls
     }
 
-    fn find_breaking_changes_in_method(
+    fn find_behavior_differences_in_method(
         &self,
         content: &str,
         method_name: &str,
         file_path: &Path,
-    ) -> Result<HashMap<String, BreakingChangeLocation>> {
-        let mut breaking_changes: HashMap<String, BreakingChangeLocation> = HashMap::new();
+    ) -> Result<HashMap<String, BehaviorDifferenceLocation>> {
+        let mut breaking_changes: HashMap<String, BehaviorDifferenceLocation> = HashMap::new();
         let lines: Vec<&str> = content.lines().collect();
         let mut in_method = false;
 
@@ -140,13 +140,13 @@ impl BaseDriverHandler for PythonHandler {
                     break;
                 }
 
-                // Look for Breaking Change patterns in Python: NEW_DRIVER_ONLY("BC#X") or OLD_DRIVER_ONLY("BC#X")
+                // Look for Behavior Difference patterns in Python: NEW_DRIVER_ONLY("BD#X") or OLD_DRIVER_ONLY("BD#X")
                 if let Some(breaking_change_id) = self.extract_breaking_change_from_line(trimmed) {
                     // Determine if this is NEW or OLD driver behavior
                     let is_new_driver = trimmed.contains("NEW_DRIVER_ONLY");
 
                     let location = if is_new_driver {
-                        BreakingChangeLocation {
+                        BehaviorDifferenceLocation {
                             new_behaviour_file: Some(
                                 file_path
                                     .strip_prefix(&self.workspace_root)
@@ -159,7 +159,7 @@ impl BaseDriverHandler for PythonHandler {
                             old_behaviour_line: None,
                         }
                     } else {
-                        BreakingChangeLocation {
+                        BehaviorDifferenceLocation {
                             new_behaviour_file: None,
                             new_behaviour_line: None,
                             old_behaviour_file: Some(
@@ -173,7 +173,7 @@ impl BaseDriverHandler for PythonHandler {
                         }
                     };
 
-                    // If we already have this Breaking Change, merge the locations
+                    // If we already have this Behavior Difference, merge the locations
                     if let Some(existing) = breaking_changes.get_mut(&breaking_change_id) {
                         if is_new_driver {
                             existing.new_behaviour_file = location.new_behaviour_file;
@@ -222,12 +222,12 @@ impl BaseDriverHandler for PythonHandler {
         matching_words >= 2
     }
 
-    fn find_breaking_changes_in_function(
+    fn find_behavior_differences_in_function(
         &self,
         content: &str,
         function_name: &str,
         file_path: &Path,
-    ) -> Result<HashMap<String, BreakingChangeLocation>> {
+    ) -> Result<HashMap<String, BehaviorDifferenceLocation>> {
         // Use the internal implementation for Python standalone functions
         self.find_breaking_changes_in_function_internal(content, function_name, file_path)
     }
@@ -239,8 +239,8 @@ impl PythonHandler {
         content: &str,
         function_name: &str,
         file_path: &Path,
-    ) -> Result<HashMap<String, BreakingChangeLocation>> {
-        let mut breaking_changes: HashMap<String, BreakingChangeLocation> = HashMap::new();
+    ) -> Result<HashMap<String, BehaviorDifferenceLocation>> {
+        let mut breaking_changes: HashMap<String, BehaviorDifferenceLocation> = HashMap::new();
         let lines: Vec<&str> = content.lines().collect();
         let mut in_function = false;
 
@@ -263,13 +263,13 @@ impl PythonHandler {
                     break;
                 }
 
-                // Look for Breaking Change patterns in Python: NEW_DRIVER_ONLY("BC#X") or OLD_DRIVER_ONLY("BC#X")
+                // Look for Behavior Difference patterns in Python: NEW_DRIVER_ONLY("BD#X") or OLD_DRIVER_ONLY("BD#X")
                 if let Some(breaking_change_id) = self.extract_breaking_change_from_line(trimmed) {
                     // Determine if this is NEW or OLD driver behavior
                     let is_new_driver = trimmed.contains("NEW_DRIVER_ONLY");
 
                     let location = if is_new_driver {
-                        BreakingChangeLocation {
+                        BehaviorDifferenceLocation {
                             new_behaviour_file: Some(
                                 file_path
                                     .strip_prefix(&self.workspace_root)
@@ -282,7 +282,7 @@ impl PythonHandler {
                             old_behaviour_line: None,
                         }
                     } else {
-                        BreakingChangeLocation {
+                        BehaviorDifferenceLocation {
                             new_behaviour_file: None,
                             new_behaviour_line: None,
                             old_behaviour_file: Some(
@@ -393,9 +393,9 @@ impl PythonHandler {
     }
 
     fn extract_breaking_change_from_line(&self, line: &str) -> Option<String> {
-        // Look for NEW_DRIVER_ONLY("BC#X") or OLD_DRIVER_ONLY("BC#X") patterns
+        // Look for NEW_DRIVER_ONLY("BD#X") or OLD_DRIVER_ONLY("BD#X") patterns
         let breaking_change_re =
-            Regex::new(r#"(?:NEW_DRIVER_ONLY|OLD_DRIVER_ONLY)\s*\(\s*"(BC#\d+)"\s*\)"#).unwrap();
+            Regex::new(r#"(?:NEW_DRIVER_ONLY|OLD_DRIVER_ONLY)\s*\(\s*"(BD#\d+)"\s*\)"#).unwrap();
         if let Some(captures) = breaking_change_re.captures(line) {
             if let Some(breaking_change_id) = captures.get(1) {
                 return Some(breaking_change_id.as_str().to_string());

@@ -4,8 +4,8 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use super::base_handler::{BaseDriverHandler, BreakingChangeLocation, TestMethod};
-use crate::breaking_changes_utils::parse_breaking_changes_descriptions as parse_breaking_changes_descriptions_util;
+use super::base_handler::{BaseDriverHandler, BehaviorDifferenceLocation, TestMethod};
+use crate::behavior_differences_utils::parse_behavior_differences_descriptions as parse_behavior_differences_descriptions_util;
 
 pub struct OdbcHandler {
     workspace_root: PathBuf,
@@ -17,7 +17,7 @@ impl OdbcHandler {
     }
 
     fn extract_breaking_change_id(&self, breaking_change_reference: &str) -> String {
-        let breaking_change_re = Regex::new(r"(BC#\d+)").unwrap();
+        let breaking_change_re = Regex::new(r"(BD#\d+)").unwrap();
         if let Some(captures) = breaking_change_re.captures(breaking_change_reference) {
             if let Some(breaking_change_id) = captures.get(1) {
                 return breaking_change_id.as_str().to_string();
@@ -28,14 +28,14 @@ impl OdbcHandler {
 }
 
 impl BaseDriverHandler for OdbcHandler {
-    fn supports_breaking_changes(&self) -> bool {
+    fn supports_behavior_differences(&self) -> bool {
         true
     }
 
-    fn get_breaking_changes_file_path(&self) -> PathBuf {
+    fn get_behavior_differences_file_path(&self) -> PathBuf {
         self.workspace_root
             .join("odbc_tests")
-            .join("BreakingChanges.md")
+            .join("BehaviorDifferences.yaml")
     }
 
     fn get_test_directory(&self) -> PathBuf {
@@ -46,20 +46,20 @@ impl BaseDriverHandler for OdbcHandler {
         vec!["*.cpp".to_string(), "*.c".to_string()]
     }
 
-    fn parse_breaking_changes_descriptions(&self) -> Result<HashMap<String, String>> {
-        let breaking_change_file_path = self.get_breaking_changes_file_path();
-        if !breaking_change_file_path.exists() {
+    fn parse_behavior_differences_descriptions(&self) -> Result<HashMap<String, String>> {
+        let behavior_difference_file_path = self.get_behavior_differences_file_path();
+        if !behavior_difference_file_path.exists() {
             return Ok(HashMap::new());
         }
 
-        let content = fs::read_to_string(&breaking_change_file_path).with_context(|| {
+        let content = fs::read_to_string(&behavior_difference_file_path).with_context(|| {
             format!(
-                "Failed to read Breaking Change file: {}",
-                breaking_change_file_path.display()
+                "Failed to read Behavior Difference file: {}",
+                behavior_difference_file_path.display()
             )
         })?;
 
-        parse_breaking_changes_descriptions_util(&content)
+        parse_behavior_differences_descriptions_util(&content)
     }
 
     fn extract_test_methods(&self, content: &str) -> Vec<TestMethod> {
@@ -165,12 +165,12 @@ impl BaseDriverHandler for OdbcHandler {
         helper_methods
     }
 
-    fn find_breaking_changes_in_method(
+    fn find_behavior_differences_in_method(
         &self,
         content: &str,
         method_name: &str,
         file_path: &Path,
-    ) -> Result<HashMap<String, BreakingChangeLocation>> {
+    ) -> Result<HashMap<String, BehaviorDifferenceLocation>> {
         let mut breaking_changes = HashMap::new();
         let lines: Vec<&str> = content.lines().collect();
 
@@ -223,7 +223,7 @@ impl BaseDriverHandler for OdbcHandler {
                     break;
                 }
 
-                // Look for Breaking Change annotations
+                // Look for Behavior Difference annotations
                 let new_driver_re = Regex::new(r#"NEW_DRIVER_ONLY\s*\(\s*"([^"]+)"\s*\)"#).unwrap();
                 let old_driver_re = Regex::new(r#"OLD_DRIVER_ONLY\s*\(\s*"([^"]+)"\s*\)"#).unwrap();
 
@@ -235,7 +235,7 @@ impl BaseDriverHandler for OdbcHandler {
 
                         let breaking_change_location = breaking_changes
                             .entry(breaking_change_id)
-                            .or_insert_with(|| BreakingChangeLocation {
+                            .or_insert_with(|| BehaviorDifferenceLocation {
                                 new_behaviour_file: None,
                                 new_behaviour_line: None,
                                 old_behaviour_file: None,
@@ -261,7 +261,7 @@ impl BaseDriverHandler for OdbcHandler {
 
                         let breaking_change_location = breaking_changes
                             .entry(breaking_change_id)
-                            .or_insert_with(|| BreakingChangeLocation {
+                            .or_insert_with(|| BehaviorDifferenceLocation {
                                 new_behaviour_file: None,
                                 new_behaviour_line: None,
                                 old_behaviour_file: None,

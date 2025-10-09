@@ -51,10 +51,10 @@ def test_should_compress_the_file_before_uploading_to_stage_when_auto_compress_s
             downloaded_content = expected_file_path.read_bytes()
             reference_content = compressed_file_path.read_bytes()
 
-            if OLD_DRIVER_ONLY("BC#1"):
+            if OLD_DRIVER_ONLY("BD#1"):
                 assert downloaded_content != reference_content
 
-            elif NEW_DRIVER_ONLY("BC#1"):
+            elif NEW_DRIVER_ONLY("BD#1"):
                 assert downloaded_content == reference_content
 
 

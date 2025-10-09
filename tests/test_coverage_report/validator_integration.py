@@ -3,7 +3,7 @@
 Validator Integration Module
 
 Handles integration with the Rust tests_format_validator, including
-running the validator, parsing output, and managing Breaking Change data.
+running the validator, parsing output, and managing Behavior Difference data.
 """
 
 import json
@@ -20,10 +20,10 @@ class ValidatorIntegration:
         self.workspace_root = workspace_root
         self.validator_path = workspace_root / "tests" / "tests_format_validator"
         self._validator_cache = None
-        self._breaking_change_cache = None
+        self._behavior_difference_cache = None
     
     def get_validator_data(self) -> Dict:
-        """Get complete validator data including features and Breaking Change information."""
+        """Get complete validator data including features and Behavior Difference information."""
         if self._validator_cache is not None:
             return self._validator_cache
         
@@ -36,7 +36,7 @@ class ValidatorIntegration:
                 print("Validator source code changed, rebuilding...")
                 # Clear cache before rebuilding since results will be different
                 self._validator_cache = None
-                self._breaking_change_cache = None
+                self._behavior_difference_cache = None
                 self._build_validator()
             
             # Run validator with JSON output
@@ -62,15 +62,15 @@ class ValidatorIntegration:
             print(f"Error running validator: {e}")
             return {}
     
-    def get_breaking_change_data(self) -> Dict:
-        """Get Breaking Change data from the validator's JSON output."""
-        if self._breaking_change_cache is not None:
-            return self._breaking_change_cache
+    def get_behavior_difference_data(self) -> Dict:
+        """Get Behavior Difference data from the validator's JSON output."""
+        if self._behavior_difference_cache is not None:
+            return self._behavior_difference_cache
         
         validator_data = self.get_validator_data()
-        if validator_data and 'breaking_changes_report' in validator_data:
-            self._breaking_change_cache = validator_data['breaking_changes_report']
-            return self._breaking_change_cache
+        if validator_data and 'behavior_differences_report' in validator_data:
+            self._behavior_difference_cache = validator_data['behavior_differences_report']
+            return self._behavior_difference_cache
         
         return {}
     

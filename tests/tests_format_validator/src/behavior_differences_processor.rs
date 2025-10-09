@@ -7,34 +7,36 @@ use walkdir::WalkDir;
 
 use crate::driver_handlers::{BaseDriverHandler, DriverHandlerFactory};
 use crate::test_discovery::Language;
-use crate::validator::{BreakingChangeImplementation, BreakingChangeInfo, BreakingChangesReport};
+use crate::validator::{
+    BehaviorDifferenceImplementation, BehaviorDifferenceInfo, BehaviorDifferencesReport,
+};
 
 #[derive(Debug, Clone)]
 pub struct FeatureInfo {
-    pub breaking_change_scenarios: Vec<String>, // Only scenarios with breaking changes
+    pub behavior_difference_scenarios: Vec<String>, // Only scenarios with behavior differences
 }
 
-pub struct BreakingChangesProcessor {
+pub struct BehaviorDifferencesProcessor {
     workspace_root: PathBuf,
 }
 
-impl BreakingChangesProcessor {
+impl BehaviorDifferencesProcessor {
     pub fn new(workspace_root: PathBuf) -> Self {
         Self { workspace_root }
     }
 
-    pub fn process_breaking_changes(
+    pub fn process_behavior_differences(
         &self,
         features: &HashMap<String, FeatureInfo>,
-    ) -> Result<BreakingChangesReport> {
-        let mut breaking_change_descriptions = HashMap::new();
-        let mut breaking_changes_by_language = HashMap::new();
+    ) -> Result<BehaviorDifferencesReport> {
+        let mut behavior_difference_descriptions = HashMap::new();
+        let mut behavior_differences_by_language = HashMap::new();
 
-        // Breaking Changes processing started
+        // Behavior Differences processing started
 
         let factory = DriverHandlerFactory::new(self.workspace_root.clone());
 
-        // Process each language that supports Breaking Changes
+        // Process each language that supports Behavior Differences
         for language in &[
             Language::Odbc,
             Language::Jdbc,
@@ -43,55 +45,57 @@ impl BreakingChangesProcessor {
         ] {
             let handler = factory.create_handler(language);
 
-            if !handler.supports_breaking_changes() {
+            if !handler.supports_behavior_differences() {
                 continue;
             }
 
-            // Parse Breaking Changes descriptions for this language
+            // Parse Behavior Differences descriptions for this language
             let descriptions = handler
-                .parse_breaking_changes_descriptions()
+                .parse_behavior_differences_descriptions()
                 .unwrap_or_default();
 
-            // Extract Breaking Changes from test files
-            if let Ok(mut breaking_changes) =
-                self.extract_breaking_changes_from_test_files(language, features, &*handler)
+            // Extract Behavior Differences from test files
+            if let Ok(mut behavior_differences) =
+                self.extract_behavior_differences_from_test_files(language, features, &*handler)
             {
-                // Populate descriptions for each Breaking Change
-                for breaking_change in &mut breaking_changes {
-                    if let Some(description) = descriptions.get(&breaking_change.breaking_change_id)
+                // Populate descriptions for each Behavior Difference
+                for behavior_difference in &mut behavior_differences {
+                    if let Some(description) =
+                        descriptions.get(&behavior_difference.behavior_difference_id)
                     {
-                        breaking_change.description = description.clone();
+                        behavior_difference.description = description.clone();
                     }
                 }
 
                 let language_key = format!("{:?}", language).to_lowercase();
-                breaking_changes_by_language.insert(language_key, breaking_changes);
+                behavior_differences_by_language.insert(language_key, behavior_differences);
 
                 // Also add to global descriptions for backward compatibility
-                breaking_change_descriptions.extend(descriptions);
+                behavior_difference_descriptions.extend(descriptions);
             }
         }
 
-        Ok(BreakingChangesReport {
-            breaking_change_descriptions,
-            breaking_changes_by_language,
+        Ok(BehaviorDifferencesReport {
+            behavior_difference_descriptions,
+            behavior_differences_by_language,
         })
     }
 
-    /// Extract Breaking Change annotations from test files following Python logic exactly
-    fn extract_breaking_changes_from_test_files(
+    /// Extract Behavior Difference annotations from test files following Python logic exactly
+    fn extract_behavior_differences_from_test_files(
         &self,
         _language: &Language,
         features: &HashMap<String, FeatureInfo>,
         handler: &dyn BaseDriverHandler,
-    ) -> Result<Vec<BreakingChangeInfo>> {
-        let mut breaking_change_test_mapping: HashMap<String, BreakingChangeInfo> = HashMap::new();
+    ) -> Result<Vec<BehaviorDifferenceInfo>> {
+        let mut behavior_difference_test_mapping: HashMap<String, BehaviorDifferenceInfo> =
+            HashMap::new();
 
-        // Step 1: Get Breaking Change scenario names from feature files to filter test methods
-        let mut breaking_change_scenarios = HashSet::new();
+        // Step 1: Get Behavior Difference scenario names from feature files to filter test methods
+        let mut behavior_difference_scenarios = HashSet::new();
         for feature_info in features.values() {
-            for scenario in &feature_info.breaking_change_scenarios {
-                breaking_change_scenarios.insert(scenario.clone());
+            for scenario in &feature_info.behavior_difference_scenarios {
+                behavior_difference_scenarios.insert(scenario.clone());
             }
         }
 
@@ -114,37 +118,41 @@ impl BreakingChangesProcessor {
             }
         }
 
-        // Step 3: Process each test file - First pass: direct Breaking Change annotations
+        // Step 3: Process each test file - First pass: direct Behavior Difference annotations
         for test_file in &test_files {
             if let Ok(content) = fs::read_to_string(test_file) {
                 let test_methods = handler.extract_test_methods(&content);
 
-                // Look for direct Breaking Change annotations in test methods
+                // Look for direct Behavior Difference annotations in test methods
                 for test_method in &test_methods {
-                    // Check if this test method matches any Breaking Change scenario
-                    let matches_breaking_change_scenario =
-                        breaking_change_scenarios.iter().any(|scenario| {
+                    // Check if this test method matches any Behavior Difference scenario
+                    let matches_behavior_difference_scenario =
+                        behavior_difference_scenarios.iter().any(|scenario| {
                             handler.method_matches_scenario(&test_method.name, scenario)
                         });
 
-                    // Only process Breaking Changes for test methods that match Breaking Change scenarios
-                    if matches_breaking_change_scenario {
-                        if let Ok(method_breaking_changes) = handler
-                            .find_breaking_changes_in_method(&content, &test_method.name, test_file)
+                    // Only process Behavior Differences for test methods that match Behavior Difference scenarios
+                    if matches_behavior_difference_scenario {
+                        if let Ok(method_behavior_differences) = handler
+                            .find_behavior_differences_in_method(
+                                &content,
+                                &test_method.name,
+                                test_file,
+                            )
                         {
-                            for (breaking_change_id, breaking_change_location) in
-                                method_breaking_changes
+                            for (behavior_difference_id, behavior_difference_location) in
+                                method_behavior_differences
                             {
-                                let breaking_change_info = breaking_change_test_mapping
-                                    .entry(breaking_change_id.clone())
-                                    .or_insert_with(|| BreakingChangeInfo {
-                                        breaking_change_id: breaking_change_id.clone(),
+                                let behavior_difference_info = behavior_difference_test_mapping
+                                    .entry(behavior_difference_id.clone())
+                                    .or_insert_with(|| BehaviorDifferenceInfo {
+                                        behavior_difference_id: behavior_difference_id.clone(),
                                         description: String::new(),
                                         implementations: Vec::new(),
                                     });
 
-                                breaking_change_info.implementations.push(
-                                    BreakingChangeImplementation {
+                                behavior_difference_info.implementations.push(
+                                    BehaviorDifferenceImplementation {
                                         test_method: test_method.name.clone(),
                                         test_file: test_file
                                             .strip_prefix(&self.workspace_root)
@@ -152,13 +160,13 @@ impl BreakingChangesProcessor {
                                             .to_string_lossy()
                                             .to_string(),
                                         test_line: test_method.line,
-                                        new_behaviour_file: breaking_change_location
+                                        new_behaviour_file: behavior_difference_location
                                             .new_behaviour_file,
-                                        new_behaviour_line: breaking_change_location
+                                        new_behaviour_line: behavior_difference_location
                                             .new_behaviour_line,
-                                        old_behaviour_file: breaking_change_location
+                                        old_behaviour_file: behavior_difference_location
                                             .old_behaviour_file,
-                                        old_behaviour_line: breaking_change_location
+                                        old_behaviour_line: behavior_difference_location
                                             .old_behaviour_line,
                                     },
                                 );
@@ -169,29 +177,29 @@ impl BreakingChangesProcessor {
             }
         }
 
-        // Step 4: Second pass - Process test methods that match Breaking Change scenarios but don't have direct Breaking Changes
-        self.find_breaking_changes_in_scenario_test_methods(
-            &mut breaking_change_test_mapping,
-            &breaking_change_scenarios,
+        // Step 4: Second pass - Process test methods that match Behavior Difference scenarios but don't have direct Behavior Differences
+        self.find_behavior_differences_in_scenario_test_methods(
+            &mut behavior_difference_test_mapping,
+            &behavior_difference_scenarios,
             handler,
             &test_files,
         )?;
 
-        // Step 5: Third pass - Look for Breaking Change assertions in cross-file helper methods
-        self.find_cross_file_breaking_change_assertions(
-            &mut breaking_change_test_mapping,
+        // Step 5: Third pass - Look for Behavior Difference assertions in cross-file helper methods
+        self.find_cross_file_behavior_difference_assertions(
+            &mut behavior_difference_test_mapping,
             handler,
             &test_files,
         )?;
 
-        Ok(breaking_change_test_mapping.into_values().collect())
+        Ok(behavior_difference_test_mapping.into_values().collect())
     }
 
-    /// Find Breaking Changes in helper methods called by test methods that match Breaking Change scenarios
-    fn find_breaking_changes_in_scenario_test_methods(
+    /// Find Behavior Differences in helper methods called by test methods that match Behavior Difference scenarios
+    fn find_behavior_differences_in_scenario_test_methods(
         &self,
-        breaking_change_test_mapping: &mut HashMap<String, BreakingChangeInfo>,
-        breaking_change_scenarios: &HashSet<String>,
+        behavior_difference_test_mapping: &mut HashMap<String, BehaviorDifferenceInfo>,
+        behavior_difference_scenarios: &HashSet<String>,
         handler: &dyn BaseDriverHandler,
         test_files: &[PathBuf],
     ) -> Result<()> {
@@ -201,41 +209,43 @@ impl BreakingChangesProcessor {
 
                 // Check each test method to see if it matches a Breaking Change scenario
                 for test_method in &test_methods {
-                    // Check if this test method matches any Breaking Change scenario
-                    let matches_breaking_change_scenario =
-                        breaking_change_scenarios.iter().any(|scenario| {
+                    // Check if this test method matches any Behavior Difference scenario
+                    let matches_behavior_difference_scenario =
+                        behavior_difference_scenarios.iter().any(|scenario| {
                             handler.method_matches_scenario(&test_method.name, scenario)
                         });
 
-                    if matches_breaking_change_scenario {
+                    if matches_behavior_difference_scenario {
                         // Extract helper methods called by this test method
                         let helper_methods =
                             handler.extract_helper_method_calls(&content, &test_method.name);
 
-                        // Search for Breaking Change assertions in the called helper methods
-                        let additional_breaking_changes = self
-                            .find_all_breaking_changes_in_helper_methods(
+                        // Search for Behavior Difference assertions in the called helper methods
+                        let additional_behavior_differences = self
+                            .find_all_behavior_differences_in_helper_methods(
                                 &content,
                                 &helper_methods,
                                 test_file,
                                 handler,
                             )?;
 
-                        // Add any Breaking Changes found to the test's Breaking Change mapping
-                        for (breaking_change_id, breaking_change_location) in
-                            additional_breaking_changes
+                        // Add any Behavior Differences found to the test's Behavior Difference mapping
+                        for (behavior_difference_id, behavior_difference_location) in
+                            additional_behavior_differences
                         {
-                            let breaking_change_info = breaking_change_test_mapping
-                                .entry(breaking_change_id.clone())
-                                .or_insert_with(|| BreakingChangeInfo {
-                                    breaking_change_id: breaking_change_id.clone(),
+                            let behavior_difference_info = behavior_difference_test_mapping
+                                .entry(behavior_difference_id.clone())
+                                .or_insert_with(|| BehaviorDifferenceInfo {
+                                    behavior_difference_id: behavior_difference_id.clone(),
                                     description: String::new(),
                                     implementations: Vec::new(),
                                 });
 
-                            // Check if this test is already in the mapping for this Breaking Change
-                            let already_exists =
-                                breaking_change_info.implementations.iter().any(|impl_| {
+                            // Check if this test is already in the mapping for this Behavior Difference
+                            let already_exists = behavior_difference_info
+                                .implementations
+                                .iter()
+                                .any(|impl_| {
                                     impl_.test_method == test_method.name
                                         && impl_.test_file
                                             == test_file
@@ -245,8 +255,8 @@ impl BreakingChangesProcessor {
                                 });
 
                             if !already_exists {
-                                breaking_change_info.implementations.push(
-                                    BreakingChangeImplementation {
+                                behavior_difference_info.implementations.push(
+                                    BehaviorDifferenceImplementation {
                                         test_method: test_method.name.clone(),
                                         test_file: test_file
                                             .strip_prefix(&self.workspace_root)
@@ -254,13 +264,13 @@ impl BreakingChangesProcessor {
                                             .to_string_lossy()
                                             .to_string(),
                                         test_line: test_method.line,
-                                        new_behaviour_file: breaking_change_location
+                                        new_behaviour_file: behavior_difference_location
                                             .new_behaviour_file,
-                                        new_behaviour_line: breaking_change_location
+                                        new_behaviour_line: behavior_difference_location
                                             .new_behaviour_line,
-                                        old_behaviour_file: breaking_change_location
+                                        old_behaviour_file: behavior_difference_location
                                             .old_behaviour_file,
-                                        old_behaviour_line: breaking_change_location
+                                        old_behaviour_line: behavior_difference_location
                                             .old_behaviour_line,
                                     },
                                 );
@@ -274,44 +284,53 @@ impl BreakingChangesProcessor {
         Ok(())
     }
 
-    /// Find all Breaking Changes in helper methods (including cross-file and nested calls)
-    fn find_all_breaking_changes_in_helper_methods(
+    /// Find all Behavior Differences in helper methods (including cross-file and nested calls)
+    fn find_all_behavior_differences_in_helper_methods(
         &self,
         content: &str,
         helper_methods: &[String],
         test_file: &Path,
         handler: &dyn BaseDriverHandler,
-    ) -> Result<HashMap<String, crate::driver_handlers::base_handler::BreakingChangeLocation>> {
-        let mut all_breaking_changes = HashMap::new();
+    ) -> Result<HashMap<String, crate::driver_handlers::base_handler::BehaviorDifferenceLocation>>
+    {
+        let mut all_behavior_differences = HashMap::new();
         let mut processed_methods = HashSet::new();
 
         // Recursively process helper methods to find nested calls
-        self.find_breaking_changes_in_helper_methods_recursive(
+        self.find_behavior_differences_in_helper_methods_recursive(
             content,
             helper_methods,
             test_file,
             handler,
-            &mut all_breaking_changes,
+            &mut all_behavior_differences,
             &mut processed_methods,
         )?;
 
-        Ok(all_breaking_changes)
+        // Also check cross-file helper methods for direct calls
+        self.find_behavior_differences_in_cross_file_methods(
+            helper_methods,
+            handler,
+            &mut all_behavior_differences,
+            &mut processed_methods,
+        )?;
+
+        Ok(all_behavior_differences)
     }
 
-    /// Recursively find Breaking Changes in helper methods and their nested calls
-    fn find_breaking_changes_in_helper_methods_recursive(
+    /// Recursively find Behavior Differences in helper methods and their nested calls
+    fn find_behavior_differences_in_helper_methods_recursive(
         &self,
         content: &str,
         helper_methods: &[String],
         test_file: &Path,
         handler: &dyn BaseDriverHandler,
-        all_breaking_changes: &mut HashMap<
+        all_behavior_differences: &mut HashMap<
             String,
-            crate::driver_handlers::base_handler::BreakingChangeLocation,
+            crate::driver_handlers::base_handler::BehaviorDifferenceLocation,
         >,
         processed_methods: &mut HashSet<String>,
     ) -> Result<()> {
-        // First, look for Breaking Changes in helper methods within the same file
+        // First, look for Behavior Differences in helper methods within the same file
         for helper_method in helper_methods {
             if processed_methods.contains(helper_method) {
                 continue; // Avoid infinite recursion
@@ -319,36 +338,36 @@ impl BreakingChangesProcessor {
             processed_methods.insert(helper_method.clone());
 
             // Find Breaking Changes directly in this helper method (class methods)
-            if let Ok(method_breaking_changes) =
-                handler.find_breaking_changes_in_method(content, helper_method, test_file)
+            if let Ok(method_behavior_differences) =
+                handler.find_behavior_differences_in_method(content, helper_method, test_file)
             {
-                all_breaking_changes.extend(method_breaking_changes);
+                all_behavior_differences.extend(method_behavior_differences);
             }
 
             // Also check for Breaking Changes in standalone functions (for Python)
-            if let Ok(function_breaking_changes) =
-                handler.find_breaking_changes_in_function(content, helper_method, test_file)
+            if let Ok(function_behavior_differences) =
+                handler.find_behavior_differences_in_function(content, helper_method, test_file)
             {
-                all_breaking_changes.extend(function_breaking_changes);
+                all_behavior_differences.extend(function_behavior_differences);
             }
 
             // Find nested helper method calls within this helper method
             let nested_helper_methods = handler.extract_helper_method_calls(content, helper_method);
             if !nested_helper_methods.is_empty() {
                 // Recursively process nested helper methods
-                self.find_breaking_changes_in_helper_methods_recursive(
+                self.find_behavior_differences_in_helper_methods_recursive(
                     content,
                     &nested_helper_methods,
                     test_file,
                     handler,
-                    all_breaking_changes,
+                    all_behavior_differences,
                     processed_methods,
                 )?;
                 // Also check cross-file for nested helper methods
-                self.find_breaking_changes_in_cross_file_methods(
+                self.find_behavior_differences_in_cross_file_methods(
                     &nested_helper_methods,
                     handler,
-                    all_breaking_changes,
+                    all_behavior_differences,
                     processed_methods,
                 )?;
             }
@@ -365,7 +384,7 @@ impl BreakingChangesProcessor {
                 helper_methods,
                 test_file,
                 handler,
-                all_breaking_changes,
+                all_behavior_differences,
                 processed_methods,
             )?;
         } else {
@@ -374,7 +393,7 @@ impl BreakingChangesProcessor {
                 helper_methods,
                 test_file,
                 handler,
-                all_breaking_changes,
+                all_behavior_differences,
                 processed_methods,
             )?;
         }
@@ -383,13 +402,13 @@ impl BreakingChangesProcessor {
     }
 
     /// Find Breaking Changes in cross-file helper methods (e.g., common library)
-    fn find_breaking_changes_in_cross_file_methods(
+    fn find_behavior_differences_in_cross_file_methods(
         &self,
         helper_methods: &[String],
         handler: &dyn BaseDriverHandler,
-        all_breaking_changes: &mut HashMap<
+        all_behavior_differences: &mut HashMap<
             String,
-            crate::driver_handlers::base_handler::BreakingChangeLocation,
+            crate::driver_handlers::base_handler::BehaviorDifferenceLocation,
         >,
         processed_methods: &mut HashSet<String>,
     ) -> Result<()> {
@@ -402,7 +421,7 @@ impl BreakingChangesProcessor {
             self.find_odbc_cross_file_methods(
                 helper_methods,
                 handler,
-                all_breaking_changes,
+                all_behavior_differences,
                 processed_methods,
             )
         }
@@ -412,9 +431,9 @@ impl BreakingChangesProcessor {
         &self,
         helper_methods: &[String],
         handler: &dyn BaseDriverHandler,
-        all_breaking_changes: &mut HashMap<
+        all_behavior_differences: &mut HashMap<
             String,
-            crate::driver_handlers::base_handler::BreakingChangeLocation,
+            crate::driver_handlers::base_handler::BehaviorDifferenceLocation,
         >,
         processed_methods: &mut HashSet<String>,
     ) -> Result<()> {
@@ -449,14 +468,14 @@ impl BreakingChangesProcessor {
                             processed_methods.insert(helper_method.clone()); // Also mark in main processed set
 
                             // Find Breaking Changes in this cross-file method
-                            if let Ok(method_breaking_changes) = handler
-                                .find_breaking_changes_in_method(
+                            if let Ok(method_behavior_differences) = handler
+                                .find_behavior_differences_in_method(
                                     &common_content,
                                     helper_method,
                                     entry.path(),
                                 )
                             {
-                                all_breaking_changes.extend(method_breaking_changes);
+                                all_behavior_differences.extend(method_behavior_differences);
                             }
 
                             // Also check for nested calls within this cross-file method
@@ -464,10 +483,10 @@ impl BreakingChangesProcessor {
                                 handler.extract_helper_method_calls(&common_content, helper_method);
                             if !nested_helper_methods.is_empty() {
                                 // Recursively process nested helper methods in cross-file context
-                                self.find_breaking_changes_in_cross_file_methods(
+                                self.find_behavior_differences_in_cross_file_methods(
                                     &nested_helper_methods,
                                     handler,
-                                    all_breaking_changes,
+                                    all_behavior_differences,
                                     processed_methods,
                                 )?;
                             }
@@ -488,9 +507,9 @@ impl BreakingChangesProcessor {
         helper_methods: &[String],
         test_file: &Path,
         handler: &dyn BaseDriverHandler,
-        all_breaking_changes: &mut HashMap<
+        all_behavior_differences: &mut HashMap<
             String,
-            crate::driver_handlers::base_handler::BreakingChangeLocation,
+            crate::driver_handlers::base_handler::BehaviorDifferenceLocation,
         >,
         processed_methods: &mut HashSet<String>,
     ) -> Result<()> {
@@ -515,14 +534,14 @@ impl BreakingChangesProcessor {
                             processed_methods.insert(helper_method.clone());
 
                             // Find Breaking Changes in this imported helper function
-                            if let Ok(method_breaking_changes) = handler
-                                .find_breaking_changes_in_function(
+                            if let Ok(method_behavior_differences) = handler
+                                .find_behavior_differences_in_function(
                                     &helper_content,
                                     helper_method,
                                     helper_file_path,
                                 )
                             {
-                                all_breaking_changes.extend(method_breaking_changes);
+                                all_behavior_differences.extend(method_behavior_differences);
                             }
 
                             // Also check for nested calls within this helper function
@@ -535,7 +554,7 @@ impl BreakingChangesProcessor {
                                     &nested_helper_methods,
                                     helper_file_path,
                                     handler,
-                                    all_breaking_changes,
+                                    all_behavior_differences,
                                     processed_methods,
                                 )?;
                             }
@@ -602,9 +621,9 @@ impl BreakingChangesProcessor {
         helper_methods: &[String],
         test_file: &Path,
         handler: &dyn BaseDriverHandler,
-        all_breaking_changes: &mut HashMap<
+        all_behavior_differences: &mut HashMap<
             String,
-            crate::driver_handlers::base_handler::BreakingChangeLocation,
+            crate::driver_handlers::base_handler::BehaviorDifferenceLocation,
         >,
         processed_methods: &mut HashSet<String>,
     ) -> Result<()> {
@@ -629,14 +648,14 @@ impl BreakingChangesProcessor {
                             processed_methods.insert(helper_method.clone());
 
                             // Find Breaking Changes in this included helper function
-                            if let Ok(method_breaking_changes) = handler
-                                .find_breaking_changes_in_method(
+                            if let Ok(method_behavior_differences) = handler
+                                .find_behavior_differences_in_method(
                                     &helper_content,
                                     helper_method,
                                     helper_file_path,
                                 )
                             {
-                                all_breaking_changes.extend(method_breaking_changes);
+                                all_behavior_differences.extend(method_behavior_differences);
                             }
 
                             // Also check for nested calls within this helper function
@@ -649,7 +668,7 @@ impl BreakingChangesProcessor {
                                     &nested_helper_methods,
                                     helper_file_path,
                                     handler,
-                                    all_breaking_changes,
+                                    all_behavior_differences,
                                     processed_methods,
                                 )?;
                             }
@@ -732,14 +751,14 @@ impl BreakingChangesProcessor {
     }
 
     /// Look for Breaking Change assertions that might be in other files for existing Breaking Changes
-    fn find_cross_file_breaking_change_assertions(
+    fn find_cross_file_behavior_difference_assertions(
         &self,
-        _breaking_change_test_mapping: &mut HashMap<String, BreakingChangeInfo>,
+        _behavior_difference_test_mapping: &mut HashMap<String, BehaviorDifferenceInfo>,
         _handler: &dyn BaseDriverHandler,
         _test_files: &[PathBuf],
     ) -> Result<()> {
         // This method can be implemented later for more complex cross-file scenarios
-        // For now, the logic in find_all_breaking_changes_in_helper_methods handles the main cases
+        // For now, the logic in find_all_behavior_differences_in_helper_methods handles the main cases
         Ok(())
     }
 }

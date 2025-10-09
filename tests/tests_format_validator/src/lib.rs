@@ -1,5 +1,5 @@
-pub mod breaking_changes_processor;
-pub mod breaking_changes_utils;
+pub mod behavior_differences_processor;
+pub mod behavior_differences_utils;
 pub mod driver_handlers;
 pub mod feature_parser;
 pub mod step_finder;

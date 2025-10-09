@@ -61,12 +61,12 @@ void verify_connection_fails_with_missing_private_key_error(ConnectionHandleWrap
   REQUIRE(records.size() == 1);  // Expecting one error record
   CHECK(records[0].sqlState == "28000");
   using Catch::Matchers::ContainsSubstring;
-  OLD_DRIVER_ONLY("BC#1") {
+  OLD_DRIVER_ONLY("BD#1") {
     CHECK(records[0].nativeError == 20032);
     CHECK_THAT(records[0].messageText, ContainsSubstring("Required setting 'PRIV_KEY_FILE'"));
   }
 
-  NEW_DRIVER_ONLY("BC#1") {
+  NEW_DRIVER_ONLY("BD#1") {
     CHECK(records[0].nativeError == 0);
     CHECK_THAT(records[0].messageText,
                ContainsSubstring("Missing required parameter: private_key_file"));

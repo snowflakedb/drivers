@@ -65,8 +65,8 @@ TEST_CASE("PUT+GET with AUTO_COMPRESS=TRUE", "[put_get][odbc]") {
   std::ifstream ref(file_gz, std::ios::binary);
   std::string reference_bytes((std::istreambuf_iterator<char>(ref)),
                               std::istreambuf_iterator<char>());
-  OLD_DRIVER_ONLY("BC#1") { CHECK(downloaded_bytes != reference_bytes); }
-  NEW_DRIVER_ONLY("BC#1") { CHECK(downloaded_bytes == reference_bytes); }
+  OLD_DRIVER_ONLY("BD#1") { CHECK(downloaded_bytes != reference_bytes); }
+  NEW_DRIVER_ONLY("BD#1") { CHECK(downloaded_bytes == reference_bytes); }
 }
 
 TEST_CASE("PUT+GET with AUTO_COMPRESS=FALSE", "[put_get][odbc]") {

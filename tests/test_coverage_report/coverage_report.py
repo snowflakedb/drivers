@@ -19,14 +19,14 @@ import argparse
 try:
     from .validator_integration import ValidatorIntegration
     from .feature_parser import FeatureParser
-    from .breaking_changes_handler import BreakingChangesHandler
+    from .behavior_differences_handler import BehaviorDifferencesHandler
     from .html_generator import HTMLGenerator
 except ImportError:
     # Handle relative imports when running as script
     sys.path.append(os.path.dirname(__file__))
     from validator_integration import ValidatorIntegration
     from feature_parser import FeatureParser
-    from breaking_changes_handler import BreakingChangesHandler
+    from behavior_differences_handler import BehaviorDifferencesHandler
     from html_generator import HTMLGenerator
 
 
@@ -37,18 +37,18 @@ class CoverageReportGenerator:
     def __init__(self, workspace_root: str):
         self.workspace_root = Path(workspace_root).resolve()  # Convert to absolute path
         self.validator_path = self.workspace_root / "tests" / "tests_format_validator"
-        self._validator_breaking_change_cache = None  # Cache for validator JSON output
+        self._validator_behavior_difference_cache = None  # Cache for validator JSON output
         self._css_cache = None  # Cache for CSS content
         
         # Initialize modular components
         self.validator = ValidatorIntegration(self.workspace_root)
         self.feature_parser = FeatureParser(self.workspace_root)
-        self.breaking_change_handler = BreakingChangesHandler(self.validator, self.feature_parser)
+        self.behavior_difference_handler = BehaviorDifferencesHandler(self.validator, self.feature_parser)
         self.html_generator = HTMLGenerator(self.workspace_root)
         
-    def get_breaking_change_data_from_validator(self) -> Dict:
-        """Get Breaking Change data from the Rust validator's JSON output."""
-        return self.validator.get_breaking_change_data()
+    def get_behavior_difference_data_from_validator(self) -> Dict:
+        """Get Behavior Difference data from the Rust validator's JSON output."""
+        return self.validator.get_behavior_difference_data()
     
     def run_validator(self) -> Dict:
         """Run the tests format validator and parse its output."""
@@ -225,18 +225,18 @@ class CoverageReportGenerator:
         return self.feature_parser.get_feature_scenarios(feature_path)
     
     def get_feature_scenarios_with_annotations(self, feature_path: str) -> List[Dict[str, any]]:
-        """Extract scenario names and their annotations (Breaking Change, expected) from a feature file."""
+        """Extract scenario names and their annotations (Behavior Difference, expected) from a feature file."""
         return self.feature_parser.get_feature_scenarios_with_annotations(feature_path)
 
-    def parse_breaking_change_descriptions(self, driver: str = 'odbc') -> Dict[str, str]:
-        """Parse Breaking Change descriptions from the driver's Breaking Change.md file."""
-        return self.breaking_change_handler.get_breaking_change_descriptions(driver)
+    def parse_behavior_difference_descriptions(self, driver: str = 'odbc') -> Dict[str, str]:
+        """Parse Behavior Difference descriptions from the driver's Behavior Difference.md file."""
+        return self.behavior_difference_handler.get_behavior_difference_descriptions(driver)
     
-    def extract_breaking_change_from_test_files(self, driver: str = 'odbc', features: Dict = None) -> Dict[str, Dict[str, List[Dict[str, any]]]]:
-        """Extract Breaking Change annotations from test files and associate them with test methods.
+    def extract_behavior_difference_from_test_files(self, driver: str = 'odbc', features: Dict = None) -> Dict[str, Dict[str, List[Dict[str, any]]]]:
+        """Extract Behavior Difference annotations from test files and associate them with test methods.
         Only includes tests that correspond to scenarios defined in feature files.
         """
-        return self.breaking_change_handler.get_breaking_change_test_mappings(driver, features)
+        return self.behavior_difference_handler.get_behavior_difference_test_mappings(driver, features)
     
     
     def is_scenario_todo_for_driver(self, scenario_info: Dict, driver: str) -> bool:
@@ -512,9 +512,9 @@ class CoverageReportGenerator:
                 method_normalized == normalize(scenario_pascal) or
                 method_normalized == normalize(scenario_test_method))
     
-    def _get_breaking_change_ids_for_scenario(self, scenario_info: Dict, driver: str, features: Dict = None) -> List[str]:
-        """Get all Breaking Change IDs associated with a scenario by looking up test implementations."""
-        return self.breaking_change_handler.get_breaking_change_ids_for_scenario(scenario_info, driver, features)
+    def _get_behavior_difference_ids_for_scenario(self, scenario_info: Dict, driver: str, features: Dict = None) -> List[str]:
+        """Get all Behavior Difference IDs associated with a scenario by looking up test implementations."""
+        return self.behavior_difference_handler.get_behavior_difference_ids_for_scenario(scenario_info, driver, features)
     
     def generate_coverage_table(self, features: Dict) -> str:
         """Generate a coverage table showing implementation status."""
@@ -602,12 +602,12 @@ class CoverageReportGenerator:
             th { background-color: #f2f2f2; }
             .tick-icon { color: green; font-weight: bold; }
             .status-na { color: #666; }
-            .breaking_change-superscript-link { 
+            .behavior_difference-superscript-link { 
                 color: #FFD700; 
                 text-decoration: none; 
                 font-weight: bold;
             }
-            .breaking_change-superscript-link:hover { 
+            .behavior_difference-superscript-link:hover { 
                 text-decoration: underline; 
             }
         '''
@@ -696,9 +696,9 @@ class CoverageReportGenerator:
                         }}
                     }}
                     
-                    function navigateToBreakingChange(breaking_changeId) {{
-                        // First, close all tabs and open Breaking Change tab
-                        showTab('breaking_change-tab');
+                    function navigateToBehaviorDifference(behavior_differenceId) {{
+                        // First, close all tabs and open Behavior Difference tab
+                        showTab('behavior_difference-tab');
                         
                         // Collapse all expandable sections in all tabs
                         const allExpandableSections = document.querySelectorAll('.expandable-section');
@@ -713,28 +713,28 @@ class CoverageReportGenerator:
                             }}
                         }});
                         
-                        const breaking_changeElement = document.getElementById(breaking_changeId);
-                        if (breaking_changeElement) {{
+                        const behavior_differenceElement = document.getElementById(behavior_differenceId);
+                        if (behavior_differenceElement) {{
                             // Find and expand the parent driver section
-                            const driverSection = breaking_changeElement.closest('.expandable-content').previousElementSibling;
+                            const driverSection = behavior_differenceElement.closest('.expandable-content').previousElementSibling;
                             if (driverSection && driverSection.classList.contains('expandable-header')) {{
                                 expandSection(driverSection);
                             }}
                             
-                            // Expand the specific Breaking Change section
-                            const breaking_changeHeader = breaking_changeElement.querySelector('.expandable-header');
-                            if (breaking_changeHeader) {{
-                                expandSection(breaking_changeHeader);
+                            // Expand the specific Behavior Difference section
+                            const behavior_differenceHeader = behavior_differenceElement.querySelector('.expandable-header');
+                            if (behavior_differenceHeader) {{
+                                expandSection(behavior_differenceHeader);
                             }}
                             
-                            // Scroll to the Breaking Change section
-                            setTimeout(() => breaking_changeElement.scrollIntoView({{behavior: 'smooth'}}), 100);
+                            // Scroll to the Behavior Difference section
+                            setTimeout(() => behavior_differenceElement.scrollIntoView({{behavior: 'smooth'}}), 100);
                         }}
                     }}
                     
-                    function toggleBreakingChangePopup(popupId) {{
-                        // Hide all other Breaking Change popups first
-                        const allPopups = document.querySelectorAll('.breaking_change-popup');
+                    function toggleBehaviorDifferencePopup(popupId) {{
+                        // Hide all other Behavior Difference popups first
+                        const allPopups = document.querySelectorAll('.behavior_difference-popup');
                         allPopups.forEach(popup => {{
                             if (popup.id !== popupId) {{
                                 popup.classList.remove('show');
@@ -748,17 +748,17 @@ class CoverageReportGenerator:
                         }}
                     }}
                     
-                    function hideBreakingChangePopup(popupId) {{
+                    function hideBehaviorDifferencePopup(popupId) {{
                         const popup = document.getElementById(popupId);
                         if (popup) {{
                             popup.classList.remove('show');
                         }}
                     }}
                     
-                    // Close Breaking Change popups when clicking outside
+                    // Close Behavior Difference popups when clicking outside
                     document.addEventListener('click', function(event) {{
-                        if (!event.target.closest('.breaking_change-popup-container')) {{
-                            const allPopups = document.querySelectorAll('.breaking_change-popup');
+                        if (!event.target.closest('.behavior_difference-popup-container')) {{
+                            const allPopups = document.querySelectorAll('.behavior_difference-popup');
                             allPopups.forEach(popup => {{
                                 popup.classList.remove('show');
                             }});
@@ -920,27 +920,27 @@ class CoverageReportGenerator:
                     
                     # Check if any scenarios in this feature are expected (in progress) for this driver
                     has_expected_scenarios = False
-                    has_breaking_change_scenarios = False
+                    has_behavior_difference_scenarios = False
                     has_implemented_scenarios = False
                     has_failed_scenarios = False
                     has_relevant_scenarios = False
                     
                     for scenario_info in scenarios_with_annotations:
                         is_todo_for_driver = self.is_scenario_todo_for_driver(scenario_info, lang)
-                        breaking_change_driver_check = self.get_language_data_key(lang).lower() if lang == 'core' else lang.lower()
+                        behavior_difference_driver_check = self.get_language_data_key(lang).lower() if lang == 'core' else lang.lower()
                         
-                        # Check if there are actual Breaking Change implementations for this driver and scenario
-                        breaking_change_ids_for_this_driver = self._get_breaking_change_ids_for_scenario(scenario_info, breaking_change_driver_check, features)
-                        is_breaking_change_for_this_driver = bool(breaking_change_ids_for_this_driver)
+                        # Check if there are actual Behavior Difference implementations for this driver and scenario
+                        behavior_difference_ids_for_this_driver = self._get_behavior_difference_ids_for_scenario(scenario_info, behavior_difference_driver_check, features)
+                        is_behavior_difference_for_this_driver = bool(behavior_difference_ids_for_this_driver)
                         has_driver_tag = self._has_driver_tag_in_scenario(scenario_info, lang.lower())
                         
-                        if is_todo_for_driver or is_breaking_change_for_this_driver or has_driver_tag:
+                        if is_todo_for_driver or is_behavior_difference_for_this_driver or has_driver_tag:
                             has_relevant_scenarios = True
                             
                             if is_todo_for_driver:
                                 has_expected_scenarios = True
-                            elif is_breaking_change_for_this_driver:
-                                has_breaking_change_scenarios = True
+                            elif is_behavior_difference_for_this_driver:
+                                has_behavior_difference_scenarios = True
                             elif has_driver_tag:
                                 # Check if implemented
                                 scenario_implemented = False
@@ -968,8 +968,8 @@ class CoverageReportGenerator:
                     elif has_failed_scenarios:
                         # Has failed scenarios
                         feature_cells.append('<td><div class="test-status"><span class="status-fail">✗</span></div></td>')
-                    elif has_implemented_scenarios or has_breaking_change_scenarios:
-                        # All scenarios are implemented or Breaking Change
+                    elif has_implemented_scenarios or has_behavior_difference_scenarios:
+                        # All scenarios are implemented or Behavior Difference
                         feature_cells.append('<td><div class="test-status"><span class="tick-icon">✓</span></div></td>')
                     else:
                         # Fallback to not applicable
@@ -979,9 +979,9 @@ class CoverageReportGenerator:
                 
                 # Individual test rows - collect in feature content
                 feature_test_rows = []
-                for i, scenario_info in enumerate(scenarios_with_annotations if scenarios_with_annotations else [{'name': s, 'breaking_change_info': None, 'expected_drivers': [], 'tags': []} for s in scenarios]):
+                for i, scenario_info in enumerate(scenarios_with_annotations if scenarios_with_annotations else [{'name': s, 'behavior_difference_info': None, 'expected_drivers': [], 'tags': []} for s in scenarios]):
                     scenario = scenario_info['name'] if isinstance(scenario_info, dict) else scenario_info
-                    breaking_change_info = scenario_info.get('breaking_change_info') if isinstance(scenario_info, dict) else None
+                    behavior_difference_info = scenario_info.get('behavior_difference_info') if isinstance(scenario_info, dict) else None
                     expected_drivers = scenario_info.get('expected_drivers', []) if isinstance(scenario_info, dict) else []
                     tags = scenario_info.get('tags', []) if isinstance(scenario_info, dict) else []
                     
@@ -1023,50 +1023,50 @@ class CoverageReportGenerator:
                             # Check if this scenario is expected (in progress) for this driver
                             is_todo_for_driver = self.is_scenario_todo_for_driver(scenario_info, lang)
                             
-                            # Check if this is a Breaking Change for this driver by looking at actual Breaking Change implementations
-                            breaking_change_driver_check = self.get_language_data_key(lang).lower() if lang == 'core' else lang.lower()
+                            # Check if this is a Behavior Difference for this driver by looking at actual Behavior Difference implementations
+                            behavior_difference_driver_check = self.get_language_data_key(lang).lower() if lang == 'core' else lang.lower()
                             
-                            # Check if there are actual Breaking Change implementations for this driver and scenario
-                            breaking_change_ids_for_link = self._get_breaking_change_ids_for_scenario(scenario_info, breaking_change_driver_check, features)
-                            is_breaking_change_for_this_driver = bool(breaking_change_ids_for_link)
+                            # Check if there are actual Behavior Difference implementations for this driver and scenario
+                            behavior_difference_ids_for_link = self._get_behavior_difference_ids_for_scenario(scenario_info, behavior_difference_driver_check, features)
+                            is_behavior_difference_for_this_driver = bool(behavior_difference_ids_for_link)
                             
                             # Determine status based on annotations and implementation
-                            # Prioritize expected status over Breaking Change status
+                            # Prioritize expected status over Behavior Difference status
                             if is_todo_for_driver:
-                                # This scenario is expected (in progress) for this driver - prioritize this over Breaking Change
+                                # This scenario is expected (in progress) for this driver - prioritize this over Behavior Difference
                                 status_cells.append('<td><div class="test-status"><span class="status-in-progress">TODO</span></div></td>')
-                            elif is_breaking_change_for_this_driver:
-                                # Breaking Change scenario for this specific driver - show Breaking Change popup with list
-                                if breaking_change_ids_for_link:
+                            elif is_behavior_difference_for_this_driver:
+                                # Behavior Difference scenario for this specific driver - show Behavior Difference popup with list
+                                if behavior_difference_ids_for_link:
                                     # Generate unique popup ID for this scenario
                                     scenario_clean = scenario.lower().replace(" ", "-").replace("'", "")
-                                    popup_id = f'breaking_change-popup-{scenario_clean}-{lang.lower()}'
+                                    popup_id = f'behavior_difference-popup-{scenario_clean}-{lang.lower()}'
                                     
-                                    # Create Breaking Change list items
-                                    breaking_change_items = []
-                                    for breaking_change_id in breaking_change_ids_for_link:
-                                        breaking_change_section_id = f'breaking_change-{breaking_change_driver_check}-{breaking_change_id.lower().replace("#", "")}'
-                                        breaking_change_items.append(f'<li><a href="#" onclick="navigateToBreakingChange(\'{breaking_change_section_id}\'); hideBreakingChangePopup(\'{popup_id}\'); return false;" class="breaking_change-popup-link">{breaking_change_id}</a></li>')
+                                    # Create Behavior Difference list items
+                                    behavior_difference_items = []
+                                    for behavior_difference_id in behavior_difference_ids_for_link:
+                                        behavior_difference_section_id = f'behavior_difference-{behavior_difference_driver_check}-{behavior_difference_id.lower().replace("#", "")}'
+                                        behavior_difference_items.append(f'<li><a href="#" onclick="navigateToBehaviorDifference(\'{behavior_difference_section_id}\'); hideBehaviorDifferencePopup(\'{popup_id}\'); return false;" class="behavior_difference-popup-link">{behavior_difference_id}</a></li>')
                                     
-                                    # Create clickable Breaking Change numbers for superscript display
-                                    breaking_change_links = []
-                                    for breaking_change_id in breaking_change_ids_for_link:
-                                        # Extract number from BC#1 format
-                                        if breaking_change_id.startswith('BC#'):
-                                            number = breaking_change_id[3:]  # Remove 'BC#' prefix
-                                            breaking_change_section_id = f'breaking_change-{breaking_change_driver_check}-{breaking_change_id.lower().replace("#", "")}'
-                                            breaking_change_links.append(f'<a href="#" onclick="navigateToBreakingChange(\'{breaking_change_section_id}\'); return false;" class="breaking_change-superscript-link">{number}</a>')
+                                    # Create clickable Behavior Difference numbers for superscript display
+                                    behavior_difference_links = []
+                                    for behavior_difference_id in behavior_difference_ids_for_link:
+                                        # Extract number from BD#1 format
+                                        if behavior_difference_id.startswith('BD#'):
+                                            number = behavior_difference_id[3:]  # Remove 'BD#' prefix
+                                            behavior_difference_section_id = f'behavior_difference-{behavior_difference_driver_check}-{behavior_difference_id.lower().replace("#", "")}'
+                                            behavior_difference_links.append(f'<a href="#" onclick="navigateToBehaviorDifference(\'{behavior_difference_section_id}\'); return false;" class="behavior_difference-superscript-link">{number}</a>')
                                     
-                                    superscript_links = ','.join(breaking_change_links)
+                                    superscript_links = ','.join(behavior_difference_links)
                                     
-                                    # Create green checkmark with clickable superscript Breaking Change numbers
+                                    # Create green checkmark with clickable superscript Behavior Difference numbers
                                     status_cells.append(f'''
                                         <td><div class="test-status">
                                             <span class="tick-icon">✓<sup>{superscript_links}</sup></span>
                                         </div></td>
                                     ''')
                                 else:
-                                    # Scenario has no actual Breaking Change implementations
+                                    # Scenario has no actual Behavior Difference implementations
                                     status_cells.append('<td><div class="test-status"><span class="status-na">-</span></div></td>')
                             elif scenario_implemented:
                                 # Regular implemented scenario
@@ -1091,49 +1091,49 @@ class CoverageReportGenerator:
                             # Check if this scenario is expected (in progress) for this driver
                             is_todo_for_driver = self.is_scenario_todo_for_driver(scenario_info, lang)
                             
-                            # Check if this is a Breaking Change for this driver by looking at actual Breaking Change implementations
-                            breaking_change_driver_check = self.get_language_data_key(lang).lower() if lang == 'core' else lang.lower()
+                            # Check if this is a Behavior Difference for this driver by looking at actual Behavior Difference implementations
+                            behavior_difference_driver_check = self.get_language_data_key(lang).lower() if lang == 'core' else lang.lower()
                             
-                            # Check if there are actual Breaking Change implementations for this driver and scenario
-                            breaking_change_ids_for_link = self._get_breaking_change_ids_for_scenario(scenario_info, breaking_change_driver_check, features)
-                            is_breaking_change_for_this_driver = bool(breaking_change_ids_for_link)
+                            # Check if there are actual Behavior Difference implementations for this driver and scenario
+                            behavior_difference_ids_for_link = self._get_behavior_difference_ids_for_scenario(scenario_info, behavior_difference_driver_check, features)
+                            is_behavior_difference_for_this_driver = bool(behavior_difference_ids_for_link)
                             
-                            # Prioritize expected status over Breaking Change status
+                            # Prioritize expected status over Behavior Difference status
                             if is_todo_for_driver:
-                                # This scenario is expected (in progress) for this driver - prioritize this over Breaking Change
+                                # This scenario is expected (in progress) for this driver - prioritize this over Behavior Difference
                                 status_cells.append('<td><div class="test-status"><span class="status-in-progress">TODO</span></div></td>')
-                            elif is_breaking_change_for_this_driver:
-                                # Breaking Change scenario for this specific driver (even if not implemented) - show Breaking Change popup with list
-                                if breaking_change_ids_for_link:
+                            elif is_behavior_difference_for_this_driver:
+                                # Behavior Difference scenario for this specific driver (even if not implemented) - show Behavior Difference popup with list
+                                if behavior_difference_ids_for_link:
                                     # Generate unique popup ID for this scenario
                                     scenario_clean = scenario.lower().replace(" ", "-").replace("'", "")
-                                    popup_id = f'breaking_change-popup-{scenario_clean}-{lang.lower()}'
+                                    popup_id = f'behavior_difference-popup-{scenario_clean}-{lang.lower()}'
                                     
-                                    # Create Breaking Change list items
-                                    breaking_change_items = []
-                                    for breaking_change_id in breaking_change_ids_for_link:
-                                        breaking_change_section_id = f'breaking_change-{breaking_change_driver_check}-{breaking_change_id.lower().replace("#", "")}'
-                                        breaking_change_items.append(f'<li><a href="#" onclick="navigateToBreakingChange(\'{breaking_change_section_id}\'); hideBreakingChangePopup(\'{popup_id}\'); return false;" class="breaking_change-popup-link">{breaking_change_id}</a></li>')
+                                    # Create Behavior Difference list items
+                                    behavior_difference_items = []
+                                    for behavior_difference_id in behavior_difference_ids_for_link:
+                                        behavior_difference_section_id = f'behavior_difference-{behavior_difference_driver_check}-{behavior_difference_id.lower().replace("#", "")}'
+                                        behavior_difference_items.append(f'<li><a href="#" onclick="navigateToBehaviorDifference(\'{behavior_difference_section_id}\'); hideBehaviorDifferencePopup(\'{popup_id}\'); return false;" class="behavior_difference-popup-link">{behavior_difference_id}</a></li>')
                                     
-                                    # Create clickable Breaking Change numbers for superscript display
-                                    breaking_change_links = []
-                                    for breaking_change_id in breaking_change_ids_for_link:
-                                        # Extract number from BC#1 format
-                                        if breaking_change_id.startswith('BC#'):
-                                            number = breaking_change_id[3:]  # Remove 'BC#' prefix
-                                            breaking_change_section_id = f'breaking_change-{breaking_change_driver_check}-{breaking_change_id.lower().replace("#", "")}'
-                                            breaking_change_links.append(f'<a href="#" onclick="navigateToBreakingChange(\'{breaking_change_section_id}\'); return false;" class="breaking_change-superscript-link">{number}</a>')
+                                    # Create clickable Behavior Difference numbers for superscript display
+                                    behavior_difference_links = []
+                                    for behavior_difference_id in behavior_difference_ids_for_link:
+                                        # Extract number from BD#1 format
+                                        if behavior_difference_id.startswith('BD#'):
+                                            number = behavior_difference_id[3:]  # Remove 'BD#' prefix
+                                            behavior_difference_section_id = f'behavior_difference-{behavior_difference_driver_check}-{behavior_difference_id.lower().replace("#", "")}'
+                                            behavior_difference_links.append(f'<a href="#" onclick="navigateToBehaviorDifference(\'{behavior_difference_section_id}\'); return false;" class="behavior_difference-superscript-link">{number}</a>')
                                     
-                                    superscript_links = ','.join(breaking_change_links)
+                                    superscript_links = ','.join(behavior_difference_links)
                                     
-                                    # Create green checkmark with clickable superscript Breaking Change numbers
+                                    # Create green checkmark with clickable superscript Behavior Difference numbers
                                     status_cells.append(f'''
                                         <td><div class="test-status">
                                             <span class="tick-icon">✓<sup>{superscript_links}</sup></span>
                                         </div></td>
                                     ''')
                                 else:
-                                    # Scenario has no actual Breaking Change implementations
+                                    # Scenario has no actual Behavior Difference implementations
                                     status_cells.append('<td><div class="test-status"><span class="status-na">-</span></div></td>')
                             else:
                                 # Check if scenario is excluded or TODO for this driver
@@ -1186,7 +1186,7 @@ class CoverageReportGenerator:
                     </div>
                     <div class="legend-item">
                         <span class="legend-symbol bc">✓<sup>1,2</sup></span>
-                        <span>Breaking Change</span>
+                        <span>Behavior Difference</span>
                     </div>
                 </div>
             </div>
@@ -1222,17 +1222,17 @@ class CoverageReportGenerator:
                     tags = scenario_info['tags']
                     
                     # Check if this scenario is expected/relevant for this driver
-                    # Check if there are actual Breaking Change implementations for this driver and scenario
-                    breaking_change_ids_for_this_driver = self._get_breaking_change_ids_for_scenario(scenario_info, lang.lower(), features)
-                    is_breaking_change_for_this_driver = bool(breaking_change_ids_for_this_driver)
+                    # Check if there are actual Behavior Difference implementations for this driver and scenario
+                    behavior_difference_ids_for_this_driver = self._get_behavior_difference_ids_for_scenario(scenario_info, lang.lower(), features)
+                    is_behavior_difference_for_this_driver = bool(behavior_difference_ids_for_this_driver)
                     is_todo_for_driver = self.is_scenario_todo_for_driver(scenario_info, lang)
                     has_driver_implementation = self._has_driver_tag_in_tags(tags, lang.lower())
                     
                     # Count as expected if:
                     # 1. Has driver tag (@{lang})
-                    # 2. Is Breaking Change for this driver (@{lang}_breaking_change)
+                    # 2. Is Behavior Difference for this driver (@{lang}_behavior_difference)
                     # 3. Is TODO for this driver
-                    is_relevant = has_driver_implementation or is_breaking_change_for_this_driver or is_todo_for_driver
+                    is_relevant = has_driver_implementation or is_behavior_difference_for_this_driver or is_todo_for_driver
                     
                     if is_relevant:
                         expected_count += 1
@@ -1254,9 +1254,9 @@ class CoverageReportGenerator:
                         
                         # Count as implemented if:
                         # 1. Actually implemented OR
-                        # 2. Is Breaking Change for this driver (Breaking Change counts as implemented)
+                        # 2. Is Behavior Difference for this driver (Behavior Difference counts as implemented)
                         # Note: Expected (in progress) scenarios are NOT counted as implemented
-                        if scenario_implemented or is_breaking_change_for_this_driver:
+                        if scenario_implemented or is_behavior_difference_for_this_driver:
                             implemented_count += 1
             
             lang_coverage = (implemented_count / expected_count) * 100 if expected_count > 0 else 0
@@ -1350,7 +1350,7 @@ class CoverageReportGenerator:
                     # Use the categorized scenarios only - this ensures each scenario appears once with proper labels
                     for scenario_info in e2e_scenarios + integration_scenarios:
                         scenario = scenario_info['name']
-                        breaking_change_info = scenario_info['breaking_change_info']
+                        behavior_difference_info = scenario_info['behavior_difference_info']
                         expected_drivers = scenario_info['expected_drivers']
                         tags = scenario_info['tags']
                     
@@ -1385,10 +1385,10 @@ class CoverageReportGenerator:
                                 if lang_data['implemented'] and 'path' in lang_data:
                                     actual_file_path = self.workspace_root / lang_data['path']
                             
-                            # Check if this is a Breaking Change for this driver
-                            breaking_change_driver_check = self.get_language_data_key(lang).lower() if lang == 'core' else lang.lower()
-                            breaking_change_ids_for_this_driver = self._get_breaking_change_ids_for_scenario(scenario_info, breaking_change_driver_check, features)
-                            is_breaking_change_for_this_driver = bool(breaking_change_ids_for_this_driver)
+                            # Check if this is a Behavior Difference for this driver
+                            behavior_difference_driver_check = self.get_language_data_key(lang).lower() if lang == 'core' else lang.lower()
+                            behavior_difference_ids_for_this_driver = self._get_behavior_difference_ids_for_scenario(scenario_info, behavior_difference_driver_check, features)
+                            is_behavior_difference_for_this_driver = bool(behavior_difference_ids_for_this_driver)
                             
                             # Check if this scenario is expected (in progress) for this driver
                             is_todo_for_driver = self.is_scenario_todo_for_driver(scenario_info, lang)
@@ -1397,15 +1397,15 @@ class CoverageReportGenerator:
                             if is_todo_for_driver:
                                 badge_class = 'lang-in-progress'
                                 status_text = 'TODO'
-                            elif is_breaking_change_for_this_driver:
-                                badge_class = 'lang-breaking_change'
-                                breaking_change_links = []
-                                for breaking_change_id in breaking_change_ids_for_this_driver:
-                                    if breaking_change_id.startswith('BC#'):
-                                        number = breaking_change_id[3:]
-                                        breaking_change_section_id = f'breaking_change-{breaking_change_driver_check}-{breaking_change_id.lower().replace("#", "")}'
-                                        breaking_change_links.append(f'<a href="#" onclick="navigateToBreakingChange(\'{breaking_change_section_id}\'); return false;" class="breaking_change-superscript-link">{number}</a>')
-                                superscript_links = ','.join(breaking_change_links)
+                            elif is_behavior_difference_for_this_driver:
+                                badge_class = 'lang-behavior_difference'
+                                behavior_difference_links = []
+                                for behavior_difference_id in behavior_difference_ids_for_this_driver:
+                                    if behavior_difference_id.startswith('BD#'):
+                                        number = behavior_difference_id[3:]
+                                        behavior_difference_section_id = f'behavior_difference-{behavior_difference_driver_check}-{behavior_difference_id.lower().replace("#", "")}'
+                                        behavior_difference_links.append(f'<a href="#" onclick="navigateToBehaviorDifference(\'{behavior_difference_section_id}\'); return false;" class="behavior_difference-superscript-link">{number}</a>')
+                                superscript_links = ','.join(behavior_difference_links)
                                 status_text = f'✓<sup>{superscript_links}</sup>'
                             elif scenario_implemented:
                                 badge_class = 'lang-implemented'
@@ -1447,7 +1447,7 @@ class CoverageReportGenerator:
                     # Use the old method for backward compatibility
                     scenarios = self.get_feature_scenarios(feature_data['path'])
                     if scenarios:
-                        # If we have scenarios but couldn't parse Breaking Change info, treat as regular scenarios
+                        # If we have scenarios but couldn't parse Behavior Difference info, treat as regular scenarios
                         for scenario in scenarios:
                             impl_items = []
                             for lang in sorted(feature_data['languages'].keys()):
@@ -1564,7 +1564,7 @@ class CoverageReportGenerator:
         scenario_items = []
         for scenario_info in scenarios:
             scenario = scenario_info['name']
-            breaking_change_info = scenario_info['breaking_change_info']
+            behavior_difference_info = scenario_info['behavior_difference_info']
             expected_drivers = scenario_info['expected_drivers']
             tags = scenario_info['tags']
             
@@ -1589,12 +1589,12 @@ class CoverageReportGenerator:
                             scenario_implemented = True
                             line_info = f" (line {method_lines[scenario]})"
                 
-                # Check if this is a Breaking Change for this driver by looking at actual Breaking Change implementations
-                breaking_change_driver_check = self.get_language_data_key(lang).lower() if lang == 'core' else lang.lower()
+                # Check if this is a Behavior Difference for this driver by looking at actual Behavior Difference implementations
+                behavior_difference_driver_check = self.get_language_data_key(lang).lower() if lang == 'core' else lang.lower()
                 
-                # Check if there are actual Breaking Change implementations for this driver and scenario
-                breaking_change_ids_for_this_driver = self._get_breaking_change_ids_for_scenario(scenario_info, breaking_change_driver_check, feature_data)
-                is_breaking_change_for_this_driver = bool(breaking_change_ids_for_this_driver)
+                # Check if there are actual Behavior Difference implementations for this driver and scenario
+                behavior_difference_ids_for_this_driver = self._get_behavior_difference_ids_for_scenario(scenario_info, behavior_difference_driver_check, feature_data)
+                is_behavior_difference_for_this_driver = bool(behavior_difference_ids_for_this_driver)
                 
                 # Check if this scenario is expected (in progress) for this driver
                 is_todo_for_driver = self.is_scenario_todo_for_driver(scenario_info, lang)
@@ -1603,19 +1603,19 @@ class CoverageReportGenerator:
                 if is_todo_for_driver:
                     badge_class = 'lang-in-progress'
                     status_text = 'TODO'
-                elif is_breaking_change_for_this_driver:
-                    badge_class = 'lang-breaking_change'
-                    # Create clickable Breaking Change numbers for superscript display
-                    breaking_change_driver_check = self.get_language_data_key(lang).lower() if lang == 'core' else lang.lower()
-                    breaking_change_links = []
-                    for breaking_change_id in breaking_change_ids_for_this_driver:
-                        # Extract number from BC#1 format
-                        if breaking_change_id.startswith('BC#'):
-                            number = breaking_change_id[3:]  # Remove 'BC#' prefix
-                            breaking_change_section_id = f'breaking_change-{breaking_change_driver_check}-{breaking_change_id.lower().replace("#", "")}'
-                            breaking_change_links.append(f'<a href="#" onclick="navigateToBreakingChange(\'{breaking_change_section_id}\'); return false;" class="breaking_change-superscript-link">{number}</a>')
+                elif is_behavior_difference_for_this_driver:
+                    badge_class = 'lang-behavior_difference'
+                    # Create clickable Behavior Difference numbers for superscript display
+                    behavior_difference_driver_check = self.get_language_data_key(lang).lower() if lang == 'core' else lang.lower()
+                    behavior_difference_links = []
+                    for behavior_difference_id in behavior_difference_ids_for_this_driver:
+                        # Extract number from BD#1 format
+                        if behavior_difference_id.startswith('BD#'):
+                            number = behavior_difference_id[3:]  # Remove 'BD#' prefix
+                            behavior_difference_section_id = f'behavior_difference-{behavior_difference_driver_check}-{behavior_difference_id.lower().replace("#", "")}'
+                            behavior_difference_links.append(f'<a href="#" onclick="navigateToBehaviorDifference(\'{behavior_difference_section_id}\'); return false;" class="behavior_difference-superscript-link">{number}</a>')
                     
-                    superscript_links = ','.join(breaking_change_links)
+                    superscript_links = ','.join(behavior_difference_links)
                     status_text = f'✓<sup>{superscript_links}</sup>'
                 elif scenario_implemented:
                     badge_class = 'lang-implemented'
@@ -1705,15 +1705,15 @@ class CoverageReportGenerator:
                                     scenario_implemented = lang_data['status'] == '✅'
                             # If scenario doesn't have the driver tag, it's not applicable (scenario_implemented stays False)
                         
-                        # Also check if it's a Breaking Change scenario (Breaking Change scenarios are considered "implemented")
-                        breaking_change_driver_check = self.get_language_data_key(lang).lower() if lang == 'core' else lang.lower()
+                        # Also check if it's a Behavior Difference scenario (Behavior Difference scenarios are considered "implemented")
+                        behavior_difference_driver_check = self.get_language_data_key(lang).lower() if lang == 'core' else lang.lower()
                         
-                        # Check if there are actual Breaking Change implementations for this driver and scenario
-                        breaking_change_ids_for_this_driver = self._get_breaking_change_ids_for_scenario(scenario_info, breaking_change_driver_check, features)
-                        is_breaking_change_for_this_driver = bool(breaking_change_ids_for_this_driver)
+                        # Check if there are actual Behavior Difference implementations for this driver and scenario
+                        behavior_difference_ids_for_this_driver = self._get_behavior_difference_ids_for_scenario(scenario_info, behavior_difference_driver_check, features)
+                        is_behavior_difference_for_this_driver = bool(behavior_difference_ids_for_this_driver)
                         
-                        # Only add to missing if it's expected but not implemented and not a Breaking Change
-                        if not scenario_implemented and not is_breaking_change_for_this_driver:
+                        # Only add to missing if it's expected but not implemented and not a Behavior Difference
+                        if not scenario_implemented and not is_behavior_difference_for_this_driver:
                             missing_by_driver[lang].append({
                                 'feature': feature_name,
                                 'scenario': scenario,
@@ -1789,104 +1789,104 @@ class CoverageReportGenerator:
             </div>
         """).strip()
     
-    def _generate_breaking_change_tab_html(self, features: Dict) -> str:
-        """Generate the Breaking Changes tab HTML content showing all Breaking Change implementations by driver."""
+    def _generate_behavior_difference_tab_html(self, features: Dict) -> str:
+        """Generate the Behavior Differences tab HTML content showing all Behavior Difference implementations by driver."""
         from textwrap import dedent
         from collections import defaultdict
         
-        # Get all drivers that have Breaking Changes from the validator data
-        drivers_with_breaking_change = set()
+        # Get all drivers that have Behavior Differences from the validator data
+        drivers_with_behavior_difference = set()
         
-        # Get Breaking Change data from validator
-        breaking_change_data = self.breaking_change_handler.validator.get_breaking_change_data()
-        if breaking_change_data:
-            breaking_change_by_language = breaking_change_data.get('breaking_changes_by_language', {})
-            for language, breaking_change_list in breaking_change_by_language.items():
-                if breaking_change_list:  # Only add if there are actual Breaking Changes
-                    drivers_with_breaking_change.add(language.lower())
+        # Get Behavior Difference data from validator
+        behavior_difference_data = self.behavior_difference_handler.validator.get_behavior_difference_data()
+        if behavior_difference_data:
+            behavior_difference_by_language = behavior_difference_data.get('behavior_differences_by_language', {})
+            for language, behavior_difference_list in behavior_difference_by_language.items():
+                if behavior_difference_list:  # Only add if there are actual Behavior Differences
+                    drivers_with_behavior_difference.add(language.lower())
         
         # Also check feature annotations as backup
         for feature_name, feature_data in features.items():
             scenarios_with_annotations = self.get_feature_scenarios_with_annotations(feature_data['path'])
             for scenario_info in scenarios_with_annotations:
-                breaking_change_info = scenario_info.get('breaking_change_info')
-                if breaking_change_info:
-                    drivers_with_breaking_change.add(breaking_change_info['driver'].lower())
+                behavior_difference_info = scenario_info.get('behavior_difference_info')
+                if behavior_difference_info:
+                    drivers_with_behavior_difference.add(behavior_difference_info['driver'].lower())
         
-        if not drivers_with_breaking_change:
+        if not drivers_with_behavior_difference:
             return dedent("""
-                <h2>📋 Breaking Changes</h2>
-                <p>No Breaking Change annotations found in the test suite.</p>
+                <h2>📋 Behavior Differences</h2>
+                <p>No Behavior Difference annotations found in the test suite.</p>
             """).strip()
         
-        # Generate sections for each driver with Breaking Changes
+        # Generate sections for each driver with Behavior Differences
         driver_sections = []
         
-        for driver in sorted(drivers_with_breaking_change):
-            # Parse Breaking Change descriptions for this driver
-            breaking_change_descriptions = self.parse_breaking_change_descriptions(driver)
+        for driver in sorted(drivers_with_behavior_difference):
+            # Parse Behavior Difference descriptions for this driver
+            behavior_difference_descriptions = self.parse_behavior_difference_descriptions(driver)
             
-            # Extract Breaking Change test implementations for this driver
-            breaking_change_test_mapping = self.extract_breaking_change_from_test_files(driver, features)
+            # Extract Behavior Difference test implementations for this driver
+            behavior_difference_test_mapping = self.extract_behavior_difference_from_test_files(driver, features)
             
-            # Collect all Breaking Changes mentioned in features and test files
-            all_breaking_changes = set()
+            # Collect all Behavior Differences mentioned in features and test files
+            all_behavior_differences = set()
             
-            # Breaking Changes from feature files
-            feature_breaking_changes = defaultdict(list)
+            # Behavior Differences from feature files
+            feature_behavior_differences = defaultdict(list)
             for feature_name, feature_data in features.items():
                 scenarios_with_annotations = self.get_feature_scenarios_with_annotations(feature_data['path'])
                 for scenario_info in scenarios_with_annotations:
-                    breaking_change_info = scenario_info.get('breaking_change_info')
-                    if breaking_change_info and breaking_change_info['driver'].lower() == driver:
-                        # Extract Breaking Change ID from tag (e.g., @odbc_breaking_change -> look for BC# in description)
-                        # For now, we'll use a placeholder as we need to correlate with actual Breaking Change IDs
-                        feature_breaking_changes['Breaking Change_FROM_FEATURE'].append({
+                    behavior_difference_info = scenario_info.get('behavior_difference_info')
+                    if behavior_difference_info and behavior_difference_info['driver'].lower() == driver:
+                        # Extract Behavior Difference ID from tag (e.g., @odbc_behavior_difference -> look for BD# in description)
+                        # For now, we'll use a placeholder as we need to correlate with actual Behavior Difference IDs
+                        feature_behavior_differences['Behavior Difference_FROM_FEATURE'].append({
                             'feature': self.format_feature_name(feature_name, feature_data['path']),
                             'scenario': scenario_info['name'],
-                            'tag': breaking_change_info['tag']
+                            'tag': behavior_difference_info['tag']
                         })
             
-            # Breaking Changes from test files
-            if driver in breaking_change_test_mapping:
-                for breaking_change_id in breaking_change_test_mapping[driver].keys():
-                    all_breaking_changes.add(breaking_change_id)
+            # Behavior Differences from test files
+            if driver in behavior_difference_test_mapping:
+                for behavior_difference_id in behavior_difference_test_mapping[driver].keys():
+                    all_behavior_differences.add(behavior_difference_id)
             
-            # Generate Breaking Change sections
-            breaking_change_sections = []
+            # Generate Behavior Difference sections
+            behavior_difference_sections = []
             
-            for breaking_change_id in sorted(all_breaking_changes):
-                description = breaking_change_descriptions.get(breaking_change_id, 'No description available')
+            for behavior_difference_id in sorted(all_behavior_differences):
+                description = behavior_difference_descriptions.get(behavior_difference_id, 'No description available')
                 
                 # Create title with driver prefix (without full description in title)
-                # Convert BC#1 to DRIVER#1 format
-                if breaking_change_id.startswith('BC#'):
-                    driver_breaking_change_id = f"{driver.upper()}#{breaking_change_id[3:]}"  # Replace BC# with DRIVER#
+                # Convert BD#1 to DRIVER#1 format
+                if behavior_difference_id.startswith('BD#'):
+                    driver_behavior_difference_id = f"{driver.upper()}#{behavior_difference_id[3:]}"  # Replace BD# with DRIVER#
                 else:
-                    driver_breaking_change_id = breaking_change_id
+                    driver_behavior_difference_id = behavior_difference_id
                 
                 # Extract just the first line for the title
                 if description and description != 'No description available':
                     first_line = description.split('\n')[0]
-                    breaking_change_title = f"{driver_breaking_change_id}: {first_line}"
+                    behavior_difference_title = f"{driver_behavior_difference_id}: {first_line}"
                     
                     # Prepare detailed description for expandable section
                     description_lines = description.split('\n')
                     if len(description_lines) > 1:
-                        # Multi-line description - show details in expandable section
-                        detailed_description = '<br>'.join(description_lines)
+                        # Multi-line description - show only the additional details (skip first line with name/type)
+                        detailed_description = '<br>'.join(description_lines[1:])
                         has_details = True
                     else:
                         # Single line description - no need for separate details section
                         detailed_description = description
                         has_details = False
                 else:
-                    breaking_change_title = driver_breaking_change_id
+                    behavior_difference_title = driver_behavior_difference_id
                     detailed_description = 'No description available'
                     has_details = False
                 
-                # Get test implementations for this Breaking Change
-                test_implementations = breaking_change_test_mapping.get(driver, {}).get(breaking_change_id, [])
+                # Get test implementations for this Behavior Difference
+                test_implementations = behavior_difference_test_mapping.get(driver, {}).get(behavior_difference_id, [])
                 
                                 # Build test implementation list
                 impl_items = []
@@ -1900,13 +1900,13 @@ class CoverageReportGenerator:
                     if impl.get('new_behaviour_file') and impl.get('new_behaviour_line'):
                         new_file = impl['new_behaviour_file']
                         new_line = impl['new_behaviour_line']
-                        behaviour_lines.append(f"<strong>New Behaviour:</strong> <code>{new_file}:{new_line}</code>")
+                        behaviour_lines.append(f"<strong>New Behavior:</strong> <code>{new_file}:{new_line}</code>")
                     
                     # Old behaviour (OLD_DRIVER_ONLY)
                     if impl.get('old_behaviour_file') and impl.get('old_behaviour_line'):
                         old_file = impl['old_behaviour_file']
                         old_line = impl['old_behaviour_line']
-                        behaviour_lines.append(f"<strong>Old Behaviour:</strong> <code>{old_file}:{old_line}</code>")
+                        behaviour_lines.append(f"<strong>Old Behavior:</strong> <code>{old_file}:{old_line}</code>")
                     
                     # If no new/old behaviour found, fall back to legacy assertion field
                     if not behaviour_lines:
@@ -1930,16 +1930,16 @@ class CoverageReportGenerator:
                 details_section_html = ""
                 if has_details:
                     details_section_html = f"""
-                                <div class="breaking_change-details">
+                                <div class="behavior_difference-details">
                                     <h4>Details</h4>
                                     <p>{detailed_description}</p>
                                 </div>
                     """
                 
-                breaking_change_section = dedent(f"""
-                    <div class="expandable-section" id="breaking_change-{driver}-{breaking_change_id.lower().replace('#', '')}">
+                behavior_difference_section = dedent(f"""
+                    <div class="expandable-section" id="behavior_difference-{driver}-{behavior_difference_id.lower().replace('#', '')}">
                         <div class="expandable-header" onclick="toggleSection(this)">
-                            <div class="expandable-title">{breaking_change_title}</div>
+                            <div class="expandable-title">{behavior_difference_title}</div>
                             <div class="expandable-toggle">▶</div>
                         </div>
                         <div class="expandable-content">
@@ -1953,20 +1953,20 @@ class CoverageReportGenerator:
                     </div>
                 """).strip()
                 
-                breaking_change_sections.append(breaking_change_section)
+                behavior_difference_sections.append(behavior_difference_section)
             
             # Create driver section
-            breaking_changes_html = '\n            '.join(breaking_change_sections) if breaking_change_sections else '<p><em>No Breaking Changes found for this driver</em></p>'
+            behavior_differences_html = '\n            '.join(behavior_difference_sections) if behavior_difference_sections else '<p><em>No Behavior Differences found for this driver</em></p>'
             
             driver_section = dedent(f"""
                 <div class="expandable-section">
                     <div class="expandable-header" onclick="toggleSection(this)">
-                        <div class="expandable-title">📂 {driver.upper()} Driver Breaking Changes ({len(all_breaking_changes)})</div>
+                        <div class="expandable-title">📂 {driver.upper()} Driver Behavior Differences ({len(all_behavior_differences)})</div>
                         <div class="expandable-toggle">▶</div>
                     </div>
                     <div class="expandable-content">
                         <div class="expandable-inner">
-                            {breaking_changes_html}
+                            {behavior_differences_html}
                         </div>
                     </div>
                 </div>
@@ -1977,8 +1977,8 @@ class CoverageReportGenerator:
         sections_html = '\n        '.join(driver_sections)
         
         return dedent(f"""
-            <h2>📋 Breaking Changes</h2>
-            <p>Breaking Changes represent behavior changes between old and new driver implementations. Each Breaking Change is documented with its description and corresponding test implementations.</p>
+            <h2>📋 Behavior Differences</h2>
+            <p>Behavior Differences represent behavior changes between old and new driver implementations. Each Behavior Difference is documented with its description and corresponding test implementations.</p>
             {sections_html}
         """).strip()
 
@@ -1999,15 +1999,15 @@ class CoverageReportGenerator:
         # Create tab structure
         sections = ['<h1>Universal Driver Test Coverage Report</h1>']
         
-        # Generate Breaking Changes tab content
-        breaking_change_content = self._generate_breaking_change_tab_html(features)
+        # Generate Behavior Differences tab content
+        behavior_difference_content = self._generate_behavior_difference_tab_html(features)
         
         # Create tabs container
         tabs_html = dedent("""
             <div class="tabs">
                 <div class="tab-buttons">
                     <button class="tab-button" onclick="showTab('overview-tab')">📊 Overview</button>
-                    <button class="tab-button" onclick="showTab('breaking_change-tab')">📋 Breaking Changes</button>
+                    <button class="tab-button" onclick="showTab('behavior_difference-tab')">📋 Behavior Differences</button>
                     <button class="tab-button" onclick="showTab('details-tab')">📋 Detailed Breakdown</button>
                     <button class="tab-button" onclick="showTab('missing-tab')">⚠️ Missing Implementations</button>
                 </div>
@@ -2016,8 +2016,8 @@ class CoverageReportGenerator:
                     {overview_content}
                 </div>
                 
-                <div id="breaking_change-tab" class="tab-content">
-                    {breaking_change_content}
+                <div id="behavior_difference-tab" class="tab-content">
+                    {behavior_difference_content}
                 </div>
                 
                 <div id="details-tab" class="tab-content">
@@ -2030,7 +2030,7 @@ class CoverageReportGenerator:
             </div>
         """).format(
             overview_content=overview_content,
-            breaking_change_content=breaking_change_content,
+            behavior_difference_content=behavior_difference_content,
             detailed_content=detailed_content,
             missing_content=missing_impl_html if missing_impl_html else '<p>No missing implementations found! ✅</p>'
         )

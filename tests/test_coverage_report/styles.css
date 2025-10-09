@@ -542,7 +542,7 @@ tr.feature-row:hover {
     margin-top: 15px;
 }
 
-/* Breaking Change-specific styles */
+/* Behavior Difference-specific styles */
 .breaking_change-link {
     text-decoration: none;
 }
@@ -557,7 +557,7 @@ tr.feature-row:hover {
     background-color: #b3d9f0;
 }
 
-/* Breaking Change Popup styles */
+/* Behavior Difference Popup styles */
 .breaking_change-popup-container {
     position: relative;
     display: block;
@@ -622,16 +622,16 @@ tr.feature-row:hover {
     text-decoration: none;
 }
 
-.breaking_change-superscript-link {
+.behavior_difference-superscript-link {
     color: #DAA520;
     text-decoration: none;
     font-weight: bold;
 }
-.breaking_change-superscript-link:hover {
+.behavior_difference-superscript-link:hover {
     text-decoration: underline;
 }
 
-/* Breaking Change Details section */
+/* Behavior Difference Details section */
 .breaking_change-details {
     background: #f8f9fa;
     border: 1px solid #e9ecef;

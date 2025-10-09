@@ -100,8 +100,8 @@ class FeatureParser:
                 if line.startswith('Scenario:'):
                     scenario_name = line.replace('Scenario:', '').strip()
                     
-                    # Breaking Changes detection is now handled by the Rust validator
-                    breaking_change_info = self._extract_breaking_change_info(current_tags)
+                    # Behavior Differences detection is now handled by the Rust validator
+                    behavior_difference_info = self._extract_behavior_difference_info(current_tags)
                     
                     # Check for scenario-level expected tags
                     scenario_expected_drivers = []
@@ -114,7 +114,7 @@ class FeatureParser:
                     scenario_info = {
                         'name': scenario_name,
                         'tags': current_tags.copy(),
-                        'breaking_change_info': breaking_change_info,
+                        'behavior_difference_info': behavior_difference_info,
                         'expected_drivers': scenario_expected_drivers,
                         'feature_level_expected_drivers': feature_level_expected_drivers,
                         'feature_level_tags': feature_level_tags
@@ -218,8 +218,8 @@ class FeatureParser:
         
         return methods
     
-    def _extract_breaking_change_info(self, tags: List[str]) -> Optional[Dict[str, str]]:
-        """Breaking Changes information is now extracted from actual implementations via Rust validator.
+    def _extract_behavior_difference_info(self, tags: List[str]) -> Optional[Dict[str, str]]:
+        """Behavior Differences information is now extracted from actual implementations via Rust validator.
         This method is kept for compatibility but returns None."""
         return None
     

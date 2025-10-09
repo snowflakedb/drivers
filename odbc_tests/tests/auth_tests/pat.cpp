@@ -160,9 +160,9 @@ TEST_CASE("PAT Authentication - Invalid Token", "[pat_auth]") {
   REQUIRE(records.size() == 1);
 
   CHECK(records[0].sqlState == "28000");
-  OLD_DRIVER_ONLY("BC#1") { CHECK(records[0].nativeError == 390100); }
+  OLD_DRIVER_ONLY("BD#1") { CHECK(records[0].nativeError == 390100); }
 
-  NEW_DRIVER_ONLY("BC#1") { CHECK(records[0].nativeError == 390100); }
+  NEW_DRIVER_ONLY("BD#1") { CHECK(records[0].nativeError == 390100); }
 
   CHECK_THAT(records[0].messageText,
              ContainsSubstring("Incorrect username or password was specified."));
@@ -184,12 +184,12 @@ TEST_CASE("PAT Authentication - Missing Token with PROGRAMMATIC_ACCESS_TOKEN", "
   auto records = require_connection_failed(connection_string);
   REQUIRE(records.size() == 1);
   CHECK(records[0].sqlState == "28000");
-  OLD_DRIVER_ONLY("BC#1") {
+  OLD_DRIVER_ONLY("BD#1") {
     CHECK(records[0].nativeError == 20032);
     CHECK_THAT(records[0].messageText, ContainsSubstring("Required setting 'TOKEN'"));
   }
 
-  NEW_DRIVER_ONLY("BC#1") {
+  NEW_DRIVER_ONLY("BD#1") {
     CHECK(records[0].nativeError == 0);
     CHECK_THAT(records[0].messageText, ContainsSubstring("Missing required parameter: token"));
   }

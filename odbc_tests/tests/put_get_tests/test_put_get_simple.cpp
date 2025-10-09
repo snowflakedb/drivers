@@ -118,12 +118,12 @@ TEST_CASE("PUT then GET returns expected rowset metadata", "[put_get][odbc]") {
     compare_compression_type(get_data<SQL_C_CHAR>(stmt, PUT_ROW_TARGET_COMPRESSION_IDX), "GZIP");
     CHECK(get_data<SQL_C_CHAR>(stmt, PUT_ROW_STATUS_IDX) == "UPLOADED");
 
-    OLD_DRIVER_ONLY("BC#3: Encryption field is no longer included in the result") {
+    OLD_DRIVER_ONLY("BD#3: Encryption field is no longer included in the result") {
       CHECK(get_data<SQL_C_CHAR>(stmt, 8) == "ENCRYPTED");
       CHECK(get_data<SQL_C_CHAR>(stmt, 9) == "");
     }
 
-    NEW_DRIVER_ONLY("BC#3: Encryption field is no longer included in the result") {
+    NEW_DRIVER_ONLY("BD#3: Encryption field is no longer included in the result") {
       CHECK(get_data<SQL_C_CHAR>(stmt, PUT_ROW_MESSAGE_IDX) == "");  // 8
     }
   }
@@ -139,22 +139,22 @@ TEST_CASE("PUT then GET returns expected rowset metadata", "[put_get][odbc]") {
     // Assert GET result fields (file, size, status, message)
     CHECK(get_data<SQL_C_CHAR>(stmt, GET_ROW_FILE_IDX) == filename + ".gz");
 
-    OLD_DRIVER_ONLY("BC#4: GET rowset metadata contains file size after decryption") {
+    OLD_DRIVER_ONLY("BD#4: GET rowset metadata contains file size after decryption") {
       CHECK(get_data<SQL_C_LONG>(stmt, GET_ROW_SIZE_IDX) == 32);
     }
 
-    NEW_DRIVER_ONLY("BC#4: GET rowset metadata contains file size after decryption") {
+    NEW_DRIVER_ONLY("BD#4: GET rowset metadata contains file size after decryption") {
       CHECK(get_data<SQL_C_LONG>(stmt, GET_ROW_SIZE_IDX) == 26);
     }
 
     CHECK(get_data<SQL_C_CHAR>(stmt, GET_ROW_STATUS_IDX) == "DOWNLOADED");
 
-    OLD_DRIVER_ONLY("BC#3: Encryption field is no longer included in the result") {
+    OLD_DRIVER_ONLY("BD#3: Encryption field is no longer included in the result") {
       CHECK(get_data<SQL_C_CHAR>(stmt, 4) == "DECRYPTED");
       CHECK(get_data<SQL_C_CHAR>(stmt, 5) == "");
     }
 
-    NEW_DRIVER_ONLY("BC#3: Encryption field is no longer included in the result") {
+    NEW_DRIVER_ONLY("BD#3: Encryption field is no longer included in the result") {
       CHECK(get_data<SQL_C_CHAR>(stmt, GET_ROW_MESSAGE_IDX) == "");  // 4
     }
   }

@@ -494,24 +494,24 @@ fn should_detect_simple_breaking_change_annotations_in_cpp() -> Result<()> {
     let enhanced_results = validator.validate_all_with_breaking_changes()?;
 
     // Check Breaking Change report
-    let breaking_changes_report = &enhanced_results.breaking_changes_report;
+    let breaking_changes_report = &enhanced_results.behavior_differences_report;
 
     assert!(
         !breaking_changes_report
-            .breaking_change_descriptions
+            .behavior_difference_descriptions
             .is_empty(),
         "Should find Breaking Change descriptions"
     );
     assert!(
         !breaking_changes_report
-            .breaking_changes_by_language
+            .behavior_differences_by_language
             .is_empty(),
         "Should find Breaking Changes by language"
     );
 
     // Check ODBC Breaking Changes
     let odbc_breaking_changes = breaking_changes_report
-        .breaking_changes_by_language
+        .behavior_differences_by_language
         .get("odbc");
     assert!(
         odbc_breaking_changes.is_some(),
@@ -527,8 +527,8 @@ fn should_detect_simple_breaking_change_annotations_in_cpp() -> Result<()> {
 
     let breaking_change = &odbc_breaking_changes[0];
     assert_eq!(
-        breaking_change.breaking_change_id, "BC#1",
-        "Should find BC#1"
+        breaking_change.behavior_difference_id, "BD#1",
+        "Should find BD#1"
     );
     assert_eq!(
         breaking_change.implementations.len(),
@@ -596,9 +596,9 @@ fn should_detect_cross_file_breaking_change_in_helper_methods() -> Result<()> {
     let enhanced_results = validator.validate_all_with_breaking_changes()?;
 
     // Check Breaking Change report
-    let breaking_changes_report = &enhanced_results.breaking_changes_report;
+    let breaking_changes_report = &enhanced_results.behavior_differences_report;
     let odbc_breaking_changes = breaking_changes_report
-        .breaking_changes_by_language
+        .behavior_differences_by_language
         .get("odbc");
     assert!(
         odbc_breaking_changes.is_some(),
@@ -606,15 +606,15 @@ fn should_detect_cross_file_breaking_change_in_helper_methods() -> Result<()> {
     );
 
     let odbc_breaking_changes = odbc_breaking_changes.unwrap();
-    assert_eq!(odbc_breaking_changes.len(), 2, "Should find BC#2 and BC#3");
+    assert_eq!(odbc_breaking_changes.len(), 2, "Should find BD#2 and BD#3");
 
     // Check that both Breaking Changes are found
     let breaking_change_ids: Vec<&str> = odbc_breaking_changes
         .iter()
-        .map(|b| b.breaking_change_id.as_str())
+        .map(|b| b.behavior_difference_id.as_str())
         .collect();
-    assert!(breaking_change_ids.contains(&"BC#2"), "Should find BC#2");
-    assert!(breaking_change_ids.contains(&"BC#3"), "Should find BC#3");
+    assert!(breaking_change_ids.contains(&"BD#2"), "Should find BD#2");
+    assert!(breaking_change_ids.contains(&"BD#3"), "Should find BD#3");
 
     // Check that implementations point to the helper file
     for breaking_change in odbc_breaking_changes {
@@ -669,9 +669,9 @@ fn should_detect_nested_helper_method_breaking_change() -> Result<()> {
     let enhanced_results = validator.validate_all_with_breaking_changes()?;
 
     // Check Breaking Change report
-    let breaking_changes_report = &enhanced_results.breaking_changes_report;
+    let breaking_changes_report = &enhanced_results.behavior_differences_report;
     let odbc_breaking_changes = breaking_changes_report
-        .breaking_changes_by_language
+        .behavior_differences_by_language
         .get("odbc");
     assert!(
         odbc_breaking_changes.is_some(),
@@ -679,10 +679,10 @@ fn should_detect_nested_helper_method_breaking_change() -> Result<()> {
     );
 
     let odbc_breaking_changes = odbc_breaking_changes.unwrap();
-    assert_eq!(odbc_breaking_changes.len(), 1, "Should find BC#4");
+    assert_eq!(odbc_breaking_changes.len(), 1, "Should find BD#4");
 
     let breaking_change = &odbc_breaking_changes[0];
-    assert_eq!(breaking_change.breaking_change_id, "BC#4");
+    assert_eq!(breaking_change.behavior_difference_id, "BD#4");
 
     let impl_info = &breaking_change.implementations[0];
     assert_eq!(impl_info.test_method, "should handle nested authentication");
@@ -718,9 +718,9 @@ fn should_only_find_breaking_changes_for_scenarios_with_breaking_change_annotati
     let enhanced_results = validator.validate_all_with_breaking_changes()?;
 
     // Check Breaking Change report
-    let breaking_changes_report = &enhanced_results.breaking_changes_report;
+    let breaking_changes_report = &enhanced_results.behavior_differences_report;
     let odbc_breaking_changes = breaking_changes_report
-        .breaking_changes_by_language
+        .behavior_differences_by_language
         .get("odbc");
     assert!(
         odbc_breaking_changes.is_some(),
@@ -732,20 +732,20 @@ fn should_only_find_breaking_changes_for_scenarios_with_breaking_change_annotati
     assert_eq!(
         odbc_breaking_changes.len(),
         2,
-        "Should find BC#5 and BC#6 (both scenarios have @odbc)"
+        "Should find BD#5 and BD#6 (both scenarios have @odbc)"
     );
 
     // Sort by Breaking Change ID to ensure consistent order
     let mut sorted_breaking_changes = odbc_breaking_changes.clone();
-    sorted_breaking_changes.sort_by(|a, b| a.breaking_change_id.cmp(&b.breaking_change_id));
+    sorted_breaking_changes.sort_by(|a, b| a.behavior_difference_id.cmp(&b.behavior_difference_id));
 
-    assert_eq!(sorted_breaking_changes[0].breaking_change_id, "BC#5");
+    assert_eq!(sorted_breaking_changes[0].behavior_difference_id, "BD#5");
     assert_eq!(
         sorted_breaking_changes[0].implementations[0].test_method,
         "should authenticate with breaking_change annotation"
     );
 
-    assert_eq!(sorted_breaking_changes[1].breaking_change_id, "BC#6");
+    assert_eq!(sorted_breaking_changes[1].behavior_difference_id, "BD#6");
     assert_eq!(
         sorted_breaking_changes[1].implementations[0].test_method,
         "should authenticate without breaking_change annotation"
@@ -776,9 +776,9 @@ fn should_find_correct_line_numbers_for_breaking_change_locations() -> Result<()
     let enhanced_results = validator.validate_all_with_breaking_changes()?;
 
     // Check Breaking Change report
-    let breaking_changes_report = &enhanced_results.breaking_changes_report;
+    let breaking_changes_report = &enhanced_results.behavior_differences_report;
     let odbc_breaking_changes = breaking_changes_report
-        .breaking_changes_by_language
+        .behavior_differences_by_language
         .get("odbc");
     assert!(
         odbc_breaking_changes.is_some(),
@@ -786,7 +786,7 @@ fn should_find_correct_line_numbers_for_breaking_change_locations() -> Result<()
     );
 
     let odbc_breaking_changes = odbc_breaking_changes.unwrap();
-    assert_eq!(odbc_breaking_changes.len(), 1, "Should find BC#7");
+    assert_eq!(odbc_breaking_changes.len(), 1, "Should find BD#7");
 
     let breaking_change = &odbc_breaking_changes[0];
     let impl_info = &breaking_change.implementations[0];
@@ -829,9 +829,9 @@ fn should_handle_multiple_breaking_changes_in_single_test_method() -> Result<()>
     let enhanced_results = validator.validate_all_with_breaking_changes()?;
 
     // Check Breaking Change report
-    let breaking_changes_report = &enhanced_results.breaking_changes_report;
+    let breaking_changes_report = &enhanced_results.behavior_differences_report;
     let odbc_breaking_changes = breaking_changes_report
-        .breaking_changes_by_language
+        .behavior_differences_by_language
         .get("odbc");
     assert!(
         odbc_breaking_changes.is_some(),
@@ -842,7 +842,7 @@ fn should_handle_multiple_breaking_changes_in_single_test_method() -> Result<()>
     assert_eq!(
         odbc_breaking_changes.len(),
         3,
-        "Should find BC#8, BC#9, and BC#10"
+        "Should find BD#8, BD#9, and BD#10"
     );
 
     // All Breaking Changes should point to the same test method
@@ -860,11 +860,11 @@ fn should_handle_multiple_breaking_changes_in_single_test_method() -> Result<()>
     // Check specific Breaking Change IDs
     let breaking_change_ids: Vec<&str> = odbc_breaking_changes
         .iter()
-        .map(|b| b.breaking_change_id.as_str())
+        .map(|b| b.behavior_difference_id.as_str())
         .collect();
-    assert!(breaking_change_ids.contains(&"BC#8"), "Should find BC#8");
-    assert!(breaking_change_ids.contains(&"BC#9"), "Should find BC#9");
-    assert!(breaking_change_ids.contains(&"BC#10"), "Should find BC#10");
+    assert!(breaking_change_ids.contains(&"BD#8"), "Should find BD#8");
+    assert!(breaking_change_ids.contains(&"BD#9"), "Should find BD#9");
+    assert!(breaking_change_ids.contains(&"BD#10"), "Should find BD#10");
 
     Ok(())
 }
@@ -893,8 +893,8 @@ impl TestWorkspace {
         fs::create_dir_all(workspace_root.join("odbc_tests/tests/e2e/auth"))?;
         fs::create_dir_all(workspace_root.join("odbc_tests/tests/e2e/query"))?;
 
-        // Create BreakingChanges.md file for tests
-        let breaking_change_file = workspace_root.join("odbc_tests/BreakingChanges.md");
+        // Create BehaviorDifferences.yaml file for tests
+        let breaking_change_file = workspace_root.join("odbc_tests/BehaviorDifferences.yaml");
         fs::write(
             breaking_change_file,
             Self::create_test_breaking_change_descriptions(),
@@ -968,27 +968,36 @@ impl TestWorkspace {
     }
 
     fn create_test_breaking_change_descriptions() -> &'static str {
-        r#"# Business Change Requests (Breaking Changes)
-
-## 1: Simple authentication Breaking Change for testing basic Breaking Change detection
-
-## 2: Cross-file Breaking Change for testing helper method detection
-
-## 3: Additional cross-file Breaking Change for comprehensive testing
-
-## 4: Nested helper method Breaking Change for testing deep call chains
-
-## 5: Mixed scenario Breaking Change for testing annotation filtering
-
-## 6: Non-Breaking Change scenario test (should not be found)
-
-## 7: Line number accuracy Breaking Change for testing precise location tracking
-
-## 8: First multiple Breaking Change for testing multiple Breaking Changes in single method
-
-## 9: Second multiple Breaking Change for testing multiple Breaking Changes in single method
-
-## 10: Third multiple Breaking Change for testing multiple Breaking Changes in single method
+        r#"behavior_differences:
+  1:
+    name: "Simple authentication Breaking Change for testing basic Breaking Change detection"
+  
+  2:
+    name: "Cross-file Breaking Change for testing helper method detection"
+  
+  3:
+    name: "Additional cross-file Breaking Change for comprehensive testing"
+  
+  4:
+    name: "Nested helper method Breaking Change for testing deep call chains"
+  
+  5:
+    name: "Mixed scenario Breaking Change for testing annotation filtering"
+  
+  6:
+    name: "Non-Breaking Change scenario test (should not be found)"
+  
+  7:
+    name: "Line number accuracy Breaking Change for testing precise location tracking"
+  
+  8:
+    name: "First multiple Breaking Change for testing multiple Breaking Changes in single method"
+  
+  9:
+    name: "Second multiple Breaking Change for testing multiple Breaking Changes in single method"
+  
+  10:
+    name: "Third multiple Breaking Change for testing multiple Breaking Changes in single method"
 "#
     }
 }
@@ -1498,12 +1507,12 @@ TEST_CASE("should authenticate using private key") {
     auto private_key = setup_private_key();
 
     // When I attempt to authenticate
-    NEW_DRIVER_ONLY("BC#1") {
+    NEW_DRIVER_ONLY("BD#1") {
         auto result = authenticate_with_new_method(private_key);
         REQUIRE(result.is_success());
     }
 
-    OLD_DRIVER_ONLY("BC#1") {
+    OLD_DRIVER_ONLY("BD#1") {
         auto result = authenticate_with_old_method(private_key);
         REQUIRE(result.is_success());
     }
@@ -1547,19 +1556,19 @@ TEST_CASE("should authenticate using private key with helper") {
         r#"#include "auth_helpers.hpp"
 
 void validate_breaking_change_successful_authentication() {
-    // BC#2: Successful authentication validation
-    OLD_DRIVER_ONLY("BC#2") {
+    // BD#2: Successful authentication validation
+    OLD_DRIVER_ONLY("BD#2") {
         INFO("Successfully authenticated with private key - old driver behavior");
         // Add any old driver specific validations here
     }
 
-    NEW_DRIVER_ONLY("BC#2") {
+    NEW_DRIVER_ONLY("BD#2") {
         INFO("Successfully authenticated with private key - new driver behavior");
         // Add any new driver specific validations here
     }
 
-    // BC#3: Additional successful authentication validation
-    NEW_DRIVER_ONLY("BC#3") {
+    // BD#3: Additional successful authentication validation
+    NEW_DRIVER_ONLY("BD#3") {
         INFO("Additional validation for successful authentication");
         // Add any additional validations here
     }
@@ -1570,7 +1579,7 @@ void validate_nested_authentication() {
 }
 
 void deep_nested_auth_helper() {
-    NEW_DRIVER_ONLY("BC#4") {
+    NEW_DRIVER_ONLY("BD#4") {
         INFO("Deep nested authentication check");
     }
 }
@@ -1612,7 +1621,7 @@ void second_level_helper() {
 }
 
 void third_level_helper() {
-    NEW_DRIVER_ONLY("BC#4") {
+    NEW_DRIVER_ONLY("BD#4") {
         INFO("Nested Breaking Change validation in third level");
     }
 }
@@ -1645,7 +1654,7 @@ TEST_CASE("should authenticate with breaking_change annotation") {
     auto auth_data = setup_auth_data();
 
     // When I authenticate
-    NEW_DRIVER_ONLY("BC#5") {
+    NEW_DRIVER_ONLY("BD#5") {
         auto result = authenticate_new_way(auth_data);
         REQUIRE(result.is_success());
     }
@@ -1659,7 +1668,7 @@ TEST_CASE("should authenticate without breaking_change annotation") {
     auto auth_data = setup_auth_data();
 
     // When I authenticate
-    NEW_DRIVER_ONLY("BC#6") {
+    NEW_DRIVER_ONLY("BD#6") {
         // This Breaking Change should now be found since scenario has @odbc
         auto result = authenticate_normally(auth_data);
         REQUIRE(result.is_success());
@@ -1690,12 +1699,12 @@ TEST_CASE("should test specific line numbers") {
     // Given I have line number test setup
     auto setup = create_line_test_setup();
     
-    NEW_DRIVER_ONLY("BC#7") {
+    NEW_DRIVER_ONLY("BD#7") {
         INFO("This NEW_DRIVER_ONLY should be at line 8");
         REQUIRE(setup.is_valid());
     }
     
-    OLD_DRIVER_ONLY("BC#7") {
+    OLD_DRIVER_ONLY("BD#7") {
         INFO("This OLD_DRIVER_ONLY should be at line 13");
         REQUIRE(setup.is_valid_old_way());
     }
@@ -1726,17 +1735,17 @@ TEST_CASE("should handle multiple authentication methods") {
     auto auth_options = setup_multiple_auth_options();
 
     // When I test each method
-    NEW_DRIVER_ONLY("BC#8") {
+    NEW_DRIVER_ONLY("BD#8") {
         auto result1 = test_first_method(auth_options);
         REQUIRE(result1.is_success());
     }
 
-    NEW_DRIVER_ONLY("BC#9") {
+    NEW_DRIVER_ONLY("BD#9") {
         auto result2 = test_second_method(auth_options);
         REQUIRE(result2.is_success());
     }
 
-    OLD_DRIVER_ONLY("BC#10") {
+    OLD_DRIVER_ONLY("BD#10") {
         auto result3 = test_third_method_old_way(auth_options);
         REQUIRE(result3.is_success());
     }

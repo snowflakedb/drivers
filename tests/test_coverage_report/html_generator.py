@@ -3,7 +3,7 @@
 HTML Generator Module
 
 Handles generation of HTML reports including coverage tables,
-detailed breakdowns, and Breaking Change tabs.
+detailed breakdowns, and Behavior Difference tabs.
 """
 
 from pathlib import Path
@@ -13,7 +13,7 @@ from textwrap import dedent
 
 
 class HTMLGenerator:
-    """Generates HTML reports from coverage and Breaking Change data."""
+    """Generates HTML reports from coverage and Behavior Difference data."""
     
     def __init__(self, workspace_root: Path):
         self.workspace_root = workspace_root
@@ -186,7 +186,7 @@ class HTMLGenerator:
             <div class="tabs">
                 <div class="tab-buttons">
                     <button class="tab-button" onclick="showTab('overview-tab')">📊 Overview</button>
-                    <button class="tab-button" onclick="showTab('breaking_change-tab')">📋 Breaking Changes</button>
+                    <button class="tab-button" onclick="showTab('breaking_change-tab')">📋 Behavior Differences</button>
                     <button class="tab-button" onclick="showTab('details-tab')">📋 Detailed Breakdown</button>
                     <button class="tab-button" onclick="showTab('missing-tab')">⚠️ Missing Implementations</button>
                 </div>
@@ -232,7 +232,7 @@ class HTMLGenerator:
                     document.querySelector('.tab-button').classList.add('active');
                 }});
                 
-                // Breaking Change popup functionality
+                // Behavior Difference popup functionality
                 function toggleBreaking ChangePopup(popupId) {{
                     const popup = document.getElementById(popupId);
                     popup.style.display = popup.style.display === 'block' ? 'none' : 'block';
@@ -242,11 +242,11 @@ class HTMLGenerator:
                     document.getElementById(popupId).style.display = 'none';
                 }}
                 
-                // Breaking Change expansion functionality
+                // Behavior Difference expansion functionality
                 function expandToBreaking Change(breaking_changeId) {{
                     const breaking_changeElement = document.getElementById(breaking_changeId);
                     if (breaking_changeElement) {{
-                        // Collapse all other Breaking Change sections
+                        // Collapse all other Behavior Difference sections
                         const allBreakingChangeSections = document.querySelectorAll('.breaking_change-section');
                         allBreakingChangeSections.forEach(section => {{
                             if (section.id !== breaking_changeId) {{
@@ -254,7 +254,7 @@ class HTMLGenerator:
                             }}
                         }});
                         
-                        // Expand the target Breaking Change section
+                        // Expand the target Behavior Difference section
                         breaking_changeElement.classList.add('expanded');
                         setTimeout(() => breaking_changeElement.scrollIntoView({{behavior: 'smooth'}}), 100);
                     }}
@@ -291,5 +291,5 @@ class HTMLGenerator:
         return "<p>Missing implementations HTML generation not yet implemented</p>"
     
     def _generate_breaking_change_tab_html(self, features: Dict, breaking_change_handler) -> str:
-        """Generate the Breaking Change tab HTML (placeholder - needs implementation)."""
-        return "<p>Breaking Change tab HTML generation not yet implemented</p>"
+        """Generate the Behavior Difference tab HTML (placeholder - needs implementation)."""
+        return "<p>Behavior Difference tab HTML generation not yet implemented</p>"

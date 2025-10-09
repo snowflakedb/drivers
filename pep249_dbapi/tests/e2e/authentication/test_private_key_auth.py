@@ -48,14 +48,14 @@ class TestPrivateKeyAuthentication:
 
 
 def create_jwt_connection(connection_factory, private_key_file, private_key_password=None):
-    if OLD_DRIVER_ONLY("BC#5"):
+    if OLD_DRIVER_ONLY("BD#5"):
         kwargs = {
             "authenticator": "SNOWFLAKE_JWT",
             "private_key_file": private_key_file,
         }
         if private_key_password:
             kwargs["private_key_file_pwd"] = private_key_password
-    elif NEW_DRIVER_ONLY("BC#5"):
+    elif NEW_DRIVER_ONLY("BD#5"):
         kwargs = {
             "authenticator": "SNOWFLAKE_JWT", 
             "private_key_file": private_key_file,

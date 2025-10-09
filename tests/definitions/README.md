@@ -41,7 +41,7 @@ This directory contains Gherkin feature files that define test scenarios for the
    - Ensures every Gherkin scenario for which driver specific annotation is added, has a corresponding test method implementation with correct name and comments containing Gherkin steps
    
 2. **Coverage Report** (`tests/test_coverage_report/`)
-   - Creates interactive HTML dashboards showing test coverage status and Breaking Change annotations for easy visualization
+   - Creates interactive HTML dashboards showing test coverage status and Behavior Difference annotations for easy visualization
 
 ## Adding New Tests
 
@@ -53,6 +53,71 @@ This directory contains Gherkin feature files that define test scenarios for the
    - **E2E tests**: use `e2e/` directories
    - **Integration tests**: use `integration/` directories
 4. **Run validator** - Use the format validator to check all scenarios have matching implementations (it is added to pre-commit)
+
+## Behavior Differences (BD)
+
+Behavior Differences document changes in driver behaviour between New and Old drivers. 
+Each Behaviour Difference will have separate assertions for New and Old drivers.
+
+### BD Types
+
+Behavior Differences are categorized into three types:
+
+1. **Breaking Change**
+2. **Bug Fix**
+3. **New Feature**
+
+### YAML Structure
+
+Each driver has a `BehaviorDifferences.yaml` file that defines its behavior differences:
+
+- **Root key**: `behaviour_differences`
+- **Numbered entries**: Each BD is numbered sequentially (1, 2, 3, etc.)
+- **Required fields**:
+  - `name`:  Description of the behavior difference
+- **Optional fields**:
+  - `type`: One of "Breaking Change", "Bug Fix", or "New Feature"
+  - `description`: Detailed explanation
+
+### Default Behavior
+
+When no `type` is specified in the YAML:
+- The BD is displayed as **"[Behaviour Difference]"** in reports
+
+### Test Implementation
+
+Behavior Differences are referenced in test code using the format `BD#{number}`:
+
+```python
+# Python example
+if OLD_DRIVER_ONLY("BD#1"):
+    assert downloaded_content != reference_content
+
+if NEW_DRIVER_ONLY("BD#1"):
+    assert downloaded_content == reference_content
+```
+
+```cpp
+// C++ example
+OLD_DRIVER_ONLY("BD#1") {
+    CHECK(downloaded_bytes != reference_bytes);
+}
+
+NEW_DRIVER_ONLY("BD#1") {
+    CHECK(downloaded_bytes == reference_bytes);
+}
+```
+
+### Coverage Report Integration
+
+- **BD Detection**: The validator automatically detects `BD#` references in test files
+
+### Adding New Behavior Differences
+
+1. **Update YAML**: Add new entry to the driver's `BehaviorDifferences.yaml` file
+2. **Implement Tests**: Add `BD#` references in test methods using `OLD_DRIVER_ONLY()` and `NEW_DRIVER_ONLY()` macros
+3. **Run Validator**: Ensure the BD is detected and appears in coverage reports
+4. **Verify Report**: Check that the BD appears correctly in the HTML coverage report
 
 ## Gherkin Best Practices
 

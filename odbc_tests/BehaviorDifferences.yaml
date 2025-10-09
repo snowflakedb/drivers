@@ -1,0 +1,12 @@
+behavior_differences:
+  1:
+    name: "Native error code should be 0 when error originates from client side"
+  
+  2:
+    name: "Compression type is now returned in uppercase"
+  
+  3:
+    name: "Encryption field is no longer included in the result"
+  
+  4:
+    name: "GET rowset metadata contains file size after decryption instead of file size before decryption"

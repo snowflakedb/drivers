@@ -1,5 +1,5 @@
-mod breaking_changes_processor;
-mod breaking_changes_utils;
+mod behavior_differences_processor;
+mod behavior_differences_utils;
 mod driver_handlers;
 mod feature_parser;
 mod step_finder;
@@ -38,7 +38,7 @@ fn main() -> anyhow::Result<()> {
     let validator = GherkinValidator::new(args.workspace, args.features)?;
 
     if args.json {
-        // JSON output mode - includes Breaking Changes processing
+        // JSON output mode - includes Behavior Differences processing
         let enhanced_results = validator.validate_all_with_breaking_changes()?;
         let json_output = serde_json::to_string_pretty(&enhanced_results)?;
         println!("{json_output}");

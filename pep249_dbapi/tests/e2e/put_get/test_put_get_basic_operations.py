@@ -104,9 +104,9 @@ def test_should_return_correct_rowset_for_put(connection):
         assert upload_result[0] == "test_data.csv"
         assert upload_result[1] == "test_data.csv.gz"
         assert upload_result[2] == 6
-        if OLD_DRIVER_ONLY("BC#1"):
+        if OLD_DRIVER_ONLY("BD#1"):
             assert upload_result[3] == 48
-        elif NEW_DRIVER_ONLY("BC#1"):
+        elif NEW_DRIVER_ONLY("BD#1"):
             assert upload_result[3] == 32
         assert upload_result[4] == "NONE"
         assert upload_result[5] == "GZIP"
@@ -136,9 +136,9 @@ def test_should_return_correct_rowset_for_get(connection):
 
             # Then Rowset for GET command should be correct
             assert get_result[0] == "test_data.csv.gz"
-            if OLD_DRIVER_ONLY("BC#1"):
+            if OLD_DRIVER_ONLY("BD#1"):
                 assert get_result[1] == 42
-            elif NEW_DRIVER_ONLY("BC#1"):
+            elif NEW_DRIVER_ONLY("BD#1"):
                 assert get_result[1] == 26
             assert get_result[2] == "DOWNLOADED"
             assert get_result[3] == ""
