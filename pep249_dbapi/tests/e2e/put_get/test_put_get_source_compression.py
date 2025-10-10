@@ -7,6 +7,7 @@ from tests.e2e.put_get.put_get_helper import (
 )
 from tests.compatibility import NEW_DRIVER_ONLY, OLD_DRIVER_ONLY
 
+
 @pytest.mark.parametrize(
     "expected_compression,filename",
     [
@@ -259,7 +260,7 @@ def get_compression_test_file_path(compression_type: str) -> Path:
 
 
 def create_stage_and_get_compression_file(
-        cursor, stage_prefix: str, compression_type: str
+    cursor, stage_prefix: str, compression_type: str
 ):
     """
     Create a temporary stage and get the compression test file path.
@@ -278,11 +279,11 @@ def create_stage_and_get_compression_file(
 
 
 def assert_put_compression_result(
-        result,
-        expected_source: str,
-        expected_source_compression: str,
-        expected_target: str,
-        expected_target_compression: str,
+    result,
+    expected_source: str,
+    expected_source_compression: str,
+    expected_target: str,
+    expected_target_compression: str,
 ):
     """
     Assert that PUT result matches expected compression values.
@@ -295,15 +296,15 @@ def assert_put_compression_result(
         expected_target_compression: Expected target compression type
     """
     assert (
-            result[0] == expected_source
+        result[0] == expected_source
     ), f"Source should be '{expected_source}', got '{result[0]}'"
     assert (
-            result[1] == expected_target
+        result[1] == expected_target
     ), f"Target should be '{expected_target}', got '{result[1]}'"
     assert (
-            result[4] == expected_source_compression
+        result[4] == expected_source_compression
     ), f"Source compression should be '{expected_source_compression}', got '{result[4]}'"
     assert (
-            result[5] == expected_target_compression
+        result[5] == expected_target_compression
     ), f"Target compression should be '{expected_target_compression}', got '{result[5]}'"
     assert result[6] == "UPLOADED", f"Status should be 'UPLOADED', got '{result[6]}'"

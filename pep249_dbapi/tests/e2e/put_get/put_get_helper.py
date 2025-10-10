@@ -100,54 +100,6 @@ def get_file_from_stage(cursor, stage_name: str, filename: str, download_dir: Pa
     return cursor.fetchone()
 
 
-def upload_files_with_wildcard(
-    cursor,
-    stage_name: str,
-    wildcard_pattern: str,
-    auto_compress: bool = True,
-    overwrite: bool = True,
-):
-    """
-    Upload files matching a wildcard pattern to a Snowflake stage.
-
-    Args:
-        cursor: Database cursor to execute the command
-        stage_name: Name of the existing stage to upload to
-        wildcard_pattern: Wildcard pattern for files to upload (e.g., 'pattern_?.csv')
-        auto_compress: Whether to enable auto compression (default: True)
-        overwrite: Whether to overwrite existing files (default: True)
-
-    Returns:
-        list: List of result rows from the PUT command (one per uploaded file)
-    """
-    options_str = (
-        f"AUTO_COMPRESS={str(auto_compress).upper()} OVERWRITE={str(overwrite).upper()}"
-    )
-    put_command = f"PUT 'file://{wildcard_pattern}' @{stage_name} {options_str}"
-    cursor.execute(put_command)
-    return cursor.fetchall()
-
-
-def get_files_with_wildcard(cursor, stage_name: str, pattern: str, download_dir: Path):
-    """
-    Download files matching a regex pattern from a Snowflake stage.
-
-    Args:
-        cursor: Database cursor to execute the command
-        stage_name: Name of the stage to download from
-        pattern: Regex pattern for files to download (e.g., '.*pattern_.\\.csv\\.gz')
-        download_dir: Local directory to download files to
-
-    Note:
-        This function executes the GET command but does not return results.
-        Check the download_dir for downloaded files after calling this function.
-    """
-    get_command = (
-        f"GET @{stage_name} 'file://{as_file_uri(download_dir)}/' PATTERN='{pattern}'"
-    )
-    cursor.execute(get_command)
-
-
 def create_temporary_stage_and_upload_file(
     cursor,
     stage_prefix: str,
@@ -180,41 +132,6 @@ def create_temporary_stage_and_upload_file(
     ), f"File upload failed. Status: {upload_result[6]}"
 
     return stage_name, upload_result
-
-
-def create_temporary_stage_and_upload_multiple_files(
-    cursor,
-    stage_prefix: str,
-    wildcard_pattern: str,
-    auto_compress: bool = True,
-    overwrite: bool = True,
-):
-    """
-    Function that creates temporary stage and uploads multiple files using wildcard pattern.
-
-    Args:
-        cursor: Database cursor to use for operations
-        stage_prefix: Prefix for the temporary stage name
-        wildcard_pattern: Wildcard pattern for files to upload (e.g., '/path/to/files/*.csv')
-        auto_compress: Whether to enable auto compression for upload (default: True)
-        overwrite: Whether to overwrite existing files for upload (default: True)
-
-    Returns:
-        tuple: (stage_name, upload_results)
-
-    Note:
-        All uploads are automatically validated for success.
-    """
-    stage_name = create_temporary_stage(cursor, stage_prefix)
-    upload_results = upload_files_with_wildcard(
-        cursor, stage_name, wildcard_pattern, auto_compress, overwrite
-    )
-    for upload_result in upload_results:
-        assert (
-            upload_result[6] == "UPLOADED"
-        ), f"File upload failed. Status: {upload_result[6]}"
-
-    return stage_name, upload_results
 
 
 def create_test_file(directory: Path, filename: str, content: str = "1,2,3\n") -> Path:
