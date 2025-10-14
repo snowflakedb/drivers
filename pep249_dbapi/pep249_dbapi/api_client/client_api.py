@@ -1,6 +1,3 @@
-from thrift.protocol.TCompactProtocol import TCompactProtocol
-
-from .transport import CoreTransport
 from ..protobuf_gen.database_driver_v1_services import DatabaseDriverClient
 import ctypes
 from .c_api import sf_core_api_call_proto

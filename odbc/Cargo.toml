@@ -9,7 +9,6 @@ crate-type = ["dylib", "rlib"]
 
 [dependencies]
 sf_core = { path = "../sf_core" }
-thrift = "0.17.0"
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.19", features = ["fmt", "env-filter"] }
 snafu = "0.8.7"

@@ -1,4 +1,3 @@
-extern crate thrift;
 extern crate tracing;
 extern crate tracing_subscriber;
 
@@ -19,7 +18,4 @@ pub mod protobuf_apis;
 pub mod protobuf_gen;
 pub mod query_types;
 pub mod rest;
-mod test_utils;
-pub mod thrift_apis;
-pub mod thrift_gen;
 pub mod tls;

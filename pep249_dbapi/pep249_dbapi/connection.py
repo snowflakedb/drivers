@@ -7,7 +7,6 @@ from .api_client.client_api import database_driver_client
 from .protobuf_gen.database_driver_v1_pb2 import *
 from .cursor import Cursor
 from .exceptions import NotSupportedError, InterfaceError
-from .thrift_gen.database_driver_v1 import DatabaseDriver
 
 
 class Connection:

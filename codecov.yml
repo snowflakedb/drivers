@@ -104,7 +104,7 @@ ignore:
   - "**/*.egg-info/"
   
   # Generated code
-  - "**/thrift_gen/"
+  - "**/protobuf_gen/"
   - "**/gen-*/"
   
   # Java/Gradle artifacts

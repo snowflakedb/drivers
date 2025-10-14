@@ -9,16 +9,10 @@ use arrow::error::ArrowError;
 use lazy_static::lazy_static;
 use odbc_sys as sql;
 use proto_utils::ProtoError;
-use sf_core::{
-    protobuf_gen::database_driver_v1::{
-        GenericError, InvalidParameterValue as ProtoInvalidParameterValue,
-        LoginError as ProtoLoginError, MissingParameter as ProtoMissingParameter,
-        driver_error::ErrorType,
-    },
-    thrift_gen::database_driver_v1::{
-        DriverError as ThriftDriverError, DriverException, InvalidParameterValue, LoginError,
-        MissingParameter, StatusCode,
-    },
+use sf_core::protobuf_gen::database_driver_v1::{
+    GenericError, InvalidParameterValue as ProtoInvalidParameterValue,
+    LoginError as ProtoLoginError, MissingParameter as ProtoMissingParameter,
+    driver_error::ErrorType,
 };
 
 use sf_core::protobuf_gen::database_driver_v1::DriverException as ProtoDriverException;
@@ -188,23 +182,6 @@ pub enum OdbcError {
     },
 
     #[snafu(display("[Core] {message}\n report: {report}"))]
-    ThriftDriverException {
-        message: String,
-        report: String,
-        status_code: StatusCode,
-        error: Box<ThriftDriverError>,
-        #[snafu(implicit)]
-        location: Location,
-    },
-
-    #[snafu(display("Thrift communication error"))]
-    ThriftCommunication {
-        message: String,
-        #[snafu(implicit)]
-        location: Location,
-    },
-
-    #[snafu(display("[Core] {message}\n report: {report}"))]
     ProtoDriverException {
         message: String,
         report: String,
@@ -292,34 +269,7 @@ impl OdbcError {
             OdbcError::FetchData { .. } => SqlState::GeneralError,
             OdbcError::TextConversionUtf8 { .. } => SqlState::StringDataRightTruncated,
             OdbcError::TextConversionFromUtf8 { .. } => SqlState::StringDataRightTruncated,
-            OdbcError::ThriftDriverException { error, .. } => {
-                // Map DriverException StatusCode to appropriate SQL states
-                match *error.clone() {
-                    ThriftDriverError::AuthError(_) => SqlState::InvalidAuthorizationSpecification,
-                    ThriftDriverError::GenericError(_) => SqlState::GeneralError,
-                    ThriftDriverError::InvalidParameterValue(InvalidParameterValue {
-                        parameter,
-                        ..
-                    }) => {
-                        if AUTHENTICATOR_PARAMETERS.contains(&parameter.to_uppercase()) {
-                            SqlState::InvalidAuthorizationSpecification
-                        } else {
-                            SqlState::InvalidConnectionStringAttribute
-                        }
-                    }
-                    ThriftDriverError::MissingParameter(MissingParameter { parameter }) => {
-                        if AUTHENTICATOR_PARAMETERS.contains(&parameter.to_uppercase()) {
-                            SqlState::InvalidAuthorizationSpecification
-                        } else {
-                            SqlState::InvalidConnectionStringAttribute
-                        }
-                    }
-                    ThriftDriverError::InternalError(_) => SqlState::GeneralError,
-                    ThriftDriverError::LoginError(_) => SqlState::InvalidAuthorizationSpecification,
-                }
-            }
             OdbcError::ArrowBinding { .. } => SqlState::GeneralError,
-            OdbcError::ThriftCommunication { .. } => SqlState::ClientUnableToEstablishConnection,
             OdbcError::ProtoDriverException { error, .. } => match *error.clone() {
                 ErrorType::AuthError(_) => SqlState::InvalidAuthorizationSpecification,
                 ErrorType::GenericError(_) => SqlState::GeneralError,
@@ -351,44 +301,11 @@ impl OdbcError {
 
     pub fn to_native_error(&self) -> sql::Integer {
         match self {
-            OdbcError::ThriftDriverException { error, .. } => match *error.clone() {
-                ThriftDriverError::LoginError(LoginError { code, .. }) => code,
-                _ => 0,
-            },
             OdbcError::ProtoDriverException { error, .. } => match *error.clone() {
                 ErrorType::LoginError(ProtoLoginError { code, .. }) => code,
                 _ => 0,
             },
             _ => 0,
-        }
-    }
-
-    /// Convert a thrift::Error into the appropriate OdbcError variant
-    #[track_caller]
-    #[allow(dead_code)]
-    pub fn from_thrift_error(error: thrift::Error) -> Self {
-        match error {
-            thrift::Error::User(boxed_error) => {
-                // Try to downcast to DriverException
-                if let Some(driver_exception) = boxed_error.downcast_ref::<DriverException>() {
-                    OdbcError::ThriftDriverException {
-                        message: driver_exception.message.clone(),
-                        status_code: driver_exception.status_code,
-                        error: Box::new(driver_exception.error.clone()),
-                        location: location!(),
-                        report: driver_exception.report.clone(),
-                    }
-                } else {
-                    ThriftCommunicationSnafu {
-                        message: boxed_error.to_string(),
-                    }
-                    .build()
-                }
-            }
-            err => ThriftCommunicationSnafu {
-                message: err.to_string(),
-            }
-            .build(),
         }
     }
 

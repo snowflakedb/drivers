@@ -18,18 +18,6 @@ try:
 except OSError as e:
     print(f"Error loading core library {e}")
 
-core.sf_core_api_init.argtypes = [ctypes.c_uint]
-core.sf_core_api_init.restype = CAPIHandle
-
-core.sf_core_api_write.restype = ctypes.c_uint
-core.sf_core_api_write.argtypes = [CAPIHandle, ctypes.c_char_p, ctypes.c_size_t]
-
-core.sf_core_api_read.restype = ctypes.c_uint
-core.sf_core_api_read.argtypes = [CAPIHandle, ctypes.c_char_p, ctypes.c_size_t]
-
-core.sf_core_api_flush.restype = None
-core.sf_core_api_flush.argtypes = [CAPIHandle]
-
 LOGGER_CALLBACK = ctypes.CFUNCTYPE(ctypes.c_uint32, ctypes.c_uint32, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint32, ctypes.c_char_p)
 core.sf_core_init_logger.argtypes = [LOGGER_CALLBACK]
 core.sf_core_init_logger.restype = ctypes.c_uint32
@@ -43,20 +31,6 @@ core.sf_core_api_call_proto.argtypes = [
     ctypes.POINTER(ctypes.POINTER(ctypes.c_ubyte)),  # char* const* response
     ctypes.POINTER(ctypes.c_size_t)  # size_t* response_len
 ]
-
-def sf_core_api_read(channel, buf, len):
-    core.sf_core_api_read(channel, buf, len)
-
-def sf_core_api_write(channel, buf, len):
-    core.sf_core_api_write(channel, buf, len)
-
-def sf_core_api_flush(channel):
-    core.sf_core_api_flush(channel)
-
-def sf_core_api_init(api_id):
-    if api_id not in CORE_API:
-        raise ValueError(f"Invalid API ID: {api_id}")
-    return core.sf_core_api_init(api_id.value)
 
 def sf_core_api_call_proto(api, method, request, request_len, response, response_len):
     return core.sf_core_api_call_proto(api, method, request, request_len, response, response_len)

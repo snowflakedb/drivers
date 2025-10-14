@@ -1,5 +1,0 @@
-name: 'Generate Thrift'
-description: 'Generates Thrift files'
-runs:
-  using: 'docker'
-  image: 'Dockerfile' 
