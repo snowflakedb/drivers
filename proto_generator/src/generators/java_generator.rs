@@ -216,6 +216,7 @@ public interface {}Service {{
         let mut content = String::new();
 
         // Package declaration
+        // TODO: Move this string formatting to a template file for better readability
         content += &format!("package {};\n\n", java_package);
 
         // Import only Message, protobuf classes are now in the same package
