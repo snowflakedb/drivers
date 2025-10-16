@@ -3,7 +3,7 @@ Jenkinsfile template for use in a multibranch pipeline
  */
 pipeline {
   //Various labels available: https://snowflakecomputing.atlassian.net/wiki/spaces/EN/pages/2443215263/Agent+labels+in+jenkins
-  agent { label 'small-node-c7' } 
+  agent { label 'small-node-c7' }
   options { timestamps()
             disableResume() //REQUIRED SECTION - We must use this property, else PRs can get in stuck state for any controller restart
             buildDiscarder(logRotator(daysToKeepStr: '5', numToKeepStr: '50')) // REQUIRED SECTION - retention policy must be set
