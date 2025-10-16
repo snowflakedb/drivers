@@ -1,26 +1,216 @@
 /*
-Jenkinsfile template for use in a multibranch pipeline
- */
+Jenkinsfile for Rust build and test pipeline
+Multi-platform support: Windows, macOS, Linux (x86_64 and arm64)
+*/
+
+def getAgentLabel(String platform) {
+  switch(platform) {
+    case 'linux-x86_64':
+      return 'small-node-c7'
+    case 'linux-arm64':
+      return 'small-node-aarch64'
+    case 'macos-x86_64':
+      return 'mac_x86'
+    case 'macos-arm64':
+      return 'mac_m1'
+    case 'windows-x86_64':
+      return 'windows-build'
+    default:
+      return 'small-node-c7'
+  }
+}
+
 pipeline {
-  //Various labels available: https://snowflakecomputing.atlassian.net/wiki/spaces/EN/pages/2443215263/Agent+labels+in+jenkins
-  agent { label 'small-node-c7' }
-  options { timestamps()
-            disableResume() //REQUIRED SECTION - We must use this property, else PRs can get in stuck state for any controller restart
-            buildDiscarder(logRotator(daysToKeepStr: '5', numToKeepStr: '50')) // REQUIRED SECTION - retention policy must be set
-            timeout(time: 1, unit: 'HOURS') // REQUIRED SECTION - timeout must be set
-          }
+  agent none
+  
+  options { 
+    timestamps()
+    disableResume() //REQUIRED SECTION - We must use this property, else PRs can get in stuck state for any controller restart
+    buildDiscarder(logRotator(daysToKeepStr: '5', numToKeepStr: '50')) // REQUIRED SECTION - retention policy must be set
+    timeout(time: 2, unit: 'HOURS') // REQUIRED SECTION - timeout must be set
+  }
+  
   stages {
-    stage('checkout') {
-      steps {
-        checkout scm
+    stage('Build and Test') {
+      matrix {
+        axes {
+          axis {
+            name 'PLATFORM'
+            values 'linux-x86_64', 'linux-arm64', 'macos-x86_64', 'macos-arm64', 'windows-x86_64'
+          }
+        }
+        agent {
+          label "${getAgentLabel(PLATFORM)}"
+        }
+        environment {
+          PATH = "${isUnix() ? env.HOME + '/.cargo/bin:/usr/local/go/bin:/opt/homebrew/bin:/usr/local/bin:' + env.PATH : env.USERPROFILE + '\\.cargo\\bin;' + env.PATH}"
+        }
+        stages {
+          // Checkout code
+          stage('Checkout') {
+            steps {
+              checkout scm
+            }
+          }
+          
+          // Setup dependencies (Go for FIPS on macOS)
+          stage('Setup Dependencies') {
+            steps {
+              script {
+                echo "Platform: ${PLATFORM}"
+                if (PLATFORM.startsWith('macos')) {
+                  sh '''
+                    # Install Go if not present (required for aws-lc-fips-sys)
+                    if ! command -v go >/dev/null 2>&1; then
+                      echo "Installing Go via Homebrew..."
+                      if command -v brew >/dev/null 2>&1; then
+                        brew install go
+                      else
+                        echo "Homebrew not found, installing Go manually..."
+                        GO_VERSION="1.21.5"
+                        GO_ARCH="darwin-arm64"
+                        if [ "${PLATFORM}" = "macos-x86_64" ]; then
+                          GO_ARCH="darwin-amd64"
+                        fi
+                        curl -LO "https://go.dev/dl/go${GO_VERSION}.${GO_ARCH}.tar.gz"
+                        sudo tar -C /usr/local -xzf "go${GO_VERSION}.${GO_ARCH}.tar.gz"
+                        rm "go${GO_VERSION}.${GO_ARCH}.tar.gz"
+                        export PATH=$PATH:/usr/local/go/bin
+                      fi
+                    fi
+                    go version
+                  '''
+                }
+              }
+            }
+          }
+          
+          // Setup Rust toolchain
+          stage('Setup Rust') {
+            steps {
+              script {
+                if (isUnix()) {
+                  sh '''
+                    # Install or update Rust
+                    if command -v rustc >/dev/null 2>&1; then
+                      rustup update stable
+                    else
+                      curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+                    fi
+                    rustc --version
+                    cargo --version
+                  '''
+                } else {
+                  bat '''
+                    @echo off
+                    rustc --version || (
+                      echo Installing Rust...
+                      curl --proto =https --tlsv1.2 -sSf https://win.rustup.rs/x86_64 -o rustup-init.exe
+                      rustup-init.exe -y
+                      del rustup-init.exe
+                    )
+                    echo Current PATH: %PATH%
+                    rustc --version
+                    cargo --version
+                  '''
+                }
+              }
+            }
+          }
+          
+          // Build workspace
+          stage('Build') {
+            steps {
+              script {
+                if (isUnix()) {
+                  sh '''
+                    cargo build --workspace --all-targets --verbose
+                  '''
+                } else {
+                  bat '''
+                    if "%VCINSTALLDIR%" == "" (
+                        if exist "c:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC" (
+                            set VCINSTALLDIR=c:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC
+                        ) else if exist "%ProgramFiles%\\Microsoft Visual Studio\\2022\\Enterprise\\VC" (
+                            set VCINSTALLDIR=%ProgramFiles%\\Microsoft Visual Studio\\2022\\Enterprise\\VC
+                        ) else if exist "C:\\Program Files (x86)\\Microsoft Visual Studio\\2022\\BuildTools\\VC" (
+                            set VCINSTALLDIR=C:\\Program Files ^(x86^)\\Microsoft Visual Studio\\2022\\BuildTools\\VC
+                        ) else (
+                            echo Set environment variable VCINSTALLDIR to sepecify Visual Studio 2022 install path.
+                        )
+                    )
+                    call "%VCINSTALLDIR%\\Auxiliary\\Build\\vcvarsall.bat"
+                    cargo build --workspace --all-targets --verbose
+                  '''
+                }
+              }
+            }
+          }
+          
+          // Run tests
+          stage('Test') {
+            steps {
+              script {
+                if (isUnix()) {
+                  sh '''
+                    # Run tests (without integration tests that require Snowflake connection)
+                    cargo test --workspace --lib --bins --verbose
+                  '''
+                } else {
+                  bat '''
+                    REM Run tests (without integration tests that require Snowflake connection)
+                    cargo test --workspace --lib --bins --verbose
+                  '''
+                }
+              }
+            }
+          }
+          
+          // Check formatting
+          stage('Check Formatting') {
+            steps {
+              script {
+                if (isUnix()) {
+                  sh '''
+                    rustup component add rustfmt
+                    cargo fmt --all -- --check
+                  '''
+                } else {
+                  bat '''
+                    rustup component add rustfmt
+                    cargo fmt --all -- --check
+                  '''
+                }
+              }
+            }
+          }
+          
+          // Run Clippy
+          stage('Clippy') {
+            steps {
+              script {
+                if (isUnix()) {
+                  sh '''
+                    rustup component add clippy
+                    cargo clippy --workspace --all-targets -- -D warnings
+                  '''
+                } else {
+                  bat '''
+                    rustup component add clippy
+                    cargo clippy --workspace --all-targets -- -D warnings
+                  '''
+                }
+              }
+            }
+          }
+        }
       }
     }
-    stage('build') {
-      steps {
-        sh '''
-          |echo "Hello world"
-        '''.stripMargin()
-      }
+  }
+  
+  post {
+    always {
+      cleanWs()
     }
   }
 }
