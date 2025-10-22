@@ -2,6 +2,7 @@
 [workspace]
 members = [
     "sf_core",
+    "sf_mini_core",
     "odbc",
     "jdbc_bridge",
     "proto_generator",
@@ -9,3 +10,8 @@ members = [
     "sf_core/tests/common/arrow_deserialize_macro",
 ]
 resolver = "1"
+
+[profile.release]
+strip = true
+opt-level = "z"
+lto = true
