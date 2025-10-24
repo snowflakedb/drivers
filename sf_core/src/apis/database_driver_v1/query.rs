@@ -2,7 +2,7 @@ use crate::arrow_utils::ArrowUtilsError;
 use crate::arrow_utils::{
     boxed_arrow_reader, convert_string_rowset_to_arrow_reader, create_schema,
 };
-use crate::chunks::ChunkReader;
+use crate::chunks::{ChunkError, ChunkReader};
 use crate::file_manager;
 use crate::file_manager::{DownloadResult, UploadResult, download_files, upload_files};
 use crate::query_types::RowType;
@@ -22,7 +22,7 @@ pub async fn process_query_response(
 ) -> Result<Box<dyn RecordBatchReader + Send>, QueryResponseProcessingError> {
     match data.command {
         Some(ref command) => perform_put_get(command.clone(), data).await,
-        None => read_batches(data).context(BatchReadingSnafu),
+        None => read_batches(data).await.context(BatchReadingSnafu),
     }
 }
 
@@ -56,14 +56,14 @@ async fn perform_put_get(
     }
 }
 
-fn read_batches(
+async fn read_batches(
     data: &query_response::Data,
 ) -> Result<Box<dyn RecordBatchReader + Send>, ReadBatchesError> {
     if let Some(rowset_base64) = &data.rowset_base64 {
         let rowset_bytes = BASE64.decode(rowset_base64).context(Base64DecodingSnafu)?;
 
         let reader_result = if let Some(chunk_download_data) = data.to_chunk_download_data() {
-            ChunkReader::multi_chunk(rowset_bytes, chunk_download_data)
+            ChunkReader::multi_chunk(rowset_bytes, chunk_download_data.into()).await
         } else {
             ChunkReader::single_chunk(rowset_bytes)
         }
@@ -254,7 +254,7 @@ pub enum ReadBatchesError {
     },
     #[snafu(display("Failed to read chunks"))]
     ChunkReading {
-        source: ArrowError,
+        source: ChunkError,
         #[snafu(implicit)]
         location: Location,
     },

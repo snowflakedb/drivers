@@ -30,19 +30,28 @@ pub struct ChunkReader {
 }
 
 impl ChunkReader {
-    pub fn multi_chunk(initial: Vec<u8>, rest: Vec<ChunkDownloadData>) -> Result<Self, ArrowError> {
+    pub async fn multi_chunk(
+        initial: Vec<u8>,
+        mut rest: VecDeque<ChunkDownloadData>,
+    ) -> Result<Self, ChunkError> {
+        let initial = if initial.is_empty() {
+            get_chunk_data(&rest.pop_front().unwrap()).await?
+        } else {
+            initial
+        };
         let cursor = io::Cursor::new(initial);
-        let reader = StreamReader::try_new(cursor, None)?;
+        let reader = StreamReader::try_new(cursor, None).context(ChunkReadingSnafu)?;
         let schema = reader.schema().clone();
         Ok(Self {
-            rest: rest.into(),
+            rest,
             schema,
             current_stream: Some(reader),
         })
     }
-    pub fn single_chunk(initial: Vec<u8>) -> Result<Self, ArrowError> {
+
+    pub fn single_chunk(initial: Vec<u8>) -> Result<Self, ChunkError> {
         let cursor = io::Cursor::new(initial);
-        let reader = StreamReader::try_new(cursor, None)?;
+        let reader = StreamReader::try_new(cursor, None).context(ChunkReadingSnafu)?;
         Ok(Self {
             rest: VecDeque::new(),
             schema: reader.schema().clone(),
@@ -158,6 +167,12 @@ pub enum ChunkError {
     #[snafu(display("Failed to decompress chunk data"))]
     Decompression {
         source: CompressionError,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Failed to read chunk data"))]
+    ChunkReading {
+        source: ArrowError,
         #[snafu(implicit)]
         location: Location,
     },
