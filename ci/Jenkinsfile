@@ -15,10 +15,34 @@ pipeline {
         checkout scm
       }
     }
+    stage('Setup rust') {
+      steps {
+        sh '''
+          if command -v rustc >/dev/null 2>&1; then
+            rustup update stable
+          else
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+            source $HOME/.cargo/env
+          fi
+          rustc --version
+          cargo --version
+        '''.stripMargin()
+      }
+    }
     stage('build') {
       steps {
         sh '''
-          |echo "Hello world"
+        source $HOME/.cargo/env
+        cargo build --package sf_mini_core
+        '''.stripMargin()
+      }
+    }
+
+    stage('test') {
+      steps {
+        sh '''
+        source $HOME/.cargo/env
+        cargo test --package sf_mini_core
         '''.stripMargin()
       }
     }
