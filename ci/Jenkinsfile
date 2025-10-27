@@ -3,8 +3,61 @@ Jenkinsfile template for use in a multibranch pipeline
  */
 
 def getAgentLabel(platform) {
-  return platform == 'linux' ? 'small-node-c7' : 'mac_m1'
+  switch (platform) {
+    case 'linux':
+      return 'small-node-c7'
+    case 'mac':
+      return 'mac_m1'
+    case 'windows':
+      return 'windows-build-vs2022'
+    default:
+      return 'small-node-c7'
+  }
 }
+
+def setupRust(platform) {
+  if (platform == 'windows') {
+    bat '''
+      rustc --version || (
+        echo Installing Rust...
+        curl -L -sSf https://win.rustup.rs/x86_64 -o rustup-init.exe
+        rustup-init.exe -y
+        del rustup-init.exe
+      )
+      set PATH=%PATH%;%USERPROFILE%\\.cargo\\bin
+      rustc --version
+      cargo --version
+    '''.stripMargin()
+    return
+  }
+
+  sh '''
+    if command -v rustc >/dev/null 2>&1; then
+      rustup update stable
+    else
+      curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+      source $HOME/.cargo/env
+    fi
+    rustc --version
+    cargo --version
+  '''.stripMargin()
+}
+
+def run_cargo_command(platform, command) {
+  if (platform == 'windows') {
+    bat """
+      set PATH=%PATH%;%USERPROFILE%\\.cargo\\bin
+      cargo ${command}
+    """
+    return
+  }
+
+  sh """
+    source $HOME/.cargo/env
+    cargo ${command}
+  """
+}
+
 
 pipeline {
   //Various labels available: https://snowflakecomputing.atlassian.net/wiki/spaces/EN/pages/2443215263/Agent+labels+in+jenkins
@@ -20,7 +73,7 @@ pipeline {
         axes {
           axis {
             name 'PLATFORM'
-            values 'linux', 'mac'
+            values 'linux', 'mac', 'windows'
           }
         }
         agent {
@@ -34,32 +87,17 @@ pipeline {
           }
           stage('Setup rust') {
             steps {
-              sh '''
-                if command -v rustc >/dev/null 2>&1; then
-                  rustup update stable
-                else
-                  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-                  source $HOME/.cargo/env
-                fi
-                rustc --version
-                cargo --version
-              '''.stripMargin()
+              setupRust(PLATFORM)
             }
           }
           stage('build') {
             steps {
-              sh '''
-                source $HOME/.cargo/env
-                cargo build --package sf_mini_core
-              '''.stripMargin()
+              run_cargo_command(PLATFORM, 'build --package sf_mini_core')
             }
           }
           stage('test') {
             steps {
-              sh '''
-                source $HOME/.cargo/env
-                cargo test --package sf_mini_core
-              '''.stripMargin()
+              run_cargo_command(PLATFORM, 'test --package sf_mini_core')
             }
           }
         }
