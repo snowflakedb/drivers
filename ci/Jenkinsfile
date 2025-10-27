@@ -1,49 +1,68 @@
 /*
 Jenkinsfile template for use in a multibranch pipeline
  */
+
+def getAgentLabel(platform) {
+  return platform == 'linux' ? 'small-node-c7' : 'mac_m1'
+}
+
 pipeline {
   //Various labels available: https://snowflakecomputing.atlassian.net/wiki/spaces/EN/pages/2443215263/Agent+labels+in+jenkins
-  agent { label 'small-node-c7' }
+  agent none
   options { timestamps()
             disableResume() //REQUIRED SECTION - We must use this property, else PRs can get in stuck state for any controller restart
             buildDiscarder(logRotator(daysToKeepStr: '5', numToKeepStr: '50')) // REQUIRED SECTION - retention policy must be set
             timeout(time: 1, unit: 'HOURS') // REQUIRED SECTION - timeout must be set
           }
   stages {
-    stage('checkout') {
-      steps {
-        checkout scm
-      }
-    }
-    stage('Setup rust') {
-      steps {
-        sh '''
-          if command -v rustc >/dev/null 2>&1; then
-            rustup update stable
-          else
-            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-            source $HOME/.cargo/env
-          fi
-          rustc --version
-          cargo --version
-        '''.stripMargin()
-      }
-    }
-    stage('build') {
-      steps {
-        sh '''
-        source $HOME/.cargo/env
-        cargo build --package sf_mini_core
-        '''.stripMargin()
-      }
-    }
-
-    stage('test') {
-      steps {
-        sh '''
-        source $HOME/.cargo/env
-        cargo test --package sf_mini_core
-        '''.stripMargin()
+    stage('Build and Test') {
+      matrix {
+        axes {
+          axis {
+            name 'PLATFORM'
+            values 'linux', 'mac'
+          }
+        }
+        agent {
+          label "${getAgentLabel(PLATFORM)}"
+        }
+        stages {
+          stage('checkout') {
+            steps {
+              checkout scm
+            }
+          }
+          stage('Setup rust') {
+            steps {
+              sh '''
+                if command -v rustc >/dev/null 2>&1; then
+                  rustup update stable
+                else
+                  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+                  source $HOME/.cargo/env
+                fi
+                rustc --version
+                cargo --version
+              '''.stripMargin()
+            }
+          }
+          stage('build') {
+            steps {
+              sh '''
+                source $HOME/.cargo/env
+                cargo build --package sf_mini_core
+              '''.stripMargin()
+            }
+          }
+          stage('test') {
+            steps {
+              sh '''
+                source $HOME/.cargo/env
+                cargo test --package sf_mini_core
+              '''.stripMargin()
+            }
+          }
+        }
       }
     }
   }
