@@ -4,19 +4,49 @@ Jenkinsfile template for use in a multibranch pipeline
 
 def getAgentLabel(platform) {
   switch (platform) {
-    case 'linux':
+    case 'linux-x86_64':
       return 'small-node-c7'
-    case 'mac':
+    case 'linux-aarch64':
+      return 'small-node-aarch64'
+    case 'macos-x86_64':
+      return 'mac_x86'
+    case 'macos-aarch64':
       return 'mac_m1'
-    case 'windows':
+    case 'windows-x86_64':
       return 'windows-build-vs2022'
-    default:
+    case 'aix-ppc64':
       return 'small-node-c7'
+    default:
+      error "Unsupported platform: ${platform}"
+  }
+}
+
+def platform_architecture(platform) {
+  return platform.split('-')[1]
+}
+
+def platform_os(platform) {
+  return platform.split('-')[0]
+}
+
+def run_aix_command(command) {
+  sshagent (credentials: ['aix-ssh-key']) {
+    sh """
+      |ssh ${AIX_USER}@${AIX_HOST} 'bash -s' <<EOF
+      |  cd ${AIX_REPO_PATH}
+      |  ${command}
+      |EOF
+    """.stripMargin()
   }
 }
 
 def setupRust(platform) {
-  if (platform == 'windows') {
+  // Rust should be already installed on AIX
+  if (platform_os(platform) == 'aix') {
+    return
+  }
+
+  if (platform_os(platform) == 'windows') {
     bat '''
       rustc --version || (
         echo Installing Rust...
@@ -43,8 +73,14 @@ def setupRust(platform) {
   '''.stripMargin()
 }
 
+
 def run_cargo_command(platform, command) {
-  if (platform == 'windows') {
+  if (platform_os(platform) == 'aix') {
+    run_aix_command("cargo ${command}")
+    return
+  }
+
+  if (platform_os(platform) == 'windows') {
     bat """
       set PATH=%PATH%;%USERPROFILE%\\.cargo\\bin
       cargo ${command}
@@ -56,6 +92,28 @@ def run_cargo_command(platform, command) {
     source $HOME/.cargo/env
     cargo ${command}
   """
+}
+
+def checkout_repo() {
+  checkout scm
+
+  if (platform_os(platform) == 'aix') {
+    sshagent (credentials: ['aix-ssh-key']) {
+      sh """
+        ssh ${AIX_USER}@${AIX_HOST} "mkdir -p ${AIX_REPO_PATH}"
+        scp -r \$(pwd)/* ${AIX_USER}@${AIX_HOST}:${AIX_REPO_PATH}
+      """
+    }
+  }
+}
+
+def cleanup() {
+  if (platform_os(platform) == 'aix') {
+    run_aix_command("""
+      cd /home/jenkins
+      rm -rf ${AIX_REPO_PATH}
+    """)
+  }
 }
 
 
@@ -73,19 +131,24 @@ pipeline {
         axes {
           axis {
             name 'PLATFORM'
-            values 'linux', 'mac', 'windows'
+            values 'linux-x86_64', 'linux-aarch64', 'windows-x86_64', 'macos-x86_64', 'macos-aarch64', 'aix-ppc64'
           }
         }
         agent {
-          label "${getAgentLabel(PLATFORM)}"
+          label getAgentLabel(PLATFORM)
+        }
+        environment {
+          AIX_REPO_PATH = '/home/jenkins/universal-driver/${BRANCH_NAME}-${BUILD_NUMBER}'
+          AIX_HOST = '40.143.95.16'
+          AIX_USER = 'jenkins'
         }
         stages {
           stage('checkout') {
             steps {
-              checkout scm
+              checkout_repo()
             }
           }
-          stage('Setup rust') {
+          stage('Setup Rust') {
             steps {
               setupRust(PLATFORM)
             }
@@ -99,6 +162,11 @@ pipeline {
             steps {
               run_cargo_command(PLATFORM, 'test --package sf_mini_core')
             }
+          }
+        }
+        post {
+          always {
+            cleanup()
           }
         }
       }
