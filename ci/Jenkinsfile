@@ -116,6 +116,46 @@ def cleanup() {
   }
 }
 
+def uploadMinicorePackage(platform) {
+  if (platform_os(platform) == 'aix') {
+    run_aix_command("""
+      set -x
+      export PLATFORM=${platform}
+      export COMMIT_SHA=${GIT_COMMIT}
+      ./scripts/package_minicore.sh
+    """)
+    sshagent (credentials: ['aix-ssh-key']) {
+      sh """
+        source ./scripts/version.sh
+        mkdir -p build
+        export PLATFORM=${platform}
+        export COMMIT_SHA=${GIT_COMMIT}
+        scp -r ${AIX_USER}@${AIX_HOST}:${AIX_REPO_PATH}/build/sf_mini_core_\${PLATFORM}_\${VERSION}_SNAPSHOT_\${COMMIT_SHA}.tar.gz build/
+        ./scripts/upload_minicore.sh
+      """
+    }
+    return
+  }
+
+  if (platform_os(platform) == 'windows') {
+    bat """
+      set PATH=%PATH%;%USERPROFILE%\\.cargo\\bin
+      set PLATFORM=${platform}
+      set COMMIT_SHA=${GIT_COMMIT}
+      ./scripts/package_minicore.bat
+      ./scripts/upload_minicore.bat
+    """
+    return
+  }
+
+  sh """
+    source $HOME/.cargo/env
+    export PLATFORM=${platform}
+    export COMMIT_SHA=${GIT_COMMIT}
+    ./scripts/package_minicore.sh
+    ./scripts/upload_minicore.sh
+  """
+}
 
 pipeline {
   //Various labels available: https://snowflakecomputing.atlassian.net/wiki/spaces/EN/pages/2443215263/Agent+labels+in+jenkins
@@ -125,6 +165,9 @@ pipeline {
             buildDiscarder(logRotator(daysToKeepStr: '5', numToKeepStr: '50')) // REQUIRED SECTION - retention policy must be set
             timeout(time: 1, unit: 'HOURS') // REQUIRED SECTION - timeout must be set
           }
+  triggers {
+    cron(env.BRANCH_NAME == 'main' ? 'H H/6 * * *' : '')
+  }
   stages {
     stage('Build and Test') {
       matrix {
@@ -148,7 +191,7 @@ pipeline {
               checkout_repo()
             }
           }
-          stage('Setup Rust') {
+          stage('setup rust') {
             steps {
               setupRust(PLATFORM)
             }
@@ -161,6 +204,19 @@ pipeline {
           stage('test') {
             steps {
               run_cargo_command(PLATFORM, 'test --package sf_mini_core')
+            }
+          }
+          stage('upload minicore package') {
+            steps {
+              withCredentials([
+                usernamePassword(
+                  usernameVariable: 'AWS_ACCESS_KEY_ID',
+                  passwordVariable: 'AWS_SECRET_ACCESS_KEY',
+                  credentialsId: '063fc85b-62a6-4181-9d72-873b43488411'
+                )
+              ]) {
+                uploadMinicorePackage(PLATFORM)
+              }
             }
           }
         }

@@ -3,6 +3,7 @@
 members = [
     "sf_core",
     "sf_mini_core",
+    "sf_mini_core_static",
     "odbc",
     "jdbc_bridge",
     "proto_generator",
@@ -14,4 +15,4 @@ resolver = "1"
 [profile.release]
 strip = true
 opt-level = "z"
-lto = true
+lto = false

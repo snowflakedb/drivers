@@ -1,0 +1,12 @@
+
+[package]
+name = "sf_mini_core_static"
+version = "0.0.1"
+edition = "2024"
+
+[lib]
+name = "sf_mini_core_static"
+crate-type = ["staticlib"]
+
+[dependencies]
+sf_mini_core = { path = "../sf_mini_core" }
