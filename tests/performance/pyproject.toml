@@ -1,0 +1,84 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "performance-tests"
+version = "0.1.0"
+description = "Performance tests for Universal Driver"
+requires-python = ">=3.8"
+dependencies = [
+    "testcontainers>=4.9.0",
+    "pytest>=8.3.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["tests"]
+
+[tool.hatch.envs.default]
+dependencies = [
+    "testcontainers>=4.9.0",
+    "pytest>=8.3.0",
+    # Benchstore upload dependencies
+    "pyCLI>=2.0.0",
+    "pyyaml>=6.0",
+    # Snowflake connector with secure local storage (includes keyring for token caching)
+    "snowflake-connector-python[secure-local-storage]",
+]
+
+# Note: benchstore-client-library requires internal Snowflake PyPI repo
+# To enable upload functionality, run:
+# hatch shell
+# pip install 'benchstore-client-library>=3.9.0' --extra-index-url https://nexus.int.snowflakecomputing.com/repository/pypi-internal/simple
+
+[tool.pytest.ini_options]
+log_cli = true
+log_cli_level = "INFO"
+log_cli_format = "%(asctime)s [%(levelname)8s] %(message)s"
+log_cli_date_format = "%Y-%m-%d %H:%M:%S"
+# Suppress pytest section headers by using short traceback and disabling verbosity for log headers
+addopts = "--tb=short --show-capture=no"
+markers = [
+    "iterations(n): set number of test iterations for this test",
+    "warmup_iterations(n): set number of warmup iterations for this test"
+]
+
+[tool.hatch.envs.default.scripts]
+
+# Build drivers (Docker images)
+build-python = "bash -c 'cd drivers/python && ./build.sh'"
+build-core = "bash -c 'cd drivers/core && ./build.sh'"
+build-odbc = "bash -c 'cd drivers/odbc && ./build.sh'"
+build = "bash -c 'cd drivers/python && ./build.sh && cd ../core && ./build.sh && cd ../odbc && ./build.sh'"
+
+# Local
+core-local = "python -m pytest tests/ --driver=core -s -v {args}"
+# Core with local binary (no Docker)
+core-local-no-docker = "python -m pytest tests/ --driver=core --use-local-binary -s -v {args}"
+python-universal-local = "python -m pytest tests/ --driver=python --driver-type=universal -s -v {args}"
+python-old-local = "python -m pytest tests/ --driver=python --driver-type=old -s -v {args}"
+python-both-local = "python -m pytest tests/ --driver=python --driver-type=both -s -v {args}"
+odbc-universal-local = "python -m pytest tests/ --driver=odbc --driver-type=universal -s -v {args}"
+odbc-old-local = "python -m pytest tests/ --driver=odbc --driver-type=old -s -v {args}"
+odbc-both-local = "python -m pytest tests/ --driver=odbc --driver-type=both -s -v {args}"
+
+# CI
+core = "python -m pytest tests/ --driver=core --upload-to-benchstore -s -v {args}"
+python-universal = "python -m pytest tests/ --driver=python --driver-type=universal --upload-to-benchstore -s -v {args}"
+python-old = "python -m pytest tests/ --driver=python --driver-type=old --upload-to-benchstore -s -v {args}"
+python-both = "python -m pytest tests/ --driver=python --driver-type=both --upload-to-benchstore -s -v {args}"
+odbc-universal = "python -m pytest tests/ --driver=odbc --driver-type=universal --upload-to-benchstore -s -v {args}"
+odbc-old = "python -m pytest tests/ --driver=odbc --driver-type=old --upload-to-benchstore -s -v {args}"
+odbc-both = "python -m pytest tests/ --driver=odbc --driver-type=both --upload-to-benchstore -s -v {args}"
+
+# Clean all generated files and results
+clean = """python -c "
+import shutil
+from pathlib import Path
+dirs = ['.pytest_cache', 'tests/__pycache__', 'runner/__pycache__', 'results']
+for d in dirs:
+    if Path(d).exists():
+        shutil.rmtree(d)
+print('✓ Cleaned cache directories and results')
+"
+"""

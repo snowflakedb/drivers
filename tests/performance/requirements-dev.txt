@@ -1,0 +1,7 @@
+# Install with: pip install -r requirements-dev.txt --extra-index-url https://nexus.int.snowflakecomputing.com/repository/pypi-internal/simple
+hatch>=1.9.0
+pyCLI>=2.0.0
+pyyaml>=6.0
+benchstore-client-library>=3.9.0
+# Snowflake connector with secure local storage (includes keyring for token caching)
+snowflake-connector-python[secure-local-storage]

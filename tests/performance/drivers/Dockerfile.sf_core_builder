@@ -1,0 +1,68 @@
+ARG BUILDPLATFORM=linux/amd64
+
+FROM --platform=${BUILDPLATFORM} artifactory.ci1.us-west-2.aws-dev.app.snowflake.com/development-docker-virtual/rust:slim AS chef
+
+# Install build dependencies for Rust and ODBC
+RUN apt-get update && apt-get install -y \
+    pkg-config \
+    libssl-dev \
+    cmake \
+    golang-go \
+    unixodbc-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /workdir
+
+# Copy rust-toolchain.toml to install the correct Rust version
+COPY rust-toolchain.toml ./rust-toolchain.toml
+RUN rustup show
+
+# Install cargo-chef
+RUN cargo install cargo-chef
+
+FROM chef AS planner
+# Copy all workspace files - cargo-chef needs the full structure
+COPY build_common.rs ./build_common.rs
+COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
+COPY sf_core/ ./sf_core/
+COPY sf_mini_core/ ./sf_mini_core/
+COPY sf_mini_core_static/ ./sf_mini_core_static/
+COPY odbc/ ./odbc/
+COPY proto_utils/ ./proto_utils/
+COPY proto_generator/ ./proto_generator/
+COPY jdbc_bridge/ ./jdbc_bridge/
+COPY protobuf/ ./protobuf/
+COPY thrift/ ./thrift/
+RUN cargo chef prepare --recipe-path recipe.json
+
+# Stage 3: Build sf_core and ODBC
+FROM chef AS builder
+COPY --from=planner /workdir/recipe.json recipe.json
+
+# Copy build-time dependencies needed by build.rs
+COPY build_common.rs ./build_common.rs
+COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
+COPY protobuf/ ./protobuf/
+COPY thrift/ ./thrift/
+
+# Build dependencies - this is the caching layer
+# Compiles ALL external crates (AWS SDK, tokio, etc.)
+RUN cargo chef cook --release --recipe-path recipe.json --package sf_core --package odbc
+
+# Copy source files
+COPY sf_core/src/ ./sf_core/src/
+COPY sf_core/build.rs ./sf_core/build.rs
+COPY sf_mini_core/src/ ./sf_mini_core/src/
+COPY sf_mini_core_static/src/ ./sf_mini_core_static/src/
+COPY proto_utils/src/ ./proto_utils/src/
+COPY odbc/src/ ./odbc/src/
+COPY proto_generator/src/ ./proto_generator/src/
+COPY jdbc_bridge/src/ ./jdbc_bridge/src/
+
+# Build sf_core
+RUN cargo build --release --package sf_core && \
+    cp target/release/libsf_core.so /workdir/libsf_core.so
+
+# Build ODBC wrapper
+RUN cargo build --release --package odbc && \
+    cp target/release/libsfodbc.so /workdir/libsfodbc.so

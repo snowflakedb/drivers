@@ -1,0 +1,18 @@
+[package]
+name = "core-perf-driver"
+version = "0.1.0"
+edition = "2021"
+
+# This package is not part of the parent workspace
+[workspace]
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+anyhow = "1.0"
+arrow = { version = "56.0.0", features = ["ffi"] }
+arrow-array = "56.0.0"
+
+sf_core = { path = "../../../../../sf_core" }

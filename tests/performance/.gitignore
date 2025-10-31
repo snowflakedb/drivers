@@ -1,0 +1,26 @@
+# Rust build artifacts
+target/
+Cargo.lock
+
+# IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Test outputs
+*.log
+results/
+reports/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Temporary perf tests build files
+.tmp_libsf_core.so
+.tmp_libsfodbc.so
+.tmp_rust_target
+
+results/

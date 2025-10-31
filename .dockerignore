@@ -1,0 +1,71 @@
+# Rust build artifacts
+**/target/
+target/
+tests/tests_format_validator/target/
+
+# Python virtual environments and caches
+**/.tox/
+**/.venv/
+.tox/
+.venv/
+.venv*/
+pep249_dbapi/.tox/
+pep249_dbapi/.venv/
+**/__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+**/.pytest_cache/
+
+# C++ build artifacts
+**/cmake-build/
+**/cmake-build-*/
+cmake-build/
+cmake-build-*/
+odbc_tests/cmake-build/
+odbc_tests/cmake-build-reference/
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Build outputs
+**/build/bdist.*
+**/build/lib/
+**/dist/
+*.egg-info/
+**/*.egg-info/
+pep249_dbapi/build/
+pep249_dbapi/reports/
+
+# Test results and reports
+results/
+**/results/
+reports/
+**/reports/
+**/test-results/
+**/Testing/
+
+# Documentation
+*.md
+!README.md
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Images and media
+images/
+*.png
+*.jpg
+*.gif
+
+
