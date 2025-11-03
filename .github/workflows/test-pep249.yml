@@ -112,6 +112,8 @@ jobs:
           files: ./pep249_dbapi/reports/coverage-${{ matrix.os }}-${{ matrix.py }}.xml
           flags: python
           name: python-${{ matrix.os }}-py${{ matrix.py }}
+          slug: snowflakedb/universal-driver
+          url: https://snowflake.codecov.io
           fail_ci_if_error: false
 
       - name: Upload test results as GitHub artifact

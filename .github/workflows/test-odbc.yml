@@ -113,4 +113,6 @@ jobs:
           files: ./lcov-${{ matrix.os }}-odbc-stable.info
           flags: odbc
           name: odbc-${{ runner.os }}
+          slug: snowflakedb/universal-driver
+          url: https://snowflake.codecov.io
           fail_ci_if_error: false

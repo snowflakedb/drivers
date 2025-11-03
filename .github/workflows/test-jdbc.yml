@@ -55,4 +55,6 @@ jobs:
           files: ./jdbc/build/reports/jacoco/test/jacocoTestReport.xml
           flags: jdbc
           name: jdbc-${{ runner.os }}-java${{ matrix.java-version }}
+          slug: snowflakedb/universal-driver
+          url: https://snowflake.codecov.io
           fail_ci_if_error: false
