@@ -87,12 +87,12 @@ jobs:
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
+        env:
+          CODECOV_TOKEN: ${{ secrets.SNOW_CODECOV_TOKEN }}
         with:
-          token: ${{ secrets.SNOW_CODECOV_TOKEN }}
           files: ./lcov-${{ matrix.os }}-${{ matrix.rust-version }}.info
           flags: rust-core
           name: rust-${{ runner.os }}-${{ matrix.rust-version }}
-          slug: snowflakedb/universal-driver
           url: https://snowflake.codecov.io
           fail_ci_if_error: false
 
