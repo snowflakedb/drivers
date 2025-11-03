@@ -108,7 +108,7 @@ jobs:
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
         env:
-          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+          CODECOV_TOKEN: ${{ secrets.SNOW_CODECOV_TOKEN }}
         with:
           files: ./lcov-${{ matrix.os }}-odbc-stable.info
           flags: odbc
