@@ -9,6 +9,7 @@ RUN apt-get update && apt-get install -y \
     cmake \
     golang-go \
     unixodbc-dev \
+    clang \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /workdir
@@ -19,6 +20,9 @@ RUN rustup show
 
 # Install cargo-chef
 RUN cargo install cargo-chef
+
+# todo SNOW-2705435 fix aws-lc-fips-sys build on ARM64
+ENV CC=gcc
 
 FROM chef AS planner
 # Copy all workspace files - cargo-chef needs the full structure

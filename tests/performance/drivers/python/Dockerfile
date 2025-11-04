@@ -9,12 +9,14 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /workdir
 
-# Copy the pre-built sf_core library
-COPY tests/performance/.tmp_libsf_core.so /usr/lib/libsf_core.so
+# Copy and install python package
+COPY python/ /workdir/python/
 
-# Copy and install pep249_dbapi package
-COPY pep249_dbapi/ /workdir/pep249_dbapi/
-RUN pip install --no-cache-dir /workdir/pep249_dbapi/
+# Copy the pre-built sf_core library
+RUN mkdir -p /workdir/python/src/snowflake/ud_connector/_core
+COPY tests/performance/.tmp_libsf_core.so /workdir/python/src/snowflake/ud_connector/_core/libsf_core.so
+
+RUN pip install --no-cache-dir /workdir/python/
 
 # Copy test application
 COPY tests/performance/drivers/python/app/ /workdir/
@@ -22,9 +24,10 @@ COPY tests/performance/drivers/python/app/ /workdir/
 # Install test dependencies (includes old driver)
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Detect OS version at build time (major version only) and write to file
+RUN bash -c '. /etc/os-release && echo "${ID^}_$(echo $VERSION_ID | cut -d. -f1)" > /etc/os_info'
+
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
-ENV CORE_PATH=/usr/lib/libsf_core.so
 
-# Run the application
-CMD ["python", "main.py"]
+CMD export OS_INFO=$(cat /etc/os_info) && python main.py

@@ -1,7 +1,9 @@
 #!/bin/bash
 set -e
 
-BUILDPLATFORM=${BUILDPLATFORM:-linux/amd64}
+# Auto-detect architecture if BUILDPLATFORM not set
+SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
+source "${SCRIPT_DIR}/../detect_platform.sh"
 
 PROJECT_ROOT="$(git rev-parse --show-toplevel)"
 cd "$PROJECT_ROOT"

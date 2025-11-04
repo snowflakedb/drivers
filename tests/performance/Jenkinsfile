@@ -1,0 +1,262 @@
+#!/usr/bin/env groovy
+
+pipeline {
+    agent none
+
+    options {
+        timestamps()
+        timeout(time: 2, unit: 'HOURS')
+        skipDefaultCheckout()
+    }
+
+    stages {
+        stage('Run Performance Tests') {
+            agent {
+                label getAgentLabel(params.ARCHITECTURE ?: 'x86_64')
+            }
+            
+            environment {
+                // Force unbuffered output for real-time log visibility during long-running performance tests
+                PYTHONUNBUFFERED = '1'
+                
+                // Docker buildkit for faster builds
+                DOCKER_BUILDKIT = '1'
+                BUILDKIT_PROGRESS = 'plain'
+                
+                // Set build platform based on architecture parameter (converted to Docker format)
+                BUILDPLATFORM = "${getDockerPlatform(params.ARCHITECTURE ?: 'x86_64')}"
+                
+                // Jenkins node label for tracking in Benchstore Tags
+                JENKINS_NODE_LABEL = "${getAgentLabel(params.ARCHITECTURE ?: 'x86_64')}"
+                
+                // Benchstore upload settings
+                BUILD_NUMBER = "${env.BUILD_NUMBER}"
+                BRANCH_NAME = "${params.BRANCH ?: 'main'}"
+            }
+            
+            stages {
+                stage('Checkout') {
+                    steps {
+                        script {
+                            cleanWs()
+                            
+                            // Determine which branch/commit to checkout
+                            def ref = params.COMMIT ?: "*/${params.BRANCH ?: 'main'}"
+                            
+                            echo "=== Checkout Configuration ==="
+                            echo "Branch: ${params.BRANCH ?: 'main'}"
+                            echo "Commit: ${params.COMMIT ?: 'latest'}"
+                            echo "Git ref: ${ref}"
+                            echo "==============================="
+                            
+                            // Checkout the specified branch/commit
+                            checkout([
+                                $class: 'GitSCM',
+                                branches: [[name: ref]],
+                                userRemoteConfigs: [[
+                                    url: 'https://github.com/snowflakedb/universal-driver.git',
+                                    credentialsId: 'jenkins-snowflake-github-app-3'  // DEV_SNOWFLAKE_3 GitHub App
+                                ]],
+                                extensions: [
+                                    [$class: 'CloneOption', depth: 0, noTags: false, shallow: false]
+                                ]
+                            ])
+                            
+                            def actualCommit = sh(returnStdout: true, script: 'git rev-parse HEAD').trim()
+                            echo "✓ Checked out commit: ${actualCommit}"
+                        }
+                    }
+                }
+
+                stage('Install Dependencies') {
+                    steps {
+                        dir('tests/performance') {
+                            sh '''
+                                echo "Using Python 3.11..."
+                                python3.11 --version
+                                
+                                echo "Creating virtual environment..."
+                                python3.11 -m venv .venv
+                                source .venv/bin/activate
+                                
+                                echo "Upgrading pip, setuptools, and wheel..."
+                                python -m pip install --upgrade pip setuptools wheel
+                                
+                                echo "Verifying pip version..."
+                                python -m pip --version
+                                
+                                echo "Installing hatch..."
+                                python -m pip install hatch
+                                
+                                echo "Hatch version:"
+                                python -m hatch --version
+                            '''
+                        }
+                    }
+                }
+
+                stage('Decrypt Secrets') {
+                    steps {
+                        dir('tests/performance') {
+                            withCredentials([
+                                string(credentialsId: 'sfctest0-parameters-secret', variable: 'PARAMETERS_SECRET')
+                            ]) {
+                                sh '''
+                                    echo "Decrypting test credentials..."
+                                    cd ../..
+                                    ./scripts/decode_secrets.sh
+                                '''
+                            }
+                        }
+                    }
+                }
+
+                stage('Build Docker Images') {
+                    steps {
+                        dir('tests/performance') {
+                            withCredentials([
+                                usernamePassword(
+                                    credentialsId: '063fc85b-62a6-4181-9d72-873b43488411',
+                                    usernameVariable: 'AWS_ACCESS_KEY_ID',
+                                    passwordVariable: 'AWS_SECRET_ACCESS_KEY'
+                                )
+                            ]) {
+                                script {
+                                    echo "Building ${params.DRIVER} driver image..."
+                                    def buildCommand = """
+                                        source .venv/bin/activate
+                                        python -m hatch run build-${params.DRIVER}
+                                    """
+                                    sh buildCommand
+                                }
+                            }
+                        }
+                    }
+                }
+
+                stage('Run Performance Tests') {
+                    steps {
+                        dir('tests/performance') {
+                            withCredentials([
+                                file(credentialsId: '22401612-0c52-4682-8d00-fb9ee98927ac', variable: 'SF_PERF_CONFIG')
+                            ]) {
+                                script {
+                                    def testCommand = ""
+                                    if (params.DRIVER == 'core') {
+                                        testCommand = "python -m hatch run core"
+                                    } else {
+                                        testCommand = "python -m hatch run ${params.DRIVER}-${params.DRIVER_TYPE}"
+                                    }
+                                    
+                                    if (params.TEST_ARGS?.trim()) {
+                                        testCommand += " ${params.TEST_ARGS}"
+                                    }
+                                    
+                                    echo "Executing: ${testCommand}"
+                                    
+                                    def command = """
+                                        source .venv/bin/activate
+                                        ${testCommand}
+                                    """
+                                    sh command
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            
+            post {
+                success {
+                    echo '✓ Performance tests completed successfully'
+                    
+                    script {
+                        def urlMap = parseBenchDashUrls()
+                        
+                        if (urlMap) {
+                            def description = ""
+                            urlMap.each { url, label ->
+                                description += "<a href='${url}'>${label}</a><br/>"
+                            }
+                            currentBuild.description = description
+                            echo "Found ${urlMap.size()} BenchDash URL(s) with labels and added to build description"
+                        }
+                    }
+                }
+                failure {
+                    echo '✗ Performance tests failed'
+                }
+            }
+        }
+    }
+}
+
+// ============================================================================
+// Helper Functions
+// ============================================================================
+
+def getAgentLabel(architecture) {
+    switch (architecture) {
+        case 'x86_64':
+            return 'regular-memory-node-snowos'
+        case 'arm64':
+            return 'regular-memory-node-snowosarm'
+        default:
+            error "Unsupported architecture: ${architecture}. Use 'x86_64' or 'arm64'."
+    }
+}
+
+def getDockerPlatform(architecture) {
+    switch (architecture) {
+        case 'x86_64':
+            return 'linux/amd64'
+        case 'arm64':
+            return 'linux/arm64'
+        default:
+            error "Unsupported architecture: ${architecture}. Use 'x86_64' or 'arm64'."
+    }
+}
+
+def parseBenchDashUrls() {
+    """
+    Parse console log to extract BenchDash URLs with driver context.
+    
+    Returns a Map of URL -> label, where label is formatted as:
+    - {driver}_old_results for old drivers
+    - {driver}_universal_results for universal drivers
+    """
+    def log = currentBuild.rawBuild.getLog(1000)
+    def urlMap = [:]  // Map of URL to driver label
+    def urlPattern = ~/https:\/\/bench-dash[^\s]+\/run\/\d+/
+    def uploadPattern = ~/✓ Uploaded (\w+) \((\w+)\)/  // Matches: ✓ Uploaded python (universal)
+    
+    def pendingUrl = null
+    
+    log.each { line ->
+        // First check for BenchDash URL (appears before driver info)
+        def urlMatcher = (line =~ urlPattern)
+        if (urlMatcher) {
+            pendingUrl = urlMatcher[0]
+        }
+        
+        // Then check for upload success line with driver info (appears after URL)
+        def uploadMatcher = (line =~ uploadPattern)
+        if (uploadMatcher && pendingUrl) {
+            def driver = uploadMatcher[0][1]
+            def driverType = uploadMatcher[0][2]
+            
+            if (!urlMap.containsKey(pendingUrl)) {
+                // Create label based on driver info
+                def label = driverType == "old" ? 
+                    "${driver}_old_results" : 
+                    "${driver}_universal_results"
+                urlMap[pendingUrl] = label
+            }
+            
+            // Reset pending URL after processing
+            pendingUrl = null
+        }
+    }
+    
+    return urlMap
+}

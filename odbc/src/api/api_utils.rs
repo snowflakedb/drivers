@@ -8,7 +8,8 @@ use snafu::ResultExt;
 #[allow(dead_code)]
 pub fn cstr_to_string(text: *const sql::Char, length: sql::Integer) -> OdbcResult<String> {
     if length == sql::NTS as i32 {
-        let result = unsafe { std::ffi::CStr::from_ptr(text as *const i8).to_str() };
+        let result =
+            unsafe { std::ffi::CStr::from_ptr(text as *const std::os::raw::c_char).to_str() };
         result.context(TextConversionUtf8Snafu {}).map(String::from)
     } else {
         let text_slice = unsafe { std::slice::from_raw_parts(text, length as usize) };

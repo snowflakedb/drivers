@@ -35,6 +35,26 @@ def write_csv_results(results, test_name, driver_type):
     return filename
 
 
+def get_architecture():
+    """Detect architecture inside the container."""
+    import platform
+    
+    machine = platform.machine().lower()
+    
+    if machine in ('x86_64', 'amd64', 'x64'):
+        return 'x86_64'
+    elif machine in ('arm64', 'aarch64', 'armv8'):
+        return 'arm64'
+    else:
+        return machine
+
+
+def get_os_version():
+    """Get OS version from environment variable (exported at container startup)."""
+    import os
+    return os.environ.get('OS_INFO', 'Linux')
+
+
 def write_run_metadata(driver_type, driver_version, server_version):
     """Write run metadata JSON file (once per run).
     
@@ -50,12 +70,18 @@ def write_run_metadata(driver_type, driver_version, server_version):
     if metadata_filename.exists():
         return
     
+    # Detect architecture and OS inside container
+    architecture = get_architecture()
+    os_info = get_os_version()
+    
     timestamp = int(time.time())
     metadata = {
         "driver": "python",
         "driver_type": driver_type,
         "driver_version": driver_version,
         "server_version": server_version,
+        "architecture": architecture,
+        "os": os_info,
         "run_timestamp": timestamp,
     }
     

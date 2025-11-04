@@ -1,10 +1,10 @@
 #!/bin/bash
 set -e
 
-BUILDPLATFORM=${BUILDPLATFORM:-linux/amd64}
-
 PROJECT_ROOT="$(git rev-parse --show-toplevel)"
 cd "$PROJECT_ROOT"
+
+source tests/performance/drivers/detect_platform.sh
 
 echo "Building sf-core-builder"
 echo "Platform: ${BUILDPLATFORM}"

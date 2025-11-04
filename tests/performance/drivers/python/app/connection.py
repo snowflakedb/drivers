@@ -1,34 +1,13 @@
 """Connection management and connector selection."""
 
-import time
 from importlib.metadata import version, PackageNotFoundError
 
-
-def get_connector(driver_type):
-    """Get the appropriate connector module based on driver type."""
-    if driver_type == "old":
-        import snowflake.connector
-        return snowflake.connector
-    else:  # universal
-        import snowflake.ud_connector
-        return snowflake.ud_connector
-
-
-def get_driver_version(driver_type):
-    """Get driver version from package metadata."""
-    try:
-        if driver_type == "old":
-            return version("snowflake-connector-python")
-        else:  # universal
-            return version("snowflake-connector-python-ud")
-    except PackageNotFoundError:
-        return "UNKNOWN"
 
 
 def create_connection(driver_type, conn_params):
     """Create and return a connection."""
-    connector = get_connector(driver_type)
-    driver_version = get_driver_version(driver_type)
+    connector = _get_connector(driver_type)
+    driver_version = _get_driver_version(driver_type)
     
     conn = connector.connect(**conn_params)
     
@@ -40,9 +19,13 @@ def get_server_version(cursor):
     try:
         cursor.execute("SELECT CURRENT_VERSION() AS VERSION")
         server_version_result = cursor.fetchone()
-        server_version = server_version_result[0] if server_version_result else "UNKNOWN"
-        return server_version
-    except Exception:
+        if server_version_result:
+            return server_version_result[0]
+        else:
+            print("⚠️  Warning: Could not retrieve server version (empty result)")
+            return "UNKNOWN"
+    except Exception as err:
+        print(f"⚠️  Warning: Could not retrieve server version: {err}")
         return "UNKNOWN"
 
 
@@ -68,3 +51,24 @@ def execute_setup_queries(cursor, setup_queries):
     
     print("✓ Setup queries completed")
 
+
+def _get_connector(driver_type):
+    """Get the appropriate connector module based on driver type."""
+    if driver_type == "old":
+        import snowflake.connector
+        return snowflake.connector
+    else:  # universal
+        from snowflake import ud_connector
+        return ud_connector
+
+
+def _get_driver_version(driver_type):
+    """Get driver version from package metadata."""
+    try:
+        if driver_type == "old":
+            return version("snowflake-connector-python")
+        else:  # universal
+            return version("snowflake-connector-python-ud")
+    except PackageNotFoundError as err:
+        print(f"⚠️  Warning: Could not determine driver version: {err}")
+        return "UNKNOWN"

@@ -12,8 +12,6 @@
 void check_odbc_error(SQLRETURN ret, SQLSMALLINT handle_type, SQLHANDLE handle,
                       const std::string& context) {
   if (ret != SQL_SUCCESS && ret != SQL_SUCCESS_WITH_INFO) {
-    // Flush stdout first to preserve output order in Docker logs
-    std::cout.flush();
     std::cerr << "ERROR: " << context << " failed with return code " << ret << "\n";
 
     // Attempt to retrieve diagnostic records
@@ -44,7 +42,6 @@ void check_odbc_error(SQLRETURN ret, SQLSMALLINT handle_type, SQLHANDLE handle,
       }
     }
 
-    std::cerr.flush();
     exit(1);
   }
 }

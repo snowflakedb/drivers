@@ -12,6 +12,7 @@ import csv
 import json
 import logging
 import re
+from collections import defaultdict
 from pathlib import Path
 from typing import Optional, Dict, List
 
@@ -21,6 +22,8 @@ from benchstore.proto import benchstore_pb2
 from benchstore.client import benchmark_manager
 from benchstore.client.quickstore import Quickstore
 from google.protobuf.timestamp_pb2 import Timestamp
+
+from runner.container import get_resource_limits
 
 logger = logging.getLogger(__name__)
 
@@ -322,8 +325,6 @@ def upload_metrics(results_dir: Optional[Path] = None, use_local_auth: bool = Fa
     
     # Get or create benchmark
     try:
-        from benchstore.storage.sf_storage import SnowflakeConnectionParams
-        
         # Get connection params for benchmark manager
         if use_local_auth:
             snowflake_connection_params = get_local_connection_params()
@@ -341,8 +342,6 @@ def upload_metrics(results_dir: Optional[Path] = None, use_local_auth: bool = Fa
         raise
     
     # Group CSV files by their tag set (driver + driver_type)
-    
-    from collections import defaultdict
     csv_groups = defaultdict(list)
     
     for csv_file in csv_files:
@@ -359,6 +358,13 @@ def upload_metrics(results_dir: Optional[Path] = None, use_local_auth: bool = Fa
     
     total_uploaded = 0
     
+    # Get resource limits from container configuration
+    resource_limits = get_resource_limits()
+    docker_memory = resource_limits['memory']
+    docker_cpu = resource_limits['cpu']
+    
+    jenkins_node = os.getenv('JENKINS_NODE_LABEL', 'UNKNOWN')
+    
     for (driver, driver_type), csv_file_list in csv_groups.items():
         # Get versions from run metadata
         metadata_key = (driver, driver_type)
@@ -368,26 +374,44 @@ def upload_metrics(results_dir: Optional[Path] = None, use_local_auth: bool = Fa
         metadata = run_metadata[metadata_key]
         client_version = metadata.get('driver_version', 'UNKNOWN')
         server_version = metadata.get('server_version', 'UNKNOWN')
+        architecture = metadata.get('architecture', 'UNKNOWN')
+        os_info = metadata.get('os', 'UNKNOWN')
         
         driver_tag_value = f"{driver}_old" if driver_type == "old" else driver
+        
+        # TYPE tag: currently set to e2e (end-to-end tests)
+        # Will be expanded to include tests with recorded HTTP traffic in the future
+        test_type = "e2e"
         
         tags = [
             f"BUILD_NUMBER={build_number}",
             f"BRANCH_NAME={branch_name}",
+            f"ARCHITECTURE={architecture}",
+            f"OS={os_info}",
             f"DRIVER={driver_tag_value}",
             f"SERVER_VERSION={server_version}",
             f"DRIVER_VERSION={client_version}",
             f"CLOUD_PROVIDER={cloud_provider}",
+            f"TYPE={test_type}",
+            f"JENKINS_NODE={jenkins_node}",
+            f"DOCKER_MEMORY={docker_memory}",
+            f"DOCKER_CPU={docker_cpu}",
         ]
         
         # Create Quickstore input once for this group
         default_comparable_tags = [
             f"BUILD_NUMBER={build_number}",
             f"BRANCH_NAME={branch_name}",
+            f"ARCHITECTURE={architecture}",
+            f"OS={os_info}",
             f"DRIVER={driver_tag_value}",
             f"SERVER_VERSION={server_version}",
             f"DRIVER_VERSION={client_version}",
             f"CLOUD_PROVIDER={cloud_provider}",
+            f"TYPE={test_type}",
+            f"JENKINS_NODE={jenkins_node}",
+            f"DOCKER_MEMORY={docker_memory}",
+            f"DOCKER_CPU={docker_cpu}",
         ]
         
         quickstore_input = benchstore_pb2.QuickstoreInput(
@@ -439,7 +463,7 @@ def upload_metrics(results_dir: Optional[Path] = None, use_local_auth: bool = Fa
                         
                         total_uploaded += 1
             
-            logger.critical(f"✓ Uploaded {driver} ({driver_type}) driver data to Benchstore")
+            logger.critical(f"✓ Uploaded {driver} ({driver_type}) [{architecture}/{os_info}] driver data to Benchstore")
                 
         except Exception as e:
             logger.error(f"Failed to upload {driver} ({driver_type}): {e}")

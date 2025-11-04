@@ -60,6 +60,9 @@ RUN mkdir -p build && \
     cmake .. && \
     cmake --build .
 
+# Detect OS version at build time (major version only) and write to file
+RUN bash -c '. /etc/os-release && echo "${ID^}_$(echo $VERSION_ID | cut -d. -f1)" > /etc/os_info'
+
 # Set environment variables
 ENV LD_LIBRARY_PATH=/usr/lib
 ENV ODBCINI=/workdir/odbc.ini
@@ -68,4 +71,5 @@ ENV ODBCSYSINI=/workdir
 # Default to universal driver (can be overridden with DRIVER_TYPE=old)
 ENV DRIVER_TYPE=universal
 
-CMD ["/workdir/build/odbc-perf-driver"]
+CMD export OS_INFO=$(cat /etc/os_info) && /workdir/build/odbc-perf-driver
+

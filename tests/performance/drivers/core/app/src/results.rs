@@ -75,6 +75,27 @@ pub fn print_statistics(results: &[IterationResult]) {
     );
 }
 
+fn get_architecture() -> String {
+    let arch = std::env::consts::ARCH;
+
+    match arch {
+        "x86_64" | "amd64" => "x86_64".to_string(),
+        "aarch64" | "arm64" => "arm64".to_string(),
+        _ => arch.to_string(), // Return as-is if unknown
+    }
+}
+
+fn get_os_version() -> String {
+    if let Ok(os_info) = std::env::var("OS_INFO") {
+        return os_info;
+    }
+    match std::env::consts::OS {
+        "macos" => "MacOS".to_string(),
+        "linux" => "Linux".to_string(),
+        other => other.to_string(),
+    }
+}
+
 pub fn write_run_metadata_json(server_version: &str) -> anyhow::Result<String> {
     let results_dir = std::env::var("RESULTS_DIR").unwrap_or_else(|_| "/results".to_string());
     let results_path = PathBuf::from(&results_dir);
@@ -93,11 +114,17 @@ pub fn write_run_metadata_json(server_version: &str) -> anyhow::Result<String> {
     // Get driver version from env (set at compile time in Cargo.toml)
     let driver_version = env!("CARGO_PKG_VERSION");
 
+    // Detect architecture and OS inside container
+    let architecture = get_architecture();
+    let os = get_os_version();
+
     let metadata = serde_json::json!({
         "driver": "core",
         "driver_type": "universal",
         "driver_version": driver_version,
         "server_version": server_version,
+        "architecture": architecture,
+        "os": os,
         "run_timestamp": timestamp,
     });
 

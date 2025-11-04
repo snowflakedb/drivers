@@ -7,6 +7,22 @@ from testcontainers.core.container import DockerContainer
 
 logger = logging.getLogger(__name__)
 
+MEMORY_LIMIT = "4096m"
+CPU_LIMIT = 2.0
+
+
+def get_resource_limits() -> dict:
+    """
+    Get the Docker resource limits used for performance test containers.
+    
+    Returns:
+        Dict with 'memory' and 'cpu' keys
+    """
+    return {
+        "memory": MEMORY_LIMIT,
+        "cpu": str(CPU_LIMIT),
+    }
+
 
 def create_perf_container(
     driver: str,
@@ -46,6 +62,10 @@ def create_perf_container(
         .with_env("PERF_ITERATIONS", str(iterations))
         .with_env("PERF_WARMUP_ITERATIONS", str(warmup_iterations))
         .with_volume_mapping(str(results_dir), "/results", mode="rw")
+        .with_kwargs(
+            mem_limit=MEMORY_LIMIT,
+            nano_cpus=int(CPU_LIMIT * 1_000_000_000)  # Convert to nano CPUs
+        )
     )
     
     if setup_queries:

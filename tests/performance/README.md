@@ -18,7 +18,8 @@
 
 1. **Docker**: Required for building and running driver containers
 2. **Python 3.8+**: For the test runner
-3. **GPG**: Required to decrypt test credentials
+3. **Hatch**: Python project manager (install: `pip install hatch`)
+4. **GPG**: Required to decrypt test credentials
 
 #### Setup Steps
 
@@ -29,17 +30,11 @@
    ```
    
 
-2. **Install dependencies**:
+2. **Install Hatch**:
    ```bash
    cd tests/performance
-   pip install -r requirements-dev.txt --extra-index-url https://nexus.int.snowflakecomputing.com/repository/pypi-internal/simple
+   pip install hatch
    ```
-
-   This installs:
-   - **Hatch**: Python project manager for running scripts
-   - **Pytest & Testcontainers**: Test framework and Docker integration
-   - **Benchstore client library**: For uploading metrics
-   - **Python driver**: For Benchstore authentication
 
 ###  Building Driver Images
 
@@ -54,6 +49,16 @@
    hatch run build-core
    hatch run build-odbc
    ```
+
+#### Platform Architecture
+
+The build system automatically detects your platform architecture and builds appropriate Docker images:
+
+The platform is auto-detected using `detect_platform.sh` based on `uname -m`. You can override this by setting the `BUILDPLATFORM` environment variable:
+
+```bash
+BUILDPLATFORM=linux/amd64 hatch run build
+```
 
 ### Running Tests
 
@@ -383,7 +388,7 @@ How `DRIVER_VERSION` is determined for each driver:
 | Driver | Universal Implementation | Old Implementation |
 |--------|-------------------------|-------------------|
 | **Core** | Uses compile-time `CARGO_PKG_VERSION` macro from `Cargo.toml` (`0.1.0`) | N/A (no old implementation) |
-| **Python** | Uses `importlib.metadata.version("snowflake-pep249-dbapi")` from installed package (`0.1.0`) | Uses `importlib.metadata.version("snowflake-connector-python")` from installed package |
+| **Python** | Uses `importlib.metadata.version("snowflake-connector-python-ud")` from installed package (`0.1.0`) | Uses `importlib.metadata.version("snowflake-connector-python")` from installed package |
 | **ODBC** | `"UNKNOWN"` (SQLGetInfo not yet implemented) | Retrieved via `SQLGetInfo(SQL_DRIVER_VER)` from installed driver |
 
 ---
@@ -405,5 +410,6 @@ This creates an intermediate image containing Core libraries:
 - `libsfodbc.so` - ODBC wrapper around `sf_core`
 
 These libraries are copied into the final driver images:
-- **Python**: Copies `libsf_core.so` → Used by `snowflake-pep249-dbapi` package
+- **Python**: Copies `libsf_core.so` → Used by `snowflake-connector-python-ud` package
 - **ODBC**: Copies both `libsf_core.so` and `libsfodbc.so` → Loaded by unixODBC driver manager
+

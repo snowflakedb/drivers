@@ -71,9 +71,5 @@ int main() {
   SQLFreeHandle(SQL_HANDLE_DBC, dbc);
   SQLFreeHandle(SQL_HANDLE_ENV, env);
 
-  // Flush stdout/stderr to ensure all output is written before exit
-  std::cout.flush();
-  std::cerr.flush();
-
   return 0;
 }

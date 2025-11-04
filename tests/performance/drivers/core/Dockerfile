@@ -38,8 +38,8 @@ RUN apt-get update && apt-get install -y \
 # Install cargo-chef
 RUN cargo install cargo-chef
 
-# Use clang instead of gcc for aws-lc-fips-sys build
-ENV CC=clang
+# todo SNOW-2705435 fix aws-lc-fips-sys build on ARM64
+ENV CC=gcc
 
 WORKDIR /workdir
 
@@ -81,7 +81,9 @@ RUN apt-get update && apt-get install -y \
 # Copy the binary from builder
 COPY --from=builder /workdir/tests/performance/drivers/core/app/target/release/core-perf-driver /usr/local/bin/core-perf-driver
 
-# Make logging configurable with default warn level for release
+# Detect OS version at build time (major version only) and write to file
+RUN bash -c '. /etc/os-release && echo "${ID^}_$(echo $VERSION_ID | cut -d. -f1)" > /etc/os_info'
+
 ENV RUST_LOG=${RUST_LOG:-warn}
 
-CMD ["core-perf-driver"]
+CMD export OS_INFO=$(cat /etc/os_info) && core-perf-driver
