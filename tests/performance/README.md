@@ -2,17 +2,16 @@
 
 ## Table of Contents
 
-- [Running Tests](#running-tests)
+- [Usage](#usage)
 - [Adding New Tests](#adding-new-tests)
 - [Architecture](#architecture)
 - [Driver Containers](#driver-containers)
-- [Test Structure](#test-structure)
 - [Results](#results)
 - [Docker Builds Approach](#docker-builds-approach)
 
 ---
 
-## Running Tests
+## Usage
 
 ### Prerequisites
 
@@ -112,10 +111,10 @@ hatch run core-local --parameters-json=parameters/my_parameters.json
 hatch run python-universal-local --iterations=5 --warmup-iterations=2
 
 # Specific test
-hatch run core-local tests/test_fetch_1000000.py::test_fetch_string_1000000_rows
+hatch run core-local tests/test_select_1000000.py::test_select_string_1000000_rows
 
 # Filter tests by name pattern
-hatch run python-both-local -k "test_fetch_string"
+hatch run python-both-local -k "test_select_string"
 
 # With Benchstore upload using local auth
 hatch run core --upload-to-benchstore --local-benchstore-upload
@@ -131,10 +130,65 @@ hatch run clean  # Remove cache directories and results
 
 ## Adding New Tests
 
+**Quick steps:**
 1. Create test in `tests/` directory
 2. Use `perf_test` fixture
 3. Add appropriate markers for iterations
 4. Extend driver images if needed
+
+### Writing Tests
+
+Tests are written using pytest with the `perf_test` fixture:
+
+```python
+@pytest.mark.iterations(3)
+@pytest.mark.warmup_iterations(1)
+def test_select_number_1000000_rows(perf_test):
+    """Custom iterations via markers"""
+    perf_test(
+        sql_command="SELECT L_LINENUMBER::int FROM SNOWFLAKE_SAMPLE_DATA.TPCH_SF100.LINEITEM LIMIT 1000000"
+    )
+
+def test_with_additional_setup(perf_test):
+    """Optional: Add additional setup queries"""
+    perf_test(
+        sql_command="SELECT * FROM my_table",
+        setup_queries=[
+            "ALTER SESSION SET QUERY_TAG = 'perf_test'"
+        ]
+    )
+
+from runner.test_types import TestType
+
+def test_put_files_12mx100(perf_test):
+    """PUT/GET test: Upload files to Snowflake stage"""
+    perf_test(
+        test_type=TestType.PUT_GET,
+        s3_download_url="s3://sfc-eng-data/ecosystem/12Mx100/",
+        setup_queries=[
+            "CREATE TEMPORARY STAGE put_test_stage"
+        ],
+        sql_command=(
+            "PUT file:///put_get_files/* @put_test_stage "
+            "AUTO_COMPRESS=FALSE SOURCE_COMPRESSION=NONE overwrite=true"
+        )
+    )
+```
+
+**Notes**: 
+- **SELECT tests**: ARROW format (`ALTER SESSION SET QUERY_RESULT_FORMAT = 'ARROW'`) is added to any provided `setup_queries`.
+- **PUT/GET tests**: `USE DATABASE {database}` is added to any provided `setup_queries`. This is required for `CREATE TEMPORARY STAGE` operations which need a database context.
+- PUT/GET tests use `test_type=TestType.PUT_GET` and measure only the file operation time (no separate fetch phase)
+- The `s3_download_url` parameter triggers automatic download of test files from S3 before test execution
+
+### Test Configuration Priority
+
+Configuration values are resolved in the following priority order (highest to lowest):
+
+1. **Command-line arguments**: `--iterations=5`
+2. **Test-level markers**: `@pytest.mark.iterations(3)`
+3. **Environment variables**: `PERF_ITERATIONS=2`
+4. **Defaults**: `iterations=2`, `warmup_iterations=1`
 
 ### Adding New Drivers
 
@@ -198,7 +252,7 @@ All drivers receive their configuration through **environment variables**. The r
 |----------|------|-------------|---------|
 | `PARAMETERS_JSON` | JSON string | Snowflake connection parameters | See below |
 | `SQL_COMMAND` | String | SQL query to execute | `"SELECT * FROM table LIMIT 1000000"` |
-| `TEST_NAME` | String | Test and metric name | `"fetch_string_1000000_rows"` |
+| `TEST_NAME` | String | Test and metric name | `"select_string_1000000_rows"` |
 | `PERF_ITERATIONS` | Integer | Number of test iterations | `"3"` |
 | `PERF_WARMUP_ITERATIONS` | Integer | Number of warmup iterations | `"1"` |
 
@@ -207,7 +261,8 @@ All drivers receive their configuration through **environment variables**. The r
 | Variable | Type | Description | Default |
 |----------|------|-------------|---------|
 | `DRIVER_TYPE` | String | `"universal"` or `"old"` | `"universal"` |
-| `SETUP_QUERIES` | JSON array | SQL queries to run before test (ARROW format is always first) | `["ALTER SESSION SET QUERY_RESULT_FORMAT = 'ARROW'"]` |
+| `TEST_TYPE` | String | `"select"` or `"put_get"` | `"select"` |
+| `SETUP_QUERIES` | JSON array | SQL queries to run before test. For SELECT tests, ARROW format is prepended. For PUT/GET tests, `USE DATABASE` is prepended. | `[]` |
 
 ### PARAMETERS_JSON Format
 
@@ -237,13 +292,8 @@ The `PARAMETERS_JSON` environment variable must contain a JSON object with a `te
 Each driver container must generate:
 
 1. **CSV Results File**: `/results/<test_name>_<driver>_<type>_<timestamp>.csv`
-   ```csv
-   query_time_ms,fetch_time_ms
-   1583.121061,21441.599846
-   1812.227726,20262.201548
-   ...
-   ```
-   Each row represents one test iteration. Values are in milliseconds with 6 decimal places.
+   
+   See [CSV Format](#csv-format) section for detailed format specification.
 
 2. **Metadata File**: `/results/run_metadata_<driver>_<type>.json`
    ```json
@@ -252,46 +302,12 @@ Each driver container must generate:
      "driver_type": "universal",
      "driver_version": "1.2.3",
      "server_version": "9.34.0",
+     "architecture": "arm64",
+     "os": "Debian_13",
      "run_timestamp": 1761734615
    }
    ```
 
-
-## Test Structure
-
-### Writing Tests
-
-Tests are written using pytest with the `perf_test` fixture:
-
-```python
-@pytest.mark.iterations(3)
-@pytest.mark.warmup_iterations(1)
-def test_fetch_number_1000000_rows(perf_test):
-    """Custom iterations via markers"""
-    perf_test(
-        sql_command="SELECT L_LINENUMBER::int FROM SNOWFLAKE_SAMPLE_DATA.TPCH_SF100.LINEITEM LIMIT 1000000"
-    )
-
-def test_with_additional_setup(perf_test):
-    """Optional: Add additional setup queries"""
-    perf_test(
-        sql_command="SELECT * FROM my_table",
-        setup_queries=[
-            "ALTER SESSION SET QUERY_TAG = 'perf_test'"
-        ]
-    )
-```
-
-**Note**: ARROW format (`ALTER SESSION SET QUERY_RESULT_FORMAT = 'ARROW'`) is automatically enabled for all tests. Any provided `setup_queries` will be appended after the ARROW format query.
-
-### Test Configuration Priority
-
-Configuration values are resolved in the following priority order (highest to lowest):
-
-1. **Command-line arguments**: `--iterations=5`
-2. **Test-level markers**: `@pytest.mark.iterations(3)`
-3. **Environment variables**: `PERF_ITERATIONS=2`
-4. **Defaults**: `iterations=2`, `warmup_iterations=1`
 
 ## Results
 
@@ -300,67 +316,59 @@ Configuration values are resolved in the following priority order (highest to lo
 ```
 results/
 └── run_20251030_113045/
-    ├── fetch_string_1000000_rows_python_universal_1761734615.csv
-    ├── fetch_string_1000000_rows_python_old_1761734627.csv
-    ├── fetch_number_1000000_rows_python_universal_1761734660.csv
-    ├── fetch_number_1000000_rows_python_old_1761734671.csv
+    ├── select_string_1000000_rows_python_universal_1761734615.csv
+    ├── select_string_1000000_rows_python_old_1761734627.csv
+    ├── select_number_1000000_rows_python_universal_1761734660.csv
+    ├── select_number_1000000_rows_python_old_1761734671.csv
     ├── run_metadata_python_universal.json
     └── run_metadata_python_old.json
 ```
 
 ### CSV Format
 
-Results CSV files contain per-iteration timing data:
+Results CSV files contain per-iteration timing data with actual execution timestamps.
 
+**For SELECT tests:**
 ```csv
-query_time_s,fetch_time_s
-1.583121,21.441600
-1.812228,20.262202
-1.799454,20.156388
+timestamp,query_s,fetch_s
+1762522370,1.583121,21.441600
+1762522392,1.812228,20.262202
+1762522414,1.799454,20.156388
+```
+
+**For PUT/GET tests:**
+```csv
+timestamp,query_s
+1762522254,6.595445
+1762522271,4.385419
+1762522288,5.123456
 ```
 
 **Columns**:
-- `query_time_s`: Time to execute query and get initial response (seconds, 6 decimal places)
-- `fetch_time_s`: Time to fetch all result data (seconds, 6 decimal places)
+- `timestamp`: Unix timestamp (seconds since epoch) when the iteration was executed
+- `query_s`: Time to execute query and get initial response (seconds, 6 decimal places)
+- `fetch_s`: Time to fetch all result data (seconds, 6 decimal places) - **only for SELECT tests**
 
 **Notes**:
 - Each row represents one test iteration (warmup iterations are not included)
-- Row number implicitly indicates iteration number (first data row = iteration 1)
-- Total time can be calculated as `query_time_s + fetch_time_s`
-
-### Metadata JSON Format
-
-```json
-{
-  "driver": "python",
-  "driver_type": "universal",
-  "driver_version": "1.2.3",
-  "server_version": "9.34.0",
-  "run_timestamp": 1761734615
-}
-```
-
-**Fields**:
-- `driver`: Driver name ("python", "core", "odbc", etc.)
-- `driver_type`: Implementation type ("universal" or "old")
-- `driver_version`: Version string (may be "UNKNOWN" if not available)
-- `server_version`: Snowflake server version
-- `run_timestamp`: Unix timestamp (seconds since epoch)
+- PUT/GET tests only measure `query_s` since file operations don't have a separate fetch phase
+- Timestamps are captured at the end of each iteration and uploaded to Benchstore for accurate time-series analysis
+- Total time for SELECT tests can be calculated as `query_s + fetch_s`
 
 ### Benchstore Metrics
 
 When uploading to Benchstore (with `--upload-to-benchstore`), each test uploads performance metrics that can be compared across drivers.
 
-- **Consistent metric names**: All drivers use identical metric names for the same test (e.g., `fetch_string_1000000_rows.query_time_s`)
-- **Tag-based separation**: Results are distinguished by tags (driver, version, cloud provider, etc.)
-- **Cross-driver comparison**: This enables direct performance comparison between Core, Python, and ODBC drivers
+- **Consistent metric names**: All drivers use identical metric names for the same test (e.g., `select_string_1000000_rows_query_s`)
+- **Tag-based separation**: Results are distinguished by tags (driver, version, cloud provider, architecture, etc.)
 
-**Example**: The test `test_fetch_string_1000000_rows` uploads:
-- Metric name: `fetch_string_1000000_rows.query_time_s` (same for all drivers)
-- Separated by tags:
-  - Core: `DRIVER=core`, `DRIVER_VERSION=0.1.0`
-  - Python Universal: `DRIVER=python`, `DRIVER_VERSION=0.1.0`
-  - Python Old: `DRIVER=python_old`, `DRIVER_VERSION=3.12.0`
+**Example**: The test `test_select_string_1000000_rows` uploads:
+- Metric names: 
+  - `select_string_1000000_rows_query_s` (query execution time)
+  - `select_string_1000000_rows_fetch_s` (data fetching time)
+
+**PUT/GET Tests**: Tests like `test_put_files_12mx100` only upload:
+- Metric name: `put_files_12mx100_query_s` (query execution time)
 
 #### Benchstore Tags
 
@@ -371,9 +379,15 @@ The following tags are automatically attached to each metric:
 | `BUILD_NUMBER` | CI build number or "LOCAL" | Jenkins `BUILD_NUMBER` env var | `"1234"` or `"LOCAL"` |
 | `BRANCH_NAME` | Git branch name or "LOCAL" | Jenkins `BRANCH_NAME` env var | `"main"` or `"LOCAL"` |
 | `DRIVER` | Driver name (with `_old` suffix for old driver) | Test configuration | `"python"`, `"core"`, `"odbc_old"` |
-| `SERVER_VERSION` | Snowflake server version | Retrieved during connection | `"9.34.0"` |
 | `DRIVER_VERSION` | Driver library version | See version detection below | `"0.1.0"` or `"UNKNOWN"` |
+| `SERVER_VERSION` | Snowflake server version | Retrieved during connection | `"9.34.0"` |
 | `CLOUD_PROVIDER` | Cloud platform | Parameters filename | `"AWS"`, `"AZURE"`, `"GCP"` |
+| `ARCHITECTURE` | CPU architecture | Detected from system | `"x86_64"`, `"arm64"` |
+| `OS` | Operating system | Detected from system | `"Debian_13"`, `"Darwin_24.6.0"` |
+| `TYPE` | Test execution type | For now e2e, will be expanded when tests with recorded http traffic will be added | `"e2e"` (end-to-end) |
+| `JENKINS_NODE` | Jenkins node label | Jenkins `JENKINS_NODE_LABEL` env var | `"regular-memory-node-snowos"` |
+| `DOCKER_MEMORY` | Container memory limit | Docker resource configuration | `"4g"` |
+| `DOCKER_CPU` | Container CPU limit | Docker resource configuration | `"2.0"` |
 
 **Tag usage notes**:
 - `CLOUD_PROVIDER` is extracted from the parameters filename (e.g., `parameters_perf_aws.json` → `"AWS"`)

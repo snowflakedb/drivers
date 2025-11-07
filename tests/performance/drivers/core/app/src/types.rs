@@ -29,6 +29,13 @@ pub struct ParametersJson {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct IterationResult {
+    pub timestamp: i64,
     pub query_time_s: f64,
     pub fetch_time_s: f64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PutGetResult {
+    pub timestamp: i64,
+    pub query_time_s: f64,
 }

@@ -9,6 +9,110 @@
 
 #include "config.h"
 
+// Forward declarations for private functions
+std::string write_private_key_to_file(const std::string& private_key);
+std::string get_connection_string();
+
+SQLHENV create_environment() {
+  SQLHENV env;
+  SQLRETURN ret = SQLAllocHandle(SQL_HANDLE_ENV, SQL_NULL_HANDLE, &env);
+  check_odbc_error(ret, SQL_HANDLE_ENV, env, "SQLAllocHandle ENV");
+
+  ret = SQLSetEnvAttr(env, SQL_ATTR_ODBC_VERSION, (SQLPOINTER)SQL_OV_ODBC3, 0);
+  check_odbc_error(ret, SQL_HANDLE_ENV, env, "SQLSetEnvAttr");
+
+  return env;
+}
+
+SQLHDBC create_connection(SQLHENV env) {
+  SQLHDBC dbc;
+  SQLRETURN ret = SQLAllocHandle(SQL_HANDLE_DBC, env, &dbc);
+  check_odbc_error(ret, SQL_HANDLE_ENV, env, "SQLAllocHandle DBC");
+
+  std::string conn_string = get_connection_string();
+  ret = SQLDriverConnect(dbc, NULL, (SQLCHAR*)conn_string.c_str(), SQL_NTS, NULL, 0, NULL,
+                         SQL_DRIVER_NOPROMPT);
+  check_odbc_error(ret, SQL_HANDLE_DBC, dbc, "SQLDriverConnect");
+
+  return dbc;
+}
+
+std::string get_driver_version(SQLHDBC dbc) {
+  char driver_version[256] = {0};
+  SQLSMALLINT version_len = 0;
+  SQLRETURN ret =
+      SQLGetInfo(dbc, SQL_DRIVER_VER, driver_version, sizeof(driver_version), &version_len);
+
+  if (ret == SQL_SUCCESS || ret == SQL_SUCCESS_WITH_INFO) {
+    return std::string(driver_version);
+  }
+
+  std::cerr << "⚠️  Warning: Could not retrieve driver version via SQLGetInfo (ret=" << ret
+            << "). This may indicate a driver issue or unimplemented feature.\n";
+  return "UNKNOWN";
+}
+
+std::string get_server_version(SQLHDBC dbc) {
+  SQLHSTMT version_stmt;
+  SQLRETURN ret = SQLAllocHandle(SQL_HANDLE_STMT, dbc, &version_stmt);
+  if (ret != SQL_SUCCESS && ret != SQL_SUCCESS_WITH_INFO) {
+    std::cerr << "⚠️  Warning: Could not allocate statement handle for server version query\n";
+    return "UNKNOWN";
+  }
+
+  // Execute query to get server version
+  ret = SQLExecDirect(version_stmt, (SQLCHAR*)"SELECT CURRENT_VERSION() AS VERSION", SQL_NTS);
+  if (ret != SQL_SUCCESS && ret != SQL_SUCCESS_WITH_INFO) {
+    std::cerr << "⚠️  Warning: Could not execute server version query\n";
+    SQLFreeHandle(SQL_HANDLE_STMT, version_stmt);
+    return "UNKNOWN";
+  }
+
+  // Fetch the result row
+  ret = SQLFetch(version_stmt);
+  if (ret != SQL_SUCCESS && ret != SQL_SUCCESS_WITH_INFO) {
+    std::cerr << "⚠️  Warning: Could not fetch server version result\n";
+    SQLFreeHandle(SQL_HANDLE_STMT, version_stmt);
+    return "UNKNOWN";
+  }
+
+  // Extract the version string
+  char version_buffer[256] = {0};
+  SQLLEN indicator = 0;
+  ret = SQLGetData(version_stmt, 1, SQL_C_CHAR, version_buffer, sizeof(version_buffer), &indicator);
+
+  SQLFreeHandle(SQL_HANDLE_STMT, version_stmt);
+
+  if (ret == SQL_SUCCESS || ret == SQL_SUCCESS_WITH_INFO) {
+    return std::string(version_buffer);
+  }
+
+  std::cerr << "⚠️  Warning: Could not retrieve server version data\n";
+  return "UNKNOWN";
+}
+
+void execute_setup_queries(SQLHDBC dbc, const std::vector<std::string>& setup_queries) {
+  if (setup_queries.empty()) {
+    return;
+  }
+
+  std::cout << "\n=== Executing Setup Queries (" << setup_queries.size() << " queries) ===\n";
+  for (size_t i = 0; i < setup_queries.size(); i++) {
+    std::cout << "  Setup query " << (i + 1) << ": " << setup_queries[i] << "\n";
+
+    SQLHSTMT stmt;
+    SQLRETURN ret = SQLAllocHandle(SQL_HANDLE_STMT, dbc, &stmt);
+    check_odbc_error(ret, SQL_HANDLE_DBC, dbc, "SQLAllocHandle STMT");
+
+    ret = SQLExecDirect(stmt, (SQLCHAR*)setup_queries[i].c_str(), SQL_NTS);
+    check_odbc_error(ret, SQL_HANDLE_STMT, stmt, "Setup query execution");
+
+    SQLFreeHandle(SQL_HANDLE_STMT, stmt);
+  }
+
+  std::cout << "✓ Setup queries completed\n";
+}
+
 void check_odbc_error(SQLRETURN ret, SQLSMALLINT handle_type, SQLHANDLE handle,
                       const std::string& context) {
   if (ret != SQL_SUCCESS && ret != SQL_SUCCESS_WITH_INFO) {
@@ -107,87 +211,4 @@ std::string get_connection_string() {
   if (!params["role"].empty()) ss << "ROLE=" << params["role"] << ";";
 
   return ss.str();
-}
-
-SQLHENV create_environment() {
-  SQLHENV env;
-  SQLRETURN ret = SQLAllocHandle(SQL_HANDLE_ENV, SQL_NULL_HANDLE, &env);
-  check_odbc_error(ret, SQL_HANDLE_ENV, env, "SQLAllocHandle ENV");
-
-  ret = SQLSetEnvAttr(env, SQL_ATTR_ODBC_VERSION, (SQLPOINTER)SQL_OV_ODBC3, 0);
-  check_odbc_error(ret, SQL_HANDLE_ENV, env, "SQLSetEnvAttr");
-
-  return env;
-}
-
-SQLHDBC create_connection(SQLHENV env) {
-  SQLHDBC dbc;
-  SQLRETURN ret = SQLAllocHandle(SQL_HANDLE_DBC, env, &dbc);
-  check_odbc_error(ret, SQL_HANDLE_ENV, env, "SQLAllocHandle DBC");
-
-  std::string conn_string = get_connection_string();
-  ret = SQLDriverConnect(dbc, NULL, (SQLCHAR*)conn_string.c_str(), SQL_NTS, NULL, 0, NULL,
-                         SQL_DRIVER_NOPROMPT);
-  check_odbc_error(ret, SQL_HANDLE_DBC, dbc, "SQLDriverConnect");
-
-  return dbc;
-}
-
-std::string get_driver_version(SQLHDBC dbc) {
-  char driver_version[256] = {0};
-  SQLSMALLINT version_len = 0;
-  SQLRETURN ret =
-      SQLGetInfo(dbc, SQL_DRIVER_VER, driver_version, sizeof(driver_version), &version_len);
-
-  if (ret == SQL_SUCCESS || ret == SQL_SUCCESS_WITH_INFO) {
-    return std::string(driver_version);
-  }
-  return "UNKNOWN";
-}
-
-std::string get_server_version(SQLHDBC dbc) {
-  std::string server_version = "UNKNOWN";
-  SQLHSTMT version_stmt;
-  SQLRETURN ret = SQLAllocHandle(SQL_HANDLE_STMT, dbc, &version_stmt);
-
-  if (ret == SQL_SUCCESS || ret == SQL_SUCCESS_WITH_INFO) {
-    ret = SQLExecDirect(version_stmt, (SQLCHAR*)"SELECT CURRENT_VERSION() AS VERSION", SQL_NTS);
-    if (ret == SQL_SUCCESS || ret == SQL_SUCCESS_WITH_INFO) {
-      ret = SQLFetch(version_stmt);
-      if (ret == SQL_SUCCESS || ret == SQL_SUCCESS_WITH_INFO) {
-        char version_buffer[256] = {0};
-        SQLLEN indicator = 0;
-        ret = SQLGetData(version_stmt, 1, SQL_C_CHAR, version_buffer, sizeof(version_buffer),
-                         &indicator);
-        if (ret == SQL_SUCCESS || ret == SQL_SUCCESS_WITH_INFO) {
-          server_version = std::string(version_buffer);
-        }
-      }
-    }
-    SQLFreeHandle(SQL_HANDLE_STMT, version_stmt);
-  }
-
-  return server_version;
-}
-
-void execute_setup_queries(SQLHDBC dbc, const std::vector<std::string>& setup_queries) {
-  if (setup_queries.empty()) {
-    return;
-  }
-
-  std::cout << "\n=== Executing Setup Queries (" << setup_queries.size() << " queries) ===\n";
-  for (size_t i = 0; i < setup_queries.size(); i++) {
-    std::cout << "  Setup query " << (i + 1) << ": " << setup_queries[i] << "\n";
-
-    SQLHSTMT stmt;
-    SQLRETURN ret = SQLAllocHandle(SQL_HANDLE_STMT, dbc, &stmt);
-    check_odbc_error(ret, SQL_HANDLE_DBC, dbc, "SQLAllocHandle STMT");
-
-    ret = SQLExecDirect(stmt, (SQLCHAR*)setup_queries[i].c_str(), SQL_NTS);
-    check_odbc_error(ret, SQL_HANDLE_STMT, stmt, "Setup query execution");
-
-    SQLFreeHandle(SQL_HANDLE_STMT, stmt);
-  }
-
-  std::cout << "✓ Setup queries completed\n";
 }

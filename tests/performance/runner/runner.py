@@ -2,6 +2,7 @@ import logging
 from pathlib import Path
 
 from runner.container import create_perf_container, run_container
+from runner.test_types import TestType
 from runner.validation import verify_results
 
 logger = logging.getLogger(__name__)
@@ -17,7 +18,9 @@ def run_performance_test(
     driver: str = "core",
     driver_type: str = None,
     setup_queries: list[str] = None,
+    test_type: TestType = TestType.SELECT,
     use_local_binary: bool = False,
+    s3_files_dir: Path = None,
 ) -> list[Path]:
     """
     Run a performance test with the specified configuration.
@@ -32,7 +35,9 @@ def run_performance_test(
         driver: Driver to use (core, python, odbc, jdbc)
         driver_type: Driver type: 'universal' or 'old' (only 'universal' for core)
         setup_queries: Optional list of SQL queries to run before warmup/test iterations
+        test_type: Type of test (TestType.SELECT or TestType.PUT_GET)
         use_local_binary: Use locally built binary instead of Docker (Core only)
+        s3_files_dir: Optional directory with S3-downloaded files to mount (for PUT/GET tests)
     
     Returns:
         List of result file paths created
@@ -44,7 +49,7 @@ def run_performance_test(
     if use_local_binary:
         driver_label += " (local binary)"
     
-    logger.info(f"Running {test_name} ({driver_label}): {iterations} iterations")
+    logger.info(f"Running {test_name} ({driver_label}): {iterations} iterations [type={test_type}]")
     
     if use_local_binary and driver == "core":
         # Run locally built Core binary
@@ -57,6 +62,8 @@ def run_performance_test(
             iterations=iterations,
             warmup_iterations=warmup_iterations,
             setup_queries=setup_queries,
+            test_type=test_type,
+            s3_files_dir=s3_files_dir,
         )
     else:
         # Create container
@@ -70,6 +77,8 @@ def run_performance_test(
             results_dir=results_dir,
             driver_type=driver_type,
             setup_queries=setup_queries,
+            test_type=test_type,
+            s3_files_dir=s3_files_dir,
         )
         
         # Run container
@@ -96,6 +105,8 @@ def run_comparison_test(
     warmup_iterations: int,
     driver: str,
     setup_queries: list[str] = None,
+    test_type: TestType = TestType.SELECT,
+    s3_files_dir: Path = None,
 ) -> dict[str, list[Path]]:
     """
     Run the same test on both universal and old driver implementations.
@@ -109,11 +120,13 @@ def run_comparison_test(
         warmup_iterations: Number of warmup iterations
         driver: Driver to test (python, odbc, jdbc)
         setup_queries: Optional list of SQL queries to run before warmup/test iterations
+        test_type: Type of test (TestType.SELECT or TestType.PUT_GET)
+        s3_files_dir: Optional directory with S3-downloaded files to mount (for PUT/GET tests)
     
     Returns:
         Dict with 'universal' and 'old' keys, each containing list of result file paths
     """
-    logger.info(f"Running {test_name} comparison ({driver.upper()}): Universal vs Old")
+    logger.info(f"Running {test_name} comparison ({driver.upper()}): Universal vs Old [type={test_type}]")
     
     results = {}
     
@@ -131,6 +144,8 @@ def run_comparison_test(
         driver=driver,
         driver_type="universal",
         setup_queries=setup_queries,
+        test_type=test_type,
+        s3_files_dir=s3_files_dir,
     )
     
     # Run Old driver second
@@ -147,6 +162,8 @@ def run_comparison_test(
         driver=driver,
         driver_type="old",
         setup_queries=setup_queries,
+        test_type=test_type,
+        s3_files_dir=s3_files_dir,
     )
     
     return results

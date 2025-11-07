@@ -2,6 +2,9 @@
 **/target/
 target/
 tests/tests_format_validator/target/
+tests/performance/.tmp_rust_target/
+tests/performance/drivers/*/app/target/
+**/.tmp_rust_target/
 
 # Python virtual environments and caches
 **/.tox/
@@ -16,6 +19,15 @@ python/.venv/
 *.pyo
 .pytest_cache/
 **/.pytest_cache/
+python/uv.lock
+python/poetry.lock
+
+# Python build artifacts and compiled libraries
+python/src/snowflake/ud_connector/_core/
+**/incremental/
+**/*.rlib
+**/deps/*.dylib
+**/deps/*.so
 
 # C++ build artifacts
 **/cmake-build/
@@ -30,9 +42,16 @@ odbc_tests/cmake-build-reference/
 .gitignore
 .gitattributes
 
+# CI/CD
+ci/
+jobs/
+.github/
+Jenkinsfile
+
 # IDE files
 .idea/
 .vscode/
+.cursor/
 *.swp
 *.swo
 *~
@@ -45,6 +64,9 @@ odbc_tests/cmake-build-reference/
 **/*.egg-info/
 python/build/
 python/reports/
+jdbc/build/
+jdbc/.gradle/
+**/gradle-cache/
 
 # Test results and reports
 results/
@@ -53,6 +75,14 @@ reports/
 **/reports/
 **/test-results/
 **/Testing/
+
+# Test fixtures
+tests/fixtures/test.crl
+tests/test_data/
+
+# Performance test data files
+tests/performance/put_get_files/
+tests/performance/get_files/
 
 # Documentation
 *.md

@@ -1,6 +1,6 @@
 //! Snowflake connection management helpers
 
-use anyhow::Result;
+type Result<T> = std::result::Result<T, String>;
 use arrow_array::StringArray;
 use sf_core::protobuf_apis::RustTransport;
 use sf_core::protobuf_gen::database_driver_v1::*;
@@ -10,41 +10,20 @@ use crate::types::TestConnectionParams;
 
 pub type DatabaseDriver = DatabaseDriverClient<RustTransport>;
 
-pub fn set_connection_option(conn_handle: &ConnectionHandle, key: &str, value: &str) -> Result<()> {
-    DatabaseDriver::connection_set_option_string(ConnectionSetOptionStringRequest {
-        conn_handle: Some(*conn_handle),
-        key: key.to_string(),
-        value: value.to_string(),
-    })
-    .map_err(|e| anyhow::anyhow!("Failed to set {}: {:?}", key, e))?;
-    Ok(())
-}
-
 pub fn create_database() -> Result<DatabaseHandle> {
     let db_response = DatabaseDriver::database_new(DatabaseNewRequest {})
-        .map_err(|e| anyhow::anyhow!("Failed to create database: {:?}", e))?;
+        .map_err(|e| format!("Failed to create database: {:?}", e))?;
 
     let db_handle = db_response
         .db_handle
-        .ok_or_else(|| anyhow::anyhow!("No database handle returned"))?;
+        .ok_or_else(|| "No database handle returned".to_string())?;
 
     DatabaseDriver::database_init(DatabaseInitRequest {
         db_handle: Some(db_handle),
     })
-    .map_err(|e| anyhow::anyhow!("Failed to initialize database: {:?}", e))?;
+    .map_err(|e| format!("Failed to initialize database: {:?}", e))?;
 
     Ok(db_handle)
-}
-
-fn write_private_key_to_file(private_key_contents: &[String]) -> Result<String> {
-    let temp_dir = std::env::temp_dir();
-    let key_file_path = temp_dir.join("perf_test_private_key.p8");
-    let private_key = private_key_contents.join("\n") + "\n";
-
-    fs::write(&key_file_path, private_key)
-        .map_err(|e| anyhow::anyhow!("Failed to write private key file: {}", e))?;
-
-    Ok(key_file_path.display().to_string())
 }
 
 pub fn create_connection(
@@ -52,11 +31,11 @@ pub fn create_connection(
     params: &TestConnectionParams,
 ) -> Result<ConnectionHandle> {
     let conn_response = DatabaseDriver::connection_new(ConnectionNewRequest {})
-        .map_err(|e| anyhow::anyhow!("Failed to create connection: {:?}", e))?;
+        .map_err(|e| format!("Failed to create connection: {:?}", e))?;
 
     let conn_handle = conn_response
         .conn_handle
-        .ok_or_else(|| anyhow::anyhow!("No connection handle returned"))?;
+        .ok_or_else(|| "No connection handle returned".to_string())?;
 
     // Set connection parameters
     set_connection_option(&conn_handle, "account", &params.account)?;
@@ -78,7 +57,7 @@ pub fn create_connection(
         conn_handle: Some(conn_handle),
         db_handle: Some(db_handle),
     })
-    .map_err(|e| anyhow::anyhow!("Connection failed: {:?}", e))?;
+    .map_err(|e| format!("Connection failed: {:?}", e))?;
 
     Ok(conn_handle)
 }
@@ -87,17 +66,17 @@ pub fn create_statement(conn_handle: ConnectionHandle, sql: &str) -> Result<Stat
     let stmt_response = DatabaseDriver::statement_new(StatementNewRequest {
         conn_handle: Some(conn_handle),
     })
-    .map_err(|e| anyhow::anyhow!("Failed to create statement: {:?}", e))?;
+    .map_err(|e| format!("Failed to create statement: {:?}", e))?;
 
     let stmt_handle = stmt_response
         .stmt_handle
-        .ok_or_else(|| anyhow::anyhow!("No statement handle returned"))?;
+        .ok_or_else(|| "No statement handle returned".to_string())?;
 
     DatabaseDriver::statement_set_sql_query(StatementSetSqlQueryRequest {
         stmt_handle: Some(stmt_handle),
         query: sql.to_string(),
     })
-    .map_err(|e| anyhow::anyhow!("Failed to set SQL query: {:?}", e))?;
+    .map_err(|e| format!("Failed to set SQL query: {:?}", e))?;
 
     Ok(stmt_handle)
 }
@@ -107,7 +86,7 @@ pub fn reset_statement_query(stmt_handle: StatementHandle, sql: &str) -> Result<
         stmt_handle: Some(stmt_handle),
         query: sql.to_string(),
     })
-    .map_err(|e| anyhow::anyhow!("Failed to reset SQL query: {:?}", e))?;
+    .map_err(|e| format!("Failed to reset SQL query: {:?}", e))?;
     Ok(())
 }
 
@@ -118,15 +97,15 @@ pub fn get_server_version(conn_handle: ConnectionHandle) -> Result<String> {
     let response = DatabaseDriver::statement_execute_query(StatementExecuteQueryRequest {
         stmt_handle: Some(version_stmt),
     })
-    .map_err(|e| anyhow::anyhow!("Query execution failed: {:?}", e))?;
+    .map_err(|e| format!("Query execution failed: {:?}", e))?;
 
     let result = response
         .result
-        .ok_or_else(|| anyhow::anyhow!("No result in execute response"))?;
+        .ok_or_else(|| "No result in execute response".to_string())?;
     let mut reader = create_arrow_reader(result)?;
 
     if let Some(batch_result) = reader.next() {
-        let batch = batch_result.map_err(|e| anyhow::anyhow!("Failed to read batch: {}", e))?;
+        let batch = batch_result.map_err(|e| format!("Failed to read batch: {:?}", e))?;
 
         if let Some(column) = batch.column(0).as_any().downcast_ref::<StringArray>() {
             if batch.num_rows() > 0 {
@@ -147,5 +126,60 @@ pub fn get_server_version(conn_handle: ConnectionHandle) -> Result<String> {
     })
     .ok();
 
-    Err(anyhow::anyhow!("Could not extract version from result"))
+    Err(format!("Could not extract version from result"))
+}
+
+pub fn execute_setup_queries(
+    conn_handle: ConnectionHandle,
+    setup_queries: &[String],
+) -> Result<()> {
+    if setup_queries.is_empty() {
+        return Ok(());
+    }
+
+    println!(
+        "\n=== Executing Setup Queries ({} queries) ===",
+        setup_queries.len()
+    );
+
+    for (i, query) in setup_queries.iter().enumerate() {
+        println!("  Setup query {}: {}", i + 1, query);
+
+        let stmt_handle = create_statement(conn_handle, query)
+            .map_err(|e| format!("Failed to create setup statement: {:?}", e))?;
+
+        DatabaseDriver::statement_execute_query(StatementExecuteQueryRequest {
+            stmt_handle: Some(stmt_handle),
+        })
+        .map_err(|e| format!("Setup query failed: {:?}", e))?;
+
+        DatabaseDriver::statement_release(StatementReleaseRequest {
+            stmt_handle: Some(stmt_handle),
+        })
+        .ok();
+    }
+
+    println!("✓ Setup queries completed");
+    Ok(())
+}
+
+fn set_connection_option(conn_handle: &ConnectionHandle, key: &str, value: &str) -> Result<()> {
+    DatabaseDriver::connection_set_option_string(ConnectionSetOptionStringRequest {
+        conn_handle: Some(*conn_handle),
+        key: key.to_string(),
+        value: value.to_string(),
+    })
+    .map_err(|e| format!("Failed to set option: {:?}", e))?;
+    Ok(())
+}
+
+fn write_private_key_to_file(private_key_contents: &[String]) -> Result<String> {
+    let temp_dir = std::env::temp_dir();
+    let key_file_path = temp_dir.join("perf_test_private_key.p8");
+    let private_key = private_key_contents.join("\n") + "\n";
+
+    fs::write(&key_file_path, private_key)
+        .map_err(|e| format!("Failed to write private key file: {:?}", e))?;
+
+    Ok(key_file_path.display().to_string())
 }

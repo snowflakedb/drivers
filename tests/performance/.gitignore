@@ -13,6 +13,8 @@ Cargo.lock
 *.log
 results/
 reports/
+put_get_files/
+get_files/
 
 # OS files
 .DS_Store

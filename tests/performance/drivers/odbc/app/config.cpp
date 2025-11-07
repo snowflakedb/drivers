@@ -13,6 +13,11 @@ std::string get_env_required(const char* name) {
   return std::string(value);
 }
 
+std::string get_env_optional(const char* name, const std::string& default_value) {
+  const char* value = std::getenv(name);
+  return value ? std::string(value) : default_value;
+}
+
 int get_env_int(const char* name, int default_value) {
   const char* value = std::getenv(name);
   return value ? std::atoi(value) : default_value;
@@ -21,6 +26,11 @@ int get_env_int(const char* name, int default_value) {
 std::string get_driver_type() {
   const char* driver_type = std::getenv("DRIVER_TYPE");
   return driver_type ? driver_type : "universal";
+}
+
+TestType get_test_type() {
+  std::string test_type_str = get_env_optional("TEST_TYPE", "select");
+  return parse_test_type(test_type_str);
 }
 
 std::string get_driver_path() {

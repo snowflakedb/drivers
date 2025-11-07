@@ -13,7 +13,8 @@ add_executable(odbc-perf-driver
     main.cpp
     config.cpp
     connection.cpp
-    execution.cpp
+    put_execution.cpp
+    query_execution.cpp
     results.cpp
 )
 

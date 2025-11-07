@@ -6,7 +6,7 @@ build-backend = "hatchling.build"
 name = "performance-tests"
 version = "0.1.0"
 description = "Performance tests for Universal Driver"
-requires-python = ">=3.8"
+requires-python = ">=3.10"
 dependencies = [
     "testcontainers>=4.9.0",
     "pytest>=8.3.0",

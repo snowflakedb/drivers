@@ -245,7 +245,7 @@ def parse_csv_filename(filename: str) -> Optional[Dict[str, str]]:
     return None
 
 
-def read_csv_results(csv_path: Path) -> List[Dict[str, float]]:
+def read_csv_results(csv_path: Path) -> List[Dict]:
     """
     Read performance test results from CSV file.
     
@@ -253,17 +253,22 @@ def read_csv_results(csv_path: Path) -> List[Dict[str, float]]:
         csv_path: Path to CSV file
         
     Returns:
-        List of dicts, each containing metrics for one iteration
+        List of dicts, each containing timestamp and metrics for one iteration
     """
     results = []
     
     with open(csv_path, 'r') as f:
         reader = csv.DictReader(f)
         for row in reader:
-            results.append({
-                'query_time_s': float(row['query_time_s']),
-                'fetch_time_s': float(row['fetch_time_s']),
-            })
+            result = {
+                'timestamp': int(row['timestamp']),
+                'query_s': float(row['query_s'])
+            }
+            
+            if 'fetch_s' in row:
+                result['fetch_s'] = float(row['fetch_s'])
+            
+            results.append(result)
     
     return results
 
@@ -443,17 +448,17 @@ def upload_metrics(results_dir: Optional[Path] = None, use_local_auth: bool = Fa
                     
                     # Upload all iterations from this CSV
                     for idx, result in enumerate(results, 1):
-                        # Convert milliseconds to seconds for metrics
                         metrics = {
-                            f"{test_name}_query_time_seconds": result['query_time_s'],
-                            f"{test_name}_fetch_time_seconds": result['fetch_time_s'],
+                            f"{test_name}_query_s": result['query_s'],
                         }
                         
-                        # Create timestamp for this data point
-                        timestamp = Timestamp()
-                        timestamp.GetCurrentTime()
+                        # fetch_s is only present in SELECT tests, not PUT/GET tests
+                        if 'fetch_s' in result:
+                            metrics[f"{test_name}_fetch_s"] = result['fetch_s']
                         
-                        # Add sample point
+                        timestamp = Timestamp()
+                        timestamp.FromSeconds(result['timestamp'])
+                        
                         quickstore.add_sample_point_from_input(
                             benchstore_pb2.AddSamplePointInput(
                                 timestamp=timestamp,

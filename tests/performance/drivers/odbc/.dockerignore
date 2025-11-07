@@ -1,0 +1,8 @@
+# Ignore CMake build artifacts to prevent cache conflicts
+app/build/
+app/.cmake/
+
+# Ignore temporary files
+**/.DS_Store
+**/*.swp
+**/*~

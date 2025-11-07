@@ -23,4 +23,3 @@ if [ -z "${BUILDPLATFORM}" ]; then
 fi
 
 export BUILDPLATFORM
-

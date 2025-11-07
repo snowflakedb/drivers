@@ -5,6 +5,7 @@ import os
 import sys
 import tempfile
 from pathlib import Path
+from test_types import TestType
 
 
 class TestConfig:
@@ -12,6 +13,14 @@ class TestConfig:
     
     def __init__(self):
         self.driver_type = os.getenv("DRIVER_TYPE", "universal")
+        
+        test_type_str = os.getenv("TEST_TYPE", "select")
+        try:
+            self.test_type = TestType(test_type_str)
+        except ValueError:
+            print(f"ERROR: Invalid test type '{test_type_str}'. Supported types: select, put_get")
+            sys.exit(1)
+        
         self.sql_command = os.getenv("SQL_COMMAND")
         self.test_name = os.getenv("TEST_NAME")
         self.iterations = int(os.getenv("PERF_ITERATIONS", "1"))

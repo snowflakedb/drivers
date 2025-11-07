@@ -1,8 +1,10 @@
 """pytest configuration for performance tests"""
-import os
+import json
 import logging
-from pathlib import Path
+import os
 from datetime import datetime
+from pathlib import Path
+from runner.test_types import TestType
 import pytest
 
 logger = logging.getLogger(__name__)
@@ -208,6 +210,34 @@ def use_local_binary(request):
     return request.config.getoption("--use-local-binary")
 
 
+def _prepare_setup_queries(test_type: TestType, parameters_json: str, setup_queries: list[str] = None) -> list[str]:
+    """
+    Prepare setup queries based on test type.
+    
+    Args:
+        test_type: Type of test (SELECT or PUT_GET)
+        parameters_json: JSON string with connection parameters
+        setup_queries: Optional user-provided setup queries
+    
+    Returns:
+        List of setup queries with test-type-specific prefixes
+    """
+    match test_type:
+        case TestType.SELECT:
+            # SELECT tests: always use ARROW format
+            arrow_query = "alter session set query_result_format = 'ARROW'"
+            return [arrow_query] + (setup_queries or [])
+        
+        case TestType.PUT_GET:
+            # PUT/GET tests: USE DATABASE is required for TEMPORARY STAGE
+            params = json.loads(parameters_json)
+            testconn = params.get("testconnection", {})
+            database = testconn.get("SNOWFLAKE_TEST_DATABASE") or testconn.get("database", "")
+            
+            use_db_query = f"USE DATABASE {database}"
+            return [use_db_query] + (setup_queries or [])
+
+
 @pytest.fixture
 def perf_test(parameters_json, results_dir, iterations, warmup_iterations, driver, driver_type, use_local_binary, request):
     """
@@ -236,7 +266,14 @@ def perf_test(parameters_json, results_dir, iterations, warmup_iterations, drive
             f"--use-local-binary is only supported for Core driver. Got: --driver={driver}"
         )
     
-    def _run_test(sql_command: str, setup_queries: list[str] = None, test_name: str = None):
+    def _run_test(
+        sql_command: str, 
+        setup_queries: list[str] = None,
+        test_name: str = None,
+        test_type: TestType = TestType.SELECT,
+        s3_download_url: str = None,  # S3 URL for PUT/GET tests
+        s3_download_dir: str = None  # Local directory for downloaded files
+    ):
         # Auto-derive test name from function name if not provided
         if test_name is None:
             func_name = request.node.name
@@ -245,12 +282,28 @@ def perf_test(parameters_json, results_dir, iterations, warmup_iterations, drive
             else:
                 test_name = func_name
         
-        # Always use ARROW format, then append any additional setup queries
-        arrow_query = "alter session set query_result_format = 'ARROW'"
-        if setup_queries is None:
-            final_setup_queries = [arrow_query]
-        else:
-            final_setup_queries = [arrow_query] + setup_queries
+        final_setup_queries = _prepare_setup_queries(test_type, parameters_json, setup_queries)
+        
+        # Download S3 files if needed (for PUT/GET tests)
+        s3_files_dir = None
+        if s3_download_url:
+            from runner.s3_utils import download_s3_files
+            from pathlib import Path
+            
+            # Default download dir: tests/performance/put_get_files/{dataset_name_from_s3_url}
+            if s3_download_dir is None:
+                s3_files_base = Path(__file__).parent / "put_get_files"
+                # Extract dataset name from S3 URL
+                # e.g., "s3://bucket/path/12Mx100/" -> "12Mx100"
+                dataset_name = s3_download_url.rstrip('/').split('/')[-1]
+                s3_download_dir = str(s3_files_base / dataset_name)
+            
+            s3_files_dir = Path(s3_download_dir)
+            
+            try:
+                download_s3_files(s3_download_url, s3_files_dir)
+            except Exception as e:
+                pytest.fail(f"S3 download failed: {e}")
         
         # For drivers with "both" option, run comparison
         # Core only has universal implementation
@@ -259,17 +312,20 @@ def perf_test(parameters_json, results_dir, iterations, warmup_iterations, drive
                 test_name=test_name,
                 sql_command=sql_command,
                 setup_queries=final_setup_queries,
+                test_type=test_type,
                 parameters_json=parameters_json,
                 results_dir=results_dir,
                 iterations=iterations,
                 warmup_iterations=warmup_iterations,
                 driver=driver,
+                s3_files_dir=s3_files_dir,
             )
         else:
             return run_performance_test(
                 test_name=test_name,
                 sql_command=sql_command,
                 setup_queries=final_setup_queries,
+                test_type=test_type,
                 parameters_json=parameters_json,
                 results_dir=results_dir,
                 iterations=iterations,
@@ -277,6 +333,7 @@ def perf_test(parameters_json, results_dir, iterations, warmup_iterations, drive
                 driver=driver,
                 driver_type=driver_type if driver != "core" else None,
                 use_local_binary=use_local_binary,
+                s3_files_dir=s3_files_dir,
             )
     
     return _run_test
