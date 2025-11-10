@@ -2,12 +2,12 @@ use crate::chunks::ChunkDownloadData;
 use crate::config::retry::RetryPolicy;
 use crate::http::retry::{HttpContext, execute_with_retry};
 use crate::rest::snowflake::error::SfError;
-use crate::rest::snowflake::{query_request, query_response, user_agent};
+use crate::rest::snowflake::{query_request, query_response};
 use once_cell::sync::Lazy;
 use reqwest::Method;
 use std::collections::HashMap;
 use std::sync::Mutex;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 pub struct SubmitOk {
     pub query_id: String,
@@ -49,10 +49,6 @@ pub async fn submit_statement_async(
                 format!("Snowflake Token=\"{session_token}\""),
             )
             .header("Accept", "application/json")
-            .header(
-                "User-Agent",
-                user_agent(&crate::rest::snowflake::client_info::ClientInfo::default()),
-            )
             .query(&[("requestId", request_id.to_string())])
             .json(&query_request)
     };
@@ -64,28 +60,47 @@ pub async fn submit_statement_async(
         allow_post_retry: true, // safe due to stable requestId
     };
 
-    let resp = execute_with_retry(client, build, &ctx, policy, |r| async move { Ok(r) })
-        .await
-        .map_err(SfError::from)?;
+    let resp = match execute_with_retry(client, build, &ctx, policy, |r| async move { Ok(r) }).await
+    {
+        Ok(r) => r,
+        Err(crate::http::retry::HttpError::Transport(source)) => {
+            return Err(SfError::Transport {
+                source,
+                location: snafu::Location::new(file!(), line!(), column!()),
+            });
+        }
+        Err(crate::http::retry::HttpError::DeadlineExceeded) => {
+            return Err(SfError::DeadlineExceeded {
+                location: snafu::Location::new(file!(), line!(), column!()),
+            });
+        }
+        Err(crate::http::retry::HttpError::HttpStatus { status, .. }) => {
+            return Err(SfError::HttpStatus {
+                status,
+                location: snafu::Location::new(file!(), line!(), column!()),
+            });
+        }
+    };
 
     let status = resp.status();
     if !status.is_success() {
-        return Err(SfError::HttpStatus { status });
+        return Err(SfError::HttpStatus {
+            status,
+            location: snafu::Location::new(file!(), line!(), column!()),
+        });
     }
 
-    let body_text = resp.text().await.map_err(SfError::from)?;
+    let body_text = resp.text().await.map_err(|source| SfError::Transport {
+        source,
+        location: snafu::Location::new(file!(), line!(), column!()),
+    })?;
     let parsed: query_response::Response =
-        serde_json::from_str(&body_text).map_err(|e| SfError::BodyParse { source: e })?;
-    let qid = parsed
-        .data
-        ._query_id
-        .clone()
-        .unwrap_or_else(|| "".to_string());
-    if !qid.is_empty() {
-        REQUEST_TO_QUERY.insert(request_id, qid.clone());
-    }
+        serde_json::from_str(&body_text).map_err(|source| SfError::BodyParse {
+            source,
+            location: snafu::Location::new(file!(), line!(), column!()),
+        })?;
     Ok(SubmitOk {
-        query_id: qid,
+        query_id: String::new(),
         response: parsed,
     })
 }
@@ -110,19 +125,43 @@ pub async fn poll_query_status(
         idempotent: true,
         allow_post_retry: false,
     };
-    let resp = execute_with_retry(client, build, &ctx, policy, |r| async move { Ok(r) })
-        .await
-        .map_err(SfError::from)?;
+    let resp = match execute_with_retry(client, build, &ctx, policy, |r| async move { Ok(r) }).await
+    {
+        Ok(r) => r,
+        Err(crate::http::retry::HttpError::Transport(source)) => {
+            return Err(SfError::Transport {
+                source,
+                location: snafu::Location::new(file!(), line!(), column!()),
+            });
+        }
+        Err(crate::http::retry::HttpError::DeadlineExceeded) => {
+            return Err(SfError::DeadlineExceeded {
+                location: snafu::Location::new(file!(), line!(), column!()),
+            });
+        }
+        Err(crate::http::retry::HttpError::HttpStatus { status, .. }) => {
+            return Err(SfError::HttpStatus {
+                status,
+                location: snafu::Location::new(file!(), line!(), column!()),
+            });
+        }
+    };
     let status = resp.status();
     if !status.is_success() {
-        return Err(SfError::HttpStatus { status });
+        return Err(SfError::HttpStatus {
+            status,
+            location: snafu::Location::new(file!(), line!(), column!()),
+        });
     }
-    let body_text = resp.text().await.map_err(SfError::from)?;
+    let body_text = resp.text().await.map_err(|source| SfError::Transport {
+        source,
+        location: snafu::Location::new(file!(), line!(), column!()),
+    })?;
     let parsed: query_response::Response =
-        serde_json::from_str(&body_text).map_err(|e| SfError::BodyParse { source: e })?;
-    if parsed.data._async_result.is_some() || parsed.data._async_rows.is_some() {
-        // Simplified: rely on success flag for terminal; extend with detailed code mapping later
-    }
+        serde_json::from_str(&body_text).map_err(|source| SfError::BodyParse {
+            source,
+            location: snafu::Location::new(file!(), line!(), column!()),
+        })?;
     if parsed.success {
         Ok((PollState::Success, parsed))
     } else {
@@ -168,7 +207,7 @@ pub async fn execute_blocking_with_async(
     Ok(submitted.response)
 }
 
-static REQUEST_TO_QUERY: Lazy<RequestQueryMap> = Lazy::new(|| RequestQueryMap::default());
+static REQUEST_TO_QUERY: Lazy<RequestQueryMap> = Lazy::new(RequestQueryMap::default);
 
 #[derive(Default)]
 struct RequestQueryMap(Mutex<HashMap<uuid::Uuid, String>>);
