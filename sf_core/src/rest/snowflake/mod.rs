@@ -1,4 +1,6 @@
+pub mod async_exec;
 mod auth;
+pub mod error;
 pub mod query_request;
 pub mod query_response;
 
@@ -201,6 +203,20 @@ pub async fn snowflake_query_with_client(
     sql: String,
     parameter_bindings: Option<HashMap<String, query_request::BindParameter>>,
 ) -> Result<query_response::Response, RestError> {
+    if std::env::var("SF_USE_ASYNC_ENGINE")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+    {
+        return snowflake_query_async_style(
+            client,
+            query_parameters,
+            session_token,
+            sql,
+            parameter_bindings,
+        )
+        .await;
+    }
+    // Legacy synchronous path retained. A new async-backed blocking facade is provided below.
     let server_url = query_parameters.server_url;
     let query_url = format!("{server_url}/queries/v1/query-request");
 
@@ -266,6 +282,39 @@ pub async fn snowflake_query_with_client(
     } else {
         Ok(query_response)
     }
+}
+
+/// New blocking facade that uses the async engine under the hood.
+#[tracing::instrument(
+    skip(client, query_parameters, session_token, parameter_bindings),
+    fields(sql)
+)]
+pub async fn snowflake_query_async_style(
+    client: &reqwest::Client,
+    query_parameters: QueryParameters,
+    session_token: String,
+    sql: String,
+    parameter_bindings: Option<HashMap<String, query_request::BindParameter>>,
+) -> Result<query_response::Response, RestError> {
+    let request_id = uuid::Uuid::new_v4();
+    let policy = crate::config::retry::RetryPolicy::default();
+    crate::rest::snowflake::async_exec::execute_blocking_with_async(
+        client,
+        &query_parameters.server_url,
+        &session_token,
+        sql,
+        parameter_bindings,
+        request_id,
+        &policy,
+    )
+    .await
+    .map_err(|e| RestError::InvalidSnowflakeResponse {
+        source: SnowflakeResponseError::InvalidResponse {
+            message: format!("{e:?}"),
+            location: snafu::Location::new(file!(), line!(), column!()),
+        },
+        location: snafu::Location::new(file!(), line!(), column!()),
+    })
 }
 
 async fn read_response_json<T>(response: reqwest::Response) -> Result<T, SnowflakeResponseError>
