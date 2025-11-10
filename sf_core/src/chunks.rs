@@ -109,12 +109,43 @@ pub async fn get_chunk_data(chunk: &ChunkDownloadData) -> Result<Vec<u8>, ChunkE
         let header_value = HeaderValue::from_str(value).context(HeaderValueSnafu { key })?;
         headers.insert(header_name, header_value);
     }
-    let response = client
-        .get(url)
-        .headers(headers)
-        .send()
-        .await
-        .context(CommunicationSnafu)?;
+    use crate::config::retry::RetryPolicy;
+    use crate::http::retry::{HttpContext, execute_with_retry};
+    use reqwest::Method;
+
+    let policy = RetryPolicy::default();
+    let ctx = HttpContext {
+        method: Method::GET,
+        path: url.clone(),
+        idempotent: true,
+        allow_post_retry: false,
+    };
+
+    let build = || client.get(url.clone()).headers(headers.clone());
+    let response =
+        match execute_with_retry(&client, build, &ctx, &policy, |r| async move { Ok(r) }).await {
+            Ok(r) => r,
+            Err(e) => match e {
+                crate::http::retry::HttpError::Transport(source) => {
+                    return Err(ChunkError::Communication {
+                        source,
+                        location: Location::new(file!(), line!(), column!()),
+                    });
+                }
+                crate::http::retry::HttpError::DeadlineExceeded => {
+                    return Err(ChunkError::UnsuccessfulResponseHTTP {
+                        status: reqwest::StatusCode::REQUEST_TIMEOUT,
+                        location: Location::new(file!(), line!(), column!()),
+                    });
+                }
+                crate::http::retry::HttpError::HttpStatus { status, .. } => {
+                    return Err(ChunkError::UnsuccessfulResponseHTTP {
+                        status,
+                        location: Location::new(file!(), line!(), column!()),
+                    });
+                }
+            },
+        };
 
     if !response.status().is_success() {
         UnsuccessfulResponseHTTPSnafu {
