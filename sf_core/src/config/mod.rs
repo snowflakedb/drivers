@@ -1,4 +1,5 @@
 pub mod rest_parameters;
+pub mod retry;
 pub mod settings;
 
 use snafu::{Location, Snafu};

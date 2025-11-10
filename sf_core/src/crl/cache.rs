@@ -695,24 +695,43 @@ impl CrlCache {
     async fn fetch(&self, url: &str) -> Result<Vec<u8>, CrlError> {
         let start = std::time::Instant::now();
         self.maybe_sleep_backoff(url).await?;
-        let resp = match self.http_client.get(url).send().await {
-            Ok(r) => r,
-            Err(e) => {
-                metrics().fetch_error_total.add(1, &[]);
-                self.record_backoff_failure(url);
-                return Err(e).context(CrlDownloadSnafu {
-                    url: url.to_string(),
-                });
-            }
+        use crate::config::retry::RetryPolicy;
+        use crate::http::retry::{HttpContext, execute_with_retry};
+        use reqwest::Method;
+
+        let policy = RetryPolicy::default();
+        let ctx = HttpContext {
+            method: Method::GET,
+            path: url.to_string(),
+            idempotent: true,
+            allow_post_retry: false,
         };
-        let resp = match resp.error_for_status() {
+
+        let build = || self.http_client.get(url);
+        let resp = match execute_with_retry(
+            &self.http_client,
+            build,
+            &ctx,
+            &policy,
+            |r| async move { Ok(r) },
+        )
+        .await
+        {
             Ok(r) => r,
             Err(e) => {
                 metrics().fetch_error_total.add(1, &[]);
                 self.record_backoff_failure(url);
-                return Err(e).context(CrlDownloadSnafu {
-                    url: url.to_string(),
-                });
+                match e {
+                    crate::http::retry::HttpError::Transport(source) => {
+                        return Err(source).context(CrlDownloadSnafu {
+                            url: url.to_string(),
+                        });
+                    }
+                    crate::http::retry::HttpError::DeadlineExceeded => {
+                        return crate::crl::error::HttpTimeoutSnafu {}.fail();
+                    }
+                    crate::http::retry::HttpError::HttpStatus { .. } => unreachable!(),
+                }
             }
         };
         let bytes = match resp.bytes().await {
