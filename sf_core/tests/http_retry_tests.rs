@@ -1,4 +1,5 @@
 use sf_core::config::retry::{Jitter, RetryPolicy};
+use std::time::Duration;
 
 #[test]
 fn defaults_are_sane() {
@@ -6,7 +7,7 @@ fn defaults_are_sane() {
     assert!(p.http.retry_safe_reads);
     assert!(p.http.retry_idempotent_writes);
     assert!(!p.http.retry_post_patch);
-    assert_eq!(p.submission.max_attempts, 6);
-    assert!(matches!(p.submission.backoff.jitter, Jitter::Decorrelated));
-    assert_eq!(p.chunk.max_attempts, 8);
+    assert_eq!(p.max_attempts, 6);
+    assert_eq!(p.backoff.base, Duration::from_millis(50));
+    assert!(matches!(p.backoff.jitter, Jitter::Decorrelated));
 }

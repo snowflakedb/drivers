@@ -696,10 +696,9 @@ impl CrlCache {
         let start = std::time::Instant::now();
         self.maybe_sleep_backoff(url).await?;
         use crate::config::retry::RetryPolicy;
-        use crate::http::retry::{HttpContext, execute_with_retry};
+        use crate::http::retry::{HttpContext, HttpError, execute_bytes_with_retry};
         use reqwest::Method;
 
-        let policy = RetryPolicy::default();
         let ctx = HttpContext {
             method: Method::GET,
             path: url.to_string(),
@@ -708,47 +707,29 @@ impl CrlCache {
         };
 
         let build = || self.http_client.get(url);
-        let resp = match execute_with_retry(
-            &self.http_client,
-            build,
-            &ctx,
-            &policy,
-            |r| async move { Ok(r) },
-        )
-        .await
-        {
-            Ok(r) => r,
-            Err(e) => {
-                metrics().fetch_error_total.add(1, &[]);
-                self.record_backoff_failure(url);
-                match e {
-                    crate::http::retry::HttpError::Transport(source) => {
-                        return Err(source).context(CrlDownloadSnafu {
+        let bytes =
+            match execute_bytes_with_retry(&self.http_client, build, &ctx, &RetryPolicy::default())
+                .await
+            {
+                Ok(b) => b,
+                Err(e) => {
+                    metrics().fetch_error_total.add(1, &[]);
+                    self.record_backoff_failure(url);
+                    return match e {
+                        HttpError::Transport(source) => Err(source).context(CrlDownloadSnafu {
                             url: url.to_string(),
-                        });
-                    }
-                    crate::http::retry::HttpError::DeadlineExceeded => {
-                        return crate::crl::error::HttpTimeoutSnafu {}.fail();
-                    }
-                    crate::http::retry::HttpError::HttpStatus { .. } => unreachable!(),
+                        }),
+                        HttpError::DeadlineExceeded => {
+                            crate::crl::error::HttpTimeoutSnafu {}.fail()
+                        }
+                    };
                 }
-            }
-        };
-        let bytes = match resp.bytes().await {
-            Ok(b) => b,
-            Err(e) => {
-                metrics().fetch_error_total.add(1, &[]);
-                self.record_backoff_failure(url);
-                return Err(e).context(CrlDownloadSnafu {
-                    url: url.to_string(),
-                });
-            }
-        };
+            };
         self.record_backoff_success(url)?;
         let ms = start.elapsed().as_millis() as u64;
         metrics().fetch_ms.record(ms, &[]);
         metrics().fetch_total.add(1, &[]);
-        Ok(bytes.to_vec())
+        Ok(bytes)
     }
 
     async fn maybe_sleep_backoff(&self, url: &str) -> Result<(), CrlError> {
