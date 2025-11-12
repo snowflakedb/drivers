@@ -1,6 +1,7 @@
 use crate::config::retry::{BackoffConfig, HttpPolicy, Jitter, RetryPolicy};
 use rand::{Rng, rng};
 use reqwest::{Method, Response, StatusCode};
+use snafu::{IntoError, Location, ResultExt, Snafu};
 use std::time::{Duration, Instant};
 
 #[derive(Clone, Debug)]
@@ -13,16 +14,29 @@ pub struct HttpContext {
     pub allow_post_retry: bool,
 }
 
-#[derive(thiserror::Error, Debug)]
+#[derive(Debug, Snafu)]
 pub enum HttpError {
-    #[error("transport error")]
-    Transport(#[from] reqwest::Error),
-    #[error("deadline exceeded")]
-    DeadlineExceeded,
+    #[snafu(display("transport error"))]
+    Transport {
+        source: reqwest::Error,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("deadline exceeded"))]
+    DeadlineExceeded {
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("retry-after {retry_after:?} exceeds remaining budget {remaining:?}"))]
+    RetryAfterExceeded {
+        retry_after: Duration,
+        remaining: Duration,
+        #[snafu(implicit)]
+        location: Location,
+    },
 }
 
 pub async fn execute_with_retry<T, B, F, H>(
-    _client: &reqwest::Client,
     build: B,
     ctx: &HttpContext,
     policy: &RetryPolicy,
@@ -42,9 +56,11 @@ where
 
     loop {
         attempt += 1;
-        if start.elapsed() > policy.deadline {
-            return Err(HttpError::DeadlineExceeded);
+        let elapsed = start.elapsed();
+        if elapsed > policy.deadline {
+            return DeadlineExceededSnafu.fail();
         }
+        let remaining = policy.deadline - elapsed;
 
         let req = build();
         let result = req.try_clone().unwrap_or_else(&build).send().await;
@@ -60,6 +76,13 @@ where
                     let retry_after = parse_retry_after(&resp);
                     sleep_ms = next_delay_ms(sleep_ms, backoff);
                     let delay = retry_after.unwrap_or(Duration::from_millis(sleep_ms as u64));
+                    if delay > remaining {
+                        return RetryAfterExceededSnafu {
+                            retry_after: delay,
+                            remaining,
+                        }
+                        .fail();
+                    }
                     if attempt >= max_attempts {
                         // Return the response to let caller decide how to surface status/body
                         return on_response(resp).await;
@@ -74,13 +97,21 @@ where
             Err(e) => {
                 if is_retryable_transport(&e) && allow_retry(ctx, &policy.http) {
                     if attempt >= max_attempts {
-                        return Err(HttpError::Transport(e));
+                        return Err(TransportSnafu.into_error(e));
                     }
                     sleep_ms = next_delay_ms(sleep_ms, backoff);
-                    tokio::time::sleep(Duration::from_millis(sleep_ms as u64)).await;
+                    let delay = Duration::from_millis(sleep_ms as u64);
+                    if delay > remaining {
+                        return RetryAfterExceededSnafu {
+                            retry_after: delay,
+                            remaining,
+                        }
+                        .fail();
+                    }
+                    tokio::time::sleep(delay).await;
                     continue;
                 } else {
-                    return Err(HttpError::Transport(e));
+                    return Err(TransportSnafu.into_error(e));
                 }
             }
         }
@@ -136,7 +167,6 @@ fn is_retryable_transport(e: &reqwest::Error) -> bool {
 /// Convenience helper: execute with retries and return the response body as bytes.
 /// Status is validated; non-2xx statuses are mapped to HttpStatus.
 pub async fn execute_bytes_with_retry<B>(
-    client: &reqwest::Client,
     build: B,
     ctx: &HttpContext,
     policy: &RetryPolicy,
@@ -144,12 +174,12 @@ pub async fn execute_bytes_with_retry<B>(
 where
     B: Fn() -> reqwest::RequestBuilder,
 {
-    let resp = execute_with_retry(client, build, ctx, policy, |r| async move { Ok(r) }).await?;
+    let resp = execute_with_retry(build, ctx, policy, |r| async move { Ok(r) }).await?;
     match resp.error_for_status() {
         Ok(ok) => {
-            let bytes = ok.bytes().await?;
+            let bytes = ok.bytes().await.context(TransportSnafu)?;
             Ok(bytes.to_vec())
         }
-        Err(e) => Err(HttpError::Transport(e)),
+        Err(e) => Err(TransportSnafu.into_error(e)),
     }
 }
