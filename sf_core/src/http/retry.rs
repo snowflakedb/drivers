@@ -71,48 +71,47 @@ where
                     return on_response(resp).await;
                 }
 
-                if should_retry_status(resp.status()) && allow_retry(ctx, &policy.http) {
-                    // Honor Retry-After if present
-                    let retry_after = parse_retry_after(&resp);
-                    sleep_ms = next_delay_ms(sleep_ms, backoff);
-                    let delay = retry_after.unwrap_or(Duration::from_millis(sleep_ms as u64));
-                    if delay > remaining {
-                        return RetryAfterExceededSnafu {
-                            retry_after: delay,
-                            remaining,
-                        }
-                        .fail();
-                    }
-                    if attempt >= max_attempts {
-                        // Return the response to let caller decide how to surface status/body
-                        return on_response(resp).await;
-                    }
-                    tokio::time::sleep(delay).await;
-                    continue;
-                } else {
+                if !should_retry_status(resp.status()) || !allow_retry(ctx, &policy.http) {
                     // Non-retryable status: surface response to caller
                     return on_response(resp).await;
                 }
+
+                // Honor Retry-After if present
+                let retry_after = parse_retry_after(&resp);
+                sleep_ms = next_delay_ms(sleep_ms, backoff);
+                let delay = retry_after.unwrap_or(Duration::from_millis(sleep_ms as u64));
+                if delay > remaining {
+                    return RetryAfterExceededSnafu {
+                        retry_after: delay,
+                        remaining,
+                    }
+                    .fail();
+                }
+                if attempt >= max_attempts {
+                    // Return the response to let caller decide how to surface status/body
+                    return on_response(resp).await;
+                }
+                tokio::time::sleep(delay).await;
+                continue;
             }
             Err(e) => {
-                if is_retryable_transport(&e) && allow_retry(ctx, &policy.http) {
-                    if attempt >= max_attempts {
-                        return Err(TransportSnafu.into_error(e));
-                    }
-                    sleep_ms = next_delay_ms(sleep_ms, backoff);
-                    let delay = Duration::from_millis(sleep_ms as u64);
-                    if delay > remaining {
-                        return RetryAfterExceededSnafu {
-                            retry_after: delay,
-                            remaining,
-                        }
-                        .fail();
-                    }
-                    tokio::time::sleep(delay).await;
-                    continue;
-                } else {
+                if !is_retryable_transport(&e) || !allow_retry(ctx, &policy.http) {
                     return Err(TransportSnafu.into_error(e));
                 }
+                if attempt >= max_attempts {
+                    return Err(TransportSnafu.into_error(e));
+                }
+                sleep_ms = next_delay_ms(sleep_ms, backoff);
+                let delay = Duration::from_millis(sleep_ms as u64);
+                if delay > remaining {
+                    return RetryAfterExceededSnafu {
+                        retry_after: delay,
+                        remaining,
+                    }
+                    .fail();
+                }
+                tokio::time::sleep(delay).await;
+                continue;
             }
         }
     }
