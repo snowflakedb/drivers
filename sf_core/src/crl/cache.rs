@@ -699,15 +699,11 @@ impl CrlCache {
         let start = std::time::Instant::now();
         self.maybe_sleep_backoff(url).await?;
 
-        let ctx = HttpContext {
-            method: Method::GET,
-            path: url.to_string(),
-            idempotent: true,
-            allow_post_retry: false,
-        };
+        let ctx = HttpContext::new(Method::GET, url.to_string());
 
-        let build = || self.http_client.get(url);
-        let bytes = match execute_bytes_with_retry(build, &ctx, &RetryPolicy::default()).await {
+        let req_builder = || self.http_client.get(url);
+        let bytes = match execute_bytes_with_retry(req_builder, &ctx, &RetryPolicy::default()).await
+        {
             Ok(b) => b,
             Err(e) => {
                 metrics().fetch_error_total.add(1, &[]);
@@ -716,7 +712,9 @@ impl CrlCache {
                     HttpError::Transport { source, .. } => Err(source).context(CrlDownloadSnafu {
                         url: url.to_string(),
                     }),
-                    HttpError::DeadlineExceeded { .. } | HttpError::RetryAfterExceeded { .. } => {
+                    HttpError::DeadlineExceeded { .. }
+                    | HttpError::RetryAfterExceeded { .. }
+                    | HttpError::MaxAttempts { .. } => {
                         crate::crl::error::HttpTimeoutSnafu {}.fail()
                     }
                 };

@@ -13,3 +13,15 @@ Feature: HTTP retry helper
     When the helper executes the request
     Then it should return a Retry-After exceeded error
 
+  @core_int
+  Scenario: should retry idempotent PUT after transient failure
+    Given an idempotent PUT request that fails once then succeeds
+    When the helper executes the request
+    Then it should have retried once and returned the successful body
+
+  @core_int
+  Scenario: should fail after reaching max attempts
+    Given a server that always fails with a retryable status
+    When the helper executes the request
+    Then it should return a max attempts error
+

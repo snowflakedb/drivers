@@ -8,10 +8,35 @@ use std::time::{Duration, Instant};
 pub struct HttpContext {
     pub method: Method,
     pub path: String,
-    /// Whether the request is known idempotent server-side (e.g., PUT/DELETE semantics)
+    /// Whether the request is known idempotent server-side (e.g., PUT/DELETE semantics).
     pub idempotent: bool,
-    /// Whether to allow POST/PATCH retries for this request (overrides global default)
+    /// Whether to allow POST/PATCH retries for this request (overrides global default).
     pub allow_post_retry: bool,
+}
+
+impl HttpContext {
+    /// Construct a context with sensible defaults for the supplied method and path.
+    pub fn new(method: Method, path: impl Into<String>) -> Self {
+        let method_clone = method.clone();
+        Self {
+            idempotent: matches!(method_clone, Method::PUT | Method::DELETE),
+            allow_post_retry: false,
+            method,
+            path: path.into(),
+        }
+    }
+
+    /// Mark this context as explicitly idempotent (useful for DELETE, PUT, or POST overrides).
+    pub fn with_idempotent(mut self, idempotent: bool) -> Self {
+        self.idempotent = idempotent;
+        self
+    }
+
+    /// Allow POST/PATCH retries for this particular request.
+    pub fn allow_post_retry(mut self) -> Self {
+        self.allow_post_retry = true;
+        self
+    }
 }
 
 #[derive(Debug, Snafu)]
@@ -22,8 +47,17 @@ pub enum HttpError {
         #[snafu(implicit)]
         location: Location,
     },
-    #[snafu(display("deadline exceeded"))]
+    #[snafu(display("deadline exceeded after {elapsed:?} (budget {configured:?})"))]
     DeadlineExceeded {
+        configured: Duration,
+        elapsed: Duration,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("max attempts ({attempts}) reached; last status {last_status}"))]
+    MaxAttempts {
+        attempts: u32,
+        last_status: StatusCode,
         #[snafu(implicit)]
         location: Location,
     },
@@ -37,7 +71,7 @@ pub enum HttpError {
 }
 
 pub async fn execute_with_retry<T, B, F, H>(
-    build: B,
+    build_request: B,
     ctx: &HttpContext,
     policy: &RetryPolicy,
     on_response: H,
@@ -57,23 +91,33 @@ where
     loop {
         attempt += 1;
         let elapsed = start.elapsed();
-        if elapsed > policy.deadline {
-            return DeadlineExceededSnafu.fail();
+        if elapsed >= policy.max_elapsed {
+            return DeadlineExceededSnafu {
+                configured: policy.max_elapsed,
+                elapsed,
+            }
+            .fail();
         }
-        let remaining = policy.deadline - elapsed;
+        let remaining = policy.max_elapsed - elapsed;
 
-        let req = build();
-        let result = req.try_clone().unwrap_or_else(&build).send().await;
+        let result = build_request().send().await;
 
         match result {
             Ok(resp) => {
                 if resp.status().is_success() {
                     return on_response(resp).await;
                 }
-
                 if !should_retry_status(resp.status()) || !allow_retry(ctx, &policy.http) {
                     // Non-retryable status: surface response to caller
                     return on_response(resp).await;
+                }
+
+                if attempt >= max_attempts {
+                    return MaxAttemptsSnafu {
+                        attempts: attempt,
+                        last_status: resp.status(),
+                    }
+                    .fail();
                 }
 
                 // Honor Retry-After if present
@@ -86,10 +130,6 @@ where
                         remaining,
                     }
                     .fail();
-                }
-                if attempt >= max_attempts {
-                    // Return the response to let caller decide how to surface status/body
-                    return on_response(resp).await;
                 }
                 tokio::time::sleep(delay).await;
                 continue;
@@ -120,6 +160,8 @@ where
 fn should_retry_status(status: StatusCode) -> bool {
     status == StatusCode::REQUEST_TIMEOUT
         || status == StatusCode::TOO_MANY_REQUESTS
+        || status == StatusCode::TEMPORARY_REDIRECT
+        || status == StatusCode::PERMANENT_REDIRECT
         || status.is_server_error()
 }
 
@@ -164,7 +206,7 @@ fn is_retryable_transport(e: &reqwest::Error) -> bool {
 }
 
 /// Convenience helper: execute with retries and return the response body as bytes.
-/// Status is validated; non-2xx statuses are mapped to HttpStatus.
+/// Status is validated; non-2xx statuses surface as `HttpError::Transport`.
 pub async fn execute_bytes_with_retry<B>(
     build: B,
     ctx: &HttpContext,

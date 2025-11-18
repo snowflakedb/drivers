@@ -2,15 +2,18 @@ use std::time::Duration;
 
 /// Global retry policy used by the driver. Keep it minimal at the HTTP layer;
 /// layers above (Snowflake query logic, etc.) can compose their own semantics.
+/// Cloning is cheap because the structure only stores durations, numbers, and
+/// booleans, allowing call sites to snapshot per-request settings easily.
 #[derive(Clone, Debug)]
 pub struct RetryPolicy {
     /// Verb-aware HTTP retry gates.
     pub http: HttpPolicy,
-    /// Max attempts and exponential backoff configuration.
+    /// Maximum number of attempts for a request.
     pub max_attempts: u32,
+    /// Configuration for exponential backoff between attempts.
     pub backoff: BackoffConfig,
-    /// Overall operation deadline; attempts stop when exceeded.
-    pub deadline: Duration,
+    /// Maximum total duration spent on the operation before we stop retrying.
+    pub max_elapsed: Duration,
 }
 
 #[derive(Clone, Debug)]
@@ -53,7 +56,7 @@ impl Default for RetryPolicy {
                 cap: Duration::from_millis(1500),
                 jitter: Jitter::Decorrelated,
             },
-            deadline: Duration::from_secs(120),
+            max_elapsed: Duration::from_secs(120),
         }
     }
 }

@@ -10,4 +10,5 @@ fn defaults_are_sane() {
     assert_eq!(p.max_attempts, 6);
     assert_eq!(p.backoff.base, Duration::from_millis(50));
     assert!(matches!(p.backoff.jitter, Jitter::Decorrelated));
+    assert_eq!(p.max_elapsed, Duration::from_secs(120));
 }
