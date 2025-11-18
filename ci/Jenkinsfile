@@ -142,8 +142,8 @@ def uploadMinicorePackage(platform) {
       set PATH=%PATH%;%USERPROFILE%\\.cargo\\bin
       set PLATFORM=${platform}
       set COMMIT_SHA=${GIT_COMMIT}
-      ./scripts/package_minicore.bat
-      ./scripts/upload_minicore.bat
+      call scripts\\package_minicore.bat
+      call scripts\\upload_minicore.bat
     """
     return
   }
