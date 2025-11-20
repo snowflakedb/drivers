@@ -1,5 +1,5 @@
 point_of_contact: @snowflakedb/client
-distributed: false
+distributed: true
 modified: true
 legal_exception: false
 production: true
