@@ -18,6 +18,14 @@ use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tracing;
 
+pub const STATEMENT_ASYNC_EXECUTION_OPTION: &str = "async_execution";
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum QueryExecutionMode {
+    Blocking,
+    Async,
+}
+
 pub fn user_agent(client_info: &ClientInfo) -> String {
     format!(
         "{}/{} ({}) CPython/3.11.6",
@@ -180,6 +188,7 @@ pub async fn snowflake_query(
     session_token: String,
     sql: String,
     parameter_bindings: Option<HashMap<String, query_request::BindParameter>>,
+    execution_mode: QueryExecutionMode,
 ) -> Result<query_response::Response, RestError> {
     let client = reqwest::Client::new();
     snowflake_query_with_client(
@@ -188,6 +197,7 @@ pub async fn snowflake_query(
         session_token,
         sql,
         parameter_bindings,
+        execution_mode,
     )
     .await
 }
@@ -202,11 +212,9 @@ pub async fn snowflake_query_with_client(
     session_token: String,
     sql: String,
     parameter_bindings: Option<HashMap<String, query_request::BindParameter>>,
+    execution_mode: QueryExecutionMode,
 ) -> Result<query_response::Response, RestError> {
-    if std::env::var("SF_USE_ASYNC_ENGINE")
-        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-        .unwrap_or(false)
-    {
+    if matches!(execution_mode, QueryExecutionMode::Async) {
         return snowflake_query_async_style(
             client,
             query_parameters,

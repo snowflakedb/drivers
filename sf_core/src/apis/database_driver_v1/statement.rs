@@ -7,7 +7,7 @@ use super::global_state::{CONN_HANDLE_MANAGER, STMT_HANDLE_MANAGER};
 use crate::apis::database_driver_v1::query::process_query_response;
 use crate::{
     config::{rest_parameters::QueryParameters, settings::Setting},
-    rest::snowflake::snowflake_query,
+    rest::snowflake::{self, QueryExecutionMode, snowflake_query},
 };
 
 use arrow::array::{RecordBatch, StructArray};
@@ -191,6 +191,7 @@ pub fn statement_execute_query(stmt_handle: Handle) -> Result<ExecuteResult, Api
                 }
                 .build()
             })?,
+            stmt.execution_mode(),
         ))
         .context(LoginSnafu)?;
 
@@ -306,6 +307,39 @@ impl Statement {
         match self.parameter_bindings.as_ref() {
             Some(parameters) => Ok(Some(parameters_from_record_batch(parameters)?)),
             None => Ok(None),
+        }
+    }
+
+    fn execution_mode(&self) -> QueryExecutionMode {
+        match self
+            .settings
+            .get(snowflake::STATEMENT_ASYNC_EXECUTION_OPTION)
+        {
+            Some(Setting::String(value)) => {
+                if value.eq_ignore_ascii_case("true")
+                    || value.eq_ignore_ascii_case("yes")
+                    || value == "1"
+                {
+                    QueryExecutionMode::Async
+                } else {
+                    QueryExecutionMode::Blocking
+                }
+            }
+            Some(Setting::Int(value)) => {
+                if *value != 0 {
+                    QueryExecutionMode::Async
+                } else {
+                    QueryExecutionMode::Blocking
+                }
+            }
+            Some(Setting::Double(value)) => {
+                if *value != 0.0 {
+                    QueryExecutionMode::Async
+                } else {
+                    QueryExecutionMode::Blocking
+                }
+            }
+            Some(Setting::Bytes(_)) | None => QueryExecutionMode::Blocking,
         }
     }
 }

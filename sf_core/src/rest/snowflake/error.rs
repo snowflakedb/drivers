@@ -1,5 +1,7 @@
 use reqwest::StatusCode;
 use snafu::{Location, Snafu};
+use std::time::Duration;
+use url::ParseError;
 
 #[derive(Snafu, Debug)]
 #[snafu(visibility(pub))]
@@ -33,8 +35,43 @@ pub enum SfError {
         #[snafu(implicit)]
         location: Location,
     },
-    #[snafu(display("Deadline exceeded"))]
+    #[snafu(display("Deadline exceeded after {elapsed:?} (budget {configured:?})"))]
     DeadlineExceeded {
+        configured: Duration,
+        elapsed: Duration,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display(
+        "Retry attempts exhausted after {attempts} attempts; last status {last_status}"
+    ))]
+    RetryAttemptsExhausted {
+        attempts: u32,
+        last_status: StatusCode,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Retry-After {retry_after:?} exceeds remaining budget {remaining:?}"))]
+    RetryBudgetExceeded {
+        retry_after: Duration,
+        remaining: Duration,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Async query response missing getResultUrl; cannot poll for completion"))]
+    MissingResultUrl {
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Async query did not report a queryId"))]
+    MissingQueryId {
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Failed to parse getResultUrl: {url}"))]
+    ResultUrlParse {
+        url: String,
+        source: ParseError,
         #[snafu(implicit)]
         location: Location,
     },

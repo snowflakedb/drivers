@@ -4,6 +4,7 @@ use arrow::ffi::{FFI_ArrowArray, FFI_ArrowSchema};
 use proto_utils::ProtoError;
 use sf_core::protobuf_apis::database_driver_v1::DatabaseDriverClient;
 use sf_core::protobuf_gen::database_driver_v1::*;
+use sf_core::rest::snowflake::STATEMENT_ASYNC_EXECUTION_OPTION;
 use std::mem::size_of;
 use std::sync::Arc;
 
@@ -279,6 +280,15 @@ impl SnowflakeTestClient {
             conn_handle: Some(self.conn_handle),
             key: option_name.to_string(),
             value: option_value,
+        })
+        .unwrap();
+    }
+
+    pub fn set_statement_async_execution(&self, stmt: &StatementHandle, enabled: bool) {
+        DatabaseDriverClient::statement_set_option_string(StatementSetOptionStringRequest {
+            stmt_handle: Some(*stmt),
+            key: STATEMENT_ASYNC_EXECUTION_OPTION.to_string(),
+            value: if enabled { "true" } else { "false" }.to_string(),
         })
         .unwrap();
     }
