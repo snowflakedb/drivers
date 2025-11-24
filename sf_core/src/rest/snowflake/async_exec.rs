@@ -3,12 +3,9 @@ use crate::config::retry::{BackoffConfig, RetryPolicy};
 use crate::http::retry::{HttpContext, HttpError, execute_with_retry};
 use crate::rest::snowflake::error::SfError;
 use crate::rest::snowflake::{query_request, query_response};
-use once_cell::sync::Lazy;
 use reqwest::{Method, StatusCode};
 use snafu::Location;
-use std::collections::HashMap;
 use std::panic::Location as StdLocation;
-use std::sync::Mutex;
 use std::time::{Duration, Instant};
 use tracing::debug;
 use url::Url;
@@ -188,16 +185,14 @@ pub async fn execute_blocking_with_async(
         response = wait_for_completion(client, session_token, result_url, policy).await?;
     }
 
-    let resolved_query_id =
-        response
-            .data
-            .query_id
-            .clone()
-            .or(query_id)
-            .ok_or_else(|| SfError::MissingQueryId {
-                location: current_location(),
-            })?;
-    REQUEST_TO_QUERY.insert(request_id, resolved_query_id);
+    response
+        .data
+        .query_id
+        .clone()
+        .or(query_id)
+        .ok_or_else(|| SfError::MissingQueryId {
+            location: current_location(),
+        })?;
 
     Ok(response)
 }
@@ -267,23 +262,6 @@ fn http_status_error(status: StatusCode) -> SfError {
     }
 }
 
-static REQUEST_TO_QUERY: Lazy<RequestQueryMap> = Lazy::new(RequestQueryMap::default);
-
-#[derive(Default)]
-struct RequestQueryMap(Mutex<HashMap<uuid::Uuid, String>>);
-
-impl RequestQueryMap {
-    fn insert(&self, rid: uuid::Uuid, qid: String) {
-        if let Ok(mut g) = self.0.lock() {
-            g.insert(rid, qid);
-        }
-    }
-    #[allow(dead_code)]
-    fn get(&self, rid: &uuid::Uuid) -> Option<String> {
-        self.0.lock().ok().and_then(|g| g.get(rid).cloned())
-    }
-}
-
 pub async fn refresh_chunk_download_data_from_get_result(
     client: &reqwest::Client,
     session_token: &str,
@@ -318,7 +296,10 @@ fn normalize_get_result_url(base: &str, url: &str) -> Result<String, SfError> {
 }
 
 fn should_poll_for_completion(resp: &query_response::Response) -> bool {
-    !resp.success || (resp.data.get_result_url.is_some() && !response_has_tabular_data(resp))
+    resp.data
+        .get_result_url
+        .as_ref()
+        .is_some_and(|_| !response_has_tabular_data(resp))
 }
 
 fn response_has_tabular_data(resp: &query_response::Response) -> bool {
@@ -332,6 +313,12 @@ fn response_has_tabular_data(resp: &query_response::Response) -> bool {
             .unwrap_or(false)
 }
 
+/// Poll Snowflake for completion, starting with a burst of short delays
+/// and then degrading into retry-policy-driven exponential backoff.
+/// Each HTTP poll flows through the shared retry helper so transport
+/// or retryable status failures are retried automatically. We stop
+/// polling once tabular data arrives, Snowflake returns a terminal
+/// error, or the overall deadline / retry budget is exhausted.
 async fn wait_for_completion(
     client: &reqwest::Client,
     session_token: &str,
@@ -373,11 +360,20 @@ async fn wait_for_completion(
             tokio::time::sleep(delay).await;
         }
 
-        let remaining = policy.max_elapsed - start.elapsed();
-        if remaining <= Duration::from_millis(0) {
+        let elapsed_after_sleep = start.elapsed();
+        let remaining = policy
+            .max_elapsed
+            .checked_sub(elapsed_after_sleep)
+            .ok_or_else(|| SfError::DeadlineExceeded {
+                configured: policy.max_elapsed,
+                elapsed: elapsed_after_sleep,
+                location: current_location(),
+            })?;
+
+        if remaining.is_zero() {
             return Err(SfError::DeadlineExceeded {
                 configured: policy.max_elapsed,
-                elapsed: start.elapsed(),
+                elapsed: elapsed_after_sleep,
                 location: current_location(),
             });
         }
@@ -436,4 +432,42 @@ fn next_poll_delay_ms(prev_ms: f64, backoff: &BackoffConfig) -> f64 {
         next = cap;
     }
     next
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn response_from_json(value: serde_json::Value) -> query_response::Response {
+        serde_json::from_value(value).expect("valid response JSON")
+    }
+
+    #[test]
+    fn should_not_poll_when_failure_has_no_result_url() {
+        let resp = response_from_json(json!({
+            "success": false,
+            "data": {
+                "rowset": null,
+                "rowsetBase64": null
+            }
+        }));
+
+        assert!(!should_poll_for_completion(&resp));
+    }
+
+    #[test]
+    fn should_poll_when_result_url_present_and_no_data() {
+        let resp = response_from_json(json!({
+            "success": true,
+            "data": {
+                "getResultUrl": "https://example.test",
+                "rowset": null,
+                "rowsetBase64": null,
+                "chunks": null
+            }
+        }));
+
+        assert!(should_poll_for_completion(&resp));
+    }
 }
