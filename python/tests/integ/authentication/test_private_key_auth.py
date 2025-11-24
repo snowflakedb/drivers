@@ -12,7 +12,7 @@ class TestPrivateKeyAuthentication:
 
         # When Trying to Connect with no private file provided
         with pytest.raises(Exception) as exception:
-            int_test_connection_factory(authenticator=authenticator)
+            int_test_connection_factory(authenticator=authenticator, private_key_file=None)
 
         # Then There is error returned
         self._verify_missing_parameter_error(exception)

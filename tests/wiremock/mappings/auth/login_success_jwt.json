@@ -1,0 +1,23 @@
+{
+  "name": "Successful JWT authentication",
+  "request": {
+    "urlPathPattern": "/session/v1/login-request.*",
+    "method": "POST",
+    "bodyPatterns": [
+      {
+        "matchesJsonPath": "$.data.AUTHENTICATOR",
+        "equalToJson": "\"SNOWFLAKE_JWT\""
+      }
+    ]
+  },
+  "response": {
+    "status": 200,
+    "jsonBody": {
+      "success": true,
+      "data": {
+        "token": "mock_token",
+        "masterToken": "mock_master_token"
+      }
+    }
+  }
+}

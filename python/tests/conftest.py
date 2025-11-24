@@ -3,10 +3,12 @@ pytest configuration and fixtures for PEP 249 tests.
 """
 
 import pytest
+from urllib.parse import urlparse
 
-from .connector_factory import ConnectorFactory, create_connection_with_adapter
 from .compatibility import set_current_connector
+from .connector_factory import ConnectorFactory, create_connection_with_adapter
 from .connector_types import ConnectorType
+from .private_key_helper import get_test_private_key_path
 
 
 def pytest_addoption(parser):
@@ -81,19 +83,24 @@ def int_test_connection_factory(connector_adapter):
     """Factory function for creating connections with integration test parameters."""
     def _create_connection(**override_params):
         """Create a connection with integration test parameters."""
+        default_server_url = "http://localhost:8090"
+        server_url = override_params.get("server_url", default_server_url)
+        parsed_url = urlparse(server_url)
+        
         # Default integration test parameters
         integration_params = {
             "account": "test_account",
-            "user": "test_user", 
-            "password": "test_password",
+            "user": "test_user",
             "database": "test_database",
             "schema": "test_schema",
             "warehouse": "test_warehouse",
             "role": "test_role",
-            "host": "localhost",
-            "port": 8090,
-            "protocol": "http",
-            "server_url": "http://localhost:8090",
+            "server_url": server_url,
+            "protocol": parsed_url.scheme,
+            "host": parsed_url.hostname,
+            "port": parsed_url.port,
+            "authenticator": "SNOWFLAKE_JWT",
+            "private_key_file": get_test_private_key_path(),
         }
         
         integration_params.update(override_params)

@@ -3,7 +3,7 @@ import random
 import logging
 
 from .auth_helpers import verify_simple_query_execution, verify_login_error
-from ...connector_factory import get_test_parameters
+from ...config import get_test_parameters
 
 
 @pytest.fixture

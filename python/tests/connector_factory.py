@@ -5,13 +5,14 @@ This module provides a unified interface to test different Snowflake connector
 implementations with the same test suite.
 """
 
-import os
-import json
 from abc import ABC, abstractmethod
-from typing import Dict, Any
+from typing import Any, Dict
 import importlib
 
+from .compatibility import is_new_driver, is_old_driver
+from .config import get_test_parameters
 from .connector_types import ConnectorType
+from .private_key_helper import get_private_key_from_parameters, get_private_key_password
 
 
 class ConnectorAdapter(ABC):
@@ -126,34 +127,9 @@ class ConnectorFactory:
         }
 
 
-def get_test_parameters():
-    """Get test connection parameters from environment or parameters file."""
-    # First try environment variable
-    parameter_path = os.environ.get("PARAMETER_PATH")
-    if parameter_path and os.path.exists(parameter_path):
-        with open(parameter_path) as f:
-            parameters = json.load(f)
-            return parameters.get("testconnection", {})
-    
-    # Fallback to default test parameters (for local testing)
-    return {
-        "SNOWFLAKE_TEST_ACCOUNT": os.environ.get("SNOWFLAKE_TEST_ACCOUNT"),
-        "SNOWFLAKE_TEST_USER": os.environ.get("SNOWFLAKE_TEST_USER"),
-        "SNOWFLAKE_TEST_PASSWORD": os.environ.get("SNOWFLAKE_TEST_PASSWORD"),
-        "SNOWFLAKE_TEST_DATABASE": os.environ.get("SNOWFLAKE_TEST_DATABASE"),
-        "SNOWFLAKE_TEST_SCHEMA": os.environ.get("SNOWFLAKE_TEST_SCHEMA"),
-        "SNOWFLAKE_TEST_WAREHOUSE": os.environ.get("SNOWFLAKE_TEST_WAREHOUSE"),
-        "SNOWFLAKE_TEST_ROLE": os.environ.get("SNOWFLAKE_TEST_ROLE"),
-        "SNOWFLAKE_TEST_SERVER_URL": os.environ.get("SNOWFLAKE_TEST_SERVER_URL"),
-        "SNOWFLAKE_TEST_HOST": os.environ.get("SNOWFLAKE_TEST_HOST"),
-        "SNOWFLAKE_TEST_PORT": os.environ.get("SNOWFLAKE_TEST_PORT"),
-        "SNOWFLAKE_TEST_PROTOCOL": os.environ.get("SNOWFLAKE_TEST_PROTOCOL"),
-    }
-
-
 def create_connection_with_adapter(adapter: ConnectorAdapter, **override_params):
     """Create a connection using the specified adapter and test parameters.
-    
+
     Args:
         adapter: The connector adapter to use
         **override_params: Parameters to override defaults (e.g., account="test", user="testuser")
@@ -164,12 +140,15 @@ def create_connection_with_adapter(adapter: ConnectorAdapter, **override_params)
     connection_params = {
         "account": test_params.get("SNOWFLAKE_TEST_ACCOUNT"),
         "user": test_params.get("SNOWFLAKE_TEST_USER"),
-        "password": test_params.get("SNOWFLAKE_TEST_PASSWORD"),
         "database": test_params.get("SNOWFLAKE_TEST_DATABASE"),
         "schema": test_params.get("SNOWFLAKE_TEST_SCHEMA"),
         "warehouse": test_params.get("SNOWFLAKE_TEST_WAREHOUSE"),
         "role": test_params.get("SNOWFLAKE_TEST_ROLE"),
     }
+    
+    # Use JWT authentication by default (unless custom private_key_file or authenticator is provided)
+    if "private_key_file" not in override_params and "authenticator" not in override_params:
+        setup_default_jwt_auth(connection_params)
     
     # Add optional parameters if they exist
     if test_params.get("SNOWFLAKE_TEST_SERVER_URL"):
@@ -188,3 +167,21 @@ def create_connection_with_adapter(adapter: ConnectorAdapter, **override_params)
     connection_params.update(override_params)
     
     return adapter.connect(**connection_params)
+
+
+def setup_default_jwt_auth(connection_params: Dict[str, Any]) -> None:
+    """Set up default JWT authentication using encrypted private key from environment.
+    
+    Args:
+        connection_params: Dictionary to populate with JWT auth parameters
+    """
+    connection_params["authenticator"] = "SNOWFLAKE_JWT"
+    private_key_path = get_private_key_from_parameters()
+    connection_params["private_key_file"] = private_key_path
+    
+    private_key_pwd = get_private_key_password()
+    if private_key_pwd:
+        if is_old_driver():
+            connection_params["private_key_file_pwd"] = private_key_pwd
+        elif is_new_driver():
+            connection_params["private_key_password"] = private_key_pwd

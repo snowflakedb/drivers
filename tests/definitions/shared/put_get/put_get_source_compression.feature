@@ -43,7 +43,7 @@ Feature: PUT/GET source compression
     When File is uploaded with SOURCE_COMPRESSION set to NONE and AUTO_COMPRESS set to TRUE
     Then Target compression has GZIP type and all PUT results are correct
 
-  @core_e2e @python_e2e
+  @core_int @python_int
   Scenario: should return error for unsupported compression type
     Given Snowflake client is logged in
     And File compressed with unsupported format

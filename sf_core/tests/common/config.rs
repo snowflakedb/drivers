@@ -44,10 +44,6 @@ pub fn get_parameters() -> Parameters {
     println!("Parameter path: {parameter_path}");
     let parameters = fs::read_to_string(parameter_path).unwrap();
     let parameters: ParametersFile = serde_json::from_str(&parameters).unwrap();
-    println!(
-        "Parameters: {:?}",
-        serde_json::to_string_pretty(&parameters).unwrap()
-    );
     parameters.testconnection
 }
 
