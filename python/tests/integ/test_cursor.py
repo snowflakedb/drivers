@@ -5,9 +5,9 @@ Integration tests for PEP 249 Cursor objects.
 import pytest
 from unittest.mock import Mock
 
-from pep249_dbapi.connection import Connection
-from pep249_dbapi.cursor import Cursor
-from pep249_dbapi.exceptions import NotSupportedError
+from python.connection import Connection
+from python.cursor import Cursor
+from python.exceptions import NotSupportedError
 
 
 class TestCursorMethods:

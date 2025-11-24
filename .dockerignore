@@ -9,8 +9,8 @@ tests/tests_format_validator/target/
 .tox/
 .venv/
 .venv*/
-pep249_dbapi/.tox/
-pep249_dbapi/.venv/
+python/.tox/
+python/.venv/
 **/__pycache__/
 *.pyc
 *.pyo
@@ -43,8 +43,8 @@ odbc_tests/cmake-build-reference/
 **/dist/
 *.egg-info/
 **/*.egg-info/
-pep249_dbapi/build/
-pep249_dbapi/reports/
+python/build/
+python/reports/
 
 # Test results and reports
 results/

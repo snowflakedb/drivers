@@ -3,7 +3,7 @@ requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "snowflake-pep249-dbapi"
+name = "snowflake-connector-python-ud"  # TODO: change this once ready, needs switching tests to UD
 version = "0.1.0"
 description = "A PEP 249 Database API 2.0 implementation for Snowflake"
 readme = "README.md"
@@ -36,9 +36,8 @@ dependencies = [
 "Documentation" = "https://github.com/snowflakedb/universal-driver/blob/main/README.md"
 
 [tool.setuptools.packages.find]
-where = ["."]
-include = ["pep249_dbapi*"]
-exclude = ["tests*", "reports*", "ci*"]
+where = ["src"]
+include = ["snowflake.*"]
 
 [project.optional-dependencies]
 test = [
@@ -60,8 +59,6 @@ dev = [
     "mypy",
 ]
 
-
-
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
@@ -82,7 +79,7 @@ log_cli_format = "%(asctime)s [%(levelname)8s] %(message)s (%(pathname)s:%(linen
 log_cli_date_format = "%Y-%m-%d %H:%M:%S"
 
 [tool.coverage.run]
-source = ["pep249_dbapi"]
+source = ["snowflake"]
 omit = [
     "*/tests/*",
     "*/test_*",

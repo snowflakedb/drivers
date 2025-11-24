@@ -4,7 +4,7 @@ PEP 249 Database API 2.0 Implementation
 This module provides an empty implementation of the Python Database API Specification 2.0
 as defined in PEP 249.
 """
-from .api_client.c_api import register_default_logger_callback
+from ._internal.api_client.c_api import register_default_logger_callback
 from .connection import Connection
 from .cursor import Cursor
 from .exceptions import (
@@ -26,7 +26,7 @@ register_default_logger_callback()
 def connect(**kwargs):
     """
     Create a connection to the database.
-    
+
     Args:
         database: Database name
         user: Username
@@ -34,7 +34,7 @@ def connect(**kwargs):
         host: Host name
         port: Port number
         **kwargs: Additional connection parameters
-        
+
     Returns:
         Connection: A Connection object
     """

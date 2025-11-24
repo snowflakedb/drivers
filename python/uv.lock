@@ -1080,7 +1080,7 @@ wheels = [
 ]
 
 [[package]]
-name = "snowflake-pep249-dbapi"
+name = "snowflake-connector-python-ud"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [

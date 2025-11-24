@@ -3,8 +3,7 @@ PEP 249 Database API 2.0 Connection Objects
 
 This module defines the Connection class as specified in PEP 249.
 """
-from .api_client.client_api import database_driver_client
-from .protobuf_gen.database_driver_v1_pb2 import *
+from python.src.snowflake.ud_connector._internal.api_client import database_driver_client
 from .cursor import Cursor
 from .exceptions import NotSupportedError, InterfaceError
 

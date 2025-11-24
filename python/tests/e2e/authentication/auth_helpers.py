@@ -1,6 +1,6 @@
 from ...compatibility import OLD_DRIVER_ONLY, NEW_DRIVER_ONLY
-from pep249_dbapi.protobuf_gen.proto_exception import ProtoApplicationException
-from pep249_dbapi.protobuf_gen.database_driver_v1_pb2 import DriverException
+from snowflake.ud_connector._internal.protobuf_gen.proto_exception import ProtoApplicationException
+from snowflake.ud_connector._internal.protobuf_gen.database_driver_v1_pb2 import DriverException
 import snowflake.connector.errors
 
 

@@ -11,10 +11,6 @@ jdbc/.gradle
 jdbc/build
 odbc_tests/cmake-build
 parameters.json
-pep249_dbapi/build
-pep249_dbapi/pep249_dbapi.egg-info/
-pep249_dbapi/reports
-pep249_dbapi/snowflake_pep249_dbapi.egg-info/
 rsa_key.p8
 universal_driver_e2e_test_coverage.html
 sf_core/src/bin

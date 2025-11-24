@@ -2,11 +2,9 @@
 Tests for PEP 249 module interface.
 """
 
-import pytest
+import snowflake.ud_connector as pep249_dbapi
 
-import pep249_dbapi
-
-from pep249_dbapi import (
+from snowflake.ud_connector import (
     apilevel, threadsafety, paramstyle, connect,
     Connection, Cursor, Warning, Error, InterfaceError, DatabaseError,
     DataError, OperationalError, IntegrityError, InternalError,

@@ -298,17 +298,17 @@ impl TestDiscovery {
 
                 let base_path = if let Some(subdir) = subdir {
                     self.workspace_root
-                        .join(format!("pep249_dbapi/tests/{}", test_dir))
+                        .join(format!("python/tests/{}", test_dir))
                         .join(subdir)
                 } else {
                     self.workspace_root
-                        .join(format!("pep249_dbapi/tests/{}", test_dir))
+                        .join(format!("python/tests/{}", test_dir))
                 };
 
                 vec![
-                    // pep249_dbapi/tests/[e2e|integ]/[subdir/]test_feature_name.py (pytest convention)
+                    // python/tests/[e2e|integ]/[subdir/]test_feature_name.py (pytest convention)
                     base_path.join(format!("test_{}.py", snake_name)),
-                    // pep249_dbapi/tests/[e2e|integ]/[subdir/]feature_name.py (legacy)
+                    // python/tests/[e2e|integ]/[subdir/]feature_name.py (legacy)
                     base_path.join(format!("{}.py", snake_name)),
                 ]
             }

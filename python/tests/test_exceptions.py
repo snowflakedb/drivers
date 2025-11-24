@@ -4,7 +4,7 @@ Tests for PEP 249 exception classes.
 
 import pytest
 
-from pep249_dbapi.exceptions import (
+from snowflake.ud_connector.exceptions import (
     Warning, Error, InterfaceError, DatabaseError, DataError,
     OperationalError, IntegrityError, InternalError, ProgrammingError,
     NotSupportedError

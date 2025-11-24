@@ -46,8 +46,8 @@ class UniversalConnectorAdapter(ConnectorAdapter):
     
     def __init__(self):
         # Import the universal connector
-        import pep249_dbapi
-        self.connector = pep249_dbapi
+        import python
+        self.connector = python
     
     def connect(self, **kwargs) -> Any:
         """Create a connection using the universal connector."""

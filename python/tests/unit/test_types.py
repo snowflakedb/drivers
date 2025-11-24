@@ -6,7 +6,7 @@ import datetime
 import time
 import pytest
 
-from pep249_dbapi.types import (
+from snowflake.ud_connector.types import (
     Date, Time, Timestamp, DateFromTicks, TimeFromTicks, TimestampFromTicks,
     Binary, STRING, BINARY, NUMBER, DATETIME, ROWID, DBAPITypeObject
 )

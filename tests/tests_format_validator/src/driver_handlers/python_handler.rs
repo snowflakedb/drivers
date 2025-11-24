@@ -23,12 +23,12 @@ impl BaseDriverHandler for PythonHandler {
 
     fn get_behavior_differences_file_path(&self) -> PathBuf {
         self.workspace_root
-            .join("pep249_dbapi")
+            .join("python")
             .join("BehaviorDifferences.yaml")
     }
 
     fn get_test_directory(&self) -> PathBuf {
-        self.workspace_root.join("pep249_dbapi/tests")
+        self.workspace_root.join("python/tests")
     }
 
     fn get_test_file_extensions(&self) -> Vec<String> {

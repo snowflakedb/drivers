@@ -4,7 +4,7 @@ Integration tests for PEP 249 Connection objects.
 import pytest
 from unittest.mock import Mock
 
-from pep249_dbapi.exceptions import NotSupportedError
+from snowflake.ud_connector.exceptions import NotSupportedError
 
 
 class TestConnectionMethods:

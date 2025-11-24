@@ -59,7 +59,7 @@ cargo build --package jdbc_bridge
 
 Each driver implementation has its own testing setup and requirements. See the individual README files for detailed instructions:
 
-- **Python (PEP 249)**: See [pep249_dbapi/README.md](pep249_dbapi/README.md)
+- **Python (PEP 249)**: See [python/README.md](python/README.md)
 - **Rust Core**: See [sf_core/README.md](sf_core/README.md)
 - **ODBC**: See [odbc/README.md](odbc/README.md)
 - **JDBC**: See [jdbc/README.md](jdbc/README.md)

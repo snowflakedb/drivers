@@ -10,8 +10,8 @@ def get_connector(driver_type):
         import snowflake.connector
         return snowflake.connector
     else:  # universal
-        import pep249_dbapi
-        return pep249_dbapi
+        import snowflake.ud_connector
+        return snowflake.ud_connector
 
 
 def get_driver_version(driver_type):
