@@ -1,4 +1,4 @@
-name: PEP-249 CI
+name: Python CI
 
 on:
   push:
@@ -41,7 +41,7 @@ jobs:
           path: target/debug/libsf_core.so
 
   # Combined unit + integration tests with universal connector
-  pep249_tests:
+  python_tests:
     needs: build_rust_core
     strategy:
       fail-fast: false
@@ -64,7 +64,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: /tmp/.uv-cache
-          key: uv-${{ runner.os }}-${{ matrix.py }}-${{ hashFiles('pep249_dbapi/uv.lock', 'pep249_dbapi/pyproject.toml', 'pep249_dbapi/tox.ini') }}
+          key: uv-${{ runner.os }}-${{ matrix.py }}-${{ hashFiles('python/uv.lock', 'python/pyproject.toml', 'python/tox.ini') }}
           restore-keys: |
             uv-${{ runner.os }}-${{ matrix.py }}-
             uv-${{ runner.os }}-
@@ -85,7 +85,7 @@ jobs:
 
       - name: Setup dependencies
         run: make setup
-        working-directory: pep249_dbapi
+        working-directory: python
 
       - name: Run all tests with coverage
         env:
@@ -99,17 +99,17 @@ jobs:
           uv run tox -e py${PYTHON_ID}-all -- \
             --json-report --json-report-file=reports/universal-${{ matrix.os }}-${{ matrix.py }}.json \
             --junitxml=reports/universal-${{ matrix.os }}-${{ matrix.py }}.xml \
-            --cov=pep249_dbapi \
+            --cov=src/snowflake \
             --cov-report=xml:reports/coverage-${{ matrix.os }}-${{ matrix.py }}.xml \
             --cov-report=html:reports/coverage-${{ matrix.os }}-${{ matrix.py }}-html
-        working-directory: pep249_dbapi
+        working-directory: python
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
         env:
           CODECOV_TOKEN: ${{ secrets.SNOW_CODECOV_TOKEN }}
         with:
-          files: ./pep249_dbapi/reports/coverage-${{ matrix.os }}-${{ matrix.py }}.xml
+          files: ./python/reports/coverage-${{ matrix.os }}-${{ matrix.py }}.xml
           flags: python
           name: python-${{ matrix.os }}-py${{ matrix.py }}
           fail_ci_if_error: false
@@ -118,10 +118,10 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: results-universal-${{ matrix.os }}-${{ matrix.py }}
-          path: pep249_dbapi/reports/*-${{ matrix.os }}-${{ matrix.py }}.*
+          path: python/reports/*-${{ matrix.os }}-${{ matrix.py }}.*
 
   # Integration tests only with reference connector (for comparison)
-  pep249_tests_reference:
+  python_tests_reference:
     needs: build_rust_core
     runs-on: ubuntu-latest
     if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
@@ -140,7 +140,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: /tmp/.uv-cache
-          key: uv-${{ runner.os }}-${{ env.REFERENCE_PYTHON_VERSION }}-${{ hashFiles('pep249_dbapi/uv.lock', 'pep249_dbapi/pyproject.toml', 'pep249_dbapi/tox.ini') }}
+          key: uv-${{ runner.os }}-${{ env.REFERENCE_PYTHON_VERSION }}-${{ hashFiles('python/uv.lock', 'python/pyproject.toml', 'python/tox.ini') }}
           restore-keys: |
             uv-${{ runner.os }}-${{ env.REFERENCE_PYTHON_VERSION }}-
             uv-${{ runner.os }}-
@@ -161,7 +161,7 @@ jobs:
 
       - name: Setup dependencies
         run: make setup
-        working-directory: pep249_dbapi
+        working-directory: python
 
       - name: Run reference integration tests
         env:
@@ -169,18 +169,18 @@ jobs:
           PARAMETER_PATH: ${{ github.workspace }}/parameters.json
           REFERENCE_DRIVER_VERSION: ${{ env.PYTHON_REFERENCE_DRIVER_VERSION }}
         run: make ci-test-reference PYTHON_VERSION=${{ env.REFERENCE_PYTHON_VERSION }} OS_VERSION=${{ env.REFERENCE_OS_VERSION }}
-        working-directory: pep249_dbapi
+        working-directory: python
 
       - name: Upload test results as GitHub artifact
         uses: actions/upload-artifact@v4
         if: always()  # Upload test results even if tests fail (needed for comparison)
         with:
           name: results-reference-${{ env.REFERENCE_OS_VERSION }}-${{ env.REFERENCE_PYTHON_VERSION }}
-          path: pep249_dbapi/reports/*-${{ env.REFERENCE_OS_VERSION }}-${{ env.REFERENCE_PYTHON_VERSION }}.*
+          path: python/reports/*-${{ env.REFERENCE_OS_VERSION }}-${{ env.REFERENCE_PYTHON_VERSION }}.*
 
   # Compare results between connectors
-  pep249_compare_results:
-    needs: [pep249_tests, pep249_tests_reference]
+  python_compare_results:
+    needs: [python_tests, python_tests_reference]
     if: always()  # Run comparison even if reference tests fail (we want to see the differences)
     runs-on: ubuntu-latest
     steps:
@@ -205,7 +205,7 @@ jobs:
 
       - name: Setup dependencies
         run: make setup
-        working-directory: pep249_dbapi
+        working-directory: python
 
       - name: Compare integration test results
         env:
@@ -214,4 +214,4 @@ jobs:
           FAIL_ON_REGRESSIONS: "0"   # set to "1" when ready to for a strong requirement on compliance with old driver
         run: |
           make ci-compare-artifacts PYTHON_VERSION=${{ env.REFERENCE_PYTHON_VERSION }} OS_VERSION=${{ env.REFERENCE_OS_VERSION }} | tee -a $GITHUB_STEP_SUMMARY
-        working-directory: pep249_dbapi
+        working-directory: python

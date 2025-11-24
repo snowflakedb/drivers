@@ -243,7 +243,7 @@ impl GherkinValidator {
                     .join("jdbc/src/test/java/com/snowflake/jdbc/e2e"),
             ],
             Language::Odbc => vec![self._workspace_root.join("odbc_tests/tests/e2e")],
-            Language::Python => vec![self._workspace_root.join("pep249_dbapi/tests/e2e")],
+            Language::Python => vec![self._workspace_root.join("python/tests/e2e")],
             _ => vec![],
         }
     }

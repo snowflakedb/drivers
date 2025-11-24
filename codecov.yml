@@ -9,7 +9,7 @@ flags:
     paths: ["sf_core/**"]
     carryforward: false
   python:
-    paths: ["pep249_dbapi/**"]
+    paths: ["python/**"]
     carryforward: false
   jdbc:
     paths: ["jdbc/**", "jdbc_bridge/**"]
@@ -58,7 +58,7 @@ component_management:
     - component_id: python
       name: "Python Driver"
       paths:
-        - "pep249_dbapi/**"
+        - "python/**"
     - component_id: jdbc
       name: "JDBC Driver"
       paths:
