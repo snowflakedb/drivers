@@ -5,9 +5,9 @@ Integration tests for PEP 249 Cursor objects.
 import pytest
 from unittest.mock import Mock
 
-from python.connection import Connection
-from python.cursor import Cursor
-from python.exceptions import NotSupportedError
+from snowflake.ud_connector.connection import Connection
+from snowflake.ud_connector.cursor import Cursor
+from snowflake.ud_connector.exceptions import NotSupportedError
 
 
 class TestCursorMethods:
