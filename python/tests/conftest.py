@@ -3,7 +3,6 @@ pytest configuration and fixtures for PEP 249 tests.
 """
 
 import pytest
-from pathlib import Path
 
 from .connector_factory import ConnectorFactory, create_connection_with_adapter
 from .compatibility import set_current_connector
@@ -39,13 +38,10 @@ def connector_adapter(request, connector_type):
     """Create the appropriate connector adapter based on command line option."""
     reference_package = request.config.getoption("--reference-package")
 
-    try:
-        if connector_type == ConnectorType.REFERENCE:
-            return ConnectorFactory.create_adapter(connector_type, package_name=reference_package)
-        else:
-            return ConnectorFactory.create_adapter(connector_type)
-    except ImportError as e:
-        pytest.skip(f"Connector {connector_type} not available: {e}")
+    if connector_type == ConnectorType.REFERENCE:
+        return ConnectorFactory.create_adapter(connector_type, package_name=reference_package)
+
+    return ConnectorFactory.create_adapter(connector_type)
 
 
 @pytest.fixture
