@@ -16,8 +16,8 @@ pub fn compress_data(input_data: Vec<u8>) -> Result<Vec<u8>, CompressionError> {
 }
 
 // Chunks decompression
-pub fn decompress_data(input_data: Vec<u8>) -> Result<Vec<u8>, CompressionError> {
-    let mut decoder = GzDecoder::new(input_data.as_slice());
+pub fn decompress_data(input_data: &[u8]) -> Result<Vec<u8>, CompressionError> {
+    let mut decoder = GzDecoder::new(input_data);
     let mut decompressed_data = Vec::new();
     decoder
         .read_to_end(&mut decompressed_data)

@@ -8,10 +8,16 @@ use arrow::datatypes::SchemaRef;
 use arrow::error::ArrowError;
 use arrow_ipc::reader::StreamReader;
 use once_cell::sync::Lazy;
-use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
+use reqwest::header::{self, HeaderMap, HeaderName, HeaderValue};
 use snafu::{Location, ResultExt, Snafu};
 
-static CHUNK_HTTP_CLIENT: Lazy<reqwest::Client> = Lazy::new(reqwest::Client::new);
+static CHUNK_HTTP_CLIENT: Lazy<reqwest::Client> = Lazy::new(|| {
+    reqwest::Client::builder()
+        .build()
+        .expect("chunk HTTP client must build")
+});
+
+const MAX_CHUNK_DECOMPRESSION_RETRIES: u32 = 2;
 
 pub struct ChunkDownloadData {
     url: String,
@@ -119,49 +125,100 @@ pub async fn get_chunk_data(chunk: &ChunkDownloadData) -> Result<Vec<u8>, ChunkE
     let policy = RetryPolicy::default();
     let ctx = HttpContext::new(Method::GET, url.clone()).with_idempotent(true);
 
-    let build = || client.get(url.clone()).headers(headers.clone());
-    let response = match execute_with_retry(build, &ctx, &policy, |r| async move { Ok(r) }).await {
-        Ok(r) => r,
-        Err(e) => {
-            return Err(match e {
-                HttpError::Transport { source, .. } => ChunkError::Communication {
-                    source,
-                    location: Location::new(file!(), line!(), column!()),
-                },
-                HttpError::DeadlineExceeded { .. } | HttpError::RetryAfterExceeded { .. } => {
-                    ChunkError::UnsuccessfulResponseHTTP {
-                        status: reqwest::StatusCode::REQUEST_TIMEOUT,
+    let mut decompress_attempt = 0;
+    loop {
+        let response = match execute_with_retry(
+            || client.get(url.clone()).headers(headers.clone()),
+            &ctx,
+            &policy,
+            |r| async move { Ok(r) },
+        )
+        .await
+        {
+            Ok(r) => r,
+            Err(e) => {
+                return Err(match e {
+                    HttpError::Transport { source, .. } => ChunkError::Communication {
+                        source,
                         location: Location::new(file!(), line!(), column!()),
+                    },
+                    HttpError::DeadlineExceeded { .. } | HttpError::RetryAfterExceeded { .. } => {
+                        ChunkError::UnsuccessfulResponseHTTP {
+                            status: reqwest::StatusCode::REQUEST_TIMEOUT,
+                            location: Location::new(file!(), line!(), column!()),
+                        }
                     }
-                }
-                HttpError::MaxAttempts { last_status, .. } => {
-                    ChunkError::UnsuccessfulResponseHTTP {
-                        status: last_status,
-                        location: Location::new(file!(), line!(), column!()),
+                    HttpError::MaxAttempts { last_status, .. } => {
+                        ChunkError::UnsuccessfulResponseHTTP {
+                            status: last_status,
+                            location: Location::new(file!(), line!(), column!()),
+                        }
                     }
-                }
-            });
-        }
-    };
+                });
+            }
+        };
 
-    if !response.status().is_success() {
-        UnsuccessfulResponseHTTPSnafu {
-            status: response.status(),
+        if !response.status().is_success() {
+            UnsuccessfulResponseHTTPSnafu {
+                status: response.status(),
+            }
+            .fail()?;
         }
-        .fail()?;
+
+        let encoding_header = response.headers().get(header::CONTENT_ENCODING).cloned();
+        let body = response.bytes().await.context(CommunicationSnafu)?.to_vec();
+
+        match decode_chunk_body(body, encoding_header.as_ref()) {
+            Ok(decoded) => return Ok(decoded),
+            Err(err @ ChunkError::Decompression { .. }) => {
+                if decompress_attempt >= MAX_CHUNK_DECOMPRESSION_RETRIES {
+                    return Err(err);
+                }
+                decompress_attempt += 1;
+                tracing::warn!(
+                    attempt = decompress_attempt,
+                    url = %url,
+                    "Chunk decompression failed, retrying"
+                );
+                continue;
+            }
+            Err(err) => return Err(err),
+        }
     }
-    tracing::debug!("Chunk response: {:?}", response);
-    let body = if response.headers().get("Content-Encoding")
-        == Some(&HeaderValue::from_str("gzip").unwrap())
-    {
-        tracing::debug!("Decompressing chunk data");
-        let compressed_body = response.bytes().await.context(CommunicationSnafu)?;
-        decompress_data(compressed_body.to_vec()).context(DecompressionSnafu)?
-    } else {
-        response.bytes().await.context(CommunicationSnafu)?.to_vec()
+}
+
+fn decode_chunk_body(body: Vec<u8>, encoding: Option<&HeaderValue>) -> Result<Vec<u8>, ChunkError> {
+    let Some(value) = encoding else {
+        return Ok(body);
     };
 
-    Ok(body)
+    let encoding_str = value
+        .to_str()
+        .map_err(|_| ChunkError::UnsupportedEncoding {
+            encoding: "<invalid utf-8>".to_string(),
+            location: Location::new(file!(), line!(), column!()),
+        })?;
+
+    let mut data = body;
+    for token in encoding_str
+        .split(',')
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+    {
+        if token.eq_ignore_ascii_case("identity") {
+            continue;
+        }
+        if token.eq_ignore_ascii_case("gzip") {
+            data = decompress_data(&data).context(DecompressionSnafu)?;
+            continue;
+        }
+        return UnsupportedEncodingSnafu {
+            encoding: token.to_string(),
+        }
+        .fail();
+    }
+
+    Ok(data)
 }
 
 #[derive(Snafu, Debug)]
@@ -192,9 +249,15 @@ pub enum ChunkError {
         #[snafu(implicit)]
         location: Location,
     },
-    #[snafu(display("Failed to decompress chunk data"))]
+    #[snafu(display("Failed to decompress chunk data: {source}"))]
     Decompression {
         source: CompressionError,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Unsupported content encoding: {encoding}"))]
+    UnsupportedEncoding {
+        encoding: String,
         #[snafu(implicit)]
         location: Location,
     },
