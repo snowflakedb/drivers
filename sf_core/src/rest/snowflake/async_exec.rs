@@ -3,8 +3,10 @@ use crate::config::retry::{BackoffConfig, RetryPolicy};
 use crate::http::retry::{HttpContext, HttpError, execute_with_retry};
 use crate::rest::snowflake::error::SfError;
 use crate::rest::snowflake::{query_request, query_response};
+use reqwest::header;
 use reqwest::{Method, StatusCode};
 use snafu::Location;
+use std::collections::HashMap;
 use std::panic::Location as StdLocation;
 use std::time::{Duration, Instant};
 use tracing::debug;
@@ -16,63 +18,79 @@ const INLINE_SHORT_POLL_DELAYS: &[Duration] = &[
     Duration::from_millis(125),
     Duration::from_millis(250),
 ];
+const QUERY_REQUEST_PATH: &str = "/queries/v1/query-request";
+const JSON_MIME: &str = "application/json";
+const QUERY_SEQUENCE_ID: u64 = 1;
+
+fn join_server_path(server_url: &str, path: &str) -> Result<String, SfError> {
+    Url::parse(server_url)
+        .and_then(|base| base.join(path))
+        .map(|joined| joined.to_string())
+        .map_err(|source| SfError::ResultUrlParse {
+            url: format!("{server_url}{path}"),
+            source,
+            location: current_location(),
+        })
+}
 pub struct SubmitOk {
     pub query_id: Option<String>,
     pub get_result_url: Option<String>,
     pub response: query_response::Response,
 }
 
-pub async fn submit_statement_async(
-    client: &reqwest::Client,
-    server_url: &str,
-    session_token: &str,
+fn build_async_query_request(
     sql: String,
-    parameter_bindings: Option<std::collections::HashMap<String, query_request::BindParameter>>,
-    request_id: uuid::Uuid,
-    policy: &RetryPolicy,
-) -> Result<SubmitOk, SfError> {
-    let query_url = format!("{server_url}/queries/v1/query-request");
-
-    let query_request = query_request::Request {
+    parameter_bindings: Option<&HashMap<String, query_request::BindParameter>>,
+) -> query_request::Request {
+    query_request::Request {
         sql_text: sql,
         async_exec: true,
-        sequence_id: 1,
-        query_submission_time: std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as i64,
+        sequence_id: QUERY_SEQUENCE_ID,
+        query_submission_time: current_epoch_millis(),
         is_internal: false,
         describe_only: None,
         parameters: None,
-        bindings: parameter_bindings,
+        bindings: parameter_bindings.cloned(),
         bind_stage: None,
         query_context: query_request::QueryContext { entries: None },
-    };
+    }
+}
 
-    let build = || {
-        client
-            .post(&query_url)
-            .header(
-                "Authorization",
-                format!("Snowflake Token=\"{session_token}\""),
-            )
-            .header("Accept", "application/json")
-            .query(&[("requestId", request_id.to_string())])
-            .json(&query_request)
-    };
+fn build_submit_request(
+    client: &reqwest::Client,
+    endpoint: &str,
+    session_token: &str,
+    request_id: uuid::Uuid,
+    payload: &query_request::Request,
+) -> reqwest::RequestBuilder {
+    let auth_header = authorization_header(session_token);
+    client
+        .post(endpoint)
+        .header(header::AUTHORIZATION, auth_header)
+        .header(header::ACCEPT, header::HeaderValue::from_static(JSON_MIME))
+        .header(
+            header::CONTENT_TYPE,
+            header::HeaderValue::from_static(JSON_MIME),
+        )
+        .query(&[("requestId", request_id.to_string())])
+        .json(payload)
+}
 
-    let ctx = HttpContext::new(Method::POST, "/queries/v1/query-request").allow_post_retry();
+fn authorization_header(session_token: &str) -> header::HeaderValue {
+    let value = format!("Snowflake Token=\"{session_token}\"");
+    header::HeaderValue::from_str(&value).expect("authorization header construction must succeed")
+}
 
-    let resp = execute_with_retry(build, &ctx, policy, |r| async move { Ok(r) })
-        .await
-        .map_err(map_http_error)?;
-
-    let status = resp.status();
+async fn parse_submit_response(
+    server_url: &str,
+    response: reqwest::Response,
+) -> Result<SubmitOk, SfError> {
+    let status = response.status();
     if !status.is_success() {
         return Err(http_status_error(status));
     }
 
-    let body_text = resp
+    let body_text = response
         .text()
         .await
         .map_err(|source| transport_error(source))?;
@@ -106,6 +124,35 @@ pub async fn submit_statement_async(
     })
 }
 
+fn current_epoch_millis() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as i64
+}
+
+pub async fn submit_statement_async(
+    client: &reqwest::Client,
+    server_url: &str,
+    session_token: &str,
+    sql: String,
+    parameter_bindings: Option<&HashMap<String, query_request::BindParameter>>,
+    request_id: uuid::Uuid,
+    policy: &RetryPolicy,
+) -> Result<SubmitOk, SfError> {
+    let endpoint = join_server_path(server_url, QUERY_REQUEST_PATH)?;
+    let request_body = build_async_query_request(sql, parameter_bindings);
+    let submit_request =
+        || build_submit_request(client, &endpoint, session_token, request_id, &request_body);
+
+    let ctx = HttpContext::new(Method::POST, QUERY_REQUEST_PATH).allow_post_retry();
+    let response = execute_with_retry(submit_request, &ctx, policy, |r| async move { Ok(r) })
+        .await
+        .map_err(map_http_error)?;
+
+    parse_submit_response(server_url, response).await
+}
+
 pub async fn poll_query_status(
     client: &reqwest::Client,
     session_token: &str,
@@ -114,21 +161,22 @@ pub async fn poll_query_status(
 ) -> Result<query_response::Response, SfError> {
     let result_url = get_result_url.to_string();
     let session = session_token.to_string();
-    let build = move || {
+    let auth_header = authorization_header(&session);
+    let poll_request = move || {
         client
             .get(result_url.clone())
-            .header("Authorization", format!("Snowflake Token=\"{session}\""))
-            .header("Accept", "application/json")
+            .header(header::AUTHORIZATION, auth_header.clone())
+            .header(header::ACCEPT, header::HeaderValue::from_static(JSON_MIME))
     };
     let ctx = HttpContext::new(Method::GET, get_result_url.to_string());
-    let resp = execute_with_retry(build, &ctx, policy, |r| async move { Ok(r) })
+    let response = execute_with_retry(poll_request, &ctx, policy, |r| async move { Ok(r) })
         .await
         .map_err(map_http_error)?;
-    let status = resp.status();
+    let status = response.status();
     if !status.is_success() {
         return Err(http_status_error(status));
     }
-    let body_text = resp
+    let body_text = response
         .text()
         .await
         .map_err(|source| transport_error(source))?;
@@ -155,7 +203,7 @@ pub async fn execute_blocking_with_async(
     server_url: &str,
     session_token: &str,
     sql: String,
-    parameter_bindings: Option<std::collections::HashMap<String, query_request::BindParameter>>,
+    parameter_bindings: Option<HashMap<String, query_request::BindParameter>>,
     request_id: uuid::Uuid,
     policy: &RetryPolicy,
 ) -> Result<query_response::Response, SfError> {
@@ -164,7 +212,7 @@ pub async fn execute_blocking_with_async(
         server_url,
         session_token,
         sql,
-        parameter_bindings,
+        parameter_bindings.as_ref(),
         request_id,
         policy,
     )
