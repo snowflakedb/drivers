@@ -17,7 +17,7 @@ env:
   REFERENCE_PYTHON_VERSION: "3.13"
   # OS version for consistent naming across jobs
   REFERENCE_OS_VERSION: "ubuntu-latest"
-  PYTHON_CORE_DOWNLOAD_PATH: "python/src/snowflake/ud_connector/_core"
+  PYTHON_CORE_DOWNLOAD_PATH: "${{ github.workspace }}/python/src/snowflake/ud_connector/_core"
 
 jobs:
   # Build Rust core library once and share across Python jobs
@@ -167,7 +167,7 @@ jobs:
 
       - name: Run reference integration tests
         env:
-          CORE_PATH: ${{ github.workspace }}/target/debug/libsf_core.so
+          CORE_PATH: ${{ env.PYTHON_CORE_DOWNLOAD_PATH }}
           PARAMETER_PATH: ${{ github.workspace }}/parameters.json
           REFERENCE_DRIVER_VERSION: ${{ env.PYTHON_REFERENCE_DRIVER_VERSION }}
         run: make ci-test-reference PYTHON_VERSION=${{ env.REFERENCE_PYTHON_VERSION }} OS_VERSION=${{ env.REFERENCE_OS_VERSION }}
