@@ -17,7 +17,7 @@ env:
   REFERENCE_PYTHON_VERSION: "3.13"
   # OS version for consistent naming across jobs
   REFERENCE_OS_VERSION: "ubuntu-latest"
-  PYTHON_CORE_DOWNLOAD_PATH: "${{ github.workspace }}/python/src/snowflake/ud_connector/_core"
+  PYTHON_CORE_MODULE_PATH: "${{ github.workspace }}/python/src/snowflake/ud_connector/_core"
 
 jobs:
   # Build Rust core library once and share across Python jobs
@@ -40,7 +40,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: rust-core-library
-          path: "${{ env.PYTHON_CORE_DOWNLOAD_PATH }}/libsf_core.so"
+          path: "${{ env.PYTHON_CORE_MODULE_PATH }}/libsf_core.so"
 
   # Combined unit + integration tests with universal connector
   python_tests:
@@ -78,7 +78,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: rust-core-library
-          path: ${{ env.PYTHON_CORE_DOWNLOAD_PATH }}
+          path: ${{ env.PYTHON_CORE_MODULE_PATH }}
 
       - name: Decode secrets
         run: ./scripts/decode_secrets.sh
@@ -153,7 +153,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: rust-core-library
-          path: ${{ env.PYTHON_CORE_DOWNLOAD_PATH }}
+          path: ${{ env.PYTHON_CORE_MODULE_PATH }}
 
       - name: Decode secrets
         run: ./scripts/decode_secrets.sh

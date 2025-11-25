@@ -13,12 +13,12 @@ PROJECT_ROOT := $(abspath ..)
 
 # Library search paths (for dependent native libs)
 # Default search locations derived from PROJECT_ROOT
-DEFAULT_LIB_DEBUG := $(PROJECT_ROOT)/python/src/snowflake/ud_connector/_core
+CORE_MODULE_DIR := $(PROJECT_ROOT)/python/src/snowflake/ud_connector/_core
 
 # Absolute paths to avoid relative path issues across different working directories
-# Derive all core-related paths from DEFAULT_LIB_DEBUG
-DEFAULT_CORE_PATH_MACOS := $(DEFAULT_LIB_DEBUG)/libsf_core.dylib
-DEFAULT_CORE_PATH_LINUX := $(DEFAULT_LIB_DEBUG)/libsf_core.so
+# Derive all core-related paths from CORE_MODULE_DIR
+DEFAULT_CORE_PATH_MACOS := $(CORE_MODULE_DIR)/libsf_core.dylib
+DEFAULT_CORE_PATH_LINUX := $(CORE_MODULE_DIR)/libsf_core.so
 DEFAULT_PARAMETER_PATH := $(PROJECT_ROOT)/parameters.json
 
 SHELL := bash
@@ -72,7 +72,7 @@ TOX_REFERENCE_ENV = py$(PYTHON_ID)-reference
 build-core:
 	@echo "Using CORE_PATH: $(DETECTED_CORE_PATH)"
 	@echo "Using PARAMETER_PATH: $(DETECTED_PARAMETER_PATH)"
-	cd .. && cargo build --package sf_core --target-dir=$(DEFAULT_LIB_DEBUG) && cd $(DEFAULT_LIB_DEBUG) && mv debug/* . &&  rm -rf debug/ || { \
+	cd .. && cargo build --package sf_core --target-dir=$(CORE_MODULE_DIR) && cd $(CORE_MODULE_DIR) && mv debug/* . &&  rm -rf debug/ || { \
 		echo "Failed to build Rust core library"; \
 		echo "Make sure Rust toolchain is installed: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"; \
 		exit 1; \

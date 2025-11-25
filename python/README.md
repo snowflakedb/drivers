@@ -5,7 +5,7 @@ A Python library that implements [PEP 249 (Python Database API Specification 2.0
 ## Development
 To build core library for local development run:
 ```bash
-make dev-build
+make build-core
 ```
 
 ## Testing
