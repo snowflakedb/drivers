@@ -7,8 +7,11 @@ use arrow::array::{RecordBatch, RecordBatchReader};
 use arrow::datatypes::SchemaRef;
 use arrow::error::ArrowError;
 use arrow_ipc::reader::StreamReader;
+use once_cell::sync::Lazy;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use snafu::{Location, ResultExt, Snafu};
+
+static CHUNK_HTTP_CLIENT: Lazy<reqwest::Client> = Lazy::new(reqwest::Client::new);
 
 pub struct ChunkDownloadData {
     url: String,
@@ -102,7 +105,7 @@ pub fn get_chunk_data_sync(chunk: &ChunkDownloadData) -> Result<Vec<u8>, ChunkEr
 
 pub async fn get_chunk_data(chunk: &ChunkDownloadData) -> Result<Vec<u8>, ChunkError> {
     let url = chunk.url.clone();
-    let client = reqwest::Client::new();
+    let client = CHUNK_HTTP_CLIENT.clone();
     let mut headers = HeaderMap::new();
     for (key, value) in chunk.headers.iter() {
         let header_name = HeaderName::from_str(key).context(HeaderNameSnafu { key })?;
@@ -110,42 +113,36 @@ pub async fn get_chunk_data(chunk: &ChunkDownloadData) -> Result<Vec<u8>, ChunkE
         headers.insert(header_name, header_value);
     }
     use crate::config::retry::RetryPolicy;
-    use crate::http::retry::{HttpContext, execute_with_retry};
+    use crate::http::retry::{HttpContext, HttpError, execute_with_retry};
     use reqwest::Method;
 
     let policy = RetryPolicy::default();
-    let ctx = HttpContext {
-        method: Method::GET,
-        path: url.clone(),
-        idempotent: true,
-        allow_post_retry: false,
-    };
+    let ctx = HttpContext::new(Method::GET, url.clone()).with_idempotent(true);
 
     let build = || client.get(url.clone()).headers(headers.clone());
-    let response =
-        match execute_with_retry(&client, build, &ctx, &policy, |r| async move { Ok(r) }).await {
-            Ok(r) => r,
-            Err(e) => match e {
-                crate::http::retry::HttpError::Transport(source) => {
-                    return Err(ChunkError::Communication {
-                        source,
-                        location: Location::new(file!(), line!(), column!()),
-                    });
-                }
-                crate::http::retry::HttpError::DeadlineExceeded => {
-                    return Err(ChunkError::UnsuccessfulResponseHTTP {
+    let response = match execute_with_retry(build, &ctx, &policy, |r| async move { Ok(r) }).await {
+        Ok(r) => r,
+        Err(e) => {
+            return Err(match e {
+                HttpError::Transport { source, .. } => ChunkError::Communication {
+                    source,
+                    location: Location::new(file!(), line!(), column!()),
+                },
+                HttpError::DeadlineExceeded { .. } | HttpError::RetryAfterExceeded { .. } => {
+                    ChunkError::UnsuccessfulResponseHTTP {
                         status: reqwest::StatusCode::REQUEST_TIMEOUT,
                         location: Location::new(file!(), line!(), column!()),
-                    });
+                    }
                 }
-                crate::http::retry::HttpError::HttpStatus { status, .. } => {
-                    return Err(ChunkError::UnsuccessfulResponseHTTP {
-                        status,
+                HttpError::MaxAttempts { last_status, .. } => {
+                    ChunkError::UnsuccessfulResponseHTTP {
+                        status: last_status,
                         location: Location::new(file!(), line!(), column!()),
-                    });
+                    }
                 }
-            },
-        };
+            });
+        }
+    };
 
     if !response.status().is_success() {
         UnsuccessfulResponseHTTPSnafu {

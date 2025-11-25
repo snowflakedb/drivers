@@ -8,6 +8,7 @@ pub mod query_response;
 use crate::auth::{AuthError, Credentials, create_credentials};
 use crate::config::rest_parameters::ClientInfo;
 use crate::config::rest_parameters::{LoginParameters, QueryParameters};
+use crate::config::retry::RetryPolicy;
 use crate::rest::snowflake::auth::{
     AuthRequest, AuthRequestClientEnvironment, AuthRequestData, AuthResponse,
 };
@@ -196,12 +197,14 @@ pub async fn snowflake_query(
     execution_mode: QueryExecutionMode,
 ) -> Result<query_response::Response, RestError> {
     let client = build_tls_http_client(&query_parameters.client_info)?;
+    let policy = RetryPolicy::default();
     snowflake_query_with_client(
         &client,
         query_parameters,
         session_token,
         sql,
         parameter_bindings,
+        &policy,
         execution_mode,
     )
     .await
@@ -217,6 +220,7 @@ pub async fn snowflake_query_with_client(
     session_token: String,
     sql: String,
     parameter_bindings: Option<HashMap<String, query_request::BindParameter>>,
+    retry_policy: &RetryPolicy,
     execution_mode: QueryExecutionMode,
 ) -> Result<query_response::Response, RestError> {
     if matches!(execution_mode, QueryExecutionMode::Async) {
@@ -226,6 +230,7 @@ pub async fn snowflake_query_with_client(
             session_token,
             sql,
             parameter_bindings,
+            retry_policy,
         )
         .await;
     }
@@ -308,9 +313,9 @@ pub async fn snowflake_query_async_style(
     session_token: String,
     sql: String,
     parameter_bindings: Option<HashMap<String, query_request::BindParameter>>,
+    retry_policy: &RetryPolicy,
 ) -> Result<query_response::Response, RestError> {
     let request_id = uuid::Uuid::new_v4();
-    let policy = crate::config::retry::RetryPolicy::default();
     crate::rest::snowflake::async_exec::execute_blocking_with_async(
         client,
         query_parameters,
@@ -318,7 +323,7 @@ pub async fn snowflake_query_async_style(
         sql,
         parameter_bindings,
         request_id,
-        &policy,
+        retry_policy,
     )
     .await
     .context(AsyncQuerySnafu)

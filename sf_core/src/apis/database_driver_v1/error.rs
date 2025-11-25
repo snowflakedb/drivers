@@ -3,6 +3,7 @@ use snafu::{Location, Snafu};
 pub use crate::apis::database_driver_v1::query::QueryResponseProcessingError;
 pub use crate::config::ConfigError;
 pub use crate::rest::snowflake::RestError;
+use crate::tls::error::TlsError;
 
 #[derive(Debug, Snafu)]
 #[snafu(visibility(pub(super)))]
@@ -38,6 +39,17 @@ pub enum ApiError {
     },
     #[snafu(display("Failed to lock connection"))]
     ConnectionLocking {
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Connection not initialized"))]
+    ConnectionNotInitialized {
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("TLS client creation failed: {source}"))]
+    TlsClientCreation {
+        source: TlsError,
         #[snafu(implicit)]
         location: Location,
     },

@@ -171,6 +171,14 @@ fn to_driver_error(error: &ApiError) -> DriverError {
         ApiError::QueryResponseProcessing { .. } => DriverError {
             error_type: Some(driver_error::ErrorType::InternalError(InternalError {})),
         },
+        ApiError::ConnectionNotInitialized { .. } => DriverError {
+            error_type: Some(driver_error::ErrorType::InternalError(InternalError {})),
+        },
+        ApiError::TlsClientCreation { source, .. } => DriverError {
+            error_type: Some(driver_error::ErrorType::AuthError(AuthenticationError {
+                detail: source.to_string(),
+            })),
+        },
     }
 }
 
@@ -196,6 +204,8 @@ fn to_driver_exception(error: ApiError) -> DriverException {
         ApiError::StatementLocking { .. } => StatusCode::InternalError,
         ApiError::DatabaseLocking { .. } => StatusCode::InternalError,
         ApiError::QueryResponseProcessing { .. } => StatusCode::InternalError,
+        ApiError::ConnectionNotInitialized { .. } => StatusCode::InternalError,
+        ApiError::TlsClientCreation { .. } => StatusCode::AuthenticationError,
     };
 
     let message = error.to_string();

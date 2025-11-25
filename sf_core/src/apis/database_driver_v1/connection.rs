@@ -6,6 +6,9 @@ use super::Setting;
 use super::error::*;
 use super::global_state::CONN_HANDLE_MANAGER;
 use crate::config::rest_parameters::LoginParameters;
+use crate::config::retry::RetryPolicy;
+use crate::tls::client::create_tls_client_with_config;
+use reqwest;
 
 pub fn connection_init(conn_handle: Handle, _db_handle: Handle) -> Result<(), ApiError> {
     match CONN_HANDLE_MANAGER.get_obj(conn_handle) {
@@ -20,16 +23,24 @@ pub fn connection_init(conn_handle: Handle, _db_handle: Handle) -> Result<(), Ap
                 .context(ConfigurationSnafu)?;
             drop(settings_guard);
 
+            let http_client =
+                create_tls_client_with_config(login_parameters.client_info.tls_config.clone())
+                    .context(TlsClientCreationSnafu)?;
+
             let login_result = rt
                 .block_on(async {
-                    crate::rest::snowflake::snowflake_login(&login_parameters).await
+                    crate::rest::snowflake::snowflake_login_with_client(
+                        &http_client,
+                        &login_parameters,
+                    )
+                    .await
                 })
                 .context(LoginSnafu)?;
 
             conn_ptr
                 .lock()
                 .map_err(|_| ConnectionLockingSnafu {}.build())?
-                .session_token = Some(login_result);
+                .initialize(login_result, http_client);
             Ok(())
         }
         None => InvalidArgumentSnafu {
@@ -72,6 +83,8 @@ pub fn connection_release(conn_handle: Handle) -> Result<(), ApiError> {
 pub struct Connection {
     pub settings: HashMap<String, Setting>,
     pub session_token: Option<String>,
+    pub http_client: Option<reqwest::Client>,
+    pub retry_policy: RetryPolicy,
 }
 
 impl Default for Connection {
@@ -85,6 +98,13 @@ impl Connection {
         Connection {
             settings: HashMap::new(),
             session_token: None,
+            http_client: None,
+            retry_policy: RetryPolicy::default(),
         }
+    }
+
+    fn initialize(&mut self, session_token: String, http_client: reqwest::Client) {
+        self.session_token = Some(session_token);
+        self.http_client = Some(http_client);
     }
 }

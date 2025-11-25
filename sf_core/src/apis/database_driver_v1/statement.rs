@@ -7,7 +7,7 @@ use super::global_state::{CONN_HANDLE_MANAGER, STMT_HANDLE_MANAGER};
 use crate::apis::database_driver_v1::query::process_query_response;
 use crate::{
     config::{rest_parameters::QueryParameters, settings::Setting},
-    rest::snowflake::{self, QueryExecutionMode, snowflake_query},
+    rest::snowflake::{self, QueryExecutionMode, snowflake_query_with_client},
 };
 
 use arrow::array::{RecordBatch, StructArray};
@@ -164,7 +164,7 @@ pub fn statement_execute_query(stmt_handle: Handle) -> Result<ExecuteResult, Api
     // Create a blocking runtime for the async operations
     let rt = tokio::runtime::Runtime::new().context(RuntimeCreationSnafu)?;
 
-    let (query_parameters, session_token) = {
+    let (query_parameters, session_token, http_client, retry_policy) = {
         let conn = stmt
             .conn
             .lock()
@@ -177,11 +177,16 @@ pub fn statement_execute_query(stmt_handle: Handle) -> Result<ExecuteResult, Api
                 }
                 .build()
             })?,
+            conn.http_client
+                .clone()
+                .ok_or_else(|| ConnectionNotInitializedSnafu {}.build())?,
+            conn.retry_policy.clone(),
         )
     };
 
     let response = rt
-        .block_on(snowflake_query(
+        .block_on(snowflake_query_with_client(
+            &http_client,
             query_parameters,
             session_token,
             query,
@@ -191,6 +196,7 @@ pub fn statement_execute_query(stmt_handle: Handle) -> Result<ExecuteResult, Api
                 }
                 .build()
             })?,
+            &retry_policy,
             stmt.execution_mode(),
         ))
         .context(LoginSnafu)?;
