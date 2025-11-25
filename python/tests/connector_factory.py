@@ -47,6 +47,7 @@ class UniversalConnectorAdapter(ConnectorAdapter):
     def __init__(self):
         # Import the universal connector
         from snowflake import ud_connector
+
         self.connector = ud_connector
     
     def connect(self, **kwargs) -> Any:
