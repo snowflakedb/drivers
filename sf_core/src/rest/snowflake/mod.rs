@@ -1,3 +1,4 @@
+#![allow(clippy::result_large_err)]
 pub mod async_exec;
 mod auth;
 pub mod error;
@@ -11,6 +12,7 @@ use crate::rest::snowflake::auth::{
     AuthRequest, AuthRequestClientEnvironment, AuthRequestData, AuthResponse,
 };
 use crate::rest::snowflake::error::SfError;
+use crate::tls::client::create_tls_client_with_config;
 use crate::tls::error::TlsError;
 use reqwest;
 use serde_json;
@@ -75,7 +77,7 @@ pub fn auth_request_data(login_parameters: &LoginParameters) -> Result<AuthReque
 
 #[tracing::instrument(skip(login_parameters), fields(account_name, login_name))]
 pub async fn snowflake_login(login_parameters: &LoginParameters) -> Result<String, RestError> {
-    let client = reqwest::Client::new();
+    let client = build_tls_http_client(&login_parameters.client_info)?;
     snowflake_login_with_client(&client, login_parameters).await
 }
 
@@ -191,7 +193,7 @@ pub async fn snowflake_query(
     parameter_bindings: Option<HashMap<String, query_request::BindParameter>>,
     execution_mode: QueryExecutionMode,
 ) -> Result<query_response::Response, RestError> {
-    let client = reqwest::Client::new();
+    let client = build_tls_http_client(&query_parameters.client_info)?;
     snowflake_query_with_client(
         &client,
         query_parameters,
@@ -343,6 +345,11 @@ where
     Ok(response_data)
 }
 
+#[track_caller]
+fn build_tls_http_client(client_info: &ClientInfo) -> Result<reqwest::Client, RestError> {
+    create_tls_client_with_config(client_info.tls_config.clone()).context(CrlValidationSnafu)
+}
+
 #[derive(Debug, Snafu)]
 pub enum RestError {
     #[snafu(display("Authentication failed"))]
@@ -373,7 +380,7 @@ pub enum RestError {
     },
     #[snafu(display("TLS client creation failed"))]
     CrlValidation {
-        source: Box<TlsError>,
+        source: TlsError,
         #[snafu(implicit)]
         location: Location,
     },
