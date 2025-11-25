@@ -13,8 +13,7 @@ PROJECT_ROOT := $(abspath ..)
 
 # Library search paths (for dependent native libs)
 # Default search locations derived from PROJECT_ROOT
-DEFAULT_LIB_DEBUG := $(PROJECT_ROOT)/target/debug
-DEFAULT_LIB_DEPS := $(DEFAULT_LIB_DEBUG)/deps
+DEFAULT_LIB_DEBUG := $(PROJECT_ROOT)/python/src/snowflake/ud_connector/_core
 
 # Absolute paths to avoid relative path issues across different working directories
 # Derive all core-related paths from DEFAULT_LIB_DEBUG
@@ -32,9 +31,7 @@ SHELL := bash
 
 # Platform-aware path detection with environment variable override
 DETECTED_CORE_PATH := $(shell \
-	if [ -n "$$CORE_PATH" ]; then \
-		echo "$$CORE_PATH"; \
-	elif [[ "$$(uname)" == "Darwin" ]]; then \
+	if [[ "$$(uname)" == "Darwin" ]]; then \
 		echo "$(DEFAULT_CORE_PATH_MACOS)"; \
 	else \
 		echo "$(DEFAULT_CORE_PATH_LINUX)"; \
@@ -71,16 +68,17 @@ TOX_E2E_ENV = py$(PYTHON_ID)-e2e
 TOX_REFERENCE_ENV = py$(PYTHON_ID)-reference
 
 
-
 # Local development: auto-build missing Rust core
-check-env-or-build:
+build-core:
 	@echo "Using CORE_PATH: $(DETECTED_CORE_PATH)"
 	@echo "Using PARAMETER_PATH: $(DETECTED_PARAMETER_PATH)"
-	cd .. && cargo build --package sf_core || { \
+	cd .. && cargo build --package sf_core --target-dir=$(DEFAULT_LIB_DEBUG) && cd $(DEFAULT_LIB_DEBUG) && mv debug/* . &&  rm -rf debug/ || { \
 		echo "Failed to build Rust core library"; \
 		echo "Make sure Rust toolchain is installed: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"; \
 		exit 1; \
 	}
+
+check-env-or-build: build-core
 	@if [ ! -f "$(DETECTED_CORE_PATH)" ]; then \
 		echo "Error: Core library not found at $(DETECTED_CORE_PATH)"; \
 		exit 1; \
@@ -89,12 +87,8 @@ check-env-or-build:
 
 # CI: fail fast if environment not properly set up
 check-env-or-fail:
-	@if [ -z "$(CORE_PATH)" ]; then \
-		echo "Error: CORE_PATH environment variable not set"; \
-		exit 1; \
-	fi
-	@if [ ! -f "$(CORE_PATH)" ]; then \
-		echo "Error: Core library not found at $(CORE_PATH)"; \
+	@if [ ! -f "$(DETECTED_CORE_PATH)" ]; then \
+		echo "Error: Core library not found at $(DETECTED_CORE_PATH)"; \
 		exit 1; \
 	fi
 
@@ -216,10 +210,6 @@ clean-reports:
 	rm -rf $(REPORTS_DIR)
 
 clean: clean-reports # Short alias
-
-dev-build:
-	cd .. && cargo build --package sf_core --target-dir=python/src/snowflake/ud_connector/_core \
-	&& cd python/src/snowflake/ud_connector/_core && mv debug/* . &&  rm -rf debug/
 
 # Below: Allow passing pytest args directly after make target
 # $(filter-out target-name alias,$(MAKECMDGOALS)) captures trailing args but excludes the target itself

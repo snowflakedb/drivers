@@ -34,7 +34,7 @@ jobs:
       - name: Build Rust core library
         working-directory: ./python
         run: |
-          RUSTFLAGS="" make dev-build
+          RUSTFLAGS="" make build-core
 
       - name: Upload Rust artifacts
         uses: actions/upload-artifact@v4
@@ -91,7 +91,6 @@ jobs:
 
       - name: Run all tests with coverage
         env:
-          CORE_PATH: ${{ github.workspace }}/target/debug/libsf_core.so
           PARAMETER_PATH: ${{ github.workspace }}/parameters.json
           REFERENCE_DRIVER_VERSION: ${{ env.PYTHON_REFERENCE_DRIVER_VERSION }}
         run: |
@@ -167,7 +166,6 @@ jobs:
 
       - name: Run reference integration tests
         env:
-          CORE_PATH: ${{ env.PYTHON_CORE_DOWNLOAD_PATH }}
           PARAMETER_PATH: ${{ github.workspace }}/parameters.json
           REFERENCE_DRIVER_VERSION: ${{ env.PYTHON_REFERENCE_DRIVER_VERSION }}
         run: make ci-test-reference PYTHON_VERSION=${{ env.REFERENCE_PYTHON_VERSION }} OS_VERSION=${{ env.REFERENCE_OS_VERSION }}
