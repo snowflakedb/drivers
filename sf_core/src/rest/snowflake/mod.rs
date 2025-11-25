@@ -10,6 +10,7 @@ use crate::config::rest_parameters::{LoginParameters, QueryParameters};
 use crate::rest::snowflake::auth::{
     AuthRequest, AuthRequestClientEnvironment, AuthRequestData, AuthResponse,
 };
+use crate::rest::snowflake::error::SfError;
 use crate::tls::error::TlsError;
 use reqwest;
 use serde_json;
@@ -316,13 +317,7 @@ pub async fn snowflake_query_async_style(
         &policy,
     )
     .await
-    .map_err(|e| RestError::InvalidSnowflakeResponse {
-        source: SnowflakeResponseError::InvalidResponse {
-            message: format!("{e:?}"),
-            location: snafu::Location::new(file!(), line!(), column!()),
-        },
-        location: snafu::Location::new(file!(), line!(), column!()),
-    })
+    .context(AsyncQuerySnafu)
 }
 
 async fn read_response_json<T>(response: reqwest::Response) -> Result<T, SnowflakeResponseError>
@@ -386,6 +381,12 @@ pub enum RestError {
     LoginError {
         message: String,
         code: i32,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Async Snowflake query failed"))]
+    AsyncQuery {
+        source: SfError,
         #[snafu(implicit)]
         location: Location,
     },
