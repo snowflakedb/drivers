@@ -13,10 +13,10 @@ use tracing::debug;
 use url::Url;
 
 const INLINE_SHORT_POLL_DELAYS: &[Duration] = &[
-    Duration::from_millis(0),
-    Duration::from_millis(50),
-    Duration::from_millis(125),
-    Duration::from_millis(250),
+    Duration::from_millis(5),
+    Duration::from_millis(10),
+    Duration::from_millis(20),
+    Duration::from_millis(40),
 ];
 const QUERY_REQUEST_PATH: &str = "/queries/v1/query-request";
 const JSON_MIME: &str = "application/json";
@@ -230,7 +230,14 @@ pub async fn execute_blocking_with_async(
             .ok_or_else(|| SfError::MissingResultUrl {
                 location: current_location(),
             })?;
-        response = wait_for_completion(client, session_token, result_url, policy).await?;
+
+        if let Some(inline) =
+            inline_poll_for_completion(client, session_token, result_url, policy).await?
+        {
+            response = inline;
+        } else {
+            response = wait_for_completion(client, session_token, result_url, policy).await?;
+        }
     }
 
     response
@@ -361,6 +368,16 @@ fn response_has_tabular_data(resp: &query_response::Response) -> bool {
             .unwrap_or(false)
 }
 
+async fn inline_poll_for_completion(
+    client: &reqwest::Client,
+    session_token: &str,
+    result_url: &str,
+    policy: &RetryPolicy,
+) -> Result<Option<query_response::Response>, SfError> {
+    let response = poll_query_status(client, session_token, result_url, policy).await?;
+    handle_poll_response(response)
+}
+
 /// Poll Snowflake for completion, starting with a burst of short delays
 /// and then degrading into retry-policy-driven exponential backoff.
 /// Each HTTP poll flows through the shared retry helper so transport
@@ -395,50 +412,39 @@ async fn wait_for_completion(
         };
         attempt += 1;
 
-        let elapsed = start.elapsed();
-        if elapsed + delay >= policy.max_elapsed {
-            return Err(SfError::DeadlineExceeded {
-                configured: policy.max_elapsed,
-                elapsed,
-                location: current_location(),
-            });
-        }
-
         if !delay.is_zero() {
+            let sleep_deadline = start.elapsed() + delay;
+            if sleep_deadline >= policy.max_elapsed {
+                return Err(SfError::DeadlineExceeded {
+                    configured: policy.max_elapsed,
+                    elapsed,
+                    location: current_location(),
+                });
+            }
             tokio::time::sleep(delay).await;
         }
 
         let elapsed_after_sleep = start.elapsed();
-        let remaining = policy
-            .max_elapsed
-            .checked_sub(elapsed_after_sleep)
-            .ok_or_else(|| SfError::DeadlineExceeded {
-                configured: policy.max_elapsed,
-                elapsed: elapsed_after_sleep,
-                location: current_location(),
-            })?;
-
-        if remaining.is_zero() {
+        if elapsed_after_sleep >= policy.max_elapsed {
             return Err(SfError::DeadlineExceeded {
                 configured: policy.max_elapsed,
                 elapsed: elapsed_after_sleep,
                 location: current_location(),
             });
         }
+
+        let remaining = policy
+            .max_elapsed
+            .checked_sub(elapsed_after_sleep)
+            .unwrap_or_default()
+            .max(Duration::from_millis(1));
 
         let mut poll_policy = policy.clone();
         poll_policy.max_elapsed = remaining;
         let response = poll_query_status(client, session_token, result_url, &poll_policy).await?;
 
-        if response.success {
-            if should_continue_after_success(&response) {
-                continue;
-            }
-            return Ok(response);
-        } else if should_continue_after_failure(&response) {
-            continue;
-        } else {
-            return Err(snowflake_failure(&response));
+        if let Some(done) = handle_poll_response(response)? {
+            return Ok(done);
         }
     }
 }
@@ -480,6 +486,23 @@ fn next_poll_delay_ms(prev_ms: f64, backoff: &BackoffConfig) -> f64 {
         next = cap;
     }
     next
+}
+
+fn handle_poll_response(
+    resp: query_response::Response,
+) -> Result<Option<query_response::Response>, SfError> {
+    if resp.success {
+        if should_continue_after_success(&resp) {
+            return Ok(None);
+        }
+        return Ok(Some(resp));
+    }
+
+    if should_continue_after_failure(&resp) {
+        return Ok(None);
+    }
+
+    Err(snowflake_failure(&resp))
 }
 
 #[cfg(test)]
