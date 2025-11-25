@@ -154,7 +154,7 @@ pub fn statement_execute_query(stmt_handle: Handle) -> Result<ExecuteResult, Api
     let mut stmt = stmt_ptr
         .lock()
         .map_err(|_| StatementLockingSnafu {}.build())?;
-    let query = stmt.query.take().ok_or_else(|| {
+    let query_str = stmt.query.as_deref().ok_or_else(|| {
         InvalidArgumentSnafu {
             argument: "Query not found".to_string(),
         }
@@ -184,6 +184,9 @@ pub fn statement_execute_query(stmt_handle: Handle) -> Result<ExecuteResult, Api
         )
     };
 
+    let execution_mode = stmt.execution_mode(Some(query_str));
+    let query = stmt.query.take().expect("query must be present");
+
     let response = rt
         .block_on(snowflake_query_with_client(
             &http_client,
@@ -197,7 +200,7 @@ pub fn statement_execute_query(stmt_handle: Handle) -> Result<ExecuteResult, Api
                 .build()
             })?,
             &retry_policy,
-            stmt.execution_mode(),
+            execution_mode,
         ))
         .context(LoginSnafu)?;
 
@@ -316,38 +319,52 @@ impl Statement {
         }
     }
 
-    fn execution_mode(&self) -> QueryExecutionMode {
+    fn execution_mode(&self, query: Option<&str>) -> QueryExecutionMode {
         match self
             .settings
             .get(snowflake::STATEMENT_ASYNC_EXECUTION_OPTION)
         {
             Some(Setting::String(value)) => {
-                if value.eq_ignore_ascii_case("true")
-                    || value.eq_ignore_ascii_case("yes")
-                    || value == "1"
+                let normalized = value.trim();
+                if normalized.eq_ignore_ascii_case("false")
+                    || normalized.eq_ignore_ascii_case("no")
+                    || normalized == "0"
                 {
-                    QueryExecutionMode::Async
-                } else {
                     QueryExecutionMode::Blocking
+                } else {
+                    QueryExecutionMode::Async
                 }
             }
             Some(Setting::Int(value)) => {
-                if *value != 0 {
-                    QueryExecutionMode::Async
-                } else {
+                if *value == 0 {
                     QueryExecutionMode::Blocking
+                } else {
+                    QueryExecutionMode::Async
                 }
             }
             Some(Setting::Double(value)) => {
-                if *value != 0.0 {
-                    QueryExecutionMode::Async
-                } else {
+                if *value == 0.0 {
                     QueryExecutionMode::Blocking
+                } else {
+                    QueryExecutionMode::Async
                 }
             }
-            Some(Setting::Bytes(_)) | None => QueryExecutionMode::Blocking,
+            Some(Setting::Bytes(_)) => QueryExecutionMode::Async,
+            None => match query {
+                Some(sql) if requires_blocking(sql) => QueryExecutionMode::Blocking,
+                _ => QueryExecutionMode::Async,
+            },
         }
     }
+}
+
+fn requires_blocking(sql: &str) -> bool {
+    let trimmed = sql.trim_start();
+    if trimmed.is_empty() {
+        return false;
+    }
+    let upper = trimmed.to_ascii_uppercase();
+    upper.starts_with("PUT ") || upper == "PUT" || upper.starts_with("GET ") || upper == "GET"
 }
 
 #[derive(Snafu, Debug)]
