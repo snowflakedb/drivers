@@ -31,14 +31,15 @@ jobs:
           sudo apt-get update
 
       - name: Build Rust core library
+        working-directory: ./python
         run: |
-          RUSTFLAGS="" cargo build --package sf_core
+          RUSTFLAGS="" make dev-build
 
       - name: Upload Rust artifacts
         uses: actions/upload-artifact@v4
         with:
           name: rust-core-library
-          path: target/debug/libsf_core.so
+          path: python/src/snowflake/ud_connector/_core/libsf_core.so
 
   # Combined unit + integration tests with universal connector
   python_tests:
@@ -76,7 +77,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: rust-core-library
-          path: target/debug/
+          path: python/src/snowflake/ud_connector/_core/
 
       - name: Decode secrets
         run: ./scripts/decode_secrets.sh

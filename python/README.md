@@ -2,6 +2,12 @@
 
 A Python library that implements [PEP 249 (Python Database API Specification 2.0)](https://peps.python.org/pep-0249/) with empty interface implementations. This library provides a complete skeleton implementation that follows the PEP 249 specification, making it an ideal starting point for creating new database drivers or for testing database API compliance.
 
+## Development
+To build core library for local development run:
+```bash
+make dev-build
+```
+
 ## Testing
 
 ### Quick Start

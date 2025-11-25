@@ -7,6 +7,16 @@ from ._internal.api_client.client_api import database_driver_client
 from .cursor import Cursor
 from .exceptions import NotSupportedError, InterfaceError
 
+from snowflake.ud_connector._internal.protobuf_gen.database_driver_v1_services import (
+    DatabaseNewRequest,
+    DatabaseInitRequest,
+    ConnectionNewRequest,
+    ConnectionSetOptionIntRequest,
+    ConnectionSetOptionStringRequest,
+    ConnectionSetOptionDoubleRequest,
+    ConnectionInitRequest
+)
+
 
 class Connection:
     """

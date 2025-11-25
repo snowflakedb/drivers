@@ -217,6 +217,10 @@ clean-reports:
 
 clean: clean-reports # Short alias
 
+dev-build:
+	cd .. && cargo build --package sf_core --target-dir=python/src/snowflake/ud_connector/_core \
+	&& cd python/src/snowflake/ud_connector/_core && mv debug/* . &&  rm -rf debug/
+
 # Below: Allow passing pytest args directly after make target
 # $(filter-out target-name alias,$(MAKECMDGOALS)) captures trailing args but excludes the target itself
 # Without this, "make test -k connection" would pass "test" to pytest, causing it to look for a test named "test"

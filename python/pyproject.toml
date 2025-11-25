@@ -39,6 +39,9 @@ dependencies = [
 where = ["src"]
 include = ["snowflake.*"]
 
+[tool.setuptools.package-data]
+"snowflake.ud_connector._core" = ["*.so", "*.dll", "*.dylib"]
+
 [project.optional-dependencies]
 test = [
     "pytest>=8",
