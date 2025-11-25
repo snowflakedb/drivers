@@ -40,7 +40,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: rust-core-library
-          path: "${PYTHON_CORE_DOWNLOAD_PATH}/libsf_core.so"
+          path: "${{ env.PYTHON_CORE_DOWNLOAD_PATH }}/libsf_core.so"
 
   # Combined unit + integration tests with universal connector
   python_tests:
@@ -78,7 +78,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: rust-core-library
-          path: $PYTHON_CORE_DOWNLOAD_PATH
+          path: ${{ env.PYTHON_CORE_DOWNLOAD_PATH }}
 
       - name: Decode secrets
         run: ./scripts/decode_secrets.sh
@@ -154,7 +154,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: rust-core-library
-          path: $PYTHON_CORE_DOWNLOAD_PATH
+          path: ${{ env.PYTHON_CORE_DOWNLOAD_PATH }}
 
       - name: Decode secrets
         run: ./scripts/decode_secrets.sh
