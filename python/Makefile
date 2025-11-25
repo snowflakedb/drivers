@@ -24,7 +24,7 @@ DEFAULT_PARAMETER_PATH := $(PROJECT_ROOT)/parameters.json
 SHELL := bash
 .ONESHELL:  # Execute each recipe in a single shell (needed for multi-line commands)
 
-.PHONY: check-env-or-build check-env-or-fail setup build-wheel test test-local test-local-sequential test-local-tox test-local-tox-sequential test-all-local-tox test-integ-local-tox test-e2e-local-tox test-reference-local-tox test-all ci-test-reference compare compare-local compare-artifacts clean clean-reports run-with-setup run-with-uv run-with-tox
+.PHONY: check-env-or-build check-env-or-fail setup build-wheel test test-local test-local-sequential test-local-hatch test-local-hatch-sequential test-all-local-hatch test-integ-local-hatch test-e2e-local-hatch test-reference-local-hatch test-all ci-test-reference compare compare-local compare-artifacts clean clean-reports run-with-setup run-with-uv run-with-hatch
 
 
 # ===== Reusable Command Components =====
@@ -61,11 +61,9 @@ PYTEST_REPORT_JSON_FLAGS = --json-report --json-report-file=
 PYTEST_REPORT_JSON_UNIVERSAL = $(PYTEST_REPORT_JSON_FLAGS)$(UNIVERSAL_REPORT_JSON_PATH)
 PYTEST_REPORT_JSON_REFERENCE = $(PYTEST_REPORT_JSON_FLAGS)$(REFERENCE_REPORT_JSON_PATH)
 
-# Tox environment names
-TOX_ALL_ENV = py$(PYTHON_ID)-all
-TOX_INTEG_ENV = py$(PYTHON_ID)-integ
-TOX_E2E_ENV = py$(PYTHON_ID)-e2e
-TOX_REFERENCE_ENV = py$(PYTHON_ID)-reference
+# Hatch environment names with Python version matrix
+HATCH_ENV = py$(PYTHON_VERSION)
+HATCH_REFERENCE_ENV = reference.py$(PYTHON_VERSION)
 
 
 # Local development: auto-build missing Rust core
@@ -123,8 +121,8 @@ run-with-setup: check-env-or-build setup
 run-with-uv: check-env-or-build setup
 	$(LOCAL_ENV) uv run $(filter-out $@,$(MAKECMDGOALS))
 
-run-with-tox: check-env-or-build setup
-	$(LOCAL_ENV) uv run tox -e $(filter-out $@,$(MAKECMDGOALS))
+run-with-hatch: check-env-or-build setup
+	$(LOCAL_ENV) hatch run $(filter-out $@,$(MAKECMDGOALS))
 
 # ===== Local Development =====
 
@@ -134,35 +132,35 @@ test-local: check-env-or-build setup
 test-local-sequential: check-env-or-build setup
 	$(LOCAL_ENV) uv run pytest tests/ --connector=universal $(PYTEST_VERBOSE) $(PYTEST_ARGS) $(filter-out $@,$(MAKECMDGOALS))
 
-test-local-tox: check-env-or-build setup
-	$(LOCAL_ENV) uv run tox -e $(TOX_ALL_ENV) -- \
+test-local-hatch: check-env-or-build setup
+	$(LOCAL_ENV) hatch run $(HATCH_ENV):all \
 	  $(PYTEST_REPORT_JSON_UNIVERSAL) \
 	  $(PYTEST_PARALLEL) $(PYTEST_ARGS) $(filter-out $@ test,$(MAKECMDGOALS))
 
-test-all-local-tox: check-env-or-build setup
-	$(LOCAL_ENV) uv run tox -e $(TOX_ALL_ENV) -- \
+test-all-local-hatch: check-env-or-build setup
+	$(LOCAL_ENV) hatch run $(HATCH_ENV):all \
 	  $(PYTEST_REPORT_JSON_UNIVERSAL) \
 	  $(PYTEST_PARALLEL) $(PYTEST_ARGS) $(filter-out $@ test,$(MAKECMDGOALS))
 
-test: test-all-local-tox  # Short alias - runs unit, integ, and e2e tests
+test: test-all-local-hatch  # Short alias - runs unit, integ, and e2e tests
 
-test-local-tox-sequential: check-env-or-build setup
-	$(LOCAL_ENV) uv run tox -e $(TOX_ALL_ENV) -- \
+test-local-hatch-sequential: check-env-or-build setup
+	$(LOCAL_ENV) hatch run $(HATCH_ENV):all \
 	  $(PYTEST_REPORT_JSON_UNIVERSAL) \
 	  $(PYTEST_ARGS) $(filter-out $@,$(MAKECMDGOALS))
 
-test-integ-local-tox: check-env-or-build setup
-	$(LOCAL_ENV) uv run tox -e $(TOX_INTEG_ENV) -- \
+test-integ-local-hatch: check-env-or-build setup
+	$(LOCAL_ENV) hatch run $(HATCH_ENV):integ \
 	  $(PYTEST_REPORT_JSON_UNIVERSAL) \
 	  $(PYTEST_PARALLEL) $(PYTEST_ARGS) $(filter-out $@,$(MAKECMDGOALS))
 
-test-e2e-local-tox: check-env-or-build setup
-	$(LOCAL_ENV) uv run tox -e $(TOX_E2E_ENV) -- \
+test-e2e-local-hatch: check-env-or-build setup
+	$(LOCAL_ENV) hatch run $(HATCH_ENV):e2e \
 	  $(PYTEST_REPORT_JSON_UNIVERSAL) \
 	  $(PYTEST_PARALLEL) $(PYTEST_ARGS) $(filter-out $@,$(MAKECMDGOALS))
 
-test-reference-local-tox: check-env-or-build setup
-	$(LOCAL_ENV) uv run tox -e $(TOX_REFERENCE_ENV) -- \
+test-reference-local-hatch: check-env-or-build setup
+	$(LOCAL_ENV) hatch run $(HATCH_REFERENCE_ENV):test \
 	  $(PYTEST_REPORT_JSON_REFERENCE) \
 	  $(PYTEST_PARALLEL) $(PYTEST_ARGS) $(filter-out $@,$(MAKECMDGOALS))
 
@@ -170,14 +168,14 @@ test-reference-local-tox: check-env-or-build setup
 
 ci-test-all: check-env-or-fail
 	mkdir -p $(REPORTS_DIR)
-	uv run tox -e $(TOX_ALL_ENV) -- \
+	hatch run $(HATCH_ENV):all \
 	  $(PYTEST_REPORT_JSON_UNIVERSAL) \
 	  --junitxml=$(UNIVERSAL_REPORT_XML_PATH) \
 	  $(PYTEST_ARGS)
 
 ci-test-reference: check-env-or-fail
 	mkdir -p $(REPORTS_DIR)
-	uv run tox -e $(TOX_REFERENCE_ENV) -- \
+	hatch run $(HATCH_REFERENCE_ENV):test \
 	  $(PYTEST_REPORT_JSON_REFERENCE) \
 	  --junitxml=$(REFERENCE_REPORT_XML_PATH) \
 	  $(PYTEST_ARGS)
@@ -193,8 +191,8 @@ compare:
 	  --fail-on-regressions $(FAIL_ON_REGRESSIONS)
 
 compare-local:
-	$(MAKE) test-all-local-tox || true  # Continue especially if tests fail
-	$(MAKE) test-reference-local-tox || true
+	$(MAKE) test-all-local-hatch || true  # Continue especially if tests fail
+	$(MAKE) test-reference-local-hatch || true
 	$(MAKE) compare
 
 # For CI: compare downloaded artifacts (paths set via env vars)

@@ -1,6 +1,6 @@
 [build-system]
-requires = ["setuptools>=61.0", "wheel"]
-build-backend = "setuptools.build_meta"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
 
 [project]
 name = "snowflake-connector-python-ud"  # TODO: change this once ready, needs switching tests to UD
@@ -35,12 +35,63 @@ dependencies = [
 "Source" = "https://github.com/snowflakedb/universal-driver"
 "Documentation" = "https://github.com/snowflakedb/universal-driver/blob/main/README.md"
 
-[tool.setuptools.packages.find]
-where = ["src"]
-include = ["snowflake.*"]
+[tool.hatch.build.targets.wheel]
+packages = ["src/snowflake"]
+only-include = ["src/snowflake"]
+artifacts = [
+  "src/snowflake/ud_connector/_core/libsf_core.so",
+  "src/snowflake/ud_connector/_core/libsf_core.dll",
+  "src/snowflake/ud_connector/_core/libsf_core.dylib",
+]
 
-[tool.setuptools.package-data]
-"snowflake.ud_connector._core" = ["*.so", "*.dll", "*.dylib"]
+[tool.hatch.envs.default]
+installer = "uv"
+features = ["test"]
+
+[[tool.hatch.envs.default.matrix]]
+python = ["3.9", "3.10", "3.11", "3.12", "3.13"]
+
+[tool.hatch.envs.default.scripts]
+all = "pytest tests/ --connector=universal {args}"
+unit = "pytest tests/unit {args}"
+integ = "pytest tests/integ --connector=universal {args}"
+e2e = "pytest tests/e2e --connector=universal {args}"
+
+[tool.hatch.envs.lint]
+installer = "uv"
+features = ["dev"]
+skip-install = false
+
+[tool.hatch.envs.lint.scripts]
+style = "flake8 src/snowflake"
+format = "black src/snowflake tests"
+format-check = "black --check src/snowflake tests"
+typing = "mypy src/snowflake"
+all = [
+  "format",
+  "style",
+  "typing",
+]
+
+[tool.hatch.envs.reference]
+installer = "uv"
+skip-install = true
+dependencies = [
+  "pytest>=8",
+  "pytest-xdist",
+  "pytest-json-report",
+  "pytest-split",
+  "hypothesis",
+  "brotli",
+  "zstandard",
+  "snowflake-connector-python=={env:REFERENCE_DRIVER_VERSION:3.17.2}",
+]
+
+[[tool.hatch.envs.reference.matrix]]
+python = ["3.9", "3.10", "3.11", "3.12", "3.13"]
+
+[tool.hatch.envs.reference.scripts]
+test = "pytest tests/integ tests/e2e --connector=reference {args}"
 
 [project.optional-dependencies]
 test = [
@@ -50,8 +101,6 @@ test = [
     "pytest-split",
     "pytest-cov",
     "hypothesis",
-    "tox>=4.14",
-    "tox-uv>=1.8",
     "snowflake-connector-python>=3.6.0",
     "brotli",
     "zstandard",
