@@ -1,9 +1,11 @@
 use crate::chunks::ChunkDownloadData;
+use crate::config::rest_parameters::{ClientInfo, QueryParameters};
 use crate::config::retry::{BackoffConfig, RetryPolicy};
 use crate::http::retry::{HttpContext, HttpError, execute_with_retry};
 use crate::rest::snowflake::error::SfError;
-use crate::rest::snowflake::{query_request, query_response};
-use reqwest::header;
+use crate::rest::snowflake::{
+    QUERY_REQUEST_PATH, apply_json_content_type, apply_query_headers, query_request, query_response,
+};
 use reqwest::{Method, StatusCode};
 use snafu::Location;
 use std::collections::HashMap;
@@ -18,8 +20,6 @@ const INLINE_SHORT_POLL_DELAYS: &[Duration] = &[
     Duration::from_millis(20),
     Duration::from_millis(40),
 ];
-const QUERY_REQUEST_PATH: &str = "/queries/v1/query-request";
-const JSON_MIME: &str = "application/json";
 const QUERY_SEQUENCE_ID: u64 = 1;
 
 fn join_server_path(server_url: &str, path: &str) -> Result<String, SfError> {
@@ -59,26 +59,15 @@ fn build_async_query_request(
 fn build_submit_request(
     client: &reqwest::Client,
     endpoint: &str,
+    client_info: &ClientInfo,
     session_token: &str,
     request_id: uuid::Uuid,
     payload: &query_request::Request,
 ) -> reqwest::RequestBuilder {
-    let auth_header = authorization_header(session_token);
-    client
-        .post(endpoint)
-        .header(header::AUTHORIZATION, auth_header)
-        .header(header::ACCEPT, header::HeaderValue::from_static(JSON_MIME))
-        .header(
-            header::CONTENT_TYPE,
-            header::HeaderValue::from_static(JSON_MIME),
-        )
+    let builder = client.post(endpoint);
+    apply_json_content_type(apply_query_headers(builder, client_info, session_token))
         .query(&[("requestId", request_id.to_string())])
         .json(payload)
-}
-
-fn authorization_header(session_token: &str) -> header::HeaderValue {
-    let value = format!("Snowflake Token=\"{session_token}\"");
-    header::HeaderValue::from_str(&value).expect("authorization header construction must succeed")
 }
 
 async fn parse_submit_response(
@@ -133,17 +122,27 @@ fn current_epoch_millis() -> i64 {
 
 pub async fn submit_statement_async(
     client: &reqwest::Client,
-    server_url: &str,
+    params: &QueryParameters,
     session_token: &str,
     sql: String,
     parameter_bindings: Option<&HashMap<String, query_request::BindParameter>>,
     request_id: uuid::Uuid,
     policy: &RetryPolicy,
 ) -> Result<SubmitOk, SfError> {
+    let server_url = &params.server_url;
+    let client_info = &params.client_info;
     let endpoint = join_server_path(server_url, QUERY_REQUEST_PATH)?;
     let request_body = build_async_query_request(sql, parameter_bindings);
-    let submit_request =
-        || build_submit_request(client, &endpoint, session_token, request_id, &request_body);
+    let submit_request = || {
+        build_submit_request(
+            client,
+            &endpoint,
+            client_info,
+            session_token,
+            request_id,
+            &request_body,
+        )
+    };
 
     let ctx = HttpContext::new(Method::POST, QUERY_REQUEST_PATH).allow_post_retry();
     let response = execute_with_retry(submit_request, &ctx, policy, |r| async move { Ok(r) })
@@ -155,19 +154,14 @@ pub async fn submit_statement_async(
 
 pub async fn poll_query_status(
     client: &reqwest::Client,
+    client_info: &ClientInfo,
     session_token: &str,
     get_result_url: &str,
     policy: &RetryPolicy,
 ) -> Result<query_response::Response, SfError> {
     let result_url = get_result_url.to_string();
-    let session = session_token.to_string();
-    let auth_header = authorization_header(&session);
-    let poll_request = move || {
-        client
-            .get(result_url.clone())
-            .header(header::AUTHORIZATION, auth_header.clone())
-            .header(header::ACCEPT, header::HeaderValue::from_static(JSON_MIME))
-    };
+    let poll_request =
+        move || apply_query_headers(client.get(result_url.clone()), client_info, session_token);
     let ctx = HttpContext::new(Method::GET, get_result_url.to_string());
     let response = execute_with_retry(poll_request, &ctx, policy, |r| async move { Ok(r) })
         .await
@@ -200,16 +194,17 @@ pub async fn poll_query_status(
 
 pub async fn execute_blocking_with_async(
     client: &reqwest::Client,
-    server_url: &str,
+    params: &QueryParameters,
     session_token: &str,
     sql: String,
     parameter_bindings: Option<HashMap<String, query_request::BindParameter>>,
     request_id: uuid::Uuid,
     policy: &RetryPolicy,
 ) -> Result<query_response::Response, SfError> {
+    let client_info = &params.client_info;
     let submitted = submit_statement_async(
         client,
-        server_url,
+        params,
         session_token,
         sql,
         parameter_bindings.as_ref(),
@@ -232,11 +227,13 @@ pub async fn execute_blocking_with_async(
             })?;
 
         if let Some(inline) =
-            inline_poll_for_completion(client, session_token, result_url, policy).await?
+            inline_poll_for_completion(client, client_info, session_token, result_url, policy)
+                .await?
         {
             response = inline;
         } else {
-            response = wait_for_completion(client, session_token, result_url, policy).await?;
+            response =
+                wait_for_completion(client, client_info, session_token, result_url, policy).await?;
         }
     }
 
@@ -319,11 +316,13 @@ fn http_status_error(status: StatusCode) -> SfError {
 
 pub async fn refresh_chunk_download_data_from_get_result(
     client: &reqwest::Client,
+    client_info: &ClientInfo,
     session_token: &str,
     get_result_url: &str,
     policy: &RetryPolicy,
 ) -> Result<Option<Vec<ChunkDownloadData>>, SfError> {
-    let resp = poll_query_status(client, session_token, get_result_url, policy).await?;
+    let resp =
+        poll_query_status(client, client_info, session_token, get_result_url, policy).await?;
     if resp.success {
         Ok(resp.data.to_chunk_download_data())
     } else {
@@ -370,11 +369,13 @@ fn response_has_tabular_data(resp: &query_response::Response) -> bool {
 
 async fn inline_poll_for_completion(
     client: &reqwest::Client,
+    client_info: &ClientInfo,
     session_token: &str,
     result_url: &str,
     policy: &RetryPolicy,
 ) -> Result<Option<query_response::Response>, SfError> {
-    let response = poll_query_status(client, session_token, result_url, policy).await?;
+    let response =
+        poll_query_status(client, client_info, session_token, result_url, policy).await?;
     handle_poll_response(response)
 }
 
@@ -386,6 +387,7 @@ async fn inline_poll_for_completion(
 /// error, or the overall deadline / retry budget is exhausted.
 async fn wait_for_completion(
     client: &reqwest::Client,
+    client_info: &ClientInfo,
     session_token: &str,
     result_url: &str,
     policy: &RetryPolicy,
@@ -441,7 +443,8 @@ async fn wait_for_completion(
 
         let mut poll_policy = policy.clone();
         poll_policy.max_elapsed = remaining;
-        let response = poll_query_status(client, session_token, result_url, &poll_policy).await?;
+        let response =
+            poll_query_status(client, client_info, session_token, result_url, &poll_policy).await?;
 
         if let Some(done) = handle_poll_response(response)? {
             return Ok(done);

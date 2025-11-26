@@ -14,14 +14,16 @@ use crate::rest::snowflake::auth::{
 use crate::rest::snowflake::error::SfError;
 use crate::tls::client::create_tls_client_with_config;
 use crate::tls::error::TlsError;
-use reqwest;
+use reqwest::{self, header};
 use serde_json;
 use snafu::{Location, ResultExt, Snafu};
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tracing;
+use url::Url;
 
 pub const STATEMENT_ASYNC_EXECUTION_OPTION: &str = "async_execution";
+pub(crate) const QUERY_REQUEST_PATH: &str = "/queries/v1/query-request";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum QueryExecutionMode {
@@ -220,16 +222,13 @@ pub async fn snowflake_query_with_client(
     if matches!(execution_mode, QueryExecutionMode::Async) {
         return snowflake_query_async_style(
             client,
-            query_parameters,
+            &query_parameters,
             session_token,
             sql,
             parameter_bindings,
         )
         .await;
     }
-    // Legacy synchronous path retained. A new async-backed blocking facade is provided below.
-    let server_url = query_parameters.server_url;
-    let query_url = format!("{server_url}/queries/v1/query-request");
 
     let query_request = query_request::Request {
         sql_text: sql,
@@ -249,21 +248,24 @@ pub async fn snowflake_query_with_client(
 
     let json_payload = serde_json::to_string_pretty(&query_request).unwrap();
     tracing::debug!("JSON Body Sent:\n{}", json_payload);
-    let request = client
-        .post(&query_url)
-        .header(
-            "Authorization",
-            &format!("Snowflake Token=\"{session_token}\""),
-        )
-        .header("Accept", "application/json")
-        .header("User-Agent", user_agent(&query_parameters.client_info))
-        .query(&[
-            ("requestId", uuid::Uuid::new_v4().to_string()),
-            ("request_guid", uuid::Uuid::new_v4().to_string()),
-        ])
-        .json(&query_request)
-        .build()
-        .context(RequestConstructionSnafu { request: "query" })?;
+    let query_url = Url::parse(query_parameters.server_url.as_str())
+        .and_then(|base| base.join(QUERY_REQUEST_PATH))
+        .context(UrlJoinSnafu {
+            path: QUERY_REQUEST_PATH,
+        })?;
+
+    let request = apply_json_content_type(apply_query_headers(
+        client.post(query_url),
+        &query_parameters.client_info,
+        &session_token,
+    ))
+    .query(&[
+        ("requestId", uuid::Uuid::new_v4().to_string()),
+        ("request_guid", uuid::Uuid::new_v4().to_string()),
+    ])
+    .json(&query_request)
+    .build()
+    .context(RequestConstructionSnafu { request: "query" })?;
 
     tracing::debug!("Query request: {:?}", request);
     tracing::debug!("Request headers: {:?}", request.headers());
@@ -302,7 +304,7 @@ pub async fn snowflake_query_with_client(
 )]
 pub async fn snowflake_query_async_style(
     client: &reqwest::Client,
-    query_parameters: QueryParameters,
+    query_parameters: &QueryParameters,
     session_token: String,
     sql: String,
     parameter_bindings: Option<HashMap<String, query_request::BindParameter>>,
@@ -311,7 +313,7 @@ pub async fn snowflake_query_async_style(
     let policy = crate::config::retry::RetryPolicy::default();
     crate::rest::snowflake::async_exec::execute_blocking_with_async(
         client,
-        &query_parameters.server_url,
+        query_parameters,
         &session_token,
         sql,
         parameter_bindings,
@@ -348,6 +350,30 @@ where
 #[track_caller]
 fn build_tls_http_client(client_info: &ClientInfo) -> Result<reqwest::Client, RestError> {
     create_tls_client_with_config(client_info.tls_config.clone()).context(CrlValidationSnafu)
+}
+
+pub(crate) fn authorization_header(session_token: &str) -> header::HeaderValue {
+    let value = format!("Snowflake Token=\"{session_token}\"");
+    header::HeaderValue::from_str(&value).expect("authorization header construction must succeed")
+}
+
+pub(crate) fn json_header_value() -> header::HeaderValue {
+    header::HeaderValue::from_static("application/json")
+}
+
+pub(crate) fn apply_query_headers(
+    builder: reqwest::RequestBuilder,
+    client_info: &ClientInfo,
+    session_token: &str,
+) -> reqwest::RequestBuilder {
+    builder
+        .header(header::AUTHORIZATION, authorization_header(session_token))
+        .header(header::ACCEPT, json_header_value())
+        .header("User-Agent", user_agent(client_info))
+}
+
+pub(crate) fn apply_json_content_type(builder: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+    builder.header(header::CONTENT_TYPE, json_header_value())
 }
 
 #[derive(Debug, Snafu)]
@@ -394,6 +420,13 @@ pub enum RestError {
     #[snafu(display("Async Snowflake query failed"))]
     AsyncQuery {
         source: SfError,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Failed to build Snowflake URL for {path}: {source}"))]
+    UrlJoin {
+        path: &'static str,
+        source: url::ParseError,
         #[snafu(implicit)]
         location: Location,
     },
