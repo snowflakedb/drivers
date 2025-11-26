@@ -44,29 +44,33 @@ artifacts = [
   "src/snowflake/ud_connector/_core/libsf_core.dylib",
 ]
 
-[tool.hatch.envs.default]
-installer = "uv"
-features = ["test"]
+[tool.hatch.build.hooks.custom]
+path = "hatch_build.py"
 
-[[tool.hatch.envs.default.matrix]]
+[tool.hatch.envs.tests]
+installer = "uv"
+features = ["test", "dev"]
+
+[[tool.hatch.envs.tests.matrix]]
 python = ["3.9", "3.10", "3.11", "3.12", "3.13"]
 
-[tool.hatch.envs.default.scripts]
+[tool.hatch.envs.tests.scripts]
 all = "pytest tests/ --connector=universal {args}"
 unit = "pytest tests/unit {args}"
 integ = "pytest tests/integ --connector=universal {args}"
 e2e = "pytest tests/e2e --connector=universal {args}"
 
-[tool.hatch.envs.lint]
+[tool.hatch.envs.dev]
 installer = "uv"
 features = ["dev"]
 skip-install = false
 
-[tool.hatch.envs.lint.scripts]
+[tool.hatch.envs.dev.scripts]
 style = "flake8 src/snowflake"
 format = "black src/snowflake tests"
 format-check = "black --check src/snowflake tests"
 typing = "mypy src/snowflake"
+build-core = "python hatch_build.py"
 all = [
   "format",
   "style",
@@ -108,6 +112,7 @@ test = [
 dev = [
     "black",
     "flake8",
+    "hatchling",
     "mypy",
 ]
 

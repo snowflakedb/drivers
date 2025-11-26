@@ -8,20 +8,12 @@ A Python library that implements [PEP 249 (Python Database API Specification 2.0
 
 This project uses [Hatch](https://hatch.pypa.io/) as the build backend with [uv](https://github.com/astral-sh/uv) for fast dependency management.
 
-To build a wheel distribution:
-```bash
-make build-wheel
-# or directly:
-uv build
-```
-
-The project configuration is in `pyproject.toml` with hatch configured to use uv for environment management.
-
 ### Building the Core Library
 
-To build core library for local development run:
+The Rust core library is now built automatically when you build the Python package. However, you can also build it explicitly:
+
 ```bash
-make build-core
+hatch dev:build-core
 ```
 
 ## Testing
@@ -87,7 +79,7 @@ hatch run reference.py3.11:test
 ```
 
 ### Requirements
-- Python 3.9+
+- Python 3.10+
 - Rust core library: `../target/debug/libsf_core.{so,dylib}` (auto-built if missing)
 - Credentials: `../parameters.json` (see main [README.md](../README.md) for setup instructions)
 

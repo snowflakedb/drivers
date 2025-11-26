@@ -66,21 +66,9 @@ HATCH_ENV = py$(PYTHON_VERSION)
 HATCH_REFERENCE_ENV = reference.py$(PYTHON_VERSION)
 
 
-# Local development: auto-build missing Rust core
-build-core:
-	@echo "Using CORE_PATH: $(DETECTED_CORE_PATH)"
-	@echo "Using PARAMETER_PATH: $(DETECTED_PARAMETER_PATH)"
-	cd .. && cargo build --package sf_core --target-dir=$(CORE_MODULE_DIR) && cd $(CORE_MODULE_DIR) && mv debug/* . &&  rm -rf debug/ || { \
-		echo "Failed to build Rust core library"; \
-		echo "Make sure Rust toolchain is installed: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"; \
-		exit 1; \
-	}
-
-check-env-or-build: build-core
-	@if [ ! -f "$(DETECTED_CORE_PATH)" ]; then \
-		echo "Error: Core library not found at $(DETECTED_CORE_PATH)"; \
-		exit 1; \
-	fi
+# Local development: build missing Rust core (now handled by hatch build hook automatically)
+check-env-or-build:
+	hatch run dev:build-core
 
 
 # CI: fail fast if environment not properly set up
@@ -120,9 +108,6 @@ run-with-setup: check-env-or-build setup
 
 run-with-uv: check-env-or-build setup
 	$(LOCAL_ENV) uv run $(filter-out $@,$(MAKECMDGOALS))
-
-run-with-hatch: check-env-or-build setup
-	$(LOCAL_ENV) hatch run $(filter-out $@,$(MAKECMDGOALS))
 
 # ===== Local Development =====
 

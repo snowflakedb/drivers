@@ -31,10 +31,9 @@ jobs:
         run: |
           sudo apt-get update
 
-      - name: Build Rust core library
+      - name: Build rust core library and put it Python module
         working-directory: ./python
-        run: |
-          RUSTFLAGS="" make build-core
+        run:  hatch run dev:build-core
 
       - name: Upload Rust artifacts
         uses: actions/upload-artifact@v4
