@@ -22,6 +22,75 @@ const INLINE_SHORT_POLL_DELAYS: &[Duration] = &[
 ];
 const QUERY_SEQUENCE_ID: u64 = 1;
 
+/// Metrics for async query execution phases, logged for monitoring and debugging.
+///
+/// Async execution follows this flow:
+/// 1. **Submit**: Initial statement submission to Snowflake (always occurs)
+/// 2. **Inline Poll**: Quick polls with short delays (5-40ms) hoping for fast completion
+/// 3. **Wait**: Exponential backoff polling if inline polling didn't complete
+///
+/// Either inline_poll completes the query, or we fall through to wait phase.
+#[derive(Debug, Default)]
+struct AsyncExecutionMetrics {
+    /// Time spent submitting the initial async statement request.
+    submit: Duration,
+    /// Metrics from the inline polling phase (short delays, hoping for quick completion).
+    inline_poll: Option<InlinePollMetrics>,
+    /// Metrics from the wait phase (exponential backoff, used for longer queries).
+    wait: Option<WaitMetrics>,
+}
+
+/// Metrics from the inline polling phase.
+#[derive(Debug)]
+struct InlinePollMetrics {
+    /// Total time spent in inline polling.
+    duration: Duration,
+    /// Whether the query completed during inline polling (true) or fell through to wait (false).
+    completed: bool,
+}
+
+/// Metrics from the exponential backoff wait phase.
+#[derive(Debug)]
+struct WaitMetrics {
+    /// Total time spent waiting for completion.
+    duration: Duration,
+    /// Number of poll requests made during the wait phase.
+    polls: usize,
+}
+
+impl AsyncExecutionMetrics {
+    fn record_submit(&mut self, duration: Duration) {
+        self.submit = duration;
+    }
+
+    fn record_inline(&mut self, duration: Duration, completed: bool) {
+        self.inline_poll = Some(InlinePollMetrics {
+            duration,
+            completed,
+        });
+    }
+
+    fn record_wait(&mut self, duration: Duration, polls: usize) {
+        self.wait = Some(WaitMetrics { duration, polls });
+    }
+
+    fn emit(&self) {
+        fn ms(d: Duration) -> f64 {
+            d.as_secs_f64() * 1000.0
+        }
+
+        let inline_ms = self.inline_poll.as_ref().map(|m| ms(m.duration));
+        let inline_completed = self.inline_poll.as_ref().map(|m| m.completed);
+        let wait_ms = self.wait.as_ref().map(|w| ms(w.duration));
+        let wait_polls = self.wait.as_ref().map(|w| w.polls);
+
+        debug!(
+            submit_ms = ms(self.submit),
+            inline_ms, inline_completed, wait_ms, wait_polls, "async execution timings"
+        );
+    }
+}
+
 fn join_server_path(server_url: &str, path: &str) -> Result<String, SfError> {
     Url::parse(server_url)
         .and_then(|base| base.join(path))
@@ -79,12 +148,12 @@ async fn parse_submit_response(
         return Err(http_status_error(status));
     }
 
-    let body_text = response
-        .text()
+    let body_bytes = response
+        .bytes()
         .await
         .map_err(|source| transport_error(source))?;
     let parsed: query_response::Response =
-        serde_json::from_str(&body_text).map_err(|source| body_parse_error(source))?;
+        serde_json::from_slice(&body_bytes).map_err(|source| body_parse_error(source))?;
     let query_id = parsed.data.query_id.clone();
     let get_result_url = parsed
         .data
@@ -170,12 +239,12 @@ pub async fn poll_query_status(
     if !status.is_success() {
         return Err(http_status_error(status));
     }
-    let body_text = response
-        .text()
+    let body_bytes = response
+        .bytes()
         .await
         .map_err(|source| transport_error(source))?;
     let parsed: query_response::Response =
-        serde_json::from_str(&body_text).map_err(|source| body_parse_error(source))?;
+        serde_json::from_slice(&body_bytes).map_err(|source| body_parse_error(source))?;
     debug!(
         success = parsed.success,
         rowset_present = parsed.data.rowset.is_some(),
@@ -202,6 +271,8 @@ pub async fn execute_blocking_with_async(
     policy: &RetryPolicy,
 ) -> Result<query_response::Response, SfError> {
     let client_info = &params.client_info;
+    let mut metrics = AsyncExecutionMetrics::default();
+    let submit_start = Instant::now();
     let submitted = submit_statement_async(
         client,
         params,
@@ -212,6 +283,7 @@ pub async fn execute_blocking_with_async(
         policy,
     )
     .await?;
+    metrics.record_submit(submit_start.elapsed());
 
     let SubmitOk {
         query_id,
@@ -226,14 +298,23 @@ pub async fn execute_blocking_with_async(
                 location: current_location(),
             })?;
 
-        if let Some(inline) =
-            inline_poll_for_completion(client, client_info, session_token, result_url, policy)
-                .await?
+        let inline_start = Instant::now();
+        match inline_poll_for_completion(client, client_info, session_token, result_url, policy)
+            .await?
         {
-            response = inline;
-        } else {
-            response =
-                wait_for_completion(client, client_info, session_token, result_url, policy).await?;
+            Some(inline) => {
+                metrics.record_inline(inline_start.elapsed(), true);
+                response = inline;
+            }
+            None => {
+                metrics.record_inline(inline_start.elapsed(), false);
+                let wait_start = Instant::now();
+                let (waited, polls) =
+                    wait_for_completion(client, client_info, session_token, result_url, policy)
+                        .await?;
+                metrics.record_wait(wait_start.elapsed(), polls);
+                response = waited;
+            }
         }
     }
 
@@ -246,6 +327,7 @@ pub async fn execute_blocking_with_async(
             location: current_location(),
         })?;
 
+    metrics.emit();
     Ok(response)
 }
 
@@ -308,6 +390,19 @@ fn body_parse_error(source: serde_json::Error) -> SfError {
 
 #[track_caller]
 fn http_status_error(status: StatusCode) -> SfError {
+    // TODO(session-refresh): Implement automatic session renewal on 401.
+    // See gosnowflake's renewRestfulSession for reference:
+    // 1. auth.rs: Expose master_token from AuthResponseMain (remove _ prefix)
+    // 2. mod.rs: Return both session_token and master_token from login
+    // 3. connection.rs: Store both tokens in Connection struct
+    // 4. New: POST /session/token-request with master_token auth and
+    //    body {"oldSessionToken": "...", "requestType": "RENEW"}
+    // 5. On 401 here: attempt refresh before returning SessionExpired
+    if status == StatusCode::UNAUTHORIZED {
+        return SfError::SessionExpired {
+            location: current_location(),
+        };
+    }
     SfError::HttpStatus {
         status,
         location: current_location(),
@@ -391,10 +486,11 @@ async fn wait_for_completion(
     session_token: &str,
     result_url: &str,
     policy: &RetryPolicy,
-) -> Result<query_response::Response, SfError> {
+) -> Result<(query_response::Response, usize), SfError> {
     let start = Instant::now();
     let mut attempt: usize = 0;
     let mut sleep_ms = policy.backoff.base.as_millis() as f64;
+    let mut polls: usize = 0;
 
     loop {
         let elapsed = start.elapsed();
@@ -445,19 +541,12 @@ async fn wait_for_completion(
         poll_policy.max_elapsed = remaining;
         let response =
             poll_query_status(client, client_info, session_token, result_url, &poll_policy).await?;
+        polls += 1;
 
         if let Some(done) = handle_poll_response(response)? {
-            return Ok(done);
+            return Ok((done, polls));
         }
     }
-}
-
-fn should_continue_after_success(resp: &query_response::Response) -> bool {
-    resp.data.get_result_url.is_some() && !response_has_tabular_data(resp)
-}
-
-fn should_continue_after_failure(resp: &query_response::Response) -> bool {
-    resp.data.get_result_url.is_some()
 }
 
 fn snowflake_failure(resp: &query_response::Response) -> SfError {
@@ -489,6 +578,18 @@ fn next_poll_delay_ms(prev_ms: f64, backoff: &BackoffConfig) -> f64 {
         next = cap;
     }
     next
+}
+
+/// Returns true if a successful response still requires more polling.
+/// This occurs when we have a result URL but no tabular data yet.
+fn should_continue_after_success(resp: &query_response::Response) -> bool {
+    resp.data.get_result_url.is_some() && !response_has_tabular_data(resp)
+}
+
+/// Returns true if a failed response should continue polling.
+/// This occurs when the response has a result URL (query still running).
+fn should_continue_after_failure(resp: &query_response::Response) -> bool {
+    resp.data.get_result_url.is_some()
 }
 
 fn handle_poll_response(
@@ -543,5 +644,26 @@ mod tests {
         }));
 
         assert!(should_poll_for_completion(&resp));
+    }
+
+    #[test]
+    fn http_401_returns_session_expired() {
+        let err = http_status_error(StatusCode::UNAUTHORIZED);
+        assert!(
+            matches!(err, SfError::SessionExpired { .. }),
+            "expected SessionExpired, got {:?}",
+            err
+        );
+    }
+
+    #[test]
+    fn http_503_returns_http_status() {
+        let err = http_status_error(StatusCode::SERVICE_UNAVAILABLE);
+        match err {
+            SfError::HttpStatus { status, .. } => {
+                assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+            }
+            other => panic!("expected HttpStatus, got {:?}", other),
+        }
     }
 }

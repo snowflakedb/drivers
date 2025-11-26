@@ -1,0 +1,12 @@
+{
+  "name": "Poll returns 401 session expired",
+  "request": {
+    "urlPathPattern": "/queries/.*/result.*",
+    "method": "GET"
+  },
+  "response": {
+    "status": 401,
+    "body": "Session expired"
+  }
+}
+

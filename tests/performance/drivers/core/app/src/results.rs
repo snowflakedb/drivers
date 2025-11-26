@@ -189,3 +189,42 @@ where
 
     Ok(filename.display().to_string())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn calculate_stats_empty_returns_zeros() {
+        let stats = calculate_stats(vec![]);
+        assert_eq!(stats.median, 0.0);
+        assert_eq!(stats.min, 0.0);
+        assert_eq!(stats.max, 0.0);
+    }
+
+    #[test]
+    fn calculate_stats_single_element() {
+        let stats = calculate_stats(vec![5.0]);
+        assert_eq!(stats.median, 5.0);
+        assert_eq!(stats.min, 5.0);
+        assert_eq!(stats.max, 5.0);
+    }
+
+    #[test]
+    fn calculate_stats_odd_count_median() {
+        // [1, 2, 3, 4, 5] -> median is 3 (middle element)
+        let stats = calculate_stats(vec![3.0, 1.0, 5.0, 2.0, 4.0]);
+        assert_eq!(stats.median, 3.0);
+        assert_eq!(stats.min, 1.0);
+        assert_eq!(stats.max, 5.0);
+    }
+
+    #[test]
+    fn calculate_stats_even_count_median() {
+        // [1, 2, 3, 4] -> median is (2 + 3) / 2 = 2.5
+        let stats = calculate_stats(vec![4.0, 1.0, 3.0, 2.0]);
+        assert_eq!(stats.median, 2.5);
+        assert_eq!(stats.min, 1.0);
+        assert_eq!(stats.max, 4.0);
+    }
+}

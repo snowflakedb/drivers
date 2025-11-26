@@ -47,8 +47,12 @@ fn run() -> Result<()> {
     execute_setup_queries(conn_handle, &config.setup_queries)
         .map_err(|e| format!("Failed to execute setup queries: {:?}", e))?;
 
-    let stmt_handle = create_statement(conn_handle, &config.sql_command)
-        .map_err(|e| format!("Failed to prepare statement: {:?}", e))?;
+    let stmt_handle = create_statement(
+        conn_handle,
+        &config.sql_command,
+        config.statement_async_override,
+    )
+    .map_err(|e| format!("Failed to prepare statement: {:?}", e))?;
 
     match config.test_type {
         TestType::Select => execute_fetch_test(

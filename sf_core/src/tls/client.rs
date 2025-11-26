@@ -4,10 +4,11 @@ use crate::tls::config::TlsConfig;
 use crate::tls::error::{
     ClientBuildSnafu, PemParseSnafu, RootStoreAddSnafu, TlsError, VerifierBuildSnafu,
 };
-use reqwest::Client;
+use reqwest::{Client, ClientBuilder};
 use rustls::ClientConfig;
 use snafu::ResultExt;
 use std::sync::Arc;
+use std::time::Duration;
 
 /// Create a reqwest Client with TLS configuration
 ///
@@ -17,7 +18,7 @@ pub fn create_tls_client_with_config(tls_config: TlsConfig) -> Result<Client, Tl
     // Handle insecure configurations
     if !tls_config.verify_certificates {
         tracing::warn!("Creating insecure TLS client - certificate verification disabled");
-        return Client::builder()
+        return configure_http_client(Client::builder())
             .danger_accept_invalid_certs(true)
             .danger_accept_invalid_hostnames(true)
             .build()
@@ -47,7 +48,9 @@ pub fn create_tls_client_with_config(tls_config: TlsConfig) -> Result<Client, Tl
                     "Custom root store specified but CRL validation disabled - custom roots will be ignored"
                 );
             }
-            Client::builder().build().context(ClientBuildSnafu)
+            configure_http_client(Client::builder())
+                .build()
+                .context(ClientBuildSnafu)
         }
         CertRevocationCheckMode::Enabled | CertRevocationCheckMode::Advisory => {
             tracing::debug!(
@@ -80,12 +83,12 @@ pub fn create_crl_tls_client_with_root_store(
         .with_no_client_auth();
 
     // Create reqwest client with custom TLS configuration
-    let client = Client::builder()
+    let client = configure_http_client(Client::builder())
         .use_preconfigured_tls(tls_config)
-        .timeout(std::time::Duration::from_secs(
-            crl_config.http_timeout.num_seconds() as u64,
+        .timeout(Duration::from_secs(
+            crl_config.http_timeout.num_seconds() as u64
         ))
-        .connect_timeout(std::time::Duration::from_secs(
+        .connect_timeout(Duration::from_secs(
             crl_config.connection_timeout.num_seconds() as u64,
         ))
         .build()
@@ -113,4 +116,11 @@ pub fn create_root_store_from_pem(pem_data: &[u8]) -> Result<rustls::RootCertSto
         root_store.add(cert).context(RootStoreAddSnafu)?;
     }
     Ok(root_store)
+}
+
+fn configure_http_client(builder: ClientBuilder) -> ClientBuilder {
+    builder
+        .pool_idle_timeout(Some(Duration::from_secs(30)))
+        .pool_max_idle_per_host(32)
+        .tcp_keepalive(Some(Duration::from_secs(60)))
 }

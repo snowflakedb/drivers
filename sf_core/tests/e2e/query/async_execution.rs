@@ -65,3 +65,30 @@ fn should_match_blocking_results_when_async_execution_enabled() {
     client.release_statement(&blocking_stmt);
     client.release_statement(&async_stmt);
 }
+
+#[test]
+fn should_use_async_by_default_when_no_execution_mode_specified() {
+    // Given Snowflake client is logged in
+    let client = SnowflakeTestClient::connect_with_default_auth();
+
+    // And Statement has no async execution setting
+    let stmt = client.new_statement(); // no set_statement_async_execution call
+
+    // When Query "SELECT seq8() as id FROM TABLE(GENERATOR(ROWCOUNT => 100)) v ORDER BY id" is executed
+    client.set_sql_query(
+        &stmt,
+        "SELECT seq8() as id FROM TABLE(GENERATOR(ROWCOUNT => 100)) v ORDER BY id",
+    );
+    let result = client.execute_statement_query(&stmt);
+
+    // Then there are 100 numbered sequentially rows returned
+    let mut arrow_helper = ArrowResultHelper::from_result(result);
+    let rows = arrow_helper.transform_into_array::<i64>().unwrap();
+    assert_eq!(rows.len(), 100);
+    for (i, row) in rows.iter().enumerate() {
+        assert_eq!(row[0], i as i64);
+    }
+
+    // And Statement should be released
+    client.release_statement(&stmt);
+}

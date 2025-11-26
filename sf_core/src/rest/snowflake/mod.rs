@@ -19,7 +19,7 @@ use reqwest::{self, header};
 use serde_json;
 use snafu::{Location, ResultExt, Snafu};
 use std::collections::HashMap;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tracing;
 use url::Url;
 
@@ -282,6 +282,7 @@ pub async fn snowflake_query_with_client(
     // tracing::debug!("Request accept: {:?}", request.accept());
     // tracing::debug!("Request accept-encoding: {:?}", request.accept_encoding());
 
+    let send_start = Instant::now();
     let response = client.execute(request).await.context(CommunicationSnafu {
         context: "Failed to execute query request",
     })?;
@@ -289,6 +290,12 @@ pub async fn snowflake_query_with_client(
     let query_response = read_response_json::<query_response::Response>(response)
         .await
         .context(InvalidSnowflakeResponseSnafu)?;
+    let elapsed_ms = send_start.elapsed().as_secs_f64() * 1000.0;
+    tracing::debug!(
+        elapsed_ms,
+        query_id = query_response.data.query_id.as_deref().unwrap_or_default(),
+        "blocking endpoint returned response"
+    );
 
     if !query_response.success {
         let message = query_response
@@ -337,6 +344,11 @@ where
     let response_text = response.text().await;
 
     if !response_status.is_success() {
+        // TODO(session-refresh): Implement automatic session renewal on 401.
+        // See gosnowflake's renewRestfulSession and TODO in async_exec.rs.
+        if response_status == reqwest::StatusCode::UNAUTHORIZED {
+            return SessionExpiredSnafu.fail();
+        }
         return ResponseStatusSnafu {
             status: response_status,
             message: response_text.unwrap_or("Unknown error".to_string()),
@@ -454,6 +466,11 @@ pub enum SnowflakeResponseError {
     ResponseStatus {
         status: reqwest::StatusCode,
         message: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Session expired - reauthentication required"))]
+    SessionExpired {
         #[snafu(implicit)]
         location: Location,
     },

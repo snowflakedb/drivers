@@ -324,32 +324,11 @@ impl Statement {
             .settings
             .get(snowflake::STATEMENT_ASYNC_EXECUTION_OPTION)
         {
-            Some(Setting::String(value)) => {
-                let normalized = value.trim();
-                if normalized.eq_ignore_ascii_case("false")
-                    || normalized.eq_ignore_ascii_case("no")
-                    || normalized == "0"
-                {
-                    QueryExecutionMode::Blocking
-                } else {
-                    QueryExecutionMode::Async
-                }
-            }
-            Some(Setting::Int(value)) => {
-                if *value == 0 {
-                    QueryExecutionMode::Blocking
-                } else {
-                    QueryExecutionMode::Async
-                }
-            }
-            Some(Setting::Double(value)) => {
-                if *value == 0.0 {
-                    QueryExecutionMode::Blocking
-                } else {
-                    QueryExecutionMode::Async
-                }
-            }
-            Some(Setting::Bytes(_)) => QueryExecutionMode::Async,
+            Some(setting) => match parse_bool_setting(setting) {
+                Some(true) => QueryExecutionMode::Async,
+                Some(false) => QueryExecutionMode::Blocking,
+                None => QueryExecutionMode::Async,
+            },
             None => match query {
                 Some(sql) if requires_blocking(sql) => QueryExecutionMode::Blocking,
                 _ => QueryExecutionMode::Async,
@@ -358,13 +337,31 @@ impl Statement {
     }
 }
 
+fn parse_bool_setting(setting: &Setting) -> Option<bool> {
+    match setting {
+        Setting::String(s) => {
+            let s = s.trim();
+            if s.eq_ignore_ascii_case("true") || s.eq_ignore_ascii_case("yes") || s == "1" {
+                Some(true)
+            } else if s.eq_ignore_ascii_case("false") || s.eq_ignore_ascii_case("no") || s == "0" {
+                Some(false)
+            } else {
+                None
+            }
+        }
+        Setting::Int(v) => Some(*v != 0),
+        _ => None,
+    }
+}
+
 fn requires_blocking(sql: &str) -> bool {
-    let trimmed = sql.trim_start();
-    if trimmed.is_empty() {
+    let s = sql.trim_start();
+    if s.len() < 3 {
         return false;
     }
-    let upper = trimmed.to_ascii_uppercase();
-    upper.starts_with("PUT ") || upper == "PUT" || upper.starts_with("GET ") || upper == "GET"
+    let prefix = &s[..3];
+    let is_put_or_get = prefix.eq_ignore_ascii_case("PUT") || prefix.eq_ignore_ascii_case("GET");
+    is_put_or_get && (s.len() == 3 || s.as_bytes()[3] == b' ')
 }
 
 #[derive(Snafu, Debug)]
@@ -381,4 +378,61 @@ pub enum StatementError {
         #[snafu(implicit)]
         location: snafu::Location,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn requires_blocking_detects_put_statements() {
+        assert!(requires_blocking("PUT file://local @stage"));
+        assert!(requires_blocking("put file://local @stage"));
+        assert!(requires_blocking("Put file://local @stage"));
+        assert!(requires_blocking("PUT"));
+        assert!(requires_blocking("put"));
+    }
+
+    #[test]
+    fn requires_blocking_detects_get_statements() {
+        assert!(requires_blocking("GET @stage file://local"));
+        assert!(requires_blocking("get @stage file://local"));
+        assert!(requires_blocking("Get @stage file://local"));
+        assert!(requires_blocking("GET"));
+        assert!(requires_blocking("get"));
+    }
+
+    #[test]
+    fn requires_blocking_handles_leading_whitespace() {
+        assert!(requires_blocking("  PUT file://local @stage"));
+        assert!(requires_blocking("\t\nGET @stage file://local"));
+        assert!(requires_blocking("   put"));
+    }
+
+    #[test]
+    fn requires_blocking_rejects_non_blocking_statements() {
+        assert!(!requires_blocking("SELECT * FROM table"));
+        assert!(!requires_blocking("INSERT INTO table VALUES (1)"));
+        assert!(!requires_blocking("UPDATE table SET x = 1"));
+        assert!(!requires_blocking("DELETE FROM table"));
+        assert!(!requires_blocking("CREATE TABLE t (id INT)"));
+    }
+
+    #[test]
+    fn requires_blocking_rejects_similar_prefixes() {
+        // Should not match words that start with PUT/GET but aren't commands
+        assert!(!requires_blocking("PUTTING"));
+        assert!(!requires_blocking("GETTING"));
+        assert!(!requires_blocking("PUTTER"));
+        assert!(!requires_blocking("GETAWAY"));
+    }
+
+    #[test]
+    fn requires_blocking_handles_edge_cases() {
+        assert!(!requires_blocking(""));
+        assert!(!requires_blocking("   "));
+        assert!(!requires_blocking("PU"));
+        assert!(!requires_blocking("GE"));
+        assert!(!requires_blocking("P"));
+    }
 }

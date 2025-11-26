@@ -4,6 +4,7 @@ type Result<T> = std::result::Result<T, String>;
 use arrow_array::StringArray;
 use sf_core::protobuf_apis::RustTransport;
 use sf_core::protobuf_gen::database_driver_v1::*;
+use sf_core::rest::snowflake::STATEMENT_ASYNC_EXECUTION_OPTION;
 use std::fs;
 
 use crate::types::TestConnectionParams;
@@ -45,6 +46,9 @@ pub fn create_connection(
     set_connection_option(&conn_handle, "authenticator", "SNOWFLAKE_JWT")?;
     let private_key_file = write_private_key_to_file(&params.private_key_contents)?;
     set_connection_option(&conn_handle, "private_key_file", &private_key_file)?;
+    if let Some(password) = &params.private_key_password {
+        set_connection_option(&conn_handle, "private_key_password", password)?;
+    }
 
     set_connection_option(&conn_handle, "database", &params.database)?;
     set_connection_option(&conn_handle, "schema", &params.schema)?;
@@ -62,7 +66,11 @@ pub fn create_connection(
     Ok(conn_handle)
 }
 
-pub fn create_statement(conn_handle: ConnectionHandle, sql: &str) -> Result<StatementHandle> {
+pub fn create_statement(
+    conn_handle: ConnectionHandle,
+    sql: &str,
+    async_override: Option<bool>,
+) -> Result<StatementHandle> {
     let stmt_response = DatabaseDriver::statement_new(StatementNewRequest {
         conn_handle: Some(conn_handle),
     })
@@ -77,6 +85,16 @@ pub fn create_statement(conn_handle: ConnectionHandle, sql: &str) -> Result<Stat
         query: sql.to_string(),
     })
     .map_err(|e| format!("Failed to set SQL query: {:?}", e))?;
+
+    if let Some(enabled) = async_override {
+        let value = if enabled { "true" } else { "false" }.to_string();
+        DatabaseDriver::statement_set_option_string(StatementSetOptionStringRequest {
+            stmt_handle: Some(stmt_handle),
+            key: STATEMENT_ASYNC_EXECUTION_OPTION.to_string(),
+            value,
+        })
+        .map_err(|e| format!("Failed to set async execution option: {:?}", e))?;
+    }
 
     Ok(stmt_handle)
 }
@@ -93,7 +111,7 @@ pub fn reset_statement_query(stmt_handle: StatementHandle, sql: &str) -> Result<
 pub fn get_server_version(conn_handle: ConnectionHandle) -> Result<String> {
     use crate::arrow::create_arrow_reader;
 
-    let version_stmt = create_statement(conn_handle, "SELECT CURRENT_VERSION() AS VERSION")?;
+    let version_stmt = create_statement(conn_handle, "SELECT CURRENT_VERSION() AS VERSION", None)?;
     let response = DatabaseDriver::statement_execute_query(StatementExecuteQueryRequest {
         stmt_handle: Some(version_stmt),
     })
@@ -145,7 +163,7 @@ pub fn execute_setup_queries(
     for (i, query) in setup_queries.iter().enumerate() {
         println!("  Setup query {}: {}", i + 1, query);
 
-        let stmt_handle = create_statement(conn_handle, query)
+        let stmt_handle = create_statement(conn_handle, query, None)
             .map_err(|e| format!("Failed to create setup statement: {:?}", e))?;
 
         DatabaseDriver::statement_execute_query(StatementExecuteQueryRequest {

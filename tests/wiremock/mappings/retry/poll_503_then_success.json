@@ -1,0 +1,38 @@
+{
+  "mappings": [
+    {
+      "name": "First poll returns 503",
+      "scenarioName": "poll-retry",
+      "requiredScenarioState": "Started",
+      "newScenarioState": "first-failure",
+      "request": {
+        "urlPathPattern": "/queries/.*/result.*",
+        "method": "GET"
+      },
+      "response": {
+        "status": 503,
+        "body": "Service Unavailable"
+      }
+    },
+    {
+      "name": "Second poll returns success",
+      "scenarioName": "poll-retry",
+      "requiredScenarioState": "first-failure",
+      "request": {
+        "urlPathPattern": "/queries/.*/result.*",
+        "method": "GET"
+      },
+      "response": {
+        "status": 200,
+        "jsonBody": {
+          "success": true,
+          "data": {
+            "queryId": "test-query-id",
+            "rowset": [["1", "test"]]
+          }
+        }
+      }
+    }
+  ]
+}
+
