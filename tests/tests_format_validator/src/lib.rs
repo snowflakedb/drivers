@@ -10,6 +10,6 @@ pub mod validator;
 pub use feature_parser::{Feature, Scenario, Step, StepType};
 pub use test_discovery::Language;
 pub use validator::{
-    GherkinValidator, LanguageValidation, MethodValidation, OrphanValidation, OrphanedTestFile,
-    ValidationResult,
+    GherkinValidator, LanguageValidation, MethodValidation, OrphanReason, OrphanValidation,
+    OrphanedTestFile, ValidationResult,
 };

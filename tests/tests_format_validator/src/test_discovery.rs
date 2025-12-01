@@ -2,7 +2,7 @@ use crate::utils::{to_pascal_case, to_snake_case};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Language {
     Rust,
     Odbc,
@@ -31,6 +31,15 @@ impl std::fmt::Display for Language {
     }
 }
 
+impl std::fmt::Display for TestLevel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TestLevel::E2E => write!(f, "e2e"),
+            TestLevel::Integration => write!(f, "integration"),
+        }
+    }
+}
+
 pub struct TestDiscovery {
     workspace_root: PathBuf,
 }
@@ -40,7 +49,8 @@ impl TestDiscovery {
         Self { workspace_root }
     }
 
-    /// Map feature tags to target languages
+    /// Map scenario tags to target languages
+    /// Only processes scenario-level tags, ignoring *_not_needed tags
     pub fn get_target_languages(tags: &[String]) -> Vec<Language> {
         let mut languages = Vec::new();
 
@@ -59,7 +69,6 @@ impl TestDiscovery {
                     languages.push(Language::JavaScript)
                 }
                 // Note: _not_needed tags are NOT included here - they explicitly exclude tests
-                // Default behavior: if feature has driver tag but scenario doesn't, it's TODO
                 _ => {} // Unknown tag, ignore
             }
         }
@@ -69,6 +78,79 @@ impl TestDiscovery {
         languages.dedup();
 
         languages
+    }
+
+    /// Get generic (non-level-specific) language tags from a list of tags
+    /// Only matches generic tags like @core, @python, NOT @core_e2e or @python_int
+    pub fn get_generic_languages(tags: &[String]) -> Vec<Language> {
+        let mut languages = Vec::new();
+
+        for tag in tags {
+            match tag.as_str() {
+                "core" => languages.push(Language::Rust),
+                "odbc" => languages.push(Language::Odbc),
+                "jdbc" => languages.push(Language::Jdbc),
+                "python" | "pep249" => languages.push(Language::Python),
+                "csharp" | "dotnet" => languages.push(Language::CSharp),
+                "javascript" | "nodejs" | "js" => languages.push(Language::JavaScript),
+                _ => {} // Ignore level-specific tags and unknown tags
+            }
+        }
+
+        // Remove duplicates
+        languages.sort_by_key(|l| format!("{:?}", l));
+        languages.dedup();
+
+        languages
+    }
+
+    /// Detect if a feature is language-specific based on its folder path
+    /// Returns Some(Language) if in a language-specific folder (core/, python/, odbc/, etc.)
+    /// Returns None if in shared/ folder
+    pub fn get_language_from_path(feature_path: &std::path::Path) -> Option<Language> {
+        let path_components: Vec<&str> = feature_path
+            .components()
+            .filter_map(|c| c.as_os_str().to_str())
+            .collect();
+
+        // Look for the organizational directory after "definitions"
+        for (i, component) in path_components.iter().enumerate() {
+            if *component == "definitions" && i + 1 < path_components.len() {
+                let org_dir = path_components[i + 1];
+                return match org_dir {
+                    "core" => Some(Language::Rust),
+                    "python" => Some(Language::Python),
+                    "odbc" => Some(Language::Odbc),
+                    "jdbc" => Some(Language::Jdbc),
+                    "csharp" => Some(Language::CSharp),
+                    "javascript" => Some(Language::JavaScript),
+                    "shared" => None,
+                    _ => None,
+                };
+            }
+        }
+        None
+    }
+
+    pub fn get_excluded_languages(tags: &[String]) -> Vec<Language> {
+        let mut excluded = Vec::new();
+
+        for tag in tags {
+            match tag.as_str() {
+                "core_not_needed" => excluded.push(Language::Rust),
+                "odbc_not_needed" => excluded.push(Language::Odbc),
+                "jdbc_not_needed" => excluded.push(Language::Jdbc),
+                "python_not_needed" => excluded.push(Language::Python),
+                "csharp_not_needed" => excluded.push(Language::CSharp),
+                "javascript_not_needed" | "js_not_needed" => excluded.push(Language::JavaScript),
+                _ => {}
+            }
+        }
+
+        excluded.sort_by_key(|l| format!("{:?}", l));
+        excluded.dedup();
+
+        excluded
     }
 
     /// Determine test level (e2e or integration) based on tags
@@ -97,6 +179,32 @@ impl TestDiscovery {
         }
         // Default to e2e if no specific level tag found
         TestLevel::E2E
+    }
+
+    /// Determine test level for a specific language based on tags
+    /// This is language-aware, so it only considers tags for the given language
+    pub fn get_test_level_for_language(tags: &[String], language: &Language) -> TestLevel {
+        let language_prefix = match language {
+            Language::Rust => "core",
+            Language::Odbc => "odbc",
+            Language::Jdbc => "jdbc",
+            Language::Python => "python",
+            Language::CSharp => "csharp",
+            Language::JavaScript => "javascript",
+        };
+
+        // First, check for language-specific level tags
+        for tag in tags {
+            if tag == &format!("{}_e2e", language_prefix) {
+                return TestLevel::E2E;
+            }
+            if tag == &format!("{}_int", language_prefix) {
+                return TestLevel::Integration;
+            }
+        }
+
+        // If no language-specific tag found, fall back to generic check
+        Self::get_test_level(tags)
     }
 
     /// Find test file for a given feature path and language (includes subdirectory structure)
@@ -153,16 +261,32 @@ impl TestDiscovery {
             .collect();
 
         // Look for "definitions" in the path and get the next component
+        // Skip organizational directories (shared, core, python, odbc, jdbc)
+        // and get the actual test subdirectory (authentication, http, put_get, query, tls, etc.)
         for (i, component) in path_components.iter().enumerate() {
             if *component == "definitions" && i + 1 < path_components.len() {
-                let subdir = path_components[i + 1];
-                if subdir
+                let mut idx = i + 1;
+                let subdir = path_components[idx];
+
+                // Skip organizational directories
+                if matches!(
+                    subdir,
+                    "shared" | "core" | "python" | "odbc" | "jdbc" | "csharp" | "javascript"
+                ) {
+                    // If there's another level after the organizational directory, use that
+                    if i + 2 < path_components.len() {
+                        idx = i + 2;
+                    }
+                }
+
+                let result_subdir = path_components[idx];
+                if result_subdir
                     != feature_path
                         .file_stem()
                         .and_then(|s| s.to_str())
                         .unwrap_or("")
                 {
-                    return Some(subdir.to_string());
+                    return Some(result_subdir.to_string());
                 }
             }
         }

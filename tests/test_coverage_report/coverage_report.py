@@ -177,11 +177,27 @@ class CoverageReportGenerator:
                         pass  # Skip malformed lines
                         
         # After parsing, mark scenarios as implemented only if they have the appropriate driver tag
+        # AND the test method exists in the correct test file for this feature
         for feature_name, feature_data in features.items():
             scenarios_with_annotations = self.get_feature_scenarios_with_annotations(feature_data['path'])
+            scenario_names = [s['name'] for s in scenarios_with_annotations]
+            
             for lang, lang_data in feature_data['languages'].items():
+                # Get test methods that exist in THIS feature's test file
+                test_file_path = lang_data.get('path', '')
+                test_methods_in_file = set()
+                
+                if test_file_path and test_file_path != "No test file found":
+                    try:
+                        # Extract test methods from the specific test file
+                        methods_with_lines = self.extract_test_methods_with_lines(test_file_path, scenario_names)
+                        test_methods_in_file = set(methods_with_lines.keys())
+                    except Exception:
+                        # If we can't read the file, assume no methods exist
+                        test_methods_in_file = set()
+                
                 if lang_data['implemented']:  # If overall language implementation passed
-                    # Only mark scenarios as passed if they have the driver tag
+                    # Only mark scenarios as passed if they have the driver tag AND test method exists in this file
                     for scenario_info in scenarios_with_annotations:
                         scenario_name = scenario_info['name']
                         scenario_tags = scenario_info['tags']
@@ -195,8 +211,14 @@ class CoverageReportGenerator:
                             tag_to_check = f'@{lang_lower}'
                         
                         if tag_to_check in [tag.lower() for tag in scenario_tags]:
-                            # Scenario has the driver tag, mark as implemented if not already set
-                            if scenario_name not in lang_data['scenarios']:
+                            # Check if a test method for this scenario exists in the correct test file
+                            method_exists = any(
+                                self._method_matches_scenario(method, scenario_name)
+                                for method in test_methods_in_file
+                            )
+                            
+                            # Only mark as implemented if method exists in this specific file
+                            if scenario_name not in lang_data['scenarios'] and method_exists:
                                 lang_data['scenarios'][scenario_name] = True
                         # If scenario doesn't have the driver tag, don't mark it as implemented
                 else:
@@ -227,6 +249,28 @@ class CoverageReportGenerator:
     def get_feature_scenarios_with_annotations(self, feature_path: str) -> List[Dict[str, any]]:
         """Extract scenario names and their annotations (Behavior Difference, expected) from a feature file."""
         return self.feature_parser.get_feature_scenarios_with_annotations(feature_path)
+    
+    def is_language_only_feature(self, feature_path: str) -> tuple[bool, str]:
+        """
+        Check if a feature is in a language-specific folder.
+        Returns: (is_only, language) where language is 'core', 'python', 'odbc', 'jdbc', or ''
+        """
+        from pathlib import Path
+        
+        # Detect language from folder path
+        path_parts = Path(feature_path).parts
+        
+        # Look for organizational directory after "definitions"
+        for i, component in enumerate(path_parts):
+            if component == "definitions" and i + 1 < len(path_parts):
+                org_dir = path_parts[i + 1]
+                if org_dir in ('core', 'python', 'odbc', 'jdbc', 'csharp', 'javascript'):
+                    return True, org_dir
+                elif org_dir == 'shared':
+                    return False, ''
+        
+        return False, ''
+    
 
     def parse_behavior_difference_descriptions(self, driver: str = 'odbc') -> Dict[str, str]:
         """Parse Behavior Difference descriptions from the driver's Behavior Difference.md file."""
@@ -437,11 +481,13 @@ class CoverageReportGenerator:
                 status = '✅' if is_implemented else '❌'
                 
                 # Convert absolute path to relative path
-                relative_path = test_file_path
-                if test_file_path.startswith('./'):
-                    relative_path = test_file_path[2:]  # Remove ./ prefix
-                elif test_file_path.startswith(str(self.workspace_root)):
-                    relative_path = Path(test_file_path).relative_to(self.workspace_root)
+                relative_path = "No test file found"
+                if test_file_path:
+                    relative_path = test_file_path
+                    if test_file_path.startswith('./'):
+                        relative_path = test_file_path[2:]  # Remove ./ prefix
+                    elif test_file_path.startswith(str(self.workspace_root)):
+                        relative_path = Path(test_file_path).relative_to(self.workspace_root)
                 
                 features[feature_name]['languages'][language] = {
                     'implemented': is_implemented,
@@ -798,23 +844,39 @@ class CoverageReportGenerator:
                     }}
                     
                     function toggleFeature(featureId) {{
-                        const featureHeader = document.querySelector(`[onclick*="${{featureId}}"]`);
-                        const featureRows = document.querySelectorAll(`[data-feature="${{featureId}}"]`);
-                        
-                        if (featureHeader.classList.contains('collapsed')) {{
-                            // Expand
-                            featureHeader.classList.remove('collapsed');
-                            featureRows.forEach(row => {{
-                                row.style.display = '';
-                                row.classList.remove('collapsed');
-                            }});
+                        // Check if it's a language-specific feature (has langspec- prefix)
+                        if (featureId.startsWith('langspec-')) {{
+                            const contentRow = document.getElementById(featureId);
+                            const toggleIcon = document.getElementById('toggle-' + featureId);
+                            if (contentRow) {{
+                                if (contentRow.style.display === 'none' || contentRow.style.display === '') {{
+                                    contentRow.style.display = 'table-row';
+                                    if (toggleIcon) toggleIcon.textContent = '▼';
+                                }} else {{
+                                    contentRow.style.display = 'none';
+                                    if (toggleIcon) toggleIcon.textContent = '▶';
+                                }}
+                            }}
                         }} else {{
-                            // Collapse
-                            featureHeader.classList.add('collapsed');
-                            featureRows.forEach(row => {{
-                                row.style.display = 'none';
-                                row.classList.add('collapsed');
-                            }});
+                            // Original toggle for shared features
+                            const featureHeader = document.querySelector(`[onclick*="${{featureId}}"]`);
+                            const featureRows = document.querySelectorAll(`[data-feature="${{featureId}}"]`);
+                            
+                            if (featureHeader && featureHeader.classList.contains('collapsed')) {{
+                                // Expand
+                                featureHeader.classList.remove('collapsed');
+                                featureRows.forEach(row => {{
+                                    row.style.display = '';
+                                    row.classList.remove('collapsed');
+                                }});
+                            }} else if (featureHeader) {{
+                                // Collapse
+                                featureHeader.classList.add('collapsed');
+                                featureRows.forEach(row => {{
+                                    row.style.display = 'none';
+                                    row.classList.add('collapsed');
+                                }});
+                            }}
                         }}
                     }}
                     
@@ -837,6 +899,19 @@ class CoverageReportGenerator:
                             row.style.display = '';
                             row.classList.remove('collapsed');
                         }});
+                        
+                        // Expand all expandable sections (for Language-Specific tab)
+                        const expandableHeaders = document.querySelectorAll('.expandable-header');
+                        expandableHeaders.forEach(header => {{
+                            const content = header.nextElementSibling;
+                            const toggle = header.querySelector('.expandable-toggle');
+                            if (content && content.classList.contains('expandable-content')) {{
+                                header.classList.add('expanded');
+                                content.classList.add('expanded');
+                                if (toggle) toggle.classList.add('expanded');
+                                content.style.display = 'block';
+                            }}
+                        }});
                     }}
                     
                     function collapseAll() {{
@@ -857,6 +932,19 @@ class CoverageReportGenerator:
                         allCollapsibleRows.forEach(row => {{
                             row.style.display = 'none';
                             row.classList.add('collapsed');
+                        }});
+                        
+                        // Collapse all expandable sections (for Language-Specific tab)
+                        const expandableHeaders = document.querySelectorAll('.expandable-header');
+                        expandableHeaders.forEach(header => {{
+                            const content = header.nextElementSibling;
+                            const toggle = header.querySelector('.expandable-toggle');
+                            if (content && content.classList.contains('expandable-content')) {{
+                                header.classList.remove('expanded');
+                                content.classList.remove('expanded');
+                                if (toggle) toggle.classList.remove('expanded');
+                                content.style.display = 'none';
+                            }}
                         }});
                     }}
                 </script>
@@ -881,8 +969,22 @@ class CoverageReportGenerator:
         for feature_name, feature_data in features.items():
             # Extract folder from path
             path_parts = Path(feature_data['path']).parts
-            if len(path_parts) >= 3 and path_parts[-3] == 'definitions':
-                folder = path_parts[-2]  # Get the folder name (auth, query, etc.)
+            
+            # Handle new directory structure: definitions/{shared,core,python,odbc}/{category}/feature.feature
+            # And old structure: definitions/{category}/feature.feature
+            if 'definitions' in path_parts:
+                def_idx = path_parts.index('definitions')
+                # Check if we have organizational dir (shared, core, python, odbc)
+                if def_idx + 2 < len(path_parts):
+                    org_dir = path_parts[def_idx + 1]
+                    if org_dir in ('shared', 'core', 'python', 'odbc', 'jdbc', 'csharp', 'javascript'):
+                        # New structure: get category after organizational dir
+                        folder = path_parts[def_idx + 2] if def_idx + 2 < len(path_parts) else 'other'
+                    else:
+                        # Old structure or direct category: use the directory after definitions
+                        folder = org_dir
+                else:
+                    folder = 'other'
             else:
                 folder = 'other'  # Fallback for unexpected paths
             
@@ -917,6 +1019,23 @@ class CoverageReportGenerator:
                 # Add status cells for each language at feature level
                 for lang in languages:
                     data_key = self.get_language_data_key(lang)
+                    
+                    # Check if language wasn't validated for this feature
+                    if data_key not in feature_data['languages']:
+                        # Language was not validated - determine if it's excluded or just not implemented
+                        # Check if ANY scenario could be TODO for this language
+                        has_todo_scenarios = any(
+                            self.is_scenario_todo_for_driver(scenario_info, lang)
+                            for scenario_info in scenarios_with_annotations
+                        )
+                        
+                        if has_todo_scenarios:
+                            # Language could be implemented (not excluded) - show as TODO
+                            feature_cells.append('<td><div class="test-status"><span class="status-in-progress">TODO</span></div></td>')
+                        else:
+                            # Language is excluded with _not_needed or not relevant - show as N/A
+                            feature_cells.append('<td><div class="test-status"><span class="status-na">-</span></div></td>')
+                        continue
                     
                     # Check if any scenarios in this feature are expected (in progress) for this driver
                     has_expected_scenarios = False
@@ -1087,7 +1206,15 @@ class CoverageReportGenerator:
                                     # Not applicable for this driver
                                     status_cells.append('<td><div class="test-status"><span class="status-na">-</span></div></td>')
                         else:
-                            # Language not present for this feature
+                            # Language not present for this feature (not validated by validator)
+                            # Check if this language is excluded for this scenario/feature
+                            is_excluded = self.is_scenario_excluded_for_driver(scenario_info, lang)
+                            
+                            if is_excluded:
+                                # Language explicitly excluded with _not_needed tag
+                                status_cells.append('<td><div class="test-status"><span class="status-na">-</span></div></td>')
+                                continue
+                            
                             # Check if this scenario is expected (in progress) for this driver
                             is_todo_for_driver = self.is_scenario_todo_for_driver(scenario_info, lang)
                             
@@ -1160,7 +1287,7 @@ class CoverageReportGenerator:
         rows_html = '\n'.join(f'                    {row}' for row in rows)
         
         return dedent(f"""
-            <h2>📊 Coverage Overview</h2>
+            <h2>📊 Shared Tests</h2>
             <div class="expand-collapse-controls">
                 <span class="expand-collapse-btn" onclick="expandAll()">📖 Expand All</span>
                 <span class="expand-collapse-btn" onclick="collapseAll()">📕 Collapse All</span>
@@ -1203,30 +1330,108 @@ class CoverageReportGenerator:
     def _generate_language_coverage_html(self, features: Dict, languages: List[str]) -> str:
         """Generate the language coverage section HTML based only on expected tests."""
         from textwrap import dedent
+        from pathlib import Path
+        
+        # Filter out language-only features from coverage calculations
+        filtered_features = {}
+        for feature_name, feature_data in features.items():
+            is_only, _ = self.is_language_only_feature(feature_data['path'])
+            if not is_only:
+                filtered_features[feature_name] = feature_data
         
         cards = []
         for lang in languages:
             expected_count = 0
             implemented_count = 0
             
-            for feature_name, feature_data in features.items():
-                # Get scenarios with annotations for this feature
+            # Count implemented tests by checking scenario-level data
+            # This gives us accurate count of implemented scenarios
+            implemented_scenarios = set()
+            for feature_name, feature_data in filtered_features.items():
+                scenarios = self.get_feature_scenarios_with_annotations(feature_data['path'])
+                data_key = self.get_language_data_key(lang)
+                
+                for scenario_info in scenarios:
+                    scenario = scenario_info['name']
+                    tags = scenario_info['tags']
+                    
+                    # Check validator data with same logic as Missing Implementations tab
+                    has_implementation_tag = self._has_driver_tag_in_tags(tags, lang.lower())
+                    scenario_implemented = False
+                    if data_key in feature_data['languages']:
+                        lang_data = feature_data['languages'][data_key]
+                        # First, try scenario-level data (most accurate)
+                        if 'scenarios' in lang_data:
+                            if scenario in lang_data['scenarios']:
+                                scenario_implemented = lang_data['scenarios'][scenario]
+                            # If scenarios dict exists but this scenario is not in it,
+                            # it means the test file exists but this specific scenario is not implemented
+                        else:
+                            # No scenario-level data available
+                            # Only use file-level status if scenario has explicit implementation tags
+                            if has_implementation_tag and lang_data['status'] == '✅':
+                                scenario_implemented = True
+                            # If scenario is TODO (no explicit tag), don't assume it's implemented
+                    else:
+                        # Check filesystem for orphaned tests (not validated but file exists)
+                        # Only count as implemented if scenario has explicit tags
+                        if has_implementation_tag:
+                            feature_file_stem = Path(feature_data['path']).stem
+                            if lang.lower() == 'core':
+                                test_path = self.workspace_root / 'sf_core' / 'tests' / 'e2e' / feature_file_stem.replace('_', '/').replace(feature_file_stem.split('_')[0], '') 
+                                test_file = test_path.parent / f"{test_path.stem}.rs"
+                            elif lang.lower() == 'python':
+                                feature_path_obj = Path(feature_data['path'])
+                                category = feature_path_obj.parent.name
+                                test_file = self.workspace_root / 'python' / 'tests' / 'e2e' / category / f"test_{feature_file_stem}.py"
+                            elif lang.lower() == 'odbc':
+                                test_file = self.workspace_root / 'odbc' / 'tests' / f"{feature_file_stem}.rs"
+                            else:
+                                test_file = None
+                            
+                            if test_file and test_file.exists():
+                                scenario_implemented = True
+                    
+                    # Check for behavior differences (only for scenarios with explicit tags)
+                    # This prevents TODO scenarios from incorrectly matching BDs from other features
+                    is_behavior_difference = False
+                    if has_implementation_tag:
+                        behavior_difference_ids = self._get_behavior_difference_ids_for_scenario(scenario_info, lang.lower(), features)
+                        is_behavior_difference = bool(behavior_difference_ids)
+                    
+                    if scenario_implemented or is_behavior_difference:
+                        scenario_key = f"{feature_name}::{scenario}"
+                        implemented_scenarios.add(scenario_key)
+            
+            implemented_count = len(implemented_scenarios)
+            
+            # Count expected tests (only those that should exist based on tags)
+            for feature_name, feature_data in filtered_features.items():
                 scenarios_with_annotations = self.get_feature_scenarios_with_annotations(feature_data['path'])
                 
                 if not scenarios_with_annotations:
                     continue
                 
                 for scenario_info in scenarios_with_annotations:
-                    scenario = scenario_info['name']
-                    expected_drivers = scenario_info['expected_drivers']
                     tags = scenario_info['tags']
                     
+                    # Check if scenario is excluded for this driver
+                    is_excluded = self.is_scenario_excluded_for_driver(scenario_info, lang)
+                    if is_excluded:
+                        # Skip excluded scenarios - don't count them as expected
+                        continue
+                    
                     # Check if this scenario is expected/relevant for this driver
-                    # Check if there are actual Behavior Difference implementations for this driver and scenario
-                    behavior_difference_ids_for_this_driver = self._get_behavior_difference_ids_for_scenario(scenario_info, lang.lower(), features)
-                    is_behavior_difference_for_this_driver = bool(behavior_difference_ids_for_this_driver)
                     is_todo_for_driver = self.is_scenario_todo_for_driver(scenario_info, lang)
                     has_driver_implementation = self._has_driver_tag_in_tags(tags, lang.lower())
+                    
+                    # Only check for Behavior Differences if scenario has explicit implementation tags
+                    # This prevents TODO scenarios from incorrectly matching BDs from other features with same scenario names
+                    behavior_difference_ids_for_this_driver = []
+                    is_behavior_difference_for_this_driver = False
+                    if has_driver_implementation:
+                        behavior_difference_ids_for_this_driver = self._get_behavior_difference_ids_for_scenario(scenario_info, lang.lower(), features)
+                        is_behavior_difference_for_this_driver = bool(behavior_difference_ids_for_this_driver)
                     
                     # Count as expected if:
                     # 1. Has driver tag (@{lang})
@@ -1236,28 +1441,6 @@ class CoverageReportGenerator:
                     
                     if is_relevant:
                         expected_count += 1
-                        
-                        # Check if it's implemented
-                        scenario_implemented = False
-                        data_key = self.get_language_data_key(lang)
-                        if data_key in feature_data['languages']:
-                            lang_data = feature_data['languages'][data_key]
-                            # Only consider a scenario implemented if it has the driver tag
-                            if self._has_driver_tag_in_scenario(scenario_info, lang.lower()):
-                                if 'scenarios' in lang_data and scenario in lang_data['scenarios']:
-                                    # Use specific scenario data if available and scenario has the tag
-                                    scenario_implemented = lang_data['scenarios'][scenario]
-                                else:
-                                    # If scenario has the driver tag, use the overall feature status
-                                    scenario_implemented = lang_data['status'] == '✅'
-                            # If scenario doesn't have the driver tag, it's not applicable (scenario_implemented stays False)
-                        
-                        # Count as implemented if:
-                        # 1. Actually implemented OR
-                        # 2. Is Behavior Difference for this driver (Behavior Difference counts as implemented)
-                        # Note: Expected (in progress) scenarios are NOT counted as implemented
-                        if scenario_implemented or is_behavior_difference_for_this_driver:
-                            implemented_count += 1
             
             lang_coverage = (implemented_count / expected_count) * 100 if expected_count > 0 else 0
             coverage_class = 'coverage-high' if lang_coverage >= 80 else 'coverage-medium' if lang_coverage >= 60 else 'coverage-low'
@@ -1301,8 +1484,22 @@ class CoverageReportGenerator:
         for feature_name, feature_data in features.items():
             # Extract folder from path
             path_parts = Path(feature_data['path']).parts
-            if len(path_parts) >= 3 and path_parts[-3] == 'definitions':
-                folder = path_parts[-2]  # Get the folder name (auth, query, etc.)
+            
+            # Handle new directory structure: definitions/{shared,core,python,odbc}/{category}/feature.feature
+            # And old structure: definitions/{category}/feature.feature
+            if 'definitions' in path_parts:
+                def_idx = path_parts.index('definitions')
+                # Check if we have organizational dir (shared, core, python, odbc)
+                if def_idx + 2 < len(path_parts):
+                    org_dir = path_parts[def_idx + 1]
+                    if org_dir in ('shared', 'core', 'python', 'odbc', 'jdbc', 'csharp', 'javascript'):
+                        # New structure: get category after organizational dir
+                        folder = path_parts[def_idx + 2] if def_idx + 2 < len(path_parts) else 'other'
+                    else:
+                        # Old structure or direct category: use the directory after definitions
+                        folder = org_dir
+                else:
+                    folder = 'other'
             else:
                 folder = 'other'  # Fallback for unexpected paths
             
@@ -1671,10 +1868,17 @@ class CoverageReportGenerator:
         from textwrap import dedent
         from collections import defaultdict
         
+        # Filter out language-only features from missing implementations
+        filtered_features = {}
+        for feature_name, feature_data in features.items():
+            is_only, _ = self.is_language_only_feature(feature_data['path'])
+            if not is_only:
+                filtered_features[feature_name] = feature_data
+        
         # Find missing expected implementations grouped by language/driver
         missing_by_driver = defaultdict(list)
         
-        for feature_name, feature_data in features.items():
+        for feature_name, feature_data in filtered_features.items():
             # Get scenarios with annotations for this feature
             scenarios_with_annotations = self.get_feature_scenarios_with_annotations(feature_data['path'])
             
@@ -1683,34 +1887,51 @@ class CoverageReportGenerator:
                 
             for scenario_info in scenarios_with_annotations:
                 scenario = scenario_info['name']
+                tags = scenario_info['tags']
                 
                 # Check each language to see if this scenario is expected but missing
                 for lang in languages:
-                    # Check if this scenario is expected (in progress) for this driver
-                    is_todo = self.is_scenario_todo_for_driver(scenario_info, lang)
+                    # Skip if scenario is excluded for this driver
+                    is_excluded = self.is_scenario_excluded_for_driver(scenario_info, lang)
+                    if is_excluded:
+                        continue
                     
-                    if is_todo:
-                        # Check if this expected scenario is implemented
+                    # Check if this scenario is expected/relevant for this driver
+                    is_todo_for_driver = self.is_scenario_todo_for_driver(scenario_info, lang)
+                    has_driver_implementation = self._has_driver_tag_in_tags(tags, lang.lower())
+                    
+                    # Only check for Behavior Differences if scenario has explicit implementation tags
+                    # This prevents TODO scenarios from incorrectly matching BDs from other features with same scenario names
+                    behavior_difference_ids_for_this_driver = []
+                    is_behavior_difference_for_this_driver = False
+                    if has_driver_implementation:
+                        behavior_difference_driver_check = self.get_language_data_key(lang).lower() if lang == 'core' else lang.lower()
+                        behavior_difference_ids_for_this_driver = self._get_behavior_difference_ids_for_scenario(scenario_info, behavior_difference_driver_check, features)
+                        is_behavior_difference_for_this_driver = bool(behavior_difference_ids_for_this_driver)
+                    
+                    # Check if scenario is expected (should be implemented)
+                    is_expected = has_driver_implementation or is_behavior_difference_for_this_driver or is_todo_for_driver
+                    
+                    if is_expected:
+                        # Check if this expected scenario is actually implemented
+                        # Use SAME logic as summary cards for consistency
                         scenario_implemented = False
                         data_key = self.get_language_data_key(lang)
                         if data_key in feature_data['languages']:
                             lang_data = feature_data['languages'][data_key]
-                            # Only consider a scenario implemented if it has the driver tag
-                            if self._has_driver_tag_in_scenario(scenario_info, lang.lower()):
-                                if 'scenarios' in lang_data and scenario in lang_data['scenarios']:
-                                    # Use specific scenario data if available and scenario has the tag
+                            # First, try scenario-level data (most accurate)
+                            if 'scenarios' in lang_data:
+                                if scenario in lang_data['scenarios']:
                                     scenario_implemented = lang_data['scenarios'][scenario]
-                                else:
-                                    # If scenario has the driver tag, use the overall feature status
-                                    scenario_implemented = lang_data['status'] == '✅'
-                            # If scenario doesn't have the driver tag, it's not applicable (scenario_implemented stays False)
-                        
-                        # Also check if it's a Behavior Difference scenario (Behavior Difference scenarios are considered "implemented")
-                        behavior_difference_driver_check = self.get_language_data_key(lang).lower() if lang == 'core' else lang.lower()
-                        
-                        # Check if there are actual Behavior Difference implementations for this driver and scenario
-                        behavior_difference_ids_for_this_driver = self._get_behavior_difference_ids_for_scenario(scenario_info, behavior_difference_driver_check, features)
-                        is_behavior_difference_for_this_driver = bool(behavior_difference_ids_for_this_driver)
+                                # If scenarios dict exists but this scenario is not in it,
+                                # it means the test file exists but this specific scenario is not implemented
+                            else:
+                                # No scenario-level data available
+                                # Only use file-level status if scenario has explicit implementation tags
+                                has_implementation_tag = self._has_driver_tag_in_tags(tags, lang.lower())
+                                if has_implementation_tag and lang_data['status'] == '✅':
+                                    scenario_implemented = True
+                                # If scenario is TODO (no explicit tag), don't assume it's implemented
                         
                         # Only add to missing if it's expected but not implemented and not a Behavior Difference
                         if not scenario_implemented and not is_behavior_difference_for_this_driver:
@@ -1982,6 +2203,273 @@ class CoverageReportGenerator:
             {sections_html}
         """).strip()
 
+    def _generate_language_specific_coverage_table_html(self, features: Dict, languages: List[str]) -> str:
+        """Generate the language-specific features table sorted by language."""
+        from textwrap import dedent
+        from collections import defaultdict
+        
+        if not features:
+            return dedent("""
+                <h2>🎯 Language-Specific Tests</h2>
+                <p>No language-specific tests found.</p>
+            """).strip()
+        
+        # Group features by language
+        features_by_language = defaultdict(list)
+        validation_errors = []
+        
+        for feature_name, feature_data in features.items():
+            is_only, only_lang = self.is_language_only_feature(feature_data['path'])
+            if is_only:
+                features_by_language[only_lang].append((feature_name, feature_data))
+        
+        # Build HTML
+        html_parts = []
+        html_parts.append('<h2>🎯 Language-Specific Tests</h2>')
+        
+        # Add expand/collapse controls
+        html_parts.append(dedent("""
+            <div class="expand-collapse-controls">
+                <span class="expand-collapse-btn" onclick="expandAll()">📖 Expand All</span>
+                <span class="expand-collapse-btn" onclick="collapseAll()">📕 Collapse All</span>
+            </div>
+        """).strip())
+        
+        # Add legend
+        html_parts.append(dedent("""
+            <div style="background: #f8f9fa; border: 1px solid #dee2e6; border-radius: 5px; padding: 15px; margin: 20px 0;">
+                <div style="font-weight: bold; margin-bottom: 10px;">📖 Legend</div>
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px;">
+                    <div>
+                        <span style="font-weight: bold;">✓</span> = Implemented
+                    </div>
+                    <div>
+                        <span style="font-weight: bold;">✓</span><sup style="color: #FFD700; font-weight: bold;">1,2</sup> = Behavior Difference
+                    </div>
+                </div>
+            </div>
+        """).strip())
+        
+        # Show validation errors if any
+        if validation_errors:
+            html_parts.append('<div class="validation-errors" style="background: #fee; border: 1px solid #c33; padding: 15px; margin: 20px 0; border-radius: 5px;">')
+            html_parts.append('<h3 style="color: #c33; margin-top: 0;">⚠️ Validation Errors</h3>')
+            html_parts.append('<ul>')
+            for feature_name, error in validation_errors:
+                html_parts.append(f'<li><strong>{feature_name}</strong>: {error}</li>')
+            html_parts.append('</ul>')
+            html_parts.append('</div>')
+        
+        # Generate sections by language (sorted alphabetically) - with expandable sections
+        for lang_index, lang in enumerate(sorted(features_by_language.keys())):
+            lang_features = features_by_language[lang]
+            
+            # Expandable language section header (similar to category headers in Shared tab)
+            html_parts.append('<div class="expandable-section" style="margin-top: 20px;">')
+            html_parts.append(f'<div class="expandable-header" onclick="toggleSection(this)" style="background: #f0f0f0; padding: 15px; cursor: pointer; border-left: 4px solid #0066cc; margin-bottom: 0;">')
+            html_parts.append(f'<div class="expandable-title" style="font-weight: bold; font-size: 1.1em; color: #333;">{lang.upper()} ({len(lang_features)} features)</div>')
+            html_parts.append('<div class="expandable-toggle" style="float: right; margin-top: -20px;">▼</div>')
+            html_parts.append('</div>')
+            
+            html_parts.append('<div class="expandable-content" style="display: block;">')
+            html_parts.append('<div class="expandable-inner">')
+            
+            # Table for this language (same format as Shared tab)
+            html_parts.append('<table class="feature-table" style="margin-bottom: 0;">')
+            html_parts.append('<thead>')
+            html_parts.append('<tr>')
+            html_parts.append('<th>Feature</th>')
+            html_parts.append(f'<th>{lang.capitalize()}</th>')
+            html_parts.append('</tr>')
+            html_parts.append('</thead>')
+            html_parts.append('<tbody>')
+            
+            # Sort features by name within language
+            sorted_lang_features = sorted(lang_features, key=lambda x: x[0])
+            
+            for feature_name, feature_data in sorted_lang_features:
+                formatted_name = self.format_feature_name(feature_name, feature_data['path'])
+                scenarios_with_annotations = self.get_feature_scenarios_with_annotations(feature_data['path'])
+                
+                # Get status
+                data_key = self.get_language_data_key(lang)
+                if data_key in feature_data['languages']:
+                    lang_data = feature_data['languages'][data_key]
+                    status_icon = lang_data['status']
+                else:
+                    status_icon = '❌'
+                
+                # Count scenarios with Behavior Differences
+                bd_count = 0
+                for scenario_info in scenarios_with_annotations:
+                    behavior_difference_ids = self._get_behavior_difference_ids_for_scenario(scenario_info, lang.lower(), features)
+                    if behavior_difference_ids:
+                        bd_count += len(behavior_difference_ids)
+                
+                # Generate unique IDs for links (same as Shared tab)
+                feature_id = f"feature-{feature_name.replace('_', '-').replace(' ', '-').lower()}"
+                feature_id_for_bd = feature_name.replace('_', '-').replace(' ', '-').lower()
+                
+                # Feature header row with collapsible functionality (same as Shared tab)
+                feature_cells = [f'<td><div class="feature-name" onclick="toggleFeature(\'{feature_id}\')">{formatted_name}</div></td>']
+                
+                # Add status cell
+                if status_icon == '✅':
+                    feature_cells.append('<td><div class="test-status"><span class="tick-icon">✓</span></div></td>')
+                elif status_icon == '❌':
+                    feature_cells.append('<td><div class="test-status"><span class="status-fail">✗</span></div></td>')
+                else:
+                    feature_cells.append(f'<td><div class="test-status"><span>{status_icon}</span></div></td>')
+                
+                html_parts.append(f'<tr class="feature-row">{"".join(feature_cells)}</tr>')
+                
+                # Individual test rows - collect in feature content (same as Shared tab)
+                for i, scenario_info in enumerate(scenarios_with_annotations):
+                    scenario = scenario_info['name']
+                    tags = scenario_info['tags']
+                    
+                    is_last_test = i == len(scenarios_with_annotations) - 1
+                    row_class = "test-row" if not is_last_test else "test-row"
+                    
+                    # Test name cell with link to detailed breakdown (same as Shared tab)
+                    # Create unique scenario ID for navigation
+                    scenario_clean = scenario.lower().replace(' ', '-').replace('(', '').replace(')', '').replace("'", '').replace('"', '')
+                    scenario_id = f"scenario-{feature_id}-{scenario_clean}"
+                    
+                    # Determine test level for inline label
+                    has_int_tag = any(tag.endswith('_int') for tag in tags)
+                    test_level_label = '<span class="test-level-integration">Integration</span>' if has_int_tag else '<span class="test-level-e2e">E2E</span>'
+                    
+                    test_name_cell = f'<td><div class="test-name">• <a href="#" onclick="showTab(\'details-tab\'); expandToFeature(\'{feature_id}\'); setTimeout(() => document.getElementById(\'{scenario_id}\').scrollIntoView({{behavior: \'smooth\', block: \'center\'}}), 200); return false;">{scenario} {test_level_label}</a></div></td>'
+                    
+                    # Check if implemented
+                    scenario_implemented = False
+                    if data_key in feature_data['languages']:
+                        lang_data = feature_data['languages'][data_key]
+                        if 'scenarios' in lang_data and scenario in lang_data['scenarios']:
+                            scenario_implemented = lang_data['scenarios'][scenario]
+                        elif lang_data['status'] == '✅':
+                            scenario_implemented = True
+                    
+                    # Check for behavior differences
+                    behavior_difference_ids = self._get_behavior_difference_ids_for_scenario(scenario_info, lang.lower(), features)
+                    
+                    # Status cell
+                    if scenario_implemented:
+                        if behavior_difference_ids:
+                            # Create clickable Behavior Difference numbers for superscript display (same as Shared tab)
+                            behavior_difference_driver_check = self.get_language_data_key(lang).lower() if lang == 'core' else lang.lower()
+                            behavior_difference_links = []
+                            for behavior_difference_id in behavior_difference_ids:
+                                # Extract number from BD#1 format
+                                if behavior_difference_id.startswith('BD#'):
+                                    number = behavior_difference_id[3:]  # Remove 'BD#' prefix
+                                    behavior_difference_section_id = f'behavior_difference-{behavior_difference_driver_check}-{behavior_difference_id.lower().replace("#", "")}'
+                                    behavior_difference_links.append(f'<a href="#" onclick="navigateToBehaviorDifference(\'{behavior_difference_section_id}\'); return false;" class="behavior_difference-superscript-link">{number}</a>')
+                            
+                            superscript_links = ','.join(behavior_difference_links)
+                            status_cell = f'<td><div class="test-status"><span class="tick-icon">✓</span><sup>{superscript_links}</sup></div></td>'
+                        else:
+                            status_cell = '<td><div class="test-status"><span class="tick-icon">✓</span></div></td>'
+                    else:
+                        status_cell = '<td><div class="test-status"><span class="status-fail">-</span></div></td>'
+                    
+                    html_parts.append(f'<tr class="{row_class} feature-content" data-feature="{feature_id}">{test_name_cell}{status_cell}</tr>')
+            
+            html_parts.append('</tbody>')
+            html_parts.append('</table>')
+            
+            # Close expandable section
+            html_parts.append('</div>')  # expandable-inner
+            html_parts.append('</div>')  # expandable-content
+            html_parts.append('</div>')  # expandable-section
+        
+        return '\n'.join(html_parts)
+    
+    def _generate_language_specific_tab_html_old(self, features: Dict, languages: List[str]) -> str:
+        """Generate the language-specific features tab HTML."""
+        from textwrap import dedent
+        from collections import defaultdict
+        
+        # Group language-only features by language
+        language_only_features = defaultdict(list)
+        validation_errors = []
+        
+        for feature_name, feature_data in features.items():
+            is_only, lang = self.is_language_only_feature(feature_data['path'])
+            if is_only:
+                # Get scenarios
+                scenarios = self.get_feature_scenarios_with_annotations(feature_data['path'])
+                language_only_features[lang].append({
+                    'name': feature_name,
+                    'formatted_name': self.format_feature_name(feature_name, feature_data['path']),
+                    'path': feature_data['path'],
+                    'scenarios': scenarios,
+                    'data': feature_data
+                })
+        
+        if not language_only_features and not validation_errors:
+            return dedent("""
+                <h2>🔒 Language-Specific Tests</h2>
+                <p>No language-specific tests found.</p>
+            """).strip()
+        
+        # Build HTML
+        html_parts = [dedent("""
+            <h2>🔒 Language-Specific Tests</h2>
+        """).strip()]
+        
+        # Show validation errors if any
+        if validation_errors:
+            html_parts.append('<div class="validation-errors" style="background: #fee; border: 1px solid #c33; padding: 15px; margin: 20px 0; border-radius: 5px;">')
+            html_parts.append('<h3 style="color: #c33; margin-top: 0;">⚠️ Validation Errors</h3>')
+            html_parts.append('<ul>')
+            for feature_name, error in validation_errors:
+                html_parts.append(f'<li><strong>{feature_name}</strong>: {error}</li>')
+            html_parts.append('</ul>')
+            html_parts.append('</div>')
+        
+        # Generate sections for each language
+        for lang in sorted(language_only_features.keys()):
+            features_list = language_only_features[lang]
+            
+            html_parts.append(f'<div class="expandable-section">')
+            html_parts.append(f'<div class="expandable-header" onclick="toggleSection(this)">')
+            html_parts.append(f'<div class="expandable-title">🔒 {lang.upper()} ({len(features_list)} features)</div>')
+            html_parts.append(f'<div class="expandable-toggle">▶</div>')
+            html_parts.append(f'</div>')
+            html_parts.append(f'<div class="expandable-content">')
+            html_parts.append(f'<div class="expandable-inner">')
+            html_parts.append(f'<ul>')
+            
+            for feature_info in features_list:
+                feature_name = feature_info['formatted_name']
+                scenarios = feature_info['scenarios']
+                data = feature_info['data']
+                
+                # Check implementation status
+                data_key = self.get_language_data_key(lang)
+                status_icon = '✅' if data_key in data['languages'] and data['languages'][data_key]['status'] == '✅' else '❌'
+                
+                html_parts.append(f'<li>')
+                html_parts.append(f'<strong>{status_icon} {feature_name}</strong> ({len(scenarios)} scenarios)')
+                html_parts.append(f'<ul class="scenario-list">')
+                
+                for scenario in scenarios:
+                    scenario_name = scenario['name']
+                    tags = ', '.join(scenario.get('tags', []))
+                    html_parts.append(f'<li>• {scenario_name}<br/><small style="color: #666;">Tags: {tags}</small></li>')
+                
+                html_parts.append(f'</ul>')
+                html_parts.append(f'</li>')
+            
+            html_parts.append(f'</ul>')
+            html_parts.append(f'</div>')
+            html_parts.append(f'</div>')
+            html_parts.append(f'</div>')
+        
+        return '\n'.join(html_parts)
+    
     def generate_html_report(self, features: Dict) -> str:
         """Generate an HTML coverage report with tabbed interface."""
         from textwrap import dedent
@@ -1992,7 +2480,22 @@ class CoverageReportGenerator:
         languages = self.get_all_languages(features)
         
         # Generate content for each tab
-        overview_content = self._generate_coverage_table_html(features, languages) + '\n\n' + self._generate_language_coverage_html(features, languages)
+        # Separate features into shared and language-specific
+        shared_features = {}
+        language_specific_features = {}
+        for feature_name, feature_data in features.items():
+            is_only, _ = self.is_language_only_feature(feature_data['path'])
+            if is_only:
+                language_specific_features[feature_name] = feature_data
+            else:
+                shared_features[feature_name] = feature_data
+        
+        # Shared tab (renamed from Overview/Shared Features)
+        shared_features_content = self._generate_coverage_table_html(shared_features, languages) + '\n\n' + self._generate_language_coverage_html(shared_features, languages)
+        
+        # Language-Specific tab (reuses table structure from shared features)
+        language_specific_content = self._generate_language_specific_coverage_table_html(language_specific_features, languages)
+        
         detailed_content = self._generate_detailed_breakdown_html(features)
         missing_impl_html = self._generate_missing_implementations_html(features, languages)
         
@@ -2006,14 +2509,19 @@ class CoverageReportGenerator:
         tabs_html = dedent("""
             <div class="tabs">
                 <div class="tab-buttons">
-                    <button class="tab-button" onclick="showTab('overview-tab')">📊 Overview</button>
+                    <button class="tab-button" onclick="showTab('shared-tab')">📊 Shared</button>
+                    <button class="tab-button" onclick="showTab('language-specific-tab')">🎯 Language-Specific</button>
                     <button class="tab-button" onclick="showTab('behavior_difference-tab')">📋 Behavior Differences</button>
                     <button class="tab-button" onclick="showTab('details-tab')">📋 Detailed Breakdown</button>
                     <button class="tab-button" onclick="showTab('missing-tab')">⚠️ Missing Implementations</button>
                 </div>
                 
-                <div id="overview-tab" class="tab-content">
-                    {overview_content}
+                <div id="shared-tab" class="tab-content">
+                    {shared_features_content}
+                </div>
+                
+                <div id="language-specific-tab" class="tab-content">
+                    {language_specific_content}
                 </div>
                 
                 <div id="behavior_difference-tab" class="tab-content">
@@ -2029,7 +2537,8 @@ class CoverageReportGenerator:
                 </div>
             </div>
         """).format(
-            overview_content=overview_content,
+            shared_features_content=shared_features_content,
+            language_specific_content=language_specific_content,
             behavior_difference_content=behavior_difference_content,
             detailed_content=detailed_content,
             missing_content=missing_impl_html if missing_impl_html else '<p>No missing implementations found! ✅</p>'

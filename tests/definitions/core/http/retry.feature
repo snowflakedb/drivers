@@ -24,4 +24,3 @@ Feature: HTTP retry helper
     Given a server that always fails with a retryable status
     When the helper executes the request
     Then it should return a max attempts error
-
