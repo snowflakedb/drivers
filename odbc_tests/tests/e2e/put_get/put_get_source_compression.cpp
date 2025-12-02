@@ -46,7 +46,9 @@ TEST_CASE("should auto-detect standard compression types when SOURCE_COMPRESSION
     auto [filename, file] = test_file(comp);
 
     // When File is uploaded with SOURCE_COMPRESSION set to AUTO_DETECT
-    auto stmt = conn.execute_fetch("PUT 'file://" + as_file_uri(file) + "' @" + stage + " SOURCE_COMPRESSION=AUTO_DETECT");
+    std::string put_sql = "PUT 'file://" + as_file_uri(file) + "' @" + stage +
+                          " SOURCE_COMPRESSION=AUTO_DETECT";
+    auto stmt = conn.execute_fetch(put_sql);
 
     // Then Target compression has correct type and all PUT results are correct
     CHECK(get_data<SQL_C_CHAR>(stmt, PUT_ROW_SOURCE_IDX) == filename);
