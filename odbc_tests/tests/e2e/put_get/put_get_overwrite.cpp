@@ -16,9 +16,19 @@
 namespace fs = std::filesystem;
 using namespace pg_utils;
 
-static std::pair<std::string, fs::path> original_test_file() { return {"test_data.csv", test_utils::shared_test_data_dir() / "overwrite" / "original" / "test_data.csv"}; }
+static std::pair<std::string, fs::path> original_test_file() {
+  return {
+    "test_data.csv",
+    test_utils::shared_test_data_dir() / "overwrite" / "original" / "test_data.csv"
+  };
+}
 
-static std::pair<std::string, fs::path> updated_test_file() { return {"test_data.csv", test_utils::shared_test_data_dir() / "overwrite" / "updated" / "test_data.csv"}; }
+static std::pair<std::string, fs::path> updated_test_file() {
+  return {
+    "test_data.csv",
+    test_utils::shared_test_data_dir() / "overwrite" / "updated" / "test_data.csv"
+  };
+}
 
 TEST_CASE("should overwrite file when OVERWRITE is set to true", "[put_get]") {
   Connection conn;
