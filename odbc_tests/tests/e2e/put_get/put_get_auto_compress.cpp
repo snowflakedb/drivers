@@ -14,9 +14,19 @@
 namespace fs = std::filesystem;
 using namespace pg_utils;
 
-static std::pair<std::string, fs::path> uncompressed_test_file() { return {"test_data.csv", test_utils::shared_test_data_dir() / "compression" / "test_data.csv"}; }
+static std::pair<std::string, fs::path> uncompressed_test_file() {
+  return {
+    "test_data.csv",
+    test_utils::shared_test_data_dir() / "compression" / "test_data.csv"
+  };
+}
 
-static std::pair<std::string, fs::path> compressed_test_file() { return {"test_data.csv.gz", test_utils::shared_test_data_dir() / "compression" / "test_data.csv.gz"}; }
+static std::pair<std::string, fs::path> compressed_test_file() {
+  return {
+    "test_data.csv.gz",
+    test_utils::shared_test_data_dir() / "compression" / "test_data.csv.gz"
+  };
+}
 
 TEST_CASE("should compress the file before uploading to stage when AUTO_COMPRESS set to true", "[put_get]") {
   Connection conn;
