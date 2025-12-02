@@ -20,7 +20,12 @@ static std::string to_lower_copy(const std::string& s) {
   return out;
 }
 
-static std::pair<std::string, fs::path> basic_test_file() { return {"test_data.csv", test_utils::shared_test_data_dir() / "basic" / "test_data.csv"}; }
+static std::pair<std::string, fs::path> basic_test_file() {
+  return {
+    "test_data.csv",
+    test_utils::shared_test_data_dir() / "basic" / "test_data.csv"
+  };
+}
 
 TEST_CASE("should select data from file uploaded to stage", "[put_get]") {
   // Given File is uploaded to stage
