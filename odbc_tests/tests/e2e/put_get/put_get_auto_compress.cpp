@@ -77,7 +77,9 @@ TEST_CASE("should not compress the file before uploading to stage when AUTO_COMP
   fs::create_directories(download_dir);
 
   // Then Only uncompressed file should be downloaded
-  auto get_stmt = conn.execute_fetch("GET @" + stage + "/" + filename + " 'file://" + as_file_uri(download_dir) + "/'");
+  std::string get_sql = "GET @" + stage + "/" + filename +
+                       " 'file://" + as_file_uri(download_dir) + "/'";
+  auto get_stmt = conn.execute_fetch(get_sql);
   std::string file_col = get_data<SQL_C_CHAR>(get_stmt, GET_ROW_FILE_IDX);
   std::string get_status = get_data<SQL_C_CHAR>(get_stmt, GET_ROW_STATUS_IDX);
   CHECK(file_col == filename);
