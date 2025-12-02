@@ -21,10 +21,7 @@ static std::string to_lower_copy(const std::string& s) {
 }
 
 static std::pair<std::string, fs::path> basic_test_file() {
-  return {
-    "test_data.csv",
-    test_utils::shared_test_data_dir() / "basic" / "test_data.csv"
-  };
+  return {"test_data.csv", test_utils::shared_test_data_dir() / "basic" / "test_data.csv"};
 }
 
 TEST_CASE("should select data from file uploaded to stage", "[put_get]") {
@@ -78,9 +75,7 @@ TEST_CASE("should get file uploaded to stage", "[put_get]") {
   fs::path download_dir = fs::temp_directory_path() / (std::string("odbc_put_get_") + random_hex());
   fs::create_directories(download_dir);
 
-  std::string get_sql = 
-    "GET @" + stage + "/" + filename +
-    " 'file://" + as_file_uri(download_dir) + "/'";
+  std::string get_sql = "GET @" + stage + "/" + filename + " 'file://" + as_file_uri(download_dir) + "/'";
   auto stmt = conn.execute_fetch(get_sql);
 
   // Then File should be downloaded

@@ -15,17 +15,11 @@ namespace fs = std::filesystem;
 using namespace pg_utils;
 
 static std::pair<std::string, fs::path> uncompressed_test_file() {
-  return {
-    "test_data.csv",
-    test_utils::shared_test_data_dir() / "compression" / "test_data.csv"
-  };
+  return {"test_data.csv", test_utils::shared_test_data_dir() / "compression" / "test_data.csv"};
 }
 
 static std::pair<std::string, fs::path> compressed_test_file() {
-  return {
-    "test_data.csv.gz",
-    test_utils::shared_test_data_dir() / "compression" / "test_data.csv.gz"
-  };
+  return {"test_data.csv.gz", test_utils::shared_test_data_dir() / "compression" / "test_data.csv.gz"};
 }
 
 TEST_CASE("should compress the file before uploading to stage when AUTO_COMPRESS set to true", "[put_get]") {
@@ -89,8 +83,7 @@ TEST_CASE("should not compress the file before uploading to stage when AUTO_COMP
   fs::create_directories(download_dir);
 
   // Then Only uncompressed file should be downloaded
-  std::string get_sql = "GET @" + stage + "/" + filename +
-                       " 'file://" + as_file_uri(download_dir) + "/'";
+  std::string get_sql = "GET @" + stage + "/" + filename + " 'file://" + as_file_uri(download_dir) + "/'";
   auto get_stmt = conn.execute_fetch(get_sql);
   std::string file_col = get_data<SQL_C_CHAR>(get_stmt, GET_ROW_FILE_IDX);
   std::string get_status = get_data<SQL_C_CHAR>(get_stmt, GET_ROW_STATUS_IDX);
