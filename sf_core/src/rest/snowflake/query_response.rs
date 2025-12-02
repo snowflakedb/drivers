@@ -12,7 +12,7 @@ pub struct Response {
     #[serde(rename = "message")]
     pub message: Option<String>,
     #[serde(rename = "code")]
-    _code: Option<String>,
+    pub code: Option<String>,
     #[serde(rename = "success")]
     pub success: bool,
 }
@@ -46,7 +46,7 @@ pub struct Data {
 
     // chunked query results
     #[serde(rename = "chunks")]
-    chunks: Option<Vec<Chunk>>,
+    pub chunks: Option<Vec<Chunk>>,
     #[serde(rename = "qrmk")]
     _qrmk: Option<String>,
     #[serde(rename = "chunkHeaders")]
@@ -60,7 +60,7 @@ pub struct Data {
     #[serde(rename = "returned")]
     _returned: Option<i64>,
     #[serde(rename = "queryId")]
-    _query_id: Option<String>,
+    pub query_id: Option<String>,
     #[serde(rename = "sqlState")]
     _sql_state: Option<String>,
     #[serde(rename = "databaseProvider")]
@@ -80,7 +80,7 @@ pub struct Data {
     #[serde(rename = "version")]
     _version: Option<i64>,
     #[serde(rename = "getResultUrl")]
-    _get_result_url: Option<String>,
+    pub get_result_url: Option<String>,
     #[serde(rename = "progressDesc")]
     _progress_desc: Option<String>,
     #[serde(rename = "queryAbortsAfterSecs")]
