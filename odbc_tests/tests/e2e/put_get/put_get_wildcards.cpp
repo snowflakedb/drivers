@@ -109,7 +109,10 @@ TEST_CASE("should download files that are matching wildcard pattern", "[put_get]
   const std::string get_pattern = R"(.*/pattern_.\.csv\.gz)";
 
   // When Files are downloaded using command with wildcard
-  conn.execute("GET @" + stage + " 'file://" + as_file_uri(download_dir) + "/' PATTERN='" + get_pattern + "'");
+  std::string get_sql = "GET @" + stage +
+                        " 'file://" + as_file_uri(download_dir) +
+                        "/' PATTERN='" + get_pattern + "'";
+  conn.execute(get_sql);
 
   // Then Files matching wildcard pattern are downloaded
   std::set<std::string> downloaded_files;
