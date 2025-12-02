@@ -90,6 +90,8 @@ TEST_CASE("should not compress the file before uploading to stage when AUTO_COMP
   std::ifstream ifs2(download_dir / filename);
   std::string downloaded_content((std::istreambuf_iterator<char>(ifs2)), std::istreambuf_iterator<char>());
   std::ifstream ifs_src(file);
-  std::string original_content((std::istreambuf_iterator<char>(ifs_src)), std::istreambuf_iterator<char>());
+  std::istreambuf_iterator<char> src_begin(ifs_src);
+  std::istreambuf_iterator<char> src_end;
+  std::string original_content(src_begin, src_end);
   CHECK(downloaded_content == original_content);
 }
