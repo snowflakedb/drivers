@@ -105,8 +105,9 @@ TEST_CASE("should not compress file when SOURCE_COMPRESSION set to AUTO_DETECT a
   auto [filename, file] = test_file("NONE");
 
   // When File is uploaded with SOURCE_COMPRESSION set to AUTO_DETECT and AUTO_COMPRESS set to FALSE
-  auto stmt = conn.execute_fetch("PUT 'file://" + as_file_uri(file) + "' @" + stage + " SOURCE_COMPRESSION=AUTO_DETECT AUTO_COMPRESS=FALSE");
-
+  std::string put_sql = "PUT 'file://" + as_file_uri(file) + "' @" + stage +
+                        " SOURCE_COMPRESSION=AUTO_DETECT AUTO_COMPRESS=FALSE";
+  auto stmt = conn.execute_fetch(put_sql);
   // Then File is not compressed
   CHECK(get_data<SQL_C_CHAR>(stmt, PUT_ROW_SOURCE_IDX) == filename);
   CHECK(get_data<SQL_C_CHAR>(stmt, PUT_ROW_TARGET_IDX) == filename);
