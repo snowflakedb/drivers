@@ -16,29 +16,25 @@
 namespace fs = std::filesystem;
 using namespace pg_utils;
 
-static std::pair<std::string, fs::path> original_test_file() {
-  return {"test_data.csv", test_utils::shared_test_data_dir() / "overwrite" / "original" / "test_data.csv"};
-}
+static std::pair<std::string, fs::path> original_test_file() { return {"test_data.csv", test_utils::shared_test_data_dir() / "overwrite" / "original" / "test_data.csv"}; }
 
-static std::pair<std::string, fs::path> updated_test_file() {
-  return {"test_data.csv", test_utils::shared_test_data_dir() / "overwrite" / "updated" / "test_data.csv"};
-}
+static std::pair<std::string, fs::path> updated_test_file() { return {"test_data.csv", test_utils::shared_test_data_dir() / "overwrite" / "updated" / "test_data.csv"}; }
 
 TEST_CASE("should overwrite file when OVERWRITE is set to true", "[put_get]") {
   Connection conn;
-  const std::string stage = create_stage(conn, "ODBCTST_OVERWRITE_TRUE");
+  const std::string stage = pg_utils::create_stage(conn, "ODBCTST_OVERWRITE_TRUE");
   auto [filename, original] = original_test_file();
   auto [_, updated] = updated_test_file();
 
   // Given File is uploaded to stage
-  auto stmt_initial = conn.execute_fetch(build_put_sql(original, stage));
+  auto stmt_initial = conn.execute_fetch("PUT 'file://" + as_file_uri(original) + "' @" + stage);
   std::string src = get_data<SQL_C_CHAR>(stmt_initial, PUT_ROW_SOURCE_IDX);
   std::string status = get_data<SQL_C_CHAR>(stmt_initial, PUT_ROW_STATUS_IDX);
   CHECK(src == filename);
   CHECK(status == "UPLOADED");
 
   // When Updated file is uploaded with OVERWRITE set to true
-  auto stmt_update = conn.execute_fetch(build_put_sql(updated, stage, {{"OVERWRITE", "TRUE"}}));
+  auto stmt_update = conn.execute_fetch("PUT 'file://" + as_file_uri(updated) + "' @" + stage + " OVERWRITE=TRUE");
   std::string src_update = get_data<SQL_C_CHAR>(stmt_update, PUT_ROW_SOURCE_IDX);
   std::string status_update = get_data<SQL_C_CHAR>(stmt_update, PUT_ROW_STATUS_IDX);
 
@@ -58,19 +54,19 @@ TEST_CASE("should overwrite file when OVERWRITE is set to true", "[put_get]") {
 
 TEST_CASE("should not overwrite file when OVERWRITE is set to false", "[put_get]") {
   Connection conn;
-  const std::string stage = create_stage(conn, "ODBCTST_OVERWRITE_FALSE");
+  const std::string stage = pg_utils::create_stage(conn, "ODBCTST_OVERWRITE_FALSE");
   auto [filename, original] = original_test_file();
   auto [_, updated] = updated_test_file();
 
   // Given File is uploaded to stage
-  auto stmt_initial = conn.execute_fetch(build_put_sql(original, stage));
+  auto stmt_initial = conn.execute_fetch("PUT 'file://" + as_file_uri(original) + "' @" + stage);
   std::string src = get_data<SQL_C_CHAR>(stmt_initial, PUT_ROW_SOURCE_IDX);
   std::string status = get_data<SQL_C_CHAR>(stmt_initial, PUT_ROW_STATUS_IDX);
   CHECK(src == filename);
   CHECK(status == "UPLOADED");
 
   // When Updated file is uploaded with OVERWRITE set to false
-  auto stmt_update = conn.execute_fetch(build_put_sql(updated, stage, {{"OVERWRITE", "FALSE"}}));
+  auto stmt_update = conn.execute_fetch("PUT 'file://" + as_file_uri(updated) + "' @" + stage + " OVERWRITE=FALSE");
   std::string src_update = get_data<SQL_C_CHAR>(stmt_update, PUT_ROW_SOURCE_IDX);
   std::string status_update = get_data<SQL_C_CHAR>(stmt_update, PUT_ROW_STATUS_IDX);
 

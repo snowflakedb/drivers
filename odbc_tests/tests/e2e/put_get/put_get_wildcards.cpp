@@ -19,7 +19,7 @@ static fs::path wildcard_tests_dir() { return test_utils::shared_test_data_dir()
 
 TEST_CASE("should upload files that match wildcard question mark pattern", "[put_get]") {
   Connection conn;
-  const std::string stage = create_stage(conn, "ODBCTST_WILDCARD_Q");
+  const std::string stage = pg_utils::create_stage(conn, "ODBCTST_WILDCARD_Q");
   fs::path wildcard_dir = wildcard_tests_dir();
 
   // Given Files matching wildcard pattern
@@ -55,7 +55,7 @@ TEST_CASE("should upload files that match wildcard question mark pattern", "[put
 
 TEST_CASE("should upload files that match wildcard star pattern", "[put_get]") {
   Connection conn;
-  const std::string stage = create_stage(conn, "ODBCTST_WILDCARD_STAR");
+  const std::string stage = pg_utils::create_stage(conn, "ODBCTST_WILDCARD_STAR");
   fs::path wildcard_dir = wildcard_tests_dir();
 
   // Given Files matching wildcard pattern
@@ -91,24 +91,25 @@ TEST_CASE("should upload files that match wildcard star pattern", "[put_get]") {
 
 TEST_CASE("should download files that are matching wildcard pattern", "[put_get]") {
   Connection conn;
-  const std::string stage = create_stage(conn, "ODBCTST_REGEXP_GET");
+  const std::string stage = pg_utils::create_stage(conn, "ODBCTST_REGEXP_GET");
   fs::path wildcard_dir = wildcard_tests_dir();
 
   // Given Files matching wildcard pattern are uploaded
   for (const auto& name : {"pattern_1.csv", "pattern_2.csv"}) {
-    conn.execute(build_put_sql(wildcard_dir / name, stage));
+    conn.execute("PUT 'file://" + as_file_uri(wildcard_dir / name) + "' @" + stage);
   }
 
   // And Files not matching wildcard pattern are uploaded
   for (const auto& name : {"pattern_10.csv", "patternabc.csv"}) {
-    conn.execute(build_put_sql(wildcard_dir / name, stage));
+    conn.execute("PUT 'file://" + as_file_uri(wildcard_dir / name) + "' @" + stage);
   }
 
-  fs::path download_dir = create_temp_download_dir();
+  fs::path download_dir = fs::temp_directory_path() / (std::string("odbc_put_get_") + random_hex());
+  fs::create_directories(download_dir);
   const std::string get_pattern = R"(.*/pattern_.\.csv\.gz)";
 
   // When Files are downloaded using command with wildcard
-  conn.execute(build_get_sql(stage, "", download_dir, get_pattern));
+  conn.execute("GET @" + stage + " 'file://" + as_file_uri(download_dir) + "/' PATTERN='" + get_pattern + "'");
 
   // Then Files matching wildcard pattern are downloaded
   std::set<std::string> downloaded_files;
