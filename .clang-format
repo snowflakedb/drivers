@@ -1,6 +1,6 @@
 BasedOnStyle: Google
 
-ColumnLimit: 100
+ColumnLimit: 200
 DerivePointerAlignment: false
 PointerAlignment: Left
 AllowShortLoopsOnASingleLine: false
