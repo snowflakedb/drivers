@@ -166,7 +166,10 @@ TEST_CASE("should compress uncompressed file when SOURCE_COMPRESSION set to NONE
   auto [filename, file] = test_file("NONE");
 
   // When File is uploaded with SOURCE_COMPRESSION set to NONE and AUTO_COMPRESS set to TRUE
-  auto stmt = conn.execute_fetch("PUT 'file://" + as_file_uri(file) + "' @" + stage + " SOURCE_COMPRESSION=NONE AUTO_COMPRESS=TRUE");
+  std::string put_sql = 
+      "PUT 'file://" + as_file_uri(file) + "' @" + stage +
+      " SOURCE_COMPRESSION=NONE AUTO_COMPRESS=TRUE";
+  auto stmt = conn.execute_fetch(put_sql);
 
   // Then Target compression has GZIP type and all PUT results are correct
   CHECK(get_data<SQL_C_CHAR>(stmt, PUT_ROW_SOURCE_IDX) == filename);
