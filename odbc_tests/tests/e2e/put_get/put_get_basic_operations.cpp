@@ -85,7 +85,9 @@ TEST_CASE("should get file uploaded to stage", "[put_get]") {
   // And Have correct content
   std::string decompressed = decompress_gzip_file(gz);
   std::ifstream ifs(file);
-  std::string original_content((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());
+  std::istreambuf_iterator<char> begin(ifs);
+  std::istreambuf_iterator<char> end;
+  std::string original_content(begin, end);
   CHECK(decompressed == original_content);
 }
 
