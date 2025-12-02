@@ -73,7 +73,9 @@ TEST_CASE("should get file uploaded to stage", "[put_get]") {
   fs::path download_dir = fs::temp_directory_path() / (std::string("odbc_put_get_") + random_hex());
   fs::create_directories(download_dir);
 
-  std::string get_sql = "GET @" + stage + "/" + filename + " 'file://" + as_file_uri(download_dir) + "/'";
+  std::string get_sql = 
+    "GET @" + stage + "/" + filename +
+    " 'file://" + as_file_uri(download_dir) + "/'";
   auto stmt = conn.execute_fetch(get_sql);
 
   // Then File should be downloaded
