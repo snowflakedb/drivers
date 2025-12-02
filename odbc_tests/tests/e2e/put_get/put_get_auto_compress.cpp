@@ -51,7 +51,9 @@ TEST_CASE("should compress the file before uploading to stage when AUTO_COMPRESS
   std::ifstream dl(download_dir / compressed, std::ios::binary);
   std::string downloaded_bytes((std::istreambuf_iterator<char>(dl)), std::istreambuf_iterator<char>());
   std::ifstream ref(file_gz, std::ios::binary);
-  std::string reference_bytes((std::istreambuf_iterator<char>(ref)), std::istreambuf_iterator<char>());
+  std::istreambuf_iterator<char> ref_begin(ref);
+  std::istreambuf_iterator<char> ref_end;
+  std::string reference_bytes(ref_begin, ref_end);
 
   OLD_DRIVER_ONLY("BD#1") { CHECK(downloaded_bytes != reference_bytes); }
   NEW_DRIVER_ONLY("BD#1") { CHECK(downloaded_bytes == reference_bytes); }
