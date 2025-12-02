@@ -1,4 +1,4 @@
-# Override these at command line: make test PYTHON_VERSION=3.12 OS_VERSION=windows-latest PYTEST_ARGS="-k test_connection"
+# Override these at command line: make test PYTHON_VERSION=3.12 OS_VERSION=windows-latest PYTEST_ARGS="-k test_connection" SKIP_BUILD=1
 PYTHON_VERSION ?= $(shell python3 -c 'import sys;print(f"{sys.version_info.major}.{sys.version_info.minor}")')
 # 3.11 -> 311 for tox env names
 PYTHON_ID := $(subst .,,$(PYTHON_VERSION))
@@ -7,6 +7,7 @@ REFERENCE_DRIVER_VERSION ?= 3.17.2
 PYTEST_ARGS ?=
 FAIL_ON_REGRESSIONS ?= 0
 OS_VERSION ?= ubuntu-latest
+SKIP_BUILD ?= 0
 
 # Project root (absolute)
 PROJECT_ROOT := $(abspath ..)
@@ -68,15 +69,20 @@ TOX_E2E_ENV = py$(PYTHON_ID)-e2e
 TOX_REFERENCE_ENV = py$(PYTHON_ID)-reference
 
 
-# Local development: auto-build missing Rust core
+# Local development: auto-build missing Rust core (conditional based on SKIP_BUILD flag)
 build-core:
 	@echo "Using CORE_PATH: $(DETECTED_CORE_PATH)"
 	@echo "Using PARAMETER_PATH: $(DETECTED_PARAMETER_PATH)"
-	cd .. && cargo build --package sf_core --target-dir=$(CORE_MODULE_DIR) && cd $(CORE_MODULE_DIR) && mv debug/* . &&  rm -rf debug/ || { \
-		echo "Failed to build Rust core library"; \
-		echo "Make sure Rust toolchain is installed: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"; \
-		exit 1; \
-	}
+	@if [ "$(SKIP_BUILD)" = "1" ]; then \
+		echo "Skipping build step (SKIP_BUILD=1)"; \
+	else \
+		echo "Building Rust core library..."; \
+		cd .. && cargo build --package sf_core --target-dir=$(CORE_MODULE_DIR) && cd $(CORE_MODULE_DIR) && cp -rf debug/* . && rm -rf debug/ || { \
+			echo "Failed to build Rust core library"; \
+			echo "Make sure Rust toolchain is installed: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"; \
+			exit 1; \
+		}; \
+	fi
 
 check-env-or-build: build-core
 	@if [ ! -f "$(DETECTED_CORE_PATH)" ]; then \
