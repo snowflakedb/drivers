@@ -20,10 +20,16 @@ using namespace pg_utils;
 static fs::path compression_tests_dir() { return test_utils::shared_test_data_dir() / "compression"; }
 
 static std::pair<std::string, fs::path> test_file(const std::string& compression_type) {
-  static const std::map<std::string, std::string> compression_map = {{"GZIP", "test_data.csv.gz"},         {"BZIP2", "test_data.csv.bz2"},
-                                                                     {"BROTLI", "test_data.csv.br"},       {"ZSTD", "test_data.csv.zst"},
-                                                                     {"DEFLATE", "test_data.csv.deflate"}, {"RAW_DEFLATE", "test_data.csv.raw_deflate"},
-                                                                     {"LZMA", "test_data.csv.xz"},         {"NONE", "test_data.csv"}};
+  static const std::map<std::string, std::string> compression_map = {
+    {"GZIP", "test_data.csv.gz"},
+    {"BZIP2", "test_data.csv.bz2"},
+    {"BROTLI", "test_data.csv.br"},
+    {"ZSTD", "test_data.csv.zst"},
+    {"DEFLATE", "test_data.csv.deflate"},
+    {"RAW_DEFLATE", "test_data.csv.raw_deflate"},
+    {"LZMA", "test_data.csv.xz"},
+    {"NONE", "test_data.csv"}
+  };
 
   auto it = compression_map.find(compression_type);
   if (it == compression_map.end()) {
