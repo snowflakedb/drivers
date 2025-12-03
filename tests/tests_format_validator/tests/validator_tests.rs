@@ -37,6 +37,13 @@ fn should_pass_validation_when_all_steps_are_implemented() -> Result<()> {
         TestImplementations::create_complete_odbc_login_test(),
     )?;
 
+    // Create matching Python test
+    workspace.create_python_test(
+        "auth",
+        "login",
+        TestImplementations::create_complete_python_login_test(),
+    )?;
+
     let validator = workspace.get_validator()?;
     let results = validator.validate_all_features()?;
 
@@ -46,9 +53,9 @@ fn should_pass_validation_when_all_steps_are_implemented() -> Result<()> {
         result.feature_file.file_stem().unwrap().to_str().unwrap(),
         "login"
     );
-    assert_eq!(result.validations.len(), 3); // Rust, Jdbc, and Odbc
+    assert_eq!(result.validations.len(), 4); // Rust, Jdbc, Odbc, and Python
 
-    // Both languages should pass
+    // All languages should pass
     for validation in &result.validations {
         assert!(
             validation.test_file_found,
@@ -892,6 +899,8 @@ impl TestWorkspace {
         fs::create_dir_all(workspace_root.join("jdbc/src/test/java/e2e/query"))?;
         fs::create_dir_all(workspace_root.join("odbc_tests/tests/e2e/auth"))?;
         fs::create_dir_all(workspace_root.join("odbc_tests/tests/e2e/query"))?;
+        fs::create_dir_all(workspace_root.join("python/tests/e2e/auth"))?;
+        fs::create_dir_all(workspace_root.join("python/tests/e2e/query"))?;
 
         // Create BehaviorDifferences.yaml file for tests
         let breaking_change_file = workspace_root.join("odbc_tests/BehaviorDifferences.yaml");
@@ -942,6 +951,16 @@ impl TestWorkspace {
             .join("odbc_tests/tests/e2e")
             .join(subdir)
             .join(format!("{}.cpp", name));
+        fs::write(test_path, content)?;
+        Ok(())
+    }
+
+    fn create_python_test(&self, subdir: &str, name: &str, content: &str) -> Result<()> {
+        let test_path = self
+            .workspace_root
+            .join("python/tests/e2e")
+            .join(subdir)
+            .join(format!("test_{}.py", name));
         fs::write(test_path, content)?;
         Ok(())
     }
@@ -1007,10 +1026,10 @@ struct TestImplementations;
 
 impl TestImplementations {
     fn create_complete_login_feature() -> &'static str {
-        r#"@core @jdbc @odbc
+        r#"@core @jdbc @odbc @python
 Feature: User Login
 
-  @core_e2e @jdbc_int @odbc_e2e
+  @core_e2e @jdbc_int @odbc_e2e @python_e2e
   Scenario: Successful login with valid credentials
     Given I have valid credentials
     When I attempt to login
@@ -1079,6 +1098,33 @@ TEST_CASE("Successful login with valid credentials") {
     // And I should have access to the system
     REQUIRE(has_system_access(result));
 }
+"#
+    }
+
+    fn create_complete_python_login_test() -> &'static str {
+        r#"
+def test_successful_login_with_valid_credentials(self, connect):
+    # Given I have valid credentials
+    credentials = setup_valid_credentials()
+    table_name = "test_login_table"
+
+    # add inline blocks to test python syntax handling
+    try:
+        # When I attempt to login
+        conn = connect(**credentials)
+
+        # Then login should succeed
+        assert conn is not None, "Login should succeed"
+
+        # And I should have access to the system
+        result = conn.cursor().execute(f"SELECT * FROM temporary_resource")
+        assert len(result) is not None, "Should have system access"
+
+    finally:
+        try:
+            cursor.execute(f"DROP TABLE IF EXISTS temporary_resource")
+        except Exception:
+            pass
 "#
     }
 
