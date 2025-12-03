@@ -10,26 +10,29 @@ def test_should_cast_number_and_its_synonyms_to_appropriate_type_and_preserve_va
     # When Query selecting literal values of NUMBER, DECIMAL, DEC, NUMERIC types is executed
     sql = """
         SELECT 
-            123.456789::NUMBER(10,6) as number_col,
-            123.456789::DECIMAL(10,6) as decimal_col,
-            123.456789::DEC(10,6) as dec_col,
-            123.456789::NUMERIC(10,6) as numeric_col
+            123456789::NUMBER(10,0) as number_col,
+            123456.789::DECIMAL(10,3) as decimal_col,
+            123::DEC(20,6) as dec_col,
+            0.123456789::NUMERIC(20,9) as numeric_col
         """
     cursor.execute(sql)
     values = cursor.fetchone()
 
     # Then All returned values should be of appropriate type
-    for value in values:
-        assert isinstance(value, Decimal), f"Value should be Decimal, got {type(value)}"
+    expected_types = (int, Decimal, Decimal, Decimal)
+    for i, (value, expected_type) in enumerate(zip(values, expected_types)):
+        assert isinstance(
+            value, expected_type
+        ), f"{i+1}th value should be {expected_type}, got {type(value)}"
 
     # And All returned values should be equal to the expected literals
-    expected_value = Decimal("123.456789")
-    assert values == (
-        expected_value,
-        expected_value,
-        expected_value,
-        expected_value,
-    ), f"Expected {expected_value}, got {values}"
+    expected_values = (
+        int("123456789"),
+        Decimal("123456.789"),
+        Decimal("123.0"),
+        Decimal("0.123456789"),
+    )
+    assert values == expected_values, f"Expected {expected_values}, got {values}"
 
 
 def test_should_cast_number_and_its_synonyms_to_appropriate_type_and_preserve_values_when_selecting_from_table(
@@ -45,14 +48,14 @@ def test_should_cast_number_and_its_synonyms_to_appropriate_type_and_preserve_va
         # SQL weirdly split into lines as test validator had a stroke reading multiline strings
         create_sql = (
             f"CREATE OR REPLACE TEMPORARY TABLE {table_name}"
-            " (number_col NUMBER(38,0),"
-            " decimal_col DECIMAL(38,0),"
-            " dec_col DEC(38,0),"
-            " numeric_col NUMERIC(38,0))"
+            " (number_col NUMBER(10,0),"
+            " decimal_col DECIMAL(10,3),"
+            " dec_col DEC(20,6),"
+            " numeric_col NUMERIC(20,9))"
         )
         cursor.execute(create_sql)
         # And Data is inserted into the table
-        insert_sql = f"INSERT INTO {table_name} VALUES (123.456789, 123.456789, 123.456789, 123.456789)"
+        insert_sql = f"INSERT INTO {table_name} VALUES (123456789, 123456.789, 123.0, 0.123456789)"
         cursor.execute(insert_sql)
 
         # When Query selecting data from the table is executed
@@ -61,15 +64,17 @@ def test_should_cast_number_and_its_synonyms_to_appropriate_type_and_preserve_va
         values = cursor.fetchone()
 
         # Then All returned values should be of appropriate type
-        for value in values:
+        expected_types = (int, Decimal, Decimal, Decimal)
+        for value, expected_type in zip(values, expected_types):
             assert isinstance(
-                value, Decimal
+                value, expected_type
             ), f"Value should be Decimal, got {type(value)}"
         # And All returned values should be equal to the inserted values
         expected_values = (
-            Decimal("123.456789"),
-            Decimal("123.456789"),
-            Decimal("123.456789"),
+            int("123456789"),
+            Decimal("123456.789"),
+            Decimal("123.0"),
+            Decimal("0.123456789"),
         )
         assert values == expected_values, f"Expected {expected_values}, got {values}"
     finally:
@@ -95,7 +100,7 @@ def test_should_handle_maximum_precision_values_correctly(cursor):
     # Then All queries should return expected values
     expected_values = (
         Decimal("1.2345678901234567890123456789012345678"),
-        Decimal("99999999999999999999999999999999999999"),
-        Decimal("-99999999999999999999999999999999999999"),
+        int("99999999999999999999999999999999999999"),
+        int("-99999999999999999999999999999999999999"),
     )
     assert values == expected_values, f"Expected {expected_values}, got {values}"
