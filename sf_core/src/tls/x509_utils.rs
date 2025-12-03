@@ -7,7 +7,6 @@ use crate::crl::error::{
 };
 use const_oid::ObjectIdentifier;
 use num_traits::ToPrimitive;
-use once_cell::unsync::OnceCell;
 use rustls::pki_types::TrustAnchor;
 use std::borrow::Cow;
 use x509_cert::crl::CertificateList as RcCertificateList;
@@ -327,10 +326,10 @@ fn crl_preflight_checks(crl_der: &[u8]) -> Result<(), CrlError> {
     Ok(())
 }
 
-pub fn resolve_anchor_issuer_key<'a>(
+pub fn resolve_anchor_issuer_key(
     crl_der: &[u8],
-    root_store: &'a rustls::RootCertStore,
-) -> Option<TrustAnchorView<'a>> {
+    root_store: &rustls::RootCertStore,
+) -> Option<TrustAnchorView> {
     let crl = RcCertificateList::from_der(crl_der).ok()?;
     let issuer_der = crl.tbs_cert_list.issuer.to_der().ok()?;
     let issuer_canon = canonicalize_name(issuer_der.as_slice());
@@ -400,53 +399,44 @@ fn wrap_as_der_sequence(input: &[u8]) -> Vec<u8> {
 
 /// Adapter that reconciles rustls/webpki trust anchors with the DER-encoded
 /// structures expected by `x509-parser`/`x509-cert`.
-pub struct TrustAnchorView<'a> {
-    subject_raw: &'a [u8],
-    spki_raw: &'a [u8],
-    subject_wrapped: OnceCell<Vec<u8>>,
-    spki_wrapped: OnceCell<Vec<u8>>,
-    canonical_subject: OnceCell<Option<String>>,
+pub struct TrustAnchorView {
+    subject_der: Vec<u8>,
+    spki_der: Vec<u8>,
+    canonical_subject: Option<String>,
 }
 
-impl<'a> TrustAnchorView<'a> {
-    pub fn new(anchor: &'a TrustAnchor<'static>) -> Self {
+impl TrustAnchorView {
+    pub fn new(anchor: &TrustAnchor<'static>) -> Self {
+        let subject_der = wrap_if_needed(anchor.subject.as_ref());
+        let spki_der = wrap_if_needed(anchor.subject_public_key_info.as_ref());
+        let canonical_subject = canonicalize_name(subject_der.as_slice());
         Self {
-            subject_raw: anchor.subject.as_ref(),
-            spki_raw: anchor.subject_public_key_info.as_ref(),
-            subject_wrapped: OnceCell::new(),
-            spki_wrapped: OnceCell::new(),
-            canonical_subject: OnceCell::new(),
+            subject_der,
+            spki_der,
+            canonical_subject,
         }
     }
 
     pub fn subject_der(&self) -> Cow<'_, [u8]> {
-        if self.subject_raw.first() == Some(&0x30) {
-            Cow::Borrowed(self.subject_raw)
-        } else {
-            Cow::Borrowed(
-                self.subject_wrapped
-                    .get_or_init(|| wrap_as_der_sequence(self.subject_raw))
-                    .as_slice(),
-            )
-        }
+        Cow::Borrowed(self.subject_der.as_slice())
     }
 
     pub fn spki_der(&self) -> Cow<'_, [u8]> {
-        if self.spki_raw.first() == Some(&0x30) {
-            Cow::Borrowed(self.spki_raw)
-        } else {
-            Cow::Borrowed(
-                self.spki_wrapped
-                    .get_or_init(|| wrap_as_der_sequence(self.spki_raw))
-                    .as_slice(),
-            )
-        }
+        Cow::Borrowed(self.spki_der.as_slice())
     }
 
     pub fn canonical_subject(&self) -> Option<&str> {
-        self.canonical_subject
-            .get_or_init(|| canonicalize_name(self.subject_der().as_ref()))
-            .as_deref()
+        self.canonical_subject.as_deref()
+    }
+}
+
+fn wrap_if_needed(bytes: &[u8]) -> Vec<u8> {
+    // RDNSequence inner bytes always start with SET (0x31); if we see 0x30 the
+    // outer SEQUENCE tag is still present, so the input is already canonical.
+    if bytes.first() == Some(&0x30) {
+        bytes.to_vec()
+    } else {
+        wrap_as_der_sequence(bytes)
     }
 }
 
