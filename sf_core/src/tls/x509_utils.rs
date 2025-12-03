@@ -220,30 +220,22 @@ pub fn verify_crl_sig_with_name_and_spki(
     spki_der: &[u8],
 ) -> Result<(), CrlError> {
     let crl = RcCertificateList::from_der(crl_der).context(CrlListParseSnafu)?;
-    let issuer_name_bytes = if issuer_name_der.first() == Some(&0x30) {
-        Cow::Borrowed(issuer_name_der)
-    } else {
-        Cow::Owned(wrap_as_der_sequence(issuer_name_der))
-    };
+    let issuer_name_bytes = wrap_if_needed_cow(issuer_name_der);
     if let Ok(issuer_name) = x509_cert::name::Name::from_der(issuer_name_bytes.as_ref())
         && issuer_name != crl.tbs_cert_list.issuer
     {
         return CrlIssuerMismatchSnafu {}.fail();
     }
-    if let Ok(spki) = x509_cert::spki::SubjectPublicKeyInfoRef::from_der(spki_der) {
-        return verify_crl_sig_with_spki(crl_der, spki);
-    }
-    let wrapped = wrap_as_der_sequence(spki_der);
-    let spki = x509_cert::spki::SubjectPublicKeyInfoRef::from_der(wrapped.as_slice())
+    let spki_bytes = wrap_if_needed_cow(spki_der);
+    let spki = x509_cert::spki::SubjectPublicKeyInfoRef::from_der(spki_bytes.as_ref())
         .context(CrlToDerSnafu)?;
-    verify_crl_sig_with_spki(crl_der, spki)
+    verify_crl_sig_with_spki(&crl, spki)
 }
 
 fn verify_crl_sig_with_spki(
-    crl_der: &[u8],
+    crl: &RcCertificateList,
     spki: x509_cert::spki::SubjectPublicKeyInfoRef<'_>,
 ) -> Result<(), CrlError> {
-    let crl = RcCertificateList::from_der(crl_der).context(CrlListParseSnafu)?;
     let spk_bytes = spki
         .subject_public_key
         .as_bytes()
@@ -264,7 +256,7 @@ fn verify_crl_sig_with_spki(
     let oid_ecdsa_sha512 = ObjectIdentifier::new_unwrap("1.2.840.10045.4.3.4");
     let oid_ed25519 = ObjectIdentifier::new_unwrap("1.3.101.112");
 
-    let tbs = tbs_crl_der(crl_der)?;
+    let tbs = crl.tbs_cert_list.to_der().context(CrlToDerSnafu)?;
     let sig_bytes = crl.signature.as_bytes().context(InvalidCrlSignatureSnafu)?;
     let try_verify = |alg: &'static dyn aws_lc_rs::signature::VerificationAlgorithm| {
         aws_lc_rs::signature::UnparsedPublicKey::new(alg, spk_bytes).verify(&tbs, sig_bytes)
@@ -377,7 +369,8 @@ fn canonicalize_from_der(der: &[u8]) -> Option<String> {
 fn wrap_as_der_sequence(input: &[u8]) -> Vec<u8> {
     // webpki drops the outer SEQUENCE header for both Name and SPKI bodies
     let len = input.len();
-    let mut out = Vec::with_capacity(len + 4);
+    // length + tag + form indicator + length bytes
+    let mut out = Vec::with_capacity(len + 1 + 1 + size_of::<usize>());
     out.push(0x30);
     if len < 0x80 {
         out.push(len as u8);
@@ -437,6 +430,14 @@ fn wrap_if_needed(bytes: &[u8]) -> Vec<u8> {
         bytes.to_vec()
     } else {
         wrap_as_der_sequence(bytes)
+    }
+}
+
+fn wrap_if_needed_cow(bytes: &[u8]) -> Cow<'_, [u8]> {
+    if bytes.first() == Some(&0x30) {
+        Cow::Borrowed(bytes)
+    } else {
+        Cow::Owned(wrap_as_der_sequence(bytes))
     }
 }
 
