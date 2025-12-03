@@ -7,12 +7,15 @@ use crate::crl::error::{
 };
 use const_oid::ObjectIdentifier;
 use num_traits::ToPrimitive;
+use std::borrow::Cow;
 use x509_cert::crl::CertificateList as RcCertificateList;
 use x509_cert::der::{Decode, Encode};
+use x509_cert::name::Name as CertName;
 use x509_parser::oid_registry::OID_X509_EXT_AUTHORITY_KEY_IDENTIFIER;
 use x509_parser::oid_registry::OID_X509_EXT_CRL_NUMBER;
-use x509_parser::prelude::FromDer;
 use x509_parser::prelude::*;
+use x509_parser::objects::oid_registry;
+use x509_parser::x509::X509Name;
 
 #[derive(Snafu, Debug)]
 #[snafu(visibility(pub))]
@@ -216,12 +219,30 @@ pub fn verify_crl_sig_with_name_and_spki(
     spki_der: &[u8],
 ) -> Result<(), CrlError> {
     let crl = RcCertificateList::from_der(crl_der).context(CrlListParseSnafu)?;
-    let issuer_name = x509_cert::name::Name::from_der(issuer_name_der).context(CrlToDerSnafu)?;
-    if issuer_name != crl.tbs_cert_list.issuer {
-        return CrlIssuerMismatchSnafu {}.fail();
+    let issuer_name_bytes = if issuer_name_der.first() == Some(&0x30) {
+        Cow::Borrowed(issuer_name_der)
+    } else {
+        Cow::Owned(wrap_as_der_sequence(issuer_name_der))
+    };
+    if let Ok(issuer_name) = x509_cert::name::Name::from_der(issuer_name_bytes.as_ref()) {
+        if issuer_name != crl.tbs_cert_list.issuer {
+            return CrlIssuerMismatchSnafu {}.fail();
+        }
     }
-    let spki =
-        x509_cert::spki::SubjectPublicKeyInfoRef::from_der(spki_der).context(CrlToDerSnafu)?;
+    if let Ok(spki) = x509_cert::spki::SubjectPublicKeyInfoRef::from_der(spki_der) {
+        return verify_crl_sig_with_spki(crl_der, spki);
+    }
+    let wrapped = wrap_as_der_sequence(spki_der);
+    let spki = x509_cert::spki::SubjectPublicKeyInfoRef::from_der(wrapped.as_slice())
+        .context(CrlToDerSnafu)?;
+    verify_crl_sig_with_spki(crl_der, spki)
+}
+
+fn verify_crl_sig_with_spki(
+    crl_der: &[u8],
+    spki: x509_cert::spki::SubjectPublicKeyInfoRef<'_>,
+) -> Result<(), CrlError> {
+    let crl = RcCertificateList::from_der(crl_der).context(CrlListParseSnafu)?;
     let spk_bytes = spki
         .subject_public_key
         .as_bytes()
@@ -311,8 +332,13 @@ pub fn resolve_anchor_issuer_key<'a>(
     if let Ok(crl) = RcCertificateList::from_der(crl_der)
         && let Ok(crl_issuer_der) = crl.tbs_cert_list.issuer.to_der()
     {
+        let issuer_canon = canonicalize_name(crl_issuer_der.as_slice());
         for a in root_store.roots.iter() {
-            if a.subject.as_ref() == crl_issuer_der.as_slice() {
+            let matches = match (&issuer_canon, canonicalize_name(a.subject.as_ref())) {
+                (Some(lhs), Some(rhs)) => lhs == &rhs,
+                _ => a.subject.as_ref() == crl_issuer_der.as_slice(),
+            };
+            if matches {
                 return Some((a.subject.as_ref(), a.subject_public_key_info.as_ref()));
             }
         }
@@ -320,8 +346,62 @@ pub fn resolve_anchor_issuer_key<'a>(
     None
 }
 
+fn canonicalize_name(der: &[u8]) -> Option<String> {
+    canonicalize_from_der(der).or_else(|| {
+        let wrapped = wrap_as_der_sequence(der);
+        canonicalize_from_der(wrapped.as_slice())
+    })
+}
+
+fn canonicalize_from_der(der: &[u8]) -> Option<String> {
+    if let Ok((_, name)) = X509Name::from_der(der) {
+        return name
+            .to_string_with_registry(&oid_registry())
+            .ok()
+            .map(|s| s.to_lowercase());
+    }
+    if let Ok(name) = CertName::from_der(der) {
+        if let Ok(re_der) = name.to_der() {
+            if let Ok((_, parsed)) = X509Name::from_der(re_der.as_slice()) {
+                return parsed
+                    .to_string_with_registry(&oid_registry())
+                    .ok()
+                    .map(|s| s.to_lowercase());
+            }
+        }
+    }
+    None
+}
+
+fn wrap_as_der_sequence(input: &[u8]) -> Vec<u8> {
+    let len = input.len();
+    let mut out = Vec::with_capacity(len + 4);
+    out.push(0x30);
+    if len < 0x80 {
+        out.push(len as u8);
+    } else {
+        let mut tmp = Vec::new();
+        let mut value = len;
+        while value > 0 {
+            tmp.push((value & 0xFF) as u8);
+            value >>= 8;
+        }
+        out.push(0x80 | tmp.len() as u8);
+        for b in tmp.iter().rev() {
+            out.push(*b);
+        }
+    }
+    out.extend_from_slice(input);
+    out
+}
+
 // Return canonical DER of the CRL's TBS (to-be-signed) part
 pub fn tbs_crl_der(crl_der: &[u8]) -> Result<Vec<u8>, CrlError> {
+    if let Ok((_, parsed)) =
+        x509_parser::revocation_list::CertificateRevocationList::from_der(crl_der)
+    {
+        return Ok(parsed.tbs_cert_list.as_ref().to_vec());
+    }
     let crl = RcCertificateList::from_der(crl_der).context(CrlListParseSnafu)?;
     crl.tbs_cert_list.to_der().context(CrlToDerSnafu)
 }
