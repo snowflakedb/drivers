@@ -392,11 +392,13 @@ impl CrlCache {
             }
         }
         // If still not verified, try configured root store to resolve a matching anchor and verify via its SPKI
+        let mut attempted_anchor = false;
         if !verified
             && let Some(store) = root_store
             && let Some(anchor_view) =
                 crate::tls::x509_utils::resolve_anchor_issuer_key(crl_bytes, store)
         {
+            attempted_anchor = true;
             verified = crate::tls::x509_utils::verify_crl_sig_with_name_and_spki(
                 crl_bytes,
                 anchor_view.subject_der().as_ref(),
@@ -406,6 +408,13 @@ impl CrlCache {
         }
 
         if !verified {
+            tracing::warn!(
+                target: "sf_core::crl",
+                "Unable to verify CRL signature (serial={}, issuer_provided={}, anchor_attempted={})",
+                hex::encode(serial),
+                issuer_der.is_some(),
+                attempted_anchor
+            );
             return InvalidCrlSignatureSnafu {}.fail();
         }
 

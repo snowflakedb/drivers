@@ -72,7 +72,7 @@ TOX_REFERENCE_ENV = py$(PYTHON_ID)-reference
 build-core:
 	@echo "Using CORE_PATH: $(DETECTED_CORE_PATH)"
 	@echo "Using PARAMETER_PATH: $(DETECTED_PARAMETER_PATH)"
-	cd .. && cargo build --package sf_core --target-dir=$(CORE_MODULE_DIR) && cd $(CORE_MODULE_DIR) && mv debug/* . &&  rm -rf debug/ || { \
+	cd .. && cargo build --package sf_core --target-dir=$(CORE_MODULE_DIR) && cd $(CORE_MODULE_DIR) && cp -R debug/. . && rm -rf debug/ || { \
 		echo "Failed to build Rust core library"; \
 		echo "Make sure Rust toolchain is installed: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"; \
 		exit 1; \

@@ -220,22 +220,23 @@ pub fn verify_crl_sig_with_name_and_spki(
     spki_der: &[u8],
 ) -> Result<(), CrlError> {
     let crl = RcCertificateList::from_der(crl_der).context(CrlListParseSnafu)?;
-    let issuer_name_bytes = wrap_if_needed_cow(issuer_name_der);
+    let issuer_name_bytes = wrap_if_needed_cow(issuer_name_der, name_is_valid_der);
     if let Ok(issuer_name) = x509_cert::name::Name::from_der(issuer_name_bytes.as_ref())
         && issuer_name != crl.tbs_cert_list.issuer
     {
         return CrlIssuerMismatchSnafu {}.fail();
     }
-    let spki_bytes = wrap_if_needed_cow(spki_der);
+    let spki_bytes = wrap_if_needed_cow(spki_der, spki_is_valid_der);
     let spki = x509_cert::spki::SubjectPublicKeyInfoRef::from_der(spki_bytes.as_ref())
         .context(CrlToDerSnafu)?;
-    verify_crl_sig_with_spki(&crl, spki)
+    verify_crl_sig_with_spki(crl_der, spki)
 }
 
 fn verify_crl_sig_with_spki(
-    crl: &RcCertificateList,
+    crl_der: &[u8],
     spki: x509_cert::spki::SubjectPublicKeyInfoRef<'_>,
 ) -> Result<(), CrlError> {
+    let crl = RcCertificateList::from_der(crl_der).context(CrlListParseSnafu)?;
     let spk_bytes = spki
         .subject_public_key
         .as_bytes()
@@ -256,7 +257,7 @@ fn verify_crl_sig_with_spki(
     let oid_ecdsa_sha512 = ObjectIdentifier::new_unwrap("1.2.840.10045.4.3.4");
     let oid_ed25519 = ObjectIdentifier::new_unwrap("1.3.101.112");
 
-    let tbs = crl.tbs_cert_list.to_der().context(CrlToDerSnafu)?;
+    let tbs = tbs_crl_der(crl_der)?;
     let sig_bytes = crl.signature.as_bytes().context(InvalidCrlSignatureSnafu)?;
     let try_verify = |alg: &'static dyn aws_lc_rs::signature::VerificationAlgorithm| {
         aws_lc_rs::signature::UnparsedPublicKey::new(alg, spk_bytes).verify(&tbs, sig_bytes)
@@ -400,8 +401,8 @@ pub struct TrustAnchorView {
 
 impl TrustAnchorView {
     pub fn new(anchor: &TrustAnchor<'static>) -> Self {
-        let subject_der = wrap_if_needed(anchor.subject.as_ref());
-        let spki_der = wrap_if_needed(anchor.subject_public_key_info.as_ref());
+        let subject_der = wrap_if_needed(anchor.subject.as_ref(), name_is_valid_der);
+        let spki_der = wrap_if_needed(anchor.subject_public_key_info.as_ref(), spki_is_valid_der);
         let canonical_subject = canonicalize_name(subject_der.as_slice());
         Self {
             subject_der,
@@ -423,22 +424,34 @@ impl TrustAnchorView {
     }
 }
 
-fn wrap_if_needed(bytes: &[u8]) -> Vec<u8> {
-    // RDNSequence inner bytes always start with SET (0x31); if we see 0x30 the
-    // outer SEQUENCE tag is still present, so the input is already canonical.
-    if bytes.first() == Some(&0x30) {
+fn wrap_if_needed<T, E, F>(bytes: &[u8], parser: F) -> Vec<u8>
+where
+    for<'a> F: Fn(&'a [u8]) -> Result<T, E>,
+{
+    if parser(bytes).is_ok() {
         bytes.to_vec()
     } else {
         wrap_as_der_sequence(bytes)
     }
 }
 
-fn wrap_if_needed_cow(bytes: &[u8]) -> Cow<'_, [u8]> {
-    if bytes.first() == Some(&0x30) {
+fn wrap_if_needed_cow<T, E, F>(bytes: &[u8], parser: F) -> Cow<'_, [u8]>
+where
+    for<'a> F: Fn(&'a [u8]) -> Result<T, E>,
+{
+    if parser(bytes).is_ok() {
         Cow::Borrowed(bytes)
     } else {
         Cow::Owned(wrap_as_der_sequence(bytes))
     }
+}
+
+fn name_is_valid_der(bytes: &[u8]) -> Result<(), x509_cert::der::Error> {
+    x509_cert::name::Name::from_der(bytes).map(|_| ())
+}
+
+fn spki_is_valid_der(bytes: &[u8]) -> Result<(), x509_cert::der::Error> {
+    x509_cert::spki::SubjectPublicKeyInfoRef::from_der(bytes).map(|_| ())
 }
 
 // Return canonical DER of the CRL's TBS (to-be-signed) part
