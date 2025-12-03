@@ -1,4 +1,4 @@
-@core_e2e @python_e2e
+@core @python
 Feature: Personal Access Token Authentication
 
   @core_e2e @python_e2e

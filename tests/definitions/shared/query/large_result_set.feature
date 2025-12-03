@@ -1,4 +1,4 @@
-@core_e2e @odbc_e2e @python_e2e
+@core @odbc @python
 Feature: Large Result Set
 
   @core_e2e @odbc_e2e @python_e2e

@@ -97,7 +97,7 @@ fn should_report_missing_files_when_no_test_files_exist() -> Result<()> {
             validation.language
         );
         assert!(validation.test_file_path.is_none());
-        assert_eq!(validation.missing_steps.len(), 3); // All steps should be missing
+        assert_eq!(validation.missing_steps.len(), 0); // No individual steps when file doesn't exist
         assert!(!validation.warnings.is_empty());
         assert!(validation.warnings[0].contains("No test file found"));
     }
@@ -1007,7 +1007,7 @@ struct TestImplementations;
 
 impl TestImplementations {
     fn create_complete_login_feature() -> &'static str {
-        r#"@core_e2e @jdbc_int @odbc_e2e
+        r#"@core @jdbc @odbc
 Feature: User Login
 
   @core_e2e @jdbc_int @odbc_e2e
@@ -1083,7 +1083,7 @@ TEST_CASE("Successful login with valid credentials") {
     }
 
     fn create_missing_file_feature() -> &'static str {
-        r#"@core_e2e @jdbc_int
+        r#"@core @jdbc
 Feature: Missing File Test
 
   @core_e2e @jdbc_int
@@ -1095,7 +1095,7 @@ Feature: Missing File Test
     }
 
     fn create_missing_function_feature() -> &'static str {
-        r#"@core_e2e @jdbc_int
+        r#"@core @jdbc
 Feature: Missing Function Test
 
   @core_e2e @jdbc_int  
@@ -1144,7 +1144,7 @@ public class MissingFunctionTest {
     }
 
     fn create_missing_step_feature() -> &'static str {
-        r#"@core_e2e @jdbc_int
+        r#"@core @jdbc
 Feature: Missing Step Test
 
   @core_e2e @jdbc_int
@@ -1198,7 +1198,7 @@ public class MissingStepTest {
     }
 
     fn create_mixed_scenarios_feature() -> &'static str {
-        r#"@core_e2e @jdbc_int
+        r#"@core @jdbc
 Feature: Mixed Scenarios Test
 
   @core_e2e @jdbc_int
@@ -1319,7 +1319,7 @@ fn orphaned_test_function() {
     }
 
     fn create_nested_blocks_feature() -> &'static str {
-        r#"@core_e2e @jdbc_int @odbc_e2e
+        r#"@core @jdbc
 Feature: Nested Blocks Test
 
   @core_e2e @jdbc_int @odbc_e2e
@@ -1431,7 +1431,7 @@ TEST_CASE("Test with nested control structures") {
     }
 
     fn create_string_braces_feature() -> &'static str {
-        r#"@core_e2e @jdbc_int
+        r#"@core @jdbc
 Feature: String Braces Test
 
   @core_e2e @jdbc_int
@@ -1488,7 +1488,7 @@ fn test_with_braces_in_strings() {
     // ===== Breaking Change Test Data =====
 
     fn create_simple_breaking_change_feature() -> &'static str {
-        r#"@odbc
+        r#"@core @jdbc
 Feature: Simple Breaking Change Test
 
   @odbc
@@ -1524,7 +1524,7 @@ TEST_CASE("should authenticate using private key") {
     }
 
     fn create_cross_file_breaking_change_feature() -> &'static str {
-        r#"@odbc
+        r#"@core @jdbc
 Feature: Cross File Breaking Change Test
 
   @odbc
@@ -1587,7 +1587,7 @@ void deep_nested_auth_helper() {
     }
 
     fn create_nested_breaking_change_feature() -> &'static str {
-        r#"@odbc
+        r#"@core @jdbc
 Feature: Nested Breaking Change Test
 
   @odbc
@@ -1629,7 +1629,7 @@ void third_level_helper() {
     }
 
     fn create_mixed_breaking_change_feature() -> &'static str {
-        r#"@odbc
+        r#"@core @jdbc
 Feature: Mixed Breaking Change Test
 
   @odbc
@@ -1681,7 +1681,7 @@ TEST_CASE("should authenticate without breaking_change annotation") {
     }
 
     fn create_line_numbers_breaking_change_feature() -> &'static str {
-        r#"@odbc
+        r#"@core @jdbc
 Feature: Line Numbers Breaking Change Test
 
   @odbc
@@ -1716,7 +1716,7 @@ TEST_CASE("should test specific line numbers") {
     }
 
     fn create_multiple_breaking_changes_feature() -> &'static str {
-        r#"@odbc
+        r#"@core @jdbc
 Feature: Multiple Breaking Changes Test
 
   @odbc

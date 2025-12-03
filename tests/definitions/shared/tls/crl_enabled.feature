@@ -1,5 +1,5 @@
 @core @odbc @python
-Feature: crl_enabled
+Feature: CRL enabled
 
   @core_e2e @odbc_e2e @python_e2e
   Scenario: Should connect and select with CRL enabled
