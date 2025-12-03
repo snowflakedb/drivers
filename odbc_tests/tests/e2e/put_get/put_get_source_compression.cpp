@@ -47,8 +47,7 @@ TEST_CASE("should auto-detect standard compression types when SOURCE_COMPRESSION
     auto [filename, file] = test_file(comp);
 
     // When File is uploaded with SOURCE_COMPRESSION set to AUTO_DETECT
-    std::string put_sql = "PUT 'file://" + as_file_uri(file) + "' @" + stage + " SOURCE_COMPRESSION=AUTO_DETECT";
-    auto stmt = conn.execute_fetch(put_sql);
+    auto stmt = conn.execute_fetch(build_put_sql(file, stage, {{"SOURCE_COMPRESSION", "AUTO_DETECT"}}));
 
     // Then Target compression has correct type and all PUT results are correct
     CHECK(get_data<SQL_C_CHAR>(stmt, PUT_ROW_SOURCE_IDX) == filename);
@@ -78,8 +77,7 @@ TEST_CASE("should upload compressed files with SOURCE_COMPRESSION set to explici
     auto [filename, file] = test_file(comp);
 
     // When File is uploaded with SOURCE_COMPRESSION set to explicit type
-    std::string put_sql = "PUT 'file://" + as_file_uri(file) + "' @" + stage + " SOURCE_COMPRESSION=" + comp;
-    auto stmt = conn.execute_fetch(put_sql);
+    auto stmt = conn.execute_fetch(build_put_sql(file, stage, {{"SOURCE_COMPRESSION", comp}}));
 
     // Then Target compression has correct type and all PUT results are correct
     CHECK(get_data<SQL_C_CHAR>(stmt, PUT_ROW_SOURCE_IDX) == filename);
@@ -100,9 +98,9 @@ TEST_CASE("should not compress file when SOURCE_COMPRESSION set to AUTO_DETECT a
   auto [filename, file] = test_file("NONE");
 
   // When File is uploaded with SOURCE_COMPRESSION set to AUTO_DETECT and AUTO_COMPRESS set to FALSE
-  std::string put_sql =
-      "PUT 'file://" + as_file_uri(file) + "' @" + stage + " SOURCE_COMPRESSION=AUTO_DETECT AUTO_COMPRESS=FALSE";
-  auto stmt = conn.execute_fetch(put_sql);
+  auto stmt = conn.execute_fetch(
+      build_put_sql(file, stage, {{"SOURCE_COMPRESSION", "AUTO_DETECT"}, {"AUTO_COMPRESS", "FALSE"}}));
+
   // Then File is not compressed
   CHECK(get_data<SQL_C_CHAR>(stmt, PUT_ROW_SOURCE_IDX) == filename);
   CHECK(get_data<SQL_C_CHAR>(stmt, PUT_ROW_TARGET_IDX) == filename);
@@ -120,9 +118,8 @@ TEST_CASE("should not compress file when SOURCE_COMPRESSION set to NONE and AUTO
   auto [filename, file] = test_file("NONE");
 
   // When File is uploaded with SOURCE_COMPRESSION set to NONE and AUTO_COMPRESS set to FALSE
-  std::string put_sql =
-      "PUT 'file://" + as_file_uri(file) + "' @" + stage + " SOURCE_COMPRESSION=NONE AUTO_COMPRESS=FALSE";
-  auto stmt = conn.execute_fetch(put_sql);
+  auto stmt =
+      conn.execute_fetch(build_put_sql(file, stage, {{"SOURCE_COMPRESSION", "NONE"}, {"AUTO_COMPRESS", "FALSE"}}));
 
   // Then File is not compressed
   CHECK(get_data<SQL_C_CHAR>(stmt, PUT_ROW_SOURCE_IDX) == filename);
@@ -142,9 +139,8 @@ TEST_CASE("should compress uncompressed file when SOURCE_COMPRESSION set to AUTO
   auto [filename, file] = test_file("NONE");
 
   // When File is uploaded with SOURCE_COMPRESSION set to AUTO_DETECT and AUTO_COMPRESS set to TRUE
-  std::string put_sql =
-      "PUT 'file://" + as_file_uri(file) + "' @" + stage + " SOURCE_COMPRESSION=AUTO_DETECT AUTO_COMPRESS=TRUE";
-  auto stmt = conn.execute_fetch(put_sql);
+  auto stmt = conn.execute_fetch(
+      build_put_sql(file, stage, {{"SOURCE_COMPRESSION", "AUTO_DETECT"}, {"AUTO_COMPRESS", "TRUE"}}));
 
   // Then Target compression has GZIP type and all PUT results are correct
   CHECK(get_data<SQL_C_CHAR>(stmt, PUT_ROW_SOURCE_IDX) == filename);
@@ -164,9 +160,8 @@ TEST_CASE("should compress uncompressed file when SOURCE_COMPRESSION set to NONE
   auto [filename, file] = test_file("NONE");
 
   // When File is uploaded with SOURCE_COMPRESSION set to NONE and AUTO_COMPRESS set to TRUE
-  std::string put_sql =
-      "PUT 'file://" + as_file_uri(file) + "' @" + stage + " SOURCE_COMPRESSION=NONE AUTO_COMPRESS=TRUE";
-  auto stmt = conn.execute_fetch(put_sql);
+  auto stmt =
+      conn.execute_fetch(build_put_sql(file, stage, {{"SOURCE_COMPRESSION", "NONE"}, {"AUTO_COMPRESS", "TRUE"}}));
 
   // Then Target compression has GZIP type and all PUT results are correct
   CHECK(get_data<SQL_C_CHAR>(stmt, PUT_ROW_SOURCE_IDX) == filename);
@@ -185,7 +180,7 @@ TEST_CASE("should return error for unsupported compression type", "[put_get]") {
   auto [filename, file] = test_file("LZMA");
 
   // When File is uploaded with SOURCE_COMPRESSION set to AUTO_DETECT
-  std::string put_sql = "PUT 'file://" + as_file_uri(file) + "' @" + stage + " SOURCE_COMPRESSION=AUTO_DETECT";
+  std::string put_sql = build_put_sql(file, stage, {{"SOURCE_COMPRESSION", "AUTO_DETECT"}});
 
   auto stmt = conn.createStatement();
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)put_sql.c_str(), SQL_NTS);

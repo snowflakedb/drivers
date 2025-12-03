@@ -27,11 +27,10 @@ static std::pair<std::string, fs::path> basic_test_file() {
 TEST_CASE("should select data from file uploaded to stage", "[put_get]") {
   // Given File is uploaded to stage
   Connection conn;
-  const std::string stage = pg_utils::create_stage(conn, "ODBCTST_BASIC_OPS_SELECT");
+  const std::string stage = create_stage(conn, "ODBCTST_BASIC_OPS_SELECT");
   auto [filename, file] = basic_test_file();
 
-  std::string put_sql = "PUT 'file://" + as_file_uri(file) + "' @" + stage;
-  conn.execute(put_sql);
+  conn.execute(build_put_sql(file, stage));
 
   // When File data is queried using Select command
   std::string select_sql = "SELECT $1, $2, $3 FROM @" + stage;
@@ -46,11 +45,10 @@ TEST_CASE("should select data from file uploaded to stage", "[put_get]") {
 TEST_CASE("should list file uploaded to stage", "[put_get]") {
   // Given File is uploaded to stage
   Connection conn;
-  const std::string stage = pg_utils::create_stage(conn, "ODBCTST_BASIC_OPS_LS");
+  const std::string stage = create_stage(conn, "ODBCTST_BASIC_OPS_LS");
   auto [filename, file] = basic_test_file();
 
-  std::string put_sql = "PUT 'file://" + as_file_uri(file) + "' @" + stage;
-  conn.execute(put_sql);
+  conn.execute(build_put_sql(file, stage));
 
   // When Stage content is listed using LS command
   std::string ls_sql = "LS @" + stage;
@@ -65,18 +63,14 @@ TEST_CASE("should list file uploaded to stage", "[put_get]") {
 TEST_CASE("should get file uploaded to stage", "[put_get]") {
   // Given File is uploaded to stage
   Connection conn;
-  const std::string stage = pg_utils::create_stage(conn, "ODBCTST_BASIC_OPS_GET");
+  const std::string stage = create_stage(conn, "ODBCTST_BASIC_OPS_GET");
   auto [filename, file] = basic_test_file();
 
-  std::string put_sql = "PUT 'file://" + as_file_uri(file) + "' @" + stage;
-  conn.execute(put_sql);
+  conn.execute(build_put_sql(file, stage));
 
   // When File is downloaded using GET command
-  fs::path download_dir = fs::temp_directory_path() / (std::string("odbc_put_get_") + random_hex());
-  fs::create_directories(download_dir);
-
-  std::string get_sql = "GET @" + stage + "/" + filename + " 'file://" + as_file_uri(download_dir) + "/'";
-  auto stmt = conn.execute_fetch(get_sql);
+  fs::path download_dir = create_temp_download_dir();
+  auto stmt = conn.execute_fetch(build_get_sql(stage, filename, download_dir));
 
   // Then File should be downloaded
   CHECK(get_data<SQL_C_CHAR>(stmt, GET_ROW_FILE_IDX) == filename + ".gz");
@@ -86,22 +80,18 @@ TEST_CASE("should get file uploaded to stage", "[put_get]") {
 
   // And Have correct content
   std::string decompressed = decompress_gzip_file(gz);
-  std::ifstream ifs(file);
-  std::istreambuf_iterator<char> begin(ifs);
-  std::istreambuf_iterator<char> end;
-  std::string original_content(begin, end);
+  std::string original_content = read_file_content(file);
   CHECK(decompressed == original_content);
 }
 
 TEST_CASE("should return correct rowset for PUT", "[put_get]") {
   // Given Snowflake client is logged in
   Connection conn;
-  const std::string stage = pg_utils::create_stage(conn, "ODBCTST_BASIC_ROWSET_PUT");
+  const std::string stage = create_stage(conn, "ODBCTST_BASIC_ROWSET_PUT");
   auto [filename, file] = basic_test_file();
 
   // When File is uploaded to stage
-  std::string put_sql = "PUT 'file://" + as_file_uri(file) + "' @" + stage;
-  auto stmt = conn.execute_fetch(put_sql);
+  auto stmt = conn.execute_fetch(build_put_sql(file, stage));
 
   // Then Rowset for PUT command should be correct
   CHECK(get_data<SQL_C_CHAR>(stmt, PUT_ROW_SOURCE_IDX) == filename);
@@ -121,18 +111,14 @@ TEST_CASE("should return correct rowset for PUT", "[put_get]") {
 TEST_CASE("should return correct rowset for GET", "[put_get]") {
   // Given File is uploaded to stage
   Connection conn;
-  const std::string stage = pg_utils::create_stage(conn, "ODBCTST_GET_ROWSET_GET");
+  const std::string stage = create_stage(conn, "ODBCTST_GET_ROWSET_GET");
   auto [filename, file] = basic_test_file();
 
-  std::string put_sql = "PUT 'file://" + as_file_uri(file) + "' @" + stage;
-  conn.execute(put_sql);
+  conn.execute(build_put_sql(file, stage));
 
   // When File is downloaded using GET command
-  fs::path download_dir = fs::temp_directory_path() / (std::string("odbc_put_get_") + random_hex());
-  fs::create_directories(download_dir);
-
-  std::string get_sql = "GET @" + stage + "/" + filename + " 'file://" + as_file_uri(download_dir) + "/'";
-  auto stmt = conn.execute_fetch(get_sql);
+  fs::path download_dir = create_temp_download_dir();
+  auto stmt = conn.execute_fetch(build_get_sql(stage, filename, download_dir));
 
   // Then Rowset for GET command should be correct
   CHECK(get_data<SQL_C_CHAR>(stmt, GET_ROW_FILE_IDX) == filename + ".gz");

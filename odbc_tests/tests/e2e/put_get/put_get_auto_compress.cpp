@@ -25,12 +25,12 @@ static std::pair<std::string, fs::path> compressed_test_file() {
 TEST_CASE("should compress the file before uploading to stage when AUTO_COMPRESS set to true", "[put_get]") {
   Connection conn;
   // Given Snowflake client is logged in
-  const std::string stage = pg_utils::create_stage(conn, "ODBCTST_COMPRESS_TRUE");
+  const std::string stage = create_stage(conn, "ODBCTST_COMPRESS_TRUE");
   auto [filename, file] = uncompressed_test_file();
   auto [compressed, file_gz] = compressed_test_file();
 
   // When File is uploaded to stage with AUTO_COMPRESS set to true
-  auto put_stmt = conn.execute_fetch("PUT 'file://" + as_file_uri(file) + "' @" + stage + " AUTO_COMPRESS=TRUE");
+  auto put_stmt = conn.execute_fetch(build_put_sql(file, stage, {{"AUTO_COMPRESS", "TRUE"}}));
   std::string src = get_data<SQL_C_CHAR>(put_stmt, PUT_ROW_SOURCE_IDX);
   std::string tgt = get_data<SQL_C_CHAR>(put_stmt, PUT_ROW_TARGET_IDX);
   std::string status = get_data<SQL_C_CHAR>(put_stmt, PUT_ROW_STATUS_IDX);
@@ -38,11 +38,10 @@ TEST_CASE("should compress the file before uploading to stage when AUTO_COMPRESS
   CHECK(tgt == compressed);
   CHECK(status == "UPLOADED");
 
-  fs::path download_dir = fs::temp_directory_path() / (std::string("odbc_put_get_") + random_hex());
-  fs::create_directories(download_dir);
+  fs::path download_dir = create_temp_download_dir();
 
   // Then Only compressed file should be downloaded
-  auto get_stmt = conn.execute_fetch("GET @" + stage + "/" + filename + " 'file://" + as_file_uri(download_dir) + "/'");
+  auto get_stmt = conn.execute_fetch(build_get_sql(stage, filename, download_dir));
   std::string file_col = get_data<SQL_C_CHAR>(get_stmt, GET_ROW_FILE_IDX);
   std::string get_status = get_data<SQL_C_CHAR>(get_stmt, GET_ROW_STATUS_IDX);
   CHECK(file_col == compressed);
@@ -52,12 +51,8 @@ TEST_CASE("should compress the file before uploading to stage when AUTO_COMPRESS
   REQUIRE(!fs::exists(download_dir / filename));
 
   // And Have correct content
-  std::ifstream dl(download_dir / compressed, std::ios::binary);
-  std::string downloaded_bytes((std::istreambuf_iterator<char>(dl)), std::istreambuf_iterator<char>());
-  std::ifstream ref(file_gz, std::ios::binary);
-  std::istreambuf_iterator<char> ref_begin(ref);
-  std::istreambuf_iterator<char> ref_end;
-  std::string reference_bytes(ref_begin, ref_end);
+  std::string downloaded_bytes = read_file_content(download_dir / compressed);
+  std::string reference_bytes = read_file_content(file_gz);
 
   OLD_DRIVER_ONLY("BD#1") { CHECK(downloaded_bytes != reference_bytes); }
   NEW_DRIVER_ONLY("BD#1") { CHECK(downloaded_bytes == reference_bytes); }
@@ -66,12 +61,12 @@ TEST_CASE("should compress the file before uploading to stage when AUTO_COMPRESS
 TEST_CASE("should not compress the file before uploading to stage when AUTO_COMPRESS set to false", "[put_get]") {
   Connection conn;
   // Given Snowflake client is logged in
-  const std::string stage = pg_utils::create_stage(conn, "ODBCTST_COMPRESS_FALSE");
+  const std::string stage = create_stage(conn, "ODBCTST_COMPRESS_FALSE");
   auto [filename, file] = uncompressed_test_file();
   auto [compressed, file_gz] = compressed_test_file();
 
   // When File is uploaded to stage with AUTO_COMPRESS set to false
-  auto put_stmt = conn.execute_fetch("PUT 'file://" + as_file_uri(file) + "' @" + stage + " AUTO_COMPRESS=FALSE");
+  auto put_stmt = conn.execute_fetch(build_put_sql(file, stage, {{"AUTO_COMPRESS", "FALSE"}}));
   std::string src = get_data<SQL_C_CHAR>(put_stmt, PUT_ROW_SOURCE_IDX);
   std::string tgt = get_data<SQL_C_CHAR>(put_stmt, PUT_ROW_TARGET_IDX);
   std::string status = get_data<SQL_C_CHAR>(put_stmt, PUT_ROW_STATUS_IDX);
@@ -79,12 +74,10 @@ TEST_CASE("should not compress the file before uploading to stage when AUTO_COMP
   CHECK(tgt == filename);
   CHECK(status == "UPLOADED");
 
-  fs::path download_dir = fs::temp_directory_path() / (std::string("odbc_put_get_") + random_hex());
-  fs::create_directories(download_dir);
+  fs::path download_dir = create_temp_download_dir();
 
   // Then Only uncompressed file should be downloaded
-  std::string get_sql = "GET @" + stage + "/" + filename + " 'file://" + as_file_uri(download_dir) + "/'";
-  auto get_stmt = conn.execute_fetch(get_sql);
+  auto get_stmt = conn.execute_fetch(build_get_sql(stage, filename, download_dir));
   std::string file_col = get_data<SQL_C_CHAR>(get_stmt, GET_ROW_FILE_IDX);
   std::string get_status = get_data<SQL_C_CHAR>(get_stmt, GET_ROW_STATUS_IDX);
   CHECK(file_col == filename);
@@ -94,13 +87,7 @@ TEST_CASE("should not compress the file before uploading to stage when AUTO_COMP
   REQUIRE(!fs::exists(download_dir / compressed));
 
   // And Have correct content
-  std::ifstream ifs2(download_dir / filename);
-  std::istreambuf_iterator<char> begin(ifs2);
-  std::istreambuf_iterator<char> end;
-  std::string downloaded_content(begin, end);
-  std::ifstream ifs_src(file);
-  std::istreambuf_iterator<char> src_begin(ifs_src);
-  std::istreambuf_iterator<char> src_end;
-  std::string original_content(src_begin, src_end);
+  std::string downloaded_content = read_file_content(download_dir / filename);
+  std::string original_content = read_file_content(file);
   CHECK(downloaded_content == original_content);
 }
