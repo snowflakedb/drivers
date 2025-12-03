@@ -1,9 +1,6 @@
 @core
 Feature: TLS handshake
 
-  Background:
-    Given an HTTPS server URL from env E2E_TLS_SERVER or default "https://example.com"
-
   @core_e2e
   Scenario: Should complete handshake with default roots
     Given a TLS client configured with default roots

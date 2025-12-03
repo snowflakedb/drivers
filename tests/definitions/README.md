@@ -2,6 +2,17 @@
 
 This directory contains Gherkin feature files that define test scenarios for the Universal Driver across multiple languages. Tests are categorized into **E2E (end-to-end)** and **Integration** tests.
 
+## Directory Structure
+
+Features are organized into two categories:
+
+- **`shared/`** - Multi-language test features (implemented across multiple drivers)
+  - `authentication/`, `http/`, `put_get/`, `query/`, `tls/`
+- **`core/`** - Core (Rust) driver-only features (marked with `@core_only`)
+- **`python/`** - Python driver-only features (marked with `@python_only`)
+- **`odbc/`** - ODBC driver-only features (marked with `@odbc_only`)
+- **`jdbc/`** - JDBC driver-only features (marked with `@jdbc_only`)
+
 ## Test Types
 
 ### E2E Tests
@@ -21,6 +32,10 @@ This directory contains Gherkin feature files that define test scenarios for the
 **Feature Level Behavior:**
 - **If feature has NO driver annotation**: All scenarios marked as "TODO" by default
 - **Feature-level exclusion**: `@{driver}_not_needed` on feature excludes ALL scenarios for that driver
+- **Language-specific features**: Detected by folder location (e.g., `core/`, `python/`)
+  - Features in language-specific folders can ONLY have tags for that driver
+  - Example: Features in `core/` can only use `@core`, `@core_e2e`, `@core_int`
+  - Excluded from cross-language coverage calculations
 
 ### Scenario Level  
 - **Test Types**: `@{driver}_{test_type}` - Specifies driver and test type
@@ -45,14 +60,19 @@ This directory contains Gherkin feature files that define test scenarios for the
 
 ## Adding New Tests
 
-1. **Write the feature file** - Create a `.feature` file in the appropriate category folder with Gherkin scenarios
-2. **Add appropriate tags** - Tag scenarios with `@{driver}_{test_type}` format:
-   - **E2E tests**: Use `_e2e` suffix
-   - **Integration tests**: Use `_int` suffix
-3. **Implement tests** - Write tests with corresponding test steps added as comments in each tagged driver's test suite:
+1. **Choose location** - Determine if the feature is shared or language-specific:
+   - **Shared features**: Place in `shared/{category}/` (e.g., `shared/authentication/`)
+   - **Language-specific features**: Place in `{driver}/{category}/` (e.g., `core/tls/`, `python/http/`)
+2. **Write the feature file** - Create a `.feature` file with Gherkin scenarios
+3. **Add appropriate tags**:
+   - Tag feature with `@{driver}` (e.g., `@core`, `@python`, or `@core @python`)
+   - Tag scenarios with `@{driver}_{test_type}` format (`_e2e` or `_int`)
+   - **Important**: Features in language-specific folders must only use tags for that driver
+     - Example: `core/` features can only have `@core` tags, not `@python`
+4. **Implement tests** - Write tests with corresponding test steps added as comments in each tagged driver's test suite:
    - **E2E tests**: use `e2e/` directories
    - **Integration tests**: use `integration/` directories
-4. **Run validator** - Use the format validator to check all scenarios have matching implementations (it is added to pre-commit)
+5. **Run validator** - Use the format validator to check all scenarios have matching implementations (it is added to pre-commit)
 
 ## Behavior Differences (BD)
 

@@ -6,6 +6,24 @@ call ./scripts/version.bat
 
 echo === Platform: %PLATFORM% ===
 echo === Commit SHA: %COMMIT_SHA% ===
+REM Set platform target based on PLATFORM
+if "%PLATFORM%"=="windows-x86_64" (
+    set PLATFORM_TARGET=x86_64-pc-windows-msvc
+) else if "%PLATFORM%"=="windows-i686" (
+    set PLATFORM_TARGET=i686-pc-windows-msvc
+) else if "%PLATFORM%"=="windows-aarch64" (
+    set PLATFORM_TARGET=aarch64-pc-windows-msvc
+) else (
+    echo Unknown platform: %PLATFORM%
+    exit /b 1
+)
+
+echo === Platform target: %PLATFORM_TARGET% ===
+
+echo === Ensuring target is installed ===
+rustup target add %PLATFORM_TARGET%
+if %ERRORLEVEL% neq 0 exit /b %ERRORLEVEL%
+
 
 echo === Checking if cbindgen is installed ===
 REM Install cbindgen if not available
@@ -31,20 +49,20 @@ if %ERRORLEVEL% neq 0 exit /b %ERRORLEVEL%
 
 REM Build release version
 echo === Building dynamic library version ===
-cargo build --release --package sf_mini_core
+cargo build --release --package sf_mini_core --target %PLATFORM_TARGET%
 if %ERRORLEVEL% neq 0 exit /b %ERRORLEVEL%
 
 echo === Building static library version ===
-cargo build --release --package sf_mini_core_static
+cargo build --release --package sf_mini_core_static --target %PLATFORM_TARGET%
 if %ERRORLEVEL% neq 0 exit /b %ERRORLEVEL%
 
 REM Copy build artifacts
 echo === Copying build artifacts ===
 REM Copy static library
-copy target\release\sf_mini_core_static.lib "%BUILD_DIR%\" >nul
+copy target\%PLATFORM_TARGET%\release\sf_mini_core_static.lib "%BUILD_DIR%\" >nul
 if %ERRORLEVEL% neq 0 exit /b %ERRORLEVEL%
 REM Copy dynamic library
-copy target\release\sf_mini_core.dll "%BUILD_DIR%\" >nul
+copy target\%PLATFORM_TARGET%\release\sf_mini_core.dll "%BUILD_DIR%\" >nul
 if %ERRORLEVEL% neq 0 exit /b %ERRORLEVEL%
 
 set PACKAGE_NAME=sf_mini_core_%PLATFORM%_%VERSION%_SNAPSHOT_%COMMIT_SHA%.tar.gz
