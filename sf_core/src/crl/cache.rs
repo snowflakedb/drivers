@@ -394,11 +394,13 @@ impl CrlCache {
         // If still not verified, try configured root store to resolve a matching anchor and verify via its SPKI
         if !verified
             && let Some(store) = root_store
-            && let Some((sub_der, spki_der)) =
+            && let Some(anchor_view) =
                 crate::tls::x509_utils::resolve_anchor_issuer_key(crl_bytes, store)
         {
             verified = crate::tls::x509_utils::verify_crl_sig_with_name_and_spki(
-                crl_bytes, sub_der, spki_der,
+                crl_bytes,
+                anchor_view.subject_der().as_ref(),
+                anchor_view.spki_der().as_ref(),
             )
             .is_ok();
         }

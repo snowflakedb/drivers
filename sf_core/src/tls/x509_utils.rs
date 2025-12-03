@@ -7,14 +7,16 @@ use crate::crl::error::{
 };
 use const_oid::ObjectIdentifier;
 use num_traits::ToPrimitive;
+use once_cell::unsync::OnceCell;
+use rustls::pki_types::TrustAnchor;
 use std::borrow::Cow;
 use x509_cert::crl::CertificateList as RcCertificateList;
 use x509_cert::der::{Decode, Encode};
 use x509_cert::name::Name as CertName;
+use x509_parser::objects::oid_registry;
 use x509_parser::oid_registry::OID_X509_EXT_AUTHORITY_KEY_IDENTIFIER;
 use x509_parser::oid_registry::OID_X509_EXT_CRL_NUMBER;
 use x509_parser::prelude::*;
-use x509_parser::objects::oid_registry;
 use x509_parser::x509::X509Name;
 
 #[derive(Snafu, Debug)]
@@ -224,10 +226,10 @@ pub fn verify_crl_sig_with_name_and_spki(
     } else {
         Cow::Owned(wrap_as_der_sequence(issuer_name_der))
     };
-    if let Ok(issuer_name) = x509_cert::name::Name::from_der(issuer_name_bytes.as_ref()) {
-        if issuer_name != crl.tbs_cert_list.issuer {
-            return CrlIssuerMismatchSnafu {}.fail();
-        }
+    if let Ok(issuer_name) = x509_cert::name::Name::from_der(issuer_name_bytes.as_ref())
+        && issuer_name != crl.tbs_cert_list.issuer
+    {
+        return CrlIssuerMismatchSnafu {}.fail();
     }
     if let Ok(spki) = x509_cert::spki::SubjectPublicKeyInfoRef::from_der(spki_der) {
         return verify_crl_sig_with_spki(crl_der, spki);
@@ -328,24 +330,25 @@ fn crl_preflight_checks(crl_der: &[u8]) -> Result<(), CrlError> {
 pub fn resolve_anchor_issuer_key<'a>(
     crl_der: &[u8],
     root_store: &'a rustls::RootCertStore,
-) -> Option<(&'a [u8], &'a [u8])> {
-    if let Ok(crl) = RcCertificateList::from_der(crl_der)
-        && let Ok(crl_issuer_der) = crl.tbs_cert_list.issuer.to_der()
-    {
-        let issuer_canon = canonicalize_name(crl_issuer_der.as_slice());
-        for a in root_store.roots.iter() {
-            let matches = match (&issuer_canon, canonicalize_name(a.subject.as_ref())) {
-                (Some(lhs), Some(rhs)) => lhs == &rhs,
-                _ => a.subject.as_ref() == crl_issuer_der.as_slice(),
-            };
-            if matches {
-                return Some((a.subject.as_ref(), a.subject_public_key_info.as_ref()));
-            }
+) -> Option<TrustAnchorView<'a>> {
+    let crl = RcCertificateList::from_der(crl_der).ok()?;
+    let issuer_der = crl.tbs_cert_list.issuer.to_der().ok()?;
+    let issuer_canon = canonicalize_name(issuer_der.as_slice());
+    for anchor in root_store.roots.iter() {
+        let view = TrustAnchorView::new(anchor);
+        let matches = match (issuer_canon.as_deref(), view.canonical_subject()) {
+            (Some(lhs), Some(rhs)) => lhs == rhs,
+            _ => view.subject_der().as_ref() == issuer_der.as_slice(),
+        };
+        if matches {
+            return Some(view);
         }
     }
     None
 }
 
+// Webpki stores subjects as the bare RDN sequence while `x509-parser` expects a canonical
+// DER `SEQUENCE`.
 fn canonicalize_name(der: &[u8]) -> Option<String> {
     canonicalize_from_der(der).or_else(|| {
         let wrapped = wrap_as_der_sequence(der);
@@ -356,24 +359,24 @@ fn canonicalize_name(der: &[u8]) -> Option<String> {
 fn canonicalize_from_der(der: &[u8]) -> Option<String> {
     if let Ok((_, name)) = X509Name::from_der(der) {
         return name
-            .to_string_with_registry(&oid_registry())
+            .to_string_with_registry(oid_registry())
             .ok()
             .map(|s| s.to_lowercase());
     }
-    if let Ok(name) = CertName::from_der(der) {
-        if let Ok(re_der) = name.to_der() {
-            if let Ok((_, parsed)) = X509Name::from_der(re_der.as_slice()) {
-                return parsed
-                    .to_string_with_registry(&oid_registry())
-                    .ok()
-                    .map(|s| s.to_lowercase());
-            }
-        }
+    if let Ok(name) = CertName::from_der(der)
+        && let Ok(re_der) = name.to_der()
+        && let Ok((_, parsed)) = X509Name::from_der(re_der.as_slice())
+    {
+        return parsed
+            .to_string_with_registry(oid_registry())
+            .ok()
+            .map(|s| s.to_lowercase());
     }
     None
 }
 
 fn wrap_as_der_sequence(input: &[u8]) -> Vec<u8> {
+    // webpki drops the outer SEQUENCE header for both Name and SPKI bodies
     let len = input.len();
     let mut out = Vec::with_capacity(len + 4);
     out.push(0x30);
@@ -393,6 +396,58 @@ fn wrap_as_der_sequence(input: &[u8]) -> Vec<u8> {
     }
     out.extend_from_slice(input);
     out
+}
+
+/// Adapter that reconciles rustls/webpki trust anchors with the DER-encoded
+/// structures expected by `x509-parser`/`x509-cert`.
+pub struct TrustAnchorView<'a> {
+    subject_raw: &'a [u8],
+    spki_raw: &'a [u8],
+    subject_wrapped: OnceCell<Vec<u8>>,
+    spki_wrapped: OnceCell<Vec<u8>>,
+    canonical_subject: OnceCell<Option<String>>,
+}
+
+impl<'a> TrustAnchorView<'a> {
+    pub fn new(anchor: &'a TrustAnchor<'static>) -> Self {
+        Self {
+            subject_raw: anchor.subject.as_ref(),
+            spki_raw: anchor.subject_public_key_info.as_ref(),
+            subject_wrapped: OnceCell::new(),
+            spki_wrapped: OnceCell::new(),
+            canonical_subject: OnceCell::new(),
+        }
+    }
+
+    pub fn subject_der(&self) -> Cow<'_, [u8]> {
+        if self.subject_raw.first() == Some(&0x30) {
+            Cow::Borrowed(self.subject_raw)
+        } else {
+            Cow::Borrowed(
+                self.subject_wrapped
+                    .get_or_init(|| wrap_as_der_sequence(self.subject_raw))
+                    .as_slice(),
+            )
+        }
+    }
+
+    pub fn spki_der(&self) -> Cow<'_, [u8]> {
+        if self.spki_raw.first() == Some(&0x30) {
+            Cow::Borrowed(self.spki_raw)
+        } else {
+            Cow::Borrowed(
+                self.spki_wrapped
+                    .get_or_init(|| wrap_as_der_sequence(self.spki_raw))
+                    .as_slice(),
+            )
+        }
+    }
+
+    pub fn canonical_subject(&self) -> Option<&str> {
+        self.canonical_subject
+            .get_or_init(|| canonicalize_name(self.subject_der().as_ref()))
+            .as_deref()
+    }
 }
 
 // Return canonical DER of the CRL's TBS (to-be-signed) part
@@ -621,6 +676,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rustls::pki_types::CertificateDer;
 
     fn make_cert(subject_cn: &str, issuer_cn: &str) -> Vec<u8> {
         // Minimal DER-like placeholders: we only hash Name DER via helper; here we fake by embedding names.
@@ -667,20 +723,20 @@ mod tests {
         assert_eq!(chains.len(), 0);
     }
 
-    #[test]
-    fn test_invalid_crl_signature() {
+    fn build_self_signed_cert(common_name: &str) -> Vec<u8> {
         use openssl::asn1::Asn1Time;
         use openssl::hash::MessageDigest;
         use openssl::pkey::PKey;
         use openssl::rsa::Rsa;
         use openssl::x509::{X509, X509NameBuilder};
 
-        // 1. Generate a CA keypair and certificate
         let rsa = Rsa::generate(2048).unwrap();
         let pkey = PKey::from_rsa(rsa).unwrap();
 
         let mut name_builder = X509NameBuilder::new().unwrap();
-        name_builder.append_entry_by_text("CN", "Test CA").unwrap();
+        name_builder
+            .append_entry_by_text("CN", common_name)
+            .unwrap();
         let name = name_builder.build();
 
         let mut cert_builder = X509::builder().unwrap();
@@ -693,8 +749,13 @@ mod tests {
         cert_builder.set_not_before(&not_before).unwrap();
         cert_builder.set_not_after(&not_after).unwrap();
         cert_builder.sign(&pkey, MessageDigest::sha256()).unwrap();
-        let issuer_cert = cert_builder.build();
-        let issuer_der = issuer_cert.to_der().unwrap();
+        cert_builder.build().to_der().unwrap()
+    }
+
+    #[test]
+    fn test_invalid_crl_signature() {
+        // 1. Generate a CA keypair and certificate
+        let issuer_der = build_self_signed_cert("Test CA");
 
         // 2. Simplest invalid case: empty/garbled CRL bytes must fail verification
         let crl_der: Vec<u8> = vec![];
@@ -721,10 +782,16 @@ mod tests {
         // Try to resolve anchor by CRL issuer subject
         let anchor = super::resolve_anchor_issuer_key(&crl_bytes, &store);
 
-        if let Some((subject_der, spki_der)) = anchor {
+        if let Some(anchor_view) = anchor {
+            let subject_der = anchor_view.subject_der();
+            let spki_der = anchor_view.spki_der();
             // If an anchor matches, verify CRL signature using that anchor's SPKI
-            let ok =
-                super::verify_crl_sig_with_name_and_spki(&crl_bytes, subject_der, spki_der).is_ok();
+            let ok = super::verify_crl_sig_with_name_and_spki(
+                &crl_bytes,
+                subject_der.as_ref(),
+                spki_der.as_ref(),
+            )
+            .is_ok();
             assert!(ok, "CRL signature should verify with matched anchor SPKI");
         } else {
             // No matching anchor for this fixture's issuer; skip positive assertion
@@ -738,6 +805,30 @@ mod tests {
         let store = rustls::RootCertStore::empty();
         let res = resolve_anchor_issuer_key(&crl_der, &store);
         assert!(res.is_none());
+    }
+
+    #[test]
+    fn trust_anchor_view_provides_compatibility_with_x509() {
+        let cert_der = build_self_signed_cert("Example Root");
+        let mut store = rustls::RootCertStore::empty();
+        store
+            .add(CertificateDer::from(cert_der.clone()))
+            .expect("root insert");
+        let anchor = store.roots.first().expect("root anchor present");
+        let view = TrustAnchorView::new(anchor);
+
+        let (_, parsed_cert) =
+            x509_parser::certificate::X509Certificate::from_der(cert_der.as_slice()).unwrap();
+        let expected = parsed_cert
+            .subject()
+            .to_string_with_registry(oid_registry())
+            .unwrap()
+            .to_lowercase();
+        assert_eq!(
+            view.canonical_subject(),
+            Some(expected.as_str()),
+            "canonical subject should match original certificate"
+        );
     }
 
     #[test]
