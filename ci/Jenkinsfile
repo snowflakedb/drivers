@@ -4,9 +4,11 @@ Jenkinsfile template for use in a multibranch pipeline
 
 def getAgentLabel(platform) {
   switch (platform) {
-    case 'linux-x86_64':
+    case 'linux-x86_64-musl':
+    case 'linux-x86_64-glibc':
       return 'small-node-c7'
-    case 'linux-aarch64':
+    case 'linux-aarch64-musl':
+    case 'linux-aarch64-glibc':
       return 'small-node-aarch64'
     case 'macos-x86_64':
       return 'mac_x86'
@@ -14,11 +16,34 @@ def getAgentLabel(platform) {
       return 'mac_m1'
     case 'windows-x86_64':
       return 'windows-build-vs2022'
+    case 'windows-i686':
+      return 'windows-build-vs2022'
+    case 'windows-aarch64':
+      return 'small-node-c7'
     case 'aix-ppc64':
       return 'small-node-c7'
     default:
       error "Unsupported platform: ${platform}"
   }
+}
+
+def getDockerfile(platform) {
+  switch (platform) {
+    case 'linux-x86_64-musl':
+    case 'linux-aarch64-musl':
+      return 'Dockerfile.alpine'
+    case 'linux-x86_64-glibc':
+    case 'linux-aarch64-glibc':
+      return 'Dockerfile.rocky'
+    case 'windows-aarch64':
+      return 'Dockerfile.xwin'
+    default:
+      return ''
+  }
+}
+
+def needsDocker(platform) {
+  return getDockerfile(platform) != ''
 }
 
 def platform_architecture(platform) {
@@ -27,6 +52,33 @@ def platform_architecture(platform) {
 
 def platform_os(platform) {
   return platform.split('-')[0]
+}
+
+def platform_target(platform) {
+  switch (platform) {
+    case 'linux-x86_64-glibc':
+      return 'x86_64-unknown-linux-gnu'
+    case 'linux-aarch64-glibc':
+      return 'aarch64-unknown-linux-gnu'
+    case 'linux-x86_64-musl':
+      return 'x86_64-unknown-linux-musl'
+    case 'linux-aarch64-musl':
+      return 'aarch64-unknown-linux-musl'
+    case 'windows-aarch64':
+      return 'aarch64-pc-windows-msvc'
+    case 'windows-x86_64':
+      return 'x86_64-pc-windows-msvc'
+    case 'windows-i686':
+      return 'i686-pc-windows-msvc'
+    case 'macos-x86_64':
+      return 'x86_64-apple-darwin'
+    case 'macos-aarch64':
+      return 'aarch64-apple-darwin'
+    case 'aix-ppc64':
+      return 'powerpc64-ibm-aix'
+    default:
+      error "Unsupported platform: ${platform}"
+  }
 }
 
 def run_aix_command(command) {
@@ -46,8 +98,8 @@ def setupRust(platform) {
     return
   }
 
-  if (platform_os(platform) == 'windows') {
-    bat '''
+  if (platform_os(platform) == 'windows' && platform != 'windows-aarch64') {
+    bat """
       rustc --version || (
         echo Installing Rust...
         curl -L -sSf https://win.rustup.rs/x86_64 -o rustup-init.exe
@@ -57,11 +109,14 @@ def setupRust(platform) {
       set PATH=%PATH%;%USERPROFILE%\\.cargo\\bin
       rustc --version
       cargo --version
-    '''.stripMargin()
+      rustup target add ${platform_target(platform)}
+    """.stripMargin()
     return
   }
 
-  sh '''
+  sh """
+    whoami
+    env
     if command -v rustc >/dev/null 2>&1; then
       rustup update stable
     else
@@ -70,13 +125,21 @@ def setupRust(platform) {
     fi
     rustc --version
     cargo --version
-  '''.stripMargin()
+    rustup target add ${platform_target(platform)}
+  """.stripMargin()
 }
 
 
 def run_cargo_command(platform, command) {
   if (platform_os(platform) == 'aix') {
     run_aix_command("cargo ${command}")
+    return
+  }
+
+  if (platform == 'windows-aarch64') {
+    sh """
+      cargo xwin ${command}
+    """
     return
   }
 
@@ -89,7 +152,6 @@ def run_cargo_command(platform, command) {
   }
 
   sh """
-    source $HOME/.cargo/env
     cargo ${command}
   """
 }
@@ -137,7 +199,7 @@ def uploadMinicorePackage(platform) {
     return
   }
 
-  if (platform_os(platform) == 'windows') {
+  if (platform_os(platform) == 'windows' && platform != 'windows-aarch64') {
     bat """
       set PATH=%PATH%;%USERPROFILE%\\.cargo\\bin
       set PLATFORM=${platform}
@@ -149,7 +211,6 @@ def uploadMinicorePackage(platform) {
   }
 
   sh """
-    source $HOME/.cargo/env
     export PLATFORM=${platform}
     export COMMIT_SHA=${GIT_COMMIT}
     ./scripts/package_minicore.sh
@@ -169,63 +230,122 @@ pipeline {
     cron(env.BRANCH_NAME == 'main' ? 'H H/6 * * *' : '')
   }
   stages {
-    stage('Build and Test') {
-      matrix {
-        axes {
-          axis {
-            name 'PLATFORM'
-            values 'linux-x86_64', 'linux-aarch64', 'windows-x86_64', 'macos-x86_64', 'macos-aarch64', 'aix-ppc64'
-          }
-        }
-        agent {
-          label getAgentLabel(PLATFORM)
-        }
-        environment {
-          AIX_REPO_PATH = '/home/jenkins/universal-driver/${BRANCH_NAME}-${BUILD_NUMBER}'
-          AIX_HOST = '40.143.95.16'
-          AIX_USER = 'jenkins'
-        }
-        stages {
-          stage('checkout') {
-            steps {
-              checkout_repo()
+        stage('Build Matrix') {
+          matrix {
+            axes {
+              axis {
+                name 'PLATFORM'
+                values 'linux-x86_64-musl', 'linux-aarch64-musl', 'linux-x86_64-glibc', 'linux-aarch64-glibc', 'windows-x86_64', 'windows-i686', 'windows-aarch64', 'macos-x86_64', 'macos-aarch64', 'aix-ppc64'
+              }
             }
-          }
-          stage('setup rust') {
-            steps {
-              setupRust(PLATFORM)
+            environment {
+              AIX_REPO_PATH = '/home/jenkins/universal-driver/${BRANCH_NAME}-${BUILD_NUMBER}'
+              AIX_HOST = '40.143.95.16'
+              AIX_USER = 'jenkins'
             }
-          }
-          stage('build') {
-            steps {
-              run_cargo_command(PLATFORM, 'build --package sf_mini_core')
-            }
-          }
-          stage('test') {
-            steps {
-              run_cargo_command(PLATFORM, 'test --package sf_mini_core')
-            }
-          }
-          stage('upload minicore package') {
-            steps {
-              withCredentials([
-                usernamePassword(
-                  usernameVariable: 'AWS_ACCESS_KEY_ID',
-                  passwordVariable: 'AWS_SECRET_ACCESS_KEY',
-                  credentialsId: '063fc85b-62a6-4181-9d72-873b43488411'
-                )
-              ]) {
-                uploadMinicorePackage(PLATFORM)
+            stages {
+              stage('Docker Build') {
+                when {
+                  beforeAgent true
+                  expression { needsDocker(PLATFORM) }
+                }
+                agent {
+                  dockerfile {
+                    filename getDockerfile(PLATFORM)
+                    dir 'ci'
+                    args '-u root --privileged'
+                    label getAgentLabel(PLATFORM)
+                    reuseNode true
+                  }
+                }
+                stages {
+                  stage('checkout (docker)') {
+                    steps {
+                      checkout scm
+                    }
+                  }
+                  stage('setup rust (docker)') {
+                    steps {
+                      setupRust(PLATFORM)
+                    }
+                  }
+                  stage('build (docker)') {
+                    steps {
+                      run_cargo_command(PLATFORM, "build --package sf_mini_core --target ${platform_target(PLATFORM)}")
+                    }
+                  }
+                  stage('test (docker)') {
+                    steps {
+                      run_cargo_command(PLATFORM, 'test --package sf_mini_core')
+                    }
+                  }
+                  stage('upload minicore package (docker)') {
+                    steps {
+                      withCredentials([
+                        usernamePassword(
+                          usernameVariable: 'AWS_ACCESS_KEY_ID',
+                          passwordVariable: 'AWS_SECRET_ACCESS_KEY',
+                          credentialsId: '063fc85b-62a6-4181-9d72-873b43488411'
+                        )
+                      ]) {
+                        uploadMinicorePackage(PLATFORM)
+                      }
+                    }
+                  }
+                }
+              }
+              
+              stage('Node Build') {
+                when {
+                  beforeAgent true
+                  expression { !needsDocker(PLATFORM) }
+                }
+                agent {
+                  label getAgentLabel(PLATFORM)
+                }
+                stages {
+                  stage('checkout (node)') {
+                    steps {
+                      checkout_repo()
+                    }
+                  }
+                  stage('setup rust (node)') {
+                    steps {
+                      setupRust(PLATFORM)
+                    }
+                  }
+                  stage('build (node)') {
+                    steps {
+                      run_cargo_command(PLATFORM, "build --package sf_mini_core --target ${platform_target(PLATFORM)}")
+                    }
+                  }
+                  stage('test (node)') {
+                    steps {
+                      run_cargo_command(PLATFORM, 'test --package sf_mini_core')
+                    }
+                  }
+                  stage('upload minicore package (node)') {
+                    steps {
+                      withCredentials([
+                        usernamePassword(
+                          usernameVariable: 'AWS_ACCESS_KEY_ID',
+                          passwordVariable: 'AWS_SECRET_ACCESS_KEY',
+                          credentialsId: '063fc85b-62a6-4181-9d72-873b43488411'
+                        )
+                      ]) {
+                        uploadMinicorePackage(PLATFORM)
+                      }
+                    }
+                  }
+                }
+                post {
+                  always {
+                    cleanup()
+                  }
+                }
               }
             }
           }
         }
-        post {
-          always {
-            cleanup()
-          }
-        }
-      }
-    }
-  }
+  } 
 }
