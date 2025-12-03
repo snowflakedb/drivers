@@ -1103,10 +1103,9 @@ TEST_CASE("Successful login with valid credentials") {
 
     fn create_complete_python_login_test() -> &'static str {
         r#"
-def test_successful_login_with_valid_credentials(self, connect):
+def test_successful_login_with_valid_credentials(connect):
     # Given I have valid credentials
     credentials = setup_valid_credentials()
-    table_name = "test_login_table"
 
     # add inline blocks to test python syntax handling
     try:
@@ -1117,7 +1116,8 @@ def test_successful_login_with_valid_credentials(self, connect):
         assert conn is not None, "Login should succeed"
 
         # And I should have access to the system
-        result = conn.cursor().execute(f"SELECT * FROM temporary_resource")
+        cursor = conn.cursor()
+        result = cursor.execute(f"SELECT * FROM temporary_resource")
         assert len(result) is not None, "Should have system access"
 
     finally:
