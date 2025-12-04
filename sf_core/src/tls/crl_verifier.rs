@@ -1,6 +1,7 @@
 use crate::crl::config::{CertRevocationCheckMode, CrlConfig};
 use crate::crl::validator::CrlValidator;
 use crate::crl::worker::CrlWorker;
+use crate::tls::x509_utils::load_system_root_store;
 use rustls::client::WebPkiServerVerifier;
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
@@ -21,11 +22,8 @@ impl CrlServerCertVerifier {
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let root_store = match custom_root_store {
             Some(store) => store,
-            None => {
-                let mut s = rustls::RootCertStore::empty();
-                s.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-                s
-            }
+            None => load_system_root_store()
+                .map_err(|err| -> Box<dyn std::error::Error + Send + Sync> { Box::new(err) })?,
         };
         let root_store = Arc::new(root_store);
         let webpki_verifier = WebPkiServerVerifier::builder(root_store.clone()).build()?;
@@ -67,7 +65,7 @@ impl ServerCertVerifier for CrlServerCertVerifier {
             return Ok(ServerCertVerified::assertion());
         }
 
-        // Build chains, anchor each with webpki, then CRL-check one-by-one
+        // Build chains, anchor each with rustls, then CRL-check one-by-one
         let inters: Vec<Vec<u8>> = intermediates.iter().map(|c| c.as_ref().to_vec()).collect();
 
         // All returned chains will be anchored.

@@ -46,7 +46,7 @@ glob = "0.3.3"
 rustls = { version = "0.23.20", features = ["aws_lc_rs", "fips"] }
 rustls-pemfile = "2.2.0"
 rustls-webpki = "0.102"
-webpki-roots = "0.26.7"
+rustls-native-certs = "0.8"
 thiserror = "1.0.69"
 aws-lc-rs = "1.13.2"
 x509-parser = "0.16"
