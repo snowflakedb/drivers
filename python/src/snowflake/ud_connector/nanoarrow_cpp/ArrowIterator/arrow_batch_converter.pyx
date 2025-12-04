@@ -1,0 +1,198 @@
+# distutils: language = c++
+# cython: language_level=3
+
+from cpython.ref cimport PyObject
+from libc.stdint cimport int64_t
+from libcpp cimport bool as cpp_bool
+
+# Import Arrow C Data Interface structures
+cdef extern from "nanoarrow.h":
+    ctypedef struct ArrowArray:
+        pass
+    
+    ctypedef struct ArrowSchema:
+        pass
+    
+    cdef int ArrowArrayMove(ArrowArray* src, ArrowArray* dst)
+    cdef int ArrowSchemaMove(ArrowSchema* src, ArrowSchema* dst)
+
+# Import our C++ classes
+cdef extern from "CArrowBatchConverter.hpp" namespace "sf":
+    cdef cppclass ReturnVal:
+        PyObject* successObj
+        PyObject* exception
+    
+    cdef cppclass CArrowBatchConverter:
+        CArrowBatchConverter(
+            ArrowArray* c_array,
+            ArrowSchema* c_schema,
+            PyObject* context,
+            PyObject* use_numpy,
+            PyObject* check_error_on_every_column
+        )
+        ReturnVal next()
+        ReturnVal checkInitializationStatus()
+        int64_t getRowCount()
+        int64_t getCurrentRowIndex()
+    
+    cdef cppclass DictCArrowBatchConverter:
+        DictCArrowBatchConverter(
+            ArrowArray* c_array,
+            ArrowSchema* c_schema,
+            PyObject* context,
+            PyObject* use_numpy
+        )
+        ReturnVal next()
+        ReturnVal checkInitializationStatus()
+        int64_t getRowCount()
+        int64_t getCurrentRowIndex()
+
+
+cdef class PyArrowBatchConverter:
+    """
+    Python wrapper for C++ Arrow batch converter.
+    Converts Arrow RecordBatch to Python tuples/dicts row-by-row.
+    """
+    cdef CArrowBatchConverter* converter
+    cdef DictCArrowBatchConverter* dict_converter
+    cdef cpp_bool use_dict_result
+    cdef object arrow_context
+    
+    def __cinit__(
+        self,
+        object record_batch,
+        object arrow_context,
+        object use_dict_result=False,
+        object use_numpy=False,
+        object check_error_on_every_column=True
+    ):
+        """
+        Initialize the batch converter.
+        
+        Parameters
+        ----------
+        record_batch : pyarrow.RecordBatch
+            The Arrow RecordBatch to convert
+        arrow_context : ArrowConverterContext
+            Context object for conversions
+        use_dict_result : bool
+            If True, return dicts instead of tuples
+        use_numpy : bool
+            If True, use numpy types for numeric data
+        check_error_on_every_column : bool
+            If True, check for Python errors after each column conversion
+        """
+        cdef ArrowArray c_array
+        cdef ArrowSchema c_schema
+        
+        self.use_dict_result = use_dict_result
+        self.arrow_context = arrow_context
+        self.converter = NULL
+        self.dict_converter = NULL
+        
+        # Export RecordBatch to Arrow C Data Interface
+        try:
+            # PyArrow 14.0+ uses __arrow_c_array__
+            c_array_capsule, c_schema_capsule = record_batch.__arrow_c_array__()
+        except AttributeError:
+            # Fallback for older PyArrow versions
+            raise RuntimeError(
+                "PyArrow version too old. Need pyarrow >= 14.0 with "
+                "__arrow_c_array__ support"
+            )
+        
+        # Extract pointers from PyCapsules
+        cdef ArrowArray* c_array_ptr = <ArrowArray*>PyCapsule_GetPointer(
+            c_array_capsule, "arrow_array"
+        )
+        cdef ArrowSchema* c_schema_ptr = <ArrowSchema*>PyCapsule_GetPointer(
+            c_schema_capsule, "arrow_schema"
+        )
+        
+        if c_array_ptr == NULL or c_schema_ptr == NULL:
+            raise RuntimeError("Failed to extract Arrow C pointers from RecordBatch")
+        
+        # Declare ReturnVal variable at function scope (Cython requirement)
+        cdef ReturnVal init_ret
+        
+        # Create appropriate converter
+        if use_dict_result:
+            self.dict_converter = new DictCArrowBatchConverter(
+                c_array_ptr,
+                c_schema_ptr,
+                <PyObject*>arrow_context,
+                <PyObject*>use_numpy
+            )
+            
+            # Check initialization
+            init_ret = self.dict_converter.checkInitializationStatus()
+            if init_ret.exception != NULL:
+                error_msg = <object>init_ret.exception
+                raise RuntimeError(f"Failed to initialize batch converter: {error_msg}")
+        else:
+            self.converter = new CArrowBatchConverter(
+                c_array_ptr,
+                c_schema_ptr,
+                <PyObject*>arrow_context,
+                <PyObject*>use_numpy,
+                <PyObject*>check_error_on_every_column
+            )
+            
+            # Check initialization
+            init_ret = self.converter.checkInitializationStatus()
+            if init_ret.exception != NULL:
+                error_msg = <object>init_ret.exception
+                raise RuntimeError(f"Failed to initialize batch converter: {error_msg}")
+    
+    def __dealloc__(self):
+        if self.converter != NULL:
+            del self.converter
+        if self.dict_converter != NULL:
+            del self.dict_converter
+    
+    def __iter__(self):
+        return self
+    
+    def __next__(self):
+        """Get next row from batch."""
+        cdef ReturnVal ret
+        
+        if self.use_dict_result:
+            ret = self.dict_converter.next()
+        else:
+            ret = self.converter.next()
+        
+        # Check for exception
+        if ret.exception != NULL:
+            error_msg = <object>ret.exception
+            raise RuntimeError(f"Error converting row: {error_msg}")
+        
+        # Check for end of iteration
+        if ret.successObj == NULL:
+            raise StopIteration
+        
+        # Return the row
+        row = <object>ret.successObj
+        return row
+    
+    def get_row_count(self):
+        """Get total number of rows in this batch."""
+        if self.use_dict_result:
+            return self.dict_converter.getRowCount()
+        else:
+            return self.converter.getRowCount()
+    
+    def get_current_index(self):
+        """Get current row index (0-based)."""
+        if self.use_dict_result:
+            return self.dict_converter.getCurrentRowIndex()
+        else:
+            return self.converter.getCurrentRowIndex()
+
+
+
+
+# Import PyCapsule functions
+cdef extern from "Python.h":
+    void* PyCapsule_GetPointer(object capsule, const char* name) except NULL
+
