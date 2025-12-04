@@ -336,16 +336,11 @@ pub fn resolve_anchor_issuer_key(
 ) -> Option<TrustAnchor<'static>> {
     let crl = RcCertificateList::from_der(crl_der).ok()?;
     let issuer_der = crl.tbs_cert_list.issuer.to_der().ok()?;
-    let issuer_subject = ensure_name_der(issuer_der.as_slice());
-    let issuer_canon = canonicalize_name(issuer_der.as_slice());
+    let issuer_canon = canonicalize_name(issuer_der.as_slice())?;
     for anchor in root_store.roots.iter() {
-        let anchor_subject = ensure_name_der(anchor.subject.as_ref());
-        let anchor_canon = canonicalize_name(anchor.subject.as_ref());
-        let matches = match (issuer_canon.as_deref(), anchor_canon.as_deref()) {
-            (Some(lhs), Some(rhs)) => lhs == rhs,
-            _ => anchor_subject.as_ref() == issuer_subject.as_ref(),
-        };
-        if matches {
+        if let Some(anchor_canon) = canonicalize_name(anchor.subject.as_ref())
+            && anchor_canon == issuer_canon
+        {
             return Some(anchor.clone());
         }
     }
