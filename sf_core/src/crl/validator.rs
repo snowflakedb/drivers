@@ -99,7 +99,8 @@ impl CrlValidator {
 
         // For non-top certs, the next certificate(s) act as issuer candidates.
         // For the top cert (no issuers), rely on the configured root store for CRL signature verification.
-        let (issuer_der, issuer_candidates) = if issuers.is_empty() {
+        let (mut issuer_der, issuer_candidates): (Option<&[u8]>, Vec<&[u8]>) = if issuers.is_empty()
+        {
             (None, Vec::new())
         } else {
             (
@@ -107,6 +108,13 @@ impl CrlValidator {
                 issuers.iter().map(|v| v.as_slice()).collect(),
             )
         };
+
+        if issuer_der.is_none()
+            && issuer_candidates.is_empty()
+            && crate::crl::certificate_parser::is_ca_certificate(cert_der).unwrap_or(false)
+        {
+            issuer_der = Some(cert_der);
+        }
 
         let outcome = match self
             .cache

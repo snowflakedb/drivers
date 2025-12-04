@@ -232,13 +232,13 @@ pub fn verify_crl_sig_with_name_and_spki(
     spki_der: &[u8],
 ) -> Result<(), CrlError> {
     let crl = RcCertificateList::from_der(crl_der).context(CrlListParseSnafu)?;
-    let issuer_name_bytes = wrap_if_needed(issuer_name_der);
+    let issuer_name_bytes = ensure_name_der(issuer_name_der);
     if let Ok(issuer_name) = x509_cert::name::Name::from_der(issuer_name_bytes.as_ref())
         && issuer_name != crl.tbs_cert_list.issuer
     {
         return CrlIssuerMismatchSnafu {}.fail();
     }
-    let spki_bytes = wrap_if_needed(spki_der);
+    let spki_bytes = ensure_spki_der(spki_der);
     let spki = x509_cert::spki::SubjectPublicKeyInfoRef::from_der(spki_bytes.as_ref())
         .context(CrlToDerSnafu)?;
     verify_crl_sig_with_spki(&crl, spki)
@@ -336,10 +336,10 @@ pub fn resolve_anchor_issuer_key(
 ) -> Option<TrustAnchor<'static>> {
     let crl = RcCertificateList::from_der(crl_der).ok()?;
     let issuer_der = crl.tbs_cert_list.issuer.to_der().ok()?;
-    let issuer_subject = wrap_if_needed(issuer_der.as_slice());
+    let issuer_subject = ensure_name_der(issuer_der.as_slice());
     let issuer_canon = canonicalize_name(issuer_der.as_slice());
     for anchor in root_store.roots.iter() {
-        let anchor_subject = wrap_if_needed(anchor.subject.as_ref());
+        let anchor_subject = ensure_name_der(anchor.subject.as_ref());
         let anchor_canon = canonicalize_name(anchor.subject.as_ref());
         let matches = match (issuer_canon.as_deref(), anchor_canon.as_deref()) {
             (Some(lhs), Some(rhs)) => lhs == rhs,
@@ -354,8 +354,8 @@ pub fn resolve_anchor_issuer_key(
 
 // Webpki stores subjects as the bare RDN sequence while `x509-parser` expects a canonical
 // DER `SEQUENCE`.
-fn canonicalize_name(der: &[u8]) -> Option<String> {
-    let wrapped = wrap_if_needed(der);
+pub fn canonicalize_name(der: &[u8]) -> Option<String> {
+    let wrapped = ensure_name_der(der);
     canonicalize_from_der(wrapped.as_ref())
 }
 
@@ -378,8 +378,16 @@ fn canonicalize_from_der(der: &[u8]) -> Option<String> {
     None
 }
 
-fn wrap_if_needed(bytes: &[u8]) -> Cow<'_, [u8]> {
-    if bytes.first() == Some(&0x30) {
+fn ensure_name_der(bytes: &[u8]) -> Cow<'_, [u8]> {
+    if x509_cert::name::Name::from_der(bytes).is_ok() {
+        Cow::Borrowed(bytes)
+    } else {
+        Cow::Owned(wrap_as_der_sequence(bytes))
+    }
+}
+
+fn ensure_spki_der(bytes: &[u8]) -> Cow<'_, [u8]> {
+    if x509_cert::spki::SubjectPublicKeyInfoRef::from_der(bytes).is_ok() {
         Cow::Borrowed(bytes)
     } else {
         Cow::Owned(wrap_as_der_sequence(bytes))
