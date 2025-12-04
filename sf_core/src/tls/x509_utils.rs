@@ -6,7 +6,7 @@ use crate::crl::error::{
     CertificateParseSnafu, CrlError, CrlListParseSnafu, CrlParsingSnafu, CrlToDerSnafu,
 };
 use const_oid::ObjectIdentifier;
-use num_traits::ToPrimitive;
+use num_traits::cast::ToPrimitive;
 use rustls::pki_types::TrustAnchor;
 use std::borrow::Cow;
 use std::mem::size_of;
@@ -231,6 +231,7 @@ pub fn verify_crl_sig_with_name_and_spki(
     issuer_name_der: &[u8],
     spki_der: &[u8],
 ) -> Result<(), CrlError> {
+    let crl = RcCertificateList::from_der(crl_der).context(CrlListParseSnafu)?;
     let issuer_name_bytes = ensure_name_der(issuer_name_der);
     if let Ok(issuer_name) = x509_cert::name::Name::from_der(issuer_name_bytes.as_ref())
         && issuer_name != crl.tbs_cert_list.issuer
@@ -332,18 +333,15 @@ fn crl_preflight_checks(crl_der: &[u8]) -> Result<(), CrlError> {
 pub fn resolve_anchor_issuer_key(
     crl_der: &[u8],
     root_store: &rustls::RootCertStore,
-) -> Option<TrustAnchorView> {
+) -> Option<TrustAnchor<'static>> {
     let crl = RcCertificateList::from_der(crl_der).ok()?;
     let issuer_der = crl.tbs_cert_list.issuer.to_der().ok()?;
-    let issuer_canon = canonicalize_name(issuer_der.as_slice());
+    let issuer_canon = canonicalize_name(issuer_der.as_slice())?;
     for anchor in root_store.roots.iter() {
-        let view = TrustAnchorView::new(anchor);
-        let matches = match (issuer_canon.as_deref(), view.canonical_subject()) {
-            (Some(lhs), Some(rhs)) => lhs == rhs,
-            _ => view.subject_der().as_ref() == issuer_der.as_slice(),
-        };
-        if matches {
-            return Some(view);
+        if let Some(anchor_canon) = canonicalize_name(anchor.subject.as_ref())
+            && anchor_canon == issuer_canon
+        {
+            return Some(anchor.clone());
         }
     }
     None
@@ -414,70 +412,6 @@ fn wrap_as_der_sequence(input: &[u8]) -> Vec<u8> {
     out
 }
 
-/// Adapter that reconciles rustls/webpki trust anchors with the DER-encoded
-/// structures expected by `x509-parser`/`x509-cert`.
-pub struct TrustAnchorView {
-    subject_der: Vec<u8>,
-    spki_der: Vec<u8>,
-    canonical_subject: Option<String>,
-}
-
-impl TrustAnchorView {
-    pub fn new(anchor: &TrustAnchor<'static>) -> Self {
-        let subject_der = wrap_if_needed(anchor.subject.as_ref(), name_is_valid_der);
-        let spki_der = wrap_if_needed(anchor.subject_public_key_info.as_ref(), spki_is_valid_der);
-        let canonical_subject = canonicalize_name(subject_der.as_slice());
-        Self {
-            subject_der,
-            spki_der,
-            canonical_subject,
-        }
-    }
-
-    pub fn subject_der(&self) -> Cow<'_, [u8]> {
-        Cow::Borrowed(self.subject_der.as_slice())
-    }
-
-    pub fn spki_der(&self) -> Cow<'_, [u8]> {
-        Cow::Borrowed(self.spki_der.as_slice())
-    }
-
-    pub fn canonical_subject(&self) -> Option<&str> {
-        self.canonical_subject.as_deref()
-    }
-}
-
-fn wrap_if_needed<T, E, F>(bytes: &[u8], parser: F) -> Vec<u8>
-where
-    for<'a> F: Fn(&'a [u8]) -> Result<T, E>,
-{
-    if parser(bytes).is_ok() {
-        bytes.to_vec()
-    } else {
-        wrap_as_der_sequence(bytes)
-    }
-}
-
-fn wrap_if_needed_cow<T, E, F>(bytes: &[u8], parser: F) -> Cow<'_, [u8]>
-where
-    for<'a> F: Fn(&'a [u8]) -> Result<T, E>,
-{
-    if parser(bytes).is_ok() {
-        Cow::Borrowed(bytes)
-    } else {
-        Cow::Owned(wrap_as_der_sequence(bytes))
-    }
-}
-
-fn name_is_valid_der(bytes: &[u8]) -> Result<(), x509_cert::der::Error> {
-    x509_cert::name::Name::from_der(bytes).map(|_| ())
-}
-
-fn spki_is_valid_der(bytes: &[u8]) -> Result<(), x509_cert::der::Error> {
-    x509_cert::spki::SubjectPublicKeyInfoRef::from_der(bytes).map(|_| ())
-}
-
->>>>>>> 5d041a6 (Fix x509 vs root store comparisons (#151))
 // Return canonical DER of the CRL's TBS (to-be-signed) part
 pub fn tbs_crl_der(crl_der: &[u8]) -> Result<Vec<u8>, CrlError> {
     if let Ok((_, parsed)) =
@@ -815,9 +749,9 @@ mod tests {
         // Try to resolve anchor by CRL issuer subject
         let anchor = super::resolve_anchor_issuer_key(&crl_bytes, &store);
 
-        if let Some(anchor_view) = anchor {
-            let subject_der = anchor_view.subject_der();
-            let spki_der = anchor_view.spki_der();
+        if let Some(anchor) = anchor {
+            let subject_der = anchor.subject;
+            let spki_der = anchor.subject_public_key_info;
             // If an anchor matches, verify CRL signature using that anchor's SPKI
             let ok = super::verify_crl_sig_with_name_and_spki(
                 &crl_bytes,
@@ -841,14 +775,13 @@ mod tests {
     }
 
     #[test]
-    fn trust_anchor_view_provides_compatibility_with_x509() {
+    fn trust_anchor_subject_matches_canonical_form() {
         let cert_der = build_self_signed_cert("Example Root");
         let mut store = rustls::RootCertStore::empty();
         store
             .add(CertificateDer::from(cert_der.clone()))
             .expect("root insert");
         let anchor = store.roots.first().expect("root anchor present");
-        let view = TrustAnchorView::new(anchor);
 
         let (_, parsed_cert) =
             x509_parser::certificate::X509Certificate::from_der(cert_der.as_slice()).unwrap();
@@ -857,11 +790,8 @@ mod tests {
             .to_string_with_registry(oid_registry())
             .unwrap()
             .to_lowercase();
-        assert_eq!(
-            view.canonical_subject(),
-            Some(expected.as_str()),
-            "canonical subject should match original certificate"
-        );
+        let actual = canonicalize_name(anchor.subject.as_ref());
+        assert_eq!(actual.as_deref(), Some(expected.as_str()));
     }
 
     #[test]

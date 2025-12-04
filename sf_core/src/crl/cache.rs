@@ -395,14 +395,14 @@ impl CrlCache {
         let mut attempted_anchor = false;
         if !verified
             && let Some(store) = root_store
-            && let Some(anchor_view) =
+            && let Some(anchor) =
                 crate::tls::x509_utils::resolve_anchor_issuer_key(crl_bytes, store)
         {
             attempted_anchor = true;
             verified = crate::tls::x509_utils::verify_crl_sig_with_name_and_spki(
                 crl_bytes,
-                anchor_view.subject_der().as_ref(),
-                anchor_view.spki_der().as_ref(),
+                anchor.subject.as_ref(),
+                anchor.subject_public_key_info.as_ref(),
             )
             .is_ok();
         }
