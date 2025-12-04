@@ -22,7 +22,8 @@ void execute_fetch_test(SQLHDBC dbc, const std::string& sql_command, int warmup_
   std::cout << "\n=== Executing SELECT Test ===\n";
   std::cout << "Query: " << sql_command << "\n";
 
-  // Bulk fetching configuration
+  // TODO SNOW-2876245: Bulk fetch not yet implemented. Decision needed on which fetch method to
+  // use. Currently using row-by-row fetch.
   bool use_bulk_fetch = false;
 
   run_warmup(dbc, sql_command, warmup_iterations, use_bulk_fetch);

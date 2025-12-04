@@ -21,8 +21,9 @@ RUN rustup show
 # Install cargo-chef
 RUN cargo install cargo-chef
 
-# todo SNOW-2705435 fix aws-lc-fips-sys build on ARM64
-ENV CC=gcc
+# TODO SNOW-2705435: Use Clang for aws-lc-fips-sys to avoid GCC >= 14 incompatibility
+# See: https://github.com/aws/aws-lc-rs/issues/569
+ENV AWS_LC_FIPS_SYS_CC=clang
 
 FROM chef AS planner
 # Copy all workspace files - cargo-chef needs the full structure

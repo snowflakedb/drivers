@@ -101,6 +101,23 @@ def run_local_core_binary(
     env["RESULTS_DIR"] = str(results_dir.absolute())
     env["TEST_TYPE"] = test_type.value
     
+    if "RUST_VERSION" not in env:
+        try:
+            rustc_output = subprocess.run(
+                ["rustc", "--version"],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            if rustc_output.returncode == 0:
+                parts = rustc_output.stdout.split()
+                if len(parts) >= 2:
+                    version = parts[1]
+                    major_minor = '.'.join(version.split('.')[:2])
+                    env["RUST_VERSION"] = major_minor
+        except Exception as e:
+            env["RUST_VERSION"] = "unknown"
+    
     if setup_queries:
         env["SETUP_QUERIES"] = json.dumps(setup_queries)
     

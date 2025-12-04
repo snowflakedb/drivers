@@ -5,7 +5,7 @@ pipeline {
 
     options {
         timestamps()
-        timeout(time: 2, unit: 'HOURS')
+        timeout(time: 4, unit: 'HOURS')
         skipDefaultCheckout()
     }
 
@@ -141,24 +141,39 @@ pipeline {
                                 file(credentialsId: '22401612-0c52-4682-8d00-fb9ee98927ac', variable: 'SF_PERF_CONFIG')
                             ]) {
                                 script {
-                                    def testCommand = ""
+                                    def cloud = params.CLOUD ?: 'aws'
+
+                                    def hatchEnv = ""
                                     if (params.DRIVER == 'core') {
-                                        testCommand = "python -m hatch run core"
+                                        hatchEnv = "core"
                                     } else {
-                                        testCommand = "python -m hatch run ${params.DRIVER}-${params.DRIVER_TYPE}"
+                                        hatchEnv = "${params.DRIVER}-${params.DRIVER_TYPE}"
                                     }
                                     
-                                    if (params.TEST_ARGS?.trim()) {
-                                        testCommand += " ${params.TEST_ARGS}"
+                                    // Build test command with optional TEST_ARGS
+                                    def testArgs = params.TEST_ARGS?.trim() ?: ""
+                                    
+                                    echo "Hatch environment: ${hatchEnv}"
+                                    echo "TEST_ARGS parameter: '${testArgs ?: '(empty - will run all tests)'}'"
+                                    
+                                    if (testArgs) {
+                                        // Pass TEST_ARGS directly as a Groovy variable, not through shell export
+                                        echo "Running specific test(s): ${testArgs}"
+                                        sh """
+                                            source .venv/bin/activate
+                                            export CLOUD=${cloud}
+                                            echo "Executing: python -m hatch run ${hatchEnv} -- ${testArgs}"
+                                            python -m hatch run ${hatchEnv} -- ${testArgs}
+                                        """
+                                    } else {
+                                        echo "Running all tests"
+                                        sh """
+                                            source .venv/bin/activate
+                                            export CLOUD=${cloud}
+                                            echo "Executing: python -m hatch run ${hatchEnv}"
+                                            python -m hatch run ${hatchEnv}
+                                        """
                                     }
-                                    
-                                    echo "Executing: ${testCommand}"
-                                    
-                                    def command = """
-                                        source .venv/bin/activate
-                                        ${testCommand}
-                                    """
-                                    sh command
                                 }
                             }
                         }

@@ -118,6 +118,10 @@ void write_run_metadata_json(const std::string& driver_type, const std::string& 
   std::string architecture = get_architecture();
   std::string os = get_os_version();
 
+  // Get Rust compiler version from environment (set during Docker build)
+  const char* rust_version_env = std::getenv("RUST_VERSION");
+  std::string build_rust_version = rust_version_env ? std::string(rust_version_env) : "unknown";
+
   std::ofstream json(filename);
   if (!json.is_open()) {
     std::cerr << "ERROR: Failed to open metadata file for writing: " << filename << "\n";
@@ -128,6 +132,8 @@ void write_run_metadata_json(const std::string& driver_type, const std::string& 
   json << "  \"driver\": \"odbc\",\n";
   json << "  \"driver_type\": \"" << driver_type << "\",\n";
   json << "  \"driver_version\": \"" << driver_version << "\",\n";
+  json << "  \"build_rust_version\": \"" << build_rust_version << "\",\n";
+  json << "  \"runtime_language_version\": \"NA\",\n";
   json << "  \"server_version\": \"" << server_version << "\",\n";
   json << "  \"architecture\": \"" << architecture << "\",\n";
   json << "  \"os\": \"" << os << "\",\n";

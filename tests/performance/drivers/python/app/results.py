@@ -2,6 +2,8 @@
 
 import csv
 import json
+import os
+import sys
 import time
 from pathlib import Path
 from test_types import TestType
@@ -67,17 +69,24 @@ def write_run_metadata(driver_type, driver_version, server_version):
     # Detect architecture and OS inside container
     architecture = _get_architecture()
     os_info = _get_os_version()
+    runtime_language_version = _get_python_version()  # Python version at runtime
     
     timestamp = int(time.time())
     metadata = {
         "driver": "python",
         "driver_type": driver_type,
         "driver_version": driver_version,
+        "runtime_language_version": runtime_language_version,  # Python runtime version
         "server_version": server_version,
         "architecture": architecture,
         "os": os_info,
         "run_timestamp": timestamp,
     }
+    
+    # Only add build_rust_version for universal driver (old driver is pure Python, no Rust)
+    # This is the Rust compiler version that built libsf_core.so (from sf-core-builder)
+    if driver_type == "universal":
+        metadata["build_rust_version"] = _get_build_rust_version()
     
     with open(metadata_filename, 'w') as f:
         json.dump(metadata, f, indent=2)
@@ -102,3 +111,12 @@ def _get_os_version():
     import os
     return os.environ.get('OS_INFO', 'Linux')
 
+
+def _get_python_version():
+    """Get Python version (e.g., '3.13')."""
+    return f"{sys.version_info.major}.{sys.version_info.minor}"
+
+
+def _get_build_rust_version():
+    """Get Rust compiler version that built libsf_core.so (from sf-core-builder)."""
+    return os.environ.get('BUILD_RUST_VERSION', 'NA')

@@ -154,6 +154,44 @@ def parse_cloud_provider_from_parameters(parameters_json_path: str) -> Optional[
     return None
 
 
+def extract_region_from_parameters(parameters_json_path: str) -> str:
+    """
+    Extract region from Snowflake host in parameters JSON.
+    
+    Examples:
+        sfctest0.us-west-2.aws.snowflakecomputing.com -> us-west-2
+        sfctest0.east-us-2.azure.snowflakecomputing.com -> east-us-2
+        sfctest0.snowflakecomputing.com -> us-west-2 (default)
+    
+    Args:
+        parameters_json_path: Path to parameters JSON file
+        
+    Returns:
+        Region identifier or UNKNOWN
+    """
+    if not parameters_json_path or not Path(parameters_json_path).exists():
+        return "UNKNOWN"
+    
+    try:
+        with open(parameters_json_path, 'r') as f:
+            params = json.load(f)
+        
+        host = params.get('testconnection', {}).get('SNOWFLAKE_TEST_HOST', '')
+        if not host:
+            return "UNKNOWN"
+        
+        parts = host.split('.')
+        if len(parts) >= 4:
+            # Format: account.region.cloud.snowflakecomputing.com
+            return parts[1]
+        
+        # Default format: account.snowflakecomputing.com (us-west-2 implicit)
+        return "us-west-2"
+    except Exception as e:
+        logger.warning(f"Could not extract region from parameters: {e}")
+        return "UNKNOWN"
+
+
 def read_run_metadata(results_dir: Path) -> Dict[str, Dict]:
     """
     Read all run metadata files from results directory.
@@ -323,6 +361,9 @@ def upload_metrics(results_dir: Optional[Path] = None, use_local_auth: bool = Fa
         cloud_provider = "UNKNOWN"
         logger.warning("Cloud provider not detected, using: UNKNOWN")
     
+    # Extract region from parameters
+    region = extract_region_from_parameters(parameters_json_path)
+    
     run_metadata = read_run_metadata(results_dir)
     
     # Login to Benchstore
@@ -382,6 +423,12 @@ def upload_metrics(results_dir: Optional[Path] = None, use_local_auth: bool = Fa
         architecture = metadata.get('architecture', 'UNKNOWN')
         os_info = metadata.get('os', 'UNKNOWN')
         
+        # Extract versions from metadata
+        # BUILD_RUST_VERSION: Rust compiler version that built the code
+        # RUNTIME_LANGUAGE_VERSION: Runtime language version (NA for compiled Rust and ODBC)
+        build_rust_version = metadata.get('build_rust_version', 'NA')
+        runtime_language_version = metadata.get('runtime_language_version', 'NA')
+        
         driver_tag_value = f"{driver}_old" if driver_type == "old" else driver
         
         # TYPE tag: currently set to e2e (end-to-end tests)
@@ -396,7 +443,10 @@ def upload_metrics(results_dir: Optional[Path] = None, use_local_auth: bool = Fa
             f"DRIVER={driver_tag_value}",
             f"SERVER_VERSION={server_version}",
             f"DRIVER_VERSION={client_version}",
+            f"BUILD_RUST_VERSION={build_rust_version}",
+            f"RUNTIME_LANGUAGE_VERSION={runtime_language_version}",
             f"CLOUD_PROVIDER={cloud_provider}",
+            f"REGION={region}",
             f"TYPE={test_type}",
             f"JENKINS_NODE={jenkins_node}",
             f"DOCKER_MEMORY={docker_memory}",
@@ -412,7 +462,10 @@ def upload_metrics(results_dir: Optional[Path] = None, use_local_auth: bool = Fa
             f"DRIVER={driver_tag_value}",
             f"SERVER_VERSION={server_version}",
             f"DRIVER_VERSION={client_version}",
+            f"BUILD_RUST_VERSION={build_rust_version}",
+            f"RUNTIME_LANGUAGE_VERSION={runtime_language_version}",
             f"CLOUD_PROVIDER={cloud_provider}",
+            f"REGION={region}",
             f"TYPE={test_type}",
             f"JENKINS_NODE={jenkins_node}",
             f"DOCKER_MEMORY={docker_memory}",
