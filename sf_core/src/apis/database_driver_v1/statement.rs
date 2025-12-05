@@ -202,7 +202,7 @@ pub fn statement_execute_query(stmt_handle: Handle) -> Result<ExecuteResult, Api
         .context(LoginSnafu)?;
 
     let response_reader = rt
-        .block_on(process_query_response(&response.data))
+        .block_on(process_query_response(&response.data, &http_client))
         .context(QueryResponseProcessingSnafu)?;
 
     let rowset_stream = Box::new(FFI_ArrowArrayStream::new(response_reader));

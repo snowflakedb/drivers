@@ -7,15 +7,9 @@ use arrow::array::{RecordBatch, RecordBatchReader};
 use arrow::datatypes::SchemaRef;
 use arrow::error::ArrowError;
 use arrow_ipc::reader::StreamReader;
-use once_cell::sync::Lazy;
+use reqwest::Client;
 use reqwest::header::{self, HeaderMap, HeaderName, HeaderValue};
 use snafu::{Location, ResultExt, Snafu};
-
-static CHUNK_HTTP_CLIENT: Lazy<reqwest::Client> = Lazy::new(|| {
-    reqwest::Client::builder()
-        .build()
-        .expect("chunk HTTP client must build")
-});
 
 const MAX_CHUNK_DECOMPRESSION_RETRIES: u32 = 2;
 
@@ -36,15 +30,17 @@ pub struct ChunkReader {
     rest: VecDeque<ChunkDownloadData>,
     schema: SchemaRef,
     current_stream: Option<StreamReader<io::Cursor<Vec<u8>>>>,
+    client: Option<Client>,
 }
 
 impl ChunkReader {
     pub async fn multi_chunk(
         initial: Vec<u8>,
         mut rest: VecDeque<ChunkDownloadData>,
+        client: Client,
     ) -> Result<Self, ChunkError> {
         let initial = if initial.is_empty() {
-            get_chunk_data(&rest.pop_front().unwrap()).await?
+            get_chunk_data(&client, &rest.pop_front().unwrap()).await?
         } else {
             initial
         };
@@ -55,6 +51,7 @@ impl ChunkReader {
             rest,
             schema,
             current_stream: Some(reader),
+            client: Some(client),
         })
     }
 
@@ -65,6 +62,7 @@ impl ChunkReader {
             rest: VecDeque::new(),
             schema: reader.schema().clone(),
             current_stream: Some(reader),
+            client: None,
         })
     }
 }
@@ -80,7 +78,15 @@ impl Iterator for ChunkReader {
                 return next_batch;
             }
             if let Some(chunk) = self.rest.pop_front() {
-                let chunk_data_result = get_chunk_data_sync(&chunk);
+                let client = match &self.client {
+                    Some(client) => client,
+                    None => {
+                        return Some(Err(ArrowError::IpcError(
+                            "chunk reader missing HTTP client".to_string(),
+                        )));
+                    }
+                };
+                let chunk_data_result = get_chunk_data_sync(client, &chunk);
                 if let Err(e) = chunk_data_result {
                     return Some(Err(ArrowError::IpcError(e.to_string())));
                 }
@@ -103,15 +109,20 @@ impl RecordBatchReader for ChunkReader {
     }
 }
 
-pub fn get_chunk_data_sync(chunk: &ChunkDownloadData) -> Result<Vec<u8>, ChunkError> {
+pub fn get_chunk_data_sync(
+    client: &Client,
+    chunk: &ChunkDownloadData,
+) -> Result<Vec<u8>, ChunkError> {
     // TODO: Find a better way of managing tokio runtimes
     let rt = tokio::runtime::Runtime::new().unwrap();
-    rt.block_on(async { get_chunk_data(chunk).await })
+    rt.block_on(async { get_chunk_data(client, chunk).await })
 }
 
-pub async fn get_chunk_data(chunk: &ChunkDownloadData) -> Result<Vec<u8>, ChunkError> {
+pub async fn get_chunk_data(
+    client: &Client,
+    chunk: &ChunkDownloadData,
+) -> Result<Vec<u8>, ChunkError> {
     let url = &chunk.url;
-    let client = CHUNK_HTTP_CLIENT.clone();
     let mut headers = HeaderMap::new();
     for (key, value) in chunk.headers.iter() {
         let header_name = HeaderName::from_str(key).context(HeaderNameSnafu { key })?;

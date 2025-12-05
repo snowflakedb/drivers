@@ -10,6 +10,7 @@ use crate::rest;
 use arrow::array::{Array, Int64Array, RecordBatchReader, StringArray};
 use arrow::error::ArrowError;
 use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
+use reqwest::Client;
 use rest::snowflake::query_response::{self, QueryResponseError};
 use snafu::{Location, ResultExt, Snafu};
 use std::sync::Arc;
@@ -19,10 +20,13 @@ const PUT_GET_ROWSET_FIXED_LENGTH: u64 = 64;
 
 pub async fn process_query_response(
     data: &query_response::Data,
+    http_client: &Client,
 ) -> Result<Box<dyn RecordBatchReader + Send>, QueryResponseProcessingError> {
     match data.command {
         Some(ref command) => perform_put_get(command.clone(), data).await,
-        None => read_batches(data).await.context(BatchReadingSnafu),
+        None => read_batches(data, http_client)
+            .await
+            .context(BatchReadingSnafu),
     }
 }
 
@@ -58,12 +62,18 @@ async fn perform_put_get(
 
 async fn read_batches(
     data: &query_response::Data,
+    http_client: &Client,
 ) -> Result<Box<dyn RecordBatchReader + Send>, ReadBatchesError> {
     if let Some(rowset_base64) = &data.rowset_base64 {
         let rowset_bytes = BASE64.decode(rowset_base64).context(Base64DecodingSnafu)?;
 
         let reader_result = if let Some(chunk_download_data) = data.to_chunk_download_data() {
-            ChunkReader::multi_chunk(rowset_bytes, chunk_download_data.into()).await
+            ChunkReader::multi_chunk(
+                rowset_bytes,
+                chunk_download_data.into(),
+                http_client.clone(),
+            )
+            .await
         } else {
             ChunkReader::single_chunk(rowset_bytes)
         }
