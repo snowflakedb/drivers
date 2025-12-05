@@ -275,3 +275,52 @@ pub enum ChunkError {
         location: Location,
     },
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::compression::compress_data;
+
+    fn header(value: &str) -> HeaderValue {
+        HeaderValue::from_str(value).expect("valid header value")
+    }
+
+    #[test]
+    fn decode_chunk_body_identity_returns_original() {
+        let source = b"hello world".to_vec();
+        let identity = header("identity");
+        let decoded =
+            decode_chunk_body(source.clone(), Some(&identity)).expect("identity succeeds");
+        assert_eq!(decoded, source);
+    }
+
+    #[test]
+    fn decode_chunk_body_supports_gzip() {
+        let payload = b"payload".to_vec();
+        let compressed = compress_data(payload.clone()).expect("compression succeeds");
+        let gzip = header("gzip");
+        let decoded = decode_chunk_body(compressed, Some(&gzip)).expect("gzip decodes");
+        assert_eq!(decoded, payload);
+    }
+
+    #[test]
+    fn decode_chunk_body_supports_mixed_encodings() {
+        let payload = b"abc123".to_vec();
+        let compressed = compress_data(payload.clone()).expect("compression succeeds");
+        let gzip_identity = header(" gzip , identity ");
+        let decoded =
+            decode_chunk_body(compressed, Some(&gzip_identity)).expect("mixed encodings decode");
+        assert_eq!(decoded, payload);
+    }
+
+    #[test]
+    fn decode_chunk_body_rejects_unsupported_encoding() {
+        let data = b"bytes".to_vec();
+        let unsupported = header("br");
+        let err = decode_chunk_body(data, Some(&unsupported)).expect_err("br unsupported");
+        match err {
+            ChunkError::UnsupportedEncoding { encoding, .. } => assert_eq!(encoding, "br"),
+            other => panic!("expected unsupported-encoding error, got {other:?}"),
+        }
+    }
+}
