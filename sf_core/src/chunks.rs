@@ -110,7 +110,7 @@ pub fn get_chunk_data_sync(chunk: &ChunkDownloadData) -> Result<Vec<u8>, ChunkEr
 }
 
 pub async fn get_chunk_data(chunk: &ChunkDownloadData) -> Result<Vec<u8>, ChunkError> {
-    let url = chunk.url.clone();
+    let url = &chunk.url;
     let client = CHUNK_HTTP_CLIENT.clone();
     let mut headers = HeaderMap::new();
     for (key, value) in chunk.headers.iter() {
@@ -137,24 +137,19 @@ pub async fn get_chunk_data(chunk: &ChunkDownloadData) -> Result<Vec<u8>, ChunkE
         {
             Ok(r) => r,
             Err(e) => {
-                return Err(match e {
-                    HttpError::Transport { source, .. } => ChunkError::Communication {
-                        source,
-                        location: Location::new(file!(), line!(), column!()),
-                    },
+                return match e {
+                    HttpError::Transport { source, .. } => Err(source).context(CommunicationSnafu),
                     HttpError::DeadlineExceeded { .. } | HttpError::RetryAfterExceeded { .. } => {
-                        ChunkError::UnsuccessfulResponseHTTP {
+                        UnsuccessfulResponseHTTPSnafu {
                             status: reqwest::StatusCode::REQUEST_TIMEOUT,
-                            location: Location::new(file!(), line!(), column!()),
                         }
+                        .fail()
                     }
-                    HttpError::MaxAttempts { last_status, .. } => {
-                        ChunkError::UnsuccessfulResponseHTTP {
-                            status: last_status,
-                            location: Location::new(file!(), line!(), column!()),
-                        }
+                    HttpError::MaxAttempts { last_status, .. } => UnsuccessfulResponseHTTPSnafu {
+                        status: last_status,
                     }
-                });
+                    .fail(),
+                };
             }
         };
 
@@ -192,12 +187,7 @@ fn decode_chunk_body(body: Vec<u8>, encoding: Option<&HeaderValue>) -> Result<Ve
         return Ok(body);
     };
 
-    let encoding_str = value
-        .to_str()
-        .map_err(|_| ChunkError::UnsupportedEncoding {
-            encoding: "<invalid utf-8>".to_string(),
-            location: Location::new(file!(), line!(), column!()),
-        })?;
+    let encoding_str = value.to_str().context(ContentEncodingHeaderSnafu)?;
 
     let mut data = body;
     for token in encoding_str
@@ -252,6 +242,12 @@ pub enum ChunkError {
     #[snafu(display("Failed to decompress chunk data: {source}"))]
     Decompression {
         source: CompressionError,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Content-Encoding header is not valid UTF-8"))]
+    ContentEncodingHeader {
+        source: reqwest::header::ToStrError,
         #[snafu(implicit)]
         location: Location,
     },
