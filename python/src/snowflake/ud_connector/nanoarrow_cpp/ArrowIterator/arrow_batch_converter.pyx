@@ -93,7 +93,8 @@ cdef class PyArrowBatchConverter:
         # Export RecordBatch to Arrow C Data Interface
         try:
             # PyArrow 14.0+ uses __arrow_c_array__
-            c_array_capsule, c_schema_capsule = record_batch.__arrow_c_array__()
+            # Note: __arrow_c_array__() returns (schema_capsule, array_capsule) - schema first!
+            c_schema_capsule, c_array_capsule = record_batch.__arrow_c_array__()
         except AttributeError:
             # Fallback for older PyArrow versions
             raise RuntimeError(
