@@ -144,6 +144,10 @@ class DatabaseDriver(ABC):
         pass
 
     @abstractmethod
+    def statement_cancel(self, request: StatementCancelRequest) -> StatementCancelResponse:
+        pass
+
+    @abstractmethod
     def statement_execute_partitions(self, request: StatementExecutePartitionsRequest) -> StatementExecutePartitionsResponse:
         pass
 
@@ -191,6 +195,7 @@ class DatabaseDriverServer(DatabaseDriver):
                 'statement_bind': (self.statement_bind, StatementBindRequest),
                 'statement_bind_stream': (self.statement_bind_stream, StatementBindStreamRequest),
                 'statement_execute_query': (self.statement_execute_query, StatementExecuteQueryRequest),
+                'statement_cancel': (self.statement_cancel, StatementCancelRequest),
                 'statement_execute_partitions': (self.statement_execute_partitions, StatementExecutePartitionsRequest),
                 'statement_read_partition': (self.statement_read_partition, StatementReadPartitionRequest)
             }
@@ -836,6 +841,25 @@ class DatabaseDriverClient:
             raise ProtoTransportException(f"Unknown error code: %s", code)
 
         response.ParseFromString(self._transport.handle_message('DatabaseDriver', 'statement_execute_query', request.SerializeToString()))
+        return response
+
+    def statement_cancel(self, request: StatementCancelRequest) -> StatementCancelResponse:
+        (code, response_bytes) = self._transport.handle_message('DatabaseDriver', 'statement_cancel', request.SerializeToString())
+        if code == 0:
+            response = StatementCancelResponse()
+            response.ParseFromString(response_bytes)
+            return response
+        elif code == 1:
+            error = DriverException()
+            error.ParseFromString(response_bytes)
+            raise ProtoApplicationException(error)
+        elif code == 2:
+            error = str(response_bytes)
+            raise ProtoTransportException(response_bytes)
+        else:
+            raise ProtoTransportException(f"Unknown error code: %s", code)
+
+        response.ParseFromString(self._transport.handle_message('DatabaseDriver', 'statement_cancel', request.SerializeToString()))
         return response
 
     def statement_execute_partitions(self, request: StatementExecutePartitionsRequest) -> StatementExecutePartitionsResponse:

@@ -1,3 +1,11 @@
+mod external_browser;
+mod oauth;
+mod sso;
+
+pub use external_browser::*;
+pub use oauth::*;
+pub use sso::*;
+
 use jwt::PKeyWithDigest;
 use jwt::SignWithKey;
 use openssl::hash::MessageDigest;
@@ -10,6 +18,8 @@ pub enum Credentials {
     Password { username: String, password: String },
     Jwt { username: String, token: String },
     Pat { username: String, token: String },
+    OAuth { username: String, token: String },
+    ExternalBrowser { username: String, token: String },
 }
 
 #[derive(Debug, Serialize)]
@@ -106,6 +116,14 @@ pub fn create_credentials(login_parameters: &LoginParameters) -> Result<Credenti
             })
         }
         LoginMethod::Pat { username, token } => Ok(Credentials::Pat {
+            username: username.clone(),
+            token: token.clone(),
+        }),
+        LoginMethod::OAuth { username, token } => Ok(Credentials::OAuth {
+            username: username.clone(),
+            token: token.clone(),
+        }),
+        LoginMethod::ExternalBrowser { username, token } => Ok(Credentials::ExternalBrowser {
             username: username.clone(),
             token: token.clone(),
         }),

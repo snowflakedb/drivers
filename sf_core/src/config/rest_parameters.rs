@@ -4,8 +4,6 @@ use crate::config::InvalidParameterValueSnafu;
 use crate::config::settings::Setting;
 use crate::config::settings::Settings;
 use crate::config::{ConfigError, MissingParameterSnafu};
-use crate::crl::config::CrlConfig;
-use crate::tls::config::TlsConfig;
 use snafu::OptionExt;
 
 fn get_server_url(settings: &dyn Settings) -> Result<String, ConfigError> {
@@ -16,9 +14,20 @@ fn get_server_url(settings: &dyn Settings) -> Result<String, ConfigError> {
     let protocol = settings
         .get_string("protocol")
         .unwrap_or("https".to_string());
-    let host = settings
-        .get_string("host")
-        .context(MissingParameterSnafu { parameter: "host" })?;
+
+    // Prefer explicit host; otherwise derive from account
+    let host = match settings.get_string("host") {
+        Some(h) => h,
+        None => {
+            let account = settings
+                .get_string("account")
+                .context(MissingParameterSnafu {
+                    parameter: "account",
+                })?;
+            format!("{account}.snowflakecomputing.com")
+        }
+    };
+
     if protocol != "https" && protocol != "http" {
         tracing::warn!("Unexpected protocol specified during server url construction: {protocol}");
     }
@@ -32,6 +41,7 @@ fn get_server_url(settings: &dyn Settings) -> Result<String, ConfigError> {
     Ok(base_url)
 }
 
+#[derive(Clone)]
 pub struct QueryParameters {
     pub server_url: String,
     pub client_info: ClientInfo,
@@ -45,29 +55,29 @@ impl QueryParameters {
         })
     }
 }
+#[derive(Clone)]
 pub struct ClientInfo {
     pub application: String,
     pub version: String,
     pub os: String,
     pub os_version: String,
     pub ocsp_mode: Option<String>,
-    pub crl_config: CrlConfig,
-    pub tls_config: TlsConfig,
 }
 
 impl ClientInfo {
     pub fn from_settings(settings: &dyn Settings) -> Result<Self, ConfigError> {
-        let crl_config = CrlConfig::from_settings(settings)?;
-        let tls_config = TlsConfig::from_settings(settings)?;
+        // Check for client_app_id override, default to "ODBC" to match our driver type
+        // This is critical for Snowflake feature detection (e.g., multi-statement support requires ODBC 2.21.8+)
+        let application = settings
+            .get_string("client_app_id")
+            .unwrap_or_else(|| "ODBC".to_string());
 
         let client_info = ClientInfo {
-            application: "PythonConnector".to_string(),
-            version: "3.15.0".to_string(),
-            os: "Darwin".to_string(),
-            os_version: "macOS-15.5-arm64-arm-64bit".to_string(),
+            application,
+            version: "3.13.0".to_string(), // Match the version we report in SQLGetInfo
+            os: std::env::consts::OS.to_string(),
+            os_version: format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH),
             ocsp_mode: Some("FAIL_OPEN".to_string()),
-            crl_config,
-            tls_config,
         };
         Ok(client_info)
     }
@@ -122,6 +132,14 @@ pub enum LoginMethod {
         username: String,
         token: String,
     },
+    OAuth {
+        username: String,
+        token: String,
+    },
+    ExternalBrowser {
+        username: String,
+        token: String,
+    },
 }
 
 impl LoginMethod {
@@ -146,8 +164,7 @@ impl LoginMethod {
 
     pub fn from_settings(settings: &dyn Settings) -> Result<Self, ConfigError> {
         let authenticator = settings.get_string("authenticator").unwrap_or_default();
-        match authenticator.as_str()
-        {
+        match authenticator.as_str() {
             "SNOWFLAKE_JWT" => Ok(Self::PrivateKey {
                 username: settings
                     .get_string("user")
@@ -173,10 +190,26 @@ impl LoginMethod {
                     .get_string("token")
                     .context(MissingParameterSnafu { parameter: "token" })?,
             }),
+            "OAUTH" => Ok(Self::OAuth {
+                username: settings
+                    .get_string("user")
+                    .context(MissingParameterSnafu { parameter: "user" })?,
+                token: settings
+                    .get_string("token")
+                    .context(MissingParameterSnafu { parameter: "token" })?,
+            }),
+            "EXTERNALBROWSER" => Ok(Self::ExternalBrowser {
+                username: settings
+                    .get_string("user")
+                    .context(MissingParameterSnafu { parameter: "user" })?,
+                token: settings
+                    .get_string("token")
+                    .context(MissingParameterSnafu { parameter: "token" })?,
+            }),
             _ => InvalidParameterValueSnafu {
                 parameter: "authenticator",
                 value: authenticator,
-                explanation: "Allowed values are SNOWFLAKE_JWT, SNOWFLAKE_PASSWORD, and PROGRAMMATIC_ACCESS_TOKEN",
+                explanation: "Allowed values: SNOWFLAKE_JWT, SNOWFLAKE_PASSWORD, PROGRAMMATIC_ACCESS_TOKEN, OAUTH, EXTERNALBROWSER",
             }
             .fail()?,
         }

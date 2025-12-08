@@ -1,4 +1,8 @@
-use std::{collections::HashSet, str::Utf8Error, string::FromUtf8Error};
+use std::{
+    collections::HashSet,
+    str::{FromStr, Utf8Error},
+    string::FromUtf8Error,
+};
 
 use crate::{
     api::{SqlState, diagnostic::DiagnosticRecord},
@@ -60,6 +64,12 @@ pub enum OdbcError {
         location: Location,
     },
 
+    #[snafu(display("Invalid column number"))]
+    InvalidColumnNumber {
+        #[snafu(implicit)]
+        location: Location,
+    },
+
     #[snafu(display("Statement not executed"))]
     StatementNotExecuted {
         #[snafu(implicit)]
@@ -90,10 +100,39 @@ pub enum OdbcError {
         location: Location,
     },
 
+    #[snafu(display("Additional data is required to complete the operation"))]
+    NeedData {
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("Invalid cursor state"))]
+    InvalidCursorState {
+        #[snafu(implicit)]
+        location: Location,
+    },
+
     #[snafu(display("Failed to parse port '{port}'"))]
     InvalidPort {
         port: String,
         source: std::num::ParseIntError,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("Failed to parse numeric option '{key}' value '{value}'"))]
+    InvalidNumericOption {
+        key: String,
+        value: String,
+        source: std::num::ParseIntError,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("Failed to parse boolean option '{key}' value '{value}'"))]
+    InvalidBoolOption {
+        key: String,
+        value: String,
         #[snafu(implicit)]
         location: Location,
     },
@@ -154,6 +193,13 @@ pub enum OdbcError {
         location: Location,
     },
 
+    #[snafu(display("Unsupported parameter direction: {direction:?}"))]
+    UnsupportedParameterDirection {
+        direction: sql::ParamType,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
     #[snafu(display("Error fetching data: {source}"))]
     FetchData {
         source: ArrowError,
@@ -181,7 +227,7 @@ pub enum OdbcError {
         location: Location,
     },
 
-    #[snafu(display("[Core] {message}\n report: {report}"))]
+    #[snafu(display("{message}\n report: {report}"))]
     ProtoDriverException {
         message: String,
         report: String,
@@ -191,14 +237,14 @@ pub enum OdbcError {
         location: Location,
     },
 
-    #[snafu(display("[Core] Protocol transport error: {message}"))]
+    #[snafu(display("Protocol transport error: {message}"))]
     ProtoTransport {
         message: String,
         #[snafu(implicit)]
         location: Location,
     },
 
-    #[snafu(display("[Core] Required field missing: {message}"))]
+    #[snafu(display("Required field missing: {message}"))]
     ProtoRequiredFieldMissing {
         message: String,
         #[snafu(implicit)]
@@ -254,11 +300,16 @@ impl OdbcError {
             }
             OdbcError::UnknownAttribute { .. } => SqlState::GeneralError,
             OdbcError::InvalidParameterNumber { .. } => SqlState::WrongNumberOfParameters,
+            OdbcError::InvalidColumnNumber { .. } => SqlState::InvalidDescriptorIndex,
             OdbcError::StatementNotExecuted { .. } => SqlState::FunctionSequenceError,
             OdbcError::DataNotFetched { .. } => SqlState::FunctionSequenceError,
             OdbcError::ExecutionDone { .. } => SqlState::FunctionSequenceError,
             OdbcError::NoMoreData { .. } => SqlState::NoDataFound,
+            OdbcError::NeedData { .. } => SqlState::GeneralError,
+            OdbcError::InvalidCursorState { .. } => SqlState::InvalidCursorState,
             OdbcError::InvalidPort { .. } => SqlState::InvalidConnectionStringAttribute,
+            OdbcError::InvalidNumericOption { .. } => SqlState::InvalidConnectionStringAttribute,
+            OdbcError::InvalidBoolOption { .. } => SqlState::InvalidConnectionStringAttribute,
             OdbcError::SetSqlQuery { .. } => SqlState::SyntaxErrorOrAccessRuleViolation,
             OdbcError::PrepareStatement { .. } => SqlState::SyntaxErrorOrAccessRuleViolation,
             OdbcError::ExecuteStatement { .. } => SqlState::GeneralError,
@@ -270,41 +321,55 @@ impl OdbcError {
             OdbcError::TextConversionUtf8 { .. } => SqlState::StringDataRightTruncated,
             OdbcError::TextConversionFromUtf8 { .. } => SqlState::StringDataRightTruncated,
             OdbcError::ArrowBinding { .. } => SqlState::GeneralError,
-            OdbcError::ProtoDriverException { error, .. } => match *error.clone() {
-                ErrorType::AuthError(_) => SqlState::InvalidAuthorizationSpecification,
-                ErrorType::GenericError(_) => SqlState::GeneralError,
-                ErrorType::InvalidParameterValue(ProtoInvalidParameterValue {
-                    parameter, ..
-                }) => {
-                    if AUTHENTICATOR_PARAMETERS.contains(&parameter.to_uppercase()) {
-                        SqlState::InvalidAuthorizationSpecification
-                    } else {
-                        SqlState::InvalidConnectionStringAttribute
+            OdbcError::ProtoDriverException { error, report, .. } => {
+                if let Some(state) = sql_state_from_report(report) {
+                    state
+                } else {
+                    match *error.clone() {
+                        ErrorType::AuthError(_) => SqlState::InvalidAuthorizationSpecification,
+                        ErrorType::GenericError(_) => SqlState::GeneralError,
+                        ErrorType::InvalidParameterValue(ProtoInvalidParameterValue {
+                            parameter,
+                            ..
+                        }) => {
+                            if AUTHENTICATOR_PARAMETERS.contains(&parameter.to_uppercase()) {
+                                SqlState::InvalidAuthorizationSpecification
+                            } else {
+                                SqlState::InvalidConnectionStringAttribute
+                            }
+                        }
+                        ErrorType::MissingParameter(ProtoMissingParameter { parameter }) => {
+                            if AUTHENTICATOR_PARAMETERS.contains(&parameter.to_uppercase()) {
+                                SqlState::InvalidAuthorizationSpecification
+                            } else {
+                                SqlState::InvalidConnectionStringAttribute
+                            }
+                        }
+                        ErrorType::InternalError(_) => SqlState::GeneralError,
+                        ErrorType::LoginError(_) => SqlState::InvalidAuthorizationSpecification,
                     }
                 }
-                ErrorType::MissingParameter(ProtoMissingParameter { parameter }) => {
-                    if AUTHENTICATOR_PARAMETERS.contains(&parameter.to_uppercase()) {
-                        SqlState::InvalidAuthorizationSpecification
-                    } else {
-                        SqlState::InvalidConnectionStringAttribute
-                    }
-                }
-                ErrorType::InternalError(_) => SqlState::GeneralError,
-                ErrorType::LoginError(_) => SqlState::InvalidAuthorizationSpecification,
-            },
+            }
             OdbcError::ProtoTransport { .. } => SqlState::ClientUnableToEstablishConnection,
             OdbcError::ProtoRequiredFieldMissing { .. } => SqlState::GeneralError,
             OdbcError::ArrowArrayStreamReaderCreation { .. } => SqlState::GeneralError,
             OdbcError::StatementErrorState { .. } => SqlState::GeneralError,
+            OdbcError::UnsupportedParameterDirection { .. } => SqlState::GeneralError,
         }
     }
 
     pub fn to_native_error(&self) -> sql::Integer {
         match self {
-            OdbcError::ProtoDriverException { error, .. } => match *error.clone() {
-                ErrorType::LoginError(ProtoLoginError { code, .. }) => code,
-                _ => 0,
-            },
+            OdbcError::ProtoDriverException { error, report, .. } => {
+                if let Some(code) = error_code_from_report(report) {
+                    code
+                } else {
+                    match *error.clone() {
+                        ErrorType::LoginError(ProtoLoginError { code, .. }) => code,
+                        _ => 0,
+                    }
+                }
+            }
             _ => 0,
         }
     }
@@ -313,18 +378,22 @@ impl OdbcError {
     pub fn from_protobuf_error(error: ProtoError<ProtoDriverException>) -> OdbcError {
         let location = location!();
         match error {
-            ProtoError::Application(driver_exception) => OdbcError::ProtoDriverException {
-                message: driver_exception.message,
-                status_code: driver_exception.status_code,
-                error: Box::new(
-                    driver_exception
-                        .error
-                        .and_then(|error| error.error_type)
-                        .unwrap_or(ErrorType::GenericError(GenericError {})),
-                ),
-                location,
-                report: driver_exception.report,
-            },
+            ProtoError::Application(driver_exception) => {
+                let display_message = extract_report_field(&driver_exception.report, "MESSAGE")
+                    .unwrap_or_else(|| driver_exception.message.clone());
+                OdbcError::ProtoDriverException {
+                    message: display_message,
+                    status_code: driver_exception.status_code,
+                    error: Box::new(
+                        driver_exception
+                            .error
+                            .and_then(|error| error.error_type)
+                            .unwrap_or(ErrorType::GenericError(GenericError {})),
+                    ),
+                    location,
+                    report: driver_exception.report,
+                }
+            }
             ProtoError::Transport(message) => OdbcError::ProtoTransport { message, location },
         }
     }
@@ -335,4 +404,31 @@ impl From<ProtoError<ProtoDriverException>> for OdbcError {
     fn from(error: ProtoError<ProtoDriverException>) -> Self {
         OdbcError::from_protobuf_error(error)
     }
+}
+
+fn extract_report_field(report: &str, key: &str) -> Option<String> {
+    if report.is_empty() {
+        return None;
+    }
+    let prefix = format!("{key}=");
+    for segment in report.split(|c| c == ';' || c == '\n') {
+        let trimmed = segment.trim();
+        if let Some(value) = trimmed.strip_prefix(&prefix) {
+            let normalized = value.trim();
+            if !normalized.is_empty() {
+                return Some(normalized.to_string());
+            }
+        }
+    }
+    None
+}
+
+fn sql_state_from_report(report: &str) -> Option<SqlState> {
+    let state = extract_report_field(report, "SQLSTATE")?;
+    SqlState::from_str(state.as_str()).ok()
+}
+
+fn error_code_from_report(report: &str) -> Option<i32> {
+    let code = extract_report_field(report, "ERROR_CODE")?;
+    code.parse::<i32>().ok()
 }

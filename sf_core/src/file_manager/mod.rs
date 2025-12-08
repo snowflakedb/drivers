@@ -9,7 +9,7 @@ pub use self::types::*;
 use crate::compression::{CompressionError, compress_data};
 use crate::compression_types::{CompressionType, CompressionTypeError, try_guess_compression_type};
 use encryption::{EncryptionError, decrypt_file_data, encrypt_file_data};
-use file_transfer::{DownloadFileError, UploadFileError, download_from_s3, upload_to_s3_or_skip};
+use file_transfer::{DownloadFileError, UploadFileError, download_file, upload_file_or_skip};
 use path_expansion::{PathExpansionError, expand_filenames};
 use snafu::{Location, ResultExt, Snafu};
 use std::fs::File;
@@ -49,7 +49,7 @@ pub async fn upload_single_file(data: SingleUploadData) -> Result<UploadResult, 
 
     let (encryption_result, file_metadata) = preprocess_file_before_upload(file_buffer, &data)?;
 
-    let status = upload_to_s3_or_skip(
+    let status = upload_file_or_skip(
         encryption_result,
         &data.stage_info,
         file_metadata.target.as_str(),
@@ -171,7 +171,7 @@ pub async fn download_single_file(
 ) -> Result<DownloadResult, FileManagerError> {
     // Download encrypted data and metadata from S3
     let (encrypted_data, file_metadata) =
-        download_from_s3(&data.stage_info, data.src_location.as_str())
+        download_file(&data.stage_info, data.src_location.as_str())
             .await
             .context(S3DownloadSnafu)?;
 
@@ -182,6 +182,11 @@ pub async fn download_single_file(
 
     // Create the full output path: local_location/src_location
     let output_path = Path::new(&data.local_location).join(&data.src_location);
+
+    // Create parent directories if they don't exist
+    if let Some(parent) = output_path.parent() {
+        std::fs::create_dir_all(parent).context(IoSnafu)?;
+    }
 
     // Save the compressed data to the constructed path
     let mut output_file = File::create(&output_path).context(IoSnafu)?;

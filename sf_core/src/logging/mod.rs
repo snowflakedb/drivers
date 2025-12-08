@@ -4,6 +4,7 @@ pub use crate::logging::callback_layer::CLogCallback;
 pub use crate::logging::callback_layer::CallbackLayer;
 pub use crate::logging::error::LogError;
 use crate::logging::opentelemetry::init_tracer;
+use std::str::FromStr;
 use tracing::level_filters::LevelFilter;
 use tracing_opentelemetry::OpenTelemetryLayer;
 use tracing_subscriber::Layer;
@@ -64,10 +65,14 @@ where
     let subscriber = subscriber.with(opentelemetry_layer);
 
     let stderr_layer = if config.stderr {
+        let env_level = std::env::var("SF_LOG_LEVEL")
+            .ok()
+            .and_then(|value| LevelFilter::from_str(&value).ok())
+            .unwrap_or(LevelFilter::ERROR);
         Some(
             tracing_subscriber::fmt::layer()
                 .with_writer(std::io::stderr)
-                .with_filter(LevelFilter::ERROR),
+                .with_filter(env_level),
         )
     } else {
         None

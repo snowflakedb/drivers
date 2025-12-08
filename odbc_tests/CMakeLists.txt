@@ -40,9 +40,27 @@ endif()
 
 
 # Find odbc library
-find_package(ODBC REQUIRED)
+# Use unixODBC by default (compatible with universal driver)
+# For official Snowflake driver testing, use iODBC build
+if(DEFINED ENV{USE_IODBC})
+    set(ODBC_INCLUDE_DIRS "/opt/homebrew/opt/libiodbc/include")
+    set(ODBC_LIBRARIES "/opt/homebrew/opt/libiodbc/lib/libiodbc.dylib")
+    message(STATUS "Using iODBC for official Snowflake driver compatibility")
+else()
+    set(ODBC_INCLUDE_DIRS "/opt/homebrew/opt/unixodbc/include")
+    set(ODBC_LIBRARIES "/opt/homebrew/opt/unixodbc/lib/libodbc.dylib")
+    message(STATUS "Using unixODBC for universal driver compatibility")
+endif()
+
 message(STATUS "ODBC_INCLUDE_DIRS: ${ODBC_INCLUDE_DIRS}")
 message(STATUS "ODBC_LIBRARIES: ${ODBC_LIBRARIES}")
+
+# Create ODBC::ODBC target
+add_library(ODBC::ODBC SHARED IMPORTED)
+set_target_properties(ODBC::ODBC PROPERTIES
+    IMPORTED_LOCATION "${ODBC_LIBRARIES}"
+    INTERFACE_INCLUDE_DIRECTORIES "${ODBC_INCLUDE_DIRS}"
+)
 
 add_subdirectory(common)
 
@@ -54,3 +72,5 @@ function(add_odbc_test name)
 endfunction()
 
 add_subdirectory(tests)
+add_subdirectory(demo)
+add_subdirectory(perf)

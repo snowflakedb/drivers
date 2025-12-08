@@ -197,6 +197,7 @@ impl SnowflakeTestClient {
         let response =
             DatabaseDriverClient::statement_execute_query(StatementExecuteQueryRequest {
                 stmt_handle: Some(stmt_handle),
+                describe_only: false,
             })
             .unwrap();
 
@@ -215,6 +216,7 @@ impl SnowflakeTestClient {
 
         match DatabaseDriverClient::statement_execute_query(StatementExecuteQueryRequest {
             stmt_handle: Some(stmt_handle),
+            describe_only: false,
         }) {
             Ok(response) => {
                 let proto_result = response.result.unwrap();

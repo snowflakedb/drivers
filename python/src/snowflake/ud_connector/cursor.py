@@ -169,11 +169,17 @@ class Cursor:
             
         Returns:
             sequence: List of rows
-            
-        Raises:
-            NotSupportedError: If not implemented
         """
-        raise NotSupportedError("fetchmany is not implemented")
+        if size is None:
+            size = self.arraysize
+        
+        rows = []
+        for _ in range(size):
+            row = self.fetchone()
+            if row is None:
+                break
+            rows.append(row)
+        return rows
     
     def fetchall(self):
         """

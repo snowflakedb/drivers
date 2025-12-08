@@ -2,5 +2,6 @@
 pub mod common;
 
 pub mod authentication;
-pub mod http;
-pub mod put_get;
+pub mod concurrent_test;
+pub mod data_types_test;
+pub mod stress_test;

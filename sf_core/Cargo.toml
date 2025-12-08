@@ -35,10 +35,14 @@ lazy_static = "1.5.0"
 prost = "0.14.1"
 proto_utils = { path = "../proto_utils" }
 
-# AWS SDK dependencies
+# Cloud Storage SDK dependencies
 aws-sdk-s3 = "1.103.0"
 aws-config = "1.8.5"
 aws-credential-types = "1.2.5"
+# TODO: Add Azure and GCS SDKs when implementing
+# azure_storage = "0.20"
+# azure_storage_blobs = "0.20"
+# google-cloud-storage = "0.22"
 snafu = "0.8.7"
 glob = "0.3.3"
 
@@ -59,6 +63,7 @@ const-oid = "0.9"
 dirs = "5.0"
 lru = "0.12"
 chrono = { version = "0.4", features = ["serde"] }
+chrono-tz = "0.9"
 url = "2.5"
 urlencoding = "2.1"
 hex = "0.4"
@@ -68,6 +73,7 @@ signature = "2"
 der = "0.7"
 pkcs1 = "0.7"
 num-traits = "0.2.19"
+roxmltree = "0.20"
 
 [dev-dependencies]
 tempfile = "3.21.0"
@@ -77,6 +83,7 @@ brotli = "8.0.2"
 zstd = "0.13.3"
 test-case = "3.3.1"
 reqwest = { version = "0.12.23", features = ["blocking"] }
+criterion = "0.5"
 
 [[test]]
 name = "integration_tests"
@@ -89,3 +96,7 @@ path = "tests/e2e/mod.rs"
 [[bin]]
 name = "tls_client"
 path = "src/bin/tls_client.rs"
+
+[[bench]]
+name = "arrow_conversion"
+harness = false

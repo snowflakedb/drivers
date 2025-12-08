@@ -36,6 +36,12 @@ pub enum ApiError {
         location: Location,
         source: RestError,
     },
+    #[snafu(display("Query execution failed: {source}"))]
+    QueryExecution {
+        #[snafu(implicit)]
+        location: Location,
+        source: RestError,
+    },
     #[snafu(display("Failed to lock connection"))]
     ConnectionLocking {
         #[snafu(implicit)]
@@ -57,5 +63,16 @@ pub enum ApiError {
         location: Location,
         #[snafu(source(from(QueryResponseProcessingError, Box::new)))]
         source: Box<QueryResponseProcessingError>,
+    },
+    #[snafu(display("Missing session token"))]
+    MissingSessionToken {
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Failed to create Tokio runtime"))]
+    TokioRuntime {
+        #[snafu(implicit)]
+        location: Location,
+        source: std::io::Error,
     },
 }

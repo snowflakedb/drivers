@@ -20,3 +20,4 @@ universal_driver_e2e_test_coverage.html
 sf_core/src/bin
 .vscode
 tests/wiremock/__files/*
+.odbc

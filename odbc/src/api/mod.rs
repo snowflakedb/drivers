@@ -1,12 +1,17 @@
 pub mod api_utils;
+pub mod catalog;
+pub mod column_metadata;
 pub mod connection;
+pub mod cursor;
 pub mod data;
 pub mod diagnostic;
 pub mod environment;
 pub mod error;
 pub mod handle_allocation;
+pub mod info;
 pub mod sql_state;
 pub mod statement;
+pub mod statement_attr;
 pub mod types;
 pub mod utils;
 

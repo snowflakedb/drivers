@@ -86,6 +86,10 @@ pub struct ExecuteResult {
     pub stream: ::core::option::Option<ArrowArrayStreamPtr>,
     #[prost(int64, tag = "2")]
     pub rows_affected: i64,
+    #[prost(string, tag = "3")]
+    pub query_id: ::prost::alloc::string::String,
+    #[prost(string, repeated, tag = "4")]
+    pub child_result_ids: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
 }
 /// Partitioned result
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
@@ -465,12 +469,21 @@ pub struct StatementBindStreamResponse {}
 pub struct StatementExecuteQueryRequest {
     #[prost(message, optional, tag = "1")]
     pub stmt_handle: ::core::option::Option<StatementHandle>,
+    #[prost(bool, tag = "2")]
+    pub describe_only: bool,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct StatementExecuteQueryResponse {
     #[prost(message, optional, tag = "1")]
     pub result: ::core::option::Option<ExecuteResult>,
 }
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct StatementCancelRequest {
+    #[prost(message, optional, tag = "1")]
+    pub stmt_handle: ::core::option::Option<StatementHandle>,
+}
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct StatementCancelResponse {}
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct StatementExecutePartitionsRequest {
     #[prost(message, optional, tag = "1")]
@@ -722,6 +735,9 @@ pub trait DatabaseDriver {
     fn statement_execute_query(
         input: StatementExecuteQueryRequest,
     ) -> Result<StatementExecuteQueryResponse, DriverException>;
+    fn statement_cancel(
+        input: StatementCancelRequest,
+    ) -> Result<StatementCancelResponse, DriverException>;
     fn statement_execute_partitions(
         input: StatementExecutePartitionsRequest,
     ) -> Result<StatementExecutePartitionsResponse, DriverException>;
@@ -1091,6 +1107,17 @@ pub trait DatabaseDriverServer: DatabaseDriver {
                     Err(e) => return Err(ProtoError::Transport(e.to_string())),
                 };
                 let result = Self::statement_execute_query(input);
+                match result {
+                    Ok(output) => Ok(output.encode_to_vec()),
+                    Err(e) => Err(ProtoError::Application(e.encode_to_vec())),
+                }
+            }
+            "statement_cancel" => {
+                let input = match StatementCancelRequest::decode(&message[..]) {
+                    Ok(input) => input,
+                    Err(e) => return Err(ProtoError::Transport(e.to_string())),
+                };
+                let result = Self::statement_cancel(input);
                 match result {
                     Ok(output) => Ok(output.encode_to_vec()),
                     Err(e) => Err(ProtoError::Application(e.encode_to_vec())),
@@ -1964,6 +1991,29 @@ impl<T: Transport> DatabaseDriverClient<T> {
         match result {
             Ok(output) => {
                 let output = StatementExecuteQueryResponse::decode(&output[..]);
+                match output {
+                    Ok(output) => Ok(output),
+                    Err(e) => Err(ProtoError::Transport(e.to_string())),
+                }
+            }
+            Err(ProtoError::Application(e)) => {
+                let output = DriverException::decode(&e[..]);
+                match output {
+                    Ok(output) => Err(ProtoError::Application(output)),
+                    Err(e) => Err(ProtoError::Transport(e.to_string())),
+                }
+            }
+            Err(ProtoError::Transport(e)) => Err(ProtoError::Transport(e)),
+        }
+    }
+
+    pub fn statement_cancel(
+        input: StatementCancelRequest,
+    ) -> Result<StatementCancelResponse, ProtoError<DriverException>> {
+        let result = T::handle_message("DatabaseDriver", "statement_cancel", input.encode_to_vec());
+        match result {
+            Ok(output) => {
+                let output = StatementCancelResponse::decode(&output[..]);
                 match output {
                     Ok(output) => Ok(output),
                     Err(e) => Err(ProtoError::Transport(e.to_string())),

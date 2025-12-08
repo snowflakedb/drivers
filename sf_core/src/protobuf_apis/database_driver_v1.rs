@@ -11,7 +11,7 @@ use crate::apis::database_driver_v1::{
     database_init, database_new, database_release, database_set_option,
 };
 use crate::apis::database_driver_v1::{
-    statement_execute_query, statement_new, statement_prepare, statement_release,
+    statement_cancel, statement_execute_query, statement_new, statement_prepare, statement_release,
     statement_set_option, statement_set_sql_query,
 };
 use crate::protobuf_gen::database_driver_v1::*;
@@ -171,6 +171,22 @@ fn to_driver_error(error: &ApiError) -> DriverError {
         ApiError::QueryResponseProcessing { .. } => DriverError {
             error_type: Some(driver_error::ErrorType::InternalError(InternalError {})),
         },
+        ApiError::QueryExecution { source, .. } => match source {
+            RestError::QueryFailed { .. } => DriverError {
+                error_type: Some(driver_error::ErrorType::GenericError(GenericError {})),
+            },
+            _ => DriverError {
+                error_type: Some(driver_error::ErrorType::InternalError(InternalError {})),
+            },
+        },
+        ApiError::MissingSessionToken { .. } => DriverError {
+            error_type: Some(driver_error::ErrorType::AuthError(AuthenticationError {
+                detail: "Missing session token".to_string(),
+            })),
+        },
+        ApiError::TokioRuntime { .. } => DriverError {
+            error_type: Some(driver_error::ErrorType::InternalError(InternalError {})),
+        },
     }
 }
 
@@ -196,11 +212,59 @@ fn to_driver_exception(error: ApiError) -> DriverException {
         ApiError::StatementLocking { .. } => StatusCode::InternalError,
         ApiError::DatabaseLocking { .. } => StatusCode::InternalError,
         ApiError::QueryResponseProcessing { .. } => StatusCode::InternalError,
+        ApiError::QueryExecution { .. } => StatusCode::InvalidData,
+        ApiError::MissingSessionToken { .. } => StatusCode::AuthenticationError,
+        ApiError::TokioRuntime { .. } => StatusCode::InternalError,
     };
 
-    let message = error.to_string();
+    #[derive(Clone)]
+    struct QueryFailureInfo {
+        sql_state: Option<String>,
+        error_code: Option<i32>,
+        query_id: Option<String>,
+        message: String,
+    }
+
+    let query_failure = if let ApiError::QueryExecution {
+        source:
+            RestError::QueryFailed {
+                sql_state,
+                error_code,
+                query_id,
+                message,
+                ..
+            },
+        ..
+    } = &error
+    {
+        Some(QueryFailureInfo {
+            sql_state: sql_state.clone(),
+            error_code: *error_code,
+            query_id: query_id.clone(),
+            message: message.clone(),
+        })
+    } else {
+        None
+    };
+
+    let mut message = error.to_string();
     let driver_error = to_driver_error(&error);
-    let report = Report::from_error(error).to_string();
+    let mut report = Report::from_error(error).to_string();
+
+    if let Some(info) = query_failure {
+        let state = info.sql_state.unwrap_or_else(|| "HY000".to_string());
+        let code = info.error_code.unwrap_or(0);
+        let query_id = info.query_id.unwrap_or_default();
+        message = format!(
+            "Snowflake query failed (SQLSTATE {state}, code {code}): {}",
+            info.message
+        );
+        report = format!(
+            "SQLSTATE={state};ERROR_CODE={code};QUERY_ID={query_id};MESSAGE={}",
+            info.message
+        );
+    }
+
     DriverException {
         message,
         status_code: status_code as i32,
@@ -588,15 +652,27 @@ impl DatabaseDriver for DatabaseDriverImpl {
     ) -> Result<StatementExecuteQueryResponse, DriverException> {
         let stmt_handle = required(input.stmt_handle, "Statement handle is required")?;
 
-        let result = statement_execute_query(stmt_handle.into()).to_protobuf()?;
+        let result =
+            statement_execute_query(stmt_handle.into(), input.describe_only).to_protobuf()?;
         let stream_ptr: ArrowArrayStreamPtr = Box::into_raw(result.stream).into();
 
         Ok(StatementExecuteQueryResponse {
             result: Some(ExecuteResult {
                 stream: Some(stream_ptr),
                 rows_affected: result.rows_affected,
+                query_id: result.query_id.unwrap_or_default(),
+                child_result_ids: result.child_result_ids,
             }),
         })
+    }
+
+    #[instrument(name = "DatabaseDriverV1::statement_cancel", skip(input))]
+    fn statement_cancel(
+        input: StatementCancelRequest,
+    ) -> Result<StatementCancelResponse, DriverException> {
+        let stmt_handle = required(input.stmt_handle, "Statement handle is required")?;
+        statement_cancel(stmt_handle.into()).to_protobuf()?;
+        Ok(StatementCancelResponse {})
     }
 
     #[instrument(name = "DatabaseDriverV1::statement_execute_partitions", skip(_input))]

@@ -20,7 +20,7 @@ pub struct Response {
 #[derive(Deserialize)]
 pub struct Data {
     #[serde(rename = "rowset")]
-    pub rowset: Option<Vec<Vec<String>>>,
+    pub rowset: Option<Vec<Vec<serde_json::Value>>>,
     #[serde(rename = "rowsetBase64")]
     pub rowset_base64: Option<String>,
     #[serde(rename = "rowtype")]
@@ -32,9 +32,9 @@ pub struct Data {
     #[serde(rename = "src_locations")]
     src_locations: Option<Vec<String>>,
     #[serde(rename = "stageInfo")]
-    stage_info: Option<StageInfo>,
+    pub stage_info: Option<StageInfo>,
     #[serde(rename = "encryptionMaterial")]
-    encryption_material: Option<OneOrMany<EncryptionMaterial>>,
+    pub encryption_material: Option<OneOrMany<EncryptionMaterial>>,
     #[serde(rename = "localLocation")]
     local_location: Option<String>,
     #[serde(rename = "autoCompress")]
@@ -56,13 +56,13 @@ pub struct Data {
     #[serde(rename = "parameters")]
     _parameters: Option<Vec<NameValueParameter>>,
     #[serde(rename = "total")]
-    _total: Option<i64>,
+    pub total: Option<i64>,
     #[serde(rename = "returned")]
-    _returned: Option<i64>,
+    pub returned: Option<i64>,
     #[serde(rename = "queryId")]
     pub query_id: Option<String>,
     #[serde(rename = "sqlState")]
-    _sql_state: Option<String>,
+    pub sql_state: Option<String>,
     #[serde(rename = "databaseProvider")]
     _database_provider: Option<String>,
     #[serde(rename = "finalDatabaseName")]
@@ -76,7 +76,7 @@ pub struct Data {
     #[serde(rename = "numberOfBinds")]
     _number_of_binds: Option<i32>,
     #[serde(rename = "statementTypeId")]
-    _statement_type_id: Option<i64>,
+    pub statement_type_id: Option<i64>,
     #[serde(rename = "version")]
     _version: Option<i64>,
     #[serde(rename = "getResultUrl")]
@@ -86,9 +86,9 @@ pub struct Data {
     #[serde(rename = "queryAbortsAfterSecs")]
     _query_abort_timeout: Option<i64>,
     #[serde(rename = "resultIds")]
-    _result_ids: Option<String>,
+    pub result_ids: Option<String>,
     #[serde(rename = "resultTypes")]
-    _result_types: Option<String>,
+    pub result_types: Option<String>,
     #[serde(rename = "queryResultFormat")]
     _query_result_format: Option<String>,
     #[serde(rename = "asyncResult")]
@@ -163,20 +163,24 @@ pub struct NameValueParameter {
 
 #[derive(Deserialize)]
 pub struct RowType {
-    #[serde(rename = "name")]
-    pub name: String,
+    #[serde(rename = "name", default)]
+    pub name: Option<String>,
     #[serde(rename = "scale")]
     pub scale: Option<u64>,
-    #[serde(rename = "nullable")]
+    #[serde(rename = "nullable", default)]
     pub nullable: bool,
-    #[serde(rename = "type")]
-    pub type_: String,
+    #[serde(rename = "type", default)]
+    pub type_: Option<String>,
     #[serde(rename = "byteLength")]
     pub byte_length: Option<u64>,
     #[serde(rename = "length")]
     pub length: Option<u64>,
     #[serde(rename = "precision")]
     pub precision: Option<u64>,
+    #[serde(rename = "extTypeName")]
+    pub ext_type_name: Option<String>,
+    #[serde(rename = "logicalType")]
+    pub logical_type: Option<String>,
 
     // unused fields
     #[serde(rename = "fields")]
@@ -188,15 +192,15 @@ pub struct FieldMetadata {
     //unused fields
     #[serde(rename = "name")]
     _name: Option<String>,
-    #[serde(rename = "type")]
-    _type_: String,
-    #[serde(rename = "nullable")]
+    #[serde(rename = "type", default)]
+    _type_: Option<String>,
+    #[serde(rename = "nullable", default)]
     _nullable: bool,
-    #[serde(rename = "length")]
+    #[serde(rename = "length", default)]
     _length: i32,
-    #[serde(rename = "scale")]
+    #[serde(rename = "scale", default)]
     _scale: i32,
-    #[serde(rename = "precision")]
+    #[serde(rename = "precision", default)]
     _precision: i32,
     #[serde(rename = "fields")]
     _fields: Option<Vec<FieldMetadata>>,
@@ -413,6 +417,19 @@ impl Data {
     }
 
     pub fn to_chunk_download_data(&self) -> Option<Vec<ChunkDownloadData>> {
+        use std::io::Write;
+        let _ = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open("/tmp/rust_debug.log")
+            .and_then(|mut f| {
+                writeln!(
+                    f,
+                    "DEBUG to_chunk_download_data: chunks={:?}, chunk_headers={:?}",
+                    self.chunks.as_ref().map(|c| c.len()),
+                    self.chunk_headers.as_ref().map(|h| h.len())
+                )
+            });
         let chunks = self.chunks.as_ref()?;
         let chunk_headers = self.chunk_headers.as_ref()?;
         let chunk_download_data = chunks
@@ -428,23 +445,33 @@ impl TryFrom<&RowType> for query_types::RowType {
     type Error = QueryResponseError;
 
     fn try_from(value: &RowType) -> Result<Self, Self::Error> {
-        let name = value.name.clone();
+        let name = value.name.clone().unwrap_or_else(|| "UNKNOWN".to_string());
         let nullable = value.nullable;
 
-        match value.type_.to_uppercase().as_str() {
-            "TEXT" => {
+        fn normalize_type_field(input: Option<&String>) -> Option<String> {
+            input
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_uppercase())
+        }
+
+        let logical_type = normalize_type_field(value.logical_type.as_ref());
+        let base_type = normalize_type_field(value.type_.as_ref());
+        let ext_type = normalize_type_field(value.ext_type_name.as_ref());
+        let type_str = ext_type
+            .clone()
+            .or_else(|| logical_type.clone())
+            .or_else(|| base_type.clone())
+            .unwrap_or_else(|| "TEXT".to_string());
+
+        match type_str.as_str() {
+            "TEXT" | "VARCHAR" | "CHAR" | "STRING" => {
                 let length = value.length.context(MissingParameterSnafu {
-                    parameter: format!(
-                        "row type -> length for TEXT/STRING/VARCHAR/CHAR column '{name}'"
-                    ),
+                    parameter: format!("row type -> length for TEXT column '{name}'"),
                 })?;
-
                 let byte_length = value.byte_length.context(MissingParameterSnafu {
-                    parameter: format!(
-                        "row type -> byte length for TEXT/STRING/VARCHAR/CHAR column '{name}'"
-                    ),
+                    parameter: format!("row type -> byte length for TEXT column '{name}'"),
                 })?;
-
                 Ok(query_types::RowType::text(
                     &name,
                     nullable,
@@ -452,29 +479,86 @@ impl TryFrom<&RowType> for query_types::RowType {
                     byte_length,
                 ))
             }
-            "FIXED" => {
+            "FIXED" | "NUMBER" | "NUMERIC" | "INT" | "INTEGER" | "DECIMAL" | "DECFLOAT" => {
                 let precision = value.precision.context(MissingParameterSnafu {
-                    parameter: format!(
-                        "row type -> precision for FIXED/NUMBER/NUMERIC/DECIMAL column '{name}'"
-                    ),
+                    parameter: format!("row type -> precision for FIXED column '{name}'"),
                 })?;
+                let scale = value.scale.unwrap_or(0);
 
-                let scale = value.scale.context(MissingParameterSnafu {
-                    parameter: format!(
-                        "row type -> scale for FIXED/NUMBER/NUMERIC/DECIMAL column '{name}'"
-                    ),
-                })?;
+                use std::io::Write;
+                let _ = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open("/tmp/rust_debug.log")
+                    .and_then(|mut f| writeln!(f, "DEBUG query_response: Parsing FIXED/DECIMAL type: name={name}, type={}, precision={precision}, scale={scale}, value.scale={:?}", type_str, value.scale));
 
+                // Always use Fixed type - arrow_utils will handle scale>0 as Decimal128
+                let original_type = base_type
+                    .or(logical_type)
+                    .or_else(|| Some(type_str.clone()));
                 let row_type = query_types::RowType::fixed(&name, nullable, precision, scale)
                     .map_err(|e| {
                         InvalidFormatSnafu {
-                            message: format!("Invalid type for column '{name}': {e}"),
+                            message: format!("{e}"),
                         }
                         .build()
-                    })?;
-
+                    })?
+                    .with_original_type(original_type);
                 Ok(row_type)
             }
+            "REAL" | "FLOAT4" => Ok(query_types::RowType::real(&name, nullable)),
+            "DOUBLE" | "FLOAT" | "FLOAT8" => Ok(query_types::RowType::double(&name, nullable)),
+            "BINARY" => {
+                let length = value.length.unwrap_or(8388608); // Snowflake default
+                Ok(query_types::RowType::binary(&name, nullable, length))
+            }
+            "VARBINARY" => {
+                let max_length = value.length.unwrap_or(8388608);
+                Ok(query_types::RowType::varbinary(&name, nullable, max_length))
+            }
+            "BOOLEAN" => Ok(query_types::RowType::boolean(&name, nullable)),
+            "DATE" => Ok(query_types::RowType::date(&name, nullable)),
+            "TIME" => {
+                let precision = value.scale.unwrap_or(9) as u8; // Default precision
+                query_types::RowType::time(&name, nullable, precision).map_err(|e| {
+                    InvalidFormatSnafu {
+                        message: format!("{e}"),
+                    }
+                    .build()
+                })
+            }
+            "TIMESTAMP_NTZ" | "TIMESTAMP" => {
+                let precision = value.scale.unwrap_or(9) as u8;
+                query_types::RowType::timestamp_ntz(&name, nullable, precision).map_err(|e| {
+                    InvalidFormatSnafu {
+                        message: format!("{e}"),
+                    }
+                    .build()
+                })
+            }
+            "TIMESTAMP_LTZ" => {
+                let precision = value.scale.unwrap_or(9) as u8;
+                query_types::RowType::timestamp_ltz(&name, nullable, precision).map_err(|e| {
+                    InvalidFormatSnafu {
+                        message: format!("{e}"),
+                    }
+                    .build()
+                })
+            }
+            "TIMESTAMP_TZ" => {
+                let precision = value.scale.unwrap_or(9) as u8;
+                query_types::RowType::timestamp_tz(&name, nullable, precision).map_err(|e| {
+                    InvalidFormatSnafu {
+                        message: format!("{e}"),
+                    }
+                    .build()
+                })
+            }
+            "VARIANT" => Ok(query_types::RowType::variant(&name, nullable)),
+            "OBJECT" => Ok(query_types::RowType::object(&name, nullable)),
+            "ARRAY" => Ok(query_types::RowType::array(&name, nullable)),
+            "GEOGRAPHY" => Ok(query_types::RowType::geography(&name, nullable)),
+            "GEOMETRY" => Ok(query_types::RowType::geometry(&name, nullable)),
             other => InvalidFormatSnafu {
                 message: format!("Unsupported column type '{other}' for column '{name}'"),
             }
@@ -555,10 +639,15 @@ impl TryFrom<&Credentials> for file_manager::Credentials {
             })?
             .clone();
 
+        let azure_sas_token = value._azure_sas_token.clone().unwrap_or_default();
+        let gcs_access_token = value._gcs_access_token.clone().unwrap_or_default();
+
         Ok(file_manager::Credentials {
             aws_key_id,
             aws_secret_key,
             aws_token,
+            azure_sas_token,
+            gcs_access_token,
         })
     }
 }

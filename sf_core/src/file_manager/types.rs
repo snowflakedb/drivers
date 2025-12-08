@@ -94,6 +94,8 @@ pub struct Credentials {
     pub aws_key_id: String,
     pub aws_secret_key: String,
     pub aws_token: String,
+    pub azure_sas_token: String,
+    pub gcs_access_token: String,
 }
 
 #[derive(Debug, Clone)]

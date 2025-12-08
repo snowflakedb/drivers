@@ -13,6 +13,86 @@ const CONTENT_TYPE_OCTET_STREAM: &str = "application/octet-stream";
 
 // TODO: streaming instead of loading the whole file into memory
 
+/// Storage provider detection
+#[derive(Debug, Clone, PartialEq)]
+pub enum StorageProvider {
+    S3,
+    Azure,
+    Gcs,
+}
+
+impl StageInfo {
+    /// Detect which cloud storage provider based on credentials
+    pub fn detect_provider(&self) -> StorageProvider {
+        if !self.creds.azure_sas_token.is_empty() {
+            StorageProvider::Azure
+        } else if !self.creds.gcs_access_token.is_empty() {
+            StorageProvider::Gcs
+        } else {
+            // Default to S3 if AWS credentials present
+            StorageProvider::S3
+        }
+    }
+}
+
+/// Main upload router that delegates to the appropriate cloud provider
+pub async fn upload_file_or_skip(
+    encryption_result: EncryptionResult,
+    stage_info: &StageInfo,
+    filename: &str,
+    overwrite: bool,
+) -> Result<String, UploadFileError> {
+    match stage_info.detect_provider() {
+        StorageProvider::S3 => {
+            upload_to_s3_or_skip(encryption_result, stage_info, filename, overwrite).await
+        }
+        StorageProvider::Azure => {
+            // TODO: Implement Azure Blob Storage
+            tracing::warn!("Azure Blob Storage not yet implemented");
+            UnsupportedUploadProviderSnafu {
+                provider: "Azure".to_string(),
+            }
+            .fail()
+        }
+        StorageProvider::Gcs => {
+            // TODO: Implement Google Cloud Storage
+            tracing::warn!("Google Cloud Storage not yet implemented");
+            UnsupportedUploadProviderSnafu {
+                provider: "GCS".to_string(),
+            }
+            .fail()
+        }
+    }
+}
+
+/// Main download router that delegates to the appropriate cloud provider
+pub async fn download_file(
+    stage_info: &StageInfo,
+    filename: &str,
+) -> Result<(Vec<u8>, EncryptedFileMetadata), DownloadFileError> {
+    match stage_info.detect_provider() {
+        StorageProvider::S3 => download_from_s3(stage_info, filename).await,
+        StorageProvider::Azure => {
+            tracing::warn!("Azure Blob Storage not yet implemented");
+            UnsupportedDownloadProviderSnafu {
+                provider: "Azure".to_string(),
+            }
+            .fail()
+        }
+        StorageProvider::Gcs => {
+            tracing::warn!("Google Cloud Storage not yet implemented");
+            UnsupportedDownloadProviderSnafu {
+                provider: "GCS".to_string(),
+            }
+            .fail()
+        }
+    }
+}
+
+// ============================================================================
+// AWS S3 IMPLEMENTATION
+// ============================================================================
+
 /// Uploads a file to S3, skipping if it already exists and `overwrite` is false.
 pub async fn upload_to_s3_or_skip(
     encryption_result: EncryptionResult,
@@ -20,22 +100,25 @@ pub async fn upload_to_s3_or_skip(
     filename: &str,
     overwrite: bool,
 ) -> Result<String, UploadFileError> {
-    // Check if the file already exists in S3
     let s3_client = create_s3_client(stage_info, SNOWFLAKE_UPLOAD_PROVIDER).await;
-    let s3_key = format!("{}{filename}", stage_info.key_prefix);
+    // Ensure there's a / between key_prefix and filename
+    let key_prefix = if stage_info.key_prefix.ends_with('/') {
+        stage_info.key_prefix.clone()
+    } else {
+        format!("{}/", stage_info.key_prefix)
+    };
+    let s3_key = format!("{}{filename}", key_prefix);
 
-    if !overwrite && check_if_file_exists(&s3_client, stage_info, &s3_key).await? {
-        tracing::info!("File already exists in S3: {}", s3_key);
+    if !overwrite && check_if_s3_file_exists(&s3_client, stage_info, &s3_key).await? {
+        tracing::info!("File already exists in S3: {s3_key}");
         return Ok("SKIPPED".to_string());
     }
 
-    // Proceed with upload if the file does not exist or overwrite is true
     upload_to_s3(encryption_result, &s3_client, stage_info, &s3_key).await?;
     Ok("UPLOADED".to_string())
 }
 
-/// Returns true if the file exists in S3, false if it does not.
-async fn check_if_file_exists(
+async fn check_if_s3_file_exists(
     s3_client: &S3Client,
     stage_info: &StageInfo,
     s3_key: &str,
@@ -59,7 +142,6 @@ async fn upload_to_s3(
     stage_info: &StageInfo,
     s3_key: &str,
 ) -> Result<(), UploadFileError> {
-    // Serialize encryption metadata
     let mat_desc = serde_json::to_string(&encryption_result.metadata.material_desc)
         .context(SerializationSnafu)?;
 
@@ -74,17 +156,15 @@ async fn upload_to_s3(
         .metadata("x-amz-key", &encryption_result.metadata.encrypted_key)
         .metadata("x-amz-matdesc", mat_desc);
 
-    tracing::trace!("PUT object request: {:?}", put_object_request);
+    tracing::trace!("PUT object request: {put_object_request:?}");
 
-    // Upload to S3 (with optional encryption metadata)
-    let result = put_object_request
+    put_object_request
         .send()
         .await
         .map_err(aws_sdk_s3::Error::from)
         .context(S3UploadSnafu)?;
 
-    tracing::debug!("S3 upload result: {:?}", result);
-
+    tracing::debug!("S3 upload complete: {s3_key}");
     Ok(())
 }
 
@@ -95,7 +175,6 @@ pub async fn download_from_s3(
     let s3_client = create_s3_client(stage_info, SNOWFLAKE_DOWNLOAD_PROVIDER).await;
     let s3_key = format!("{}{filename}", stage_info.key_prefix);
 
-    // Download from S3
     let response = s3_client
         .get_object()
         .bucket(stage_info.bucket.clone())
@@ -105,7 +184,6 @@ pub async fn download_from_s3(
         .map_err(aws_sdk_s3::Error::from)
         .context(S3DownloadSnafu)?;
 
-    // Extract metadata from S3 response and construct the metadata structure directly
     let metadata_map = response.metadata().context(MissingFileMetadataSnafu {
         field: "All fields".to_string(),
     })?;
@@ -119,7 +197,6 @@ pub async fn download_from_s3(
     let material_desc: MaterialDescription =
         serde_json::from_str(mat_desc_str).context(DeserializationSnafu)?;
 
-    // Construct the metadata structure directly without intermediate variables
     let file_metadata = EncryptedFileMetadata {
         encrypted_key: metadata_map
             .get("x-amz-key")
@@ -142,53 +219,67 @@ pub async fn download_from_s3(
             .to_owned(),
     };
 
-    // Read the encrypted data from the response body
-    let encrypted_data = response
+    let body_bytes = response
         .body
         .collect()
         .await
-        .context(ByteStreamSnafu)?
-        .into_bytes()
-        .to_vec();
+        .expect("Failed to collect body bytes");
+    let encrypted_data = body_bytes.into_bytes().to_vec();
 
+    tracing::debug!(
+        "S3 download complete: {s3_key}, size: {}",
+        encrypted_data.len()
+    );
     Ok((encrypted_data, file_metadata))
 }
 
-async fn create_s3_client(stage_info: &StageInfo, provider_name: &'static str) -> S3Client {
-    let credentials = Credentials::new(
+async fn create_s3_client(stage_info: &StageInfo, provider: &'static str) -> S3Client {
+    let creds = Credentials::new(
         &stage_info.creds.aws_key_id,
         &stage_info.creds.aws_secret_key,
         Some(stage_info.creds.aws_token.clone()),
         None,
-        provider_name,
+        provider,
     );
 
     let config = aws_config::defaults(BehaviorVersion::latest())
-        .credentials_provider(credentials)
         .region(Region::new(stage_info.region.clone()))
+        .credentials_provider(creds)
         .load()
         .await;
 
     S3Client::new(&config)
 }
 
+// ============================================================================
+// ERROR TYPES
+// ============================================================================
+
 #[derive(Snafu, Debug)]
+#[snafu(visibility(pub))]
 pub enum UploadFileError {
     #[snafu(display("Failed to upload file to S3"))]
     S3Upload {
-        #[snafu(source(from(aws_sdk_s3::Error, Box::new)))]
-        source: Box<aws_sdk_s3::Error>,
+        source: aws_sdk_s3::Error,
         #[snafu(implicit)]
         location: Location,
     },
+
     #[snafu(display("Failed to check if file exists in S3"))]
     S3Head {
-        #[snafu(source(from(aws_sdk_s3::Error, Box::new)))]
-        source: Box<aws_sdk_s3::Error>,
+        source: aws_sdk_s3::Error,
         #[snafu(implicit)]
         location: Location,
     },
-    #[snafu(display("Failed to serialize metadata during file upload"))]
+
+    #[snafu(display("Unsupported upload storage provider: {provider}"))]
+    UnsupportedUploadProvider {
+        provider: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("Failed to serialize metadata"))]
     Serialization {
         source: serde_json::Error,
         #[snafu(implicit)]
@@ -197,29 +288,32 @@ pub enum UploadFileError {
 }
 
 #[derive(Snafu, Debug)]
+#[snafu(visibility(pub))]
 pub enum DownloadFileError {
     #[snafu(display("Failed to download file from S3"))]
     S3Download {
-        #[snafu(source(from(aws_sdk_s3::Error, Box::new)))]
-        source: Box<aws_sdk_s3::Error>,
+        source: aws_sdk_s3::Error,
         #[snafu(implicit)]
         location: Location,
     },
-    #[snafu(display("Failed to deserialize metadata during file download"))]
-    Deserialization {
-        source: serde_json::Error,
+
+    #[snafu(display("Unsupported download storage provider: {provider}"))]
+    UnsupportedDownloadProvider {
+        provider: String,
         #[snafu(implicit)]
         location: Location,
     },
-    #[snafu(display("File metadata missing: {field}"))]
+
+    #[snafu(display("Missing file metadata: {field}"))]
     MissingFileMetadata {
         field: String,
         #[snafu(implicit)]
         location: Location,
     },
-    #[snafu(display("Failed to read byte stream from S3"))]
-    ByteStream {
-        source: aws_sdk_s3::primitives::ByteStreamError,
+
+    #[snafu(display("Failed to deserialize metadata"))]
+    Deserialization {
+        source: serde_json::Error,
         #[snafu(implicit)]
         location: Location,
     },

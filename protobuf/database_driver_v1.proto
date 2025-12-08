@@ -112,6 +112,8 @@ message DriverException {
 message ExecuteResult {
   ArrowArrayStreamPtr stream = 1;
   int64 rows_affected = 2;
+  string query_id = 3;
+  repeated string child_result_ids = 4;
 }
 
 // Partitioned result
@@ -432,11 +434,18 @@ message StatementBindStreamResponse {
 
 message StatementExecuteQueryRequest {
   StatementHandle stmt_handle = 1;
+  bool describe_only = 2;
 }
 
 message StatementExecuteQueryResponse {
   ExecuteResult result = 1;
 }
+
+message StatementCancelRequest {
+  StatementHandle stmt_handle = 1;
+}
+
+message StatementCancelResponse {}
 
 message StatementExecutePartitionsRequest {
   StatementHandle stmt_handle = 1;
@@ -496,6 +505,7 @@ service DatabaseDriver {
   rpc StatementBind(StatementBindRequest) returns (StatementBindResponse);
   rpc StatementBindStream(StatementBindStreamRequest) returns (StatementBindStreamResponse);
   rpc StatementExecuteQuery(StatementExecuteQueryRequest) returns (StatementExecuteQueryResponse);
+  rpc StatementCancel(StatementCancelRequest) returns (StatementCancelResponse);
   rpc StatementExecutePartitions(StatementExecutePartitionsRequest) returns (StatementExecutePartitionsResponse);
   rpc StatementReadPartition(StatementReadPartitionRequest) returns (StatementReadPartitionResponse);
 }

@@ -94,6 +94,10 @@ pub enum SqlState {
     /// 0A000 - Feature not supported
     FeatureNotSupported,
 
+    // Invalid cursor state class (24)
+    /// 24000 - Invalid cursor state
+    InvalidCursorState,
+
     // Invalid transaction state class (25)
     /// 25000 - Invalid transaction state
     InvalidTransactionState,
@@ -332,6 +336,7 @@ impl SqlState {
             SqlState::CommunicationLinkFailure => "08S01",
             SqlState::TriggeredActionException => "09000",
             SqlState::FeatureNotSupported => "0A000",
+            SqlState::InvalidCursorState => "24000",
             SqlState::InvalidTransactionState => "25000",
             SqlState::TransactionStateUnknown => "25S01",
             SqlState::TransactionIsStillActive => "25S02",
@@ -501,6 +506,7 @@ impl FromStr for SqlState {
             "08S01" => SqlState::CommunicationLinkFailure,
             "09000" => SqlState::TriggeredActionException,
             "0A000" => SqlState::FeatureNotSupported,
+            "24000" => SqlState::InvalidCursorState,
             "25000" => SqlState::InvalidTransactionState,
             "25S01" => SqlState::TransactionStateUnknown,
             "25S02" => SqlState::TransactionIsStillActive,

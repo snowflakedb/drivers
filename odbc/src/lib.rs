@@ -2,7 +2,11 @@ mod api;
 pub mod c_api;
 mod cdata_types;
 mod read_arrow;
+mod timezone;
 mod write_arrow;
+
+#[cfg(test)]
+mod read_arrow_tests;
 
 extern crate sf_core;
 extern crate tracing;

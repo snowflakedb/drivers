@@ -14,6 +14,49 @@ use crate::api::{
 };
 use odbc_sys as sql;
 
+fn encode_utf16(value: &str) -> Vec<sql::WChar> {
+    value.encode_utf16().map(|c| c as sql::WChar).collect()
+}
+
+fn write_wide_string(value: &str, dest: *mut sql::WChar, capacity: usize) {
+    if dest.is_null() || capacity == 0 {
+        return;
+    }
+
+    // On macOS, SQLWCHAR is wchar_t which is 4 bytes (UTF-32)
+    // We need to write UTF-32 values, not UTF-16
+    #[cfg(target_os = "macos")]
+    {
+        let dest32 = dest as *mut u32;
+        let max_chars = capacity.saturating_sub(1);
+        let chars: Vec<u32> = value.chars().map(|c| c as u32).collect();
+        let copy_len = chars.len().min(max_chars);
+        unsafe {
+            if copy_len > 0 {
+                std::ptr::copy_nonoverlapping(chars.as_ptr(), dest32, copy_len);
+            }
+            std::ptr::write(dest32.add(copy_len), 0);
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        let encoded = encode_utf16(value);
+        let max_chars = capacity.saturating_sub(1);
+        let copy_len = encoded.len().min(max_chars);
+        unsafe {
+            if copy_len > 0 {
+                std::ptr::copy_nonoverlapping(encoded.as_ptr(), dest, copy_len);
+            }
+            std::ptr::write(dest.add(copy_len), 0);
+        }
+    }
+}
+
+fn utf16_length(value: &str) -> sql::SmallInt {
+    value.encode_utf16().count() as sql::SmallInt
+}
+
 /// ODBC Diagnostic Identifiers according to the ODBC standard
 ///
 /// These identifiers are used with SQLGetDiagField to retrieve specific
@@ -193,6 +236,9 @@ impl<'a> WithDiagnosticInfo for Statement<'a> {
 }
 
 pub fn clear_diag_info(handle_type: sql::HandleType, handle: sql::Handle) {
+    if handle.is_null() {
+        return;
+    }
     let t: &mut dyn WithDiagnosticInfo = match handle_type {
         sql::HandleType::Env => env_from_handle(handle),
         sql::HandleType::Dbc => conn_from_handle(handle),
@@ -207,6 +253,9 @@ pub fn set_diag_info_from_result(
     handle: sql::Handle,
     result: &OdbcResult<()>,
 ) {
+    if handle.is_null() {
+        return;
+    }
     let t: &mut dyn WithDiagnosticInfo = match handle_type {
         sql::HandleType::Env => env_from_handle(handle),
         sql::HandleType::Dbc => conn_from_handle(handle),
@@ -220,6 +269,9 @@ pub fn set_diag_info_from_result(
     match result {
         Ok(_) => {}
         Err(error) => {
+            if matches!(error, OdbcError::NeedData { .. }) {
+                return;
+            }
             diagnostic_info.add_record(error.to_diagnostic_record());
         }
     }
@@ -276,11 +328,65 @@ pub unsafe fn get_diag_rec(
             message_text,
             buffer_length as sql::Len,
         )?;
-        *native_error_ptr = record.native_error;
-        let max_msg_len = (buffer_length - 1).max(0) as usize;
-        let written = std::cmp::min(record.message_text.len(), max_msg_len);
-        *text_length_ptr = written as sql::SmallInt;
+        if !native_error_ptr.is_null() {
+            *native_error_ptr = record.native_error;
+        }
+        if !text_length_ptr.is_null() {
+            let max_msg_len = (buffer_length - 1).max(0) as usize;
+            let written = std::cmp::min(record.message_text.len(), max_msg_len);
+            *text_length_ptr = written as sql::SmallInt;
+        }
     }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+pub unsafe fn get_diag_rec_w(
+    handle_type: sql::HandleType,
+    handle: sql::Handle,
+    rec_number: sql::SmallInt,
+    sql_state: *mut sql::WChar,
+    native_error_ptr: *mut sql::Integer,
+    message_text: *mut sql::WChar,
+    buffer_length: sql::SmallInt,
+    text_length_ptr: *mut sql::SmallInt,
+) -> OdbcResult<()> {
+    let diagnostic_info = get_diag_info(handle_type, handle)?;
+    if rec_number <= 0 {
+        return InvalidRecordNumberSnafu { number: rec_number }.fail();
+    }
+
+    if rec_number > diagnostic_info.records.len() as i16 {
+        return NoMoreDataSnafu.fail();
+    }
+
+    let record = diagnostic_info
+        .records
+        .get((rec_number - 1) as usize)
+        .unwrap();
+
+    let state = &record.sql_state.as_str()[..5.min(record.sql_state.as_str().len())];
+    write_wide_string(state, sql_state, 6);
+
+    let capacity = if buffer_length <= 0 {
+        0
+    } else {
+        buffer_length as usize
+    };
+    write_wide_string(&record.message_text, message_text, capacity);
+
+    if !native_error_ptr.is_null() {
+        unsafe {
+            *native_error_ptr = record.native_error;
+        }
+    }
+
+    if !text_length_ptr.is_null() {
+        unsafe {
+            *text_length_ptr = utf16_length(&record.message_text);
+        }
+    }
+
     Ok(())
 }
 
