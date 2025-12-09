@@ -1,41 +1,37 @@
 """
-Result batch iterators for processing Arrow data.
+Arrow stream iterator for processing Arrow data.
 
-This module provides batch iteration over Arrow record batches,
-similar to the original snowflake-connector-python result_batch module
-but simplified for the universal-driver architecture.
+This module provides iteration over Arrow record batch streams,
+converting them to Python tuples or dicts row-by-row using C++ converters.
 """
 
 from __future__ import annotations
 
-from typing import Any, Iterator
+from typing import Iterator
 
 import pyarrow
 
-from snowflake.ud_connector.arrow_batch_converter import PyArrowBatchConverter
+from snowflake.ud_connector._arrow_batch_iterator import PyArrowBatchIterator
 from snowflake.ud_connector.arrow_context import ArrowConverterContext
 
 
-class ArrowBatchIterator:
-    """Iterator that processes Arrow record batches and converts them to Python tuples."""
+class ArrowStreamIterator:
+    """Iterator that processes Arrow record batch streams and converts them to Python tuples."""
 
     def __init__(
         self,
         reader: pyarrow.RecordBatchReader,
-        schema: list[dict[str, Any]],
         use_dict_result: bool = False,
-        arrow_context: Any = None,
+        arrow_context: ArrowConverterContext | None = None,
     ):
-        """Initialize the batch iterator.
+        """Initialize the stream iterator.
 
         Args:
             reader: PyArrow RecordBatchReader to iterate over
-            schema: List of column metadata dicts
             use_dict_result: If True, return dicts instead of tuples
             arrow_context: Arrow context for C++ converter (optional)
         """
         self.reader = reader
-        self.schema = schema
         self.use_dict_result = use_dict_result
         # Create default context if none provided
         self.arrow_context = arrow_context if arrow_context else ArrowConverterContext()
@@ -61,7 +57,7 @@ class ArrowBatchIterator:
                             return tuple()
 
                     # Create C++ batch converter for this batch
-                    self._current_batch_iterator = PyArrowBatchConverter(
+                    self._current_batch_iterator = PyArrowBatchIterator(
                         batch,
                         self.arrow_context,
                         use_dict_result=self.use_dict_result,
@@ -127,7 +123,7 @@ class ArrowBatchIterator:
                 batch = self.reader.read_next_batch()
 
                 if batch.num_columns > 0:
-                    batch_iterator = PyArrowBatchConverter(
+                    batch_iterator = PyArrowBatchIterator(
                         batch,
                         self.arrow_context,
                         use_dict_result=self.use_dict_result,
