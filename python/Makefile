@@ -1,4 +1,4 @@
-# Override these at command line: make test PYTHON_VERSION=3.12 OS_VERSION=windows-latest PYTEST_ARGS="-k test_connection" SKIP_BUILD=1
+# Override these at command line: make test PYTHON_VERSION=3.12 OS_VERSION=windows-latest PYTEST_ARGS="-k test_connection" SKIP_BUILD=1 BUILD_CPP_EXTENSIONS=1
 PYTHON_VERSION ?= $(shell python3 -c 'import sys;print(f"{sys.version_info.major}.{sys.version_info.minor}")')
 # 3.11 -> 311 for tox env names
 PYTHON_ID := $(subst .,,$(PYTHON_VERSION))
@@ -8,6 +8,7 @@ PYTEST_ARGS ?=
 FAIL_ON_REGRESSIONS ?= 0
 OS_VERSION ?= ubuntu-latest
 SKIP_BUILD ?= 0
+BUILD_CPP_EXTENSIONS ?= 0
 
 # Project root (absolute)
 PROJECT_ROOT := $(abspath ..)
@@ -116,6 +117,10 @@ setup:
 		echo "cmake already installed: $$(cmake --version | head -1)"; \
 	fi
 	uv sync --all-extras
+	@if [ "$(BUILD_CPP_EXTENSIONS)" = "1" ]; then \
+		echo "Building C++ extensions (BUILD_CPP_EXTENSIONS=1)..."; \
+		uv pip install -e .; \
+	fi
 	mkdir -p $(REPORTS_DIR)
 
 build-wheel: setup
