@@ -1,5 +1,5 @@
-#ifndef PC_ARROWBATCHCONVERTER_HPP
-#define PC_ARROWBATCHCONVERTER_HPP
+#ifndef PC_ARROWBATCHITERATOR_HPP
+#define PC_ARROWBATCHITERATOR_HPP
 
 #include <memory>
 #include <vector>
@@ -21,10 +21,10 @@ std::shared_ptr<sf::IColumnConverter> getConverterFromSchema(ArrowSchema* schema
                                                              Logger* logger);
 
 /**
- * Arrow batch converter for converting a single RecordBatch to Python rows.
+ * Arrow batch iterator for converting a single RecordBatch to Python rows.
  * Takes Arrow C Data Interface pointers and converts row-by-row.
  */
-class CArrowBatchConverter {
+class CArrowBatchIterator {
  public:
   /**
    * Constructor - takes Arrow C Array and Schema
@@ -34,13 +34,13 @@ class CArrowBatchConverter {
    * @param use_numpy Whether to use numpy types
    * @param check_error_on_every_column Check Python errors after each column
    */
-  CArrowBatchConverter(ArrowArray* c_array, ArrowSchema* c_schema, PyObject* context,
-                       PyObject* use_numpy, PyObject* check_error_on_every_column);
+  CArrowBatchIterator(ArrowArray* c_array, ArrowSchema* c_schema, PyObject* context,
+                      PyObject* use_numpy, PyObject* check_error_on_every_column);
 
   /**
    * Destructor
    */
-  virtual ~CArrowBatchConverter();
+  virtual ~CArrowBatchIterator();
 
   /**
    * Get the next row as a Python tuple
@@ -119,12 +119,12 @@ class CArrowBatchConverter {
 /**
  * Dictionary result variant - returns Python dicts instead of tuples
  */
-class DictCArrowBatchConverter : public CArrowBatchConverter {
+class DictCArrowBatchIterator : public CArrowBatchIterator {
  public:
-  DictCArrowBatchConverter(ArrowArray* c_array, ArrowSchema* c_schema, PyObject* context,
-                           PyObject* use_numpy);
+  DictCArrowBatchIterator(ArrowArray* c_array, ArrowSchema* c_schema, PyObject* context,
+                          PyObject* use_numpy);
 
-  ~DictCArrowBatchConverter() = default;
+  ~DictCArrowBatchIterator() = default;
 
  private:
   void createRowPyObject() override;
@@ -132,4 +132,5 @@ class DictCArrowBatchConverter : public CArrowBatchConverter {
 
 }  // namespace sf
 
-#endif  // PC_ARROWBATCHCONVERTER_HPP
+#endif  // PC_ARROWBATCHITERATOR_HPP
+

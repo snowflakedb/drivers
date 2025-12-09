@@ -46,13 +46,6 @@ if _ABLE_TO_COMPILE_EXTENSIONS and not SNOWFLAKE_DISABLE_COMPILE_ARROW_EXTENSION
     extensions = cythonize(
         [
             Extension(
-                name="snowflake.ud_connector.nanoarrow_arrow_iterator",
-                sources=[
-                    os.path.join(NANOARROW_SRC_DIR, "nanoarrow_arrow_iterator.pyx")
-                ],
-                language="c++",
-            ),
-            Extension(
                 name="snowflake.ud_connector.arrow_batch_converter",
                 sources=[os.path.join(NANOARROW_SRC_DIR, "arrow_batch_converter.pyx")],
                 language="c++",
@@ -69,10 +62,7 @@ if _ABLE_TO_COMPILE_EXTENSIONS and not SNOWFLAKE_DISABLE_COMPILE_ARROW_EXTENSION
                 ext.extra_link_args.append("-O0")
             current_dir = os.getcwd()
 
-            if ext.name in (
-                "snowflake.ud_connector.nanoarrow_arrow_iterator",
-                "snowflake.ud_connector.arrow_batch_converter",
-            ):
+            if ext.name == "snowflake.ud_connector.arrow_batch_converter":
                 NANOARROW_CPP_SRC_DIR = os.path.join(CONNECTOR_SRC_DIR, "nanoarrow_cpp")
                 NANOARROW_ARROW_ITERATOR_SRC_DIR = os.path.join(
                     NANOARROW_CPP_SRC_DIR, "ArrowIterator"
@@ -90,8 +80,7 @@ if _ABLE_TO_COMPILE_EXTENSIONS and not SNOWFLAKE_DISABLE_COMPILE_ARROW_EXTENSION
                         "ArrayConverter.cpp",
                         "BinaryConverter.cpp",
                         "BooleanConverter.cpp",
-                        "CArrowBatchConverter.cpp",
-                        "CArrowChunkIterator.cpp",
+                        "CArrowBatchIterator.cpp",
                         "CArrowIterator.cpp",
                         "CArrowTableIterator.cpp",
                         "DateConverter.cpp",
