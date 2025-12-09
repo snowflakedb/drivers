@@ -4,7 +4,7 @@
 {
     "distutils": {
         "depends": [
-            "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/CArrowBatchConverter.hpp",
+            "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/CArrowBatchIterator.hpp",
             "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/nanoarrow.h"
         ],
         "include_dirs": [
@@ -1153,7 +1153,7 @@ static int __Pyx_init_co_variables(void) {
 #include <stdio.h>
 #include <stdint.h>
 #include "nanoarrow.h"
-#include "CArrowBatchConverter.hpp"
+#include "CArrowBatchIterator.hpp"
 #ifdef _OPENMP
 #include <omp.h>
 #endif /* _OPENMP */
@@ -1547,12 +1547,12 @@ struct __pyx_obj_9snowflake_12ud_connector_21arrow_batch_converter_PyArrowBatchC
  * 
  * cdef class PyArrowBatchConverter:             # <<<<<<<<<<<<<<
  *     """
- *     Python wrapper for C++ Arrow batch converter.
+ *     Python wrapper for C++ Arrow batch iterator.
 */
 struct __pyx_obj_9snowflake_12ud_connector_21arrow_batch_converter_PyArrowBatchConverter {
   PyObject_HEAD
-  sf::CArrowBatchConverter *converter;
-  sf::DictCArrowBatchConverter *dict_converter;
+  sf::CArrowBatchIterator *converter;
+  sf::DictCArrowBatchIterator *dict_converter;
   bool use_dict_result;
   PyObject *arrow_context;
 };
@@ -2464,7 +2464,7 @@ static __pyx_mstatetype * const __pyx_mstate_global = &__pyx_mstate_global_stati
 #define __pyx_kp_u_ __pyx_string_tab[0]
 #define __pyx_kp_u_Error_converting_row __pyx_string_tab[1]
 #define __pyx_kp_u_Failed_to_extract_Arrow_C_pointe __pyx_string_tab[2]
-#define __pyx_kp_u_Failed_to_initialize_batch_conve __pyx_string_tab[3]
+#define __pyx_kp_u_Failed_to_initialize_batch_itera __pyx_string_tab[3]
 #define __pyx_kp_u_PyArrow_version_too_old_Need_pya __pyx_string_tab[4]
 #define __pyx_kp_u_disable __pyx_string_tab[5]
 #define __pyx_kp_u_enable __pyx_string_tab[6]
@@ -3049,22 +3049,22 @@ static int __pyx_pf_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowB
 
   /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_converter.pyx":120
  * 
- *         # Create appropriate converter
+ *         # Create appropriate iterator
  *         if use_dict_result:             # <<<<<<<<<<<<<<
- *             self.dict_converter = new DictCArrowBatchConverter(
+ *             self.dict_converter = new DictCArrowBatchIterator(
  *                 c_array_ptr,
 */
   __pyx_t_14 = __Pyx_PyObject_IsTrue(__pyx_v_use_dict_result); if (unlikely((__pyx_t_14 < 0))) __PYX_ERR(0, 120, __pyx_L1_error)
   if (__pyx_t_14) {
 
     /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_converter.pyx":121
- *         # Create appropriate converter
+ *         # Create appropriate iterator
  *         if use_dict_result:
- *             self.dict_converter = new DictCArrowBatchConverter(             # <<<<<<<<<<<<<<
+ *             self.dict_converter = new DictCArrowBatchIterator(             # <<<<<<<<<<<<<<
  *                 c_array_ptr,
  *                 c_schema_ptr,
 */
-    __pyx_v_self->dict_converter = new sf::DictCArrowBatchConverter(__pyx_v_c_array_ptr, __pyx_v_c_schema_ptr, ((PyObject *)__pyx_v_arrow_context), ((PyObject *)__pyx_v_use_numpy));
+    __pyx_v_self->dict_converter = new sf::DictCArrowBatchIterator(__pyx_v_c_array_ptr, __pyx_v_c_schema_ptr, ((PyObject *)__pyx_v_arrow_context), ((PyObject *)__pyx_v_use_numpy));
 
     /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_converter.pyx":129
  * 
@@ -3080,7 +3080,7 @@ static int __pyx_pf_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowB
  *             init_ret = self.dict_converter.checkInitializationStatus()
  *             if init_ret.exception != NULL:             # <<<<<<<<<<<<<<
  *                 error_msg = <object>init_ret.exception
- *                 raise RuntimeError(f"Failed to initialize batch converter: {error_msg}")
+ *                 raise RuntimeError(f"Failed to initialize batch iterator: {error_msg}")
 */
     __pyx_t_14 = (__pyx_v_init_ret.exception != NULL);
     if (unlikely(__pyx_t_14)) {
@@ -3089,7 +3089,7 @@ static int __pyx_pf_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowB
  *             init_ret = self.dict_converter.checkInitializationStatus()
  *             if init_ret.exception != NULL:
  *                 error_msg = <object>init_ret.exception             # <<<<<<<<<<<<<<
- *                 raise RuntimeError(f"Failed to initialize batch converter: {error_msg}")
+ *                 raise RuntimeError(f"Failed to initialize batch iterator: {error_msg}")
  *         else:
 */
       __pyx_t_6 = ((PyObject *)__pyx_v_init_ret.exception);
@@ -3100,14 +3100,14 @@ static int __pyx_pf_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowB
       /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_converter.pyx":132
  *             if init_ret.exception != NULL:
  *                 error_msg = <object>init_ret.exception
- *                 raise RuntimeError(f"Failed to initialize batch converter: {error_msg}")             # <<<<<<<<<<<<<<
+ *                 raise RuntimeError(f"Failed to initialize batch iterator: {error_msg}")             # <<<<<<<<<<<<<<
  *         else:
- *             self.converter = new CArrowBatchConverter(
+ *             self.converter = new CArrowBatchIterator(
 */
       __pyx_t_8 = NULL;
       __pyx_t_5 = __Pyx_PyObject_FormatSimple(__pyx_v_error_msg, __pyx_mstate_global->__pyx_empty_unicode); if (unlikely(!__pyx_t_5)) __PYX_ERR(0, 132, __pyx_L1_error)
       __Pyx_GOTREF(__pyx_t_5);
-      __pyx_t_9 = __Pyx_PyUnicode_Concat(__pyx_mstate_global->__pyx_kp_u_Failed_to_initialize_batch_conve, __pyx_t_5); if (unlikely(!__pyx_t_9)) __PYX_ERR(0, 132, __pyx_L1_error)
+      __pyx_t_9 = __Pyx_PyUnicode_Concat(__pyx_mstate_global->__pyx_kp_u_Failed_to_initialize_batch_itera, __pyx_t_5); if (unlikely(!__pyx_t_9)) __PYX_ERR(0, 132, __pyx_L1_error)
       __Pyx_GOTREF(__pyx_t_9);
       __Pyx_DECREF(__pyx_t_5); __pyx_t_5 = 0;
       __pyx_t_7 = 1;
@@ -3128,24 +3128,24 @@ static int __pyx_pf_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowB
  *             init_ret = self.dict_converter.checkInitializationStatus()
  *             if init_ret.exception != NULL:             # <<<<<<<<<<<<<<
  *                 error_msg = <object>init_ret.exception
- *                 raise RuntimeError(f"Failed to initialize batch converter: {error_msg}")
+ *                 raise RuntimeError(f"Failed to initialize batch iterator: {error_msg}")
 */
     }
 
     /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_converter.pyx":120
  * 
- *         # Create appropriate converter
+ *         # Create appropriate iterator
  *         if use_dict_result:             # <<<<<<<<<<<<<<
- *             self.dict_converter = new DictCArrowBatchConverter(
+ *             self.dict_converter = new DictCArrowBatchIterator(
  *                 c_array_ptr,
 */
     goto __pyx_L16;
   }
 
   /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_converter.pyx":134
- *                 raise RuntimeError(f"Failed to initialize batch converter: {error_msg}")
+ *                 raise RuntimeError(f"Failed to initialize batch iterator: {error_msg}")
  *         else:
- *             self.converter = new CArrowBatchConverter(             # <<<<<<<<<<<<<<
+ *             self.converter = new CArrowBatchIterator(             # <<<<<<<<<<<<<<
  *                 c_array_ptr,
  *                 c_schema_ptr,
 */
@@ -3158,7 +3158,7 @@ static int __pyx_pf_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowB
  *             )
  * 
 */
-    __pyx_v_self->converter = new sf::CArrowBatchConverter(__pyx_v_c_array_ptr, __pyx_v_c_schema_ptr, ((PyObject *)__pyx_v_arrow_context), ((PyObject *)__pyx_v_use_numpy), ((PyObject *)__pyx_v_check_error_on_every_column));
+    __pyx_v_self->converter = new sf::CArrowBatchIterator(__pyx_v_c_array_ptr, __pyx_v_c_schema_ptr, ((PyObject *)__pyx_v_arrow_context), ((PyObject *)__pyx_v_use_numpy), ((PyObject *)__pyx_v_check_error_on_every_column));
 
     /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_converter.pyx":143
  * 
@@ -3174,7 +3174,7 @@ static int __pyx_pf_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowB
  *             init_ret = self.converter.checkInitializationStatus()
  *             if init_ret.exception != NULL:             # <<<<<<<<<<<<<<
  *                 error_msg = <object>init_ret.exception
- *                 raise RuntimeError(f"Failed to initialize batch converter: {error_msg}")
+ *                 raise RuntimeError(f"Failed to initialize batch iterator: {error_msg}")
 */
     __pyx_t_14 = (__pyx_v_init_ret.exception != NULL);
     if (unlikely(__pyx_t_14)) {
@@ -3183,7 +3183,7 @@ static int __pyx_pf_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowB
  *             init_ret = self.converter.checkInitializationStatus()
  *             if init_ret.exception != NULL:
  *                 error_msg = <object>init_ret.exception             # <<<<<<<<<<<<<<
- *                 raise RuntimeError(f"Failed to initialize batch converter: {error_msg}")
+ *                 raise RuntimeError(f"Failed to initialize batch iterator: {error_msg}")
  * 
 */
       __pyx_t_6 = ((PyObject *)__pyx_v_init_ret.exception);
@@ -3194,14 +3194,14 @@ static int __pyx_pf_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowB
       /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_converter.pyx":146
  *             if init_ret.exception != NULL:
  *                 error_msg = <object>init_ret.exception
- *                 raise RuntimeError(f"Failed to initialize batch converter: {error_msg}")             # <<<<<<<<<<<<<<
+ *                 raise RuntimeError(f"Failed to initialize batch iterator: {error_msg}")             # <<<<<<<<<<<<<<
  * 
  *     def __dealloc__(self):
 */
       __pyx_t_9 = NULL;
       __pyx_t_8 = __Pyx_PyObject_FormatSimple(__pyx_v_error_msg, __pyx_mstate_global->__pyx_empty_unicode); if (unlikely(!__pyx_t_8)) __PYX_ERR(0, 146, __pyx_L1_error)
       __Pyx_GOTREF(__pyx_t_8);
-      __pyx_t_5 = __Pyx_PyUnicode_Concat(__pyx_mstate_global->__pyx_kp_u_Failed_to_initialize_batch_conve, __pyx_t_8); if (unlikely(!__pyx_t_5)) __PYX_ERR(0, 146, __pyx_L1_error)
+      __pyx_t_5 = __Pyx_PyUnicode_Concat(__pyx_mstate_global->__pyx_kp_u_Failed_to_initialize_batch_itera, __pyx_t_8); if (unlikely(!__pyx_t_5)) __PYX_ERR(0, 146, __pyx_L1_error)
       __Pyx_GOTREF(__pyx_t_5);
       __Pyx_DECREF(__pyx_t_8); __pyx_t_8 = 0;
       __pyx_t_7 = 1;
@@ -3222,7 +3222,7 @@ static int __pyx_pf_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowB
  *             init_ret = self.converter.checkInitializationStatus()
  *             if init_ret.exception != NULL:             # <<<<<<<<<<<<<<
  *                 error_msg = <object>init_ret.exception
- *                 raise RuntimeError(f"Failed to initialize batch converter: {error_msg}")
+ *                 raise RuntimeError(f"Failed to initialize batch iterator: {error_msg}")
 */
     }
   }
@@ -3256,7 +3256,7 @@ static int __pyx_pf_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowB
 }
 
 /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_converter.pyx":148
- *                 raise RuntimeError(f"Failed to initialize batch converter: {error_msg}")
+ *                 raise RuntimeError(f"Failed to initialize batch iterator: {error_msg}")
  * 
  *     def __dealloc__(self):             # <<<<<<<<<<<<<<
  *         if self.converter != NULL:
@@ -3336,7 +3336,7 @@ static void __pyx_pf_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrow
   }
 
   /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_converter.pyx":148
- *                 raise RuntimeError(f"Failed to initialize batch converter: {error_msg}")
+ *                 raise RuntimeError(f"Failed to initialize batch iterator: {error_msg}")
  * 
  *     def __dealloc__(self):             # <<<<<<<<<<<<<<
  *         if self.converter != NULL:
@@ -4172,7 +4172,7 @@ static PyMethodDef __pyx_methods_9snowflake_12ud_connector_21arrow_batch_convert
 #if CYTHON_USE_TYPE_SPECS
 static PyType_Slot __pyx_type_9snowflake_12ud_connector_21arrow_batch_converter_PyArrowBatchConverter_slots[] = {
   {Py_tp_dealloc, (void *)__pyx_tp_dealloc_9snowflake_12ud_connector_21arrow_batch_converter_PyArrowBatchConverter},
-  {Py_tp_doc, (void *)PyDoc_STR("\n    Python wrapper for C++ Arrow batch converter.\n    Converts Arrow RecordBatch to Python tuples/dicts row-by-row.\n    ")},
+  {Py_tp_doc, (void *)PyDoc_STR("\n    Python wrapper for C++ Arrow batch iterator.\n    Converts Arrow RecordBatch to Python tuples/dicts row-by-row.\n    ")},
   {Py_tp_traverse, (void *)__pyx_tp_traverse_9snowflake_12ud_connector_21arrow_batch_converter_PyArrowBatchConverter},
   {Py_tp_clear, (void *)__pyx_tp_clear_9snowflake_12ud_connector_21arrow_batch_converter_PyArrowBatchConverter},
   {Py_tp_iter, (void *)__pyx_pw_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowBatchConverter_5__iter__},
@@ -4211,7 +4211,7 @@ static PyTypeObject __pyx_type_9snowflake_12ud_connector_21arrow_batch_converter
   0, /*tp_setattro*/
   0, /*tp_as_buffer*/
   Py_TPFLAGS_DEFAULT|Py_TPFLAGS_HAVE_VERSION_TAG|Py_TPFLAGS_CHECKTYPES|Py_TPFLAGS_HAVE_NEWBUFFER|Py_TPFLAGS_BASETYPE|Py_TPFLAGS_HAVE_GC, /*tp_flags*/
-  PyDoc_STR("\n    Python wrapper for C++ Arrow batch converter.\n    Converts Arrow RecordBatch to Python tuples/dicts row-by-row.\n    "), /*tp_doc*/
+  PyDoc_STR("\n    Python wrapper for C++ Arrow batch iterator.\n    Converts Arrow RecordBatch to Python tuples/dicts row-by-row.\n    "), /*tp_doc*/
   __pyx_tp_traverse_9snowflake_12ud_connector_21arrow_batch_converter_PyArrowBatchConverter, /*tp_traverse*/
   __pyx_tp_clear_9snowflake_12ud_connector_21arrow_batch_converter_PyArrowBatchConverter, /*tp_clear*/
   0, /*tp_richcompare*/
@@ -4794,25 +4794,25 @@ static int __Pyx_InitCachedConstants(__pyx_mstatetype *__pyx_mstate) {
 static int __Pyx_InitConstants(__pyx_mstatetype *__pyx_mstate) {
   CYTHON_UNUSED_VAR(__pyx_mstate);
   {
-    const struct { const unsigned int length: 7; } index[] = {{1},{22},{51},{38},{76},{7},{6},{2},{9},{50},{80},{14},{21},{39},{41},{39},{35},{20},{17},{13},{18},{27},{18},{8},{17},{13},{12},{13},{5},{8},{10},{8},{3},{11},{12},{12},{10},{17},{13},{4},{12},{10},{12},{19},{44},{8},{15},{9},{6},{33},{31},{9}};
-    #if (CYTHON_COMPRESS_STRINGS) == 2 /* compression: bz2 (623 bytes) */
-const char* const cstring = "BZh91AY&SY\355\252f2\000\000-\177\373d\\(\004a\013\3447\277!p\000\277\357\377\360\300@@\000@@@@@@@\000@\002'iQ\025\206\241'\2422h\003@d\000\032\003@\320\304\320c(4\"O\3216\242bi2f\210h\000\000\000\000\032\016`LM\006\023&L\231\030L\023M210\0040\tM\020\232CiM0\247\224\364\236\243A\2404\001\240\000l\240\314A\032\022\025X\030(\020\300\022\267\034Er\341_\350\372\274\324\207\315r\304R;\333\271\314'\301O:RY\216\263\264\210\311H\274f\020\250\326\215\254\004\001\255\332\313\310\365\006 4\240\2175\250.AeV\310.\367DM\367+9k9\237\375N\344\231\222(\206\317\233q90\362\022)\372\243\365\366k\r\020\270\302\327u\r4_BVl\030\255\300\002T\340\346\027\320\224H\205RH\221\274 \237,3C&k)\245U?\332\373\035\035\007Y\307\371P\310r\357\325\r\337\344\267\334d\316\306;\004h\333V\342\322\302\007\305\211TcL\351\344\235\361&/J\007\262i\362\222\034\010\313\003\006\020i\302\242\202}ZW\030\270H\3401\031\204C:\321\2212\376\337\230S{C\034^{\307\245\371\025jC\006u\271\230\243\313\035eP\204\213\262%\232\355\031X\306p\345g\342q\347G\302\302 `T\177Tj\222\225\023\025\220\243\032V\261s_\251#)\203\026A+r\014\245%Q1\035\356\203\245\304\376\363Y\200\211\221\240|\227Yu\363@\252\006\nqc[h\210\244*\261\220\021\302H\367KD\366a\275{8\023\314\\\340\0303\022\214\021\224\004\"\320\014T\226l\267\305\326\226\034\324:J\362\t2\023,\007\314a\222e\301\254\230\367\033`\230\2332f&-\005N\031c\200\010g*\206)\216\242*_\0100\243\354\347{\261\035\034#\034\037N\356w\330E\265P\220\246\212I\213\206\035J\020T\000~B\203~`\016\301z\200\032'\006o\272\000\247N\261\013\260\243\316B\016\257v\322J\305\265\301\247=X1\3230bS\222I\007\365\233\003N\3740\007&\262t\200\363\213|\372\037\022\0011\200\340\224]\234\223\235\030C\"\024\377\027rE8P\220\355\252f2";
-    PyObject *data = __Pyx_DecompressString(cstring, 623, 2);
+    const struct { const unsigned int length: 7; } index[] = {{1},{22},{51},{37},{76},{7},{6},{2},{9},{50},{80},{14},{21},{39},{41},{39},{35},{20},{17},{13},{18},{27},{18},{8},{17},{13},{12},{13},{5},{8},{10},{8},{3},{11},{12},{12},{10},{17},{13},{4},{12},{10},{12},{19},{44},{8},{15},{9},{6},{33},{31},{9}};
+    #if (CYTHON_COMPRESS_STRINGS) == 2 /* compression: bz2 (622 bytes) */
+const char* const cstring = "BZh91AY&SY\007K\002E\000\000-\177\373d\\(\004a\013\3447\277!p\000\277\357\377\360\300@@\000@@@@@@@\000@\002'iQ\006\032\204\233H\311\240\r\000\320\000i\240\320414\030\312\r\010\217D\332\223\002L\230\232\032\000\000\000\000\0009\20114\030L\2312da0M4\310\304\300\020\300%4\202i\033%0)\345='\250\320h\000\006A\240\033)\2439\004hH:\300\301@\206\000\227\004q\025\273\205\177\243\347\347\017\232\345\210\253\0249\333\271\314'\301OBRY\225Y\312dd\244^3\010TkK\254\004\001\261\312\313\310\365\006 4\240\2175\254.Ad\367\310]\361\204$\373\225\234\265\234\315\376\237z,\311\023Cf\303q(\260\361\022'\373\233\365\366\341\r\020\314al\315KM\027\322\226\033\006+\356\001+ps\n\220\224H\205rH\221\2748\237,\031\240\311\232\312IQK\370\276\347?9\326q\376\3202\031\367\352\203xy-\370\0313\261\211\260F\215\264n-\032\300|X\215\0064\312~i_\010\215|\007\262ig\"8\021\225\314\030A\250\n\212\t\365\376\2561\230H\3401\031\204C;\021\2212\376U0\301{A\216/-\343\316\374\212\224 \301\231n\030\233\307\035e\020\204\213\262%\205\3322\261\214\341\312\317\304\343\316\217\205\244@\300\254\376i\323%*f+aN4\261b\346\251kte8b\310\032\374\203)2\250\230\216~s\251\304\376\343Y\200\211\221\240|\227Uu\265 U\203\005@\271\256\274D`\n\254`\010\341${\245\242\213p\317>p(\230\271\20031(\301\001@ \213@\030\241\0342\337\013\255\032\362\314\364\224\344\022d\310U\034\300\256I\027\006\262C\334m\201!6\t\230\220\264\0248e\207\000\020\316Q0O\035D(_\004\025\233\354\346{\261\035\034!\215_N\356g\330B\332\246DRD\342\305\303\020\263\261s\263qzU?p\026ru\014/J\230a\302\241n\316\353\034\272\236+!Hf\335\264\212\261mp4\346\240\030\351\2201\031E$\203\261\232\246\235\365\2509\"\256\350\0176\267\317\241\361 \023\030\016\tE\331\311UTb\014\210S\374]\311\024\341B@\035,\t\024";
+    PyObject *data = __Pyx_DecompressString(cstring, 622, 2);
     if (unlikely(!data)) __PYX_ERR(0, 1, __pyx_L1_error)
     const char* const bytes = __Pyx_PyBytes_AsString(data);
     #if !CYTHON_ASSUME_SAFE_MACROS
     if (likely(bytes)); else { Py_DECREF(data); __PYX_ERR(0, 1, __pyx_L1_error) }
     #endif
-    #elif (CYTHON_COMPRESS_STRINGS) != 0 /* compression: zlib (533 bytes) */
-const char* const cstring = "x\332\205R\275n\023A\020\026\022\005\002\032DK\261ih\020g\220\334\020A\220\t \321D$/0Z\357\216\355U\366v.\373c\337\245!\245K?BJ\312\224<F\312\224y\024f\317\347#\212\035q\322\355\317\31473\337\354|\237\277yO^(rs\364\321\270\251\360\264\330\027\337\245\261\250E$\201u\364RE1b\334B\034\212\212\214\213\350\203\230x*\305\t*\362\372\213\214j\366/\3048\023\215\264\346\034\3058{6\331\321\357\213\237\315:\021\337\203!\307p\022du!\216\220\203\253F\266\336\203O\342\375\260x'\026&\316\004@k\004\225w\331\000\210\220\252\212|\324&\310\261Ety\235*\023\326'\355Hh\234\310d#\307z\324I!\007\351\204\231\234#\3676z3g\202\354U\231+@\360j\020\034-&V\236\342 i`\306\016U$?p\322QW\277\252\006-\371\037\334\211\314\276\265\275\355\021\372\036\213\252\251?\006.\341\246\201\222Wx\320\365\334\276\322\341\006\266\323X\364|U\023g\344\000\036\202\005\214!\312\370?\340\024#\250\344=\272\010\306i\254\037\206\265-Rb \347\252\371\377jT\204#\236\377\tN\266f\320]\211\265PG\031\032\247\014\025\254\005J,\"\014j\206\352\0240k\013\230\035r\235\206\3216\225NY\0060\031\310\272\302\261d\034L\222S\000[d\357\321\232nz\0060\001\372b&b\031\000J\3119\371+I'\2331\340d\311{E\025/\334Q\027{\226\244]{|+\336n~\275P\266F\320\033\260\316\357n'\355\353w\331\371\324i\355\316L`\307|zy\025w\345U\354\224\020@\304\300\tS@\320y\n\036\003W\310W\227\312\252\231K\2330\\\214n\237<[\016\227g7\317_\256\206\253_\327\257?\374yq\333\236\317\257\367\206W\243\373\200K{\265\327\371/_\375>\276xt\363\370\351\362\315\352\370/\213\330\227.";
-    PyObject *data = __Pyx_DecompressString(cstring, 533, 1);
+    #elif (CYTHON_COMPRESS_STRINGS) != 0 /* compression: zlib (536 bytes) */
+const char* const cstring = "x\332\205R\275n\023A\020\026\022\005\n4\2106\305\246\241A\234ArC\004A&\200D\023\221\274\300h\275;g\257\262\267s\331\037\373.\r)]\372\021RR\246\3441R\246\314\2430{\276\230(v\304I\267\177\363\315\31473\337\347o\336\223\027\212\334\014}4n\"<\315\367\305wi,j\021I`\023\275TQ\214\0307\027\207\242&\343\"\372 JO\2258AE^\177\221QM\377\271\030g\242\221\326\234\243\030g\2130\354 #\371}\361\263]\305\341d\301\220c4\t\262\272\020G\310\276u+;\353\301'\361~X\274\023s\023\247\002\240{\004\225w\331\002\210\220\352\232|\324&\310\261Ety\235(\023V'\355Hh,e\262\221}=\352\244\220\235t\302\314\315\221{\033\275\2311?\266\252L\025 x5\010\216\346\245\225\2478H\032\270\035\016\0253\0368\351\250\317_\327\203\216\374\217\276\232\301\352\275+\021\372\006\242/\352\266\371\0308\205\233\004J^\341A_s\327\244\303;\330\326\307b\315W\265qJ\016\3401X\300\030\242\214\377\003N0\202J\336\243\213`\234\306\346qXW\"%\006r\254\206\377\257FE8\342\361\237`\2711\203\376J,\205&\312\320:e\250`)Pb\raPST\247\200YZ\300\354\220\363\264\214\266\251r\3122\200\311@\226\025\216%\343\240LN\001l\220}@krW3\200\t\260N\306\342\252\002@%9&\177\025\351d3\006\234\254x\257\251\346\205+\352}\317\222\264+\213\357\264\333\317o-\224\215\021\254\037\260\311}\267e\327\375>:\237z\255\335\233\tl\231\317Z^\305}y\025[%\004\0201p\300\024\020t\236\202\307\300\031\362\325\245\252ng\322&\014\027\243\333g\317\027\303\305\331\315\213W\313\341\362\327\365\353\017\177^\336v\347\363\353\275\341\325\350!\340\322^\355\365\366\313\335\337\307\027On\236\356,\336,\217\377\002\330_\226\300";
+    PyObject *data = __Pyx_DecompressString(cstring, 536, 1);
     if (unlikely(!data)) __PYX_ERR(0, 1, __pyx_L1_error)
     const char* const bytes = __Pyx_PyBytes_AsString(data);
     #if !CYTHON_ASSUME_SAFE_MACROS
     if (likely(bytes)); else { Py_DECREF(data); __PYX_ERR(0, 1, __pyx_L1_error) }
     #endif
-    #else /* compression: none (1028 bytes) */
-const char* const bytes = "?Error converting row: Failed to extract Arrow C pointers from RecordBatchFailed to initialize batch converter: PyArrow version too old. Need pyarrow >= 14.0 with __arrow_c_array__ supportdisableenablegcisenabledno default __reduce__ due to non-trivial __cinit__src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_converter.pyx<stringsource>PyArrowBatchConverterPyArrowBatchConverter.__reduce_cython__PyArrowBatchConverter.__setstate_cython__PyArrowBatchConverter.get_current_indexPyArrowBatchConverter.get_row_count__Pyx_PyDict_NextRef__arrow_c_array__arrow_contextasyncio.coroutinescheck_error_on_every_columncline_in_traceback__func__get_current_indexget_row_count__getstate___is_coroutineitems__main____module____name__pop__pyx_state__qualname__record_batch__reduce____reduce_cython____reduce_ex__self__set_name__setdefault__setstate____setstate_cython__snowflake.ud_connector.arrow_batch_converter__test__use_dict_resultuse_numpyvalues\200A\340\010\013\2104\210q\330\014\023\2204\220\177\320&9\270\021\340\014\023\2204\220z\320!4\260A\200A\340\010\013\2104\210q\330\014\023\2204\220\177\240l\260!\340\014\023\2204\220z\240\034\250Q\200\001\330\004\n\210+\220Q";
+    #else /* compression: none (1027 bytes) */
+const char* const bytes = "?Error converting row: Failed to extract Arrow C pointers from RecordBatchFailed to initialize batch iterator: PyArrow version too old. Need pyarrow >= 14.0 with __arrow_c_array__ supportdisableenablegcisenabledno default __reduce__ due to non-trivial __cinit__src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_converter.pyx<stringsource>PyArrowBatchConverterPyArrowBatchConverter.__reduce_cython__PyArrowBatchConverter.__setstate_cython__PyArrowBatchConverter.get_current_indexPyArrowBatchConverter.get_row_count__Pyx_PyDict_NextRef__arrow_c_array__arrow_contextasyncio.coroutinescheck_error_on_every_columncline_in_traceback__func__get_current_indexget_row_count__getstate___is_coroutineitems__main____module____name__pop__pyx_state__qualname__record_batch__reduce____reduce_cython____reduce_ex__self__set_name__setdefault__setstate____setstate_cython__snowflake.ud_connector.arrow_batch_converter__test__use_dict_resultuse_numpyvalues\200A\340\010\013\2104\210q\330\014\023\2204\220\177\320&9\270\021\340\014\023\2204\220z\320!4\260A\200A\340\010\013\2104\210q\330\014\023\2204\220\177\240l\260!\340\014\023\2204\220z\240\034\250Q\200\001\330\004\n\210+\220Q";
     PyObject *data = NULL;
     CYTHON_UNUSED_VAR(__Pyx_DecompressString);
     #endif

@@ -2,7 +2,7 @@
 
 #include <memory>
 
-#include "CArrowChunkIterator.hpp"
+#include "CArrowBatchIterator.hpp"
 #include "CArrowIterator.hpp"
 #include "SnowflakeType.hpp"
 

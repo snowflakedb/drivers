@@ -17,13 +17,13 @@ cdef extern from "nanoarrow.h":
     cdef int ArrowSchemaMove(ArrowSchema* src, ArrowSchema* dst)
 
 # Import our C++ classes
-cdef extern from "CArrowBatchConverter.hpp" namespace "sf":
+cdef extern from "CArrowBatchIterator.hpp" namespace "sf":
     cdef cppclass ReturnVal:
         PyObject* successObj
         PyObject* exception
     
-    cdef cppclass CArrowBatchConverter:
-        CArrowBatchConverter(
+    cdef cppclass CArrowBatchIterator:
+        CArrowBatchIterator(
             ArrowArray* c_array,
             ArrowSchema* c_schema,
             PyObject* context,
@@ -35,8 +35,8 @@ cdef extern from "CArrowBatchConverter.hpp" namespace "sf":
         int64_t getRowCount()
         int64_t getCurrentRowIndex()
     
-    cdef cppclass DictCArrowBatchConverter:
-        DictCArrowBatchConverter(
+    cdef cppclass DictCArrowBatchIterator:
+        DictCArrowBatchIterator(
             ArrowArray* c_array,
             ArrowSchema* c_schema,
             PyObject* context,
@@ -50,11 +50,11 @@ cdef extern from "CArrowBatchConverter.hpp" namespace "sf":
 
 cdef class PyArrowBatchConverter:
     """
-    Python wrapper for C++ Arrow batch converter.
+    Python wrapper for C++ Arrow batch iterator.
     Converts Arrow RecordBatch to Python tuples/dicts row-by-row.
     """
-    cdef CArrowBatchConverter* converter
-    cdef DictCArrowBatchConverter* dict_converter
+    cdef CArrowBatchIterator* converter
+    cdef DictCArrowBatchIterator* dict_converter
     cdef cpp_bool use_dict_result
     cdef object arrow_context
     
@@ -116,9 +116,9 @@ cdef class PyArrowBatchConverter:
         # Declare ReturnVal variable at function scope (Cython requirement)
         cdef ReturnVal init_ret
         
-        # Create appropriate converter
+        # Create appropriate iterator
         if use_dict_result:
-            self.dict_converter = new DictCArrowBatchConverter(
+            self.dict_converter = new DictCArrowBatchIterator(
                 c_array_ptr,
                 c_schema_ptr,
                 <PyObject*>arrow_context,
@@ -129,9 +129,9 @@ cdef class PyArrowBatchConverter:
             init_ret = self.dict_converter.checkInitializationStatus()
             if init_ret.exception != NULL:
                 error_msg = <object>init_ret.exception
-                raise RuntimeError(f"Failed to initialize batch converter: {error_msg}")
+                raise RuntimeError(f"Failed to initialize batch iterator: {error_msg}")
         else:
-            self.converter = new CArrowBatchConverter(
+            self.converter = new CArrowBatchIterator(
                 c_array_ptr,
                 c_schema_ptr,
                 <PyObject*>arrow_context,
@@ -143,7 +143,7 @@ cdef class PyArrowBatchConverter:
             init_ret = self.converter.checkInitializationStatus()
             if init_ret.exception != NULL:
                 error_msg = <object>init_ret.exception
-                raise RuntimeError(f"Failed to initialize batch converter: {error_msg}")
+                raise RuntimeError(f"Failed to initialize batch iterator: {error_msg}")
     
     def __dealloc__(self):
         if self.converter != NULL:
