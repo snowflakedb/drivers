@@ -48,13 +48,13 @@ cdef extern from "CArrowBatchIterator.hpp" namespace "sf":
         int64_t getCurrentRowIndex()
 
 
-cdef class PyArrowBatchConverter:
+cdef class PyArrowBatchIterator:
     """
     Python wrapper for C++ Arrow batch iterator.
     Converts Arrow RecordBatch to Python tuples/dicts row-by-row.
     """
-    cdef CArrowBatchIterator* converter
-    cdef DictCArrowBatchIterator* dict_converter
+    cdef CArrowBatchIterator* iterator
+    cdef DictCArrowBatchIterator* dict_iterator
     cdef cpp_bool use_dict_result
     cdef object arrow_context
     
@@ -67,12 +67,12 @@ cdef class PyArrowBatchConverter:
         object check_error_on_every_column=True
     ):
         """
-        Initialize the batch converter.
+        Initialize the batch iterator.
         
         Parameters
         ----------
         record_batch : pyarrow.RecordBatch
-            The Arrow RecordBatch to convert
+            The Arrow RecordBatch to iterate over
         arrow_context : ArrowConverterContext
             Context object for conversions
         use_dict_result : bool
@@ -87,8 +87,8 @@ cdef class PyArrowBatchConverter:
         
         self.use_dict_result = use_dict_result
         self.arrow_context = arrow_context
-        self.converter = NULL
-        self.dict_converter = NULL
+        self.iterator = NULL
+        self.dict_iterator = NULL
         
         # Export RecordBatch to Arrow C Data Interface
         try:
@@ -118,7 +118,7 @@ cdef class PyArrowBatchConverter:
         
         # Create appropriate iterator
         if use_dict_result:
-            self.dict_converter = new DictCArrowBatchIterator(
+            self.dict_iterator = new DictCArrowBatchIterator(
                 c_array_ptr,
                 c_schema_ptr,
                 <PyObject*>arrow_context,
@@ -126,12 +126,12 @@ cdef class PyArrowBatchConverter:
             )
             
             # Check initialization
-            init_ret = self.dict_converter.checkInitializationStatus()
+            init_ret = self.dict_iterator.checkInitializationStatus()
             if init_ret.exception != NULL:
                 error_msg = <object>init_ret.exception
                 raise RuntimeError(f"Failed to initialize batch iterator: {error_msg}")
         else:
-            self.converter = new CArrowBatchIterator(
+            self.iterator = new CArrowBatchIterator(
                 c_array_ptr,
                 c_schema_ptr,
                 <PyObject*>arrow_context,
@@ -140,16 +140,16 @@ cdef class PyArrowBatchConverter:
             )
             
             # Check initialization
-            init_ret = self.converter.checkInitializationStatus()
+            init_ret = self.iterator.checkInitializationStatus()
             if init_ret.exception != NULL:
                 error_msg = <object>init_ret.exception
                 raise RuntimeError(f"Failed to initialize batch iterator: {error_msg}")
     
     def __dealloc__(self):
-        if self.converter != NULL:
-            del self.converter
-        if self.dict_converter != NULL:
-            del self.dict_converter
+        if self.iterator != NULL:
+            del self.iterator
+        if self.dict_iterator != NULL:
+            del self.dict_iterator
     
     def __iter__(self):
         return self
@@ -159,9 +159,9 @@ cdef class PyArrowBatchConverter:
         cdef ReturnVal ret
         
         if self.use_dict_result:
-            ret = self.dict_converter.next()
+            ret = self.dict_iterator.next()
         else:
-            ret = self.converter.next()
+            ret = self.iterator.next()
         
         # Check for exception
         if ret.exception != NULL:
@@ -179,18 +179,16 @@ cdef class PyArrowBatchConverter:
     def get_row_count(self):
         """Get total number of rows in this batch."""
         if self.use_dict_result:
-            return self.dict_converter.getRowCount()
+            return self.dict_iterator.getRowCount()
         else:
-            return self.converter.getRowCount()
+            return self.iterator.getRowCount()
     
     def get_current_index(self):
         """Get current row index (0-based)."""
         if self.use_dict_result:
-            return self.dict_converter.getCurrentRowIndex()
+            return self.dict_iterator.getCurrentRowIndex()
         else:
-            return self.converter.getCurrentRowIndex()
-
-
+            return self.iterator.getCurrentRowIndex()
 
 
 # Import PyCapsule functions

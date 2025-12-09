@@ -11,12 +11,12 @@
             "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator"
         ],
         "language": "c++",
-        "name": "snowflake.ud_connector.arrow_batch_converter",
+        "name": "snowflake.ud_connector._arrow_batch_iterator",
         "sources": [
-            "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_converter.pyx"
+            "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_iterator.pyx"
         ]
     },
-    "module_name": "snowflake.ud_connector.arrow_batch_converter"
+    "module_name": "snowflake.ud_connector._arrow_batch_iterator"
 }
 END: Cython Metadata */
 
@@ -1146,8 +1146,8 @@ static int __Pyx_init_co_variables(void) {
     #define __PYX_EXTERN_C extern "C++"
 #endif
 
-#define __PYX_HAVE__snowflake__ud_connector__arrow_batch_converter
-#define __PYX_HAVE_API__snowflake__ud_connector__arrow_batch_converter
+#define __PYX_HAVE__snowflake__ud_connector___arrow_batch_iterator
+#define __PYX_HAVE_API__snowflake__ud_connector___arrow_batch_iterator
 /* Early includes */
 #include <string.h>
 #include <stdio.h>
@@ -1361,7 +1361,7 @@ static const char *__pyx_filename;
 /* #### Code section: filename_table ### */
 
 static const char* const __pyx_f[] = {
-  "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_converter.pyx",
+  "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_iterator.pyx",
   "<stringsource>",
   "cpython/type.pxd",
 };
@@ -1540,19 +1540,19 @@ static const char* const __pyx_f[] = {
 /* #### Code section: type_declarations ### */
 
 /*--- Type declarations ---*/
-struct __pyx_obj_9snowflake_12ud_connector_21arrow_batch_converter_PyArrowBatchConverter;
+struct __pyx_obj_9snowflake_12ud_connector_21_arrow_batch_iterator_PyArrowBatchIterator;
 
-/* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_converter.pyx":51
+/* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_iterator.pyx":51
  * 
  * 
- * cdef class PyArrowBatchConverter:             # <<<<<<<<<<<<<<
+ * cdef class PyArrowBatchIterator:             # <<<<<<<<<<<<<<
  *     """
  *     Python wrapper for C++ Arrow batch iterator.
 */
-struct __pyx_obj_9snowflake_12ud_connector_21arrow_batch_converter_PyArrowBatchConverter {
+struct __pyx_obj_9snowflake_12ud_connector_21_arrow_batch_iterator_PyArrowBatchIterator {
   PyObject_HEAD
-  sf::CArrowBatchIterator *converter;
-  sf::DictCArrowBatchIterator *dict_converter;
+  sf::CArrowBatchIterator *iterator;
+  sf::DictCArrowBatchIterator *dict_iterator;
   bool use_dict_result;
   PyObject *arrow_context;
 };
@@ -2371,28 +2371,28 @@ static int __Pyx_State_RemoveModule(void*);
 
 /* Module declarations from "libcpp" */
 
-/* Module declarations from "snowflake.ud_connector.arrow_batch_converter" */
+/* Module declarations from "snowflake.ud_connector._arrow_batch_iterator" */
 /* #### Code section: typeinfo ### */
 /* #### Code section: before_global_var ### */
-#define __Pyx_MODULE_NAME "snowflake.ud_connector.arrow_batch_converter"
-extern int __pyx_module_is_main_snowflake__ud_connector__arrow_batch_converter;
-int __pyx_module_is_main_snowflake__ud_connector__arrow_batch_converter = 0;
+#define __Pyx_MODULE_NAME "snowflake.ud_connector._arrow_batch_iterator"
+extern int __pyx_module_is_main_snowflake__ud_connector___arrow_batch_iterator;
+int __pyx_module_is_main_snowflake__ud_connector___arrow_batch_iterator = 0;
 
-/* Implementation of "snowflake.ud_connector.arrow_batch_converter" */
+/* Implementation of "snowflake.ud_connector._arrow_batch_iterator" */
 /* #### Code section: global_var ### */
 /* #### Code section: string_decls ### */
 static const char __pyx_k_arrow_array[] = "arrow_array";
 static const char __pyx_k_arrow_schema[] = "arrow_schema";
 /* #### Code section: decls ### */
-static int __pyx_pf_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowBatchConverter___cinit__(struct __pyx_obj_9snowflake_12ud_connector_21arrow_batch_converter_PyArrowBatchConverter *__pyx_v_self, PyObject *__pyx_v_record_batch, PyObject *__pyx_v_arrow_context, PyObject *__pyx_v_use_dict_result, PyObject *__pyx_v_use_numpy, PyObject *__pyx_v_check_error_on_every_column); /* proto */
-static void __pyx_pf_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowBatchConverter_2__dealloc__(struct __pyx_obj_9snowflake_12ud_connector_21arrow_batch_converter_PyArrowBatchConverter *__pyx_v_self); /* proto */
-static PyObject *__pyx_pf_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowBatchConverter_4__iter__(struct __pyx_obj_9snowflake_12ud_connector_21arrow_batch_converter_PyArrowBatchConverter *__pyx_v_self); /* proto */
-static PyObject *__pyx_pf_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowBatchConverter_6__next__(struct __pyx_obj_9snowflake_12ud_connector_21arrow_batch_converter_PyArrowBatchConverter *__pyx_v_self); /* proto */
-static PyObject *__pyx_pf_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowBatchConverter_8get_row_count(struct __pyx_obj_9snowflake_12ud_connector_21arrow_batch_converter_PyArrowBatchConverter *__pyx_v_self); /* proto */
-static PyObject *__pyx_pf_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowBatchConverter_10get_current_index(struct __pyx_obj_9snowflake_12ud_connector_21arrow_batch_converter_PyArrowBatchConverter *__pyx_v_self); /* proto */
-static PyObject *__pyx_pf_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowBatchConverter_12__reduce_cython__(CYTHON_UNUSED struct __pyx_obj_9snowflake_12ud_connector_21arrow_batch_converter_PyArrowBatchConverter *__pyx_v_self); /* proto */
-static PyObject *__pyx_pf_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowBatchConverter_14__setstate_cython__(CYTHON_UNUSED struct __pyx_obj_9snowflake_12ud_connector_21arrow_batch_converter_PyArrowBatchConverter *__pyx_v_self, CYTHON_UNUSED PyObject *__pyx_v___pyx_state); /* proto */
-static PyObject *__pyx_tp_new_9snowflake_12ud_connector_21arrow_batch_converter_PyArrowBatchConverter(PyTypeObject *t, PyObject *a, PyObject *k); /*proto*/
+static int __pyx_pf_9snowflake_12ud_connector_21_arrow_batch_iterator_20PyArrowBatchIterator___cinit__(struct __pyx_obj_9snowflake_12ud_connector_21_arrow_batch_iterator_PyArrowBatchIterator *__pyx_v_self, PyObject *__pyx_v_record_batch, PyObject *__pyx_v_arrow_context, PyObject *__pyx_v_use_dict_result, PyObject *__pyx_v_use_numpy, PyObject *__pyx_v_check_error_on_every_column); /* proto */
+static void __pyx_pf_9snowflake_12ud_connector_21_arrow_batch_iterator_20PyArrowBatchIterator_2__dealloc__(struct __pyx_obj_9snowflake_12ud_connector_21_arrow_batch_iterator_PyArrowBatchIterator *__pyx_v_self); /* proto */
+static PyObject *__pyx_pf_9snowflake_12ud_connector_21_arrow_batch_iterator_20PyArrowBatchIterator_4__iter__(struct __pyx_obj_9snowflake_12ud_connector_21_arrow_batch_iterator_PyArrowBatchIterator *__pyx_v_self); /* proto */
+static PyObject *__pyx_pf_9snowflake_12ud_connector_21_arrow_batch_iterator_20PyArrowBatchIterator_6__next__(struct __pyx_obj_9snowflake_12ud_connector_21_arrow_batch_iterator_PyArrowBatchIterator *__pyx_v_self); /* proto */
+static PyObject *__pyx_pf_9snowflake_12ud_connector_21_arrow_batch_iterator_20PyArrowBatchIterator_8get_row_count(struct __pyx_obj_9snowflake_12ud_connector_21_arrow_batch_iterator_PyArrowBatchIterator *__pyx_v_self); /* proto */
+static PyObject *__pyx_pf_9snowflake_12ud_connector_21_arrow_batch_iterator_20PyArrowBatchIterator_10get_current_index(struct __pyx_obj_9snowflake_12ud_connector_21_arrow_batch_iterator_PyArrowBatchIterator *__pyx_v_self); /* proto */
+static PyObject *__pyx_pf_9snowflake_12ud_connector_21_arrow_batch_iterator_20PyArrowBatchIterator_12__reduce_cython__(CYTHON_UNUSED struct __pyx_obj_9snowflake_12ud_connector_21_arrow_batch_iterator_PyArrowBatchIterator *__pyx_v_self); /* proto */
+static PyObject *__pyx_pf_9snowflake_12ud_connector_21_arrow_batch_iterator_20PyArrowBatchIterator_14__setstate_cython__(CYTHON_UNUSED struct __pyx_obj_9snowflake_12ud_connector_21_arrow_batch_iterator_PyArrowBatchIterator *__pyx_v_self, CYTHON_UNUSED PyObject *__pyx_v___pyx_state); /* proto */
+static PyObject *__pyx_tp_new_9snowflake_12ud_connector_21_arrow_batch_iterator_PyArrowBatchIterator(PyTypeObject *t, PyObject *a, PyObject *k); /*proto*/
 /* #### Code section: late_includes ### */
 /* #### Code section: module_state ### */
 /* SmallCodeConfig */
@@ -2414,8 +2414,8 @@ typedef struct {
   PyObject *__pyx_empty_bytes;
   PyObject *__pyx_empty_unicode;
   PyTypeObject *__pyx_ptype_7cpython_4type_type;
-  PyObject *__pyx_type_9snowflake_12ud_connector_21arrow_batch_converter_PyArrowBatchConverter;
-  PyTypeObject *__pyx_ptype_9snowflake_12ud_connector_21arrow_batch_converter_PyArrowBatchConverter;
+  PyObject *__pyx_type_9snowflake_12ud_connector_21_arrow_batch_iterator_PyArrowBatchIterator;
+  PyTypeObject *__pyx_ptype_9snowflake_12ud_connector_21_arrow_batch_iterator_PyArrowBatchIterator;
   __Pyx_CachedCFunction __pyx_umethod_PyDict_Type_items;
   __Pyx_CachedCFunction __pyx_umethod_PyDict_Type_pop;
   __Pyx_CachedCFunction __pyx_umethod_PyDict_Type_values;
@@ -2473,11 +2473,11 @@ static __pyx_mstatetype * const __pyx_mstate_global = &__pyx_mstate_global_stati
 #define __pyx_kp_u_no_default___reduce___due_to_non __pyx_string_tab[9]
 #define __pyx_kp_u_src_snowflake_ud_connector_nanoa __pyx_string_tab[10]
 #define __pyx_kp_u_stringsource __pyx_string_tab[11]
-#define __pyx_n_u_PyArrowBatchConverter __pyx_string_tab[12]
-#define __pyx_n_u_PyArrowBatchConverter___reduce_c __pyx_string_tab[13]
-#define __pyx_n_u_PyArrowBatchConverter___setstate __pyx_string_tab[14]
-#define __pyx_n_u_PyArrowBatchConverter_get_curren __pyx_string_tab[15]
-#define __pyx_n_u_PyArrowBatchConverter_get_row_co __pyx_string_tab[16]
+#define __pyx_n_u_PyArrowBatchIterator __pyx_string_tab[12]
+#define __pyx_n_u_PyArrowBatchIterator___reduce_cy __pyx_string_tab[13]
+#define __pyx_n_u_PyArrowBatchIterator___setstate __pyx_string_tab[14]
+#define __pyx_n_u_PyArrowBatchIterator_get_current __pyx_string_tab[15]
+#define __pyx_n_u_PyArrowBatchIterator_get_row_cou __pyx_string_tab[16]
 #define __pyx_n_u_Pyx_PyDict_NextRef __pyx_string_tab[17]
 #define __pyx_n_u_arrow_c_array __pyx_string_tab[18]
 #define __pyx_n_u_arrow_context __pyx_string_tab[19]
@@ -2505,13 +2505,13 @@ static __pyx_mstatetype * const __pyx_mstate_global = &__pyx_mstate_global_stati
 #define __pyx_n_u_setdefault __pyx_string_tab[41]
 #define __pyx_n_u_setstate __pyx_string_tab[42]
 #define __pyx_n_u_setstate_cython __pyx_string_tab[43]
-#define __pyx_n_u_snowflake_ud_connector_arrow_bat __pyx_string_tab[44]
+#define __pyx_n_u_snowflake_ud_connector__arrow_ba __pyx_string_tab[44]
 #define __pyx_n_u_test __pyx_string_tab[45]
 #define __pyx_n_u_use_dict_result __pyx_string_tab[46]
 #define __pyx_n_u_use_numpy __pyx_string_tab[47]
 #define __pyx_n_u_values __pyx_string_tab[48]
-#define __pyx_kp_b_iso88591_A_4q_4_9_4z_4A __pyx_string_tab[49]
-#define __pyx_kp_b_iso88591_A_4q_4_l_4z_Q __pyx_string_tab[50]
+#define __pyx_kp_b_iso88591_A_4q_4_4y_A __pyx_string_tab[49]
+#define __pyx_kp_b_iso88591_A_4q_4_8_4y_31 __pyx_string_tab[50]
 #define __pyx_kp_b_iso88591_Q __pyx_string_tab[51]
 /* #### Code section: module_state_clear ### */
 #if CYTHON_USE_MODULE_STATE
@@ -2528,8 +2528,8 @@ static CYTHON_SMALL_CODE int __pyx_m_clear(PyObject *m) {
   __Pyx_State_RemoveModule(NULL);
   #endif
   Py_CLEAR(clear_module_state->__pyx_ptype_7cpython_4type_type);
-  Py_CLEAR(clear_module_state->__pyx_ptype_9snowflake_12ud_connector_21arrow_batch_converter_PyArrowBatchConverter);
-  Py_CLEAR(clear_module_state->__pyx_type_9snowflake_12ud_connector_21arrow_batch_converter_PyArrowBatchConverter);
+  Py_CLEAR(clear_module_state->__pyx_ptype_9snowflake_12ud_connector_21_arrow_batch_iterator_PyArrowBatchIterator);
+  Py_CLEAR(clear_module_state->__pyx_type_9snowflake_12ud_connector_21_arrow_batch_iterator_PyArrowBatchIterator);
   for (int i=0; i<4; ++i) { Py_CLEAR(clear_module_state->__pyx_codeobj_tab[i]); }
   for (int i=0; i<52; ++i) { Py_CLEAR(clear_module_state->__pyx_string_tab[i]); }
 /* #### Code section: module_state_clear_contents ### */
@@ -2555,8 +2555,8 @@ static CYTHON_SMALL_CODE int __pyx_m_traverse(PyObject *m, visitproc visit, void
   __Pyx_VISIT_CONST(traverse_module_state->__pyx_empty_bytes);
   __Pyx_VISIT_CONST(traverse_module_state->__pyx_empty_unicode);
   Py_VISIT(traverse_module_state->__pyx_ptype_7cpython_4type_type);
-  Py_VISIT(traverse_module_state->__pyx_ptype_9snowflake_12ud_connector_21arrow_batch_converter_PyArrowBatchConverter);
-  Py_VISIT(traverse_module_state->__pyx_type_9snowflake_12ud_connector_21arrow_batch_converter_PyArrowBatchConverter);
+  Py_VISIT(traverse_module_state->__pyx_ptype_9snowflake_12ud_connector_21_arrow_batch_iterator_PyArrowBatchIterator);
+  Py_VISIT(traverse_module_state->__pyx_type_9snowflake_12ud_connector_21_arrow_batch_iterator_PyArrowBatchIterator);
   for (int i=0; i<4; ++i) { __Pyx_VISIT_CONST(traverse_module_state->__pyx_codeobj_tab[i]); }
   for (int i=0; i<52; ++i) { __Pyx_VISIT_CONST(traverse_module_state->__pyx_string_tab[i]); }
 /* #### Code section: module_state_traverse_contents ### */
@@ -2572,7 +2572,7 @@ return 0;
 #endif
 /* #### Code section: module_code ### */
 
-/* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_converter.pyx":61
+/* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_iterator.pyx":61
  *     cdef object arrow_context
  * 
  *     def __cinit__(             # <<<<<<<<<<<<<<
@@ -2581,8 +2581,8 @@ return 0;
 */
 
 /* Python wrapper */
-static int __pyx_pw_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowBatchConverter_1__cinit__(PyObject *__pyx_v_self, PyObject *__pyx_args, PyObject *__pyx_kwds); /*proto*/
-static int __pyx_pw_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowBatchConverter_1__cinit__(PyObject *__pyx_v_self, PyObject *__pyx_args, PyObject *__pyx_kwds) {
+static int __pyx_pw_9snowflake_12ud_connector_21_arrow_batch_iterator_20PyArrowBatchIterator_1__cinit__(PyObject *__pyx_v_self, PyObject *__pyx_args, PyObject *__pyx_kwds); /*proto*/
+static int __pyx_pw_9snowflake_12ud_connector_21_arrow_batch_iterator_20PyArrowBatchIterator_1__cinit__(PyObject *__pyx_v_self, PyObject *__pyx_args, PyObject *__pyx_kwds) {
   PyObject *__pyx_v_record_batch = 0;
   PyObject *__pyx_v_arrow_context = 0;
   PyObject *__pyx_v_use_dict_result = 0;
@@ -2635,7 +2635,7 @@ static int __pyx_pw_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowB
       const Py_ssize_t kwd_pos_args = __pyx_nargs;
       if (__Pyx_ParseKeywords(__pyx_kwds, __pyx_kwvalues, __pyx_pyargnames, 0, values, kwd_pos_args, __pyx_kwds_len, "__cinit__", 0) < (0)) __PYX_ERR(0, 61, __pyx_L3_error)
 
-      /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_converter.pyx":65
+      /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_iterator.pyx":65
  *         object record_batch,
  *         object arrow_context,
  *         object use_dict_result=False,             # <<<<<<<<<<<<<<
@@ -2644,7 +2644,7 @@ static int __pyx_pw_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowB
 */
       if (!values[2]) values[2] = __Pyx_NewRef(((PyObject *)Py_False));
 
-      /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_converter.pyx":66
+      /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_iterator.pyx":66
  *         object arrow_context,
  *         object use_dict_result=False,
  *         object use_numpy=False,             # <<<<<<<<<<<<<<
@@ -2653,7 +2653,7 @@ static int __pyx_pw_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowB
 */
       if (!values[3]) values[3] = __Pyx_NewRef(((PyObject *)Py_False));
 
-      /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_converter.pyx":67
+      /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_iterator.pyx":67
  *         object use_dict_result=False,
  *         object use_numpy=False,
  *         object check_error_on_every_column=True             # <<<<<<<<<<<<<<
@@ -2687,7 +2687,7 @@ static int __pyx_pw_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowB
         default: goto __pyx_L5_argtuple_error;
       }
 
-      /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_converter.pyx":65
+      /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_iterator.pyx":65
  *         object record_batch,
  *         object arrow_context,
  *         object use_dict_result=False,             # <<<<<<<<<<<<<<
@@ -2696,7 +2696,7 @@ static int __pyx_pw_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowB
 */
       if (!values[2]) values[2] = __Pyx_NewRef(((PyObject *)Py_False));
 
-      /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_converter.pyx":66
+      /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_iterator.pyx":66
  *         object arrow_context,
  *         object use_dict_result=False,
  *         object use_numpy=False,             # <<<<<<<<<<<<<<
@@ -2705,7 +2705,7 @@ static int __pyx_pw_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowB
 */
       if (!values[3]) values[3] = __Pyx_NewRef(((PyObject *)Py_False));
 
-      /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_converter.pyx":67
+      /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_iterator.pyx":67
  *         object use_dict_result=False,
  *         object use_numpy=False,
  *         object check_error_on_every_column=True             # <<<<<<<<<<<<<<
@@ -2729,13 +2729,13 @@ static int __pyx_pw_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowB
   for (Py_ssize_t __pyx_temp=0; __pyx_temp < (Py_ssize_t)(sizeof(values)/sizeof(values[0])); ++__pyx_temp) {
     Py_XDECREF(values[__pyx_temp]);
   }
-  __Pyx_AddTraceback("snowflake.ud_connector.arrow_batch_converter.PyArrowBatchConverter.__cinit__", __pyx_clineno, __pyx_lineno, __pyx_filename);
+  __Pyx_AddTraceback("snowflake.ud_connector._arrow_batch_iterator.PyArrowBatchIterator.__cinit__", __pyx_clineno, __pyx_lineno, __pyx_filename);
   __Pyx_RefNannyFinishContext();
   return -1;
   __pyx_L4_argument_unpacking_done:;
-  __pyx_r = __pyx_pf_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowBatchConverter___cinit__(((struct __pyx_obj_9snowflake_12ud_connector_21arrow_batch_converter_PyArrowBatchConverter *)__pyx_v_self), __pyx_v_record_batch, __pyx_v_arrow_context, __pyx_v_use_dict_result, __pyx_v_use_numpy, __pyx_v_check_error_on_every_column);
+  __pyx_r = __pyx_pf_9snowflake_12ud_connector_21_arrow_batch_iterator_20PyArrowBatchIterator___cinit__(((struct __pyx_obj_9snowflake_12ud_connector_21_arrow_batch_iterator_PyArrowBatchIterator *)__pyx_v_self), __pyx_v_record_batch, __pyx_v_arrow_context, __pyx_v_use_dict_result, __pyx_v_use_numpy, __pyx_v_check_error_on_every_column);
 
-  /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_converter.pyx":61
+  /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_iterator.pyx":61
  *     cdef object arrow_context
  * 
  *     def __cinit__(             # <<<<<<<<<<<<<<
@@ -2751,7 +2751,7 @@ static int __pyx_pw_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowB
   return __pyx_r;
 }
 
-static int __pyx_pf_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowBatchConverter___cinit__(struct __pyx_obj_9snowflake_12ud_connector_21arrow_batch_converter_PyArrowBatchConverter *__pyx_v_self, PyObject *__pyx_v_record_batch, PyObject *__pyx_v_arrow_context, PyObject *__pyx_v_use_dict_result, PyObject *__pyx_v_use_numpy, PyObject *__pyx_v_check_error_on_every_column) {
+static int __pyx_pf_9snowflake_12ud_connector_21_arrow_batch_iterator_20PyArrowBatchIterator___cinit__(struct __pyx_obj_9snowflake_12ud_connector_21_arrow_batch_iterator_PyArrowBatchIterator *__pyx_v_self, PyObject *__pyx_v_record_batch, PyObject *__pyx_v_arrow_context, PyObject *__pyx_v_use_dict_result, PyObject *__pyx_v_use_numpy, PyObject *__pyx_v_check_error_on_every_column) {
   PyObject *__pyx_v_c_schema_capsule = NULL;
   PyObject *__pyx_v_c_array_capsule = NULL;
   ArrowArray *__pyx_v_c_array_ptr;
@@ -2780,22 +2780,22 @@ static int __pyx_pf_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowB
   int __pyx_clineno = 0;
   __Pyx_RefNannySetupContext("__cinit__", 0);
 
-  /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_converter.pyx":88
+  /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_iterator.pyx":88
  *         cdef ArrowSchema c_schema
  * 
  *         self.use_dict_result = use_dict_result             # <<<<<<<<<<<<<<
  *         self.arrow_context = arrow_context
- *         self.converter = NULL
+ *         self.iterator = NULL
 */
   __pyx_t_1 = __Pyx_PyObject_IsTrue(__pyx_v_use_dict_result); if (unlikely((__pyx_t_1 == ((bool)-1)) && PyErr_Occurred())) __PYX_ERR(0, 88, __pyx_L1_error)
   __pyx_v_self->use_dict_result = __pyx_t_1;
 
-  /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_converter.pyx":89
+  /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_iterator.pyx":89
  * 
  *         self.use_dict_result = use_dict_result
  *         self.arrow_context = arrow_context             # <<<<<<<<<<<<<<
- *         self.converter = NULL
- *         self.dict_converter = NULL
+ *         self.iterator = NULL
+ *         self.dict_iterator = NULL
 */
   __Pyx_INCREF(__pyx_v_arrow_context);
   __Pyx_GIVEREF(__pyx_v_arrow_context);
@@ -2803,25 +2803,25 @@ static int __pyx_pf_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowB
   __Pyx_DECREF(__pyx_v_self->arrow_context);
   __pyx_v_self->arrow_context = __pyx_v_arrow_context;
 
-  /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_converter.pyx":90
+  /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_iterator.pyx":90
  *         self.use_dict_result = use_dict_result
  *         self.arrow_context = arrow_context
- *         self.converter = NULL             # <<<<<<<<<<<<<<
- *         self.dict_converter = NULL
+ *         self.iterator = NULL             # <<<<<<<<<<<<<<
+ *         self.dict_iterator = NULL
  * 
 */
-  __pyx_v_self->converter = NULL;
+  __pyx_v_self->iterator = NULL;
 
-  /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_converter.pyx":91
+  /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_iterator.pyx":91
  *         self.arrow_context = arrow_context
- *         self.converter = NULL
- *         self.dict_converter = NULL             # <<<<<<<<<<<<<<
+ *         self.iterator = NULL
+ *         self.dict_iterator = NULL             # <<<<<<<<<<<<<<
  * 
  *         # Export RecordBatch to Arrow C Data Interface
 */
-  __pyx_v_self->dict_converter = NULL;
+  __pyx_v_self->dict_iterator = NULL;
 
-  /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_converter.pyx":94
+  /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_iterator.pyx":94
  * 
  *         # Export RecordBatch to Arrow C Data Interface
  *         try:             # <<<<<<<<<<<<<<
@@ -2837,7 +2837,7 @@ static int __pyx_pf_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowB
     __Pyx_XGOTREF(__pyx_t_4);
     /*try:*/ {
 
-      /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_converter.pyx":97
+      /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_iterator.pyx":97
  *             # PyArrow 14.0+ uses __arrow_c_array__
  *             # Note: __arrow_c_array__() returns (schema_capsule, array_capsule) - schema first!
  *             c_schema_capsule, c_array_capsule = record_batch.__arrow_c_array__()             # <<<<<<<<<<<<<<
@@ -2909,7 +2909,7 @@ static int __pyx_pf_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowB
       __pyx_v_c_array_capsule = __pyx_t_8;
       __pyx_t_8 = 0;
 
-      /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_converter.pyx":94
+      /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_iterator.pyx":94
  * 
  *         # Export RecordBatch to Arrow C Data Interface
  *         try:             # <<<<<<<<<<<<<<
@@ -2927,7 +2927,7 @@ static int __pyx_pf_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowB
     __Pyx_XDECREF(__pyx_t_8); __pyx_t_8 = 0;
     __Pyx_XDECREF(__pyx_t_9); __pyx_t_9 = 0;
 
-    /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_converter.pyx":98
+    /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_iterator.pyx":98
  *             # Note: __arrow_c_array__() returns (schema_capsule, array_capsule) - schema first!
  *             c_schema_capsule, c_array_capsule = record_batch.__arrow_c_array__()
  *         except AttributeError:             # <<<<<<<<<<<<<<
@@ -2936,13 +2936,13 @@ static int __pyx_pf_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowB
 */
     __pyx_t_11 = __Pyx_PyErr_ExceptionMatches(((PyObject *)(((PyTypeObject*)PyExc_AttributeError))));
     if (__pyx_t_11) {
-      __Pyx_AddTraceback("snowflake.ud_connector.arrow_batch_converter.PyArrowBatchConverter.__cinit__", __pyx_clineno, __pyx_lineno, __pyx_filename);
+      __Pyx_AddTraceback("snowflake.ud_connector._arrow_batch_iterator.PyArrowBatchIterator.__cinit__", __pyx_clineno, __pyx_lineno, __pyx_filename);
       if (__Pyx_GetException(&__pyx_t_5, &__pyx_t_8, &__pyx_t_6) < 0) __PYX_ERR(0, 98, __pyx_L5_except_error)
       __Pyx_XGOTREF(__pyx_t_5);
       __Pyx_XGOTREF(__pyx_t_8);
       __Pyx_XGOTREF(__pyx_t_6);
 
-      /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_converter.pyx":100
+      /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_iterator.pyx":100
  *         except AttributeError:
  *             # Fallback for older PyArrow versions
  *             raise RuntimeError(             # <<<<<<<<<<<<<<
@@ -2964,7 +2964,7 @@ static int __pyx_pf_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowB
     }
     goto __pyx_L5_except_error;
 
-    /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_converter.pyx":94
+    /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_iterator.pyx":94
  * 
  *         # Export RecordBatch to Arrow C Data Interface
  *         try:             # <<<<<<<<<<<<<<
@@ -2980,7 +2980,7 @@ static int __pyx_pf_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowB
     __pyx_L8_try_end:;
   }
 
-  /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_converter.pyx":106
+  /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_iterator.pyx":106
  * 
  *         # Extract pointers from PyCapsules
  *         cdef ArrowArray* c_array_ptr = <ArrowArray*>PyCapsule_GetPointer(             # <<<<<<<<<<<<<<
@@ -2990,7 +2990,7 @@ static int __pyx_pf_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowB
   __pyx_t_13 = PyCapsule_GetPointer(__pyx_v_c_array_capsule, __pyx_k_arrow_array); if (unlikely(__pyx_t_13 == ((void *)NULL))) __PYX_ERR(0, 106, __pyx_L1_error)
   __pyx_v_c_array_ptr = ((ArrowArray *)__pyx_t_13);
 
-  /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_converter.pyx":109
+  /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_iterator.pyx":109
  *             c_array_capsule, "arrow_array"
  *         )
  *         cdef ArrowSchema* c_schema_ptr = <ArrowSchema*>PyCapsule_GetPointer(             # <<<<<<<<<<<<<<
@@ -3000,7 +3000,7 @@ static int __pyx_pf_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowB
   __pyx_t_13 = PyCapsule_GetPointer(__pyx_v_c_schema_capsule, __pyx_k_arrow_schema); if (unlikely(__pyx_t_13 == ((void *)NULL))) __PYX_ERR(0, 109, __pyx_L1_error)
   __pyx_v_c_schema_ptr = ((ArrowSchema *)__pyx_t_13);
 
-  /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_converter.pyx":113
+  /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_iterator.pyx":113
  *         )
  * 
  *         if c_array_ptr == NULL or c_schema_ptr == NULL:             # <<<<<<<<<<<<<<
@@ -3018,7 +3018,7 @@ static int __pyx_pf_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowB
   __pyx_L14_bool_binop_done:;
   if (unlikely(__pyx_t_14)) {
 
-    /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_converter.pyx":114
+    /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_iterator.pyx":114
  * 
  *         if c_array_ptr == NULL or c_schema_ptr == NULL:
  *             raise RuntimeError("Failed to extract Arrow C pointers from RecordBatch")             # <<<<<<<<<<<<<<
@@ -3038,7 +3038,7 @@ static int __pyx_pf_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowB
     __Pyx_DECREF(__pyx_t_6); __pyx_t_6 = 0;
     __PYX_ERR(0, 114, __pyx_L1_error)
 
-    /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_converter.pyx":113
+    /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_iterator.pyx":113
  *         )
  * 
  *         if c_array_ptr == NULL or c_schema_ptr == NULL:             # <<<<<<<<<<<<<<
@@ -3047,37 +3047,37 @@ static int __pyx_pf_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowB
 */
   }
 
-  /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_converter.pyx":120
+  /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_iterator.pyx":120
  * 
  *         # Create appropriate iterator
  *         if use_dict_result:             # <<<<<<<<<<<<<<
- *             self.dict_converter = new DictCArrowBatchIterator(
+ *             self.dict_iterator = new DictCArrowBatchIterator(
  *                 c_array_ptr,
 */
   __pyx_t_14 = __Pyx_PyObject_IsTrue(__pyx_v_use_dict_result); if (unlikely((__pyx_t_14 < 0))) __PYX_ERR(0, 120, __pyx_L1_error)
   if (__pyx_t_14) {
 
-    /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_converter.pyx":121
+    /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_iterator.pyx":121
  *         # Create appropriate iterator
  *         if use_dict_result:
- *             self.dict_converter = new DictCArrowBatchIterator(             # <<<<<<<<<<<<<<
+ *             self.dict_iterator = new DictCArrowBatchIterator(             # <<<<<<<<<<<<<<
  *                 c_array_ptr,
  *                 c_schema_ptr,
 */
-    __pyx_v_self->dict_converter = new sf::DictCArrowBatchIterator(__pyx_v_c_array_ptr, __pyx_v_c_schema_ptr, ((PyObject *)__pyx_v_arrow_context), ((PyObject *)__pyx_v_use_numpy));
+    __pyx_v_self->dict_iterator = new sf::DictCArrowBatchIterator(__pyx_v_c_array_ptr, __pyx_v_c_schema_ptr, ((PyObject *)__pyx_v_arrow_context), ((PyObject *)__pyx_v_use_numpy));
 
-    /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_converter.pyx":129
+    /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_iterator.pyx":129
  * 
  *             # Check initialization
- *             init_ret = self.dict_converter.checkInitializationStatus()             # <<<<<<<<<<<<<<
+ *             init_ret = self.dict_iterator.checkInitializationStatus()             # <<<<<<<<<<<<<<
  *             if init_ret.exception != NULL:
  *                 error_msg = <object>init_ret.exception
 */
-    __pyx_v_init_ret = __pyx_v_self->dict_converter->checkInitializationStatus();
+    __pyx_v_init_ret = __pyx_v_self->dict_iterator->checkInitializationStatus();
 
-    /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_converter.pyx":130
+    /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_iterator.pyx":130
  *             # Check initialization
- *             init_ret = self.dict_converter.checkInitializationStatus()
+ *             init_ret = self.dict_iterator.checkInitializationStatus()
  *             if init_ret.exception != NULL:             # <<<<<<<<<<<<<<
  *                 error_msg = <object>init_ret.exception
  *                 raise RuntimeError(f"Failed to initialize batch iterator: {error_msg}")
@@ -3085,8 +3085,8 @@ static int __pyx_pf_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowB
     __pyx_t_14 = (__pyx_v_init_ret.exception != NULL);
     if (unlikely(__pyx_t_14)) {
 
-      /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_converter.pyx":131
- *             init_ret = self.dict_converter.checkInitializationStatus()
+      /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_iterator.pyx":131
+ *             init_ret = self.dict_iterator.checkInitializationStatus()
  *             if init_ret.exception != NULL:
  *                 error_msg = <object>init_ret.exception             # <<<<<<<<<<<<<<
  *                 raise RuntimeError(f"Failed to initialize batch iterator: {error_msg}")
@@ -3097,12 +3097,12 @@ static int __pyx_pf_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowB
       __pyx_v_error_msg = __pyx_t_6;
       __pyx_t_6 = 0;
 
-      /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_converter.pyx":132
+      /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_iterator.pyx":132
  *             if init_ret.exception != NULL:
  *                 error_msg = <object>init_ret.exception
  *                 raise RuntimeError(f"Failed to initialize batch iterator: {error_msg}")             # <<<<<<<<<<<<<<
  *         else:
- *             self.converter = new CArrowBatchIterator(
+ *             self.iterator = new CArrowBatchIterator(
 */
       __pyx_t_8 = NULL;
       __pyx_t_5 = __Pyx_PyObject_FormatSimple(__pyx_v_error_msg, __pyx_mstate_global->__pyx_empty_unicode); if (unlikely(!__pyx_t_5)) __PYX_ERR(0, 132, __pyx_L1_error)
@@ -3123,55 +3123,55 @@ static int __pyx_pf_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowB
       __Pyx_DECREF(__pyx_t_6); __pyx_t_6 = 0;
       __PYX_ERR(0, 132, __pyx_L1_error)
 
-      /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_converter.pyx":130
+      /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_iterator.pyx":130
  *             # Check initialization
- *             init_ret = self.dict_converter.checkInitializationStatus()
+ *             init_ret = self.dict_iterator.checkInitializationStatus()
  *             if init_ret.exception != NULL:             # <<<<<<<<<<<<<<
  *                 error_msg = <object>init_ret.exception
  *                 raise RuntimeError(f"Failed to initialize batch iterator: {error_msg}")
 */
     }
 
-    /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_converter.pyx":120
+    /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_iterator.pyx":120
  * 
  *         # Create appropriate iterator
  *         if use_dict_result:             # <<<<<<<<<<<<<<
- *             self.dict_converter = new DictCArrowBatchIterator(
+ *             self.dict_iterator = new DictCArrowBatchIterator(
  *                 c_array_ptr,
 */
     goto __pyx_L16;
   }
 
-  /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_converter.pyx":134
+  /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_iterator.pyx":134
  *                 raise RuntimeError(f"Failed to initialize batch iterator: {error_msg}")
  *         else:
- *             self.converter = new CArrowBatchIterator(             # <<<<<<<<<<<<<<
+ *             self.iterator = new CArrowBatchIterator(             # <<<<<<<<<<<<<<
  *                 c_array_ptr,
  *                 c_schema_ptr,
 */
   /*else*/ {
 
-    /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_converter.pyx":139
+    /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_iterator.pyx":139
  *                 <PyObject*>arrow_context,
  *                 <PyObject*>use_numpy,
  *                 <PyObject*>check_error_on_every_column             # <<<<<<<<<<<<<<
  *             )
  * 
 */
-    __pyx_v_self->converter = new sf::CArrowBatchIterator(__pyx_v_c_array_ptr, __pyx_v_c_schema_ptr, ((PyObject *)__pyx_v_arrow_context), ((PyObject *)__pyx_v_use_numpy), ((PyObject *)__pyx_v_check_error_on_every_column));
+    __pyx_v_self->iterator = new sf::CArrowBatchIterator(__pyx_v_c_array_ptr, __pyx_v_c_schema_ptr, ((PyObject *)__pyx_v_arrow_context), ((PyObject *)__pyx_v_use_numpy), ((PyObject *)__pyx_v_check_error_on_every_column));
 
-    /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_converter.pyx":143
+    /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_iterator.pyx":143
  * 
  *             # Check initialization
- *             init_ret = self.converter.checkInitializationStatus()             # <<<<<<<<<<<<<<
+ *             init_ret = self.iterator.checkInitializationStatus()             # <<<<<<<<<<<<<<
  *             if init_ret.exception != NULL:
  *                 error_msg = <object>init_ret.exception
 */
-    __pyx_v_init_ret = __pyx_v_self->converter->checkInitializationStatus();
+    __pyx_v_init_ret = __pyx_v_self->iterator->checkInitializationStatus();
 
-    /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_converter.pyx":144
+    /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_iterator.pyx":144
  *             # Check initialization
- *             init_ret = self.converter.checkInitializationStatus()
+ *             init_ret = self.iterator.checkInitializationStatus()
  *             if init_ret.exception != NULL:             # <<<<<<<<<<<<<<
  *                 error_msg = <object>init_ret.exception
  *                 raise RuntimeError(f"Failed to initialize batch iterator: {error_msg}")
@@ -3179,8 +3179,8 @@ static int __pyx_pf_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowB
     __pyx_t_14 = (__pyx_v_init_ret.exception != NULL);
     if (unlikely(__pyx_t_14)) {
 
-      /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_converter.pyx":145
- *             init_ret = self.converter.checkInitializationStatus()
+      /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_iterator.pyx":145
+ *             init_ret = self.iterator.checkInitializationStatus()
  *             if init_ret.exception != NULL:
  *                 error_msg = <object>init_ret.exception             # <<<<<<<<<<<<<<
  *                 raise RuntimeError(f"Failed to initialize batch iterator: {error_msg}")
@@ -3191,7 +3191,7 @@ static int __pyx_pf_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowB
       __pyx_v_error_msg = __pyx_t_6;
       __pyx_t_6 = 0;
 
-      /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_converter.pyx":146
+      /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_iterator.pyx":146
  *             if init_ret.exception != NULL:
  *                 error_msg = <object>init_ret.exception
  *                 raise RuntimeError(f"Failed to initialize batch iterator: {error_msg}")             # <<<<<<<<<<<<<<
@@ -3217,9 +3217,9 @@ static int __pyx_pf_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowB
       __Pyx_DECREF(__pyx_t_6); __pyx_t_6 = 0;
       __PYX_ERR(0, 146, __pyx_L1_error)
 
-      /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_converter.pyx":144
+      /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_iterator.pyx":144
  *             # Check initialization
- *             init_ret = self.converter.checkInitializationStatus()
+ *             init_ret = self.iterator.checkInitializationStatus()
  *             if init_ret.exception != NULL:             # <<<<<<<<<<<<<<
  *                 error_msg = <object>init_ret.exception
  *                 raise RuntimeError(f"Failed to initialize batch iterator: {error_msg}")
@@ -3228,7 +3228,7 @@ static int __pyx_pf_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowB
   }
   __pyx_L16:;
 
-  /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_converter.pyx":61
+  /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_iterator.pyx":61
  *     cdef object arrow_context
  * 
  *     def __cinit__(             # <<<<<<<<<<<<<<
@@ -3245,7 +3245,7 @@ static int __pyx_pf_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowB
   __Pyx_XDECREF(__pyx_t_8);
   __Pyx_XDECREF(__pyx_t_9);
   __Pyx_XDECREF(__pyx_t_12);
-  __Pyx_AddTraceback("snowflake.ud_connector.arrow_batch_converter.PyArrowBatchConverter.__cinit__", __pyx_clineno, __pyx_lineno, __pyx_filename);
+  __Pyx_AddTraceback("snowflake.ud_connector._arrow_batch_iterator.PyArrowBatchIterator.__cinit__", __pyx_clineno, __pyx_lineno, __pyx_filename);
   __pyx_r = -1;
   __pyx_L0:;
   __Pyx_XDECREF(__pyx_v_c_schema_capsule);
@@ -3255,99 +3255,99 @@ static int __pyx_pf_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowB
   return __pyx_r;
 }
 
-/* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_converter.pyx":148
+/* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_iterator.pyx":148
  *                 raise RuntimeError(f"Failed to initialize batch iterator: {error_msg}")
  * 
  *     def __dealloc__(self):             # <<<<<<<<<<<<<<
- *         if self.converter != NULL:
- *             del self.converter
+ *         if self.iterator != NULL:
+ *             del self.iterator
 */
 
 /* Python wrapper */
-static void __pyx_pw_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowBatchConverter_3__dealloc__(PyObject *__pyx_v_self); /*proto*/
-static void __pyx_pw_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowBatchConverter_3__dealloc__(PyObject *__pyx_v_self) {
+static void __pyx_pw_9snowflake_12ud_connector_21_arrow_batch_iterator_20PyArrowBatchIterator_3__dealloc__(PyObject *__pyx_v_self); /*proto*/
+static void __pyx_pw_9snowflake_12ud_connector_21_arrow_batch_iterator_20PyArrowBatchIterator_3__dealloc__(PyObject *__pyx_v_self) {
   CYTHON_UNUSED PyObject *const *__pyx_kwvalues;
   __Pyx_RefNannyDeclarations
   __Pyx_RefNannySetupContext("__dealloc__ (wrapper)", 0);
   __pyx_kwvalues = __Pyx_KwValues_VARARGS(__pyx_args, __pyx_nargs);
-  __pyx_pf_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowBatchConverter_2__dealloc__(((struct __pyx_obj_9snowflake_12ud_connector_21arrow_batch_converter_PyArrowBatchConverter *)__pyx_v_self));
+  __pyx_pf_9snowflake_12ud_connector_21_arrow_batch_iterator_20PyArrowBatchIterator_2__dealloc__(((struct __pyx_obj_9snowflake_12ud_connector_21_arrow_batch_iterator_PyArrowBatchIterator *)__pyx_v_self));
 
   /* function exit code */
   __Pyx_RefNannyFinishContext();
 }
 
-static void __pyx_pf_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowBatchConverter_2__dealloc__(struct __pyx_obj_9snowflake_12ud_connector_21arrow_batch_converter_PyArrowBatchConverter *__pyx_v_self) {
+static void __pyx_pf_9snowflake_12ud_connector_21_arrow_batch_iterator_20PyArrowBatchIterator_2__dealloc__(struct __pyx_obj_9snowflake_12ud_connector_21_arrow_batch_iterator_PyArrowBatchIterator *__pyx_v_self) {
   int __pyx_t_1;
 
-  /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_converter.pyx":149
+  /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_iterator.pyx":149
  * 
  *     def __dealloc__(self):
- *         if self.converter != NULL:             # <<<<<<<<<<<<<<
- *             del self.converter
- *         if self.dict_converter != NULL:
+ *         if self.iterator != NULL:             # <<<<<<<<<<<<<<
+ *             del self.iterator
+ *         if self.dict_iterator != NULL:
 */
-  __pyx_t_1 = (__pyx_v_self->converter != NULL);
+  __pyx_t_1 = (__pyx_v_self->iterator != NULL);
   if (__pyx_t_1) {
 
-    /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_converter.pyx":150
+    /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_iterator.pyx":150
  *     def __dealloc__(self):
- *         if self.converter != NULL:
- *             del self.converter             # <<<<<<<<<<<<<<
- *         if self.dict_converter != NULL:
- *             del self.dict_converter
+ *         if self.iterator != NULL:
+ *             del self.iterator             # <<<<<<<<<<<<<<
+ *         if self.dict_iterator != NULL:
+ *             del self.dict_iterator
 */
-    delete __pyx_v_self->converter;
+    delete __pyx_v_self->iterator;
 
-    /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_converter.pyx":149
+    /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_iterator.pyx":149
  * 
  *     def __dealloc__(self):
- *         if self.converter != NULL:             # <<<<<<<<<<<<<<
- *             del self.converter
- *         if self.dict_converter != NULL:
+ *         if self.iterator != NULL:             # <<<<<<<<<<<<<<
+ *             del self.iterator
+ *         if self.dict_iterator != NULL:
 */
   }
 
-  /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_converter.pyx":151
- *         if self.converter != NULL:
- *             del self.converter
- *         if self.dict_converter != NULL:             # <<<<<<<<<<<<<<
- *             del self.dict_converter
+  /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_iterator.pyx":151
+ *         if self.iterator != NULL:
+ *             del self.iterator
+ *         if self.dict_iterator != NULL:             # <<<<<<<<<<<<<<
+ *             del self.dict_iterator
  * 
 */
-  __pyx_t_1 = (__pyx_v_self->dict_converter != NULL);
+  __pyx_t_1 = (__pyx_v_self->dict_iterator != NULL);
   if (__pyx_t_1) {
 
-    /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_converter.pyx":152
- *             del self.converter
- *         if self.dict_converter != NULL:
- *             del self.dict_converter             # <<<<<<<<<<<<<<
+    /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_iterator.pyx":152
+ *             del self.iterator
+ *         if self.dict_iterator != NULL:
+ *             del self.dict_iterator             # <<<<<<<<<<<<<<
  * 
  *     def __iter__(self):
 */
-    delete __pyx_v_self->dict_converter;
+    delete __pyx_v_self->dict_iterator;
 
-    /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_converter.pyx":151
- *         if self.converter != NULL:
- *             del self.converter
- *         if self.dict_converter != NULL:             # <<<<<<<<<<<<<<
- *             del self.dict_converter
+    /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_iterator.pyx":151
+ *         if self.iterator != NULL:
+ *             del self.iterator
+ *         if self.dict_iterator != NULL:             # <<<<<<<<<<<<<<
+ *             del self.dict_iterator
  * 
 */
   }
 
-  /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_converter.pyx":148
+  /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_iterator.pyx":148
  *                 raise RuntimeError(f"Failed to initialize batch iterator: {error_msg}")
  * 
  *     def __dealloc__(self):             # <<<<<<<<<<<<<<
- *         if self.converter != NULL:
- *             del self.converter
+ *         if self.iterator != NULL:
+ *             del self.iterator
 */
 
   /* function exit code */
 }
 
-/* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_converter.pyx":154
- *             del self.dict_converter
+/* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_iterator.pyx":154
+ *             del self.dict_iterator
  * 
  *     def __iter__(self):             # <<<<<<<<<<<<<<
  *         return self
@@ -3355,26 +3355,26 @@ static void __pyx_pf_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrow
 */
 
 /* Python wrapper */
-static PyObject *__pyx_pw_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowBatchConverter_5__iter__(PyObject *__pyx_v_self); /*proto*/
-static PyObject *__pyx_pw_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowBatchConverter_5__iter__(PyObject *__pyx_v_self) {
+static PyObject *__pyx_pw_9snowflake_12ud_connector_21_arrow_batch_iterator_20PyArrowBatchIterator_5__iter__(PyObject *__pyx_v_self); /*proto*/
+static PyObject *__pyx_pw_9snowflake_12ud_connector_21_arrow_batch_iterator_20PyArrowBatchIterator_5__iter__(PyObject *__pyx_v_self) {
   CYTHON_UNUSED PyObject *const *__pyx_kwvalues;
   PyObject *__pyx_r = 0;
   __Pyx_RefNannyDeclarations
   __Pyx_RefNannySetupContext("__iter__ (wrapper)", 0);
   __pyx_kwvalues = __Pyx_KwValues_VARARGS(__pyx_args, __pyx_nargs);
-  __pyx_r = __pyx_pf_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowBatchConverter_4__iter__(((struct __pyx_obj_9snowflake_12ud_connector_21arrow_batch_converter_PyArrowBatchConverter *)__pyx_v_self));
+  __pyx_r = __pyx_pf_9snowflake_12ud_connector_21_arrow_batch_iterator_20PyArrowBatchIterator_4__iter__(((struct __pyx_obj_9snowflake_12ud_connector_21_arrow_batch_iterator_PyArrowBatchIterator *)__pyx_v_self));
 
   /* function exit code */
   __Pyx_RefNannyFinishContext();
   return __pyx_r;
 }
 
-static PyObject *__pyx_pf_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowBatchConverter_4__iter__(struct __pyx_obj_9snowflake_12ud_connector_21arrow_batch_converter_PyArrowBatchConverter *__pyx_v_self) {
+static PyObject *__pyx_pf_9snowflake_12ud_connector_21_arrow_batch_iterator_20PyArrowBatchIterator_4__iter__(struct __pyx_obj_9snowflake_12ud_connector_21_arrow_batch_iterator_PyArrowBatchIterator *__pyx_v_self) {
   PyObject *__pyx_r = NULL;
   __Pyx_RefNannyDeclarations
   __Pyx_RefNannySetupContext("__iter__", 0);
 
-  /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_converter.pyx":155
+  /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_iterator.pyx":155
  * 
  *     def __iter__(self):
  *         return self             # <<<<<<<<<<<<<<
@@ -3386,8 +3386,8 @@ static PyObject *__pyx_pf_9snowflake_12ud_connector_21arrow_batch_converter_21Py
   __pyx_r = ((PyObject *)__pyx_v_self);
   goto __pyx_L0;
 
-  /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_converter.pyx":154
- *             del self.dict_converter
+  /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_iterator.pyx":154
+ *             del self.dict_iterator
  * 
  *     def __iter__(self):             # <<<<<<<<<<<<<<
  *         return self
@@ -3401,7 +3401,7 @@ static PyObject *__pyx_pf_9snowflake_12ud_connector_21arrow_batch_converter_21Py
   return __pyx_r;
 }
 
-/* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_converter.pyx":157
+/* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_iterator.pyx":157
  *         return self
  * 
  *     def __next__(self):             # <<<<<<<<<<<<<<
@@ -3410,25 +3410,25 @@ static PyObject *__pyx_pf_9snowflake_12ud_connector_21arrow_batch_converter_21Py
 */
 
 /* Python wrapper */
-static PyObject *__pyx_pw_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowBatchConverter_7__next__(PyObject *__pyx_v_self); /*proto*/
-PyDoc_STRVAR(__pyx_doc_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowBatchConverter_6__next__, "Get next row from batch.");
+static PyObject *__pyx_pw_9snowflake_12ud_connector_21_arrow_batch_iterator_20PyArrowBatchIterator_7__next__(PyObject *__pyx_v_self); /*proto*/
+PyDoc_STRVAR(__pyx_doc_9snowflake_12ud_connector_21_arrow_batch_iterator_20PyArrowBatchIterator_6__next__, "Get next row from batch.");
 #if CYTHON_UPDATE_DESCRIPTOR_DOC
-struct wrapperbase __pyx_wrapperbase_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowBatchConverter_6__next__;
+struct wrapperbase __pyx_wrapperbase_9snowflake_12ud_connector_21_arrow_batch_iterator_20PyArrowBatchIterator_6__next__;
 #endif
-static PyObject *__pyx_pw_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowBatchConverter_7__next__(PyObject *__pyx_v_self) {
+static PyObject *__pyx_pw_9snowflake_12ud_connector_21_arrow_batch_iterator_20PyArrowBatchIterator_7__next__(PyObject *__pyx_v_self) {
   CYTHON_UNUSED PyObject *const *__pyx_kwvalues;
   PyObject *__pyx_r = 0;
   __Pyx_RefNannyDeclarations
   __Pyx_RefNannySetupContext("__next__ (wrapper)", 0);
   __pyx_kwvalues = __Pyx_KwValues_VARARGS(__pyx_args, __pyx_nargs);
-  __pyx_r = __pyx_pf_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowBatchConverter_6__next__(((struct __pyx_obj_9snowflake_12ud_connector_21arrow_batch_converter_PyArrowBatchConverter *)__pyx_v_self));
+  __pyx_r = __pyx_pf_9snowflake_12ud_connector_21_arrow_batch_iterator_20PyArrowBatchIterator_6__next__(((struct __pyx_obj_9snowflake_12ud_connector_21_arrow_batch_iterator_PyArrowBatchIterator *)__pyx_v_self));
 
   /* function exit code */
   __Pyx_RefNannyFinishContext();
   return __pyx_r;
 }
 
-static PyObject *__pyx_pf_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowBatchConverter_6__next__(struct __pyx_obj_9snowflake_12ud_connector_21arrow_batch_converter_PyArrowBatchConverter *__pyx_v_self) {
+static PyObject *__pyx_pf_9snowflake_12ud_connector_21_arrow_batch_iterator_20PyArrowBatchIterator_6__next__(struct __pyx_obj_9snowflake_12ud_connector_21_arrow_batch_iterator_PyArrowBatchIterator *__pyx_v_self) {
   sf::ReturnVal __pyx_v_ret;
   PyObject *__pyx_v_error_msg = NULL;
   PyObject *__pyx_v_row = NULL;
@@ -3446,48 +3446,48 @@ static PyObject *__pyx_pf_9snowflake_12ud_connector_21arrow_batch_converter_21Py
   int __pyx_clineno = 0;
   __Pyx_RefNannySetupContext("__next__", 0);
 
-  /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_converter.pyx":161
+  /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_iterator.pyx":161
  *         cdef ReturnVal ret
  * 
  *         if self.use_dict_result:             # <<<<<<<<<<<<<<
- *             ret = self.dict_converter.next()
+ *             ret = self.dict_iterator.next()
  *         else:
 */
   __pyx_t_1 = (__pyx_v_self->use_dict_result != 0);
   if (__pyx_t_1) {
 
-    /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_converter.pyx":162
+    /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_iterator.pyx":162
  * 
  *         if self.use_dict_result:
- *             ret = self.dict_converter.next()             # <<<<<<<<<<<<<<
+ *             ret = self.dict_iterator.next()             # <<<<<<<<<<<<<<
  *         else:
- *             ret = self.converter.next()
+ *             ret = self.iterator.next()
 */
-    __pyx_v_ret = __pyx_v_self->dict_converter->next();
+    __pyx_v_ret = __pyx_v_self->dict_iterator->next();
 
-    /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_converter.pyx":161
+    /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_iterator.pyx":161
  *         cdef ReturnVal ret
  * 
  *         if self.use_dict_result:             # <<<<<<<<<<<<<<
- *             ret = self.dict_converter.next()
+ *             ret = self.dict_iterator.next()
  *         else:
 */
     goto __pyx_L3;
   }
 
-  /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_converter.pyx":164
- *             ret = self.dict_converter.next()
+  /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_iterator.pyx":164
+ *             ret = self.dict_iterator.next()
  *         else:
- *             ret = self.converter.next()             # <<<<<<<<<<<<<<
+ *             ret = self.iterator.next()             # <<<<<<<<<<<<<<
  * 
  *         # Check for exception
 */
   /*else*/ {
-    __pyx_v_ret = __pyx_v_self->converter->next();
+    __pyx_v_ret = __pyx_v_self->iterator->next();
   }
   __pyx_L3:;
 
-  /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_converter.pyx":167
+  /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_iterator.pyx":167
  * 
  *         # Check for exception
  *         if ret.exception != NULL:             # <<<<<<<<<<<<<<
@@ -3497,7 +3497,7 @@ static PyObject *__pyx_pf_9snowflake_12ud_connector_21arrow_batch_converter_21Py
   __pyx_t_1 = (__pyx_v_ret.exception != NULL);
   if (unlikely(__pyx_t_1)) {
 
-    /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_converter.pyx":168
+    /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_iterator.pyx":168
  *         # Check for exception
  *         if ret.exception != NULL:
  *             error_msg = <object>ret.exception             # <<<<<<<<<<<<<<
@@ -3509,7 +3509,7 @@ static PyObject *__pyx_pf_9snowflake_12ud_connector_21arrow_batch_converter_21Py
     __pyx_v_error_msg = __pyx_t_2;
     __pyx_t_2 = 0;
 
-    /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_converter.pyx":169
+    /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_iterator.pyx":169
  *         if ret.exception != NULL:
  *             error_msg = <object>ret.exception
  *             raise RuntimeError(f"Error converting row: {error_msg}")             # <<<<<<<<<<<<<<
@@ -3535,7 +3535,7 @@ static PyObject *__pyx_pf_9snowflake_12ud_connector_21arrow_batch_converter_21Py
     __Pyx_DECREF(__pyx_t_2); __pyx_t_2 = 0;
     __PYX_ERR(0, 169, __pyx_L1_error)
 
-    /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_converter.pyx":167
+    /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_iterator.pyx":167
  * 
  *         # Check for exception
  *         if ret.exception != NULL:             # <<<<<<<<<<<<<<
@@ -3544,7 +3544,7 @@ static PyObject *__pyx_pf_9snowflake_12ud_connector_21arrow_batch_converter_21Py
 */
   }
 
-  /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_converter.pyx":172
+  /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_iterator.pyx":172
  * 
  *         # Check for end of iteration
  *         if ret.successObj == NULL:             # <<<<<<<<<<<<<<
@@ -3554,7 +3554,7 @@ static PyObject *__pyx_pf_9snowflake_12ud_connector_21arrow_batch_converter_21Py
   __pyx_t_1 = (__pyx_v_ret.successObj == NULL);
   if (unlikely(__pyx_t_1)) {
 
-    /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_converter.pyx":173
+    /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_iterator.pyx":173
  *         # Check for end of iteration
  *         if ret.successObj == NULL:
  *             raise StopIteration             # <<<<<<<<<<<<<<
@@ -3564,7 +3564,7 @@ static PyObject *__pyx_pf_9snowflake_12ud_connector_21arrow_batch_converter_21Py
     __pyx_error_without_exception = 1;
     goto __pyx_L1_error;;
 
-    /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_converter.pyx":172
+    /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_iterator.pyx":172
  * 
  *         # Check for end of iteration
  *         if ret.successObj == NULL:             # <<<<<<<<<<<<<<
@@ -3573,7 +3573,7 @@ static PyObject *__pyx_pf_9snowflake_12ud_connector_21arrow_batch_converter_21Py
 */
   }
 
-  /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_converter.pyx":176
+  /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_iterator.pyx":176
  * 
  *         # Return the row
  *         row = <object>ret.successObj             # <<<<<<<<<<<<<<
@@ -3585,7 +3585,7 @@ static PyObject *__pyx_pf_9snowflake_12ud_connector_21arrow_batch_converter_21Py
   __pyx_v_row = __pyx_t_2;
   __pyx_t_2 = 0;
 
-  /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_converter.pyx":177
+  /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_iterator.pyx":177
  *         # Return the row
  *         row = <object>ret.successObj
  *         return row             # <<<<<<<<<<<<<<
@@ -3597,7 +3597,7 @@ static PyObject *__pyx_pf_9snowflake_12ud_connector_21arrow_batch_converter_21Py
   __pyx_r = __pyx_v_row;
   goto __pyx_L0;
 
-  /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_converter.pyx":157
+  /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_iterator.pyx":157
  *         return self
  * 
  *     def __next__(self):             # <<<<<<<<<<<<<<
@@ -3612,7 +3612,7 @@ static PyObject *__pyx_pf_9snowflake_12ud_connector_21arrow_batch_converter_21Py
   __Pyx_XDECREF(__pyx_t_4);
   __Pyx_XDECREF(__pyx_t_5);
   if (!__pyx_error_without_exception) {
-    __Pyx_AddTraceback("snowflake.ud_connector.arrow_batch_converter.PyArrowBatchConverter.__next__", __pyx_clineno, __pyx_lineno, __pyx_filename);
+    __Pyx_AddTraceback("snowflake.ud_connector._arrow_batch_iterator.PyArrowBatchIterator.__next__", __pyx_clineno, __pyx_lineno, __pyx_filename);
   }
   __pyx_r = NULL;
   __pyx_L0:;
@@ -3623,7 +3623,7 @@ static PyObject *__pyx_pf_9snowflake_12ud_connector_21arrow_batch_converter_21Py
   return __pyx_r;
 }
 
-/* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_converter.pyx":179
+/* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_iterator.pyx":179
  *         return row
  * 
  *     def get_row_count(self):             # <<<<<<<<<<<<<<
@@ -3632,16 +3632,16 @@ static PyObject *__pyx_pf_9snowflake_12ud_connector_21arrow_batch_converter_21Py
 */
 
 /* Python wrapper */
-static PyObject *__pyx_pw_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowBatchConverter_9get_row_count(PyObject *__pyx_v_self, 
+static PyObject *__pyx_pw_9snowflake_12ud_connector_21_arrow_batch_iterator_20PyArrowBatchIterator_9get_row_count(PyObject *__pyx_v_self, 
 #if CYTHON_METH_FASTCALL
 PyObject *const *__pyx_args, Py_ssize_t __pyx_nargs, PyObject *__pyx_kwds
 #else
 PyObject *__pyx_args, PyObject *__pyx_kwds
 #endif
 ); /*proto*/
-PyDoc_STRVAR(__pyx_doc_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowBatchConverter_8get_row_count, "Get total number of rows in this batch.");
-static PyMethodDef __pyx_mdef_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowBatchConverter_9get_row_count = {"get_row_count", (PyCFunction)(void(*)(void))(__Pyx_PyCFunction_FastCallWithKeywords)__pyx_pw_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowBatchConverter_9get_row_count, __Pyx_METH_FASTCALL|METH_KEYWORDS, __pyx_doc_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowBatchConverter_8get_row_count};
-static PyObject *__pyx_pw_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowBatchConverter_9get_row_count(PyObject *__pyx_v_self, 
+PyDoc_STRVAR(__pyx_doc_9snowflake_12ud_connector_21_arrow_batch_iterator_20PyArrowBatchIterator_8get_row_count, "Get total number of rows in this batch.");
+static PyMethodDef __pyx_mdef_9snowflake_12ud_connector_21_arrow_batch_iterator_20PyArrowBatchIterator_9get_row_count = {"get_row_count", (PyCFunction)(void(*)(void))(__Pyx_PyCFunction_FastCallWithKeywords)__pyx_pw_9snowflake_12ud_connector_21_arrow_batch_iterator_20PyArrowBatchIterator_9get_row_count, __Pyx_METH_FASTCALL|METH_KEYWORDS, __pyx_doc_9snowflake_12ud_connector_21_arrow_batch_iterator_20PyArrowBatchIterator_8get_row_count};
+static PyObject *__pyx_pw_9snowflake_12ud_connector_21_arrow_batch_iterator_20PyArrowBatchIterator_9get_row_count(PyObject *__pyx_v_self, 
 #if CYTHON_METH_FASTCALL
 PyObject *const *__pyx_args, Py_ssize_t __pyx_nargs, PyObject *__pyx_kwds
 #else
@@ -3667,14 +3667,14 @@ PyObject *__pyx_args, PyObject *__pyx_kwds
   const Py_ssize_t __pyx_kwds_len = unlikely(__pyx_kwds) ? __Pyx_NumKwargs_FASTCALL(__pyx_kwds) : 0;
   if (unlikely(__pyx_kwds_len < 0)) return NULL;
   if (unlikely(__pyx_kwds_len > 0)) {__Pyx_RejectKeywords("get_row_count", __pyx_kwds); return NULL;}
-  __pyx_r = __pyx_pf_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowBatchConverter_8get_row_count(((struct __pyx_obj_9snowflake_12ud_connector_21arrow_batch_converter_PyArrowBatchConverter *)__pyx_v_self));
+  __pyx_r = __pyx_pf_9snowflake_12ud_connector_21_arrow_batch_iterator_20PyArrowBatchIterator_8get_row_count(((struct __pyx_obj_9snowflake_12ud_connector_21_arrow_batch_iterator_PyArrowBatchIterator *)__pyx_v_self));
 
   /* function exit code */
   __Pyx_RefNannyFinishContext();
   return __pyx_r;
 }
 
-static PyObject *__pyx_pf_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowBatchConverter_8get_row_count(struct __pyx_obj_9snowflake_12ud_connector_21arrow_batch_converter_PyArrowBatchConverter *__pyx_v_self) {
+static PyObject *__pyx_pf_9snowflake_12ud_connector_21_arrow_batch_iterator_20PyArrowBatchIterator_8get_row_count(struct __pyx_obj_9snowflake_12ud_connector_21_arrow_batch_iterator_PyArrowBatchIterator *__pyx_v_self) {
   PyObject *__pyx_r = NULL;
   __Pyx_RefNannyDeclarations
   int __pyx_t_1;
@@ -3684,56 +3684,56 @@ static PyObject *__pyx_pf_9snowflake_12ud_connector_21arrow_batch_converter_21Py
   int __pyx_clineno = 0;
   __Pyx_RefNannySetupContext("get_row_count", 0);
 
-  /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_converter.pyx":181
+  /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_iterator.pyx":181
  *     def get_row_count(self):
  *         """Get total number of rows in this batch."""
  *         if self.use_dict_result:             # <<<<<<<<<<<<<<
- *             return self.dict_converter.getRowCount()
+ *             return self.dict_iterator.getRowCount()
  *         else:
 */
   __pyx_t_1 = (__pyx_v_self->use_dict_result != 0);
   if (__pyx_t_1) {
 
-    /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_converter.pyx":182
+    /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_iterator.pyx":182
  *         """Get total number of rows in this batch."""
  *         if self.use_dict_result:
- *             return self.dict_converter.getRowCount()             # <<<<<<<<<<<<<<
+ *             return self.dict_iterator.getRowCount()             # <<<<<<<<<<<<<<
  *         else:
- *             return self.converter.getRowCount()
+ *             return self.iterator.getRowCount()
 */
     __Pyx_XDECREF(__pyx_r);
-    __pyx_t_2 = __Pyx_PyLong_From_int64_t(__pyx_v_self->dict_converter->getRowCount()); if (unlikely(!__pyx_t_2)) __PYX_ERR(0, 182, __pyx_L1_error)
+    __pyx_t_2 = __Pyx_PyLong_From_int64_t(__pyx_v_self->dict_iterator->getRowCount()); if (unlikely(!__pyx_t_2)) __PYX_ERR(0, 182, __pyx_L1_error)
     __Pyx_GOTREF(__pyx_t_2);
     __pyx_r = __pyx_t_2;
     __pyx_t_2 = 0;
     goto __pyx_L0;
 
-    /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_converter.pyx":181
+    /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_iterator.pyx":181
  *     def get_row_count(self):
  *         """Get total number of rows in this batch."""
  *         if self.use_dict_result:             # <<<<<<<<<<<<<<
- *             return self.dict_converter.getRowCount()
+ *             return self.dict_iterator.getRowCount()
  *         else:
 */
   }
 
-  /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_converter.pyx":184
- *             return self.dict_converter.getRowCount()
+  /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_iterator.pyx":184
+ *             return self.dict_iterator.getRowCount()
  *         else:
- *             return self.converter.getRowCount()             # <<<<<<<<<<<<<<
+ *             return self.iterator.getRowCount()             # <<<<<<<<<<<<<<
  * 
  *     def get_current_index(self):
 */
   /*else*/ {
     __Pyx_XDECREF(__pyx_r);
-    __pyx_t_2 = __Pyx_PyLong_From_int64_t(__pyx_v_self->converter->getRowCount()); if (unlikely(!__pyx_t_2)) __PYX_ERR(0, 184, __pyx_L1_error)
+    __pyx_t_2 = __Pyx_PyLong_From_int64_t(__pyx_v_self->iterator->getRowCount()); if (unlikely(!__pyx_t_2)) __PYX_ERR(0, 184, __pyx_L1_error)
     __Pyx_GOTREF(__pyx_t_2);
     __pyx_r = __pyx_t_2;
     __pyx_t_2 = 0;
     goto __pyx_L0;
   }
 
-  /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_converter.pyx":179
+  /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_iterator.pyx":179
  *         return row
  * 
  *     def get_row_count(self):             # <<<<<<<<<<<<<<
@@ -3744,7 +3744,7 @@ static PyObject *__pyx_pf_9snowflake_12ud_connector_21arrow_batch_converter_21Py
   /* function exit code */
   __pyx_L1_error:;
   __Pyx_XDECREF(__pyx_t_2);
-  __Pyx_AddTraceback("snowflake.ud_connector.arrow_batch_converter.PyArrowBatchConverter.get_row_count", __pyx_clineno, __pyx_lineno, __pyx_filename);
+  __Pyx_AddTraceback("snowflake.ud_connector._arrow_batch_iterator.PyArrowBatchIterator.get_row_count", __pyx_clineno, __pyx_lineno, __pyx_filename);
   __pyx_r = NULL;
   __pyx_L0:;
   __Pyx_XGIVEREF(__pyx_r);
@@ -3752,8 +3752,8 @@ static PyObject *__pyx_pf_9snowflake_12ud_connector_21arrow_batch_converter_21Py
   return __pyx_r;
 }
 
-/* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_converter.pyx":186
- *             return self.converter.getRowCount()
+/* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_iterator.pyx":186
+ *             return self.iterator.getRowCount()
  * 
  *     def get_current_index(self):             # <<<<<<<<<<<<<<
  *         """Get current row index (0-based)."""
@@ -3761,16 +3761,16 @@ static PyObject *__pyx_pf_9snowflake_12ud_connector_21arrow_batch_converter_21Py
 */
 
 /* Python wrapper */
-static PyObject *__pyx_pw_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowBatchConverter_11get_current_index(PyObject *__pyx_v_self, 
+static PyObject *__pyx_pw_9snowflake_12ud_connector_21_arrow_batch_iterator_20PyArrowBatchIterator_11get_current_index(PyObject *__pyx_v_self, 
 #if CYTHON_METH_FASTCALL
 PyObject *const *__pyx_args, Py_ssize_t __pyx_nargs, PyObject *__pyx_kwds
 #else
 PyObject *__pyx_args, PyObject *__pyx_kwds
 #endif
 ); /*proto*/
-PyDoc_STRVAR(__pyx_doc_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowBatchConverter_10get_current_index, "Get current row index (0-based).");
-static PyMethodDef __pyx_mdef_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowBatchConverter_11get_current_index = {"get_current_index", (PyCFunction)(void(*)(void))(__Pyx_PyCFunction_FastCallWithKeywords)__pyx_pw_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowBatchConverter_11get_current_index, __Pyx_METH_FASTCALL|METH_KEYWORDS, __pyx_doc_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowBatchConverter_10get_current_index};
-static PyObject *__pyx_pw_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowBatchConverter_11get_current_index(PyObject *__pyx_v_self, 
+PyDoc_STRVAR(__pyx_doc_9snowflake_12ud_connector_21_arrow_batch_iterator_20PyArrowBatchIterator_10get_current_index, "Get current row index (0-based).");
+static PyMethodDef __pyx_mdef_9snowflake_12ud_connector_21_arrow_batch_iterator_20PyArrowBatchIterator_11get_current_index = {"get_current_index", (PyCFunction)(void(*)(void))(__Pyx_PyCFunction_FastCallWithKeywords)__pyx_pw_9snowflake_12ud_connector_21_arrow_batch_iterator_20PyArrowBatchIterator_11get_current_index, __Pyx_METH_FASTCALL|METH_KEYWORDS, __pyx_doc_9snowflake_12ud_connector_21_arrow_batch_iterator_20PyArrowBatchIterator_10get_current_index};
+static PyObject *__pyx_pw_9snowflake_12ud_connector_21_arrow_batch_iterator_20PyArrowBatchIterator_11get_current_index(PyObject *__pyx_v_self, 
 #if CYTHON_METH_FASTCALL
 PyObject *const *__pyx_args, Py_ssize_t __pyx_nargs, PyObject *__pyx_kwds
 #else
@@ -3796,14 +3796,14 @@ PyObject *__pyx_args, PyObject *__pyx_kwds
   const Py_ssize_t __pyx_kwds_len = unlikely(__pyx_kwds) ? __Pyx_NumKwargs_FASTCALL(__pyx_kwds) : 0;
   if (unlikely(__pyx_kwds_len < 0)) return NULL;
   if (unlikely(__pyx_kwds_len > 0)) {__Pyx_RejectKeywords("get_current_index", __pyx_kwds); return NULL;}
-  __pyx_r = __pyx_pf_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowBatchConverter_10get_current_index(((struct __pyx_obj_9snowflake_12ud_connector_21arrow_batch_converter_PyArrowBatchConverter *)__pyx_v_self));
+  __pyx_r = __pyx_pf_9snowflake_12ud_connector_21_arrow_batch_iterator_20PyArrowBatchIterator_10get_current_index(((struct __pyx_obj_9snowflake_12ud_connector_21_arrow_batch_iterator_PyArrowBatchIterator *)__pyx_v_self));
 
   /* function exit code */
   __Pyx_RefNannyFinishContext();
   return __pyx_r;
 }
 
-static PyObject *__pyx_pf_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowBatchConverter_10get_current_index(struct __pyx_obj_9snowflake_12ud_connector_21arrow_batch_converter_PyArrowBatchConverter *__pyx_v_self) {
+static PyObject *__pyx_pf_9snowflake_12ud_connector_21_arrow_batch_iterator_20PyArrowBatchIterator_10get_current_index(struct __pyx_obj_9snowflake_12ud_connector_21_arrow_batch_iterator_PyArrowBatchIterator *__pyx_v_self) {
   PyObject *__pyx_r = NULL;
   __Pyx_RefNannyDeclarations
   int __pyx_t_1;
@@ -3813,57 +3813,57 @@ static PyObject *__pyx_pf_9snowflake_12ud_connector_21arrow_batch_converter_21Py
   int __pyx_clineno = 0;
   __Pyx_RefNannySetupContext("get_current_index", 0);
 
-  /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_converter.pyx":188
+  /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_iterator.pyx":188
  *     def get_current_index(self):
  *         """Get current row index (0-based)."""
  *         if self.use_dict_result:             # <<<<<<<<<<<<<<
- *             return self.dict_converter.getCurrentRowIndex()
+ *             return self.dict_iterator.getCurrentRowIndex()
  *         else:
 */
   __pyx_t_1 = (__pyx_v_self->use_dict_result != 0);
   if (__pyx_t_1) {
 
-    /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_converter.pyx":189
+    /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_iterator.pyx":189
  *         """Get current row index (0-based)."""
  *         if self.use_dict_result:
- *             return self.dict_converter.getCurrentRowIndex()             # <<<<<<<<<<<<<<
+ *             return self.dict_iterator.getCurrentRowIndex()             # <<<<<<<<<<<<<<
  *         else:
- *             return self.converter.getCurrentRowIndex()
+ *             return self.iterator.getCurrentRowIndex()
 */
     __Pyx_XDECREF(__pyx_r);
-    __pyx_t_2 = __Pyx_PyLong_From_int64_t(__pyx_v_self->dict_converter->getCurrentRowIndex()); if (unlikely(!__pyx_t_2)) __PYX_ERR(0, 189, __pyx_L1_error)
+    __pyx_t_2 = __Pyx_PyLong_From_int64_t(__pyx_v_self->dict_iterator->getCurrentRowIndex()); if (unlikely(!__pyx_t_2)) __PYX_ERR(0, 189, __pyx_L1_error)
     __Pyx_GOTREF(__pyx_t_2);
     __pyx_r = __pyx_t_2;
     __pyx_t_2 = 0;
     goto __pyx_L0;
 
-    /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_converter.pyx":188
+    /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_iterator.pyx":188
  *     def get_current_index(self):
  *         """Get current row index (0-based)."""
  *         if self.use_dict_result:             # <<<<<<<<<<<<<<
- *             return self.dict_converter.getCurrentRowIndex()
+ *             return self.dict_iterator.getCurrentRowIndex()
  *         else:
 */
   }
 
-  /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_converter.pyx":191
- *             return self.dict_converter.getCurrentRowIndex()
+  /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_iterator.pyx":191
+ *             return self.dict_iterator.getCurrentRowIndex()
  *         else:
- *             return self.converter.getCurrentRowIndex()             # <<<<<<<<<<<<<<
+ *             return self.iterator.getCurrentRowIndex()             # <<<<<<<<<<<<<<
  * 
  * 
 */
   /*else*/ {
     __Pyx_XDECREF(__pyx_r);
-    __pyx_t_2 = __Pyx_PyLong_From_int64_t(__pyx_v_self->converter->getCurrentRowIndex()); if (unlikely(!__pyx_t_2)) __PYX_ERR(0, 191, __pyx_L1_error)
+    __pyx_t_2 = __Pyx_PyLong_From_int64_t(__pyx_v_self->iterator->getCurrentRowIndex()); if (unlikely(!__pyx_t_2)) __PYX_ERR(0, 191, __pyx_L1_error)
     __Pyx_GOTREF(__pyx_t_2);
     __pyx_r = __pyx_t_2;
     __pyx_t_2 = 0;
     goto __pyx_L0;
   }
 
-  /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_converter.pyx":186
- *             return self.converter.getRowCount()
+  /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_iterator.pyx":186
+ *             return self.iterator.getRowCount()
  * 
  *     def get_current_index(self):             # <<<<<<<<<<<<<<
  *         """Get current row index (0-based)."""
@@ -3873,7 +3873,7 @@ static PyObject *__pyx_pf_9snowflake_12ud_connector_21arrow_batch_converter_21Py
   /* function exit code */
   __pyx_L1_error:;
   __Pyx_XDECREF(__pyx_t_2);
-  __Pyx_AddTraceback("snowflake.ud_connector.arrow_batch_converter.PyArrowBatchConverter.get_current_index", __pyx_clineno, __pyx_lineno, __pyx_filename);
+  __Pyx_AddTraceback("snowflake.ud_connector._arrow_batch_iterator.PyArrowBatchIterator.get_current_index", __pyx_clineno, __pyx_lineno, __pyx_filename);
   __pyx_r = NULL;
   __pyx_L0:;
   __Pyx_XGIVEREF(__pyx_r);
@@ -3888,15 +3888,15 @@ static PyObject *__pyx_pf_9snowflake_12ud_connector_21arrow_batch_converter_21Py
 */
 
 /* Python wrapper */
-static PyObject *__pyx_pw_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowBatchConverter_13__reduce_cython__(PyObject *__pyx_v_self, 
+static PyObject *__pyx_pw_9snowflake_12ud_connector_21_arrow_batch_iterator_20PyArrowBatchIterator_13__reduce_cython__(PyObject *__pyx_v_self, 
 #if CYTHON_METH_FASTCALL
 PyObject *const *__pyx_args, Py_ssize_t __pyx_nargs, PyObject *__pyx_kwds
 #else
 PyObject *__pyx_args, PyObject *__pyx_kwds
 #endif
 ); /*proto*/
-static PyMethodDef __pyx_mdef_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowBatchConverter_13__reduce_cython__ = {"__reduce_cython__", (PyCFunction)(void(*)(void))(__Pyx_PyCFunction_FastCallWithKeywords)__pyx_pw_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowBatchConverter_13__reduce_cython__, __Pyx_METH_FASTCALL|METH_KEYWORDS, 0};
-static PyObject *__pyx_pw_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowBatchConverter_13__reduce_cython__(PyObject *__pyx_v_self, 
+static PyMethodDef __pyx_mdef_9snowflake_12ud_connector_21_arrow_batch_iterator_20PyArrowBatchIterator_13__reduce_cython__ = {"__reduce_cython__", (PyCFunction)(void(*)(void))(__Pyx_PyCFunction_FastCallWithKeywords)__pyx_pw_9snowflake_12ud_connector_21_arrow_batch_iterator_20PyArrowBatchIterator_13__reduce_cython__, __Pyx_METH_FASTCALL|METH_KEYWORDS, 0};
+static PyObject *__pyx_pw_9snowflake_12ud_connector_21_arrow_batch_iterator_20PyArrowBatchIterator_13__reduce_cython__(PyObject *__pyx_v_self, 
 #if CYTHON_METH_FASTCALL
 PyObject *const *__pyx_args, Py_ssize_t __pyx_nargs, PyObject *__pyx_kwds
 #else
@@ -3922,14 +3922,14 @@ PyObject *__pyx_args, PyObject *__pyx_kwds
   const Py_ssize_t __pyx_kwds_len = unlikely(__pyx_kwds) ? __Pyx_NumKwargs_FASTCALL(__pyx_kwds) : 0;
   if (unlikely(__pyx_kwds_len < 0)) return NULL;
   if (unlikely(__pyx_kwds_len > 0)) {__Pyx_RejectKeywords("__reduce_cython__", __pyx_kwds); return NULL;}
-  __pyx_r = __pyx_pf_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowBatchConverter_12__reduce_cython__(((struct __pyx_obj_9snowflake_12ud_connector_21arrow_batch_converter_PyArrowBatchConverter *)__pyx_v_self));
+  __pyx_r = __pyx_pf_9snowflake_12ud_connector_21_arrow_batch_iterator_20PyArrowBatchIterator_12__reduce_cython__(((struct __pyx_obj_9snowflake_12ud_connector_21_arrow_batch_iterator_PyArrowBatchIterator *)__pyx_v_self));
 
   /* function exit code */
   __Pyx_RefNannyFinishContext();
   return __pyx_r;
 }
 
-static PyObject *__pyx_pf_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowBatchConverter_12__reduce_cython__(CYTHON_UNUSED struct __pyx_obj_9snowflake_12ud_connector_21arrow_batch_converter_PyArrowBatchConverter *__pyx_v_self) {
+static PyObject *__pyx_pf_9snowflake_12ud_connector_21_arrow_batch_iterator_20PyArrowBatchIterator_12__reduce_cython__(CYTHON_UNUSED struct __pyx_obj_9snowflake_12ud_connector_21_arrow_batch_iterator_PyArrowBatchIterator *__pyx_v_self) {
   PyObject *__pyx_r = NULL;
   __Pyx_RefNannyDeclarations
   int __pyx_lineno = 0;
@@ -3954,7 +3954,7 @@ static PyObject *__pyx_pf_9snowflake_12ud_connector_21arrow_batch_converter_21Py
 
   /* function exit code */
   __pyx_L1_error:;
-  __Pyx_AddTraceback("snowflake.ud_connector.arrow_batch_converter.PyArrowBatchConverter.__reduce_cython__", __pyx_clineno, __pyx_lineno, __pyx_filename);
+  __Pyx_AddTraceback("snowflake.ud_connector._arrow_batch_iterator.PyArrowBatchIterator.__reduce_cython__", __pyx_clineno, __pyx_lineno, __pyx_filename);
   __pyx_r = NULL;
   __Pyx_XGIVEREF(__pyx_r);
   __Pyx_RefNannyFinishContext();
@@ -3969,15 +3969,15 @@ static PyObject *__pyx_pf_9snowflake_12ud_connector_21arrow_batch_converter_21Py
 */
 
 /* Python wrapper */
-static PyObject *__pyx_pw_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowBatchConverter_15__setstate_cython__(PyObject *__pyx_v_self, 
+static PyObject *__pyx_pw_9snowflake_12ud_connector_21_arrow_batch_iterator_20PyArrowBatchIterator_15__setstate_cython__(PyObject *__pyx_v_self, 
 #if CYTHON_METH_FASTCALL
 PyObject *const *__pyx_args, Py_ssize_t __pyx_nargs, PyObject *__pyx_kwds
 #else
 PyObject *__pyx_args, PyObject *__pyx_kwds
 #endif
 ); /*proto*/
-static PyMethodDef __pyx_mdef_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowBatchConverter_15__setstate_cython__ = {"__setstate_cython__", (PyCFunction)(void(*)(void))(__Pyx_PyCFunction_FastCallWithKeywords)__pyx_pw_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowBatchConverter_15__setstate_cython__, __Pyx_METH_FASTCALL|METH_KEYWORDS, 0};
-static PyObject *__pyx_pw_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowBatchConverter_15__setstate_cython__(PyObject *__pyx_v_self, 
+static PyMethodDef __pyx_mdef_9snowflake_12ud_connector_21_arrow_batch_iterator_20PyArrowBatchIterator_15__setstate_cython__ = {"__setstate_cython__", (PyCFunction)(void(*)(void))(__Pyx_PyCFunction_FastCallWithKeywords)__pyx_pw_9snowflake_12ud_connector_21_arrow_batch_iterator_20PyArrowBatchIterator_15__setstate_cython__, __Pyx_METH_FASTCALL|METH_KEYWORDS, 0};
+static PyObject *__pyx_pw_9snowflake_12ud_connector_21_arrow_batch_iterator_20PyArrowBatchIterator_15__setstate_cython__(PyObject *__pyx_v_self, 
 #if CYTHON_METH_FASTCALL
 PyObject *const *__pyx_args, Py_ssize_t __pyx_nargs, PyObject *__pyx_kwds
 #else
@@ -4039,11 +4039,11 @@ PyObject *__pyx_args, PyObject *__pyx_kwds
   for (Py_ssize_t __pyx_temp=0; __pyx_temp < (Py_ssize_t)(sizeof(values)/sizeof(values[0])); ++__pyx_temp) {
     Py_XDECREF(values[__pyx_temp]);
   }
-  __Pyx_AddTraceback("snowflake.ud_connector.arrow_batch_converter.PyArrowBatchConverter.__setstate_cython__", __pyx_clineno, __pyx_lineno, __pyx_filename);
+  __Pyx_AddTraceback("snowflake.ud_connector._arrow_batch_iterator.PyArrowBatchIterator.__setstate_cython__", __pyx_clineno, __pyx_lineno, __pyx_filename);
   __Pyx_RefNannyFinishContext();
   return NULL;
   __pyx_L4_argument_unpacking_done:;
-  __pyx_r = __pyx_pf_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowBatchConverter_14__setstate_cython__(((struct __pyx_obj_9snowflake_12ud_connector_21arrow_batch_converter_PyArrowBatchConverter *)__pyx_v_self), __pyx_v___pyx_state);
+  __pyx_r = __pyx_pf_9snowflake_12ud_connector_21_arrow_batch_iterator_20PyArrowBatchIterator_14__setstate_cython__(((struct __pyx_obj_9snowflake_12ud_connector_21_arrow_batch_iterator_PyArrowBatchIterator *)__pyx_v_self), __pyx_v___pyx_state);
 
   /* function exit code */
   for (Py_ssize_t __pyx_temp=0; __pyx_temp < (Py_ssize_t)(sizeof(values)/sizeof(values[0])); ++__pyx_temp) {
@@ -4053,7 +4053,7 @@ PyObject *__pyx_args, PyObject *__pyx_kwds
   return __pyx_r;
 }
 
-static PyObject *__pyx_pf_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowBatchConverter_14__setstate_cython__(CYTHON_UNUSED struct __pyx_obj_9snowflake_12ud_connector_21arrow_batch_converter_PyArrowBatchConverter *__pyx_v_self, CYTHON_UNUSED PyObject *__pyx_v___pyx_state) {
+static PyObject *__pyx_pf_9snowflake_12ud_connector_21_arrow_batch_iterator_20PyArrowBatchIterator_14__setstate_cython__(CYTHON_UNUSED struct __pyx_obj_9snowflake_12ud_connector_21_arrow_batch_iterator_PyArrowBatchIterator *__pyx_v_self, CYTHON_UNUSED PyObject *__pyx_v___pyx_state) {
   PyObject *__pyx_r = NULL;
   __Pyx_RefNannyDeclarations
   int __pyx_lineno = 0;
@@ -4078,7 +4078,7 @@ static PyObject *__pyx_pf_9snowflake_12ud_connector_21arrow_batch_converter_21Py
 
   /* function exit code */
   __pyx_L1_error:;
-  __Pyx_AddTraceback("snowflake.ud_connector.arrow_batch_converter.PyArrowBatchConverter.__setstate_cython__", __pyx_clineno, __pyx_lineno, __pyx_filename);
+  __Pyx_AddTraceback("snowflake.ud_connector._arrow_batch_iterator.PyArrowBatchIterator.__setstate_cython__", __pyx_clineno, __pyx_lineno, __pyx_filename);
   __pyx_r = NULL;
   __Pyx_XGIVEREF(__pyx_r);
   __Pyx_RefNannyFinishContext();
@@ -4086,25 +4086,25 @@ static PyObject *__pyx_pf_9snowflake_12ud_connector_21arrow_batch_converter_21Py
 }
 /* #### Code section: module_exttypes ### */
 
-static PyObject *__pyx_tp_new_9snowflake_12ud_connector_21arrow_batch_converter_PyArrowBatchConverter(PyTypeObject *t, PyObject *a, PyObject *k) {
-  struct __pyx_obj_9snowflake_12ud_connector_21arrow_batch_converter_PyArrowBatchConverter *p;
+static PyObject *__pyx_tp_new_9snowflake_12ud_connector_21_arrow_batch_iterator_PyArrowBatchIterator(PyTypeObject *t, PyObject *a, PyObject *k) {
+  struct __pyx_obj_9snowflake_12ud_connector_21_arrow_batch_iterator_PyArrowBatchIterator *p;
   PyObject *o;
   o = __Pyx_AllocateExtensionType(t, 0);
   if (unlikely(!o)) return 0;
-  p = ((struct __pyx_obj_9snowflake_12ud_connector_21arrow_batch_converter_PyArrowBatchConverter *)o);
+  p = ((struct __pyx_obj_9snowflake_12ud_connector_21_arrow_batch_iterator_PyArrowBatchIterator *)o);
   p->arrow_context = Py_None; Py_INCREF(Py_None);
-  if (unlikely(__pyx_pw_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowBatchConverter_1__cinit__(o, a, k) < 0)) goto bad;
+  if (unlikely(__pyx_pw_9snowflake_12ud_connector_21_arrow_batch_iterator_20PyArrowBatchIterator_1__cinit__(o, a, k) < 0)) goto bad;
   return o;
   bad:
   Py_DECREF(o); o = 0;
   return NULL;
 }
 
-static void __pyx_tp_dealloc_9snowflake_12ud_connector_21arrow_batch_converter_PyArrowBatchConverter(PyObject *o) {
-  struct __pyx_obj_9snowflake_12ud_connector_21arrow_batch_converter_PyArrowBatchConverter *p = (struct __pyx_obj_9snowflake_12ud_connector_21arrow_batch_converter_PyArrowBatchConverter *)o;
+static void __pyx_tp_dealloc_9snowflake_12ud_connector_21_arrow_batch_iterator_PyArrowBatchIterator(PyObject *o) {
+  struct __pyx_obj_9snowflake_12ud_connector_21_arrow_batch_iterator_PyArrowBatchIterator *p = (struct __pyx_obj_9snowflake_12ud_connector_21_arrow_batch_iterator_PyArrowBatchIterator *)o;
   #if CYTHON_USE_TP_FINALIZE
   if (unlikely(__Pyx_PyObject_GetSlot(o, tp_finalize, destructor)) && !__Pyx_PyObject_GC_IsFinalized(o)) {
-    if (__Pyx_PyObject_GetSlot(o, tp_dealloc, destructor) == __pyx_tp_dealloc_9snowflake_12ud_connector_21arrow_batch_converter_PyArrowBatchConverter) {
+    if (__Pyx_PyObject_GetSlot(o, tp_dealloc, destructor) == __pyx_tp_dealloc_9snowflake_12ud_connector_21_arrow_batch_iterator_PyArrowBatchIterator) {
       if (PyObject_CallFinalizerFromDealloc(o)) return;
     }
   }
@@ -4114,7 +4114,7 @@ static void __pyx_tp_dealloc_9snowflake_12ud_connector_21arrow_batch_converter_P
     PyObject *etype, *eval, *etb;
     PyErr_Fetch(&etype, &eval, &etb);
     __Pyx_SET_REFCNT(o, Py_REFCNT(o) + 1);
-    __pyx_pw_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowBatchConverter_3__dealloc__(o);
+    __pyx_pw_9snowflake_12ud_connector_21_arrow_batch_iterator_20PyArrowBatchIterator_3__dealloc__(o);
     __Pyx_SET_REFCNT(o, Py_REFCNT(o) - 1);
     PyErr_Restore(etype, eval, etb);
   }
@@ -4133,9 +4133,9 @@ static void __pyx_tp_dealloc_9snowflake_12ud_connector_21arrow_batch_converter_P
   #endif
 }
 
-static int __pyx_tp_traverse_9snowflake_12ud_connector_21arrow_batch_converter_PyArrowBatchConverter(PyObject *o, visitproc v, void *a) {
+static int __pyx_tp_traverse_9snowflake_12ud_connector_21_arrow_batch_iterator_PyArrowBatchIterator(PyObject *o, visitproc v, void *a) {
   int e;
-  struct __pyx_obj_9snowflake_12ud_connector_21arrow_batch_converter_PyArrowBatchConverter *p = (struct __pyx_obj_9snowflake_12ud_connector_21arrow_batch_converter_PyArrowBatchConverter *)o;
+  struct __pyx_obj_9snowflake_12ud_connector_21_arrow_batch_iterator_PyArrowBatchIterator *p = (struct __pyx_obj_9snowflake_12ud_connector_21_arrow_batch_iterator_PyArrowBatchIterator *)o;
   {
     e = __Pyx_call_type_traverse(o, 1, v, a);
     if (e) return e;
@@ -4146,56 +4146,56 @@ static int __pyx_tp_traverse_9snowflake_12ud_connector_21arrow_batch_converter_P
   return 0;
 }
 
-static int __pyx_tp_clear_9snowflake_12ud_connector_21arrow_batch_converter_PyArrowBatchConverter(PyObject *o) {
+static int __pyx_tp_clear_9snowflake_12ud_connector_21_arrow_batch_iterator_PyArrowBatchIterator(PyObject *o) {
   PyObject* tmp;
-  struct __pyx_obj_9snowflake_12ud_connector_21arrow_batch_converter_PyArrowBatchConverter *p = (struct __pyx_obj_9snowflake_12ud_connector_21arrow_batch_converter_PyArrowBatchConverter *)o;
+  struct __pyx_obj_9snowflake_12ud_connector_21_arrow_batch_iterator_PyArrowBatchIterator *p = (struct __pyx_obj_9snowflake_12ud_connector_21_arrow_batch_iterator_PyArrowBatchIterator *)o;
   tmp = ((PyObject*)p->arrow_context);
   p->arrow_context = Py_None; Py_INCREF(Py_None);
   Py_XDECREF(tmp);
   return 0;
 }
 
-static PyObject *__pyx_specialmethod___pyx_pw_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowBatchConverter_7__next__(PyObject *self, CYTHON_UNUSED PyObject *arg) {
-  PyObject *res = __pyx_pw_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowBatchConverter_7__next__(self);
+static PyObject *__pyx_specialmethod___pyx_pw_9snowflake_12ud_connector_21_arrow_batch_iterator_20PyArrowBatchIterator_7__next__(PyObject *self, CYTHON_UNUSED PyObject *arg) {
+  PyObject *res = __pyx_pw_9snowflake_12ud_connector_21_arrow_batch_iterator_20PyArrowBatchIterator_7__next__(self);
   if (!res && !PyErr_Occurred()) { PyErr_SetNone(PyExc_StopIteration); }
   return res;
 }
 
-static PyMethodDef __pyx_methods_9snowflake_12ud_connector_21arrow_batch_converter_PyArrowBatchConverter[] = {
-  {"__next__", (PyCFunction)__pyx_specialmethod___pyx_pw_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowBatchConverter_7__next__, METH_NOARGS|METH_COEXIST, __pyx_doc_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowBatchConverter_6__next__},
-  {"get_row_count", (PyCFunction)(void(*)(void))(__Pyx_PyCFunction_FastCallWithKeywords)__pyx_pw_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowBatchConverter_9get_row_count, __Pyx_METH_FASTCALL|METH_KEYWORDS, __pyx_doc_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowBatchConverter_8get_row_count},
-  {"get_current_index", (PyCFunction)(void(*)(void))(__Pyx_PyCFunction_FastCallWithKeywords)__pyx_pw_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowBatchConverter_11get_current_index, __Pyx_METH_FASTCALL|METH_KEYWORDS, __pyx_doc_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowBatchConverter_10get_current_index},
-  {"__reduce_cython__", (PyCFunction)(void(*)(void))(__Pyx_PyCFunction_FastCallWithKeywords)__pyx_pw_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowBatchConverter_13__reduce_cython__, __Pyx_METH_FASTCALL|METH_KEYWORDS, 0},
-  {"__setstate_cython__", (PyCFunction)(void(*)(void))(__Pyx_PyCFunction_FastCallWithKeywords)__pyx_pw_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowBatchConverter_15__setstate_cython__, __Pyx_METH_FASTCALL|METH_KEYWORDS, 0},
+static PyMethodDef __pyx_methods_9snowflake_12ud_connector_21_arrow_batch_iterator_PyArrowBatchIterator[] = {
+  {"__next__", (PyCFunction)__pyx_specialmethod___pyx_pw_9snowflake_12ud_connector_21_arrow_batch_iterator_20PyArrowBatchIterator_7__next__, METH_NOARGS|METH_COEXIST, __pyx_doc_9snowflake_12ud_connector_21_arrow_batch_iterator_20PyArrowBatchIterator_6__next__},
+  {"get_row_count", (PyCFunction)(void(*)(void))(__Pyx_PyCFunction_FastCallWithKeywords)__pyx_pw_9snowflake_12ud_connector_21_arrow_batch_iterator_20PyArrowBatchIterator_9get_row_count, __Pyx_METH_FASTCALL|METH_KEYWORDS, __pyx_doc_9snowflake_12ud_connector_21_arrow_batch_iterator_20PyArrowBatchIterator_8get_row_count},
+  {"get_current_index", (PyCFunction)(void(*)(void))(__Pyx_PyCFunction_FastCallWithKeywords)__pyx_pw_9snowflake_12ud_connector_21_arrow_batch_iterator_20PyArrowBatchIterator_11get_current_index, __Pyx_METH_FASTCALL|METH_KEYWORDS, __pyx_doc_9snowflake_12ud_connector_21_arrow_batch_iterator_20PyArrowBatchIterator_10get_current_index},
+  {"__reduce_cython__", (PyCFunction)(void(*)(void))(__Pyx_PyCFunction_FastCallWithKeywords)__pyx_pw_9snowflake_12ud_connector_21_arrow_batch_iterator_20PyArrowBatchIterator_13__reduce_cython__, __Pyx_METH_FASTCALL|METH_KEYWORDS, 0},
+  {"__setstate_cython__", (PyCFunction)(void(*)(void))(__Pyx_PyCFunction_FastCallWithKeywords)__pyx_pw_9snowflake_12ud_connector_21_arrow_batch_iterator_20PyArrowBatchIterator_15__setstate_cython__, __Pyx_METH_FASTCALL|METH_KEYWORDS, 0},
   {0, 0, 0, 0}
 };
 #if CYTHON_USE_TYPE_SPECS
-static PyType_Slot __pyx_type_9snowflake_12ud_connector_21arrow_batch_converter_PyArrowBatchConverter_slots[] = {
-  {Py_tp_dealloc, (void *)__pyx_tp_dealloc_9snowflake_12ud_connector_21arrow_batch_converter_PyArrowBatchConverter},
+static PyType_Slot __pyx_type_9snowflake_12ud_connector_21_arrow_batch_iterator_PyArrowBatchIterator_slots[] = {
+  {Py_tp_dealloc, (void *)__pyx_tp_dealloc_9snowflake_12ud_connector_21_arrow_batch_iterator_PyArrowBatchIterator},
   {Py_tp_doc, (void *)PyDoc_STR("\n    Python wrapper for C++ Arrow batch iterator.\n    Converts Arrow RecordBatch to Python tuples/dicts row-by-row.\n    ")},
-  {Py_tp_traverse, (void *)__pyx_tp_traverse_9snowflake_12ud_connector_21arrow_batch_converter_PyArrowBatchConverter},
-  {Py_tp_clear, (void *)__pyx_tp_clear_9snowflake_12ud_connector_21arrow_batch_converter_PyArrowBatchConverter},
-  {Py_tp_iter, (void *)__pyx_pw_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowBatchConverter_5__iter__},
-  {Py_tp_iternext, (void *)__pyx_pw_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowBatchConverter_7__next__},
-  {Py_tp_methods, (void *)__pyx_methods_9snowflake_12ud_connector_21arrow_batch_converter_PyArrowBatchConverter},
-  {Py_tp_new, (void *)__pyx_tp_new_9snowflake_12ud_connector_21arrow_batch_converter_PyArrowBatchConverter},
+  {Py_tp_traverse, (void *)__pyx_tp_traverse_9snowflake_12ud_connector_21_arrow_batch_iterator_PyArrowBatchIterator},
+  {Py_tp_clear, (void *)__pyx_tp_clear_9snowflake_12ud_connector_21_arrow_batch_iterator_PyArrowBatchIterator},
+  {Py_tp_iter, (void *)__pyx_pw_9snowflake_12ud_connector_21_arrow_batch_iterator_20PyArrowBatchIterator_5__iter__},
+  {Py_tp_iternext, (void *)__pyx_pw_9snowflake_12ud_connector_21_arrow_batch_iterator_20PyArrowBatchIterator_7__next__},
+  {Py_tp_methods, (void *)__pyx_methods_9snowflake_12ud_connector_21_arrow_batch_iterator_PyArrowBatchIterator},
+  {Py_tp_new, (void *)__pyx_tp_new_9snowflake_12ud_connector_21_arrow_batch_iterator_PyArrowBatchIterator},
   {0, 0},
 };
-static PyType_Spec __pyx_type_9snowflake_12ud_connector_21arrow_batch_converter_PyArrowBatchConverter_spec = {
-  "snowflake.ud_connector.arrow_batch_converter.PyArrowBatchConverter",
-  sizeof(struct __pyx_obj_9snowflake_12ud_connector_21arrow_batch_converter_PyArrowBatchConverter),
+static PyType_Spec __pyx_type_9snowflake_12ud_connector_21_arrow_batch_iterator_PyArrowBatchIterator_spec = {
+  "snowflake.ud_connector._arrow_batch_iterator.PyArrowBatchIterator",
+  sizeof(struct __pyx_obj_9snowflake_12ud_connector_21_arrow_batch_iterator_PyArrowBatchIterator),
   0,
   Py_TPFLAGS_DEFAULT|Py_TPFLAGS_HAVE_VERSION_TAG|Py_TPFLAGS_CHECKTYPES|Py_TPFLAGS_HAVE_NEWBUFFER|Py_TPFLAGS_BASETYPE|Py_TPFLAGS_HAVE_GC,
-  __pyx_type_9snowflake_12ud_connector_21arrow_batch_converter_PyArrowBatchConverter_slots,
+  __pyx_type_9snowflake_12ud_connector_21_arrow_batch_iterator_PyArrowBatchIterator_slots,
 };
 #else
 
-static PyTypeObject __pyx_type_9snowflake_12ud_connector_21arrow_batch_converter_PyArrowBatchConverter = {
+static PyTypeObject __pyx_type_9snowflake_12ud_connector_21_arrow_batch_iterator_PyArrowBatchIterator = {
   PyVarObject_HEAD_INIT(0, 0)
-  "snowflake.ud_connector.arrow_batch_converter.""PyArrowBatchConverter", /*tp_name*/
-  sizeof(struct __pyx_obj_9snowflake_12ud_connector_21arrow_batch_converter_PyArrowBatchConverter), /*tp_basicsize*/
+  "snowflake.ud_connector._arrow_batch_iterator.""PyArrowBatchIterator", /*tp_name*/
+  sizeof(struct __pyx_obj_9snowflake_12ud_connector_21_arrow_batch_iterator_PyArrowBatchIterator), /*tp_basicsize*/
   0, /*tp_itemsize*/
-  __pyx_tp_dealloc_9snowflake_12ud_connector_21arrow_batch_converter_PyArrowBatchConverter, /*tp_dealloc*/
+  __pyx_tp_dealloc_9snowflake_12ud_connector_21_arrow_batch_iterator_PyArrowBatchIterator, /*tp_dealloc*/
   0, /*tp_vectorcall_offset*/
   0, /*tp_getattr*/
   0, /*tp_setattr*/
@@ -4212,13 +4212,13 @@ static PyTypeObject __pyx_type_9snowflake_12ud_connector_21arrow_batch_converter
   0, /*tp_as_buffer*/
   Py_TPFLAGS_DEFAULT|Py_TPFLAGS_HAVE_VERSION_TAG|Py_TPFLAGS_CHECKTYPES|Py_TPFLAGS_HAVE_NEWBUFFER|Py_TPFLAGS_BASETYPE|Py_TPFLAGS_HAVE_GC, /*tp_flags*/
   PyDoc_STR("\n    Python wrapper for C++ Arrow batch iterator.\n    Converts Arrow RecordBatch to Python tuples/dicts row-by-row.\n    "), /*tp_doc*/
-  __pyx_tp_traverse_9snowflake_12ud_connector_21arrow_batch_converter_PyArrowBatchConverter, /*tp_traverse*/
-  __pyx_tp_clear_9snowflake_12ud_connector_21arrow_batch_converter_PyArrowBatchConverter, /*tp_clear*/
+  __pyx_tp_traverse_9snowflake_12ud_connector_21_arrow_batch_iterator_PyArrowBatchIterator, /*tp_traverse*/
+  __pyx_tp_clear_9snowflake_12ud_connector_21_arrow_batch_iterator_PyArrowBatchIterator, /*tp_clear*/
   0, /*tp_richcompare*/
   0, /*tp_weaklistoffset*/
-  __pyx_pw_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowBatchConverter_5__iter__, /*tp_iter*/
-  __pyx_pw_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowBatchConverter_7__next__, /*tp_iternext*/
-  __pyx_methods_9snowflake_12ud_connector_21arrow_batch_converter_PyArrowBatchConverter, /*tp_methods*/
+  __pyx_pw_9snowflake_12ud_connector_21_arrow_batch_iterator_20PyArrowBatchIterator_5__iter__, /*tp_iter*/
+  __pyx_pw_9snowflake_12ud_connector_21_arrow_batch_iterator_20PyArrowBatchIterator_7__next__, /*tp_iternext*/
+  __pyx_methods_9snowflake_12ud_connector_21_arrow_batch_iterator_PyArrowBatchIterator, /*tp_methods*/
   0, /*tp_members*/
   0, /*tp_getset*/
   0, /*tp_base*/
@@ -4230,7 +4230,7 @@ static PyTypeObject __pyx_type_9snowflake_12ud_connector_21arrow_batch_converter
   #endif
   0, /*tp_init*/
   0, /*tp_alloc*/
-  __pyx_tp_new_9snowflake_12ud_connector_21arrow_batch_converter_PyArrowBatchConverter, /*tp_new*/
+  __pyx_tp_new_9snowflake_12ud_connector_21_arrow_batch_iterator_PyArrowBatchIterator, /*tp_new*/
   0, /*tp_free*/
   0, /*tp_is_gc*/
   0, /*tp_bases*/
@@ -4317,36 +4317,36 @@ static int __Pyx_modinit_type_init_code(__pyx_mstatetype *__pyx_mstate) {
   __Pyx_RefNannySetupContext("__Pyx_modinit_type_init_code", 0);
   /*--- Type init code ---*/
   #if CYTHON_USE_TYPE_SPECS
-  __pyx_mstate->__pyx_ptype_9snowflake_12ud_connector_21arrow_batch_converter_PyArrowBatchConverter = (PyTypeObject *) __Pyx_PyType_FromModuleAndSpec(__pyx_m, &__pyx_type_9snowflake_12ud_connector_21arrow_batch_converter_PyArrowBatchConverter_spec, NULL); if (unlikely(!__pyx_mstate->__pyx_ptype_9snowflake_12ud_connector_21arrow_batch_converter_PyArrowBatchConverter)) __PYX_ERR(0, 51, __pyx_L1_error)
-  if (__Pyx_fix_up_extension_type_from_spec(&__pyx_type_9snowflake_12ud_connector_21arrow_batch_converter_PyArrowBatchConverter_spec, __pyx_mstate->__pyx_ptype_9snowflake_12ud_connector_21arrow_batch_converter_PyArrowBatchConverter) < (0)) __PYX_ERR(0, 51, __pyx_L1_error)
+  __pyx_mstate->__pyx_ptype_9snowflake_12ud_connector_21_arrow_batch_iterator_PyArrowBatchIterator = (PyTypeObject *) __Pyx_PyType_FromModuleAndSpec(__pyx_m, &__pyx_type_9snowflake_12ud_connector_21_arrow_batch_iterator_PyArrowBatchIterator_spec, NULL); if (unlikely(!__pyx_mstate->__pyx_ptype_9snowflake_12ud_connector_21_arrow_batch_iterator_PyArrowBatchIterator)) __PYX_ERR(0, 51, __pyx_L1_error)
+  if (__Pyx_fix_up_extension_type_from_spec(&__pyx_type_9snowflake_12ud_connector_21_arrow_batch_iterator_PyArrowBatchIterator_spec, __pyx_mstate->__pyx_ptype_9snowflake_12ud_connector_21_arrow_batch_iterator_PyArrowBatchIterator) < (0)) __PYX_ERR(0, 51, __pyx_L1_error)
   #else
-  __pyx_mstate->__pyx_ptype_9snowflake_12ud_connector_21arrow_batch_converter_PyArrowBatchConverter = &__pyx_type_9snowflake_12ud_connector_21arrow_batch_converter_PyArrowBatchConverter;
+  __pyx_mstate->__pyx_ptype_9snowflake_12ud_connector_21_arrow_batch_iterator_PyArrowBatchIterator = &__pyx_type_9snowflake_12ud_connector_21_arrow_batch_iterator_PyArrowBatchIterator;
   #endif
   #if !CYTHON_COMPILING_IN_LIMITED_API
   #endif
   #if !CYTHON_USE_TYPE_SPECS
-  if (__Pyx_PyType_Ready(__pyx_mstate->__pyx_ptype_9snowflake_12ud_connector_21arrow_batch_converter_PyArrowBatchConverter) < (0)) __PYX_ERR(0, 51, __pyx_L1_error)
+  if (__Pyx_PyType_Ready(__pyx_mstate->__pyx_ptype_9snowflake_12ud_connector_21_arrow_batch_iterator_PyArrowBatchIterator) < (0)) __PYX_ERR(0, 51, __pyx_L1_error)
   #endif
   #if CYTHON_COMPILING_IN_CPYTHON && PY_VERSION_HEX >= 0x030E0000
-  PyUnstable_Object_EnableDeferredRefcount((PyObject*)__pyx_mstate->__pyx_ptype_9snowflake_12ud_connector_21arrow_batch_converter_PyArrowBatchConverter);
+  PyUnstable_Object_EnableDeferredRefcount((PyObject*)__pyx_mstate->__pyx_ptype_9snowflake_12ud_connector_21_arrow_batch_iterator_PyArrowBatchIterator);
   #endif
   #if !CYTHON_COMPILING_IN_LIMITED_API
-  if ((CYTHON_USE_TYPE_SLOTS && CYTHON_USE_PYTYPE_LOOKUP) && likely(!__pyx_mstate->__pyx_ptype_9snowflake_12ud_connector_21arrow_batch_converter_PyArrowBatchConverter->tp_dictoffset && __pyx_mstate->__pyx_ptype_9snowflake_12ud_connector_21arrow_batch_converter_PyArrowBatchConverter->tp_getattro == PyObject_GenericGetAttr)) {
-    __pyx_mstate->__pyx_ptype_9snowflake_12ud_connector_21arrow_batch_converter_PyArrowBatchConverter->tp_getattro = PyObject_GenericGetAttr;
+  if ((CYTHON_USE_TYPE_SLOTS && CYTHON_USE_PYTYPE_LOOKUP) && likely(!__pyx_mstate->__pyx_ptype_9snowflake_12ud_connector_21_arrow_batch_iterator_PyArrowBatchIterator->tp_dictoffset && __pyx_mstate->__pyx_ptype_9snowflake_12ud_connector_21_arrow_batch_iterator_PyArrowBatchIterator->tp_getattro == PyObject_GenericGetAttr)) {
+    __pyx_mstate->__pyx_ptype_9snowflake_12ud_connector_21_arrow_batch_iterator_PyArrowBatchIterator->tp_getattro = PyObject_GenericGetAttr;
   }
   #endif
   #if CYTHON_UPDATE_DESCRIPTOR_DOC
   {
-    PyObject *wrapper = PyObject_GetAttrString((PyObject *)__pyx_mstate->__pyx_ptype_9snowflake_12ud_connector_21arrow_batch_converter_PyArrowBatchConverter, "__next__"); if (unlikely(!wrapper)) __PYX_ERR(0, 51, __pyx_L1_error)
+    PyObject *wrapper = PyObject_GetAttrString((PyObject *)__pyx_mstate->__pyx_ptype_9snowflake_12ud_connector_21_arrow_batch_iterator_PyArrowBatchIterator, "__next__"); if (unlikely(!wrapper)) __PYX_ERR(0, 51, __pyx_L1_error)
     if (__Pyx_IS_TYPE(wrapper, &PyWrapperDescr_Type)) {
-      __pyx_wrapperbase_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowBatchConverter_6__next__ = *((PyWrapperDescrObject *)wrapper)->d_base;
-      __pyx_wrapperbase_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowBatchConverter_6__next__.doc = __pyx_doc_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowBatchConverter_6__next__;
-      ((PyWrapperDescrObject *)wrapper)->d_base = &__pyx_wrapperbase_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowBatchConverter_6__next__;
+      __pyx_wrapperbase_9snowflake_12ud_connector_21_arrow_batch_iterator_20PyArrowBatchIterator_6__next__ = *((PyWrapperDescrObject *)wrapper)->d_base;
+      __pyx_wrapperbase_9snowflake_12ud_connector_21_arrow_batch_iterator_20PyArrowBatchIterator_6__next__.doc = __pyx_doc_9snowflake_12ud_connector_21_arrow_batch_iterator_20PyArrowBatchIterator_6__next__;
+      ((PyWrapperDescrObject *)wrapper)->d_base = &__pyx_wrapperbase_9snowflake_12ud_connector_21_arrow_batch_iterator_20PyArrowBatchIterator_6__next__;
     }
   }
   #endif
-  if (PyObject_SetAttr(__pyx_m, __pyx_mstate_global->__pyx_n_u_PyArrowBatchConverter, (PyObject *) __pyx_mstate->__pyx_ptype_9snowflake_12ud_connector_21arrow_batch_converter_PyArrowBatchConverter) < (0)) __PYX_ERR(0, 51, __pyx_L1_error)
-  if (__Pyx_setup_reduce((PyObject *) __pyx_mstate->__pyx_ptype_9snowflake_12ud_connector_21arrow_batch_converter_PyArrowBatchConverter) < (0)) __PYX_ERR(0, 51, __pyx_L1_error)
+  if (PyObject_SetAttr(__pyx_m, __pyx_mstate_global->__pyx_n_u_PyArrowBatchIterator, (PyObject *) __pyx_mstate->__pyx_ptype_9snowflake_12ud_connector_21_arrow_batch_iterator_PyArrowBatchIterator) < (0)) __PYX_ERR(0, 51, __pyx_L1_error)
+  if (__Pyx_setup_reduce((PyObject *) __pyx_mstate->__pyx_ptype_9snowflake_12ud_connector_21_arrow_batch_iterator_PyArrowBatchIterator) < (0)) __PYX_ERR(0, 51, __pyx_L1_error)
   __Pyx_RefNannyFinishContext();
   return 0;
   __pyx_L1_error:;
@@ -4403,10 +4403,10 @@ static int __Pyx_modinit_function_import_code(__pyx_mstatetype *__pyx_mstate) {
 
 #if CYTHON_PEP489_MULTI_PHASE_INIT
 static PyObject* __pyx_pymod_create(PyObject *spec, PyModuleDef *def); /*proto*/
-static int __pyx_pymod_exec_arrow_batch_converter(PyObject* module); /*proto*/
+static int __pyx_pymod_exec__arrow_batch_iterator(PyObject* module); /*proto*/
 static PyModuleDef_Slot __pyx_moduledef_slots[] = {
   {Py_mod_create, (void*)__pyx_pymod_create},
-  {Py_mod_exec, (void*)__pyx_pymod_exec_arrow_batch_converter},
+  {Py_mod_exec, (void*)__pyx_pymod_exec__arrow_batch_iterator},
   #if CYTHON_COMPILING_IN_CPYTHON_FREETHREADING
   {Py_mod_gil, Py_MOD_GIL_USED},
   #endif
@@ -4425,7 +4425,7 @@ namespace {
   #endif
   {
       PyModuleDef_HEAD_INIT,
-      "arrow_batch_converter",
+      "_arrow_batch_iterator",
       0, /* m_doc */
     #if CYTHON_USE_MODULE_STATE
       sizeof(__pyx_mstatetype), /* m_size */
@@ -4463,8 +4463,8 @@ namespace {
   #endif
 #endif
 
-__Pyx_PyMODINIT_FUNC PyInit_arrow_batch_converter(void) CYTHON_SMALL_CODE; /*proto*/
-__Pyx_PyMODINIT_FUNC PyInit_arrow_batch_converter(void)
+__Pyx_PyMODINIT_FUNC PyInit__arrow_batch_iterator(void) CYTHON_SMALL_CODE; /*proto*/
+__Pyx_PyMODINIT_FUNC PyInit__arrow_batch_iterator(void)
 #if CYTHON_PEP489_MULTI_PHASE_INIT
 {
   return PyModuleDef_Init(&__pyx_moduledef);
@@ -4571,7 +4571,7 @@ bad:
 }
 
 
-static CYTHON_SMALL_CODE int __pyx_pymod_exec_arrow_batch_converter(PyObject *__pyx_pyinit_module)
+static CYTHON_SMALL_CODE int __pyx_pymod_exec__arrow_batch_iterator(PyObject *__pyx_pyinit_module)
 #endif
 {
   int stringtab_initialized = 0;
@@ -4588,7 +4588,7 @@ static CYTHON_SMALL_CODE int __pyx_pymod_exec_arrow_batch_converter(PyObject *__
   #if CYTHON_PEP489_MULTI_PHASE_INIT
   if (__pyx_m) {
     if (__pyx_m == __pyx_pyinit_module) return 0;
-    PyErr_SetString(PyExc_RuntimeError, "Module 'arrow_batch_converter' has already been imported. Re-initialisation is not supported.");
+    PyErr_SetString(PyExc_RuntimeError, "Module '_arrow_batch_iterator' has already been imported. Re-initialisation is not supported.");
     return -1;
   }
   #else
@@ -4604,7 +4604,7 @@ static CYTHON_SMALL_CODE int __pyx_pymod_exec_arrow_batch_converter(PyObject *__
   #if CYTHON_USE_MODULE_STATE
   {
     int add_module_result = __Pyx_State_AddModule(__pyx_t_1, &__pyx_moduledef);
-    __pyx_t_1 = 0; /* transfer ownership from __pyx_t_1 to "arrow_batch_converter" pseudovariable */
+    __pyx_t_1 = 0; /* transfer ownership from __pyx_t_1 to "_arrow_batch_iterator" pseudovariable */
     if (unlikely((add_module_result < 0))) __PYX_ERR(0, 1, __pyx_L1_error)
     pystate_addmodule_run = 1;
   }
@@ -4632,7 +4632,7 @@ static CYTHON_SMALL_CODE int __pyx_pymod_exec_arrow_batch_converter(PyObject *__
   }
   #endif
   
-__Pyx_RefNannySetupContext("PyInit_arrow_batch_converter", 0);
+__Pyx_RefNannySetupContext("PyInit__arrow_batch_iterator", 0);
   __Pyx_init_runtime_version();
   if (__Pyx_check_binary_version(__PYX_LIMITED_VERSION_HEX, __Pyx_get_runtime_version(), CYTHON_COMPILING_IN_LIMITED_API) < (0)) __PYX_ERR(0, 1, __pyx_L1_error)
   __pyx_mstate->__pyx_empty_tuple = PyTuple_New(0); if (unlikely(!__pyx_mstate->__pyx_empty_tuple)) __PYX_ERR(0, 1, __pyx_L1_error)
@@ -4643,13 +4643,13 @@ __Pyx_RefNannySetupContext("PyInit_arrow_batch_converter", 0);
   if (__Pyx_InitConstants(__pyx_mstate) < (0)) __PYX_ERR(0, 1, __pyx_L1_error)
   stringtab_initialized = 1;
   if (__Pyx_InitGlobals() < (0)) __PYX_ERR(0, 1, __pyx_L1_error)
-  if (__pyx_module_is_main_snowflake__ud_connector__arrow_batch_converter) {
+  if (__pyx_module_is_main_snowflake__ud_connector___arrow_batch_iterator) {
     if (PyObject_SetAttr(__pyx_m, __pyx_mstate_global->__pyx_n_u_name, __pyx_mstate_global->__pyx_n_u_main) < (0)) __PYX_ERR(0, 1, __pyx_L1_error)
   }
   {
     PyObject *modules = PyImport_GetModuleDict(); if (unlikely(!modules)) __PYX_ERR(0, 1, __pyx_L1_error)
-    if (!PyDict_GetItemString(modules, "snowflake.ud_connector.arrow_batch_converter")) {
-      if (unlikely((PyDict_SetItemString(modules, "snowflake.ud_connector.arrow_batch_converter", __pyx_m) < 0))) __PYX_ERR(0, 1, __pyx_L1_error)
+    if (!PyDict_GetItemString(modules, "snowflake.ud_connector._arrow_batch_iterator")) {
+      if (unlikely((PyDict_SetItemString(modules, "snowflake.ud_connector._arrow_batch_iterator", __pyx_m) < 0))) __PYX_ERR(0, 1, __pyx_L1_error)
     }
   }
   /*--- Builtin init code ---*/
@@ -4667,34 +4667,34 @@ __Pyx_RefNannySetupContext("PyInit_arrow_batch_converter", 0);
   (void)__Pyx_modinit_function_import_code(__pyx_mstate);
   /*--- Execution code ---*/
 
-  /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_converter.pyx":179
+  /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_iterator.pyx":179
  *         return row
  * 
  *     def get_row_count(self):             # <<<<<<<<<<<<<<
  *         """Get total number of rows in this batch."""
  *         if self.use_dict_result:
 */
-  __pyx_t_2 = __Pyx_CyFunction_New(&__pyx_mdef_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowBatchConverter_9get_row_count, __Pyx_CYFUNCTION_CCLASS, __pyx_mstate_global->__pyx_n_u_PyArrowBatchConverter_get_row_co, NULL, __pyx_mstate_global->__pyx_n_u_snowflake_ud_connector_arrow_bat, __pyx_mstate_global->__pyx_d, ((PyObject *)__pyx_mstate_global->__pyx_codeobj_tab[0])); if (unlikely(!__pyx_t_2)) __PYX_ERR(0, 179, __pyx_L1_error)
+  __pyx_t_2 = __Pyx_CyFunction_New(&__pyx_mdef_9snowflake_12ud_connector_21_arrow_batch_iterator_20PyArrowBatchIterator_9get_row_count, __Pyx_CYFUNCTION_CCLASS, __pyx_mstate_global->__pyx_n_u_PyArrowBatchIterator_get_row_cou, NULL, __pyx_mstate_global->__pyx_n_u_snowflake_ud_connector__arrow_ba, __pyx_mstate_global->__pyx_d, ((PyObject *)__pyx_mstate_global->__pyx_codeobj_tab[0])); if (unlikely(!__pyx_t_2)) __PYX_ERR(0, 179, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_t_2);
   #if CYTHON_COMPILING_IN_CPYTHON && PY_VERSION_HEX >= 0x030E0000
   PyUnstable_Object_EnableDeferredRefcount(__pyx_t_2);
   #endif
-  if (__Pyx_SetItemOnTypeDict(__pyx_mstate_global->__pyx_ptype_9snowflake_12ud_connector_21arrow_batch_converter_PyArrowBatchConverter, __pyx_mstate_global->__pyx_n_u_get_row_count, __pyx_t_2) < (0)) __PYX_ERR(0, 179, __pyx_L1_error)
+  if (__Pyx_SetItemOnTypeDict(__pyx_mstate_global->__pyx_ptype_9snowflake_12ud_connector_21_arrow_batch_iterator_PyArrowBatchIterator, __pyx_mstate_global->__pyx_n_u_get_row_count, __pyx_t_2) < (0)) __PYX_ERR(0, 179, __pyx_L1_error)
   __Pyx_DECREF(__pyx_t_2); __pyx_t_2 = 0;
 
-  /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_converter.pyx":186
- *             return self.converter.getRowCount()
+  /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_iterator.pyx":186
+ *             return self.iterator.getRowCount()
  * 
  *     def get_current_index(self):             # <<<<<<<<<<<<<<
  *         """Get current row index (0-based)."""
  *         if self.use_dict_result:
 */
-  __pyx_t_2 = __Pyx_CyFunction_New(&__pyx_mdef_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowBatchConverter_11get_current_index, __Pyx_CYFUNCTION_CCLASS, __pyx_mstate_global->__pyx_n_u_PyArrowBatchConverter_get_curren, NULL, __pyx_mstate_global->__pyx_n_u_snowflake_ud_connector_arrow_bat, __pyx_mstate_global->__pyx_d, ((PyObject *)__pyx_mstate_global->__pyx_codeobj_tab[1])); if (unlikely(!__pyx_t_2)) __PYX_ERR(0, 186, __pyx_L1_error)
+  __pyx_t_2 = __Pyx_CyFunction_New(&__pyx_mdef_9snowflake_12ud_connector_21_arrow_batch_iterator_20PyArrowBatchIterator_11get_current_index, __Pyx_CYFUNCTION_CCLASS, __pyx_mstate_global->__pyx_n_u_PyArrowBatchIterator_get_current, NULL, __pyx_mstate_global->__pyx_n_u_snowflake_ud_connector__arrow_ba, __pyx_mstate_global->__pyx_d, ((PyObject *)__pyx_mstate_global->__pyx_codeobj_tab[1])); if (unlikely(!__pyx_t_2)) __PYX_ERR(0, 186, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_t_2);
   #if CYTHON_COMPILING_IN_CPYTHON && PY_VERSION_HEX >= 0x030E0000
   PyUnstable_Object_EnableDeferredRefcount(__pyx_t_2);
   #endif
-  if (__Pyx_SetItemOnTypeDict(__pyx_mstate_global->__pyx_ptype_9snowflake_12ud_connector_21arrow_batch_converter_PyArrowBatchConverter, __pyx_mstate_global->__pyx_n_u_get_current_index, __pyx_t_2) < (0)) __PYX_ERR(0, 186, __pyx_L1_error)
+  if (__Pyx_SetItemOnTypeDict(__pyx_mstate_global->__pyx_ptype_9snowflake_12ud_connector_21_arrow_batch_iterator_PyArrowBatchIterator, __pyx_mstate_global->__pyx_n_u_get_current_index, __pyx_t_2) < (0)) __PYX_ERR(0, 186, __pyx_L1_error)
   __Pyx_DECREF(__pyx_t_2); __pyx_t_2 = 0;
 
   /* "(tree fragment)":1
@@ -4702,7 +4702,7 @@ __Pyx_RefNannySetupContext("PyInit_arrow_batch_converter", 0);
  *     raise TypeError, "no default __reduce__ due to non-trivial __cinit__"
  * def __setstate_cython__(self, __pyx_state):
 */
-  __pyx_t_2 = __Pyx_CyFunction_New(&__pyx_mdef_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowBatchConverter_13__reduce_cython__, __Pyx_CYFUNCTION_CCLASS, __pyx_mstate_global->__pyx_n_u_PyArrowBatchConverter___reduce_c, NULL, __pyx_mstate_global->__pyx_n_u_snowflake_ud_connector_arrow_bat, __pyx_mstate_global->__pyx_d, ((PyObject *)__pyx_mstate_global->__pyx_codeobj_tab[2])); if (unlikely(!__pyx_t_2)) __PYX_ERR(1, 1, __pyx_L1_error)
+  __pyx_t_2 = __Pyx_CyFunction_New(&__pyx_mdef_9snowflake_12ud_connector_21_arrow_batch_iterator_20PyArrowBatchIterator_13__reduce_cython__, __Pyx_CYFUNCTION_CCLASS, __pyx_mstate_global->__pyx_n_u_PyArrowBatchIterator___reduce_cy, NULL, __pyx_mstate_global->__pyx_n_u_snowflake_ud_connector__arrow_ba, __pyx_mstate_global->__pyx_d, ((PyObject *)__pyx_mstate_global->__pyx_codeobj_tab[2])); if (unlikely(!__pyx_t_2)) __PYX_ERR(1, 1, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_t_2);
   #if CYTHON_COMPILING_IN_CPYTHON && PY_VERSION_HEX >= 0x030E0000
   PyUnstable_Object_EnableDeferredRefcount(__pyx_t_2);
@@ -4716,7 +4716,7 @@ __Pyx_RefNannySetupContext("PyInit_arrow_batch_converter", 0);
  * def __setstate_cython__(self, __pyx_state):             # <<<<<<<<<<<<<<
  *     raise TypeError, "no default __reduce__ due to non-trivial __cinit__"
 */
-  __pyx_t_2 = __Pyx_CyFunction_New(&__pyx_mdef_9snowflake_12ud_connector_21arrow_batch_converter_21PyArrowBatchConverter_15__setstate_cython__, __Pyx_CYFUNCTION_CCLASS, __pyx_mstate_global->__pyx_n_u_PyArrowBatchConverter___setstate, NULL, __pyx_mstate_global->__pyx_n_u_snowflake_ud_connector_arrow_bat, __pyx_mstate_global->__pyx_d, ((PyObject *)__pyx_mstate_global->__pyx_codeobj_tab[3])); if (unlikely(!__pyx_t_2)) __PYX_ERR(1, 3, __pyx_L1_error)
+  __pyx_t_2 = __Pyx_CyFunction_New(&__pyx_mdef_9snowflake_12ud_connector_21_arrow_batch_iterator_20PyArrowBatchIterator_15__setstate_cython__, __Pyx_CYFUNCTION_CCLASS, __pyx_mstate_global->__pyx_n_u_PyArrowBatchIterator___setstate, NULL, __pyx_mstate_global->__pyx_n_u_snowflake_ud_connector__arrow_ba, __pyx_mstate_global->__pyx_d, ((PyObject *)__pyx_mstate_global->__pyx_codeobj_tab[3])); if (unlikely(!__pyx_t_2)) __PYX_ERR(1, 3, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_t_2);
   #if CYTHON_COMPILING_IN_CPYTHON && PY_VERSION_HEX >= 0x030E0000
   PyUnstable_Object_EnableDeferredRefcount(__pyx_t_2);
@@ -4724,7 +4724,7 @@ __Pyx_RefNannySetupContext("PyInit_arrow_batch_converter", 0);
   if (PyDict_SetItem(__pyx_mstate_global->__pyx_d, __pyx_mstate_global->__pyx_n_u_setstate_cython, __pyx_t_2) < (0)) __PYX_ERR(1, 3, __pyx_L1_error)
   __Pyx_DECREF(__pyx_t_2); __pyx_t_2 = 0;
 
-  /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_converter.pyx":1
+  /* "src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_iterator.pyx":1
  * # distutils: language = c++             # <<<<<<<<<<<<<<
  * # cython: language_level=3
  * 
@@ -4741,7 +4741,7 @@ __Pyx_RefNannySetupContext("PyInit_arrow_batch_converter", 0);
   __Pyx_XDECREF(__pyx_t_2);
   if (__pyx_m) {
     if (__pyx_mstate->__pyx_d && stringtab_initialized) {
-      __Pyx_AddTraceback("init snowflake.ud_connector.arrow_batch_converter", __pyx_clineno, __pyx_lineno, __pyx_filename);
+      __Pyx_AddTraceback("init snowflake.ud_connector._arrow_batch_iterator", __pyx_clineno, __pyx_lineno, __pyx_filename);
     }
     #if !CYTHON_USE_MODULE_STATE
     Py_CLEAR(__pyx_m);
@@ -4755,7 +4755,7 @@ __Pyx_RefNannySetupContext("PyInit_arrow_batch_converter", 0);
     }
     #endif
   } else if (!PyErr_Occurred()) {
-    PyErr_SetString(PyExc_ImportError, "init snowflake.ud_connector.arrow_batch_converter");
+    PyErr_SetString(PyExc_ImportError, "init snowflake.ud_connector._arrow_batch_iterator");
   }
   __pyx_L0:;
   __Pyx_RefNannyFinishContext();
@@ -4794,25 +4794,25 @@ static int __Pyx_InitCachedConstants(__pyx_mstatetype *__pyx_mstate) {
 static int __Pyx_InitConstants(__pyx_mstatetype *__pyx_mstate) {
   CYTHON_UNUSED_VAR(__pyx_mstate);
   {
-    const struct { const unsigned int length: 7; } index[] = {{1},{22},{51},{37},{76},{7},{6},{2},{9},{50},{80},{14},{21},{39},{41},{39},{35},{20},{17},{13},{18},{27},{18},{8},{17},{13},{12},{13},{5},{8},{10},{8},{3},{11},{12},{12},{10},{17},{13},{4},{12},{10},{12},{19},{44},{8},{15},{9},{6},{33},{31},{9}};
-    #if (CYTHON_COMPRESS_STRINGS) == 2 /* compression: bz2 (622 bytes) */
-const char* const cstring = "BZh91AY&SY\007K\002E\000\000-\177\373d\\(\004a\013\3447\277!p\000\277\357\377\360\300@@\000@@@@@@@\000@\002'iQ\006\032\204\233H\311\240\r\000\320\000i\240\320414\030\312\r\010\217D\332\223\002L\230\232\032\000\000\000\000\0009\20114\030L\2312da0M4\310\304\300\020\300%4\202i\033%0)\345='\250\320h\000\006A\240\033)\2439\004hH:\300\301@\206\000\227\004q\025\273\205\177\243\347\347\017\232\345\210\253\0249\333\271\314'\301OBRY\225Y\312dd\244^3\010TkK\254\004\001\261\312\313\310\365\006 4\240\2175\254.Ad\367\310]\361\204$\373\225\234\265\234\315\376\237z,\311\023Cf\303q(\260\361\022'\373\233\365\366\341\r\020\314al\315KM\027\322\226\033\006+\356\001+ps\n\220\224H\205rH\221\2748\237,\031\240\311\232\312IQK\370\276\347?9\326q\376\3202\031\367\352\203xy-\370\0313\261\211\260F\215\264n-\032\300|X\215\0064\312~i_\010\215|\007\262ig\"8\021\225\314\030A\250\n\212\t\365\376\2561\230H\3401\031\204C;\021\2212\376U0\301{A\216/-\343\316\374\212\224 \301\231n\030\233\307\035e\020\204\213\262%\205\3322\261\214\341\312\317\304\343\316\217\205\244@\300\254\376i\323%*f+aN4\261b\346\251kte8b\310\032\374\203)2\250\230\216~s\251\304\376\343Y\200\211\221\240|\227Uu\265 U\203\005@\271\256\274D`\n\254`\010\341${\245\242\213p\317>p(\230\271\20031(\301\001@ \213@\030\241\0342\337\013\255\032\362\314\364\224\344\022d\310U\034\300\256I\027\006\262C\334m\201!6\t\230\220\264\0248e\207\000\020\316Q0O\035D(_\004\025\233\354\346{\261\035\034!\215_N\356g\330B\332\246DRD\342\305\303\020\263\261s\263qzU?p\026ru\014/J\230a\302\241n\316\353\034\272\236+!Hf\335\264\212\261mp4\346\240\030\351\2201\031E$\203\261\232\246\235\365\2509\"\256\350\0176\267\317\241\361 \023\030\016\tE\331\311UTb\014\210S\374]\311\024\341B@\035,\t\024";
-    PyObject *data = __Pyx_DecompressString(cstring, 622, 2);
+    const struct { const unsigned int length: 7; } index[] = {{1},{22},{51},{37},{76},{7},{6},{2},{9},{50},{79},{14},{20},{38},{40},{38},{34},{20},{17},{13},{18},{27},{18},{8},{17},{13},{12},{13},{5},{8},{10},{8},{3},{11},{12},{12},{10},{17},{13},{4},{12},{10},{12},{19},{44},{8},{15},{9},{6},{31},{33},{9}};
+    #if (CYTHON_COMPRESS_STRINGS) == 2 /* compression: bz2 (623 bytes) */
+const char* const cstring = "BZh91AY&SY\352I\371\027\000\000-\377\373d\\(\000B\013\354W\277!p\004\277\357\377\361@@@\000@@@@@@@\000@\002&\334\330f\\5\t\036\210d444\000\0324\000\032\003M\251\243'\224\032 \236\204\364\246\023P=5=@\000\000\000\000\0004\312#*i\372j4\2154l\243\324\000\000\000\000\032\032\004\242h\215#h\243\324\365\006F@44\000\000\000\3652\031H\021*T\027`\030,%K@]Th-\367K\337\247s\301\024.\025\005\\\243Wo\0070c\325'\233\3750\372(\221\222\222r\014!Y\307\235.\226B@}\271\362ob\207\203J\t\271O\207(\020\034\375\213U\203\312\260\315\t\315\014\024]\270\366dE$5r\260P\366\t\340\221\017\232V[\341\rx`a+\302j\370\272l\260\3249J\354\2402\266\206\324d\202D+\245\220#puB\271\251dFED\251fU\241a\366\276\246L\205\306l\361\013\305\230\334\033\325\313\330EG!R\006\260\245\230\"\231\221\364\260\352\220|D4\2416XP\317\n\030v\025Ha\017\016\014[BBB2\274 \240\031\3703CPZ3\314F2BD\326\244\226O\312\2362D\232C\351\217\3042\210\310\341\000\322\002\303\314T1\325g\210\0300f\022Fj\231iS\030\206\242\273A\247\213\035\013H\201\201Y\374OH\220\246\362\266\023\321e\211\026\255NC\255\321\245\002\225\341n\274f)\242\007\221\320\025\204\336\323\241\340@\310\330\035$\30550\201T\014\024\205\253nQ\021\220\")\306\342c\233N\264\254\272\2124\300\223\300\224\021\204@\332\006RL\010N>\375\350\264\362}8f2\221A)+@\244\225\350\023\206\231\001\323\232\254@T\245Q\010\013a\022\353\355p\n#\210\2515v\215\022\206P\224\313\035\312\027\302#+\257\324\264r\\\264\303\247\212\220\360h\"\227\260\200`\351\246\020\373\000\222Lj*\320\016\021\n\200\210\221\000\226\214\245\365P\023\315\254\302\334I\346\360\213\253\263\000\365\250\253Q\213tc]\260\004\037\007\252\252\206tI\026\343\224\201\304\027\214\276\247Q\357{\214@>\201!\200\246\250\224\225M\232\234!\240\245\277\213\271\"\234(Hu$\374\213\200";
+    PyObject *data = __Pyx_DecompressString(cstring, 623, 2);
     if (unlikely(!data)) __PYX_ERR(0, 1, __pyx_L1_error)
     const char* const bytes = __Pyx_PyBytes_AsString(data);
     #if !CYTHON_ASSUME_SAFE_MACROS
     if (likely(bytes)); else { Py_DECREF(data); __PYX_ERR(0, 1, __pyx_L1_error) }
     #endif
-    #elif (CYTHON_COMPRESS_STRINGS) != 0 /* compression: zlib (536 bytes) */
-const char* const cstring = "x\332\205R\275n\023A\020\026\022\005\n4\2106\305\246\241A\234ArC\004A&\200D\023\221\274\300h\275;g\257\262\267s\331\037\373.\r)]\372\021RR\246\3441R\246\314\2430{\276\230(v\304I\267\177\363\315\31473\337\347o\336\223\027\212\334\014}4n\"<\315\367\305wi,j\021I`\023\275TQ\214\0307\027\207\242&\343\"\372 JO\2258AE^\177\221QM\377\271\030g\242\221\326\234\243\030g\2130\354 #\371}\361\263]\305\341d\301\220c4\t\262\272\020G\310\276u+;\353\301'\361~X\274\023s\023\247\002\240{\004\225w\331\002\210\220\352\232|\324&\310\261Ety\235(\023V'\355Hh,e\262\221}=\352\244\220\235t\302\314\315\221{\033\275\2311?\266\252L\025 x5\010\216\346\245\225\2478H\032\270\035\016\0253\0368\351\250\317_\327\203\216\374\217\276\232\301\352\275+\021\372\006\242/\352\266\371\0308\205\233\004J^\341A_s\327\244\303;\330\326\307b\315W\265qJ\016\3401X\300\030\242\214\377\003N0\202J\336\243\213`\234\306\346qXW\"%\006r\254\206\377\257FE8\342\361\237`\2711\203\376J,\205&\312\320:e\250`)Pb\raPST\247\200YZ\300\354\220\363\264\214\266\251r\3122\200\311@\226\025\216%\343\240LN\001l\220}@krW3\200\t\260N\306\342\252\002@%9&\177\025\351d3\006\234\254x\257\251\346\205+\352}\317\222\264+\213\357\264\333\317o-\224\215\021\254\037\260\311}\267e\327\375>:\237z\255\335\233\tl\231\317Z^\305}y\025[%\004\0201p\300\024\020t\236\202\307\300\031\362\325\245\252ng\322&\014\027\243\333g\317\027\303\305\331\315\213W\313\341\362\327\365\353\017\177^\336v\347\363\353\275\341\325\350!\340\322^\355\365\366\313\335\337\307\027On\236\356,\336,\217\377\002\330_\226\300";
-    PyObject *data = __Pyx_DecompressString(cstring, 536, 1);
+    #elif (CYTHON_COMPRESS_STRINGS) != 0 /* compression: zlib (534 bytes) */
+const char* const cstring = "x\332\205R\275n\023A\020V$\n\004i\020/\260\r\025\342L\204\013\024A\220\371\223h\242\220\032i\264\336\235\263W\331\333\271\354\217}G\201R\272\364#\244\244L\311c\244L\231Ga\366|6Q\354\210\223n\377\346\233\231of\276\017_\274'/\024\271\031\372h\334Dx\232\037\212\257\322X\324\"\222\300&z\251\242\0301n.>\211\232\214\213\350\203(=U\342\024\025y\375QF5\375\347b\234\211FZ\363\023\3058[\204a\007\031\311\037\212\223v\025\207\223\005C\216\321$\310\352B\034#\373\326\255\354\254G\357\305\301\260x-\346&N\005@\367\010*\357\262\005\020!\3255\371\250M\220c\213\350\362:Q&\254N\332\221\320X\312d#\373z\324I!;\351\204\231\233#\367*z3c~lU\231*@\360j\020\034\315K+\317p\2204p;\034*f<p\322Q\237\277\256\007\035\371o}5\203\325{W\"\254K,\352\266y\0278\203\233\004J^\341Q_r\327\243\265\353\256\267bCV\265qJ\016\340\001T\300\030\242\214\377\301M0\202J\336\243\213`\234\306\346ATW\034%\306q\244\206\377\317FE8\346\301\237b\271\325\375\376J,\202&\312\320:e\250`\021Pb\365`PSTg\200YT\300\334\220\007\3352\332\246\312)\313\000\346\002YP8\226\214\20329\005\260\305\365\036\255\311\272b\000\023`\223\214{^\005\200JrL\376*\322\311f\0148Y\361^S\315\013W\324\373\236'iW\026\337\251\266\237\334F\"[\375\337<`\223\273n\313\256\367}t>\365*\2733\021\3301\235\215\260\212\273\302*`\227z\000\"\006\016\230\002\202\316S\360\0308C\276\272T\325\355L\332\204\341bt\373\370\351b\2708\277\331\177\276\034.\177]\376\270zv\333\035\333\313\375\337\243\373\346\353\027o\377\354\365\366k\361\346\352\340b\357\346\321\223\305\313\345\367\277\363g\223\265";
+    PyObject *data = __Pyx_DecompressString(cstring, 534, 1);
     if (unlikely(!data)) __PYX_ERR(0, 1, __pyx_L1_error)
     const char* const bytes = __Pyx_PyBytes_AsString(data);
     #if !CYTHON_ASSUME_SAFE_MACROS
     if (likely(bytes)); else { Py_DECREF(data); __PYX_ERR(0, 1, __pyx_L1_error) }
     #endif
-    #else /* compression: none (1027 bytes) */
-const char* const bytes = "?Error converting row: Failed to extract Arrow C pointers from RecordBatchFailed to initialize batch iterator: PyArrow version too old. Need pyarrow >= 14.0 with __arrow_c_array__ supportdisableenablegcisenabledno default __reduce__ due to non-trivial __cinit__src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_converter.pyx<stringsource>PyArrowBatchConverterPyArrowBatchConverter.__reduce_cython__PyArrowBatchConverter.__setstate_cython__PyArrowBatchConverter.get_current_indexPyArrowBatchConverter.get_row_count__Pyx_PyDict_NextRef__arrow_c_array__arrow_contextasyncio.coroutinescheck_error_on_every_columncline_in_traceback__func__get_current_indexget_row_count__getstate___is_coroutineitems__main____module____name__pop__pyx_state__qualname__record_batch__reduce____reduce_cython____reduce_ex__self__set_name__setdefault__setstate____setstate_cython__snowflake.ud_connector.arrow_batch_converter__test__use_dict_resultuse_numpyvalues\200A\340\010\013\2104\210q\330\014\023\2204\220\177\320&9\270\021\340\014\023\2204\220z\320!4\260A\200A\340\010\013\2104\210q\330\014\023\2204\220\177\240l\260!\340\014\023\2204\220z\240\034\250Q\200\001\330\004\n\210+\220Q";
+    #else /* compression: none (1021 bytes) */
+const char* const bytes = "?Error converting row: Failed to extract Arrow C pointers from RecordBatchFailed to initialize batch iterator: PyArrow version too old. Need pyarrow >= 14.0 with __arrow_c_array__ supportdisableenablegcisenabledno default __reduce__ due to non-trivial __cinit__src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_iterator.pyx<stringsource>PyArrowBatchIteratorPyArrowBatchIterator.__reduce_cython__PyArrowBatchIterator.__setstate_cython__PyArrowBatchIterator.get_current_indexPyArrowBatchIterator.get_row_count__Pyx_PyDict_NextRef__arrow_c_array__arrow_contextasyncio.coroutinescheck_error_on_every_columncline_in_traceback__func__get_current_indexget_row_count__getstate___is_coroutineitems__main____module____name__pop__pyx_state__qualname__record_batch__reduce____reduce_cython____reduce_ex__self__set_name__setdefault__setstate____setstate_cython__snowflake.ud_connector._arrow_batch_iterator__test__use_dict_resultuse_numpyvalues\200A\340\010\013\2104\210q\330\014\023\2204\220~\240\\\260\021\340\014\023\2204\220y\240\014\250A\200A\340\010\013\2104\210q\330\014\023\2204\220~\320%8\270\001\340\014\023\2204\220y\320 3\2601\200\001\330\004\n\210+\220Q";
     PyObject *data = NULL;
     CYTHON_UNUSED_VAR(__Pyx_DecompressString);
     #endif
@@ -4888,12 +4888,12 @@ static int __Pyx_CreateCodeObjects(__pyx_mstatetype *__pyx_mstate) {
   {
     const __Pyx_PyCode_New_function_description descr = {1, 0, 0, 1, (unsigned int)(CO_OPTIMIZED|CO_NEWLOCALS), 179};
     PyObject* const varnames[] = {__pyx_mstate->__pyx_n_u_self};
-    __pyx_mstate_global->__pyx_codeobj_tab[0] = __Pyx_PyCode_New(descr, varnames, __pyx_mstate->__pyx_kp_u_src_snowflake_ud_connector_nanoa, __pyx_mstate->__pyx_n_u_get_row_count, __pyx_mstate->__pyx_kp_b_iso88591_A_4q_4_l_4z_Q, tuple_dedup_map); if (unlikely(!__pyx_mstate_global->__pyx_codeobj_tab[0])) goto bad;
+    __pyx_mstate_global->__pyx_codeobj_tab[0] = __Pyx_PyCode_New(descr, varnames, __pyx_mstate->__pyx_kp_u_src_snowflake_ud_connector_nanoa, __pyx_mstate->__pyx_n_u_get_row_count, __pyx_mstate->__pyx_kp_b_iso88591_A_4q_4_4y_A, tuple_dedup_map); if (unlikely(!__pyx_mstate_global->__pyx_codeobj_tab[0])) goto bad;
   }
   {
     const __Pyx_PyCode_New_function_description descr = {1, 0, 0, 1, (unsigned int)(CO_OPTIMIZED|CO_NEWLOCALS), 186};
     PyObject* const varnames[] = {__pyx_mstate->__pyx_n_u_self};
-    __pyx_mstate_global->__pyx_codeobj_tab[1] = __Pyx_PyCode_New(descr, varnames, __pyx_mstate->__pyx_kp_u_src_snowflake_ud_connector_nanoa, __pyx_mstate->__pyx_n_u_get_current_index, __pyx_mstate->__pyx_kp_b_iso88591_A_4q_4_9_4z_4A, tuple_dedup_map); if (unlikely(!__pyx_mstate_global->__pyx_codeobj_tab[1])) goto bad;
+    __pyx_mstate_global->__pyx_codeobj_tab[1] = __Pyx_PyCode_New(descr, varnames, __pyx_mstate->__pyx_kp_u_src_snowflake_ud_connector_nanoa, __pyx_mstate->__pyx_n_u_get_current_index, __pyx_mstate->__pyx_kp_b_iso88591_A_4q_4_8_4y_31, tuple_dedup_map); if (unlikely(!__pyx_mstate_global->__pyx_codeobj_tab[1])) goto bad;
   }
   {
     const __Pyx_PyCode_New_function_description descr = {1, 0, 0, 1, (unsigned int)(CO_OPTIMIZED|CO_NEWLOCALS), 1};

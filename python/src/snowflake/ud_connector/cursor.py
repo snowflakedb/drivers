@@ -12,7 +12,7 @@ from ._internal.protobuf_gen.database_driver_v1_pb2 import (
     StatementSetSqlQueryRequest,
     StatementExecuteQueryRequest,
 )
-from .result_batch import ArrowBatchIterator
+from .arrow_stream_iterator import ArrowStreamIterator
 
 
 class Cursor:
@@ -40,7 +40,6 @@ class Cursor:
         self._reader = None
         self._batch_iterator = None
         self.execute_result = None
-        self._schema = None
 
     @property
     def description(self):
@@ -118,7 +117,6 @@ class Cursor:
         # Reset streaming state for a new result
         self._reader = None
         self._batch_iterator = None
-        self._schema = None
 
     def executemany(self, operation, seq_of_parameters):
         """
@@ -133,51 +131,6 @@ class Cursor:
         """
         raise NotSupportedError("executemany is not implemented")
 
-    def _extract_schema_from_arrow(self, arrow_schema):
-        """Extract schema information from Arrow schema.
-
-        Args:
-            arrow_schema: PyArrow schema object
-
-        Returns:
-            List of dicts with column metadata
-        """
-        schema = []
-        for field in arrow_schema:
-            col_info = {
-                "name": field.name,
-                "type": "TEXT",  # Default type
-                "scale": 0,
-                "precision": 38,
-                "nullable": field.nullable,
-            }
-
-            # Extract Snowflake type metadata from Arrow field metadata
-            if field.metadata:
-                # Look for Snowflake-specific metadata keys
-                metadata = field.metadata
-                if b"logicalType" in metadata:
-                    logical_type = metadata[b"logicalType"].decode("utf-8")
-                    col_info["type"] = logical_type.upper()
-
-                if b"scale" in metadata:
-                    try:
-                        col_info["scale"] = int(metadata[b"scale"].decode("utf-8"))
-                    except (ValueError, UnicodeDecodeError):
-                        pass
-
-                if b"precision" in metadata:
-                    try:
-                        col_info["precision"] = int(
-                            metadata[b"precision"].decode("utf-8")
-                        )
-                    except (ValueError, UnicodeDecodeError):
-                        pass
-
-            schema.append(col_info)
-
-        return schema
-
     def _batch_reader(self):
         stream_ptr = int.from_bytes(
             self.execute_result.stream.value, byteorder="little", signed=False
@@ -190,13 +143,8 @@ class Cursor:
             if self._reader is None:
                 self._reader = self._batch_reader()
 
-            # Extract schema from Arrow reader if not already set
-            if self._schema is None:
-                self._schema = self._extract_schema_from_arrow(self._reader.schema)
-
-            self._batch_iterator = ArrowBatchIterator(
+            self._batch_iterator = ArrowStreamIterator(
                 self._reader,
-                self._schema if self._schema else [],
                 use_dict_result=False,
             )
 
