@@ -13,6 +13,7 @@ from typing import Any, Iterator
 import pyarrow
 
 from snowflake.ud_connector.arrow_batch_converter import PyArrowBatchConverter
+from snowflake.ud_connector.arrow_context import ArrowConverterContext
 
 
 class ArrowBatchIterator:
@@ -36,7 +37,8 @@ class ArrowBatchIterator:
         self.reader = reader
         self.schema = schema
         self.use_dict_result = use_dict_result
-        self.arrow_context = arrow_context
+        # Create default context if none provided
+        self.arrow_context = arrow_context if arrow_context else ArrowConverterContext()
         self._current_batch_iterator = None
 
     def __iter__(self) -> Iterator[tuple | dict]:
@@ -61,7 +63,7 @@ class ArrowBatchIterator:
                     # Create C++ batch converter for this batch
                     self._current_batch_iterator = PyArrowBatchConverter(
                         batch,
-                        self.arrow_context if self.arrow_context else {},
+                        self.arrow_context,
                         use_dict_result=self.use_dict_result,
                         use_numpy=False,
                         check_error_on_every_column=True,
@@ -127,7 +129,7 @@ class ArrowBatchIterator:
                 if batch.num_columns > 0:
                     batch_iterator = PyArrowBatchConverter(
                         batch,
-                        self.arrow_context if self.arrow_context else {},
+                        self.arrow_context,
                         use_dict_result=self.use_dict_result,
                         use_numpy=False,
                         check_error_on_every_column=True,
