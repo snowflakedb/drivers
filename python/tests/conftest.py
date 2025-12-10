@@ -18,13 +18,13 @@ def pytest_addoption(parser):
         action="store",
         default="universal",
         choices=["universal", "reference"],
-        help="Which connector implementation to test against (default: universal)"
+        help="Which connector implementation to test against (default: universal)",
     )
     parser.addoption(
         "--reference-package",
         action="store",
         default="snowflake.connector",
-        help="Package name for reference connector (default: snowflake.connector)"
+        help="Package name for reference connector (default: snowflake.connector)",
     )
 
 
@@ -41,7 +41,9 @@ def connector_adapter(request, connector_type):
     reference_package = request.config.getoption("--reference-package")
 
     if connector_type == ConnectorType.REFERENCE:
-        return ConnectorFactory.create_adapter(connector_type, package_name=reference_package)
+        return ConnectorFactory.create_adapter(
+            connector_type, package_name=reference_package
+        )
 
     return ConnectorFactory.create_adapter(connector_type)
 
@@ -59,10 +61,10 @@ def connection_factory(connector_adapter):
 
     def _create_connection(**override_params):
         """Create a connection with custom parameters.
-        
+
         Args:
             **override_params: Parameters to override defaults
-            
+
         Example:
             conn = connection_factory(account="test_account", user="test_user")
         """
@@ -79,14 +81,28 @@ def cursor(connection):
 
 
 @pytest.fixture
+def tmp_schema(cursor):
+    """Create a temporary schema."""
+    import uuid
+
+    schema_name = f"test_schema_{uuid.uuid4().hex}"
+    cursor.execute(f"CREATE SCHEMA {schema_name}")
+    try:
+        yield schema_name
+    finally:
+        cursor.execute(f"DROP SCHEMA {schema_name}")
+
+
+@pytest.fixture
 def int_test_connection_factory(connector_adapter):
     """Factory function for creating connections with integration test parameters."""
+
     def _create_connection(**override_params):
         """Create a connection with integration test parameters."""
         default_server_url = "http://localhost:8090"
         server_url = override_params.get("server_url", default_server_url)
         parsed_url = urlparse(server_url)
-        
+
         # Default integration test parameters
         integration_params = {
             "account": "test_account",
@@ -102,11 +118,11 @@ def int_test_connection_factory(connector_adapter):
             "authenticator": "SNOWFLAKE_JWT",
             "private_key_file": get_test_private_key_path(),
         }
-        
+
         integration_params.update(override_params)
-        
+
         return create_connection_with_adapter(connector_adapter, **integration_params)
-    
+
     return _create_connection
 
 
