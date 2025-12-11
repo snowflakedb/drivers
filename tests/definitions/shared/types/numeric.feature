@@ -29,7 +29,7 @@ Feature: Numeric Types Support
   Scenario: should cast INT and its synonyms to appropriate type and preserve values when selecting literals
     Given Snowflake client is logged in
     When Query selecting literal values of INT, INTEGER, BIGINT, SMALLINT, TINYINT, BYTEINT types is executed
-    Then All returned values should be cast to integers
+    Then All returned values should be of appropriate type
     And All returned values should be equal to the expected literals
 
   @python
@@ -38,7 +38,7 @@ Feature: Numeric Types Support
     And A table with columns of types INT, INTEGER, BIGINT, SMALLINT, TINYINT, BYTEINT is created
     And Data is inserted into the table
     When Query selecting data from the table is executed
-    Then All returned values should be cast to integers
+    Then All returned values should be of appropriate type
     And All returned values should be equal to the inserted values
 
   @python
@@ -46,13 +46,13 @@ Feature: Numeric Types Support
     Given Snowflake client is logged in
     When Query "SELECT 99999999999999999999999999999999999999::INT as max_value_col" is executed
     And Query "SELECT -99999999999999999999999999999999999999::INT as min_value_col" is executed
-    Then All queries should return expected integer values
+    Then All queries should return expected values
 
   @python
   Scenario: should cast FLOAT and its synonyms to appropriate type and preserve values when selecting literals
     Given Snowflake client is logged in
     When Query selecting literal values of FLOAT, FLOAT4, FLOAT8, DOUBLE, DOUBLE PRECISION, REAL types is executed
-    Then All returned values should be cast to floats
+    Then All returned values should be of appropriate type
     And All returned values should be equal to the expected literals
 
   @python
@@ -61,7 +61,7 @@ Feature: Numeric Types Support
     And A table with columns of types FLOAT, FLOAT4, FLOAT8, DOUBLE, DOUBLE PRECISION, REAL is created
     And Data is inserted into the table
     When Query selecting data from the table is executed
-    Then All returned values should be cast to floats
+    Then All returned values should be of appropriate type
     And All returned values should be equal to the inserted values
 
   @python
@@ -71,6 +71,22 @@ Feature: Numeric Types Support
     And Query selecting extreme exponent values 1e308, 1e-308, and 1e-324 is executed
     And Query selecting special float values NaN, Inf, and -Inf is executed
     Then All queries should return expected float values
+
+  @python
+  Scenario: should cast DECFLOAT to appropriate type and preserve values when selecting literals
+    Given Snowflake client is logged in
+    When Query selecting literal values of DECFLOAT type is executed
+    Then All returned values should be of appropriate type
+    And All returned values should be equal to the expected literals
+
+  @python
+  Scenario: should cast DECFLOAT to appropriate type and preserve values when selecting from table
+    Given Snowflake client is logged in
+    And A table with column of type DECFLOAT is created
+    And Data is inserted into the table
+    When Query selecting data from the table is executed
+    Then All returned values should be of appropriate type
+    And All returned values should be equal to the inserted values
 
   @python
   Scenario: Type mappings for numeric types are tested

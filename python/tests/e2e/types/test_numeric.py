@@ -120,7 +120,7 @@ def test_should_cast_int_and_its_synonyms_to_appropriate_type_and_preserve_value
     cursor.execute(sql)
     values = cursor.fetchone()
 
-    # Then All returned values should be cast to integers
+    # Then All returned values should be of appropriate type
     assert all(
         isinstance(value, int) for value in values
     ), f"All values should be int, got types: {[type(v) for v in values]}"
@@ -168,7 +168,7 @@ def test_should_cast_int_and_its_synonyms_to_appropriate_type_and_preserve_value
     cursor.execute(select_sql)
     values = cursor.fetchone()
 
-    # Then All returned values should be cast to integers
+    # Then All returned values should be of appropriate type
     assert all(
         isinstance(value, int) for value in values
     ), f"All values should be int, got types: {[type(v) for v in values]}"
@@ -196,7 +196,7 @@ def test_should_handle_maximum_values_of_int_correctly(cursor):
     cursor.execute(sql)
     values = cursor.fetchone()
 
-    # Then All queries should return expected integer values
+    # Then All queries should return expected values
     assert all(
         isinstance(value, int) for value in values
     ), f"All values should be int, got types: {[type(v) for v in values]}"
@@ -227,7 +227,7 @@ def test_should_cast_float_and_its_synonyms_to_appropriate_type_and_preserve_val
     cursor.execute(sql)
     values = cursor.fetchone()
 
-    # Then All returned values should be cast to floats
+    # Then All returned values should be of appropriate type
     assert all(
         isinstance(value, float) for value in values
     ), f"All values should be float, got types: {[type(v) for v in values]}"
@@ -276,7 +276,7 @@ def test_should_cast_float_and_its_synonyms_to_appropriate_type_and_preserve_val
     cursor.execute(select_sql)
     values = cursor.fetchone()
 
-    # Then All returned values should be cast to floats
+    # Then All returned values should be of appropriate type
     assert all(
         isinstance(value, float) for value in values
     ), f"All values should be float, got types: {[type(v) for v in values]}"
@@ -339,6 +339,80 @@ def test_should_handle_extreme_values_of_float_correctly(cursor):
     assert math.isnan(values[5]), f"Expected NaN, got {values[5]}"
     assert math.isinf(values[6]) and values[6] > 0, f"Expected +Inf, got {values[6]}"
     assert math.isinf(values[7]) and values[7] < 0, f"Expected -Inf, got {values[7]}"
+
+
+def test_should_cast_decfloat_to_appropriate_type_and_preserve_values_when_selecting_literals(
+    cursor,
+):
+    # Given Snowflake client is logged in
+    assert cursor
+
+    # When Query selecting literal values of DECFLOAT type is executed
+    sql = """
+        SELECT 
+            3.141592653589793238462643383::DECFLOAT as decfloat_col1,
+            -2.718281828459045235360287471::DECFLOAT as decfloat_col2,
+            1.414213562373095048801688724::DECFLOAT as decfloat_col3
+        """
+    cursor.execute(sql)
+    values = cursor.fetchone()
+
+    # Then All returned values should be of appropriate type
+    assert all(
+        isinstance(value, Decimal) for value in values
+    ), f"All values should be Decimal, got types: {[type(v) for v in values]}"
+
+    # And All returned values should be equal to the expected literals
+    expected_values = (
+        Decimal("3.141592653589793238462643383"),
+        Decimal("-2.718281828459045235360287471"),
+        Decimal("1.414213562373095048801688724"),
+    )
+    assert values == expected_values, f"Expected {expected_values}, got {values}"
+
+
+def test_should_cast_decfloat_to_appropriate_type_and_preserve_values_when_selecting_from_table(
+    cursor, tmp_schema
+):
+    # Given Snowflake client is logged in
+    table_name = f"{tmp_schema}.test_decfloat_select_from_table"
+    assert cursor, "Cursor should be open"
+
+    # And A table with column of type DECFLOAT is created
+    create_sql = (
+        f"CREATE OR REPLACE TEMPORARY TABLE {table_name}"
+        " (decfloat_col1 DECFLOAT,"
+        " decfloat_col2 DECFLOAT,"
+        " decfloat_col3 DECFLOAT)"
+    )
+    cursor.execute(create_sql)
+
+    # And Data is inserted into the table
+    insert_sql = (
+        f"INSERT INTO {table_name} VALUES"
+        " (3.141592653589793238462643383,"
+        " -2.718281828459045235360287471,"
+        " 1.414213562373095048801688724)"
+    )
+    cursor.execute(insert_sql)
+
+    # When Query selecting data from the table is executed
+    select_sql = f"SELECT * FROM {table_name}"
+    cursor.execute(select_sql)
+    values = cursor.fetchone()
+
+    # Then All returned values should be of appropriate type
+    assert all(
+        isinstance(value, Decimal) for value in values
+    ), f"All values should be Decimal, got types: {[type(v) for v in values]}"
+
+    # And All returned values should be equal to the inserted values
+    expected_values = (
+        Decimal("3.141592653589793238462643383"),
+        Decimal("-2.718281828459045235360287471"),
+        Decimal("1.414213562373095048801688724"),
+    )
+    assert values == expected_values, f"Expected {expected_values}, got {values}"
 
 
 def test_type_mappings_for_numeric_types_are_tested():
