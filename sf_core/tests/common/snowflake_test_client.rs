@@ -9,21 +9,18 @@ use std::mem::size_of;
 use std::sync::Arc;
 
 use super::config::{Parameters, get_parameters, setup_logging};
+use super::private_key_helper::{self, TempPrivateKeyFile};
 
 /// Creates a connected Snowflake client with database and connection initialized
 pub struct SnowflakeTestClient {
     pub conn_handle: ConnectionHandle,
     pub db_handle: DatabaseHandle,
     pub parameters: Parameters,
-}
-
-impl Default for SnowflakeTestClient {
-    fn default() -> Self {
-        Self::connect_with_default_auth()
-    }
+    temp_key_file: Option<TempPrivateKeyFile>,
 }
 
 impl SnowflakeTestClient {
+    /// Creates a client with default parameters (no authentication parameters set)
     pub fn with_default_params() -> Self {
         setup_logging();
         let parameters = get_parameters();
@@ -43,53 +40,44 @@ impl SnowflakeTestClient {
             conn_handle,
             db_handle,
             parameters,
+            temp_key_file: None,
         };
 
-        // Set connection options using the helper method
-        client.set_connection_option("account", &client.parameters.account_name.clone().unwrap());
-        client.set_connection_option("user", &client.parameters.user.clone().unwrap());
-
-        // Set optional parameters if specified
-        if let Some(database) = client.parameters.database.clone() {
-            client.set_connection_option("database", &database);
-        }
-
-        if let Some(schema) = client.parameters.schema.clone() {
-            client.set_connection_option("schema", &schema);
-        }
-
-        if let Some(warehouse) = client.parameters.warehouse.clone() {
-            client.set_connection_option("warehouse", &warehouse);
-        }
-
-        if let Some(host) = client.parameters.host.clone() {
-            client.set_connection_option("host", &host);
-        }
-
-        if let Some(role) = client.parameters.role.clone() {
-            client.set_connection_option("role", &role);
-        }
-
-        if let Some(server_url) = client.parameters.server_url.clone() {
-            client.set_connection_option("server_url", &server_url);
-        }
-
-        if let Some(port) = client.parameters.port {
-            client.set_connection_option_int("port", port);
-        }
-
-        if let Some(protocol) = client.parameters.protocol.clone() {
-            client.set_connection_option("protocol", &protocol);
-        }
-
+        client.set_options_from_parameters();
         client
     }
 
-    /// Creates a test client with integration test parameters
-    pub fn with_int_test_params() -> Self {
+    /// Creates a client with default parameters and JWT authentication configured
+    pub fn with_default_jwt_auth_params() -> Self {
+        setup_logging();
+        let mut client = Self::with_default_params();
+
+        let temp_key_file = client.setup_jwt_auth();
+        client.temp_key_file = Some(temp_key_file);
+        client
+    }
+
+    pub fn connect_with_default_auth() -> Self {
+        setup_logging();
+        let mut client = Self::with_default_params();
+
+        let temp_key_file = client.setup_jwt_auth();
+
+        DatabaseDriverClient::connection_init(ConnectionInitRequest {
+            conn_handle: Some(client.conn_handle),
+            db_handle: Some(client.db_handle),
+        })
+        .unwrap();
+
+        client.temp_key_file = Some(temp_key_file);
+        client
+    }
+
+    pub fn with_int_tests_params(server_url: Option<&str>) -> Self {
         setup_logging();
 
-        // Create test parameters for integration tests
+        let server_url = server_url.unwrap_or("http://localhost:8090");
+
         let test_parameters = Parameters {
             account_name: Some("test_account".to_string()),
             user: Some("test_user".to_string()),
@@ -99,8 +87,8 @@ impl SnowflakeTestClient {
             warehouse: Some("test_warehouse".to_string()),
             host: Some("localhost".to_string()),
             role: Some("test_role".to_string()),
-            server_url: Some("http://localhost:8090".to_string()),
-            port: Some(8090),
+            server_url: Some(server_url.to_string()),
+            port: None,
             protocol: Some("http".to_string()),
             private_key_contents: None,
             private_key_password: None,
@@ -121,34 +109,20 @@ impl SnowflakeTestClient {
             conn_handle,
             db_handle,
             parameters: test_parameters,
+            temp_key_file: None,
         };
 
-        // Set connection options using the helper method
-        client.set_connection_option("account", &client.parameters.account_name.clone().unwrap());
-        client.set_connection_option("user", &client.parameters.user.clone().unwrap());
-        client.set_connection_option("database", &client.parameters.database.clone().unwrap());
-        client.set_connection_option("schema", &client.parameters.schema.clone().unwrap());
-        client.set_connection_option("warehouse", &client.parameters.warehouse.clone().unwrap());
-        client.set_connection_option("host", &client.parameters.host.clone().unwrap());
-        client.set_connection_option("role", &client.parameters.role.clone().unwrap());
-        client.set_connection_option("server_url", &client.parameters.server_url.clone().unwrap());
-        client.set_connection_option_int("port", client.parameters.port.unwrap());
-        client.set_connection_option("protocol", &client.parameters.protocol.clone().unwrap());
-
+        client.set_options_from_parameters();
         client
     }
 
-    /// Creates a new test client with Snowflake connection established
-    pub fn connect_with_default_auth() -> Self {
-        setup_logging();
-        let client = Self::with_default_params();
+    pub fn connect_integration_test(server_url: Option<&str>) -> Self {
+        let mut client = Self::with_int_tests_params(server_url);
 
-        DatabaseDriverClient::connection_set_option_string(ConnectionSetOptionStringRequest {
-            conn_handle: Some(client.conn_handle),
-            key: "password".to_string(),
-            value: client.parameters.password.clone().unwrap(),
-        })
-        .unwrap();
+        client.set_connection_option("authenticator", "SNOWFLAKE_JWT");
+        let temp_key_file = private_key_helper::get_test_private_key_file()
+            .expect("Failed to create test private key file");
+        client.set_connection_option("private_key_file", temp_key_file.path().to_str().unwrap());
 
         DatabaseDriverClient::connection_init(ConnectionInitRequest {
             conn_handle: Some(client.conn_handle),
@@ -156,6 +130,7 @@ impl SnowflakeTestClient {
         })
         .unwrap();
 
+        client.temp_key_file = Some(temp_key_file);
         client
     }
 
@@ -293,6 +268,11 @@ impl SnowflakeTestClient {
         .unwrap();
     }
 
+    /// Stores a temporary private key file to keep it alive for the duration of the test.
+    pub fn set_temp_key_file(&mut self, temp_key_file: TempPrivateKeyFile) {
+        self.temp_key_file = Some(temp_key_file);
+    }
+
     pub fn verify_simple_query(&self, connection_result: Result<(), String>) {
         connection_result.expect("Login failed");
         let _result = self.execute_query("SELECT 1");
@@ -325,6 +305,56 @@ impl SnowflakeTestClient {
             "Error message should contain missing parameter information: {error_msg}"
         );
         assert!(!error_msg.is_empty(), "Error message should not be empty");
+    }
+
+    /// Sets up JWT authentication configuration and returns a private key file
+    fn setup_jwt_auth(&mut self) -> TempPrivateKeyFile {
+        self.set_connection_option("authenticator", "SNOWFLAKE_JWT");
+        let temp_key_file = private_key_helper::get_private_key_from_parameters(&self.parameters)
+            .expect("Failed to create private key file");
+        self.set_connection_option("private_key_file", temp_key_file.path().to_str().unwrap());
+        if let Some(password) = &self.parameters.private_key_password {
+            self.set_connection_option("private_key_password", password);
+        }
+        temp_key_file
+    }
+
+    fn set_options_from_parameters(&self) {
+        self.set_connection_option("account", &self.parameters.account_name.clone().unwrap());
+        self.set_connection_option("user", &self.parameters.user.clone().unwrap());
+
+        // Set optional parameters if specified
+        if let Some(database) = &self.parameters.database {
+            self.set_connection_option("database", database);
+        }
+
+        if let Some(schema) = &self.parameters.schema {
+            self.set_connection_option("schema", schema);
+        }
+
+        if let Some(warehouse) = &self.parameters.warehouse {
+            self.set_connection_option("warehouse", warehouse);
+        }
+
+        if let Some(host) = &self.parameters.host {
+            self.set_connection_option("host", host);
+        }
+
+        if let Some(role) = &self.parameters.role {
+            self.set_connection_option("role", role);
+        }
+
+        if let Some(server_url) = &self.parameters.server_url {
+            self.set_connection_option("server_url", server_url);
+        }
+
+        if let Some(port) = self.parameters.port {
+            self.set_connection_option_int("port", port);
+        }
+
+        if let Some(protocol) = &self.parameters.protocol {
+            self.set_connection_option("protocol", protocol);
+        }
     }
 }
 

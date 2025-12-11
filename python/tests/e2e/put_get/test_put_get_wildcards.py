@@ -2,11 +2,12 @@ import tempfile
 from pathlib import Path
 
 from tests.e2e.put_get.put_get_helper import (
-    list_stage_contents,
-    create_temporary_stage,
-    upload_file_to_stage,
+    as_file_uri,
     create_matching_files,
+    create_temporary_stage,
     create_test_files,
+    list_stage_contents,
+    upload_file_to_stage,
 )
 
 
@@ -190,8 +191,6 @@ def create_temporary_stage_and_upload_multiple_files(
     Note:
         All uploads are automatically validated for success.
     """
-    from tests.e2e.put_get.put_get_helper import create_temporary_stage
-
     stage_name = create_temporary_stage(cursor, stage_prefix)
     upload_results = upload_files_with_wildcard(
         cursor, stage_name, wildcard_pattern, auto_compress, overwrite
@@ -218,8 +217,6 @@ def get_files_with_wildcard(cursor, stage_name: str, pattern: str, download_dir:
         This function executes the GET command but does not return results.
         Check the download_dir for downloaded files after calling this function.
     """
-    from tests.e2e.put_get.put_get_helper import as_file_uri
-
     get_command = (
         f"GET @{stage_name} 'file://{as_file_uri(download_dir)}/' PATTERN='{pattern}'"
     )

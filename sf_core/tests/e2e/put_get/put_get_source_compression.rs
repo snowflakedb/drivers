@@ -169,34 +169,6 @@ fn should_compress_uncompressed_file_when_source_compression_set_to_none_and_aut
     assert_put_results(put_result, filename, "NONE", &expected_target, "GZIP");
 }
 
-#[test]
-fn should_return_error_for_unsupported_compression_type() {
-    // Given Snowflake client is logged in
-    let client = SnowflakeTestClient::connect_with_default_auth();
-    let stage_name = "TEST_STAGE_UNSUPPORTED";
-
-    // And File compressed with unsupported format
-    let filename = "test_data.csv.xz"; //LZMA
-    let test_file_path = get_test_data_path(filename);
-
-    // When File is uploaded with SOURCE_COMPRESSION set to AUTO_DETECT
-    client.create_temporary_stage(stage_name);
-    let put_sql = format!(
-        "PUT 'file://{}' @{stage_name} SOURCE_COMPRESSION=AUTO_DETECT",
-        test_file_path.to_str().unwrap().replace("\\", "/")
-    );
-
-    // Then Unsupported compression error is thrown
-    let result = client.execute_query_no_unwrap(&put_sql);
-    assert!(
-        matches!(
-            &result,
-            Err(e) if format!("{e:?}").contains("Unsupported compression type")
-        ),
-        "Expected unsupported compression error, got: {result:?}"
-    );
-}
-
 fn assert_put_results(
     put_data: ExecuteResult,
     expected_source_filename: &str,

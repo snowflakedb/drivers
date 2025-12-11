@@ -41,6 +41,7 @@ def _execute_query(cursor, sql):
     cursor.execute(sql)
     query_time = time.time() - query_start
     
+    # TODO SNOW-2876245: fetchmany is not implemented yet. Currently using iterator (row-by-row).
     fetch_start = time.time()
     row_count = 0
     for _ in cursor:

@@ -1,9 +1,9 @@
-use super::super::common::test_utils::*;
+use crate::common::snowflake_test_client::SnowflakeTestClient;
 
 #[test]
 fn should_connect_and_select_with_crl_enabled() {
     // Given Snowflake client is logged in
-    let client = SnowflakeTestClient::with_default_params();
+    let client = SnowflakeTestClient::connect_with_default_auth();
 
     // And CRL is enabled
     client.set_connection_option("crl_mode", "ENABLED");

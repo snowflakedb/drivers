@@ -45,8 +45,11 @@ FROM runtime_base
 WORKDIR /workdir
 
 # Copy the universal ODBC wrapper and sf_core library
-COPY tests/performance/.tmp_libsfodbc.so /usr/lib/libsfodbc.so
-COPY tests/performance/.tmp_libsf_core.so /usr/lib/libsf_core.so
+COPY tests/performance/.tmp/libsfodbc.so /usr/lib/libsfodbc.so
+COPY tests/performance/.tmp/libsf_core.so /usr/lib/libsf_core.so
+
+# Copy Rust version from sf-core-builder
+COPY tests/performance/.tmp/rust_version /etc/rust_version
 
 # Copy old driver from installer stage
 COPY --from=old_installer /usr/lib/snowflake/ /usr/lib/snowflake/
@@ -71,5 +74,5 @@ ENV ODBCSYSINI=/workdir
 # Default to universal driver (can be overridden with DRIVER_TYPE=old)
 ENV DRIVER_TYPE=universal
 
-CMD export OS_INFO=$(cat /etc/os_info) && /workdir/build/odbc-perf-driver
+CMD export OS_INFO=$(cat /etc/os_info) && export RUST_VERSION=$(cat /etc/rust_version) && /workdir/build/odbc-perf-driver
 

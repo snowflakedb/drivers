@@ -51,25 +51,25 @@ build-core = "bash -c 'cd drivers/core && ./build.sh'"
 build-odbc = "bash -c 'cd drivers/odbc && ./build.sh'"
 build = "bash -c 'cd drivers/python && ./build.sh && cd ../core && ./build.sh && cd ../odbc && ./build.sh'"
 
-# Local
-core-local = "python -m pytest tests/ --driver=core -s -v {args}"
-# Core with local binary (no Docker)
-core-local-no-docker = "python -m pytest tests/ --driver=core --use-local-binary -s -v {args}"
-python-universal-local = "python -m pytest tests/ --driver=python --driver-type=universal -s -v {args}"
-python-old-local = "python -m pytest tests/ --driver=python --driver-type=old -s -v {args}"
-python-both-local = "python -m pytest tests/ --driver=python --driver-type=both -s -v {args}"
-odbc-universal-local = "python -m pytest tests/ --driver=odbc --driver-type=universal -s -v {args}"
-odbc-old-local = "python -m pytest tests/ --driver=odbc --driver-type=old -s -v {args}"
-odbc-both-local = "python -m pytest tests/ --driver=odbc --driver-type=both -s -v {args}"
+# Local (always builds before execution)
+core-local = ["build-core", "python -m pytest {args:tests/} --driver=core -s -v"]
+# Core with local binary (no Docker, no build needed)
+core-local-no-docker = "python -m pytest {args:tests/} --driver=core --use-local-binary -s -v"
+python-universal-local = ["build-python", "python -m pytest {args:tests/} --driver=python --driver-type=universal -s -v"]
+python-old-local = ["build-python", "python -m pytest {args:tests/} --driver=python --driver-type=old -s -v"]
+python-both-local = ["build-python", "python -m pytest {args:tests/} --driver=python --driver-type=both -s -v"]
+odbc-universal-local = ["build-odbc", "python -m pytest {args:tests/} --driver=odbc --driver-type=universal -s -v"]
+odbc-old-local = ["build-odbc", "python -m pytest {args:tests/} --driver=odbc --driver-type=old -s -v"]
+odbc-both-local = ["build-odbc", "python -m pytest {args:tests/} --driver=odbc --driver-type=both -s -v"]
 
 # CI
-core = "python -m pytest tests/ --driver=core --upload-to-benchstore -s -v {args}"
-python-universal = "python -m pytest tests/ --driver=python --driver-type=universal --upload-to-benchstore -s -v {args}"
-python-old = "python -m pytest tests/ --driver=python --driver-type=old --upload-to-benchstore -s -v {args}"
-python-both = "python -m pytest tests/ --driver=python --driver-type=both --upload-to-benchstore -s -v {args}"
-odbc-universal = "python -m pytest tests/ --driver=odbc --driver-type=universal --upload-to-benchstore -s -v {args}"
-odbc-old = "python -m pytest tests/ --driver=odbc --driver-type=old --upload-to-benchstore -s -v {args}"
-odbc-both = "python -m pytest tests/ --driver=odbc --driver-type=both --upload-to-benchstore -s -v {args}"
+core = "python -m pytest {args:tests/} --driver=core --upload-to-benchstore -s -v"
+python-universal = "python -m pytest {args:tests/} --driver=python --driver-type=universal --upload-to-benchstore -s -v"
+python-old = "python -m pytest {args:tests/} --driver=python --driver-type=old --upload-to-benchstore -s -v"
+python-both = "python -m pytest {args:tests/} --driver=python --driver-type=both --upload-to-benchstore -s -v"
+odbc-universal = "python -m pytest {args:tests/} --driver=odbc --driver-type=universal --upload-to-benchstore -s -v"
+odbc-old = "python -m pytest {args:tests/} --driver=odbc --driver-type=old --upload-to-benchstore -s -v"
+odbc-both = "python -m pytest {args:tests/} --driver=odbc --driver-type=both --upload-to-benchstore -s -v"
 
 # Clean all generated files and results
 clean = """python -c "

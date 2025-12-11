@@ -50,6 +50,7 @@ test = [
     "pytest-split",
     "pytest-cov",
     "hypothesis",
+    "requests",
     "tox>=4.14",
     "tox-uv>=1.8",
     "snowflake-connector-python>=3.6.0",

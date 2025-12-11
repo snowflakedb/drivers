@@ -86,13 +86,29 @@ hatch run odbc-old
 hatch run odbc-both
 ```
 
+### Cloud Provider Selection
+
+Default: AWS. Available: `aws`, `azure`, `gcp`
+
+```bash
+# Use --cloud flag
+hatch run core-local --cloud=azure
+
+# Use environment variable
+CLOUD=azure hatch run python-both-local
+
+# Use explicit path
+hatch run core-local --parameters-json=parameters/parameters_perf_azure.json
+```
+
 ### Command-Line Options
 
 | Option | Description | Default |
 |--------|-------------|---------|
-| `--parameters-json` | Path to parameters JSON file | `parameters/parameters_perf_aws.json` |
-| `--iterations` | Number of test iterations | `2` (or per-test marker) |
-| `--warmup-iterations` | Number of warmup iterations | `1` (or per-test marker) |
+| `--cloud` | Cloud provider: `aws`, `azure`, or `gcp` | `aws` |
+| `--parameters-json` | Path to parameters JSON file | Auto-selected based on `--cloud` |
+| `--iterations` | Number of test iterations | `5` (or per-test marker) |
+| `--warmup-iterations` | Number of warmup iterations | `0` (or per-test marker) |
 | `--driver` | Driver to test | `core` |
 | `--driver-type` | `universal`, `old`, or `both` | `universal` |
 | `--upload-to-benchstore` | Upload metrics to Benchstore | `false` |
@@ -101,23 +117,21 @@ hatch run odbc-both
 
 #### Examples with Custom Arguments
 
-All hatch test scripts accept pytest arguments:
-
 ```bash
-# Custom parameters file
-hatch run core-local --parameters-json=parameters/my_parameters.json
+# Different cloud
+hatch run core-local --cloud=azure
 
 # Custom iterations
-hatch run python-universal-local --iterations=5 --warmup-iterations=2
+hatch run python-universal-local --iterations=10 --warmup-iterations=2
 
 # Specific test
-hatch run core-local tests/test_select_1000000.py::test_select_string_1000000_rows
+hatch run core-local tests/test_select_1M.py::test_select_string_1M_arrow_fetch_s
 
-# Filter tests by name pattern
-hatch run python-both-local -k "test_select_string"
+# Filter by pattern
+hatch run python-both-local -k "1M"
 
-# With Benchstore upload using local auth
-hatch run core --upload-to-benchstore --local-benchstore-upload
+# Combined options
+hatch run python-universal-local --cloud=azure --iterations=10 -k "1M"
 ```
 
 ### Utility Scripts
@@ -183,12 +197,17 @@ def test_put_files_12mx100(perf_test):
 
 ### Test Configuration Priority
 
-Configuration values are resolved in the following priority order (highest to lowest):
+**Cloud/Parameters** (highest to lowest):
+1. `--parameters-json=path/to/file.json`
+2. `--cloud=azure`
+3. `CLOUD` environment variable
+4. Default: `aws`
 
-1. **Command-line arguments**: `--iterations=5`
-2. **Test-level markers**: `@pytest.mark.iterations(3)`
-3. **Environment variables**: `PERF_ITERATIONS=2`
-4. **Defaults**: `iterations=2`, `warmup_iterations=1`
+**Iterations/Warmup** (highest to lowest):
+1. Command-line: `--iterations=10`
+2. Test marker: `@pytest.mark.iterations(5)`
+3. Environment: `PERF_ITERATIONS=3`
+4. Defaults: `iterations=5`, `warmup_iterations=0`
 
 ### Adding New Drivers
 
@@ -380,8 +399,11 @@ The following tags are automatically attached to each metric:
 | `BRANCH_NAME` | Git branch name or "LOCAL" | Jenkins `BRANCH_NAME` env var | `"main"` or `"LOCAL"` |
 | `DRIVER` | Driver name (with `_old` suffix for old driver) | Test configuration | `"python"`, `"core"`, `"odbc_old"` |
 | `DRIVER_VERSION` | Driver library version | See version detection below | `"0.1.0"` or `"UNKNOWN"` |
+| `BUILD_RUST_VERSION` | Rust compiler version that built the code | Build-time detection | `"1.75"`, `"NA"` for non-Rust |
+| `RUNTIME_LANGUAGE_VERSION` | Runtime language version for interpreted languages | Runtime detection | `"3.13"` for Python, `"NA"` for compiled code |
 | `SERVER_VERSION` | Snowflake server version | Retrieved during connection | `"9.34.0"` |
 | `CLOUD_PROVIDER` | Cloud platform | Parameters filename | `"AWS"`, `"AZURE"`, `"GCP"` |
+| `REGION` | Cloud region | Extracted from host | `"us-west-2"`, `"east-us-2"` |
 | `ARCHITECTURE` | CPU architecture | Detected from system | `"x86_64"`, `"arm64"` |
 | `OS` | Operating system | Detected from system | `"Debian_13"`, `"Darwin_24.6.0"` |
 | `TYPE` | Test execution type | For now e2e, will be expanded when tests with recorded http traffic will be added | `"e2e"` (end-to-end) |
@@ -389,11 +411,10 @@ The following tags are automatically attached to each metric:
 | `DOCKER_MEMORY` | Container memory limit | Docker resource configuration | `"4g"` |
 | `DOCKER_CPU` | Container CPU limit | Docker resource configuration | `"2.0"` |
 
-**Tag usage notes**:
-- `CLOUD_PROVIDER` is extracted from the parameters filename (e.g., `parameters_perf_aws.json` → `"AWS"`)
-- Old driver implementations have `_old` suffix in the `DRIVER` tag (e.g., `"python_old"`)
-- Local test runs use `"LOCAL"` for build and branch information
-- Tags enable filtering and grouping metrics in Benchstore for analysis and comparison
+**Notes**:
+- `CLOUD_PROVIDER` extracted from parameters filename (e.g., `parameters_perf_aws.json` → `"AWS"`)
+- Old drivers have `_old` suffix (e.g., `"python_old"`)
+- Local runs use `"LOCAL"` for build and branch tags
 
 #### Driver Version Detection
 

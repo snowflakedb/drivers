@@ -8,6 +8,10 @@ FROM --platform=${BUILDPLATFORM} artifactory.ci1.us-west-2.aws-dev.app.snowflake
 # Install cargo-chef
 RUN cargo install cargo-chef
 
+# TODO SNOW-2705435: Use Clang for aws-lc-fips-sys to avoid GCC >= 14 incompatibility
+# See: https://github.com/aws/aws-lc-rs/issues/569
+ENV AWS_LC_FIPS_SYS_CC=clang
+
 WORKDIR /workdir
 
 # Copy all source files needed for recipe generation
@@ -26,6 +30,9 @@ RUN cargo chef prepare --recipe-path recipe.json
 # Stage 2: Builder - build dependencies (cached) then app
 FROM --platform=${BUILDPLATFORM} artifactory.ci1.us-west-2.aws-dev.app.snowflake.com/development-docker-virtual/rust:slim AS builder
 
+# Capture Rust version (major.minor only, e.g. 1.75)
+RUN rustc --version | awk '{print $2}' | cut -d. -f1,2 > /rust_version
+
 # Install build dependencies
 RUN apt-get update && apt-get install -y \
     pkg-config \
@@ -38,8 +45,9 @@ RUN apt-get update && apt-get install -y \
 # Install cargo-chef
 RUN cargo install cargo-chef
 
-# todo SNOW-2705435 fix aws-lc-fips-sys build on ARM64
-ENV CC=gcc
+# TODO SNOW-2705435: Use Clang for aws-lc-fips-sys to avoid GCC >= 14 incompatibility
+# See: https://github.com/aws/aws-lc-rs/issues/569
+ENV AWS_LC_FIPS_SYS_CC=clang
 
 WORKDIR /workdir
 
@@ -81,9 +89,10 @@ RUN apt-get update && apt-get install -y \
 # Copy the binary from builder
 COPY --from=builder /workdir/tests/performance/drivers/core/app/target/release/core-perf-driver /usr/local/bin/core-perf-driver
 
-# Detect OS version at build time (major version only) and write to file
+# Detect OS version and Rust version at build time
+COPY --from=builder /rust_version /etc/rust_version
 RUN bash -c '. /etc/os-release && echo "${ID^}_$(echo $VERSION_ID | cut -d. -f1)" > /etc/os_info'
 
 ENV RUST_LOG=${RUST_LOG:-warn}
 
-CMD export OS_INFO=$(cat /etc/os_info) && core-perf-driver
+CMD export OS_INFO=$(cat /etc/os_info) && export RUST_VERSION=$(cat /etc/rust_version) && core-perf-driver

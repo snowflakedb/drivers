@@ -102,7 +102,7 @@ def run_container(container: DockerContainer) -> str:
     with container:
         result = container.get_wrapped_container()
         
-        timeout = 1800  # 30 minutes timeout
+        timeout = 3600  # 1 hour
         start_time = time.time()
         logs_buffer = []
         stream_error = None

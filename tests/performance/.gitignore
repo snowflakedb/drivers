@@ -21,8 +21,7 @@ get_files/
 Thumbs.db
 
 # Temporary perf tests build files
-.tmp_libsf_core.so
-.tmp_libsfodbc.so
 .tmp_rust_target
+.tmp/
 
 results/

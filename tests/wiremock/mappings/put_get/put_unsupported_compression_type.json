@@ -1,0 +1,44 @@
+{
+  "request": {
+    "urlPathPattern": "/queries/v1/query-request.*",
+    "method": "POST",
+    "bodyPatterns": [
+      {
+        "matchesJsonPath": "$.sqlText",
+        "contains": "PUT"
+      }
+    ]
+  },
+  "response": {
+    "status": 200,
+    "jsonBody": {
+      "success": true,
+      "data": {
+        "command": "UPLOAD",
+        "stageInfo": {
+          "locationType": "S3",
+          "location": "mock-stage/",
+          "path": "mock-stage/",
+          "region": "us-west-2",
+          "isClientSideEncrypted": true,
+          "creds": {
+            "AWS_KEY_ID": "mock_key",
+            "AWS_SECRET_KEY": "mock_secret",
+            "AWS_TOKEN": "mock_token"
+          }
+        },
+        "encryptionMaterial": {
+          "queryStageMasterKey": "mock_key==",
+          "queryId": "mock-query-id",
+          "smkId": 1
+        },
+        "src_locations": [
+          "{{REPO_ROOT}}/tests/test_data/generated_test_data/compression/*.xz"
+        ],
+        "autoCompress": true,
+        "overwrite": false,
+        "sourceCompression": "auto_detect"
+      }
+    }
+  }
+}

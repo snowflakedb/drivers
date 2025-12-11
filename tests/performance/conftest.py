@@ -19,24 +19,30 @@ _current_run_dir = None
 def pytest_addoption(parser):
     """Add custom command line options"""
     parser.addoption(
+        "--cloud",
+        action="store",
+        default=None,
+        help="Cloud provider: aws, azure, or gcp. If specified, will use parameters/parameters_perf_{cloud}.json",
+    )
+    parser.addoption(
         "--parameters-json",
         action="store",
-        default=str(Path("parameters") / "parameters_perf_aws.json"),
-        help="Path to parameters.json file",
+        default=None,
+        help="Path to parameters.json file. If not specified and --cloud is provided, uses parameters/parameters_perf_{cloud}.json. Default: parameters/parameters_perf_aws.json",
     )
     parser.addoption(
         "--iterations",
         action="store",
         default=None,
         type=int,
-        help="Number of test iterations (default: 2, or per-test marker)",
+        help="Number of test iterations (default: 5, or per-test marker)",
     )
     parser.addoption(
         "--warmup-iterations",
         action="store",
         default=None,
         type=int,
-        help="Number of warmup iterations (default: 1, or per-test marker)",
+        help="Number of warmup iterations (default: 0, or per-test marker)",
     )
     parser.addoption(
         "--driver",
@@ -70,12 +76,41 @@ def pytest_addoption(parser):
     )
 
 
+def _resolve_parameters_path(config) -> str:
+    """
+    Resolve parameters JSON path from config and environment.
+    
+    Priority:
+    1. --parameters-json flag (explicit path)
+    2. --cloud flag (uses parameters/parameters_perf_{cloud}.json)
+    3. CLOUD environment variable (uses parameters/parameters_perf_{cloud}.json)
+    4. Default: parameters/parameters_perf_aws.json
+    
+    Args:
+        config: pytest config object
+        
+    Returns:
+        Path to parameters JSON file
+    """
+    # Check for explicit parameters file path
+    params_path = config.getoption("--parameters-json")
+    if params_path:
+        return params_path
+    
+    # Check for cloud parameter (CLI or environment)
+    cloud = config.getoption("--cloud") or os.getenv("CLOUD")
+    if cloud:
+        cloud = cloud.lower()
+        return str(Path("parameters") / f"parameters_perf_{cloud}.json")
+    
+    # Default to AWS
+    return str(Path("parameters") / "parameters_perf_aws.json")
+
+
 @pytest.fixture
 def parameters_json_path(request):
-    """Get parameters JSON path from command line or environment"""
-    return request.config.getoption("--parameters-json") or os.getenv(
-        "PARAMETERS_JSON", str(Path("..") / ".." / "parameters.json")
-    )
+    """Get parameters JSON path from command line, cloud option, or environment."""
+    return _resolve_parameters_path(request.config)
 
 
 @pytest.fixture
@@ -92,7 +127,7 @@ def iterations(request):
     1. Command line args (--iterations=N) - highest priority
     2. Test-level marker (@pytest.mark.iterations(N))
     3. Environment variable (PERF_ITERATIONS)
-    4. Default value (2) - lowest priority
+    4. Default value (5) - lowest priority
     """
     # 1. Check command line (explicitly provided)
     cli_value = request.config.getoption("--iterations")
@@ -113,7 +148,7 @@ def iterations(request):
         return int(env_value)
     
     # 4. Default
-    return 2
+    return 5
 
 
 @pytest.fixture
@@ -123,7 +158,7 @@ def warmup_iterations(request):
     1. Command line args (--warmup-iterations=N) - highest priority
     2. Test-level marker (@pytest.mark.warmup_iterations(N))
     3. Environment variable (PERF_WARMUP_ITERATIONS)
-    4. Default value (1) - lowest priority
+    4. Default value (0) - lowest priority
     """
     # 1. Check command line (explicitly provided)
     cli_value = request.config.getoption("--warmup-iterations")
@@ -144,7 +179,7 @@ def warmup_iterations(request):
         return int(env_value)
     
     # 4. Default
-    return 1
+    return 0
 
 
 @pytest.fixture
@@ -386,7 +421,7 @@ def pytest_sessionfinish(session, exitstatus):
     
     upload_to_benchstore = session.config.getoption("--upload-to-benchstore")
     local_benchstore_upload = session.config.getoption("--local-benchstore-upload")
-    parameters_json_path = session.config.getoption("--parameters-json")
+    parameters_json_path = _resolve_parameters_path(session.config)
     
     if upload_to_benchstore:
         logger.info("")

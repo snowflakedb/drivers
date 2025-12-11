@@ -76,6 +76,10 @@ pub fn write_run_metadata_json(server_version: &str) -> Result<String> {
     // Get driver version from env (set at compile time in Cargo.toml)
     let driver_version = env!("CARGO_PKG_VERSION");
 
+    // Get Rust compiler version from environment
+    let build_rust_version =
+        std::env::var("RUST_VERSION").unwrap_or_else(|_| "unknown".to_string());
+
     // Detect architecture and OS inside container
     let architecture = get_architecture();
     let os = get_os_version();
@@ -84,6 +88,8 @@ pub fn write_run_metadata_json(server_version: &str) -> Result<String> {
         "driver": "core",
         "driver_type": "universal",
         "driver_version": driver_version,
+        "build_rust_version": build_rust_version,
+        "runtime_language_version": "NA",  // code is compiled
         "server_version": server_version,
         "architecture": architecture,
         "os": os,

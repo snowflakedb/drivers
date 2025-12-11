@@ -3,5 +3,7 @@ pub mod arrow_extract_value;
 pub mod arrow_result_helper;
 pub mod config;
 pub mod file_utils;
+pub mod private_key_helper;
 pub mod put_get_common;
 pub mod snowflake_test_client;
+pub mod wiremock_client;

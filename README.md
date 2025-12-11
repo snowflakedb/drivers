@@ -87,3 +87,8 @@ cargo run
 
 1. **Missing parameters.json**: Run `./scripts/decode_secrets.sh` or create manually
 2. **Missing Rust library**: Run `cargo build --package sf_core`
+
+## License
+Copyright (c) Snowflake Inc. All rights reserved.
+
+Licensed under the [Apache License 2.0](https://www.apache.org/licenses/LICENSE-2.0).

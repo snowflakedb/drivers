@@ -8,3 +8,5 @@ fi
 
 gpg --batch --yes --passphrase "${PARAMETERS_SECRET}" --decrypt ./.github/secrets/parameters_aws.json.gpg > parameters.json
 gpg --batch --yes --passphrase "${PARAMETERS_SECRET}" --decrypt tests/performance/parameters/parameters_perf_aws.json.gpg > tests/performance/parameters/parameters_perf_aws.json
+gpg --batch --yes --passphrase "${PARAMETERS_SECRET}" --decrypt tests/performance/parameters/parameters_perf_azure.json.gpg > tests/performance/parameters/parameters_perf_azure.json
+gpg --batch --yes --passphrase "${PARAMETERS_SECRET}" --decrypt tests/performance/parameters/parameters_perf_gcp.json.gpg > tests/performance/parameters/parameters_perf_gcp.json

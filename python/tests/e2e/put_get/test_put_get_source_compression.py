@@ -6,6 +6,7 @@ from tests.e2e.put_get.put_get_helper import (
     create_temporary_stage,
 )
 from tests.compatibility import NEW_DRIVER_ONLY, OLD_DRIVER_ONLY
+from tests.utils import shared_test_data_dir
 
 
 @pytest.mark.parametrize(
@@ -239,8 +240,6 @@ def get_compression_test_file_path(compression_type: str) -> Path:
     Raises:
         ValueError: If compression type is not supported
     """
-    from tests.utils import shared_test_data_dir
-
     compression_map = {
         "GZIP": "test_data.csv.gz",
         "BZIP2": "test_data.csv.bz2",
