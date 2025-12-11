@@ -10,3 +10,9 @@ behavior_differences:
   
   4:
     name: "GET rowset metadata contains file size after decryption instead of file size before decryption"
+  
+  5:
+    name: "Header of a gzip-compressed file does not contain filename"
+  
+  6:
+    name: "Unsupported compression type returns error instead of being silently ignored"

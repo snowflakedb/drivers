@@ -26,7 +26,7 @@ static std::pair<std::string, fs::path> updated_test_file() {
 
 TEST_CASE("should overwrite file when OVERWRITE is set to true", "[put_get]") {
   Connection conn;
-  const std::string stage = pg_utils::create_stage(conn, "ODBCTST_OVERWRITE_TRUE");
+  const std::string stage = pg_utils::create_stage(conn, unique_stage_name("ODBCTST_OVERWRITE"));
   auto [filename, original] = original_test_file();
   auto [_, updated] = updated_test_file();
 
@@ -58,7 +58,7 @@ TEST_CASE("should overwrite file when OVERWRITE is set to true", "[put_get]") {
 
 TEST_CASE("should not overwrite file when OVERWRITE is set to false", "[put_get]") {
   Connection conn;
-  const std::string stage = pg_utils::create_stage(conn, "ODBCTST_OVERWRITE_FALSE");
+  const std::string stage = pg_utils::create_stage(conn, unique_stage_name("ODBCTST_OVERWRITE"));
   auto [filename, original] = original_test_file();
   auto [_, updated] = updated_test_file();
 

@@ -17,34 +17,42 @@ using namespace pg_utils;
 
 static fs::path wildcard_tests_dir() { return test_utils::shared_test_data_dir() / "wildcard"; }
 
-static std::string unique_stage_name(const std::string& prefix) { return prefix + "_" + random_hex(4); }
-
-static fs::path create_isolated_test_files(const std::vector<std::string>& filenames) {
+// Copies test files to a TempTestDir and populates the directory
+static void populate_test_files(const TempTestDir& temp_dir, const std::vector<std::string>& filenames) {
   fs::path source_dir = wildcard_tests_dir();
-  fs::path temp_dir = fs::temp_directory_path() / ("odbc_wildcard_" + random_hex(8));
-  fs::create_directories(temp_dir);
   for (const auto& name : filenames) {
-    fs::copy_file(source_dir / name, temp_dir / name, fs::copy_options::overwrite_existing);
+    fs::path dest = temp_dir.path() / name;
+    // Read source file content
+    std::ifstream src(source_dir / name, std::ios::binary);
+    std::string content((std::istreambuf_iterator<char>(src)), std::istreambuf_iterator<char>());
+    src.close();
+    // Write to destination and sync
+    std::ofstream dst(dest, std::ios::binary | std::ios::trunc);
+    dst << content;
+    dst.flush();
+    dst.close();
+    // Verify file is readable and has content
+    REQUIRE(fs::exists(dest));
+    REQUIRE(fs::file_size(dest) > 0);
   }
-  return temp_dir;
 }
 
 TEST_CASE("should upload files that match wildcard question mark pattern", "[put_get]") {
   Connection conn;
   const std::string stage = pg_utils::create_stage(conn, unique_stage_name("ODBCTST_WILDCARD_Q"));
-  fs::path wildcard_dir =
-      create_isolated_test_files({"pattern_1.csv", "pattern_2.csv", "pattern_10.csv", "patternabc.csv"});
+  TempTestDir wildcard_dir("odbc_wildcard_");
+  populate_test_files(wildcard_dir, {"pattern_1.csv", "pattern_2.csv", "pattern_10.csv", "patternabc.csv"});
 
   // Given Files matching wildcard pattern
-  REQUIRE(fs::exists(wildcard_dir / "pattern_1.csv"));
-  REQUIRE(fs::exists(wildcard_dir / "pattern_2.csv"));
+  REQUIRE(fs::exists(wildcard_dir.path() / "pattern_1.csv"));
+  REQUIRE(fs::exists(wildcard_dir.path() / "pattern_2.csv"));
 
   // And Files not matching wildcard pattern
-  REQUIRE(fs::exists(wildcard_dir / "pattern_10.csv"));
-  REQUIRE(fs::exists(wildcard_dir / "patternabc.csv"));
+  REQUIRE(fs::exists(wildcard_dir.path() / "pattern_10.csv"));
+  REQUIRE(fs::exists(wildcard_dir.path() / "patternabc.csv"));
 
   // When Files are uploaded using command with question mark wildcard
-  const std::string pattern = as_file_uri(wildcard_dir) + "/pattern_?.csv";
+  const std::string pattern = as_file_uri(wildcard_dir.path()) + "/pattern_?.csv";
   conn.execute("PUT 'file://" + pattern + "' @" + stage);
 
   // Then Files matching wildcard pattern are uploaded
@@ -71,18 +79,18 @@ TEST_CASE("should upload files that match wildcard star pattern", "[put_get]") {
   const std::string stage = pg_utils::create_stage(conn, unique_stage_name("ODBCTST_WILDCARD_STAR"));
 
   // Given Files matching wildcard pattern
-  fs::path wildcard_dir =
-      create_isolated_test_files({"pattern_1.csv", "pattern_2.csv", "pattern_10.csv", "patternabc.csv"});
+  TempTestDir wildcard_dir("odbc_wildcard_");
+  populate_test_files(wildcard_dir, {"pattern_1.csv", "pattern_2.csv", "pattern_10.csv", "patternabc.csv"});
 
-  REQUIRE(fs::exists(wildcard_dir / "pattern_1.csv"));
-  REQUIRE(fs::exists(wildcard_dir / "pattern_2.csv"));
+  REQUIRE(fs::exists(wildcard_dir.path() / "pattern_1.csv"));
+  REQUIRE(fs::exists(wildcard_dir.path() / "pattern_2.csv"));
 
   // And Files not matching wildcard pattern
-  REQUIRE(fs::exists(wildcard_dir / "pattern_10.csv"));
-  REQUIRE(fs::exists(wildcard_dir / "patternabc.csv"));
+  REQUIRE(fs::exists(wildcard_dir.path() / "pattern_10.csv"));
+  REQUIRE(fs::exists(wildcard_dir.path() / "patternabc.csv"));
 
   // When Files are uploaded using command with star wildcard
-  const std::string pattern = as_file_uri(wildcard_dir) + "/pattern_*.csv";
+  const std::string pattern = as_file_uri(wildcard_dir.path()) + "/pattern_*.csv";
   conn.execute("PUT 'file://" + pattern + "' @" + stage);
 
   // Then Files matching wildcard pattern are uploaded
@@ -109,28 +117,27 @@ TEST_CASE("should download files that are matching wildcard pattern", "[put_get]
   const std::string stage = pg_utils::create_stage(conn, unique_stage_name("ODBCTST_REGEXP_GET"));
 
   // Given Files matching wildcard pattern are uploaded
-  fs::path wildcard_dir =
-      create_isolated_test_files({"pattern_1.csv", "pattern_2.csv", "pattern_10.csv", "patternabc.csv"});
+  TempTestDir wildcard_dir("odbc_wildcard_");
+  populate_test_files(wildcard_dir, {"pattern_1.csv", "pattern_2.csv", "pattern_10.csv", "patternabc.csv"});
 
   for (const auto& name : {"pattern_1.csv", "pattern_2.csv"}) {
-    conn.execute("PUT 'file://" + as_file_uri(wildcard_dir / name) + "' @" + stage);
+    conn.execute("PUT 'file://" + as_file_uri(wildcard_dir.path() / name) + "' @" + stage);
   }
 
   // And Files not matching wildcard pattern are uploaded
   for (const auto& name : {"pattern_10.csv", "patternabc.csv"}) {
-    conn.execute("PUT 'file://" + as_file_uri(wildcard_dir / name) + "' @" + stage);
+    conn.execute("PUT 'file://" + as_file_uri(wildcard_dir.path() / name) + "' @" + stage);
   }
 
-  fs::path download_dir = fs::temp_directory_path() / (std::string("odbc_put_get_") + random_hex());
-  fs::create_directories(download_dir);
+  TempTestDir download_dir("odbc_put_get_");
   const std::string get_pattern = R"(.*/pattern_.\.csv\.gz)";
 
   // When Files are downloaded using command with wildcard
-  conn.execute("GET @" + stage + " 'file://" + as_file_uri(download_dir) + "/' PATTERN='" + get_pattern + "'");
+  conn.execute("GET @" + stage + " 'file://" + as_file_uri(download_dir.path()) + "/' PATTERN='" + get_pattern + "'");
 
   // Then Files matching wildcard pattern are downloaded
   std::set<std::string> downloaded_files;
-  for (const auto& entry : fs::directory_iterator(download_dir)) {
+  for (const auto& entry : fs::directory_iterator(download_dir.path())) {
     downloaded_files.insert(entry.path().filename().string());
   }
 

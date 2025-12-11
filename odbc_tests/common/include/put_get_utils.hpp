@@ -44,12 +44,64 @@ static constexpr int GET_ROW_SIZE_IDX = 2;
 static constexpr int GET_ROW_STATUS_IDX = 3;
 static constexpr int GET_ROW_MESSAGE_IDX = 4;
 
+// Generate a unique stage name with random suffix for parallel test safety
+inline std::string unique_stage_name(const std::string& prefix) { return prefix + "_" + random_hex(4); }
+
 // Create a temporary stage for a test and return its name (without leading '@')
 inline std::string create_stage(Connection& conn, const std::string& stage_name) {
   std::string sql = "CREATE OR REPLACE TEMPORARY STAGE " + stage_name;
   auto stmt = conn.execute(sql);
   return stage_name;
 }
+
+// RAII wrapper for temporary test directories - automatically cleans up on destruction
+class TempTestDir {
+ public:
+  explicit TempTestDir(const std::string& prefix = "odbc_test_")
+      : path_(std::filesystem::temp_directory_path() / (prefix + random_hex_internal())) {
+    std::filesystem::create_directories(path_);
+  }
+
+  ~TempTestDir() {
+    if (std::filesystem::exists(path_)) {
+      std::error_code ec;
+      std::filesystem::remove_all(path_, ec);
+      // Ignore errors during cleanup - test environment may have already cleaned up
+    }
+  }
+
+  // Non-copyable, movable
+  TempTestDir(const TempTestDir&) = delete;
+  TempTestDir& operator=(const TempTestDir&) = delete;
+  TempTestDir(TempTestDir&& other) noexcept : path_(std::move(other.path_)) { other.path_.clear(); }
+  TempTestDir& operator=(TempTestDir&& other) noexcept {
+    if (this != &other) {
+      path_ = std::move(other.path_);
+      other.path_.clear();
+    }
+    return *this;
+  }
+
+  [[nodiscard]] const std::filesystem::path& path() const { return path_; }
+  [[nodiscard]] operator const std::filesystem::path&() const { return path_; }
+
+ private:
+  std::filesystem::path path_;
+
+  static std::string random_hex_internal(size_t num_bytes = 8) {
+    std::random_device rd;
+    std::mt19937_64 gen(rd());
+    std::uniform_int_distribution<uint64_t> dist(0, UINT64_MAX);
+
+    std::stringstream ss;
+    const char* hex = "0123456789abcdef";
+    for (size_t i = 0; i < num_bytes; ++i) {
+      uint8_t v = static_cast<uint8_t>(dist(gen) & 0xFF);
+      ss << hex[(v >> 4) & 0x0F] << hex[v & 0x0F];
+    }
+    return ss.str();
+  }
+};
 
 // Generate a random hex string for temporary directory names
 inline std::string random_hex(size_t num_bytes = 8) {
@@ -67,8 +119,7 @@ inline std::string random_hex(size_t num_bytes = 8) {
 }
 
 // Write a text file with given content and return the path
-inline std::filesystem::path write_text_file(const std::filesystem::path& dir,
-                                             const std::string& filename,
+inline std::filesystem::path write_text_file(const std::filesystem::path& dir, const std::string& filename,
                                              const std::string& content) {
   std::filesystem::create_directories(dir);
   std::filesystem::path p = dir / filename;
@@ -92,8 +143,7 @@ inline std::string as_file_uri(const std::filesystem::path& p) {
 inline std::string decompress_gzip_file(const std::filesystem::path& gz_path) {
   std::ifstream ifs(gz_path, std::ios::binary);
   REQUIRE(ifs.good());
-  std::vector<unsigned char> compressed((std::istreambuf_iterator<char>(ifs)),
-                                        std::istreambuf_iterator<char>());
+  std::vector<unsigned char> compressed((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());
 
   // Set up zlib inflate with gzip header support
   z_stream strm{};
@@ -126,8 +176,8 @@ inline void compare_compression_type(const std::string& compression_type,
   }
   OLD_DRIVER_ONLY("BC#2: Compression type is now returned in uppercase") {
     std::string exp_comp_type_lower = expected_compression_type;
-    std::transform(exp_comp_type_lower.begin(), exp_comp_type_lower.end(),
-                   exp_comp_type_lower.begin(), [](unsigned char c) { return std::tolower(c); });
+    std::transform(exp_comp_type_lower.begin(), exp_comp_type_lower.end(), exp_comp_type_lower.begin(),
+                   [](unsigned char c) { return std::tolower(c); });
     CHECK(compression_type == exp_comp_type_lower);
   }
 }

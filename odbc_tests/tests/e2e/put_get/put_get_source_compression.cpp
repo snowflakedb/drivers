@@ -38,7 +38,7 @@ static std::pair<std::string, fs::path> test_file(const std::string& compression
 TEST_CASE("should auto-detect standard compression types when SOURCE_COMPRESSION set to AUTO_DETECT", "[put_get]") {
   Connection conn;
   // Given Snowflake client is logged in
-  const std::string stage = create_stage(conn, "ODBCTST_SC_AUTO_DETECT_STD");
+  const std::string stage = create_stage(conn, unique_stage_name("ODBCTST_SC_AUTO"));
 
   // And File with standard type (GZIP, BZIP2, BROTLI, ZSTD, DEFLATE)
   const std::vector<std::string> types = {"GZIP", "BZIP2", "BROTLI", "ZSTD", "DEFLATE"};
@@ -69,7 +69,7 @@ TEST_CASE("should auto-detect standard compression types when SOURCE_COMPRESSION
 TEST_CASE("should upload compressed files with SOURCE_COMPRESSION set to explicit types", "[put_get]") {
   Connection conn;
   // Given Snowflake client is logged in
-  const std::string stage = create_stage(conn, "ODBCTST_SC_EXPLICIT");
+  const std::string stage = create_stage(conn, unique_stage_name("ODBCTST_SC_EXPLICIT"));
 
   // And File with standard type (GZIP, BZIP2, BROTLI, ZSTD, DEFLATE, RAW_DEFLATE)
   const std::vector<std::string> types = {"GZIP", "BZIP2", "BROTLI", "ZSTD", "DEFLATE", "RAW_DEFLATE"};
@@ -94,7 +94,7 @@ TEST_CASE("should not compress file when SOURCE_COMPRESSION set to AUTO_DETECT a
           "[put_get]") {
   Connection conn;
   // Given Snowflake client is logged in
-  const std::string stage = create_stage(conn, "ODBCTST_SC_AUTO_NO_AC");
+  const std::string stage = create_stage(conn, unique_stage_name("ODBCTST_SC_AUTO_NO_AC"));
 
   // And Uncompressed file
   auto [filename, file] = test_file("NONE");
@@ -114,7 +114,7 @@ TEST_CASE("should not compress file when SOURCE_COMPRESSION set to AUTO_DETECT a
 TEST_CASE("should not compress file when SOURCE_COMPRESSION set to NONE and AUTO_COMPRESS set to FALSE", "[put_get]") {
   Connection conn;
   // Given Snowflake client is logged in
-  const std::string stage = create_stage(conn, "ODBCTST_SC_NONE_NO_AC");
+  const std::string stage = create_stage(conn, unique_stage_name("ODBCTST_SC_NONE_NO_AC"));
 
   // And Uncompressed file
   auto [filename, file] = test_file("NONE");
@@ -135,7 +135,7 @@ TEST_CASE("should compress uncompressed file when SOURCE_COMPRESSION set to AUTO
           "[put_get]") {
   Connection conn;
   // Given Snowflake client is logged in
-  const std::string stage = create_stage(conn, "ODBCTST_SC_AUTO_AC");
+  const std::string stage = create_stage(conn, unique_stage_name("ODBCTST_SC_AUTO_AC"));
 
   // And Uncompressed file
   auto [filename, file] = test_file("NONE");
@@ -156,7 +156,7 @@ TEST_CASE("should compress uncompressed file when SOURCE_COMPRESSION set to NONE
           "[put_get]") {
   Connection conn;
   // Given Snowflake client is logged in
-  const std::string stage = create_stage(conn, "ODBCTST_SC_NONE_AC");
+  const std::string stage = create_stage(conn, unique_stage_name("ODBCTST_SC_NONE_AC"));
 
   // And Uncompressed file
   auto [filename, file] = test_file("NONE");
@@ -175,7 +175,7 @@ TEST_CASE("should compress uncompressed file when SOURCE_COMPRESSION set to NONE
 
 TEST_CASE("should return error for unsupported compression type", "[put_get]") {
   Connection conn;
-  const std::string stage = create_stage(conn, "ODBCTST_SC_UNSUPPORTED");
+  const std::string stage = create_stage(conn, unique_stage_name("ODBCTST_SC_UNSUPPORTED"));
 
   // Given Snowflake client is logged in
   // And File compressed with unsupported format
@@ -188,6 +188,6 @@ TEST_CASE("should return error for unsupported compression type", "[put_get]") {
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)put_sql.c_str(), SQL_NTS);
 
   // Then Unsupported compression error is thrown
-  OLD_DRIVER_ONLY("BD#1") { REQUIRE(ret == SQL_SUCCESS); }
-  NEW_DRIVER_ONLY("BD#1") { REQUIRE(ret == SQL_ERROR); }
+  OLD_DRIVER_ONLY("BD#6") { REQUIRE(ret == SQL_SUCCESS); }
+  NEW_DRIVER_ONLY("BD#6") { REQUIRE(ret == SQL_ERROR); }
 }
