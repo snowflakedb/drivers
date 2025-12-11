@@ -15,3 +15,9 @@ Feature: Types mapping
     Then All returned values should be cast to Decimal
     And All returned values should be equal to the expected literals
 
+  @python
+  Scenario: should cast INT and its synonyms to integer
+    Given Snowflake client is logged in
+    When Query selecting values of INT, INTEGER, BIGINT, SMALLINT, TINYINT, BYTEINT is executed
+    Then All returned values should be cast to integers
+    And All returned values should be equal to the expected literals

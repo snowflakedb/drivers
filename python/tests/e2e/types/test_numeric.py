@@ -79,7 +79,7 @@ def test_should_cast_number_and_its_synonyms_to_appropriate_type_and_preserve_va
     assert values == expected_values, f"Expected {expected_values}, got {values}"
 
 
-def test_should_handle_maximum_precision_values_correctly(cursor):
+def test_should_handle_maximum_precision_values_of_number_correctly(cursor):
     # Given Snowflake client is logged in
     assert cursor
 
@@ -95,6 +95,113 @@ def test_should_handle_maximum_precision_values_correctly(cursor):
     # Then All queries should return expected values
     expected_values = (
         Decimal("1.2345678901234567890123456789012345678"),
+        int("99999999999999999999999999999999999999"),
+        int("-99999999999999999999999999999999999999"),
+    )
+    assert values == expected_values, f"Expected {expected_values}, got {values}"
+
+
+def test_should_cast_int_and_its_synonyms_to_appropriate_type_and_preserve_values_when_selecting_literals(
+    cursor,
+):
+    # Given Snowflake client is logged in
+    assert cursor
+
+    # When Query selecting literal values of INT, INTEGER, BIGINT, SMALLINT, TINYINT, BYTEINT types is executed
+    sql = """
+        SELECT 
+            123456789::INT as int_col,
+            -987654321::INTEGER as integer_col,
+            9223372036854775807::BIGINT as bigint_col,
+            32767::SMALLINT as smallint_col,
+            127::TINYINT as tinyint_col,
+            -128::BYTEINT as byteint_col
+        """
+    cursor.execute(sql)
+    values = cursor.fetchone()
+
+    # Then All returned values should be cast to integers
+    assert all(
+        isinstance(value, int) for value in values
+    ), f"All values should be int, got types: {[type(v) for v in values]}"
+
+    # And All returned values should be equal to the expected literals
+    expected_values = (
+        123456789,
+        -987654321,
+        9223372036854775807,
+        32767,
+        127,
+        -128,
+    )
+    assert values == expected_values, f"Expected {expected_values}, got {values}"
+
+
+def test_should_cast_int_and_its_synonyms_to_appropriate_type_and_preserve_values_when_selecting_from_table(
+    cursor, tmp_schema
+):
+    # Given Snowflake client is logged in
+    table_name = f"{tmp_schema}.test_int_select_from_table"
+    assert cursor, "Cursor should be open"
+
+    # And A table with columns of types INT, INTEGER, BIGINT, SMALLINT, TINYINT, BYTEINT is created
+    create_sql = (
+        f"CREATE OR REPLACE TEMPORARY TABLE {table_name}"
+        " (int_col INT,"
+        " integer_col INTEGER,"
+        " bigint_col BIGINT,"
+        " smallint_col SMALLINT,"
+        " tinyint_col TINYINT,"
+        " byteint_col BYTEINT)"
+    )
+    cursor.execute(create_sql)
+
+    # And Data is inserted into the table
+    insert_sql = (
+        f"INSERT INTO {table_name} VALUES"
+        " (123456789, -987654321, 9223372036854775807, 32767, 127, -128)"
+    )
+    cursor.execute(insert_sql)
+
+    # When Query selecting data from the table is executed
+    select_sql = f"SELECT * FROM {table_name}"
+    cursor.execute(select_sql)
+    values = cursor.fetchone()
+
+    # Then All returned values should be cast to integers
+    assert all(
+        isinstance(value, int) for value in values
+    ), f"All values should be int, got types: {[type(v) for v in values]}"
+
+    # And All returned values should be equal to the inserted values
+    expected_values = (
+        123456789,
+        -987654321,
+        9223372036854775807,
+        32767,
+        127,
+        -128,
+    )
+    assert values == expected_values, f"Expected {expected_values}, got {values}"
+
+
+def test_should_handle_maximum_values_of_int_correctly(cursor):
+    # Given Snowflake client is logged in
+    assert cursor
+
+    # When Query "SELECT 99999999999999999999999999999999999999::INT as max_value_col" is executed
+    # And Query "SELECT -99999999999999999999999999999999999999::INT as min_value_col" is executed
+    sql = """SELECT 99999999999999999999999999999999999999::INT as max_value_col,
+        -99999999999999999999999999999999999999::INT as min_value_col"""
+    cursor.execute(sql)
+    values = cursor.fetchone()
+
+    # Then All queries should return expected integer values
+    assert all(
+        isinstance(value, int) for value in values
+    ), f"All values should be int, got types: {[type(v) for v in values]}"
+
+    expected_values = (
         int("99999999999999999999999999999999999999"),
         int("-99999999999999999999999999999999999999"),
     )

@@ -54,3 +54,39 @@ def test_should_cast_number_to_decimal_when_scale_is_nonzero(
         Decimal("-12.3456789"),
     )
     assert values == expected_values, f"Expected {expected_values}, got {values}"
+
+
+def test_should_cast_int_and_its_synonyms_to_integer(
+    cursor,
+):
+    # Given Snowflake client is logged in
+    assert cursor
+
+    # When Query selecting values of INT, INTEGER, BIGINT, SMALLINT, TINYINT, BYTEINT is executed
+    sql = """
+        SELECT 
+            123456789::INT as int_col,
+            -987654321::INTEGER as integer_col,
+            9223372036854775807::BIGINT as bigint_col,
+            32767::SMALLINT as smallint_col,
+            127::TINYINT as tinyint_col,
+            -128::BYTEINT as byteint_col
+        """
+    cursor.execute(sql)
+    values = cursor.fetchone()
+
+    # Then All returned values should be cast to integers
+    assert all(
+        isinstance(value, int) for value in values
+    ), f"All values should be int, got types: {[type(v) for v in values]}"
+
+    # And All returned values should be equal to the expected literals
+    expected_values = (
+        123456789,
+        -987654321,
+        9223372036854775807,
+        32767,
+        127,
+        -128,
+    )
+    assert values == expected_values, f"Expected {expected_values}, got {values}"
