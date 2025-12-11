@@ -145,3 +145,33 @@ def test_should_cast_float_subnormal_value_1e_324_to_zero(
 
     # And The returned value should be equal to 0.0
     assert value == 0.0, f"Expected 0.0, got {value}"
+
+
+def test_should_cast_decfloat_to_decimal(
+    cursor,
+):
+    # Given Snowflake client is logged in
+    assert cursor
+
+    # When Query selecting values of DECFLOAT is executed
+    sql = """
+        SELECT 
+            3.141592653589793238462643383::DECFLOAT as decfloat_col1,
+            -2.718281828459045235360287471::DECFLOAT as decfloat_col2,
+            0::DECFLOAT as decfloat_col3
+        """
+    cursor.execute(sql)
+    values = cursor.fetchone()
+
+    # Then All returned values should be cast to Decimal
+    assert all(
+        isinstance(value, Decimal) for value in values
+    ), f"All values should be Decimal, got types: {[type(v) for v in values]}"
+
+    # And All returned values should be equal to the expected literals
+    expected_values = (
+        Decimal("3.141592653589793238462643383"),
+        Decimal("-2.718281828459045235360287471"),
+        Decimal("0"),
+    )
+    assert values == expected_values, f"Expected {expected_values}, got {values}"

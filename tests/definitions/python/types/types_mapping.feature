@@ -35,3 +35,10 @@ Feature: Types mapping
     When Query selecting subnormal float value 1e-324 is executed
     Then The returned value should be cast to float
     And The returned value should be equal to 0.0
+
+  @python
+  Scenario: should cast DECFLOAT to Decimal
+    Given Snowflake client is logged in
+    When Query selecting values of DECFLOAT is executed
+    Then All returned values should be cast to Decimal
+    And All returned values should be equal to the expected literals
