@@ -24,3 +24,11 @@ Feature: Numeric Types Support
     And Query "SELECT 99999999999999999999999999999999999999::NUMBER(38,0) as max_value_col" is executed
     And Query "SELECT -99999999999999999999999999999999999999::NUMBER(38,0) as min_value_col" is executed
     Then All queries should return expected values
+
+  @python
+  Scenario: Type mappings for numeric types are tested
+    Given wrapper implements numeric types
+    Then type mapping for NUMBER should be tested
+    And type mapping for INT should be tested
+    And type mapping for FLOAT should be tested
+    And type mapping for DECFLOAT should be tested

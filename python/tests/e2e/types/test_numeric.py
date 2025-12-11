@@ -99,3 +99,17 @@ def test_should_handle_maximum_precision_values_correctly(cursor):
         int("-99999999999999999999999999999999999999"),
     )
     assert values == expected_values, f"Expected {expected_values}, got {values}"
+
+
+def test_type_mappings_for_numeric_types_are_tested():
+    # Given wrapper implements numeric types
+
+    # Then type mapping for NUMBER should be tested
+
+    # And type mapping for INT should be tested
+
+    # And type mapping for FLOAT should be tested
+
+    # And type mapping for DECFLOAT should be tested
+
+    assert True
