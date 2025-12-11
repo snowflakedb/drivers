@@ -44,6 +44,21 @@ static constexpr int GET_ROW_SIZE_IDX = 2;
 static constexpr int GET_ROW_STATUS_IDX = 3;
 static constexpr int GET_ROW_MESSAGE_IDX = 4;
 
+// Generate a random hex string for temporary directory names
+inline std::string random_hex(size_t num_bytes = 8) {
+  std::random_device rd;
+  std::mt19937_64 gen(rd());
+  std::uniform_int_distribution<uint64_t> dist(0, UINT64_MAX);
+
+  std::stringstream ss;
+  const char* hex = "0123456789abcdef";
+  for (size_t i = 0; i < num_bytes; ++i) {
+    uint8_t v = static_cast<uint8_t>(dist(gen) & 0xFF);
+    ss << hex[(v >> 4) & 0x0F] << hex[v & 0x0F];
+  }
+  return ss.str();
+}
+
 // Generate a unique stage name with random suffix for parallel test safety
 inline std::string unique_stage_name(const std::string& prefix) { return prefix + "_" + random_hex(4); }
 
@@ -102,21 +117,6 @@ class TempTestDir {
     return ss.str();
   }
 };
-
-// Generate a random hex string for temporary directory names
-inline std::string random_hex(size_t num_bytes = 8) {
-  std::random_device rd;
-  std::mt19937_64 gen(rd());
-  std::uniform_int_distribution<uint64_t> dist(0, UINT64_MAX);
-
-  std::stringstream ss;
-  const char* hex = "0123456789abcdef";
-  for (size_t i = 0; i < num_bytes; ++i) {
-    uint8_t v = static_cast<uint8_t>(dist(gen) & 0xFF);
-    ss << hex[(v >> 4) & 0x0F] << hex[v & 0x0F];
-  }
-  return ss.str();
-}
 
 // Write a text file with given content and return the path
 inline std::filesystem::path write_text_file(const std::filesystem::path& dir, const std::string& filename,
