@@ -90,3 +90,58 @@ def test_should_cast_int_and_its_synonyms_to_integer(
         -128,
     )
     assert values == expected_values, f"Expected {expected_values}, got {values}"
+
+
+def test_should_cast_float_and_its_synonyms_to_float(
+    cursor,
+):
+    # Given Snowflake client is logged in
+    assert cursor
+
+    # When Query selecting values of FLOAT, FLOAT4, FLOAT8, DOUBLE, DOUBLE PRECISION, REAL is executed
+    sql = """
+        SELECT 
+            3.14159::FLOAT as float_col,
+            -2.71828::FLOAT4 as float4_col,
+            1.41421::FLOAT8 as float8_col,
+            2.99792e8::DOUBLE as double_col,
+            6.62607e-34::DOUBLE PRECISION as double_precision_col,
+            -1.60218e-19::REAL as real_col
+        """
+    cursor.execute(sql)
+    values = cursor.fetchone()
+
+    # Then All returned values should be cast to floats
+    assert all(
+        isinstance(value, float) for value in values
+    ), f"All values should be float, got types: {[type(v) for v in values]}"
+
+    # And All returned values should be equal to the expected literals
+    expected_values = (
+        3.14159,
+        -2.71828,
+        1.41421,
+        2.99792e8,
+        6.62607e-34,
+        -1.60218e-19,
+    )
+    for actual, expected in zip(values, expected_values):
+        assert actual == expected, f"Expected {expected}, got {actual}"
+
+
+def test_should_cast_float_subnormal_value_1e_324_to_zero(
+    cursor,
+):
+    # Given Snowflake client is logged in
+    assert cursor
+
+    # When Query selecting subnormal float value 1e-324 is executed
+    sql = "SELECT 1e-324::FLOAT as subnormal_col"
+    cursor.execute(sql)
+    value = cursor.fetchone()[0]
+
+    # Then The returned value should be cast to float
+    assert isinstance(value, float), f"Value should be float, got {type(value)}"
+
+    # And The returned value should be equal to 0.0
+    assert value == 0.0, f"Expected 0.0, got {value}"
