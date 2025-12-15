@@ -31,7 +31,20 @@ pipeline {
                         withCredentials([
                             string(credentialsId: 'sfctest0-parameters-secret', variable: 'PARAMETERS_SECRET')
                         ]) {
-                            sh './scripts/decode_secrets.sh'
+                            sh '''
+                                echo "=== Decoding secrets ==="
+                                ./scripts/decode_secrets.sh
+                                
+                                echo "=== Verifying parameters.json ==="
+                                if [ -f parameters.json ]; then
+                                    echo "parameters.json exists, size: $(wc -c < parameters.json) bytes"
+                                    echo "Keys in testconnection:"
+                                    cat parameters.json | python3 -c "import sys,json; d=json.load(sys.stdin); print('\\n'.join(d.get('testconnection',{}).keys()))" || echo "Failed to parse JSON"
+                                else
+                                    echo "ERROR: parameters.json not found!"
+                                    exit 1
+                                fi
+                            '''
                         }
                     }
                 }
