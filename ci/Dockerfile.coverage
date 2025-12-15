@@ -1,13 +1,11 @@
 # Dockerfile for code coverage builds
 # Contains all dependencies for: Rust Core, Python, ODBC, JDBC
-# Based on Rocky Linux 8 (same as Dockerfile.rocky)
+# Mirrors the GitHub Actions test workflows
 
 FROM rockylinux:8
 
 # Install base development tools
 RUN dnf install -y \
-    gcc \
-    gcc-c++ \
     make \
     tar \
     gzip \
@@ -18,31 +16,38 @@ RUN dnf install -y \
     which \
     findutils \
     openssl-devel \
-    perl-IPC-Cmd
+    perl-IPC-Cmd \
+    lcov
+
+# Install GCC 11 (has std::filesystem built-in, no separate stdc++fs needed)
+RUN dnf install -y gcc-toolset-11-gcc gcc-toolset-11-gcc-c++ && \
+    echo 'source /opt/rh/gcc-toolset-11/enable' >> /etc/bashrc
+ENV PATH="/opt/rh/gcc-toolset-11/root/usr/bin:${PATH}"
+ENV LD_LIBRARY_PATH="/opt/rh/gcc-toolset-11/root/usr/lib64:${LD_LIBRARY_PATH}"
 
 # Install EPEL for additional packages
 RUN dnf install -y epel-release && dnf install -y awscli
 
 # ============================================================
-# Python (for Python driver tests)
+# Python 3.9 (for Python driver tests)
 # ============================================================
 RUN dnf install -y python39 python39-pip python39-devel && \
     alternatives --set python3 /usr/bin/python3.9 && \
     pip3 install --upgrade pip setuptools wheel uv
 
 # ============================================================
-# Java 8 (for JDBC tests)
+# Java 11 (for JDBC tests and Wiremock which requires Java 11+)
 # ============================================================
-RUN dnf install -y java-1.8.0-openjdk java-1.8.0-openjdk-devel
-ENV JAVA_HOME=/usr/lib/jvm/java-1.8.0-openjdk
+RUN dnf install -y java-11-openjdk java-11-openjdk-devel
+ENV JAVA_HOME=/usr/lib/jvm/java-11-openjdk
 
 # ============================================================
 # ODBC (for ODBC tests)
 # ============================================================
 RUN dnf install -y unixODBC unixODBC-devel zlib-devel
 
-# Install CMake 4.0+ (required by ODBC tests)
-RUN curl -L https://github.com/Kitware/CMake/releases/download/v4.0.0/cmake-4.0.0-linux-x86_64.sh -o /tmp/cmake.sh && \
+# Install CMake 4.0.3 (matching GitHub Actions)
+RUN curl -L https://github.com/Kitware/CMake/releases/download/v4.0.3/cmake-4.0.3-linux-x86_64.sh -o /tmp/cmake.sh && \
     sh /tmp/cmake.sh --skip-license --prefix=/usr/local && \
     rm /tmp/cmake.sh
 
@@ -66,14 +71,15 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y && \
 # ============================================================
 # Codecov CLI (for uploading coverage)
 # ============================================================
-# Install via pip because the standalone binary requires GLIBC 2.29+ (Rocky 8 has 2.28)
 RUN pip3 install codecov-cli
 
 # Verify installations
-# Note: cmake --version skipped as it may fail under Rosetta on Apple Silicon
-RUN rustc --version && \
+RUN gcc --version && \
+    g++ --version && \
+    rustc --version && \
     cargo --version && \
     python3 --version && \
     java -version && \
     go version && \
+    cmake --version && \
     codecovcli --version

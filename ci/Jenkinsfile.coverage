@@ -1,8 +1,8 @@
 /*
  * Jenkinsfile for code coverage generation and upload to Codecov
  * 
- * Uses Dockerfile.coverage which contains all dependencies for all components.
- * Mirrors the GitHub Actions workflows.
+ * Mirrors the GitHub Actions test workflows exactly.
+ * Uses Dockerfile.coverage which contains all dependencies.
  * 
  * Setup:
  * 1. Create a new Multibranch Pipeline job in Jenkins
@@ -11,28 +11,22 @@
  */
 
 pipeline {
-    // Use a single node for entire pipeline - this allows Docker image and build artifact sharing
-    // Using large build node for parallel coverage jobs
     agent {
-        label 'build-node-large'
+        label 'build-node-extra-large'
     }
     
     options {
         timestamps()
-        disableResume()  // REQUIRED - prevents PRs from getting stuck on controller restart
-        buildDiscarder(logRotator(daysToKeepStr: '14', numToKeepStr: '100'))  // REQUIRED - retention policy
-        timeout(time: 2, unit: 'HOURS')  // REQUIRED - timeout must be set
+        disableResume()
+        buildDiscarder(logRotator(daysToKeepStr: '14', numToKeepStr: '100'))
+        timeout(time: 2, unit: 'HOURS')
     }
     
     triggers {
-        // Run nightly on main branch
         cron(env.BRANCH_NAME == 'main' ? 'H 2 * * *' : '')
     }
     
     stages {
-        // =====================================================================
-        // Build Docker Image Once
-        // =====================================================================
         stage('Build Docker Image') {
             steps {
                 script {
@@ -41,10 +35,7 @@ pipeline {
             }
         }
         
-        // =====================================================================
-        // Build Rust Dependencies (compiles shared deps, cached for parallel stages)
-        // =====================================================================
-        stage('Build Deps') {
+        stage('Setup Secrets') {
             agent {
                 docker {
                     image "universal-driver-coverage:${BUILD_NUMBER}"
@@ -53,24 +44,19 @@ pipeline {
                 }
             }
             steps {
-                sh '''
-                    echo "=== Configuring git safe directory ==="
-                    git config --global --add safe.directory $(pwd)
-                    
-                    echo "=== Pre-compiling Rust dependencies ==="
-                    cargo fetch
-                    cargo build --package sf_core
-                '''
+                sh 'git config --global --add safe.directory $(pwd)'
+                withCredentials([
+                    string(credentialsId: 'sfctest0-parameters-secret', variable: 'PARAMETERS_SECRET')
+                ]) {
+                    sh './scripts/decode_secrets.sh'
+                }
             }
         }
         
-        // =====================================================================
-        // Run All Coverage Jobs in Parallel - All on the same node using the shared image
-        // =====================================================================
         stage('Coverage') {
             parallel {
                 // =====================================================================
-                // Rust Core Coverage
+                // Rust Core - mirrors test-rust-core.yml
                 // =====================================================================
                 stage('Rust Core') {
                     agent {
@@ -80,38 +66,42 @@ pipeline {
                             reuseNode true
                         }
                     }
-                    steps {
-                        withCredentials([
-                            string(credentialsId: 'sfctest0-parameters-secret', variable: 'PARAMETERS_SECRET')
-                        ]) {
-                            sh './scripts/decode_secrets.sh'
+                    stages {
+                        stage('Build') {
+                            steps {
+                                sh '''
+                                    export PARAMETER_PATH=$(pwd)/parameters.json
+                                    cargo tarpaulin --packages sf_core --all-features --skip-clean --no-fail-fast --no-run --out lcov --output-dir .
+                                '''
+                            }
                         }
-                        
-                        sh '''
-                            echo "=== Configuring git safe directory ==="
-                            git config --global --add safe.directory $(pwd)
-                            
-                            echo "=== Running Rust Core tests with coverage ==="
-                            export PARAMETER_PATH=$(pwd)/parameters.json
-                            cargo tarpaulin --packages sf_core --all-features --skip-clean --no-fail-fast --out lcov --output-dir .
-                            mv lcov.info lcov-rust-core.info
-                        '''
-                        
-                        withCredentials([
-                            string(credentialsId: 'codecov-token', variable: 'CODECOV_TOKEN')
-                        ]) {
-                            sh '''
-                                echo "=== Uploading Rust Core coverage to Codecov ==="
-                                codecovcli upload-process \
-                                    --token "${CODECOV_TOKEN}" \
-                                    --file lcov-rust-core.info \
-                                    --flag rust-core \
-                                    --name "rust-core-jenkins-${BUILD_NUMBER}" \
-                                    --branch "${BRANCH_NAME}" \
-                                    --sha "${GIT_COMMIT}" \
-                                    ${CHANGE_ID:+--pr "${CHANGE_ID}"} \
-                                    --verbose || echo "Warning: Upload failed"
-                            '''
+                        stage('Test') {
+                            steps {
+                                sh '''
+                                    export PARAMETER_PATH=$(pwd)/parameters.json
+                                    cargo tarpaulin --packages sf_core --all-features --skip-clean --no-fail-fast --out lcov --output-dir .
+                                    mv lcov.info lcov-rust-core.info
+                                '''
+                            }
+                        }
+                        stage('Upload') {
+                            steps {
+                                withCredentials([
+                                    string(credentialsId: 'codecov-token', variable: 'CODECOV_TOKEN')
+                                ]) {
+                                    sh '''
+                                        codecovcli upload-process \
+                                            --token "${CODECOV_TOKEN}" \
+                                            --file lcov-rust-core.info \
+                                            --flag rust-core \
+                                            --name "rust-core-jenkins-${BUILD_NUMBER}" \
+                                            --branch "${BRANCH_NAME}" \
+                                            --sha "${GIT_COMMIT}" \
+                                            ${CHANGE_ID:+--pr "${CHANGE_ID}"} \
+                                            --verbose || echo "Warning: Upload failed"
+                                    '''
+                                }
+                            }
                         }
                     }
                     post {
@@ -122,7 +112,7 @@ pipeline {
                 }
                 
                 // =====================================================================
-                // Python Coverage
+                // Python - mirrors test-python.yml
                 // =====================================================================
                 stage('Python') {
                     agent {
@@ -132,50 +122,56 @@ pipeline {
                             reuseNode true
                         }
                     }
-                    steps {
-                        withCredentials([
-                            string(credentialsId: 'sfctest0-parameters-secret', variable: 'PARAMETERS_SECRET')
-                        ]) {
-                            sh './scripts/decode_secrets.sh'
+                    stages {
+                        stage('Build Core') {
+                            steps {
+                                dir('python') {
+                                    sh 'RUSTFLAGS="" make build-core'
+                                }
+                            }
                         }
-                        
-                        sh '''
-                            echo "=== Configuring git safe directory ==="
-                            git config --global --add safe.directory $(pwd)
-                            
-                            echo "=== Building Python native extension ==="
-                            cd python
-                            RUSTFLAGS="" make build-core
-                            
-                            echo "=== Setting up Python dependencies ==="
-                            make setup
-                            
-                            echo "=== Running Python tests with coverage ==="
-                            export PARAMETER_PATH=$(pwd)/../parameters.json
-                            mkdir -p reports
-                            uv run tox -e py39-all -- \
-                                --cov=src/snowflake \
-                                --cov-report=xml:reports/coverage-python.xml \
-                                || true
-                        '''
-                        
-                        withCredentials([
-                            string(credentialsId: 'codecov-token', variable: 'CODECOV_TOKEN')
-                        ]) {
-                            sh '''
-                                if [ -f python/reports/coverage-python.xml ]; then
-                                    echo "=== Uploading Python coverage to Codecov ==="
-                                    codecovcli upload-process \
-                                        --token "${CODECOV_TOKEN}" \
-                                        --file python/reports/coverage-python.xml \
-                                        --flag python \
-                                        --name "python-jenkins-${BUILD_NUMBER}" \
-                                        --branch "${BRANCH_NAME}" \
-                                        --sha "${GIT_COMMIT}" \
-                                        ${CHANGE_ID:+--pr "${CHANGE_ID}"} \
-                                        --verbose || echo "Warning: Upload failed"
-                                fi
-                            '''
+                        stage('Setup') {
+                            steps {
+                                dir('python') {
+                                    sh 'make setup'
+                                }
+                            }
+                        }
+                        stage('Test') {
+                            steps {
+                                dir('python') {
+                                    sh '''
+                                        export PARAMETER_PATH=$(pwd)/../parameters.json
+                                        mkdir -p reports
+                                        uv run tox -e py39-all -- \
+                                            --cov=src/snowflake \
+                                            --cov-report=xml:reports/coverage-python.xml
+                                    '''
+                                }
+                            }
+                        }
+                        stage('Upload') {
+                            steps {
+                                withCredentials([
+                                    string(credentialsId: 'codecov-token', variable: 'CODECOV_TOKEN')
+                                ]) {
+                                    sh '''
+                                        if [ -f python/reports/coverage-python.xml ]; then
+                                            codecovcli upload-process \
+                                                --token "${CODECOV_TOKEN}" \
+                                                --file python/reports/coverage-python.xml \
+                                                --flag python \
+                                                --name "python-jenkins-${BUILD_NUMBER}" \
+                                                --branch "${BRANCH_NAME}" \
+                                                --sha "${GIT_COMMIT}" \
+                                                ${CHANGE_ID:+--pr "${CHANGE_ID}"} \
+                                                --verbose || echo "Warning: Upload failed"
+                                        else
+                                            echo "Warning: Coverage file not found"
+                                        fi
+                                    '''
+                                }
+                            }
                         }
                     }
                     post {
@@ -186,7 +182,7 @@ pipeline {
                 }
                 
                 // =====================================================================
-                // ODBC Coverage
+                // ODBC - mirrors test-odbc.yml
                 // =====================================================================
                 stage('ODBC') {
                     agent {
@@ -196,65 +192,74 @@ pipeline {
                             reuseNode true
                         }
                     }
-                    steps {
-                        withCredentials([
-                            string(credentialsId: 'sfctest0-parameters-secret', variable: 'PARAMETERS_SECRET')
-                        ]) {
-                            sh './scripts/decode_secrets.sh'
+                    stages {
+                        stage('Build Driver') {
+                            steps {
+                                sh 'RUSTFLAGS="-C instrument-coverage" cargo build'
+                            }
                         }
-                        
-                        sh '''
-                            echo "=== Configuring git safe directory ==="
-                            git config --global --add safe.directory $(pwd)
-                            
-                            echo "=== Building Rust ODBC driver with coverage instrumentation ==="
-                            RUSTFLAGS="-C instrument-coverage" cargo build
-                            
-                            echo "=== Building and running ODBC tests ==="
-                            export DRIVER_PATH=$(pwd)/target/debug/libsfodbc.so
-                            export PARAMETER_PATH=$(pwd)/parameters.json
-                            export LLVM_PROFILE_FILE="odbc-%p-%m.profraw"
-                            
-                            cd odbc_tests
-                            mkdir -p cmake-build
-                            cmake -B cmake-build \
-                                -D ODBC_LIBRARY="/usr/lib64/libodbc.so" \
-                                -D ODBC_INCLUDE_DIR="/usr/include" \
-                                -D DRIVER_TYPE=NEW \
-                                -D CMAKE_EXE_LINKER_FLAGS="-lstdc++fs" \
-                                .
-                            cmake --build cmake-build -- -j $(nproc)
-                            ctest -j $(nproc) -C Debug --test-dir cmake-build --output-on-failure || true
-                            
-                            echo "=== Generating coverage report ==="
-                            cd ..
-                            LLVM_PROFDATA=$(find /root/.rustup -name "llvm-profdata" -type f 2>/dev/null | head -1)
-                            LLVM_COV=$(find /root/.rustup -name "llvm-cov" -type f 2>/dev/null | head -1)
-                            find . -name "odbc-*.profraw" -type f | xargs $LLVM_PROFDATA merge -sparse -o coverage.profdata
-                            $LLVM_COV export target/debug/libsfodbc.so \
-                                -instr-profile=coverage.profdata \
-                                -format=lcov \
-                                -sources=$(pwd)/odbc \
-                                -sources=$(pwd)/sf_core > lcov-odbc.info
-                        '''
-                        
-                        withCredentials([
-                            string(credentialsId: 'codecov-token', variable: 'CODECOV_TOKEN')
-                        ]) {
-                            sh '''
-                                if [ -f lcov-odbc.info ]; then
-                                    echo "=== Uploading ODBC coverage to Codecov ==="
-                                    codecovcli upload-process \
-                                        --token "${CODECOV_TOKEN}" \
-                                        --file lcov-odbc.info \
-                                        --flag odbc \
-                                        --name "odbc-jenkins-${BUILD_NUMBER}" \
-                                        --branch "${BRANCH_NAME}" \
-                                        --sha "${GIT_COMMIT}" \
-                                        ${CHANGE_ID:+--pr "${CHANGE_ID}"} \
-                                        --verbose || echo "Warning: Upload failed"
-                                fi
-                            '''
+                        stage('Build Tests') {
+                            steps {
+                                dir('odbc_tests') {
+                                    sh '''
+                                        mkdir -p cmake-build
+                                        cmake -B cmake-build \
+                                            -D ODBC_LIBRARY="/usr/lib64/libodbc.so" \
+                                            -D ODBC_INCLUDE_DIR="/usr/include" \
+                                            -D DRIVER_TYPE=NEW \
+                                            .
+                                        cmake --build cmake-build -- -j $(nproc)
+                                    '''
+                                }
+                            }
+                        }
+                        stage('Test') {
+                            steps {
+                                sh '''
+                                    export DRIVER_PATH=$(pwd)/target/debug/libsfodbc.so
+                                    export PARAMETER_PATH=$(pwd)/parameters.json
+                                    export LLVM_PROFILE_FILE="odbc-%p-%m.profraw"
+                                    cd odbc_tests
+                                    ctest -j $(nproc) -C Debug --test-dir cmake-build --output-on-failure
+                                '''
+                            }
+                        }
+                        stage('Generate Report') {
+                            steps {
+                                sh '''
+                                    LLVM_PROFDATA=$(find /root/.rustup -name "llvm-profdata" -type f 2>/dev/null | head -1)
+                                    LLVM_COV=$(find /root/.rustup -name "llvm-cov" -type f 2>/dev/null | head -1)
+                                    find . -name "odbc-*.profraw" -type f | xargs $LLVM_PROFDATA merge -sparse -o coverage.profdata
+                                    $LLVM_COV export target/debug/libsfodbc.so \
+                                        -instr-profile=coverage.profdata \
+                                        -format=lcov \
+                                        -sources=$(pwd)/odbc \
+                                        -sources=$(pwd)/sf_core > lcov-odbc.info
+                                '''
+                            }
+                        }
+                        stage('Upload') {
+                            steps {
+                                withCredentials([
+                                    string(credentialsId: 'codecov-token', variable: 'CODECOV_TOKEN')
+                                ]) {
+                                    sh '''
+                                        if [ -f lcov-odbc.info ]; then
+                                            codecovcli upload-process \
+                                                --token "${CODECOV_TOKEN}" \
+                                                --file lcov-odbc.info \
+                                                --flag odbc \
+                                                --name "odbc-jenkins-${BUILD_NUMBER}" \
+                                                --branch "${BRANCH_NAME}" \
+                                                --sha "${GIT_COMMIT}" \
+                                                ${CHANGE_ID:+--pr "${CHANGE_ID}"} \
+                                                --verbose || echo "Warning: Upload failed"
+                                        else
+                                            echo "Warning: Coverage file not found"
+                                        fi
+                                    '''
+                                }
+                            }
                         }
                     }
                     post {
@@ -265,7 +270,7 @@ pipeline {
                 }
                 
                 // =====================================================================
-                // JDBC Coverage
+                // JDBC - mirrors test-jdbc.yml
                 // =====================================================================
                 stage('JDBC') {
                     agent {
@@ -275,45 +280,48 @@ pipeline {
                             reuseNode true
                         }
                     }
-                    steps {
-                        withCredentials([
-                            string(credentialsId: 'sfctest0-parameters-secret', variable: 'PARAMETERS_SECRET')
-                        ]) {
-                            sh './scripts/decode_secrets.sh'
+                    stages {
+                        stage('Build') {
+                            steps {
+                                sh '''
+                                    cargo build --package sf_core
+                                    cargo build --package jdbc_bridge
+                                '''
+                            }
                         }
-                        
-                        sh '''
-                            echo "=== Configuring git safe directory ==="
-                            git config --global --add safe.directory $(pwd)
-                            
-                            echo "=== Building JDBC bridge ==="
-                            cargo build --package jdbc_bridge
-                            
-                            echo "=== Running JDBC tests with coverage ==="
-                            export PARAMETER_PATH=$(pwd)/parameters.json
-                            export CORE_PATH=$(pwd)/target/debug/libjdbc_bridge.so
-                            chmod +x jdbc/gradlew
-                            cd jdbc
-                            ./gradlew test jacocoTestReport --stacktrace || true
-                        '''
-                        
-                        withCredentials([
-                            string(credentialsId: 'codecov-token', variable: 'CODECOV_TOKEN')
-                        ]) {
-                            sh '''
-                                if [ -f jdbc/build/reports/jacoco/test/jacocoTestReport.xml ]; then
-                                    echo "=== Uploading JDBC coverage to Codecov ==="
-                                    codecovcli upload-process \
-                                        --token "${CODECOV_TOKEN}" \
-                                        --file jdbc/build/reports/jacoco/test/jacocoTestReport.xml \
-                                        --flag jdbc \
-                                        --name "jdbc-jenkins-${BUILD_NUMBER}" \
-                                        --branch "${BRANCH_NAME}" \
-                                        --sha "${GIT_COMMIT}" \
-                                        ${CHANGE_ID:+--pr "${CHANGE_ID}"} \
-                                        --verbose || echo "Warning: Upload failed"
-                                fi
-                            '''
+                        stage('Test') {
+                            steps {
+                                sh '''
+                                    export PARAMETER_PATH=$(pwd)/parameters.json
+                                    export CORE_PATH=$(pwd)/target/debug/libjdbc_bridge.so
+                                    chmod +x jdbc/gradlew
+                                    cd jdbc
+                                    ./gradlew test jacocoTestReport --stacktrace
+                                '''
+                            }
+                        }
+                        stage('Upload') {
+                            steps {
+                                withCredentials([
+                                    string(credentialsId: 'codecov-token', variable: 'CODECOV_TOKEN')
+                                ]) {
+                                    sh '''
+                                        if [ -f jdbc/build/reports/jacoco/test/jacocoTestReport.xml ]; then
+                                            codecovcli upload-process \
+                                                --token "${CODECOV_TOKEN}" \
+                                                --file jdbc/build/reports/jacoco/test/jacocoTestReport.xml \
+                                                --flag jdbc \
+                                                --name "jdbc-jenkins-${BUILD_NUMBER}" \
+                                                --branch "${BRANCH_NAME}" \
+                                                --sha "${GIT_COMMIT}" \
+                                                ${CHANGE_ID:+--pr "${CHANGE_ID}"} \
+                                                --verbose || echo "Warning: Upload failed"
+                                        else
+                                            echo "Warning: Coverage file not found"
+                                        fi
+                                    '''
+                                }
+                            }
                         }
                     }
                     post {
