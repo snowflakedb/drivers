@@ -47,6 +47,12 @@ RUN curl -L https://github.com/Kitware/CMake/releases/download/v3.28.3/cmake-3.2
     rm /tmp/cmake.sh
 
 # ============================================================
+# Go (required by aws-lc-fips-sys for FIPS-compliant crypto)
+# ============================================================
+RUN curl -L https://go.dev/dl/go1.22.5.linux-amd64.tar.gz | tar -C /usr/local -xzf -
+ENV PATH="/usr/local/go/bin:${PATH}"
+
+# ============================================================
 # Rust (shared by all components)
 # ============================================================
 ENV CARGO_HOME=/root/.cargo
@@ -69,4 +75,5 @@ RUN rustc --version && \
     cargo --version && \
     python3 --version && \
     java -version && \
+    go version && \
     codecovcli --version

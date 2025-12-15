@@ -10,10 +10,11 @@
  * 3. Add credential 'codecov-token' with the Codecov upload token
  */
 
-def COVERAGE_IMAGE = null
-
 pipeline {
-    agent none
+    // Use a single node for entire pipeline - this allows Docker image sharing
+    agent {
+        label 'small-node-c7'
+    }
     
     options {
         timestamps()
@@ -32,19 +33,15 @@ pipeline {
         // Build Docker Image Once
         // =====================================================================
         stage('Build Docker Image') {
-            agent {
-                label 'small-node-c7'
-            }
             steps {
-                checkout scm
                 script {
-                    COVERAGE_IMAGE = docker.build("universal-driver-coverage:${BUILD_NUMBER}", "-f ci/Dockerfile.coverage ci/")
+                    docker.build("universal-driver-coverage:${BUILD_NUMBER}", "-f ci/Dockerfile.coverage ci/")
                 }
             }
         }
         
         // =====================================================================
-        // Run All Coverage Jobs in Parallel Using the Pre-built Image
+        // Run All Coverage Jobs in Parallel - All on the same node using the shared image
         // =====================================================================
         stage('Coverage') {
             parallel {
@@ -56,13 +53,10 @@ pipeline {
                         docker {
                             image "universal-driver-coverage:${BUILD_NUMBER}"
                             args '-u root --privileged'
-                            label 'small-node-c7'
-                            reuseNode true
+                            reuseNode true  // Run on same node where image was built
                         }
                     }
                     steps {
-                        checkout scm
-                        
                         withCredentials([
                             string(credentialsId: 'sfctest0-parameters-secret', variable: 'PARAMETERS_SECRET')
                         ]) {
@@ -108,13 +102,10 @@ pipeline {
                         docker {
                             image "universal-driver-coverage:${BUILD_NUMBER}"
                             args '-u root --privileged'
-                            label 'small-node-c7'
                             reuseNode true
                         }
                     }
                     steps {
-                        checkout scm
-                        
                         withCredentials([
                             string(credentialsId: 'sfctest0-parameters-secret', variable: 'PARAMETERS_SECRET')
                         ]) {
@@ -172,13 +163,10 @@ pipeline {
                         docker {
                             image "universal-driver-coverage:${BUILD_NUMBER}"
                             args '-u root --privileged'
-                            label 'small-node-c7'
                             reuseNode true
                         }
                     }
                     steps {
-                        checkout scm
-                        
                         withCredentials([
                             string(credentialsId: 'sfctest0-parameters-secret', variable: 'PARAMETERS_SECRET')
                         ]) {
@@ -250,13 +238,10 @@ pipeline {
                         docker {
                             image "universal-driver-coverage:${BUILD_NUMBER}"
                             args '-u root --privileged'
-                            label 'small-node-c7'
                             reuseNode true
                         }
                     }
                     steps {
-                        checkout scm
-                        
                         withCredentials([
                             string(credentialsId: 'sfctest0-parameters-secret', variable: 'PARAMETERS_SECRET')
                         ]) {
