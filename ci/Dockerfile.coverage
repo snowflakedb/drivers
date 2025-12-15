@@ -16,7 +16,9 @@ RUN dnf install -y \
     bash \
     git \
     which \
-    findutils
+    findutils \
+    openssl-devel \
+    perl-IPC-Cmd
 
 # Install EPEL for additional packages
 RUN dnf install -y epel-release && dnf install -y awscli
