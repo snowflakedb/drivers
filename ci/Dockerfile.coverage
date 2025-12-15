@@ -41,8 +41,8 @@ ENV JAVA_HOME=/usr/lib/jvm/java-1.8.0-openjdk
 # ============================================================
 RUN dnf install -y unixODBC unixODBC-devel zlib-devel
 
-# Install CMake (need newer version for ODBC tests)
-RUN curl -L https://github.com/Kitware/CMake/releases/download/v3.28.3/cmake-3.28.3-linux-x86_64.sh -o /tmp/cmake.sh && \
+# Install CMake 4.0+ (required by ODBC tests)
+RUN curl -L https://github.com/Kitware/CMake/releases/download/v4.0.0/cmake-4.0.0-linux-x86_64.sh -o /tmp/cmake.sh && \
     sh /tmp/cmake.sh --skip-license --prefix=/usr/local && \
     rm /tmp/cmake.sh
 

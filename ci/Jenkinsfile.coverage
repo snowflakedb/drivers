@@ -11,9 +11,10 @@
  */
 
 pipeline {
-    // Use a single node for entire pipeline - this allows Docker image sharing
+    // Use a single node for entire pipeline - this allows Docker image and build artifact sharing
+    // Using high-memory SnowOS node for parallel coverage jobs
     agent {
-        label 'small-node-c7'
+        label 'high-memory-node-snowos'
     }
     
     options {
@@ -41,6 +42,26 @@ pipeline {
         }
         
         // =====================================================================
+        // Build Rust Dependencies (compiles shared deps, cached for parallel stages)
+        // =====================================================================
+        stage('Build Deps') {
+            agent {
+                docker {
+                    image "universal-driver-coverage:${BUILD_NUMBER}"
+                    args '-u root --privileged'
+                    reuseNode true
+                }
+            }
+            steps {
+                sh '''
+                    echo "=== Pre-compiling Rust dependencies ==="
+                    cargo fetch
+                    cargo build --package sf_core
+                '''
+            }
+        }
+        
+        // =====================================================================
         // Run All Coverage Jobs in Parallel - All on the same node using the shared image
         // =====================================================================
         stage('Coverage') {
@@ -53,7 +74,7 @@ pipeline {
                         docker {
                             image "universal-driver-coverage:${BUILD_NUMBER}"
                             args '-u root --privileged'
-                            reuseNode true  // Run on same node where image was built
+                            reuseNode true
                         }
                     }
                     steps {
@@ -113,7 +134,7 @@ pipeline {
                         }
                         
                         sh '''
-                            echo "=== Building Rust core library ==="
+                            echo "=== Building Python native extension ==="
                             cd python
                             RUSTFLAGS="" make build-core
                             
@@ -174,7 +195,7 @@ pipeline {
                         }
                         
                         sh '''
-                            echo "=== Building Rust ODBC driver with coverage ==="
+                            echo "=== Building Rust ODBC driver with coverage instrumentation ==="
                             RUSTFLAGS="-C instrument-coverage" cargo build
                             
                             echo "=== Building and running ODBC tests ==="
@@ -249,8 +270,7 @@ pipeline {
                         }
                         
                         sh '''
-                            echo "=== Building Rust components ==="
-                            cargo build --package sf_core
+                            echo "=== Building JDBC bridge ==="
                             cargo build --package jdbc_bridge
                             
                             echo "=== Running JDBC tests with coverage ==="
