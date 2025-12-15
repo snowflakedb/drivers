@@ -60,15 +60,13 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y && \
 # ============================================================
 # Codecov CLI (for uploading coverage)
 # ============================================================
-RUN curl -Os https://cli.codecov.io/latest/linux/codecov && \
-    chmod +x codecov && \
-    mv codecov /usr/local/bin/
+# Install via pip because the standalone binary requires GLIBC 2.29+ (Rocky 8 has 2.28)
+RUN pip3 install codecov-cli
 
 # Verify installations
+# Note: cmake --version skipped as it may fail under Rosetta on Apple Silicon
 RUN rustc --version && \
     cargo --version && \
     python3 --version && \
     java -version && \
-    cmake --version && \
-    codecov --version
-
+    codecovcli --version

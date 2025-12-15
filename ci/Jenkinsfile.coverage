@@ -10,6 +10,8 @@
  * 3. Add credential 'codecov-token' with the Codecov upload token
  */
 
+def COVERAGE_IMAGE = null
+
 pipeline {
     agent none
     
@@ -26,19 +28,36 @@ pipeline {
     }
     
     stages {
+        // =====================================================================
+        // Build Docker Image Once
+        // =====================================================================
+        stage('Build Docker Image') {
+            agent {
+                label 'small-node-c7'
+            }
+            steps {
+                checkout scm
+                script {
+                    COVERAGE_IMAGE = docker.build("universal-driver-coverage:${BUILD_NUMBER}", "-f ci/Dockerfile.coverage ci/")
+                }
+            }
+        }
+        
+        // =====================================================================
+        // Run All Coverage Jobs in Parallel Using the Pre-built Image
+        // =====================================================================
         stage('Coverage') {
             parallel {
                 // =====================================================================
                 // Rust Core Coverage
-                // Mirrors: .github/workflows/test-rust-core.yml
                 // =====================================================================
                 stage('Rust Core') {
                     agent {
-                        dockerfile {
-                            filename 'Dockerfile.coverage'
-                            dir 'ci'
+                        docker {
+                            image "universal-driver-coverage:${BUILD_NUMBER}"
                             args '-u root --privileged'
                             label 'small-node-c7'
+                            reuseNode true
                         }
                     }
                     steps {
@@ -62,7 +81,7 @@ pipeline {
                         ]) {
                             sh '''
                                 echo "=== Uploading Rust Core coverage to Codecov ==="
-                                codecov upload-process \
+                                codecovcli upload-process \
                                     --token "${CODECOV_TOKEN}" \
                                     --file lcov-rust-core.info \
                                     --flag rust-core \
@@ -83,15 +102,14 @@ pipeline {
                 
                 // =====================================================================
                 // Python Coverage
-                // Mirrors: .github/workflows/test-python.yml
                 // =====================================================================
                 stage('Python') {
                     agent {
-                        dockerfile {
-                            filename 'Dockerfile.coverage'
-                            dir 'ci'
+                        docker {
+                            image "universal-driver-coverage:${BUILD_NUMBER}"
                             args '-u root --privileged'
                             label 'small-node-c7'
+                            reuseNode true
                         }
                     }
                     steps {
@@ -126,7 +144,7 @@ pipeline {
                             sh '''
                                 if [ -f python/reports/coverage-python.xml ]; then
                                     echo "=== Uploading Python coverage to Codecov ==="
-                                    codecov upload-process \
+                                    codecovcli upload-process \
                                         --token "${CODECOV_TOKEN}" \
                                         --file python/reports/coverage-python.xml \
                                         --flag python \
@@ -148,15 +166,14 @@ pipeline {
                 
                 // =====================================================================
                 // ODBC Coverage
-                // Mirrors: .github/workflows/test-odbc.yml
                 // =====================================================================
                 stage('ODBC') {
                     agent {
-                        dockerfile {
-                            filename 'Dockerfile.coverage'
-                            dir 'ci'
+                        docker {
+                            image "universal-driver-coverage:${BUILD_NUMBER}"
                             args '-u root --privileged'
                             label 'small-node-c7'
+                            reuseNode true
                         }
                     }
                     steps {
@@ -205,7 +222,7 @@ pipeline {
                             sh '''
                                 if [ -f lcov-odbc.info ]; then
                                     echo "=== Uploading ODBC coverage to Codecov ==="
-                                    codecov upload-process \
+                                    codecovcli upload-process \
                                         --token "${CODECOV_TOKEN}" \
                                         --file lcov-odbc.info \
                                         --flag odbc \
@@ -227,15 +244,14 @@ pipeline {
                 
                 // =====================================================================
                 // JDBC Coverage
-                // Mirrors: .github/workflows/test-jdbc.yml
                 // =====================================================================
                 stage('JDBC') {
                     agent {
-                        dockerfile {
-                            filename 'Dockerfile.coverage'
-                            dir 'ci'
+                        docker {
+                            image "universal-driver-coverage:${BUILD_NUMBER}"
                             args '-u root --privileged'
                             label 'small-node-c7'
+                            reuseNode true
                         }
                     }
                     steps {
@@ -266,7 +282,7 @@ pipeline {
                             sh '''
                                 if [ -f jdbc/build/reports/jacoco/test/jacocoTestReport.xml ]; then
                                     echo "=== Uploading JDBC coverage to Codecov ==="
-                                    codecov upload-process \
+                                    codecovcli upload-process \
                                         --token "${CODECOV_TOKEN}" \
                                         --file jdbc/build/reports/jacoco/test/jacocoTestReport.xml \
                                         --flag jdbc \
