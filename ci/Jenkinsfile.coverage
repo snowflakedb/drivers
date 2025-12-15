@@ -12,9 +12,9 @@
 
 pipeline {
     // Use a single node for entire pipeline - this allows Docker image and build artifact sharing
-    // Using high-memory SnowOS node for parallel coverage jobs
+    // Using large build node for parallel coverage jobs
     agent {
-        label 'high-memory-node-snowos'
+        label 'build-node-large'
     }
     
     options {
@@ -221,6 +221,7 @@ pipeline {
                                 -D ODBC_LIBRARY="/usr/lib64/libodbc.so" \
                                 -D ODBC_INCLUDE_DIR="/usr/include" \
                                 -D DRIVER_TYPE=NEW \
+                                -D CMAKE_EXE_LINKER_FLAGS="-lstdc++fs" \
                                 .
                             cmake --build cmake-build -- -j $(nproc)
                             ctest -j $(nproc) -C Debug --test-dir cmake-build --output-on-failure || true
