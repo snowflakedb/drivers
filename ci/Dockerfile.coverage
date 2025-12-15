@@ -7,8 +7,10 @@ FROM rockylinux:8
 # Install EPEL first (needed for lcov and awscli)
 RUN dnf install -y epel-release
 
-# Install base development tools
+# Install base development tools (including GCC 8 for Rust builds)
 RUN dnf install -y \
+    gcc \
+    gcc-c++ \
     make \
     tar \
     gzip \
@@ -24,10 +26,8 @@ RUN dnf install -y \
     awscli
 
 # Install GCC 11 (has std::filesystem built-in, no separate stdc++fs needed)
-RUN dnf install -y gcc-toolset-11-gcc gcc-toolset-11-gcc-c++ && \
-    echo 'source /opt/rh/gcc-toolset-11/enable' >> /etc/bashrc
-ENV PATH="/opt/rh/gcc-toolset-11/root/usr/bin:${PATH}"
-ENV LD_LIBRARY_PATH="/opt/rh/gcc-toolset-11/root/usr/lib64:${LD_LIBRARY_PATH}"
+# NOTE: Don't add to PATH globally - only enable for ODBC builds to avoid Rust linker conflicts
+RUN dnf install -y gcc-toolset-11-gcc gcc-toolset-11-gcc-c++
 
 # ============================================================
 # Python 3.9 (for Python driver tests)

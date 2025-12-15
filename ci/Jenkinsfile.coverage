@@ -51,20 +51,25 @@ pipeline {
                     steps {
                         sh '''
                             export PARAMETER_PATH=$(pwd)/parameters.json
+                            # Run tests and generate coverage
                             cargo tarpaulin --packages sf_core --all-features --skip-clean --no-fail-fast --out lcov --output-dir .
                             mv lcov.info lcov-rust-core.info
                         '''
                         withCredentials([string(credentialsId: 'codecov-token', variable: 'CODECOV_TOKEN')]) {
                             sh '''
-                                codecovcli upload-process \
-                                    --token "${CODECOV_TOKEN}" \
-                                    --file lcov-rust-core.info \
-                                    --flag rust-core \
-                                    --name "rust-core-jenkins-${BUILD_NUMBER}" \
-                                    --branch "${BRANCH_NAME}" \
-                                    --sha "${GIT_COMMIT}" \
-                                    ${CHANGE_ID:+--pr "${CHANGE_ID}"} \
-                                    --verbose || echo "Warning: Upload failed"
+                                if [ -f lcov-rust-core.info ]; then
+                                    codecovcli upload-process \
+                                        --token "${CODECOV_TOKEN}" \
+                                        --file lcov-rust-core.info \
+                                        --flag rust-core \
+                                        --name "rust-core-jenkins-${BUILD_NUMBER}" \
+                                        --branch "${BRANCH_NAME}" \
+                                        --sha "${GIT_COMMIT}" \
+                                        ${CHANGE_ID:+--pr "${CHANGE_ID}"} \
+                                        --verbose || echo "Warning: Upload failed"
+                                else
+                                    echo "Warning: Coverage file not found"
+                                fi
                             '''
                         }
                     }
@@ -90,6 +95,7 @@ pipeline {
                                 make setup
                                 export PARAMETER_PATH=$(pwd)/../parameters.json
                                 mkdir -p reports
+                                # Run tests
                                 uv run tox -e py39-all -- \
                                     --cov=src/snowflake \
                                     --cov-report=xml:reports/coverage-python.xml
@@ -107,6 +113,8 @@ pipeline {
                                         --sha "${GIT_COMMIT}" \
                                         ${CHANGE_ID:+--pr "${CHANGE_ID}"} \
                                         --verbose || echo "Warning: Upload failed"
+                                else
+                                    echo "Warning: Coverage file not found"
                                 fi
                             '''
                         }
@@ -128,10 +136,13 @@ pipeline {
                     }
                     steps {
                         sh '''
-                            # Build driver with coverage instrumentation
+                            # Build driver with coverage instrumentation (use default GCC, not GCC-11)
                             RUSTFLAGS="-C instrument-coverage" cargo build
                             
-                            # Build tests
+                            # Enable GCC-11 for C++ builds (needed for std::filesystem)
+                            source /opt/rh/gcc-toolset-11/enable
+                            
+                            # Build tests with GCC-11
                             cd odbc_tests
                             mkdir -p cmake-build
                             cmake -B cmake-build \
@@ -216,6 +227,8 @@ pipeline {
                                         --sha "${GIT_COMMIT}" \
                                         ${CHANGE_ID:+--pr "${CHANGE_ID}"} \
                                         --verbose || echo "Warning: Upload failed"
+                                else
+                                    echo "Warning: Coverage file not found"
                                 fi
                             '''
                         }
