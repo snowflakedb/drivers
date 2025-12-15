@@ -1,0 +1,72 @@
+# Dockerfile for code coverage builds
+# Contains all dependencies for: Rust Core, Python, ODBC, JDBC
+# Based on Rocky Linux 8 (same as Dockerfile.rocky)
+
+FROM rockylinux:8
+
+# Install base development tools
+RUN dnf install -y \
+    gcc \
+    gcc-c++ \
+    make \
+    tar \
+    gzip \
+    curl \
+    wget \
+    bash \
+    git \
+    which \
+    findutils
+
+# Install EPEL for additional packages
+RUN dnf install -y epel-release && dnf install -y awscli
+
+# ============================================================
+# Python (for Python driver tests)
+# ============================================================
+RUN dnf install -y python39 python39-pip python39-devel && \
+    alternatives --set python3 /usr/bin/python3.9 && \
+    pip3 install --upgrade pip setuptools wheel uv
+
+# ============================================================
+# Java 8 (for JDBC tests)
+# ============================================================
+RUN dnf install -y java-1.8.0-openjdk java-1.8.0-openjdk-devel
+ENV JAVA_HOME=/usr/lib/jvm/java-1.8.0-openjdk
+
+# ============================================================
+# ODBC (for ODBC tests)
+# ============================================================
+RUN dnf install -y unixODBC unixODBC-devel zlib-devel
+
+# Install CMake (need newer version for ODBC tests)
+RUN curl -L https://github.com/Kitware/CMake/releases/download/v3.28.3/cmake-3.28.3-linux-x86_64.sh -o /tmp/cmake.sh && \
+    sh /tmp/cmake.sh --skip-license --prefix=/usr/local && \
+    rm /tmp/cmake.sh
+
+# ============================================================
+# Rust (shared by all components)
+# ============================================================
+ENV CARGO_HOME=/root/.cargo
+ENV RUSTUP_HOME=/root/.rustup
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y && \
+    rustup component add llvm-tools-preview && \
+    cargo install cargo-tarpaulin
+
+# ============================================================
+# Codecov CLI (for uploading coverage)
+# ============================================================
+RUN curl -Os https://cli.codecov.io/latest/linux/codecov && \
+    chmod +x codecov && \
+    mv codecov /usr/local/bin/
+
+# Verify installations
+RUN rustc --version && \
+    cargo --version && \
+    python3 --version && \
+    java -version && \
+    cmake --version && \
+    codecov --version
+
