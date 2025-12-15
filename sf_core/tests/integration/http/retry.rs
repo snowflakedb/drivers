@@ -63,7 +63,9 @@ async fn should_fail_when_retry_after_exceeds_deadline() {
             cap: Duration::from_millis(10),
             jitter: Jitter::None,
         },
-        max_elapsed: Duration::from_millis(50),
+        // Use 2 seconds to avoid race with deadline check on slow CI,
+        // but still less than the 5-second Retry-After from server
+        max_elapsed: Duration::from_secs(2),
     };
 
     // When the helper executes the request
