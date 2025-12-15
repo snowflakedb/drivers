@@ -54,6 +54,9 @@ pipeline {
             }
             steps {
                 sh '''
+                    echo "=== Configuring git safe directory ==="
+                    git config --global --add safe.directory $(pwd)
+                    
                     echo "=== Pre-compiling Rust dependencies ==="
                     cargo fetch
                     cargo build --package sf_core
@@ -85,6 +88,9 @@ pipeline {
                         }
                         
                         sh '''
+                            echo "=== Configuring git safe directory ==="
+                            git config --global --add safe.directory $(pwd)
+                            
                             echo "=== Running Rust Core tests with coverage ==="
                             export PARAMETER_PATH=$(pwd)/parameters.json
                             cargo tarpaulin --packages sf_core --all-features --skip-clean --no-fail-fast --out lcov --output-dir .
@@ -134,6 +140,9 @@ pipeline {
                         }
                         
                         sh '''
+                            echo "=== Configuring git safe directory ==="
+                            git config --global --add safe.directory $(pwd)
+                            
                             echo "=== Building Python native extension ==="
                             cd python
                             RUSTFLAGS="" make build-core
@@ -195,6 +204,9 @@ pipeline {
                         }
                         
                         sh '''
+                            echo "=== Configuring git safe directory ==="
+                            git config --global --add safe.directory $(pwd)
+                            
                             echo "=== Building Rust ODBC driver with coverage instrumentation ==="
                             RUSTFLAGS="-C instrument-coverage" cargo build
                             
@@ -270,6 +282,9 @@ pipeline {
                         }
                         
                         sh '''
+                            echo "=== Configuring git safe directory ==="
+                            git config --global --add safe.directory $(pwd)
+                            
                             echo "=== Building JDBC bridge ==="
                             cargo build --package jdbc_bridge
                             
