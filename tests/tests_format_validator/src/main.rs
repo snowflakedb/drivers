@@ -30,12 +30,16 @@ struct Args {
     /// Output results as JSON
     #[arg(short, long)]
     json: bool,
+
+    /// List of files to validate (feature or test files). When provided, only these files will be checked.
+    #[arg(trailing_var_arg = true)]
+    files: Vec<PathBuf>,
 }
 
 fn main() -> anyhow::Result<()> {
     let args = Args::parse();
 
-    let validator = GherkinValidator::new(args.workspace, args.features)?;
+    let validator = GherkinValidator::new(args.workspace, args.features, args.files)?;
 
     if args.json {
         // JSON output mode - includes Behavior Differences processing

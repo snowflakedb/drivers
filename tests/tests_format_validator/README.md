@@ -56,9 +56,19 @@ cargo run -- --verbose
 # Run with JSON output (includes Behavior Difference data)
 cargo run -- --json
 
+# Validate only specific files (useful for pre-commit hooks)
+cargo run -- tests/definitions/shared/put_get/put_get_wildcards.feature sf_core/tests/e2e/put_get/put_get_wildcards.rs
+
+# Validate multiple files
+cargo run -- file1.feature file2.feature test1.rs test2.py
+
 # Show help
 cargo run -- --help
 ```
+
+### Pre-commit Integration
+
+When used as a pre-commit hook, the validator automatically receives staged files and validates only those files. When no files are passed, it validates all files in the workspace.
 
 ## What it validates
 

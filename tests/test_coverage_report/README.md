@@ -15,3 +15,5 @@ python3 tests/test_coverage_report/coverage_report.py --output custom_report.htm
 # Specify workspace directory (if running from different location)
 python3 tests/test_coverage_report/coverage_report.py --workspace /path/to/workspace
 ```
+
+**Note:** The coverage reporter always generates reports for ALL files in the workspace. For file-specific validation (e.g., in pre-commit hooks), use the validator directly instead.

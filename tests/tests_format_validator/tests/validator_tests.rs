@@ -869,6 +869,284 @@ fn should_handle_multiple_breaking_changes_in_single_test_method() -> Result<()>
     Ok(())
 }
 
+// ===== File Filtering Tests =====
+
+#[test]
+fn should_validate_only_specified_feature_files_when_filter_provided() -> Result<()> {
+    let workspace = TestWorkspace::new()?;
+
+    // Create multiple feature files
+    workspace.create_feature_file(
+        "auth",
+        "login",
+        TestImplementations::create_complete_login_feature(),
+    )?;
+    workspace.create_feature_file(
+        "query",
+        "missing_function",
+        TestImplementations::create_missing_function_feature(),
+    )?;
+
+    // Create matching Rust tests
+    workspace.create_rust_test(
+        "auth",
+        "login",
+        TestImplementations::create_complete_rust_login_test(),
+    )?;
+    workspace.create_rust_test(
+        "query",
+        "missing_function",
+        TestImplementations::create_rust_test_with_wrong_function_name(),
+    )?;
+
+    // Filter to only validate the login feature
+    let login_feature_path = workspace.features_dir.join("auth/login.feature");
+    let validator = workspace.get_validator_with_files(vec![login_feature_path])?;
+    let results = validator.validate_all_features()?;
+
+    // Should only validate the login feature
+    assert_eq!(results.len(), 1, "Should validate only one feature");
+    assert_eq!(
+        results[0]
+            .feature_file
+            .file_stem()
+            .unwrap()
+            .to_str()
+            .unwrap(),
+        "login"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn should_validate_all_features_when_no_filter_provided() -> Result<()> {
+    let workspace = TestWorkspace::new()?;
+
+    // Create multiple feature files
+    workspace.create_feature_file(
+        "auth",
+        "login",
+        TestImplementations::create_complete_login_feature(),
+    )?;
+    workspace.create_feature_file(
+        "query",
+        "missing_function",
+        TestImplementations::create_missing_function_feature(),
+    )?;
+
+    // Create matching Rust tests
+    workspace.create_rust_test(
+        "auth",
+        "login",
+        TestImplementations::create_complete_rust_login_test(),
+    )?;
+    workspace.create_rust_test(
+        "query",
+        "missing_function",
+        TestImplementations::create_rust_test_with_wrong_function_name(),
+    )?;
+
+    // No filter - should validate all features
+    let validator = workspace.get_validator()?;
+    let results = validator.validate_all_features()?;
+
+    // Should validate both features
+    assert_eq!(results.len(), 2, "Should validate all features");
+
+    Ok(())
+}
+
+#[test]
+fn should_filter_multiple_specific_feature_files() -> Result<()> {
+    let workspace = TestWorkspace::new()?;
+
+    // Create three feature files
+    workspace.create_feature_file(
+        "auth",
+        "login",
+        TestImplementations::create_complete_login_feature(),
+    )?;
+    workspace.create_feature_file(
+        "auth",
+        "missing_step",
+        TestImplementations::create_missing_step_feature(),
+    )?;
+    workspace.create_feature_file(
+        "query",
+        "missing_function",
+        TestImplementations::create_missing_function_feature(),
+    )?;
+
+    // Create matching tests
+    workspace.create_rust_test(
+        "auth",
+        "login",
+        TestImplementations::create_complete_rust_login_test(),
+    )?;
+    workspace.create_rust_test(
+        "auth",
+        "missing_step",
+        TestImplementations::create_rust_test_with_missing_step(),
+    )?;
+
+    // Filter to validate only login and missing_step
+    let login_feature = workspace.features_dir.join("auth/login.feature");
+    let missing_step_feature = workspace.features_dir.join("auth/missing_step.feature");
+    let validator =
+        workspace.get_validator_with_files(vec![login_feature, missing_step_feature])?;
+    let results = validator.validate_all_features()?;
+
+    // Should validate only the two specified features
+    assert_eq!(results.len(), 2, "Should validate two features");
+
+    let feature_names: Vec<&str> = results
+        .iter()
+        .map(|r| r.feature_file.file_stem().unwrap().to_str().unwrap())
+        .collect();
+    assert!(feature_names.contains(&"login"));
+    assert!(feature_names.contains(&"missing_step"));
+    assert!(!feature_names.contains(&"missing_function"));
+
+    Ok(())
+}
+
+#[test]
+fn should_detect_orphaned_tests_only_for_filtered_files() -> Result<()> {
+    let workspace = TestWorkspace::new()?;
+
+    // Create a feature file
+    workspace.create_feature_file(
+        "auth",
+        "login",
+        TestImplementations::create_complete_login_feature(),
+    )?;
+
+    // Create matching test
+    workspace.create_rust_test(
+        "auth",
+        "login",
+        TestImplementations::create_rust_test_with_orphaned_method(),
+    )?;
+
+    // Create a completely orphaned test file (not in filter)
+    workspace.create_rust_test(
+        "query",
+        "orphaned_file",
+        TestImplementations::create_orphaned_rust_test(),
+    )?;
+
+    // Filter to check both the feature and test file
+    // (orphan detection needs the feature file to know which methods are valid)
+    let login_feature = workspace.features_dir.join("auth/login.feature");
+    let login_test_path = workspace
+        .workspace_root
+        .join("sf_core/tests/e2e/auth/login.rs");
+    let validator = workspace.get_validator_with_files(vec![login_feature, login_test_path])?;
+    let orphan_results = validator.find_orphaned_tests()?;
+
+    // Should only find orphaned methods in the filtered file
+    assert_eq!(orphan_results.len(), 1);
+    let rust_orphans = &orphan_results[0];
+
+    // Should find only the login file with orphaned methods
+    assert_eq!(rust_orphans.orphaned_files.len(), 1);
+    let orphaned_file = &rust_orphans.orphaned_files[0];
+    assert_eq!(
+        orphaned_file.file_path.file_stem().and_then(|s| s.to_str()),
+        Some("login")
+    );
+    assert_eq!(orphaned_file.orphaned_methods.len(), 1);
+    assert_eq!(orphaned_file.orphaned_methods[0], "orphaned_test_method");
+
+    Ok(())
+}
+
+#[test]
+fn should_detect_orphaned_file_when_only_test_file_in_filter() -> Result<()> {
+    let workspace = TestWorkspace::new()?;
+
+    // Create an orphaned test file (no corresponding feature)
+    workspace.create_rust_test(
+        "query",
+        "orphaned_file",
+        TestImplementations::create_orphaned_rust_test(),
+    )?;
+
+    // Filter to only check this orphaned test file
+    let orphaned_test_path = workspace
+        .workspace_root
+        .join("sf_core/tests/e2e/query/orphaned_file.rs");
+    let validator = workspace.get_validator_with_files(vec![orphaned_test_path])?;
+
+    let orphan_results = validator.find_orphaned_tests()?;
+
+    // Should detect the file as orphaned
+    assert_eq!(orphan_results.len(), 1);
+    let rust_orphans = &orphan_results[0];
+    assert_eq!(rust_orphans.orphaned_files.len(), 1);
+
+    let orphaned_file = &rust_orphans.orphaned_files[0];
+    assert_eq!(
+        orphaned_file.file_path.file_stem().and_then(|s| s.to_str()),
+        Some("orphaned_file")
+    );
+
+    Ok(())
+}
+
+#[test]
+fn should_validate_mixed_feature_and_test_files_in_filter() -> Result<()> {
+    let workspace = TestWorkspace::new()?;
+
+    // Create feature files
+    workspace.create_feature_file(
+        "auth",
+        "login",
+        TestImplementations::create_complete_login_feature(),
+    )?;
+    workspace.create_feature_file(
+        "query",
+        "missing_function",
+        TestImplementations::create_missing_function_feature(),
+    )?;
+
+    // Create tests
+    workspace.create_rust_test(
+        "auth",
+        "login",
+        TestImplementations::create_complete_rust_login_test(),
+    )?;
+    workspace.create_rust_test(
+        "query",
+        "missing_function",
+        TestImplementations::create_rust_test_with_wrong_function_name(),
+    )?;
+
+    // Filter with both feature and test files
+    let login_feature = workspace.features_dir.join("auth/login.feature");
+    let query_test = workspace
+        .workspace_root
+        .join("sf_core/tests/e2e/query/missing_function.rs");
+    let validator = workspace.get_validator_with_files(vec![login_feature, query_test])?;
+
+    let results = validator.validate_all_features()?;
+
+    // Should validate only the login feature (from the filter)
+    assert_eq!(results.len(), 1);
+    assert_eq!(
+        results[0]
+            .feature_file
+            .file_stem()
+            .unwrap()
+            .to_str()
+            .unwrap(),
+        "login"
+    );
+
+    Ok(())
+}
+
 // ===== Helper Structs and Test Data =====
 
 /// Helper to create a temporary workspace with features and test files
@@ -964,7 +1242,19 @@ impl TestWorkspace {
     }
 
     fn get_validator(&self) -> Result<GherkinValidator> {
-        GherkinValidator::new(self.workspace_root.clone(), self.features_dir.clone())
+        GherkinValidator::new(
+            self.workspace_root.clone(),
+            self.features_dir.clone(),
+            vec![],
+        )
+    }
+
+    fn get_validator_with_files(&self, files: Vec<PathBuf>) -> Result<GherkinValidator> {
+        GherkinValidator::new(
+            self.workspace_root.clone(),
+            self.features_dir.clone(),
+            files,
+        )
     }
 
     fn create_test_breaking_change_descriptions() -> &'static str {

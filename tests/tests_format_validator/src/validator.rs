@@ -13,6 +13,7 @@ pub struct GherkinValidator {
     _workspace_root: PathBuf,
     features_dir: PathBuf,
     discovery: TestDiscovery,
+    filter_files: Option<Vec<PathBuf>>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -96,14 +97,44 @@ pub struct EnhancedValidationResult {
 }
 
 impl GherkinValidator {
-    pub fn new(workspace_root: PathBuf, features_dir: PathBuf) -> Result<Self> {
+    pub fn new(
+        workspace_root: PathBuf,
+        features_dir: PathBuf,
+        filter_files: Vec<PathBuf>,
+    ) -> Result<Self> {
         let discovery = TestDiscovery::new(workspace_root.clone());
+
+        // Canonicalize filter_files for accurate comparison
+        let filter_files = if filter_files.is_empty() {
+            None
+        } else {
+            Some(
+                filter_files
+                    .into_iter()
+                    .filter_map(|p| p.canonicalize().ok())
+                    .collect(),
+            )
+        };
 
         Ok(Self {
             _workspace_root: workspace_root,
             features_dir,
             discovery,
+            filter_files,
         })
+    }
+
+    /// Check if a file should be included based on filter_files
+    fn should_include_file(&self, file_path: &Path) -> bool {
+        if let Some(filter_files) = &self.filter_files {
+            if let Ok(canonical_path) = file_path.canonicalize() {
+                return filter_files.contains(&canonical_path);
+            }
+            false
+        } else {
+            // No filter - include all files
+            true
+        }
     }
 
     pub fn validate_all_features(&self) -> Result<Vec<ValidationResult>> {
@@ -114,6 +145,7 @@ impl GherkinValidator {
             .into_iter()
             .filter_map(|e| e.ok())
             .filter(|e| e.path().extension().is_some_and(|ext| ext == "feature"))
+            .filter(|e| self.should_include_file(e.path()))
         {
             let feature = Feature::parse_from_file(entry.path()).with_context(|| {
                 format!("Failed to parse feature file: {}", entry.path().display())
@@ -167,6 +199,7 @@ impl GherkinValidator {
             .into_iter()
             .filter_map(|e| e.ok())
             .filter(|e| e.path().extension().is_some_and(|ext| ext == "feature"))
+            .filter(|e| self.should_include_file(e.path()))
         {
             let feature_path = entry.path();
             let feature = Feature::parse_from_file(feature_path)?;
@@ -203,6 +236,7 @@ impl GherkinValidator {
             .into_iter()
             .filter_map(|e| e.ok())
             .filter(|e| e.path().extension().is_some_and(|ext| ext == "feature"))
+            .filter(|e| self.should_include_file(e.path()))
         {
             let feature_path = entry.path();
             let feature = Feature::parse_from_file(feature_path)?;
@@ -288,6 +322,7 @@ impl GherkinValidator {
                 .filter(|e| e.file_type().is_file())
                 .filter(|e| self.is_test_file_for_language(e.path(), language))
                 .filter(|e| !self.is_utility_file(e.path()))
+                .filter(|e| self.should_include_file(e.path()))
             {
                 let test_file_path = entry.path();
                 let orphaned_methods = self.find_orphaned_methods_in_file(
