@@ -30,25 +30,16 @@ pipeline {
         stage('Build Docker Image') {
             steps {
                 script {
-                    docker.build("universal-driver-coverage:${BUILD_NUMBER}", "-f ci/Dockerfile.coverage ci/")
-                }
-            }
-        }
-        
-        stage('Setup Secrets') {
-            agent {
-                docker {
-                    image "universal-driver-coverage:${BUILD_NUMBER}"
-                    args '-u root --privileged'
-                    reuseNode true
-                }
-            }
-            steps {
-                sh 'git config --global --add safe.directory $(pwd)'
-                withCredentials([
-                    string(credentialsId: 'sfctest0-parameters-secret', variable: 'PARAMETERS_SECRET')
-                ]) {
-                    sh './scripts/decode_secrets.sh'
+                    def coverageImage = docker.build("universal-driver-coverage:${BUILD_NUMBER}", "-f ci/Dockerfile.coverage ci/")
+                    // Decode secrets inside Docker container (not baked into image)
+                    coverageImage.inside('-u root --privileged') {
+                        sh 'git config --global --add safe.directory $(pwd)'
+                        withCredentials([
+                            string(credentialsId: 'sfctest0-parameters-secret', variable: 'PARAMETERS_SECRET')
+                        ]) {
+                            sh './scripts/decode_secrets.sh'
+                        }
+                    }
                 }
             }
         }
