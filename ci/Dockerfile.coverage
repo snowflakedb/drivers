@@ -74,6 +74,9 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y && \
 # ============================================================
 RUN pip3 install codecov-cli
 
+# Configure git to trust all directories (needed for Docker-mounted workspaces)
+RUN git config --global --add safe.directory '*'
+
 # Verify installations
 RUN gcc --version && \
     g++ --version && \
