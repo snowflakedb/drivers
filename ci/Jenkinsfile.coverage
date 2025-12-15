@@ -51,254 +51,252 @@ pipeline {
             }
         }
         
-        stage('Rust Core') {
-            agent {
-                docker {
-                    image "universal-driver-coverage:${BUILD_NUMBER}"
-                    args '-u root --privileged'
-                    reuseNode true
-                }
-            }
-            steps {
-                echo "=== Running Rust Core tests with coverage ==="
-                sh '''
-                    export PARAMETER_PATH=$(pwd)/parameters.json
-                    cargo tarpaulin --packages sf_core --all-features --skip-clean --no-fail-fast --out lcov --output-dir .
-                    mv lcov.info lcov-rust-core.info
-                    echo "✓ Rust Core tests PASSED"
-                '''
-                
-                // Upload to Codecov - don't fail the build if this fails
-                script {
-                    catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
-                        echo "=== Uploading Rust Core coverage to Codecov ==="
-                        withCredentials([string(credentialsId: 'codecov-token', variable: 'CODECOV_TOKEN')]) {
-                            sh '''
-                                if [ -f lcov-rust-core.info ]; then
-                                    codecovcli upload-process \
-                                        --token "${CODECOV_TOKEN}" \
-                                        --file lcov-rust-core.info \
-                                        --flag rust-core \
-                                        --name "rust-core-jenkins-${BUILD_NUMBER}" \
-                                        --branch "${BRANCH_NAME}" \
-                                        --sha "${GIT_COMMIT}" \
-                                        ${CHANGE_ID:+--pr "${CHANGE_ID}"} \
-                                        --verbose
-                                    echo "✓ Codecov upload SUCCEEDED"
-                                else
-                                    echo "⚠ Coverage file not found, skipping upload"
-                                fi
-                            '''
+        stage('Coverage') {
+            parallel {
+                stage('Rust Core') {
+                    agent {
+                        docker {
+                            image "universal-driver-coverage:${BUILD_NUMBER}"
+                            args '-u root --privileged'
+                            reuseNode true
+                        }
+                    }
+                    steps {
+                        echo "=== Running Rust Core tests with coverage ==="
+                        sh '''
+                            export PARAMETER_PATH=$(pwd)/parameters.json
+                            cargo tarpaulin --packages sf_core --all-features --skip-clean --no-fail-fast --out lcov --output-dir .
+                            mv lcov.info lcov-rust-core.info
+                            echo "✓ Rust Core tests completed"
+                        '''
+                        
+                        // Upload to Codecov - don't fail the build if this fails
+                        script {
+                            catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
+                                echo "=== Uploading Rust Core coverage to Codecov ==="
+                                withCredentials([string(credentialsId: 'codecov-token', variable: 'CODECOV_TOKEN')]) {
+                                    sh '''
+                                        if [ -f lcov-rust-core.info ]; then
+                                            codecovcli upload-process \
+                                                --token "${CODECOV_TOKEN}" \
+                                                --file lcov-rust-core.info \
+                                                --flag rust-core \
+                                                --name "rust-core-jenkins-${BUILD_NUMBER}" \
+                                                --branch "${BRANCH_NAME}" \
+                                                --sha "${GIT_COMMIT}" \
+                                                ${CHANGE_ID:+--pr "${CHANGE_ID}"} \
+                                                --verbose
+                                            echo "✓ Codecov upload SUCCEEDED"
+                                        else
+                                            echo "⚠ Coverage file not found, skipping upload"
+                                        fi
+                                    '''
+                                }
+                            }
+                        }
+                    }
+                    post {
+                        always {
+                            archiveArtifacts artifacts: 'lcov-rust-core.info', allowEmptyArchive: true
                         }
                     }
                 }
-            }
-            post {
-                always {
-                    archiveArtifacts artifacts: 'lcov-rust-core.info', allowEmptyArchive: true
-                }
-            }
-        }
-        
-        stage('Python') {
-            when {
-                // Re-enable when ready
-                expression { false }
-            }
-            agent {
-                docker {
-                    image "universal-driver-coverage:${BUILD_NUMBER}"
-                    args '-u root --privileged'
-                    reuseNode true
-                }
-            }
-            steps {
-                echo "=== Building Python driver ==="
-                dir('python') {
-                    sh '''
-                        RUSTFLAGS="" make build-core
-                        make setup
-                    '''
-                }
-                echo "=== Running Python tests with coverage ==="
-                dir('python') {
-                    sh '''
-                        export PARAMETER_PATH=$(pwd)/../parameters.json
-                        mkdir -p reports
-                        uv run tox -e py39-all -- \
-                            --cov=src/snowflake \
-                            --cov-report=xml:reports/coverage-python.xml
-                        echo "✓ Python tests PASSED"
-                    '''
-                }
                 
-                // Upload to Codecov - don't fail the build if this fails
-                script {
-                    catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
-                        echo "=== Uploading Python coverage to Codecov ==="
-                        withCredentials([string(credentialsId: 'codecov-token', variable: 'CODECOV_TOKEN')]) {
+                stage('Python') {
+                    when {
+                        expression { false }  // Disabled for now
+                    }
+                    agent {
+                        docker {
+                            image "universal-driver-coverage:${BUILD_NUMBER}"
+                            args '-u root --privileged'
+                            reuseNode true
+                        }
+                    }
+                    steps {
+                        echo "=== Building Python driver ==="
+                        dir('python') {
                             sh '''
-                                if [ -f python/reports/coverage-python.xml ]; then
-                                    codecovcli upload-process \
-                                        --token "${CODECOV_TOKEN}" \
-                                        --file python/reports/coverage-python.xml \
-                                        --flag python \
-                                        --name "python-jenkins-${BUILD_NUMBER}" \
-                                        --branch "${BRANCH_NAME}" \
-                                        --sha "${GIT_COMMIT}" \
-                                        ${CHANGE_ID:+--pr "${CHANGE_ID}"} \
-                                        --verbose
-                                    echo "✓ Codecov upload SUCCEEDED"
-                                else
-                                    echo "⚠ Coverage file not found, skipping upload"
-                                fi
+                                RUSTFLAGS="" make build-core
+                                make setup
                             '''
+                        }
+                        echo "=== Running Python tests with coverage ==="
+                        dir('python') {
+                            sh '''
+                                export PARAMETER_PATH=$(pwd)/../parameters.json
+                                mkdir -p reports
+                                uv run tox -e py39-all -- \
+                                    --cov=src/snowflake \
+                                    --cov-report=xml:reports/coverage-python.xml
+                                echo "✓ Python tests completed"
+                            '''
+                        }
+                        
+                        script {
+                            catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
+                                echo "=== Uploading Python coverage to Codecov ==="
+                                withCredentials([string(credentialsId: 'codecov-token', variable: 'CODECOV_TOKEN')]) {
+                                    sh '''
+                                        if [ -f python/reports/coverage-python.xml ]; then
+                                            codecovcli upload-process \
+                                                --token "${CODECOV_TOKEN}" \
+                                                --file python/reports/coverage-python.xml \
+                                                --flag python \
+                                                --name "python-jenkins-${BUILD_NUMBER}" \
+                                                --branch "${BRANCH_NAME}" \
+                                                --sha "${GIT_COMMIT}" \
+                                                ${CHANGE_ID:+--pr "${CHANGE_ID}"} \
+                                                --verbose
+                                            echo "✓ Codecov upload SUCCEEDED"
+                                        else
+                                            echo "⚠ Coverage file not found, skipping upload"
+                                        fi
+                                    '''
+                                }
+                            }
+                        }
+                    }
+                    post {
+                        always {
+                            archiveArtifacts artifacts: 'python/reports/coverage-python.xml', allowEmptyArchive: true
                         }
                     }
                 }
-            }
-            post {
-                always {
-                    archiveArtifacts artifacts: 'python/reports/coverage-python.xml', allowEmptyArchive: true
-                }
-            }
-        }
-        
-        stage('ODBC') {
-            when {
-                // Re-enable when ready
-                expression { false }
-            }
-            agent {
-                docker {
-                    image "universal-driver-coverage:${BUILD_NUMBER}"
-                    args '-u root --privileged'
-                    reuseNode true
-                }
-            }
-            steps {
-                echo "=== Building ODBC driver with coverage instrumentation ==="
-                sh '''
-                    RUSTFLAGS="-C instrument-coverage" cargo build
-                    source /opt/rh/gcc-toolset-11/enable
-                    cd odbc_tests
-                    mkdir -p cmake-build
-                    cmake -B cmake-build \
-                        -D ODBC_LIBRARY="/usr/lib64/libodbc.so" \
-                        -D ODBC_INCLUDE_DIR="/usr/include" \
-                        -D DRIVER_TYPE=NEW \
-                        .
-                    cmake --build cmake-build -- -j $(nproc)
-                '''
-                echo "=== Running ODBC tests ==="
-                sh '''
-                    export DRIVER_PATH=$(pwd)/target/debug/libsfodbc.so
-                    export PARAMETER_PATH=$(pwd)/parameters.json
-                    export LLVM_PROFILE_FILE="odbc-%p-%m.profraw"
-                    cd odbc_tests
-                    ctest -j 1 -C Debug --test-dir cmake-build --output-on-failure -E "crl"
-                '''
-                echo "=== Generating ODBC coverage report ==="
-                sh '''
-                    LLVM_PROFDATA=$(find /root/.rustup -name "llvm-profdata" -type f 2>/dev/null | head -1)
-                    LLVM_COV=$(find /root/.rustup -name "llvm-cov" -type f 2>/dev/null | head -1)
-                    find . -name "odbc-*.profraw" -type f | xargs $LLVM_PROFDATA merge -sparse -o coverage.profdata
-                    $LLVM_COV export target/debug/libsfodbc.so \
-                        -instr-profile=coverage.profdata \
-                        -format=lcov \
-                        -sources=$(pwd)/odbc \
-                        -sources=$(pwd)/sf_core > lcov-odbc.info
-                    echo "✓ ODBC tests PASSED"
-                '''
                 
-                // Upload to Codecov - don't fail the build if this fails
-                script {
-                    catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
-                        echo "=== Uploading ODBC coverage to Codecov ==="
-                        withCredentials([string(credentialsId: 'codecov-token', variable: 'CODECOV_TOKEN')]) {
-                            sh '''
-                                if [ -f lcov-odbc.info ]; then
-                                    codecovcli upload-process \
-                                        --token "${CODECOV_TOKEN}" \
-                                        --file lcov-odbc.info \
-                                        --flag odbc \
-                                        --name "odbc-jenkins-${BUILD_NUMBER}" \
-                                        --branch "${BRANCH_NAME}" \
-                                        --sha "${GIT_COMMIT}" \
-                                        ${CHANGE_ID:+--pr "${CHANGE_ID}"} \
-                                        --verbose
-                                    echo "✓ Codecov upload SUCCEEDED"
-                                else
-                                    echo "⚠ Coverage file not found, skipping upload"
-                                fi
-                            '''
+                stage('ODBC') {
+                    when {
+                        expression { false }  // Disabled for now
+                    }
+                    agent {
+                        docker {
+                            image "universal-driver-coverage:${BUILD_NUMBER}"
+                            args '-u root --privileged'
+                            reuseNode true
+                        }
+                    }
+                    steps {
+                        echo "=== Building ODBC driver with coverage instrumentation ==="
+                        sh '''
+                            RUSTFLAGS="-C instrument-coverage" cargo build
+                            source /opt/rh/gcc-toolset-11/enable
+                            cd odbc_tests
+                            mkdir -p cmake-build
+                            cmake -B cmake-build \
+                                -D ODBC_LIBRARY="/usr/lib64/libodbc.so" \
+                                -D ODBC_INCLUDE_DIR="/usr/include" \
+                                -D DRIVER_TYPE=NEW \
+                                .
+                            cmake --build cmake-build -- -j $(nproc)
+                        '''
+                        echo "=== Running ODBC tests ==="
+                        sh '''
+                            export DRIVER_PATH=$(pwd)/target/debug/libsfodbc.so
+                            export PARAMETER_PATH=$(pwd)/parameters.json
+                            export LLVM_PROFILE_FILE="odbc-%p-%m.profraw"
+                            cd odbc_tests
+                            ctest -j 1 -C Debug --test-dir cmake-build --output-on-failure -E "crl"
+                        '''
+                        echo "=== Generating ODBC coverage report ==="
+                        sh '''
+                            LLVM_PROFDATA=$(find /root/.rustup -name "llvm-profdata" -type f 2>/dev/null | head -1)
+                            LLVM_COV=$(find /root/.rustup -name "llvm-cov" -type f 2>/dev/null | head -1)
+                            find . -name "odbc-*.profraw" -type f | xargs $LLVM_PROFDATA merge -sparse -o coverage.profdata
+                            $LLVM_COV export target/debug/libsfodbc.so \
+                                -instr-profile=coverage.profdata \
+                                -format=lcov \
+                                -sources=$(pwd)/odbc \
+                                -sources=$(pwd)/sf_core > lcov-odbc.info
+                            echo "✓ ODBC tests completed"
+                        '''
+                        
+                        script {
+                            catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
+                                echo "=== Uploading ODBC coverage to Codecov ==="
+                                withCredentials([string(credentialsId: 'codecov-token', variable: 'CODECOV_TOKEN')]) {
+                                    sh '''
+                                        if [ -f lcov-odbc.info ]; then
+                                            codecovcli upload-process \
+                                                --token "${CODECOV_TOKEN}" \
+                                                --file lcov-odbc.info \
+                                                --flag odbc \
+                                                --name "odbc-jenkins-${BUILD_NUMBER}" \
+                                                --branch "${BRANCH_NAME}" \
+                                                --sha "${GIT_COMMIT}" \
+                                                ${CHANGE_ID:+--pr "${CHANGE_ID}"} \
+                                                --verbose
+                                            echo "✓ Codecov upload SUCCEEDED"
+                                        else
+                                            echo "⚠ Coverage file not found, skipping upload"
+                                        fi
+                                    '''
+                                }
+                            }
+                        }
+                    }
+                    post {
+                        always {
+                            archiveArtifacts artifacts: 'lcov-odbc.info', allowEmptyArchive: true
                         }
                     }
                 }
-            }
-            post {
-                always {
-                    archiveArtifacts artifacts: 'lcov-odbc.info', allowEmptyArchive: true
-                }
-            }
-        }
-        
-        stage('JDBC') {
-            when {
-                // Re-enable when ready
-                expression { false }
-            }
-            agent {
-                docker {
-                    image "universal-driver-coverage:${BUILD_NUMBER}"
-                    args '-u root --privileged'
-                    reuseNode true
-                }
-            }
-            steps {
-                echo "=== Building JDBC driver ==="
-                sh '''
-                    cargo build --package sf_core
-                    cargo build --package jdbc_bridge
-                '''
-                echo "=== Running JDBC tests with coverage ==="
-                sh '''
-                    export PARAMETER_PATH=$(pwd)/parameters.json
-                    export CORE_PATH=$(pwd)/target/debug/libjdbc_bridge.so
-                    chmod +x jdbc/gradlew
-                    cd jdbc
-                    ./gradlew test jacocoTestReport --stacktrace
-                    echo "✓ JDBC tests PASSED"
-                '''
                 
-                // Upload to Codecov - don't fail the build if this fails
-                script {
-                    catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
-                        echo "=== Uploading JDBC coverage to Codecov ==="
-                        withCredentials([string(credentialsId: 'codecov-token', variable: 'CODECOV_TOKEN')]) {
-                            sh '''
-                                if [ -f jdbc/build/reports/jacoco/test/jacocoTestReport.xml ]; then
-                                    codecovcli upload-process \
-                                        --token "${CODECOV_TOKEN}" \
-                                        --file jdbc/build/reports/jacoco/test/jacocoTestReport.xml \
-                                        --flag jdbc \
-                                        --name "jdbc-jenkins-${BUILD_NUMBER}" \
-                                        --branch "${BRANCH_NAME}" \
-                                        --sha "${GIT_COMMIT}" \
-                                        ${CHANGE_ID:+--pr "${CHANGE_ID}"} \
-                                        --verbose
-                                    echo "✓ Codecov upload SUCCEEDED"
-                                else
-                                    echo "⚠ Coverage file not found, skipping upload"
-                                fi
-                            '''
+                stage('JDBC') {
+                    when {
+                        expression { false }  // Disabled for now
+                    }
+                    agent {
+                        docker {
+                            image "universal-driver-coverage:${BUILD_NUMBER}"
+                            args '-u root --privileged'
+                            reuseNode true
                         }
                     }
-                }
-            }
-            post {
-                always {
-                    archiveArtifacts artifacts: 'jdbc/build/reports/jacoco/test/jacocoTestReport.xml', allowEmptyArchive: true
+                    steps {
+                        echo "=== Building JDBC driver ==="
+                        sh '''
+                            cargo build --package sf_core
+                            cargo build --package jdbc_bridge
+                        '''
+                        echo "=== Running JDBC tests with coverage ==="
+                        sh '''
+                            export PARAMETER_PATH=$(pwd)/parameters.json
+                            export CORE_PATH=$(pwd)/target/debug/libjdbc_bridge.so
+                            chmod +x jdbc/gradlew
+                            cd jdbc
+                            ./gradlew test jacocoTestReport --stacktrace
+                            echo "✓ JDBC tests completed"
+                        '''
+                        
+                        script {
+                            catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
+                                echo "=== Uploading JDBC coverage to Codecov ==="
+                                withCredentials([string(credentialsId: 'codecov-token', variable: 'CODECOV_TOKEN')]) {
+                                    sh '''
+                                        if [ -f jdbc/build/reports/jacoco/test/jacocoTestReport.xml ]; then
+                                            codecovcli upload-process \
+                                                --token "${CODECOV_TOKEN}" \
+                                                --file jdbc/build/reports/jacoco/test/jacocoTestReport.xml \
+                                                --flag jdbc \
+                                                --name "jdbc-jenkins-${BUILD_NUMBER}" \
+                                                --branch "${BRANCH_NAME}" \
+                                                --sha "${GIT_COMMIT}" \
+                                                ${CHANGE_ID:+--pr "${CHANGE_ID}"} \
+                                                --verbose
+                                            echo "✓ Codecov upload SUCCEEDED"
+                                        else
+                                            echo "⚠ Coverage file not found, skipping upload"
+                                        fi
+                                    '''
+                                }
+                            }
+                        }
+                    }
+                    post {
+                        always {
+                            archiveArtifacts artifacts: 'jdbc/build/reports/jacoco/test/jacocoTestReport.xml', allowEmptyArchive: true
+                        }
+                    }
                 }
             }
         }
