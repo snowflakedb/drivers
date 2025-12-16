@@ -70,7 +70,6 @@ pipeline {
                             echo "✓ Rust Core tests completed"
                         '''
                         
-                        // Upload to Codecov - don't fail the build if this fails
                         script {
                             catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
                                 echo "=== Uploading Rust Core coverage to Codecov ==="
@@ -165,9 +164,6 @@ pipeline {
                 }
                 
                 stage('ODBC') {
-                    when {
-                        expression { false }  // Disabled for now
-                    }
                     agent {
                         docker {
                             image "universal-driver-coverage:${BUILD_NUMBER}"
@@ -242,9 +238,6 @@ pipeline {
                 }
                 
                 stage('JDBC') {
-                    when {
-                        expression { false }  // Disabled for now
-                    }
                     agent {
                         docker {
                             image "universal-driver-coverage:${BUILD_NUMBER}"
