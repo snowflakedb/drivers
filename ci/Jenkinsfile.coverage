@@ -37,11 +37,12 @@ pipeline {
                                 // Verify Codecov token is accessible
                                 withCredentials([string(credentialsId: 'jenkins/ctlr/dev/snowdrivers/ud_repo_codecov', variable: 'CODECOV_TOKEN')]) {
                                     sh '''
+                                        set -e
                                         if [ -z "${CODECOV_TOKEN}" ]; then
                                             echo "ERROR: CODECOV_TOKEN is empty!"
                                             exit 1
                                         fi
-                                        echo "✓ CODECOV_TOKEN is set (length: ${#CODECOV_TOKEN} chars)"
+                                        echo "CODECOV_TOKEN is set (length: $(echo -n "${CODECOV_TOKEN}" | wc -c) chars)"
                                     '''
                                 }
                             }
@@ -95,11 +96,12 @@ pipeline {
                                 }
                                 withCredentials([string(credentialsId: 'jenkins/ctlr/dev/snowdrivers/ud_repo_codecov', variable: 'CODECOV_TOKEN')]) {
                                     sh '''
+                                        set -e
                                         if [ -z "${CODECOV_TOKEN}" ]; then
                                             echo "ERROR: CODECOV_TOKEN is empty!"
                                             exit 1
                                         fi
-                                        echo "✓ CODECOV_TOKEN is set (length: ${#CODECOV_TOKEN} chars)"
+                                        echo "CODECOV_TOKEN is set (length: $(echo -n "${CODECOV_TOKEN}" | wc -c) chars)"
                                     '''
                                 }
                             }
@@ -167,11 +169,12 @@ pipeline {
                                 }
                                 withCredentials([string(credentialsId: 'jenkins/ctlr/dev/snowdrivers/ud_repo_codecov', variable: 'CODECOV_TOKEN')]) {
                                     sh '''
+                                        set -e
                                         if [ -z "${CODECOV_TOKEN}" ]; then
                                             echo "ERROR: CODECOV_TOKEN is empty!"
                                             exit 1
                                         fi
-                                        echo "✓ CODECOV_TOKEN is set (length: ${#CODECOV_TOKEN} chars)"
+                                        echo "CODECOV_TOKEN is set (length: $(echo -n "${CODECOV_TOKEN}" | wc -c) chars)"
                                     '''
                                 }
                             }
@@ -257,11 +260,12 @@ pipeline {
                                 }
                                 withCredentials([string(credentialsId: 'jenkins/ctlr/dev/snowdrivers/ud_repo_codecov', variable: 'CODECOV_TOKEN')]) {
                                     sh '''
+                                        set -e
                                         if [ -z "${CODECOV_TOKEN}" ]; then
                                             echo "ERROR: CODECOV_TOKEN is empty!"
                                             exit 1
                                         fi
-                                        echo "✓ CODECOV_TOKEN is set (length: ${#CODECOV_TOKEN} chars)"
+                                        echo "CODECOV_TOKEN is set (length: $(echo -n "${CODECOV_TOKEN}" | wc -c) chars)"
                                     '''
                                 }
                             }
