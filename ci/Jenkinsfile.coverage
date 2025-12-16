@@ -35,7 +35,7 @@ pipeline {
                                     sh './scripts/decode_secrets.sh'
                                 }
                                 // Verify Codecov token is accessible
-                                withCredentials([string(credentialsId: 'ud_repo_codecov', variable: 'CODECOV_TOKEN')]) {
+                                withCredentials([string(credentialsId: 'jenkins/ctlr/dev/snowdrivers/ud_repo_codecov', variable: 'CODECOV_TOKEN')]) {
                                     sh '''
                                         if [ -z "${CODECOV_TOKEN}" ]; then
                                             echo "ERROR: CODECOV_TOKEN is empty!"
@@ -57,7 +57,7 @@ pipeline {
                         }
                         stage('Upload to Codecov') {
                             steps {
-                                withCredentials([string(credentialsId: 'ud_repo_codecov', variable: 'CODECOV_TOKEN')]) {
+                                withCredentials([string(credentialsId: 'jenkins/ctlr/dev/snowdrivers/ud_repo_codecov', variable: 'CODECOV_TOKEN')]) {
                                     sh '''
                                         codecovcli --verbose upload-process \
                                             --disable-search \
@@ -93,7 +93,7 @@ pipeline {
                                 withCredentials([string(credentialsId: 'sfctest0-parameters-secret', variable: 'PARAMETERS_SECRET')]) {
                                     sh './scripts/decode_secrets.sh'
                                 }
-                                withCredentials([string(credentialsId: 'ud_repo_codecov', variable: 'CODECOV_TOKEN')]) {
+                                withCredentials([string(credentialsId: 'jenkins/ctlr/dev/snowdrivers/ud_repo_codecov', variable: 'CODECOV_TOKEN')]) {
                                     sh '''
                                         if [ -z "${CODECOV_TOKEN}" ]; then
                                             echo "ERROR: CODECOV_TOKEN is empty!"
@@ -129,7 +129,7 @@ pipeline {
                         }
                         stage('Upload to Codecov') {
                             steps {
-                                withCredentials([string(credentialsId: 'ud_repo_codecov', variable: 'CODECOV_TOKEN')]) {
+                                withCredentials([string(credentialsId: 'jenkins/ctlr/dev/snowdrivers/ud_repo_codecov', variable: 'CODECOV_TOKEN')]) {
                                     sh '''
                                         codecovcli --verbose upload-process \
                                             --disable-search \
@@ -165,7 +165,7 @@ pipeline {
                                 withCredentials([string(credentialsId: 'sfctest0-parameters-secret', variable: 'PARAMETERS_SECRET')]) {
                                     sh './scripts/decode_secrets.sh'
                                 }
-                                withCredentials([string(credentialsId: 'ud_repo_codecov', variable: 'CODECOV_TOKEN')]) {
+                                withCredentials([string(credentialsId: 'jenkins/ctlr/dev/snowdrivers/ud_repo_codecov', variable: 'CODECOV_TOKEN')]) {
                                     sh '''
                                         if [ -z "${CODECOV_TOKEN}" ]; then
                                             echo "ERROR: CODECOV_TOKEN is empty!"
@@ -219,7 +219,7 @@ pipeline {
                         }
                         stage('Upload to Codecov') {
                             steps {
-                                withCredentials([string(credentialsId: 'ud_repo_codecov', variable: 'CODECOV_TOKEN')]) {
+                                withCredentials([string(credentialsId: 'jenkins/ctlr/dev/snowdrivers/ud_repo_codecov', variable: 'CODECOV_TOKEN')]) {
                                     sh '''
                                         codecovcli --verbose upload-process \
                                             --disable-search \
@@ -255,7 +255,7 @@ pipeline {
                                 withCredentials([string(credentialsId: 'sfctest0-parameters-secret', variable: 'PARAMETERS_SECRET')]) {
                                     sh './scripts/decode_secrets.sh'
                                 }
-                                withCredentials([string(credentialsId: 'ud_repo_codecov', variable: 'CODECOV_TOKEN')]) {
+                                withCredentials([string(credentialsId: 'jenkins/ctlr/dev/snowdrivers/ud_repo_codecov', variable: 'CODECOV_TOKEN')]) {
                                     sh '''
                                         if [ -z "${CODECOV_TOKEN}" ]; then
                                             echo "ERROR: CODECOV_TOKEN is empty!"
@@ -287,7 +287,7 @@ pipeline {
                         }
                         stage('Upload to Codecov') {
                             steps {
-                                withCredentials([string(credentialsId: 'ud_repo_codecov', variable: 'CODECOV_TOKEN')]) {
+                                withCredentials([string(credentialsId: 'jenkins/ctlr/dev/snowdrivers/ud_repo_codecov', variable: 'CODECOV_TOKEN')]) {
                                     sh '''
                                         codecovcli --verbose upload-process \
                                             --disable-search \
