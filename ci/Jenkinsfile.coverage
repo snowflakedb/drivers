@@ -1,292 +1,180 @@
 /*
  * Jenkinsfile for code coverage generation and upload to Codecov
+ * Each component runs on its own node, builds Docker once, uses it for all steps
  */
 
-pipeline {
-    agent none
-    
-    options {
-        timestamps()
-        disableResume()
-        buildDiscarder(logRotator(daysToKeepStr: '14', numToKeepStr: '100'))
-        timeout(time: 2, unit: 'HOURS')
-    }
-    
-    triggers {
-        cron(env.BRANCH_NAME == 'main' ? 'H 2 * * *' : '')
-    }
-    
-    stages {
-        stage('Coverage') {
-            parallel {
-                stage('Rust Core') {
-                    agent { label 'build-node-extra-large' }
-                    stages {
-                        stage('Setup') {
-                            steps {
-                                script {
-                                    docker.build("universal-driver-coverage-rust:${BUILD_NUMBER}", "-f ci/Dockerfile.coverage ci/")
-                                }
+properties([
+    buildDiscarder(logRotator(daysToKeepStr: '14', numToKeepStr: '100')),
+    pipelineTriggers([cron(env.BRANCH_NAME == 'main' ? 'H 2 * * *' : '')])
+])
+
+timestamps {
+    timeout(time: 2, unit: 'HOURS') {
+        parallel(
+            'Rust Core': {
+                node('build-node-extra-large') {
+                    checkout scm
+                    def img = docker.build("ud-cov-rust:${BUILD_NUMBER}", "-f ci/Dockerfile.coverage ci/")
+                    img.inside('-u root --privileged') {
+                        stage('Rust Core') {
+                            withCredentials([string(credentialsId: 'sfctest0-parameters-secret', variable: 'PARAMETERS_SECRET')]) {
+                                sh './scripts/decode_secrets.sh'
                             }
-                        }
-                        stage('Test') {
-                            agent {
-                                docker {
-                                    image "universal-driver-coverage-rust:${BUILD_NUMBER}"
-                                    args '-u root --privileged'
-                                    reuseNode true
-                                }
-                            }
-                            steps {
-                                withCredentials([string(credentialsId: 'sfctest0-parameters-secret', variable: 'PARAMETERS_SECRET')]) {
-                                    sh './scripts/decode_secrets.sh'
-                                }
+                            sh '''
+                                export PARAMETER_PATH=$(pwd)/parameters.json
+                                cargo tarpaulin --packages sf_core --all-features --skip-clean --no-fail-fast --out lcov --output-dir .
+                                mv lcov.info lcov-rust-core.info
+                            '''
+                            withCredentials([string(credentialsId: 'ud_repo_codecov', variable: 'CODECOV_TOKEN')]) {
                                 sh '''
-                                    export PARAMETER_PATH=$(pwd)/parameters.json
-                                    cargo tarpaulin --packages sf_core --all-features --skip-clean --no-fail-fast --out lcov --output-dir .
-                                    mv lcov.info lcov-rust-core.info
+                                    codecovcli upload-process \
+                                        --token "${CODECOV_TOKEN}" \
+                                        --file lcov-rust-core.info \
+                                        --flag rust-core \
+                                        --name "rust-core-jenkins-${BUILD_NUMBER}" \
+                                        --branch "${BRANCH_NAME}" \
+                                        --sha "${GIT_COMMIT}" \
+                                        ${CHANGE_ID:+--pr "${CHANGE_ID}"} \
+                                        --verbose
                                 '''
                             }
-                        }
-                        stage('Upload') {
-                            agent {
-                                docker {
-                                    image "universal-driver-coverage-rust:${BUILD_NUMBER}"
-                                    args '-u root --privileged'
-                                    reuseNode true
-                                }
-                            }
-                            steps {
-                                sh 'echo "Files in workspace:" && ls -la *.info || true'
-                                withCredentials([string(credentialsId: 'ud_repo_codecov', variable: 'CODECOV_TOKEN')]) {
-                                    sh '''
-                                        codecovcli upload-process \
-                                            --token "${CODECOV_TOKEN}" \
-                                            --file lcov-rust-core.info \
-                                            --flag rust-core \
-                                            --name "rust-core-jenkins-${BUILD_NUMBER}" \
-                                            --branch "${BRANCH_NAME}" \
-                                            --sha "${GIT_COMMIT}" \
-                                            ${CHANGE_ID:+--pr "${CHANGE_ID}"} \
-                                            --verbose
-                                    '''
-                                }
-                                archiveArtifacts artifacts: 'lcov-rust-core.info', allowEmptyArchive: true
-                            }
+                            archiveArtifacts artifacts: 'lcov-rust-core.info', allowEmptyArchive: true
                         }
                     }
                 }
-                
-                stage('Python') {
-                    agent { label 'build-node-extra-large' }
-                    stages {
-                        stage('Setup') {
-                            steps {
-                                script {
-                                    docker.build("universal-driver-coverage-python:${BUILD_NUMBER}", "-f ci/Dockerfile.coverage ci/")
-                                }
+            },
+            'Python': {
+                node('build-node-extra-large') {
+                    checkout scm
+                    def img = docker.build("ud-cov-python:${BUILD_NUMBER}", "-f ci/Dockerfile.coverage ci/")
+                    img.inside('-u root --privileged') {
+                        stage('Python') {
+                            withCredentials([string(credentialsId: 'sfctest0-parameters-secret', variable: 'PARAMETERS_SECRET')]) {
+                                sh './scripts/decode_secrets.sh'
                             }
-                        }
-                        stage('Test') {
-                            agent {
-                                docker {
-                                    image "universal-driver-coverage-python:${BUILD_NUMBER}"
-                                    args '-u root --privileged'
-                                    reuseNode true
-                                }
+                            dir('python') {
+                                sh '''
+                                    RUSTFLAGS="" make build-core
+                                    make setup
+                                    export PARAMETER_PATH=$(pwd)/../parameters.json
+                                    mkdir -p reports
+                                    uv run tox -e py39-all -- \
+                                        --cov=src/snowflake \
+                                        --cov-report=xml:reports/coverage-python.xml
+                                '''
                             }
-                            steps {
-                                withCredentials([string(credentialsId: 'sfctest0-parameters-secret', variable: 'PARAMETERS_SECRET')]) {
-                                    sh './scripts/decode_secrets.sh'
-                                }
-                                dir('python') {
-                                    sh '''
-                                        RUSTFLAGS="" make build-core
-                                        make setup
-                                        export PARAMETER_PATH=$(pwd)/../parameters.json
-                                        mkdir -p reports
-                                        uv run tox -e py39-all -- \
-                                            --cov=src/snowflake \
-                                            --cov-report=xml:reports/coverage-python.xml
-                                    '''
-                                }
+                            withCredentials([string(credentialsId: 'ud_repo_codecov', variable: 'CODECOV_TOKEN')]) {
+                                sh '''
+                                    codecovcli upload-process \
+                                        --token "${CODECOV_TOKEN}" \
+                                        --file python/reports/coverage-python.xml \
+                                        --flag python \
+                                        --name "python-jenkins-${BUILD_NUMBER}" \
+                                        --branch "${BRANCH_NAME}" \
+                                        --sha "${GIT_COMMIT}" \
+                                        ${CHANGE_ID:+--pr "${CHANGE_ID}"} \
+                                        --verbose
+                                '''
                             }
-                        }
-                        stage('Upload') {
-                            agent {
-                                docker {
-                                    image "universal-driver-coverage-python:${BUILD_NUMBER}"
-                                    args '-u root --privileged'
-                                    reuseNode true
-                                }
-                            }
-                            steps {
-                                sh 'echo "Files:" && ls -la python/reports/*.xml || true'
-                                withCredentials([string(credentialsId: 'ud_repo_codecov', variable: 'CODECOV_TOKEN')]) {
-                                    sh '''
-                                        codecovcli upload-process \
-                                            --token "${CODECOV_TOKEN}" \
-                                            --file python/reports/coverage-python.xml \
-                                            --flag python \
-                                            --name "python-jenkins-${BUILD_NUMBER}" \
-                                            --branch "${BRANCH_NAME}" \
-                                            --sha "${GIT_COMMIT}" \
-                                            ${CHANGE_ID:+--pr "${CHANGE_ID}"} \
-                                            --verbose
-                                    '''
-                                }
-                                archiveArtifacts artifacts: 'python/reports/coverage-python.xml', allowEmptyArchive: true
-                            }
+                            archiveArtifacts artifacts: 'python/reports/coverage-python.xml', allowEmptyArchive: true
                         }
                     }
                 }
-                
-                stage('ODBC') {
-                    agent { label 'build-node-extra-large' }
-                    stages {
-                        stage('Setup') {
-                            steps {
-                                script {
-                                    docker.build("universal-driver-coverage-odbc:${BUILD_NUMBER}", "-f ci/Dockerfile.coverage ci/")
-                                }
+            },
+            'ODBC': {
+                node('build-node-extra-large') {
+                    checkout scm
+                    def img = docker.build("ud-cov-odbc:${BUILD_NUMBER}", "-f ci/Dockerfile.coverage ci/")
+                    img.inside('-u root --privileged') {
+                        stage('ODBC') {
+                            withCredentials([string(credentialsId: 'sfctest0-parameters-secret', variable: 'PARAMETERS_SECRET')]) {
+                                sh './scripts/decode_secrets.sh'
                             }
-                        }
-                        stage('Test') {
-                            agent {
-                                docker {
-                                    image "universal-driver-coverage-odbc:${BUILD_NUMBER}"
-                                    args '-u root --privileged'
-                                    reuseNode true
-                                }
-                            }
-                            steps {
-                                withCredentials([string(credentialsId: 'sfctest0-parameters-secret', variable: 'PARAMETERS_SECRET')]) {
-                                    sh './scripts/decode_secrets.sh'
-                                }
+                            sh '''
+                                RUSTFLAGS="-C instrument-coverage" cargo build
+                                source /opt/rh/gcc-toolset-11/enable
+                                cd odbc_tests
+                                mkdir -p cmake-build
+                                cmake -B cmake-build \
+                                    -D ODBC_LIBRARY="/usr/lib64/libodbc.so" \
+                                    -D ODBC_INCLUDE_DIR="/usr/include" \
+                                    -D DRIVER_TYPE=NEW \
+                                    .
+                                cmake --build cmake-build -- -j $(nproc)
+                            '''
+                            sh '''
+                                export DRIVER_PATH=$(pwd)/target/debug/libsfodbc.so
+                                export PARAMETER_PATH=$(pwd)/parameters.json
+                                export LLVM_PROFILE_FILE="odbc-%p-%m.profraw"
+                                cd odbc_tests
+                                ctest -j 1 -C Debug --test-dir cmake-build --output-on-failure -E "crl"
+                            '''
+                            sh '''
+                                LLVM_PROFDATA=$(find /root/.rustup -name "llvm-profdata" -type f 2>/dev/null | head -1)
+                                LLVM_COV=$(find /root/.rustup -name "llvm-cov" -type f 2>/dev/null | head -1)
+                                find . -name "odbc-*.profraw" -type f | xargs $LLVM_PROFDATA merge -sparse -o coverage.profdata
+                                $LLVM_COV export target/debug/libsfodbc.so \
+                                    -instr-profile=coverage.profdata \
+                                    -format=lcov \
+                                    -sources=$(pwd)/odbc \
+                                    -sources=$(pwd)/sf_core > lcov-odbc.info
+                            '''
+                            withCredentials([string(credentialsId: 'ud_repo_codecov', variable: 'CODECOV_TOKEN')]) {
                                 sh '''
-                                    RUSTFLAGS="-C instrument-coverage" cargo build
-                                    source /opt/rh/gcc-toolset-11/enable
-                                    cd odbc_tests
-                                    mkdir -p cmake-build
-                                    cmake -B cmake-build \
-                                        -D ODBC_LIBRARY="/usr/lib64/libodbc.so" \
-                                        -D ODBC_INCLUDE_DIR="/usr/include" \
-                                        -D DRIVER_TYPE=NEW \
-                                        .
-                                    cmake --build cmake-build -- -j $(nproc)
-                                '''
-                                sh '''
-                                    export DRIVER_PATH=$(pwd)/target/debug/libsfodbc.so
-                                    export PARAMETER_PATH=$(pwd)/parameters.json
-                                    export LLVM_PROFILE_FILE="odbc-%p-%m.profraw"
-                                    cd odbc_tests
-                                    ctest -j 1 -C Debug --test-dir cmake-build --output-on-failure -E "crl"
-                                '''
-                                sh '''
-                                    LLVM_PROFDATA=$(find /root/.rustup -name "llvm-profdata" -type f 2>/dev/null | head -1)
-                                    LLVM_COV=$(find /root/.rustup -name "llvm-cov" -type f 2>/dev/null | head -1)
-                                    find . -name "odbc-*.profraw" -type f | xargs $LLVM_PROFDATA merge -sparse -o coverage.profdata
-                                    $LLVM_COV export target/debug/libsfodbc.so \
-                                        -instr-profile=coverage.profdata \
-                                        -format=lcov \
-                                        -sources=$(pwd)/odbc \
-                                        -sources=$(pwd)/sf_core > lcov-odbc.info
+                                    codecovcli upload-process \
+                                        --token "${CODECOV_TOKEN}" \
+                                        --file lcov-odbc.info \
+                                        --flag odbc \
+                                        --name "odbc-jenkins-${BUILD_NUMBER}" \
+                                        --branch "${BRANCH_NAME}" \
+                                        --sha "${GIT_COMMIT}" \
+                                        ${CHANGE_ID:+--pr "${CHANGE_ID}"} \
+                                        --verbose
                                 '''
                             }
-                        }
-                        stage('Upload') {
-                            agent {
-                                docker {
-                                    image "universal-driver-coverage-odbc:${BUILD_NUMBER}"
-                                    args '-u root --privileged'
-                                    reuseNode true
-                                }
-                            }
-                            steps {
-                                sh 'echo "Files:" && ls -la *.info || true'
-                                withCredentials([string(credentialsId: 'ud_repo_codecov', variable: 'CODECOV_TOKEN')]) {
-                                    sh '''
-                                        codecovcli upload-process \
-                                            --token "${CODECOV_TOKEN}" \
-                                            --file lcov-odbc.info \
-                                            --flag odbc \
-                                            --name "odbc-jenkins-${BUILD_NUMBER}" \
-                                            --branch "${BRANCH_NAME}" \
-                                            --sha "${GIT_COMMIT}" \
-                                            ${CHANGE_ID:+--pr "${CHANGE_ID}"} \
-                                            --verbose
-                                    '''
-                                }
-                                archiveArtifacts artifacts: 'lcov-odbc.info', allowEmptyArchive: true
-                            }
+                            archiveArtifacts artifacts: 'lcov-odbc.info', allowEmptyArchive: true
                         }
                     }
                 }
-                
-                stage('JDBC') {
-                    agent { label 'build-node-extra-large' }
-                    stages {
-                        stage('Setup') {
-                            steps {
-                                script {
-                                    docker.build("universal-driver-coverage-jdbc:${BUILD_NUMBER}", "-f ci/Dockerfile.coverage ci/")
-                                }
+            },
+            'JDBC': {
+                node('build-node-extra-large') {
+                    checkout scm
+                    def img = docker.build("ud-cov-jdbc:${BUILD_NUMBER}", "-f ci/Dockerfile.coverage ci/")
+                    img.inside('-u root --privileged') {
+                        stage('JDBC') {
+                            withCredentials([string(credentialsId: 'sfctest0-parameters-secret', variable: 'PARAMETERS_SECRET')]) {
+                                sh './scripts/decode_secrets.sh'
                             }
-                        }
-                        stage('Test') {
-                            agent {
-                                docker {
-                                    image "universal-driver-coverage-jdbc:${BUILD_NUMBER}"
-                                    args '-u root --privileged'
-                                    reuseNode true
-                                }
-                            }
-                            steps {
-                                withCredentials([string(credentialsId: 'sfctest0-parameters-secret', variable: 'PARAMETERS_SECRET')]) {
-                                    sh './scripts/decode_secrets.sh'
-                                }
+                            sh '''
+                                cargo build --package sf_core
+                                cargo build --package jdbc_bridge
+                            '''
+                            sh '''
+                                export PARAMETER_PATH=$(pwd)/parameters.json
+                                export CORE_PATH=$(pwd)/target/debug/libjdbc_bridge.so
+                                chmod +x jdbc/gradlew
+                                cd jdbc
+                                ./gradlew test jacocoTestReport --stacktrace
+                            '''
+                            withCredentials([string(credentialsId: 'ud_repo_codecov', variable: 'CODECOV_TOKEN')]) {
                                 sh '''
-                                    cargo build --package sf_core
-                                    cargo build --package jdbc_bridge
+                                    codecovcli upload-process \
+                                        --token "${CODECOV_TOKEN}" \
+                                        --file jdbc/build/reports/jacoco/test/jacocoTestReport.xml \
+                                        --flag jdbc \
+                                        --name "jdbc-jenkins-${BUILD_NUMBER}" \
+                                        --branch "${BRANCH_NAME}" \
+                                        --sha "${GIT_COMMIT}" \
+                                        ${CHANGE_ID:+--pr "${CHANGE_ID}"} \
+                                        --verbose
                                 '''
-                                sh '''
-                                    export PARAMETER_PATH=$(pwd)/parameters.json
-                                    export CORE_PATH=$(pwd)/target/debug/libjdbc_bridge.so
-                                    chmod +x jdbc/gradlew
-                                    cd jdbc
-                                    ./gradlew test jacocoTestReport --stacktrace
-                                '''
                             }
-                        }
-                        stage('Upload') {
-                            agent {
-                                docker {
-                                    image "universal-driver-coverage-jdbc:${BUILD_NUMBER}"
-                                    args '-u root --privileged'
-                                    reuseNode true
-                                }
-                            }
-                            steps {
-                                sh 'echo "Files:" && ls -la jdbc/build/reports/jacoco/test/*.xml || true'
-                                withCredentials([string(credentialsId: 'ud_repo_codecov', variable: 'CODECOV_TOKEN')]) {
-                                    sh '''
-                                        codecovcli upload-process \
-                                            --token "${CODECOV_TOKEN}" \
-                                            --file jdbc/build/reports/jacoco/test/jacocoTestReport.xml \
-                                            --flag jdbc \
-                                            --name "jdbc-jenkins-${BUILD_NUMBER}" \
-                                            --branch "${BRANCH_NAME}" \
-                                            --sha "${GIT_COMMIT}" \
-                                            ${CHANGE_ID:+--pr "${CHANGE_ID}"} \
-                                            --verbose
-                                    '''
-                                }
-                                archiveArtifacts artifacts: 'jdbc/build/reports/jacoco/test/jacocoTestReport.xml', allowEmptyArchive: true
-                            }
+                            archiveArtifacts artifacts: 'jdbc/build/reports/jacoco/test/jacocoTestReport.xml', allowEmptyArchive: true
                         }
                     }
                 }
             }
-        }
+        )
     }
 }
