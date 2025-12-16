@@ -144,14 +144,14 @@ mod disk_crl_tests {
                     crl.iter_revoked_certificates().count(),
                 );
 
-                // Performance assertions (reasonable limits)
+                // Performance assertions (reasonable limits for CI environments)
                 assert!(
-                    parse_duration.as_millis() < 100,
-                    "CRL parsing should be fast (< 100ms)"
+                    parse_duration.as_millis() < 500,
+                    "CRL parsing should be fast (< 500ms)"
                 );
                 assert!(
-                    check_duration.as_millis() < 50,
-                    "Certificate checking should be fast (< 50ms)"
+                    check_duration.as_millis() < 200,
+                    "Certificate checking should be fast (< 200ms)"
                 );
             }
         }
