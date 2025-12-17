@@ -1,6 +1,5 @@
 /*
- * Jenkinsfile for code coverage generation
- * TODO: Enable Codecov upload once credential is configured
+ * Jenkinsfile for code coverage generation and upload to Codecov
  */
 
 pipeline {
@@ -35,9 +34,21 @@ pipeline {
                         withCredentials([string(credentialsId: 'sfctest0-parameters-secret', variable: 'PARAMETERS_SECRET')]) {
                             sh './scripts/decode_secrets.sh'
                         }
+                        withCredentials([string(credentialsId: 'jenkins/ctlr/dev/snowdrivers/ud_repo_codecov', variable: 'CODECOV_TOKEN')]) {
+                            sh '''
+                                set +x
+                                set -e
+                                if [ -z "${CODECOV_TOKEN}" ]; then
+                                    echo "ERROR: CODECOV_TOKEN is empty!"
+                                    exit 1
+                                fi
+                                echo "CODECOV_TOKEN is set (length: $(echo -n "${CODECOV_TOKEN}" | wc -c) chars)"
+                            '''
+                        }
                         
                         // Test + Coverage (tarpaulin prints coverage summary automatically)
                         sh '''
+                            set +x
                             echo "=== Test + Coverage ==="
                             export PARAMETER_PATH=$(pwd)/parameters.json
                             cargo tarpaulin --packages sf_core --all-features --skip-clean --no-fail-fast --out lcov --output-dir .
@@ -45,6 +56,21 @@ pipeline {
                             echo ""
                             echo "=== Coverage Report Saved: lcov-rust-core.info ==="
                         '''
+                        
+                        // Upload to Codecov
+                        withCredentials([string(credentialsId: 'jenkins/ctlr/dev/snowdrivers/ud_repo_codecov', variable: 'CODECOV_TOKEN')]) {
+                            sh '''
+                                set +x
+                                echo "=== Uploading to Codecov ==="
+                                codecovcli --verbose upload-process \
+                                    --disable-search \
+                                    --fail-on-error \
+                                    -t "${CODECOV_TOKEN}" \
+                                    -n "rust-core-jenkins-${BUILD_NUMBER}" \
+                                    -F rust-core \
+                                    -f lcov-rust-core.info
+                            '''
+                        }
                         
                         archiveArtifacts artifacts: 'lcov-rust-core.info', allowEmptyArchive: true
                     }
@@ -65,10 +91,22 @@ pipeline {
                         withCredentials([string(credentialsId: 'sfctest0-parameters-secret', variable: 'PARAMETERS_SECRET')]) {
                             sh './scripts/decode_secrets.sh'
                         }
+                        withCredentials([string(credentialsId: 'jenkins/ctlr/dev/snowdrivers/ud_repo_codecov', variable: 'CODECOV_TOKEN')]) {
+                            sh '''
+                                set +x
+                                set -e
+                                if [ -z "${CODECOV_TOKEN}" ]; then
+                                    echo "ERROR: CODECOV_TOKEN is empty!"
+                                    exit 1
+                                fi
+                                echo "CODECOV_TOKEN is set (length: $(echo -n "${CODECOV_TOKEN}" | wc -c) chars)"
+                            '''
+                        }
                         
                         // Build
                         dir('python') {
                             sh '''
+                                set +x
                                 echo "=== Build ==="
                                 RUSTFLAGS="" make build-core
                                 make setup
@@ -78,6 +116,7 @@ pipeline {
                         // Test + Coverage (added --cov-report=term for console output)
                         dir('python') {
                             sh '''
+                                set +x
                                 echo "=== Test + Coverage ==="
                                 export PARAMETER_PATH=$(pwd)/../parameters.json
                                 mkdir -p reports
@@ -87,6 +126,21 @@ pipeline {
                                     --cov-report=xml:reports/coverage-python.xml
                                 echo ""
                                 echo "=== Coverage Report Saved: python/reports/coverage-python.xml ==="
+                            '''
+                        }
+                        
+                        // Upload to Codecov
+                        withCredentials([string(credentialsId: 'jenkins/ctlr/dev/snowdrivers/ud_repo_codecov', variable: 'CODECOV_TOKEN')]) {
+                            sh '''
+                                set +x
+                                echo "=== Uploading to Codecov ==="
+                                codecovcli --verbose upload-process \
+                                    --disable-search \
+                                    --fail-on-error \
+                                    -t "${CODECOV_TOKEN}" \
+                                    -n "python-jenkins-${BUILD_NUMBER}" \
+                                    -F python \
+                                    -f python/reports/coverage-python.xml
                             '''
                         }
                         
@@ -109,9 +163,21 @@ pipeline {
                         withCredentials([string(credentialsId: 'sfctest0-parameters-secret', variable: 'PARAMETERS_SECRET')]) {
                             sh './scripts/decode_secrets.sh'
                         }
+                        withCredentials([string(credentialsId: 'jenkins/ctlr/dev/snowdrivers/ud_repo_codecov', variable: 'CODECOV_TOKEN')]) {
+                            sh '''
+                                set +x
+                                set -e
+                                if [ -z "${CODECOV_TOKEN}" ]; then
+                                    echo "ERROR: CODECOV_TOKEN is empty!"
+                                    exit 1
+                                fi
+                                echo "CODECOV_TOKEN is set (length: $(echo -n "${CODECOV_TOKEN}" | wc -c) chars)"
+                            '''
+                        }
                         
                         // Build
                         sh '''
+                            set +x
                             echo "=== Build ==="
                             RUSTFLAGS="-C instrument-coverage" cargo build
                             source /opt/rh/gcc-toolset-11/enable
@@ -127,6 +193,7 @@ pipeline {
                         
                         // Test
                         sh '''
+                            set +x
                             echo "=== Test ==="
                             export DRIVER_PATH=$(pwd)/target/debug/libsfodbc.so
                             export PARAMETER_PATH=$(pwd)/parameters.json
@@ -154,6 +221,7 @@ pipeline {
                         
                         // Coverage (added report summary)
                         sh '''
+                            set +x
                             echo "=== Coverage ==="
                             LLVM_PROFDATA=$(find /root/.rustup -name "llvm-profdata" -type f 2>/dev/null | head -1)
                             LLVM_COV=$(find /root/.rustup -name "llvm-cov" -type f 2>/dev/null | head -1)
@@ -176,6 +244,21 @@ pipeline {
                             echo "=== Coverage Report Saved: lcov-odbc.info ==="
                         '''
                         
+                        // Upload to Codecov
+                        withCredentials([string(credentialsId: 'jenkins/ctlr/dev/snowdrivers/ud_repo_codecov', variable: 'CODECOV_TOKEN')]) {
+                            sh '''
+                                set +x
+                                echo "=== Uploading to Codecov ==="
+                                codecovcli --verbose upload-process \
+                                    --disable-search \
+                                    --fail-on-error \
+                                    -t "${CODECOV_TOKEN}" \
+                                    -n "odbc-jenkins-${BUILD_NUMBER}" \
+                                    -F odbc \
+                                    -f lcov-odbc.info
+                            '''
+                        }
+                        
                         archiveArtifacts artifacts: 'lcov-odbc.info', allowEmptyArchive: true
                     }
                 }
@@ -195,9 +278,21 @@ pipeline {
                         withCredentials([string(credentialsId: 'sfctest0-parameters-secret', variable: 'PARAMETERS_SECRET')]) {
                             sh './scripts/decode_secrets.sh'
                         }
+                        withCredentials([string(credentialsId: 'jenkins/ctlr/dev/snowdrivers/ud_repo_codecov', variable: 'CODECOV_TOKEN')]) {
+                            sh '''
+                                set +x
+                                set -e
+                                if [ -z "${CODECOV_TOKEN}" ]; then
+                                    echo "ERROR: CODECOV_TOKEN is empty!"
+                                    exit 1
+                                fi
+                                echo "CODECOV_TOKEN is set (length: $(echo -n "${CODECOV_TOKEN}" | wc -c) chars)"
+                            '''
+                        }
                         
                         // Build
                         sh '''
+                            set +x
                             echo "=== Build ==="
                             cargo build --package sf_core
                             cargo build --package jdbc_bridge
@@ -205,6 +300,7 @@ pipeline {
                         
                         // Test + Coverage
                         sh '''
+                            set +x
                             echo "=== Test + Coverage ==="
                             export PARAMETER_PATH=$(pwd)/parameters.json
                             export CORE_PATH=$(pwd)/target/debug/libjdbc_bridge.so
@@ -215,19 +311,26 @@ pipeline {
                         
                         // Print coverage summary from JaCoCo XML
                         sh '''
+                            set +x
                             echo ""
                             echo "=== Coverage Summary ==="
                             REPORT="jdbc/build/reports/jacoco/test/jacocoTestReport.xml"
                             if [ -f "$REPORT" ]; then
                                 # Extract line coverage from JaCoCo XML
-                                MISSED=$(grep -o 'type="LINE" missed="[0-9]*"' "$REPORT" | head -1 | grep -o '[0-9]*')
-                                COVERED=$(grep -o 'type="LINE" covered="[0-9]*"' "$REPORT" | head -1 | grep -o '[0-9]*')
-                                if [ -n "$MISSED" ] && [ -n "$COVERED" ]; then
-                                    TOTAL=$((MISSED + COVERED))
-                                    if [ "$TOTAL" -gt 0 ]; then
-                                        PERCENT=$((COVERED * 100 / TOTAL))
-                                        echo "Line Coverage: ${PERCENT}% (${COVERED}/${TOTAL} lines)"
-                                    fi
+                                # Use || true to prevent script failure if grep finds nothing
+                                MISSED=$(grep -o 'type="LINE" missed="[0-9]*"' "$REPORT" | head -1 | grep -o '[0-9]*' || echo "0")
+                                COVERED=$(grep -o 'type="LINE" covered="[0-9]*"' "$REPORT" | head -1 | grep -o '[0-9]*' || echo "0")
+                                
+                                # Convert to integers
+                                MISSED_INT=${MISSED:-0}
+                                COVERED_INT=${COVERED:-0}
+                                TOTAL=$((MISSED_INT + COVERED_INT))
+                                
+                                if [ "$TOTAL" -gt 0 ]; then
+                                    PERCENT=$((COVERED_INT * 100 / TOTAL))
+                                    echo "Line Coverage: ${PERCENT}% (${COVERED_INT}/${TOTAL} lines)"
+                                else
+                                    echo "No coverage data found in report"
                                 fi
                                 echo "Full report: jdbc/build/reports/jacoco/test/html/index.html"
                             else
@@ -235,6 +338,21 @@ pipeline {
                             fi
                             echo "=== Coverage Report Saved: jdbc/build/reports/jacoco/test/jacocoTestReport.xml ==="
                         '''
+                        
+                        // Upload to Codecov
+                        withCredentials([string(credentialsId: 'jenkins/ctlr/dev/snowdrivers/ud_repo_codecov', variable: 'CODECOV_TOKEN')]) {
+                            sh '''
+                                set +x
+                                echo "=== Uploading to Codecov ==="
+                                codecovcli --verbose upload-process \
+                                    --disable-search \
+                                    --fail-on-error \
+                                    -t "${CODECOV_TOKEN}" \
+                                    -n "jdbc-jenkins-${BUILD_NUMBER}" \
+                                    -F jdbc \
+                                    -f jdbc/build/reports/jacoco/test/jacocoTestReport.xml
+                            '''
+                        }
                         
                         archiveArtifacts artifacts: 'jdbc/build/reports/jacoco/test/jacocoTestReport.xml', allowEmptyArchive: true
                     }
