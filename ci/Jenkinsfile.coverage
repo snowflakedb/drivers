@@ -35,7 +35,7 @@ pipeline {
                             sh './scripts/decode_secrets.sh'
                         }
                         withCredentials([
-                            fuseString(variable: 'CODECOV_TOKEN', encryptedSecret: 'sf-crypt://universes/prod/services/drivers-namespace/locations/sfc-or-dev-ci-k8s-ci1/secrets/ud_repo_codecov/7a389cbc-4799-4288-b8bb-dbb9da80a298:AQAAAUQKOnNmYy1vci1kZXYtY2ktazhzLWNpMS9jMTJhYTQxNi1jOWU5LTRlMmUtYmQzZi01Y2M0NTdlMjBmYWISwQG8u76iQPMELRTNTTEdnfxKA4G30eWmnDrnsjHvbjX-rZ4mX4yHEy013w5i9M1B5L0GaQnrbfB1qZAQkC-AUyoZjUXNyFNbkHmnGC39UdWlN7vGIuIei7agB100iVNJ7Btxoa7Te3OWilytx9ZF-IMgeVP7Px2ET6u2hSfvv_8QA-GDGKPQbgnflauxpU4dkXu8nBYVJ2q7B0vX6FwRZkzswAsV6403tgiJdRcLnbOSLLnO0_N2OEnd8p9SZHcCbbnxGDQiQI2fsYpgVxQW9tk13vHUI1v3SI_j4rHStiSBeqofDwg-98Y0ULnamF-7RvcutV6dHrcmA4G_xLW1aQpZtU9YL2tHi1vZa8iCGx_zgW07ywc6QoQz2uEoqxRTHR3gVrfXLpsoNW5Hh-PmmO542OuGaQ3h3FQlTw8-va6Kbjw6svMOD10XQQ==' 
+                            fuseString(variable: 'CODECOV_TOKEN', encryptedSecret: 'sf-crypt://universes/prod/services/drivers-namespace/locations/sfc-or-dev-ci-k8s-ci1/secrets/ud_repo_codecov/7a389cbc-4799-4288-b8bb-dbb9da80a298:AQAAAUQKOnNmYy1vci1kZXYtY2ktazhzLWNpMS9jMTJhYTQxNi1jOWU5LTRlMmUtYmQzZi01Y2M0NTdlMjBmYWISwQG8u76iQPMELRTNTTEdnfxKA4G30eWmnDrnsjHvbjX-rZ4mX4yHEy013w5i9M1B5L0GaQnrbfB1qZAQkC-AUyoZjUXNyFNbkHmnGC39UdWlN7vGIuIei7agB100iVNJ7Btxoa7Te3OWilytx9ZF-IMgeVP7Px2ET6u2hSfvv_8QA-GDGKPQbgnflauxpU4dkXu8nBYVJ2q7B0vX6FwRZkzswAsV6403tgiJdRcLnbOSLLnO0_N2OEnd8p9SZHcCbbnxGDQiQI2fsYpgVxQW9tk13vHUI1v3SI_j4rHStiSBeqofDwg-98Y0ULnamF-7RvcutV6dHrcmA4G_xLW1aQpZtU9YL2tHi1vZa8iCGx_zgW07ywc6QoQz2uEoqxRTHR3gVrfXLpsoNW5Hh-PmmO542OuGaQ3h3FQlTw8-va6Kbjw6svMOD10XQQ==')
                         ]) {
                             sh '''
                                 set +x
