@@ -35,8 +35,7 @@ pipeline {
                             sh './scripts/decode_secrets.sh'
                         }
                         withCredentials([
-                            fuseString(variable: 'CODECOV_TOKEN', encryptedSecret: 'sf-crypt://universes/prod/services/jenkins/locations/sfc-or-dev-ci-k8s-ci1/secrets/jenkins/ctlr/dev/snowdrivers/ud_repo_codecov/d17dfc2e-875b-4320-8a18-b4efd0631a70:AQAAAVcKOnNmYy1vci1kZXYtY2ktazhzLWNpMS9jMTJhYTQxNi1jOWU5LTRlMmUtYmQzZi01Y2M0NTdlMjBmYWIS1AFTfr2leAaIicr-MxHW71TJ0awbKWoWmoljufftopa4ooW1HNYQruhogw-DnUn6cNtUvkOPbq9DQtD2cKX_8vPizn58xCQQeBQuvPI2cNgLHvaMTcPWP-FKaLUj7nnDyhpGJyQNsFUMPPlEjh0wuJsg5JdDiks-x2_kwbG66iYT6s9qhZmmwhWtIINIhB1lw4ObK5uK7G7T72fd30sjcHrAJEC8gso2_m1sq94tQPVm4-TGxigEKRFJCwuE9T6kX1GORDxHO9hyLHWI102FR-arqLuaJBg0IkAdo4DVN7eooSCn55O4C8W1SXNJOaANNpJCTYXvJ0LV4fP3mpFOTzZ2HBktEvfaERZoYtsWIOy09mHnziJgdVJqo-5QJya-m5YWyzCB0VpPhwDTXvCkZRME6tGQW6F-Cg9ZK-QBYy85I5YbCop0VcH0P_6iFywtaJ3M6j-C8oHCmRSIz84=')
-                        ]) {
+                            fuseString(variable: 'CODECOV_TOKEN', encryptedSecret: 'sf-crypt://universes/prod/services/drivers-namespace/locations/sfc-or-dev-ci-k8s-ci1/secrets/ud_repo_codecov/7a389cbc-4799-4288-b8bb-dbb9da80a298:AQAAAUQKOnNmYy1vci1kZXYtY2ktazhzLWNpMS9jMTJhYTQxNi1jOWU5LTRlMmUtYmQzZi01Y2M0NTdlMjBmYWISwQG8u76iQPMELRTNTTEdnfxKA4G30eWmnDrnsjHvbjX-rZ4mX4yHEy013w5i9M1B5L0GaQnrbfB1qZAQkC-AUyoZjUXNyFNbkHmnGC39UdWlN7vGIuIei7agB100iVNJ7Btxoa7Te3OWilytx9ZF-IMgeVP7Px2ET6u2hSfvv_8QA-GDGKPQbgnflauxpU4dkXu8nBYVJ2q7B0vX6FwRZkzswAsV6403tgiJdRcLnbOSLLnO0_N2OEnd8p9SZHcCbbnxGDQiQI2fsYpgVxQW9tk13vHUI1v3SI_j4rHStiSBeqofDwg-98Y0ULnamF-7RvcutV6dHrcmA4G_xLW1aQpZtU9YL2tHi1vZa8iCGx_zgW07ywc6QoQz2uEoqxRTHR3gVrfXLpsoNW5Hh-PmmO542OuGaQ3h3FQlTw8-va6Kbjw6svMOD10XQQ==' ]) {
                             sh '''
                                 set +x
                                 set -e
@@ -61,8 +60,7 @@ pipeline {
                         
                         // Upload to Codecov
                         withCredentials([
-                            fuseString(variable: 'CODECOV_TOKEN', encryptedSecret: 'sf-crypt://universes/prod/services/jenkins/locations/sfc-or-dev-ci-k8s-ci1/secrets/jenkins/ctlr/dev/snowdrivers/ud_repo_codecov/d17dfc2e-875b-4320-8a18-b4efd0631a70:AQAAAVcKOnNmYy1vci1kZXYtY2ktazhzLWNpMS9jMTJhYTQxNi1jOWU5LTRlMmUtYmQzZi01Y2M0NTdlMjBmYWIS1AFTfr2leAaIicr-MxHW71TJ0awbKWoWmoljufftopa4ooW1HNYQruhogw-DnUn6cNtUvkOPbq9DQtD2cKX_8vPizn58xCQQeBQuvPI2cNgLHvaMTcPWP-FKaLUj7nnDyhpGJyQNsFUMPPlEjh0wuJsg5JdDiks-x2_kwbG66iYT6s9qhZmmwhWtIINIhB1lw4ObK5uK7G7T72fd30sjcHrAJEC8gso2_m1sq94tQPVm4-TGxigEKRFJCwuE9T6kX1GORDxHO9hyLHWI102FR-arqLuaJBg0IkAdo4DVN7eooSCn55O4C8W1SXNJOaANNpJCTYXvJ0LV4fP3mpFOTzZ2HBktEvfaERZoYtsWIOy09mHnziJgdVJqo-5QJya-m5YWyzCB0VpPhwDTXvCkZRME6tGQW6F-Cg9ZK-QBYy85I5YbCop0VcH0P_6iFywtaJ3M6j-C8oHCmRSIz84=')
-                        ]) {
+                            fuseString(variable: 'CODECOV_TOKEN', encryptedSecret: 'sf-crypt://universes/prod/services/drivers-namespace/locations/sfc-or-dev-ci-k8s-ci1/secrets/ud_repo_codecov/7a389cbc-4799-4288-b8bb-dbb9da80a298:AQAAAUQKOnNmYy1vci1kZXYtY2ktazhzLWNpMS9jMTJhYTQxNi1jOWU5LTRlMmUtYmQzZi01Y2M0NTdlMjBmYWISwQG8u76iQPMELRTNTTEdnfxKA4G30eWmnDrnsjHvbjX-rZ4mX4yHEy013w5i9M1B5L0GaQnrbfB1qZAQkC-AUyoZjUXNyFNbkHmnGC39UdWlN7vGIuIei7agB100iVNJ7Btxoa7Te3OWilytx9ZF-IMgeVP7Px2ET6u2hSfvv_8QA-GDGKPQbgnflauxpU4dkXu8nBYVJ2q7B0vX6FwRZkzswAsV6403tgiJdRcLnbOSLLnO0_N2OEnd8p9SZHcCbbnxGDQiQI2fsYpgVxQW9tk13vHUI1v3SI_j4rHStiSBeqofDwg-98Y0ULnamF-7RvcutV6dHrcmA4G_xLW1aQpZtU9YL2tHi1vZa8iCGx_zgW07ywc6QoQz2uEoqxRTHR3gVrfXLpsoNW5Hh-PmmO542OuGaQ3h3FQlTw8-va6Kbjw6svMOD10XQQ==' ]) {
                             sh '''
                                 set +x
                                 echo "=== Uploading to Codecov ==="
@@ -96,8 +94,7 @@ pipeline {
                             sh './scripts/decode_secrets.sh'
                         }
                         withCredentials([
-                            fuseString(variable: 'CODECOV_TOKEN', encryptedSecret: 'sf-crypt://universes/prod/services/jenkins/locations/sfc-or-dev-ci-k8s-ci1/secrets/jenkins/ctlr/dev/snowdrivers/ud_repo_codecov/d17dfc2e-875b-4320-8a18-b4efd0631a70:AQAAAVcKOnNmYy1vci1kZXYtY2ktazhzLWNpMS9jMTJhYTQxNi1jOWU5LTRlMmUtYmQzZi01Y2M0NTdlMjBmYWIS1AFTfr2leAaIicr-MxHW71TJ0awbKWoWmoljufftopa4ooW1HNYQruhogw-DnUn6cNtUvkOPbq9DQtD2cKX_8vPizn58xCQQeBQuvPI2cNgLHvaMTcPWP-FKaLUj7nnDyhpGJyQNsFUMPPlEjh0wuJsg5JdDiks-x2_kwbG66iYT6s9qhZmmwhWtIINIhB1lw4ObK5uK7G7T72fd30sjcHrAJEC8gso2_m1sq94tQPVm4-TGxigEKRFJCwuE9T6kX1GORDxHO9hyLHWI102FR-arqLuaJBg0IkAdo4DVN7eooSCn55O4C8W1SXNJOaANNpJCTYXvJ0LV4fP3mpFOTzZ2HBktEvfaERZoYtsWIOy09mHnziJgdVJqo-5QJya-m5YWyzCB0VpPhwDTXvCkZRME6tGQW6F-Cg9ZK-QBYy85I5YbCop0VcH0P_6iFywtaJ3M6j-C8oHCmRSIz84=')
-                        ]) {
+                            fuseString(variable: 'CODECOV_TOKEN', encryptedSecret: 'sf-crypt://universes/prod/services/drivers-namespace/locations/sfc-or-dev-ci-k8s-ci1/secrets/ud_repo_codecov/7a389cbc-4799-4288-b8bb-dbb9da80a298:AQAAAUQKOnNmYy1vci1kZXYtY2ktazhzLWNpMS9jMTJhYTQxNi1jOWU5LTRlMmUtYmQzZi01Y2M0NTdlMjBmYWISwQG8u76iQPMELRTNTTEdnfxKA4G30eWmnDrnsjHvbjX-rZ4mX4yHEy013w5i9M1B5L0GaQnrbfB1qZAQkC-AUyoZjUXNyFNbkHmnGC39UdWlN7vGIuIei7agB100iVNJ7Btxoa7Te3OWilytx9ZF-IMgeVP7Px2ET6u2hSfvv_8QA-GDGKPQbgnflauxpU4dkXu8nBYVJ2q7B0vX6FwRZkzswAsV6403tgiJdRcLnbOSLLnO0_N2OEnd8p9SZHcCbbnxGDQiQI2fsYpgVxQW9tk13vHUI1v3SI_j4rHStiSBeqofDwg-98Y0ULnamF-7RvcutV6dHrcmA4G_xLW1aQpZtU9YL2tHi1vZa8iCGx_zgW07ywc6QoQz2uEoqxRTHR3gVrfXLpsoNW5Hh-PmmO542OuGaQ3h3FQlTw8-va6Kbjw6svMOD10XQQ==' ]) {
                             sh '''
                                 set +x
                                 set -e
@@ -137,8 +134,7 @@ pipeline {
                         
                         // Upload to Codecov
                         withCredentials([
-                            fuseString(variable: 'CODECOV_TOKEN', encryptedSecret: 'sf-crypt://universes/prod/services/jenkins/locations/sfc-or-dev-ci-k8s-ci1/secrets/jenkins/ctlr/dev/snowdrivers/ud_repo_codecov/d17dfc2e-875b-4320-8a18-b4efd0631a70:AQAAAVcKOnNmYy1vci1kZXYtY2ktazhzLWNpMS9jMTJhYTQxNi1jOWU5LTRlMmUtYmQzZi01Y2M0NTdlMjBmYWIS1AFTfr2leAaIicr-MxHW71TJ0awbKWoWmoljufftopa4ooW1HNYQruhogw-DnUn6cNtUvkOPbq9DQtD2cKX_8vPizn58xCQQeBQuvPI2cNgLHvaMTcPWP-FKaLUj7nnDyhpGJyQNsFUMPPlEjh0wuJsg5JdDiks-x2_kwbG66iYT6s9qhZmmwhWtIINIhB1lw4ObK5uK7G7T72fd30sjcHrAJEC8gso2_m1sq94tQPVm4-TGxigEKRFJCwuE9T6kX1GORDxHO9hyLHWI102FR-arqLuaJBg0IkAdo4DVN7eooSCn55O4C8W1SXNJOaANNpJCTYXvJ0LV4fP3mpFOTzZ2HBktEvfaERZoYtsWIOy09mHnziJgdVJqo-5QJya-m5YWyzCB0VpPhwDTXvCkZRME6tGQW6F-Cg9ZK-QBYy85I5YbCop0VcH0P_6iFywtaJ3M6j-C8oHCmRSIz84=')
-                        ]) {
+                            fuseString(variable: 'CODECOV_TOKEN', encryptedSecret: 'sf-crypt://universes/prod/services/drivers-namespace/locations/sfc-or-dev-ci-k8s-ci1/secrets/ud_repo_codecov/7a389cbc-4799-4288-b8bb-dbb9da80a298:AQAAAUQKOnNmYy1vci1kZXYtY2ktazhzLWNpMS9jMTJhYTQxNi1jOWU5LTRlMmUtYmQzZi01Y2M0NTdlMjBmYWISwQG8u76iQPMELRTNTTEdnfxKA4G30eWmnDrnsjHvbjX-rZ4mX4yHEy013w5i9M1B5L0GaQnrbfB1qZAQkC-AUyoZjUXNyFNbkHmnGC39UdWlN7vGIuIei7agB100iVNJ7Btxoa7Te3OWilytx9ZF-IMgeVP7Px2ET6u2hSfvv_8QA-GDGKPQbgnflauxpU4dkXu8nBYVJ2q7B0vX6FwRZkzswAsV6403tgiJdRcLnbOSLLnO0_N2OEnd8p9SZHcCbbnxGDQiQI2fsYpgVxQW9tk13vHUI1v3SI_j4rHStiSBeqofDwg-98Y0ULnamF-7RvcutV6dHrcmA4G_xLW1aQpZtU9YL2tHi1vZa8iCGx_zgW07ywc6QoQz2uEoqxRTHR3gVrfXLpsoNW5Hh-PmmO542OuGaQ3h3FQlTw8-va6Kbjw6svMOD10XQQ==' ]) {
                             sh '''
                                 set +x
                                 echo "=== Uploading to Codecov ==="
@@ -172,8 +168,7 @@ pipeline {
                             sh './scripts/decode_secrets.sh'
                         }
                         withCredentials([
-                            fuseString(variable: 'CODECOV_TOKEN', encryptedSecret: 'sf-crypt://universes/prod/services/jenkins/locations/sfc-or-dev-ci-k8s-ci1/secrets/jenkins/ctlr/dev/snowdrivers/ud_repo_codecov/d17dfc2e-875b-4320-8a18-b4efd0631a70:AQAAAVcKOnNmYy1vci1kZXYtY2ktazhzLWNpMS9jMTJhYTQxNi1jOWU5LTRlMmUtYmQzZi01Y2M0NTdlMjBmYWIS1AFTfr2leAaIicr-MxHW71TJ0awbKWoWmoljufftopa4ooW1HNYQruhogw-DnUn6cNtUvkOPbq9DQtD2cKX_8vPizn58xCQQeBQuvPI2cNgLHvaMTcPWP-FKaLUj7nnDyhpGJyQNsFUMPPlEjh0wuJsg5JdDiks-x2_kwbG66iYT6s9qhZmmwhWtIINIhB1lw4ObK5uK7G7T72fd30sjcHrAJEC8gso2_m1sq94tQPVm4-TGxigEKRFJCwuE9T6kX1GORDxHO9hyLHWI102FR-arqLuaJBg0IkAdo4DVN7eooSCn55O4C8W1SXNJOaANNpJCTYXvJ0LV4fP3mpFOTzZ2HBktEvfaERZoYtsWIOy09mHnziJgdVJqo-5QJya-m5YWyzCB0VpPhwDTXvCkZRME6tGQW6F-Cg9ZK-QBYy85I5YbCop0VcH0P_6iFywtaJ3M6j-C8oHCmRSIz84=')
-                        ]) {
+                            fuseString(variable: 'CODECOV_TOKEN', encryptedSecret: 'sf-crypt://universes/prod/services/drivers-namespace/locations/sfc-or-dev-ci-k8s-ci1/secrets/ud_repo_codecov/7a389cbc-4799-4288-b8bb-dbb9da80a298:AQAAAUQKOnNmYy1vci1kZXYtY2ktazhzLWNpMS9jMTJhYTQxNi1jOWU5LTRlMmUtYmQzZi01Y2M0NTdlMjBmYWISwQG8u76iQPMELRTNTTEdnfxKA4G30eWmnDrnsjHvbjX-rZ4mX4yHEy013w5i9M1B5L0GaQnrbfB1qZAQkC-AUyoZjUXNyFNbkHmnGC39UdWlN7vGIuIei7agB100iVNJ7Btxoa7Te3OWilytx9ZF-IMgeVP7Px2ET6u2hSfvv_8QA-GDGKPQbgnflauxpU4dkXu8nBYVJ2q7B0vX6FwRZkzswAsV6403tgiJdRcLnbOSLLnO0_N2OEnd8p9SZHcCbbnxGDQiQI2fsYpgVxQW9tk13vHUI1v3SI_j4rHStiSBeqofDwg-98Y0ULnamF-7RvcutV6dHrcmA4G_xLW1aQpZtU9YL2tHi1vZa8iCGx_zgW07ywc6QoQz2uEoqxRTHR3gVrfXLpsoNW5Hh-PmmO542OuGaQ3h3FQlTw8-va6Kbjw6svMOD10XQQ==' ]) {
                             sh '''
                                 set +x
                                 set -e
@@ -256,8 +251,7 @@ pipeline {
                         
                         // Upload to Codecov
                         withCredentials([
-                            fuseString(variable: 'CODECOV_TOKEN', encryptedSecret: 'sf-crypt://universes/prod/services/jenkins/locations/sfc-or-dev-ci-k8s-ci1/secrets/jenkins/ctlr/dev/snowdrivers/ud_repo_codecov/d17dfc2e-875b-4320-8a18-b4efd0631a70:AQAAAVcKOnNmYy1vci1kZXYtY2ktazhzLWNpMS9jMTJhYTQxNi1jOWU5LTRlMmUtYmQzZi01Y2M0NTdlMjBmYWIS1AFTfr2leAaIicr-MxHW71TJ0awbKWoWmoljufftopa4ooW1HNYQruhogw-DnUn6cNtUvkOPbq9DQtD2cKX_8vPizn58xCQQeBQuvPI2cNgLHvaMTcPWP-FKaLUj7nnDyhpGJyQNsFUMPPlEjh0wuJsg5JdDiks-x2_kwbG66iYT6s9qhZmmwhWtIINIhB1lw4ObK5uK7G7T72fd30sjcHrAJEC8gso2_m1sq94tQPVm4-TGxigEKRFJCwuE9T6kX1GORDxHO9hyLHWI102FR-arqLuaJBg0IkAdo4DVN7eooSCn55O4C8W1SXNJOaANNpJCTYXvJ0LV4fP3mpFOTzZ2HBktEvfaERZoYtsWIOy09mHnziJgdVJqo-5QJya-m5YWyzCB0VpPhwDTXvCkZRME6tGQW6F-Cg9ZK-QBYy85I5YbCop0VcH0P_6iFywtaJ3M6j-C8oHCmRSIz84=')
-                        ]) {
+                            fuseString(variable: 'CODECOV_TOKEN', encryptedSecret: 'sf-crypt://universes/prod/services/drivers-namespace/locations/sfc-or-dev-ci-k8s-ci1/secrets/ud_repo_codecov/7a389cbc-4799-4288-b8bb-dbb9da80a298:AQAAAUQKOnNmYy1vci1kZXYtY2ktazhzLWNpMS9jMTJhYTQxNi1jOWU5LTRlMmUtYmQzZi01Y2M0NTdlMjBmYWISwQG8u76iQPMELRTNTTEdnfxKA4G30eWmnDrnsjHvbjX-rZ4mX4yHEy013w5i9M1B5L0GaQnrbfB1qZAQkC-AUyoZjUXNyFNbkHmnGC39UdWlN7vGIuIei7agB100iVNJ7Btxoa7Te3OWilytx9ZF-IMgeVP7Px2ET6u2hSfvv_8QA-GDGKPQbgnflauxpU4dkXu8nBYVJ2q7B0vX6FwRZkzswAsV6403tgiJdRcLnbOSLLnO0_N2OEnd8p9SZHcCbbnxGDQiQI2fsYpgVxQW9tk13vHUI1v3SI_j4rHStiSBeqofDwg-98Y0ULnamF-7RvcutV6dHrcmA4G_xLW1aQpZtU9YL2tHi1vZa8iCGx_zgW07ywc6QoQz2uEoqxRTHR3gVrfXLpsoNW5Hh-PmmO542OuGaQ3h3FQlTw8-va6Kbjw6svMOD10XQQ==' ]) {
                             sh '''
                                 set +x
                                 echo "=== Uploading to Codecov ==="
@@ -291,8 +285,8 @@ pipeline {
                             sh './scripts/decode_secrets.sh'
                         }
                         withCredentials([
-                            fuseString(variable: 'CODECOV_TOKEN', encryptedSecret: 'sf-crypt://universes/prod/services/jenkins/locations/sfc-or-dev-ci-k8s-ci1/secrets/jenkins/ctlr/dev/snowdrivers/ud_repo_codecov/d17dfc2e-875b-4320-8a18-b4efd0631a70:AQAAAVcKOnNmYy1vci1kZXYtY2ktazhzLWNpMS9jMTJhYTQxNi1jOWU5LTRlMmUtYmQzZi01Y2M0NTdlMjBmYWIS1AFTfr2leAaIicr-MxHW71TJ0awbKWoWmoljufftopa4ooW1HNYQruhogw-DnUn6cNtUvkOPbq9DQtD2cKX_8vPizn58xCQQeBQuvPI2cNgLHvaMTcPWP-FKaLUj7nnDyhpGJyQNsFUMPPlEjh0wuJsg5JdDiks-x2_kwbG66iYT6s9qhZmmwhWtIINIhB1lw4ObK5uK7G7T72fd30sjcHrAJEC8gso2_m1sq94tQPVm4-TGxigEKRFJCwuE9T6kX1GORDxHO9hyLHWI102FR-arqLuaJBg0IkAdo4DVN7eooSCn55O4C8W1SXNJOaANNpJCTYXvJ0LV4fP3mpFOTzZ2HBktEvfaERZoYtsWIOy09mHnziJgdVJqo-5QJya-m5YWyzCB0VpPhwDTXvCkZRME6tGQW6F-Cg9ZK-QBYy85I5YbCop0VcH0P_6iFywtaJ3M6j-C8oHCmRSIz84=')
-                        ]) {
+                            fuseString(variable: 'CODECOV_TOKEN', encryptedSecret: 'sf-crypt://universes/prod/services/drivers-namespace/locations/sfc-or-dev-ci-k8s-ci1/secrets/ud_repo_codecov/7a389cbc-4799-4288-b8bb-dbb9da80a298:AQAAAUQKOnNmYy1vci1kZXYtY2ktazhzLWNpMS9jMTJhYTQxNi1jOWU5LTRlMmUtYmQzZi01Y2M0NTdlMjBmYWISwQG8u76iQPMELRTNTTEdnfxKA4G30eWmnDrnsjHvbjX-rZ4mX4yHEy013w5i9M1B5L0GaQnrbfB1qZAQkC-AUyoZjUXNyFNbkHmnGC39UdWlN7vGIuIei7agB100iVNJ7Btxoa7Te3OWilytx9ZF-IMgeVP7Px2ET6u2hSfvv_8QA-GDGKPQbgnflauxpU4dkXu8nBYVJ2q7B0vX6FwRZkzswAsV6403tgiJdRcLnbOSLLnO0_N2OEnd8p9SZHcCbbnxGDQiQI2fsYpgVxQW9tk13vHUI1v3SI_j4rHStiSBeqofDwg-98Y0ULnamF-7RvcutV6dHrcmA4G_xLW1aQpZtU9YL2tHi1vZa8iCGx_zgW07ywc6QoQz2uEoqxRTHR3gVrfXLpsoNW5Hh-PmmO542OuGaQ3h3FQlTw8-va6Kbjw6svMOD10XQQ==' ]) {
+                        {
                             sh '''
                                 set +x
                                 set -e
@@ -355,8 +349,8 @@ pipeline {
                         
                         // Upload to Codecov
                         withCredentials([
-                            fuseString(variable: 'CODECOV_TOKEN', encryptedSecret: 'sf-crypt://universes/prod/services/jenkins/locations/sfc-or-dev-ci-k8s-ci1/secrets/jenkins/ctlr/dev/snowdrivers/ud_repo_codecov/d17dfc2e-875b-4320-8a18-b4efd0631a70:AQAAAVcKOnNmYy1vci1kZXYtY2ktazhzLWNpMS9jMTJhYTQxNi1jOWU5LTRlMmUtYmQzZi01Y2M0NTdlMjBmYWIS1AFTfr2leAaIicr-MxHW71TJ0awbKWoWmoljufftopa4ooW1HNYQruhogw-DnUn6cNtUvkOPbq9DQtD2cKX_8vPizn58xCQQeBQuvPI2cNgLHvaMTcPWP-FKaLUj7nnDyhpGJyQNsFUMPPlEjh0wuJsg5JdDiks-x2_kwbG66iYT6s9qhZmmwhWtIINIhB1lw4ObK5uK7G7T72fd30sjcHrAJEC8gso2_m1sq94tQPVm4-TGxigEKRFJCwuE9T6kX1GORDxHO9hyLHWI102FR-arqLuaJBg0IkAdo4DVN7eooSCn55O4C8W1SXNJOaANNpJCTYXvJ0LV4fP3mpFOTzZ2HBktEvfaERZoYtsWIOy09mHnziJgdVJqo-5QJya-m5YWyzCB0VpPhwDTXvCkZRME6tGQW6F-Cg9ZK-QBYy85I5YbCop0VcH0P_6iFywtaJ3M6j-C8oHCmRSIz84=')
-                        ]) {
+                            fuseString(variable: 'CODECOV_TOKEN', encryptedSecret: 'sf-crypt://universes/prod/services/drivers-namespace/locations/sfc-or-dev-ci-k8s-ci1/secrets/ud_repo_codecov/7a389cbc-4799-4288-b8bb-dbb9da80a298:AQAAAUQKOnNmYy1vci1kZXYtY2ktazhzLWNpMS9jMTJhYTQxNi1jOWU5LTRlMmUtYmQzZi01Y2M0NTdlMjBmYWISwQG8u76iQPMELRTNTTEdnfxKA4G30eWmnDrnsjHvbjX-rZ4mX4yHEy013w5i9M1B5L0GaQnrbfB1qZAQkC-AUyoZjUXNyFNbkHmnGC39UdWlN7vGIuIei7agB100iVNJ7Btxoa7Te3OWilytx9ZF-IMgeVP7Px2ET6u2hSfvv_8QA-GDGKPQbgnflauxpU4dkXu8nBYVJ2q7B0vX6FwRZkzswAsV6403tgiJdRcLnbOSLLnO0_N2OEnd8p9SZHcCbbnxGDQiQI2fsYpgVxQW9tk13vHUI1v3SI_j4rHStiSBeqofDwg-98Y0ULnamF-7RvcutV6dHrcmA4G_xLW1aQpZtU9YL2tHi1vZa8iCGx_zgW07ywc6QoQz2uEoqxRTHR3gVrfXLpsoNW5Hh-PmmO542OuGaQ3h3FQlTw8-va6Kbjw6svMOD10XQQ==' ]) {
+                        {
                             sh '''
                                 set +x
                                 echo "=== Uploading to Codecov ==="
