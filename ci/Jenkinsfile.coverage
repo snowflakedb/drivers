@@ -36,12 +36,14 @@ pipeline {
                             sh './scripts/decode_secrets.sh'
                         }
                         
-                        // Test + Coverage (tarpaulin does both)
+                        // Test + Coverage (tarpaulin prints coverage summary automatically)
                         sh '''
                             echo "=== Test + Coverage ==="
                             export PARAMETER_PATH=$(pwd)/parameters.json
                             cargo tarpaulin --packages sf_core --all-features --skip-clean --no-fail-fast --out lcov --output-dir .
                             mv lcov.info lcov-rust-core.info
+                            echo ""
+                            echo "=== Coverage Report Saved: lcov-rust-core.info ==="
                         '''
                         
                         archiveArtifacts artifacts: 'lcov-rust-core.info', allowEmptyArchive: true
@@ -73,7 +75,7 @@ pipeline {
                             '''
                         }
                         
-                        // Test + Coverage
+                        // Test + Coverage (added --cov-report=term for console output)
                         dir('python') {
                             sh '''
                                 echo "=== Test + Coverage ==="
@@ -81,7 +83,10 @@ pipeline {
                                 mkdir -p reports
                                 uv run tox -e py39-all -- \
                                     --cov=src/snowflake \
+                                    --cov-report=term \
                                     --cov-report=xml:reports/coverage-python.xml
+                                echo ""
+                                echo "=== Coverage Report Saved: python/reports/coverage-python.xml ==="
                             '''
                         }
                         
@@ -126,21 +131,49 @@ pipeline {
                             export DRIVER_PATH=$(pwd)/target/debug/libsfodbc.so
                             export PARAMETER_PATH=$(pwd)/parameters.json
                             export LLVM_PROFILE_FILE="odbc-%p-%m.profraw"
+                            
+                            # Enable ODBC Tracing
+                            echo "[ODBC]" > odbcinst.ini
+                            echo "Trace = yes" >> odbcinst.ini
+                            echo "TraceFile = $(pwd)/sql.log" >> odbcinst.ini
+                            export ODBCSYSINI=$(pwd)
+                            
                             cd odbc_tests
+                            set +e # Allow tests to fail so we can print the log
                             ctest -j 1 -C Debug --test-dir cmake-build --output-on-failure -E "crl"
+                            TEST_EXIT_CODE=$?
+                            set -e
+                            
+                            if [ $TEST_EXIT_CODE -ne 0 ]; then
+                                echo "=== ODBC Trace (Last 100 lines) ==="
+                                tail -n 100 ../sql.log || true
+                                echo "=== End Trace ==="
+                                exit $TEST_EXIT_CODE
+                            fi
                         '''
                         
-                        // Coverage
+                        // Coverage (added report summary)
                         sh '''
                             echo "=== Coverage ==="
                             LLVM_PROFDATA=$(find /root/.rustup -name "llvm-profdata" -type f 2>/dev/null | head -1)
                             LLVM_COV=$(find /root/.rustup -name "llvm-cov" -type f 2>/dev/null | head -1)
                             find . -name "odbc-*.profraw" -type f | xargs $LLVM_PROFDATA merge -sparse -o coverage.profdata
+                            
+                            echo ""
+                            echo "=== Coverage Summary ==="
+                            $LLVM_COV report target/debug/libsfodbc.so \
+                                -instr-profile=coverage.profdata \
+                                -sources=$(pwd)/odbc \
+                                -sources=$(pwd)/sf_core
+                            
+                            echo ""
+                            echo "=== Generating LCOV Report ==="
                             $LLVM_COV export target/debug/libsfodbc.so \
                                 -instr-profile=coverage.profdata \
                                 -format=lcov \
                                 -sources=$(pwd)/odbc \
                                 -sources=$(pwd)/sf_core > lcov-odbc.info
+                            echo "=== Coverage Report Saved: lcov-odbc.info ==="
                         '''
                         
                         archiveArtifacts artifacts: 'lcov-odbc.info', allowEmptyArchive: true
@@ -170,7 +203,7 @@ pipeline {
                             cargo build --package jdbc_bridge
                         '''
                         
-                        // Test + Coverage (JaCoCo does both)
+                        // Test + Coverage
                         sh '''
                             echo "=== Test + Coverage ==="
                             export PARAMETER_PATH=$(pwd)/parameters.json
@@ -178,6 +211,29 @@ pipeline {
                             chmod +x jdbc/gradlew
                             cd jdbc
                             ./gradlew test jacocoTestReport --stacktrace
+                        '''
+                        
+                        // Print coverage summary from JaCoCo XML
+                        sh '''
+                            echo ""
+                            echo "=== Coverage Summary ==="
+                            REPORT="jdbc/build/reports/jacoco/test/jacocoTestReport.xml"
+                            if [ -f "$REPORT" ]; then
+                                # Extract line coverage from JaCoCo XML
+                                MISSED=$(grep -o 'type="LINE" missed="[0-9]*"' "$REPORT" | head -1 | grep -o '[0-9]*')
+                                COVERED=$(grep -o 'type="LINE" covered="[0-9]*"' "$REPORT" | head -1 | grep -o '[0-9]*')
+                                if [ -n "$MISSED" ] && [ -n "$COVERED" ]; then
+                                    TOTAL=$((MISSED + COVERED))
+                                    if [ "$TOTAL" -gt 0 ]; then
+                                        PERCENT=$((COVERED * 100 / TOTAL))
+                                        echo "Line Coverage: ${PERCENT}% (${COVERED}/${TOTAL} lines)"
+                                    fi
+                                fi
+                                echo "Full report: jdbc/build/reports/jacoco/test/html/index.html"
+                            else
+                                echo "Coverage report not found"
+                            fi
+                            echo "=== Coverage Report Saved: jdbc/build/reports/jacoco/test/jacocoTestReport.xml ==="
                         '''
                         
                         archiveArtifacts artifacts: 'jdbc/build/reports/jacoco/test/jacocoTestReport.xml', allowEmptyArchive: true
