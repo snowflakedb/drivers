@@ -1,5 +1,6 @@
 /*
- * Jenkinsfile for code coverage generation and upload to Codecov
+ * Jenkinsfile for code coverage generation
+ * TODO: Enable Codecov upload once credential is configured
  */
 
 pipeline {
@@ -28,54 +29,22 @@ pipeline {
                             label 'build-node-extra-large'
                         }
                     }
-                    stages {
-                        stage('Setup') {
-                            steps {
-                                withCredentials([string(credentialsId: 'sfctest0-parameters-secret', variable: 'PARAMETERS_SECRET')]) {
-                                    sh './scripts/decode_secrets.sh'
-                                }
-                                // Verify Codecov token is accessible
-                                withCredentials([string(credentialsId: 'jenkins/ctlr/dev/snowdrivers/ud_repo_codecov', variable: 'CODECOV_TOKEN')]) {
-                                    sh '''
-                                        set -e
-                                        if [ -z "${CODECOV_TOKEN}" ]; then
-                                            echo "ERROR: CODECOV_TOKEN is empty!"
-                                            exit 1
-                                        fi
-                                        echo "CODECOV_TOKEN is set (length: $(echo -n "${CODECOV_TOKEN}" | wc -c) chars)"
-                                    '''
-                                }
-                            }
+                    steps {
+                        // Setup
+                        sh 'echo "=== Setup ==="'
+                        withCredentials([string(credentialsId: 'sfctest0-parameters-secret', variable: 'PARAMETERS_SECRET')]) {
+                            sh './scripts/decode_secrets.sh'
                         }
-                        stage('Run Tests') {
-                            steps {
-                                sh '''
-                                    export PARAMETER_PATH=$(pwd)/parameters.json
-                                    cargo tarpaulin --packages sf_core --all-features --skip-clean --no-fail-fast --out lcov --output-dir .
-                                    mv lcov.info lcov-rust-core.info
-                                '''
-                            }
-                        }
-                        stage('Upload to Codecov') {
-                            steps {
-                                withCredentials([string(credentialsId: 'jenkins/ctlr/dev/snowdrivers/ud_repo_codecov', variable: 'CODECOV_TOKEN')]) {
-                                    sh '''
-                                        codecovcli --verbose upload-process \
-                                            --disable-search \
-                                            --fail-on-error \
-                                            -t "${CODECOV_TOKEN}" \
-                                            -n "rust-core-jenkins-${BUILD_NUMBER}" \
-                                            -F rust-core \
-                                            -f lcov-rust-core.info
-                                    '''
-                                }
-                            }
-                        }
-                        stage('Archive') {
-                            steps {
-                                archiveArtifacts artifacts: 'lcov-rust-core.info', allowEmptyArchive: true
-                            }
-                        }
+                        
+                        // Test + Coverage (tarpaulin does both)
+                        sh '''
+                            echo "=== Test + Coverage ==="
+                            export PARAMETER_PATH=$(pwd)/parameters.json
+                            cargo tarpaulin --packages sf_core --all-features --skip-clean --no-fail-fast --out lcov --output-dir .
+                            mv lcov.info lcov-rust-core.info
+                        '''
+                        
+                        archiveArtifacts artifacts: 'lcov-rust-core.info', allowEmptyArchive: true
                     }
                 }
                 
@@ -88,67 +57,35 @@ pipeline {
                             label 'build-node-extra-large'
                         }
                     }
-                    stages {
-                        stage('Setup') {
-                            steps {
-                                withCredentials([string(credentialsId: 'sfctest0-parameters-secret', variable: 'PARAMETERS_SECRET')]) {
-                                    sh './scripts/decode_secrets.sh'
-                                }
-                                withCredentials([string(credentialsId: 'jenkins/ctlr/dev/snowdrivers/ud_repo_codecov', variable: 'CODECOV_TOKEN')]) {
-                                    sh '''
-                                        set -e
-                                        if [ -z "${CODECOV_TOKEN}" ]; then
-                                            echo "ERROR: CODECOV_TOKEN is empty!"
-                                            exit 1
-                                        fi
-                                        echo "CODECOV_TOKEN is set (length: $(echo -n "${CODECOV_TOKEN}" | wc -c) chars)"
-                                    '''
-                                }
-                            }
+                    steps {
+                        // Setup
+                        sh 'echo "=== Setup ==="'
+                        withCredentials([string(credentialsId: 'sfctest0-parameters-secret', variable: 'PARAMETERS_SECRET')]) {
+                            sh './scripts/decode_secrets.sh'
                         }
-                        stage('Build') {
-                            steps {
-                                dir('python') {
-                                    sh '''
-                                        RUSTFLAGS="" make build-core
-                                        make setup
-                                    '''
-                                }
-                            }
+                        
+                        // Build
+                        dir('python') {
+                            sh '''
+                                echo "=== Build ==="
+                                RUSTFLAGS="" make build-core
+                                make setup
+                            '''
                         }
-                        stage('Run Tests') {
-                            steps {
-                                dir('python') {
-                                    sh '''
-                                        export PARAMETER_PATH=$(pwd)/../parameters.json
-                                        mkdir -p reports
-                                        uv run tox -e py39-all -- \
-                                            --cov=src/snowflake \
-                                            --cov-report=xml:reports/coverage-python.xml
-                                    '''
-                                }
-                            }
+                        
+                        // Test + Coverage
+                        dir('python') {
+                            sh '''
+                                echo "=== Test + Coverage ==="
+                                export PARAMETER_PATH=$(pwd)/../parameters.json
+                                mkdir -p reports
+                                uv run tox -e py39-all -- \
+                                    --cov=src/snowflake \
+                                    --cov-report=xml:reports/coverage-python.xml
+                            '''
                         }
-                        stage('Upload to Codecov') {
-                            steps {
-                                withCredentials([string(credentialsId: 'jenkins/ctlr/dev/snowdrivers/ud_repo_codecov', variable: 'CODECOV_TOKEN')]) {
-                                    sh '''
-                                        codecovcli --verbose upload-process \
-                                            --disable-search \
-                                            --fail-on-error \
-                                            -t "${CODECOV_TOKEN}" \
-                                            -n "python-jenkins-${BUILD_NUMBER}" \
-                                            -F python \
-                                            -f python/reports/coverage-python.xml
-                                    '''
-                                }
-                            }
-                        }
-                        stage('Archive') {
-                            steps {
-                                archiveArtifacts artifacts: 'python/reports/coverage-python.xml', allowEmptyArchive: true
-                            }
-                        }
+                        
+                        archiveArtifacts artifacts: 'python/reports/coverage-python.xml', allowEmptyArchive: true
                     }
                 }
                 
@@ -161,85 +98,52 @@ pipeline {
                             label 'build-node-extra-large'
                         }
                     }
-                    stages {
-                        stage('Setup') {
-                            steps {
-                                withCredentials([string(credentialsId: 'sfctest0-parameters-secret', variable: 'PARAMETERS_SECRET')]) {
-                                    sh './scripts/decode_secrets.sh'
-                                }
-                                withCredentials([string(credentialsId: 'jenkins/ctlr/dev/snowdrivers/ud_repo_codecov', variable: 'CODECOV_TOKEN')]) {
-                                    sh '''
-                                        set -e
-                                        if [ -z "${CODECOV_TOKEN}" ]; then
-                                            echo "ERROR: CODECOV_TOKEN is empty!"
-                                            exit 1
-                                        fi
-                                        echo "CODECOV_TOKEN is set (length: $(echo -n "${CODECOV_TOKEN}" | wc -c) chars)"
-                                    '''
-                                }
-                            }
+                    steps {
+                        // Setup
+                        sh 'echo "=== Setup ==="'
+                        withCredentials([string(credentialsId: 'sfctest0-parameters-secret', variable: 'PARAMETERS_SECRET')]) {
+                            sh './scripts/decode_secrets.sh'
                         }
-                        stage('Build') {
-                            steps {
-                                sh '''
-                                    RUSTFLAGS="-C instrument-coverage" cargo build
-                                    source /opt/rh/gcc-toolset-11/enable
-                                    cd odbc_tests
-                                    mkdir -p cmake-build
-                                    cmake -B cmake-build \
-                                        -D ODBC_LIBRARY="/usr/lib64/libodbc.so" \
-                                        -D ODBC_INCLUDE_DIR="/usr/include" \
-                                        -D DRIVER_TYPE=NEW \
-                                        .
-                                    cmake --build cmake-build -- -j $(nproc)
-                                '''
-                            }
-                        }
-                        stage('Run Tests') {
-                            steps {
-                                sh '''
-                                    export DRIVER_PATH=$(pwd)/target/debug/libsfodbc.so
-                                    export PARAMETER_PATH=$(pwd)/parameters.json
-                                    export LLVM_PROFILE_FILE="odbc-%p-%m.profraw"
-                                    cd odbc_tests
-                                    ctest -j 1 -C Debug --test-dir cmake-build --output-on-failure -E "crl"
-                                '''
-                            }
-                        }
-                        stage('Generate Coverage') {
-                            steps {
-                                sh '''
-                                    LLVM_PROFDATA=$(find /root/.rustup -name "llvm-profdata" -type f 2>/dev/null | head -1)
-                                    LLVM_COV=$(find /root/.rustup -name "llvm-cov" -type f 2>/dev/null | head -1)
-                                    find . -name "odbc-*.profraw" -type f | xargs $LLVM_PROFDATA merge -sparse -o coverage.profdata
-                                    $LLVM_COV export target/debug/libsfodbc.so \
-                                        -instr-profile=coverage.profdata \
-                                        -format=lcov \
-                                        -sources=$(pwd)/odbc \
-                                        -sources=$(pwd)/sf_core > lcov-odbc.info
-                                '''
-                            }
-                        }
-                        stage('Upload to Codecov') {
-                            steps {
-                                withCredentials([string(credentialsId: 'jenkins/ctlr/dev/snowdrivers/ud_repo_codecov', variable: 'CODECOV_TOKEN')]) {
-                                    sh '''
-                                        codecovcli --verbose upload-process \
-                                            --disable-search \
-                                            --fail-on-error \
-                                            -t "${CODECOV_TOKEN}" \
-                                            -n "odbc-jenkins-${BUILD_NUMBER}" \
-                                            -F odbc \
-                                            -f lcov-odbc.info
-                                    '''
-                                }
-                            }
-                        }
-                        stage('Archive') {
-                            steps {
-                                archiveArtifacts artifacts: 'lcov-odbc.info', allowEmptyArchive: true
-                            }
-                        }
+                        
+                        // Build
+                        sh '''
+                            echo "=== Build ==="
+                            RUSTFLAGS="-C instrument-coverage" cargo build
+                            source /opt/rh/gcc-toolset-11/enable
+                            cd odbc_tests
+                            mkdir -p cmake-build
+                            cmake -B cmake-build \
+                                -D ODBC_LIBRARY="/usr/lib64/libodbc.so" \
+                                -D ODBC_INCLUDE_DIR="/usr/include" \
+                                -D DRIVER_TYPE=NEW \
+                                .
+                            cmake --build cmake-build -- -j $(nproc)
+                        '''
+                        
+                        // Test
+                        sh '''
+                            echo "=== Test ==="
+                            export DRIVER_PATH=$(pwd)/target/debug/libsfodbc.so
+                            export PARAMETER_PATH=$(pwd)/parameters.json
+                            export LLVM_PROFILE_FILE="odbc-%p-%m.profraw"
+                            cd odbc_tests
+                            ctest -j 1 -C Debug --test-dir cmake-build --output-on-failure -E "crl"
+                        '''
+                        
+                        // Coverage
+                        sh '''
+                            echo "=== Coverage ==="
+                            LLVM_PROFDATA=$(find /root/.rustup -name "llvm-profdata" -type f 2>/dev/null | head -1)
+                            LLVM_COV=$(find /root/.rustup -name "llvm-cov" -type f 2>/dev/null | head -1)
+                            find . -name "odbc-*.profraw" -type f | xargs $LLVM_PROFDATA merge -sparse -o coverage.profdata
+                            $LLVM_COV export target/debug/libsfodbc.so \
+                                -instr-profile=coverage.profdata \
+                                -format=lcov \
+                                -sources=$(pwd)/odbc \
+                                -sources=$(pwd)/sf_core > lcov-odbc.info
+                        '''
+                        
+                        archiveArtifacts artifacts: 'lcov-odbc.info', allowEmptyArchive: true
                     }
                 }
                 
@@ -252,63 +156,31 @@ pipeline {
                             label 'build-node-extra-large'
                         }
                     }
-                    stages {
-                        stage('Setup') {
-                            steps {
-                                withCredentials([string(credentialsId: 'sfctest0-parameters-secret', variable: 'PARAMETERS_SECRET')]) {
-                                    sh './scripts/decode_secrets.sh'
-                                }
-                                withCredentials([string(credentialsId: 'jenkins/ctlr/dev/snowdrivers/ud_repo_codecov', variable: 'CODECOV_TOKEN')]) {
-                                    sh '''
-                                        set -e
-                                        if [ -z "${CODECOV_TOKEN}" ]; then
-                                            echo "ERROR: CODECOV_TOKEN is empty!"
-                                            exit 1
-                                        fi
-                                        echo "CODECOV_TOKEN is set (length: $(echo -n "${CODECOV_TOKEN}" | wc -c) chars)"
-                                    '''
-                                }
-                            }
+                    steps {
+                        // Setup
+                        sh 'echo "=== Setup ==="'
+                        withCredentials([string(credentialsId: 'sfctest0-parameters-secret', variable: 'PARAMETERS_SECRET')]) {
+                            sh './scripts/decode_secrets.sh'
                         }
-                        stage('Build') {
-                            steps {
-                                sh '''
-                                    cargo build --package sf_core
-                                    cargo build --package jdbc_bridge
-                                '''
-                            }
-                        }
-                        stage('Run Tests') {
-                            steps {
-                                sh '''
-                                    export PARAMETER_PATH=$(pwd)/parameters.json
-                                    export CORE_PATH=$(pwd)/target/debug/libjdbc_bridge.so
-                                    chmod +x jdbc/gradlew
-                                    cd jdbc
-                                    ./gradlew test jacocoTestReport --stacktrace
-                                '''
-                            }
-                        }
-                        stage('Upload to Codecov') {
-                            steps {
-                                withCredentials([string(credentialsId: 'jenkins/ctlr/dev/snowdrivers/ud_repo_codecov', variable: 'CODECOV_TOKEN')]) {
-                                    sh '''
-                                        codecovcli --verbose upload-process \
-                                            --disable-search \
-                                            --fail-on-error \
-                                            -t "${CODECOV_TOKEN}" \
-                                            -n "jdbc-jenkins-${BUILD_NUMBER}" \
-                                            -F jdbc \
-                                            -f jdbc/build/reports/jacoco/test/jacocoTestReport.xml
-                                    '''
-                                }
-                            }
-                        }
-                        stage('Archive') {
-                            steps {
-                                archiveArtifacts artifacts: 'jdbc/build/reports/jacoco/test/jacocoTestReport.xml', allowEmptyArchive: true
-                            }
-                        }
+                        
+                        // Build
+                        sh '''
+                            echo "=== Build ==="
+                            cargo build --package sf_core
+                            cargo build --package jdbc_bridge
+                        '''
+                        
+                        // Test + Coverage (JaCoCo does both)
+                        sh '''
+                            echo "=== Test + Coverage ==="
+                            export PARAMETER_PATH=$(pwd)/parameters.json
+                            export CORE_PATH=$(pwd)/target/debug/libjdbc_bridge.so
+                            chmod +x jdbc/gradlew
+                            cd jdbc
+                            ./gradlew test jacocoTestReport --stacktrace
+                        '''
+                        
+                        archiveArtifacts artifacts: 'jdbc/build/reports/jacoco/test/jacocoTestReport.xml', allowEmptyArchive: true
                     }
                 }
             }
