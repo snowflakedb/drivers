@@ -6,6 +6,20 @@ use snafu::{Location, ResultExt, Snafu};
 
 use crate::config::rest_parameters::{LoginMethod, LoginParameters};
 
+/// Extracts the account locator from a full account identifier.
+///
+/// Per Snowflake documentation, the JWT `iss` field must use just the account locator
+/// without region or cloud provider information, in uppercase.
+/// See: https://docs.snowflake.com/en/developer-guide/sql-api/authenticating#using-key-pair-authentication
+///
+/// # Examples
+/// - `"sfctest0"` -> `"SFCTEST0"`
+/// - `"driverspreprod6.preprod6.us-west-2.aws"` -> `"DRIVERSPREPROD6"`
+/// - `"myaccount.us-east-1"` -> `"MYACCOUNT"`
+pub fn extract_account_locator(account: &str) -> String {
+    account.split('.').next().unwrap_or(account).to_uppercase()
+}
+
 pub enum Credentials {
     Password { username: String, password: String },
     Jwt { username: String, token: String },
@@ -66,7 +80,15 @@ fn generate_jwt_token(
         .context(SystemTimeSnafu)?
         .as_secs() as i64;
 
-    let sub = format!("{}.{}", account.to_uppercase(), username.to_uppercase());
+    // Normalize the account name to just the account locator (first segment before any dots).
+    // Per Snowflake documentation, the JWT `iss` field must use the account locator without
+    // region information, and both account and username must be uppercase.
+    // See: https://docs.snowflake.com/en/developer-guide/sql-api/authenticating#using-key-pair-authentication
+    // Format: <account_identifier>.<user>.SHA256:<public_key_fingerprint>
+    // Example: "driverspreprod6.preprod6.us-west-2.aws" -> "DRIVERSPREPROD6"
+    let account_locator = extract_account_locator(account);
+
+    let sub = format!("{}.{}", account_locator, username.to_uppercase());
     let iss = format!("{sub}.SHA256:{public_key_b64}");
     let claim: Claim = Claim {
         sub,
@@ -144,4 +166,53 @@ pub enum AuthError {
         #[snafu(implicit)]
         location: Location,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_extract_account_locator_simple() {
+        // Simple account name without region
+        assert_eq!(extract_account_locator("sfctest0"), "SFCTEST0");
+        assert_eq!(extract_account_locator("myaccount"), "MYACCOUNT");
+    }
+
+    #[test]
+    fn test_extract_account_locator_with_region() {
+        // Account name with region suffix (common format)
+        assert_eq!(
+            extract_account_locator("driverspreprod6.preprod6.us-west-2.aws"),
+            "DRIVERSPREPROD6"
+        );
+        assert_eq!(extract_account_locator("myaccount.us-east-1"), "MYACCOUNT");
+        assert_eq!(
+            extract_account_locator("testaccount.eu-central-1.azure"),
+            "TESTACCOUNT"
+        );
+    }
+
+    #[test]
+    fn test_extract_account_locator_already_uppercase() {
+        // Already uppercase input
+        assert_eq!(extract_account_locator("SFCTEST0"), "SFCTEST0");
+        assert_eq!(extract_account_locator("MYACCOUNT.US-WEST-2"), "MYACCOUNT");
+    }
+
+    #[test]
+    fn test_extract_account_locator_mixed_case() {
+        // Mixed case input
+        assert_eq!(extract_account_locator("SfcTest0"), "SFCTEST0");
+        assert_eq!(
+            extract_account_locator("MyAccount.Us-West-2.Aws"),
+            "MYACCOUNT"
+        );
+    }
+
+    #[test]
+    fn test_extract_account_locator_empty() {
+        // Edge case: empty string
+        assert_eq!(extract_account_locator(""), "");
+    }
 }
