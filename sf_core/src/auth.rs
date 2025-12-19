@@ -84,7 +84,7 @@ fn generate_jwt_token(
     // Per Snowflake documentation, the JWT `iss` field must use the account locator without
     // region information, and both account and username must be uppercase.
     // See: https://docs.snowflake.com/en/developer-guide/sql-api/authenticating#using-key-pair-authentication
-    // Format: <account_identifier>.<user>.SHA256:<public_key_fingerprint>
+    // Format: <account_locator>.<user>.SHA256:<public_key_fingerprint>
     // Example: "driverspreprod6.preprod6.us-west-2.aws" -> "DRIVERSPREPROD6"
     let account_locator = extract_account_locator(account);
 
