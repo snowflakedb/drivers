@@ -19,9 +19,8 @@ inline TimingStats calculate_stats(std::vector<double> values) {
 
   std::sort(values.begin(), values.end());
 
-  double median = (values.size() % 2 == 0)
-                      ? (values[values.size() / 2 - 1] + values[values.size() / 2]) / 2.0
-                      : values[values.size() / 2];
+  double median = (values.size() % 2 == 0) ? (values[values.size() / 2 - 1] + values[values.size() / 2]) / 2.0
+                                           : values[values.size() / 2];
 
   double min_val = values.front();
   double max_val = values.back();

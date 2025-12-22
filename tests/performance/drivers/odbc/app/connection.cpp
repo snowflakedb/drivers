@@ -30,8 +30,7 @@ SQLHDBC create_connection(SQLHENV env) {
   check_odbc_error(ret, SQL_HANDLE_ENV, env, "SQLAllocHandle DBC");
 
   std::string conn_string = get_connection_string();
-  ret = SQLDriverConnect(dbc, NULL, (SQLCHAR*)conn_string.c_str(), SQL_NTS, NULL, 0, NULL,
-                         SQL_DRIVER_NOPROMPT);
+  ret = SQLDriverConnect(dbc, NULL, (SQLCHAR*)conn_string.c_str(), SQL_NTS, NULL, 0, NULL, SQL_DRIVER_NOPROMPT);
   check_odbc_error(ret, SQL_HANDLE_DBC, dbc, "SQLDriverConnect");
 
   return dbc;
@@ -40,8 +39,7 @@ SQLHDBC create_connection(SQLHENV env) {
 std::string get_driver_version(SQLHDBC dbc) {
   char driver_version[256] = {0};
   SQLSMALLINT version_len = 0;
-  SQLRETURN ret =
-      SQLGetInfo(dbc, SQL_DRIVER_VER, driver_version, sizeof(driver_version), &version_len);
+  SQLRETURN ret = SQLGetInfo(dbc, SQL_DRIVER_VER, driver_version, sizeof(driver_version), &version_len);
 
   if (ret == SQL_SUCCESS || ret == SQL_SUCCESS_WITH_INFO) {
     return std::string(driver_version);
@@ -113,8 +111,7 @@ void execute_setup_queries(SQLHDBC dbc, const std::vector<std::string>& setup_qu
   std::cout << "✓ Setup queries completed\n";
 }
 
-void check_odbc_error(SQLRETURN ret, SQLSMALLINT handle_type, SQLHANDLE handle,
-                      const std::string& context) {
+void check_odbc_error(SQLRETURN ret, SQLSMALLINT handle_type, SQLHANDLE handle, const std::string& context) {
   if (ret != SQL_SUCCESS && ret != SQL_SUCCESS_WITH_INFO) {
     std::cerr << "ERROR: " << context << " failed with return code " << ret << "\n";
 
@@ -126,8 +123,8 @@ void check_odbc_error(SQLRETURN ret, SQLSMALLINT handle_type, SQLHANDLE handle,
 
     SQLSMALLINT rec_num = 1;
     while (true) {
-      SQLRETURN diag_ret = SQLGetDiagRec(handle_type, handle, rec_num, sql_state, &native_error,
-                                         error_msg, sizeof(error_msg), &msg_len);
+      SQLRETURN diag_ret =
+          SQLGetDiagRec(handle_type, handle, rec_num, sql_state, &native_error, error_msg, sizeof(error_msg), &msg_len);
 
       if (diag_ret == SQL_SUCCESS || diag_ret == SQL_SUCCESS_WITH_INFO) {
         std::cerr << "[Diagnostic Record " << rec_num << "]\n";

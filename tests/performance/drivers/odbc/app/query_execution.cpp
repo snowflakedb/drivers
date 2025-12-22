@@ -10,15 +10,13 @@
 
 // Forward declarations for private helpers
 void run_warmup(SQLHDBC dbc, const std::string& sql, int warmup_iterations, bool use_bulk_fetch);
-std::vector<TestResult> run_test_iterations(SQLHDBC dbc, const std::string& sql, int iterations,
-                                            bool use_bulk_fetch);
+std::vector<TestResult> run_test_iterations(SQLHDBC dbc, const std::string& sql, int iterations, bool use_bulk_fetch);
 void print_statistics(const std::vector<TestResult>& results);
 TestResult run_query(SQLHDBC dbc, const std::string& sql, int iteration, bool use_bulk_fetch);
 
-void execute_fetch_test(SQLHDBC dbc, const std::string& sql_command, int warmup_iterations,
-                        int iterations, const std::string& test_name,
-                        const std::string& driver_type_str, const std::string& driver_version_str,
-                        const std::string& server_version, time_t now) {
+void execute_fetch_test(SQLHDBC dbc, const std::string& sql_command, int warmup_iterations, int iterations,
+                        const std::string& test_name, const std::string& driver_type_str,
+                        const std::string& driver_version_str, const std::string& server_version, time_t now) {
   std::cout << "\n=== Executing SELECT Test ===\n";
   std::cout << "Query: " << sql_command << "\n";
 
@@ -46,8 +44,7 @@ void run_warmup(SQLHDBC dbc, const std::string& sql, int warmup_iterations, bool
   }
 }
 
-std::vector<TestResult> run_test_iterations(SQLHDBC dbc, const std::string& sql, int iterations,
-                                            bool use_bulk_fetch) {
+std::vector<TestResult> run_test_iterations(SQLHDBC dbc, const std::string& sql, int iterations, bool use_bulk_fetch) {
   std::vector<TestResult> results;
 
   for (int i = 1; i <= iterations; i++) {
@@ -76,8 +73,7 @@ void print_statistics(const std::vector<TestResult>& results) {
 
 // Private functions
 
-TestResult run_query(SQLHDBC dbc, const std::string& sql_command, int iteration,
-                     bool use_bulk_fetch) {
+TestResult run_query(SQLHDBC dbc, const std::string& sql_command, int iteration, bool use_bulk_fetch) {
   TestResult result;
   result.iteration = iteration;
 

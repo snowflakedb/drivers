@@ -35,8 +35,7 @@ std::string get_jwt_connection_string_without_private_key() {
 
 EnvironmentHandleWrapper setup_environment_integration() {
   EnvironmentHandleWrapper env;
-  SQLRETURN ret =
-      SQLSetEnvAttr(env.getHandle(), SQL_ATTR_ODBC_VERSION, (SQLPOINTER)SQL_OV_ODBC3, 0);
+  SQLRETURN ret = SQLSetEnvAttr(env.getHandle(), SQL_ATTR_ODBC_VERSION, (SQLPOINTER)SQL_OV_ODBC3, 0);
   CHECK_ODBC(ret, env);
   return env;
 }
@@ -47,8 +46,8 @@ ConnectionHandleWrapper get_connection_handle_integration(EnvironmentHandleWrapp
 
 SQLRETURN attempt_connection_expect_error_integration(ConnectionHandleWrapper& dbc,
                                                       const std::string& connection_string) {
-  SQLRETURN ret = SQLDriverConnect(dbc.getHandle(), NULL, (SQLCHAR*)connection_string.c_str(),
-                                   SQL_NTS, NULL, 0, NULL, SQL_DRIVER_NOPROMPT);
+  SQLRETURN ret = SQLDriverConnect(dbc.getHandle(), NULL, (SQLCHAR*)connection_string.c_str(), SQL_NTS, NULL, 0, NULL,
+                                   SQL_DRIVER_NOPROMPT);
   REQUIRE(ret == SQL_ERROR);
   return ret;
 }
@@ -68,8 +67,7 @@ void verify_connection_fails_with_missing_private_key_error(ConnectionHandleWrap
 
   NEW_DRIVER_ONLY("BD#1") {
     CHECK(records[0].nativeError == 0);
-    CHECK_THAT(records[0].messageText,
-               ContainsSubstring("Missing required parameter: private_key_file"));
+    CHECK_THAT(records[0].messageText, ContainsSubstring("Missing required parameter: private_key_file"));
   }
 }
 

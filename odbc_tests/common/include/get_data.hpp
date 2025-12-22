@@ -10,8 +10,7 @@
 #include "MetaOfSqlCTypes.hpp"
 
 template <int SQL_C_TYPE>
-inline typename MetaOfSqlCType<SQL_C_TYPE>::type get_data(const StatementHandleWrapper& stmt,
-                                                          SQLUSMALLINT col) {
+inline typename MetaOfSqlCType<SQL_C_TYPE>::type get_data(const StatementHandleWrapper& stmt, SQLUSMALLINT col) {
   typename MetaOfSqlCType<SQL_C_TYPE>::type value;
   SQLLEN indicator;
   SQLRETURN ret = SQLGetData(stmt.getHandle(), col, SQL_C_TYPE, &value, sizeof(value), &indicator);

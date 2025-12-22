@@ -31,8 +31,7 @@ std::string get_jwt_connection_string_with_private_key() {
   auto params = get_test_parameters("testconnection");
   std::stringstream ss;
   read_default_params(ss, params);
-  add_param_optional<std::string>(ss, params, "SNOWFLAKE_TEST_PRIVATE_KEY_PASSWORD",
-                                  "PRIV_KEY_FILE_PWD");
+  add_param_optional<std::string>(ss, params, "SNOWFLAKE_TEST_PRIVATE_KEY_PASSWORD", "PRIV_KEY_FILE_PWD");
   ss << "AUTHENTICATOR=SNOWFLAKE_JWT;";
   ss << "PRIV_KEY_FILE=" << get_private_key_path_for_auth(params) << ";";
   return ss.str();
@@ -42,8 +41,7 @@ std::string get_jwt_connection_string_with_invalid_private_key() {
   auto params = get_test_parameters("testconnection");
   std::stringstream ss;
   read_default_params(ss, params);
-  add_param_optional<std::string>(ss, params, "SNOWFLAKE_TEST_PRIVATE_KEY_PASSWORD",
-                                  "PRIV_KEY_FILE_PWD");
+  add_param_optional<std::string>(ss, params, "SNOWFLAKE_TEST_PRIVATE_KEY_PASSWORD", "PRIV_KEY_FILE_PWD");
   ss << "AUTHENTICATOR=SNOWFLAKE_JWT;";
   ss << "PRIV_KEY_FILE=" << test_utils::test_data_file_path("invalid_rsa_key.p8").string() << ";";
   return ss.str();
@@ -51,19 +49,16 @@ std::string get_jwt_connection_string_with_invalid_private_key() {
 
 EnvironmentHandleWrapper setup_environment() {
   EnvironmentHandleWrapper env;
-  SQLRETURN ret =
-      SQLSetEnvAttr(env.getHandle(), SQL_ATTR_ODBC_VERSION, (SQLPOINTER)SQL_OV_ODBC3, 0);
+  SQLRETURN ret = SQLSetEnvAttr(env.getHandle(), SQL_ATTR_ODBC_VERSION, (SQLPOINTER)SQL_OV_ODBC3, 0);
   CHECK_ODBC(ret, env);
   return env;
 }
 
-ConnectionHandleWrapper get_connection_handle(EnvironmentHandleWrapper& env) {
-  return env.createConnectionHandle();
-}
+ConnectionHandleWrapper get_connection_handle(EnvironmentHandleWrapper& env) { return env.createConnectionHandle(); }
 
 void attempt_connection(ConnectionHandleWrapper& dbc, const std::string& connection_string) {
-  SQLRETURN ret = SQLDriverConnect(dbc.getHandle(), NULL, (SQLCHAR*)connection_string.c_str(),
-                                   SQL_NTS, NULL, 0, NULL, SQL_DRIVER_NOPROMPT);
+  SQLRETURN ret = SQLDriverConnect(dbc.getHandle(), NULL, (SQLCHAR*)connection_string.c_str(), SQL_NTS, NULL, 0, NULL,
+                                   SQL_DRIVER_NOPROMPT);
   CHECK_ODBC(ret, dbc);
 }
 
@@ -81,10 +76,9 @@ void verify_simple_query_execution(ConnectionHandleWrapper& dbc) {
   REQUIRE(result == 1);
 }
 
-SQLRETURN attempt_connection_expect_error(ConnectionHandleWrapper& dbc,
-                                          const std::string& connection_string) {
-  SQLRETURN ret = SQLDriverConnect(dbc.getHandle(), NULL, (SQLCHAR*)connection_string.c_str(),
-                                   SQL_NTS, NULL, 0, NULL, SQL_DRIVER_NOPROMPT);
+SQLRETURN attempt_connection_expect_error(ConnectionHandleWrapper& dbc, const std::string& connection_string) {
+  SQLRETURN ret = SQLDriverConnect(dbc.getHandle(), NULL, (SQLCHAR*)connection_string.c_str(), SQL_NTS, NULL, 0, NULL,
+                                   SQL_DRIVER_NOPROMPT);
   REQUIRE(ret == SQL_ERROR);
   return ret;
 }
@@ -111,8 +105,7 @@ TEST_CASE("should authenticate using private file with password", "[private_key_
   SQLDisconnect(dbc.getHandle());
 }
 
-TEST_CASE("should fail JWT authentication when invalid private key provided",
-          "[private_key_auth]") {
+TEST_CASE("should fail JWT authentication when invalid private key provided", "[private_key_auth]") {
   // Given Authentication is set to JWT and invalid private key file is provided
   auto env = setup_environment();
   auto dbc = get_connection_handle(env);

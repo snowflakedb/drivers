@@ -14,17 +14,15 @@ class Connection {
  public:
   static EnvironmentHandleWrapper initEnv() {
     EnvironmentHandleWrapper env;
-    SQLRETURN ret =
-        SQLSetEnvAttr(env.getHandle(), SQL_ATTR_ODBC_VERSION, (SQLPOINTER)SQL_OV_ODBC3, 0);
+    SQLRETURN ret = SQLSetEnvAttr(env.getHandle(), SQL_ATTR_ODBC_VERSION, (SQLPOINTER)SQL_OV_ODBC3, 0);
     CHECK_ODBC(ret, env);
     return env;
   }
 
-  static ConnectionHandleWrapper initDbc(EnvironmentHandleWrapper& env,
-                                         const std::string& connection_string) {
+  static ConnectionHandleWrapper initDbc(EnvironmentHandleWrapper& env, const std::string& connection_string) {
     ConnectionHandleWrapper dbc = env.createConnectionHandle();
-    SQLRETURN ret = SQLDriverConnect(dbc.getHandle(), NULL, (SQLCHAR*)connection_string.c_str(),
-                                     SQL_NTS, NULL, 0, NULL, SQL_DRIVER_NOPROMPT);
+    SQLRETURN ret = SQLDriverConnect(dbc.getHandle(), NULL, (SQLCHAR*)connection_string.c_str(), SQL_NTS, NULL, 0, NULL,
+                                     SQL_DRIVER_NOPROMPT);
     CHECK_ODBC(ret, dbc);
     return dbc;
   }

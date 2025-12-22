@@ -17,8 +17,7 @@ std::string get_architecture();
 std::string get_os_version();
 std::unique_ptr<std::ofstream> open_csv_file(const std::string& filename);
 void write_run_metadata_json(const std::string& driver_type, const std::string& driver_version,
-                             const std::string& server_version, time_t timestamp,
-                             const std::string& filename);
+                             const std::string& server_version, time_t timestamp, const std::string& filename);
 
 void write_csv_results(const std::vector<TestResult>& results, const std::string& filename) {
   auto csv = open_csv_file(filename);
@@ -26,14 +25,12 @@ void write_csv_results(const std::vector<TestResult>& results, const std::string
 
   *csv << "timestamp,query_s,fetch_s\n";
   for (const auto& r : results) {
-    *csv << r.timestamp << "," << std::fixed << std::setprecision(6) << r.query_time_s << ","
-         << r.fetch_time_s << "\n";
+    *csv << r.timestamp << "," << std::fixed << std::setprecision(6) << r.query_time_s << "," << r.fetch_time_s << "\n";
   }
   csv->close();
 }
 
-void write_csv_results_put_get(const std::vector<PutGetResult>& results,
-                               const std::string& filename) {
+void write_csv_results_put_get(const std::vector<PutGetResult>& results, const std::string& filename) {
   auto csv = open_csv_file(filename);
   if (!csv) return;
 
@@ -44,8 +41,7 @@ void write_csv_results_put_get(const std::vector<PutGetResult>& results,
   csv->close();
 }
 
-std::string generate_results_filename(const std::string& test_name, const std::string& driver_type,
-                                      time_t timestamp) {
+std::string generate_results_filename(const std::string& test_name, const std::string& driver_type, time_t timestamp) {
   std::filesystem::path results_dir = std::filesystem::path("/results");
   std::stringstream filename_ss;
   filename_ss << test_name << "_odbc_" << driver_type << "_" << timestamp << ".csv";
@@ -60,11 +56,9 @@ std::string generate_metadata_filename(const std::string& driver_type) {
 }
 
 void finalize_test_execution(const std::string& results_file, const std::string& driver_type,
-                             const std::string& driver_version, const std::string& server_version,
-                             time_t timestamp) {
+                             const std::string& driver_version, const std::string& server_version, time_t timestamp) {
   std::string metadata_filename = generate_metadata_filename(driver_type);
-  write_run_metadata_json(driver_type, driver_version, server_version, timestamp,
-                          metadata_filename);
+  write_run_metadata_json(driver_type, driver_version, server_version, timestamp, metadata_filename);
   std::cout << "\n✓ Complete → " << results_file << "\n";
 }
 
@@ -105,8 +99,7 @@ std::unique_ptr<std::ofstream> open_csv_file(const std::string& filename) {
 }
 
 void write_run_metadata_json(const std::string& driver_type, const std::string& driver_version,
-                             const std::string& server_version, time_t timestamp,
-                             const std::string& filename) {
+                             const std::string& server_version, time_t timestamp, const std::string& filename) {
   // Check if metadata file already exists
   std::ifstream check_file(filename);
   if (check_file.good()) {

@@ -109,8 +109,7 @@ TEST_CASE("Test decimal conversion", "[datatype][number]") {
   }
 
   // Test character type conversions - each column should return its string representation
-  std::vector<std::string> expected_string_values = {"123",     "123.4", "123.45",
-                                                     "123.456", "123",   "123"};
+  std::vector<std::string> expected_string_values = {"123", "123.4", "123.45", "123.456", "123", "123"};
 
   for (int i = 1; i <= 6; ++i) {
     INFO("Testing column " << i << " with SQL_C_CHAR");
@@ -123,18 +122,14 @@ void test_at_limits(Connection& conn) {
   std::stringstream queryBuilder;
   queryBuilder << "SELECT ";
   // prefix + to ensure numeric limits are treated as numbers, not characters
-  queryBuilder << +std::numeric_limits<typename MetaOfSqlCType<SQL_C_TYPE>::type>::max()
-               << " AS max, ";
-  queryBuilder << +std::numeric_limits<typename MetaOfSqlCType<SQL_C_TYPE>::type>::min()
-               << " AS min";
+  queryBuilder << +std::numeric_limits<typename MetaOfSqlCType<SQL_C_TYPE>::type>::max() << " AS max, ";
+  queryBuilder << +std::numeric_limits<typename MetaOfSqlCType<SQL_C_TYPE>::type>::min() << " AS min";
   auto query = queryBuilder.str();
   std::cout << "Executing query: " << query << std::endl;
   INFO("Executing query: " << query);
   auto stmt = conn.execute_fetch(query);
-  CHECK(get_data<SQL_C_TYPE>(stmt, 1) ==
-        std::numeric_limits<typename MetaOfSqlCType<SQL_C_TYPE>::type>::max());
-  CHECK(get_data<SQL_C_TYPE>(stmt, 2) ==
-        std::numeric_limits<typename MetaOfSqlCType<SQL_C_TYPE>::type>::min());
+  CHECK(get_data<SQL_C_TYPE>(stmt, 1) == std::numeric_limits<typename MetaOfSqlCType<SQL_C_TYPE>::type>::max());
+  CHECK(get_data<SQL_C_TYPE>(stmt, 2) == std::numeric_limits<typename MetaOfSqlCType<SQL_C_TYPE>::type>::min());
 }
 
 void test_string_at_limits(Connection& conn) {

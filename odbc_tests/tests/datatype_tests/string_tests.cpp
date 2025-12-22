@@ -26,8 +26,7 @@ TEST_CASE("Test string basic query", "[datatype][string]") {
   conn.execute("INSERT INTO test_string_basic (str_col) VALUES ('Hello World')");
   auto stmt = conn.createStatement();
 
-  SQLRETURN ret =
-      SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT str_col FROM test_string_basic", SQL_NTS);
+  SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT str_col FROM test_string_basic", SQL_NTS);
   CHECK_ODBC(ret, stmt);
 
   ret = SQLFetch(stmt.getHandle());
@@ -51,8 +50,7 @@ TEST_CASE("Test basic string binding", "[datatype][string]") {
 
   // Prepare insert statement
   SQLRETURN ret =
-      SQLPrepare(stmt.getHandle(),
-                 (SQLCHAR*)"INSERT INTO test_string_basic_binding (str_col) VALUES (?)", SQL_NTS);
+      SQLPrepare(stmt.getHandle(), (SQLCHAR*)"INSERT INTO test_string_basic_binding (str_col) VALUES (?)", SQL_NTS);
   CHECK_ODBC(ret, stmt);
 
   // Test value to bind
@@ -78,8 +76,7 @@ TEST_CASE("Test basic string binding", "[datatype][string]") {
   CHECK_ODBC(ret, stmt);
 
   // Verify the inserted data
-  ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT str_col FROM test_string_basic_binding",
-                      SQL_NTS);
+  ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT str_col FROM test_string_basic_binding", SQL_NTS);
   CHECK_ODBC(ret, stmt);
 
   ret = SQLFetch(stmt.getHandle());

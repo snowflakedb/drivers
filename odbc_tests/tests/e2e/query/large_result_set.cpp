@@ -19,8 +19,7 @@ void verify_column_count(StatementHandleWrapper& stmt, int expected_count) {
   REQUIRE(num_cols == expected_count);
 }
 
-void verify_row_count_and_sequential_numbering(StatementHandleWrapper& stmt,
-                                               int expected_row_count) {
+void verify_row_count_and_sequential_numbering(StatementHandleWrapper& stmt, int expected_row_count) {
   int row_count = 0;
   int expected_value = 0;
 

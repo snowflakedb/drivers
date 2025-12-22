@@ -18,10 +18,9 @@ inline std::string get_driver_path() {
     // If ODBCINSTINI is not set, warn the user; still return braced name
     const char* odbcinstini_env_value = std::getenv("ODBCINSTINI");
     if (odbcinstini_env_value == nullptr || odbcinstini_env_value[0] == '\0') {
-      WARN(std::string(
-               "You are using DRIVER_NAME variable to set the driver implementation, while "
-               "ODBCINSTINI is not set.\nPlease make sure ODBCINSTINI points to configuration "
-               "file for ODBC drivers.")
+      WARN(std::string("You are using DRIVER_NAME variable to set the driver implementation, while "
+                       "ODBCINSTINI is not set.\nPlease make sure ODBCINSTINI points to configuration "
+                       "file for ODBC drivers.")
                .c_str());
     }
     // Return braced name so the Driver Manager resolves installed driver entry
@@ -58,8 +57,7 @@ inline picojson::object get_test_parameters(const std::string& connection_name) 
 }
 
 template <typename T>
-inline void add_param_required(std::stringstream& ss, const picojson::object& params,
-                               const std::string& cfg_param_name,
+inline void add_param_required(std::stringstream& ss, const picojson::object& params, const std::string& cfg_param_name,
                                const std::string& conn_param_name) {
   auto it = params.find(cfg_param_name);
   if (it == params.end()) {
@@ -73,8 +71,7 @@ inline void add_param_required(std::stringstream& ss, const picojson::object& pa
 }
 
 template <typename T>
-inline void add_param_optional(std::stringstream& ss, const picojson::object& params,
-                               const std::string& cfg_param_name,
+inline void add_param_optional(std::stringstream& ss, const picojson::object& params, const std::string& cfg_param_name,
                                const std::string& conn_param_name) {
   auto it = params.find(cfg_param_name);
   if (it != params.end()) {

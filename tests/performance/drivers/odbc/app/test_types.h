@@ -17,8 +17,7 @@ inline TestType parse_test_type(const std::string& str) {
   } else if (lower == "put_get") {
     return TestType::PutGet;
   } else {
-    throw std::invalid_argument("Unknown test type: '" + str +
-                                "'. Supported types: select, put_get");
+    throw std::invalid_argument("Unknown test type: '" + str + "'. Supported types: select, put_get");
   }
 }
 

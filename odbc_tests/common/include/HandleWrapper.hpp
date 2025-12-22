@@ -31,14 +31,12 @@ class HandleWrapper {
 
 class StatementHandleWrapper : public HandleWrapper {
  public:
-  StatementHandleWrapper(SQLHANDLE parent_handle, SQLSMALLINT type)
-      : HandleWrapper(parent_handle, type) {}
+  StatementHandleWrapper(SQLHANDLE parent_handle, SQLSMALLINT type) : HandleWrapper(parent_handle, type) {}
 };
 
 class ConnectionHandleWrapper : public HandleWrapper {
  public:
-  ConnectionHandleWrapper(SQLHANDLE parent_handle, SQLSMALLINT type)
-      : HandleWrapper(parent_handle, type) {}
+  ConnectionHandleWrapper(SQLHANDLE parent_handle, SQLSMALLINT type) : HandleWrapper(parent_handle, type) {}
 
   StatementHandleWrapper createStatementHandle() { return {this->handle, SQL_HANDLE_STMT}; }
 };

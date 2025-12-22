@@ -12,16 +12,14 @@
 
 // Forward declarations for private helpers
 void run_warmup_put_get(SQLHDBC dbc, const std::string& sql, int warmup_iterations);
-std::vector<PutGetResult> run_test_iterations_put_get(SQLHDBC dbc, const std::string& sql,
-                                                      int iterations);
+std::vector<PutGetResult> run_test_iterations_put_get(SQLHDBC dbc, const std::string& sql, int iterations);
 void print_statistics_put_get(const std::vector<PutGetResult>& results);
 PutGetResult run_put_get_query(SQLHDBC dbc, const std::string& sql, int iteration);
 void create_get_target_directory(const std::string& sql_command);
 
-void execute_put_get_test(SQLHDBC dbc, const std::string& sql_command, int warmup_iterations,
-                          int iterations, const std::string& test_name,
-                          const std::string& driver_type_str, const std::string& driver_version_str,
-                          const std::string& server_version, time_t now) {
+void execute_put_get_test(SQLHDBC dbc, const std::string& sql_command, int warmup_iterations, int iterations,
+                          const std::string& test_name, const std::string& driver_type_str,
+                          const std::string& driver_version_str, const std::string& server_version, time_t now) {
   std::cout << "\n=== Executing PUT_GET Test ===\n";
   std::cout << "Query: " << sql_command << "\n";
 
@@ -45,8 +43,7 @@ void run_warmup_put_get(SQLHDBC dbc, const std::string& sql, int warmup_iteratio
   }
 }
 
-std::vector<PutGetResult> run_test_iterations_put_get(SQLHDBC dbc, const std::string& sql,
-                                                      int iterations) {
+std::vector<PutGetResult> run_test_iterations_put_get(SQLHDBC dbc, const std::string& sql, int iterations) {
   std::vector<PutGetResult> results;
 
   for (int i = 1; i <= iterations; i++) {

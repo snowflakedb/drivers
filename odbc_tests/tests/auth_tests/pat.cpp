@@ -57,16 +57,15 @@ class Pat {
     // Get token name (first column)
     SQLCHAR token_name_buffer[256];
     SQLLEN token_name_length;
-    ret = SQLGetData(stmt.getHandle(), 1, SQL_C_CHAR, token_name_buffer, sizeof(token_name_buffer),
-                     &token_name_length);
+    ret = SQLGetData(stmt.getHandle(), 1, SQL_C_CHAR, token_name_buffer, sizeof(token_name_buffer), &token_name_length);
     CHECK_ODBC(ret, stmt);
     token_name = std::string((char*)token_name_buffer, token_name_length);
 
     // Get token secret (second column)
     SQLCHAR token_secret_buffer[1024];
     SQLLEN token_secret_length;
-    ret = SQLGetData(stmt.getHandle(), 2, SQL_C_CHAR, token_secret_buffer,
-                     sizeof(token_secret_buffer), &token_secret_length);
+    ret = SQLGetData(stmt.getHandle(), 2, SQL_C_CHAR, token_secret_buffer, sizeof(token_secret_buffer),
+                     &token_secret_length);
     CHECK_ODBC(ret, stmt);
     token_secret = std::string((char*)token_secret_buffer, token_secret_length);
   }
@@ -78,8 +77,7 @@ class Pat {
       std::string user = params.at("SNOWFLAKE_TEST_USER").get<std::string>();
 
       std::stringstream cleanup_sql;
-      cleanup_sql << "ALTER USER IF EXISTS " << user << " REMOVE PROGRAMMATIC ACCESS TOKEN "
-                  << token_name;
+      cleanup_sql << "ALTER USER IF EXISTS " << user << " REMOVE PROGRAMMATIC ACCESS TOKEN " << token_name;
 
       conn.execute(cleanup_sql.str());
     } catch (...) {
@@ -164,8 +162,7 @@ TEST_CASE("PAT Authentication - Invalid Token", "[pat_auth]") {
 
   NEW_DRIVER_ONLY("BD#1") { CHECK(records[0].nativeError == 390100); }
 
-  CHECK_THAT(records[0].messageText,
-             ContainsSubstring("Incorrect username or password was specified."));
+  CHECK_THAT(records[0].messageText, ContainsSubstring("Incorrect username or password was specified."));
 }
 
 TEST_CASE("PAT Authentication - Missing Token with PROGRAMMATIC_ACCESS_TOKEN", "[pat_auth]") {

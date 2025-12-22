@@ -6,8 +6,7 @@
 #include <string>
 #include <vector>
 
-void check_odbc_error(SQLRETURN ret, SQLSMALLINT handle_type, SQLHANDLE handle,
-                      const std::string& context);
+void check_odbc_error(SQLRETURN ret, SQLSMALLINT handle_type, SQLHANDLE handle, const std::string& context);
 SQLHENV create_environment();
 SQLHDBC create_connection(SQLHENV env);
 std::string get_driver_version(SQLHDBC dbc);
