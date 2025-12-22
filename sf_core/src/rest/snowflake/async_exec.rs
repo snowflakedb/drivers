@@ -391,7 +391,7 @@ fn body_parse_error(source: serde_json::Error) -> SfError {
 
 #[track_caller]
 fn http_status_error(status: StatusCode) -> SfError {
-    // TODO(session-refresh): Implement automatic session renewal on 401.
+    // TODO(SNOW-2371565): Implement automatic session renewal on 401.
     // See gosnowflake's renewRestfulSession for reference:
     // 1. auth.rs: Expose master_token from AuthResponseMain (remove _ prefix)
     // 2. mod.rs: Return both session_token and master_token from login
