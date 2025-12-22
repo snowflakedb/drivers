@@ -25,6 +25,15 @@ pub enum SfError {
         #[snafu(implicit)]
         location: Location,
     },
+    /// Error 612 from async polling - triggers automatic retry with sync mode
+    /// only on first poll. If we've made progress, don't retry.
+    #[snafu(display("Async poll returned error 612 (result not found)"))]
+    AsyncPollResultNotFound {
+        /// True if this was the first poll attempt (safe to retry with sync)
+        is_first_poll: bool,
+        #[snafu(implicit)]
+        location: Location,
+    },
     #[snafu(display("Session expired"))]
     SessionExpired {
         #[snafu(implicit)]

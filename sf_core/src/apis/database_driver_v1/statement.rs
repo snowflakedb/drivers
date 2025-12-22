@@ -330,7 +330,7 @@ impl Statement {
                 None => QueryExecutionMode::Async,
             },
             None => match query {
-                Some(sql) if requires_blocking(sql) => QueryExecutionMode::Blocking,
+                Some(sql) if is_file_transfer(sql) => QueryExecutionMode::Blocking,
                 _ => QueryExecutionMode::Async,
             },
         }
@@ -354,14 +354,54 @@ fn parse_bool_setting(setting: &Setting) -> Option<bool> {
     }
 }
 
-fn requires_blocking(sql: &str) -> bool {
-    let s = sql.trim_start();
-    if s.len() < 3 {
+/// Best-effort detection of file transfer commands (PUT/GET) from SQL text.
+///
+/// Snowflake's async API does not support file transfers. Submitting PUT/GET with
+/// asyncExec=true returns a poll URL, but polling returns error 612 "Result not found"
+/// because file transfer metadata is only available synchronously.
+///
+/// We parse SQL to detect PUT/GET and force sync mode. If detection fails, error 612
+/// triggers a retry with sync mode (see snowflake_query_with_client).
+fn is_file_transfer(sql: &str) -> bool {
+    let s = skip_leading_whitespace_and_comments(sql);
+    if s.len() < 4 {
         return false;
     }
     let prefix = &s[..3];
+    let next_char = s.as_bytes()[3];
     let is_put_or_get = prefix.eq_ignore_ascii_case("PUT") || prefix.eq_ignore_ascii_case("GET");
-    is_put_or_get && (s.len() == 3 || s.as_bytes()[3] == b' ')
+    // Must be followed by whitespace or comment start (-- or /*)
+    let valid_separator = next_char.is_ascii_whitespace() || next_char == b'/' || next_char == b'-';
+    is_put_or_get && valid_separator
+}
+
+/// Strips leading whitespace, line comments (--), and block comments (/* */)
+fn skip_leading_whitespace_and_comments(s: &str) -> &str {
+    let mut s = s;
+    loop {
+        s = s.trim_start();
+
+        // Skip line comments: -- ... \n
+        if s.starts_with("--") {
+            match s.find('\n') {
+                Some(pos) => s = &s[pos + 1..],
+                None => return "", // Comment extends to end
+            }
+            continue;
+        }
+
+        // Skip block comments: /* ... */
+        if s.starts_with("/*") {
+            match s.find("*/") {
+                Some(pos) => s = &s[pos + 2..],
+                None => return "", // Unterminated comment
+            }
+            continue;
+        }
+
+        break;
+    }
+    s
 }
 
 #[derive(Snafu, Debug)]
@@ -385,54 +425,114 @@ mod tests {
     use super::*;
 
     #[test]
-    fn requires_blocking_detects_put_statements() {
-        assert!(requires_blocking("PUT file://local @stage"));
-        assert!(requires_blocking("put file://local @stage"));
-        assert!(requires_blocking("Put file://local @stage"));
-        assert!(requires_blocking("PUT"));
-        assert!(requires_blocking("put"));
+    fn is_file_transfer_detects_put_statements() {
+        assert!(is_file_transfer("PUT file://local @stage"));
+        assert!(is_file_transfer("put file://local @stage"));
+        assert!(is_file_transfer("Put file://local @stage"));
     }
 
     #[test]
-    fn requires_blocking_detects_get_statements() {
-        assert!(requires_blocking("GET @stage file://local"));
-        assert!(requires_blocking("get @stage file://local"));
-        assert!(requires_blocking("Get @stage file://local"));
-        assert!(requires_blocking("GET"));
-        assert!(requires_blocking("get"));
+    fn is_file_transfer_detects_get_statements() {
+        assert!(is_file_transfer("GET @stage file://local"));
+        assert!(is_file_transfer("get @stage file://local"));
+        assert!(is_file_transfer("Get @stage file://local"));
     }
 
     #[test]
-    fn requires_blocking_handles_leading_whitespace() {
-        assert!(requires_blocking("  PUT file://local @stage"));
-        assert!(requires_blocking("\t\nGET @stage file://local"));
-        assert!(requires_blocking("   put"));
+    fn is_file_transfer_handles_whitespace_after_command() {
+        // Space
+        assert!(is_file_transfer("PUT file://local"));
+        // Tab
+        assert!(is_file_transfer("PUT\tfile://local"));
+        // Newline
+        assert!(is_file_transfer("PUT\nfile://local"));
+        assert!(is_file_transfer("GET\n@stage"));
     }
 
     #[test]
-    fn requires_blocking_rejects_non_blocking_statements() {
-        assert!(!requires_blocking("SELECT * FROM table"));
-        assert!(!requires_blocking("INSERT INTO table VALUES (1)"));
-        assert!(!requires_blocking("UPDATE table SET x = 1"));
-        assert!(!requires_blocking("DELETE FROM table"));
-        assert!(!requires_blocking("CREATE TABLE t (id INT)"));
+    fn is_file_transfer_handles_comment_after_command() {
+        // Block comment immediately after PUT/GET
+        assert!(is_file_transfer("PUT/* comment */file://local"));
+        assert!(is_file_transfer("GET/**/file://local"));
+        // Line comment immediately after PUT/GET
+        assert!(is_file_transfer("PUT-- comment\nfile://local"));
+        assert!(is_file_transfer("GET--\n@stage"));
     }
 
     #[test]
-    fn requires_blocking_rejects_similar_prefixes() {
+    fn is_file_transfer_handles_leading_whitespace() {
+        assert!(is_file_transfer("  PUT file://local @stage"));
+        assert!(is_file_transfer("\t\nGET @stage file://local"));
+    }
+
+    #[test]
+    fn is_file_transfer_handles_line_comments() {
+        assert!(is_file_transfer("-- comment\nPUT file://local @stage"));
+        assert!(is_file_transfer(
+            "-- line1\n-- line2\nGET @stage file://local"
+        ));
+        assert!(is_file_transfer("  -- indented comment\nPUT file://local"));
+    }
+
+    #[test]
+    fn is_file_transfer_handles_block_comments() {
+        assert!(is_file_transfer("/* comment */PUT file://local @stage"));
+        assert!(is_file_transfer("/* comment */ PUT file://local @stage"));
+        assert!(is_file_transfer(
+            "/* c1 */ /* c2 */ GET @stage file://local"
+        ));
+        assert!(is_file_transfer("/*\nmultiline\n*/PUT file://local"));
+    }
+
+    #[test]
+    fn is_file_transfer_handles_mixed_comments() {
+        assert!(is_file_transfer("-- line\n/* block */PUT file://local"));
+        assert!(is_file_transfer("/* block */-- line\nGET @stage"));
+        assert!(is_file_transfer(
+            "  /* block */ -- line\n  PUT file://local"
+        ));
+    }
+
+    #[test]
+    fn is_file_transfer_rejects_comment_only() {
+        assert!(!is_file_transfer("-- just a comment"));
+        assert!(!is_file_transfer("/* unterminated comment"));
+        assert!(!is_file_transfer("-- comment\n-- another"));
+    }
+
+    #[test]
+    fn is_file_transfer_rejects_bare_commands() {
+        // PUT or GET alone is not a valid command
+        assert!(!is_file_transfer("PUT"));
+        assert!(!is_file_transfer("GET"));
+        assert!(!is_file_transfer("put"));
+        assert!(!is_file_transfer("get"));
+    }
+
+    #[test]
+    fn is_file_transfer_rejects_non_blocking_statements() {
+        assert!(!is_file_transfer("SELECT * FROM table"));
+        assert!(!is_file_transfer("INSERT INTO table VALUES (1)"));
+        assert!(!is_file_transfer("UPDATE table SET x = 1"));
+        assert!(!is_file_transfer("DELETE FROM table"));
+        assert!(!is_file_transfer("CREATE TABLE t (id INT)"));
+    }
+
+    #[test]
+    fn is_file_transfer_rejects_similar_prefixes() {
         // Should not match words that start with PUT/GET but aren't commands
-        assert!(!requires_blocking("PUTTING"));
-        assert!(!requires_blocking("GETTING"));
-        assert!(!requires_blocking("PUTTER"));
-        assert!(!requires_blocking("GETAWAY"));
+        assert!(!is_file_transfer("PUTTING"));
+        assert!(!is_file_transfer("GETTING"));
+        assert!(!is_file_transfer("PUTTER"));
+        assert!(!is_file_transfer("GETAWAY"));
     }
 
     #[test]
-    fn requires_blocking_handles_edge_cases() {
-        assert!(!requires_blocking(""));
-        assert!(!requires_blocking("   "));
-        assert!(!requires_blocking("PU"));
-        assert!(!requires_blocking("GE"));
-        assert!(!requires_blocking("P"));
+    fn is_file_transfer_handles_edge_cases() {
+        assert!(!is_file_transfer(""));
+        assert!(!is_file_transfer("   "));
+        assert!(!is_file_transfer("PU"));
+        assert!(!is_file_transfer("GE"));
+        assert!(!is_file_transfer("P"));
     }
 }

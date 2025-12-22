@@ -255,6 +255,7 @@ pub async fn poll_query_status(
             .as_ref()
             .map(|c| c.len())
             .unwrap_or_default(),
+        code = parsed.code.as_deref().unwrap_or_default(),
         message = parsed.message.as_deref().unwrap_or_default(),
         "polled query status"
     );
@@ -471,7 +472,7 @@ async fn inline_poll_for_completion(
 ) -> Result<Option<query_response::Response>, SfError> {
     let response =
         poll_query_status(client, client_info, session_token, result_url, policy).await?;
-    handle_poll_response(response)
+    handle_poll_response(response, true) // First poll
 }
 
 /// Poll Snowflake for completion, starting with a burst of short delays
@@ -543,18 +544,32 @@ async fn wait_for_completion(
             poll_query_status(client, client_info, session_token, result_url, &poll_policy).await?;
         polls += 1;
 
-        if let Some(done) = handle_poll_response(response)? {
+        if let Some(done) = handle_poll_response(response, false)? {
             return Ok((done, polls));
         }
     }
 }
 
-fn snowflake_failure(resp: &query_response::Response) -> SfError {
+/// Error code 612 indicates "Result not found" - typically returned when
+/// trying to poll for file transfer (PUT/GET) results in async mode.
+const SNOWFLAKE_ERROR_RESULT_NOT_FOUND: i32 = 612;
+
+fn snowflake_failure(resp: &query_response::Response, is_first_poll: bool) -> SfError {
     let code = resp
         .code
         .as_deref()
         .and_then(|c| c.parse::<i32>().ok())
         .unwrap_or(-1);
+
+    // Error 612 "Result not found" occurs when polling for PUT/GET results.
+    // File transfer commands don't support async mode.
+    if code == SNOWFLAKE_ERROR_RESULT_NOT_FOUND {
+        return SfError::AsyncPollResultNotFound {
+            is_first_poll,
+            location: current_location(),
+        };
+    }
+
     let message = resp
         .message
         .clone()
@@ -594,6 +609,7 @@ fn should_continue_after_failure(resp: &query_response::Response) -> bool {
 
 fn handle_poll_response(
     resp: query_response::Response,
+    is_first_poll: bool,
 ) -> Result<Option<query_response::Response>, SfError> {
     if resp.success {
         if should_continue_after_success(&resp) {
@@ -606,7 +622,7 @@ fn handle_poll_response(
         return Ok(None);
     }
 
-    Err(snowflake_failure(&resp))
+    Err(snowflake_failure(&resp, is_first_poll))
 }
 
 #[cfg(test)]
@@ -665,5 +681,45 @@ mod tests {
             }
             other => panic!("expected HttpStatus, got {:?}", other),
         }
+    }
+
+    #[test]
+    fn error_612_returns_async_poll_result_not_found() {
+        // Error 612 "Result not found" is returned when polling for PUT/GET results
+        let resp = response_from_json(json!({
+            "success": false,
+            "code": "612",
+            "message": "Result not found",
+            "data": {
+                "rowset": null,
+                "rowsetBase64": null
+            }
+        }));
+
+        let err = snowflake_failure(&resp, true);
+        assert!(
+            matches!(
+                err,
+                SfError::AsyncPollResultNotFound {
+                    is_first_poll: true,
+                    ..
+                }
+            ),
+            "expected AsyncPollResultNotFound with is_first_poll=true, got {:?}",
+            err
+        );
+
+        let err = snowflake_failure(&resp, false);
+        assert!(
+            matches!(
+                err,
+                SfError::AsyncPollResultNotFound {
+                    is_first_poll: false,
+                    ..
+                }
+            ),
+            "expected AsyncPollResultNotFound with is_first_poll=false, got {:?}",
+            err
+        );
     }
 }
