@@ -93,11 +93,13 @@ pub struct AuthResponseSessionInfo {
 
 #[derive(Debug, Deserialize)]
 pub struct AuthResponseMain {
+    /// Session token for authenticating requests
     pub token: Option<String>,
     #[serde(rename = "validityInSeconds")]
     pub _validity: Option<u64>,
+    /// Master token for refreshing expired session tokens
     #[serde(rename = "masterToken")]
-    pub _master_token: Option<String>,
+    pub master_token: Option<String>,
     #[serde(rename = "masterValidityInSeconds")]
     pub _master_validity: Option<u64>,
     #[serde(rename = "mfaToken")]
@@ -122,8 +124,9 @@ pub struct AuthResponseMain {
     pub _health_check_interval: Option<u64>,
     #[serde(rename = "newClientForUpgrade")]
     pub _new_client_for_upgrade: Option<String>,
+    /// Session ID for the current session
     #[serde(rename = "sessionId")]
-    pub _session_id: Option<i64>,
+    pub session_id: Option<i64>,
     #[serde(rename = "parameters")]
     pub _parameters: Option<Vec<NameValueParameter>>,
     #[serde(rename = "sessionInfo")]

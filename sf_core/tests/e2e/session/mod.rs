@@ -1,2 +1,1 @@
-mod retry;
 mod session_refresh;

@@ -5,8 +5,9 @@ use super::Handle;
 use super::Setting;
 use super::error::*;
 use super::global_state::CONN_HANDLE_MANAGER;
-use crate::config::rest_parameters::LoginParameters;
+use crate::config::rest_parameters::{ClientInfo, LoginParameters};
 use crate::config::retry::RetryPolicy;
+use crate::rest::snowflake::SessionTokens;
 use crate::tls::client::create_tls_client_with_config;
 use reqwest;
 
@@ -27,7 +28,7 @@ pub fn connection_init(conn_handle: Handle, _db_handle: Handle) -> Result<(), Ap
                 create_tls_client_with_config(login_parameters.client_info.tls_config.clone())
                     .context(TlsClientCreationSnafu)?;
 
-            let login_result = rt
+            let tokens = rt
                 .block_on(async {
                     crate::rest::snowflake::snowflake_login_with_client(
                         &http_client,
@@ -40,7 +41,12 @@ pub fn connection_init(conn_handle: Handle, _db_handle: Handle) -> Result<(), Ap
             conn_ptr
                 .lock()
                 .map_err(|_| ConnectionLockingSnafu {}.build())?
-                .initialize(login_result, http_client);
+                .initialize(
+                    tokens,
+                    http_client,
+                    login_parameters.server_url.clone(),
+                    login_parameters.client_info.clone(),
+                );
             Ok(())
         }
         None => InvalidArgumentSnafu {
@@ -82,9 +88,14 @@ pub fn connection_release(conn_handle: Handle) -> Result<(), ApiError> {
 
 pub struct Connection {
     pub settings: HashMap<String, Setting>,
-    pub session_token: Option<String>,
+    /// Session tokens for authentication and refresh
+    pub tokens: Option<SessionTokens>,
     pub http_client: Option<reqwest::Client>,
     pub retry_policy: RetryPolicy,
+    /// Server URL for refresh requests
+    pub server_url: Option<String>,
+    /// Client info for refresh requests
+    pub client_info: Option<ClientInfo>,
 }
 
 impl Default for Connection {
@@ -97,14 +108,29 @@ impl Connection {
     pub fn new() -> Self {
         Connection {
             settings: HashMap::new(),
-            session_token: None,
+            tokens: None,
             http_client: None,
             retry_policy: RetryPolicy::default(),
+            server_url: None,
+            client_info: None,
         }
     }
 
-    fn initialize(&mut self, session_token: String, http_client: reqwest::Client) {
-        self.session_token = Some(session_token);
+    fn initialize(
+        &mut self,
+        tokens: SessionTokens,
+        http_client: reqwest::Client,
+        server_url: String,
+        client_info: ClientInfo,
+    ) {
+        self.tokens = Some(tokens);
         self.http_client = Some(http_client);
+        self.server_url = Some(server_url);
+        self.client_info = Some(client_info);
+    }
+
+    /// Get the current session token, if authenticated
+    pub fn session_token(&self) -> Option<&str> {
+        self.tokens.as_ref().map(|t| t.session_token.as_str())
     }
 }

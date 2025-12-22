@@ -70,4 +70,10 @@ pub enum ApiError {
         #[snafu(source(from(QueryResponseProcessingError, Box::new)))]
         source: Box<QueryResponseProcessingError>,
     },
+    #[snafu(display("Failed to refresh session: {source}"))]
+    SessionRefresh {
+        #[snafu(implicit)]
+        location: Location,
+        source: RestError,
+    },
 }

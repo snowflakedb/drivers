@@ -1,0 +1,30 @@
+{
+  "name": "Query succeeds with refreshed token",
+  "scenarioName": "session-refresh",
+  "requiredScenarioState": "Token Refreshed",
+  "request": {
+    "urlPathPattern": "/queries/v1/query-request.*",
+    "method": "POST",
+    "headers": {
+      "Authorization": {
+        "contains": "new-session-token"
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "jsonBody": {
+      "success": true,
+      "data": {
+        "queryId": "test-query-id",
+        "rowtype": [],
+        "rowset": [[1]]
+      }
+    },
+    "headers": {
+      "Content-Type": "application/json"
+    }
+  },
+  "priority": 1
+}
+

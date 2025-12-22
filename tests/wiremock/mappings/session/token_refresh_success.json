@@ -1,0 +1,31 @@
+{
+  "name": "Token refresh succeeds",
+  "scenarioName": "session-refresh",
+  "requiredScenarioState": "Token Expired",
+  "newScenarioState": "Token Refreshed",
+  "request": {
+    "urlPathPattern": "/session/token-request.*",
+    "method": "POST",
+    "headers": {
+      "Authorization": {
+        "contains": "valid-master-token"
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "jsonBody": {
+      "success": true,
+      "data": {
+        "sessionToken": "new-session-token",
+        "masterToken": "new-master-token",
+        "sessionId": 12345
+      }
+    },
+    "headers": {
+      "Content-Type": "application/json"
+    }
+  },
+  "priority": 1
+}
+

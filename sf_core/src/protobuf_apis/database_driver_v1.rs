@@ -179,6 +179,11 @@ fn to_driver_error(error: &ApiError) -> DriverError {
                 detail: source.to_string(),
             })),
         },
+        ApiError::SessionRefresh { source, .. } => DriverError {
+            error_type: Some(driver_error::ErrorType::AuthError(AuthenticationError {
+                detail: source.to_string(),
+            })),
+        },
     }
 }
 
@@ -206,6 +211,7 @@ fn to_driver_exception(error: ApiError) -> DriverException {
         ApiError::QueryResponseProcessing { .. } => StatusCode::InternalError,
         ApiError::ConnectionNotInitialized { .. } => StatusCode::InternalError,
         ApiError::TlsClientCreation { .. } => StatusCode::AuthenticationError,
+        ApiError::SessionRefresh { .. } => StatusCode::AuthenticationError,
     };
 
     let message = error.to_string();

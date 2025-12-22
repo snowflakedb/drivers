@@ -1,0 +1,20 @@
+{
+  "name": "Token refresh fails when master token is also expired",
+  "scenarioName": "session-refresh-both-expired",
+  "requiredScenarioState": "Started",
+  "request": {
+    "urlPathPattern": "/session/token-request.*",
+    "method": "POST",
+    "headers": {
+      "Authorization": {
+        "contains": "expired-master-token"
+      }
+    }
+  },
+  "response": {
+    "status": 401,
+    "body": "Master token expired"
+  },
+  "priority": 1
+}
+

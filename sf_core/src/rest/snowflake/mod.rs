@@ -25,6 +25,37 @@ use url::Url;
 
 pub const STATEMENT_ASYNC_EXECUTION_OPTION: &str = "async_execution";
 pub(crate) const QUERY_REQUEST_PATH: &str = "/queries/v1/query-request";
+const TOKEN_REQUEST_PATH: &str = "/session/token-request";
+
+/// Session tokens returned from login, used for authentication and refresh
+#[derive(Debug, Clone)]
+pub struct SessionTokens {
+    /// Token used to authenticate API requests
+    pub session_token: String,
+    /// Token used to refresh an expired session token
+    pub master_token: String,
+    /// Server-assigned session ID
+    pub session_id: i64,
+}
+
+/// Response from the session token refresh endpoint
+#[derive(Debug, serde::Deserialize)]
+struct RefreshSessionResponse {
+    data: Option<RefreshSessionData>,
+    message: Option<String>,
+    code: Option<String>,
+    success: bool,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct RefreshSessionData {
+    #[serde(rename = "sessionToken")]
+    session_token: String,
+    #[serde(rename = "masterToken")]
+    master_token: String,
+    #[serde(rename = "sessionId")]
+    session_id: i64,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum QueryExecutionMode {
@@ -79,7 +110,9 @@ pub fn auth_request_data(login_parameters: &LoginParameters) -> Result<AuthReque
 }
 
 #[tracing::instrument(skip(login_parameters), fields(account_name, login_name))]
-pub async fn snowflake_login(login_parameters: &LoginParameters) -> Result<String, RestError> {
+pub async fn snowflake_login(
+    login_parameters: &LoginParameters,
+) -> Result<SessionTokens, RestError> {
     let client = build_tls_http_client(&login_parameters.client_info)?;
     snowflake_login_with_client(&client, login_parameters).await
 }
@@ -88,7 +121,7 @@ pub async fn snowflake_login(login_parameters: &LoginParameters) -> Result<Strin
 pub async fn snowflake_login_with_client(
     client: &reqwest::Client,
     login_parameters: &LoginParameters,
-) -> Result<String, RestError> {
+) -> Result<SessionTokens, RestError> {
     tracing::info!("Starting Snowflake login process");
 
     // Record key fields in the span
@@ -174,18 +207,145 @@ pub async fn snowflake_login_with_client(
         LoginSnafu { message, code }.fail()?;
     }
 
-    tracing::debug!("Login successful, extracting session token");
-    if let Some(token) = auth_response.data.token {
-        tracing::info!("Snowflake login completed successfully");
-        Ok(token)
-    } else {
-        tracing::error!("Login response missing token data");
-        InvalidResponseSnafu {
-            message: "Login response missing token".to_string(),
+    tracing::debug!("Login successful, extracting session tokens");
+
+    let session_token = auth_response.data.token.ok_or_else(|| {
+        tracing::error!("Login response missing session token");
+        RestError::InvalidSnowflakeResponse {
+            source: InvalidResponseSnafu {
+                message: "Login response missing session token".to_string(),
+            }
+            .build(),
+            location: snafu::Location::new(file!(), line!(), column!()),
         }
-        .fail()
-        .context(InvalidSnowflakeResponseSnafu)?
+    })?;
+
+    let master_token = auth_response.data.master_token.ok_or_else(|| {
+        tracing::error!("Login response missing master token");
+        RestError::InvalidSnowflakeResponse {
+            source: InvalidResponseSnafu {
+                message: "Login response missing master token".to_string(),
+            }
+            .build(),
+            location: snafu::Location::new(file!(), line!(), column!()),
+        }
+    })?;
+
+    let session_id = auth_response.data.session_id.ok_or_else(|| {
+        tracing::error!("Login response missing session ID");
+        RestError::InvalidSnowflakeResponse {
+            source: InvalidResponseSnafu {
+                message: "Login response missing session ID".to_string(),
+            }
+            .build(),
+            location: snafu::Location::new(file!(), line!(), column!()),
+        }
+    })?;
+
+    tracing::info!(session_id, "Snowflake login completed successfully");
+    Ok(SessionTokens {
+        session_token,
+        master_token,
+        session_id,
+    })
+}
+
+/// Refresh an expired session token using the master token.
+///
+/// When a session token expires (indicated by HTTP 401), this function can be called
+/// to obtain new tokens without requiring a full re-authentication.
+#[tracing::instrument(skip(client, client_info, tokens))]
+pub async fn refresh_session(
+    client: &reqwest::Client,
+    server_url: &str,
+    client_info: &ClientInfo,
+    tokens: &SessionTokens,
+) -> Result<SessionTokens, RestError> {
+    tracing::info!(session_id = tokens.session_id, "Refreshing session token");
+
+    let refresh_url = Url::parse(server_url)
+        .and_then(|base| base.join(TOKEN_REQUEST_PATH))
+        .context(UrlJoinSnafu {
+            path: TOKEN_REQUEST_PATH,
+        })?;
+
+    // Build request body per gosnowflake: {"oldSessionToken": "...", "requestType": "RENEW"}
+    let body = serde_json::json!({
+        "oldSessionToken": tokens.session_token,
+        "requestType": "RENEW"
+    });
+
+    let request = client
+        .post(refresh_url)
+        .query(&[
+            ("requestId", uuid::Uuid::new_v4().to_string()),
+            ("request_guid", uuid::Uuid::new_v4().to_string()),
+        ])
+        // Authenticate with master token, not session token
+        .header(
+            header::AUTHORIZATION,
+            format!("Snowflake Token=\"{}\"", tokens.master_token),
+        )
+        .header(header::ACCEPT, "application/json")
+        .header("User-Agent", user_agent(client_info))
+        .json(&body)
+        .build()
+        .context(RequestConstructionSnafu {
+            request: "session refresh",
+        })?;
+
+    let response = client.execute(request).await.context(CommunicationSnafu {
+        context: "Failed to execute session refresh request",
+    })?;
+
+    let status = response.status();
+    if !status.is_success() {
+        tracing::error!(status = %status, "Session refresh request failed");
+        return SessionRefreshSnafu { status }.fail();
     }
+
+    let refresh_response =
+        response
+            .json::<RefreshSessionResponse>()
+            .await
+            .context(CommunicationSnafu {
+                context: "Failed to parse session refresh response",
+            })?;
+
+    if !refresh_response.success {
+        let message = refresh_response
+            .message
+            .unwrap_or_else(|| "Unknown error".to_string());
+        let code = refresh_response
+            .code
+            .as_deref()
+            .and_then(|c| c.parse::<i32>().ok())
+            .unwrap_or(-1);
+        tracing::error!(code, message = %message, "Session refresh failed");
+        return SessionRefreshFailedSnafu { message, code }.fail();
+    }
+
+    let data = refresh_response.data.ok_or_else(|| {
+        tracing::error!("Session refresh response missing data");
+        RestError::InvalidSnowflakeResponse {
+            source: InvalidResponseSnafu {
+                message: "Session refresh response missing data".to_string(),
+            }
+            .build(),
+            location: snafu::Location::new(file!(), line!(), column!()),
+        }
+    })?;
+
+    tracing::info!(
+        session_id = data.session_id,
+        "Session refreshed successfully"
+    );
+
+    Ok(SessionTokens {
+        session_token: data.session_token,
+        master_token: data.master_token,
+        session_id: data.session_id,
+    })
 }
 
 #[tracing::instrument(skip(query_parameters, session_token, parameter_bindings), fields(sql))]
@@ -511,6 +671,19 @@ pub enum RestError {
     UrlJoin {
         path: &'static str,
         source: url::ParseError,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Session refresh HTTP request failed with status {status}"))]
+    SessionRefresh {
+        status: reqwest::StatusCode,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Session refresh failed: {message} (code: {code})"))]
+    SessionRefreshFailed {
+        message: String,
+        code: i32,
         #[snafu(implicit)]
         location: Location,
     },

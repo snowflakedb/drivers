@@ -32,6 +32,7 @@ fn get_server_url(settings: &dyn Settings) -> Result<String, ConfigError> {
     Ok(base_url)
 }
 
+#[derive(Clone)]
 pub struct QueryParameters {
     pub server_url: String,
     pub client_info: ClientInfo,
@@ -45,6 +46,7 @@ impl QueryParameters {
         })
     }
 }
+#[derive(Clone)]
 pub struct ClientInfo {
     pub application: String,
     pub version: String,

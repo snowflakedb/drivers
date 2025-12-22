@@ -16,7 +16,8 @@
       "success": true,
       "data": {
         "token": "mock_token",
-        "masterToken": "mock_master_token"
+        "masterToken": "mock_master_token",
+        "sessionId": 12345
       }
     }
   }

@@ -1,0 +1,21 @@
+{
+  "name": "Query returns 401 then succeeds after refresh",
+  "scenarioName": "session-refresh",
+  "requiredScenarioState": "Started",
+  "newScenarioState": "Token Expired",
+  "request": {
+    "urlPathPattern": "/queries/v1/query-request.*",
+    "method": "POST",
+    "headers": {
+      "Authorization": {
+        "contains": "expired-session-token"
+      }
+    }
+  },
+  "response": {
+    "status": 401,
+    "body": "Session expired"
+  },
+  "priority": 1
+}
+
