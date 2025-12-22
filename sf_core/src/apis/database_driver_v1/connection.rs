@@ -1,6 +1,7 @@
 use snafu::{OptionExt, ResultExt};
 use std::future::Future;
 use std::{collections::HashMap, sync::Arc, sync::Mutex};
+use tokio::sync::Mutex as AsyncMutex;
 
 use super::Handle;
 use super::Setting;
@@ -97,6 +98,8 @@ pub struct Connection {
     pub server_url: Option<String>,
     /// Client info for refresh requests
     pub client_info: Option<ClientInfo>,
+    /// Lock to prevent concurrent refresh attempts
+    refresh_lock: Arc<AsyncMutex<()>>,
 }
 
 impl Default for Connection {
@@ -114,6 +117,7 @@ impl Connection {
             retry_policy: RetryPolicy::default(),
             server_url: None,
             client_info: None,
+            refresh_lock: Arc::new(AsyncMutex::new(())),
         }
     }
 
@@ -142,7 +146,7 @@ impl Connection {
 /// 1. Extracts the session token from the connection
 /// 2. Runs the provided function with that token
 /// 3. On SessionExpired error, refreshes the session and retries once
-/// 4. Updates the connection with new tokens on successful refresh
+/// 4. Uses a lock to prevent concurrent refresh attempts
 pub async fn with_valid_session<F, Fut, T>(
     conn: &Arc<Mutex<Connection>>,
     f: F,
@@ -152,13 +156,14 @@ where
     Fut: Future<Output = Result<T, RestError>>,
 {
     // Extract what we need from the connection
-    let (session_token, http_client) = {
+    let (session_token, refresh_lock, http_client) = {
         let guard = conn.lock().map_err(|_| ConnectionLockingSnafu.build())?;
         (
             guard
                 .session_token()
                 .map(|s| s.to_string())
                 .context(ConnectionNotInitializedSnafu)?,
+            guard.refresh_lock.clone(),
             guard
                 .http_client
                 .clone()
@@ -175,7 +180,10 @@ where
         }) => {
             tracing::info!("Session expired, attempting refresh");
 
-            // Get refresh context
+            // Acquire refresh lock - only one refresh at a time
+            let _lock_guard = refresh_lock.lock().await;
+
+            // Re-check tokens after acquiring lock (another request may have refreshed)
             let (tokens, server_url, client_info) = {
                 let guard = conn.lock().map_err(|_| ConnectionLockingSnafu.build())?;
                 (
@@ -194,9 +202,15 @@ where
                 )
             };
 
-            // Check if master token is already expired - fail fast instead of making a doomed request
+            // If another request already refreshed, use the new token
+            if !tokens.is_session_expired() {
+                tracing::debug!("Session already refreshed by another request");
+                return f(tokens.session_token).await.context(QuerySnafu);
+            }
+
+            // Check if master token is expired
             if tokens.is_master_expired() {
-                tracing::info!("Master token expired, full re-authentication required");
+                tracing::error!("Master token expired, full re-authentication required");
                 return MasterTokenExpiredSnafu.fail();
             }
 
