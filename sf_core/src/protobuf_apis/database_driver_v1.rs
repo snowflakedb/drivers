@@ -184,6 +184,17 @@ fn to_driver_error(error: &ApiError) -> DriverError {
                 detail: source.to_string(),
             })),
         },
+        ApiError::Statement { .. } => DriverError {
+            error_type: Some(driver_error::ErrorType::InternalError(InternalError {})),
+        },
+        ApiError::Query { .. } => DriverError {
+            error_type: Some(driver_error::ErrorType::InternalError(InternalError {})),
+        },
+        ApiError::MasterTokenExpired { .. } => DriverError {
+            error_type: Some(driver_error::ErrorType::AuthError(AuthenticationError {
+                detail: "Master token expired, full re-authentication required".to_string(),
+            })),
+        },
     }
 }
 
@@ -212,6 +223,9 @@ fn to_driver_exception(error: ApiError) -> DriverException {
         ApiError::ConnectionNotInitialized { .. } => StatusCode::InternalError,
         ApiError::TlsClientCreation { .. } => StatusCode::AuthenticationError,
         ApiError::SessionRefresh { .. } => StatusCode::AuthenticationError,
+        ApiError::Statement { .. } => StatusCode::InternalError,
+        ApiError::Query { .. } => StatusCode::InternalError,
+        ApiError::MasterTokenExpired { .. } => StatusCode::AuthenticationError,
     };
 
     let message = error.to_string();

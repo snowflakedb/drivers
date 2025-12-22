@@ -17,7 +17,7 @@ use crate::tls::client::create_tls_client_with_config;
 use crate::tls::error::TlsError;
 use reqwest::{self, header};
 use serde_json;
-use snafu::{Location, ResultExt, Snafu};
+use snafu::{Location, OptionExt, ResultExt, Snafu};
 use std::collections::HashMap;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tracing;
@@ -36,6 +36,32 @@ pub struct SessionTokens {
     pub master_token: String,
     /// Server-assigned session ID
     pub session_id: i64,
+    /// When the session token expires
+    pub session_expires_at: Option<std::time::Instant>,
+    /// When the master token expires (after this, full re-auth is needed)
+    pub master_expires_at: Option<std::time::Instant>,
+}
+
+impl SessionTokens {
+    /// Check if the master token is expired or about to expire
+    pub fn is_master_expired(&self) -> bool {
+        self.master_expires_at
+            .map(|exp| exp < std::time::Instant::now())
+            .unwrap_or(false)
+    }
+
+    /// Check if the session token is expired or about to expire
+    pub fn is_session_expired(&self) -> bool {
+        self.session_expires_at
+            .map(|exp| exp < std::time::Instant::now())
+            .unwrap_or(false)
+    }
+
+    /// Get remaining validity for the master token
+    pub fn master_valid_for(&self) -> Option<std::time::Duration> {
+        self.master_expires_at
+            .and_then(|exp| exp.checked_duration_since(std::time::Instant::now()))
+    }
 }
 
 /// Response from the session token refresh endpoint
@@ -55,6 +81,18 @@ struct RefreshSessionData {
     master_token: String,
     #[serde(rename = "sessionId")]
     session_id: i64,
+    #[serde(
+        rename = "validityInSecondsST",
+        deserialize_with = "auth::deserialize_seconds_as_duration",
+        default
+    )]
+    validity: Option<std::time::Duration>,
+    #[serde(
+        rename = "validityInSecondsMT",
+        deserialize_with = "auth::deserialize_seconds_as_duration",
+        default
+    )]
+    master_validity: Option<std::time::Duration>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -209,44 +247,46 @@ pub async fn snowflake_login_with_client(
 
     tracing::debug!("Login successful, extracting session tokens");
 
-    let session_token = auth_response.data.token.ok_or_else(|| {
-        tracing::error!("Login response missing session token");
-        RestError::InvalidSnowflakeResponse {
-            source: InvalidResponseSnafu {
-                message: "Login response missing session token".to_string(),
-            }
-            .build(),
-            location: snafu::Location::new(file!(), line!(), column!()),
-        }
-    })?;
+    let session_token = auth_response
+        .data
+        .token
+        .context(InvalidResponseSnafu {
+            message: "Login response missing session token",
+        })
+        .context(InvalidSnowflakeResponseSnafu)?;
 
-    let master_token = auth_response.data.master_token.ok_or_else(|| {
-        tracing::error!("Login response missing master token");
-        RestError::InvalidSnowflakeResponse {
-            source: InvalidResponseSnafu {
-                message: "Login response missing master token".to_string(),
-            }
-            .build(),
-            location: snafu::Location::new(file!(), line!(), column!()),
-        }
-    })?;
+    let master_token = auth_response
+        .data
+        .master_token
+        .context(InvalidResponseSnafu {
+            message: "Login response missing master token",
+        })
+        .context(InvalidSnowflakeResponseSnafu)?;
 
-    let session_id = auth_response.data.session_id.ok_or_else(|| {
-        tracing::error!("Login response missing session ID");
-        RestError::InvalidSnowflakeResponse {
-            source: InvalidResponseSnafu {
-                message: "Login response missing session ID".to_string(),
-            }
-            .build(),
-            location: snafu::Location::new(file!(), line!(), column!()),
-        }
-    })?;
+    let session_id = auth_response
+        .data
+        .session_id
+        .context(InvalidResponseSnafu {
+            message: "Login response missing session ID",
+        })
+        .context(InvalidSnowflakeResponseSnafu)?;
 
-    tracing::info!(session_id, "Snowflake login completed successfully");
+    let now = std::time::Instant::now();
+    let session_expires_at = auth_response.data.validity.map(|d| now + d);
+    let master_expires_at = auth_response.data.master_validity.map(|d| now + d);
+
+    tracing::info!(
+        session_id,
+        session_validity_secs = auth_response.data.validity.map(|d| d.as_secs()),
+        master_validity_secs = auth_response.data.master_validity.map(|d| d.as_secs()),
+        "Snowflake login completed successfully"
+    );
     Ok(SessionTokens {
         session_token,
         master_token,
         session_id,
+        session_expires_at,
+        master_expires_at,
     })
 }
 
@@ -325,19 +365,21 @@ pub async fn refresh_session(
         return SessionRefreshFailedSnafu { message, code }.fail();
     }
 
-    let data = refresh_response.data.ok_or_else(|| {
-        tracing::error!("Session refresh response missing data");
-        RestError::InvalidSnowflakeResponse {
-            source: InvalidResponseSnafu {
-                message: "Session refresh response missing data".to_string(),
-            }
-            .build(),
-            location: snafu::Location::new(file!(), line!(), column!()),
-        }
-    })?;
+    let data = refresh_response
+        .data
+        .context(InvalidResponseSnafu {
+            message: "Session refresh response missing data",
+        })
+        .context(InvalidSnowflakeResponseSnafu)?;
+
+    let now = std::time::Instant::now();
+    let session_expires_at = data.validity.map(|d| now + d);
+    let master_expires_at = data.master_validity.map(|d| now + d);
 
     tracing::info!(
         session_id = data.session_id,
+        session_validity_secs = data.validity.map(|d| d.as_secs()),
+        master_validity_secs = data.master_validity.map(|d| d.as_secs()),
         "Session refreshed successfully"
     );
 
@@ -345,6 +387,8 @@ pub async fn refresh_session(
         session_token: data.session_token,
         master_token: data.master_token,
         session_id: data.session_id,
+        session_expires_at,
+        master_expires_at,
     })
 }
 
@@ -409,26 +453,22 @@ pub async fn snowflake_query_with_client(
                 // We'll log after sync completes based on actual command type.
                 retried_612 = true;
             }
-            Err(RestError::AsyncQuery {
-                source:
-                    SfError::AsyncPollResultNotFound {
-                        is_first_poll: false,
-                        ..
-                    },
-                ..
-            }) => {
+            Err(
+                e @ RestError::AsyncQuery {
+                    source:
+                        SfError::AsyncPollResultNotFound {
+                            is_first_poll: false,
+                            ..
+                        },
+                    ..
+                },
+            ) => {
                 // Got 612 after successful polls - something went wrong, don't retry
                 tracing::error!(
                     sql_prefix = sql.chars().take(50).collect::<String>(),
                     "Error 612 after prior successful polls; not retrying"
                 );
-                return Err(RestError::AsyncQuery {
-                    source: SfError::AsyncPollResultNotFound {
-                        is_first_poll: false,
-                        location: snafu::Location::new(file!(), line!(), column!()),
-                    },
-                    location: snafu::Location::new(file!(), line!(), column!()),
-                });
+                return Err(e);
             }
             Err(e) => return Err(e),
         }

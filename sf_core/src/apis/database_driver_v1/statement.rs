@@ -1,16 +1,14 @@
-use snafu::ResultExt;
+use snafu::{OptionExt, ResultExt};
 use std::sync::{Mutex, MutexGuard};
 
 use super::Handle;
+use super::connection::with_valid_session;
 use super::error::*;
 use super::global_state::{CONN_HANDLE_MANAGER, STMT_HANDLE_MANAGER};
 use crate::apis::database_driver_v1::query::process_query_response;
 use crate::{
     config::{rest_parameters::QueryParameters, settings::Setting},
-    rest::snowflake::{
-        self, QueryExecutionMode, SnowflakeResponseError, refresh_session,
-        snowflake_query_with_client,
-    },
+    rest::snowflake::{self, QueryExecutionMode, snowflake_query_with_client},
 };
 
 use arrow::array::{RecordBatch, StructArray};
@@ -54,9 +52,7 @@ pub fn statement_release(stmt_handle: Handle) -> Result<(), ApiError> {
 pub fn statement_set_option(handle: Handle, key: String, value: Setting) -> Result<(), ApiError> {
     match STMT_HANDLE_MANAGER.get_obj(handle) {
         Some(stmt_ptr) => {
-            let mut stmt = stmt_ptr
-                .lock()
-                .map_err(|_| StatementLockingSnafu {}.build())?;
+            let mut stmt = stmt_ptr.lock().map_err(|_| StatementLockingSnafu.build())?;
             stmt.settings.insert(key, value);
             Ok(())
         }
@@ -71,9 +67,7 @@ pub fn statement_set_sql_query(stmt_handle: Handle, query: String) -> Result<(),
     let handle = stmt_handle;
     match STMT_HANDLE_MANAGER.get_obj(handle) {
         Some(stmt_ptr) => {
-            let mut stmt = stmt_ptr
-                .lock()
-                .map_err(|_| StatementLockingSnafu {}.build())?;
+            let mut stmt = stmt_ptr.lock().map_err(|_| StatementLockingSnafu.build())?;
             stmt.query = Some(query);
             Ok(())
         }
@@ -154,9 +148,7 @@ pub fn statement_execute_query(stmt_handle: Handle) -> Result<ExecuteResult, Api
         .build()
     })?;
 
-    let mut stmt = stmt_ptr
-        .lock()
-        .map_err(|_| StatementLockingSnafu {}.build())?;
+    let mut stmt = stmt_ptr.lock().map_err(|_| StatementLockingSnafu.build())?;
     let query_str = stmt.query.as_deref().ok_or_else(|| {
         InvalidArgumentSnafu {
             argument: "Query not found".to_string(),
@@ -167,49 +159,47 @@ pub fn statement_execute_query(stmt_handle: Handle) -> Result<ExecuteResult, Api
     // Create a blocking runtime for the async operations
     let rt = tokio::runtime::Runtime::new().context(RuntimeCreationSnafu)?;
 
-    let (query_parameters, session_token, http_client, retry_policy) = {
+    let (query_parameters, http_client, retry_policy) = {
         let conn = stmt
             .conn
             .lock()
-            .map_err(|_| ConnectionLockingSnafu {}.build())?;
+            .map_err(|_| ConnectionLockingSnafu.build())?;
         (
             QueryParameters::from_settings(&conn.settings).context(ConfigurationSnafu)?,
-            conn.session_token().map(|s| s.to_string()).ok_or_else(|| {
-                InvalidArgumentSnafu {
-                    argument: "Session token not found".to_string(),
-                }
-                .build()
-            })?,
             conn.http_client
                 .clone()
-                .ok_or_else(|| ConnectionNotInitializedSnafu {}.build())?,
+                .context(ConnectionNotInitializedSnafu)?,
             conn.retry_policy.clone(),
         )
     };
 
     let execution_mode = stmt.execution_mode(Some(query_str));
     let query = stmt.query.take().expect("query must be present");
-    let bindings = stmt.get_query_parameter_bindings().map_err(|_| {
-        InvalidArgumentSnafu {
-            argument: "Failed to get query parameter bindings".to_string(),
-        }
-        .build()
-    })?;
+    let bindings = stmt
+        .get_query_parameter_bindings()
+        .context(StatementSnafu)?;
 
     // Execute query with automatic session refresh on 401
-    let response = rt.block_on(async {
-        execute_query_with_refresh(
-            &stmt.conn,
-            &http_client,
-            query_parameters,
-            session_token,
-            query,
-            bindings,
-            &retry_policy,
-            execution_mode,
-        )
-        .await
-    })?;
+    let conn = stmt.conn.clone();
+    let response = rt.block_on(with_valid_session(&conn, |session_token| {
+        let http_client = http_client.clone();
+        let query_parameters = query_parameters.clone();
+        let query = query.clone();
+        let bindings = bindings.clone();
+        let retry_policy = retry_policy.clone();
+        async move {
+            snowflake_query_with_client(
+                &http_client,
+                query_parameters,
+                session_token,
+                query,
+                bindings,
+                &retry_policy,
+                execution_mode,
+            )
+            .await
+        }
+    }))?;
 
     let response_reader = rt
         .block_on(process_query_response(&response.data, &http_client))
@@ -223,88 +213,6 @@ pub fn statement_execute_query(stmt_handle: Handle) -> Result<ExecuteResult, Api
         stream: rowset_stream,
         rows_affected: 0,
     })
-}
-
-/// Execute a query, automatically refreshing the session token on 401.
-#[allow(clippy::too_many_arguments)]
-async fn execute_query_with_refresh(
-    conn: &Arc<Mutex<Connection>>,
-    http_client: &reqwest::Client,
-    query_parameters: QueryParameters,
-    session_token: String,
-    query: String,
-    bindings: Option<HashMap<String, query_request::BindParameter>>,
-    retry_policy: &crate::config::retry::RetryPolicy,
-    execution_mode: QueryExecutionMode,
-) -> Result<snowflake::query_response::Response, ApiError> {
-    // First attempt
-    let result = snowflake_query_with_client(
-        http_client,
-        query_parameters.clone(),
-        session_token,
-        query.clone(),
-        bindings.clone(),
-        retry_policy,
-        execution_mode,
-    )
-    .await;
-
-    match result {
-        Ok(response) => Ok(response),
-        Err(snowflake::RestError::InvalidSnowflakeResponse {
-            source: SnowflakeResponseError::SessionExpired { .. },
-            ..
-        }) => {
-            tracing::info!("Session expired, attempting refresh");
-
-            // Get connection context for refresh
-            let (tokens, server_url, client_info) = {
-                let conn_guard = conn.lock().map_err(|_| ConnectionLockingSnafu {}.build())?;
-                let tokens = conn_guard
-                    .tokens
-                    .clone()
-                    .ok_or_else(|| ConnectionNotInitializedSnafu {}.build())?;
-                let server_url = conn_guard
-                    .server_url
-                    .clone()
-                    .ok_or_else(|| ConnectionNotInitializedSnafu {}.build())?;
-                let client_info = conn_guard
-                    .client_info
-                    .clone()
-                    .ok_or_else(|| ConnectionNotInitializedSnafu {}.build())?;
-                (tokens, server_url, client_info)
-            };
-
-            // Refresh session
-            let new_tokens = refresh_session(http_client, &server_url, &client_info, &tokens)
-                .await
-                .context(SessionRefreshSnafu)?;
-
-            let new_session_token = new_tokens.session_token.clone();
-
-            // Update connection with new tokens
-            {
-                let mut conn_guard = conn.lock().map_err(|_| ConnectionLockingSnafu {}.build())?;
-                conn_guard.tokens = Some(new_tokens);
-            }
-
-            tracing::info!("Session refreshed, retrying query");
-
-            // Retry with new token
-            snowflake_query_with_client(
-                http_client,
-                query_parameters,
-                new_session_token,
-                query,
-                bindings,
-                retry_policy,
-                execution_mode,
-            )
-            .await
-            .context(LoginSnafu)
-        }
-        Err(e) => Err(e).context(LoginSnafu),
-    }
 }
 
 fn parameters_from_record_batch(

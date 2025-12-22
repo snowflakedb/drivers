@@ -27,6 +27,8 @@ fn test_tokens() -> SessionTokens {
         session_token: "old-session-token".to_string(),
         master_token: "valid-master-token".to_string(),
         session_id: 12345,
+        session_expires_at: None,
+        master_expires_at: None,
     }
 }
 

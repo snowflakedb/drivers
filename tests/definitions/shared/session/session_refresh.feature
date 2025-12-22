@@ -17,3 +17,10 @@ Feature: Session Token Refresh
     Given Snowflake client is logged in
     When we execute queries with delays between them
     Then each query should succeed
+
+  @core_e2e
+  Scenario: should refresh session proactively
+    # E2E test - verifies the refresh endpoint works without waiting for expiry
+    Given valid login credentials
+    When we login and immediately call refresh
+    Then we should get new tokens that differ from the original

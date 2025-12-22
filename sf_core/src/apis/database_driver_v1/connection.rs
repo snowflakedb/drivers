@@ -1,5 +1,6 @@
-use snafu::ResultExt;
-use std::{collections::HashMap, sync::Mutex};
+use snafu::{OptionExt, ResultExt};
+use std::future::Future;
+use std::{collections::HashMap, sync::Arc, sync::Mutex};
 
 use super::Handle;
 use super::Setting;
@@ -7,7 +8,7 @@ use super::error::*;
 use super::global_state::CONN_HANDLE_MANAGER;
 use crate::config::rest_parameters::{ClientInfo, LoginParameters};
 use crate::config::retry::RetryPolicy;
-use crate::rest::snowflake::SessionTokens;
+use crate::rest::snowflake::{self, RestError, SessionTokens, SnowflakeResponseError};
 use crate::tls::client::create_tls_client_with_config;
 use reqwest;
 
@@ -132,5 +133,92 @@ impl Connection {
     /// Get the current session token, if authenticated
     pub fn session_token(&self) -> Option<&str> {
         self.tokens.as_ref().map(|t| t.session_token.as_str())
+    }
+}
+
+/// Execute an operation with automatic session refresh on 401.
+///
+/// This function:
+/// 1. Extracts the session token from the connection
+/// 2. Runs the provided function with that token
+/// 3. On SessionExpired error, refreshes the session and retries once
+/// 4. Updates the connection with new tokens on successful refresh
+pub async fn with_valid_session<F, Fut, T>(
+    conn: &Arc<Mutex<Connection>>,
+    f: F,
+) -> Result<T, ApiError>
+where
+    F: Fn(String) -> Fut,
+    Fut: Future<Output = Result<T, RestError>>,
+{
+    // Extract what we need from the connection
+    let (session_token, http_client) = {
+        let guard = conn.lock().map_err(|_| ConnectionLockingSnafu.build())?;
+        (
+            guard
+                .session_token()
+                .map(|s| s.to_string())
+                .context(ConnectionNotInitializedSnafu)?,
+            guard
+                .http_client
+                .clone()
+                .context(ConnectionNotInitializedSnafu)?,
+        )
+    };
+
+    // First attempt
+    match f(session_token).await {
+        Ok(result) => Ok(result),
+        Err(RestError::InvalidSnowflakeResponse {
+            source: SnowflakeResponseError::SessionExpired { .. },
+            ..
+        }) => {
+            tracing::info!("Session expired, attempting refresh");
+
+            // Get refresh context
+            let (tokens, server_url, client_info) = {
+                let guard = conn.lock().map_err(|_| ConnectionLockingSnafu.build())?;
+                (
+                    guard
+                        .tokens
+                        .clone()
+                        .context(ConnectionNotInitializedSnafu)?,
+                    guard
+                        .server_url
+                        .clone()
+                        .context(ConnectionNotInitializedSnafu)?,
+                    guard
+                        .client_info
+                        .clone()
+                        .context(ConnectionNotInitializedSnafu)?,
+                )
+            };
+
+            // Check if master token is already expired - fail fast instead of making a doomed request
+            if tokens.is_master_expired() {
+                tracing::info!("Master token expired, full re-authentication required");
+                return MasterTokenExpiredSnafu.fail();
+            }
+
+            // Refresh session
+            let new_tokens =
+                snowflake::refresh_session(&http_client, &server_url, &client_info, &tokens)
+                    .await
+                    .context(SessionRefreshSnafu)?;
+
+            let new_session_token = new_tokens.session_token.clone();
+
+            // Update connection with new tokens
+            {
+                let mut guard = conn.lock().map_err(|_| ConnectionLockingSnafu.build())?;
+                guard.tokens = Some(new_tokens);
+            }
+
+            tracing::info!("Session refreshed, retrying operation");
+
+            // Retry with new token
+            f(new_session_token).await.context(QuerySnafu)
+        }
+        Err(e) => Err(e).context(QuerySnafu),
     }
 }
