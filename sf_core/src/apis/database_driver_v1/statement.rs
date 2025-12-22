@@ -317,20 +317,16 @@ impl Statement {
     }
 
     fn execution_mode(&self, query: Option<&str>) -> QueryExecutionMode {
-        match self
+        let is_sync = !self
             .settings
             .get(snowflake::STATEMENT_ASYNC_EXECUTION_OPTION)
-        {
-            Some(setting) => match parse_bool_setting(setting) {
-                Some(true) => QueryExecutionMode::Async,
-                Some(false) => QueryExecutionMode::Blocking,
-                None => QueryExecutionMode::Async,
-            },
-            None => match query {
-                Some(sql) if is_file_transfer(sql) => QueryExecutionMode::Blocking,
-                _ => QueryExecutionMode::Async,
-            },
+            .and_then(parse_bool_setting)
+            .unwrap_or(false);
+
+        if is_sync || query.is_some_and(is_file_transfer) {
+            return QueryExecutionMode::Blocking;
         }
+        QueryExecutionMode::Async
     }
 }
 

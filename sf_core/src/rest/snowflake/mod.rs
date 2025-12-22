@@ -17,7 +17,7 @@ use crate::tls::client::create_tls_client_with_config;
 use crate::tls::error::TlsError;
 use reqwest::{self, header};
 use serde_json;
-use snafu::{Location, OptionExt, ResultExt, Snafu};
+use snafu::{IntoError, Location, OptionExt, ResultExt, Snafu};
 use std::collections::HashMap;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tracing;
@@ -421,62 +421,240 @@ pub async fn snowflake_query_with_client(
     retry_policy: &RetryPolicy,
     execution_mode: QueryExecutionMode,
 ) -> Result<query_response::Response, RestError> {
-    // Try async mode if requested
-    let mut retried_612 = false;
+    // Async mode path (legacy, opt-in)
     if matches!(execution_mode, QueryExecutionMode::Async) {
-        match snowflake_query_async_style(
+        return execute_async_with_fallback(
             client,
             &query_parameters,
-            session_token.clone(),
-            sql.clone(),
-            parameter_bindings.clone(),
+            session_token,
+            sql,
+            parameter_bindings,
             retry_policy,
         )
-        .await
-        {
-            Ok(response) => return Ok(response),
-            Err(RestError::AsyncQuery {
+        .await;
+    }
+
+    // Sync mode (default): use requestId-based retry for connection failures
+    execute_sync_with_retry(
+        client,
+        &query_parameters,
+        &session_token,
+        sql,
+        parameter_bindings,
+        retry_policy,
+    )
+    .await
+}
+
+/// Execute query in async mode with fallback to sync for error 612.
+async fn execute_async_with_fallback(
+    client: &reqwest::Client,
+    query_parameters: &QueryParameters,
+    session_token: String,
+    sql: String,
+    parameter_bindings: Option<HashMap<String, query_request::BindParameter>>,
+    retry_policy: &RetryPolicy,
+) -> Result<query_response::Response, RestError> {
+    match snowflake_query_async_style(
+        client,
+        query_parameters,
+        session_token.clone(),
+        sql.clone(),
+        parameter_bindings.clone(),
+        retry_policy,
+    )
+    .await
+    {
+        Ok(response) => return Ok(response),
+        Err(RestError::AsyncQuery {
+            source:
+                SfError::AsyncPollResultNotFound {
+                    is_first_poll: true,
+                    ..
+                },
+            ..
+        }) => {
+            // Error 612 "Result not found" on first poll - fall through to sync retry.
+        }
+        Err(
+            e @ RestError::AsyncQuery {
                 source:
                     SfError::AsyncPollResultNotFound {
-                        is_first_poll: true,
+                        is_first_poll: false,
                         ..
                     },
                 ..
-            }) => {
-                // Error 612 "Result not found" on first poll - safe to retry with sync.
-                // We'll log after sync completes based on actual command type.
-                retried_612 = true;
-            }
-            Err(
-                e @ RestError::AsyncQuery {
-                    source:
-                        SfError::AsyncPollResultNotFound {
-                            is_first_poll: false,
-                            ..
-                        },
-                    ..
-                },
-            ) => {
-                // Got 612 after successful polls - something went wrong, don't retry
-                tracing::error!(
-                    sql_prefix = sql.chars().take(50).collect::<String>(),
-                    "Error 612 after prior successful polls; not retrying"
+            },
+        ) => {
+            tracing::error!(
+                sql_prefix = sql.chars().take(50).collect::<String>(),
+                "Error 612 after prior successful polls; not retrying"
+            );
+            return Err(e);
+        }
+        Err(e) => return Err(e),
+    }
+
+    // Fallback to sync after 612
+    let response = execute_sync_with_retry(
+        client,
+        query_parameters,
+        &session_token,
+        sql,
+        parameter_bindings,
+        retry_policy,
+    )
+    .await?;
+
+    // Log based on actual command type after sync completes (we always get here via 612)
+    let is_file_transfer = response
+        .data
+        .command
+        .as_deref()
+        .map(|c| c.eq_ignore_ascii_case("UPLOAD") || c.eq_ignore_ascii_case("DOWNLOAD"))
+        .unwrap_or(false);
+    if is_file_transfer {
+        tracing::info!(
+            command = response.data.command.as_deref(),
+            "Retried async 612 with sync; confirmed file transfer"
+        );
+    } else {
+        tracing::warn!(
+            command = response.data.command.as_deref(),
+            "Retried async 612 with sync; unexpected non-file-transfer query"
+        );
+    }
+
+    Ok(response)
+}
+
+/// Execute query synchronously with requestId-based retry on transport failures.
+///
+/// On connection errors (network timeout, connection reset), the query is retried
+/// with the same `requestId` and `retry=true`. Snowflake uses requestId for
+/// idempotency - if the original query completed, the retry returns the existing result.
+async fn execute_sync_with_retry(
+    client: &reqwest::Client,
+    query_parameters: &QueryParameters,
+    session_token: &str,
+    sql: String,
+    parameter_bindings: Option<HashMap<String, query_request::BindParameter>>,
+    retry_policy: &RetryPolicy,
+) -> Result<query_response::Response, RestError> {
+    // Generate requestId upfront - persisted across retries for idempotency
+    let request_id = uuid::Uuid::new_v4();
+    let sql_prefix = sql.chars().take(50).collect::<String>();
+
+    tracing::debug!(
+        request_id = %request_id,
+        sql_prefix,
+        "Executing sync query"
+    );
+
+    // First attempt
+    match execute_sync_query(
+        client,
+        query_parameters,
+        session_token,
+        &sql,
+        parameter_bindings.as_ref(),
+        request_id,
+        false, // not a retry
+    )
+    .await
+    {
+        Ok(response) => return Ok(response),
+        Err(RestError::Communication {
+            context, source, ..
+        }) => {
+            // Transport error - retry with same requestId
+            tracing::warn!(
+                request_id = %request_id,
+                error = %source,
+                context,
+                "Transport error on sync query; retrying with same requestId"
+            );
+        }
+        Err(e) => return Err(e),
+    }
+
+    // Retry with retry=true - Snowflake will return existing result if query completed
+    let max_retries = retry_policy.max_attempts.saturating_sub(1).max(1);
+    let mut last_error = None;
+
+    for attempt in 1..=max_retries {
+        let backoff = std::time::Duration::from_millis(
+            (retry_policy.backoff.base.as_millis() as f64
+                * retry_policy.backoff.factor.powi(attempt as i32)) as u64,
+        )
+        .min(retry_policy.backoff.cap);
+
+        tokio::time::sleep(backoff).await;
+
+        tracing::info!(
+            request_id = %request_id,
+            attempt,
+            max_retries,
+            backoff_ms = backoff.as_millis(),
+            "Retrying sync query with retry=true"
+        );
+
+        match execute_sync_query(
+            client,
+            query_parameters,
+            session_token,
+            &sql,
+            parameter_bindings.as_ref(),
+            request_id,
+            true, // is retry
+        )
+        .await
+        {
+            Ok(response) => {
+                tracing::info!(
+                    request_id = %request_id,
+                    attempt,
+                    query_id = response.data.query_id.as_deref().unwrap_or_default(),
+                    "Sync query retry succeeded"
                 );
-                return Err(e);
+                return Ok(response);
+            }
+            Err(RestError::Communication {
+                context, source, ..
+            }) => {
+                tracing::warn!(
+                    request_id = %request_id,
+                    attempt,
+                    error = %source,
+                    context,
+                    "Transport error on retry; will try again"
+                );
+                last_error = Some(CommunicationSnafu { context }.into_error(source));
             }
             Err(e) => return Err(e),
         }
     }
 
-    // Save prefix for logging if we retried due to 612
-    let sql_prefix = if retried_612 {
-        Some(sql.chars().take(50).collect::<String>())
-    } else {
-        None
-    };
+    // Exhausted retries - return the last transport error
+    tracing::error!(
+        request_id = %request_id,
+        "Exhausted all retry attempts for sync query"
+    );
+    Err(last_error.expect("last_error must be set after retry loop"))
+}
 
+/// Execute a single sync query request.
+async fn execute_sync_query(
+    client: &reqwest::Client,
+    query_parameters: &QueryParameters,
+    session_token: &str,
+    sql: &str,
+    parameter_bindings: Option<&HashMap<String, query_request::BindParameter>>,
+    request_id: uuid::Uuid,
+    is_retry: bool,
+) -> Result<query_response::Response, RestError> {
     let query_request = query_request::Request {
-        sql_text: sql,
+        sql_text: sql.to_owned(),
         async_exec: false,
         sequence_id: 1,
         query_submission_time: SystemTime::now()
@@ -486,41 +664,35 @@ pub async fn snowflake_query_with_client(
         is_internal: false,
         describe_only: None,
         parameters: None,
-        bindings: parameter_bindings,
+        bindings: parameter_bindings.cloned(),
         bind_stage: None,
         query_context: query_request::QueryContext { entries: None },
     };
 
-    let json_payload = serde_json::to_string_pretty(&query_request).unwrap();
-    tracing::debug!("JSON Body Sent:\n{}", json_payload);
     let query_url = Url::parse(query_parameters.server_url.as_str())
         .and_then(|base| base.join(QUERY_REQUEST_PATH))
         .context(UrlJoinSnafu {
             path: QUERY_REQUEST_PATH,
         })?;
 
+    // Build query parameters - include retry=true if this is a retry
+    let mut query_params = vec![
+        ("requestId", request_id.to_string()),
+        ("request_guid", uuid::Uuid::new_v4().to_string()),
+    ];
+    if is_retry {
+        query_params.push(("retry", "true".to_string()));
+    }
+
     let request = apply_json_content_type(apply_query_headers(
         client.post(query_url),
         &query_parameters.client_info,
-        &session_token,
+        session_token,
     ))
-    .query(&[
-        ("requestId", uuid::Uuid::new_v4().to_string()),
-        ("request_guid", uuid::Uuid::new_v4().to_string()),
-    ])
+    .query(&query_params)
     .json(&query_request)
     .build()
     .context(RequestConstructionSnafu { request: "query" })?;
-
-    tracing::debug!("Query request: {:?}", request);
-    tracing::debug!("Request headers: {:?}", request.headers());
-    tracing::debug!("Request method: {:?}", request.method());
-    tracing::debug!("Request url: {:?}", request.url());
-    tracing::debug!("Request version: {:?}", request.version());
-    // tracing::debug!("Request content-length: {:?}", request.content_length());
-    // tracing::debug!("Request content-type: {:?}", request.content_type());
-    // tracing::debug!("Request accept: {:?}", request.accept());
-    // tracing::debug!("Request accept-encoding: {:?}", request.accept_encoding());
 
     let send_start = Instant::now();
     let response = client.execute(request).await.context(CommunicationSnafu {
@@ -530,42 +702,22 @@ pub async fn snowflake_query_with_client(
     let query_response = read_response_json::<query_response::Response>(response)
         .await
         .context(InvalidSnowflakeResponseSnafu)?;
+
     let elapsed_ms = send_start.elapsed().as_secs_f64() * 1000.0;
     tracing::debug!(
         elapsed_ms,
+        request_id = %request_id,
+        is_retry,
         query_id = query_response.data.query_id.as_deref().unwrap_or_default(),
-        "blocking endpoint returned response"
+        "Sync query completed"
     );
 
     if !query_response.success {
         let message = query_response
             .message
-            .unwrap_or_else(|| "Unknown error".to_string());
+            .unwrap_or_else(|| "Unknown error".to_owned());
         return QueryFailedSnafu { message }.fail();
     }
-
-    // Log if we retried due to 612, now that we know the actual command type
-    if let Some(sql_prefix) = sql_prefix {
-        let is_file_transfer = query_response
-            .data
-            .command
-            .as_deref()
-            .map(|c| c.eq_ignore_ascii_case("UPLOAD") || c.eq_ignore_ascii_case("DOWNLOAD"))
-            .unwrap_or(false);
-        if is_file_transfer {
-            tracing::info!(
-                command = query_response.data.command.as_deref(),
-                "Retried async 612 with sync; confirmed file transfer"
-            );
-        } else {
-            tracing::warn!(
-                command = query_response.data.command.as_deref(),
-                sql_prefix,
-                "Retried async 612 with sync; unexpected non-file-transfer query"
-            );
-        }
-    }
-
     Ok(query_response)
 }
 
