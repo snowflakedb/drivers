@@ -611,8 +611,7 @@ where
     let response_text = response.text().await;
 
     if !response_status.is_success() {
-        // TODO(session-refresh): Implement automatic session renewal on 401.
-        // See gosnowflake's renewRestfulSession and TODO in async_exec.rs.
+        // Return SessionExpired so caller can refresh and retry
         if response_status == reqwest::StatusCode::UNAUTHORIZED {
             return SessionExpiredSnafu.fail();
         }
