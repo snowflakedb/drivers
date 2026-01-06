@@ -1,0 +1,26 @@
+# Dockerfile for building the old ODBC driver with coverage
+FROM rockylinux:8
+
+RUN dnf install -y gcc tar gzip bash
+RUN dnf install -y epel-release && dnf install -y awscli
+
+ENV CARGO_HOME=/root/.cargo
+ENV RUSTUP_HOME=/root/.rustup
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+
+RUN dnf install -y dnf-plugins-core && dnf config-manager --set-enabled powertools || dnf config-manager --set-enabled crb
+RUN dnf install -y which gcc-c++ libstdc++-devel libstdc++-static
+RUN dnf install -y python3 cmake git autoconf automake libtool
+RUN ln -s /usr/bin/python3 /usr/bin/python
+
+RUN dnf install -y unixODBC-devel zlib-devel lcov
+
+RUN cd /tmp && git clone https://github.com/VXAPPS/cppunit.git &&\
+    cd cppunit &&\
+    git checkout 7e1c90fa717eb2253ca1901d4065f06b2469cfa2 &&\
+    ./autogen.sh &&\
+    ./configure CXXFLAGS="-std=c++11" &&\
+    make && make install &&\
+    cp /usr/local/lib/libcppunit* /usr/lib64

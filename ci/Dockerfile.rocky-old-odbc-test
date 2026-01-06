@@ -1,0 +1,45 @@
+# Dockerfile for building and running ODBC tests against the old driver
+FROM rockylinux:9
+
+RUN dnf install -y gcc tar gzip bash
+RUN dnf install -y epel-release && dnf install -y awscli
+
+ENV CARGO_HOME=/root/.cargo
+ENV RUSTUP_HOME=/root/.rustup
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+
+RUN dnf install -y dnf-plugins-core && dnf config-manager --set-enabled powertools || dnf config-manager --set-enabled crb
+RUN dnf install -y which gcc-c++ libstdc++-devel libstdc++-static
+RUN dnf install -y python3 cmake git autoconf automake libtool
+RUN ln -s /usr/bin/python3 /usr/bin/python
+
+# Install CMake 4.0 as cmake4 command
+RUN cd /tmp && \
+    curl -L https://github.com/Kitware/CMake/releases/download/v4.0.0/cmake-4.0.0-linux-aarch64.tar.gz -o cmake-4.0.0.tar.gz && \
+    tar -xzf cmake-4.0.0.tar.gz && \
+    cp -r cmake-4.0.0-linux-aarch64 /opt/cmake-4.0.0-linux-aarch64 && \
+    ln -s /opt/cmake-4.0.0-linux-aarch64/bin/cmake /usr/bin/cmake4 && \
+    ln -s /opt/cmake-4.0.0-linux-aarch64/bin/ctest /usr/bin/ctest4 && \
+    ln -s /opt/cmake-4.0.0-linux-aarch64/bin/st /usr/bin/st4 && \
+    ln -s /opt/cmake-4.0.0-linux-aarch64/bin/cpack /usr/bin/cpack4 && \
+    ln -s /opt/cmake-4.0.0-linux-aarch64/bin/ccmake /usr/bin/ccmake4 && \
+    rm -rf cmake-4.0.0*
+
+RUN cd /tmp && git clone https://github.com/VXAPPS/cppunit.git &&\
+    cd cppunit &&\
+    git checkout 7e1c90fa717eb2253ca1901d4065f06b2469cfa2 &&\
+    ./autogen.sh &&\
+    ./configure CXXFLAGS="-std=c++11" &&\
+    make && make install &&\
+    cp /usr/local/lib/libcppunit* /usr/lib64
+
+RUN dnf install -y unixODBC-devel zlib-devel
+
+# Install Snowflake ODBC driver
+RUN curl -O https://sfc-repo.snowflakecomputing.com/odbc/linuxaarch64/3.13.0/snowflake-odbc-3.13.0.aarch64.rpm && \
+    rpm -i --nosignature snowflake-odbc-3.13.0.aarch64.rpm
+
+RUN git config --global --add safe.directory '*'
+
