@@ -65,6 +65,7 @@ pipeline {
     
     stages {
         stage('Coverage') {
+            failFast false
             parallel {
                 stage('Rust Core') {
                     agent { label 'build-node-extra-large' }
@@ -223,8 +224,9 @@ pipeline {
                                     if [ -f "$REPORT" ]; then
                                         MISSED=$(grep -oP 'type="LINE"[^/]*missed="\\K[0-9]+' "$REPORT" | head -1 || echo "0")
                                         COVERED=$(grep -oP 'type="LINE"[^/]*covered="\\K[0-9]+' "$REPORT" | head -1 || echo "0")
-                                        if [ $((MISSED + COVERED)) -gt 0 ]; then
-                                            awk "BEGIN {printf \"%.2f\", $COVERED * 100 / ($MISSED + $COVERED)}"
+                                        TOTAL=$((MISSED + COVERED))
+                                        if [ "$TOTAL" -gt 0 ]; then
+                                            echo "$COVERED $TOTAL" | awk '{printf "%.2f", $1 * 100 / $2}'
                                         else
                                             echo "N/A"
                                         fi
@@ -243,11 +245,11 @@ pipeline {
                 }
             }
         }
-    }
-    
-    post {
-        always {
-            node('built-in') {
+        
+        stage('Coverage Summary') {
+            when { expression { return true } }
+            agent any
+            steps {
                 script {
                     def lines = ["CODE COVERAGE SUMMARY", ""]
                     if (coverageResults.isEmpty()) {
@@ -257,8 +259,7 @@ pipeline {
                             lines << "${component}: ${coverage}"
                         }
                     }
-                    def report = lines.join('\n')
-                    echo report
+                    echo lines.join('\n')
                     
                     def summary = coverageResults.collect { k, v -> "${k}: ${v}" }.join(' | ')
                     if (summary) {
