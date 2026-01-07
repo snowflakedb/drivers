@@ -61,6 +61,14 @@ pipeline {
                         ]) {
                             sh label: 'Upload to Codecov', script: '''
                                 set +x
+                                echo "=== Coverage File Check ==="
+                                ls -la lcov-rust-core.info
+                                echo "File size: $(wc -c < lcov-rust-core.info) bytes"
+                                echo "Line count: $(wc -l < lcov-rust-core.info) lines"
+                                echo "First 20 lines:"
+                                head -20 lcov-rust-core.info
+                                echo "==========================="
+                                
                                 codecovcli --verbose --enterprise-url https://snowflake.codecov.io \
                                     upload-process \
                                     --disable-search \
@@ -132,6 +140,13 @@ pipeline {
                             ]) {
                             sh label: 'Upload to Codecov', script: '''
                                 set +x
+                                echo "=== Coverage File Check ==="
+                                ls -la python/reports/coverage-python.xml
+                                echo "File size: $(wc -c < python/reports/coverage-python.xml) bytes"
+                                echo "First 20 lines:"
+                                head -20 python/reports/coverage-python.xml
+                                echo "==========================="
+                                
                                 codecovcli --verbose --enterprise-url https://snowflake.codecov.io \
                                     upload-process \
                                     --disable-search \
@@ -256,6 +271,14 @@ EOF
                             ]) {
                             sh label: 'Upload to Codecov', script: '''
                                 set +x
+                                echo "=== Coverage File Check ==="
+                                ls -la lcov-odbc.info
+                                echo "File size: $(wc -c < lcov-odbc.info) bytes"
+                                echo "Line count: $(wc -l < lcov-odbc.info) lines"
+                                echo "First 20 lines:"
+                                head -20 lcov-odbc.info
+                                echo "==========================="
+                                
                                 codecovcli --verbose --enterprise-url https://snowflake.codecov.io \
                                     upload-process \
                                     --disable-search \
@@ -345,6 +368,13 @@ EOF
                         ]) {
                             sh label: 'Upload to Codecov', script: '''
                                 set +x
+                                echo "=== Coverage File Check ==="
+                                ls -la jdbc/build/reports/jacoco/test/jacocoTestReport.xml
+                                echo "File size: $(wc -c < jdbc/build/reports/jacoco/test/jacocoTestReport.xml) bytes"
+                                echo "First 20 lines:"
+                                head -20 jdbc/build/reports/jacoco/test/jacocoTestReport.xml
+                                echo "==========================="
+                                
                                 codecovcli --verbose --enterprise-url https://snowflake.codecov.io \
                                     upload-process \
                                     --disable-search \
