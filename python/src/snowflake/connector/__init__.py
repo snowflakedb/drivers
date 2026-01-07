@@ -65,6 +65,9 @@ def connect(**kwargs: Any) -> Connection:
     return Connection(**kwargs)
 
 
+# Backward compatibility
+SnowflakeConnection = Connection
+
 # Export all public symbols
 __all__ = [
     # Version
@@ -79,6 +82,8 @@ __all__ = [
     "Connection",
     "DictCursor",
     "SnowflakeCursor",
+    "SnowflakeConnection",
+    "Cursor",
     # Exceptions
     "Warning",
     "Error",
