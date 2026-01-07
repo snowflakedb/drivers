@@ -67,6 +67,7 @@ pipeline {
                                 set +x
                                 echo "=== Uploading to Codecov ==="
                                 codecovcli --verbose upload-process \
+                                    --enterprise-url https://snowflake.codecov.io \
                                     --disable-search \
                                     --fail-on-error \
                                     -t "${CODECOV_TOKEN}" \
@@ -143,6 +144,7 @@ pipeline {
                                 set +x
                                 echo "=== Uploading to Codecov ==="
                                 codecovcli --verbose upload-process \
+                                    --enterprise-url https://snowflake.codecov.io \
                                     --disable-search \
                                     --fail-on-error \
                                     -t "${CODECOV_TOKEN}" \
@@ -262,6 +264,7 @@ pipeline {
                                 set +x
                                 echo "=== Uploading to Codecov ==="
                                 codecovcli --verbose upload-process \
+                                    --enterprise-url https://snowflake.codecov.io \
                                     --disable-search \
                                     --fail-on-error \
                                     -t "${CODECOV_TOKEN}" \
@@ -361,6 +364,7 @@ pipeline {
                                 set +x
                                 echo "=== Uploading to Codecov ==="
                                 codecovcli --verbose upload-process \
+                                    --enterprise-url https://snowflake.codecov.io \
                                     --disable-search \
                                     --fail-on-error \
                                     -t "${CODECOV_TOKEN}" \
