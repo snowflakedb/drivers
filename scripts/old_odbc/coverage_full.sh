@@ -11,7 +11,6 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$(dirname "$SCRIPT_DIR")")"
-OLD_ODBC_PATH="${OLD_ODBC_PATH:-}"
 
 # Clone old ODBC if path doesn't exist
 if [ -z "$OLD_ODBC_PATH" ] || [ ! -d "$OLD_ODBC_PATH" ]; then

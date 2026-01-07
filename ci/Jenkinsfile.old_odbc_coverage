@@ -42,7 +42,7 @@ pipeline {
                         dir('old_odbc') {
                             checkout([
                                 $class: 'GitSCM',
-                                branches: [[name: '*/SNOW-2923743-old-odbc-coverage-with-ud-tests']],
+                                branches: [[name: '*/master']],
                                 userRemoteConfigs: [[
                                     url: 'https://github.com/snowflakedb/snowflake-odbc.git',
                                     credentialsId: 'jenkins-snowflake-github-app-3'

@@ -38,7 +38,7 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 
 # Build and install cppunit
 RUN cd /tmp && \
-    git clone --depth 1 https://github.com/VXAPPS/cppunit.git && \
+    git clone https://github.com/VXAPPS/cppunit.git && \
     cd cppunit && \
     git checkout 7e1c90fa717eb2253ca1901d4065f06b2469cfa2 && \
     ./autogen.sh && \
