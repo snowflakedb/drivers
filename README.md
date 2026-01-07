@@ -117,6 +117,16 @@ cargo run
 1. **Missing parameters.json**: Run `./scripts/decode_secrets.sh` or create manually
 2. **Missing Rust library**: Run `cargo build --package sf_core`
 
+## CWS setup
+To build the core on CWS run the following command:
+```bash
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+export CC=/opt/rh/devtoolset-10/root/usr/bin/gcc
+export CXX=/opt/rh/devtoolset-10/root/usr/bin/g++
+cargo clean
+cargo build
+```
+
 ## License
 Copyright (c) Snowflake Inc. All rights reserved.
 

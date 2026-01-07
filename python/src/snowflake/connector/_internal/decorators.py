@@ -1,0 +1,19 @@
+"""Decorators for internal use."""
+
+from typing import Callable, TypeVar
+
+
+F = TypeVar("F", bound=Callable)
+
+
+def internal(func: F) -> F:
+    """
+    Mark a method or function as internal.
+    This is an identity function that returns the function unchanged.
+    It serves as a marker for internal APIs that should not be used by external consumers.
+    Args:
+        func: The function or method to mark as internal
+    Returns:
+        The unchanged function
+    """
+    return func
