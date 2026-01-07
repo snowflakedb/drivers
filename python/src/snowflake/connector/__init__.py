@@ -64,6 +64,9 @@ def connect(**kwargs: Any) -> Connection:
     return Connection(**kwargs)
 
 
+# Backward compatibility
+SnowflakeConnection = Connection
+
 # Export all public symbols
 __all__ = [
     # Module constants
@@ -74,6 +77,7 @@ __all__ = [
     "connect",
     # Classes
     "Connection",
+    "SnowflakeConnection",
     "Cursor",
     # Exceptions
     "Warning",

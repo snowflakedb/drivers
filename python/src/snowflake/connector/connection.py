@@ -17,7 +17,9 @@ from snowflake.connector._internal.protobuf_gen.database_driver_v1_services impo
     DatabaseInitRequest,
     DatabaseNewRequest,
 )
+from snowflake.ud_connector._internal.snowflake_restful import SnowflakeRestful
 
+from ._internal import internal
 from ._internal.api_client.client_api import database_driver_client
 from .cursor import Cursor
 from .exceptions import InterfaceError, NotSupportedError
@@ -206,3 +208,12 @@ class Connection:
             bool: True if connection is closed, False otherwise
         """
         return self._closed
+
+    @property
+    @internal
+    def rest(self) -> SnowflakeRestful:
+        return SnowflakeRestful(connection=self)
+
+    @internal
+    def _telemetry(self) -> Any:
+        pass
