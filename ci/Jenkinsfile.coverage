@@ -2,6 +2,9 @@
  * Jenkinsfile for code coverage generation and upload to Codecov
  */
 
+def DOCKER_IMAGE = 'nexus.int.snowflakecomputing.com:8086/docker/rhel8-universal-driver-coverage:1'
+def CODECOV_SECRET = 'sf-crypt://universes/prod/services/drivers-namespace/locations/sfc-or-dev-ci-k8s-ci1/secrets/snowdrivers/ud_repo_codecov/3cf8b455-20d3-4307-b054-bb039be2907a:AQAAAVAKOnNmYy1vci1kZXYtY2ktazhzLWNpMS9jMTJhYTQxNi1jOWU5LTRlMmUtYmQzZi01Y2M0NTdlMjBmYWISzQGyBCCbsMiWJQXfcX716lA8lm9MCq8Hm3dfMlv1DQWsAmD60mPDeGLdYSfkpw4FOYKx4x9YCQEmwjLiUwkk2neOLJ0pDiQHFRaVOYMuyo8Wc88c71_xmuaNLkT03Au8osvlYdaBhjKfOqGSsxioIugJ2dQAL4o4O_A4yn7zj9JRRQdjhPwf7AJGN2q9y1-ta3fO-VAqYuYTsn22xlEpY0Vh-S8J026j3k3YkUM_HpIRJS8M8646ywon-9e4W5aLk8zfCL5oEnjCbAuRxMjfGDQiQGC_ISCEDyk3S1GZJMsS9jTbdaeLqogmF2D9MTL2xBg1CokRhXzwiSvQZMi6y5rOVENbkTe_5P9IybGXZIGffAKYo7zA8u6K4SP733pEXojQd8JiJCqCA7xEkRr0kT26Vsc-tLP_dL7ANNLosqmnLq9R9NYAvGv_Xd0DptQF_GM0iVHHcw=='
+
 pipeline {
     agent none
     
@@ -20,63 +23,40 @@ pipeline {
         stage('Coverage') {
             parallel {
                 stage('Rust Core') {
-                    agent {
-                        docker {
-                            image 'nexus.int.snowflakecomputing.com:8086/docker/rhel8-universal-driver-coverage:1'
-                            args '-u root --privileged'
-                            label 'build-node-extra-large'
-                        }
-                    }
+                    agent { label 'build-node-extra-large' }
                     steps {
-                        // Setup
-                        withCredentials([string(credentialsId: 'sfctest0-parameters-secret', variable: 'PARAMETERS_SECRET')]) {
-                            sh label: 'Decode Secrets', script: './scripts/decode_secrets.sh'
-                        }
-                        withCredentials([
-                            fuseString(variable: 'CODECOV_TOKEN', encryptedSecret: 'sf-crypt://universes/prod/services/drivers-namespace/locations/sfc-or-dev-ci-k8s-ci1/secrets/snowdrivers/ud_repo_codecov/3cf8b455-20d3-4307-b054-bb039be2907a:AQAAAVAKOnNmYy1vci1kZXYtY2ktazhzLWNpMS9jMTJhYTQxNi1jOWU5LTRlMmUtYmQzZi01Y2M0NTdlMjBmYWISzQGyBCCbsMiWJQXfcX716lA8lm9MCq8Hm3dfMlv1DQWsAmD60mPDeGLdYSfkpw4FOYKx4x9YCQEmwjLiUwkk2neOLJ0pDiQHFRaVOYMuyo8Wc88c71_xmuaNLkT03Au8osvlYdaBhjKfOqGSsxioIugJ2dQAL4o4O_A4yn7zj9JRRQdjhPwf7AJGN2q9y1-ta3fO-VAqYuYTsn22xlEpY0Vh-S8J026j3k3YkUM_HpIRJS8M8646ywon-9e4W5aLk8zfCL5oEnjCbAuRxMjfGDQiQGC_ISCEDyk3S1GZJMsS9jTbdaeLqogmF2D9MTL2xBg1CokRhXzwiSvQZMi6y5rOVENbkTe_5P9IybGXZIGffAKYo7zA8u6K4SP733pEXojQd8JiJCqCA7xEkRr0kT26Vsc-tLP_dL7ANNLosqmnLq9R9NYAvGv_Xd0DptQF_GM0iVHHcw==')
-                        ]) {
-                            sh label: 'Verify Codecov Token', script: '''
-                                set +x
-                                set -e
-                                if [ -z "${CODECOV_TOKEN}" ]; then
-                                    echo "ERROR: CODECOV_TOKEN is empty!"
-                                    exit 1
-                                fi
-                                echo "CODECOV_TOKEN is set (length: $(echo -n "${CODECOV_TOKEN}" | wc -c) chars)"
-                            '''
+                        // Docker Login
+                        withCredentials([string(credentialsId: 'a791118f-a1ea-46cd-b876-56da1b9bc71c', variable: 'NEXUS_PASSWORD')]) {
+                            sh label: 'Docker Login', script: 'source ./scripts/login_internal_docker.sh'
                         }
                         
-                        // Test + Coverage
-                        sh label: 'Run Tests with Coverage', script: '''
-                            set +x
-                            export PARAMETER_PATH=$(pwd)/parameters.json
-                            cargo tarpaulin --packages sf_core --all-features --skip-clean --no-fail-fast --out lcov --output-dir .
-                            mv lcov.info lcov-rust-core.info
-                        '''
-                        
-                        // Upload to Codecov
-                        withCredentials([
-                            fuseString(variable: 'CODECOV_TOKEN', encryptedSecret: 'sf-crypt://universes/prod/services/drivers-namespace/locations/sfc-or-dev-ci-k8s-ci1/secrets/snowdrivers/ud_repo_codecov/3cf8b455-20d3-4307-b054-bb039be2907a:AQAAAVAKOnNmYy1vci1kZXYtY2ktazhzLWNpMS9jMTJhYTQxNi1jOWU5LTRlMmUtYmQzZi01Y2M0NTdlMjBmYWISzQGyBCCbsMiWJQXfcX716lA8lm9MCq8Hm3dfMlv1DQWsAmD60mPDeGLdYSfkpw4FOYKx4x9YCQEmwjLiUwkk2neOLJ0pDiQHFRaVOYMuyo8Wc88c71_xmuaNLkT03Au8osvlYdaBhjKfOqGSsxioIugJ2dQAL4o4O_A4yn7zj9JRRQdjhPwf7AJGN2q9y1-ta3fO-VAqYuYTsn22xlEpY0Vh-S8J026j3k3YkUM_HpIRJS8M8646ywon-9e4W5aLk8zfCL5oEnjCbAuRxMjfGDQiQGC_ISCEDyk3S1GZJMsS9jTbdaeLqogmF2D9MTL2xBg1CokRhXzwiSvQZMi6y5rOVENbkTe_5P9IybGXZIGffAKYo7zA8u6K4SP733pEXojQd8JiJCqCA7xEkRr0kT26Vsc-tLP_dL7ANNLosqmnLq9R9NYAvGv_Xd0DptQF_GM0iVHHcw==')
-                        ]) {
-                            sh label: 'Upload to Codecov', script: '''
-                                set +x
-                                echo "=== Coverage File Check ==="
-                                ls -la lcov-rust-core.info
-                                echo "File size: $(wc -c < lcov-rust-core.info) bytes"
-                                echo "Line count: $(wc -l < lcov-rust-core.info) lines"
-                                echo "First 20 lines:"
-                                head -20 lcov-rust-core.info
-                                echo "==========================="
+                        script {
+                            docker.image(DOCKER_IMAGE).inside('-u root --privileged') {
+                                withCredentials([string(credentialsId: 'sfctest0-parameters-secret', variable: 'PARAMETERS_SECRET')]) {
+                                    sh label: 'Decode Secrets', script: './scripts/decode_secrets.sh'
+                                }
                                 
-                                codecovcli --verbose --enterprise-url https://snowflake.codecov.io \
-                                    upload-process \
-                                    --disable-search \
-                                    --fail-on-error \
-                                    -t "${CODECOV_TOKEN}" \
-                                    -n "rust-core-jenkins-${BUILD_NUMBER}" \
-                                    -F rust-core \
-                                    -f lcov-rust-core.info
-                            '''
+                                sh label: 'Run Tests with Coverage', script: '''
+                                    set +x
+                                    export PARAMETER_PATH=$(pwd)/parameters.json
+                                    cargo tarpaulin --packages sf_core --all-features --skip-clean --no-fail-fast --out lcov --output-dir .
+                                    mv lcov.info lcov-rust-core.info
+                                '''
+                                
+                                withCredentials([fuseString(variable: 'CODECOV_TOKEN', encryptedSecret: CODECOV_SECRET)]) {
+                                    sh label: 'Upload to Codecov', script: '''
+                                        set +x
+                                        codecovcli --verbose --enterprise-url https://snowflake.codecov.io \
+                                            upload-process \
+                                            --disable-search \
+                                            --fail-on-error \
+                                            -t "${CODECOV_TOKEN}" \
+                                            -n "rust-core-jenkins-${BUILD_NUMBER}" \
+                                            -F rust-core \
+                                            -f lcov-rust-core.info
+                                    '''
+                                }
+                            }
                         }
                         
                         archiveArtifacts artifacts: 'lcov-rust-core.info', allowEmptyArchive: true
@@ -84,76 +64,53 @@ pipeline {
                 }
                 
                 stage('Python') {
-                    agent {
-                        docker {
-                            image 'nexus.int.snowflakecomputing.com:8086/docker/rhel8-universal-driver-coverage:1'
-                            args '-u root --privileged'
-                            label 'build-node-extra-large'
-                        }
-                    }
+                    agent { label 'build-node-extra-large' }
                     steps {
-                        // Setup
-                        withCredentials([string(credentialsId: 'sfctest0-parameters-secret', variable: 'PARAMETERS_SECRET')]) {
-                            sh label: 'Decode Secrets', script: './scripts/decode_secrets.sh'
-                        }
-                        withCredentials([
-                            fuseString(variable: 'CODECOV_TOKEN', encryptedSecret: 'sf-crypt://universes/prod/services/drivers-namespace/locations/sfc-or-dev-ci-k8s-ci1/secrets/snowdrivers/ud_repo_codecov/3cf8b455-20d3-4307-b054-bb039be2907a:AQAAAVAKOnNmYy1vci1kZXYtY2ktazhzLWNpMS9jMTJhYTQxNi1jOWU5LTRlMmUtYmQzZi01Y2M0NTdlMjBmYWISzQGyBCCbsMiWJQXfcX716lA8lm9MCq8Hm3dfMlv1DQWsAmD60mPDeGLdYSfkpw4FOYKx4x9YCQEmwjLiUwkk2neOLJ0pDiQHFRaVOYMuyo8Wc88c71_xmuaNLkT03Au8osvlYdaBhjKfOqGSsxioIugJ2dQAL4o4O_A4yn7zj9JRRQdjhPwf7AJGN2q9y1-ta3fO-VAqYuYTsn22xlEpY0Vh-S8J026j3k3YkUM_HpIRJS8M8646ywon-9e4W5aLk8zfCL5oEnjCbAuRxMjfGDQiQGC_ISCEDyk3S1GZJMsS9jTbdaeLqogmF2D9MTL2xBg1CokRhXzwiSvQZMi6y5rOVENbkTe_5P9IybGXZIGffAKYo7zA8u6K4SP733pEXojQd8JiJCqCA7xEkRr0kT26Vsc-tLP_dL7ANNLosqmnLq9R9NYAvGv_Xd0DptQF_GM0iVHHcw==')
-                            ]) {
-                            sh label: 'Verify Codecov Token', script: '''
-                                set +x
-                                set -e
-                                if [ -z "${CODECOV_TOKEN}" ]; then
-                                    echo "ERROR: CODECOV_TOKEN is empty!"
-                                    exit 1
-                                fi
-                                echo "CODECOV_TOKEN is set (length: $(echo -n "${CODECOV_TOKEN}" | wc -c) chars)"
-                            '''
+                        // Docker Login
+                        withCredentials([string(credentialsId: 'a791118f-a1ea-46cd-b876-56da1b9bc71c', variable: 'NEXUS_PASSWORD')]) {
+                            sh label: 'Docker Login', script: 'source ./scripts/login_internal_docker.sh'
                         }
                         
-                        // Build
-                        dir('python') {
-                            sh label: 'Build Python Package', script: '''
-                                set +x
-                                RUSTFLAGS="" make build-core
-                                make setup
-                            '''
-                        }
-                        
-                        // Test + Coverage
-                        dir('python') {
-                            sh label: 'Run Tests with Coverage', script: '''
-                                set +x
-                                export PARAMETER_PATH=$(pwd)/../parameters.json
-                                mkdir -p reports
-                                uv run tox -e py39-all -- \
-                                    --cov=src/snowflake \
-                                    --cov-report=term \
-                                    --cov-report=xml:reports/coverage-python.xml
-                            '''
-                        }
-                        
-                        // Upload to Codecov
-                        withCredentials([
-                            fuseString(variable: 'CODECOV_TOKEN', encryptedSecret: 'sf-crypt://universes/prod/services/drivers-namespace/locations/sfc-or-dev-ci-k8s-ci1/secrets/snowdrivers/ud_repo_codecov/3cf8b455-20d3-4307-b054-bb039be2907a:AQAAAVAKOnNmYy1vci1kZXYtY2ktazhzLWNpMS9jMTJhYTQxNi1jOWU5LTRlMmUtYmQzZi01Y2M0NTdlMjBmYWISzQGyBCCbsMiWJQXfcX716lA8lm9MCq8Hm3dfMlv1DQWsAmD60mPDeGLdYSfkpw4FOYKx4x9YCQEmwjLiUwkk2neOLJ0pDiQHFRaVOYMuyo8Wc88c71_xmuaNLkT03Au8osvlYdaBhjKfOqGSsxioIugJ2dQAL4o4O_A4yn7zj9JRRQdjhPwf7AJGN2q9y1-ta3fO-VAqYuYTsn22xlEpY0Vh-S8J026j3k3YkUM_HpIRJS8M8646ywon-9e4W5aLk8zfCL5oEnjCbAuRxMjfGDQiQGC_ISCEDyk3S1GZJMsS9jTbdaeLqogmF2D9MTL2xBg1CokRhXzwiSvQZMi6y5rOVENbkTe_5P9IybGXZIGffAKYo7zA8u6K4SP733pEXojQd8JiJCqCA7xEkRr0kT26Vsc-tLP_dL7ANNLosqmnLq9R9NYAvGv_Xd0DptQF_GM0iVHHcw==')
-                            ]) {
-                            sh label: 'Upload to Codecov', script: '''
-                                set +x
-                                echo "=== Coverage File Check ==="
-                                ls -la python/reports/coverage-python.xml
-                                echo "File size: $(wc -c < python/reports/coverage-python.xml) bytes"
-                                echo "First 20 lines:"
-                                head -20 python/reports/coverage-python.xml
-                                echo "==========================="
+                        script {
+                            docker.image(DOCKER_IMAGE).inside('-u root --privileged') {
+                                withCredentials([string(credentialsId: 'sfctest0-parameters-secret', variable: 'PARAMETERS_SECRET')]) {
+                                    sh label: 'Decode Secrets', script: './scripts/decode_secrets.sh'
+                                }
                                 
-                                codecovcli --verbose --enterprise-url https://snowflake.codecov.io \
-                                    upload-process \
-                                    --disable-search \
-                                    --fail-on-error \
-                                    -t "${CODECOV_TOKEN}" \
-                                    -n "python-jenkins-${BUILD_NUMBER}" \
-                                    -F python \
-                                    -f python/reports/coverage-python.xml
-                            '''
+                                dir('python') {
+                                    sh label: 'Build Python Package', script: '''
+                                        set +x
+                                        RUSTFLAGS="" make build-core
+                                        make setup
+                                    '''
+                                }
+                                
+                                dir('python') {
+                                    sh label: 'Run Tests with Coverage', script: '''
+                                        set +x
+                                        export PARAMETER_PATH=$(pwd)/../parameters.json
+                                        mkdir -p reports
+                                        uv run tox -e py39-all -- \
+                                            --cov=src/snowflake \
+                                            --cov-report=term \
+                                            --cov-report=xml:reports/coverage-python.xml
+                                    '''
+                                }
+                                
+                                withCredentials([fuseString(variable: 'CODECOV_TOKEN', encryptedSecret: CODECOV_SECRET)]) {
+                                    sh label: 'Upload to Codecov', script: '''
+                                        set +x
+                                        codecovcli --verbose --enterprise-url https://snowflake.codecov.io \
+                                            upload-process \
+                                            --disable-search \
+                                            --fail-on-error \
+                                            -t "${CODECOV_TOKEN}" \
+                                            -n "python-jenkins-${BUILD_NUMBER}" \
+                                            -F python \
+                                            -f python/reports/coverage-python.xml
+                                    '''
+                                }
+                            }
                         }
                         
                         archiveArtifacts artifacts: 'python/reports/coverage-python.xml', allowEmptyArchive: true
@@ -161,130 +118,77 @@ pipeline {
                 }
                 
                 stage('ODBC') {
-                    agent {
-                        docker {
-                            image 'nexus.int.snowflakecomputing.com:8086/docker/rhel8-universal-driver-coverage:1'
-                            args '-u root --privileged'
-                            label 'build-node-extra-large'
-                        }
-                    }
+                    agent { label 'build-node-extra-large' }
                     steps {
-                        // Setup
-                        withCredentials([string(credentialsId: 'sfctest0-parameters-secret', variable: 'PARAMETERS_SECRET')]) {
-                            sh label: 'Decode Secrets', script: './scripts/decode_secrets.sh'
-                        }
-                        withCredentials([
-                            fuseString(variable: 'CODECOV_TOKEN', encryptedSecret: 'sf-crypt://universes/prod/services/drivers-namespace/locations/sfc-or-dev-ci-k8s-ci1/secrets/snowdrivers/ud_repo_codecov/3cf8b455-20d3-4307-b054-bb039be2907a:AQAAAVAKOnNmYy1vci1kZXYtY2ktazhzLWNpMS9jMTJhYTQxNi1jOWU5LTRlMmUtYmQzZi01Y2M0NTdlMjBmYWISzQGyBCCbsMiWJQXfcX716lA8lm9MCq8Hm3dfMlv1DQWsAmD60mPDeGLdYSfkpw4FOYKx4x9YCQEmwjLiUwkk2neOLJ0pDiQHFRaVOYMuyo8Wc88c71_xmuaNLkT03Au8osvlYdaBhjKfOqGSsxioIugJ2dQAL4o4O_A4yn7zj9JRRQdjhPwf7AJGN2q9y1-ta3fO-VAqYuYTsn22xlEpY0Vh-S8J026j3k3YkUM_HpIRJS8M8646ywon-9e4W5aLk8zfCL5oEnjCbAuRxMjfGDQiQGC_ISCEDyk3S1GZJMsS9jTbdaeLqogmF2D9MTL2xBg1CokRhXzwiSvQZMi6y5rOVENbkTe_5P9IybGXZIGffAKYo7zA8u6K4SP733pEXojQd8JiJCqCA7xEkRr0kT26Vsc-tLP_dL7ANNLosqmnLq9R9NYAvGv_Xd0DptQF_GM0iVHHcw==')
-                            ]) {
-                            sh label: 'Verify Codecov Token', script: '''
-                                set +x
-                                set -e
-                                if [ -z "${CODECOV_TOKEN}" ]; then
-                                    echo "ERROR: CODECOV_TOKEN is empty!"
-                                    exit 1
-                                fi
-                                echo "CODECOV_TOKEN is set (length: $(echo -n "${CODECOV_TOKEN}" | wc -c) chars)"
-                            '''
+                        // Docker Login
+                        withCredentials([string(credentialsId: 'a791118f-a1ea-46cd-b876-56da1b9bc71c', variable: 'NEXUS_PASSWORD')]) {
+                            sh label: 'Docker Login', script: 'source ./scripts/login_internal_docker.sh'
                         }
                         
-                        // Build
-                        sh label: 'Build ODBC Driver', script: '''
-                            set +x
-                            RUSTFLAGS="-C instrument-coverage" cargo build
-                            source /opt/rh/gcc-toolset-11/enable
-                            cd odbc_tests
-                            mkdir -p cmake-build
-                            cmake -B cmake-build \
-                                -D ODBC_LIBRARY="/usr/lib64/libodbc.so" \
-                                -D ODBC_INCLUDE_DIR="/usr/include" \
-                                -D DRIVER_TYPE=NEW \
-                                .
-                            cmake --build cmake-build -- -j $(nproc)
-                        '''
-                        
-                        // Test
-                        sh label: 'Run ODBC Tests', script: '''
-                            set +x
-                            WORKSPACE_ROOT=$(pwd)
-                            export DRIVER_PATH=${WORKSPACE_ROOT}/target/debug/libsfodbc.so
-                            export PARAMETER_PATH=${WORKSPACE_ROOT}/parameters.json
-                            export LLVM_PROFILE_FILE="${WORKSPACE_ROOT}/odbc-%p-%m.profraw"
-                            
-                            # Enable ODBC Tracing
-                            export ODBCSYSINI=${WORKSPACE_ROOT}
-                            cat > ${WORKSPACE_ROOT}/odbcinst.ini << EOF
-[ODBC]
-Trace = yes
-TraceFile = ${WORKSPACE_ROOT}/sql.log
-EOF
-                            echo "ODBC config: ODBCSYSINI=${ODBCSYSINI}"
-                            cat ${WORKSPACE_ROOT}/odbcinst.ini
-                            
-                            cd odbc_tests
-                            set +e
-                            ctest -j 1 -C Debug --test-dir cmake-build --output-on-failure -E "crl"
-                            TEST_EXIT_CODE=$?
-                            set -e
-                            
-                            if [ $TEST_EXIT_CODE -ne 0 ]; then
-                                echo ""
-                                echo "=== ODBC Trace ==="
-                                if [ -f "${WORKSPACE_ROOT}/sql.log" ]; then
-                                    tail -n 100 "${WORKSPACE_ROOT}/sql.log"
-                                else
-                                    echo "No trace file found at ${WORKSPACE_ROOT}/sql.log"
-                                    echo "Trace may not be enabled or tests failed before connection"
-                                fi
-                                echo "=== End Trace ==="
-                                exit $TEST_EXIT_CODE
-                            fi
-                        '''
-                        
-                        // Coverage
-                        sh label: 'Generate Coverage Report', script: '''
-                            set +x
-                            LLVM_PROFDATA=$(find /root/.rustup -name "llvm-profdata" -type f 2>/dev/null | head -1)
-                            LLVM_COV=$(find /root/.rustup -name "llvm-cov" -type f 2>/dev/null | head -1)
-                            find . -name "odbc-*.profraw" -type f | xargs $LLVM_PROFDATA merge -sparse -o coverage.profdata
-                            
-                            echo ""
-                            echo "=== Coverage Summary ==="
-                            $LLVM_COV report target/debug/libsfodbc.so \
-                                -instr-profile=coverage.profdata \
-                                -sources=$(pwd)/odbc \
-                                -sources=$(pwd)/sf_core
-                            
-                            echo ""
-                            $LLVM_COV export target/debug/libsfodbc.so \
-                                -instr-profile=coverage.profdata \
-                                -format=lcov \
-                                -sources=$(pwd)/odbc \
-                                -sources=$(pwd)/sf_core > lcov-odbc.info
-                        '''
-                        
-                        // Upload to Codecov
-                        withCredentials([
-                            fuseString(variable: 'CODECOV_TOKEN', encryptedSecret: 'sf-crypt://universes/prod/services/drivers-namespace/locations/sfc-or-dev-ci-k8s-ci1/secrets/snowdrivers/ud_repo_codecov/3cf8b455-20d3-4307-b054-bb039be2907a:AQAAAVAKOnNmYy1vci1kZXYtY2ktazhzLWNpMS9jMTJhYTQxNi1jOWU5LTRlMmUtYmQzZi01Y2M0NTdlMjBmYWISzQGyBCCbsMiWJQXfcX716lA8lm9MCq8Hm3dfMlv1DQWsAmD60mPDeGLdYSfkpw4FOYKx4x9YCQEmwjLiUwkk2neOLJ0pDiQHFRaVOYMuyo8Wc88c71_xmuaNLkT03Au8osvlYdaBhjKfOqGSsxioIugJ2dQAL4o4O_A4yn7zj9JRRQdjhPwf7AJGN2q9y1-ta3fO-VAqYuYTsn22xlEpY0Vh-S8J026j3k3YkUM_HpIRJS8M8646ywon-9e4W5aLk8zfCL5oEnjCbAuRxMjfGDQiQGC_ISCEDyk3S1GZJMsS9jTbdaeLqogmF2D9MTL2xBg1CokRhXzwiSvQZMi6y5rOVENbkTe_5P9IybGXZIGffAKYo7zA8u6K4SP733pEXojQd8JiJCqCA7xEkRr0kT26Vsc-tLP_dL7ANNLosqmnLq9R9NYAvGv_Xd0DptQF_GM0iVHHcw==')
-                            ]) {
-                            sh label: 'Upload to Codecov', script: '''
-                                set +x
-                                echo "=== Coverage File Check ==="
-                                ls -la lcov-odbc.info
-                                echo "File size: $(wc -c < lcov-odbc.info) bytes"
-                                echo "Line count: $(wc -l < lcov-odbc.info) lines"
-                                echo "First 20 lines:"
-                                head -20 lcov-odbc.info
-                                echo "==========================="
+                        script {
+                            docker.image(DOCKER_IMAGE).inside('-u root --privileged') {
+                                withCredentials([string(credentialsId: 'sfctest0-parameters-secret', variable: 'PARAMETERS_SECRET')]) {
+                                    sh label: 'Decode Secrets', script: './scripts/decode_secrets.sh'
+                                }
                                 
-                                codecovcli --verbose --enterprise-url https://snowflake.codecov.io \
-                                    upload-process \
-                                    --disable-search \
-                                    --fail-on-error \
-                                    -t "${CODECOV_TOKEN}" \
-                                    -n "odbc-jenkins-${BUILD_NUMBER}" \
-                                    -F odbc \
-                                    -f lcov-odbc.info
-                            '''
+                                sh label: 'Build ODBC Driver', script: '''
+                                    set +x
+                                    RUSTFLAGS="-C instrument-coverage" cargo build
+                                    source /opt/rh/gcc-toolset-11/enable
+                                    cd odbc_tests
+                                    mkdir -p cmake-build
+                                    cmake -B cmake-build \
+                                        -D ODBC_LIBRARY="/usr/lib64/libodbc.so" \
+                                        -D ODBC_INCLUDE_DIR="/usr/include" \
+                                        -D DRIVER_TYPE=NEW \
+                                        .
+                                    cmake --build cmake-build -- -j $(nproc)
+                                '''
+                                
+                                sh label: 'Run ODBC Tests', script: '''
+                                    set +x
+                                    WORKSPACE_ROOT=$(pwd)
+                                    export DRIVER_PATH=${WORKSPACE_ROOT}/target/debug/libsfodbc.so
+                                    export PARAMETER_PATH=${WORKSPACE_ROOT}/parameters.json
+                                    export LLVM_PROFILE_FILE="${WORKSPACE_ROOT}/odbc-%p-%m.profraw"
+                                    
+                                    cd odbc_tests
+                                    ctest -j 1 -C Debug --test-dir cmake-build --output-on-failure -E "crl"
+                                '''
+                                
+                                sh label: 'Generate Coverage Report', script: '''
+                                    set +x
+                                    LLVM_PROFDATA=$(find /root/.rustup -name "llvm-profdata" -type f 2>/dev/null | head -1)
+                                    LLVM_COV=$(find /root/.rustup -name "llvm-cov" -type f 2>/dev/null | head -1)
+                                    find . -name "odbc-*.profraw" -type f | xargs $LLVM_PROFDATA merge -sparse -o coverage.profdata
+                                    
+                                    echo "=== Coverage Summary ==="
+                                    $LLVM_COV report target/debug/libsfodbc.so \
+                                        -instr-profile=coverage.profdata \
+                                        -sources=$(pwd)/odbc \
+                                        -sources=$(pwd)/sf_core
+                                    
+                                    $LLVM_COV export target/debug/libsfodbc.so \
+                                        -instr-profile=coverage.profdata \
+                                        -format=lcov \
+                                        -sources=$(pwd)/odbc \
+                                        -sources=$(pwd)/sf_core > lcov-odbc.info
+                                '''
+                                
+                                withCredentials([fuseString(variable: 'CODECOV_TOKEN', encryptedSecret: CODECOV_SECRET)]) {
+                                    sh label: 'Upload to Codecov', script: '''
+                                        set +x
+                                        codecovcli --verbose --enterprise-url https://snowflake.codecov.io \
+                                            upload-process \
+                                            --disable-search \
+                                            --fail-on-error \
+                                            -t "${CODECOV_TOKEN}" \
+                                            -n "odbc-jenkins-${BUILD_NUMBER}" \
+                                            -F odbc \
+                                            -f lcov-odbc.info
+                                    '''
+                                }
+                            }
                         }
                         
                         archiveArtifacts artifacts: 'lcov-odbc.info', allowEmptyArchive: true
@@ -292,94 +196,48 @@ EOF
                 }
                 
                 stage('JDBC') {
-                    agent {
-                        docker {
-                            image 'nexus.int.snowflakecomputing.com:8086/docker/rhel8-universal-driver-coverage:1'
-                            args '-u root --privileged'
-                            label 'build-node-extra-large'
-                        }
-                    }
+                    agent { label 'build-node-extra-large' }
                     steps {
-                        // Setup
-                        withCredentials([string(credentialsId: 'sfctest0-parameters-secret', variable: 'PARAMETERS_SECRET')]) {
-                            sh label: 'Decode Secrets', script: './scripts/decode_secrets.sh'
-                        }
-                        withCredentials([
-                            fuseString(variable: 'CODECOV_TOKEN', encryptedSecret: 'sf-crypt://universes/prod/services/drivers-namespace/locations/sfc-or-dev-ci-k8s-ci1/secrets/snowdrivers/ud_repo_codecov/3cf8b455-20d3-4307-b054-bb039be2907a:AQAAAVAKOnNmYy1vci1kZXYtY2ktazhzLWNpMS9jMTJhYTQxNi1jOWU5LTRlMmUtYmQzZi01Y2M0NTdlMjBmYWISzQGyBCCbsMiWJQXfcX716lA8lm9MCq8Hm3dfMlv1DQWsAmD60mPDeGLdYSfkpw4FOYKx4x9YCQEmwjLiUwkk2neOLJ0pDiQHFRaVOYMuyo8Wc88c71_xmuaNLkT03Au8osvlYdaBhjKfOqGSsxioIugJ2dQAL4o4O_A4yn7zj9JRRQdjhPwf7AJGN2q9y1-ta3fO-VAqYuYTsn22xlEpY0Vh-S8J026j3k3YkUM_HpIRJS8M8646ywon-9e4W5aLk8zfCL5oEnjCbAuRxMjfGDQiQGC_ISCEDyk3S1GZJMsS9jTbdaeLqogmF2D9MTL2xBg1CokRhXzwiSvQZMi6y5rOVENbkTe_5P9IybGXZIGffAKYo7zA8u6K4SP733pEXojQd8JiJCqCA7xEkRr0kT26Vsc-tLP_dL7ANNLosqmnLq9R9NYAvGv_Xd0DptQF_GM0iVHHcw==')
-                        ]) {
-                            sh label: 'Verify Codecov Token', script: '''
-                                set +x
-                                set -e
-                                if [ -z "${CODECOV_TOKEN}" ]; then
-                                    echo "ERROR: CODECOV_TOKEN is empty!"
-                                    exit 1
-                                fi
-                                echo "CODECOV_TOKEN is set (length: $(echo -n "${CODECOV_TOKEN}" | wc -c) chars)"
-                            '''
+                        // Docker Login
+                        withCredentials([string(credentialsId: 'a791118f-a1ea-46cd-b876-56da1b9bc71c', variable: 'NEXUS_PASSWORD')]) {
+                            sh label: 'Docker Login', script: 'source ./scripts/login_internal_docker.sh'
                         }
                         
-                        // Build
-                        sh label: 'Build JDBC Bridge', script: '''
-                            set +x
-                            cargo build --package sf_core
-                            cargo build --package jdbc_bridge
-                        '''
-                        
-                        // Test + Coverage
-                        sh label: 'Run Tests with Coverage', script: '''
-                            set +x
-                            export PARAMETER_PATH=$(pwd)/parameters.json
-                            export CORE_PATH=$(pwd)/target/debug/libjdbc_bridge.so
-                            chmod +x jdbc/gradlew
-                            cd jdbc
-                            ./gradlew test jacocoTestReport --stacktrace
-                        '''
-                        
-                        // Print coverage summary
-                        sh label: 'Print Coverage Summary', script: '''
-                            set +x
-                            echo ""
-                            echo "=== Coverage Summary ==="
-                            REPORT="jdbc/build/reports/jacoco/test/jacocoTestReport.xml"
-                            if [ -f "$REPORT" ]; then
-                                MISSED=$(grep -o 'type="LINE" missed="[0-9]*"' "$REPORT" | head -1 | grep -o '[0-9]*' || echo "0")
-                                COVERED=$(grep -o 'type="LINE" covered="[0-9]*"' "$REPORT" | head -1 | grep -o '[0-9]*' || echo "0")
-                                MISSED_INT=${MISSED:-0}
-                                COVERED_INT=${COVERED:-0}
-                                TOTAL=$((MISSED_INT + COVERED_INT))
-                                if [ "$TOTAL" -gt 0 ]; then
-                                    PERCENT=$((COVERED_INT * 100 / TOTAL))
-                                    echo "Line Coverage: ${PERCENT}% (${COVERED_INT}/${TOTAL} lines)"
-                                else
-                                    echo "No coverage data found in report"
-                                fi
-                            else
-                                echo "Coverage report not found"
-                            fi
-                        '''
-                        
-                        // Upload to Codecov
-                        withCredentials([
-                            fuseString(variable: 'CODECOV_TOKEN', encryptedSecret: 'sf-crypt://universes/prod/services/drivers-namespace/locations/sfc-or-dev-ci-k8s-ci1/secrets/snowdrivers/ud_repo_codecov/3cf8b455-20d3-4307-b054-bb039be2907a:AQAAAVAKOnNmYy1vci1kZXYtY2ktazhzLWNpMS9jMTJhYTQxNi1jOWU5LTRlMmUtYmQzZi01Y2M0NTdlMjBmYWISzQGyBCCbsMiWJQXfcX716lA8lm9MCq8Hm3dfMlv1DQWsAmD60mPDeGLdYSfkpw4FOYKx4x9YCQEmwjLiUwkk2neOLJ0pDiQHFRaVOYMuyo8Wc88c71_xmuaNLkT03Au8osvlYdaBhjKfOqGSsxioIugJ2dQAL4o4O_A4yn7zj9JRRQdjhPwf7AJGN2q9y1-ta3fO-VAqYuYTsn22xlEpY0Vh-S8J026j3k3YkUM_HpIRJS8M8646ywon-9e4W5aLk8zfCL5oEnjCbAuRxMjfGDQiQGC_ISCEDyk3S1GZJMsS9jTbdaeLqogmF2D9MTL2xBg1CokRhXzwiSvQZMi6y5rOVENbkTe_5P9IybGXZIGffAKYo7zA8u6K4SP733pEXojQd8JiJCqCA7xEkRr0kT26Vsc-tLP_dL7ANNLosqmnLq9R9NYAvGv_Xd0DptQF_GM0iVHHcw==')
-                        ]) {
-                            sh label: 'Upload to Codecov', script: '''
-                                set +x
-                                echo "=== Coverage File Check ==="
-                                ls -la jdbc/build/reports/jacoco/test/jacocoTestReport.xml
-                                echo "File size: $(wc -c < jdbc/build/reports/jacoco/test/jacocoTestReport.xml) bytes"
-                                echo "First 20 lines:"
-                                head -20 jdbc/build/reports/jacoco/test/jacocoTestReport.xml
-                                echo "==========================="
+                        script {
+                            docker.image(DOCKER_IMAGE).inside('-u root --privileged') {
+                                withCredentials([string(credentialsId: 'sfctest0-parameters-secret', variable: 'PARAMETERS_SECRET')]) {
+                                    sh label: 'Decode Secrets', script: './scripts/decode_secrets.sh'
+                                }
                                 
-                                codecovcli --verbose --enterprise-url https://snowflake.codecov.io \
-                                    upload-process \
-                                    --disable-search \
-                                    --fail-on-error \
-                                    -t "${CODECOV_TOKEN}" \
-                                    -n "jdbc-jenkins-${BUILD_NUMBER}" \
-                                    -F jdbc \
-                                    -f jdbc/build/reports/jacoco/test/jacocoTestReport.xml
-                            '''
+                                sh label: 'Build JDBC Bridge', script: '''
+                                    set +x
+                                    cargo build --package sf_core
+                                    cargo build --package jdbc_bridge
+                                '''
+                                
+                                sh label: 'Run Tests with Coverage', script: '''
+                                    set +x
+                                    export PARAMETER_PATH=$(pwd)/parameters.json
+                                    export CORE_PATH=$(pwd)/target/debug/libjdbc_bridge.so
+                                    chmod +x jdbc/gradlew
+                                    cd jdbc
+                                    ./gradlew test jacocoTestReport --stacktrace
+                                '''
+                                
+                                withCredentials([fuseString(variable: 'CODECOV_TOKEN', encryptedSecret: CODECOV_SECRET)]) {
+                                    sh label: 'Upload to Codecov', script: '''
+                                        set +x
+                                        codecovcli --verbose --enterprise-url https://snowflake.codecov.io \
+                                            upload-process \
+                                            --disable-search \
+                                            --fail-on-error \
+                                            -t "${CODECOV_TOKEN}" \
+                                            -n "jdbc-jenkins-${BUILD_NUMBER}" \
+                                            -F jdbc \
+                                            -f jdbc/build/reports/jacoco/test/jacocoTestReport.xml
+                                    '''
+                                }
+                            }
                         }
                         
                         archiveArtifacts artifacts: 'jdbc/build/reports/jacoco/test/jacocoTestReport.xml', allowEmptyArchive: true
