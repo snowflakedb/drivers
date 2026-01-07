@@ -176,7 +176,8 @@ where
             .context(ConnectionNotInitializedSnafu)?
     };
 
-    // First attempt
+    // First attempt - save the token we used so we can detect if it changed
+    let failed_token = session_token.clone();
     match f(session_token).await {
         Ok(result) => Ok(result),
         Err(RestError::InvalidSnowflakeResponse {
@@ -193,15 +194,16 @@ where
                 .cloned()
                 .context(ConnectionNotInitializedSnafu)?;
 
-            // If another request already refreshed while we waited, use the new token
-            if !tokens.is_session_expired() {
+            // If another request already refreshed while we waited, use the new token.
+            // Compare actual token strings - more reliable than expiration times.
+            if tokens.session_token != failed_token {
                 tracing::debug!("Session already refreshed by another request");
                 let token = tokens.session_token.clone();
                 drop(tokens_guard); // Release write lock before async call
                 return f(token).await.context(QuerySnafu);
             }
 
-            // Check if master token is expired
+            // Check if master token is expired (can't refresh without valid master token)
             if tokens.is_master_expired() {
                 tracing::error!("Master token expired, full re-authentication required");
                 return MasterTokenExpiredSnafu.fail();
