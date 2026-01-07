@@ -12,13 +12,12 @@ import groovy.transform.Field
 // Coverage results storage
 @Field def coverageResults = [:]
 
-// Helper: Docker login, pull and inspect
+// Helper: Docker login and pull
 def dockerSetup() {
     withCredentials([string(credentialsId: NEXUS_CREDENTIAL_ID, variable: 'NEXUS_PASSWORD')]) {
         sh label: 'Docker Login', script: 'source ./scripts/login_internal_docker.sh'
     }
     sh label: 'Docker Pull', script: "docker pull ${DOCKER_IMAGE}"
-    sh label: 'Docker Inspect', script: "docker inspect ${DOCKER_IMAGE} > /dev/null"
 }
 
 // Helper: Decode test secrets
@@ -45,19 +44,18 @@ def uploadToCodecov(String flag, String file) {
     }
 }
 
-// Helper: Report coverage (display + store + GitHub)
+// Helper: Report coverage (store + GitHub)
 def reportCoverage(String component, String coverage) {
-    echo "══════════════════════════════════════════"
-    echo "  ${component.toUpperCase()} COVERAGE: ${coverage}"
-    echo "══════════════════════════════════════════"
-    
     coverageResults[component] = coverage
     
-    def status = coverage.replace('%', '').toFloat() >= 50 ? 'SUCCESS' : 'UNSTABLE'
-    githubNotify context: "coverage/${component}",
-                 description: "Coverage: ${coverage}",
-                 status: status,
-                 targetUrl: "${BUILD_URL}"
+    def coverageValue = coverage.replace('%', '').trim()
+    def status = coverageValue.toFloat() >= 50 ? 'SUCCESS' : 'UNSTABLE'
+    
+    publishChecks name: "coverage/${component}",
+                  title: "${component.toUpperCase()} Coverage",
+                  summary: "Coverage: ${coverage}",
+                  status: 'COMPLETED',
+                  conclusion: status
 }
 
 pipeline {
@@ -235,7 +233,7 @@ pipeline {
                                         MISSED=$(grep -oP 'type="LINE"[^/]*missed="\\K[0-9]+' "$REPORT" | head -1 || echo "0")
                                         COVERED=$(grep -oP 'type="LINE"[^/]*covered="\\K[0-9]+' "$REPORT" | head -1 || echo "0")
                                         if [ $((MISSED + COVERED)) -gt 0 ]; then
-                                            echo "scale=1; $COVERED * 100 / ($MISSED + $COVERED)" | bc
+                                            echo "scale=2; $COVERED * 100 / ($MISSED + $COVERED)" | bc
                                         else
                                             echo "0"
                                         fi
@@ -256,19 +254,17 @@ pipeline {
         }
         
         stage('Summary') {
-            agent { label 'build-node-extra-large' }
+            agent any
             steps {
                 script {
-                    echo ""
-                    echo "══════════════════════════════════════════"
-                    echo "         CODE COVERAGE SUMMARY"
-                    echo "══════════════════════════════════════════"
+                    def lines = ["CODE COVERAGE SUMMARY", ""]
                     coverageResults.each { component, coverage ->
-                        echo "  ${component}: ${coverage}"
+                        lines << "${component}: ${coverage}"
                     }
-                    echo "══════════════════════════════════════════"
+                    def report = lines.join('\n')
                     
-                    // Set build description with coverage summary
+                    sh label: 'Coverage Summary', script: "echo '${report}'"
+                    
                     def summary = coverageResults.collect { k, v -> "${k}: ${v}" }.join(' | ')
                     currentBuild.description = summary
                 }
