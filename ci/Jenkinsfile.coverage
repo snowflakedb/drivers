@@ -26,7 +26,7 @@ def decodeSecrets() {
 
 // Helper: Upload coverage to Codecov
 def uploadToCodecov(String flag, String file) {
-    withCredentials([fuseString(credentialsId: CODECOV_CREDENTIAL_ID, variable: 'CODECOV_TOKEN')]) {
+    withCredentials([string(credentialsId: CODECOV_CREDENTIAL_ID, variable: 'CODECOV_TOKEN')]) {
         sh label: 'Upload to Codecov', script: """
             set +x
             codecovcli --verbose --enterprise-url https://snowflake.codecov.io \\
