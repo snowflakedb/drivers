@@ -21,9 +21,8 @@ pipeline {
             parallel {
                 stage('Rust Core') {
                     agent {
-                        dockerfile {
-                            filename 'Dockerfile.coverage'
-                            dir 'ci'
+                        docker {
+                            image 'nexus.int.snowflakecomputing.com:8086/docker/rhel8-universal-driver-coverage:1'
                             args '-u root --privileged'
                             label 'build-node-extra-large'
                         }
@@ -86,9 +85,8 @@ pipeline {
                 
                 stage('Python') {
                     agent {
-                        dockerfile {
-                            filename 'Dockerfile.coverage'
-                            dir 'ci'
+                        docker {
+                            image 'nexus.int.snowflakecomputing.com:8086/docker/rhel8-universal-driver-coverage:1'
                             args '-u root --privileged'
                             label 'build-node-extra-large'
                         }
@@ -164,9 +162,8 @@ pipeline {
                 
                 stage('ODBC') {
                     agent {
-                        dockerfile {
-                            filename 'Dockerfile.coverage'
-                            dir 'ci'
+                        docker {
+                            image 'nexus.int.snowflakecomputing.com:8086/docker/rhel8-universal-driver-coverage:1'
                             args '-u root --privileged'
                             label 'build-node-extra-large'
                         }
@@ -296,9 +293,8 @@ EOF
                 
                 stage('JDBC') {
                     agent {
-                        dockerfile {
-                            filename 'Dockerfile.coverage'
-                            dir 'ci'
+                        docker {
+                            image 'nexus.int.snowflakecomputing.com:8086/docker/rhel8-universal-driver-coverage:1'
                             args '-u root --privileged'
                             label 'build-node-extra-large'
                         }
