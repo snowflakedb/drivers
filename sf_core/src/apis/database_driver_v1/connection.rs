@@ -1,7 +1,7 @@
 use snafu::{OptionExt, ResultExt};
 use std::future::Future;
 use std::{collections::HashMap, sync::Arc, sync::Mutex};
-use tokio::sync::Mutex as AsyncMutex;
+use tokio::sync::RwLock as AsyncRwLock;
 
 use super::Handle;
 use super::Setting;
@@ -90,16 +90,14 @@ pub fn connection_release(conn_handle: Handle) -> Result<(), ApiError> {
 
 pub struct Connection {
     pub settings: HashMap<String, Setting>,
-    /// Session tokens for authentication and refresh
-    pub tokens: Option<SessionTokens>,
+    /// Session tokens - RwLock allows concurrent reads, exclusive writes for refresh
+    pub tokens: Arc<AsyncRwLock<Option<SessionTokens>>>,
     pub http_client: Option<reqwest::Client>,
     pub retry_policy: RetryPolicy,
     /// Server URL for refresh requests
     pub server_url: Option<String>,
     /// Client info for refresh requests
     pub client_info: Option<ClientInfo>,
-    /// Lock to prevent concurrent refresh attempts
-    refresh_lock: Arc<AsyncMutex<()>>,
 }
 
 impl Default for Connection {
@@ -112,12 +110,11 @@ impl Connection {
     pub fn new() -> Self {
         Connection {
             settings: HashMap::new(),
-            tokens: None,
+            tokens: Arc::new(AsyncRwLock::new(None)),
             http_client: None,
             retry_policy: RetryPolicy::default(),
             server_url: None,
             client_info: None,
-            refresh_lock: Arc::new(AsyncMutex::new(())),
         }
     }
 
@@ -128,25 +125,20 @@ impl Connection {
         server_url: String,
         client_info: ClientInfo,
     ) {
-        self.tokens = Some(tokens);
+        // Use blocking_write since we're in a sync context during connection_init
+        *self.tokens.blocking_write() = Some(tokens);
         self.http_client = Some(http_client);
         self.server_url = Some(server_url);
         self.client_info = Some(client_info);
-    }
-
-    /// Get the current session token, if authenticated
-    pub fn session_token(&self) -> Option<&str> {
-        self.tokens.as_ref().map(|t| t.session_token.as_str())
     }
 }
 
 /// Execute an operation with automatic session refresh on 401.
 ///
 /// This function:
-/// 1. Extracts the session token from the connection
+/// 1. Reads the session token (allows concurrent readers)
 /// 2. Runs the provided function with that token
-/// 3. On SessionExpired error, refreshes the session and retries once
-/// 4. Uses a lock to prevent concurrent refresh attempts
+/// 3. On SessionExpired error, acquires write lock, refreshes, and retries
 pub async fn with_valid_session<F, Fut, T>(
     conn: &Arc<Mutex<Connection>>,
     f: F,
@@ -155,20 +147,33 @@ where
     F: Fn(String) -> Fut,
     Fut: Future<Output = Result<T, RestError>>,
 {
-    // Extract what we need from the connection
-    let (session_token, refresh_lock, http_client) = {
+    // Extract connection info and get Arc to tokens RwLock
+    let (tokens_lock, http_client, server_url, client_info) = {
         let guard = conn.lock().map_err(|_| ConnectionLockingSnafu.build())?;
         (
-            guard
-                .session_token()
-                .map(|s| s.to_string())
-                .context(ConnectionNotInitializedSnafu)?,
-            guard.refresh_lock.clone(),
+            guard.tokens.clone(),
             guard
                 .http_client
                 .clone()
                 .context(ConnectionNotInitializedSnafu)?,
+            guard
+                .server_url
+                .clone()
+                .context(ConnectionNotInitializedSnafu)?,
+            guard
+                .client_info
+                .clone()
+                .context(ConnectionNotInitializedSnafu)?,
         )
+    };
+
+    // Read session token - concurrent readers allowed
+    let session_token = {
+        let tokens_guard = tokens_lock.read().await;
+        tokens_guard
+            .as_ref()
+            .map(|t| t.session_token.clone())
+            .context(ConnectionNotInitializedSnafu)?
     };
 
     // First attempt
@@ -180,32 +185,20 @@ where
         }) => {
             tracing::info!("Session expired, attempting refresh");
 
-            // Acquire refresh lock - only one refresh at a time
-            let _lock_guard = refresh_lock.lock().await;
+            // Acquire write lock - blocks other readers/writers during refresh
+            let mut tokens_guard = tokens_lock.write().await;
 
-            // Re-check tokens after acquiring lock (another request may have refreshed)
-            let (tokens, server_url, client_info) = {
-                let guard = conn.lock().map_err(|_| ConnectionLockingSnafu.build())?;
-                (
-                    guard
-                        .tokens
-                        .clone()
-                        .context(ConnectionNotInitializedSnafu)?,
-                    guard
-                        .server_url
-                        .clone()
-                        .context(ConnectionNotInitializedSnafu)?,
-                    guard
-                        .client_info
-                        .clone()
-                        .context(ConnectionNotInitializedSnafu)?,
-                )
-            };
+            let tokens = tokens_guard
+                .as_ref()
+                .cloned()
+                .context(ConnectionNotInitializedSnafu)?;
 
-            // If another request already refreshed, use the new token
+            // If another request already refreshed while we waited, use the new token
             if !tokens.is_session_expired() {
                 tracing::debug!("Session already refreshed by another request");
-                return f(tokens.session_token).await.context(QuerySnafu);
+                let token = tokens.session_token.clone();
+                drop(tokens_guard); // Release write lock before async call
+                return f(token).await.context(QuerySnafu);
             }
 
             // Check if master token is expired
@@ -214,7 +207,7 @@ where
                 return MasterTokenExpiredSnafu.fail();
             }
 
-            // Refresh session
+            // Refresh session (still holding write lock to prevent concurrent refreshes)
             let new_tokens =
                 snowflake::refresh_session(&http_client, &server_url, &client_info, &tokens)
                     .await
@@ -222,11 +215,9 @@ where
 
             let new_session_token = new_tokens.session_token.clone();
 
-            // Update connection with new tokens
-            {
-                let mut guard = conn.lock().map_err(|_| ConnectionLockingSnafu.build())?;
-                guard.tokens = Some(new_tokens);
-            }
+            // Update tokens
+            *tokens_guard = Some(new_tokens);
+            drop(tokens_guard); // Release write lock before retry
 
             tracing::info!("Session refreshed, retrying operation");
 
