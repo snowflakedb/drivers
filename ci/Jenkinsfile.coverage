@@ -3,7 +3,41 @@
  */
 
 def DOCKER_IMAGE = 'nexus.int.snowflakecomputing.com:8086/docker/rhel8-universal-driver-coverage:1'
-def CODECOV_SECRET = 'sf-crypt://universes/prod/services/drivers-namespace/locations/sfc-or-dev-ci-k8s-ci1/secrets/snowdrivers/ud_repo_codecov/3cf8b455-20d3-4307-b054-bb039be2907a:AQAAAVAKOnNmYy1vci1kZXYtY2ktazhzLWNpMS9jMTJhYTQxNi1jOWU5LTRlMmUtYmQzZi01Y2M0NTdlMjBmYWISzQGyBCCbsMiWJQXfcX716lA8lm9MCq8Hm3dfMlv1DQWsAmD60mPDeGLdYSfkpw4FOYKx4x9YCQEmwjLiUwkk2neOLJ0pDiQHFRaVOYMuyo8Wc88c71_xmuaNLkT03Au8osvlYdaBhjKfOqGSsxioIugJ2dQAL4o4O_A4yn7zj9JRRQdjhPwf7AJGN2q9y1-ta3fO-VAqYuYTsn22xlEpY0Vh-S8J026j3k3YkUM_HpIRJS8M8646ywon-9e4W5aLk8zfCL5oEnjCbAuRxMjfGDQiQGC_ISCEDyk3S1GZJMsS9jTbdaeLqogmF2D9MTL2xBg1CokRhXzwiSvQZMi6y5rOVENbkTe_5P9IybGXZIGffAKYo7zA8u6K4SP733pEXojQd8JiJCqCA7xEkRr0kT26Vsc-tLP_dL7ANNLosqmnLq9R9NYAvGv_Xd0DptQF_GM0iVHHcw=='
+def CODECOV_SECRET_ID = 'snowdrivers/ud_repo_codecov'
+def NEXUS_CREDENTIAL_ID = 'a791118f-a1ea-46cd-b876-56da1b9bc71c'
+def PARAMS_CREDENTIAL_ID = 'sfctest0-parameters-secret'
+
+// Helper: Docker login and pull
+def dockerSetup() {
+    withCredentials([string(credentialsId: NEXUS_CREDENTIAL_ID, variable: 'NEXUS_PASSWORD')]) {
+        sh label: 'Docker Login', script: 'source ./scripts/login_internal_docker.sh'
+    }
+    sh label: 'Docker Pull', script: "docker pull ${DOCKER_IMAGE}"
+}
+
+// Helper: Decode test secrets
+def decodeSecrets() {
+    withCredentials([string(credentialsId: PARAMS_CREDENTIAL_ID, variable: 'PARAMETERS_SECRET')]) {
+        sh label: 'Decode Secrets', script: './scripts/decode_secrets.sh'
+    }
+}
+
+// Helper: Upload coverage to Codecov
+def uploadToCodecov(String flag, String file) {
+    withCredentials([fuseString(variable: 'CODECOV_TOKEN', secretId: CODECOV_SECRET_ID)]) {
+        sh label: 'Upload to Codecov', script: """
+            set +x
+            codecovcli --verbose --enterprise-url https://snowflake.codecov.io \\
+                upload-process \\
+                --disable-search \\
+                --fail-on-error \\
+                -t "\${CODECOV_TOKEN}" \\
+                -n "${flag}-jenkins-\${BUILD_NUMBER}" \\
+                -F ${flag} \\
+                -f ${file}
+        """
+    }
+}
 
 pipeline {
     agent none
@@ -25,16 +59,10 @@ pipeline {
                 stage('Rust Core') {
                     agent { label 'build-node-extra-large' }
                     steps {
-                        // Docker Login
-                        withCredentials([string(credentialsId: 'a791118f-a1ea-46cd-b876-56da1b9bc71c', variable: 'NEXUS_PASSWORD')]) {
-                            sh label: 'Docker Login', script: 'source ./scripts/login_internal_docker.sh'
-                        }
-                        
                         script {
+                            dockerSetup()
                             docker.image(DOCKER_IMAGE).inside('-u root --privileged') {
-                                withCredentials([string(credentialsId: 'sfctest0-parameters-secret', variable: 'PARAMETERS_SECRET')]) {
-                                    sh label: 'Decode Secrets', script: './scripts/decode_secrets.sh'
-                                }
+                                decodeSecrets()
                                 
                                 sh label: 'Run Tests with Coverage', script: '''
                                     set +x
@@ -43,22 +71,9 @@ pipeline {
                                     mv lcov.info lcov-rust-core.info
                                 '''
                                 
-                                withCredentials([fuseString(variable: 'CODECOV_TOKEN', encryptedSecret: CODECOV_SECRET)]) {
-                                    sh label: 'Upload to Codecov', script: '''
-                                        set +x
-                                        codecovcli --verbose --enterprise-url https://snowflake.codecov.io \
-                                            upload-process \
-                                            --disable-search \
-                                            --fail-on-error \
-                                            -t "${CODECOV_TOKEN}" \
-                                            -n "rust-core-jenkins-${BUILD_NUMBER}" \
-                                            -F rust-core \
-                                            -f lcov-rust-core.info
-                                    '''
-                                }
+                                uploadToCodecov('rust-core', 'lcov-rust-core.info')
                             }
                         }
-                        
                         archiveArtifacts artifacts: 'lcov-rust-core.info', allowEmptyArchive: true
                     }
                 }
@@ -66,16 +81,10 @@ pipeline {
                 stage('Python') {
                     agent { label 'build-node-extra-large' }
                     steps {
-                        // Docker Login
-                        withCredentials([string(credentialsId: 'a791118f-a1ea-46cd-b876-56da1b9bc71c', variable: 'NEXUS_PASSWORD')]) {
-                            sh label: 'Docker Login', script: 'source ./scripts/login_internal_docker.sh'
-                        }
-                        
                         script {
+                            dockerSetup()
                             docker.image(DOCKER_IMAGE).inside('-u root --privileged') {
-                                withCredentials([string(credentialsId: 'sfctest0-parameters-secret', variable: 'PARAMETERS_SECRET')]) {
-                                    sh label: 'Decode Secrets', script: './scripts/decode_secrets.sh'
-                                }
+                                decodeSecrets()
                                 
                                 dir('python') {
                                     sh label: 'Build Python Package', script: '''
@@ -83,9 +92,7 @@ pipeline {
                                         RUSTFLAGS="" make build-core
                                         make setup
                                     '''
-                                }
-                                
-                                dir('python') {
+                                    
                                     sh label: 'Run Tests with Coverage', script: '''
                                         set +x
                                         export PARAMETER_PATH=$(pwd)/../parameters.json
@@ -97,22 +104,9 @@ pipeline {
                                     '''
                                 }
                                 
-                                withCredentials([fuseString(variable: 'CODECOV_TOKEN', encryptedSecret: CODECOV_SECRET)]) {
-                                    sh label: 'Upload to Codecov', script: '''
-                                        set +x
-                                        codecovcli --verbose --enterprise-url https://snowflake.codecov.io \
-                                            upload-process \
-                                            --disable-search \
-                                            --fail-on-error \
-                                            -t "${CODECOV_TOKEN}" \
-                                            -n "python-jenkins-${BUILD_NUMBER}" \
-                                            -F python \
-                                            -f python/reports/coverage-python.xml
-                                    '''
-                                }
+                                uploadToCodecov('python', 'python/reports/coverage-python.xml')
                             }
                         }
-                        
                         archiveArtifacts artifacts: 'python/reports/coverage-python.xml', allowEmptyArchive: true
                     }
                 }
@@ -120,16 +114,10 @@ pipeline {
                 stage('ODBC') {
                     agent { label 'build-node-extra-large' }
                     steps {
-                        // Docker Login
-                        withCredentials([string(credentialsId: 'a791118f-a1ea-46cd-b876-56da1b9bc71c', variable: 'NEXUS_PASSWORD')]) {
-                            sh label: 'Docker Login', script: 'source ./scripts/login_internal_docker.sh'
-                        }
-                        
                         script {
+                            dockerSetup()
                             docker.image(DOCKER_IMAGE).inside('-u root --privileged') {
-                                withCredentials([string(credentialsId: 'sfctest0-parameters-secret', variable: 'PARAMETERS_SECRET')]) {
-                                    sh label: 'Decode Secrets', script: './scripts/decode_secrets.sh'
-                                }
+                                decodeSecrets()
                                 
                                 sh label: 'Build ODBC Driver', script: '''
                                     set +x
@@ -175,22 +163,9 @@ pipeline {
                                         -sources=$(pwd)/sf_core > lcov-odbc.info
                                 '''
                                 
-                                withCredentials([fuseString(variable: 'CODECOV_TOKEN', encryptedSecret: CODECOV_SECRET)]) {
-                                    sh label: 'Upload to Codecov', script: '''
-                                        set +x
-                                        codecovcli --verbose --enterprise-url https://snowflake.codecov.io \
-                                            upload-process \
-                                            --disable-search \
-                                            --fail-on-error \
-                                            -t "${CODECOV_TOKEN}" \
-                                            -n "odbc-jenkins-${BUILD_NUMBER}" \
-                                            -F odbc \
-                                            -f lcov-odbc.info
-                                    '''
-                                }
+                                uploadToCodecov('odbc', 'lcov-odbc.info')
                             }
                         }
-                        
                         archiveArtifacts artifacts: 'lcov-odbc.info', allowEmptyArchive: true
                     }
                 }
@@ -198,16 +173,10 @@ pipeline {
                 stage('JDBC') {
                     agent { label 'build-node-extra-large' }
                     steps {
-                        // Docker Login
-                        withCredentials([string(credentialsId: 'a791118f-a1ea-46cd-b876-56da1b9bc71c', variable: 'NEXUS_PASSWORD')]) {
-                            sh label: 'Docker Login', script: 'source ./scripts/login_internal_docker.sh'
-                        }
-                        
                         script {
+                            dockerSetup()
                             docker.image(DOCKER_IMAGE).inside('-u root --privileged') {
-                                withCredentials([string(credentialsId: 'sfctest0-parameters-secret', variable: 'PARAMETERS_SECRET')]) {
-                                    sh label: 'Decode Secrets', script: './scripts/decode_secrets.sh'
-                                }
+                                decodeSecrets()
                                 
                                 sh label: 'Build JDBC Bridge', script: '''
                                     set +x
@@ -224,22 +193,9 @@ pipeline {
                                     ./gradlew test jacocoTestReport --stacktrace
                                 '''
                                 
-                                withCredentials([fuseString(variable: 'CODECOV_TOKEN', encryptedSecret: CODECOV_SECRET)]) {
-                                    sh label: 'Upload to Codecov', script: '''
-                                        set +x
-                                        codecovcli --verbose --enterprise-url https://snowflake.codecov.io \
-                                            upload-process \
-                                            --disable-search \
-                                            --fail-on-error \
-                                            -t "${CODECOV_TOKEN}" \
-                                            -n "jdbc-jenkins-${BUILD_NUMBER}" \
-                                            -F jdbc \
-                                            -f jdbc/build/reports/jacoco/test/jacocoTestReport.xml
-                                    '''
-                                }
+                                uploadToCodecov('jdbc', 'jdbc/build/reports/jacoco/test/jacocoTestReport.xml')
                             }
                         }
-                        
                         archiveArtifacts artifacts: 'jdbc/build/reports/jacoco/test/jacocoTestReport.xml', allowEmptyArchive: true
                     }
                 }
