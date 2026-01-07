@@ -22,7 +22,7 @@ RUN cd /tmp && \
     cp -r cmake-4.0.0-linux-aarch64 /opt/cmake-4.0.0-linux-aarch64 && \
     ln -s /opt/cmake-4.0.0-linux-aarch64/bin/cmake /usr/bin/cmake4 && \
     ln -s /opt/cmake-4.0.0-linux-aarch64/bin/ctest /usr/bin/ctest4 && \
-    ln -s /opt/cmake-4.0.0-linux-aarch64/bin/st /usr/bin/st4 && \
+
     ln -s /opt/cmake-4.0.0-linux-aarch64/bin/cpack /usr/bin/cpack4 && \
     ln -s /opt/cmake-4.0.0-linux-aarch64/bin/ccmake /usr/bin/ccmake4 && \
     rm -rf cmake-4.0.0*
