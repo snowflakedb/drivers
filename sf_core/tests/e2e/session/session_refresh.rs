@@ -69,7 +69,9 @@ fn should_refresh_session_proactively() {
         let temp_key_file = private_key_helper::get_private_key_from_parameters(&parameters)
             .expect("Failed to create private key file");
 
-        let server_url = parameters.server_url.clone().expect("server_url required");
+        let server_url = parameters
+            .get_server_url()
+            .expect("server_url or host required");
 
         let client_info = ClientInfo {
             application: "sf_core_test".to_string(),

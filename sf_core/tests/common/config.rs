@@ -38,6 +38,21 @@ pub struct Parameters {
     pub private_key_password: Option<String>,
 }
 
+impl Parameters {
+    /// Get the server URL, constructing from host if not explicitly set.
+    pub fn get_server_url(&self) -> Option<String> {
+        self.server_url.clone().or_else(|| {
+            self.host.as_ref().map(|host| {
+                let protocol = self.protocol.as_deref().unwrap_or("https");
+                match self.port {
+                    Some(port) => format!("{protocol}://{host}:{port}"),
+                    None => format!("{protocol}://{host}"),
+                }
+            })
+        })
+    }
+}
+
 /// Parses and returns the test parameters from the configured parameter file
 pub fn get_parameters() -> Parameters {
     let parameter_path = std::env::var("PARAMETER_PATH").unwrap();
