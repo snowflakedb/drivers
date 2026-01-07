@@ -9,12 +9,13 @@ import groovy.transform.Field
 @Field String NEXUS_CREDENTIAL_ID = 'a791118f-a1ea-46cd-b876-56da1b9bc71c'
 @Field String PARAMS_CREDENTIAL_ID = 'sfctest0-parameters-secret'
 
-// Helper: Docker login and pull
+// Helper: Docker login, pull and inspect
 def dockerSetup() {
     withCredentials([string(credentialsId: NEXUS_CREDENTIAL_ID, variable: 'NEXUS_PASSWORD')]) {
         sh label: 'Docker Login', script: 'source ./scripts/login_internal_docker.sh'
     }
     sh label: 'Docker Pull', script: "docker pull ${DOCKER_IMAGE}"
+    sh label: 'Docker Inspect', script: "docker inspect ${DOCKER_IMAGE} > /dev/null"
 }
 
 // Helper: Decode test secrets
