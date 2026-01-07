@@ -61,7 +61,8 @@ pipeline {
                         ]) {
                             sh label: 'Upload to Codecov', script: '''
                                 set +x
-                                codecovcli --verbose upload-process \
+                                codecovcli --verbose --enterprise-url https://snowflake.codecov.io \
+                                    upload-process \
                                     --disable-search \
                                     --fail-on-error \
                                     -t "${CODECOV_TOKEN}" \
@@ -131,7 +132,8 @@ pipeline {
                             ]) {
                             sh label: 'Upload to Codecov', script: '''
                                 set +x
-                                codecovcli --verbose upload-process \
+                                codecovcli --verbose --enterprise-url https://snowflake.codecov.io \
+                                    upload-process \
                                     --disable-search \
                                     --fail-on-error \
                                     -t "${CODECOV_TOKEN}" \
@@ -191,15 +193,20 @@ pipeline {
                         // Test
                         sh label: 'Run ODBC Tests', script: '''
                             set +x
-                            export DRIVER_PATH=$(pwd)/target/debug/libsfodbc.so
-                            export PARAMETER_PATH=$(pwd)/parameters.json
-                            export LLVM_PROFILE_FILE="odbc-%p-%m.profraw"
+                            WORKSPACE_ROOT=$(pwd)
+                            export DRIVER_PATH=${WORKSPACE_ROOT}/target/debug/libsfodbc.so
+                            export PARAMETER_PATH=${WORKSPACE_ROOT}/parameters.json
+                            export LLVM_PROFILE_FILE="${WORKSPACE_ROOT}/odbc-%p-%m.profraw"
                             
                             # Enable ODBC Tracing
-                            echo "[ODBC]" > odbcinst.ini
-                            echo "Trace = yes" >> odbcinst.ini
-                            echo "TraceFile = $(pwd)/sql.log" >> odbcinst.ini
-                            export ODBCSYSINI=$(pwd)
+                            export ODBCSYSINI=${WORKSPACE_ROOT}
+                            cat > ${WORKSPACE_ROOT}/odbcinst.ini << EOF
+[ODBC]
+Trace = yes
+TraceFile = ${WORKSPACE_ROOT}/sql.log
+EOF
+                            echo "ODBC config: ODBCSYSINI=${ODBCSYSINI}"
+                            cat ${WORKSPACE_ROOT}/odbcinst.ini
                             
                             cd odbc_tests
                             set +e
@@ -208,8 +215,14 @@ pipeline {
                             set -e
                             
                             if [ $TEST_EXIT_CODE -ne 0 ]; then
-                                echo "=== ODBC Trace (Last 100 lines) ==="
-                                tail -n 100 ../sql.log || true
+                                echo ""
+                                echo "=== ODBC Trace ==="
+                                if [ -f "${WORKSPACE_ROOT}/sql.log" ]; then
+                                    tail -n 100 "${WORKSPACE_ROOT}/sql.log"
+                                else
+                                    echo "No trace file found at ${WORKSPACE_ROOT}/sql.log"
+                                    echo "Trace may not be enabled or tests failed before connection"
+                                fi
                                 echo "=== End Trace ==="
                                 exit $TEST_EXIT_CODE
                             fi
@@ -243,7 +256,8 @@ pipeline {
                             ]) {
                             sh label: 'Upload to Codecov', script: '''
                                 set +x
-                                codecovcli --verbose upload-process \
+                                codecovcli --verbose --enterprise-url https://snowflake.codecov.io \
+                                    upload-process \
                                     --disable-search \
                                     --fail-on-error \
                                     -t "${CODECOV_TOKEN}" \
@@ -331,7 +345,8 @@ pipeline {
                         ]) {
                             sh label: 'Upload to Codecov', script: '''
                                 set +x
-                                codecovcli --verbose upload-process \
+                                codecovcli --verbose --enterprise-url https://snowflake.codecov.io \
+                                    upload-process \
                                     --disable-search \
                                     --fail-on-error \
                                     -t "${CODECOV_TOKEN}" \
