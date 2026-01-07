@@ -44,18 +44,9 @@ def uploadToCodecov(String flag, String file) {
     }
 }
 
-// Helper: Report coverage (store + GitHub)
+// Helper: Store coverage result
 def reportCoverage(String component, String coverage) {
     coverageResults[component] = coverage
-    
-    def coverageValue = coverage.replace('%', '').trim()
-    def status = coverageValue.toFloat() >= 50 ? 'SUCCESS' : 'UNSTABLE'
-    
-    publishChecks name: "coverage/${component}",
-                  title: "${component.toUpperCase()} Coverage",
-                  summary: "Coverage: ${coverage}",
-                  status: 'COMPLETED',
-                  conclusion: status
 }
 
 pipeline {
@@ -233,12 +224,12 @@ pipeline {
                                         MISSED=$(grep -oP 'type="LINE"[^/]*missed="\\K[0-9]+' "$REPORT" | head -1 || echo "0")
                                         COVERED=$(grep -oP 'type="LINE"[^/]*covered="\\K[0-9]+' "$REPORT" | head -1 || echo "0")
                                         if [ $((MISSED + COVERED)) -gt 0 ]; then
-                                            echo "scale=2; $COVERED * 100 / ($MISSED + $COVERED)" | bc
+                                            awk "BEGIN {printf \"%.2f\", $COVERED * 100 / ($MISSED + $COVERED)}"
                                         else
-                                            echo "0"
+                                            echo "N/A"
                                         fi
                                     else
-                                        echo "0"
+                                        echo "N/A"
                                     fi
                                 '''
                                 
@@ -252,21 +243,27 @@ pipeline {
                 }
             }
         }
-        
-        stage('Summary') {
-            agent any
-            steps {
+    }
+    
+    post {
+        always {
+            node('built-in') {
                 script {
                     def lines = ["CODE COVERAGE SUMMARY", ""]
-                    coverageResults.each { component, coverage ->
-                        lines << "${component}: ${coverage}"
+                    if (coverageResults.isEmpty()) {
+                        lines << "No coverage data collected"
+                    } else {
+                        coverageResults.each { component, coverage ->
+                            lines << "${component}: ${coverage}"
+                        }
                     }
                     def report = lines.join('\n')
-                    
-                    sh label: 'Coverage Summary', script: "echo '${report}'"
+                    echo report
                     
                     def summary = coverageResults.collect { k, v -> "${k}: ${v}" }.join(' | ')
-                    currentBuild.description = summary
+                    if (summary) {
+                        currentBuild.description = summary
+                    }
                 }
             }
         }
