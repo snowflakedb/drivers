@@ -2,10 +2,12 @@
  * Jenkinsfile for code coverage generation and upload to Codecov
  */
 
-def DOCKER_IMAGE = 'nexus.int.snowflakecomputing.com:8086/docker/rhel8-universal-driver-coverage:1'
-def CODECOV_SECRET_ID = 'snowdrivers/ud_repo_codecov'
-def NEXUS_CREDENTIAL_ID = 'a791118f-a1ea-46cd-b876-56da1b9bc71c'
-def PARAMS_CREDENTIAL_ID = 'sfctest0-parameters-secret'
+import groovy.transform.Field
+
+@Field String DOCKER_IMAGE = 'nexus.int.snowflakecomputing.com:8086/docker/rhel8-universal-driver-coverage:1'
+@Field String CODECOV_SECRET_ID = 'snowdrivers/ud_repo_codecov'
+@Field String NEXUS_CREDENTIAL_ID = 'a791118f-a1ea-46cd-b876-56da1b9bc71c'
+@Field String PARAMS_CREDENTIAL_ID = 'sfctest0-parameters-secret'
 
 // Helper: Docker login and pull
 def dockerSetup() {
