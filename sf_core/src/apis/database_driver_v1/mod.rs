@@ -8,10 +8,12 @@ mod statement;
 
 pub use crate::config::settings::Setting;
 pub use crate::handle_manager::Handle;
+pub use connection::Connection;
 pub use connection::connection_init;
 pub use connection::connection_new;
 pub use connection::connection_release;
 pub use connection::connection_set_option;
+pub use connection::with_valid_session;
 pub use database::database_init;
 pub use database::database_new;
 pub use database::database_release;

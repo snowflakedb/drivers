@@ -24,3 +24,10 @@ Feature: Session Token Refresh
     Given valid login credentials
     When we login and immediately call refresh
     Then we should get new tokens that differ from the original
+
+  @core_int
+  Scenario: should only refresh once with concurrent 401 errors
+    Given a connection with an expired session token
+    When multiple concurrent requests receive 401 errors
+    Then only one refresh attempt should be made
+    And all requests should succeed after the refresh
