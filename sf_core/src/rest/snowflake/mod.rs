@@ -250,26 +250,23 @@ pub async fn snowflake_login_with_client(
     let session_token = auth_response
         .data
         .token
-        .context(InvalidResponseSnafu {
-            message: "Login response missing session token",
-        })
-        .context(InvalidSnowflakeResponseSnafu)?;
+        .context(MissingResponseFieldSnafu {
+            field: "session token",
+        })?;
 
     let master_token = auth_response
         .data
         .master_token
-        .context(InvalidResponseSnafu {
-            message: "Login response missing master token",
-        })
-        .context(InvalidSnowflakeResponseSnafu)?;
+        .context(MissingResponseFieldSnafu {
+            field: "master token",
+        })?;
 
     let session_id = auth_response
         .data
         .session_id
-        .context(InvalidResponseSnafu {
-            message: "Login response missing session ID",
-        })
-        .context(InvalidSnowflakeResponseSnafu)?;
+        .context(MissingResponseFieldSnafu {
+            field: "session ID",
+        })?;
 
     let now = std::time::Instant::now();
     let session_expires_at = auth_response.data.validity.map(|d| now + d);
@@ -365,12 +362,9 @@ pub async fn refresh_session(
         return SessionRefreshFailedSnafu { message, code }.fail();
     }
 
-    let data = refresh_response
-        .data
-        .context(InvalidResponseSnafu {
-            message: "Session refresh response missing data",
-        })
-        .context(InvalidSnowflakeResponseSnafu)?;
+    let data = refresh_response.data.context(MissingResponseFieldSnafu {
+        field: "session refresh data",
+    })?;
 
     let now = std::time::Instant::now();
     let session_expires_at = data.validity.map(|d| now + d);
@@ -547,33 +541,32 @@ pub async fn snowflake_query_with_client(
         let message = query_response
             .message
             .unwrap_or_else(|| "Unknown error".to_string());
-        InvalidResponseSnafu { message }
-            .fail()
-            .context(InvalidSnowflakeResponseSnafu)
-    } else {
-        // Log if we retried due to 612, now that we know the actual command type
-        if let Some(sql_prefix) = sql_prefix {
-            let is_file_transfer = query_response
-                .data
-                .command
-                .as_deref()
-                .map(|c| c.eq_ignore_ascii_case("UPLOAD") || c.eq_ignore_ascii_case("DOWNLOAD"))
-                .unwrap_or(false);
-            if is_file_transfer {
-                tracing::info!(
-                    command = query_response.data.command.as_deref(),
-                    "Retried async 612 with sync; confirmed file transfer"
-                );
-            } else {
-                tracing::warn!(
-                    command = query_response.data.command.as_deref(),
-                    sql_prefix,
-                    "Retried async 612 with sync; unexpected non-file-transfer query"
-                );
-            }
-        }
-        Ok(query_response)
+        return QueryFailedSnafu { message }.fail();
     }
+
+    // Log if we retried due to 612, now that we know the actual command type
+    if let Some(sql_prefix) = sql_prefix {
+        let is_file_transfer = query_response
+            .data
+            .command
+            .as_deref()
+            .map(|c| c.eq_ignore_ascii_case("UPLOAD") || c.eq_ignore_ascii_case("DOWNLOAD"))
+            .unwrap_or(false);
+        if is_file_transfer {
+            tracing::info!(
+                command = query_response.data.command.as_deref(),
+                "Retried async 612 with sync; confirmed file transfer"
+            );
+        } else {
+            tracing::warn!(
+                command = query_response.data.command.as_deref(),
+                sql_prefix,
+                "Retried async 612 with sync; unexpected non-file-transfer query"
+            );
+        }
+    }
+
+    Ok(query_response)
 }
 
 /// New blocking facade that uses the async engine under the hood.
@@ -726,6 +719,18 @@ pub enum RestError {
         #[snafu(implicit)]
         location: Location,
     },
+    #[snafu(display("Missing response field: {field}"))]
+    MissingResponseField {
+        field: &'static str,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Query failed: {message}"))]
+    QueryFailed {
+        message: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
 }
 #[derive(Debug, Snafu)]
 pub enum SnowflakeResponseError {
@@ -750,12 +755,6 @@ pub enum SnowflakeResponseError {
     },
     #[snafu(display("Session expired - reauthentication required"))]
     SessionExpired {
-        #[snafu(implicit)]
-        location: Location,
-    },
-    #[snafu(display("{message}"))]
-    InvalidResponse {
-        message: String,
         #[snafu(implicit)]
         location: Location,
     },
