@@ -5,7 +5,7 @@
 import groovy.transform.Field
 
 @Field String DOCKER_IMAGE = 'nexus.int.snowflakecomputing.com:8086/docker/rhel8-universal-driver-coverage:1'
-@Field String CODECOV_SECRET_ID = 'snowdrivers/ud_repo_codecov'
+@Field String CODECOV_SECRET_ID = 'ud_repo_codecov'
 @Field String NEXUS_CREDENTIAL_ID = 'a791118f-a1ea-46cd-b876-56da1b9bc71c'
 @Field String PARAMS_CREDENTIAL_ID = 'sfctest0-parameters-secret'
 
@@ -26,7 +26,7 @@ def decodeSecrets() {
 
 // Helper: Upload coverage to Codecov
 def uploadToCodecov(String flag, String file) {
-    withCredentials([fuseString(variable: 'CODECOV_TOKEN', secretId: CODECOV_SECRET_ID)]) {
+    withCredentials([fuseString(variable: 'CODECOV_TOKEN', encryptedSecret: CODECOV_SECRET_ID)]) {
         sh label: 'Upload to Codecov', script: """
             set +x
             codecovcli --verbose --enterprise-url https://snowflake.codecov.io \\
