@@ -9,6 +9,9 @@ import groovy.transform.Field
 @Field String NEXUS_CREDENTIAL_ID = 'a791118f-a1ea-46cd-b876-56da1b9bc71c'
 @Field String PARAMS_CREDENTIAL_ID = 'sfctest0-parameters-secret'
 
+// Coverage results storage
+@Field def coverageResults = [:]
+
 // Helper: Docker login, pull and inspect
 def dockerSetup() {
     withCredentials([string(credentialsId: NEXUS_CREDENTIAL_ID, variable: 'NEXUS_PASSWORD')]) {
@@ -42,6 +45,21 @@ def uploadToCodecov(String flag, String file) {
     }
 }
 
+// Helper: Report coverage (display + store + GitHub)
+def reportCoverage(String component, String coverage) {
+    echo "══════════════════════════════════════════"
+    echo "  ${component.toUpperCase()} COVERAGE: ${coverage}"
+    echo "══════════════════════════════════════════"
+    
+    coverageResults[component] = coverage
+    
+    def status = coverage.replace('%', '').toFloat() >= 50 ? 'SUCCESS' : 'UNSTABLE'
+    githubNotify context: "coverage/${component}",
+                 description: "Coverage: ${coverage}",
+                 status: status,
+                 targetUrl: "${BUILD_URL}"
+}
+
 pipeline {
     agent none
     
@@ -67,13 +85,17 @@ pipeline {
                             docker.image(DOCKER_IMAGE).inside('-u root --privileged') {
                                 decodeSecrets()
                                 
-                                sh label: 'Run Tests with Coverage', script: '''
+                                def output = sh label: 'Run Tests with Coverage', returnStdout: true, script: '''
                                     set +x
                                     export PARAMETER_PATH=$(pwd)/parameters.json
-                                    cargo tarpaulin --packages sf_core --all-features --skip-clean --no-fail-fast --out lcov --output-dir .
+                                    cargo tarpaulin --packages sf_core --all-features --skip-clean --no-fail-fast --out lcov --output-dir . 2>&1 | tee tarpaulin.log
                                     mv lcov.info lcov-rust-core.info
+                                    # Extract coverage percentage
+                                    grep -oP '\\d+\\.\\d+% coverage' tarpaulin.log | tail -1 || echo "0% coverage"
                                 '''
                                 
+                                def coverage = output.trim().split('\n').last().replaceAll(' coverage', '')
+                                reportCoverage('rust-core', coverage)
                                 uploadToCodecov('rust-core', 'lcov-rust-core.info')
                             }
                         }
@@ -96,15 +118,20 @@ pipeline {
                                         make setup
                                     '''
                                     
-                                    sh label: 'Run Tests with Coverage', script: '''
+                                    def output = sh label: 'Run Tests with Coverage', returnStdout: true, script: '''
                                         set +x
                                         export PARAMETER_PATH=$(pwd)/../parameters.json
                                         mkdir -p reports
                                         uv run tox -e py39-all -- \
                                             --cov=src/snowflake \
                                             --cov-report=term \
-                                            --cov-report=xml:reports/coverage-python.xml
+                                            --cov-report=xml:reports/coverage-python.xml 2>&1 | tee coverage.log
+                                        # Extract TOTAL coverage line
+                                        grep "^TOTAL" coverage.log | awk '{print $NF}' || echo "0%"
                                     '''
+                                    
+                                    def coverage = output.trim().split('\n').last()
+                                    reportCoverage('python', coverage)
                                 }
                                 
                                 uploadToCodecov('python', 'python/reports/coverage-python.xml')
@@ -147,25 +174,29 @@ pipeline {
                                     ctest -j 1 -C Debug --test-dir cmake-build --output-on-failure -E "crl"
                                 '''
                                 
-                                sh label: 'Generate Coverage Report', script: '''
+                                def output = sh label: 'Generate Coverage Report', returnStdout: true, script: '''
                                     set +x
                                     LLVM_PROFDATA=$(find /root/.rustup -name "llvm-profdata" -type f 2>/dev/null | head -1)
                                     LLVM_COV=$(find /root/.rustup -name "llvm-cov" -type f 2>/dev/null | head -1)
                                     find . -name "odbc-*.profraw" -type f | xargs $LLVM_PROFDATA merge -sparse -o coverage.profdata
                                     
-                                    echo "=== Coverage Summary ==="
                                     $LLVM_COV report target/debug/libsfodbc.so \
                                         -instr-profile=coverage.profdata \
                                         -sources=$(pwd)/odbc \
-                                        -sources=$(pwd)/sf_core
+                                        -sources=$(pwd)/sf_core 2>&1 | tee llvm-cov.log
                                     
                                     $LLVM_COV export target/debug/libsfodbc.so \
                                         -instr-profile=coverage.profdata \
                                         -format=lcov \
                                         -sources=$(pwd)/odbc \
                                         -sources=$(pwd)/sf_core > lcov-odbc.info
+                                    
+                                    # Extract coverage from TOTAL line
+                                    grep "^TOTAL" llvm-cov.log | awk '{print $NF}' || echo "0%"
                                 '''
                                 
+                                def coverage = output.trim().split('\n').last()
+                                reportCoverage('odbc', coverage)
                                 uploadToCodecov('odbc', 'lcov-odbc.info')
                             }
                         }
@@ -196,11 +227,50 @@ pipeline {
                                     ./gradlew test jacocoTestReport --stacktrace
                                 '''
                                 
+                                // Parse JaCoCo XML for coverage
+                                def output = sh label: 'Extract Coverage', returnStdout: true, script: '''
+                                    set +x
+                                    REPORT="jdbc/build/reports/jacoco/test/jacocoTestReport.xml"
+                                    if [ -f "$REPORT" ]; then
+                                        MISSED=$(grep -oP 'type="LINE"[^/]*missed="\\K[0-9]+' "$REPORT" | head -1 || echo "0")
+                                        COVERED=$(grep -oP 'type="LINE"[^/]*covered="\\K[0-9]+' "$REPORT" | head -1 || echo "0")
+                                        if [ $((MISSED + COVERED)) -gt 0 ]; then
+                                            echo "scale=1; $COVERED * 100 / ($MISSED + $COVERED)" | bc
+                                        else
+                                            echo "0"
+                                        fi
+                                    else
+                                        echo "0"
+                                    fi
+                                '''
+                                
+                                def coverage = output.trim() + '%'
+                                reportCoverage('jdbc', coverage)
                                 uploadToCodecov('jdbc', 'jdbc/build/reports/jacoco/test/jacocoTestReport.xml')
                             }
                         }
                         archiveArtifacts artifacts: 'jdbc/build/reports/jacoco/test/jacocoTestReport.xml', allowEmptyArchive: true
                     }
+                }
+            }
+        }
+        
+        stage('Summary') {
+            agent { label 'build-node-extra-large' }
+            steps {
+                script {
+                    echo ""
+                    echo "══════════════════════════════════════════"
+                    echo "         CODE COVERAGE SUMMARY"
+                    echo "══════════════════════════════════════════"
+                    coverageResults.each { component, coverage ->
+                        echo "  ${component}: ${coverage}"
+                    }
+                    echo "══════════════════════════════════════════"
+                    
+                    // Set build description with coverage summary
+                    def summary = coverageResults.collect { k, v -> "${k}: ${v}" }.join(' | ')
+                    currentBuild.description = summary
                 }
             }
         }
