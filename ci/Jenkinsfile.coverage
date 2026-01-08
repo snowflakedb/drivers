@@ -245,21 +245,21 @@ pipeline {
                 }
             }
         }
-        
-        stage('Coverage Summary') {
-            when { expression { return true } }
-            agent any
-            steps {
+    }
+    
+    post {
+        always {
+            stage('Coverage Summary') {
                 script {
-                    def lines = ["CODE COVERAGE SUMMARY", ""]
+                    echo "CODE COVERAGE SUMMARY"
+                    echo ""
                     if (coverageResults.isEmpty()) {
-                        lines << "No coverage data collected"
+                        echo "No coverage data collected"
                     } else {
                         coverageResults.each { component, coverage ->
-                            lines << "${component}: ${coverage}"
+                            echo "${component}: ${coverage}"
                         }
                     }
-                    echo lines.join('\n')
                     
                     def summary = coverageResults.collect { k, v -> "${k}: ${v}" }.join(' | ')
                     if (summary) {
