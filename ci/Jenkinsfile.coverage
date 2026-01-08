@@ -9,6 +9,12 @@ import groovy.transform.Field
 @Field String NEXUS_CREDENTIAL_ID = 'a791118f-a1ea-46cd-b876-56da1b9bc71c'
 @Field String PARAMS_CREDENTIAL_ID = 'sfctest0-parameters-secret'
 @Field Map coverageResults = [:]
+@Field Map DISPLAY_NAMES = [
+    'rust-core': 'Rust Core',
+    'python': 'Python',
+    'odbc': 'ODBC',
+    'jdbc': 'JDBC'
+]
 
 // Helper: Docker login and pull
 def dockerSetup() {
@@ -25,15 +31,85 @@ def decodeSecrets() {
     }
 }
 
-// Helper: Report coverage to GitHub and store result
-def reportCoverage(String component, String coverage) {
-    coverageResults[component] = coverage
-    publishChecks name: "coverage/${component}",
-                  title: "Coverage: ${coverage}%",
-                  summary: "Code coverage for ${component}",
+// Helper: Get coverage percentage from Codecov API for a specific flag
+def getCodecovFlagCoverage(String flag) {
+    def coverage = null
+    def maxRetries = 3
+    def retryDelay = 10 // seconds
+    
+    for (int attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+            withCredentials([string(credentialsId: CODECOV_CREDENTIAL_ID, variable: 'CODECOV_TOKEN')]) {
+                def response = httpRequest(
+                    url: "https://snowflake.codecov.io/api/v2/github/snowflakedb/repos/universal-driver/flags/${flag}/coverage",
+                    customHeaders: [[name: 'Authorization', value: "Bearer ${CODECOV_TOKEN}"]],
+                    validResponseCodes: '200',
+                    quiet: true
+                )
+                
+                def json = readJSON text: response.content
+                
+                // The API returns coverage as a percentage (e.g., 55.22)
+                if (json.coverage != null) {
+                    coverage = String.format("%.2f", json.coverage as Double)
+                    echo "Codecov API returned coverage for ${flag}: ${coverage}%"
+                    return coverage
+                }
+            }
+        } catch (Exception e) {
+            echo "Attempt ${attempt}/${maxRetries} - Could not fetch coverage from Codecov API: ${e.message}"
+            if (attempt < maxRetries) {
+                echo "Waiting ${retryDelay} seconds before retry..."
+                sleep(time: retryDelay, unit: 'SECONDS')
+            }
+        }
+    }
+    
+    echo "Failed to get coverage from Codecov API after ${maxRetries} attempts"
+    return null
+}
+
+// Helper: Report success to GitHub with coverage percentage
+def reportSuccess(String component) {
+    def displayName = DISPLAY_NAMES[component] ?: component
+    
+    // Wait for Codecov to process the upload, then fetch the coverage
+    echo "Waiting for Codecov to process upload..."
+    sleep(time: 15, unit: 'SECONDS')
+    
+    def coverage = getCodecovFlagCoverage(component)
+    
+    if (coverage) {
+        coverageResults[component] = coverage
+        publishChecks name: "Code Coverage - ${displayName}",
+                      title: "Coverage: ${coverage}%",
+                      summary: "Code coverage for ${displayName}: ${coverage}%",
+                      detailsURL: "https://snowflake.codecov.io/gh/snowflakedb/universal-driver?flags%5B0%5D=${component}",
+                      status: 'COMPLETED',
+                      conclusion: 'SUCCESS'
+    } else {
+        // Could not retrieve coverage from API - mark as failed
+        coverageResults[component] = 'FAILED'
+        publishChecks name: "Code Coverage - ${displayName}",
+                      title: "Coverage failed",
+                      summary: "Coverage report uploaded but could not retrieve percentage from Codecov API.",
+                      detailsURL: "https://snowflake.codecov.io/gh/snowflakedb/universal-driver?flags%5B0%5D=${component}",
+                      status: 'COMPLETED',
+                      conclusion: 'FAILURE'
+    }
+}
+
+// Helper: Report failure to GitHub
+def reportFailure(String component) {
+    def displayName = DISPLAY_NAMES[component] ?: component
+    coverageResults[component] = 'FAILED'
+    
+    publishChecks name: "Code Coverage - ${displayName}",
+                  title: "Coverage failed",
+                  summary: "Coverage collection failed for ${displayName}",
                   detailsURL: "https://snowflake.codecov.io/gh/snowflakedb/universal-driver",
                   status: 'COMPLETED',
-                  conclusion: 'SUCCESS'
+                  conclusion: 'FAILURE'
 }
 
 // Helper: Upload coverage to Codecov
@@ -84,28 +160,27 @@ pipeline {
                     steps {
                         checkout scm
                         script {
-                            dockerSetup()
-                            docker.image(DOCKER_IMAGE).inside('-u root --privileged') {
-                                decodeSecrets()
-                                
-                                sh label: 'Run Tests with Coverage', script: '''
-                                    set +x
-                                    export PARAMETER_PATH=$(pwd)/parameters.json
-                                    cargo tarpaulin --packages sf_core --all-features --skip-clean --no-fail-fast --out lcov --output-dir .
-                                    mv lcov.info lcov-rust-core.info
-                                '''
-                                
-                                def coverage = sh(script: '''
-                                    TOTAL=$(grep -c "^DA:" lcov-rust-core.info || echo 0)
-                                    COVERED=$(grep "^DA:" lcov-rust-core.info | grep -v ",0$" | wc -l || echo 0)
-                                    echo "$COVERED $TOTAL" | awk '{if($2>0) printf "%.2f", $1*100/$2; else print "0.00"}'
-                                ''', returnStdout: true).trim()
-                                
-                                uploadToCodecov('rust-core', 'lcov-rust-core.info')
-                                reportCoverage('rust-core', coverage)
+                            try {
+                                dockerSetup()
+                                docker.image(DOCKER_IMAGE).inside('-u root --privileged') {
+                                    decodeSecrets()
+                                    
+                                    sh label: 'Run Tests with Coverage', script: '''
+                                        set +x
+                                        export PARAMETER_PATH=$(pwd)/parameters.json
+                                        cargo tarpaulin --packages sf_core --all-features --skip-clean --no-fail-fast --out lcov --output-dir .
+                                        mv lcov.info lcov-rust-core.info
+                                    '''
+                                    
+                                    uploadToCodecov('rust-core', 'lcov-rust-core.info')
+                                    reportSuccess('rust-core')
+                                }
+                                archiveArtifacts artifacts: 'lcov-rust-core.info', allowEmptyArchive: true
+                            } catch (Exception e) {
+                                reportFailure('rust-core')
+                                throw e
                             }
                         }
-                        archiveArtifacts artifacts: 'lcov-rust-core.info', allowEmptyArchive: true
                     }
                 }
                 
@@ -114,37 +189,38 @@ pipeline {
                     steps {
                         checkout scm
                         script {
-                            dockerSetup()
-                            docker.image(DOCKER_IMAGE).inside('-u root --privileged') {
-                                decodeSecrets()
-                                
-                                dir('python') {
-                                    sh label: 'Build Python Package', script: '''
-                                        set +x
-                                        RUSTFLAGS="" make build-core
-                                        make setup
-                                    '''
+                            try {
+                                dockerSetup()
+                                docker.image(DOCKER_IMAGE).inside('-u root --privileged') {
+                                    decodeSecrets()
                                     
-                                    sh label: 'Run Tests with Coverage', script: '''
-                                        set +x
-                                        export PARAMETER_PATH=$(pwd)/../parameters.json
-                                        mkdir -p reports
-                                        uv run tox -e py39-all -- \
-                                            --cov=src/snowflake \
-                                            --cov-report=term \
-                                            --cov-report=xml:reports/coverage-python.xml
-                                    '''
+                                    dir('python') {
+                                        sh label: 'Build Python Package', script: '''
+                                            set +x
+                                            RUSTFLAGS="" make build-core
+                                            make setup
+                                        '''
+                                        
+                                        sh label: 'Run Tests with Coverage', script: '''
+                                            set +x
+                                            export PARAMETER_PATH=$(pwd)/../parameters.json
+                                            mkdir -p reports
+                                            uv run tox -e py39-all -- \
+                                                --cov=src/snowflake \
+                                                --cov-report=term \
+                                                --cov-report=xml:reports/coverage-python.xml
+                                        '''
+                                    }
+                                    
+                                    uploadToCodecov('python', 'python/reports/coverage-python.xml')
+                                    reportSuccess('python')
                                 }
-                                
-                                def coverage = sh(script: '''
-                                    grep -o 'line-rate="[0-9.]*"' python/reports/coverage-python.xml | head -1 | grep -o '[0-9.]*' | awk '{printf "%.2f", $1 * 100}'
-                                ''', returnStdout: true).trim()
-                                
-                                uploadToCodecov('python', 'python/reports/coverage-python.xml')
-                                reportCoverage('python', coverage)
+                                archiveArtifacts artifacts: 'python/reports/coverage-python.xml', allowEmptyArchive: true
+                            } catch (Exception e) {
+                                reportFailure('python')
+                                throw e
                             }
                         }
-                        archiveArtifacts artifacts: 'python/reports/coverage-python.xml', allowEmptyArchive: true
                     }
                 }
                 
@@ -153,59 +229,58 @@ pipeline {
                     steps {
                         checkout scm
                         script {
-                            dockerSetup()
-                            docker.image(DOCKER_IMAGE).inside('-u root --privileged') {
-                                decodeSecrets()
-                                
-                                sh label: 'Build ODBC Driver', script: '''
-                                    set +x
-                                    RUSTFLAGS="-C instrument-coverage" cargo build
-                                    source /opt/rh/gcc-toolset-11/enable
-                                    cd odbc_tests
-                                    mkdir -p cmake-build
-                                    cmake -B cmake-build \
-                                        -D ODBC_LIBRARY="/usr/lib64/libodbc.so" \
-                                        -D ODBC_INCLUDE_DIR="/usr/include" \
-                                        -D DRIVER_TYPE=NEW \
-                                        .
-                                    cmake --build cmake-build -- -j $(nproc)
-                                '''
-                                
-                                sh label: 'Run ODBC Tests', script: '''
-                                    set +x
-                                    WORKSPACE_ROOT=$(pwd)
-                                    export DRIVER_PATH=${WORKSPACE_ROOT}/target/debug/libsfodbc.so
-                                    export PARAMETER_PATH=${WORKSPACE_ROOT}/parameters.json
-                                    export LLVM_PROFILE_FILE="${WORKSPACE_ROOT}/odbc-%p-%m.profraw"
+                            try {
+                                dockerSetup()
+                                docker.image(DOCKER_IMAGE).inside('-u root --privileged') {
+                                    decodeSecrets()
                                     
-                                    cd odbc_tests
-                                    ctest -j 1 -C Debug --test-dir cmake-build --output-on-failure -E "crl"
-                                '''
-                                
-                                sh label: 'Generate Coverage Report', script: '''
-                                    set +x
-                                    LLVM_PROFDATA=$(find /root/.rustup -name "llvm-profdata" -type f 2>/dev/null | head -1)
-                                    LLVM_COV=$(find /root/.rustup -name "llvm-cov" -type f 2>/dev/null | head -1)
-                                    find . -name "odbc-*.profraw" -type f | xargs $LLVM_PROFDATA merge -sparse -o coverage.profdata
+                                    sh label: 'Build ODBC Driver', script: '''
+                                        set +x
+                                        RUSTFLAGS="-C instrument-coverage" cargo build
+                                        source /opt/rh/gcc-toolset-11/enable
+                                        cd odbc_tests
+                                        mkdir -p cmake-build
+                                        cmake -B cmake-build \
+                                            -D ODBC_LIBRARY="/usr/lib64/libodbc.so" \
+                                            -D ODBC_INCLUDE_DIR="/usr/include" \
+                                            -D DRIVER_TYPE=NEW \
+                                            .
+                                        cmake --build cmake-build -- -j $(nproc)
+                                    '''
                                     
-                                    $LLVM_COV export target/debug/libsfodbc.so \
-                                        -instr-profile=coverage.profdata \
-                                        -format=lcov \
-                                        -sources=$(pwd)/odbc \
-                                        -sources=$(pwd)/sf_core > lcov-odbc.info
-                                '''
-                                
-                                def coverage = sh(script: '''
-                                    TOTAL=$(grep -c "^DA:" lcov-odbc.info || echo 0)
-                                    COVERED=$(grep "^DA:" lcov-odbc.info | grep -v ",0$" | wc -l || echo 0)
-                                    echo "$COVERED $TOTAL" | awk '{if($2>0) printf "%.2f", $1*100/$2; else print "0.00"}'
-                                ''', returnStdout: true).trim()
-                                
-                                uploadToCodecov('odbc', 'lcov-odbc.info')
-                                reportCoverage('odbc', coverage)
+                                    sh label: 'Run ODBC Tests', script: '''
+                                        set +x
+                                        WORKSPACE_ROOT=$(pwd)
+                                        export DRIVER_PATH=${WORKSPACE_ROOT}/target/debug/libsfodbc.so
+                                        export PARAMETER_PATH=${WORKSPACE_ROOT}/parameters.json
+                                        export LLVM_PROFILE_FILE="${WORKSPACE_ROOT}/odbc-%p-%m.profraw"
+                                        
+                                        cd odbc_tests
+                                        ctest -j 1 -C Debug --test-dir cmake-build --output-on-failure -E "crl"
+                                    '''
+                                    
+                                    sh label: 'Generate Coverage Report', script: '''
+                                        set +x
+                                        LLVM_PROFDATA=$(find /root/.rustup -name "llvm-profdata" -type f 2>/dev/null | head -1)
+                                        LLVM_COV=$(find /root/.rustup -name "llvm-cov" -type f 2>/dev/null | head -1)
+                                        find . -name "odbc-*.profraw" -type f | xargs $LLVM_PROFDATA merge -sparse -o coverage.profdata
+                                        
+                                        $LLVM_COV export target/debug/libsfodbc.so \
+                                            -instr-profile=coverage.profdata \
+                                            -format=lcov \
+                                            -sources=$(pwd)/odbc \
+                                            -sources=$(pwd)/sf_core > lcov-odbc.info
+                                    '''
+                                    
+                                    uploadToCodecov('odbc', 'lcov-odbc.info')
+                                    reportSuccess('odbc')
+                                }
+                                archiveArtifacts artifacts: 'lcov-odbc.info', allowEmptyArchive: true
+                            } catch (Exception e) {
+                                reportFailure('odbc')
+                                throw e
                             }
                         }
-                        archiveArtifacts artifacts: 'lcov-odbc.info', allowEmptyArchive: true
                     }
                 }
                 
@@ -259,8 +334,16 @@ pipeline {
                 if (coverageResults.isEmpty()) {
                     currentBuild.description = "No coverage data"
                 } else {
-                    def summary = coverageResults.collect { k, v -> "${k}: ${v}%" }.join(' | ')
-                    currentBuild.description = summary
+                    def parts = []
+                    coverageResults.each { component, value ->
+                        def displayName = DISPLAY_NAMES[component] ?: component
+                        if (value == 'FAILED') {
+                            parts << "${displayName}: FAILED"
+                        } else {
+                            parts << "${displayName}: ${value}%"
+                        }
+                    }
+                    currentBuild.description = parts.join(' | ')
                 }
             }
         }
