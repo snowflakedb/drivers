@@ -186,12 +186,14 @@ def reportFailure(String component) {
 
 // Helper: Upload coverage to Codecov
 def uploadToCodecov(String flag, String file) {
-    // For PRs, use the actual PR head commit, not the merge commit
-    def commitSha = env.ghprbActualCommit ?: env.sha1 ?: env.GIT_COMMIT ?: sh(script: 'git rev-parse HEAD', returnStdout: true).trim()
+    // Determine Commit SHA and Branch for Codecov
+    // In Jenkins Multibranch with PRs, GIT_COMMIT is often the Merge Commit.
+    // We prefer the PR Head Commit if available to link correctly in Codecov.
+    def commitSha = env.ghprbActualCommit ?: env.CHANGE_COMMIT ?: env.GIT_COMMIT ?: sh(script: 'git rev-parse HEAD', returnStdout: true).trim()
     def branch = env.CHANGE_BRANCH ?: env.GIT_BRANCH ?: env.BRANCH_NAME
     def prFlag = env.CHANGE_ID ? "--pr ${env.CHANGE_ID}" : ""
     
-    echo "Uploading coverage for commit: ${commitSha}, branch: ${branch}"
+    echo "Uploading coverage params -- SHA: ${commitSha}, Branch: ${branch}, PR: ${env.CHANGE_ID}"
     
     withCredentials([string(credentialsId: CODECOV_CREDENTIAL_ID, variable: 'CODECOV_TOKEN')]) {
         sh label: 'Upload to Codecov', script: """
@@ -227,6 +229,18 @@ pipeline {
     }
     
     stages {
+        stage('Setup') {
+            steps {
+                script {
+                    publishChecks name: "Universal Driver - Code Coverage",
+                                  title: "Build In Progress",
+                                  summary: "Jenkins Build ${env.BUILD_NUMBER} is running...",
+                                  detailsURL: env.BUILD_URL,
+                                  status: 'IN_PROGRESS'
+                }
+            }
+        }
+
         stage('Coverage') {
             failFast false
             parallel {
@@ -431,6 +445,14 @@ pipeline {
                     }
                     currentBuild.description = parts.join(' | ')
                 }
+                
+                // Publish overall build status with link to Jenkins
+                publishChecks name: "Universal Driver - Code Coverage",
+                              title: "Build ${currentBuild.currentResult}",
+                              summary: "Jenkins Build ${env.BUILD_NUMBER}: ${currentBuild.currentResult}\n${currentBuild.description ?: ''}",
+                              detailsURL: env.BUILD_URL,
+                              status: 'COMPLETED',
+                              conclusion: currentBuild.currentResult == 'SUCCESS' ? 'SUCCESS' : 'FAILURE'
             }
         }
     }
