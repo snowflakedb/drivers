@@ -2,10 +2,9 @@
 
 [![codecov](https://codecov.io/gh/acme/universal-driver/branch/main/graph/badge.svg)](https://codecov.io/gh/acme/universal-driver)
 
-# Disclaimer regarding the project's support
+# Disclaimer
 
-This project is experimental and you're free to experiment with it at your own risk, but please be aware that at this early stage we do not provide any level of support for it, that especially means cases raised for Snowflake Support.
-Please watch this space for updates and thank you for your interest in this product.
+This repository contains experimental content provided as-is. Support applies only to functionality that is embedded in an officially supported Snowflake driver and used as part of that driver. All other files, modules, examples, and utilities in this repository are unsupported, may change or be removed without notice, and should be used at your own risk.
 
 # Running Tests
 
