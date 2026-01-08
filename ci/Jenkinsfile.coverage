@@ -8,7 +8,7 @@ import groovy.transform.Field
 @Field String CODECOV_CREDENTIAL_ID = 'ud_repo_codecov'
 @Field String NEXUS_CREDENTIAL_ID = 'a791118f-a1ea-46cd-b876-56da1b9bc71c'
 @Field String PARAMS_CREDENTIAL_ID = 'sfctest0-parameters-secret'
-@Field Map coverageResults = [:]
+@Field Map coverageResults = new java.util.concurrent.ConcurrentHashMap()
 @Field Map DISPLAY_NAMES = [
     'rust-core': 'Rust Core',
     'python': 'Python',
@@ -187,9 +187,9 @@ def reportFailure(String component) {
 // Helper: Upload coverage to Codecov
 def uploadToCodecov(String flag, String file) {
     // Determine Commit SHA and Branch for Codecov
-    // In Jenkins Multibranch with PRs, GIT_COMMIT is often the Merge Commit.
-    // We prefer the PR Head Commit if available to link correctly in Codecov.
-    def commitSha = env.ghprbActualCommit ?: env.CHANGE_COMMIT ?: env.GIT_COMMIT ?: sh(script: 'git rev-parse HEAD', returnStdout: true).trim()
+    // Reverting to use the actual built commit (often Merge Commit) to ensure consistency
+    // with the local workspace and avoid "unavailable" metadata on Codecov.
+    def commitSha = env.ghprbActualCommit ?: env.GIT_COMMIT ?: sh(script: 'git rev-parse HEAD', returnStdout: true).trim()
     def branch = env.CHANGE_BRANCH ?: env.GIT_BRANCH ?: env.BRANCH_NAME
     def prFlag = env.CHANGE_ID ? "--pr ${env.CHANGE_ID}" : ""
     
@@ -417,18 +417,29 @@ pipeline {
     post {
         always {
             script {
+                echo "Starting Post-Build Actions..."
+                
                 // Notify Codecov that all uploads are complete
-                def commitSha = env.ghprbActualCommit ?: env.sha1 ?: env.GIT_COMMIT ?: sh(script: 'git rev-parse HEAD', returnStdout: true).trim()
-                withCredentials([string(credentialsId: CODECOV_CREDENTIAL_ID, variable: 'CODECOV_TOKEN')]) {
-                     sh label: 'Notify Codecov', script: """
-                        codecovcli --enterprise-url https://snowflake.codecov.io \\
-                            send-notifications \\
-                            -t "\${CODECOV_TOKEN}" \\
-                            --git-service github \\
-                            --sha ${commitSha} || true
-                     """
+                try {
+                    def commitSha = env.ghprbActualCommit ?: env.GIT_COMMIT ?: env.CHANGE_COMMIT
+                    if (commitSha) {
+                        node {
+                            withCredentials([string(credentialsId: CODECOV_CREDENTIAL_ID, variable: 'CODECOV_TOKEN')]) {
+                                 sh label: 'Notify Codecov', script: """
+                                    codecovcli --enterprise-url https://snowflake.codecov.io \\
+                                        send-notifications \\
+                                        -t "\${CODECOV_TOKEN}" \\
+                                        --git-service github \\
+                                        --sha ${commitSha} || true
+                                 """
+                            }
+                        }
+                    }
+                } catch (Exception e) {
+                    echo "Error notifying Codecov: ${e.message}"
                 }
 
+                // Generate Description
                 if (coverageResults.isEmpty()) {
                     currentBuild.description = "No coverage data"
                 } else {
@@ -446,6 +457,7 @@ pipeline {
                     currentBuild.description = parts.join(' | ')
                 }
                 
+                echo "Updating GitHub Check Status..."
                 // Publish overall build status with link to Jenkins
                 publishChecks name: "Universal Driver - Code Coverage",
                               title: "Build ${currentBuild.currentResult}",
