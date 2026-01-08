@@ -31,53 +31,50 @@ def decodeSecrets() {
     }
 }
 
-// Helper: Get coverage percentage from Codecov API for a specific flag
-def getCodecovFlagCoverage(String flag) {
-    def coverage = null
-    def maxRetries = 3
-    def retryDelay = 10 // seconds
-    
-    for (int attempt = 1; attempt <= maxRetries; attempt++) {
-        try {
-            withCredentials([string(credentialsId: CODECOV_CREDENTIAL_ID, variable: 'CODECOV_TOKEN')]) {
-                def response = httpRequest(
-                    url: "https://snowflake.codecov.io/api/v2/github/snowflakedb/repos/universal-driver/flags/${flag}/coverage",
-                    customHeaders: [[name: 'Authorization', value: "Bearer ${CODECOV_TOKEN}"]],
-                    validResponseCodes: '200',
-                    quiet: true
-                )
-                
-                def json = readJSON text: response.content
-                
-                // The API returns coverage as a percentage (e.g., 55.22)
-                if (json.coverage != null) {
-                    coverage = String.format("%.2f", json.coverage as Double)
-                    echo "Codecov API returned coverage for ${flag}: ${coverage}%"
-                    return coverage
-                }
+// Helper: Parse coverage from LCOV file (for Rust/ODBC)
+// LCOV format has LH (lines hit) and LF (lines found) per file
+def parseLcovCoverage(String lcovFile) {
+    def result = sh(script: """
+        awk '
+            /^LH:/ { hit += substr(\$0, 4) }
+            /^LF:/ { found += substr(\$0, 4) }
+            END {
+                if (found > 0) printf "%.2f", hit * 100 / found
+                else print ""
             }
-        } catch (Exception e) {
-            echo "Attempt ${attempt}/${maxRetries} - Could not fetch coverage from Codecov API: ${e.message}"
-            if (attempt < maxRetries) {
-                echo "Waiting ${retryDelay} seconds before retry..."
-                sleep(time: retryDelay, unit: 'SECONDS')
-            }
-        }
-    }
-    
-    echo "Failed to get coverage from Codecov API after ${maxRetries} attempts"
-    return null
+        ' "${lcovFile}"
+    """, returnStdout: true).trim()
+    return result ?: null
 }
 
-// Helper: Report success to GitHub with coverage percentage
-def reportSuccess(String component) {
+// Helper: Parse coverage from JaCoCo XML (for JDBC)
+// Extracts LINE counter's missed/covered attributes
+def parseJacocoCoverage(String xmlFile) {
+    def result = sh(script: '''
+        REPORT="''' + xmlFile + '''"
+        LINE=$(grep 'type="LINE"' "$REPORT" | tail -1)
+        MISSED=$(echo "$LINE" | sed 's/.*missed="\\([0-9]*\\)".*/\\1/')
+        COVERED=$(echo "$LINE" | sed 's/.*covered="\\([0-9]*\\)".*/\\1/')
+        TOTAL=$((MISSED + COVERED))
+        if [ "$TOTAL" -gt 0 ]; then
+            echo "$COVERED $TOTAL" | awk '{printf "%.2f", $1*100/$2}'
+        fi
+    ''', returnStdout: true).trim()
+    return result ?: null
+}
+
+// Helper: Parse coverage from Cobertura XML (for Python/pytest-cov)
+// Extracts line-rate attribute from root element
+def parseCoberturaCoverage(String xmlFile) {
+    def result = sh(script: """
+        grep -o 'line-rate="[^"]*"' "${xmlFile}" | head -1 | sed 's/line-rate="\\([^"]*\\)"/\\1/' | awk '{printf "%.2f", \$1 * 100}'
+    """, returnStdout: true).trim()
+    return result ?: null
+}
+
+// Helper: Report coverage status to GitHub
+def reportStatus(String component, String coverage) {
     def displayName = DISPLAY_NAMES[component] ?: component
-    
-    // Wait for Codecov to process the upload, then fetch the coverage
-    echo "Waiting for Codecov to process upload..."
-    sleep(time: 15, unit: 'SECONDS')
-    
-    def coverage = getCodecovFlagCoverage(component)
     
     if (coverage) {
         coverageResults[component] = coverage
@@ -88,11 +85,10 @@ def reportSuccess(String component) {
                       status: 'COMPLETED',
                       conclusion: 'SUCCESS'
     } else {
-        // Could not retrieve coverage from API - mark as failed
         coverageResults[component] = 'FAILED'
         publishChecks name: "Code Coverage - ${displayName}",
                       title: "Coverage failed",
-                      summary: "Coverage report uploaded but could not retrieve percentage from Codecov API.",
+                      summary: "Could not calculate coverage percentage from report.",
                       detailsURL: "https://snowflake.codecov.io/gh/snowflakedb/universal-driver?flags%5B0%5D=${component}",
                       status: 'COMPLETED',
                       conclusion: 'FAILURE'
@@ -172,8 +168,9 @@ pipeline {
                                         mv lcov.info lcov-rust-core.info
                                     '''
                                     
+                                    def coverage = parseLcovCoverage('lcov-rust-core.info')
                                     uploadToCodecov('rust-core', 'lcov-rust-core.info')
-                                    reportSuccess('rust-core')
+                                    reportStatus('rust-core', coverage)
                                 }
                                 archiveArtifacts artifacts: 'lcov-rust-core.info', allowEmptyArchive: true
                             } catch (Exception e) {
@@ -212,8 +209,9 @@ pipeline {
                                         '''
                                     }
                                     
+                                    def coverage = parseCoberturaCoverage('python/reports/coverage-python.xml')
                                     uploadToCodecov('python', 'python/reports/coverage-python.xml')
-                                    reportSuccess('python')
+                                    reportStatus('python', coverage)
                                 }
                                 archiveArtifacts artifacts: 'python/reports/coverage-python.xml', allowEmptyArchive: true
                             } catch (Exception e) {
@@ -272,8 +270,9 @@ pipeline {
                                             -sources=$(pwd)/sf_core > lcov-odbc.info
                                     '''
                                     
+                                    def coverage = parseLcovCoverage('lcov-odbc.info')
                                     uploadToCodecov('odbc', 'lcov-odbc.info')
-                                    reportSuccess('odbc')
+                                    reportStatus('odbc', coverage)
                                 }
                                 archiveArtifacts artifacts: 'lcov-odbc.info', allowEmptyArchive: true
                             } catch (Exception e) {
@@ -289,39 +288,36 @@ pipeline {
                     steps {
                         checkout scm
                         script {
-                            dockerSetup()
-                            docker.image(DOCKER_IMAGE).inside('-u root --privileged') {
-                                decodeSecrets()
-                                
-                                sh label: 'Build JDBC Bridge', script: '''
-                                    set +x
-                                    cargo build --package sf_core
-                                    cargo build --package jdbc_bridge
-                                '''
-                                
-                                sh label: 'Run Tests with Coverage', script: '''
-                                    set +x
-                                    export PARAMETER_PATH=$(pwd)/parameters.json
-                                    export CORE_PATH=$(pwd)/target/debug/libjdbc_bridge.so
-                                    chmod +x jdbc/gradlew
-                                    cd jdbc
-                                    ./gradlew test jacocoTestReport --stacktrace
-                                '''
-                                
-                                def coverage = sh(script: '''
-                                    REPORT="jdbc/build/reports/jacoco/test/jacocoTestReport.xml"
-                                    LINE=$(grep 'type="LINE"' "$REPORT" | tail -1)
-                                    MISSED=$(echo "$LINE" | sed 's/.*missed="\\([0-9]*\\)".*/\\1/')
-                                    COVERED=$(echo "$LINE" | sed 's/.*covered="\\([0-9]*\\)".*/\\1/')
-                                    TOTAL=$((MISSED + COVERED))
-                                    echo "$COVERED $TOTAL" | awk '{if($2>0) printf "%.2f", $1*100/$2; else print "0.00"}'
-                                ''', returnStdout: true).trim()
-                                
-                                uploadToCodecov('jdbc', 'jdbc/build/reports/jacoco/test/jacocoTestReport.xml')
-                                reportCoverage('jdbc', coverage)
+                            try {
+                                dockerSetup()
+                                docker.image(DOCKER_IMAGE).inside('-u root --privileged') {
+                                    decodeSecrets()
+                                    
+                                    sh label: 'Build JDBC Bridge', script: '''
+                                        set +x
+                                        cargo build --package sf_core
+                                        cargo build --package jdbc_bridge
+                                    '''
+                                    
+                                    sh label: 'Run Tests with Coverage', script: '''
+                                        set +x
+                                        export PARAMETER_PATH=$(pwd)/parameters.json
+                                        export CORE_PATH=$(pwd)/target/debug/libjdbc_bridge.so
+                                        chmod +x jdbc/gradlew
+                                        cd jdbc
+                                        ./gradlew test jacocoTestReport --stacktrace
+                                    '''
+                                    
+                                    def coverage = parseJacocoCoverage('jdbc/build/reports/jacoco/test/jacocoTestReport.xml')
+                                    uploadToCodecov('jdbc', 'jdbc/build/reports/jacoco/test/jacocoTestReport.xml')
+                                    reportStatus('jdbc', coverage)
+                                }
+                                archiveArtifacts artifacts: 'jdbc/build/reports/jacoco/test/jacocoTestReport.xml', allowEmptyArchive: true
+                            } catch (Exception e) {
+                                reportFailure('jdbc')
+                                throw e
                             }
                         }
-                        archiveArtifacts artifacts: 'jdbc/build/reports/jacoco/test/jacocoTestReport.xml', allowEmptyArchive: true
                     }
                 }
             }
