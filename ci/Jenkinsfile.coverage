@@ -8,9 +8,7 @@ import groovy.transform.Field
 @Field String CODECOV_CREDENTIAL_ID = 'ud_repo_codecov'
 @Field String NEXUS_CREDENTIAL_ID = 'a791118f-a1ea-46cd-b876-56da1b9bc71c'
 @Field String PARAMS_CREDENTIAL_ID = 'sfctest0-parameters-secret'
-
-// Coverage results storage
-@Field def coverageResults = [:]
+@Field Map coverageResults = [:]
 
 // Helper: Docker login and pull
 def dockerSetup() {
@@ -27,8 +25,21 @@ def decodeSecrets() {
     }
 }
 
+// Helper: Report coverage to GitHub and store result
+def reportCoverage(String component, String coverage) {
+    coverageResults[component] = coverage
+    githubNotify context: "coverage/${component}", 
+                 status: 'SUCCESS', 
+                 description: "Coverage: ${coverage}%",
+                 targetUrl: "https://snowflake.codecov.io/gh/snowflakedb/universal-driver"
+}
+
 // Helper: Upload coverage to Codecov
 def uploadToCodecov(String flag, String file) {
+    def commitSha = env.GIT_COMMIT ?: sh(script: 'git rev-parse HEAD', returnStdout: true).trim()
+    def branch = env.CHANGE_BRANCH ?: env.BRANCH_NAME
+    def prFlag = env.CHANGE_ID ? "--pr ${env.CHANGE_ID}" : ""
+    
     withCredentials([string(credentialsId: CODECOV_CREDENTIAL_ID, variable: 'CODECOV_TOKEN')]) {
         sh label: 'Upload to Codecov', script: """
             set +x
@@ -39,14 +50,13 @@ def uploadToCodecov(String flag, String file) {
                 -t "\${CODECOV_TOKEN}" \\
                 -n "${flag}-jenkins-\${BUILD_NUMBER}" \\
                 -F ${flag} \\
-                -f ${file}
+                -f ${file} \\
+                --git-service github \\
+                -C ${commitSha} \\
+                -B ${branch} \\
+                ${prFlag}
         """
     }
-}
-
-// Helper: Store coverage result
-def reportCoverage(String component, String coverage) {
-    coverageResults[component] = coverage
 }
 
 pipeline {
@@ -76,24 +86,21 @@ pipeline {
                             docker.image(DOCKER_IMAGE).inside('-u root --privileged') {
                                 decodeSecrets()
                                 
-                                def output = sh label: 'Run Tests with Coverage', returnStdout: true, script: '''
+                                sh label: 'Run Tests with Coverage', script: '''
                                     set +x
                                     export PARAMETER_PATH=$(pwd)/parameters.json
                                     cargo tarpaulin --packages sf_core --all-features --skip-clean --no-fail-fast --out lcov --output-dir .
                                     mv lcov.info lcov-rust-core.info
-                                    # Calculate coverage from lcov file (same as Codecov)
-                                    TOTAL=$(grep -c "^DA:" lcov-rust-core.info || echo "0")
-                                    COVERED=$(grep "^DA:" lcov-rust-core.info | grep -v ",0$" | wc -l || echo "0")
-                                    if [ "$TOTAL" -gt 0 ]; then
-                                        echo "$COVERED $TOTAL" | awk '{printf "%.2f", $1 * 100 / $2}'
-                                    else
-                                        echo "N/A"
-                                    fi
                                 '''
                                 
-                                def coverage = output.trim().split('\n').last() + '%'
-                                reportCoverage('rust-core', coverage)
+                                def coverage = sh(script: '''
+                                    TOTAL=$(grep -c "^DA:" lcov-rust-core.info || echo 0)
+                                    COVERED=$(grep "^DA:" lcov-rust-core.info | grep -v ",0$" | wc -l || echo 0)
+                                    echo "$COVERED $TOTAL" | awk '{if($2>0) printf "%.2f", $1*100/$2; else print "0.00"}'
+                                ''', returnStdout: true).trim()
+                                
                                 uploadToCodecov('rust-core', 'lcov-rust-core.info')
+                                reportCoverage('rust-core', coverage)
                             }
                         }
                         archiveArtifacts artifacts: 'lcov-rust-core.info', allowEmptyArchive: true
@@ -116,7 +123,7 @@ pipeline {
                                         make setup
                                     '''
                                     
-                                    def output = sh label: 'Run Tests with Coverage', returnStdout: true, script: '''
+                                    sh label: 'Run Tests with Coverage', script: '''
                                         set +x
                                         export PARAMETER_PATH=$(pwd)/../parameters.json
                                         mkdir -p reports
@@ -124,16 +131,15 @@ pipeline {
                                             --cov=src/snowflake \
                                             --cov-report=term \
                                             --cov-report=xml:reports/coverage-python.xml
-                                        # Extract line-rate from XML and convert to percentage
-                                        RATE=$(grep -oP 'line-rate="\\K[0-9.]+' reports/coverage-python.xml | head -1 || echo "0")
-                                        echo "$RATE" | awk '{printf "%.2f", $1 * 100}'
                                     '''
-                                    
-                                    def coverage = output.trim().split('\n').last() + '%'
-                                    reportCoverage('python', coverage)
                                 }
                                 
+                                def coverage = sh(script: '''
+                                    grep -o 'line-rate="[0-9.]*"' python/reports/coverage-python.xml | head -1 | grep -o '[0-9.]*' | awk '{printf "%.2f", $1 * 100}'
+                                ''', returnStdout: true).trim()
+                                
                                 uploadToCodecov('python', 'python/reports/coverage-python.xml')
+                                reportCoverage('python', coverage)
                             }
                         }
                         archiveArtifacts artifacts: 'python/reports/coverage-python.xml', allowEmptyArchive: true
@@ -174,7 +180,7 @@ pipeline {
                                     ctest -j 1 -C Debug --test-dir cmake-build --output-on-failure -E "crl"
                                 '''
                                 
-                                def output = sh label: 'Generate Coverage Report', returnStdout: true, script: '''
+                                sh label: 'Generate Coverage Report', script: '''
                                     set +x
                                     LLVM_PROFDATA=$(find /root/.rustup -name "llvm-profdata" -type f 2>/dev/null | head -1)
                                     LLVM_COV=$(find /root/.rustup -name "llvm-cov" -type f 2>/dev/null | head -1)
@@ -185,20 +191,16 @@ pipeline {
                                         -format=lcov \
                                         -sources=$(pwd)/odbc \
                                         -sources=$(pwd)/sf_core > lcov-odbc.info
-                                    
-                                    # Calculate coverage from lcov file (same as Codecov)
-                                    TOTAL=$(grep -c "^DA:" lcov-odbc.info || echo "0")
-                                    COVERED=$(grep "^DA:" lcov-odbc.info | grep -v ",0$" | wc -l || echo "0")
-                                    if [ "$TOTAL" -gt 0 ]; then
-                                        echo "$COVERED $TOTAL" | awk '{printf "%.2f", $1 * 100 / $2}'
-                                    else
-                                        echo "N/A"
-                                    fi
                                 '''
                                 
-                                def coverage = output.trim().split('\n').last() + '%'
-                                reportCoverage('odbc', coverage)
+                                def coverage = sh(script: '''
+                                    TOTAL=$(grep -c "^DA:" lcov-odbc.info || echo 0)
+                                    COVERED=$(grep "^DA:" lcov-odbc.info | grep -v ",0$" | wc -l || echo 0)
+                                    echo "$COVERED $TOTAL" | awk '{if($2>0) printf "%.2f", $1*100/$2; else print "0.00"}'
+                                ''', returnStdout: true).trim()
+                                
                                 uploadToCodecov('odbc', 'lcov-odbc.info')
+                                reportCoverage('odbc', coverage)
                             }
                         }
                         archiveArtifacts artifacts: 'lcov-odbc.info', allowEmptyArchive: true
@@ -229,31 +231,17 @@ pipeline {
                                     ./gradlew test jacocoTestReport --stacktrace
                                 '''
                                 
-                                // Parse JaCoCo XML for coverage
-                                def output = sh label: 'Extract Coverage', returnStdout: true, script: '''
-                                    set +x
+                                def coverage = sh(script: '''
                                     REPORT="jdbc/build/reports/jacoco/test/jacocoTestReport.xml"
-                                    if [ -f "$REPORT" ]; then
-                                        # Get the last LINE counter (report-level summary)
-                                        LINE=$(grep 'type="LINE"' "$REPORT" | tail -1)
-                                        MISSED=$(echo "$LINE" | sed -n 's/.*missed="\\([0-9]*\\)".*/\\1/p')
-                                        COVERED=$(echo "$LINE" | sed -n 's/.*covered="\\([0-9]*\\)".*/\\1/p')
-                                        MISSED=${MISSED:-0}
-                                        COVERED=${COVERED:-0}
-                                        TOTAL=$((MISSED + COVERED))
-                                        if [ "$TOTAL" -gt 0 ]; then
-                                            echo "$COVERED $TOTAL" | awk '{printf "%.2f", $1 * 100 / $2}'
-                                        else
-                                            echo "N/A"
-                                        fi
-                                    else
-                                        echo "N/A"
-                                    fi
-                                '''
+                                    LINE=$(grep 'type="LINE"' "$REPORT" | tail -1)
+                                    MISSED=$(echo "$LINE" | sed 's/.*missed="\\([0-9]*\\)".*/\\1/')
+                                    COVERED=$(echo "$LINE" | sed 's/.*covered="\\([0-9]*\\)".*/\\1/')
+                                    TOTAL=$((MISSED + COVERED))
+                                    echo "$COVERED $TOTAL" | awk '{if($2>0) printf "%.2f", $1*100/$2; else print "0.00"}'
+                                ''', returnStdout: true).trim()
                                 
-                                def coverage = output.trim() + '%'
-                                reportCoverage('jdbc', coverage)
                                 uploadToCodecov('jdbc', 'jdbc/build/reports/jacoco/test/jacocoTestReport.xml')
+                                reportCoverage('jdbc', coverage)
                             }
                         }
                         archiveArtifacts artifacts: 'jdbc/build/reports/jacoco/test/jacocoTestReport.xml', allowEmptyArchive: true
@@ -266,18 +254,10 @@ pipeline {
     post {
         always {
             script {
-                echo "CODE COVERAGE SUMMARY"
-                echo ""
                 if (coverageResults.isEmpty()) {
-                    echo "No coverage data collected"
+                    currentBuild.description = "No coverage data"
                 } else {
-                    coverageResults.each { component, coverage ->
-                        echo "${component}: ${coverage}"
-                    }
-                }
-                
-                def summary = coverageResults.collect { k, v -> "${k}: ${v}" }.join(' | ')
-                if (summary) {
+                    def summary = coverageResults.collect { k, v -> "${k}: ${v}%" }.join(' | ')
                     currentBuild.description = summary
                 }
             }
