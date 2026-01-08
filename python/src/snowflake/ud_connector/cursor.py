@@ -4,7 +4,7 @@ PEP 249 Database API 2.0 Cursor Objects
 This module defines the Cursor class as specified in PEP 249.
 """
 
-from .exceptions import NotSupportedError
+from .exceptions import NotSupportedError, ProgrammingError
 
 from ._internal.protobuf_gen.database_driver_v1_pb2 import (
     StatementNewRequest,
@@ -32,11 +32,13 @@ class Cursor:
         """
         self.connection = connection
         self.description = None
-        self.rowcount = -1
+        self._total_rowcount = -1
         self.arraysize = 1  # Instance attribute overrides class attribute
         self._closed = False
         # Streaming state for Arrow results
         self._stream_iterator = None
+        self._result = None  # Iterator over stream results
+        self._rownumber = None  # Current row position in result set
         self.execute_result = None
 
     @property
@@ -55,19 +57,30 @@ class Cursor:
         self._description = value
 
     @property
-    def rowcount(self):
+    def rowcount(self) -> int | None:
         """
         Read-only attribute specifying the number of rows that the last
         .execute*() produced or affected.
 
         Returns:
-            int: Number of rows affected, or -1 if not determined
+            int: Number of rows affected, or None if not determined
         """
-        return self._rowcount
+        return self._total_rowcount if self._total_rowcount >= 0 else None
 
-    @rowcount.setter
-    def rowcount(self, value):
-        self._rowcount = value
+    @property
+    def rownumber(self) -> int | None:
+        """
+        Read-only attribute specifying the current 0-based index of the cursor
+        in the result set.
+
+        Returns:
+            int: Current row index, or None if not determined
+        """
+        return (
+            self._rownumber
+            if self._rownumber is not None and self._rownumber >= 0
+            else None
+        )
 
     def callproc(self, procname, parameters=None):
         """
@@ -113,10 +126,12 @@ class Cursor:
         ).result
 
         # Update rowcount from execute result
-        self.rowcount = self.execute_result.rows_affected
+        self._total_rowcount = self.execute_result.rows_affected
 
         # Reset streaming state for a new result
         self._stream_iterator = None
+        self._result = None
+        self._rownumber = -1
 
     def executemany(self, operation, seq_of_parameters):
         """
@@ -146,14 +161,20 @@ class Cursor:
         Fetch the next row of a query result set.
 
         Returns:
-            sequence: Next row, or None when no more data is available
-
-        Raises:
-            NotSupportedError: If not implemented
+            tuple: Next row, or None when no more data is available
         """
-        # Initialize stream iterator on first use
-        self._ensure_stream_iterator()
-        return self._stream_iterator.fetchone()
+        # Lazily create iterator on first fetch
+        if self._result is None:
+            self._ensure_stream_iterator()
+            self._result = iter(self._stream_iterator)
+
+        try:
+            row = next(self._result)
+            if self._rownumber is not None:
+                self._rownumber += 1
+            return row
+        except StopIteration:
+            return None
 
     def fetchmany(self, size=None):
         """
@@ -163,26 +184,40 @@ class Cursor:
             size (int): Number of rows to fetch (defaults to arraysize)
 
         Returns:
-            sequence: List of rows
-
-        Raises:
-            NotSupportedError: If not implemented
+            list: List of rows (tuples)
         """
-        raise NotSupportedError("fetchmany is not implemented")
+        if size is None:
+            size = self.arraysize
+
+        if size < 0:
+            raise ProgrammingError(
+                f"The number of rows is not zero or positive number: {size}"
+            )
+
+        rows = []
+        while size > 0:
+            row = self.fetchone()
+            if row is None:
+                break
+            rows.append(row)
+            size -= 1
+
+        return rows
 
     def fetchall(self):
         """
         Fetch all (remaining) rows of a query result.
 
         Returns:
-            sequence: List of all remaining rows
-
-        Raises:
-            NotSupportedError: If not implemented
+            list: List of all remaining rows (tuples)
         """
-        # Initialize stream iterator on first use
-        self._ensure_stream_iterator()
-        return self._stream_iterator.fetchall()
+        rows = []
+        while True:
+            row = self.fetchone()
+            if row is None:
+                break
+            rows.append(row)
+        return rows
 
     def nextset(self):
         """
@@ -219,32 +254,15 @@ class Cursor:
 
     def __iter__(self):
         """
-        Return the cursor itself as an iterator.
+        Iteration over the result set.
 
-        Returns:
-            Cursor: Self
+        Yields rows from the result set until exhausted.
         """
-        return self
-
-    def __next__(self):
-        """
-        Fetch the next row from the currently executed statement.
-
-        Returns:
-            sequence: Next row
-
-        Raises:
-            StopIteration: When no more rows are available
-        """
-        row = self.fetchone()
-        if row is None:
-            raise StopIteration
-        return row
-
-    # Python 2 compatibility
-    def next(self):
-        """Python 2 compatibility method."""
-        return self.__next__()
+        while True:
+            row = self.fetchone()
+            if row is None:
+                break
+            yield row
 
     def __enter__(self):
         """

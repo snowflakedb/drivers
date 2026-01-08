@@ -59,42 +59,6 @@ class ArrowStreamIterator:
         """Get next row from the batches."""
         return next(self._stream_iterator)
 
-    def fetchone(self) -> tuple | dict | None:
-        """Fetch the next row.
-
-        Returns:
-            Next row as tuple or dict, or None when no more data is available
-        """
-        try:
-            return next(self._stream_iterator)
-        except StopIteration:
-            return None
-
-    def fetchmany(self, size: int = 1) -> list[tuple | dict]:
-        """Fetch the next `size` rows.
-
-        Args:
-            size: Number of rows to fetch
-
-        Returns:
-            List of rows (tuples or dicts)
-        """
-        rows = []
-        for _ in range(size):
-            try:
-                rows.append(next(self._stream_iterator))
-            except StopIteration:
-                break
-        return rows
-
-    def fetchall(self) -> list[tuple | dict]:
-        """Fetch all remaining rows.
-
-        Returns:
-            List of all remaining rows (tuples or dicts)
-        """
-        return list(self._stream_iterator)
-
     @property
     def column_count(self) -> int:
         """Get the number of columns in the result."""
