@@ -12,26 +12,36 @@ This library serves as a proof-of-concept for loading Rust-based extensions into
 
 The library exports a single C-compatible function (`sf_core_full_version`) that returns the version string, providing a simple way to verify the library loaded successfully.
 
-## Building
+## Building & Packaging
+
+Use the packaging script to build the library and generate the C header:
 
 ```bash
-# Build the dynamic library
-cargo build --release -p sf_mini_core
+# Set the target platform (see script for all options)
+export PLATFORM=macos-aarch64  # or linux-x86_64-glibc, windows-x86_64, etc.
 
-# The output will be in target/release/:
-#   - libsf_mini_core.dylib (macOS)
-#   - libsf_mini_core.so (Linux)
-#   - sf_mini_core.dll (Windows)
+# Run the package script
+./scripts/package_minicore.sh
 ```
 
-## Generated Header
+This will:
+1. Generate the C header using cbindgen
+2. Build both dynamic and static library variants
+3. Create a distributable archive in `build/`
 
-The C header is auto-generated using cbindgen during the build process. After building, the header can be found at `target/sf_mini_core.h`.
+Output files in `build/`:
+- `sf_mini_core.h` - C header file
+- `libsf_mini_core.dylib` / `.so` / `.dll` - Dynamic library
+- `libsf_mini_core_static.a` / `.lib` - Static library
 
-To manually generate the header:
+### Manual Build (without packaging)
 
 ```bash
-cbindgen --config sf_mini_core/cbindgen.toml --crate sf_mini_core --output target/sf_mini_core.h
+# Build just the dynamic library
+cargo build --release -p sf_mini_core
+
+# Generate the header manually
+cbindgen --config sf_mini_core/cbindgen.toml --crate sf_mini_core > sf_mini_core.h
 ```
 
 ## Usage from C/C++
