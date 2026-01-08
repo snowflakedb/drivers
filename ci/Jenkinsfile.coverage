@@ -186,14 +186,13 @@ def reportFailure(String component) {
 
 // Helper: Upload coverage to Codecov
 def uploadToCodecov(String flag, String file) {
-    // Determine Commit SHA and Branch for Codecov
-    // MUST use CHANGE_COMMIT (PR head SHA) - this is the actual commit on GitHub.
-    // GIT_COMMIT is a synthetic merge commit that doesn't exist on GitHub,
-    // causing "commit message unavailable" on Codecov dashboard.
-    def commitSha = env.ghprbActualCommit ?: env.CHANGE_COMMIT ?: env.GIT_COMMIT ?: sh(script: 'git rev-parse HEAD', returnStdout: true).trim()
+    // For PRs, use the actual PR head commit, not the merge commit
+    // Matches working version from commit 1bdffa8
+    def commitSha = env.ghprbActualCommit ?: env.sha1 ?: env.GIT_COMMIT ?: sh(script: 'git rev-parse HEAD', returnStdout: true).trim()
     def branch = env.CHANGE_BRANCH ?: env.GIT_BRANCH ?: env.BRANCH_NAME
+    def prFlag = env.CHANGE_ID ? "--pr ${env.CHANGE_ID}" : ""
     
-    echo "Uploading coverage params -- SHA: ${commitSha}, Branch: ${branch}"
+    echo "Uploading coverage for commit: ${commitSha}, branch: ${branch}"
     
     withCredentials([string(credentialsId: CODECOV_CREDENTIAL_ID, variable: 'CODECOV_TOKEN')]) {
         sh label: 'Upload to Codecov', script: """
@@ -208,7 +207,8 @@ def uploadToCodecov(String flag, String file) {
                 -f ${file} \\
                 --git-service github \\
                 -C ${commitSha} \\
-                -B ${branch}
+                -B ${branch} \\
+                ${prFlag}
         """
     }
 }
@@ -419,9 +419,9 @@ pipeline {
                 echo "Starting Post-Build Actions..."
                 
                 // Notify Codecov that all uploads are complete
-                // Use CHANGE_COMMIT (PR head) to match uploadToCodecov
+                // Match SHA logic from uploadToCodecov (working version from 1bdffa8)
                 try {
-                    def commitSha = env.ghprbActualCommit ?: env.CHANGE_COMMIT ?: env.GIT_COMMIT
+                    def commitSha = env.ghprbActualCommit ?: env.sha1 ?: env.GIT_COMMIT
                     if (commitSha) {
                         node {
                             withCredentials([string(credentialsId: CODECOV_CREDENTIAL_ID, variable: 'CODECOV_TOKEN')]) {
