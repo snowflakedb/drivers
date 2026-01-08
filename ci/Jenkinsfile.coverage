@@ -45,11 +45,11 @@ def parseLcovCoverage(String lcovFile) {
                 # 2. Must not be in ignore list (tests, generated code, etc.)
                 
                 include = 1
-                if (path ~ /test/ || path ~ /tests\// || path ~ /protobuf_gen/) include = 0
+                if (index(path, "test") > 0 || index(path, "protobuf_gen") > 0) include = 0
                 
                 # Component specific filtering
-                if ("${lcovFile}" ~ /rust-core/ && path !~ /sf_core/) include = 0
-                if ("${lcovFile}" ~ /odbc/ && path !~ /odbc\/|sf_core/) include = 0
+                if ("${lcovFile}" ~ /rust-core/ && index(path, "sf_core") == 0) include = 0
+                if ("${lcovFile}" ~ /odbc/ && index(path, "odbc") == 0 && index(path, "sf_core") == 0) include = 0
             }
             include && /^LH:/ { hit += substr(\$0, 4) }
             include && /^LF:/ { found += substr(\$0, 4) }
@@ -111,7 +111,7 @@ def parseCoberturaCoverage(String xmlFile) {
                 filename = f[1]
                 
                 # Filter paths (exclude tests, include python/src/snowflake)
-                if (filename ~ /tests\// || filename ~ /test_/) {
+                if (index(filename, "tests/") > 0 || index(filename, "test_") > 0) {
                     include = 0
                 } else {
                     include = 1
