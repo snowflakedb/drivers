@@ -28,10 +28,12 @@ def decodeSecrets() {
 // Helper: Report coverage to GitHub and store result
 def reportCoverage(String component, String coverage) {
     coverageResults[component] = coverage
-    githubNotify context: "coverage/${component}", 
-                 status: 'SUCCESS', 
-                 description: "Coverage: ${coverage}%",
-                 targetUrl: "https://snowflake.codecov.io/gh/snowflakedb/universal-driver"
+    publishChecks name: "coverage/${component}",
+                  title: "Coverage: ${coverage}%",
+                  summary: "Code coverage for ${component}",
+                  detailsURL: "https://snowflake.codecov.io/gh/snowflakedb/universal-driver",
+                  status: 'COMPLETED',
+                  conclusion: 'SUCCESS'
 }
 
 // Helper: Upload coverage to Codecov
