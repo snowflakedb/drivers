@@ -249,22 +249,20 @@ pipeline {
     
     post {
         always {
-            stage('Coverage Summary') {
-                script {
-                    echo "CODE COVERAGE SUMMARY"
-                    echo ""
-                    if (coverageResults.isEmpty()) {
-                        echo "No coverage data collected"
-                    } else {
-                        coverageResults.each { component, coverage ->
-                            echo "${component}: ${coverage}"
-                        }
+            script {
+                echo "CODE COVERAGE SUMMARY"
+                echo ""
+                if (coverageResults.isEmpty()) {
+                    echo "No coverage data collected"
+                } else {
+                    coverageResults.each { component, coverage ->
+                        echo "${component}: ${coverage}"
                     }
-                    
-                    def summary = coverageResults.collect { k, v -> "${k}: ${v}" }.join(' | ')
-                    if (summary) {
-                        currentBuild.description = summary
-                    }
+                }
+                
+                def summary = coverageResults.collect { k, v -> "${k}: ${v}" }.join(' | ')
+                if (summary) {
+                    currentBuild.description = summary
                 }
             }
         }
