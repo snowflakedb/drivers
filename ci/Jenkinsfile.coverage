@@ -72,13 +72,17 @@ def parseJacocoCoverage(String xmlFile) {
         awk '
             /<package name=/ { 
                 pkg = $0
-                skip = index(pkg, "protobuf_gen") > 0 || index(pkg, "/test") > 0
+                # Skip protobuf_gen or test packages
+                if (index(pkg, "protobuf_gen") > 0 || index(pkg, "/test") > 0) {
+                    skip = 1
+                } else {
+                    skip = 0
+                }
             }
             /<sourcefile / { 
-                # Check for test files in sourcefile name
-                match($0, /name="([^"]+)"/, n)
-                name = n[1]
-                if (index(name, "Test.java") > 0 || index(name, "IT.java") > 0) {
+                src = $0
+                # Skip test files
+                if (index(src, "Test.java") > 0 || index(src, "IT.java") > 0) {
                     in_sourcefile = 0
                 } else {
                     in_sourcefile = !skip
@@ -86,9 +90,19 @@ def parseJacocoCoverage(String xmlFile) {
             }
             /<\\/sourcefile>/ { in_sourcefile = 0 }
             in_sourcefile && /type="LINE"/ {
-                gsub(/.*missed="/, ""); gsub(/".*covered="/, " "); gsub(/".*/, "")
-                missed += $1
-                covered += $2
+                # Extract missed and covered counts without using regex capture groups (portability)
+                line = $0
+                sub(/.*missed="/, "", line)
+                missed_val = line
+                sub(/".*/, "", missed_val)
+                
+                line = $0
+                sub(/.*covered="/, "", line)
+                covered_val = line
+                sub(/".*/, "", covered_val)
+                
+                missed += missed_val
+                covered += covered_val
             }
             END {
                 total = missed + covered
@@ -389,6 +403,18 @@ pipeline {
     post {
         always {
             script {
+                // Notify Codecov that all uploads are complete
+                def commitSha = env.ghprbActualCommit ?: env.sha1 ?: env.GIT_COMMIT ?: sh(script: 'git rev-parse HEAD', returnStdout: true).trim()
+                withCredentials([string(credentialsId: CODECOV_CREDENTIAL_ID, variable: 'CODECOV_TOKEN')]) {
+                     sh label: 'Notify Codecov', script: """
+                        codecovcli --enterprise-url https://snowflake.codecov.io \\
+                            send-notifications \\
+                            -t "\${CODECOV_TOKEN}" \\
+                            --git-service github \\
+                            --sha ${commitSha} || true
+                     """
+                }
+
                 if (coverageResults.isEmpty()) {
                     currentBuild.description = "No coverage data"
                 } else {
