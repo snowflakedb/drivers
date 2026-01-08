@@ -146,4 +146,15 @@ jacocoTestReport {
         html.required = true
         csv.required = false
     }
+    
+    afterEvaluate {
+        classDirectories.setFrom(files(classDirectories.files.collect {
+            fileTree(dir: it, include: [
+                'com/snowflake/jdbc/**',
+                'com/snowflake/unicore/**'
+            ], exclude: [
+                '**/protobuf_gen/**'
+            ])
+        }))
+    }
 }

@@ -111,6 +111,7 @@ ignore:
   - "**/.gradle/"
   - "**/gradlew*"
   - "**/*.class"
+  - "jdbc/src/test/**"
   
   # CMake artifacts
   - "**/CMakeCache.txt"
