@@ -78,13 +78,19 @@ pipeline {
                                 def output = sh label: 'Run Tests with Coverage', returnStdout: true, script: '''
                                     set +x
                                     export PARAMETER_PATH=$(pwd)/parameters.json
-                                    cargo tarpaulin --packages sf_core --all-features --skip-clean --no-fail-fast --out lcov --output-dir . 2>&1 | tee tarpaulin.log
+                                    cargo tarpaulin --packages sf_core --all-features --skip-clean --no-fail-fast --out lcov --output-dir .
                                     mv lcov.info lcov-rust-core.info
-                                    # Extract coverage percentage
-                                    grep -oP '\\d+\\.\\d+% coverage' tarpaulin.log | tail -1 || echo "0% coverage"
+                                    # Calculate coverage from lcov file (same as Codecov)
+                                    TOTAL=$(grep -c "^DA:" lcov-rust-core.info || echo "0")
+                                    COVERED=$(grep "^DA:" lcov-rust-core.info | grep -v ",0$" | wc -l || echo "0")
+                                    if [ "$TOTAL" -gt 0 ]; then
+                                        echo "$COVERED $TOTAL" | awk '{printf "%.2f", $1 * 100 / $2}'
+                                    else
+                                        echo "N/A"
+                                    fi
                                 '''
                                 
-                                def coverage = output.trim().split('\n').last().replaceAll(' coverage', '')
+                                def coverage = output.trim().split('\n').last() + '%'
                                 reportCoverage('rust-core', coverage)
                                 uploadToCodecov('rust-core', 'lcov-rust-core.info')
                             }
@@ -115,12 +121,13 @@ pipeline {
                                         uv run tox -e py39-all -- \
                                             --cov=src/snowflake \
                                             --cov-report=term \
-                                            --cov-report=xml:reports/coverage-python.xml 2>&1 | tee coverage.log
-                                        # Extract TOTAL coverage line
-                                        grep "^TOTAL" coverage.log | awk '{print $NF}' || echo "0%"
+                                            --cov-report=xml:reports/coverage-python.xml
+                                        # Extract line-rate from XML and convert to percentage
+                                        RATE=$(grep -oP 'line-rate="\\K[0-9.]+' reports/coverage-python.xml | head -1 || echo "0")
+                                        echo "$RATE" | awk '{printf "%.2f", $1 * 100}'
                                     '''
                                     
-                                    def coverage = output.trim().split('\n').last()
+                                    def coverage = output.trim().split('\n').last() + '%'
                                     reportCoverage('python', coverage)
                                 }
                                 
@@ -170,22 +177,23 @@ pipeline {
                                     LLVM_COV=$(find /root/.rustup -name "llvm-cov" -type f 2>/dev/null | head -1)
                                     find . -name "odbc-*.profraw" -type f | xargs $LLVM_PROFDATA merge -sparse -o coverage.profdata
                                     
-                                    $LLVM_COV report target/debug/libsfodbc.so \
-                                        -instr-profile=coverage.profdata \
-                                        -sources=$(pwd)/odbc \
-                                        -sources=$(pwd)/sf_core 2>&1 | tee llvm-cov.log
-                                    
                                     $LLVM_COV export target/debug/libsfodbc.so \
                                         -instr-profile=coverage.profdata \
                                         -format=lcov \
                                         -sources=$(pwd)/odbc \
                                         -sources=$(pwd)/sf_core > lcov-odbc.info
                                     
-                                    # Extract coverage from TOTAL line
-                                    grep "^TOTAL" llvm-cov.log | awk '{print $NF}' || echo "0%"
+                                    # Calculate coverage from lcov file (same as Codecov)
+                                    TOTAL=$(grep -c "^DA:" lcov-odbc.info || echo "0")
+                                    COVERED=$(grep "^DA:" lcov-odbc.info | grep -v ",0$" | wc -l || echo "0")
+                                    if [ "$TOTAL" -gt 0 ]; then
+                                        echo "$COVERED $TOTAL" | awk '{printf "%.2f", $1 * 100 / $2}'
+                                    else
+                                        echo "N/A"
+                                    fi
                                 '''
                                 
-                                def coverage = output.trim().split('\n').last()
+                                def coverage = output.trim().split('\n').last() + '%'
                                 reportCoverage('odbc', coverage)
                                 uploadToCodecov('odbc', 'lcov-odbc.info')
                             }
@@ -222,16 +230,15 @@ pipeline {
                                     set +x
                                     REPORT="jdbc/build/reports/jacoco/test/jacocoTestReport.xml"
                                     if [ -f "$REPORT" ]; then
-                                        LINE_COUNTER=$(grep 'type="LINE"' "$REPORT" | head -1)
-                                        if [ -n "$LINE_COUNTER" ]; then
-                                            MISSED=$(echo "$LINE_COUNTER" | grep -oP 'missed="\\K[0-9]+' || echo "0")
-                                            COVERED=$(echo "$LINE_COUNTER" | grep -oP 'covered="\\K[0-9]+' || echo "0")
-                                            TOTAL=$((MISSED + COVERED))
-                                            if [ "$TOTAL" -gt 0 ]; then
-                                                echo "$COVERED $TOTAL" | awk '{printf "%.2f", $1 * 100 / $2}'
-                                            else
-                                                echo "N/A"
-                                            fi
+                                        # Get the last LINE counter (report-level summary)
+                                        LINE=$(grep 'type="LINE"' "$REPORT" | tail -1)
+                                        MISSED=$(echo "$LINE" | sed -n 's/.*missed="\\([0-9]*\\)".*/\\1/p')
+                                        COVERED=$(echo "$LINE" | sed -n 's/.*covered="\\([0-9]*\\)".*/\\1/p')
+                                        MISSED=${MISSED:-0}
+                                        COVERED=${COVERED:-0}
+                                        TOTAL=$((MISSED + COVERED))
+                                        if [ "$TOTAL" -gt 0 ]; then
+                                            echo "$COVERED $TOTAL" | awk '{printf "%.2f", $1 * 100 / $2}'
                                         else
                                             echo "N/A"
                                         fi
