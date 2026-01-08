@@ -34,7 +34,8 @@ def decodeSecrets() {
 // Helper: Parse coverage from LCOV file (for Rust/ODBC)
 // LCOV format has LH (lines hit) and LF (lines found) per file
 def parseLcovCoverage(String lcovFile) {
-    def result = sh(script: """
+    def result = sh(label: 'Parse LCOV Coverage', script: """
+        set +x
         awk '
             /^LH:/ { hit += substr(\$0, 4) }
             /^LF:/ { found += substr(\$0, 4) }
@@ -48,11 +49,12 @@ def parseLcovCoverage(String lcovFile) {
 }
 
 // Helper: Parse coverage from JaCoCo XML (for JDBC)
-// Extracts LINE counter's missed/covered attributes
+// Extracts INSTRUCTION counter (what Codecov uses) from report-level summary
 def parseJacocoCoverage(String xmlFile) {
-    def result = sh(script: '''
-        REPORT="''' + xmlFile + '''"
-        LINE=$(grep 'type="LINE"' "$REPORT" | tail -1)
+    def result = sh(label: 'Parse JaCoCo Coverage', script: '''
+        set +x
+        # Get the report-level INSTRUCTION counter (last 5 lines contain report summary)
+        LINE=$(tail -5 "''' + xmlFile + '''" | grep 'type="INSTRUCTION"' | head -1)
         MISSED=$(echo "$LINE" | sed 's/.*missed="\\([0-9]*\\)".*/\\1/')
         COVERED=$(echo "$LINE" | sed 's/.*covered="\\([0-9]*\\)".*/\\1/')
         TOTAL=$((MISSED + COVERED))
@@ -66,7 +68,8 @@ def parseJacocoCoverage(String xmlFile) {
 // Helper: Parse coverage from Cobertura XML (for Python/pytest-cov)
 // Extracts line-rate attribute from root element
 def parseCoberturaCoverage(String xmlFile) {
-    def result = sh(script: """
+    def result = sh(label: 'Parse Cobertura Coverage', script: """
+        set +x
         grep -o 'line-rate="[^"]*"' "${xmlFile}" | head -1 | sed 's/line-rate="\\([^"]*\\)"/\\1/' | awk '{printf "%.2f", \$1 * 100}'
     """, returnStdout: true).trim()
     return result ?: null
@@ -154,7 +157,6 @@ pipeline {
                 stage('Rust Core') {
                     agent { label 'build-node-extra-large' }
                     steps {
-                        checkout scm
                         script {
                             try {
                                 dockerSetup()
@@ -184,7 +186,6 @@ pipeline {
                 stage('Python') {
                     agent { label 'build-node-extra-large' }
                     steps {
-                        checkout scm
                         script {
                             try {
                                 dockerSetup()
@@ -225,7 +226,6 @@ pipeline {
                 stage('ODBC') {
                     agent { label 'build-node-extra-large' }
                     steps {
-                        checkout scm
                         script {
                             try {
                                 dockerSetup()
@@ -286,7 +286,6 @@ pipeline {
                 stage('JDBC') {
                     agent { label 'build-node-extra-large' }
                     steps {
-                        checkout scm
                         script {
                             try {
                                 dockerSetup()
