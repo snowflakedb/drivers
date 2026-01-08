@@ -31,48 +31,49 @@ def decodeSecrets() {
     }
 }
 
-// Helper: Parse coverage from LCOV file (for Rust/ODBC)
-// LCOV format has LH (lines hit) and LF (lines found) per file
-def parseLcovCoverage(String lcovFile) {
-    def result = sh(label: 'Parse LCOV Coverage', script: """
-        set +x
-        awk '
-            /^LH:/ { hit += substr(\$0, 4) }
-            /^LF:/ { found += substr(\$0, 4) }
-            END {
-                if (found > 0) printf "%.2f", hit * 100 / found
-                else print ""
+// Helper: Get coverage from Codecov after upload
+// Polls get-report-results until processing is complete
+def getCodecovCoverage(String commitSha) {
+    def maxRetries = 12  // Wait up to 2 minutes (12 * 10s)
+    def coverage = null
+    
+    withCredentials([string(credentialsId: CODECOV_CREDENTIAL_ID, variable: 'CODECOV_TOKEN')]) {
+        for (int i = 0; i < maxRetries; i++) {
+            def result = sh(label: 'Get Codecov Results', script: """
+                set +x
+                codecovcli --enterprise-url https://snowflake.codecov.io \\
+                    get-report-results \\
+                    -t "\${CODECOV_TOKEN}" \\
+                    --git-service github \\
+                    --commit-sha ${commitSha} \\
+                    --code default 2>&1 || true
+            """, returnStdout: true).trim()
+            
+            echo "Codecov result (attempt ${i + 1}): ${result}"
+            
+            // Check if report is ready and extract coverage
+            if (result.contains('"state": "complete"') || result.contains('totals')) {
+                // Extract coverage percentage from result
+                def match = (result =~ /"coverage":\s*([\d.]+)/)
+                if (match.find()) {
+                    coverage = match.group(1)
+                    echo "Found coverage: ${coverage}%"
+                    break
+                }
             }
-        ' "${lcovFile}"
-    """, returnStdout: true).trim()
-    return result ?: null
-}
-
-// Helper: Parse coverage from JaCoCo XML (for JDBC)
-// Extracts INSTRUCTION counter (what Codecov uses) from report-level summary
-def parseJacocoCoverage(String xmlFile) {
-    def result = sh(label: 'Parse JaCoCo Coverage', script: '''
-        set +x
-        # Get the report-level INSTRUCTION counter (last 5 lines contain report summary)
-        LINE=$(tail -5 "''' + xmlFile + '''" | grep 'type="INSTRUCTION"' | head -1)
-        MISSED=$(echo "$LINE" | sed 's/.*missed="\\([0-9]*\\)".*/\\1/')
-        COVERED=$(echo "$LINE" | sed 's/.*covered="\\([0-9]*\\)".*/\\1/')
-        TOTAL=$((MISSED + COVERED))
-        if [ "$TOTAL" -gt 0 ]; then
-            echo "$COVERED $TOTAL" | awk '{printf "%.2f", $1*100/$2}'
-        fi
-    ''', returnStdout: true).trim()
-    return result ?: null
-}
-
-// Helper: Parse coverage from Cobertura XML (for Python/pytest-cov)
-// Extracts line-rate attribute from root element
-def parseCoberturaCoverage(String xmlFile) {
-    def result = sh(label: 'Parse Cobertura Coverage', script: """
-        set +x
-        grep -o 'line-rate="[^"]*"' "${xmlFile}" | head -1 | sed 's/line-rate="\\([^"]*\\)"/\\1/' | awk '{printf "%.2f", \$1 * 100}'
-    """, returnStdout: true).trim()
-    return result ?: null
+            
+            if (result.contains('Report not found') || result.contains('pending')) {
+                echo "Report still processing, waiting 10s..."
+                sleep(10)
+            } else if (result.contains('error')) {
+                echo "Error getting report: ${result}"
+                break
+            } else {
+                sleep(10)
+            }
+        }
+    }
+    return coverage
 }
 
 // Helper: Report coverage status to GitHub
@@ -111,11 +112,14 @@ def reportFailure(String component) {
                   conclusion: 'FAILURE'
 }
 
-// Helper: Upload coverage to Codecov
+// Helper: Upload coverage to Codecov and return commit SHA
 def uploadToCodecov(String flag, String file) {
-    def commitSha = env.GIT_COMMIT ?: sh(script: 'git rev-parse HEAD', returnStdout: true).trim()
-    def branch = env.CHANGE_BRANCH ?: env.BRANCH_NAME
+    // For PRs, use the actual PR head commit, not the merge commit
+    def commitSha = env.ghprbActualCommit ?: env.sha1 ?: env.GIT_COMMIT ?: sh(script: 'git rev-parse HEAD', returnStdout: true).trim()
+    def branch = env.CHANGE_BRANCH ?: env.GIT_BRANCH ?: env.BRANCH_NAME
     def prFlag = env.CHANGE_ID ? "--pr ${env.CHANGE_ID}" : ""
+    
+    echo "Uploading coverage for commit: ${commitSha}, branch: ${branch}"
     
     withCredentials([string(credentialsId: CODECOV_CREDENTIAL_ID, variable: 'CODECOV_TOKEN')]) {
         sh label: 'Upload to Codecov', script: """
@@ -134,6 +138,7 @@ def uploadToCodecov(String flag, String file) {
                 ${prFlag}
         """
     }
+    return commitSha
 }
 
 pipeline {
@@ -171,8 +176,8 @@ pipeline {
                                         mv lcov.info lcov-rust-core.info
                                     '''
                                     
-                                    def coverage = parseLcovCoverage('lcov-rust-core.info')
-                                    uploadToCodecov('rust-core', 'lcov-rust-core.info')
+                                    def commitSha = uploadToCodecov('rust-core', 'lcov-rust-core.info')
+                                    def coverage = getCodecovCoverage(commitSha)
                                     reportStatus('rust-core', coverage)
                                 }
                                 archiveArtifacts artifacts: 'lcov-rust-core.info', allowEmptyArchive: true
@@ -211,8 +216,8 @@ pipeline {
                                         '''
                                     }
                                     
-                                    def coverage = parseCoberturaCoverage('python/reports/coverage-python.xml')
-                                    uploadToCodecov('python', 'python/reports/coverage-python.xml')
+                                    def commitSha = uploadToCodecov('python', 'python/reports/coverage-python.xml')
+                                    def coverage = getCodecovCoverage(commitSha)
                                     reportStatus('python', coverage)
                                 }
                                 archiveArtifacts artifacts: 'python/reports/coverage-python.xml', allowEmptyArchive: true
@@ -271,8 +276,8 @@ pipeline {
                                             -sources=$(pwd)/sf_core > lcov-odbc.info
                                     '''
                                     
-                                    def coverage = parseLcovCoverage('lcov-odbc.info')
-                                    uploadToCodecov('odbc', 'lcov-odbc.info')
+                                    def commitSha = uploadToCodecov('odbc', 'lcov-odbc.info')
+                                    def coverage = getCodecovCoverage(commitSha)
                                     reportStatus('odbc', coverage)
                                 }
                                 archiveArtifacts artifacts: 'lcov-odbc.info', allowEmptyArchive: true
@@ -308,8 +313,8 @@ pipeline {
                                         ./gradlew test jacocoTestReport --stacktrace
                                     '''
                                     
-                                    def coverage = parseJacocoCoverage('jdbc/build/reports/jacoco/test/jacocoTestReport.xml')
-                                    uploadToCodecov('jdbc', 'jdbc/build/reports/jacoco/test/jacocoTestReport.xml')
+                                    def commitSha = uploadToCodecov('jdbc', 'jdbc/build/reports/jacoco/test/jacocoTestReport.xml')
+                                    def coverage = getCodecovCoverage(commitSha)
                                     reportStatus('jdbc', coverage)
                                 }
                                 archiveArtifacts artifacts: 'jdbc/build/reports/jacoco/test/jacocoTestReport.xml', allowEmptyArchive: true
