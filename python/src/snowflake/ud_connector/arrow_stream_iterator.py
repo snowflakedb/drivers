@@ -3,39 +3,53 @@ Arrow stream iterator for processing Arrow data.
 
 This module provides iteration over Arrow record batch streams,
 converting them to Python tuples or dicts row-by-row using C++ converters.
+
+This implementation works directly with the Arrow C Stream Interface,
+without requiring pyarrow as a dependency.
 """
 
 from __future__ import annotations
 
 from typing import Iterator
 
-import pyarrow
-
-from snowflake.ud_connector._arrow_batch_iterator import PyArrowBatchIterator
+from snowflake.ud_connector._arrow_batch_iterator import NanoarrowStreamIterator
 from snowflake.ud_connector.arrow_context import ArrowConverterContext
 
 
 class ArrowStreamIterator:
-    """Iterator that processes Arrow record batch streams and converts them to Python tuples."""
+    """Iterator that processes Arrow record batch streams and converts them to Python tuples.
+
+    This class wraps the Cython NanoarrowStreamIterator which directly consumes
+    Arrow C Stream Interface pointers from the Rust core, without requiring pyarrow.
+    """
 
     def __init__(
         self,
-        reader: pyarrow.RecordBatchReader,
+        stream_ptr: int,
         use_dict_result: bool = False,
         arrow_context: ArrowConverterContext | None = None,
+        use_numpy: bool = False,
     ):
         """Initialize the stream iterator.
 
         Args:
-            reader: PyArrow RecordBatchReader to iterate over
+            stream_ptr: Pointer to ArrowArrayStream (as integer)
             use_dict_result: If True, return dicts instead of tuples
             arrow_context: Arrow context for C++ converter (optional)
+            use_numpy: If True, use numpy types for numeric data
         """
-        self.reader = reader
-        self.use_dict_result = use_dict_result
         # Create default context if none provided
         self.arrow_context = arrow_context if arrow_context else ArrowConverterContext()
-        self._current_batch_iterator = None
+        self.use_dict_result = use_dict_result
+        self.use_numpy = use_numpy
+
+        # Create the Cython stream iterator that works directly with C Stream Interface
+        self._stream_iterator = NanoarrowStreamIterator(
+            stream_ptr,
+            self.arrow_context,
+            use_dict_result=use_dict_result,
+            use_numpy=use_numpy,
+        )
 
     def __iter__(self) -> Iterator[tuple | dict]:
         """Return iterator over rows."""
@@ -43,42 +57,16 @@ class ArrowStreamIterator:
 
     def __next__(self) -> tuple | dict:
         """Get next row from the batches."""
-        while True:
-            # If no current batch iterator or exhausted, read next batch
-            if self._current_batch_iterator is None:
-                try:
-                    batch = self.reader.read_next_batch()
-
-                    # Handle empty schema
-                    if batch.num_columns == 0:
-                        if self.use_dict_result:
-                            return {}
-                        else:
-                            return tuple()
-
-                    # Create C++ batch converter for this batch
-                    self._current_batch_iterator = PyArrowBatchIterator(
-                        batch,
-                        self.arrow_context,
-                        use_dict_result=self.use_dict_result,
-                        use_numpy=False,
-                        check_error_on_every_column=True,
-                    )
-                except StopIteration:
-                    raise StopIteration
-
-            # Try to get next row from current batch
-            try:
-                return next(self._current_batch_iterator)
-            except StopIteration:
-                # Batch exhausted, get next batch
-                self._current_batch_iterator = None
-                continue
+        return next(self._stream_iterator)
 
     def fetchone(self) -> tuple | dict | None:
-        """Fetch the next row."""
+        """Fetch the next row.
+
+        Returns:
+            Next row as tuple or dict, or None when no more data is available
+        """
         try:
-            return self.__next__()
+            return next(self._stream_iterator)
         except StopIteration:
             return None
 
@@ -94,8 +82,7 @@ class ArrowStreamIterator:
         rows = []
         for _ in range(size):
             try:
-                row = self.__next__()
-                rows.append(row)
+                rows.append(next(self._stream_iterator))
             except StopIteration:
                 break
         return rows
@@ -106,32 +93,9 @@ class ArrowStreamIterator:
         Returns:
             List of all remaining rows (tuples or dicts)
         """
-        rows = []
+        return list(self._stream_iterator)
 
-        # Drain current batch iterator first (if any)
-        if self._current_batch_iterator is not None:
-            try:
-                while True:
-                    rows.append(next(self._current_batch_iterator))
-            except StopIteration:
-                pass
-            self._current_batch_iterator = None
-
-        # Read and convert following batches
-        while True:
-            try:
-                batch = self.reader.read_next_batch()
-
-                if batch.num_columns > 0:
-                    batch_iterator = PyArrowBatchIterator(
-                        batch,
-                        self.arrow_context,
-                        use_dict_result=self.use_dict_result,
-                        use_numpy=False,
-                        check_error_on_every_column=True,
-                    )
-                    rows.extend(list(batch_iterator))
-            except StopIteration:
-                break
-
-        return rows
+    @property
+    def column_count(self) -> int:
+        """Get the number of columns in the result."""
+        return self._stream_iterator.column_count

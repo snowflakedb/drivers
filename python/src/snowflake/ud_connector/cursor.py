@@ -5,7 +5,6 @@ This module defines the Cursor class as specified in PEP 249.
 """
 
 from .exceptions import NotSupportedError
-import pyarrow
 
 from ._internal.protobuf_gen.database_driver_v1_pb2 import (
     StatementNewRequest,
@@ -37,8 +36,7 @@ class Cursor:
         self.arraysize = 1  # Instance attribute overrides class attribute
         self._closed = False
         # Streaming state for Arrow results
-        self._reader = None
-        self._batch_iterator = None
+        self._stream_iterator = None
         self.execute_result = None
 
     @property
@@ -118,8 +116,7 @@ class Cursor:
         self.rowcount = self.execute_result.rows_affected
 
         # Reset streaming state for a new result
-        self._reader = None
-        self._batch_iterator = None
+        self._stream_iterator = None
 
     def executemany(self, operation, seq_of_parameters):
         """
@@ -134,20 +131,13 @@ class Cursor:
         """
         raise NotSupportedError("executemany is not implemented")
 
-    def _batch_reader(self):
-        stream_ptr = int.from_bytes(
-            self.execute_result.stream.value, byteorder="little", signed=False
-        )
-        reader = pyarrow.RecordBatchReader._import_from_c(stream_ptr)
-        return reader
-
-    def _ensure_batch_iterator(self):
-        if self._batch_iterator is None:
-            if self._reader is None:
-                self._reader = self._batch_reader()
-
-            self._batch_iterator = ArrowStreamIterator(
-                self._reader,
+    def _ensure_stream_iterator(self):
+        if self._stream_iterator is None:
+            stream_ptr = int.from_bytes(
+                self.execute_result.stream.value, byteorder="little", signed=False
+            )
+            self._stream_iterator = ArrowStreamIterator(
+                stream_ptr,
                 use_dict_result=False,
             )
 
@@ -161,9 +151,9 @@ class Cursor:
         Raises:
             NotSupportedError: If not implemented
         """
-        # Initialize batch iterator on first use
-        self._ensure_batch_iterator()
-        return self._batch_iterator.fetchone()
+        # Initialize stream iterator on first use
+        self._ensure_stream_iterator()
+        return self._stream_iterator.fetchone()
 
     def fetchmany(self, size=None):
         """
@@ -190,9 +180,9 @@ class Cursor:
         Raises:
             NotSupportedError: If not implemented
         """
-        # Initialize batch iterator on first use
-        self._ensure_batch_iterator()
-        return self._batch_iterator.fetchall()
+        # Initialize stream iterator on first use
+        self._ensure_stream_iterator()
+        return self._stream_iterator.fetchall()
 
     def nextset(self):
         """
