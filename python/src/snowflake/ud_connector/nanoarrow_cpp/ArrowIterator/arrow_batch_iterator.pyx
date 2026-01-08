@@ -13,6 +13,7 @@ cdef extern from "nanoarrow.h":
         void (*release)(ArrowArray*)
     
     ctypedef struct ArrowSchema:
+        int64_t n_children
         void (*release)(ArrowSchema*)
     
     # Arrow C Stream Interface
@@ -361,10 +362,14 @@ cdef class NanoarrowStreamIterator:
         # Mark as not owned by setting release to NULL
         # This is a shallow copy - the batch iterator should handle this
         
-        return (batch_array, batch_schema)
+        # Return pointers as integers (uintptr_t) so they can be returned to Python
+        return (<uintptr_t>batch_array, <uintptr_t>batch_schema)
     
     def __next__(self):
         """Get next row from the stream."""
+        cdef uintptr_t batch_array_ptr
+        cdef uintptr_t batch_schema_ptr
+        
         while True:
             # If no current batch iterator, read next batch
             if self._current_batch_iterator is None:
@@ -372,15 +377,15 @@ cdef class NanoarrowStreamIterator:
                 if result is None:
                     raise StopIteration
                 
-                batch_array, batch_schema = result
+                batch_array_ptr, batch_schema_ptr = result
                 
                 # Handle empty schema (0 columns)
                 if self._column_count == 0:
                     # Release the batch array
-                    if (<ArrowArray*>batch_array).release != NULL:
-                        (<ArrowArray*>batch_array).release(<ArrowArray*>batch_array)
-                    free(<void*>batch_array)
-                    free(<void*>batch_schema)
+                    if (<ArrowArray*>batch_array_ptr).release != NULL:
+                        (<ArrowArray*>batch_array_ptr).release(<ArrowArray*>batch_array_ptr)
+                    free(<void*>batch_array_ptr)
+                    free(<void*>batch_schema_ptr)
                     
                     if self._use_dict_result:
                         return {}
@@ -390,8 +395,8 @@ cdef class NanoarrowStreamIterator:
                 # Create batch iterator with raw pointers
                 # Note: NanoarrowBatchIterator takes ownership via ArrowArrayMove/ArrowSchemaMove
                 self._current_batch_iterator = NanoarrowBatchIterator(
-                    <uintptr_t>batch_array,
-                    <uintptr_t>batch_schema,
+                    batch_array_ptr,
+                    batch_schema_ptr,
                     self._arrow_context,
                     use_dict_result=self._use_dict_result,
                     use_numpy=self._use_numpy,
@@ -399,8 +404,8 @@ cdef class NanoarrowStreamIterator:
                 )
                 
                 # Free our allocations (data was moved to batch iterator)
-                free(<void*>batch_array)
-                free(<void*>batch_schema)
+                free(<void*>batch_array_ptr)
+                free(<void*>batch_schema_ptr)
             
             # Try to get next row from current batch
             try:
