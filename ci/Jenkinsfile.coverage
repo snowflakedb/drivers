@@ -70,6 +70,7 @@ pipeline {
                 stage('Rust Core') {
                     agent { label 'build-node-extra-large' }
                     steps {
+                        checkout scm
                         script {
                             dockerSetup()
                             docker.image(DOCKER_IMAGE).inside('-u root --privileged') {
@@ -102,6 +103,7 @@ pipeline {
                 stage('Python') {
                     agent { label 'build-node-extra-large' }
                     steps {
+                        checkout scm
                         script {
                             dockerSetup()
                             docker.image(DOCKER_IMAGE).inside('-u root --privileged') {
@@ -141,6 +143,7 @@ pipeline {
                 stage('ODBC') {
                     agent { label 'build-node-extra-large' }
                     steps {
+                        checkout scm
                         script {
                             dockerSetup()
                             docker.image(DOCKER_IMAGE).inside('-u root --privileged') {
@@ -205,6 +208,7 @@ pipeline {
                 stage('JDBC') {
                     agent { label 'build-node-extra-large' }
                     steps {
+                        checkout scm
                         script {
                             dockerSetup()
                             docker.image(DOCKER_IMAGE).inside('-u root --privileged') {
