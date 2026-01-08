@@ -1,0 +1,15 @@
+include *.md
+include LICENSE
+include pyproject.toml
+include src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/LICENSE.txt
+
+recursive-include src/snowflake/ud_connector py.typed *.py *.pyx
+recursive-include src/snowflake/ud_connector/nanoarrow_cpp *.cpp *.hpp
+recursive-include src/snowflake/ud_connector/nanoarrow_cpp *.c *.h
+
+# Include native libraries for distribution
+recursive-include src/snowflake/ud_connector/_core *.so *.dll *.dylib
+
+prune __pycache__
+prune src/snowflake/ud_connector/nanoarrow_cpp/scripts
+
