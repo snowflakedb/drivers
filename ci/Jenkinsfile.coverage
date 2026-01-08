@@ -222,11 +222,16 @@ pipeline {
                                     set +x
                                     REPORT="jdbc/build/reports/jacoco/test/jacocoTestReport.xml"
                                     if [ -f "$REPORT" ]; then
-                                        MISSED=$(grep -oP 'type="LINE"[^/]*missed="\\K[0-9]+' "$REPORT" | head -1 || echo "0")
-                                        COVERED=$(grep -oP 'type="LINE"[^/]*covered="\\K[0-9]+' "$REPORT" | head -1 || echo "0")
-                                        TOTAL=$((MISSED + COVERED))
-                                        if [ "$TOTAL" -gt 0 ]; then
-                                            echo "$COVERED $TOTAL" | awk '{printf "%.2f", $1 * 100 / $2}'
+                                        LINE_COUNTER=$(grep 'type="LINE"' "$REPORT" | head -1)
+                                        if [ -n "$LINE_COUNTER" ]; then
+                                            MISSED=$(echo "$LINE_COUNTER" | grep -oP 'missed="\\K[0-9]+' || echo "0")
+                                            COVERED=$(echo "$LINE_COUNTER" | grep -oP 'covered="\\K[0-9]+' || echo "0")
+                                            TOTAL=$((MISSED + COVERED))
+                                            if [ "$TOTAL" -gt 0 ]; then
+                                                echo "$COVERED $TOTAL" | awk '{printf "%.2f", $1 * 100 / $2}'
+                                            else
+                                                echo "N/A"
+                                            fi
                                         else
                                             echo "N/A"
                                         fi
