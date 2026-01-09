@@ -49,38 +49,43 @@ def parseLcovCoverage(String lcovFile) {
 }
 
 // Helper: Parse coverage from JaCoCo XML (for JDBC)
-// Uses LINE counter (what Codecov uses) and excludes test packages
+// Matches Codecov calculation: counts ALL source files including those with 0% coverage
 def parseJacocoCoverage(String xmlFile) {
     def result = sh(label: 'Parse JaCoCo Coverage', script: '''
         set +x
-        # Parse LINE counters from non-test packages only
-        # JaCoCo XML has <package> elements with <counter type="LINE"> inside
-        awk '
+        
+        # Step 1: Count lines from ALL .java source files (excluding tests)
+        ALL_LINES=0
+        for f in $(find jdbc/src/java/com/snowflake -name "*.java" 2>/dev/null); do
+            # Count non-empty, non-comment lines
+            LINES=$(grep -c "^" "$f" 2>/dev/null || echo 0)
+            ALL_LINES=$((ALL_LINES + LINES))
+        done
+        
+        # Step 2: Get covered lines from JaCoCo report (excluding test packages)
+        COVERED_LINES=$(awk '
             /<package name="/ {
                 pkg = $0
-                # Skip test packages
-                is_test = (index(pkg, "/test") > 0 || index(pkg, "Test") > 0)
+                is_test = (index(pkg, "/test") > 0)
             }
-            !is_test && /type="LINE"/ {
-                # Extract missed and covered values
-                line = $0
-                sub(/.*missed="/, "", line)
-                missed = line
-                sub(/".*/, "", missed)
-                
+            /<sourcefile / {
+                src = $0
+                is_test_file = (index(src, "Test.java") > 0)
+            }
+            !is_test && !is_test_file && /type="LINE"/ {
                 line = $0
                 sub(/.*covered="/, "", line)
                 covered = line
                 sub(/".*/, "", covered)
-                
-                total_missed += missed
-                total_covered += covered
+                total += covered
             }
-            END {
-                total = total_missed + total_covered
-                if (total > 0) printf "%.2f", total_covered * 100 / total
-            }
-        ' "''' + xmlFile + '''"
+            END { print total + 0 }
+        ' "''' + xmlFile + '''" 2>/dev/null)
+        
+        # Step 3: Calculate percentage
+        if [ "$ALL_LINES" -gt 0 ]; then
+            echo "$COVERED_LINES $ALL_LINES" | awk '{printf "%.2f", $1 * 100 / $2}'
+        fi
     ''', returnStdout: true).trim()
     return result ?: null
 }
