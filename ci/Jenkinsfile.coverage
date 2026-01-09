@@ -113,28 +113,31 @@ def reportFailure(String component) {
 
 // Helper: Upload coverage to Codecov
 def uploadToCodecov(String flag, String file) {
-    // Use CHANGE_COMMIT for PRs (actual commit on GitHub), fallback to GIT_COMMIT for branch builds
-    def commitSha = env.CHANGE_COMMIT ?: env.GIT_COMMIT ?: sh(script: 'git rev-parse HEAD', returnStdout: true).trim()
-    def branch = env.CHANGE_BRANCH ?: env.BRANCH_NAME
-    def prFlag = env.CHANGE_ID ? "--pr ${env.CHANGE_ID}" : ""
+    // Get the actual PR head commit from remote (not the local merge commit)
+    def commitSha = ""
+    if (env.CHANGE_BRANCH) {
+        commitSha = sh(script: "git ls-remote origin refs/heads/${env.CHANGE_BRANCH} | cut -f1", returnStdout: true).trim()
+    }
+    if (!commitSha) {
+        commitSha = env.GIT_COMMIT ?: sh(script: 'git rev-parse HEAD', returnStdout: true).trim()
+    }
     
-    echo "Uploading to Codecov: commit=${commitSha}, branch=${branch}, PR=${env.CHANGE_ID ?: 'none'}"
+    echo "Uploading to Codecov: commit=${commitSha}, branch=${env.CHANGE_BRANCH ?: env.BRANCH_NAME}"
     
     withCredentials([string(credentialsId: CODECOV_CREDENTIAL_ID, variable: 'CODECOV_TOKEN')]) {
         sh label: 'Upload to Codecov', script: """
             set +x
-            codecovcli --verbose --enterprise-url https://snowflake.codecov.io \\
+            codecovcli --verbose \\
+                --enterprise-url https://snowflake.codecov.io \\
+                --codecov-yml-path codecov.yml \\
                 upload-process \\
                 --disable-search \\
-                --fail-on-error \\
                 -t "\${CODECOV_TOKEN}" \\
                 -n "${flag}-jenkins-\${BUILD_NUMBER}" \\
                 -F ${flag} \\
                 -f ${file} \\
-                --git-service github \\
                 -C ${commitSha} \\
-                -B ${branch} \\
-                ${prFlag}
+                -B ${env.CHANGE_BRANCH ?: env.BRANCH_NAME}
         """
     }
 }
@@ -323,8 +326,10 @@ pipeline {
                                         ./gradlew test jacocoTestReport --stacktrace
                                     '''
                                     
-                                    def coverage = parseJacocoCoverage('jdbc/build/reports/jacoco/test/jacocoTestReport.xml')
-                                    uploadToCodecov('jdbc', 'jdbc/build/reports/jacoco/test/jacocoTestReport.xml')
+                                    sh 'ls -la jdbc/build/reports/jacoco/test/ || echo "Directory not found"'
+                                    def jdbcReportPath = "${env.WORKSPACE}/jdbc/build/reports/jacoco/test/jacocoTestReport.xml"
+                                    def coverage = parseJacocoCoverage(jdbcReportPath)
+                                    uploadToCodecov('jdbc', jdbcReportPath)
                                     reportStatus('jdbc', coverage)
                                 }
                                 archiveArtifacts artifacts: 'jdbc/build/reports/jacoco/test/jacocoTestReport.xml', allowEmptyArchive: true
