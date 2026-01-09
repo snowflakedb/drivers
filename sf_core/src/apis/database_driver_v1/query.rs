@@ -67,6 +67,11 @@ async fn read_batches(
     if let Some(rowset_base64) = &data.rowset_base64 {
         let rowset_bytes = BASE64.decode(rowset_base64).context(Base64DecodingSnafu)?;
 
+        // Handle empty result - return empty reader with schema from rowtype
+        if rowset_bytes.is_empty() {
+            return create_empty_reader_from_rowtype(data);
+        }
+
         let reader_result = if let Some(chunk_download_data) = data.to_chunk_download_data() {
             ChunkReader::multi_chunk(
                 rowset_bytes,
@@ -186,6 +191,30 @@ fn build_generic_text_rowtype(name: &str) -> RowType {
 
 fn build_generic_fixed_rowtype(name: &str) -> RowType {
     RowType::fixed_with_scale_zero(name, false, PUT_GET_ROWSET_FIXED_LENGTH)
+}
+
+/// Creates an empty Arrow reader with schema from rowtype metadata.
+/// Used when query returns 0 rows (empty rowsetBase64).
+fn create_empty_reader_from_rowtype(
+    data: &query_response::Data,
+) -> Result<Box<dyn RecordBatchReader + Send>, ReadBatchesError> {
+    if let Some(rowtype) = &data.row_type {
+        let row_types: Vec<RowType> = rowtype
+            .iter()
+            .map(|rt| rt.try_into())
+            .collect::<Result<Vec<_>, _>>()
+            .context(RowTypeParsingSnafu)?;
+
+        let schema = create_schema(&row_types).context(RowsetConversionSnafu)?;
+
+        // Create empty reader with just the schema (no batches)
+        Ok(Box::new(arrow::record_batch::RecordBatchIterator::new(
+            std::iter::empty(),
+            schema,
+        )))
+    } else {
+        MissingRowsetOrRowtypeSnafu.fail()
+    }
 }
 
 #[derive(Debug, Snafu)]
