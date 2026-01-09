@@ -11,7 +11,8 @@ from ._internal.protobuf_gen.database_driver_v1_pb2 import (
     StatementSetSqlQueryRequest,
     StatementExecuteQueryRequest,
 )
-from .arrow_stream_iterator import ArrowStreamIterator
+from ._arrow_stream_iterator import ArrowStreamIterator
+from .arrow_context import ArrowConverterContext
 
 
 class Cursor:
@@ -23,18 +24,22 @@ class Cursor:
     # Class attribute for arraysize
     arraysize = 1
 
-    def __init__(self, connection):
+    def __init__(self, connection, use_dict_result=False, use_numpy=False):
         """
         Initialize a new cursor object.
 
         Args:
             connection: Connection object that created this cursor
+            use_dict_result: If True, return dicts instead of tuples
+            use_numpy: If True, use numpy types for numeric data
         """
         self.connection = connection
         self.description = None
         self._total_rowcount = -1
         self.arraysize = 1  # Instance attribute overrides class attribute
         self._closed = False
+        self._use_dict_result = use_dict_result
+        self._use_numpy = use_numpy
         # Streaming state for Arrow results
         self._stream_iterator = None
         self._result = None  # Iterator over stream results
@@ -153,7 +158,9 @@ class Cursor:
             )
             self._stream_iterator = ArrowStreamIterator(
                 stream_ptr,
-                use_dict_result=False,
+                ArrowConverterContext(),
+                use_dict_result=self._use_dict_result,
+                use_numpy=self._use_numpy,
             )
 
     def fetchone(self):

@@ -61,7 +61,7 @@ cdef extern from "CArrowBatchIterator.hpp" namespace "sf":
         int64_t getCurrentRowIndex()
 
 
-cdef class NanoarrowBatchIterator:
+cdef class ArrowBatchIterator:
     """
     Python wrapper for C++ Arrow batch iterator.
     Converts Arrow RecordBatch to Python tuples/dicts row-by-row.
@@ -220,7 +220,7 @@ cdef class NanoarrowBatchIterator:
             return self.iterator.getCurrentRowIndex()
 
 
-cdef class NanoarrowStreamIterator:
+cdef class ArrowStreamIterator:
     """
     Python wrapper that iterates over an Arrow C Stream Interface.
     
@@ -393,8 +393,8 @@ cdef class NanoarrowStreamIterator:
                         return tuple()
                 
                 # Create batch iterator with raw pointers
-                # Note: NanoarrowBatchIterator takes ownership via ArrowArrayMove/ArrowSchemaMove
-                self._current_batch_iterator = NanoarrowBatchIterator(
+                # Note: ArrowBatchIterator takes ownership via ArrowArrayMove/ArrowSchemaMove
+                self._current_batch_iterator = ArrowBatchIterator(
                     batch_array_ptr,
                     batch_schema_ptr,
                     self._arrow_context,

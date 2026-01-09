@@ -81,6 +81,13 @@ def cursor(connection):
 
 
 @pytest.fixture
+def dict_cursor(connection):
+    """Create a test cursor that returns dict results."""
+    with connection.cursor(use_dict_result=True) as cursor:
+        yield cursor
+
+
+@pytest.fixture
 def tmp_schema(cursor):
     """Create a temporary schema."""
     import uuid
