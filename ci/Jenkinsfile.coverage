@@ -4,7 +4,7 @@
 
 import groovy.transform.Field
 
-@Field String DOCKER_IMAGE = 'nexus.int.snowflakecomputing.com:8086/docker/rhel8-universal-driver-coverage:2'
+@Field String DOCKER_IMAGE = 'nexus.int.snowflakecomputing.com:8086/docker/rhel8-universal-driver-coverage:1'
 @Field String CODECOV_CREDENTIAL_ID = 'ud_repo_codecov'
 @Field String NEXUS_CREDENTIAL_ID = 'a791118f-a1ea-46cd-b876-56da1b9bc71c'
 @Field String PARAMS_CREDENTIAL_ID = 'sfctest0-parameters-secret'
@@ -16,7 +16,6 @@ import groovy.transform.Field
     'jdbc': 'JDBC'
 ]
 
-// Helper: Docker login and pull
 def dockerSetup() {
     withCredentials([string(credentialsId: NEXUS_CREDENTIAL_ID, variable: 'NEXUS_PASSWORD')]) {
         sh label: 'Docker Login', script: 'source ./scripts/login_internal_docker.sh'
@@ -24,15 +23,12 @@ def dockerSetup() {
     sh label: 'Docker Pull', script: "docker pull ${DOCKER_IMAGE}"
 }
 
-// Helper: Decode test secrets
 def decodeSecrets() {
     withCredentials([string(credentialsId: PARAMS_CREDENTIAL_ID, variable: 'PARAMETERS_SECRET')]) {
         sh label: 'Decode Secrets', script: './scripts/decode_secrets.sh'
     }
 }
 
-// Helper: Parse coverage from LCOV file (for Rust/ODBC)
-// LCOV format has LH (lines hit) and LF (lines found) per file
 def parseLcovCoverage(String lcovFile) {
     def result = sh(label: 'Parse LCOV Coverage', script: """
         set +x
@@ -48,35 +44,17 @@ def parseLcovCoverage(String lcovFile) {
     return result ?: null
 }
 
-// Helper: Parse coverage from JaCoCo XML (for JDBC)
-// JaCoCo report is configured to include all classes (including those with 0% coverage)
-// and exclude test classes, so we can use the report-level LINE counter directly
 def parseJacocoCoverage(String xmlFile) {
     def result = sh(label: 'Parse JaCoCo Coverage', script: """
         set +x
-        # Get the report-level LINE counter (last one in file, after all packages)
-        grep 'type="LINE"' "${xmlFile}" | tail -1 | awk '
-            {
-                line = \$0
-                sub(/.*missed="/, "", line)
-                missed = line
-                sub(/".*/, "", missed)
-                
-                line = \$0
-                sub(/.*covered="/, "", line)
-                covered = line
-                sub(/".*/, "", covered)
-                
-                total = missed + covered
-                if (total > 0) printf "%.2f", covered * 100 / total
-            }
-        '
+        grep 'type="LINE"' "${xmlFile}" | tail -1 | sed 's/.*missed="\\([0-9]*\\)".*covered="\\([0-9]*\\)".*/\\1 \\2/' | awk '{
+            total = \$1 + \$2
+            if (total > 0) printf "%.2f", \$2 * 100 / total
+        }'
     """, returnStdout: true).trim()
     return result ?: null
 }
 
-// Helper: Parse coverage from Cobertura XML (for Python/pytest-cov)
-// Extracts line-rate attribute from root element
 def parseCoberturaCoverage(String xmlFile) {
     def result = sh(label: 'Parse Cobertura Coverage', script: """
         set +x
@@ -85,16 +63,16 @@ def parseCoberturaCoverage(String xmlFile) {
     return result ?: null
 }
 
-// Helper: Report coverage status to GitHub
 def reportStatus(String component, String coverage) {
     def displayName = DISPLAY_NAMES[component] ?: component
+    def codecovUrl = "https://snowflake.codecov.io/gh/snowflakedb/universal-driver?flags%5B0%5D=${component}"
     
     if (coverage) {
         coverageResults[component] = coverage
         publishChecks name: "Code Coverage - ${displayName}",
                       title: "Coverage: ${coverage}%",
                       summary: "Code coverage for ${displayName}: ${coverage}%",
-                      detailsURL: "https://snowflake.codecov.io/gh/snowflakedb/universal-driver?flags%5B0%5D=${component}",
+                      detailsURL: codecovUrl,
                       status: 'COMPLETED',
                       conclusion: 'SUCCESS'
     } else {
@@ -102,13 +80,12 @@ def reportStatus(String component, String coverage) {
         publishChecks name: "Code Coverage - ${displayName}",
                       title: "Coverage failed",
                       summary: "Could not calculate coverage percentage from report.",
-                      detailsURL: "https://snowflake.codecov.io/gh/snowflakedb/universal-driver?flags%5B0%5D=${component}",
+                      detailsURL: codecovUrl,
                       status: 'COMPLETED',
                       conclusion: 'FAILURE'
     }
 }
 
-// Helper: Report failure to GitHub
 def reportFailure(String component) {
     def displayName = DISPLAY_NAMES[component] ?: component
     coverageResults[component] = 'FAILED'
@@ -121,9 +98,7 @@ def reportFailure(String component) {
                   conclusion: 'FAILURE'
 }
 
-// Helper: Upload coverage to Codecov
 def uploadToCodecov(String flag, String file) {
-    // Get the actual PR head commit from remote (not the local merge commit)
     def commitSha = ""
     if (env.CHANGE_BRANCH) {
         commitSha = sh(script: "git ls-remote origin refs/heads/${env.CHANGE_BRANCH} | cut -f1", returnStdout: true).trim()
@@ -334,7 +309,6 @@ pipeline {
                                         ./gradlew test jacocoTestReport --stacktrace
                                     '''
                                     
-                                    sh 'ls -la jdbc/build/reports/jacoco/test/ || echo "Directory not found"'
                                     def jdbcReportPath = "${env.WORKSPACE}/jdbc/build/reports/jacoco/test/jacocoTestReport.xml"
                                     def coverage = parseJacocoCoverage(jdbcReportPath)
                                     uploadToCodecov('jdbc', jdbcReportPath)
@@ -355,10 +329,8 @@ pipeline {
     post {
         always {
             script {
-                // Notify Codecov that all uploads are complete
                 try {
                     node {
-                        // Get the same commit SHA used for uploads
                         def commitSha = ""
                         if (env.CHANGE_BRANCH) {
                             commitSha = sh(script: "git ls-remote origin refs/heads/${env.CHANGE_BRANCH} | cut -f1", returnStdout: true).trim()
@@ -383,7 +355,6 @@ pipeline {
                     echo "Error notifying Codecov: ${e.message}"
                 }
 
-                // Generate build description
                 if (coverageResults.isEmpty()) {
                     currentBuild.description = "No coverage data"
                 } else {
@@ -399,7 +370,6 @@ pipeline {
                     currentBuild.description = parts.join(' | ')
                 }
                 
-                // Update overall status check
                 publishChecks name: 'Universal Driver Code Coverage',
                               title: "Build ${currentBuild.currentResult}",
                               summary: "Jenkins Build ${env.BUILD_NUMBER}: ${currentBuild.currentResult}\n${currentBuild.description ?: ''}",

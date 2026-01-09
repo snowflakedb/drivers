@@ -18,8 +18,23 @@ class HandleWrapper {
   HandleWrapper(HandleWrapper&& other) noexcept : handle(other.handle), type(other.type) {
     other.handle = SQL_NULL_HANDLE;  // Transfer ownership
   }
+  HandleWrapper& operator=(HandleWrapper&& other) noexcept {
+    if (this != &other) {
+      if (handle != SQL_NULL_HANDLE) {
+        SQLFreeHandle(type, handle);
+      }
+      handle = other.handle;
+      type = other.type;
+      other.handle = SQL_NULL_HANDLE;
+    }
+    return *this;
+  }
 
-  ~HandleWrapper() { SQLFreeHandle(type, handle); }
+  ~HandleWrapper() {
+    if (handle != SQL_NULL_HANDLE) {
+      SQLFreeHandle(type, handle);
+    }
+  }
 
   SQLHANDLE getHandle() const { return handle; }
   SQLSMALLINT getType() const { return type; }
