@@ -2,7 +2,7 @@ use std::{collections::HashSet, str::Utf8Error, string::FromUtf8Error};
 
 use crate::{
     api::{SqlState, diagnostic::DiagnosticRecord},
-    read_arrow::ExtractError,
+    conversion::ConversionError,
     write_arrow::ArrowBindingError,
 };
 use arrow::error::ArrowError;
@@ -135,7 +135,8 @@ pub enum OdbcError {
 
     #[snafu(display("Error reading arrow value: {source:?}"))]
     ArrowRead {
-        source: ExtractError,
+        #[snafu(source(from(ConversionError, Box::new)))]
+        source: Box<ConversionError>,
         #[snafu(implicit)]
         location: Location,
     },

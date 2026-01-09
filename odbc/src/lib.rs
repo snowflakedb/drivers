@@ -1,7 +1,7 @@
 mod api;
 pub mod c_api;
 mod cdata_types;
-mod read_arrow;
+mod conversion;
 mod write_arrow;
 
 extern crate sf_core;

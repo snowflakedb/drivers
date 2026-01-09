@@ -103,7 +103,11 @@ pub enum CDataType {
     SsTimestampOffset = C_TYPES_EXTENDED + 1,
 }
 
+#[allow(dead_code)]
 pub type UBigInt = u64;
+#[allow(dead_code)]
 pub type SBigInt = i64;
+#[allow(dead_code)]
 pub type Real = f32;
+#[allow(dead_code)]
 pub type Double = f64;
