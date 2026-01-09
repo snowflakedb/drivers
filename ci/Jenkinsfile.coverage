@@ -49,52 +49,29 @@ def parseLcovCoverage(String lcovFile) {
 }
 
 // Helper: Parse coverage from JaCoCo XML (for JDBC)
-// Uses LINE counters from JaCoCo, filtered to match Codecov rules:
-// - Include only com/snowflake packages (not test packages)
-// - Exclude test files
+// JaCoCo report is configured to include all classes (including those with 0% coverage)
+// and exclude test classes, so we can use the report-level LINE counter directly
 def parseJacocoCoverage(String xmlFile) {
-    def result = sh(label: 'Parse JaCoCo Coverage', script: '''
+    def result = sh(label: 'Parse JaCoCo Coverage', script: """
         set +x
-        awk '
-            # Track current package
-            /<package name="/ {
-                pkg = $0
-                sub(/.*name="/, "", pkg)
-                sub(/".*/, "", pkg)
-                # Include only com/snowflake packages, exclude test packages
-                include_pkg = (index(pkg, "com/snowflake") > 0 && index(pkg, "test") == 0)
-            }
-            
-            # Track current sourcefile
-            /<sourcefile name="/ {
-                src = $0
-                # Exclude test files
-                is_test_file = (index(src, "Test.java") > 0 || index(src, "IT.java") > 0)
-            }
-            
-            # Sum LINE counters from included packages/files
-            include_pkg && !is_test_file && /type="LINE"/ {
-                line = $0
-                
+        # Get the report-level LINE counter (last one in file, after all packages)
+        grep 'type="LINE"' "${xmlFile}" | tail -1 | awk '
+            {
+                line = \$0
                 sub(/.*missed="/, "", line)
                 missed = line
                 sub(/".*/, "", missed)
                 
-                line = $0
+                line = \$0
                 sub(/.*covered="/, "", line)
                 covered = line
                 sub(/".*/, "", covered)
                 
-                total_missed += missed
-                total_covered += covered
+                total = missed + covered
+                if (total > 0) printf "%.2f", covered * 100 / total
             }
-            
-            END {
-                total = total_missed + total_covered
-                if (total > 0) printf "%.2f", total_covered * 100 / total
-            }
-        ' "''' + xmlFile + '''"
-    ''', returnStdout: true).trim()
+        '
+    """, returnStdout: true).trim()
     return result ?: null
 }
 
