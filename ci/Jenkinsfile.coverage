@@ -127,17 +127,15 @@ def uploadToCodecov(String flag, String file) {
     withCredentials([string(credentialsId: CODECOV_CREDENTIAL_ID, variable: 'CODECOV_TOKEN')]) {
         sh label: 'Upload to Codecov', script: """
             set +x
-            codecovcli --verbose \\
-                --enterprise-url https://snowflake.codecov.io \\
-                --codecov-yml-path codecov.yml \\
-                upload-process \\
-                --disable-search \\
-                -t "\${CODECOV_TOKEN}" \\
-                -n "${flag}-jenkins-\${BUILD_NUMBER}" \\
-                -F ${flag} \\
-                -f ${file} \\
-                -C ${commitSha} \\
-                -B ${env.CHANGE_BRANCH ?: env.BRANCH_NAME}
+            codecovcli --verbose \
+                --enterprise-url https://snowflake.codecov.io \
+                --codecov-yml-path codecov.yml \
+                upload-process \
+                --disable-search \
+                -t "\${CODECOV_TOKEN}" \
+                -F ${flag} \
+                -f ${file} \
+                -C ${commitSha}
         """
     }
 }
@@ -350,12 +348,24 @@ pipeline {
                 // Notify Codecov that all uploads are complete
                 try {
                     node {
+                        // Get the same commit SHA used for uploads
+                        def commitSha = ""
+                        if (env.CHANGE_BRANCH) {
+                            commitSha = sh(script: "git ls-remote origin refs/heads/${env.CHANGE_BRANCH} | cut -f1", returnStdout: true).trim()
+                        }
+                        if (!commitSha) {
+                            commitSha = env.GIT_COMMIT
+                        }
+                        
+                        echo "Notifying Codecov for commit: ${commitSha}"
+                        
                         withCredentials([string(credentialsId: CODECOV_CREDENTIAL_ID, variable: 'CODECOV_TOKEN')]) {
                             sh label: 'Notify Codecov', script: """
                                 codecovcli --enterprise-url https://snowflake.codecov.io \\
                                     send-notifications \\
                                     -t "\${CODECOV_TOKEN}" \\
-                                    --git-service github || true
+                                    --git-service github \\
+                                    -C ${commitSha} || true
                             """
                         }
                     }
