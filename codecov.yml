@@ -3,6 +3,7 @@ codecov:
   notify:
     wait_for_ci: true
     require_ci_to_pass: true
+    manual_trigger: true
 
 flags:
   rust-core:

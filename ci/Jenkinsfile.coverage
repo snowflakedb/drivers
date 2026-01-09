@@ -8,7 +8,7 @@ import groovy.transform.Field
 @Field String CODECOV_CREDENTIAL_ID = 'ud_repo_codecov'
 @Field String NEXUS_CREDENTIAL_ID = 'a791118f-a1ea-46cd-b876-56da1b9bc71c'
 @Field String PARAMS_CREDENTIAL_ID = 'sfctest0-parameters-secret'
-@Field Map coverageResults = new java.util.concurrent.ConcurrentHashMap()
+@Field Map coverageResults = [:]
 @Field Map DISPLAY_NAMES = [
     'rust-core': 'Rust Core',
     'python': 'Python',
@@ -32,27 +32,13 @@ def decodeSecrets() {
 }
 
 // Helper: Parse coverage from LCOV file (for Rust/ODBC)
-// LCOV format has SF (source file), LH (lines hit), and LF (lines found)
-// Replicates Codecov filtering for 'rust-core' and 'odbc' flags
+// LCOV format has LH (lines hit) and LF (lines found) per file
 def parseLcovCoverage(String lcovFile) {
     def result = sh(label: 'Parse LCOV Coverage', script: """
         set +x
         awk '
-            /^SF:/ {
-                path = substr(\$0, 4)
-                # Check if file should be included based on typical Codecov rules
-                # 1. Must be in relevant component directory (detected via filename context)
-                # 2. Must not be in ignore list (tests, generated code, etc.)
-                
-                include = 1
-                if (index(path, "test") > 0 || index(path, "protobuf_gen") > 0) include = 0
-                
-                # Component specific filtering
-                if ("${lcovFile}" ~ /rust-core/ && index(path, "sf_core") == 0) include = 0
-                if ("${lcovFile}" ~ /odbc/ && index(path, "odbc") == 0 && index(path, "sf_core") == 0) include = 0
-            }
-            include && /^LH:/ { hit += substr(\$0, 4) }
-            include && /^LF:/ { found += substr(\$0, 4) }
+            /^LH:/ { hit += substr(\$0, 4) }
+            /^LF:/ { found += substr(\$0, 4) }
             END {
                 if (found > 0) printf "%.2f", hit * 100 / found
                 else print ""
@@ -63,87 +49,28 @@ def parseLcovCoverage(String lcovFile) {
 }
 
 // Helper: Parse coverage from JaCoCo XML (for JDBC)
-// Matches Codecov calculation: sum LINE counters from sourcefile elements,
-// excluding protobuf_gen and tests
+// Extracts INSTRUCTION counter (what Codecov uses) from report-level summary
 def parseJacocoCoverage(String xmlFile) {
     def result = sh(label: 'Parse JaCoCo Coverage', script: '''
         set +x
-        # Sum LINE coverage from all sourcefile elements, excluding protobuf_gen and tests
-        awk '
-            /<package name=/ { 
-                pkg = $0
-                # Skip protobuf_gen or test packages
-                if (index(pkg, "protobuf_gen") > 0 || index(pkg, "/test") > 0) {
-                    skip = 1
-                } else {
-                    skip = 0
-                }
-            }
-            /<sourcefile / { 
-                src = $0
-                # Skip test files
-                if (index(src, "Test.java") > 0 || index(src, "IT.java") > 0) {
-                    in_sourcefile = 0
-                } else {
-                    in_sourcefile = !skip
-                }
-            }
-            /<\\/sourcefile>/ { in_sourcefile = 0 }
-            in_sourcefile && /type="LINE"/ {
-                # Extract missed and covered counts without using regex capture groups (portability)
-                line = $0
-                sub(/.*missed="/, "", line)
-                missed_val = line
-                sub(/".*/, "", missed_val)
-                
-                line = $0
-                sub(/.*covered="/, "", line)
-                covered_val = line
-                sub(/".*/, "", covered_val)
-                
-                missed += missed_val
-                covered += covered_val
-            }
-            END {
-                total = missed + covered
-                if (total > 0) printf "%.2f", covered * 100 / total
-            }
-        ' "''' + xmlFile + '''"
+        # Get the report-level INSTRUCTION counter (last 5 lines contain report summary)
+        LINE=$(tail -5 "''' + xmlFile + '''" | grep 'type="INSTRUCTION"' | head -1)
+        MISSED=$(echo "$LINE" | sed 's/.*missed="\\([0-9]*\\)".*/\\1/')
+        COVERED=$(echo "$LINE" | sed 's/.*covered="\\([0-9]*\\)".*/\\1/')
+        TOTAL=$((MISSED + COVERED))
+        if [ "$TOTAL" -gt 0 ]; then
+            echo "$COVERED $TOTAL" | awk '{printf "%.2f", $1*100/$2}'
+        fi
     ''', returnStdout: true).trim()
     return result ?: null
 }
 
 // Helper: Parse coverage from Cobertura XML (for Python/pytest-cov)
-// Sums lines from classes, filtering by path
+// Extracts line-rate attribute from root element
 def parseCoberturaCoverage(String xmlFile) {
     def result = sh(label: 'Parse Cobertura Coverage', script: """
         set +x
-        awk '
-            /<class / {
-                # Extract filename
-                match(\$0, /filename="([^"]+)"/, f)
-                filename = f[1]
-                
-                # Filter paths (exclude tests, include python/src/snowflake)
-                if (index(filename, "tests/") > 0 || index(filename, "test_") > 0) {
-                    include = 0
-                } else {
-                    include = 1
-                }
-            }
-            include && /<line / {
-                # Check hits
-                match(\$0, /hits="([^"]+)"/, h)
-                hits = h[1]
-                
-                total_lines++
-                if (hits > 0) covered_lines++
-            }
-            END {
-                if (total_lines > 0) printf "%.2f", covered_lines * 100 / total_lines
-                else print ""
-            }
-        ' "${xmlFile}"
+        grep -o 'line-rate="[^"]*"' "${xmlFile}" | head -1 | sed 's/line-rate="\\([^"]*\\)"/\\1/' | awk '{printf "%.2f", \$1 * 100}'
     """, returnStdout: true).trim()
     return result ?: null
 }
@@ -161,13 +88,13 @@ def reportStatus(String component, String coverage) {
                       status: 'COMPLETED',
                       conclusion: 'SUCCESS'
     } else {
-        coverageResults[component] = 'N/A'
+        coverageResults[component] = 'FAILED'
         publishChecks name: "Code Coverage - ${displayName}",
-                      title: "Coverage uploaded",
-                      summary: "Coverage uploaded to Codecov. Check Codecov for results.",
+                      title: "Coverage failed",
+                      summary: "Could not calculate coverage percentage from report.",
                       detailsURL: "https://snowflake.codecov.io/gh/snowflakedb/universal-driver?flags%5B0%5D=${component}",
                       status: 'COMPLETED',
-                      conclusion: 'SUCCESS'
+                      conclusion: 'FAILURE'
     }
 }
 
@@ -186,13 +113,9 @@ def reportFailure(String component) {
 
 // Helper: Upload coverage to Codecov
 def uploadToCodecov(String flag, String file) {
-    // For PRs, use the actual PR head commit, not the merge commit
-    // Matches working version from commit 1bdffa8
-    def commitSha = env.ghprbActualCommit ?: env.sha1 ?: env.GIT_COMMIT ?: sh(script: 'git rev-parse HEAD', returnStdout: true).trim()
-    def branch = env.CHANGE_BRANCH ?: env.GIT_BRANCH ?: env.BRANCH_NAME
+    def commitSha = env.GIT_COMMIT ?: sh(script: 'git rev-parse HEAD', returnStdout: true).trim()
+    def branch = env.CHANGE_BRANCH ?: env.BRANCH_NAME
     def prFlag = env.CHANGE_ID ? "--pr ${env.CHANGE_ID}" : ""
-    
-    echo "Uploading coverage for commit: ${commitSha}, branch: ${branch}"
     
     withCredentials([string(credentialsId: CODECOV_CREDENTIAL_ID, variable: 'CODECOV_TOKEN')]) {
         sh label: 'Upload to Codecov', script: """
@@ -228,18 +151,6 @@ pipeline {
     }
     
     stages {
-        stage('Setup') {
-            steps {
-                script {
-                    publishChecks name: "Universal Driver - Code Coverage",
-                                  title: "Build In Progress",
-                                  summary: "Jenkins Build ${env.BUILD_NUMBER} is running...",
-                                  detailsURL: env.BUILD_URL,
-                                  status: 'IN_PROGRESS'
-                }
-            }
-        }
-
         stage('Coverage') {
             failFast false
             parallel {
@@ -416,30 +327,23 @@ pipeline {
     post {
         always {
             script {
-                echo "Starting Post-Build Actions..."
-                
                 // Notify Codecov that all uploads are complete
-                // Match SHA logic from uploadToCodecov (working version from 1bdffa8)
                 try {
-                    def commitSha = env.ghprbActualCommit ?: env.sha1 ?: env.GIT_COMMIT
-                    if (commitSha) {
-                        node {
-                            withCredentials([string(credentialsId: CODECOV_CREDENTIAL_ID, variable: 'CODECOV_TOKEN')]) {
-                                 sh label: 'Notify Codecov', script: """
-                                    codecovcli --enterprise-url https://snowflake.codecov.io \\
-                                        send-notifications \\
-                                        -t "\${CODECOV_TOKEN}" \\
-                                        --git-service github \\
-                                        --sha ${commitSha} || true
-                                 """
-                            }
+                    node {
+                        withCredentials([string(credentialsId: CODECOV_CREDENTIAL_ID, variable: 'CODECOV_TOKEN')]) {
+                            sh label: 'Notify Codecov', script: """
+                                codecovcli --enterprise-url https://snowflake.codecov.io \\
+                                    send-notifications \\
+                                    -t "\${CODECOV_TOKEN}" \\
+                                    --git-service github || true
+                            """
                         }
                     }
                 } catch (Exception e) {
                     echo "Error notifying Codecov: ${e.message}"
                 }
 
-                // Generate Description
+                // Generate build description
                 if (coverageResults.isEmpty()) {
                     currentBuild.description = "No coverage data"
                 } else {
@@ -448,23 +352,12 @@ pipeline {
                         def displayName = DISPLAY_NAMES[component] ?: component
                         if (value == 'FAILED') {
                             parts << "${displayName}: FAILED"
-                        } else if (value == 'N/A') {
-                            parts << "${displayName}: Uploaded"
                         } else {
                             parts << "${displayName}: ${value}%"
                         }
                     }
                     currentBuild.description = parts.join(' | ')
                 }
-                
-                echo "Updating GitHub Check Status..."
-                // Publish overall build status with link to Jenkins
-                publishChecks name: "Universal Driver - Code Coverage",
-                              title: "Build ${currentBuild.currentResult}",
-                              summary: "Jenkins Build ${env.BUILD_NUMBER}: ${currentBuild.currentResult}\n${currentBuild.description ?: ''}",
-                              detailsURL: env.BUILD_URL,
-                              status: 'COMPLETED',
-                              conclusion: currentBuild.currentResult == 'SUCCESS' ? 'SUCCESS' : 'FAILURE'
             }
         }
     }
