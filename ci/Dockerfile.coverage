@@ -44,8 +44,16 @@ ENV JAVA_HOME=/usr/lib/jvm/java-11-openjdk
 
 # ============================================================
 # ODBC (for ODBC tests)
+# Build unixODBC 2.3.12 from source (Rocky Linux 8 ships with 2.3.7 which is old)
 # ============================================================
-RUN dnf install -y unixODBC unixODBC-devel zlib-devel
+RUN dnf install -y zlib-devel libtool autoconf automake && \
+    curl -L https://www.unixodbc.org/unixODBC-2.3.12.tar.gz | tar xz && \
+    cd unixODBC-2.3.12 && \
+    ./configure --prefix=/usr --sysconfdir=/etc --libdir=/usr/lib64 && \
+    make -j$(nproc) && \
+    make install && \
+    cd .. && rm -rf unixODBC-2.3.12 && \
+    ldconfig
 
 # Install CMake 4.0.3 (matching GitHub Actions)
 RUN curl -L https://github.com/Kitware/CMake/releases/download/v4.0.3/cmake-4.0.3-linux-x86_64.sh -o /tmp/cmake.sh && \
@@ -86,4 +94,5 @@ RUN gcc --version && \
     java -version && \
     go version && \
     cmake --version && \
+    odbc_config --version && \
     codecovcli --version
