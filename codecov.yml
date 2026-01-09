@@ -63,67 +63,10 @@ component_management:
       name: "JDBC Driver"
       paths:
         - "jdbc/**"
-        - "jdbc_bridge/**"
     - component_id: odbc
       name: "ODBC Driver"
       paths:
         - "odbc/**"
-
-ignore:
-  # Test files and documentation
-  - "tests/"
-  - "tests/**/*"
-  - "**/tests/"
-  - "**/tests/**/*"
-  - "**/*.md"
-  - "odbc_tests/"
-  - "odbc_tests/**/*"
-  - "scripts/"
-  
-  # Specific test paths to exclude
-  - "sf_core/tests/**"
-  - "**/tests/common/**"
-  - "tests/common/**"
-  - "tests/tests_format_validator/**"
-  
-  # Build artifacts
-  - "**/target/"
-  - "**/build/"
-  
-  # Configuration files
-  - "**/*.toml"
-  - "**/*.lock"
-  
-  # Python artifacts
-  - "**/__pycache__/"
-  - "**/*.pyc"
-  - "**/*.pyo"
-  - "**/.pytest_cache/"
-  - "**/.tox/"
-  - "**/dist/"
-  - "**/*.egg-info/"
-  
-  # Generated code
-  - "**/protobuf_gen/"
-  - "**/gen-*/"
-  
-  # Java/Gradle artifacts
-  - "**/.gradle/"
-  - "**/gradlew*"
-  - "**/*.class"
-  - "jdbc/src/test/**"
-  
-  # CMake artifacts
-  - "**/CMakeCache.txt"
-  - "**/CMakeFiles/"
-  - "**/cmake_install.cmake"
-  - "**/cmake-build/"
-  
-  # IDE and OS files
-  - "**/.idea/"
-  - "**/.vscode/"
-  - "**/.DS_Store"
-  - "**/*.swp"
 
 github_checks:
   annotations: true
