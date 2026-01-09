@@ -32,17 +32,18 @@ CArrowBatchIterator::CArrowBatchIterator(ArrowArray* c_array, ArrowSchema* c_sch
       m_columnCount(0),
       m_context(context),
       m_useNumpy(use_numpy == Py_True),
-      m_checkErrorOnEveryColumn(check_error_on_every_column == Py_True) {
+      m_checkErrorOnEveryColumn(check_error_on_every_column == Py_True),
+      m_borrowedSchema(c_schema) {
   int returnCode = 0;
   ArrowError error;
 
-  // Move Arrow C Data structures into RAII wrappers
-  ArrowSchemaMove(c_schema, m_schema.get());
+  // Schema is borrowed - just store the pointer (caller retains ownership)
+  // Array ownership is transferred - move into RAII wrapper
   ArrowArrayMove(c_array, m_array.get());
 
-  // Validate we got valid data
-  if (m_schema->release == nullptr || m_array->release == nullptr) {
-    std::string errorInfo = "[Snowflake Exception] Invalid Arrow C Data: schema or array is null";
+  // Validate we got valid array
+  if (m_array->release == nullptr) {
+    std::string errorInfo = "[Snowflake Exception] Invalid Arrow C Data: array is null";
     logger->error(__FILE__, __func__, __LINE__, errorInfo.c_str());
     PyErr_SetString(PyExc_Exception, errorInfo.c_str());
     return;
@@ -50,14 +51,14 @@ CArrowBatchIterator::CArrowBatchIterator(ArrowArray* c_array, ArrowSchema* c_sch
 
   // Get row count
   m_rowCount = m_array->length;
-  m_columnCount = m_schema->n_children;
+  m_columnCount = m_borrowedSchema->n_children;
 
   logger->debug(__FILE__, __func__, __LINE__,
                 "CArrowBatchIterator initialized: rows=%lld, columns=%lld", m_rowCount,
                 m_columnCount);
 
   // Initialize array view for efficient access
-  returnCode = ArrowArrayViewInitFromSchema(m_arrayView.get(), m_schema.get(), &error);
+  returnCode = ArrowArrayViewInitFromSchema(m_arrayView.get(), m_borrowedSchema, &error);
   if (returnCode != NANOARROW_OK) {
     std::string errorInfo = Logger::formatString(
         "[Snowflake Exception] error initializing ArrowArrayView: %s, error "
@@ -92,7 +93,7 @@ void CArrowBatchIterator::initColumnConverters() {
   m_columnConverters.reserve(m_columnCount);
 
   for (int64_t i = 0; i < m_columnCount; ++i) {
-    ArrowSchema* columnSchema = m_schema->children[i];
+    ArrowSchema* columnSchema = m_borrowedSchema->children[i];
     ArrowArrayView* columnArrayView = m_arrayView->children[i];
 
     auto converter =
@@ -180,7 +181,7 @@ void DictCArrowBatchIterator::createRowPyObject() {
   PyObject* pydict = PyDict_New();
 
   for (int64_t colIdx = 0; colIdx < m_columnCount; ++colIdx) {
-    const char* colName = m_schema->children[colIdx]->name;
+    const char* colName = m_borrowedSchema->children[colIdx]->name;
     PyObject* val = m_columnConverters[colIdx]->toPyObject(m_currentRowIndex);
 
     if (py::checkPyError()) {

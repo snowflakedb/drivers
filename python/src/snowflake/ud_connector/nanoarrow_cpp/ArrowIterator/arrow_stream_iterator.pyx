@@ -29,6 +29,7 @@ cdef extern from "nanoarrow.h":
     
     cdef int NANOARROW_OK
 
+
 # Import our C++ classes
 cdef extern from "CArrowBatchIterator.hpp" namespace "sf":
     cdef cppclass ReturnVal:
@@ -65,14 +66,16 @@ cdef class ArrowBatchIterator:
     """
     Python wrapper for C++ Arrow batch iterator.
     Converts Arrow RecordBatch to Python tuples/dicts row-by-row.
+    
+    Schema is always borrowed from the stream iterator (caller retains ownership).
+    Array ownership is always transferred to this iterator.
     """
     cdef CArrowBatchIterator* iterator
     cdef DictCArrowBatchIterator* dict_iterator
     cdef cpp_bool use_dict_result
     cdef object arrow_context
-    # We need to own the schema/array memory when created from raw pointers
-    cdef ArrowSchema* _owned_schema
-    cdef ArrowArray* _owned_array
+    # Array storage - we allocate, C++ takes ownership via ArrowArrayMove
+    cdef ArrowArray* _array_storage
     
     def __cinit__(
         self,
@@ -89,9 +92,9 @@ cdef class ArrowBatchIterator:
         Parameters
         ----------
         array_ptr : int
-            Pointer to ArrowArray (as integer)
+            Pointer to ArrowArray (as integer) - ownership transferred
         schema_ptr : int
-            Pointer to ArrowSchema (as integer)
+            Pointer to ArrowSchema (as integer) - borrowed, caller retains ownership
         arrow_context : ArrowConverterContext
             Context object for conversions
         use_dict_result : bool
@@ -105,42 +108,33 @@ cdef class ArrowBatchIterator:
         self.arrow_context = arrow_context
         self.iterator = NULL
         self.dict_iterator = NULL
-        self._owned_schema = NULL
-        self._owned_array = NULL
+        self._array_storage = NULL
         
-        # Cast integer pointers to C pointers
+        # Cast pointers
         cdef ArrowArray* c_array_ptr = <ArrowArray*>array_ptr
         cdef ArrowSchema* c_schema_ptr = <ArrowSchema*>schema_ptr
         
         if c_array_ptr == NULL or c_schema_ptr == NULL:
             raise RuntimeError("Invalid Arrow C Data pointers (NULL)")
         
-        # Allocate our own copies and move the data into them
-        # This ensures proper ownership and cleanup
-        self._owned_schema = <ArrowSchema*>malloc(sizeof(ArrowSchema))
-        self._owned_array = <ArrowArray*>malloc(sizeof(ArrowArray))
+        # Allocate storage for array and move data into it
+        # C++ will take ownership via ArrowArrayMove
+        self._array_storage = <ArrowArray*>malloc(sizeof(ArrowArray))
+        if self._array_storage == NULL:
+            raise MemoryError("Failed to allocate ArrowArray")
         
-        if self._owned_schema == NULL or self._owned_array == NULL:
-            if self._owned_schema != NULL:
-                free(self._owned_schema)
-                self._owned_schema = NULL
-            if self._owned_array != NULL:
-                free(self._owned_array)
-                self._owned_array = NULL
-            raise MemoryError("Failed to allocate Arrow structures")
-        
-        # Move the data (transfers ownership)
-        ArrowSchemaMove(c_schema_ptr, self._owned_schema)
-        ArrowArrayMove(c_array_ptr, self._owned_array)
+        # Move array data (transfers ownership to our storage, then to C++)
+        ArrowArrayMove(c_array_ptr, self._array_storage)
         
         # Declare ReturnVal variable at function scope (Cython requirement)
         cdef ReturnVal init_ret
         
         # Create appropriate iterator
+        # Schema is borrowed - C++ just stores the pointer
         if use_dict_result:
             self.dict_iterator = new DictCArrowBatchIterator(
-                self._owned_array,
-                self._owned_schema,
+                self._array_storage,
+                c_schema_ptr,
                 <PyObject*>arrow_context,
                 <PyObject*>use_numpy
             )
@@ -152,8 +146,8 @@ cdef class ArrowBatchIterator:
                 raise RuntimeError(f"Failed to initialize batch iterator: {error_msg}")
         else:
             self.iterator = new CArrowBatchIterator(
-                self._owned_array,
-                self._owned_schema,
+                self._array_storage,
+                c_schema_ptr,
                 <PyObject*>arrow_context,
                 <PyObject*>use_numpy,
                 <PyObject*>check_error_on_every_column
@@ -166,19 +160,15 @@ cdef class ArrowBatchIterator:
                 raise RuntimeError(f"Failed to initialize batch iterator: {error_msg}")
     
     def __dealloc__(self):
+        # Delete C++ iterators - they handle array cleanup via RAII
+        # Schema is borrowed, so it's not released here
         if self.iterator != NULL:
             del self.iterator
         if self.dict_iterator != NULL:
             del self.dict_iterator
-        # Release and free owned structures
-        if self._owned_schema != NULL:
-            if self._owned_schema.release != NULL:
-                self._owned_schema.release(self._owned_schema)
-            free(self._owned_schema)
-        if self._owned_array != NULL:
-            if self._owned_array.release != NULL:
-                self._owned_array.release(self._owned_array)
-            free(self._owned_array)
+        # Free our array storage (data was moved to C++)
+        if self._array_storage != NULL:
+            free(self._array_storage)
     
     def __iter__(self):
         return self
@@ -311,10 +301,10 @@ cdef class ArrowStreamIterator:
     def __iter__(self):
         return self
     
-    cdef _read_next_batch(self):
-        """Read the next batch from the stream. Returns None if exhausted."""
+    cdef ArrowArray* _read_next_batch(self) except NULL:
+        """Read the next batch from the stream. Returns NULL if exhausted."""
         if self._stream == NULL or self._stream.release == NULL:
-            return None
+            return NULL
         
         # Allocate array for the batch
         cdef ArrowArray* batch_array = <ArrowArray*>malloc(sizeof(ArrowArray))
@@ -337,75 +327,54 @@ cdef class ArrowStreamIterator:
         # Check if stream is exhausted (array.release will be NULL)
         if batch_array.release == NULL:
             free(batch_array)
-            return None
+            return NULL
         
         # Check for empty batch
         if batch_array.length == 0:
             if batch_array.release != NULL:
                 batch_array.release(batch_array)
             free(batch_array)
-            return None
+            return NULL
         
-        # We need to create a copy of the schema for each batch iterator
-        # since the batch iterator takes ownership
-        cdef ArrowSchema* batch_schema = <ArrowSchema*>malloc(sizeof(ArrowSchema))
-        if batch_schema == NULL:
-            if batch_array.release != NULL:
-                batch_array.release(batch_array)
-            free(batch_array)
-            raise MemoryError("Failed to allocate ArrowSchema for batch")
-        
-        # Copy schema (we need to duplicate it since batch iterator will own it)
-        # For now, we pass the schema pointer but don't move it
-        # The batch iterator should not release the schema
-        batch_schema[0] = self._schema[0]
-        # Mark as not owned by setting release to NULL
-        # This is a shallow copy - the batch iterator should handle this
-        
-        # Return pointers as integers (uintptr_t) so they can be returned to Python
-        return (<uintptr_t>batch_array, <uintptr_t>batch_schema)
+        return batch_array
     
     def __next__(self):
         """Get next row from the stream."""
-        cdef uintptr_t batch_array_ptr
-        cdef uintptr_t batch_schema_ptr
+        cdef ArrowArray* batch_array
         
         while True:
             # If no current batch iterator, read next batch
             if self._current_batch_iterator is None:
-                result = self._read_next_batch()
-                if result is None:
+                batch_array = self._read_next_batch()
+                if batch_array == NULL:
                     raise StopIteration
-                
-                batch_array_ptr, batch_schema_ptr = result
                 
                 # Handle empty schema (0 columns)
                 if self._column_count == 0:
                     # Release the batch array
-                    if (<ArrowArray*>batch_array_ptr).release != NULL:
-                        (<ArrowArray*>batch_array_ptr).release(<ArrowArray*>batch_array_ptr)
-                    free(<void*>batch_array_ptr)
-                    free(<void*>batch_schema_ptr)
+                    if batch_array.release != NULL:
+                        batch_array.release(batch_array)
+                    free(batch_array)
                     
                     if self._use_dict_result:
                         return {}
                     else:
                         return tuple()
                 
-                # Create batch iterator with raw pointers
-                # Note: ArrowBatchIterator takes ownership via ArrowArrayMove/ArrowSchemaMove
+                # Create batch iterator
+                # - Array ownership is transferred (ArrowBatchIterator moves it)
+                # - Schema is borrowed (stream owns it)
                 self._current_batch_iterator = ArrowBatchIterator(
-                    batch_array_ptr,
-                    batch_schema_ptr,
+                    <uintptr_t>batch_array,
+                    <uintptr_t>self._schema,  # Pass schema as int - borrowed
                     self._arrow_context,
                     use_dict_result=self._use_dict_result,
                     use_numpy=self._use_numpy,
                     check_error_on_every_column=True
                 )
                 
-                # Free our allocations (data was moved to batch iterator)
-                free(<void*>batch_array_ptr)
-                free(<void*>batch_schema_ptr)
+                # Free our array allocation (data was moved to batch iterator)
+                free(batch_array)
             
             # Try to get next row from current batch
             try:

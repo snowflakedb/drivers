@@ -23,13 +23,16 @@ std::shared_ptr<sf::IColumnConverter> getConverterFromSchema(ArrowSchema* schema
 /**
  * Arrow batch iterator for converting a single RecordBatch to Python rows.
  * Takes Arrow C Data Interface pointers and converts row-by-row.
+ * 
+ * Schema is always borrowed from the stream iterator - caller retains ownership.
+ * Array ownership is always transferred to this iterator.
  */
 class CArrowBatchIterator {
  public:
   /**
    * Constructor - takes Arrow C Array and Schema
-   * @param c_array Arrow C Array pointer from PyArrow RecordBatch
-   * @param c_schema Arrow C Schema pointer from PyArrow RecordBatch
+   * @param c_array Arrow C Array pointer - ownership is transferred
+   * @param c_schema Arrow C Schema pointer - borrowed, caller retains ownership
    * @param context Python context object for conversions
    * @param use_numpy Whether to use numpy types
    * @param check_error_on_every_column Check Python errors after each column
@@ -76,10 +79,10 @@ class CArrowBatchIterator {
   /** List of column converters */
   std::vector<std::shared_ptr<sf::IColumnConverter>> m_columnConverters;
 
-  /** Arrow schema */
-  nanoarrow::UniqueSchema m_schema;
+  /** Arrow schema pointer - borrowed from stream, not owned */
+  ArrowSchema* m_borrowedSchema;
 
-  /** Arrow array */
+  /** Arrow array - owned, released on destruction */
   nanoarrow::UniqueArray m_array;
 
   /** Arrow array view for efficient access */
