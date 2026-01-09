@@ -13,7 +13,7 @@ flags:
     paths: ["python/**"]
     carryforward: false
   jdbc:
-    paths: ["jdbc/**", "jdbc_bridge/**"]
+    paths: ["jdbc/**"]
     carryforward: false
   odbc:
     paths: ["odbc/**"]
