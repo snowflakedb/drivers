@@ -49,18 +49,38 @@ def parseLcovCoverage(String lcovFile) {
 }
 
 // Helper: Parse coverage from JaCoCo XML (for JDBC)
-// Extracts INSTRUCTION counter (what Codecov uses) from report-level summary
+// Uses LINE counter (what Codecov uses) and excludes test packages
 def parseJacocoCoverage(String xmlFile) {
     def result = sh(label: 'Parse JaCoCo Coverage', script: '''
         set +x
-        # Get the report-level INSTRUCTION counter (last 5 lines contain report summary)
-        LINE=$(tail -5 "''' + xmlFile + '''" | grep 'type="INSTRUCTION"' | head -1)
-        MISSED=$(echo "$LINE" | sed 's/.*missed="\\([0-9]*\\)".*/\\1/')
-        COVERED=$(echo "$LINE" | sed 's/.*covered="\\([0-9]*\\)".*/\\1/')
-        TOTAL=$((MISSED + COVERED))
-        if [ "$TOTAL" -gt 0 ]; then
-            echo "$COVERED $TOTAL" | awk '{printf "%.2f", $1*100/$2}'
-        fi
+        # Parse LINE counters from non-test packages only
+        # JaCoCo XML has <package> elements with <counter type="LINE"> inside
+        awk '
+            /<package name="/ {
+                pkg = $0
+                # Skip test packages
+                is_test = (index(pkg, "/test") > 0 || index(pkg, "Test") > 0)
+            }
+            !is_test && /type="LINE"/ {
+                # Extract missed and covered values
+                line = $0
+                sub(/.*missed="/, "", line)
+                missed = line
+                sub(/".*/, "", missed)
+                
+                line = $0
+                sub(/.*covered="/, "", line)
+                covered = line
+                sub(/".*/, "", covered)
+                
+                total_missed += missed
+                total_covered += covered
+            }
+            END {
+                total = total_missed + total_covered
+                if (total > 0) printf "%.2f", total_covered * 100 / total
+            }
+        ' "''' + xmlFile + '''"
     ''', returnStdout: true).trim()
     return result ?: null
 }
