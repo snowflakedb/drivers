@@ -68,5 +68,27 @@ component_management:
       paths:
         - "odbc/**"
 
+ignore:
+  # Test files
+  - "tests/**"
+  - "**/tests/**"
+  - "odbc_tests/**"
+  - "jdbc/src/test/**"
+  - "sf_core/tests/**"
+  
+  # Build artifacts
+  - "**/target/"
+  - "**/build/"
+  
+  # Generated code
+  - "**/protobuf_gen/"
+  - "**/gen-*/"
+  
+  # Configuration/documentation
+  - "**/*.md"
+  - "**/*.toml"
+  - "**/*.lock"
+  - "scripts/"
+
 github_checks:
   annotations: true
