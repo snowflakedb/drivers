@@ -20,8 +20,17 @@ env:
   PYTHON_CORE_MODULE_PATH: "${{ github.workspace }}/python/src/snowflake/ud_connector/_core"
 
 jobs:
+  detect-changes:
+    uses: ./.github/workflows/detect-changes.yml
+
   # Build Rust core library once and share across Python jobs
   build_rust_core:
+    needs: detect-changes
+    if: |
+      github.event_name == 'push' ||
+      needs.detect-changes.outputs.python == 'true' ||
+      needs.detect-changes.outputs.core == 'true' ||
+      needs.detect-changes.outputs.shared == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -51,14 +60,18 @@ jobs:
 
   # Combined unit + integration tests with universal connector
   python_tests:
-    needs: build_rust_core
+    needs: [detect-changes, build_rust_core]
+    if: |
+      github.event_name == 'push' ||
+      needs.detect-changes.outputs.python == 'true' ||
+      needs.detect-changes.outputs.core == 'true' ||
+      needs.detect-changes.outputs.shared == 'true'
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest]
         py: ["3.9", "3.10", "3.11", "3.12", "3.13"]
     runs-on: ${{ matrix.os }}
-    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
     steps:
       - uses: actions/checkout@v4
 
@@ -127,9 +140,13 @@ jobs:
 
   # Integration tests only with reference connector (for comparison)
   python_tests_reference:
-    needs: build_rust_core
+    needs: [detect-changes, build_rust_core]
+    if: |
+      github.event_name == 'push' ||
+      needs.detect-changes.outputs.python == 'true' ||
+      needs.detect-changes.outputs.core == 'true' ||
+      needs.detect-changes.outputs.shared == 'true'
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
     continue-on-error: true  # Reference tests expected to fail due to behavioral differences
     steps:
       - uses: actions/checkout@v4
@@ -188,8 +205,13 @@ jobs:
 
   # Compare results between connectors
   python_compare_results:
-    needs: [python_tests, python_tests_reference]
-    if: always()  # Run comparison even if reference tests fail (we want to see the differences)
+    needs: [detect-changes, python_tests, python_tests_reference]
+    if: |
+      always() &&
+      (github.event_name == 'push' ||
+       needs.detect-changes.outputs.python == 'true' ||
+       needs.detect-changes.outputs.core == 'true' ||
+       needs.detect-changes.outputs.shared == 'true')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -223,3 +245,30 @@ jobs:
             --reference ${{ github.workspace }}/reference-results/reference-${{ env.REFERENCE_OS_VERSION }}-${{ env.REFERENCE_PYTHON_VERSION }}.json \
             --fail-on-regressions 0 | tee -a $GITHUB_STEP_SUMMARY
         working-directory: python
+
+  # Summary job that always runs to provide consistent status for branch protection
+  python-status:
+    needs: [detect-changes, build_rust_core, python_tests, python_tests_reference, python_compare_results]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check status
+        run: |
+          if [[ "${{ needs.detect-changes.outputs.docs_only }}" == "true" ]]; then
+            echo "Skipped: documentation-only changes"
+            exit 0
+          fi
+          # Skip if no relevant changes
+          if [[ "${{ needs.detect-changes.outputs.python }}" == "false" ]] && \
+             [[ "${{ needs.detect-changes.outputs.core }}" == "false" ]] && \
+             [[ "${{ needs.detect-changes.outputs.shared }}" == "false" ]] && \
+             [[ "${{ github.event_name }}" != "push" ]]; then
+            echo "Skipped: no Python, core, or shared changes"
+            exit 0
+          fi
+          if [[ "${{ needs.build_rust_core.result }}" == "failure" ]] || \
+             [[ "${{ needs.python_tests.result }}" == "failure" ]]; then
+            echo "Python tests failed"
+            exit 1
+          fi
+          echo "All required jobs passed or were skipped"

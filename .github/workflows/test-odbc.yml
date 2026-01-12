@@ -10,7 +10,16 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  detect-changes:
+    uses: ./.github/workflows/detect-changes.yml
+
   odbc_tests_reference:
+    needs: detect-changes
+    if: |
+      github.event_name == 'push' ||
+      needs.detect-changes.outputs.odbc == 'true' ||
+      needs.detect-changes.outputs.core == 'true' ||
+      needs.detect-changes.outputs.shared == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -49,6 +58,12 @@ jobs:
           ctest -j $(nproc) -C Debug --test-dir cmake-build --output-on-failure
 
   odbc_tests:
+    needs: detect-changes
+    if: |
+      github.event_name == 'push' ||
+      needs.detect-changes.outputs.odbc == 'true' ||
+      needs.detect-changes.outputs.core == 'true' ||
+      needs.detect-changes.outputs.shared == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -114,3 +129,30 @@ jobs:
           flags: odbc
           name: odbc-${{ runner.os }}
           fail_ci_if_error: false
+
+  # Summary job that always runs to provide consistent status for branch protection
+  odbc-status:
+    needs: [detect-changes, odbc_tests_reference, odbc_tests]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check status
+        run: |
+          if [[ "${{ needs.detect-changes.outputs.docs_only }}" == "true" ]]; then
+            echo "Skipped: documentation-only changes"
+            exit 0
+          fi
+          # Skip if no relevant changes
+          if [[ "${{ needs.detect-changes.outputs.odbc }}" == "false" ]] && \
+             [[ "${{ needs.detect-changes.outputs.core }}" == "false" ]] && \
+             [[ "${{ needs.detect-changes.outputs.shared }}" == "false" ]] && \
+             [[ "${{ github.event_name }}" != "push" ]]; then
+            echo "Skipped: no ODBC, core, or shared changes"
+            exit 0
+          fi
+          if [[ "${{ needs.odbc_tests_reference.result }}" == "failure" ]] || \
+             [[ "${{ needs.odbc_tests.result }}" == "failure" ]]; then
+            echo "ODBC tests failed"
+            exit 1
+          fi
+          echo "All required jobs passed or were skipped"

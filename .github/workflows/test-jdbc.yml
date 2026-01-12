@@ -9,7 +9,16 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  detect-changes:
+    uses: ./.github/workflows/detect-changes.yml
+
   jdbc_tests:
+    needs: detect-changes
+    if: |
+      github.event_name == 'push' ||
+      needs.detect-changes.outputs.jdbc == 'true' ||
+      needs.detect-changes.outputs.core == 'true' ||
+      needs.detect-changes.outputs.shared == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -56,3 +65,29 @@ jobs:
           flags: jdbc
           name: jdbc-${{ runner.os }}-java${{ matrix.java-version }}
           fail_ci_if_error: false
+
+  # Summary job that always runs to provide consistent status for branch protection
+  jdbc-status:
+    needs: [detect-changes, jdbc_tests]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check status
+        run: |
+          if [[ "${{ needs.detect-changes.outputs.docs_only }}" == "true" ]]; then
+            echo "Skipped: documentation-only changes"
+            exit 0
+          fi
+          # Skip if no relevant changes
+          if [[ "${{ needs.detect-changes.outputs.jdbc }}" == "false" ]] && \
+             [[ "${{ needs.detect-changes.outputs.core }}" == "false" ]] && \
+             [[ "${{ needs.detect-changes.outputs.shared }}" == "false" ]] && \
+             [[ "${{ github.event_name }}" != "push" ]]; then
+            echo "Skipped: no JDBC, core, or shared changes"
+            exit 0
+          fi
+          if [[ "${{ needs.jdbc_tests.result }}" == "failure" ]]; then
+            echo "JDBC tests failed"
+            exit 1
+          fi
+          echo "All required jobs passed or were skipped"

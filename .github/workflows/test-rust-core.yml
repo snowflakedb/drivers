@@ -9,7 +9,15 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  detect-changes:
+    uses: ./.github/workflows/detect-changes.yml
+
   format:
+    needs: detect-changes
+    if: |
+      github.event_name == 'push' ||
+      needs.detect-changes.outputs.core == 'true' ||
+      needs.detect-changes.outputs.shared == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -22,6 +30,11 @@ jobs:
         run: cargo fmt --all -- --check
 
   clippy:
+    needs: detect-changes
+    if: |
+      github.event_name == 'push' ||
+      needs.detect-changes.outputs.core == 'true' ||
+      needs.detect-changes.outputs.shared == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -34,6 +47,11 @@ jobs:
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
   
   test:
+    needs: detect-changes
+    if: |
+      github.event_name == 'push' ||
+      needs.detect-changes.outputs.core == 'true' ||
+      needs.detect-changes.outputs.shared == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -95,4 +113,22 @@ jobs:
           name: rust-${{ runner.os }}-${{ matrix.rust-version }}
           fail_ci_if_error: false
 
-
+  # Summary job that always runs to provide consistent status for branch protection
+  rust-core-status:
+    needs: [detect-changes, format, clippy, test]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check status
+        run: |
+          if [[ "${{ needs.detect-changes.outputs.docs_only }}" == "true" ]]; then
+            echo "Skipped: documentation-only changes"
+            exit 0
+          fi
+          if [[ "${{ needs.format.result }}" == "failure" ]] || \
+             [[ "${{ needs.clippy.result }}" == "failure" ]] || \
+             [[ "${{ needs.test.result }}" == "failure" ]]; then
+            echo "One or more jobs failed"
+            exit 1
+          fi
+          echo "All required jobs passed or were skipped"
