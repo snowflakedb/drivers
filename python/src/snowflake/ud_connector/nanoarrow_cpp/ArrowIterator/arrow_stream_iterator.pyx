@@ -13,7 +13,9 @@ cdef extern from "nanoarrow.h":
         void (*release)(ArrowArray*)
     
     ctypedef struct ArrowSchema:
+        const char* name
         int64_t n_children
+        ArrowSchema** children
         void (*release)(ArrowSchema*)
     
     # Arrow C Stream Interface
@@ -388,3 +390,23 @@ cdef class ArrowStreamIterator:
     def column_count(self):
         """Get the number of columns in the result."""
         return self._column_count
+    
+    def column_names(self):
+        """Get the list of column names from the schema.
+        
+        Returns:
+            list: List of column names, or empty list if schema not initialized
+        """
+        if self._schema == NULL or not self._schema_initialized:
+            return []
+        
+        names = []
+        cdef int64_t i
+        cdef ArrowSchema* child
+        for i in range(self._column_count):
+            child = self._schema.children[i]
+            if child != NULL and child.name != NULL:
+                names.append(child.name.decode('utf-8'))
+            else:
+                names.append(None)
+        return names
