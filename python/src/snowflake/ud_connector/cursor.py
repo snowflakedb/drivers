@@ -21,9 +21,6 @@ class Cursor:
     of a fetch operation.
     """
 
-    # Class attribute for arraysize
-    arraysize = 1
-
     def __init__(self, connection, use_dict_result=False, use_numpy=False):
         """
         Initialize a new cursor object.
@@ -36,7 +33,7 @@ class Cursor:
         self.connection = connection
         self.description = None
         self._total_rowcount = -1
-        self.arraysize = 1  # Instance attribute overrides class attribute
+        self._arraysize = 1  # PEP-0249: defaults to 1
         self._closed = False
         self._use_dict_result = use_dict_result
         self._use_numpy = use_numpy
@@ -86,6 +83,21 @@ class Cursor:
             if self._rownumber is not None and self._rownumber >= 0
             else None
         )
+
+    @property
+    def arraysize(self) -> int:
+        """
+        Read/write attribute specifying the number of rows to fetch at a time
+        with fetchmany(). It defaults to 1.
+
+        Returns:
+            int: Number of rows to fetch
+        """
+        return self._arraysize
+
+    @arraysize.setter
+    def arraysize(self, value) -> None:
+        self._arraysize = int(value)
 
     def callproc(self, procname, parameters=None):
         """

@@ -3,7 +3,7 @@ Integration tests for PEP 249 Cursor objects.
 """
 
 import pytest
-
+from decimal import Decimal
 from snowflake.ud_connector.exceptions import NotSupportedError
 
 
@@ -112,8 +112,7 @@ class TestCursorFetch:
         """Test fetchone with multiple columns."""
         cursor.execute("SELECT 1, 'hello', 3.14")
         result = cursor.fetchone()
-        assert result is not None
-        assert len(result) == 3
+        assert result == (1, "hello", Decimal("3.14"))
 
     def test_fetchone_returns_none_when_exhausted(self, cursor):
         """Test fetchone returns None when no more rows."""
@@ -122,18 +121,11 @@ class TestCursorFetch:
         result = cursor.fetchone()
         assert result is None
 
-    def test_fetchall_single_row(self, cursor):
-        """Test fetchall with a single row."""
-        cursor.execute("SELECT 42")
-        result = cursor.fetchall()
-        assert len(result) == 1
-        assert result[0] == (42,)
-
     def test_fetchall_multiple_rows(self, cursor):
         """Test fetchall with multiple rows."""
         cursor.execute("SELECT seq4() FROM TABLE(GENERATOR(ROWCOUNT => 10))")
         result = cursor.fetchall()
-        assert len(result) == 10
+        assert result == [(0,), (1,), (2,), (3,), (4,), (5,), (6,), (7,), (8,), (9,)]
 
     def test_fetchall_empty_result(self, cursor):
         """Test fetchall with empty result."""
@@ -148,7 +140,6 @@ class TestCursorFetch:
         )
         cursor.arraysize = 3
         result = cursor.fetchmany()
-        assert len(result) == 3
         assert result == [(0,), (1,), (2,)]
 
     def test_fetchmany_with_size(self, cursor):
@@ -337,10 +328,11 @@ class TestCursorDictResult:
         dict_cursor.execute("SELECT 1 AS col_a, 'hello' AS col_b, 3.14 AS col_c")
         result = dict_cursor.fetchone()
         assert isinstance(result, dict)
-        assert "COL_A" in result or "col_a" in result
-        # Check we got the expected values (keys might be uppercase or lowercase)
-        values = list(result.values())
-        assert 1 in values or "1" in str(values)
+        assert result == {
+            "COL_A": 1,
+            "COL_B": "hello",
+            "COL_C": Decimal("3.14"),
+        }
 
     def test_fetchall_returns_list_of_dicts(self, dict_cursor):
         """Test fetchall returns list of dicts."""
@@ -348,11 +340,7 @@ class TestCursorDictResult:
             "SELECT seq4() AS id FROM TABLE(GENERATOR(ROWCOUNT => 5)) ORDER BY id"
         )
         results = dict_cursor.fetchall()
-        assert len(results) == 5
-        assert all(isinstance(row, dict) for row in results)
-        # Check column name exists (might be uppercase)
-        first_row = results[0]
-        assert "ID" in first_row or "id" in first_row
+        assert results == [{"ID": 0}, {"ID": 1}, {"ID": 2}, {"ID": 3}, {"ID": 4}]
 
     def test_dict_result_multiple_columns(self, dict_cursor):
         """Test dict result with multiple columns."""
@@ -365,8 +353,7 @@ class TestCursorDictResult:
         """
         )
         result = dict_cursor.fetchone()
-        assert isinstance(result, dict)
-        assert len(result) == 3
+        assert result == {"NUMERIC_COL": 42, "STRING_COL": "test", "BOOL_COL": True}
 
     def test_dict_result_large_result(self, dict_cursor):
         """Test dict result with large result set spanning multiple batches."""
@@ -392,21 +379,19 @@ class TestCursorDictResult:
             "SELECT seq4() AS n FROM TABLE(GENERATOR(ROWCOUNT => 10)) ORDER BY n"
         )
         rows = list(dict_cursor)
-        assert len(rows) == 10
-        assert all(isinstance(row, dict) for row in rows)
+        assert rows == list({"N": i} for i in range(10))
 
     def test_dict_mixed_fetchone_and_fetchall(self, dict_cursor):
         """Test mixing fetchone and fetchall with dict results."""
         dict_cursor.execute(
-            "SELECT seq4() AS n FROM TABLE(GENERATOR(ROWCOUNT => 10)) ORDER BY n"
+            "SELECT seq4() AS n FROM TABLE(GENERATOR(ROWCOUNT => 5)) ORDER BY n"
         )
         # Fetch first few rows
         r1 = dict_cursor.fetchone()
         r2 = dict_cursor.fetchone()
-        assert isinstance(r1, dict)
-        assert isinstance(r2, dict)
+        assert r1 == {"N": 0}
+        assert r2 == {"N": 1}
 
         # Fetch remaining
         remaining = dict_cursor.fetchall()
-        assert len(remaining) == 8
-        assert all(isinstance(row, dict) for row in remaining)
+        assert remaining == [{"N": 2}, {"N": 3}, {"N": 4}]
