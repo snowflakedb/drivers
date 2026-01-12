@@ -138,21 +138,26 @@ jobs:
     steps:
       - name: Check status
         run: |
-          if [[ "${{ needs.detect-changes.outputs.docs_only }}" == "true" ]]; then
-            echo "Skipped: documentation-only changes"
+          echo "=== ODBC CI Status ==="
+          
+          # Check if tests were skipped
+          if [[ "${{ needs.odbc_tests.result }}" == "skipped" ]]; then
+            echo "✓ ODBC tests were SKIPPED (no relevant changes detected)"
+            echo "  - odbc changed: ${{ needs.detect-changes.outputs.odbc }}"
+            echo "  - core changed: ${{ needs.detect-changes.outputs.core }}"
+            echo "  - shared changed: ${{ needs.detect-changes.outputs.shared }}"
             exit 0
           fi
-          # Skip if no relevant changes
-          if [[ "${{ needs.detect-changes.outputs.odbc }}" == "false" ]] && \
-             [[ "${{ needs.detect-changes.outputs.core }}" == "false" ]] && \
-             [[ "${{ needs.detect-changes.outputs.shared }}" == "false" ]] && \
-             [[ "${{ github.event_name }}" != "push" ]]; then
-            echo "Skipped: no ODBC, core, or shared changes"
-            exit 0
-          fi
+          
+          # Check if tests failed
           if [[ "${{ needs.odbc_tests_reference.result }}" == "failure" ]] || \
              [[ "${{ needs.odbc_tests.result }}" == "failure" ]]; then
-            echo "ODBC tests failed"
+            echo "✗ ODBC tests were RUN and FAILED"
+            echo "  - odbc_tests_reference: ${{ needs.odbc_tests_reference.result }}"
+            echo "  - odbc_tests: ${{ needs.odbc_tests.result }}"
             exit 1
           fi
-          echo "All required jobs passed or were skipped"
+          
+          # Tests ran and passed
+          echo "✓ ODBC tests were RUN and PASSED"
+          exit 0

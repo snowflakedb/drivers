@@ -22,10 +22,10 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        
+
       - name: Install rustfmt
         run: rustup component add rustfmt && cargo fmt --version
-        
+
       - name: Check formatting
         run: cargo fmt --all -- --check
 
@@ -39,13 +39,13 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        
+
       - name: Install clippy
         run: rustup component add clippy
-        
+
       - name: Run clippy
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
-  
+
   test:
     needs: detect-changes
     if: |
@@ -114,6 +114,7 @@ jobs:
           fail_ci_if_error: false
 
   # Summary job that always runs to provide consistent status for branch protection
+  # Configure branch protection to require "rust-core-status" instead of "test (ubuntu-latest, stable)"
   rust-core-status:
     needs: [detect-changes, format, clippy, test]
     if: always()
@@ -121,14 +122,27 @@ jobs:
     steps:
       - name: Check status
         run: |
-          if [[ "${{ needs.detect-changes.outputs.docs_only }}" == "true" ]]; then
-            echo "Skipped: documentation-only changes"
+          echo "=== Rust Core CI Status ==="
+          
+          # Check if tests were skipped
+          if [[ "${{ needs.test.result }}" == "skipped" ]]; then
+            echo "✓ Rust Core tests were SKIPPED (no relevant changes detected)"
+            echo "  - core changed: ${{ needs.detect-changes.outputs.core }}"
+            echo "  - shared changed: ${{ needs.detect-changes.outputs.shared }}"
             exit 0
           fi
+          
+          # Check if any job failed
           if [[ "${{ needs.format.result }}" == "failure" ]] || \
              [[ "${{ needs.clippy.result }}" == "failure" ]] || \
              [[ "${{ needs.test.result }}" == "failure" ]]; then
-            echo "One or more jobs failed"
+            echo "✗ Rust Core tests were RUN and FAILED"
+            echo "  - format: ${{ needs.format.result }}"
+            echo "  - clippy: ${{ needs.clippy.result }}"
+            echo "  - test: ${{ needs.test.result }}"
             exit 1
           fi
-          echo "All required jobs passed or were skipped"
+          
+          # Tests ran and passed
+          echo "✓ Rust Core tests were RUN and PASSED"
+          exit 0

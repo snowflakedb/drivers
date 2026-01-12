@@ -85,6 +85,7 @@ jobs:
           cargo run --bin tests_format_validator --manifest-path tests/tests_format_validator/Cargo.toml
 
   # Summary job that always runs to provide consistent status for branch protection
+  # Configure branch protection to require "validations-status" instead of individual validation jobs
   validations-status:
     needs: [detect-changes, test-data, proto, tests-format-validator]
     if: always()
@@ -92,14 +93,30 @@ jobs:
     steps:
       - name: Check status
         run: |
-          if [[ "${{ needs.detect-changes.outputs.docs_only }}" == "true" ]]; then
-            echo "Skipped: documentation-only changes"
+          echo "=== Validations Status ==="
+          
+          # Check if all validations were skipped (docs-only)
+          if [[ "${{ needs.test-data.result }}" == "skipped" ]] && \
+             [[ "${{ needs.proto.result }}" == "skipped" ]] && \
+             [[ "${{ needs.tests-format-validator.result }}" == "skipped" ]]; then
+            echo "✓ Validations were SKIPPED (documentation-only changes)"
             exit 0
           fi
+          
+          # Check if any validation failed
           if [[ "${{ needs.test-data.result }}" == "failure" ]] || \
              [[ "${{ needs.proto.result }}" == "failure" ]] || \
              [[ "${{ needs.tests-format-validator.result }}" == "failure" ]]; then
-            echo "Validation checks failed"
+            echo "✗ Validations were RUN and FAILED"
+            echo "  - test-data: ${{ needs.test-data.result }}"
+            echo "  - proto: ${{ needs.proto.result }}"
+            echo "  - tests-format-validator: ${{ needs.tests-format-validator.result }}"
             exit 1
           fi
-          echo "All validations passed or were skipped"
+          
+          # Validations ran and passed
+          echo "✓ Validations were RUN and PASSED"
+          echo "  - test-data: ${{ needs.test-data.result }}"
+          echo "  - proto: ${{ needs.proto.result }}"
+          echo "  - tests-format-validator: ${{ needs.tests-format-validator.result }}"
+          exit 0

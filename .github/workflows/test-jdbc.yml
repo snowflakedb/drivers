@@ -74,20 +74,23 @@ jobs:
     steps:
       - name: Check status
         run: |
-          if [[ "${{ needs.detect-changes.outputs.docs_only }}" == "true" ]]; then
-            echo "Skipped: documentation-only changes"
+          echo "=== JDBC CI Status ==="
+          
+          # Check if tests were skipped
+          if [[ "${{ needs.jdbc_tests.result }}" == "skipped" ]]; then
+            echo "✓ JDBC tests were SKIPPED (no relevant changes detected)"
+            echo "  - jdbc changed: ${{ needs.detect-changes.outputs.jdbc }}"
+            echo "  - core changed: ${{ needs.detect-changes.outputs.core }}"
+            echo "  - shared changed: ${{ needs.detect-changes.outputs.shared }}"
             exit 0
           fi
-          # Skip if no relevant changes
-          if [[ "${{ needs.detect-changes.outputs.jdbc }}" == "false" ]] && \
-             [[ "${{ needs.detect-changes.outputs.core }}" == "false" ]] && \
-             [[ "${{ needs.detect-changes.outputs.shared }}" == "false" ]] && \
-             [[ "${{ github.event_name }}" != "push" ]]; then
-            echo "Skipped: no JDBC, core, or shared changes"
-            exit 0
-          fi
+          
+          # Check if tests failed
           if [[ "${{ needs.jdbc_tests.result }}" == "failure" ]]; then
-            echo "JDBC tests failed"
+            echo "✗ JDBC tests were RUN and FAILED"
             exit 1
           fi
-          echo "All required jobs passed or were skipped"
+          
+          # Tests ran and passed
+          echo "✓ JDBC tests were RUN and PASSED"
+          exit 0

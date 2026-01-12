@@ -223,10 +223,10 @@ jobs:
 
       - name: Download universal test results
         uses: actions/download-artifact@v4
-        with: 
+        with:
           name: results-universal-${{ env.REFERENCE_OS_VERSION }}-${{ env.REFERENCE_PYTHON_VERSION }}
           path: ${{ github.workspace }}/universal-results
-      
+
       - name: Download reference test results
         uses: actions/download-artifact@v4
         with:
@@ -254,21 +254,26 @@ jobs:
     steps:
       - name: Check status
         run: |
-          if [[ "${{ needs.detect-changes.outputs.docs_only }}" == "true" ]]; then
-            echo "Skipped: documentation-only changes"
+          echo "=== Python CI Status ==="
+          
+          # Check if tests were skipped
+          if [[ "${{ needs.python_tests.result }}" == "skipped" ]]; then
+            echo "✓ Python tests were SKIPPED (no relevant changes detected)"
+            echo "  - python changed: ${{ needs.detect-changes.outputs.python }}"
+            echo "  - core changed: ${{ needs.detect-changes.outputs.core }}"
+            echo "  - shared changed: ${{ needs.detect-changes.outputs.shared }}"
             exit 0
           fi
-          # Skip if no relevant changes
-          if [[ "${{ needs.detect-changes.outputs.python }}" == "false" ]] && \
-             [[ "${{ needs.detect-changes.outputs.core }}" == "false" ]] && \
-             [[ "${{ needs.detect-changes.outputs.shared }}" == "false" ]] && \
-             [[ "${{ github.event_name }}" != "push" ]]; then
-            echo "Skipped: no Python, core, or shared changes"
-            exit 0
-          fi
+          
+          # Check if tests failed
           if [[ "${{ needs.build_rust_core.result }}" == "failure" ]] || \
              [[ "${{ needs.python_tests.result }}" == "failure" ]]; then
-            echo "Python tests failed"
+            echo "✗ Python tests were RUN and FAILED"
+            echo "  - build_rust_core: ${{ needs.build_rust_core.result }}"
+            echo "  - python_tests: ${{ needs.python_tests.result }}"
             exit 1
           fi
-          echo "All required jobs passed or were skipped"
+          
+          # Tests ran and passed
+          echo "✓ Python tests were RUN and PASSED"
+          exit 0
