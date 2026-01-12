@@ -1118,7 +1118,7 @@ def test_successful_login_with_valid_credentials(connect):
         # And I should have access to the system
         cursor = conn.cursor()
         result = cursor.execute(f"SELECT * FROM temporary_resource")
-        assert len(result) is not None, "Should have system access"
+        assert len(result) > 0, "Should have system access"
 
     finally:
         try:
