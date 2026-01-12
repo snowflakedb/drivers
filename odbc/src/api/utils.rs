@@ -8,9 +8,8 @@ pub fn num_result_cols(
     column_count_ptr: *mut sql::SmallInt,
 ) -> OdbcResult<()> {
     tracing::debug!("num_result_cols called");
-    let int_ptr = column_count_ptr as *mut i32;
     unsafe {
-        std::ptr::write(int_ptr, 1);
+        std::ptr::write(column_count_ptr, 1);
     }
     Ok(())
 }
