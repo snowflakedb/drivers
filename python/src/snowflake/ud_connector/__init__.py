@@ -64,3 +64,5 @@ __all__ = [
     # Type objects
     'STRING', 'BINARY', 'NUMBER', 'DATETIME', 'ROWID'
 ]
+
+# TODO: Remove this line - mock change to test GHA path filtering

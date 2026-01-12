@@ -65,9 +65,6 @@ jobs:
               - 'Cargo.lock'
               - 'build_common.rs'
               - 'rust-toolchain.toml'
-              - '.github/workflows/**'
-              - 'scripts/**'
-              - 'tests/**'
             docs_only:
               - '**/*.md'
               - 'LICENSE'
