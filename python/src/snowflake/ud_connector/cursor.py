@@ -4,6 +4,8 @@ PEP 249 Database API 2.0 Cursor Objects
 This module defines the Cursor class as specified in PEP 249.
 """
 
+from __future__ import annotations
+
 from .exceptions import NotSupportedError, ProgrammingError
 
 from ._internal.protobuf_gen.database_driver_v1_pb2 import (
