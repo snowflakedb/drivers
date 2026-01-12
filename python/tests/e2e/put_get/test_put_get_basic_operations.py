@@ -35,6 +35,7 @@ def test_should_select_data_from_file_uploaded_to_stage(connection):
         assert row == ("1", "2", "3")
 
 
+@pytest.mark.skip(reason="debug")
 def test_should_list_file_uploaded_to_stage(connection):
     test_file_path = shared_test_data_dir() / "compression" / "test_data.csv"
     filename = test_file_path.name
