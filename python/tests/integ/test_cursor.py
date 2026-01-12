@@ -281,31 +281,48 @@ class TestCursorMultipleQueries:
 
     def test_sequential_queries(self, cursor):
         """Test sequential queries on same cursor."""
+        # Before any query, rownumber should be None
+        assert cursor.rownumber is None
+
         cursor.execute("SELECT 1")
+        # After execute, before fetch, rownumber should be None (not yet fetched)
+        assert cursor.rownumber is None
+
         result1 = cursor.fetchone()
         assert result1 == (1,)
+        assert cursor.rownumber == 0
 
         cursor.execute("SELECT 2, 3")
+        # New query should reset rownumber
+        assert cursor.rownumber is None
+
         result2 = cursor.fetchone()
         assert result2 == (2, 3)
+        assert cursor.rownumber == 0
 
     def test_new_query_resets_iterator(self, cursor):
         """Test new query resets the iterator state."""
         cursor.execute("SELECT seq4() FROM TABLE(GENERATOR(ROWCOUNT => 100))")
         # Partially consume
-        for _ in range(10):
+        for i in range(10):
             cursor.fetchone()
+            assert cursor.rownumber == i
 
         # New query should reset
         cursor.execute("SELECT 42")
+        assert cursor.rownumber is None
+
         result = cursor.fetchone()
         assert result == (42,)
+        assert cursor.rownumber == 0
 
     def test_fetchall_after_partial_fetch(self, cursor):
         """Test fetchall after partial fetchone calls."""
         cursor.execute(
             "SELECT seq4() as n FROM TABLE(GENERATOR(ROWCOUNT => 10)) ORDER BY n"
         )
+        assert cursor.rownumber is None
+
         # Fetch first 3
         r1 = cursor.fetchone()
         r2 = cursor.fetchone()
@@ -313,11 +330,14 @@ class TestCursorMultipleQueries:
         assert r1 == (0,)
         assert r2 == (1,)
         assert r3 == (2,)
+        assert cursor.rownumber == 2
 
         # Fetch remaining
         remaining = cursor.fetchall()
         assert len(remaining) == 7
         assert remaining[0] == (3,)
+        # After fetchall, rownumber should be at the last row (9)
+        assert cursor.rownumber == 9
 
 
 class TestCursorDictResult:
@@ -395,3 +415,9 @@ class TestCursorDictResult:
         # Fetch remaining
         remaining = dict_cursor.fetchall()
         assert remaining == [{"N": 2}, {"N": 3}, {"N": 4}]
+
+    def test_dict_should_not_crash_when_no_rows(self, dict_cursor):
+        """Test dict should not crash when no rows."""
+        dict_cursor.execute("SELECT 1 WHERE FALSE")
+        result = dict_cursor.fetchall()
+        assert result == []
