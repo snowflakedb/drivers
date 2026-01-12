@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use crate::api::{
     Connection, ConnectionState, Environment, OdbcResult, Statement, StatementState,
     conn_from_handle,
@@ -107,7 +109,7 @@ pub fn init_logging() {
     lazy_static! {
         // TODO: This is a hack to initialize the logging system.
         // We should find a better way to do this.
-        static ref LOGGING_RESULT: Result<(), sf_core::logging::LogError> = sf_core::logging::init(sf_core::logging::LoggingConfig::new(None, true, false));
+        static ref LOGGING_RESULT: Result<(), sf_core::logging::LogError> = sf_core::logging::init(sf_core::logging::LoggingConfig::new(Some(PathBuf::from("rust.log")), true, false));
     }
 
     if let Err(e) = LOGGING_RESULT.as_ref() {
