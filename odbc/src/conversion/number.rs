@@ -1,5 +1,5 @@
 use arrow::array::{ArrowPrimitiveType, PrimitiveArray};
-use odbc_sys::{Len, Pointer};
+use odbc_sys::Len;
 
 use crate::cdata_types::CDataType;
 use crate::conversion::traits::Binding;
