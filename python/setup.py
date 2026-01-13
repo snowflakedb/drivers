@@ -56,10 +56,8 @@ if _ABLE_TO_COMPILE_EXTENSIONS and not SNOWFLAKE_DISABLE_COMPILE_ARROW_EXTENSION
     class MyBuildExt(build_ext):
         def build_extension(self, ext):
             if options["debug"]:
-                ext.extra_compile_args.append("-g")
-                ext.extra_link_args.append("-g")
-                ext.extra_compile_args.append("-O0")
-                ext.extra_link_args.append("-O0")
+                ext.extra_compile_args.extend(["-g", "-O0"])
+                ext.extra_link_args.extend(["-g", "-O0"])
             current_dir = os.getcwd()
 
             if ext.name == "snowflake.ud_connector._arrow_stream_iterator":
@@ -116,11 +114,16 @@ if _ABLE_TO_COMPILE_EXTENSIONS and not SNOWFLAKE_DISABLE_COMPILE_ARROW_EXTENSION
                         ext.extra_compile_args.append("/std:c++17")
                 elif sys.platform == "linux" or sys.platform == "darwin":
                     if "std=" not in os.environ.get("CXXFLAGS", ""):
-                        ext.extra_compile_args.append("-std=c++11")
-                        ext.extra_compile_args.append("-D_GLIBCXX_USE_CXX11_ABI=0")
+                        ext.extra_compile_args.extend(
+                            ["-std=c++11", "-D_GLIBCXX_USE_CXX11_ABI=0"]
+                        )
                     # Define endianness for flatcc
-                    ext.extra_compile_args.append("-DFLATBUFFERS_LITTLEENDIAN=1")
-                    ext.extra_compile_args.append("-DFLATBUFFERS_PROTOCOL_IS_LE=1")
+                    ext.extra_compile_args.extend(
+                        [
+                            "-DFLATBUFFERS_LITTLEENDIAN=1",
+                            "-DFLATBUFFERS_PROTOCOL_IS_LE=1",
+                        ]
+                    )
                     if (
                         sys.platform == "darwin"
                         and "macosx-version-min" not in os.environ.get("CXXFLAGS", "")
