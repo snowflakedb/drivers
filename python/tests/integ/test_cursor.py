@@ -5,6 +5,7 @@ Integration tests for PEP 249 Cursor objects.
 import pytest
 
 from snowflake.ud_connector.exceptions import NotSupportedError
+from decimal import Decimal
 
 
 class TestCursorMethods:
@@ -115,19 +116,19 @@ class TestCursorDatabaseQueries:
 class TestCursorFetch:
     """Test cursor fetch operations."""
 
+    # TODO: SNOW-2997748 - test fetchone and fetchall without execute
+
     def test_fetchone_single_value(self, cursor):
         """Test fetchone with a single value."""
         cursor.execute("SELECT 1")
         result = cursor.fetchone()
-        assert result is not None
         assert result == (1,)
 
     def test_fetchone_multiple_columns(self, cursor):
         """Test fetchone with multiple columns."""
         cursor.execute("SELECT 1, 'hello', 3.14")
         result = cursor.fetchone()
-        assert result is not None
-        assert len(result) == 3
+        assert result == (1, "hello", Decimal("3.14"))
 
     def test_fetchone_returns_none_when_exhausted(self, cursor):
         """Test fetchone returns None when no more rows."""
@@ -147,9 +148,15 @@ class TestCursorFetch:
         """Test fetchall with multiple rows."""
         cursor.execute("SELECT seq4() FROM TABLE(GENERATOR(ROWCOUNT => 10))")
         result = cursor.fetchall()
-        assert len(result) == 10
+        assert result == [(i,) for i in range(10)]
 
-    @pytest.mark.skip("TODO: Known issue")
+    def test_fetchall_multiple_columns(self, cursor):
+        """Test fetchall with multiple columns."""
+        cursor.execute("SELECT 1, 'hello', 3.14")
+        result = cursor.fetchall()
+        assert result == [(1, "hello", Decimal("3.14"))]
+
+    @pytest.mark.skip("TODO: Known issue, SNOW-2997744")
     def test_fetchall_empty_result(self, cursor):
         """Test fetchall with empty result."""
         cursor.execute("SELECT 1 WHERE FALSE")
@@ -164,16 +171,16 @@ class TestCursorIteration:
         """Test cursor can be iterated."""
         cursor.execute("SELECT seq4() FROM TABLE(GENERATOR(ROWCOUNT => 5))")
         rows = list(cursor)
-        assert len(rows) == 5
+        assert rows == [(i,) for i in range(5)]
 
     def test_cursor_iteration_order(self, cursor):
         """Test cursor iteration maintains order."""
         cursor.execute(
-            "SELECT seq4() as n FROM TABLE(GENERATOR(ROWCOUNT => 100)) ORDER BY n"
+            "SELECT seq4() as n FROM TABLE(GENERATOR(ROWCOUNT => 100)) ORDER BY n DESC"
         )
         rows = list(cursor)
         for i, row in enumerate(rows):
-            assert row == (i,), f"Expected ({i},), got {row}"
+            assert row == (99 - i,), f"Expected ({99 - i},), got {row}"
 
     def test_mixed_fetchone_and_iteration(self, cursor):
         """Test mixing fetchone and iteration."""
@@ -183,55 +190,55 @@ class TestCursorIteration:
         assert first == (0,)
         # Iterate rest
         remaining = list(cursor)
-        assert len(remaining) == 4
-        assert remaining[0] == (1,)
+        assert remaining == [(1,), (2,), (3,), (4,)]
 
 
 class TestCursorLargeResults:
     """Test cursor with large result sets."""
 
-    @pytest.mark.parametrize("row_count", [100, 1000, 5000])
-    def test_large_result_fetchall(self, cursor, row_count):
-        """Test fetchall with large results."""
-        cursor.execute(f"SELECT seq4() FROM TABLE(GENERATOR(ROWCOUNT => {row_count}))")
-        result = cursor.fetchall()
-        assert len(result) == row_count
+    N_ROWS = 20_000
 
-    @pytest.mark.parametrize("row_count", [100, 1000])
-    def test_large_result_iteration(self, cursor, row_count):
+    def test_large_result_fetchall(self, cursor):
+        """Test fetchall with large results."""
+        cursor.execute(
+            f"SELECT seq4() FROM TABLE(GENERATOR(ROWCOUNT => {self.N_ROWS}))"
+        )
+        result = cursor.fetchall()
+        assert result == [(i,) for i in range(self.N_ROWS)]
+
+    def test_large_result_iteration(self, cursor):
         """Test iteration over large results."""
-        cursor.execute(f"SELECT seq4() FROM TABLE(GENERATOR(ROWCOUNT => {row_count}))")
-        count = sum(1 for _ in cursor)
-        assert count == row_count
+        cursor.execute(
+            f"SELECT seq4() FROM TABLE(GENERATOR(ROWCOUNT => {self.N_ROWS}))"
+        )
+        rows = list(cursor)
+        assert rows == [(i,) for i in range(self.N_ROWS)]
 
     def test_large_result_with_multiple_columns(self, cursor):
         """Test large result with multiple columns."""
         cursor.execute(
-            """
+            f"""
             SELECT 
                 seq4() as id,
                 seq4() * 2 as doubled,
                 seq4() % 10 as mod10
-            FROM TABLE(GENERATOR(ROWCOUNT => 1000))
+            FROM TABLE(GENERATOR(ROWCOUNT => {self.N_ROWS}))
         """
         )
         result = cursor.fetchall()
-        assert len(result) == 1000
-        assert all(len(row) == 3 for row in result)
-
-
-class TestCursorBatchHandling:
-    """Test cursor batch handling."""
+        assert result == [(i, i * 2, i % 10) for i in range(self.N_ROWS)]
 
     def test_partial_batch_consumption(self, cursor):
         """Test partial consumption of batches."""
-        cursor.execute("SELECT seq4() FROM TABLE(GENERATOR(ROWCOUNT => 1000))")
+        cursor.execute(
+            f"SELECT seq4() FROM TABLE(GENERATOR(ROWCOUNT => {self.N_ROWS}))"
+        )
         # Fetch only some rows
-        for _ in range(100):
+        for _ in range(self.N_ROWS // 10):
             cursor.fetchone()
         # Fetch remaining
         remaining = cursor.fetchall()
-        assert len(remaining) == 900
+        assert remaining == [(i,) for i in range(self.N_ROWS // 10, self.N_ROWS)]
 
 
 class TestCursorMultipleQueries:
@@ -274,8 +281,7 @@ class TestCursorMultipleQueries:
 
         # Fetch remaining
         remaining = cursor.fetchall()
-        assert len(remaining) == 7
-        assert remaining[0] == (3,)
+        assert remaining == [(i,) for i in range(3, 10)]
 
 
 class TestCursorDictResult:
@@ -285,6 +291,7 @@ class TestCursorDictResult:
     directly to verify dict result functionality works correctly.
     """
 
+    @pytest.mark.skip_reference
     def test_next_returns_dict(self, cursor):
         """Test next() returns dict with column names as keys."""
         # TODO: Replace with DictCursor when implemented
@@ -299,6 +306,7 @@ class TestCursorDictResult:
         result = next(iterator)
         assert result == {"ID": 1, "NAME": "hello"}
 
+    @pytest.mark.skip_reference
     def test_dict_result_large_result(self, cursor):
         """Test dict result with large result set spanning multiple batches."""
         # TODO: Replace with DictCursor when implemented
