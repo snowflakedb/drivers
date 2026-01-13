@@ -1,6 +1,6 @@
 [build-system]
-requires = ["setuptools>=61.0", "wheel"]
-build-backend = "setuptools.build_meta"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
 
 [project]
 name = "snowflake-connector-python-ud"  # TODO: change this once ready, needs switching tests to UD
@@ -35,12 +35,13 @@ dependencies = [
 "Source" = "https://github.com/snowflakedb/universal-driver"
 "Documentation" = "https://github.com/snowflakedb/universal-driver/blob/main/README.md"
 
-[tool.setuptools.packages.find]
-where = ["src"]
-include = ["snowflake.*"]
+[tool.hatch.build.targets.wheel]
+packages = ["src/snowflake"]
 
-[tool.setuptools.package-data]
-"snowflake.ud_connector._core" = ["*.so", "*.dll", "*.dylib"]
+[tool.hatch.build.targets.wheel.force-include]
+"src/snowflake/ud_connector/_core/libsf_core.so" = "snowflake/ud_connector/_core/libsf_core.so"
+"src/snowflake/ud_connector/_core/libsf_core.dylib" = "snowflake/ud_connector/_core/libsf_core.dylib"
+"src/snowflake/ud_connector/_core/libsf_core.dll" = "snowflake/ud_connector/_core/libsf_core.dll"
 
 [project.optional-dependencies]
 test = [
@@ -51,8 +52,6 @@ test = [
     "pytest-cov",
     "hypothesis",
     "requests",
-    "tox>=4.14",
-    "tox-uv>=1.8",
     "snowflake-connector-python>=3.6.0",
     "brotli",
     "zstandard",
@@ -152,3 +151,73 @@ strict_equality = true
 module = "tests.*"
 disallow_untyped_defs = false
 disallow_incomplete_defs = false
+
+# ===== Hatch Configuration =====
+
+[tool.hatch.envs.default]
+features = ["test", "dev"]
+
+[tool.hatch.envs.default.env-vars]
+# Auto-detect core library path based on platform
+CORE_PATH = "{env:CORE_PATH:}"
+PARAMETER_PATH = "{env:PARAMETER_PATH:}"
+
+[tool.hatch.envs.default.scripts]
+# Build Rust core library
+build-core = "cargo build --package sf_core --manifest-path=../Cargo.toml --target-dir=src/snowflake/ud_connector/_core && cd src/snowflake/ud_connector/_core && cp -rf debug/* . && rm -rf debug/"
+
+# Lint environment
+[tool.hatch.envs.lint]
+features = ["dev"]
+scripts.run = "flake8 src/snowflake"
+
+# Type checking environment
+[tool.hatch.envs.type]
+features = ["dev"]
+scripts.run = "mypy src/snowflake"
+
+# Test environment matrix
+[tool.hatch.envs.test]
+features = ["test"]
+
+[[tool.hatch.envs.test.matrix]]
+python = ["3.9", "3.10", "3.11", "3.12", "3.13"]
+
+[tool.hatch.envs.test.scripts]
+# Unit tests
+unit = "pytest tests/unit {args}"
+# Integration tests
+integ = "pytest tests/integ --connector=universal {args}"
+# End-to-end tests
+e2e = "pytest tests/e2e --connector=universal {args}"
+# All tests
+all = "pytest tests/ --connector=universal {args}"
+# All tests with coverage
+all-cov = "pytest tests/ --connector=universal --cov=src/snowflake --cov-report=xml --cov-report=html {args}"
+
+# Reference connector environment (isolated - doesn't install local package)
+[tool.hatch.envs.reference]
+skip-install = true
+dependencies = [
+    "pytest>=8",
+    "pytest-xdist",
+    "pytest-json-report",
+    "pytest-split",
+    "hypothesis",
+    "brotli",
+    "zstandard",
+    "snowflake-connector-python=={env:REFERENCE_DRIVER_VERSION:3.17.2}",
+]
+
+[tool.hatch.envs.reference.scripts]
+run = "pytest tests/integ tests/e2e --connector=reference {args}"
+
+# CI environment for special CI tasks
+[tool.hatch.envs.ci]
+skip-install = false
+dependencies = [
+    "requests",
+]
+
+[tool.hatch.envs.ci.scripts]
+compare = "python ci/reference_tests/compare_reports.py {args}"

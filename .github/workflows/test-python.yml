@@ -31,10 +31,17 @@ jobs:
         run: |
           sudo apt-get update
 
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "0.5.11"
+
+      - name: Install Hatch
+        run: uv tool install hatch
+
       - name: Build Rust core library
         working-directory: ./python
-        run: |
-          RUSTFLAGS="" make build-core
+        run: hatch run build-core
 
       - name: Upload Rust artifacts
         uses: actions/upload-artifact@v4
@@ -66,7 +73,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: /tmp/.uv-cache
-          key: uv-${{ runner.os }}-${{ matrix.py }}-${{ hashFiles('python/uv.lock', 'python/pyproject.toml', 'python/tox.ini') }}
+          key: uv-${{ runner.os }}-${{ matrix.py }}-${{ hashFiles('python/uv.lock', 'python/pyproject.toml') }}
           restore-keys: |
             uv-${{ runner.os }}-${{ matrix.py }}-
             uv-${{ runner.os }}-
@@ -85,22 +92,19 @@ jobs:
         env:
           PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
 
-      - name: Setup dependencies
-        run: make setup
-        working-directory: python
+      - name: Install Hatch
+        run: uv tool install hatch
 
       - name: Run all tests with coverage
         env:
           PARAMETER_PATH: ${{ github.workspace }}/parameters.json
           REFERENCE_DRIVER_VERSION: ${{ env.PYTHON_REFERENCE_DRIVER_VERSION }}
+          CORE_PATH: ${{ env.PYTHON_CORE_MODULE_PATH }}/libsf_core.so
         run: |
           mkdir -p reports
-          PYTHON_ID="${{ matrix.py }}"
-          PYTHON_ID=${PYTHON_ID//./}  # Remove dots: 3.9 -> 39
-          uv run tox -e py${PYTHON_ID}-all -- \
+          hatch run test.py${{ matrix.py }}:all-cov \
             --json-report --json-report-file=reports/universal-${{ matrix.os }}-${{ matrix.py }}.json \
             --junitxml=reports/universal-${{ matrix.os }}-${{ matrix.py }}.xml \
-            --cov=src/snowflake \
             --cov-report=xml:reports/coverage-${{ matrix.os }}-${{ matrix.py }}.xml \
             --cov-report=html:reports/coverage-${{ matrix.os }}-${{ matrix.py }}-html
         working-directory: python
@@ -141,7 +145,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: /tmp/.uv-cache
-          key: uv-${{ runner.os }}-${{ env.REFERENCE_PYTHON_VERSION }}-${{ hashFiles('python/uv.lock', 'python/pyproject.toml', 'python/tox.ini') }}
+          key: uv-${{ runner.os }}-${{ env.REFERENCE_PYTHON_VERSION }}-${{ hashFiles('python/uv.lock', 'python/pyproject.toml') }}
           restore-keys: |
             uv-${{ runner.os }}-${{ env.REFERENCE_PYTHON_VERSION }}-
             uv-${{ runner.os }}-
@@ -160,15 +164,19 @@ jobs:
         env:
           PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
 
-      - name: Setup dependencies
-        run: make setup
-        working-directory: python
+      - name: Install Hatch
+        run: uv tool install hatch
 
       - name: Run reference integration tests
         env:
           PARAMETER_PATH: ${{ github.workspace }}/parameters.json
           REFERENCE_DRIVER_VERSION: ${{ env.PYTHON_REFERENCE_DRIVER_VERSION }}
-        run: make ci-test-reference PYTHON_VERSION=${{ env.REFERENCE_PYTHON_VERSION }} OS_VERSION=${{ env.REFERENCE_OS_VERSION }}
+          CORE_PATH: ${{ env.PYTHON_CORE_MODULE_PATH }}/libsf_core.so
+        run: |
+          mkdir -p reports
+          hatch run reference:run \
+            --json-report --json-report-file=reports/reference-${{ env.REFERENCE_OS_VERSION }}-${{ env.REFERENCE_PYTHON_VERSION }}.json \
+            --junitxml=reports/reference-${{ env.REFERENCE_OS_VERSION }}-${{ env.REFERENCE_PYTHON_VERSION }}.xml
         working-directory: python
 
       - name: Upload test results as GitHub artifact
@@ -199,19 +207,19 @@ jobs:
       
       - name: Download reference test results
         uses: actions/download-artifact@v4
-        with: 
+        with:
           name: results-reference-${{ env.REFERENCE_OS_VERSION }}-${{ env.REFERENCE_PYTHON_VERSION }}
           path: ${{ github.workspace }}/reference-results
 
-      - name: Setup dependencies
-        run: make setup
-        working-directory: python
+      - name: Install Hatch
+        run: uv tool install hatch
 
       - name: Compare integration test results
-        env:
-          UNIVERSAL_TEST_REPORTS_DIR: ${{ github.workspace }}/universal-results
-          REFERENCE_TEST_REPORTS_DIR: ${{ github.workspace }}/reference-results
-          FAIL_ON_REGRESSIONS: "0"   # set to "1" when ready to for a strong requirement on compliance with old driver
         run: |
-          make ci-compare-artifacts PYTHON_VERSION=${{ env.REFERENCE_PYTHON_VERSION }} OS_VERSION=${{ env.REFERENCE_OS_VERSION }} | tee -a $GITHUB_STEP_SUMMARY
+          hatch run ci:compare \
+            --py ${{ env.REFERENCE_PYTHON_VERSION }} \
+            --os ${{ env.REFERENCE_OS_VERSION }} \
+            --universal ${{ github.workspace }}/universal-results/universal-${{ env.REFERENCE_OS_VERSION }}-${{ env.REFERENCE_PYTHON_VERSION }}.json \
+            --reference ${{ github.workspace }}/reference-results/reference-${{ env.REFERENCE_OS_VERSION }}-${{ env.REFERENCE_PYTHON_VERSION }}.json \
+            --fail-on-regressions 0 | tee -a $GITHUB_STEP_SUMMARY
         working-directory: python
