@@ -233,40 +233,6 @@ class TestCursorBatchHandling:
         assert len(remaining) == 900
 
 
-class TestCursorRowcount:
-    """Test cursor rowcount attribute."""
-
-    def test_rowcount_after_select(self, cursor):
-        """Test rowcount is set after SELECT."""
-        cursor.execute("SELECT 1")
-        # For SELECT, rowcount is typically the number of rows affected
-        # which may be 0 or -1 depending on implementation
-        assert cursor.rowcount >= -1
-
-    def test_rowcount_after_insert(self, cursor, tmp_schema):
-        """Test rowcount after INSERT."""
-        table_name = f"{tmp_schema}.test_rowcount"
-        cursor.execute(f"CREATE OR REPLACE TABLE {table_name} (id INT)")
-        cursor.execute(f"INSERT INTO {table_name} VALUES (1), (2), (3)")
-        assert cursor.rowcount == 3
-
-    def test_rowcount_after_update(self, cursor, tmp_schema):
-        """Test rowcount after UPDATE."""
-        table_name = f"{tmp_schema}.test_rowcount_update"
-        cursor.execute(f"CREATE OR REPLACE TABLE {table_name} (id INT)")
-        cursor.execute(f"INSERT INTO {table_name} VALUES (1), (2), (3)")
-        cursor.execute(f"UPDATE {table_name} SET id = id + 10 WHERE id > 1")
-        assert cursor.rowcount == 2
-
-    def test_rowcount_after_delete(self, cursor, tmp_schema):
-        """Test rowcount after DELETE."""
-        table_name = f"{tmp_schema}.test_rowcount_delete"
-        cursor.execute(f"CREATE OR REPLACE TABLE {table_name} (id INT)")
-        cursor.execute(f"INSERT INTO {table_name} VALUES (1), (2), (3), (4), (5)")
-        cursor.execute(f"DELETE FROM {table_name} WHERE id <= 3")
-        assert cursor.rowcount == 3
-
-
 class TestCursorMultipleQueries:
     """Test cursor with multiple queries."""
 

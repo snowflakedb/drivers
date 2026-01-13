@@ -114,9 +114,6 @@ class Cursor:
             StatementExecuteQueryRequest(stmt_handle=stmt_handle)
         ).result
 
-        # Update rowcount from execute result
-        self.rowcount = self.execute_result.rows_affected
-
         # Reset streaming state for a new result
         self._reader = None
         self._batch_iterator = None

@@ -82,24 +82,6 @@ class ArrowStreamIterator:
         except StopIteration:
             return None
 
-    def fetchmany(self, size: int = 1) -> list[tuple | dict]:
-        """Fetch the next `size` rows.
-
-        Args:
-            size: Number of rows to fetch
-
-        Returns:
-            List of rows (tuples or dicts)
-        """
-        rows = []
-        for _ in range(size):
-            try:
-                row = self.__next__()
-                rows.append(row)
-            except StopIteration:
-                break
-        return rows
-
     def fetchall(self) -> list[tuple | dict]:
         """Fetch all remaining rows.
 
