@@ -37,11 +37,11 @@ dependencies = [
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/snowflake"]
-
-[tool.hatch.build.targets.wheel.force-include]
-"src/snowflake/ud_connector/_core/libsf_core.so" = "snowflake/ud_connector/_core/libsf_core.so"
-"src/snowflake/ud_connector/_core/libsf_core.dylib" = "snowflake/ud_connector/_core/libsf_core.dylib"
-"src/snowflake/ud_connector/_core/libsf_core.dll" = "snowflake/ud_connector/_core/libsf_core.dll"
+artifacts = [
+    "src/snowflake/ud_connector/_core/*.so",
+    "src/snowflake/ud_connector/_core/*.dylib",
+    "src/snowflake/ud_connector/_core/*.dll",
+]
 
 [project.optional-dependencies]
 test = [
