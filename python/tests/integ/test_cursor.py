@@ -284,8 +284,8 @@ class TestCursorDictResult:
     directly to verify dict result functionality works correctly.
     """
 
-    def test_fetchone_returns_dict(self, cursor):
-        """Test fetchone returns dict with column names as keys."""
+    def test_next_returns_dict(self, cursor):
+        """Test next() returns dict with column names as keys."""
         # TODO: Replace with DictCursor when implemented
         from snowflake.ud_connector.arrow_stream_iterator import ArrowStreamIterator
 
@@ -293,7 +293,7 @@ class TestCursorDictResult:
         reader = cursor._batch_reader()
         iterator = ArrowStreamIterator(reader, use_dict_result=True)
 
-        result = iterator.fetchone()
+        result = next(iterator)
         assert result == {"ID": 1, "NAME": "hello"}
 
     def test_dict_result_large_result(self, cursor):
@@ -312,7 +312,7 @@ class TestCursorDictResult:
         reader = cursor._batch_reader()
         iterator = ArrowStreamIterator(reader, use_dict_result=True)
 
-        result = iterator.fetchall()
+        result = list(iterator)
         assert len(result) == 5000
         assert all(isinstance(row, dict) for row in result)
         assert all(len(row) == 2 for row in result)

@@ -170,153 +170,11 @@ class TestArrowStreamIteratorIteration:
                 next(iterator)
 
 
-class TestArrowStreamIteratorFetchOne:
-    """Test ArrowStreamIterator fetchone method."""
-
-    def test_fetchone_returns_next_row(self):
-        """Test fetchone returns the next row."""
-        mock_reader = MagicMock()
-        mock_batch = MagicMock()
-        mock_batch.num_columns = 1
-
-        mock_reader.read_next_batch.return_value = mock_batch
-
-        mock_batch_iterator = MagicMock()
-        mock_batch_iterator.__next__ = MagicMock(return_value=(42,))
-
-        with patch(
-            "snowflake.ud_connector.arrow_stream_iterator.PyArrowBatchIterator",
-            return_value=mock_batch_iterator,
-        ):
-            from snowflake.ud_connector.arrow_stream_iterator import ArrowStreamIterator
-
-            iterator = ArrowStreamIterator(mock_reader)
-            result = iterator.fetchone()
-            assert result == (42,)
-
-    def test_fetchone_returns_none_when_exhausted(self):
-        """Test fetchone returns None when iterator is exhausted."""
-        mock_reader = MagicMock()
-        mock_reader.read_next_batch.side_effect = StopIteration
-
-        with patch("snowflake.ud_connector.arrow_stream_iterator.PyArrowBatchIterator"):
-            from snowflake.ud_connector.arrow_stream_iterator import ArrowStreamIterator
-
-            iterator = ArrowStreamIterator(mock_reader)
-            result = iterator.fetchone()
-            assert result is None
-
-
-class TestArrowStreamIteratorFetchAll:
-    """Test ArrowStreamIterator fetchall method."""
-
-    def test_fetchall_returns_all_rows(self):
-        """Test fetchall returns all remaining rows."""
-        mock_reader = MagicMock()
-        mock_batch = MagicMock()
-        mock_batch.num_columns = 1
-
-        # First returns batch, second raises StopIteration
-        mock_reader.read_next_batch.side_effect = [mock_batch, StopIteration]
-
-        mock_batch_iterator = MagicMock()
-        mock_batch_iterator.__iter__ = MagicMock(return_value=iter([(1,), (2,), (3,)]))
-
-        with patch(
-            "snowflake.ud_connector.arrow_stream_iterator.PyArrowBatchIterator",
-            return_value=mock_batch_iterator,
-        ):
-            from snowflake.ud_connector.arrow_stream_iterator import ArrowStreamIterator
-
-            iterator = ArrowStreamIterator(mock_reader)
-            result = iterator.fetchall()
-            assert result == [(1,), (2,), (3,)]
-
-    def test_fetchall_with_multiple_batches(self):
-        """Test fetchall across multiple batches."""
-        mock_reader = MagicMock()
-        mock_batch1 = MagicMock()
-        mock_batch1.num_columns = 1
-        mock_batch2 = MagicMock()
-        mock_batch2.num_columns = 1
-
-        # Returns batch1, batch2, then StopIteration
-        mock_reader.read_next_batch.side_effect = [
-            mock_batch1,
-            mock_batch2,
-            StopIteration,
-        ]
-
-        mock_iter1 = MagicMock()
-        mock_iter1.__iter__ = MagicMock(return_value=iter([(1,), (2,)]))
-
-        mock_iter2 = MagicMock()
-        mock_iter2.__iter__ = MagicMock(return_value=iter([(3,), (4,)]))
-
-        with patch(
-            "snowflake.ud_connector.arrow_stream_iterator.PyArrowBatchIterator",
-            side_effect=[mock_iter1, mock_iter2],
-        ):
-            from snowflake.ud_connector.arrow_stream_iterator import ArrowStreamIterator
-
-            iterator = ArrowStreamIterator(mock_reader)
-            result = iterator.fetchall()
-            assert result == [(1,), (2,), (3,), (4,)]
-
-    def test_fetchall_empty_result(self):
-        """Test fetchall with no rows."""
-        mock_reader = MagicMock()
-        mock_reader.read_next_batch.side_effect = StopIteration
-
-        with patch("snowflake.ud_connector.arrow_stream_iterator.PyArrowBatchIterator"):
-            from snowflake.ud_connector.arrow_stream_iterator import ArrowStreamIterator
-
-            iterator = ArrowStreamIterator(mock_reader)
-            result = iterator.fetchall()
-            assert result == []
-
-    def test_fetchall_read_remaining_rows(self):
-        """Test fetchall reads remaining rows from all batches."""
-        mock_reader = MagicMock()
-        mock_batch1 = MagicMock()
-        mock_batch1.num_columns = 1
-        mock_batch2 = MagicMock()
-        mock_batch2.num_columns = 1
-
-        # Returns batch1, batch2, then StopIteration
-        mock_reader.read_next_batch.side_effect = [
-            mock_batch1,
-            mock_batch2,
-            StopIteration,
-        ]
-
-        mock_iter1 = MagicMock()
-        mock_iter1.__next__ = MagicMock(side_effect=[(1,), (2,), StopIteration])
-        mock_iter1.__iter__ = MagicMock(return_value=mock_iter1)
-
-        mock_iter2 = MagicMock()
-        mock_iter2.__next__ = MagicMock(side_effect=[(3,), (4,), (5,), StopIteration])
-        mock_iter2.__iter__ = MagicMock(return_value=mock_iter2)
-
-        with patch(
-            "snowflake.ud_connector.arrow_stream_iterator.PyArrowBatchIterator",
-            side_effect=[mock_iter1, mock_iter2],
-        ):
-            from snowflake.ud_connector.arrow_stream_iterator import ArrowStreamIterator
-
-            iterator = ArrowStreamIterator(mock_reader)
-            result_one = iterator.fetchone()
-            assert result_one == (1,)
-
-            result_rest = iterator.fetchall()
-            assert result_rest == [(2,), (3,), (4,), (5,)]
-
-
 class TestArrowStreamIteratorWithDictResult:
     """Test ArrowStreamIterator with use_dict_result=True."""
 
-    def test_fetchone_returns_dict(self):
-        """Test fetchone returns dict when use_dict_result=True."""
+    def test_next_returns_dict(self):
+        """Test next() returns dict when use_dict_result=True."""
         mock_reader = MagicMock()
         mock_batch = MagicMock()
         mock_batch.num_columns = 2
@@ -335,5 +193,5 @@ class TestArrowStreamIteratorWithDictResult:
             from snowflake.ud_connector.arrow_stream_iterator import ArrowStreamIterator
 
             iterator = ArrowStreamIterator(mock_reader, use_dict_result=True)
-            result = iterator.fetchone()
+            result = next(iterator)
             assert result == {"col1": 1, "col2": "test"}

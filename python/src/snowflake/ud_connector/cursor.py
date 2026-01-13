@@ -37,8 +37,7 @@ class Cursor:
         self.arraysize = 1  # Instance attribute overrides class attribute
         self._closed = False
         # Streaming state for Arrow results
-        self._reader = None
-        self._batch_iterator = None
+        self._iterator = None
         self.execute_result = None
 
     @property
@@ -115,8 +114,7 @@ class Cursor:
         ).result
 
         # Reset streaming state for a new result
-        self._reader = None
-        self._batch_iterator = None
+        self._iterator = None
 
     def executemany(self, operation, seq_of_parameters):
         """
@@ -138,15 +136,10 @@ class Cursor:
         reader = pyarrow.RecordBatchReader._import_from_c(stream_ptr)
         return reader
 
-    def _ensure_batch_iterator(self):
-        if self._batch_iterator is None:
-            if self._reader is None:
-                self._reader = self._batch_reader()
-
-            self._batch_iterator = ArrowStreamIterator(
-                self._reader,
-                use_dict_result=False,
-            )
+    def _ensure_iterator(self):
+        if self._iterator is None:
+            reader = self._batch_reader()
+            self._iterator = ArrowStreamIterator(reader, use_dict_result=False)
 
     def fetchone(self):
         """
@@ -158,9 +151,11 @@ class Cursor:
         Raises:
             NotSupportedError: If not implemented
         """
-        # Initialize batch iterator on first use
-        self._ensure_batch_iterator()
-        return self._batch_iterator.fetchone()
+        self._ensure_iterator()
+        try:
+            return next(self._iterator)
+        except StopIteration:
+            return None
 
     def fetchmany(self, size=None):
         """
@@ -187,9 +182,8 @@ class Cursor:
         Raises:
             NotSupportedError: If not implemented
         """
-        # Initialize batch iterator on first use
-        self._ensure_batch_iterator()
-        return self._batch_iterator.fetchall()
+        self._ensure_iterator()
+        return list(self._iterator)
 
     def nextset(self):
         """
