@@ -183,10 +183,20 @@ build-core = "cargo build --package sf_core --manifest-path=../Cargo.toml --targ
 # Detect and display paths (for convenience)
 show-paths = "python scripts/detect_core_path.py --export"
 
-# Lint environment
-[tool.hatch.envs.lint]
-features = ["dev"]
-scripts.run = "flake8 src/snowflake"
+# Precommit environment
+[tool.hatch.envs.precommit.scripts]
+check = [
+    'ruff format --check src/snowflake tests',
+    'ruff check src/snowflake tests',
+    'mypy --install-types --non-interactive -p snowflake.ud_connector',
+]
+fix = [
+    'ruff format src/snowflake tests',
+    'ruff check --fix src/snowflake tests',
+    # Run format once again as linting may have changed files.
+    'ruff format src/snowflake tests',
+    'mypy --install-types --non-interactive -p snowflake.ud_connector',
+]
 
 # Type checking environment
 [tool.hatch.envs.type]

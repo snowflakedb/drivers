@@ -37,3 +37,10 @@ repos:
         entry: cargo run --bin tests_format_validator --manifest-path tests/tests_format_validator/Cargo.toml
         pass_filenames: false
         language: system
+    -   id: python-checks
+        name: Python code checks (hatch)
+        description: Run linting, formatting, and type checks on Python files in python/ directory
+        entry: bash -c 'cd python && hatch run precommit:check'
+        pass_filenames: false
+        files: ^python/.*\.py$
+        language: system

@@ -54,9 +54,31 @@ jobs:
           name: rust-core-library
           path: "${{ env.PYTHON_CORE_MODULE_PATH }}/libsf_core.so"
 
+  # Format and lint checking
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "0.5.11"
+
+      - name: Set up Python
+        run: uv python install 3.13
+
+      - name: Install Hatch
+        run: uv tool install hatch
+
+      - name: Run format and lint checks
+        working-directory: ./python
+        run: hatch run precommit:check
+
   # Combined unit + integration tests with universal connector
   python_tests:
-    needs: [detect-changes, build_rust_core]
+    needs: [detect-changes, build_rust_core, format]
     if: github.event_name == 'push' || needs.detect-changes.outputs.run_python == 'true'
     strategy:
       fail-fast: false
@@ -132,7 +154,7 @@ jobs:
 
   # Integration tests only with reference connector (for comparison)
   python_tests_reference:
-    needs: [detect-changes, build_rust_core]
+    needs: [detect-changes, build_rust_core, format]
     if: github.event_name == 'push' || needs.detect-changes.outputs.run_python == 'true'
     runs-on: ubuntu-latest
     continue-on-error: true  # Reference tests expected to fail due to behavioral differences

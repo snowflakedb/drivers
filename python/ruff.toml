@@ -1,0 +1,40 @@
+line-length = 120
+extend-exclude = [
+    'src/snowflake/ud_connector/_core',
+    'src/snowflake/ud_connector/_internal/protobuf_gen',
+]
+
+[lint]
+select = [
+    'B',                        # flake8-bugbear
+    'D',                        # pydocstyle
+    'E',                        # pycodestyle
+    'F',                        # pyflakes
+    'I',                        # isort
+    'RUF100',                   # check for valid noqa directives
+    'UP',                       # pyupgrade
+    'W',                        # pycodestyle
+]
+ignore = [
+    'D100',                     # Missing docstring in public class
+    'D101',                     # Missing docstring in public class
+    'D102',                     # Missing docstring in public method
+    'D104',                     # Missing docstring in public package
+    'D105',                     # Missing docstring in magic method
+    'D107',                     # Missing docstring in `__init__`
+]
+
+[lint.pydocstyle]
+convention = 'pep257'
+
+[lint.isort]
+known-first-party = ['snowflake']
+lines-after-imports = 2
+lines-between-types = 1
+order-by-type = true
+
+[format]
+quote-style = "double"
+indent-style = "space"
+docstring-code-line-length = 100
+docstring-code-format = true

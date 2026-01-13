@@ -106,8 +106,8 @@ hatch run test.py3.13:all
 ### Code Quality
 
 ```bash
-hatch run lint:run    # Run flake8
-hatch run type:run    # Run mypy type checking
+hatch run precommit:check    # Run all checks (format, lint, type)
+hatch run precommit:fix      # Auto-fix formatting and linting
 ```
 
 ### Build

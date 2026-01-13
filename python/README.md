@@ -88,9 +88,9 @@ hatch run test:all -k test_connection --maxfail=1
 # Run reference connector tests
 REFERENCE_DRIVER_VERSION=3.17.2 hatch run reference:run
 
-# Lint and type checking
-hatch run lint:run
-hatch run type:run
+# Code quality checks
+hatch run precommit:check        # Run all checks (format, lint, type)
+hatch run precommit:fix          # Auto-fix formatting and linting issues
 ```
 
 ## References
