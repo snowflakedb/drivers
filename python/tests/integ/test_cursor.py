@@ -280,22 +280,20 @@ class TestCursorMultipleQueries:
 class TestCursorDictResult:
     """Test dict result mode.
 
-    Note: DictCursor is not yet implemented. These tests use PyArrowStreamIterator
+    Note: DictCursor is not yet implemented. These tests use ArrowStreamIterator
     directly to verify dict result functionality works correctly.
     """
 
     def test_next_returns_dict(self, cursor):
         """Test next() returns dict with column names as keys."""
         # TODO: Replace with DictCursor when implemented
-        from snowflake.ud_connector._arrow_batch_iterator import PyArrowStreamIterator
+        from snowflake.ud_connector._arrow_stream_iterator import ArrowStreamIterator
         from snowflake.ud_connector.arrow_context import ArrowConverterContext
 
         cursor.execute("SELECT 1 AS id, 'hello' AS name")
         stream_ptr = cursor._get_stream_ptr()
         arrow_context = ArrowConverterContext()
-        iterator = PyArrowStreamIterator(
-            stream_ptr, arrow_context, use_dict_result=True
-        )
+        iterator = ArrowStreamIterator(stream_ptr, arrow_context, use_dict_result=True)
 
         result = next(iterator)
         assert result == {"ID": 1, "NAME": "hello"}
@@ -303,7 +301,7 @@ class TestCursorDictResult:
     def test_dict_result_large_result(self, cursor):
         """Test dict result with large result set spanning multiple batches."""
         # TODO: Replace with DictCursor when implemented
-        from snowflake.ud_connector._arrow_batch_iterator import PyArrowStreamIterator
+        from snowflake.ud_connector._arrow_stream_iterator import ArrowStreamIterator
         from snowflake.ud_connector.arrow_context import ArrowConverterContext
 
         cursor.execute(
@@ -316,9 +314,7 @@ class TestCursorDictResult:
         )
         stream_ptr = cursor._get_stream_ptr()
         arrow_context = ArrowConverterContext()
-        iterator = PyArrowStreamIterator(
-            stream_ptr, arrow_context, use_dict_result=True
-        )
+        iterator = ArrowStreamIterator(stream_ptr, arrow_context, use_dict_result=True)
 
         result = list(iterator)
         assert len(result) == 5000

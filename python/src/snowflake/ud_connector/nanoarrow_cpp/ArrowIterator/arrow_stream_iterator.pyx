@@ -48,7 +48,7 @@ cdef extern from "CArrowBatchIterator.hpp" namespace "sf":
         int64_t getCurrentRowIndex()
 
 
-cdef class PyArrowBatchIterator:
+cdef class ArrowBatchIterator:
     """
     Python wrapper for C++ Arrow batch iterator.
     Converts Arrow RecordBatch to Python tuples/dicts row-by-row.
@@ -204,7 +204,7 @@ cdef extern from "CArrowStreamIterator.hpp" namespace "sf":
         ReturnVal checkInitializationStatus()
 
 
-cdef class PyArrowStreamIterator:
+cdef class ArrowStreamIterator:
     """
     Python wrapper for C++ Arrow stream iterator.
     
@@ -286,4 +286,3 @@ cdef class PyArrowStreamIterator:
 # Import PyCapsule functions
 cdef extern from "Python.h":
     void* PyCapsule_GetPointer(object capsule, const char* name) except NULL
-

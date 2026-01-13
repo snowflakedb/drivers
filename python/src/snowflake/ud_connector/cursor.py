@@ -11,7 +11,7 @@ from ._internal.protobuf_gen.database_driver_v1_pb2 import (
     StatementSetSqlQueryRequest,
     StatementExecuteQueryRequest,
 )
-from ._arrow_batch_iterator import PyArrowStreamIterator
+from ._arrow_stream_iterator import ArrowStreamIterator
 from .arrow_context import ArrowConverterContext
 
 
@@ -140,7 +140,7 @@ class Cursor:
         if self._iterator is None:
             stream_ptr = self._get_stream_ptr()
             arrow_context = ArrowConverterContext()
-            self._iterator = PyArrowStreamIterator(
+            self._iterator = ArrowStreamIterator(
                 stream_ptr,
                 arrow_context,
                 use_dict_result=False,
