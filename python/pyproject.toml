@@ -195,17 +195,10 @@ all = "pytest tests/ --connector=universal {args}"
 # All tests with coverage
 all-cov = "pytest tests/ --connector=universal --cov=src/snowflake --cov-report=xml --cov-report=html {args}"
 
-# Reference connector environment (isolated - doesn't install local package)
+# Reference connector environment (installs local package + reference connector)
 [tool.hatch.envs.reference]
-skip-install = true
+features = ["test"]
 dependencies = [
-    "pytest>=8",
-    "pytest-xdist",
-    "pytest-json-report",
-    "pytest-split",
-    "hypothesis",
-    "brotli",
-    "zstandard",
     "snowflake-connector-python=={env:REFERENCE_DRIVER_VERSION:3.17.2}",
 ]
 
