@@ -5,14 +5,14 @@ This module defines the Cursor class as specified in PEP 249.
 """
 
 from .exceptions import NotSupportedError
-import pyarrow
 
 from ._internal.protobuf_gen.database_driver_v1_pb2 import (
     StatementNewRequest,
     StatementSetSqlQueryRequest,
     StatementExecuteQueryRequest,
 )
-from .arrow_stream_iterator import ArrowStreamIterator
+from ._arrow_batch_iterator import PyArrowStreamIterator
+from .arrow_context import ArrowConverterContext
 
 
 class Cursor:
@@ -129,17 +129,23 @@ class Cursor:
         """
         raise NotSupportedError("executemany is not implemented")
 
-    def _batch_reader(self):
+    def _get_stream_ptr(self):
+        """Get the ArrowArrayStream pointer from execute result."""
         stream_ptr = int.from_bytes(
             self.execute_result.stream.value, byteorder="little", signed=False
         )
-        reader = pyarrow.RecordBatchReader._import_from_c(stream_ptr)
-        return reader
+        return stream_ptr
 
     def _ensure_iterator(self):
         if self._iterator is None:
-            reader = self._batch_reader()
-            self._iterator = ArrowStreamIterator(reader, use_dict_result=False)
+            stream_ptr = self._get_stream_ptr()
+            arrow_context = ArrowConverterContext()
+            self._iterator = PyArrowStreamIterator(
+                stream_ptr,
+                arrow_context,
+                use_dict_result=False,
+                use_numpy=False,
+            )
 
     def fetchone(self):
         """

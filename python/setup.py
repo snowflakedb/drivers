@@ -82,6 +82,7 @@ if _ABLE_TO_COMPILE_EXTENSIONS and not SNOWFLAKE_DISABLE_COMPILE_ARROW_EXTENSION
                         "BooleanConverter.cpp",
                         "CArrowBatchIterator.cpp",
                         "CArrowIterator.cpp",
+                        "CArrowStreamIterator.cpp",
                         "CArrowTableIterator.cpp",
                         "DateConverter.cpp",
                         "DecFloatConverter.cpp",
