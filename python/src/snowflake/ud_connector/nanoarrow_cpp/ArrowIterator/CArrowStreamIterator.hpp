@@ -5,20 +5,14 @@
 #include <vector>
 
 #include "CArrowIterator.hpp"  // For ReturnVal definition
+#include "ConverterUtil.hpp"
 #include "IColumnConverter.hpp"
 #include "Python/Common.hpp"
-#include "SnowflakeType.hpp"
 #include "logging.hpp"
 #include "nanoarrow.h"
 #include "nanoarrow.hpp"
 
 namespace sf {
-
-// Forward declaration
-std::shared_ptr<sf::IColumnConverter> getConverterFromSchema(ArrowSchema* schema,
-                                                             ArrowArrayView* array,
-                                                             PyObject* context, bool useNumpy,
-                                                             Logger* logger);
 
 /**
  * Arrow stream iterator that reads directly from an ArrowArrayStream pointer.

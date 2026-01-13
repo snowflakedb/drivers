@@ -73,8 +73,8 @@ bool CArrowStreamIterator::loadNextBatch() {
   m_currentArrayView.reset();
 
   // Get next batch from stream
-  // IMPORTANT: Release the GIL during get_next() because Rust may need to do
-  // async I/O (fetching chunks from S3) which could deadlock if GIL is held
+  // IMPORTANT: Release the GIL during get_next() to avoid deadlocks.
+  // Similar practice happens in pyarrow.
   int returnCode;
   {
     Py_BEGIN_ALLOW_THREADS

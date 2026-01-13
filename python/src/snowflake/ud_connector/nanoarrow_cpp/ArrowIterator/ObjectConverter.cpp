@@ -2,8 +2,8 @@
 
 #include <memory>
 
-#include "CArrowBatchIterator.hpp"
 #include "CArrowIterator.hpp"
+#include "ConverterUtil.hpp"
 #include "SnowflakeType.hpp"
 
 namespace sf {
