@@ -27,6 +27,28 @@ Build the Rust core library:
 hatch run build-core
 ```
 
+### Environment Variables
+
+**IMPORTANT:** Set up required environment variables before running tests:
+
+```bash
+# Easy way (recommended) - use the setup script:
+source scripts/setup_env.sh
+
+# Or manually with auto-detection:
+eval $(python scripts/detect_core_path.py --export)
+
+# Or set manually:
+export PARAMETER_PATH="$(pwd)/../parameters.json"
+```
+
+You can verify the detected path with:
+```bash
+hatch run show-paths
+```
+
+**Note:** Unlike the old Makefile which auto-detected paths, you must explicitly set `PARAMETER_PATH` before running tests. If not set, it will be an empty string, which will cause test failures.
+
 ## Testing
 
 ### Quick Start

@@ -20,6 +20,34 @@ uv tool install hatch
 
 # Build Rust core library
 hatch run build-core
+
+# Set up environment variables (REQUIRED for tests)
+source scripts/setup_env.sh
+```
+
+### Environment Variables
+
+**CRITICAL:** Tests require `PARAMETER_PATH` to be set explicitly.
+
+#### Quick Setup (Recommended)
+
+```bash
+# One-liner - sets up everything and validates paths:
+source scripts/setup_env.sh
+```
+
+#### Manual Setup
+
+```bash
+# Auto-detect path:
+eval $(python scripts/detect_core_path.py --export)
+
+# Or set manually:
+export PARAMETER_PATH="$(pwd)/../parameters.json"
+
+# Verify path is set correctly:
+hatch run show-paths
+echo $PARAMETER_PATH
 ```
 
 ## Quick Start

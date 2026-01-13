@@ -158,13 +158,14 @@ disallow_incomplete_defs = false
 features = ["test", "dev"]
 
 [tool.hatch.envs.default.env-vars]
-# Auto-detect core library path based on platform
-CORE_PATH = "{env:CORE_PATH:}"
+# IMPORTANT: PARAMETER_PATH must be explicitly set
 PARAMETER_PATH = "{env:PARAMETER_PATH:}"
 
 [tool.hatch.envs.default.scripts]
 # Build Rust core library
 build-core = "cargo build --package sf_core --manifest-path=../Cargo.toml --target-dir=src/snowflake/ud_connector/_core && cd src/snowflake/ud_connector/_core && cp -rf debug/* . && rm -rf debug/"
+# Detect and display paths (for convenience)
+show-paths = "python scripts/detect_core_path.py --export"
 
 # Lint environment
 [tool.hatch.envs.lint]
