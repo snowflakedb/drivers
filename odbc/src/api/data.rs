@@ -182,6 +182,7 @@ mod tests {
     fn field_with_text_meta() -> Field {
         let mut metadata = HashMap::new();
         metadata.insert("logicalType".to_string(), "TEXT".to_string());
+        metadata.insert("charLength".to_string(), "4096".to_string());
         Field::new("test", DataType::Utf8, false).with_metadata(metadata)
     }
 
