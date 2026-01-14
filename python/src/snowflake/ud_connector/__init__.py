@@ -63,4 +63,3 @@ __all__ = [
 
     # Type objects
     'STRING', 'BINARY', 'NUMBER', 'DATETIME', 'ROWID'
-]
