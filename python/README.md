@@ -51,6 +51,8 @@ hatch run show-paths
 
 ## Testing
 
+See README in `tests/` directory
+
 ### Quick Start
 
 ```bash
