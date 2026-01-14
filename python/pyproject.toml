@@ -1,5 +1,5 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "Cython", "setuptools"]
 build-backend = "hatchling.build"
 
 [project]
@@ -25,7 +25,6 @@ classifiers = [
 ]
 requires-python = ">=3.9"
 dependencies = [
-    "pyarrow>=19.0.0",
     "protobuf>=6.32.1",
 ]
 
@@ -35,13 +34,30 @@ dependencies = [
 "Source" = "https://github.com/snowflakedb/universal-driver"
 "Documentation" = "https://github.com/snowflakedb/universal-driver/blob/main/README.md"
 
+[tool.hatch.build.targets.sdist]
+include = [
+    "src/",
+    "hatch_build_hooks.py",
+    "LICENSE",
+    "README.md",
+]
+exclude = [
+    "__pycache__",
+    "src/snowflake/ud_connector/_internal/nanoarrow_cpp/scripts",
+]
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/snowflake"]
 artifacts = [
     "src/snowflake/ud_connector/_core/*.so",
     "src/snowflake/ud_connector/_core/*.dylib",
     "src/snowflake/ud_connector/_core/*.dll",
+    "src/snowflake/ud_connector/_internal/*.so",
+    "src/snowflake/ud_connector/_internal/*.pyd",
 ]
+
+[tool.hatch.build.targets.wheel.hooks.custom]
+path = "hatch_build_hooks.py"
 
 [project.optional-dependencies]
 test = [
