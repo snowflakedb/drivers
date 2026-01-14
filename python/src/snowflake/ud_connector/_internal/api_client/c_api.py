@@ -65,14 +65,14 @@ core.sf_core_api_call_proto.argtypes = [
 
 
 def sf_core_api_call_proto(
-    api: bytes,
-    method: bytes,
+    api: ctypes.c_char_p,
+    method: ctypes.c_char_p,
     request: Any,
     request_len: int,
     response: Any,
     response_len: Any,
 ) -> int:
-    return core.sf_core_api_call_proto(api, method, request, request_len, response, response_len)
+    return core.sf_core_api_call_proto(api, method, request, request_len, response, response_len)  # type: ignore
 
 
 def sf_core_init_logger(callback: Any) -> None:

@@ -5,7 +5,9 @@ This module defines the Cursor class as specified in PEP 249.
 """
 
 from __future__ import annotations
-from typing import TYPE_CHECKING, Any, Sequence
+
+from collections.abc import Sequence
+from typing import TYPE_CHECKING, Any
 
 import pyarrow  # type: ignore[import-untyped]
 
@@ -19,6 +21,7 @@ from ._internal.protobuf_gen.database_driver_v1_pb2 import (  # type: ignore[att
 
 from ._internal.arrow_stream_iterator import ArrowStreamIterator
 from ._internal.arrow_context import ArrowConverterContext
+
 
 if TYPE_CHECKING:
     from .connection import Connection

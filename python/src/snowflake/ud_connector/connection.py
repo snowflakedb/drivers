@@ -5,6 +5,7 @@ This module defines the Connection class as specified in PEP 249.
 """
 
 from __future__ import annotations
+
 from typing import Any
 
 from snowflake.ud_connector._internal.protobuf_gen.database_driver_v1_services import (  # type: ignore[attr-defined]

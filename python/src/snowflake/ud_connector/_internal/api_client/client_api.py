@@ -1,6 +1,8 @@
+from __future__ import annotations
+
 import ctypes
 
-from __future__ import annotations
+from ctypes import c_char_p
 
 from ..protobuf_gen.database_driver_v1_services import DatabaseDriverClient
 from ..protobuf_gen.proto_exception import ProtoTransportException
@@ -11,13 +13,13 @@ class ProtoTransport:
     def handle_message(self, api: str, method: str, message: bytes) -> tuple[int, bytes]:
         response = ctypes.POINTER(ctypes.c_ubyte)()
         response_len = ctypes.c_size_t()
-        api = ctypes.c_char_p(api.encode("utf-8"))
-        method = ctypes.c_char_p(method.encode("utf-8"))
+        api_bytes: c_char_p = ctypes.c_char_p(api.encode("utf-8"))
+        method_bytes: c_char_p = ctypes.c_char_p(method.encode("utf-8"))
         message_buf = (ctypes.c_ubyte * len(message))()
-        message_buf[:] = message
+        message_buf[:] = message  # type: ignore
         code = sf_core_api_call_proto(
-            api,
-            method,
+            api_bytes,
+            method_bytes,
             ctypes.cast(message_buf, ctypes.POINTER(ctypes.c_ubyte)),
             len(message),
             ctypes.byref(response),
