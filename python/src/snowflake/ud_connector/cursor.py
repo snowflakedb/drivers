@@ -3,6 +3,12 @@ PEP 249 Database API 2.0 Cursor Objects
 
 This module defines the Cursor class as specified in PEP 249.
 """
+
+from __future__ import annotations
+from typing import TYPE_CHECKING, Any, Sequence
+
+import pyarrow  # type: ignore[import-untyped]
+
 from .exceptions import NotSupportedError
 
 from ._internal.protobuf_gen.database_driver_v1_pb2 import (  # type: ignore[attr-defined]
@@ -14,6 +20,10 @@ from ._internal.protobuf_gen.database_driver_v1_pb2 import (  # type: ignore[att
 from ._internal.arrow_stream_iterator import ArrowStreamIterator
 from ._internal.arrow_context import ArrowConverterContext
 
+if TYPE_CHECKING:
+    from .connection import Connection
+
+
 class Cursor:
     """
     Cursor objects represent a database cursor, which is used to manage the context
@@ -23,7 +33,7 @@ class Cursor:
     # Class attribute for arraysize
     arraysize = 1
 
-    def __init__(self, connection: Any) -> None:
+    def __init__(self, connection: Connection) -> None:
         """
         Initialize a new cursor object.
 
@@ -36,6 +46,10 @@ class Cursor:
         self.arraysize = 1  # Instance attribute overrides class attribute
         self._closed = False
         # Streaming state for Arrow results
+        self._reader: pyarrow.RecordBatchReader | None = None
+        self._current_batch: pyarrow.RecordBatch | None = None
+        self._current_row_in_batch = 0
+        self.execute_result: Any = None
         self._iterator = None
         self.execute_result = None
 
@@ -51,11 +65,11 @@ class Cursor:
         return self._description
 
     @description.setter
-    def description(self, value):
+    def description(self, value: Any) -> None:
         self._description = value
 
     @property
-    def rowcount(self):
+    def rowcount(self) -> int:
         """
         Read-only attribute specifying the number of rows that the last
         .execute*() produced or affected.
@@ -66,10 +80,10 @@ class Cursor:
         return self._rowcount
 
     @rowcount.setter
-    def rowcount(self, value):
+    def rowcount(self, value: int) -> None:
         self._rowcount = value
 
-    def callproc(self, procname, parameters=None):
+    def callproc(self, procname: str, parameters: Sequence[Any] | None = None) -> Sequence[Any]:
         """
         Call a stored database procedure with the given name.
 
@@ -85,11 +99,11 @@ class Cursor:
         """
         raise NotSupportedError("callproc is not implemented")
 
-    def close(self):
+    def close(self) -> None:
         """Close the cursor now (rather than whenever __del__ is called)."""
         self._closed = True
 
-    def execute(self, operation, parameters=None):
+    def execute(self, operation: str, parameters: Sequence[Any] | dict[str, Any] | None = None) -> None:
         """
         Execute a database operation (query or command).
 
@@ -112,7 +126,7 @@ class Cursor:
         # Reset streaming state for a new result
         self._iterator = None
 
-    def executemany(self, operation, seq_of_parameters):
+    def executemany(self, operation: str, seq_of_parameters: Sequence[Sequence[Any]]) -> None:
         """
         Execute a database operation repeatedly for each element in seq_of_parameters.
 
@@ -125,14 +139,14 @@ class Cursor:
         """
         raise NotSupportedError("executemany is not implemented")
 
-    def _get_stream_ptr(self):
+    def _get_stream_ptr(self) -> pyarrow.RecordBatchReader:
         """Get the ArrowArrayStream pointer from execute result."""
         stream_ptr = int.from_bytes(
             self.execute_result.stream.value, byteorder="little", signed=False
         )
         return stream_ptr
 
-    def _ensure_iterator(self):
+    def _ensure_iterator(self) -> None:
         if self._iterator is None:
             stream_ptr = self._get_stream_ptr()
             arrow_context = ArrowConverterContext()
@@ -144,7 +158,7 @@ class Cursor:
                 use_numpy=False,
             )
 
-    def fetchone(self):
+    def fetchone(self) -> tuple[Any, ...] | None:
         """
         Fetch the next row of a query result set.
 
@@ -160,7 +174,7 @@ class Cursor:
         except StopIteration:
             return None
 
-    def fetchmany(self, size=None):
+    def fetchmany(self, size: int | None = None) -> list[tuple[Any, ...]]:
         """
         Fetch the next set of rows of a query result.
 
@@ -175,7 +189,7 @@ class Cursor:
         """
         raise NotSupportedError("fetchmany is not implemented")
 
-    def fetchall(self):
+    def fetchall(self) -> list[tuple[Any, ...]]:
         """
         Fetch all (remaining) rows of a query result.
 
@@ -199,7 +213,7 @@ class Cursor:
         """
         raise NotSupportedError("nextset is not implemented")
 
-    def setinputsizes(self, sizes):
+    def setinputsizes(self, sizes: Sequence[Any]) -> None:
         """
         Predefine memory areas for the operation parameters.
 
@@ -209,7 +223,7 @@ class Cursor:
         # This method is optional and can be implemented as a no-op
         pass
 
-    def setoutputsize(self, size, column=None):
+    def setoutputsize(self, size: int, column: int | None = None) -> None:
         """
         Set a column buffer size for fetches of large columns.
 
@@ -220,7 +234,7 @@ class Cursor:
         # This method is optional and can be implemented as a no-op
         pass
 
-    def __iter__(self):
+    def __iter__(self) -> Cursor:
         """
         Return the cursor itself as an iterator.
 
@@ -229,7 +243,7 @@ class Cursor:
         """
         return self
 
-    def __next__(self):
+    def __next__(self) -> tuple[Any, ...]:
         """
         Fetch the next row from the currently executed statement.
 
@@ -245,11 +259,11 @@ class Cursor:
         return row
 
     # Python 2 compatibility
-    def next(self):
+    def next(self) -> tuple[Any, ...]:
         """Python 2 compatibility method."""
         return self.__next__()
 
-    def __enter__(self):
+    def __enter__(self) -> Cursor:
         """
         Enter the runtime context for the cursor.
 
@@ -258,11 +272,11 @@ class Cursor:
         """
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         """Exit the runtime context for the cursor."""
         self.close()
 
-    def is_closed(self):
+    def is_closed(self) -> bool:
         """
         Check if the cursor is closed.
 

@@ -5,6 +5,8 @@ This module provides an empty implementation of the Python Database API Specific
 as defined in PEP 249.
 """
 
+from typing import Any
+
 from ._internal.api_client.c_api import register_default_logger_callback
 from .connection import Connection
 from .cursor import Cursor
@@ -44,7 +46,7 @@ paramstyle = "format"  # Python extended format codes, e.g. ...WHERE name=%s
 register_default_logger_callback()
 
 
-def connect(**kwargs):
+def connect(**kwargs: Any) -> Connection:
     """
     Create a connection to the database.
 

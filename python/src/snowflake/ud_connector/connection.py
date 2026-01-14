@@ -4,6 +4,9 @@ PEP 249 Database API 2.0 Connection Objects
 This module defines the Connection class as specified in PEP 249.
 """
 
+from __future__ import annotations
+from typing import Any
+
 from snowflake.ud_connector._internal.protobuf_gen.database_driver_v1_services import (  # type: ignore[attr-defined]
     ConnectionInitRequest,
     ConnectionNewRequest,
@@ -22,7 +25,7 @@ from .exceptions import InterfaceError, NotSupportedError
 class Connection:
     """Connection objects represent a database connection."""
 
-    def __init__(self, **kwargs):
+    def __init__(self, **kwargs: Any) -> None:
         """
         Initialize a new connection object.
 
@@ -59,11 +62,11 @@ class Connection:
         self._closed = False
         self._autocommit = False
 
-    def close(self):
+    def close(self) -> None:
         """Close the connection now."""
         self._closed = True
 
-    def commit(self):
+    def commit(self) -> None:
         """
         Commit any pending transaction to the database.
 
@@ -72,7 +75,7 @@ class Connection:
         """
         raise NotSupportedError("commit is not implemented")
 
-    def rollback(self):
+    def rollback(self) -> None:
         """
         Roll back to the start of any pending transaction.
 
@@ -81,7 +84,7 @@ class Connection:
         """
         raise NotSupportedError("rollback is not implemented")
 
-    def cursor(self):
+    def cursor(self) -> Cursor:
         """
         Return a new Cursor object using the connection.
 
@@ -93,7 +96,7 @@ class Connection:
         return Cursor(self)
 
     # Context manager support
-    def __enter__(self):
+    def __enter__(self) -> Connection:
         """
         Enter the runtime context for the connection.
 
@@ -102,7 +105,7 @@ class Connection:
         """
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         """
         Exit the runtime context for the connection.
 
@@ -125,7 +128,7 @@ class Connection:
         self.close()
 
     # Optional methods that some databases might support
-    def cancel(self):
+    def cancel(self) -> None:
         """
         Cancel a long-running operation on the connection.
 
@@ -134,7 +137,7 @@ class Connection:
         """
         raise NotSupportedError("cancel is not implemented")
 
-    def ping(self):
+    def ping(self) -> bool:
         """
         Check if the connection to the server is still alive.
 
@@ -146,7 +149,7 @@ class Connection:
         """
         raise NotSupportedError("ping is not implemented")
 
-    def set_autocommit(self, autocommit):
+    def set_autocommit(self, autocommit: bool) -> None:
         """
         Set the autocommit mode.
 
@@ -158,7 +161,7 @@ class Connection:
         """
         raise NotSupportedError("set_autocommit is not implemented")
 
-    def get_autocommit(self):
+    def get_autocommit(self) -> bool:
         """
         Get the current autocommit mode.
 
@@ -171,7 +174,7 @@ class Connection:
         raise NotSupportedError("get_autocommit is not implemented")
 
     @property
-    def autocommit(self):
+    def autocommit(self) -> bool:
         """
         Get/set autocommit mode as a property.
 
@@ -181,7 +184,7 @@ class Connection:
         return self._autocommit
 
     @autocommit.setter
-    def autocommit(self, value):
+    def autocommit(self, value: bool) -> None:
         """
         Set autocommit mode.
 
@@ -194,7 +197,7 @@ class Connection:
         except NotSupportedError:
             pass  # autocommit not supported by implementation
 
-    def is_closed(self):
+    def is_closed(self) -> bool:
         """
         Check if the connection is closed.
 

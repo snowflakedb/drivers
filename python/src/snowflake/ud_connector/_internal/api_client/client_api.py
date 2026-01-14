@@ -1,12 +1,14 @@
 import ctypes
 
+from __future__ import annotations
+
 from ..protobuf_gen.database_driver_v1_services import DatabaseDriverClient
 from ..protobuf_gen.proto_exception import ProtoTransportException
 from .c_api import sf_core_api_call_proto
 
 
 class ProtoTransport:
-    def handle_message(self, api, method, message):
+    def handle_message(self, api: str, method: str, message: bytes) -> tuple[int, bytes]:
         response = ctypes.POINTER(ctypes.c_ubyte)()
         response_len = ctypes.c_size_t()
         api = ctypes.c_char_p(api.encode("utf-8"))
@@ -27,10 +29,10 @@ class ProtoTransport:
         raise ProtoTransportException(f"Unknown error code: {code}")
 
 
-_DATABASE_DRIVER_CLIENT = None
+_DATABASE_DRIVER_CLIENT: DatabaseDriverClient | None = None
 
 
-def database_driver_client():
+def database_driver_client() -> DatabaseDriverClient:
     global _DATABASE_DRIVER_CLIENT
     if _DATABASE_DRIVER_CLIENT is None:
         _DATABASE_DRIVER_CLIENT = DatabaseDriverClient(ProtoTransport())
