@@ -62,8 +62,6 @@ jobs:
           name: jdbc-${{ runner.os }}-java${{ matrix.java-version }}
           fail_ci_if_error: false
 
-  # Summary job that always runs to provide consistent status for branch protection
-  # Configure branch protection to require "jdbc-status" instead of "jdbc_tests (ubuntu-latest, 8)"
   jdbc-status:
     needs: [detect-changes, jdbc_tests]
     if: always()

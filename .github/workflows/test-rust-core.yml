@@ -104,8 +104,6 @@ jobs:
           name: rust-${{ runner.os }}-${{ matrix.rust-version }}
           fail_ci_if_error: false
 
-  # Summary job that always runs to provide consistent status for branch protection
-  # Configure branch protection to require "rust-core-status" instead of "test (ubuntu-latest, stable)"
   rust-core-status:
     needs: [detect-changes, format, clippy, test]
     if: always()

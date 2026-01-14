@@ -232,8 +232,6 @@ jobs:
             --fail-on-regressions 0 | tee -a $GITHUB_STEP_SUMMARY
         working-directory: python
 
-  # Summary job that always runs to provide consistent status for branch protection
-  # Configure branch protection to require "python-status" instead of "python_tests (ubuntu-latest, 3.x)"
   python-status:
     needs: [detect-changes, build_rust_core, python_tests, python_tests_reference, python_compare_results]
     if: always()

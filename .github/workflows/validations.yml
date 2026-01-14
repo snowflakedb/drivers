@@ -77,8 +77,6 @@ jobs:
         run: |
           cargo run --bin tests_format_validator --manifest-path tests/tests_format_validator/Cargo.toml
 
-  # Summary job that always runs to provide consistent status for branch protection
-  # Configure branch protection to require "validations-status" instead of individual validation jobs
   validations-status:
     needs: [detect-changes, test-data, proto, tests-format-validator]
     if: always()

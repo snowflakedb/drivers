@@ -122,8 +122,6 @@ jobs:
           name: odbc-${{ runner.os }}
           fail_ci_if_error: false
 
-  # Summary job that always runs to provide consistent status for branch protection
-  # Configure branch protection to require "odbc-status" instead of "odbc_tests (ubuntu-latest)"
   odbc-status:
     needs: [detect-changes, odbc_tests_reference, odbc_tests]
     if: always()

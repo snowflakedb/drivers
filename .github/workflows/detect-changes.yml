@@ -22,7 +22,7 @@ on:
       docs_only:
         description: "True if only documentation changed"
         value: ${{ jobs.detect.outputs.docs_only }}
-      # Pre-computed "should run" outputs (DRY helper)
+      # Pre-computed "should run" outputs
       run_jdbc:
         description: "True if JDBC tests should run (jdbc OR core OR shared changed)"
         value: ${{ jobs.detect.outputs.run_jdbc }}
