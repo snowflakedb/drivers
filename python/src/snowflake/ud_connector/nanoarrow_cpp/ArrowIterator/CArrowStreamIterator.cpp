@@ -24,12 +24,9 @@ std::unique_ptr<CArrowStreamIterator> CArrowStreamIterator::from_stream(int64_t 
     return nullptr;
   }
 
-  // Create the iterator (constructor only sets attributes)
-  auto iterator = std::unique_ptr<CArrowStreamIterator>(
-      new CArrowStreamIterator(stream, context, use_numpy, use_dict_result));
-
-  // Get schema from stream
-  int returnCode = stream->get_schema(stream, iterator->m_schema.get());
+  // Get schema from stream before creating the iterator
+  ArrowSchema schema = {};
+  int returnCode = stream->get_schema(stream, &schema);
   if (returnCode != 0) {
     const char* error_msg = stream->get_last_error(stream);
     std::string errorInfo = Logger::formatString(
@@ -40,11 +37,12 @@ std::unique_ptr<CArrowStreamIterator> CArrowStreamIterator::from_stream(int64_t 
     return nullptr;
   }
 
-  iterator->m_columnCount = iterator->m_schema->n_children;
   logger->debug(__FILE__, __func__, __LINE__, "CArrowStreamIterator initialized with %lld columns",
-                iterator->m_columnCount);
+                schema.n_children);
 
-  return iterator;
+  // Create the iterator with all data
+  return std::unique_ptr<CArrowStreamIterator>(
+      new CArrowStreamIterator(stream, &schema, context, use_numpy, use_dict_result));
 }
 
 namespace {
@@ -55,17 +53,20 @@ namespace {
   }
 }  // namespace
 
-CArrowStreamIterator::CArrowStreamIterator(ArrowArrayStream* stream, PyObject* context,
-                                           bool use_numpy, bool use_dict_result)
+CArrowStreamIterator::CArrowStreamIterator(ArrowArrayStream* stream, ArrowSchema* schema,
+                                           PyObject* context, bool use_numpy, bool use_dict_result)
     : m_stream(stream, releaseArrowArrayStream),
       m_currentRowIndex(0),
       m_rowCount(0),
-      m_columnCount(0),
+      m_columnCount(schema->n_children),
       m_context(context),
       m_useNumpy(use_numpy),
       m_useDictResult(use_dict_result),
       m_streamExhausted(false),
-      m_totalRowsReturned(0) {}
+      m_totalRowsReturned(0) {
+  // Move schema data into our UniqueSchema (transfers ownership)
+  ArrowSchemaMove(schema, m_schema.get());
+}
 
 bool CArrowStreamIterator::loadNextBatch() {
   if (m_streamExhausted) {

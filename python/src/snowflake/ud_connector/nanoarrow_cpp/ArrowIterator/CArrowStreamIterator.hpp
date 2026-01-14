@@ -41,10 +41,10 @@ class CArrowStreamIterator {
  private:
   /**
    * Private constructor - use from_stream() factory method instead.
-   * Only initializes member variables without validation.
+   * Takes ownership of stream and schema.
    */
-  CArrowStreamIterator(ArrowArrayStream* stream, PyObject* context, bool use_numpy,
-                       bool use_dict_result);
+  CArrowStreamIterator(ArrowArrayStream* stream, ArrowSchema* schema, PyObject* context,
+                       bool use_numpy, bool use_dict_result);
 
  protected:
   /**
