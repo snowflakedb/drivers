@@ -15,8 +15,7 @@ class DecFloatConverter : public IColumnConverter {
   static const std::string FIELD_NAME_EXPONENT;
   static const std::string FIELD_NAME_SIGNIFICAND;
 
-  explicit DecFloatConverter(ArrowArrayView& array, ArrowSchemaView& schema, PyObject& context,
-                             bool useNumpy);
+  explicit DecFloatConverter(ArrowArrayView& array, ArrowSchemaView& schema, PyObject& context, bool useNumpy);
 
   PyObject* toPyObject(int64_t rowIndex) const override;
 

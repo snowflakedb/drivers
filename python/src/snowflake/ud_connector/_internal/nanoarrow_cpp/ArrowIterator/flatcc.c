@@ -86,9 +86,7 @@ static inline uoffset_t alignup_uoffset(uoffset_t x, size_t align) {
   return (x + (uoffset_t)align - 1u) & ~((uoffset_t)align - 1u);
 }
 
-static inline size_t alignup_size(size_t x, size_t align) {
-  return (x + align - 1u) & ~(align - 1u);
-}
+static inline size_t alignup_size(size_t x, size_t align) { return (x + align - 1u) & ~(align - 1u); }
 
 typedef struct vtable_descriptor vtable_descriptor_t;
 struct vtable_descriptor {
@@ -126,8 +124,7 @@ struct flatcc_iov_state {
     iov.count = 0; \
   }
 
-int flatcc_builder_default_alloc(void* alloc_context, iovec_t* b, size_t request, int zero_fill,
-                                 int hint) {
+int flatcc_builder_default_alloc(void* alloc_context, iovec_t* b, size_t request, int zero_fill, int hint) {
   void* p;
   size_t n;
 
@@ -190,12 +187,9 @@ int flatcc_builder_default_alloc(void* alloc_context, iovec_t* b, size_t request
 #define us_ptr(pos) (T_ptr(B->buffers[flatcc_builder_alloc_us].iov_base, (pos)))
 #define vd_ptr(pos) (T_ptr(B->buffers[flatcc_builder_alloc_vd].iov_base, (pos)))
 #define vb_ptr(pos) (T_ptr(B->buffers[flatcc_builder_alloc_vb].iov_base, (pos)))
-#define vs_offset(ptr) \
-  ((uoffset_t)((size_t)(ptr) - (size_t)B->buffers[flatcc_builder_alloc_vs].iov_base))
-#define pl_offset(ptr) \
-  ((uoffset_t)((size_t)(ptr) - (size_t)B->buffers[flatcc_builder_alloc_pl].iov_base))
-#define us_offset(ptr) \
-  ((uoffset_t)((size_t)(ptr) - (size_t)B->buffers[flatcc_builder_alloc_us].iov_base))
+#define vs_offset(ptr) ((uoffset_t)((size_t)(ptr) - (size_t)B->buffers[flatcc_builder_alloc_vs].iov_base))
+#define pl_offset(ptr) ((uoffset_t)((size_t)(ptr) - (size_t)B->buffers[flatcc_builder_alloc_pl].iov_base))
+#define us_offset(ptr) ((uoffset_t)((size_t)(ptr) - (size_t)B->buffers[flatcc_builder_alloc_us].iov_base))
 
 #define table_limit (FLATBUFFERS_VOFFSET_MAX - field_size + 1)
 #define data_limit (FLATBUFFERS_UOFFSET_MAX - field_size + 1)
@@ -268,8 +262,7 @@ static inline void* push_ds_copy(flatcc_builder_t* B, const void* data, uoffset_
   return p;
 }
 
-static inline void* push_ds_field(flatcc_builder_t* B, uoffset_t size, uint16_t align,
-                                  voffset_t id) {
+static inline void* push_ds_field(flatcc_builder_t* B, uoffset_t size, uint16_t align, voffset_t id) {
   uoffset_t offset;
 
   /*
@@ -310,8 +303,7 @@ static inline void* push_ds_offset_field(flatcc_builder_t* B, voffset_t id) {
   return B->ds + offset;
 }
 
-static inline void* reserve_buffer(flatcc_builder_t* B, int alloc_type, size_t used, size_t need,
-                                   int zero_init) {
+static inline void* reserve_buffer(flatcc_builder_t* B, int alloc_type, size_t used, size_t need, int zero_init) {
   iovec_t* buf = B->buffers + alloc_type;
 
   if (used + need > buf->iov_len) {
@@ -392,9 +384,8 @@ void flatcc_builder_flush_vtable_cache(flatcc_builder_t* B) {
   B->vb_end = 0;
 }
 
-int flatcc_builder_custom_init(flatcc_builder_t* B, flatcc_builder_emit_fun* emit,
-                               void* emit_context, flatcc_builder_alloc_fun* alloc,
-                               void* alloc_context) {
+int flatcc_builder_custom_init(flatcc_builder_t* B, flatcc_builder_emit_fun* emit, void* emit_context,
+                               flatcc_builder_alloc_fun* alloc, void* alloc_context) {
   /*
    * Do not allocate anything here. Only the required buffers will be
    * allocated. For simple struct buffers, no allocation is required
@@ -427,8 +418,7 @@ int flatcc_builder_custom_reset(flatcc_builder_t* B, int set_defaults, int reduc
     buf = B->buffers + i;
     if (buf->iov_base) {
       /* Don't try to reduce the hash table. */
-      if (i != flatcc_builder_alloc_ht && reduce_buffers &&
-          B->alloc(B->alloc_context, buf, 1, 1, i)) {
+      if (i != flatcc_builder_alloc_ht && reduce_buffers && B->alloc(B->alloc_context, buf, 1, 1, i)) {
         return -1;
       }
       memset(buf->iov_base, 0, buf->iov_len);
@@ -553,17 +543,14 @@ size_t flatcc_builder_exit_user_frame_at(flatcc_builder_t* B, size_t handle) {
 
 size_t flatcc_builder_get_current_user_frame(flatcc_builder_t* B) { return B->user_frame_offset; }
 
-void* flatcc_builder_get_user_frame_ptr(flatcc_builder_t* B, size_t handle) {
-  return us_ptr(handle);
-}
+void* flatcc_builder_get_user_frame_ptr(flatcc_builder_t* B, size_t handle) { return us_ptr(handle); }
 
 static int enter_frame(flatcc_builder_t* B, uint16_t align) {
   if (++B->level > B->limit_level) {
     if (B->max_level > 0 && B->level > B->max_level) {
       return -1;
     }
-    if (!(B->frame = reserve_buffer(B, flatcc_builder_alloc_fs, (size_t)(B->level - 1) * frame_size,
-                                    frame_size, 0))) {
+    if (!(B->frame = reserve_buffer(B, flatcc_builder_alloc_fs, (size_t)(B->level - 1) * frame_size, frame_size, 0))) {
       return -1;
     }
     B->limit_level = (int)(B->buffers[flatcc_builder_alloc_fs].iov_len / frame_size);
@@ -671,8 +658,7 @@ static inline flatcc_builder_ref_t emit_back(flatcc_builder_t* B, iov_state_t* i
   return ref + 1;
 }
 
-static int align_to_block(flatcc_builder_t* B, uint16_t* align, uint16_t block_align,
-                          int is_nested) {
+static int align_to_block(flatcc_builder_t* B, uint16_t* align, uint16_t block_align, int is_nested) {
   size_t end_pad;
   iov_state_t iov;
 
@@ -694,9 +680,8 @@ static int align_to_block(flatcc_builder_t* B, uint16_t* align, uint16_t block_a
   return 0;
 }
 
-flatcc_builder_ref_t flatcc_builder_embed_buffer(flatcc_builder_t* B, uint16_t block_align,
-                                                 const void* data, size_t size, uint16_t align,
-                                                 int flags) {
+flatcc_builder_ref_t flatcc_builder_embed_buffer(flatcc_builder_t* B, uint16_t block_align, const void* data,
+                                                 size_t size, uint16_t align, int flags) {
   uoffset_t size_field, pad;
   iov_state_t iov;
   int with_size = flags & flatcc_builder_with_size;
@@ -714,10 +699,8 @@ flatcc_builder_ref_t flatcc_builder_embed_buffer(flatcc_builder_t* B, uint16_t b
   return emit_front(B, &iov);
 }
 
-flatcc_builder_ref_t flatcc_builder_create_buffer(flatcc_builder_t* B,
-                                                  const char identifier[identifier_size],
-                                                  uint16_t block_align,
-                                                  flatcc_builder_ref_t object_ref, uint16_t align,
+flatcc_builder_ref_t flatcc_builder_create_buffer(flatcc_builder_t* B, const char identifier[identifier_size],
+                                                  uint16_t block_align, flatcc_builder_ref_t object_ref, uint16_t align,
                                                   int flags) {
   flatcc_builder_ref_t buffer_ref;
   uoffset_t header_pad, id_size = 0;
@@ -747,8 +730,7 @@ flatcc_builder_ref_t flatcc_builder_create_buffer(flatcc_builder_t* B,
   /* Identifiers are not always present in buffer. */
   push_iov(&id_out, id_size);
   push_iov(_pad, header_pad);
-  buffer_base = (uoffset_t)B->emit_start - (uoffset_t)iov.len +
-                (uoffset_t)((is_nested || with_size) ? field_size : 0);
+  buffer_base = (uoffset_t)B->emit_start - (uoffset_t)iov.len + (uoffset_t)((is_nested || with_size) ? field_size : 0);
   if (is_nested) {
     write_uoffset(&buffer_size, (uoffset_t)B->buffer_mark - buffer_base);
   } else {
@@ -763,8 +745,7 @@ flatcc_builder_ref_t flatcc_builder_create_buffer(flatcc_builder_t* B,
   return buffer_ref;
 }
 
-flatcc_builder_ref_t flatcc_builder_create_struct(flatcc_builder_t* B, const void* data,
-                                                  size_t size, uint16_t align) {
+flatcc_builder_ref_t flatcc_builder_create_struct(flatcc_builder_t* B, const void* data, size_t size, uint16_t align) {
   size_t pad;
   iov_state_t iov;
 
@@ -781,8 +762,8 @@ flatcc_builder_ref_t flatcc_builder_create_struct(flatcc_builder_t* B, const voi
   return emit_front(B, &iov);
 }
 
-int flatcc_builder_start_buffer(flatcc_builder_t* B, const char identifier[identifier_size],
-                                uint16_t block_align, int flags) {
+int flatcc_builder_start_buffer(flatcc_builder_t* B, const char identifier[identifier_size], uint16_t block_align,
+                                int flags) {
   /*
    * This saves the parent `min_align` in the align field since we
    * shouldn't use that for the current buffer. `exit_frame`
@@ -824,8 +805,8 @@ flatcc_builder_ref_t flatcc_builder_end_buffer(flatcc_builder_t* B, flatcc_build
   flags |= is_top_buffer(B) ? 0 : flatcc_builder_is_nested;
   check(frame(type) == flatcc_builder_buffer, "expected buffer frame");
   set_min_align(B, B->block_align);
-  if (0 == (buffer_ref = flatcc_builder_create_buffer(B, (void*)&B->identifier, B->block_align,
-                                                      root, B->min_align, flags))) {
+  if (0 == (buffer_ref =
+                flatcc_builder_create_buffer(B, (void*)&B->identifier, B->block_align, root, B->min_align, flags))) {
     return 0;
   }
   B->buffer_mark = frame(container.buffer.mark);
@@ -884,8 +865,7 @@ void* flatcc_builder_extend_vector(flatcc_builder_t* B, size_t count) {
 
 void* flatcc_builder_vector_push(flatcc_builder_t* B, const void* data) {
   check(frame(type) == flatcc_builder_vector, "expected vector frame");
-  check_error(frame(container.vector.count) <= frame(container.vector.max_count), 0,
-              "vector max count exceeded");
+  check_error(frame(container.vector.count) <= frame(container.vector.max_count), 0, "vector max count exceeded");
   frame(container.vector.count) += 1;
   return push_ds_copy(B, data, frame(container.vector.elem_size));
 }
@@ -905,8 +885,7 @@ flatcc_builder_ref_t* flatcc_builder_extend_offset_vector(flatcc_builder_t* B, s
   return push_ds(B, (uoffset_t)(field_size * count));
 }
 
-flatcc_builder_ref_t* flatcc_builder_offset_vector_push(flatcc_builder_t* B,
-                                                        flatcc_builder_ref_t ref) {
+flatcc_builder_ref_t* flatcc_builder_offset_vector_push(flatcc_builder_t* B, flatcc_builder_ref_t ref) {
   flatcc_builder_ref_t* p;
 
   check(frame(type) == flatcc_builder_offset_vector, "expected offset vector frame");
@@ -921,8 +900,7 @@ flatcc_builder_ref_t* flatcc_builder_offset_vector_push(flatcc_builder_t* B,
   return p;
 }
 
-flatcc_builder_ref_t* flatcc_builder_append_offset_vector(flatcc_builder_t* B,
-                                                          const flatcc_builder_ref_t* refs,
+flatcc_builder_ref_t* flatcc_builder_append_offset_vector(flatcc_builder_t* B, const flatcc_builder_ref_t* refs,
                                                           size_t count) {
   check(frame(type) == flatcc_builder_offset_vector, "expected offset vector frame");
   if (vector_count_add(B, (uoffset_t)count, max_offset_count)) {
@@ -965,8 +943,7 @@ int flatcc_builder_truncate_vector(flatcc_builder_t* B, size_t count) {
 
 int flatcc_builder_truncate_offset_vector(flatcc_builder_t* B, size_t count) {
   check(frame(type) == flatcc_builder_offset_vector, "expected offset vector frame");
-  check_error(frame(container.vector.count) >= (uoffset_t)count, -1,
-              "cannot truncate vector past empty");
+  check_error(frame(container.vector.count) >= (uoffset_t)count, -1, "cannot truncate vector past empty");
   frame(container.vector.count) -= (uoffset_t)count;
   unpush_ds(B, frame(container.vector.elem_size) * (uoffset_t)count);
   return 0;
@@ -980,8 +957,7 @@ int flatcc_builder_truncate_string(flatcc_builder_t* B, size_t len) {
   return 0;
 }
 
-int flatcc_builder_start_vector(flatcc_builder_t* B, size_t elem_size, uint16_t align,
-                                size_t max_count) {
+int flatcc_builder_start_vector(flatcc_builder_t* B, size_t elem_size, uint16_t align, size_t max_count) {
   get_min_align(&align, field_size);
   if (enter_frame(B, align)) {
     return -1;
@@ -1005,8 +981,7 @@ int flatcc_builder_start_offset_vector(flatcc_builder_t* B) {
   return 0;
 }
 
-flatcc_builder_ref_t flatcc_builder_create_offset_vector(flatcc_builder_t* B,
-                                                         const flatcc_builder_ref_t* vec,
+flatcc_builder_ref_t flatcc_builder_create_offset_vector(flatcc_builder_t* B, const flatcc_builder_ref_t* vec,
                                                          size_t count) {
   flatcc_builder_ref_t* _vec;
 
@@ -1055,8 +1030,7 @@ int flatcc_builder_start_table(flatcc_builder_t* B, int count) {
   return 0;
 }
 
-flatcc_builder_vt_ref_t flatcc_builder_create_vtable(flatcc_builder_t* B, const voffset_t* vt,
-                                                     voffset_t vt_size) {
+flatcc_builder_vt_ref_t flatcc_builder_create_vtable(flatcc_builder_t* B, const voffset_t* vt, voffset_t vt_size) {
   flatcc_builder_vt_ref_t vt_ref;
   iov_state_t iov;
   voffset_t* vt_;
@@ -1120,8 +1094,7 @@ flatcc_builder_vt_ref_t flatcc_builder_create_vtable(flatcc_builder_t* B, const 
   return vt_ref;
 }
 
-flatcc_builder_vt_ref_t flatcc_builder_create_cached_vtable(flatcc_builder_t* B,
-                                                            const voffset_t* vt, voffset_t vt_size,
+flatcc_builder_vt_ref_t flatcc_builder_create_cached_vtable(flatcc_builder_t* B, const voffset_t* vt, voffset_t vt_size,
                                                             uint32_t vt_hash) {
   vtable_descriptor_t *vd, *vd2;
   uoffset_t *pvd, *pvd_head;
@@ -1163,8 +1136,7 @@ flatcc_builder_vt_ref_t flatcc_builder_create_cached_vtable(flatcc_builder_t* B,
     return vd->vt_ref;
   }
   /* Allocate new descriptor. */
-  if (!(vd = reserve_buffer(B, flatcc_builder_alloc_vd, B->vd_end, sizeof(vtable_descriptor_t),
-                            0))) {
+  if (!(vd = reserve_buffer(B, flatcc_builder_alloc_vd, B->vd_end, sizeof(vtable_descriptor_t), 0))) {
     return 0;
   }
   next = B->vd_end;
@@ -1198,9 +1170,9 @@ flatcc_builder_vt_ref_t flatcc_builder_create_cached_vtable(flatcc_builder_t* B,
   return vd->vt_ref;
 }
 
-flatcc_builder_ref_t flatcc_builder_create_table(flatcc_builder_t* B, const void* data, size_t size,
-                                                 uint16_t align, flatbuffers_voffset_t* offsets,
-                                                 int offset_count, flatcc_builder_vt_ref_t vt_ref) {
+flatcc_builder_ref_t flatcc_builder_create_table(flatcc_builder_t* B, const void* data, size_t size, uint16_t align,
+                                                 flatbuffers_voffset_t* offsets, int offset_count,
+                                                 flatcc_builder_vt_ref_t vt_ref) {
   int i;
   uoffset_t pad, vt_offset, vt_offset_field, vt_base, base, offset, *offset_field;
   iov_state_t iov;
@@ -1259,8 +1231,7 @@ int flatcc_builder_check_union_field(flatcc_builder_t* B, flatbuffers_voffset_t 
   return B->vs[id] == 0;
 }
 
-int flatcc_builder_check_required(flatcc_builder_t* B, const flatbuffers_voffset_t* required,
-                                  int count) {
+int flatcc_builder_check_required(flatcc_builder_t* B, const flatbuffers_voffset_t* required, int count) {
   int i;
 
   check(frame(type) == flatcc_builder_table, "expected table frame");
@@ -1307,8 +1278,7 @@ flatcc_builder_ref_t flatcc_builder_end_table(flatcc_builder_t* B) {
 
   pl = pl_ptr(frame(container.table.pl_end));
   pl_count = (int)(B->pl - pl);
-  if (0 == (table_ref = flatcc_builder_create_table(B, B->ds, B->ds_offset, B->align, pl, pl_count,
-                                                    vt_ref))) {
+  if (0 == (table_ref = flatcc_builder_create_table(B, B->ds, B->ds_offset, B->align, pl, pl_count, vt_ref))) {
     return 0;
   }
   B->vt_hash = frame(container.table.vt_hash);
@@ -1319,9 +1289,8 @@ flatcc_builder_ref_t flatcc_builder_end_table(flatcc_builder_t* B) {
   return table_ref;
 }
 
-flatcc_builder_ref_t flatcc_builder_create_vector(flatcc_builder_t* B, const void* data,
-                                                  size_t count, size_t elem_size, uint16_t align,
-                                                  size_t max_count) {
+flatcc_builder_ref_t flatcc_builder_create_vector(flatcc_builder_t* B, const void* data, size_t count, size_t elem_size,
+                                                  uint16_t align, size_t max_count) {
   /*
    * Note: it is important that vec_size is uoffset not size_t
    * in case sizeof(uoffset_t) > sizeof(size_t) because max_count is
@@ -1368,9 +1337,9 @@ flatcc_builder_ref_t flatcc_builder_end_vector(flatcc_builder_t* B) {
 
   check(frame(type) == flatcc_builder_vector, "expected vector frame");
 
-  if (0 == (vector_ref = flatcc_builder_create_vector(B, B->ds, frame(container.vector.count),
-                                                      frame(container.vector.elem_size), B->align,
-                                                      frame(container.vector.max_count)))) {
+  if (0 == (vector_ref =
+                flatcc_builder_create_vector(B, B->ds, frame(container.vector.count), frame(container.vector.elem_size),
+                                             B->align, frame(container.vector.max_count)))) {
     return 0;
   }
   exit_frame(B);
@@ -1382,8 +1351,7 @@ size_t flatcc_builder_vector_count(flatcc_builder_t* B) { return frame(container
 void* flatcc_builder_vector_edit(flatcc_builder_t* B) { return B->ds; }
 
 /* This function destroys the source content but avoids stack allocation. */
-static flatcc_builder_ref_t _create_offset_vector_direct(flatcc_builder_t* B,
-                                                         flatcc_builder_ref_t* vec, size_t count,
+static flatcc_builder_ref_t _create_offset_vector_direct(flatcc_builder_t* B, flatcc_builder_ref_t* vec, size_t count,
                                                          const utype_t* types) {
   uoffset_t vec_size, vec_pad;
   uoffset_t length_prefix, offset;
@@ -1431,8 +1399,7 @@ static flatcc_builder_ref_t _create_offset_vector_direct(flatcc_builder_t* B,
   return emit_front(B, &iov);
 }
 
-flatcc_builder_ref_t flatcc_builder_create_offset_vector_direct(flatcc_builder_t* B,
-                                                                flatcc_builder_ref_t* vec,
+flatcc_builder_ref_t flatcc_builder_create_offset_vector_direct(flatcc_builder_t* B, flatcc_builder_ref_t* vec,
                                                                 size_t count) {
   return _create_offset_vector_direct(B, vec, count, 0);
 }
@@ -1441,21 +1408,20 @@ flatcc_builder_ref_t flatcc_builder_end_offset_vector(flatcc_builder_t* B) {
   flatcc_builder_ref_t vector_ref;
 
   check(frame(type) == flatcc_builder_offset_vector, "expected offset vector frame");
-  if (0 == (vector_ref = flatcc_builder_create_offset_vector_direct(
-                B, (flatcc_builder_ref_t*)B->ds, frame(container.vector.count)))) {
+  if (0 == (vector_ref = flatcc_builder_create_offset_vector_direct(B, (flatcc_builder_ref_t*)B->ds,
+                                                                    frame(container.vector.count)))) {
     return 0;
   }
   exit_frame(B);
   return vector_ref;
 }
 
-flatcc_builder_ref_t flatcc_builder_end_offset_vector_for_unions(flatcc_builder_t* B,
-                                                                 const utype_t* types) {
+flatcc_builder_ref_t flatcc_builder_end_offset_vector_for_unions(flatcc_builder_t* B, const utype_t* types) {
   flatcc_builder_ref_t vector_ref;
 
   check(frame(type) == flatcc_builder_offset_vector, "expected offset vector frame");
-  if (0 == (vector_ref = _create_offset_vector_direct(B, (flatcc_builder_ref_t*)B->ds,
-                                                      frame(container.vector.count), types))) {
+  if (0 == (vector_ref =
+                _create_offset_vector_direct(B, (flatcc_builder_ref_t*)B->ds, frame(container.vector.count), types))) {
     return 0;
   }
   exit_frame(B);
@@ -1464,9 +1430,7 @@ flatcc_builder_ref_t flatcc_builder_end_offset_vector_for_unions(flatcc_builder_
 
 void* flatcc_builder_offset_vector_edit(flatcc_builder_t* B) { return B->ds; }
 
-size_t flatcc_builder_offset_vector_count(flatcc_builder_t* B) {
-  return frame(container.vector.count);
-}
+size_t flatcc_builder_offset_vector_count(flatcc_builder_t* B) { return frame(container.vector.count); }
 
 int flatcc_builder_table_add_union(flatcc_builder_t* B, int id, flatcc_builder_union_ref_t uref) {
   flatcc_builder_ref_t* pref;
@@ -1485,13 +1449,11 @@ int flatcc_builder_table_add_union(flatcc_builder_t* B, int id, flatcc_builder_u
   return 0;
 }
 
-int flatcc_builder_table_add_union_vector(flatcc_builder_t* B, int id,
-                                          flatcc_builder_union_vec_ref_t uvref) {
+int flatcc_builder_table_add_union_vector(flatcc_builder_t* B, int id, flatcc_builder_union_vec_ref_t uvref) {
   flatcc_builder_ref_t* pref;
 
   check(frame(type) == flatcc_builder_table, "expected table frame");
-  check_error((uvref.type == 0) == (uvref.value == 0), -1,
-              "expected both type and value vector, or neither");
+  check_error((uvref.type == 0) == (uvref.value == 0), -1, "expected both type and value vector, or neither");
   if (uvref.type != 0) {
     pref = flatcc_builder_table_add_offset(B, id - 1);
     check_error(pref != 0, -1, "unable to add union member");
@@ -1504,8 +1466,9 @@ int flatcc_builder_table_add_union_vector(flatcc_builder_t* B, int id,
   return 0;
 }
 
-flatcc_builder_union_vec_ref_t flatcc_builder_create_union_vector(
-    flatcc_builder_t* B, const flatcc_builder_union_ref_t* urefs, size_t count) {
+flatcc_builder_union_vec_ref_t flatcc_builder_create_union_vector(flatcc_builder_t* B,
+                                                                  const flatcc_builder_union_ref_t* urefs,
+                                                                  size_t count) {
   flatcc_builder_union_vec_ref_t uvref = {0, 0};
   flatcc_builder_utype_t* types;
   flatcc_builder_ref_t* refs;
@@ -1534,9 +1497,9 @@ flatcc_builder_union_vec_ref_t flatcc_builder_create_union_vector(
   return uvref;
 }
 
-flatcc_builder_union_vec_ref_t flatcc_builder_create_union_vector_direct(
-    flatcc_builder_t* B, const flatcc_builder_utype_t* types, flatcc_builder_ref_t* data,
-    size_t count) {
+flatcc_builder_union_vec_ref_t flatcc_builder_create_union_vector_direct(flatcc_builder_t* B,
+                                                                         const flatcc_builder_utype_t* types,
+                                                                         flatcc_builder_ref_t* data, size_t count) {
   flatcc_builder_union_vec_ref_t uvref = {0, 0};
 
   if (0 == (uvref.value = _create_offset_vector_direct(B, data, count, types))) {
@@ -1548,8 +1511,7 @@ flatcc_builder_union_vec_ref_t flatcc_builder_create_union_vector_direct(
   return uvref;
 }
 
-flatcc_builder_ref_t flatcc_builder_create_type_vector(flatcc_builder_t* B,
-                                                       const flatcc_builder_utype_t* types,
+flatcc_builder_ref_t flatcc_builder_create_type_vector(flatcc_builder_t* B, const flatcc_builder_utype_t* types,
                                                        size_t count) {
   return flatcc_builder_create_vector(B, types, count, utype_size, utype_size, max_utype_count);
 }
@@ -1602,9 +1564,7 @@ flatcc_builder_union_vec_ref_t flatcc_builder_end_union_vector(flatcc_builder_t*
 
 void* flatcc_builder_union_vector_edit(flatcc_builder_t* B) { return B->ds; }
 
-size_t flatcc_builder_union_vector_count(flatcc_builder_t* B) {
-  return frame(container.vector.count);
-}
+size_t flatcc_builder_union_vector_count(flatcc_builder_t* B) { return frame(container.vector.count); }
 
 flatcc_builder_union_ref_t* flatcc_builder_extend_union_vector(flatcc_builder_t* B, size_t count) {
   if (vector_count_add(B, (uoffset_t)count, max_union_count)) {
@@ -1615,15 +1575,13 @@ flatcc_builder_union_ref_t* flatcc_builder_extend_union_vector(flatcc_builder_t*
 
 int flatcc_builder_truncate_union_vector(flatcc_builder_t* B, size_t count) {
   check(frame(type) == flatcc_builder_union_vector, "expected union vector frame");
-  check_error(frame(container.vector.count) >= (uoffset_t)count, -1,
-              "cannot truncate vector past empty");
+  check_error(frame(container.vector.count) >= (uoffset_t)count, -1, "cannot truncate vector past empty");
   frame(container.vector.count) -= (uoffset_t)count;
   unpush_ds(B, frame(container.vector.elem_size) * (uoffset_t)count);
   return 0;
 }
 
-flatcc_builder_union_ref_t* flatcc_builder_union_vector_push(flatcc_builder_t* B,
-                                                             flatcc_builder_union_ref_t uref) {
+flatcc_builder_union_ref_t* flatcc_builder_union_vector_push(flatcc_builder_t* B, flatcc_builder_union_ref_t uref) {
   flatcc_builder_union_ref_t* p;
 
   check(frame(type) == flatcc_builder_union_vector, "expected union vector frame");
@@ -1638,8 +1596,8 @@ flatcc_builder_union_ref_t* flatcc_builder_union_vector_push(flatcc_builder_t* B
   return p;
 }
 
-flatcc_builder_union_ref_t* flatcc_builder_append_union_vector(
-    flatcc_builder_t* B, const flatcc_builder_union_ref_t* urefs, size_t count) {
+flatcc_builder_union_ref_t* flatcc_builder_append_union_vector(flatcc_builder_t* B,
+                                                               const flatcc_builder_union_ref_t* urefs, size_t count) {
   check(frame(type) == flatcc_builder_union_vector, "expected union vector frame");
   if (vector_count_add(B, (uoffset_t)count, max_union_count)) {
     return 0;
@@ -1669,8 +1627,7 @@ flatcc_builder_ref_t flatcc_builder_create_string_str(flatcc_builder_t* B, const
   return flatcc_builder_create_string(B, s, strlen(s));
 }
 
-flatcc_builder_ref_t flatcc_builder_create_string_strn(flatcc_builder_t* B, const char* s,
-                                                       size_t max_len) {
+flatcc_builder_ref_t flatcc_builder_create_string_strn(flatcc_builder_t* B, const char* s, size_t max_len) {
   return flatcc_builder_create_string(B, s, strnlen(s, max_len));
 }
 
@@ -1735,8 +1692,7 @@ void* flatcc_builder_table_edit(flatcc_builder_t* B, size_t size) {
   return B->ds + B->ds_offset - size;
 }
 
-void* flatcc_builder_table_add_copy(flatcc_builder_t* B, int id, const void* data, size_t size,
-                                    uint16_t align) {
+void* flatcc_builder_table_add_copy(flatcc_builder_t* B, int id, const void* data, size_t size, uint16_t align) {
   void* p;
 
   if ((p = flatcc_builder_table_add(B, id, size, align))) {
@@ -1769,9 +1725,7 @@ uint16_t flatcc_builder_push_buffer_alignment(flatcc_builder_t* B) {
   return old_min_align;
 }
 
-void flatcc_builder_pop_buffer_alignment(flatcc_builder_t* B, uint16_t pushed_align) {
-  set_min_align(B, pushed_align);
-}
+void flatcc_builder_pop_buffer_alignment(flatcc_builder_t* B, uint16_t pushed_align) { set_min_align(B, pushed_align); }
 
 uint16_t flatcc_builder_get_buffer_alignment(flatcc_builder_t* B) { return B->min_align; }
 
@@ -1791,17 +1745,13 @@ void flatcc_builder_set_max_level(flatcc_builder_t* B, int max_level) {
   }
 }
 
-size_t flatcc_builder_get_buffer_size(flatcc_builder_t* B) {
-  return (size_t)(B->emit_end - B->emit_start);
-}
+size_t flatcc_builder_get_buffer_size(flatcc_builder_t* B) { return (size_t)(B->emit_end - B->emit_start); }
 
 flatcc_builder_ref_t flatcc_builder_get_buffer_start(flatcc_builder_t* B) { return B->emit_start; }
 
 flatcc_builder_ref_t flatcc_builder_get_buffer_end(flatcc_builder_t* B) { return B->emit_end; }
 
-void flatcc_builder_set_vtable_cache_limit(flatcc_builder_t* B, size_t size) {
-  B->vb_flush_limit = size;
-}
+void flatcc_builder_set_vtable_cache_limit(flatcc_builder_t* B, size_t size) { B->vb_flush_limit = size; }
 
 void flatcc_builder_set_identifier(flatcc_builder_t* B, const char identifier[identifier_size]) {
   set_identifier(identifier);
@@ -2098,8 +2048,8 @@ void flatcc_emitter_clear(flatcc_emitter_t* E) {
   memset(E, 0, sizeof(*E));
 }
 
-int flatcc_emitter(void* emit_context, const flatcc_iovec_t* iov, int iov_count,
-                   flatbuffers_soffset_t offset, size_t len) {
+int flatcc_emitter(void* emit_context, const flatcc_iovec_t* iov, int iov_count, flatbuffers_soffset_t offset,
+                   size_t len) {
   flatcc_emitter_t* E = emit_context;
   uint8_t* p;
 
@@ -2195,8 +2145,7 @@ void* flatcc_emitter_copy_buffer(flatcc_emitter_t* E, void* buf, size_t size) {
 
 #if FLATCC_TRACE_VERIFY
 #include <stdio.h>
-#define trace_verify(s, p) \
-  fprintf(stderr, "trace verify: %s: 0x%02x\n", (s), (unsigned)(size_t)(p));
+#define trace_verify(s, p) fprintf(stderr, "trace verify: %s: 0x%02x\n", (s), (unsigned)(size_t)(p));
 #else
 #define trace_verify(s, p) ((void)0)
 #endif
@@ -2319,8 +2268,7 @@ static inline int check_header(uoffset_t end, uoffset_t base, uoffset_t offset) 
   return k > base && k + offset_size <= end && !(k & (offset_size - 1));
 }
 
-static inline int check_aligned_header(uoffset_t end, uoffset_t base, uoffset_t offset,
-                                       uint16_t align) {
+static inline int check_aligned_header(uoffset_t end, uoffset_t base, uoffset_t offset, uint16_t align) {
   uoffset_t k = base + offset;
 
   if (uoffset_size <= voffset_size && k + offset_size < k) {
@@ -2331,12 +2279,10 @@ static inline int check_aligned_header(uoffset_t end, uoffset_t base, uoffset_t 
 
   /* Note to self: the builder can also use the mask OR trick to propagate
    * `min_align`. */
-  return k > base && k + offset_size <= end &&
-         !((k + offset_size) & ((offset_size - 1) | (align - 1u)));
+  return k > base && k + offset_size <= end && !((k + offset_size) & ((offset_size - 1) | (align - 1u)));
 }
 
-static inline int verify_struct(uoffset_t end, uoffset_t base, uoffset_t offset, uoffset_t size,
-                                uint16_t align) {
+static inline int verify_struct(uoffset_t end, uoffset_t base, uoffset_t offset, uoffset_t size, uint16_t align) {
   /* Structs can have zero size so `end` is a valid value. */
   if (offset == 0 || base + offset > end) {
     return flatcc_verify_error_offset_out_of_range;
@@ -2363,8 +2309,8 @@ static inline const void* get_field_ptr(flatcc_table_verifier_descriptor_t* td, 
   return vte ? (const uint8_t*)td->buf + td->table + vte : 0;
 }
 
-static int verify_field(flatcc_table_verifier_descriptor_t* td, voffset_t id, int required,
-                        uoffset_t size, uint16_t align) {
+static int verify_field(flatcc_table_verifier_descriptor_t* td, voffset_t id, int required, uoffset_t size,
+                        uint16_t align) {
   uoffset_t k, k2;
   voffset_t vte;
   uoffset_t base = (uoffset_t)(size_t)td->buf;
@@ -2408,8 +2354,7 @@ static int verify_field(flatcc_table_verifier_descriptor_t* td, voffset_t id, in
   return flatcc_verify_ok;
 }
 
-static int get_offset_field(flatcc_table_verifier_descriptor_t* td, voffset_t id, int required,
-                            uoffset_t* out) {
+static int get_offset_field(flatcc_table_verifier_descriptor_t* td, voffset_t id, int required, uoffset_t* out) {
   uoffset_t k, k2;
   voffset_t vte;
 
@@ -2443,8 +2388,7 @@ static int get_offset_field(flatcc_table_verifier_descriptor_t* td, voffset_t id
 static inline int verify_string(const void* buf, uoffset_t end, uoffset_t base, uoffset_t offset) {
   uoffset_t n;
 
-  verify(check_header(end, base, offset),
-         flatcc_verify_error_string_header_out_of_range_or_unaligned);
+  verify(check_header(end, base, offset), flatcc_verify_error_string_header_out_of_range_or_unaligned);
   base += offset;
   n = read_uoffset(buf, base);
   base += offset_size;
@@ -2458,12 +2402,11 @@ static inline int verify_string(const void* buf, uoffset_t end, uoffset_t base, 
  * `max_count` is a precomputed division to manage overflow check on vector
  * length.
  */
-static inline int verify_vector(const void* buf, uoffset_t end, uoffset_t base, uoffset_t offset,
-                                uoffset_t elem_size, uint16_t align, uoffset_t max_count) {
+static inline int verify_vector(const void* buf, uoffset_t end, uoffset_t base, uoffset_t offset, uoffset_t elem_size,
+                                uint16_t align, uoffset_t max_count) {
   uoffset_t n;
 
-  verify(check_aligned_header(end, base, offset, align),
-         flatcc_verify_error_vector_header_out_of_range_or_unaligned);
+  verify(check_aligned_header(end, base, offset, align), flatcc_verify_error_vector_header_out_of_range_or_unaligned);
   base += offset;
   n = read_uoffset(buf, base);
   base += offset_size;
@@ -2473,12 +2416,10 @@ static inline int verify_vector(const void* buf, uoffset_t end, uoffset_t base, 
   return flatcc_verify_ok;
 }
 
-static inline int verify_string_vector(const void* buf, uoffset_t end, uoffset_t base,
-                                       uoffset_t offset) {
+static inline int verify_string_vector(const void* buf, uoffset_t end, uoffset_t base, uoffset_t offset) {
   uoffset_t i, n;
 
-  check_result(verify_vector(buf, end, base, offset, offset_size, offset_size,
-                             FLATBUFFERS_COUNT_MAX(offset_size)));
+  check_result(verify_vector(buf, end, base, offset, offset_size, offset_size, FLATBUFFERS_COUNT_MAX(offset_size)));
   base += offset;
   n = read_uoffset(buf, base);
   base += offset_size;
@@ -2488,14 +2429,13 @@ static inline int verify_string_vector(const void* buf, uoffset_t end, uoffset_t
   return flatcc_verify_ok;
 }
 
-static inline int verify_table(const void* buf, uoffset_t end, uoffset_t base, uoffset_t offset,
-                               int ttl, flatcc_table_verifier_f tvf) {
+static inline int verify_table(const void* buf, uoffset_t end, uoffset_t base, uoffset_t offset, int ttl,
+                               flatcc_table_verifier_f tvf) {
   uoffset_t vbase, vend;
   flatcc_table_verifier_descriptor_t td;
 
   verify((td.ttl = ttl - 1), flatcc_verify_error_max_nesting_level_reached);
-  verify(check_header(end, base, offset),
-         flatcc_verify_error_table_header_out_of_range_or_unaligned);
+  verify(check_header(end, base, offset), flatcc_verify_error_table_header_out_of_range_or_unaligned);
   td.table = base + offset;
   /* Read vtable offset - it is signed, but we want it unsigned, assuming 2's
    * complement works. */
@@ -2506,8 +2446,7 @@ static inline int verify_table(const void* buf, uoffset_t end, uoffset_t base, u
   /* Read vtable size. */
   td.vsize = read_voffset(buf, vbase);
   vend = vbase + td.vsize;
-  verify(vend <= end && !(td.vsize & (voffset_size - 1)),
-         flatcc_verify_error_vtable_size_out_of_range_or_unaligned);
+  verify(vend <= end && !(td.vsize & (voffset_size - 1)), flatcc_verify_error_vtable_size_out_of_range_or_unaligned);
   /* Optimizes away overflow check if uoffset_t is large enough. */
   verify(uoffset_size > voffset_size || vend >= vbase, flatcc_verify_error_vtable_size_overflow);
 
@@ -2521,13 +2460,12 @@ static inline int verify_table(const void* buf, uoffset_t end, uoffset_t base, u
   return tvf(&td);
 }
 
-static inline int verify_table_vector(const void* buf, uoffset_t end, uoffset_t base,
-                                      uoffset_t offset, int ttl, flatcc_table_verifier_f tvf) {
+static inline int verify_table_vector(const void* buf, uoffset_t end, uoffset_t base, uoffset_t offset, int ttl,
+                                      flatcc_table_verifier_f tvf) {
   uoffset_t i, n;
 
   verify(ttl-- > 0, flatcc_verify_error_max_nesting_level_reached);
-  check_result(verify_vector(buf, end, base, offset, offset_size, offset_size,
-                             FLATBUFFERS_COUNT_MAX(offset_size)));
+  check_result(verify_vector(buf, end, base, offset, offset_size, offset_size, FLATBUFFERS_COUNT_MAX(offset_size)));
   base += offset;
   n = read_uoffset(buf, base);
   base += offset_size;
@@ -2537,15 +2475,13 @@ static inline int verify_table_vector(const void* buf, uoffset_t end, uoffset_t 
   return flatcc_verify_ok;
 }
 
-static inline int verify_union_vector(const void* buf, uoffset_t end, uoffset_t base,
-                                      uoffset_t offset, uoffset_t count, const utype_t* types,
-                                      int ttl, flatcc_union_verifier_f uvf) {
+static inline int verify_union_vector(const void* buf, uoffset_t end, uoffset_t base, uoffset_t offset, uoffset_t count,
+                                      const utype_t* types, int ttl, flatcc_union_verifier_f uvf) {
   uoffset_t i, n, elem;
   flatcc_union_verifier_descriptor_t ud;
 
   verify(ttl-- > 0, flatcc_verify_error_max_nesting_level_reached);
-  check_result(verify_vector(buf, end, base, offset, offset_size, offset_size,
-                             FLATBUFFERS_COUNT_MAX(offset_size)));
+  check_result(verify_vector(buf, end, base, offset, offset_size, offset_size, FLATBUFFERS_COUNT_MAX(offset_size)));
   base += offset;
   n = read_uoffset(buf, base);
   verify(n == count, flatcc_verify_error_union_vector_length_mismatch);
@@ -2571,8 +2507,7 @@ static inline int verify_union_vector(const void* buf, uoffset_t end, uoffset_t 
   return flatcc_verify_ok;
 }
 
-int flatcc_verify_field(flatcc_table_verifier_descriptor_t* td, voffset_t id, size_t size,
-                        uint16_t align) {
+int flatcc_verify_field(flatcc_table_verifier_descriptor_t* td, voffset_t id, size_t size, uint16_t align) {
   check_result(verify_field(td, id, 0, (uoffset_t)size, align));
   return flatcc_verify_ok;
 }
@@ -2584,17 +2519,16 @@ int flatcc_verify_string_field(flatcc_table_verifier_descriptor_t* td, voffset_t
   return verify_string(td->buf, td->end, base, read_uoffset(td->buf, base));
 }
 
-int flatcc_verify_vector_field(flatcc_table_verifier_descriptor_t* td, voffset_t id, int required,
-                               size_t elem_size, uint16_t align, size_t max_count) {
+int flatcc_verify_vector_field(flatcc_table_verifier_descriptor_t* td, voffset_t id, int required, size_t elem_size,
+                               uint16_t align, size_t max_count) {
   uoffset_t base;
 
   check_field(td, id, required, base);
-  return verify_vector(td->buf, td->end, base, read_uoffset(td->buf, base), (uoffset_t)elem_size,
-                       align, (uoffset_t)max_count);
+  return verify_vector(td->buf, td->end, base, read_uoffset(td->buf, base), (uoffset_t)elem_size, align,
+                       (uoffset_t)max_count);
 }
 
-int flatcc_verify_string_vector_field(flatcc_table_verifier_descriptor_t* td, voffset_t id,
-                                      int required) {
+int flatcc_verify_string_vector_field(flatcc_table_verifier_descriptor_t* td, voffset_t id, int required) {
   uoffset_t base;
 
   check_field(td, id, required, base);
@@ -2609,21 +2543,19 @@ int flatcc_verify_table_field(flatcc_table_verifier_descriptor_t* td, voffset_t 
   return verify_table(td->buf, td->end, base, read_uoffset(td->buf, base), td->ttl, tvf);
 }
 
-int flatcc_verify_table_vector_field(flatcc_table_verifier_descriptor_t* td, voffset_t id,
-                                     int required, flatcc_table_verifier_f tvf) {
+int flatcc_verify_table_vector_field(flatcc_table_verifier_descriptor_t* td, voffset_t id, int required,
+                                     flatcc_table_verifier_f tvf) {
   uoffset_t base;
 
   check_field(td, id, required, base);
   return verify_table_vector(td->buf, td->end, base, read_uoffset(td->buf, base), td->ttl, tvf);
 }
 
-int flatcc_verify_union_table(flatcc_union_verifier_descriptor_t* ud,
-                              flatcc_table_verifier_f* tvf) {
+int flatcc_verify_union_table(flatcc_union_verifier_descriptor_t* ud, flatcc_table_verifier_f* tvf) {
   return verify_table(ud->buf, ud->end, ud->base, ud->offset, ud->ttl, tvf);
 }
 
-int flatcc_verify_union_struct(flatcc_union_verifier_descriptor_t* ud, size_t size,
-                               uint16_t align) {
+int flatcc_verify_union_struct(flatcc_union_verifier_descriptor_t* ud, size_t size, uint16_t align) {
   return verify_struct(ud->end, ud->base, ud->offset, (uoffset_t)size, align);
 }
 
@@ -2634,19 +2566,16 @@ int flatcc_verify_union_string(flatcc_union_verifier_descriptor_t* ud) {
 int flatcc_verify_buffer_header(const void* buf, size_t bufsiz, const char* fid) {
   thash_t id, id2;
 
-  verify_runtime(!(((size_t)buf) & (offset_size - 1)),
-                 flatcc_verify_error_runtime_buffer_header_not_aligned);
+  verify_runtime(!(((size_t)buf) & (offset_size - 1)), flatcc_verify_error_runtime_buffer_header_not_aligned);
   /* -8 ensures no scalar or offset field size can overflow. */
-  verify_runtime(bufsiz <= FLATBUFFERS_UOFFSET_MAX - 8,
-                 flatcc_verify_error_runtime_buffer_size_too_large);
+  verify_runtime(bufsiz <= FLATBUFFERS_UOFFSET_MAX - 8, flatcc_verify_error_runtime_buffer_size_too_large);
   /*
    * Even if we specify no fid, the user might later. Therefore
    * require space for it. Not all buffer generators will take this
    * into account, so it is possible to fail an otherwise valid buffer
    * - but such buffers aren't safe.
    */
-  verify(bufsiz >= offset_size + FLATBUFFERS_IDENTIFIER_SIZE,
-         flatcc_verify_error_buffer_header_too_small);
+  verify(bufsiz >= offset_size + FLATBUFFERS_IDENTIFIER_SIZE, flatcc_verify_error_buffer_header_too_small);
   if (fid != 0) {
     id2 = read_thash_identifier(fid);
     id = read_thash(buf, offset_size);
@@ -2658,19 +2587,16 @@ int flatcc_verify_buffer_header(const void* buf, size_t bufsiz, const char* fid)
 int flatcc_verify_typed_buffer_header(const void* buf, size_t bufsiz, flatbuffers_thash_t thash) {
   thash_t id, id2;
 
-  verify_runtime(!(((size_t)buf) & (offset_size - 1)),
-                 flatcc_verify_error_runtime_buffer_header_not_aligned);
+  verify_runtime(!(((size_t)buf) & (offset_size - 1)), flatcc_verify_error_runtime_buffer_header_not_aligned);
   /* -8 ensures no scalar or offset field size can overflow. */
-  verify_runtime(bufsiz <= FLATBUFFERS_UOFFSET_MAX - 8,
-                 flatcc_verify_error_runtime_buffer_size_too_large);
+  verify_runtime(bufsiz <= FLATBUFFERS_UOFFSET_MAX - 8, flatcc_verify_error_runtime_buffer_size_too_large);
   /*
    * Even if we specify no fid, the user might later. Therefore
    * require space for it. Not all buffer generators will take this
    * into account, so it is possible to fail an otherwise valid buffer
    * - but such buffers aren't safe.
    */
-  verify(bufsiz >= offset_size + FLATBUFFERS_IDENTIFIER_SIZE,
-         flatcc_verify_error_buffer_header_too_small);
+  verify(bufsiz >= offset_size + FLATBUFFERS_IDENTIFIER_SIZE, flatcc_verify_error_buffer_header_too_small);
   if (thash != 0) {
     id2 = thash;
     id = read_thash(buf, offset_size);
@@ -2679,35 +2605,30 @@ int flatcc_verify_typed_buffer_header(const void* buf, size_t bufsiz, flatbuffer
   return flatcc_verify_ok;
 }
 
-int flatcc_verify_struct_as_root(const void* buf, size_t bufsiz, const char* fid, size_t size,
-                                 uint16_t align) {
+int flatcc_verify_struct_as_root(const void* buf, size_t bufsiz, const char* fid, size_t size, uint16_t align) {
   check_result(flatcc_verify_buffer_header(buf, bufsiz, fid));
   return verify_struct((uoffset_t)bufsiz, 0, read_uoffset(buf, 0), (uoffset_t)size, align);
 }
 
-int flatcc_verify_struct_as_typed_root(const void* buf, size_t bufsiz, flatbuffers_thash_t thash,
-                                       size_t size, uint16_t align) {
+int flatcc_verify_struct_as_typed_root(const void* buf, size_t bufsiz, flatbuffers_thash_t thash, size_t size,
+                                       uint16_t align) {
   check_result(flatcc_verify_typed_buffer_header(buf, bufsiz, thash));
   return verify_struct((uoffset_t)bufsiz, 0, read_uoffset(buf, 0), (uoffset_t)size, align);
 }
 
-int flatcc_verify_table_as_root(const void* buf, size_t bufsiz, const char* fid,
-                                flatcc_table_verifier_f* tvf) {
+int flatcc_verify_table_as_root(const void* buf, size_t bufsiz, const char* fid, flatcc_table_verifier_f* tvf) {
   check_result(flatcc_verify_buffer_header(buf, (uoffset_t)bufsiz, fid));
-  return verify_table(buf, (uoffset_t)bufsiz, 0, read_uoffset(buf, 0), FLATCC_VERIFIER_MAX_LEVELS,
-                      tvf);
+  return verify_table(buf, (uoffset_t)bufsiz, 0, read_uoffset(buf, 0), FLATCC_VERIFIER_MAX_LEVELS, tvf);
 }
 
 int flatcc_verify_table_as_typed_root(const void* buf, size_t bufsiz, flatbuffers_thash_t thash,
                                       flatcc_table_verifier_f* tvf) {
   check_result(flatcc_verify_typed_buffer_header(buf, (uoffset_t)bufsiz, thash));
-  return verify_table(buf, (uoffset_t)bufsiz, 0, read_uoffset(buf, 0), FLATCC_VERIFIER_MAX_LEVELS,
-                      tvf);
+  return verify_table(buf, (uoffset_t)bufsiz, 0, read_uoffset(buf, 0), FLATCC_VERIFIER_MAX_LEVELS, tvf);
 }
 
-int flatcc_verify_struct_as_nested_root(flatcc_table_verifier_descriptor_t* td, voffset_t id,
-                                        int required, const char* fid, size_t size,
-                                        uint16_t align) {
+int flatcc_verify_struct_as_nested_root(flatcc_table_verifier_descriptor_t* td, voffset_t id, int required,
+                                        const char* fid, size_t size, uint16_t align) {
   const uoffset_t* buf;
   uoffset_t bufsiz;
 
@@ -2721,9 +2642,8 @@ int flatcc_verify_struct_as_nested_root(flatcc_table_verifier_descriptor_t* td, 
   return flatcc_verify_struct_as_root(buf, bufsiz, fid, size, align);
 }
 
-int flatcc_verify_table_as_nested_root(flatcc_table_verifier_descriptor_t* td, voffset_t id,
-                                       int required, const char* fid, uint16_t align,
-                                       flatcc_table_verifier_f tvf) {
+int flatcc_verify_table_as_nested_root(flatcc_table_verifier_descriptor_t* td, voffset_t id, int required,
+                                       const char* fid, uint16_t align, flatcc_table_verifier_f tvf) {
   const uoffset_t* buf;
   uoffset_t bufsiz;
 
@@ -2775,8 +2695,7 @@ int flatcc_verify_union_field(flatcc_table_verifier_descriptor_t* td, voffset_t 
   return uvf(&ud);
 }
 
-int flatcc_verify_union_vector_field(flatcc_table_verifier_descriptor_t* td,
-                                     flatbuffers_voffset_t id, int required,
+int flatcc_verify_union_vector_field(flatcc_table_verifier_descriptor_t* td, flatbuffers_voffset_t id, int required,
                                      flatcc_union_verifier_f uvf) {
   voffset_t vte_type, vte_table;
   const uoffset_t* buf;
@@ -2788,8 +2707,8 @@ int flatcc_verify_union_vector_field(flatcc_table_verifier_descriptor_t* td,
       verify(!required, flatcc_verify_error_type_field_absent_from_required_union_vector_field);
     }
   }
-  check_result(flatcc_verify_vector_field(td, id - 1, required, utype_size, utype_size,
-                                          FLATBUFFERS_COUNT_MAX(utype_size)));
+  check_result(
+      flatcc_verify_vector_field(td, id - 1, required, utype_size, utype_size, FLATBUFFERS_COUNT_MAX(utype_size)));
   if (0 == (buf = get_field_ptr(td, id - 1))) {
     return flatcc_verify_ok;
   }
@@ -2799,8 +2718,7 @@ int flatcc_verify_union_vector_field(flatcc_table_verifier_descriptor_t* td,
   types = (utype_t*)buf;
 
   check_field(td, id, required, base);
-  return verify_union_vector(td->buf, td->end, base, read_uoffset(td->buf, base), count, types,
-                             td->ttl, uvf);
+  return verify_union_vector(td->buf, td->end, base, read_uoffset(td->buf, base), count, types, td->ttl, uvf);
 }
 /*
  * Optional file that can be included in runtime library to support DAG
@@ -2918,8 +2836,7 @@ int flatcc_refmap_resize(flatcc_refmap_t* refmap, size_t count) {
   return 0;
 }
 
-flatcc_refmap_ref_t flatcc_refmap_insert(flatcc_refmap_t* refmap, const void* src,
-                                         flatcc_refmap_ref_t ref) {
+flatcc_refmap_ref_t flatcc_refmap_insert(flatcc_refmap_t* refmap, const void* src, flatcc_refmap_ref_t ref) {
   struct flatcc_refmap_item* T;
   size_t N, i, j, k;
 

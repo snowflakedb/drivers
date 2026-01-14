@@ -43,8 +43,7 @@
 /* https://github.com/dvidelabs/flatcc/issues/130 */
 #ifndef __alignas_is_defined
 #if defined(__cplusplus)
-#if __cplusplus == 201103 && !defined(__clang__) && \
-    ((__GNUC__ > 8) || (__GNUC__ == 8 && __GNUC_MINOR__ >= 3))
+#if __cplusplus == 201103 && !defined(__clang__) && ((__GNUC__ > 8) || (__GNUC__ == 8 && __GNUC_MINOR__ >= 3))
 #define __alignas_is_defined 1
 #define __alignof_is_defined 1
 #include <stdalign.h>
@@ -98,8 +97,7 @@
 extern "C" {
 #endif
 
-#if (!defined(__clang__) && defined(__GNUC__) && \
-     ((__GNUC__ < 4) || (__GNUC__ == 4 && __GNUC_MINOR__ < 7)))
+#if (!defined(__clang__) && defined(__GNUC__) && ((__GNUC__ < 4) || (__GNUC__ == 4 && __GNUC_MINOR__ < 7)))
 #undef PORTABLE_C11_STDALIGN_MISSING
 #define PORTABLE_C11_STDALIGN_MISSING
 #endif
@@ -109,8 +107,7 @@ extern "C" {
 #define PORTABLE_C11_STDALIGN_MISSING
 #endif
 
-#if ((defined(__STDC__) && __STDC__ && defined(__STDC_VERSION__) && \
-      __STDC_VERSION__ >= 201112L) &&                               \
+#if ((defined(__STDC__) && __STDC__ && defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L) && \
      !defined(PORTABLE_C11_STDALIGN_MISSING))
 /* C11 or newer */
 #include <stdalign.h>

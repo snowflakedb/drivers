@@ -73,8 +73,7 @@ extern "C" {
 
 #else
 
-#define unaligned_read_le16toh(p) \
-  ((((uint16_t)(((uint8_t*)(p))[0])) << 0) | (((uint16_t)(((uint8_t*)(p))[1])) << 8))
+#define unaligned_read_le16toh(p) ((((uint16_t)(((uint8_t*)(p))[0])) << 0) | (((uint16_t)(((uint8_t*)(p))[1])) << 8))
 
 #define unaligned_read_le32toh(p)                                                      \
   ((((uint32_t)(((uint8_t*)(p))[0])) << 0) | (((uint32_t)(((uint8_t*)(p))[1])) << 8) | \
@@ -86,8 +85,7 @@ extern "C" {
    (((uint64_t)(((uint8_t*)(p))[4])) << 32) | (((uint64_t)(((uint8_t*)(p))[5])) << 40) | \
    (((uint64_t)(((uint8_t*)(p))[6])) << 48) | (((uint64_t)(((uint8_t*)(p))[7])) << 56))
 
-#define unaligned_read_be16toh(p) \
-  ((((uint16_t)(((uint8_t*)(p))[0])) << 8) | (((uint16_t)(((uint8_t*)(p))[1])) << 0))
+#define unaligned_read_be16toh(p) ((((uint16_t)(((uint8_t*)(p))[0])) << 8) | (((uint16_t)(((uint8_t*)(p))[1])) << 0))
 
 #define unaligned_read_be32toh(p)                                                        \
   ((((uint32_t)(((uint8_t*)(p))[0])) << 24) | (((uint32_t)(((uint8_t*)(p))[1])) << 16) | \

@@ -12,8 +12,7 @@ namespace sf {
 
 class MapConverter : public IColumnConverter {
  public:
-  explicit MapConverter(ArrowSchemaView* schemaView, ArrowArrayView* array, PyObject* context,
-                        bool useNumpy);
+  explicit MapConverter(ArrowSchemaView* schemaView, ArrowArrayView* array, PyObject* context, bool useNumpy);
 
   PyObject* toPyObject(int64_t rowIndex) const override;
 

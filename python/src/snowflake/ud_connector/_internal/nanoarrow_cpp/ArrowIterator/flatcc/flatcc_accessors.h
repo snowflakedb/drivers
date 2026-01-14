@@ -77,30 +77,26 @@ extern "C" {
   }                                                     \
   __flatcc_basic_scalar_accessors_impl(N, T, W, E)
 
-#define __flatcc_define_integer_accessors(N, T, W, E) \
-  __flatcc_define_integer_accessors_impl(N, T, W, E)
+#define __flatcc_define_integer_accessors(N, T, W, E) __flatcc_define_integer_accessors_impl(N, T, W, E)
 
 #define __flatcc_define_real_accessors(N, T, W, E) __flatcc_define_real_accessors_impl(N, T, W, E)
 
-#define __flatcc_define_basic_integer_accessors(NS, TN, T, W, E) \
-  __flatcc_define_integer_accessors(NS##TN, T, W, E)
+#define __flatcc_define_basic_integer_accessors(NS, TN, T, W, E) __flatcc_define_integer_accessors(NS##TN, T, W, E)
 
-#define __flatcc_define_basic_real_accessors(NS, TN, T, W, E) \
-  __flatcc_define_real_accessors(NS##TN, T, W, E)
+#define __flatcc_define_basic_real_accessors(NS, TN, T, W, E) __flatcc_define_real_accessors(NS##TN, T, W, E)
 
-#define __flatcc_define_basic_scalar_accessors(NS, E)                                              \
-  __flatcc_define_basic_integer_accessors(                                                         \
-      NS, char, char, 8, E) __flatcc_define_basic_integer_accessors(NS, uint8, uint8_t, 8, E)      \
-      __flatcc_define_basic_integer_accessors(NS, uint16, uint16_t, 16, E)                         \
-          __flatcc_define_basic_integer_accessors(NS, uint32, uint32_t, 32, E)                     \
-              __flatcc_define_basic_integer_accessors(NS, uint64, uint64_t, 64, E)                 \
-                  __flatcc_define_basic_integer_accessors(NS, int8, int8_t, 8, E)                  \
-                      __flatcc_define_basic_integer_accessors(NS, int16, int16_t, 16, E)           \
-                          __flatcc_define_basic_integer_accessors(NS, int32, int32_t, 32, E)       \
-                              __flatcc_define_basic_integer_accessors(NS, int64, int64_t, 64, E)   \
-                                  __flatcc_define_basic_real_accessors(NS, float, float, 32, E)    \
-                                      __flatcc_define_basic_real_accessors(NS, double, double, 64, \
-                                                                           E)
+#define __flatcc_define_basic_scalar_accessors(NS, E)                                                \
+  __flatcc_define_basic_integer_accessors(NS, char, char, 8, E)                                      \
+      __flatcc_define_basic_integer_accessors(NS, uint8, uint8_t, 8, E)                              \
+          __flatcc_define_basic_integer_accessors(NS, uint16, uint16_t, 16, E)                       \
+              __flatcc_define_basic_integer_accessors(NS, uint32, uint32_t, 32, E)                   \
+                  __flatcc_define_basic_integer_accessors(NS, uint64, uint64_t, 64, E)               \
+                      __flatcc_define_basic_integer_accessors(NS, int8, int8_t, 8, E)                \
+                          __flatcc_define_basic_integer_accessors(NS, int16, int16_t, 16, E)         \
+                              __flatcc_define_basic_integer_accessors(NS, int32, int32_t, 32, E)     \
+                                  __flatcc_define_basic_integer_accessors(NS, int64, int64_t, 64, E) \
+                                      __flatcc_define_basic_real_accessors(NS, float, float, 32, E)  \
+                                          __flatcc_define_basic_real_accessors(NS, double, double, 64, E)
 
 #ifdef __cplusplus
 }

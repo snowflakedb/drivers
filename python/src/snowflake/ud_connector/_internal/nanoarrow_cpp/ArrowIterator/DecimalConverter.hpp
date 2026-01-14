@@ -50,8 +50,7 @@ class DecimalFromIntConverter : public DecimalBaseConverter {
 
 class NumpyDecimalConverter : public IColumnConverter {
  public:
-  explicit NumpyDecimalConverter(ArrowArrayView* array, int precision, int scale,
-                                 PyObject* context);
+  explicit NumpyDecimalConverter(ArrowArrayView* array, int precision, int scale, PyObject* context);
 
   PyObject* toPyObject(int64_t rowIndex) const override;
 

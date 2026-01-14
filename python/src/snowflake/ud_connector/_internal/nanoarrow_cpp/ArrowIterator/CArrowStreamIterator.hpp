@@ -29,8 +29,8 @@ class CArrowStreamIterator {
    * @param use_dict_result Whether to return dicts instead of tuples
    * @return Unique pointer to the iterator, or nullptr on error (with Python exception set)
    */
-  static std::unique_ptr<CArrowStreamIterator> from_stream(int64_t stream_ptr, PyObject* context,
-                                                           bool use_numpy, bool use_dict_result);
+  static std::unique_ptr<CArrowStreamIterator> from_stream(int64_t stream_ptr, PyObject* context, bool use_numpy,
+                                                           bool use_dict_result);
 
   /**
    * Get the next row as a Python tuple or dict
@@ -43,8 +43,8 @@ class CArrowStreamIterator {
    * Private constructor - use from_stream() factory method instead.
    * Takes ownership of stream and schema.
    */
-  CArrowStreamIterator(ArrowArrayStream* stream, ArrowSchema* schema, PyObject* context,
-                       bool use_numpy, bool use_dict_result);
+  CArrowStreamIterator(ArrowArrayStream* stream, ArrowSchema* schema, PyObject* context, bool use_numpy,
+                       bool use_dict_result);
 
  protected:
   /**
@@ -120,4 +120,3 @@ class CArrowStreamIterator {
 }  // namespace sf
 
 #endif  // PC_ARROWSTREAMITERATOR_HPP
-

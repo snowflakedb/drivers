@@ -23,8 +23,7 @@ constexpr int SECONDS_PER_HOUR = MINUTES_PER_HOUR * SECONDS_PER_MINUTE;
 constexpr int32_t PYTHON_DATETIME_TIME_MICROSEC_DIGIT = 6;
 constexpr int32_t NANOSEC_DIGIT = 9;
 
-constexpr int powTenSB4[]{1,      10,      100,      1000,      10000,
-                          100000, 1000000, 10000000, 100000000, 1000000000};
+constexpr int powTenSB4[]{1, 10, 100, 1000, 10000, 100000, 1000000, 10000000, 100000000, 1000000000};
 
 /** if we use c++17 some day in the future, we can use 'constexpr
  * std::string_view sv = "hello, world";' to replace this */

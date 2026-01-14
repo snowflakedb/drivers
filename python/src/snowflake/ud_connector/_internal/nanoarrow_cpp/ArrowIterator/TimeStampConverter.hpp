@@ -38,8 +38,7 @@ class OneFieldTimeStampNTZConverter : public TimeStampBaseConverter {
 
 class NumpyOneFieldTimeStampNTZConverter : public TimeStampBaseConverter {
  public:
-  explicit NumpyOneFieldTimeStampNTZConverter(ArrowArrayView* array, int32_t scale,
-                                              PyObject* context);
+  explicit NumpyOneFieldTimeStampNTZConverter(ArrowArrayView* array, int32_t scale, PyObject* context);
 
   PyObject* toPyObject(int64_t rowIndex) const override;
 
@@ -49,8 +48,8 @@ class NumpyOneFieldTimeStampNTZConverter : public TimeStampBaseConverter {
 
 class TwoFieldTimeStampNTZConverter : public TimeStampBaseConverter {
  public:
-  explicit TwoFieldTimeStampNTZConverter(ArrowArrayView* array, ArrowSchemaView* schema,
-                                         int32_t scale, PyObject* context);
+  explicit TwoFieldTimeStampNTZConverter(ArrowArrayView* array, ArrowSchemaView* schema, int32_t scale,
+                                         PyObject* context);
 
   PyObject* toPyObject(int64_t rowIndex) const override;
 
@@ -64,8 +63,8 @@ class TwoFieldTimeStampNTZConverter : public TimeStampBaseConverter {
 
 class NumpyTwoFieldTimeStampNTZConverter : public TimeStampBaseConverter {
  public:
-  explicit NumpyTwoFieldTimeStampNTZConverter(ArrowArrayView* array, ArrowSchemaView* schema,
-                                              int32_t scale, PyObject* context);
+  explicit NumpyTwoFieldTimeStampNTZConverter(ArrowArrayView* array, ArrowSchemaView* schema, int32_t scale,
+                                              PyObject* context);
 
   PyObject* toPyObject(int64_t rowIndex) const override;
 
@@ -89,8 +88,8 @@ class OneFieldTimeStampLTZConverter : public TimeStampBaseConverter {
 
 class TwoFieldTimeStampLTZConverter : public TimeStampBaseConverter {
  public:
-  explicit TwoFieldTimeStampLTZConverter(ArrowArrayView* array, ArrowSchemaView* schema,
-                                         int32_t scale, PyObject* context);
+  explicit TwoFieldTimeStampLTZConverter(ArrowArrayView* array, ArrowSchemaView* schema, int32_t scale,
+                                         PyObject* context);
 
   PyObject* toPyObject(int64_t rowIndex) const override;
 
@@ -104,8 +103,8 @@ class TwoFieldTimeStampLTZConverter : public TimeStampBaseConverter {
 
 class TwoFieldTimeStampTZConverter : public TimeStampBaseConverter {
  public:
-  explicit TwoFieldTimeStampTZConverter(ArrowArrayView* array, ArrowSchemaView* schema,
-                                        int32_t scale, PyObject* context);
+  explicit TwoFieldTimeStampTZConverter(ArrowArrayView* array, ArrowSchemaView* schema, int32_t scale,
+                                        PyObject* context);
 
   PyObject* toPyObject(int64_t rowIndex) const override;
 
@@ -119,8 +118,8 @@ class TwoFieldTimeStampTZConverter : public TimeStampBaseConverter {
 
 class ThreeFieldTimeStampTZConverter : public TimeStampBaseConverter {
  public:
-  explicit ThreeFieldTimeStampTZConverter(ArrowArrayView* array, ArrowSchemaView* schema,
-                                          int32_t scale, PyObject* context);
+  explicit ThreeFieldTimeStampTZConverter(ArrowArrayView* array, ArrowSchemaView* schema, int32_t scale,
+                                          PyObject* context);
 
   PyObject* toPyObject(int64_t rowIndex) const override;
 

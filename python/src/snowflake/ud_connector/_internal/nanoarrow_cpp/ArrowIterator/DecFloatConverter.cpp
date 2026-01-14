@@ -13,13 +13,8 @@ Logger* DecFloatConverter::logger = new Logger("snowflake.connector.DecFloatConv
 const std::string DecFloatConverter::FIELD_NAME_EXPONENT = "exponent";
 const std::string DecFloatConverter::FIELD_NAME_SIGNIFICAND = "significand";
 
-DecFloatConverter::DecFloatConverter(ArrowArrayView& array, ArrowSchemaView& schema,
-                                     PyObject& context, bool useNumpy)
-    : m_context(context),
-      m_array(array),
-      m_exponent(nullptr),
-      m_significand(nullptr),
-      m_useNumpy(useNumpy) {
+DecFloatConverter::DecFloatConverter(ArrowArrayView& array, ArrowSchemaView& schema, PyObject& context, bool useNumpy)
+    : m_context(context), m_array(array), m_exponent(nullptr), m_significand(nullptr), m_useNumpy(useNumpy) {
   if (schema.schema->n_children != 2) {
     std::string errorInfo = Logger::formatString(
         "[Snowflake Exception] arrow schema field number does not match, "
@@ -33,8 +28,7 @@ DecFloatConverter::DecFloatConverter(ArrowArrayView& array, ArrowSchemaView& sch
     ArrowSchema* c_schema = schema.schema->children[i];
     if (std::strcmp(c_schema->name, DecFloatConverter::FIELD_NAME_EXPONENT.c_str()) == 0) {
       m_exponent = m_array.children[i];
-    } else if (std::strcmp(c_schema->name, DecFloatConverter::FIELD_NAME_SIGNIFICAND.c_str()) ==
-               0) {
+    } else if (std::strcmp(c_schema->name, DecFloatConverter::FIELD_NAME_SIGNIFICAND.c_str()) == 0) {
       m_significand = m_array.children[i];
     }
   }
@@ -42,9 +36,8 @@ DecFloatConverter::DecFloatConverter(ArrowArrayView& array, ArrowSchemaView& sch
     std::string errorInfo = Logger::formatString(
         "[Snowflake Exception] arrow schema field names do not match, "
         "expected %s and %s, but got %s and %s instead",
-        DecFloatConverter::FIELD_NAME_EXPONENT.c_str(),
-        DecFloatConverter::FIELD_NAME_SIGNIFICAND.c_str(), schema.schema->children[0]->name,
-        schema.schema->children[1]->name);
+        DecFloatConverter::FIELD_NAME_EXPONENT.c_str(), DecFloatConverter::FIELD_NAME_SIGNIFICAND.c_str(),
+        schema.schema->children[0]->name, schema.schema->children[1]->name);
     logger->error(__FILE__, __func__, __LINE__, errorInfo.c_str());
     PyErr_SetString(PyExc_Exception, errorInfo.c_str());
     return;
@@ -67,9 +60,8 @@ PyObject* DecFloatConverter::toPyObject(int64_t rowIndex) const {
   }
   PyObject* significand = PyBytes_FromStringAndSize(stringView.data, stringView.size_bytes);
 
-  PyObject* result = PyObject_CallMethod(
-      &m_context, m_useNumpy ? "DECFLOAT_to_numpy_float64" : "DECFLOAT_to_decimal", "iS", exponent,
-      significand);
+  PyObject* result = PyObject_CallMethod(&m_context, m_useNumpy ? "DECFLOAT_to_numpy_float64" : "DECFLOAT_to_decimal",
+                                         "iS", exponent, significand);
   Py_XDECREF(significand);
   return result;
 }

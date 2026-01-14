@@ -9,8 +9,7 @@
 namespace sf {
 Logger* ObjectConverter::logger = new Logger("snowflake.connector.BinaryConverter");
 
-ObjectConverter::ObjectConverter(ArrowSchemaView* schemaView, ArrowArrayView* array,
-                                 PyObject* context, bool useNumpy) {
+ObjectConverter::ObjectConverter(ArrowSchemaView* schemaView, ArrowArrayView* array, PyObject* context, bool useNumpy) {
   m_array = array;
   m_converters.clear();
   m_property_names.clear();
@@ -23,8 +22,7 @@ ObjectConverter::ObjectConverter(ArrowSchemaView* schemaView, ArrowArrayView* ar
 
     ArrowArrayView* child_array = array->children[i];
 
-    m_converters.push_back(
-        getConverterFromSchema(property_schema, child_array, context, useNumpy, logger));
+    m_converters.push_back(getConverterFromSchema(property_schema, child_array, context, useNumpy, logger));
   }
 }
 

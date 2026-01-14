@@ -6,14 +6,10 @@
 
 namespace sf {
 
-
-
 Logger* CArrowStreamIterator::logger = new Logger("snowflake.connector.CArrowStreamIterator");
 
-std::unique_ptr<CArrowStreamIterator> CArrowStreamIterator::from_stream(int64_t stream_ptr,
-                                                                        PyObject* context,
-                                                                        bool use_numpy,
-                                                                        bool use_dict_result) {
+std::unique_ptr<CArrowStreamIterator> CArrowStreamIterator::from_stream(int64_t stream_ptr, PyObject* context,
+                                                                        bool use_numpy, bool use_dict_result) {
   auto* stream = reinterpret_cast<ArrowArrayStream*>(stream_ptr);
 
   // Validate stream pointer
@@ -29,16 +25,15 @@ std::unique_ptr<CArrowStreamIterator> CArrowStreamIterator::from_stream(int64_t 
   int returnCode = stream->get_schema(stream, &schema);
   if (returnCode != 0) {
     const char* error_msg = stream->get_last_error(stream);
-    std::string errorInfo = Logger::formatString(
-        "[Snowflake Exception] error getting schema from stream: %s, error code: %d",
-        error_msg ? error_msg : "unknown", returnCode);
+    std::string errorInfo =
+        Logger::formatString("[Snowflake Exception] error getting schema from stream: %s, error code: %d",
+                             error_msg ? error_msg : "unknown", returnCode);
     logger->error(__FILE__, __func__, __LINE__, errorInfo.c_str());
     PyErr_SetString(PyExc_Exception, errorInfo.c_str());
     return nullptr;
   }
 
-  logger->debug(__FILE__, __func__, __LINE__, "CArrowStreamIterator initialized with %lld columns",
-                schema.n_children);
+  logger->debug(__FILE__, __func__, __LINE__, "CArrowStreamIterator initialized with %lld columns", schema.n_children);
 
   // Create the iterator with all data
   return std::unique_ptr<CArrowStreamIterator>(
@@ -46,15 +41,15 @@ std::unique_ptr<CArrowStreamIterator> CArrowStreamIterator::from_stream(int64_t 
 }
 
 namespace {
-  void releaseArrowArrayStream(ArrowArrayStream* stream) {
-    if (stream != nullptr && stream->release != nullptr) {
-      stream->release(stream);
-    }
+void releaseArrowArrayStream(ArrowArrayStream* stream) {
+  if (stream != nullptr && stream->release != nullptr) {
+    stream->release(stream);
   }
+}
 }  // namespace
 
-CArrowStreamIterator::CArrowStreamIterator(ArrowArrayStream* stream, ArrowSchema* schema,
-                                           PyObject* context, bool use_numpy, bool use_dict_result)
+CArrowStreamIterator::CArrowStreamIterator(ArrowArrayStream* stream, ArrowSchema* schema, PyObject* context,
+                                           bool use_numpy, bool use_dict_result)
     : m_stream(stream, releaseArrowArrayStream),
       m_currentRowIndex(0),
       m_rowCount(0),
@@ -88,16 +83,15 @@ bool CArrowStreamIterator::loadNextBatch() {
   int returnCode;
   ArrowArrayStream* stream = m_stream.get();
   {
-    Py_BEGIN_ALLOW_THREADS
-    returnCode = stream->get_next(stream, m_currentArray.get());
+    Py_BEGIN_ALLOW_THREADS returnCode = stream->get_next(stream, m_currentArray.get());
     Py_END_ALLOW_THREADS
   }
 
   if (returnCode != 0) {
     const char* error_msg = stream->get_last_error(stream);
-    std::string errorInfo = Logger::formatString(
-        "[Snowflake Exception] error getting next batch from stream: %s, error code: %d",
-        error_msg ? error_msg : "unknown", returnCode);
+    std::string errorInfo =
+        Logger::formatString("[Snowflake Exception] error getting next batch from stream: %s, error code: %d",
+                             error_msg ? error_msg : "unknown", returnCode);
     logger->error(__FILE__, __func__, __LINE__, errorInfo.c_str());
     PyErr_SetString(PyExc_Exception, errorInfo.c_str());
     return false;
@@ -122,9 +116,9 @@ bool CArrowStreamIterator::loadNextBatch() {
   ArrowError error;
   returnCode = ArrowArrayViewInitFromSchema(m_currentArrayView.get(), m_schema.get(), &error);
   if (returnCode != NANOARROW_OK) {
-    std::string errorInfo = Logger::formatString(
-        "[Snowflake Exception] error initializing ArrowArrayView: %s, error code: %d",
-        ArrowErrorMessage(&error), returnCode);
+    std::string errorInfo =
+        Logger::formatString("[Snowflake Exception] error initializing ArrowArrayView: %s, error code: %d",
+                             ArrowErrorMessage(&error), returnCode);
     logger->error(__FILE__, __func__, __LINE__, errorInfo.c_str());
     PyErr_SetString(PyExc_Exception, errorInfo.c_str());
     return false;
@@ -132,9 +126,9 @@ bool CArrowStreamIterator::loadNextBatch() {
 
   returnCode = ArrowArrayViewSetArray(m_currentArrayView.get(), m_currentArray.get(), &error);
   if (returnCode != NANOARROW_OK) {
-    std::string errorInfo = Logger::formatString(
-        "[Snowflake Exception] error setting ArrowArrayView: %s, error code: %d",
-        ArrowErrorMessage(&error), returnCode);
+    std::string errorInfo =
+        Logger::formatString("[Snowflake Exception] error setting ArrowArrayView: %s, error code: %d",
+                             ArrowErrorMessage(&error), returnCode);
     logger->error(__FILE__, __func__, __LINE__, errorInfo.c_str());
     PyErr_SetString(PyExc_Exception, errorInfo.c_str());
     return false;
@@ -154,8 +148,7 @@ void CArrowStreamIterator::initColumnConverters() {
     ArrowSchema* columnSchema = m_schema->children[i];
     ArrowArrayView* columnArrayView = m_currentArrayView->children[i];
 
-    auto converter =
-        getConverterFromSchema(columnSchema, columnArrayView, m_context, m_useNumpy, logger);
+    auto converter = getConverterFromSchema(columnSchema, columnArrayView, m_context, m_useNumpy, logger);
     if (converter == nullptr) {
       std::string errorInfo =
           Logger::formatString("[Snowflake Exception] Failed to create converter for column %lld", i);
@@ -166,8 +159,7 @@ void CArrowStreamIterator::initColumnConverters() {
     m_columnConverters.push_back(converter);
   }
 
-  logger->debug(__FILE__, __func__, __LINE__, "Initialized %zu column converters",
-                m_columnConverters.size());
+  logger->debug(__FILE__, __func__, __LINE__, "Initialized %zu column converters", m_columnConverters.size());
 }
 
 ReturnVal CArrowStreamIterator::next() {
@@ -224,8 +216,7 @@ void CArrowStreamIterator::createRowPyObject() {
     PyObject* val = m_columnConverters[colIdx]->toPyObject(m_currentRowIndex);
 
     if (py::checkPyError()) {
-      logger->debug(__FILE__, __func__, __LINE__,
-                    "Python error occurred during conversion of column %lld", colIdx);
+      logger->debug(__FILE__, __func__, __LINE__, "Python error occurred during conversion of column %lld", colIdx);
       Py_DECREF(pytuple);
       return;
     }
@@ -244,8 +235,7 @@ void CArrowStreamIterator::createDictRowPyObject() {
     PyObject* val = m_columnConverters[colIdx]->toPyObject(m_currentRowIndex);
 
     if (py::checkPyError()) {
-      logger->debug(__FILE__, __func__, __LINE__,
-                    "Python error occurred during conversion of column %s", colName);
+      logger->debug(__FILE__, __func__, __LINE__, "Python error occurred during conversion of column %s", colName);
       Py_DECREF(pydict);
       return;
     }
@@ -258,4 +248,3 @@ void CArrowStreamIterator::createDictRowPyObject() {
 }
 
 }  // namespace sf
-

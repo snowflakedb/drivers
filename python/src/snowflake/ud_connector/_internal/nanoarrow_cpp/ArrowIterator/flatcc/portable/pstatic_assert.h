@@ -51,8 +51,7 @@
 #define static_assert(e, msg) enum { __PSTATIC_ASSERT_CONCAT(__COUNTER__, __LINE__) = 1 / (!!(e)) }
 #else
 #include "pstatic_assert_scope.h"
-#define static_assert(e, msg) \
-  enum { __PSTATIC_ASSERT_CONCAT(__PSTATIC_ASSERT_COUNTER, __LINE__) = 1 / (int)(!!(e)) }
+#define static_assert(e, msg) enum { __PSTATIC_ASSERT_CONCAT(__PSTATIC_ASSERT_COUNTER, __LINE__) = 1 / (int)(!!(e)) }
 #endif
 
 #define __static_assert_is_defined 1

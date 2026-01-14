@@ -55,8 +55,7 @@ extern "C" {
 #ifndef FLATCC_EMITTER_PAGE_SIZE
 #define FLATCC_EMITTER_MAX_PAGE_SIZE 3000
 #define FLATCC_EMITTER_PAGE_MULTIPLE 64
-#define FLATCC_EMITTER_PAGE_SIZE \
-  ((FLATCC_EMITTER_MAX_PAGE_SIZE) & ~(2 * (FLATCC_EMITTER_PAGE_MULTIPLE) - 1))
+#define FLATCC_EMITTER_PAGE_SIZE ((FLATCC_EMITTER_MAX_PAGE_SIZE) & ~(2 * (FLATCC_EMITTER_PAGE_MULTIPLE) - 1))
 #endif
 
 #ifndef FLATCC_EMITTER_ALLOC
@@ -198,8 +197,8 @@ void* flatcc_emitter_copy_buffer(flatcc_emitter_t* E, void* buf, size_t size);
  * This function is compatible with the `flatbuilder_emit_fun`
  * type defined in "flatbuilder.h".
  */
-int flatcc_emitter(void* emit_context, const flatcc_iovec_t* iov, int iov_count,
-                   flatbuffers_soffset_t offset, size_t len);
+int flatcc_emitter(void* emit_context, const flatcc_iovec_t* iov, int iov_count, flatbuffers_soffset_t offset,
+                   size_t len);
 
 #ifdef __cplusplus
 }

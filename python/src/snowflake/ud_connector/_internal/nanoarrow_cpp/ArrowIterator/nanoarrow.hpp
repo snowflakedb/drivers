@@ -54,24 +54,22 @@ class Exception : public std::exception {
 };
 
 #if defined(NANOARROW_DEBUG)
-#define _NANOARROW_THROW_NOT_OK_IMPL(NAME, EXPR, EXPR_STR)                                    \
-  do {                                                                                        \
-    const int NAME = (EXPR);                                                                  \
-    if (NAME) {                                                                               \
-      throw nanoarrow::Exception(std::string(EXPR_STR) + std::string(" failed with errno ") + \
-                                 std::to_string(NAME) + std::string("\n * ") +                \
-                                 std::string(__FILE__) + std::string(":") +                   \
-                                 std::to_string(__LINE__) + std::string("\n"));               \
-    }                                                                                         \
+#define _NANOARROW_THROW_NOT_OK_IMPL(NAME, EXPR, EXPR_STR)                                                           \
+  do {                                                                                                               \
+    const int NAME = (EXPR);                                                                                         \
+    if (NAME) {                                                                                                      \
+      throw nanoarrow::Exception(std::string(EXPR_STR) + std::string(" failed with errno ") + std::to_string(NAME) + \
+                                 std::string("\n * ") + std::string(__FILE__) + std::string(":") +                   \
+                                 std::to_string(__LINE__) + std::string("\n"));                                      \
+    }                                                                                                                \
   } while (0)
 #else
-#define _NANOARROW_THROW_NOT_OK_IMPL(NAME, EXPR, EXPR_STR)                                    \
-  do {                                                                                        \
-    const int NAME = (EXPR);                                                                  \
-    if (NAME) {                                                                               \
-      throw nanoarrow::Exception(std::string(EXPR_STR) + std::string(" failed with errno ") + \
-                                 std::to_string(NAME));                                       \
-    }                                                                                         \
+#define _NANOARROW_THROW_NOT_OK_IMPL(NAME, EXPR, EXPR_STR)                                                           \
+  do {                                                                                                               \
+    const int NAME = (EXPR);                                                                                         \
+    if (NAME) {                                                                                                      \
+      throw nanoarrow::Exception(std::string(EXPR_STR) + std::string(" failed with errno ") + std::to_string(NAME)); \
+    }                                                                                                                \
   } while (0)
 #endif
 
@@ -88,9 +86,7 @@ namespace internal {
 
 static inline void init_pointer(struct ArrowSchema* data) { data->release = nullptr; }
 
-static inline void move_pointer(struct ArrowSchema* src, struct ArrowSchema* dst) {
-  ArrowSchemaMove(src, dst);
-}
+static inline void move_pointer(struct ArrowSchema* src, struct ArrowSchema* dst) { ArrowSchemaMove(src, dst); }
 
 static inline void release_pointer(struct ArrowSchema* data) {
   if (data->release != nullptr) {
@@ -100,9 +96,7 @@ static inline void release_pointer(struct ArrowSchema* data) {
 
 static inline void init_pointer(struct ArrowArray* data) { data->release = nullptr; }
 
-static inline void move_pointer(struct ArrowArray* src, struct ArrowArray* dst) {
-  ArrowArrayMove(src, dst);
-}
+static inline void move_pointer(struct ArrowArray* src, struct ArrowArray* dst) { ArrowArrayMove(src, dst); }
 
 static inline void release_pointer(struct ArrowArray* data) {
   if (data->release != nullptr) {
@@ -124,17 +118,13 @@ static inline void release_pointer(ArrowArrayStream* data) {
 
 static inline void init_pointer(struct ArrowBuffer* data) { ArrowBufferInit(data); }
 
-static inline void move_pointer(struct ArrowBuffer* src, struct ArrowBuffer* dst) {
-  ArrowBufferMove(src, dst);
-}
+static inline void move_pointer(struct ArrowBuffer* src, struct ArrowBuffer* dst) { ArrowBufferMove(src, dst); }
 
 static inline void release_pointer(struct ArrowBuffer* data) { ArrowBufferReset(data); }
 
 static inline void init_pointer(struct ArrowBitmap* data) { ArrowBitmapInit(data); }
 
-static inline void move_pointer(struct ArrowBitmap* src, struct ArrowBitmap* dst) {
-  ArrowBitmapMove(src, dst);
-}
+static inline void move_pointer(struct ArrowBitmap* src, struct ArrowBitmap* dst) { ArrowBitmapMove(src, dst); }
 
 static inline void release_pointer(struct ArrowBitmap* data) { ArrowBitmapReset(data); }
 
@@ -265,9 +255,7 @@ class EmptyArrayStream {
     stream->private_data = this;
   }
 
-  virtual int get_schema(struct ArrowSchema* schema) {
-    return ArrowSchemaDeepCopy(schema_.get(), schema);
-  }
+  virtual int get_schema(struct ArrowSchema* schema) { return ArrowSchemaDeepCopy(schema_.get(), schema); }
 
   virtual int get_next(struct ArrowArray* array) {
     array->release = nullptr;

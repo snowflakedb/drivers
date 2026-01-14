@@ -8,20 +8,16 @@
 
 namespace sf {
 
-static constexpr char INTERVAL_DT_DECIMAL_TO_NUMPY_TIMEDELTA[] =
-    "INTERVAL_DAY_TIME_decimal_to_numpy_timedelta";
+static constexpr char INTERVAL_DT_DECIMAL_TO_NUMPY_TIMEDELTA[] = "INTERVAL_DAY_TIME_decimal_to_numpy_timedelta";
 static constexpr char INTERVAL_DT_DECIMAL_TO_TIMEDELTA[] = "INTERVAL_DAY_TIME_decimal_to_timedelta";
-static constexpr char INTERVAL_DT_INT_TO_NUMPY_TIMEDELTA[] =
-    "INTERVAL_DAY_TIME_int_to_numpy_timedelta";
+static constexpr char INTERVAL_DT_INT_TO_NUMPY_TIMEDELTA[] = "INTERVAL_DAY_TIME_int_to_numpy_timedelta";
 static constexpr char INTERVAL_DT_INT_TO_TIMEDELTA[] = "INTERVAL_DAY_TIME_int_to_timedelta";
-static constexpr char INTERVAL_YEAR_MONTH_TO_NUMPY_TIMEDELTA[] =
-    "INTERVAL_YEAR_MONTH_to_numpy_timedelta";
+static constexpr char INTERVAL_YEAR_MONTH_TO_NUMPY_TIMEDELTA[] = "INTERVAL_YEAR_MONTH_to_numpy_timedelta";
 // Python timedelta does not support year-month intervals. Use ANSI SQL
 // formatted string instead.
 static constexpr char INTERVAL_YEAR_MONTH_TO_STR[] = "INTERVAL_YEAR_MONTH_to_str";
 
-IntervalYearMonthConverter::IntervalYearMonthConverter(ArrowArrayView* array, PyObject* context,
-                                                       bool useNumpy)
+IntervalYearMonthConverter::IntervalYearMonthConverter(ArrowArrayView* array, PyObject* context, bool useNumpy)
     : m_array(array), m_context(context) {
   m_method = useNumpy ? INTERVAL_YEAR_MONTH_TO_NUMPY_TIMEDELTA : INTERVAL_YEAR_MONTH_TO_STR;
 }
@@ -34,8 +30,7 @@ PyObject* IntervalYearMonthConverter::toPyObject(int64_t rowIndex) const {
   return PyObject_CallMethod(m_context, m_method, "L", val);
 }
 
-IntervalDayTimeConverterInt::IntervalDayTimeConverterInt(ArrowArrayView* array, PyObject* context,
-                                                         bool useNumpy)
+IntervalDayTimeConverterInt::IntervalDayTimeConverterInt(ArrowArrayView* array, PyObject* context, bool useNumpy)
     : m_array(array), m_context(context) {
   m_method = useNumpy ? INTERVAL_DT_INT_TO_NUMPY_TIMEDELTA : INTERVAL_DT_INT_TO_TIMEDELTA;
 }
@@ -48,8 +43,8 @@ PyObject* IntervalDayTimeConverterInt::toPyObject(int64_t rowIndex) const {
   return PyObject_CallMethod(m_context, m_method, "L", val);
 }
 
-IntervalDayTimeConverterDecimal::IntervalDayTimeConverterDecimal(ArrowArrayView* array,
-                                                                 PyObject* context, bool useNumpy)
+IntervalDayTimeConverterDecimal::IntervalDayTimeConverterDecimal(ArrowArrayView* array, PyObject* context,
+                                                                 bool useNumpy)
     : m_array(array), m_context(context) {
   m_method = useNumpy ? INTERVAL_DT_DECIMAL_TO_NUMPY_TIMEDELTA : INTERVAL_DT_DECIMAL_TO_TIMEDELTA;
 }

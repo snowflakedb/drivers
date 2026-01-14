@@ -26,15 +26,15 @@
     return ret_val;                                                             \
   }
 
-#define SF_CHECK_ARROW_RC_AND_RELEASE_ARROW_STREAM(arrow_status, stream, format_string, ...) \
-  if (arrow_status != NANOARROW_OK) {                                                        \
-    std::string errorInfo = std::string(format_string) + std::string(", error info: ") +     \
-                            std::string(stream.get_last_error(&stream));                     \
-    std::string fullErrorInfo = Logger::formatString(errorInfo.c_str(), ##__VA_ARGS__);      \
-    logger->error(__FILE__, __func__, __LINE__, fullErrorInfo.c_str());                      \
-    PyErr_SetString(PyExc_Exception, fullErrorInfo.c_str());                                 \
-    stream.release(&stream);                                                                 \
-    return;                                                                                  \
+#define SF_CHECK_ARROW_RC_AND_RELEASE_ARROW_STREAM(arrow_status, stream, format_string, ...)                      \
+  if (arrow_status != NANOARROW_OK) {                                                                             \
+    std::string errorInfo =                                                                                       \
+        std::string(format_string) + std::string(", error info: ") + std::string(stream.get_last_error(&stream)); \
+    std::string fullErrorInfo = Logger::formatString(errorInfo.c_str(), ##__VA_ARGS__);                           \
+    logger->error(__FILE__, __func__, __LINE__, fullErrorInfo.c_str());                                           \
+    PyErr_SetString(PyExc_Exception, fullErrorInfo.c_str());                                                      \
+    stream.release(&stream);                                                                                      \
+    return;                                                                                                       \
   }
 
 #define SF_CHECK_PYTHON_ERR()                              \

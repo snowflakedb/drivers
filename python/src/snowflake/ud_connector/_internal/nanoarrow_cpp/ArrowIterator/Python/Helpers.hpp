@@ -25,8 +25,7 @@ void importPythonModule(const std::string& moduleName, UniqueRef& ref, const Log
 
 void importFromModule(const UniqueRef& moduleRef, const std::string& name, UniqueRef& ref);
 
-void importFromModule(const UniqueRef& moduleRef, const std::string& name, UniqueRef& ref,
-                      const Logger& logger);
+void importFromModule(const UniqueRef& moduleRef, const std::string& name, UniqueRef& ref, const Logger& logger);
 
 }  // namespace py
 }  // namespace sf

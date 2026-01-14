@@ -14,8 +14,7 @@ void MapConverter::generateError(const std::string& msg) const {
   PyErr_SetString(PyExc_Exception, msg.c_str());
 }
 
-MapConverter::MapConverter(ArrowSchemaView* schemaView, ArrowArrayView* array, PyObject* context,
-                           bool useNumpy) {
+MapConverter::MapConverter(ArrowSchemaView* schemaView, ArrowArrayView* array, PyObject* context, bool useNumpy) {
   m_array = array;
 
   if (schemaView->schema->n_children != 1) {

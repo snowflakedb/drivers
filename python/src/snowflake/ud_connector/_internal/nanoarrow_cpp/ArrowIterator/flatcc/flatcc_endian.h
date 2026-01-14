@@ -79,24 +79,20 @@ extern "C" {
 
 __flatcc_define_basic_scalar_accessors(flatbuffers_, flatbuffers_endian)
 
-    __flatcc_define_integer_accessors(flatbuffers_bool, flatbuffers_bool_t, FLATBUFFERS_BOOL_WIDTH,
-                                      flatbuffers_endian)
-        __flatcc_define_integer_accessors(flatbuffers_union_type, flatbuffers_union_type_t,
-                                          FLATBUFFERS_UTYPE_WIDTH, flatbuffers_endian)
+    __flatcc_define_integer_accessors(flatbuffers_bool, flatbuffers_bool_t, FLATBUFFERS_BOOL_WIDTH, flatbuffers_endian)
+        __flatcc_define_integer_accessors(flatbuffers_union_type, flatbuffers_union_type_t, FLATBUFFERS_UTYPE_WIDTH,
+                                          flatbuffers_endian)
 
-            __flatcc_define_integer_accessors(__flatbuffers_uoffset, flatbuffers_uoffset_t,
-                                              FLATBUFFERS_UOFFSET_WIDTH, flatbuffers_endian)
+            __flatcc_define_integer_accessors(__flatbuffers_uoffset, flatbuffers_uoffset_t, FLATBUFFERS_UOFFSET_WIDTH,
+                                              flatbuffers_endian)
                 __flatcc_define_integer_accessors(__flatbuffers_soffset, flatbuffers_soffset_t,
                                                   FLATBUFFERS_SOFFSET_WIDTH, flatbuffers_endian)
                     __flatcc_define_integer_accessors(__flatbuffers_voffset, flatbuffers_voffset_t,
                                                       FLATBUFFERS_VOFFSET_WIDTH, flatbuffers_endian)
                         __flatcc_define_integer_accessors(__flatbuffers_utype, flatbuffers_utype_t,
-                                                          FLATBUFFERS_UTYPE_WIDTH,
-                                                          flatbuffers_endian)
-                            __flatcc_define_integer_accessors(__flatbuffers_thash,
-                                                              flatbuffers_thash_t,
-                                                              FLATBUFFERS_THASH_WIDTH,
-                                                              flatbuffers_endian)
+                                                          FLATBUFFERS_UTYPE_WIDTH, flatbuffers_endian)
+                            __flatcc_define_integer_accessors(__flatbuffers_thash, flatbuffers_thash_t,
+                                                              FLATBUFFERS_THASH_WIDTH, flatbuffers_endian)
 
 /* flatcc/portable/pendian.h sets LITTLE/BIG flags if possible, and always defines le16toh. */
 #ifndef flatbuffers_is_native_pe

@@ -197,17 +197,15 @@
  *  do nothing else.  On the Mac OS X version of gcc this is _STDINT_H_.
  */
 
-#if ((defined(_MSC_VER) && _MSC_VER >= 1600) ||                                          \
-     (defined(__STDC__) && __STDC__ && defined(__STDC_VERSION__) &&                      \
-      __STDC_VERSION__ >= 199901L) ||                                                    \
-     (defined(__WATCOMC__) && (defined(_STDINT_H_INCLUDED) || __WATCOMC__ >= 1250)) ||   \
-     (defined(__GNUC__) && (__GNUC__ > 3 || defined(_STDINT_H) || defined(_STDINT_H_) || \
-                            defined(__UINT_FAST64_TYPE__)))) &&                          \
+#if ((defined(_MSC_VER) && _MSC_VER >= 1600) ||                                                         \
+     (defined(__STDC__) && __STDC__ && defined(__STDC_VERSION__) && __STDC_VERSION__ >= 199901L) ||     \
+     (defined(__WATCOMC__) && (defined(_STDINT_H_INCLUDED) || __WATCOMC__ >= 1250)) ||                  \
+     (defined(__GNUC__) &&                                                                              \
+      (__GNUC__ > 3 || defined(_STDINT_H) || defined(_STDINT_H_) || defined(__UINT_FAST64_TYPE__)))) && \
     !defined(_PSTDINT_H_INCLUDED)
 #include <stdint.h>
 #define _PSTDINT_H_INCLUDED
-#if defined(__GNUC__) && (defined(__x86_64__) || defined(__ppc64__)) && \
-    !(defined(__APPLE__) && defined(__MACH__))
+#if defined(__GNUC__) && (defined(__x86_64__) || defined(__ppc64__)) && !(defined(__APPLE__) && defined(__MACH__))
 #ifndef PRINTF_INT64_MODIFIER
 #define PRINTF_INT64_MODIFIER "l"
 #endif
@@ -517,8 +515,8 @@ __extension__ typedef unsigned long long uint64_t;
 #ifndef PRINTF_INT64_MODIFIER
 #define PRINTF_INT64_MODIFIER "ll"
 #endif
-#elif defined(__MWERKS__) || defined(__SUNPRO_C) || defined(__SUNPRO_CC) || \
-    defined(__APPLE_CC__) || defined(_LONG_LONG) || defined(_CRAYC) || defined(S_SPLINT_S)
+#elif defined(__MWERKS__) || defined(__SUNPRO_C) || defined(__SUNPRO_CC) || defined(__APPLE_CC__) || \
+    defined(_LONG_LONG) || defined(_CRAYC) || defined(S_SPLINT_S)
 #define stdint_int64_defined
 typedef long long int64_t;
 typedef unsigned long long uint64_t;
@@ -527,8 +525,7 @@ typedef unsigned long long uint64_t;
 #ifndef PRINTF_INT64_MODIFIER
 #define PRINTF_INT64_MODIFIER "ll"
 #endif
-#elif (defined(__WATCOMC__) && defined(__WATCOM_INT64__)) || \
-    (defined(_MSC_VER) && _INTEGRAL_MAX_BITS >= 64) ||       \
+#elif (defined(__WATCOMC__) && defined(__WATCOM_INT64__)) || (defined(_MSC_VER) && _INTEGRAL_MAX_BITS >= 64) || \
     (defined(__BORLANDC__) && __BORLANDC__ > 0x460) || defined(__alpha) || defined(__DECC)
 #define stdint_int64_defined
 typedef __int64 int64_t;
@@ -737,8 +734,7 @@ typedef uint_least64_t uint_fast64_t;
 #endif
 
 #ifndef STDINT_H_UINTPTR_T_DEFINED
-#if defined(__alpha__) || defined(__ia64__) || defined(__x86_64__) || defined(_WIN64) || \
-    defined(__ppc64__)
+#if defined(__alpha__) || defined(__ia64__) || defined(__x86_64__) || defined(_WIN64) || defined(__ppc64__)
 #define stdint_intptr_bits 64
 #elif defined(__WATCOMC__) || defined(__TURBOC__)
 #if defined(__TINY__) || defined(__SMALL__) || defined(__MEDIUM__)
@@ -849,13 +845,11 @@ int main() {
   char str0[256], str1[256];
 
   sprintf(str0, "%" PRINTF_INT32_MODIFIER "d", INT32_C(2147483647));
-  if (0 != strcmp(str0, "2147483647"))
-    REPORTERROR(("Something wrong with PRINTF_INT32_MODIFIER : %s\n", str0));
+  if (0 != strcmp(str0, "2147483647")) REPORTERROR(("Something wrong with PRINTF_INT32_MODIFIER : %s\n", str0));
   if (atoi(PRINTF_INT32_DEC_WIDTH) != (int)strlen(str0))
     REPORTERROR(("Something wrong with PRINTF_INT32_DEC_WIDTH : %s\n", PRINTF_INT32_DEC_WIDTH));
   sprintf(str0, "%" PRINTF_INT32_MODIFIER "u", UINT32_C(4294967295));
-  if (0 != strcmp(str0, "4294967295"))
-    REPORTERROR(("Something wrong with PRINTF_INT32_MODIFIER : %s\n", str0));
+  if (0 != strcmp(str0, "4294967295")) REPORTERROR(("Something wrong with PRINTF_INT32_MODIFIER : %s\n", str0));
   if (atoi(PRINTF_UINT32_DEC_WIDTH) != (int)strlen(str0))
     REPORTERROR(("Something wrong with PRINTF_UINT32_DEC_WIDTH : %s\n", PRINTF_UINT32_DEC_WIDTH));
 #ifdef INT64_MAX
@@ -863,14 +857,13 @@ int main() {
   if (0 != strcmp(str1, "9223372036854775807"))
     REPORTERROR(("Something wrong with PRINTF_INT32_MODIFIER : %s\n", str1));
   if (atoi(PRINTF_INT64_DEC_WIDTH) != (int)strlen(str1))
-    REPORTERROR(("Something wrong with PRINTF_INT64_DEC_WIDTH : %s, %d\n", PRINTF_INT64_DEC_WIDTH,
-                 (int)strlen(str1)));
+    REPORTERROR(("Something wrong with PRINTF_INT64_DEC_WIDTH : %s, %d\n", PRINTF_INT64_DEC_WIDTH, (int)strlen(str1)));
   sprintf(str1, "%" PRINTF_INT64_MODIFIER "u", UINT64_C(18446744073709550591));
   if (0 != strcmp(str1, "18446744073709550591"))
     REPORTERROR(("Something wrong with PRINTF_INT32_MODIFIER : %s\n", str1));
   if (atoi(PRINTF_UINT64_DEC_WIDTH) != (int)strlen(str1))
-    REPORTERROR(("Something wrong with PRINTF_UINT64_DEC_WIDTH : %s, %d\n", PRINTF_UINT64_DEC_WIDTH,
-                 (int)strlen(str1)));
+    REPORTERROR(
+        ("Something wrong with PRINTF_UINT64_DEC_WIDTH : %s, %d\n", PRINTF_UINT64_DEC_WIDTH, (int)strlen(str1)));
 #endif
 
   sprintf(str0, "%d %x\n", 0, ~0);
