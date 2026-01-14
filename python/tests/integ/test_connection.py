@@ -1,8 +1,10 @@
 """
 Integration tests for PEP 249 Connection objects.
 """
-import pytest
+
 from unittest.mock import Mock
+
+import pytest
 
 from snowflake.ud_connector.exceptions import NotSupportedError
 
@@ -30,7 +32,9 @@ class TestConnectionMethods:
             connection.rollback()
         assert "rollback is not implemented" in str(excinfo.value)
 
+
 # TODO: Tests for context manager were deleted - we might want to add them again later
+
 
 class TestConnectionOptionalMethods:
     """Test optional Connection methods."""
@@ -71,7 +75,7 @@ class TestConnectionAutocommitProperty:
     def test_autocommit_property_get(self, connection):
         """Test getting autocommit property."""
         assert connection.autocommit is False
-        
+
         connection._autocommit = True
         assert connection.autocommit is True
 
@@ -80,10 +84,10 @@ class TestConnectionAutocommitProperty:
         """Test setting autocommit property."""
         # Mock set_autocommit to track calls
         mock_set_autocommit = Mock()
-        monkeypatch.setattr(connection, 'set_autocommit', mock_set_autocommit)
-        
+        monkeypatch.setattr(connection, "set_autocommit", mock_set_autocommit)
+
         connection.autocommit = True
-        
+
         assert connection._autocommit is True
         mock_set_autocommit.assert_called_once_with(True)
 
@@ -92,6 +96,6 @@ class TestConnectionAutocommitProperty:
         """Test setting autocommit property handles NotSupportedError."""
         # Default set_autocommit raises NotSupportedError
         connection.autocommit = True
-        
+
         # Should set internal flag despite NotSupportedError
         assert connection._autocommit is True

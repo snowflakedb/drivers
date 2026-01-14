@@ -3,17 +3,16 @@ PEP 249 Database API 2.0 Cursor Objects
 
 This module defines the Cursor class as specified in PEP 249.
 """
-
 from .exceptions import NotSupportedError
 
-from ._internal.protobuf_gen.database_driver_v1_pb2 import (
+from ._internal.protobuf_gen.database_driver_v1_pb2 import (  # type: ignore[attr-defined]
+    StatementExecuteQueryRequest,
     StatementNewRequest,
     StatementSetSqlQueryRequest,
-    StatementExecuteQueryRequest,
 )
+
 from ._internal.arrow_stream_iterator import ArrowStreamIterator
 from ._internal.arrow_context import ArrowConverterContext
-
 
 class Cursor:
     """
@@ -24,7 +23,7 @@ class Cursor:
     # Class attribute for arraysize
     arraysize = 1
 
-    def __init__(self, connection):
+    def __init__(self, connection: Any) -> None:
         """
         Initialize a new cursor object.
 
@@ -41,7 +40,7 @@ class Cursor:
         self.execute_result = None
 
     @property
-    def description(self):
+    def description(self) -> Any:
         """
         Read-only attribute describing the result columns of a query.
 
@@ -87,9 +86,7 @@ class Cursor:
         raise NotSupportedError("callproc is not implemented")
 
     def close(self):
-        """
-        Close the cursor now (rather than whenever __del__ is called).
-        """
+        """Close the cursor now (rather than whenever __del__ is called)."""
         self._closed = True
 
     def execute(self, operation, parameters=None):
@@ -108,11 +105,10 @@ class Cursor:
         ).stmt_handle
         self.connection.db_api.statement_set_sql_query(
             StatementSetSqlQueryRequest(stmt_handle=stmt_handle, query=operation)
-        )
-        self.execute_result = self.connection.db_api.statement_execute_query(
+
+        )self.execute_result = self.connection.db_api.statement_execute_query(
             StatementExecuteQueryRequest(stmt_handle=stmt_handle)
         ).result
-
         # Reset streaming state for a new result
         self._iterator = None
 
@@ -191,7 +187,6 @@ class Cursor:
         """
         self._ensure_iterator()
         return list(self._iterator)
-
     def nextset(self):
         """
         Skip to the next available set, discarding any remaining rows from current set.
@@ -264,9 +259,7 @@ class Cursor:
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        """
-        Exit the runtime context for the cursor.
-        """
+        """Exit the runtime context for the cursor."""
         self.close()
 
     def is_closed(self):

@@ -1,10 +1,11 @@
 import tempfile
+
 from pathlib import Path
 
 from tests.compatibility import NEW_DRIVER_ONLY, OLD_DRIVER_ONLY
 from tests.e2e.put_get.put_get_helper import (
-    get_file_from_stage,
     create_temporary_stage_and_upload_file,
+    get_file_from_stage,
 )
 from tests.utils import shared_test_data_dir
 
@@ -17,7 +18,6 @@ def test_should_compress_the_file_before_uploading_to_stage_when_auto_compress_s
     uncompressed_filename = "test_data.csv"
     compressed_filename = "test_data.csv.gz"
     with connection.cursor() as cursor:
-
         # Given Snowflake client is logged in
         assert cursor is not None
 
@@ -31,13 +31,10 @@ def test_should_compress_the_file_before_uploading_to_stage_when_auto_compress_s
         )
 
         with tempfile.TemporaryDirectory() as temp_dir:
-
             # Then Only compressed file should be downloaded
             download_dir = Path(temp_dir)
 
-            get_result = get_file_from_stage(
-                cursor, stage_name, uncompressed_filename, download_dir
-            )
+            get_result = get_file_from_stage(cursor, stage_name, uncompressed_filename, download_dir)
 
             assert get_result[2] == "DOWNLOADED"
 
@@ -66,7 +63,6 @@ def test_should_not_compress_the_file_before_uploading_to_stage_when_auto_compre
     compressed_filename = "test_data.csv.gz"
 
     with connection.cursor() as cursor:
-
         # Given Snowflake client is logged in
         assert cursor is not None
 
@@ -80,12 +76,9 @@ def test_should_not_compress_the_file_before_uploading_to_stage_when_auto_compre
         )
 
         with tempfile.TemporaryDirectory() as temp_dir:
-
             # Then Only uncompressed file should be downloaded
             download_dir = Path(temp_dir)
-            get_result = get_file_from_stage(
-                cursor, stage_name, uncompressed_filename, download_dir
-            )
+            get_result = get_file_from_stage(cursor, stage_name, uncompressed_filename, download_dir)
 
             assert get_result[2] == "DOWNLOADED"
 

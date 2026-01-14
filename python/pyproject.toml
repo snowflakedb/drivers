@@ -133,6 +133,10 @@ warn_unreachable = true
 strict_equality = true
 
 [[tool.mypy.overrides]]
+module = "snowflake.ud_connector._internal.protobuf_gen.*"
+ignore_errors = true
+
+[[tool.mypy.overrides]]
 module = "tests.*"
 disallow_untyped_defs = false
 disallow_incomplete_defs = false

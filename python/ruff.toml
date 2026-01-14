@@ -22,7 +22,12 @@ ignore = [
     'D104',                     # Missing docstring in public package
     'D105',                     # Missing docstring in magic method
     'D107',                     # Missing docstring in `__init__`
+    'D400',                     # First line should end with a period
+    'D205',                     # 1 blank line required between summary line and description
 ]
+
+[lint.per-file-ignores]
+'tests/**' = ['D']
 
 [lint.pydocstyle]
 convention = 'pep257'

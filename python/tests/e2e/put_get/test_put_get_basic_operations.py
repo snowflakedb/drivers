@@ -1,13 +1,15 @@
-import pytest
-import tempfile
 import gzip
+import tempfile
+
 from pathlib import Path
+
+import pytest
 
 from tests.compatibility import NEW_DRIVER_ONLY, OLD_DRIVER_ONLY
 from tests.e2e.put_get.put_get_helper import (
-    list_stage_contents,
-    get_file_from_stage,
     create_temporary_stage_and_upload_file,
+    get_file_from_stage,
+    list_stage_contents,
 )
 from tests.utils import shared_test_data_dir
 
@@ -16,7 +18,6 @@ def test_should_select_data_from_file_uploaded_to_stage(connection):
     test_file_path = shared_test_data_dir() / "compression" / "test_data.csv"
 
     with connection.cursor() as cursor:
-
         # Given File is uploaded to stage
         stage_name, _ = create_temporary_stage_and_upload_file(
             cursor,
@@ -40,7 +41,6 @@ def test_should_list_file_uploaded_to_stage(connection):
     filename = test_file_path.name
 
     with connection.cursor() as cursor:
-
         # Given File is uploaded to stage
         stage_name, _ = create_temporary_stage_and_upload_file(
             cursor, "TEST_STAGE_LS", test_file_path, auto_compress=True, overwrite=True
@@ -60,13 +60,11 @@ def test_should_get_file_uploaded_to_stage(connection):
     filename = test_file_path.name
 
     with connection.cursor() as cursor:
-
         # Given File is uploaded to stage
         stage_name, _ = create_temporary_stage_and_upload_file(
             cursor, "TEST_STAGE_GET", test_file_path, auto_compress=True, overwrite=True
         )
         with tempfile.TemporaryDirectory() as temp_dir:
-
             # When File is downloaded using GET command
             download_dir = Path(temp_dir)
 
@@ -87,7 +85,6 @@ def test_should_return_correct_rowset_for_put(connection):
     test_file_path = shared_test_data_dir() / "compression" / "test_data.csv"
 
     with connection.cursor() as cursor:
-
         # Given Snowflake client is logged in
         assert cursor is not None
 
@@ -119,7 +116,6 @@ def test_should_return_correct_rowset_for_get(connection):
     filename = test_file_path.name
 
     with connection.cursor() as cursor:
-
         # Given File is uploaded to stage
         stage_name, _ = create_temporary_stage_and_upload_file(
             cursor,
@@ -129,7 +125,6 @@ def test_should_return_correct_rowset_for_get(connection):
             overwrite=True,
         )
         with tempfile.TemporaryDirectory() as temp_dir:
-
             # When File is downloaded using GET command
             download_dir = Path(temp_dir)
             get_result = get_file_from_stage(cursor, stage_name, filename, download_dir)
@@ -144,14 +139,11 @@ def test_should_return_correct_rowset_for_get(connection):
             assert get_result[3] == ""
 
 
-@pytest.mark.skip(
-    reason="SNOW-2391324 cursor.description not implemented in new driver"
-)
+@pytest.mark.skip(reason="SNOW-2391324 cursor.description not implemented in new driver")
 def test_should_return_correct_column_metadata_for_put(connection):
     test_file_path = shared_test_data_dir() / "compression" / "test_data.csv"
 
     with connection.cursor() as cursor:
-
         # Given Snowflake client is logged in
         assert cursor is not None
 
@@ -181,20 +173,15 @@ def test_should_return_correct_column_metadata_for_put(connection):
 
         for i, expected_name in enumerate(expected_columns):
             actual_name = columns[i][0].lower()
-            assert (
-                actual_name == expected_name
-            ), f"Column {i} should be named '{expected_name}', got '{actual_name}'"
+            assert actual_name == expected_name, f"Column {i} should be named '{expected_name}', got '{actual_name}'"
 
 
-@pytest.mark.skip(
-    reason="SNOW-2391324 cursor.description not implemented in new driver"
-)
+@pytest.mark.skip(reason="SNOW-2391324 cursor.description not implemented in new driver")
 def test_should_return_correct_column_metadata_for_get(connection):
     test_file_path = shared_test_data_dir() / "compression" / "test_data.csv"
     filename = test_file_path.name
 
     with connection.cursor() as cursor:
-
         # Given File is uploaded to stage
         stage_name, _ = create_temporary_stage_and_upload_file(
             cursor,
@@ -204,7 +191,6 @@ def test_should_return_correct_column_metadata_for_get(connection):
             overwrite=True,
         )
         with tempfile.TemporaryDirectory() as temp_dir:
-
             # When File is downloaded using GET command
             download_dir = Path(temp_dir)
 
@@ -217,6 +203,6 @@ def test_should_return_correct_column_metadata_for_get(connection):
             expected_columns = ["file", "size", "status", "message"]
             for i, expected_name in enumerate(expected_columns):
                 actual_name = columns[i][0].lower()
-                assert (
-                    actual_name == expected_name
-                ), f"Column {i} should be named '{expected_name}', got '{actual_name}'"
+                assert actual_name == expected_name, (
+                    f"Column {i} should be named '{expected_name}', got '{actual_name}'"
+                )

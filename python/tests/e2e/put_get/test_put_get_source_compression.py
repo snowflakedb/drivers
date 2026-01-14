@@ -1,11 +1,12 @@
-import pytest
 from pathlib import Path
 
+import pytest
+
+from tests.compatibility import NEW_DRIVER_ONLY, OLD_DRIVER_ONLY
 from tests.e2e.put_get.put_get_helper import (
     as_file_uri,
     create_temporary_stage,
 )
-from tests.compatibility import NEW_DRIVER_ONLY, OLD_DRIVER_ONLY
 from tests.utils import shared_test_data_dir
 
 
@@ -106,9 +107,7 @@ def test_should_upload_compressed_files_with_source_compression_set_to_explicit_
             result = cursor.fetchone()
 
         # Then Target compression has correct type and all PUT results are correct
-        assert_put_compression_result(
-            result, filename, compression, filename, compression
-        )
+        assert_put_compression_result(result, filename, compression, filename, compression)
 
 
 def test_should_not_compress_file_when_source_compression_set_to_auto_detect_and_auto_compress_set_to_false(
@@ -125,7 +124,10 @@ def test_should_not_compress_file_when_source_compression_set_to_auto_detect_and
         filename = "test_data.csv"
 
         # When File is uploaded with SOURCE_COMPRESSION set to AUTO_DETECT and AUTO_COMPRESS set to FALSE
-        put_command = f"PUT 'file://{as_file_uri(test_file_path)}' @{stage_name} SOURCE_COMPRESSION=AUTO_DETECT AUTO_COMPRESS=FALSE"
+        put_command = (
+            f"PUT 'file://{as_file_uri(test_file_path)}' @{stage_name} "
+            "SOURCE_COMPRESSION=AUTO_DETECT AUTO_COMPRESS=FALSE"
+        )
         cursor.execute(put_command)
         result = cursor.fetchone()
 
@@ -147,7 +149,9 @@ def test_should_not_compress_file_when_source_compression_set_to_none_and_auto_c
         filename = "test_data.csv"
 
         # When File is uploaded with SOURCE_COMPRESSION set to NONE and AUTO_COMPRESS set to FALSE
-        put_command = f"PUT 'file://{as_file_uri(test_file_path)}' @{stage_name} SOURCE_COMPRESSION=NONE AUTO_COMPRESS=FALSE"
+        put_command = (
+            f"PUT 'file://{as_file_uri(test_file_path)}' @{stage_name} SOURCE_COMPRESSION=NONE AUTO_COMPRESS=FALSE"
+        )
         cursor.execute(put_command)
         result = cursor.fetchone()
 
@@ -163,13 +167,14 @@ def test_should_compress_uncompressed_file_when_source_compression_set_to_auto_d
         assert cursor is not None
 
         # And Uncompressed file
-        stage_name, test_file_path = create_stage_and_get_compression_file(
-            cursor, "TEST_STAGE_AUTO_COMPRESS", "NONE"
-        )
+        stage_name, test_file_path = create_stage_and_get_compression_file(cursor, "TEST_STAGE_AUTO_COMPRESS", "NONE")
         filename = "test_data.csv"
 
         # When File is uploaded with SOURCE_COMPRESSION set to AUTO_DETECT and AUTO_COMPRESS set to TRUE
-        put_command = f"PUT 'file://{as_file_uri(test_file_path)}' @{stage_name} SOURCE_COMPRESSION=AUTO_DETECT AUTO_COMPRESS=TRUE"
+        put_command = (
+            f"PUT 'file://{as_file_uri(test_file_path)}' @{stage_name} "
+            "SOURCE_COMPRESSION=AUTO_DETECT AUTO_COMPRESS=TRUE"
+        )
         cursor.execute(put_command)
         result = cursor.fetchone()
 
@@ -192,7 +197,9 @@ def test_should_compress_uncompressed_file_when_source_compression_set_to_none_a
         filename = "test_data.csv"
 
         # When File is uploaded with SOURCE_COMPRESSION set to NONE and AUTO_COMPRESS set to TRUE
-        put_command = f"PUT 'file://{as_file_uri(test_file_path)}' @{stage_name} SOURCE_COMPRESSION=NONE AUTO_COMPRESS=TRUE"
+        put_command = (
+            f"PUT 'file://{as_file_uri(test_file_path)}' @{stage_name} SOURCE_COMPRESSION=NONE AUTO_COMPRESS=TRUE"
+        )
         cursor.execute(put_command)
         result = cursor.fetchone()
 
@@ -207,10 +214,7 @@ def test_should_return_error_for_unsupported_compression_type(connection):
         assert cursor is not None
 
         # And File compressed with unsupported format
-        stage_name, test_file_path = create_stage_and_get_compression_file(
-            cursor, "TEST_STAGE_UNSUPPORTED", "LZMA"
-        )
-        filename = "test_data.csv.xz"
+        stage_name, test_file_path = create_stage_and_get_compression_file(cursor, "TEST_STAGE_UNSUPPORTED", "LZMA")
 
         # When File is uploaded with SOURCE_COMPRESSION set to AUTO_DETECT
         put_command = f"PUT 'file://{as_file_uri(test_file_path)}' @{stage_name} SOURCE_COMPRESSION=AUTO_DETECT"
@@ -258,9 +262,7 @@ def get_compression_test_file_path(compression_type: str) -> Path:
     return shared_test_data_dir() / "compression" / filename
 
 
-def create_stage_and_get_compression_file(
-    cursor, stage_prefix: str, compression_type: str
-):
+def create_stage_and_get_compression_file(cursor, stage_prefix: str, compression_type: str):
     """
     Create a temporary stage and get the compression test file path.
 
@@ -294,16 +296,12 @@ def assert_put_compression_result(
         expected_target: Expected target filename
         expected_target_compression: Expected target compression type
     """
-    assert (
-        result[0] == expected_source
-    ), f"Source should be '{expected_source}', got '{result[0]}'"
-    assert (
-        result[1] == expected_target
-    ), f"Target should be '{expected_target}', got '{result[1]}'"
-    assert (
-        result[4] == expected_source_compression
-    ), f"Source compression should be '{expected_source_compression}', got '{result[4]}'"
-    assert (
-        result[5] == expected_target_compression
-    ), f"Target compression should be '{expected_target_compression}', got '{result[5]}'"
+    assert result[0] == expected_source, f"Source should be '{expected_source}', got '{result[0]}'"
+    assert result[1] == expected_target, f"Target should be '{expected_target}', got '{result[1]}'"
+    assert result[4] == expected_source_compression, (
+        f"Source compression should be '{expected_source_compression}', got '{result[4]}'"
+    )
+    assert result[5] == expected_target_compression, (
+        f"Target compression should be '{expected_target_compression}', got '{result[5]}'"
+    )
     assert result[6] == "UPLOADED", f"Status should be 'UPLOADED', got '{result[6]}'"

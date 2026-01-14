@@ -6,15 +6,10 @@ from tests.utils import shared_test_data_dir
 
 
 def test_should_overwrite_file_when_overwrite_is_set_to_true(connection):
-    original_file_path = (
-        shared_test_data_dir() / "overwrite" / "original" / "test_data.csv"
-    )
-    updated_file_path = (
-        shared_test_data_dir() / "overwrite" / "updated" / "test_data.csv"
-    )
+    original_file_path = shared_test_data_dir() / "overwrite" / "original" / "test_data.csv"
+    updated_file_path = shared_test_data_dir() / "overwrite" / "updated" / "test_data.csv"
 
     with connection.cursor() as cursor:
-
         # Given File is uploaded to stage
         assert cursor is not None
         stage_name, _ = create_temporary_stage_and_upload_file(
@@ -42,15 +37,10 @@ def test_should_overwrite_file_when_overwrite_is_set_to_true(connection):
 
 
 def test_should_not_overwrite_file_when_overwrite_is_set_to_false(connection):
-    original_file_path = (
-        shared_test_data_dir() / "overwrite" / "original" / "test_data.csv"
-    )
-    updated_file_path = (
-        shared_test_data_dir() / "overwrite" / "updated" / "test_data.csv"
-    )
+    original_file_path = shared_test_data_dir() / "overwrite" / "original" / "test_data.csv"
+    updated_file_path = shared_test_data_dir() / "overwrite" / "updated" / "test_data.csv"
 
     with connection.cursor() as cursor:
-
         # Given File is uploaded to stage
         stage_name, _ = create_temporary_stage_and_upload_file(
             cursor,

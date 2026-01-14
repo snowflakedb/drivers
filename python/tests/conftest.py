@@ -2,8 +2,9 @@
 pytest configuration and fixtures for PEP 249 tests.
 """
 
-import pytest
 from urllib.parse import urlparse
+
+import pytest
 
 from .compatibility import set_current_connector
 from .connector_factory import ConnectorFactory, create_connection_with_adapter

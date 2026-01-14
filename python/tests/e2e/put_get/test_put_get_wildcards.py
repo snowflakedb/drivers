@@ -1,4 +1,5 @@
 import tempfile
+
 from pathlib import Path
 
 from tests.e2e.put_get.put_get_helper import (
@@ -102,9 +103,7 @@ def test_should_download_files_that_are_matching_wildcard_pattern(connection):
         stage_name = create_temporary_stage(cursor, "TEST_GET_WILDCARD")
         for filename in matching_files:
             file_path = temp_path / filename
-            upload_file_to_stage(
-                cursor, stage_name, file_path, auto_compress=True, overwrite=True
-            )
+            upload_file_to_stage(cursor, stage_name, file_path, auto_compress=True, overwrite=True)
 
         # And Files not matching wildcard pattern are uploaded
         non_matching_files = [
@@ -114,9 +113,7 @@ def test_should_download_files_that_are_matching_wildcard_pattern(connection):
         create_test_files(temp_path, non_matching_files)
         for filename in non_matching_files:
             file_path = temp_path / filename
-            upload_file_to_stage(
-                cursor, stage_name, file_path, auto_compress=True, overwrite=True
-            )
+            upload_file_to_stage(cursor, stage_name, file_path, auto_compress=True, overwrite=True)
 
         with tempfile.TemporaryDirectory() as download_temp_dir:
             download_dir = Path(download_temp_dir)
@@ -160,9 +157,7 @@ def upload_files_with_wildcard(
     Returns:
         list: List of result rows from the PUT command (one per uploaded file)
     """
-    options_str = (
-        f"AUTO_COMPRESS={str(auto_compress).upper()} OVERWRITE={str(overwrite).upper()}"
-    )
+    options_str = f"AUTO_COMPRESS={str(auto_compress).upper()} OVERWRITE={str(overwrite).upper()}"
     put_command = f"PUT 'file://{wildcard_pattern}' @{stage_name} {options_str}"
     cursor.execute(put_command)
     return cursor.fetchall()
@@ -192,13 +187,9 @@ def create_temporary_stage_and_upload_multiple_files(
         All uploads are automatically validated for success.
     """
     stage_name = create_temporary_stage(cursor, stage_prefix)
-    upload_results = upload_files_with_wildcard(
-        cursor, stage_name, wildcard_pattern, auto_compress, overwrite
-    )
+    upload_results = upload_files_with_wildcard(cursor, stage_name, wildcard_pattern, auto_compress, overwrite)
     for upload_result in upload_results:
-        assert (
-            upload_result[6] == "UPLOADED"
-        ), f"File upload failed. Status: {upload_result[6]}"
+        assert upload_result[6] == "UPLOADED", f"File upload failed. Status: {upload_result[6]}"
 
     return stage_name, upload_results
 
@@ -217,7 +208,5 @@ def get_files_with_wildcard(cursor, stage_name: str, pattern: str, download_dir:
         This function executes the GET command but does not return results.
         Check the download_dir for downloaded files after calling this function.
     """
-    get_command = (
-        f"GET @{stage_name} 'file://{as_file_uri(download_dir)}/' PATTERN='{pattern}'"
-    )
+    get_command = f"GET @{stage_name} 'file://{as_file_uri(download_dir)}/' PATTERN='{pattern}'"
     cursor.execute(get_command)

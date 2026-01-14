@@ -3,7 +3,6 @@ import pytest
 
 @pytest.mark.skip_reference(reason="CRL e2e applies to universal driver")
 def test_should_connect_and_select_with_crl_enabled(connection_factory):
-
     # Given Snowflake client is logged in
     with connection_factory(crl_check_mode="ENABLED") as conn:
         cur = conn.cursor()

@@ -1,11 +1,12 @@
-import os
 import json
-from typing import Dict, Any
+import os
+
+from typing import Any
 
 
-def get_test_parameters() -> Dict[str, Any]:
+def get_test_parameters() -> dict[str, Any]:
     """Get test connection parameters from environment or parameters file.
-    
+
     Returns:
         Dictionary containing test connection parameters from parameters.json
         or environment variables as fallback.
@@ -16,7 +17,7 @@ def get_test_parameters() -> Dict[str, Any]:
         with open(parameter_path) as f:
             parameters = json.load(f)
             return parameters.get("testconnection", {})
-    
+
     # Fallback to default test parameters (for local testing)
     env_vars = [
         "SNOWFLAKE_TEST_ACCOUNT",
@@ -34,4 +35,3 @@ def get_test_parameters() -> Dict[str, Any]:
         "SNOWFLAKE_TEST_PRIVATE_KEY_PASSWORD",
     ]
     return {k: os.environ.get(k) for k in env_vars}
-
