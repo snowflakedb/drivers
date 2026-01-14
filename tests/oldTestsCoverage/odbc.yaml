@@ -1,0 +1,947 @@
+title: ODBC Driver Test Coverage
+description: Mapping of old ODBC driver tests to new Universal Driver test suite.
+summary:
+  total_tests: 432
+  total_test_files: 71
+tests:
+  AuthenticationTests/AuthLatestTest/ExternalBrowserTest.cpp:
+  - test_name: IdToken scenario
+    ud_tests: []
+  - test_name: should authenticate using external browser
+    ud_tests: []
+  - test_name: should throw error for browser timeout
+    ud_tests: []
+  - test_name: should throw error for mismatched username - external browser
+    ud_tests: []
+  - test_name: should throw error for wrong credentials
+    ud_tests: []
+  AuthenticationTests/AuthLatestTest/MfaLatestTest.cpp:
+  - test_name: should authenticate using MFA with TOTP codes from generator
+    ud_tests: []
+  AuthenticationTests/AuthLatestTest/OauthLatestTest.cpp:
+  - test_name: should authenticate using oauth
+    ud_tests: []
+  - test_name: should throw error for invalid token
+    ud_tests: []
+  - test_name: should throw error for mismatched username - oauth
+    ud_tests: []
+  AuthenticationTests/AuthLatestTest/OauthOktaAuthorizationCodeLatestTest.cpp:
+  - test_name: should authenticate using external oauth okta authorization code
+    ud_tests: []
+  - test_name: should authenticate using external oauth okta authorization code -
+      token cache
+    ud_tests: []
+  - test_name: should throw error for browser timeout - oauth okta authorization code
+    ud_tests: []
+  - test_name: should throw error for mismatched username - oauth okta authorization
+      code
+    ud_tests: []
+  AuthenticationTests/AuthLatestTest/OauthOktaClientCredentialsLatestTest.cpp:
+  - test_name: should authenticate using okta ouath client credentials
+    ud_tests: []
+  - test_name: should throw error for client credentials mismatched username
+    ud_tests: []
+  - test_name: should throw error for unauthorized client credentials
+    ud_tests: []
+  AuthenticationTests/AuthLatestTest/OauthSnowflakeAuthorizationCodeLatestTest.cpp:
+  - test_name: should authenticate using snowflake authorization code
+    ud_tests: []
+  - test_name: should authenticate using snowflake authorization code - token cache
+    ud_tests: []
+  - test_name: should authenticate using snowflake authorization code on chosen redirect
+      URI
+    ud_tests: []
+  - test_name: should throw error for browser timeout - snowflake authorization code
+    ud_tests: []
+  - test_name: should throw error for mismatched username - snowflake authorization
+      code
+    ud_tests: []
+  AuthenticationTests/AuthLatestTest/OktaLatestTest.cpp:
+  - test_name: should authenticate using okta
+    ud_tests: []
+  - test_name: should throw error for wrong okta credentials
+    ud_tests: []
+  - test_name: should throw error for wrong okta url
+    ud_tests: []
+  - test_name: should throw error for wrong url without okta path
+    ud_tests: []
+  AuthenticationTests/AuthLatestTest/PATLatestTest.cpp:
+  - test_name: should authenticate using PAT
+    ud_tests: []
+  - test_name: should authenticate using PAT in password
+    ud_tests: []
+  - test_name: should throw error for invalid PAT
+    ud_tests: []
+  - test_name: should throw error for mismatched username - PAT
+    ud_tests: []
+  AuthenticationTests/WIFLatestTest/WIFLatestTest.cpp:
+  - test_name: should authenticate using OIDC
+    ud_tests: []
+  - test_name: should authenticate using wif with explicit provider
+    ud_tests: []
+  - test_name: shouldn't authenticate using wif without explicit provider
+    ud_tests: []
+  EndToEndTests/ApiCatchLatestTest/ApiCatchLatestTest.cpp:
+  - test_name: Configurable default varchar/binary size
+    ud_tests: []
+  - test_name: Log Settings
+    ud_tests: []
+  - test_name: Query ID for PUT operation
+    ud_tests: []
+  - test_name: SELECT DECFLOAT
+    ud_tests: []
+  - test_name: SQLColAttribute with external type name
+    ud_tests: []
+  - test_name: SQLDescribeCol and SQLColAttribute
+    ud_tests: []
+  - test_name: SQLGetData in parts
+    ud_tests: []
+  - test_name: SQLGetTypeInfo() with decfloat
+    ud_tests: []
+  - test_name: SQLParamData and SQLPutData
+    ud_tests: []
+  - test_name: SQLParamData and SQLPutData with enableDescribeDirectExec
+    ud_tests: []
+  - test_name: Test API not supported
+    ud_tests: []
+  - test_name: Test Current Catalog
+    ud_tests: []
+  - test_name: Test MapToLongVarchar
+    ud_tests: []
+  - test_name: Test ODBC_TREAT_BIG_NUMBER_AS_STRING
+    ud_tests: []
+  - test_name: Test ODBC_TREAT_DECIMAL_AS_INT
+    ud_tests: []
+  - test_name: Test SQLColumns() with decfloat
+    ud_tests: []
+  - test_name: Test SQLColumns() with geography
+    ud_tests: []
+  - test_name: Test SQLColumns() with geometry
+    ud_tests: []
+  - test_name: Test SQLProcedures and SQLProcedureColumns
+    ud_tests: []
+  - test_name: Test Unicode catalog funtion filter
+    ud_tests: []
+  - test_name: Test catalog funtion filter with special characters
+    ud_tests: []
+  - test_name: Test large query with GCS downscoped token
+    ud_tests: []
+  - test_name: Test length not missing for SQLDescribeCol()
+    ud_tests: []
+  - test_name: Test retrieving large number
+    ud_tests: []
+  EndToEndTests/ApiCatchTest/ApiCatchTest.cpp:
+  - test_name: Bind NULL type
+    ud_tests: []
+  - test_name: CLIENT_PREFETCH_THREADS
+    ud_tests: []
+  - test_name: Expiredcertificate
+    ud_tests: []
+  - test_name: Query ID for failed query
+    ud_tests: []
+  - test_name: Query ID for successful query
+    ud_tests: []
+  - test_name: Query Timeout
+    ud_tests: []
+  - test_name: RevokedCertificate
+    ud_tests: []
+  - test_name: SELECT BINARY
+    ud_tests: []
+  - test_name: SQLConnect
+    ud_tests: []
+  - test_name: SQLGetFunctions()
+    ud_tests: []
+  - test_name: SQLGetTypeInfo()
+    ud_tests: []
+  - test_name: Test SQLColumns()
+    ud_tests: []
+  - test_name: Test SQLTables()
+    ud_tests: []
+  - test_name: TestCharactersInServerParameter
+    ud_tests: []
+  - test_name: TestSessionParameters
+    ud_tests: []
+  - test_name: TestWrongPort
+    ud_tests: []
+  - test_name: testCopyDesc
+    ud_tests: []
+  EndToEndTests/ApiTest/ApiTest.cpp:
+  - test_name: ApiTest
+    ud_tests: []
+  EndToEndTests/ApplicationTest/ApplicationTest.cpp:
+  - test_name: Set Application Name
+    ud_tests: []
+  EndToEndTests/ArrowBulkLatestTest/ArrowBulkLatestTest.cpp:
+  - test_name: BULKTEST ALL_NUMBER
+    ud_tests: []
+  - test_name: Bulk fetch number with bigint
+    ud_tests: []
+  - test_name: Bulk fetch number with char
+    ud_tests: []
+  - test_name: Bulk fetch number with double
+    ud_tests: []
+  - test_name: Bulk fetch number with integer
+    ud_tests: []
+  - test_name: Bulk fetch number with numeric
+    ud_tests: []
+  - test_name: Bulk fetch random data
+    ud_tests: []
+  - test_name: Concurrent bulk fetch number
+    ud_tests: []
+  - test_name: SELECT ALLOTHERDATATYPES
+    ud_tests: []
+  - test_name: SELECT TIMESTAMP_NTZ
+    ud_tests: []
+  - test_name: SELECT TIMESTAMP_TZ
+    ud_tests: []
+  - test_name: TIMESTAMP_LTZ
+    ud_tests: []
+  - test_name: To_Timestamp_NTZ_Different_precisions
+    ud_tests: []
+  EndToEndTests/ArrowLatestTest/ArrowLatestTest.cpp:
+  - test_name: Negative Date Test
+    ud_tests: []
+  - test_name: RESULT_SCAN
+    ud_tests: []
+  - test_name: SELECT BASE64
+    ud_tests: []
+  - test_name: SELECT BINARY
+    ud_tests: []
+  - test_name: SELECT BOOLEAN
+    ud_tests: []
+  - test_name: SELECT DATETIMESTRUCT
+    ud_tests: []
+  - test_name: SELECT DECIMAL
+    ud_tests: []
+  - test_name: SELECT DOUBLE
+    ud_tests: []
+  - test_name: SELECT HEX
+    ud_tests: []
+  - test_name: SELECT INT
+    ud_tests: []
+  - test_name: SELECT STRUCTURED TYPES
+    ud_tests: []
+  - test_name: SELECT TIME
+    ud_tests: []
+  - test_name: SELECT TIMESTAMP_NTZ
+    ud_tests: []
+  - test_name: SELECT TIMESTAMP_TZ
+    ud_tests: []
+  - test_name: SELECT UNPRINTABLES
+    ud_tests: []
+  - test_name: SELECT VARCHARS
+    ud_tests: []
+  - test_name: SELECT VARIANTS
+    ud_tests: []
+  - test_name: SELECT floating point
+    ud_tests: []
+  - test_name: SQLDescribeCol and SQLColAttribute
+    ud_tests: []
+  - test_name: STRING TEST
+    ud_tests: []
+  - test_name: SWITCH FORMAT
+    ud_tests: []
+  - test_name: TIMESTAMP_LTZ
+    ud_tests: []
+  - test_name: TIMESTAMP_NTZ with different precision
+    ud_tests: []
+  - test_name: Test SQLTables()
+    ud_tests: []
+  EndToEndTests/ArrowResultTest/ArrowResultTest.hpp:
+  - test_name: testArrowResult
+    ud_tests: []
+  - test_name: testArrowResultS3
+    ud_tests: []
+  EndToEndTests/BindCatchLatestTest/BindCatchLatestTest.cpp:
+  - test_name: ArrayBindWizDynamicParamDiscovery
+    ud_tests: []
+  - test_name: BindSingleValue
+    ud_tests: []
+  - test_name: Error on SQL_DEFAULT_PARAM
+    ud_tests: []
+  - test_name: Exceed max number of parameters
+    ud_tests: []
+  - test_name: Stage binding disable
+    ud_tests: []
+  - test_name: Stage binding fallback on error
+    ud_tests: []
+  - test_name: Stage binding with compression
+    ud_tests: []
+  - test_name: Stage binding with date/time types
+    ud_tests: []
+  - test_name: Stage binding with enableDescribeDirectExec
+    ud_tests: []
+  - test_name: Stage binding with multiple file uploading
+    ud_tests: []
+  - test_name: arrayBindSupportedReturnedFalse
+    ud_tests: []
+  - test_name: arrayBindSupportedReturnedFalse with enableDescribeDirectExec
+    ud_tests: []
+  - test_name: changing binding during multiple executions
+    ud_tests: []
+  EndToEndTests/BindCatchTest/BindCatchTest.cpp:
+  - test_name: Bind timestamp to varchar should keep trailing 0s
+    ud_tests: []
+  - test_name: Stage parameter array binding
+    ud_tests: []
+  - test_name: TIMESTAMP_LTZ
+    ud_tests: []
+  EndToEndTests/BindTest/BindTest.hpp:
+  - test_name: testAroundYearZero
+    ud_tests: []
+  - test_name: testArrayBindInput
+    ud_tests: []
+  - test_name: testBindAndGetNullTimestampNTZ
+    ud_tests: []
+  - test_name: testBindArraytoSelect
+    ud_tests: []
+  - test_name: testBindBoolean
+    ud_tests: []
+  - test_name: testBindDate
+    ud_tests: []
+  - test_name: testBindIntegerStringNumberOutOfRange
+    ud_tests: []
+  - test_name: testBindNegativeInteger
+    ud_tests: []
+  - test_name: testBindTime
+    ud_tests: []
+  - test_name: testBindTimestamp
+    ud_tests: []
+  - test_name: testBindTimestampTZViaString
+    ud_tests: []
+  - test_name: testBindWithRewrite
+    ud_tests: []
+  - test_name: testDoubleToString
+    ud_tests: []
+  - test_name: testNoBindExec
+    ud_tests: []
+  - test_name: testPrepareTimeout
+    ud_tests: []
+  - test_name: testRowWiseBinding
+    ud_tests: []
+  - test_name: testSFTimestampNTZ
+    ud_tests: []
+  - test_name: testStageArrayBindInput
+    ud_tests: []
+  EndToEndTests/BulkTest/BulkTest.hpp:
+  - test_name: testBulkConverterForBigInt
+    ud_tests: []
+  - test_name: testBulkConverterForDouble
+    ud_tests: []
+  - test_name: testBulkConverterForNull
+    ud_tests: []
+  - test_name: testBulkConverterForTimestamp
+    ud_tests: []
+  - test_name: testMultiFetchResultBulk
+    ud_tests: []
+  - test_name: testMultiFetchResultBulkChar
+    ud_tests: []
+  EndToEndTests/CancelLatestTest/CancelLatestTest.cpp:
+  - test_name: cancel query with large result set
+    ud_tests: []
+  - test_name: cancel when fetching on large result set
+    ud_tests: []
+  - test_name: cancel with binding parameter array not supported by server
+    ud_tests: []
+  EndToEndTests/CancelTest/CancelTest.cpp:
+  - test_name: basic SQLCancel()
+    ud_tests: []
+  - test_name: cancel with data SQLCancel()
+    ud_tests: []
+  EndToEndTests/CompatibilityTest/CompatibilityTest.cpp:
+  - test_name: Test compatibility
+    ud_tests: []
+  EndToEndTests/ConcurrentPutsLatestTest/ConcurrentPutsLatestTest.cpp:
+  - test_name: SET_MAX_CONCURRENT_JOBS
+    ud_tests: []
+  - test_name: concurrentPuts
+    ud_tests: []
+  - test_name: createStage
+    ud_tests: []
+  - test_name: dropStage
+    ud_tests: []
+  - test_name: verifyStage
+    ud_tests: []
+  EndToEndTests/ConnectionDiagnosticTest/ConnectionDiagnosticTest.cpp:
+  - test_name: Test Connection Diagnostic Allowlist Path
+    ud_tests: []
+  - test_name: Test Connection Diagnostic Empty Allowlist Path
+    ud_tests: []
+  - test_name: Test Connection Diagnostic Empty Report Path
+    ud_tests: []
+  - test_name: Test Connection Diagnostic Invalid Allowlist JSON
+    ud_tests: []
+  - test_name: Test Connection Diagnostic Invalid Allowlist Path
+    ud_tests: []
+  - test_name: Test Connection Diagnostic Invalid Report Path
+    ud_tests: []
+  - test_name: Test Connection Diagnostic Report Created
+    ud_tests: []
+  - test_name: Test Connection Diagnostic Report Not Created
+    ud_tests: []
+  EndToEndTests/ConnectionLatestTest/ConnectionLatestTest.cpp:
+  - test_name: CLIENT_OUT_OF_BAND_TELEMETRY_ENABLED
+    ud_tests: []
+  - test_name: CURL_NO_IDLE_CHECK
+    ud_tests: []
+  - test_name: Concurrent Connection
+    ud_tests: []
+  - test_name: Connect with CRL and OCSP enabled should fail
+    ud_tests: []
+  - test_name: Connect with CRL enabled
+    ud_tests: []
+  - test_name: Connect with CRL enabled and OCSP defaults should fail
+    ud_tests: []
+  - test_name: Connection individual proxy
+    ud_tests: []
+  - test_name: Invalid connection key
+    ud_tests: []
+  - test_name: Retry On 429
+    ud_tests: []
+  - test_name: RetryOn403
+    ud_tests: []
+  - test_name: SIGPIPE with azure
+    ud_tests: []
+  - test_name: Set Application Name through connection string
+    ud_tests: []
+  - test_name: Test BROWSER_RESPONSE_TIMEOUT
+    ud_tests: []
+  - test_name: Test BROWSER_RESPONSE_TIMEOUT Parameter
+    ud_tests: []
+  - test_name: Test Jitter
+    ud_tests: []
+  - test_name: Test Login Retry Count
+    ud_tests: []
+  - test_name: Test Login Timeout
+    ud_tests: []
+  - test_name: Test MaxHttpRetries
+    ud_tests: []
+  - test_name: Test Retry Timeout
+    ud_tests: []
+  - test_name: Test when timeout is set to 0
+    ud_tests: []
+  - test_name: ValidateSessionParam
+    ud_tests: []
+  - test_name: credential leak in log
+    ud_tests: []
+  - test_name: default cabundle file
+    ud_tests: []
+  - test_name: default connection
+    ud_tests: []
+  - test_name: disableSamlUrlCheck
+    ud_tests: []
+  - test_name: escape url parameters
+    ud_tests: []
+  - test_name: includeRetryReason
+    ud_tests: []
+  - test_name: oob disabled for incorrect proxy definition
+    ud_tests: []
+  - test_name: org connection
+    ud_tests: []
+  - test_name: secondary roles
+    ud_tests: []
+  EndToEndTests/FeatureTest/FeatureTest.cpp:
+  - test_name: ESCAPE CHARACTERS
+    ud_tests: []
+  EndToEndTests/FunctionCatchTest/FunctionCatchTest.cpp:
+  - test_name: Test Time/Date functions
+    ud_tests: []
+  EndToEndTests/FunctionTest/FunctionTest.hpp:
+  - test_name: testNumericFunctions
+    ud_tests: []
+  - test_name: testStringFunctions
+    ud_tests: []
+  - test_name: testSystemFunctions
+    ud_tests: []
+  - test_name: testTypeConversionFunctions
+    ud_tests: []
+  EndToEndTests/GSRetryTest/GSRetryTest.cpp:
+  - test_name: GSRetryTest
+    ud_tests: []
+  - test_name: GSRetryTestWithBind
+    ud_tests: []
+  EndToEndTests/IncidentLatestTest/IncidentLatestTest.cpp:
+  - test_name: Test incident send as inband telemetry
+    ud_tests: []
+  EndToEndTests/JwtTest/JwtTest.cpp:
+  - test_name: JWT renew
+    ud_tests: []
+  - test_name: Load base64 encoded private key
+    ud_tests: []
+  - test_name: Load private key through EVP_PKEY structure
+    ud_tests: []
+  - test_name: Load private key through PEM file
+    ud_tests: []
+  - test_name: Load private key through PEM file with unicode path
+    ud_tests: []
+  - test_name: Load private key through key file content
+    ud_tests: []
+  - test_name: Missing private key
+    ud_tests: []
+  EndToEndTests/LOBCatchLatestTest/LOBCatchLatestTest.cpp:
+  - test_name: InsertLobDataWithBindings
+    ud_tests: []
+  - test_name: InsertLobDataWithLiteral
+    ud_tests: []
+  - test_name: InsertLobDataWithStageBinding
+    ud_tests: []
+  - test_name: LOBTableMetadata
+    ud_tests: []
+  EndToEndTests/LargeResultTest/LargeResultTest.hpp:
+  - test_name: testLargeResult
+    ud_tests: []
+  - test_name: testLargeResultAzure
+    ud_tests: []
+  - test_name: testLargeResultGCP
+    ud_tests: []
+  - test_name: testLargeResultS3
+    ud_tests: []
+  EndToEndTests/LogTest/LogTest.cpp:
+  - test_name: Test ClientConfig Log Created
+    ud_tests: []
+  - test_name: Test Log Directory Created With Proper Permissions
+    ud_tests: []
+  EndToEndTests/LongRunningQueryLatestTest/LongRunningQueryLatestTest.cpp:
+  - test_name: long running query
+    ud_tests: []
+  EndToEndTests/MultiStatementLatestTest/MultiStatementLatestTest.cpp:
+  - test_name: testMultiStmtAlterSessionParams
+    ud_tests: []
+  - test_name: testMultiStmtCommitRollback
+    ud_tests: []
+  - test_name: testMultiStmtCommitRollbackNoAutocommit
+    ud_tests: []
+  - test_name: testMultiStmtCountNotMatch
+    ud_tests: []
+  - test_name: testMultiStmtExecError
+    ud_tests: []
+  - test_name: testMultiStmtExecute
+    ud_tests: []
+  - test_name: testMultiStmtMultiLine
+    ud_tests: []
+  - test_name: testMultiStmtParseError
+    ud_tests: []
+  - test_name: testMultiStmtQuotes
+    ud_tests: []
+  - test_name: testMultiStmtSetUnset
+    ud_tests: []
+  - test_name: testMultiStmtTempTable
+    ud_tests: []
+  - test_name: testMultiStmtTransaction
+    ud_tests: []
+  - test_name: testMultiStmtTransactionRollback
+    ud_tests: []
+  - test_name: testMultiStmtUseStmt
+    ud_tests: []
+  - test_name: testMultiStmtWithCallProcedure
+    ud_tests: []
+  - test_name: testMultiStmtWithUnknownType
+    ud_tests: []
+  - test_name: testPreparedMultiStmtInsertMoreBindings
+    ud_tests: []
+  - test_name: testPreparedMultiStmtInsertMoreBindings with enableDescribeDirectExec
+    ud_tests: []
+  - test_name: testPreparedMultiStmtInsertWithBindings
+    ud_tests: []
+  - test_name: testPreparedMultiStmtInsertWithBindings and enableDescribeDirectExec
+    ud_tests: []
+  - test_name: testPreparedMultiStmtLessBindings
+    ud_tests: []
+  - test_name: testPreparedMultiStmtLessBindings with enableDescribeDirectExec
+    ud_tests: []
+  - test_name: testPreparedMultiStmtSelectNoBindings
+    ud_tests: []
+  - test_name: testPreparedMultiStmtSelectWithBindings
+    ud_tests: []
+  - test_name: testWithScript
+    ud_tests: []
+  EndToEndTests/StageOperationLatestTest/StageOperationLatestTest.cpp:
+  - test_name: Execution Failure
+    ud_tests: []
+  - test_name: LIST REMOVE Command
+    ud_tests: []
+  - test_name: PUT GET Large 2GB Command
+    ud_tests: []
+  - test_name: PUT GET Large Command
+    ud_tests: []
+  - test_name: PUT GET Simple Command
+    ud_tests: []
+  - test_name: PUT GET with CLIENT_ENCRYPTION_KEY_SIZE 256
+    ud_tests: []
+  - test_name: PUT GET with GCS downscoped token
+    ud_tests: []
+  - test_name: PUT GET with Server Side Encryption
+    ud_tests: []
+  - test_name: PUT GET with overwrite
+    ud_tests: []
+  - test_name: PUT GET with unicode characters
+    ud_tests: []
+  - test_name: TEST FILE URIS
+    ud_tests: []
+  - test_name: TEST_S3_REGIONAL_URL
+    ud_tests: []
+  - test_name: Use urandom device
+    ud_tests: []
+  - test_name: command injection with PUT_TEMPDIR
+    ud_tests: []
+  - test_name: putget settings
+    ud_tests: []
+  EndToEndTests/StatementCatchLatestTest/StatementCatchLatestTest.cpp:
+  - test_name: ALTER
+    ud_tests: []
+  - test_name: ARROW Test
+    ud_tests: []
+  - test_name: BEGIN_TEST
+    ud_tests: []
+  - test_name: COPY Statement
+    ud_tests: []
+  - test_name: DESCRIBE
+    ud_tests: []
+  - test_name: EXPLAIN
+    ud_tests: []
+  - test_name: ExecDirect And No SqlPrepare
+    ud_tests: []
+  - test_name: PARAMETERIZED INSERTION
+    ud_tests: []
+  - test_name: PROCEDURE CALL returns NULL
+    ud_tests: []
+  - test_name: PUT GET Statement
+    ud_tests: []
+  - test_name: RESULT SCAN
+    ud_tests: []
+  - test_name: SET_TEST
+    ud_tests: []
+  - test_name: STATEMENT TYPE CALL
+    ud_tests: []
+  - test_name: STRING TEST
+    ud_tests: []
+  - test_name: SqlPrepare And Exec
+    ud_tests: []
+  - test_name: SqlPrepare for Set
+    ud_tests: []
+  - test_name: Truncate
+    ud_tests: []
+  - test_name: USE Test
+    ud_tests: []
+  EndToEndTests/TelemetryTest/TelemetryTest.cpp:
+  - test_name: Test Exception Created
+    ud_tests: []
+  - test_name: Test many telemetry queued after disconnect
+    ud_tests: []
+  - test_name: telemetry with concurrent Connections
+    ud_tests: []
+  EndToEndTests/TomlConfigurationTest/TomlConfigurationTest.cpp:
+  - test_name: Invalid Toml file
+    ud_tests: []
+  - test_name: Missing Toml file
+    ud_tests: []
+  - test_name: Not enough parameters
+    ud_tests: []
+  - test_name: Not only Driver param passed in
+    ud_tests: []
+  - test_name: Python key mapping
+    ud_tests: []
+  - test_name: Use SNOWFLAKE_DEFAULT_CONNECTION_NAME env var
+    ud_tests: []
+  - test_name: Use SNOWFLAKE_DEFAULT_CONNECTION_NAME env var to fail
+    ud_tests: []
+  - test_name: Use default ~/.snowflake
+    ud_tests: []
+  EndToEndTests/WcharTest/WcharTest.cpp:
+  - test_name: wchar_t
+    ud_tests: []
+  SSOTest/SSOTest.cpp:
+  - test_name: OKTA OAuth
+    ud_tests: []
+  - test_name: SF External Browser with Token Cache
+    ud_tests: []
+  - test_name: SF OAuth
+    ud_tests: []
+  - test_name: SF OAuth CC
+    ud_tests: []
+  - test_name: mfa
+    ud_tests: []
+  - test_name: okta
+    ud_tests: []
+  - test_name: sso
+    ud_tests: []
+  UnitTests/InbandTelemetryTest/InbandTelemetryTest.cpp:
+  - test_name: Negative Test case
+    ud_tests: []
+  - test_name: inband telemetry test
+    ud_tests: []
+  - test_name: sf sql incident test
+    ud_tests: []
+  - test_name: sf sql logged exception test
+    ud_tests: []
+  UnitTests/Int128CatchTest/Int128Test.cpp:
+  - test_name: int128_t
+    ud_tests: []
+  UnitTests/RestRequestTest/RestRequestTest.hpp:
+  - test_name: testBadAuthenticator
+    ud_tests: []
+  - test_name: testBadPostBackUrl
+    ud_tests: []
+  - test_name: testBadPostBackUrlWithCheckDisabled
+    ud_tests: []
+  - test_name: testConnect
+    ud_tests: []
+  - test_name: testConnectWithServiceName
+    ud_tests: []
+  - test_name: testExternalBrowserAuthentication
+    ud_tests: []
+  - test_name: testJsonParser2
+    ud_tests: []
+  - test_name: testMetadata
+    ud_tests: []
+  - test_name: testOktaAuthentication
+    ud_tests: []
+  - test_name: testQuery
+    ud_tests: []
+  - test_name: testQueryType
+    ud_tests: []
+  - test_name: testRenewException
+    ud_tests: []
+  - test_name: testRetryContext
+    ud_tests: []
+  - test_name: testTimestampTz
+    ud_tests: []
+  - test_name: testdisConnect
+    ud_tests: []
+  UnitTests/StackTraceTest/StackTraceTest.cpp:
+  - test_name: Print Stacktrace
+    ud_tests: []
+  UnitTests/StringUtilsTest/StringUtilsTest.hpp:
+  - test_name: testFormatHttpDateString
+    ud_tests: []
+  - test_name: testGetAnsiFromWString
+    ud_tests: []
+  - test_name: testParsePatternArguments
+    ud_tests: []
+  - test_name: testParseURL
+    ud_tests: []
+  - test_name: testSqlTypeToName
+    ud_tests: []
+  - test_name: testUnescapeURL
+    ud_tests: []
+  UnitTests/UnitArrowChunkTest/UnitArrowChunkTest.cpp:
+  - test_name: unit_sf_arrow_chunk_downloader_invalid_chunk
+    ud_tests: []
+  UnitTests/UnitAuthenticatorOAuthTest/UnitAuthenticatorOAuthTest.cpp:
+  - test_name: unit_authenticator_start_browser_url_t
+    ud_tests: []
+  - test_name: unit_authenticator_start_browser_url_when_no_redirect_uri_t
+    ud_tests: []
+  UnitTests/UnitAuthenticatorOAuthTest/UnitMaskOAuthSecretTest.cpp:
+  - test_name: unit_maskOAuthSecret_sfurl
+    ud_tests: []
+  - test_name: unit_maskOAuthSecret_string
+    ud_tests: []
+  UnitTests/UnitAuthenticatorTest/UnitAuthenticatorTest.cpp:
+  - test_name: check_connection_settings_initialization
+    ud_tests: []
+  - test_name: externalBrowserAuthentication
+    ud_tests: []
+  - test_name: externalBrowserAuthentication_open_valid_url
+    ud_tests: []
+  - test_name: externalBrowserAuthentication_sso_validation
+    ud_tests: []
+  - test_name: unit_authenticator_external_browser_privatelink
+    ud_tests: []
+  - test_name: unit_authenticator_external_browser_privatelink_with_china_domain
+    ud_tests: []
+  - test_name: unit_authenticator_external_browser_t
+    ud_tests: []
+  - test_name: unit_authenticator_temporary_token_t
+    ud_tests: []
+  UnitTests/UnitClientConfigTest/UnitClientConfigTest.cpp:
+  - test_name: Test Binary Directory
+    ud_tests: []
+  - test_name: Test Empty config JSON
+    ud_tests: []
+  - test_name: Test Environment Variable
+    ud_tests: []
+  - test_name: Test File Permissions
+    ud_tests: []
+  - test_name: Test Invalid Environment Variable
+    ud_tests: []
+  - test_name: Test Invalid config JSON
+    ud_tests: []
+  - test_name: Test Invalid config path
+    ud_tests: []
+  - test_name: Test No Config
+    ud_tests: []
+  - test_name: Test User Home Directory
+    ud_tests: []
+  - test_name: Test Valid config
+    ud_tests: []
+  UnitTests/UnitClientTelemetryTest/UnitClientTelemetryTest.cpp:
+  - test_name: UnitClientTelemetryTest
+    ud_tests: []
+  UnitTests/UnitConnectionStringTests/ConnectionStringTests.cpp:
+  - test_name: Check CRL enabled and OCSP disabled should pass
+    ud_tests: []
+  - test_name: Check OCSP and CRL both disabled should pass
+    ud_tests: []
+  - test_name: Check OCSP and CRL cannot be both enabled
+    ud_tests: []
+  - test_name: Check OCSP enabled by default and CRL check disabled
+    ud_tests: []
+  - test_name: Configurable Retries
+    ud_tests: []
+  - test_name: Fastfail Enabled
+    ud_tests: []
+  - test_name: Host of token's key in SecureStorage is derived from Snowflake URL
+      for non-OAuth flows
+    ud_tests: []
+  - test_name: Host of token's key in SecureStorage is derived from Token URL for
+      OAuth flows
+    ud_tests: []
+  - test_name: Type of token's key in SecureStorage for any authentication
+    ud_tests: []
+  - test_name: User of token's key in SecureStorage for any authentication
+    ud_tests: []
+  UnitTests/UnitHeartbeatTest/HeartbeatTest.cpp:
+  - test_name: testHeartbeatSync
+    ud_tests: []
+  UnitTests/UnitI128Test/i128Test.cpp:
+  - test_name: Test base 0
+    ud_tests: []
+  - test_name: Test base 10
+    ud_tests: []
+  - test_name: Test base 16
+    ud_tests: []
+  - test_name: Test base 8
+    ud_tests: []
+  UnitTests/UnitMultiThreadTest/UnitMultiThreadTest.cpp:
+  - test_name: Concurrently update id tokens
+    ud_tests: []
+  - test_name: Concurrently update session tokens
+    ud_tests: []
+  - test_name: update session parameters and sessionInfo in queries
+    ud_tests: []
+  UnitTests/UnitOAuthTest/UnitOAuthClientCredentialsTest.cpp:
+  - test_name: Failure OAuth client credentials flow
+    ud_tests: []
+  - test_name: Successful OAuth client credentials flow
+    ud_tests: []
+  UnitTests/UnitOAuthTest/UnitOAuthRefreshTokenTest.cpp:
+  - test_name: Re-authentication and refresh token is expired
+    ud_tests: []
+  - test_name: Re-authentication and refresh token is valid
+    ud_tests: []
+  UnitTests/UnitOAuthTest/UnitOauthAuthorizationFlowTest.cpp:
+  - test_name: Browser timeout OAuth authorization flow
+    ud_tests: []
+  - test_name: CustomURLs OAuth authorization flow
+    ud_tests: []
+  - test_name: Invalid access token in OAuth authorization flow
+    ud_tests: []
+  - test_name: Invalid scope OAuth authorization flow in redirect url
+    ud_tests: []
+  - test_name: Missing access token in OAuth authorization flow
+    ud_tests: []
+  - test_name: Successful OAuth authorization flow
+    ud_tests: []
+  - test_name: Successful OAuth authorization flow with root path in redirect URI
+    ud_tests: []
+  - test_name: Successful OAuth authorization flow with single use refresh token
+    ud_tests: []
+  - test_name: Token request error OAuth authorization flow
+    ud_tests: []
+  - test_name: Validate HTTP OAuth redirect listener detects occupied port
+    ud_tests: []
+  UnitTests/UnitPATTest/UnitPATTest.cpp:
+  - test_name: UnitPATTest
+    ud_tests: []
+  UnitTests/UnitPlatformInfoTest/UnitPlatformInfoTest.cpp:
+  - test_name: UnitPlatformInfoTest
+    ud_tests: []
+  UnitTests/UnitQueryContextCacheTest/UnitQueryContextCacheTest.cpp:
+  - test_name: testAddSameIDButStaleTimestamp
+    ud_tests: []
+  - test_name: testAddSamePriority
+    ud_tests: []
+  - test_name: testEmptyCacheWithEmptyResponseData
+    ud_tests: []
+  - test_name: testEmptyCacheWithNullData
+    ud_tests: []
+  - test_name: testIsEmpty
+    ud_tests: []
+  - test_name: testMoreThanCapacity
+    ud_tests: []
+  - test_name: testSerializeRequestAndDeserializeResponseData
+    ud_tests: []
+  - test_name: testSerializeRequestAndDeserializeResponseDataWithEmptyContext
+    ud_tests: []
+  - test_name: testUpdatePriority
+    ud_tests: []
+  - test_name: testUpdateTimestamp
+    ud_tests: []
+  - test_name: testWithSomeData
+    ud_tests: []
+  - test_name: testWithSomeDataInRandomOrder
+    ud_tests: []
+  UnitTests/UnitSFConnAttrTest/UnitSFConnAttrTest.cpp:
+  - test_name: Test Applicaton Name
+    ud_tests: []
+  - test_name: Test Private Key
+    ud_tests: []
+  - test_name: invalid attributes
+    ud_tests: []
+  UnitTests/UnitSFSettingsTest/UnitSFSettingsTest.cpp:
+  - test_name: Filter on account name
+    ud_tests: []
+  - test_name: Filter on client name
+    ud_tests: []
+  - test_name: Loading PKCS8 key file
+    ud_tests: []
+  - test_name: Sanity check on connection parameters of SFSetting
+    ud_tests: []
+  UnitTests/UnitSecretDetectorTest/UnitSecretDetectorTest.cpp:
+  - test_name: unit_sf_secret_detector_mask_access_token
+    ud_tests: []
+  - test_name: unit_sf_secret_detector_mask_aws_secret
+    ud_tests: []
+  - test_name: unit_sf_secret_detector_mask_client_id
+    ud_tests: []
+  - test_name: unit_sf_secret_detector_mask_client_secret
+    ud_tests: []
+  - test_name: unit_sf_secret_detector_mask_gcp_signature
+    ud_tests: []
+  - test_name: unit_sf_secret_detector_mask_oauth_token
+    ud_tests: []
+  - test_name: unit_sf_secret_detector_mask_password
+    ud_tests: []
+  - test_name: unit_sf_secret_detector_mask_private_key
+    ud_tests: []
+  - test_name: unit_sf_secret_detector_mask_proxy
+    ud_tests: []
+  - test_name: unit_sf_secret_detector_mask_refresh_token
+    ud_tests: []
+  - test_name: unit_sf_secret_detector_mask_sas_token
+    ud_tests: []
+  - test_name: unit_sf_secret_detector_mask_token
+    ud_tests: []
+  - test_name: unit_sf_secret_detector_no_masking
+    ud_tests: []
+  UnitTests/UnitShowCommandTest/ShowCommandGenerationTest.cpp:
+  - test_name: Foreign Key Predicate
+    ud_tests: []
+  UnitTests/UnitTelemetryDisabledTest/TelemetryDisabledTest.cpp:
+  - test_name: telemetry disabled
+    ud_tests: []
+  UnitTests/UnitTomlConfigTest/UnitTomlConfigTest.cpp:
+  - test_name: Completely empty
+    ud_tests: []
+  - test_name: Data types
+    ud_tests: []
+  - test_name: Empty toml
+    ud_tests: []
+  - test_name: Python keys
+    ud_tests: []
+  - test_name: proper usage
+    ud_tests: []
+  UnitTests/UnitUsrPwdMfaTest/UnitUsrPwdMfaTest.cpp:
+  - test_name: UnitUsrPwdMfaAuthTest
+    ud_tests: []

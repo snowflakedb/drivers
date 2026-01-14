@@ -1,0 +1,3554 @@
+title: JDBC Driver Test Coverage
+description: Mapping of old JDBC driver tests to new Universal Driver test suite.
+summary:
+  total_tests: 1640
+  total_test_files: 268
+tests:
+  authentication.ExternalBrowserLatestIT.java:
+  - test_name: shouldAuthenticateUsingExternalBrowser
+    ud_tests: []
+  - test_name: shouldThrowErrorForBrowserTimeout
+    ud_tests: []
+  - test_name: shouldThrowErrorForMismatchedUsername
+    ud_tests: []
+  - test_name: shouldThrowErrorForWrongCredentials
+    ud_tests: []
+  authentication.IdTokenLatestIT.java:
+  - test_name: shouldAuthenticateUsingExternalBrowserAndSaveToken
+    ud_tests: []
+  - test_name: shouldAuthenticateUsingTokenWithoutBrowser
+    ud_tests: []
+  - test_name: shouldOpenBrowserAgainWhenTokenIsDeleted
+    ud_tests: []
+  authentication.MFALatestIT.java:
+  - test_name: testMfaSuccessful
+    ud_tests: []
+  authentication.OauthLatestIT.java:
+  - test_name: shouldAuthenticateUsingOauth
+    ud_tests: []
+  - test_name: shouldThrowErrorForInvalidToken
+    ud_tests: []
+  - test_name: shouldThrowErrorForMismatchedOauthUsername
+    ud_tests: []
+  authentication.OauthOktaAuthorizationCodeLatestIT.java:
+  - test_name: shouldAuthenticateUsingExternalOauthOktaAuthorizationCode
+    ud_tests: []
+  - test_name: shouldAuthenticateUsingTokenCacheForOauthOkta
+    ud_tests: []
+  - test_name: shouldThrowErrorForMismatchedOauthOktaUsername
+    ud_tests: []
+  - test_name: shouldThrowErrorForOauthOktaTimeout
+    ud_tests: []
+  authentication.OauthOktaClientCredentialsLatestIT.java:
+  - test_name: shouldAuthenticateUsingSnowflakeOauthClientCredentials
+    ud_tests: []
+  - test_name: shouldThrowErrorForClientCredentialsMismatchedUsername
+    ud_tests: []
+  - test_name: shouldThrowErrorForUnauthorizedClientCredentials
+    ud_tests: []
+  authentication.OauthSnowflakeAuthorizationCodeLatestIT.java:
+  - test_name: shouldAuthenticateUsingSnowflakeOauthAuthorizationCode
+    ud_tests: []
+  - test_name: shouldAuthenticateUsingTokenCacheOauthSnowflake
+    ud_tests: []
+  - test_name: shouldNotAuthenticateUsingTokenCacheOauthSnowflake
+    ud_tests: []
+  - test_name: shouldThrowErrorForMismatchedOauthSnowflakeUsername
+    ud_tests: []
+  - test_name: shouldThrowErrorForOauthSnowflakeTimeout
+    ud_tests: []
+  authentication.OauthSnowflakeAuthorizationCodeWildcardsLatestIT.java:
+  - test_name: shouldAuthenticateUsingSnowflakeOauthAuthorizationCode
+    ud_tests: []
+  - test_name: shouldAuthenticateUsingTokenCacheOauthSnowflake
+    ud_tests: []
+  - test_name: shouldThrowErrorForMismatchedOauthSnowflakeUsername
+    ud_tests: []
+  - test_name: shouldThrowErrorForOauthSnowflakeTimeout
+    ud_tests: []
+  authentication.OktaAuthLatestIT.java:
+  - test_name: shouldAuthenticateUsingOkta
+    ud_tests: []
+  - test_name: shouldAuthenticateUsingOktaWithOktaUsernameParam
+    ud_tests: []
+  - test_name: shouldThrowErrorForWrongOktaCredentials
+    ud_tests: []
+  - test_name: shouldThrowErrorForWrongOktaCredentialsInOktaUsernameParam
+    ud_tests: []
+  - test_name: shouldThrowErrorForWrongOktaUrl
+    ud_tests: []
+  authentication.PATLatestIT.java:
+  - test_name: shouldAuthenticateUsingPAT
+    ud_tests: []
+  - test_name: shouldThrowErrorForInvalidPAT
+    ud_tests: []
+  - test_name: shouldThrowErrorForMismatchedPATUsername
+    ud_tests: []
+  config.ConnectionAutoUrlParserTest.java:
+  - test_name: testMissingValueForConnection
+    ud_tests: []
+  - test_name: testNoParameters
+    ud_tests: []
+  - test_name: testUTFCharParameterKey
+    ud_tests: []
+  - test_name: testValidConnection
+    ud_tests: []
+  config.SFClientConfigParserTest.java:
+  - test_name: testCommonPropsConstructorAndAccessors
+    ud_tests: []
+  - test_name: testCommonPropsEqualsAndHashCode
+    ud_tests: []
+  - test_name: testConvertToWindowsPath
+    ud_tests: []
+  - test_name: testGetConfigFileNameFromJDBCJarLocation
+    ud_tests: []
+  - test_name: testLoadSFClientConfigInValidJson
+    ud_tests: []
+  - test_name: testLoadSFClientConfigInValidPath
+    ud_tests: []
+  - test_name: testLoadSFClientConfigValidPath
+    ud_tests: []
+  - test_name: testLoadSFClientConfigValidPathWithUnknownProperties
+    ud_tests: []
+  - test_name: testLoadSFClientConfigWithDriverLocation
+    ud_tests: []
+  - test_name: testLoadSFClientConfigWithEnvVar
+    ud_tests: []
+  - test_name: testLoadSFClientConfigWithUserHome
+    ud_tests: []
+  - test_name: testLoadSFClientNoConditionsMatch
+    ud_tests: []
+  - test_name: testSFClientConfigConstructorAndAccessors
+    ud_tests: []
+  - test_name: testSFClientConfigEqualsAndHashCode
+    ud_tests: []
+  config.SFConnectionConfigParserPermissionTest.java:
+  - test_name: testFilePermissionScenarios
+    ud_tests: []
+  - test_name: testSkipWarningForReadPermissionsEnvVar
+    ud_tests: []
+  config.SFConnectionConfigParserTest.java:
+  - test_name: shouldThrowExceptionIfNoneOfHostAndAccountIsSet
+    ud_tests: []
+  - test_name: shouldThrowExceptionIfTokenIsNotSetForOauth
+    ud_tests: []
+  - test_name: testLoadSFConnectionConfigInValidPath
+    ud_tests: []
+  - test_name: testLoadSFConnectionConfigWithHostConfigured
+    ud_tests: []
+  - test_name: testLoadSFConnectionConfigWithTokenFromFile
+    ud_tests: []
+  - test_name: testLoadSFConnectionConfigWrongConfigurationName
+    ud_tests: []
+  - test_name: testNoThrowErrorWhenWrongPermissionsForTokenFileButSkippingFlagIsEnabled
+    ud_tests: []
+  - test_name: testThrowErrorWhenWrongPermissionsForConnectionConfigurationFile
+    ud_tests: []
+  - test_name: testThrowErrorWhenWrongPermissionsForTokenFile
+    ud_tests: []
+  config.SFPermissionsTest.java:
+  - test_name: testLogDirectoryPermissions
+    ud_tests: []
+  core.AttributeEnhancingHttpRequestRetryHandlerTest.java:
+  - test_name: testAttributeSet
+    ud_tests: []
+  core.CertificateChainTrustValidationTestLatestIT.java:
+  - test_name: shouldProperlyValidateCrossSignedChain
+    ud_tests: []
+  core.CoreUtilsMiscellaneousTest.java:
+  - test_name: testConvertProxyPropertiesToHttpClientKey
+    ud_tests: []
+  - test_name: testHttpClientSettingsKey
+    ud_tests: []
+  - test_name: testNullAndEmptyProxySettingsForS3
+    ud_tests: []
+  - test_name: testSetProxyForAzure
+    ud_tests: []
+  - test_name: testSetProxyForS3
+    ud_tests: []
+  - test_name: testSetSessionlessProxyForAzure
+    ud_tests: []
+  - test_name: testSetSessionlessProxyForS3
+    ud_tests: []
+  - test_name: testSizeOfHttpClientMapWithGzipAndUserAgentSuffix
+    ud_tests: []
+  - test_name: testSizeOfHttpClientMapWithVariableNonProxyHosts
+    ud_tests: []
+  - test_name: testSnowflakeAssertTrue
+    ud_tests: []
+  - test_name: testgetOS
+    ud_tests: []
+  core.CredentialManagerTest.java:
+  - test_name: shouldCreateHostBasedOnExternalIdpUrl
+    ud_tests: []
+  - test_name: shouldCreateHostBasedOnSnowflakeServerUrl
+    ud_tests: []
+  - test_name: shouldProperlyDeleteTokensFromCache
+    ud_tests: []
+  - test_name: shouldProperlyUpdateInputWithTokensFromCache
+    ud_tests: []
+  - test_name: shouldProperlyWriteTokensToCache
+    ud_tests: []
+  core.EventHandlerTest.java:
+  - test_name: testDumpLogBuffer
+    ud_tests: []
+  - test_name: testEventFlusher
+    ud_tests: []
+  - test_name: testPublishRecord
+    ud_tests: []
+  core.EventTest.java:
+  - test_name: testEvent
+    ud_tests: []
+  - test_name: testWriteEventDumpLine
+    ud_tests: []
+  core.ExecTimeTelemetryDataTest.java:
+  - test_name: testExecTimeTelemetryData
+    ud_tests: []
+  - test_name: testRetryLocation
+    ud_tests: []
+  core.FileCacheManagerDefaultDirTest.java:
+  - test_name: shouldCreateCacheDirForLinuxWithoutXDG
+    ud_tests: []
+  - test_name: shouldCreateCacheDirForLinuxXDG
+    ud_tests: []
+  - test_name: shouldCreateCacheDirForMacOS
+    ud_tests: []
+  - test_name: shouldCreateCacheDirForWindows
+    ud_tests: []
+  - test_name: shouldReturnNullWhenNoHomeDirSet
+    ud_tests: []
+  core.FileCacheManagerTest.java:
+  - test_name: notThrowExceptionWhenCacheFolderIsNotAccessibleWhenReadFromCache
+    ud_tests: []
+  - test_name: notThrowExceptionWhenCacheFolderIsNotAccessibleWhenWriteToCache
+    ud_tests: []
+  - test_name: notThrowForToWidePermissionsWhenOnlyOwnerPermissionsSetFalseTest
+    ud_tests: []
+  - test_name: shouldCreateDirAndFile
+    ud_tests: []
+  - test_name: throwWhenOverrideCacheFileHasDifferentOwnerThanCurrentUserTest
+    ud_tests: []
+  - test_name: throwWhenOverrideCacheFileNotFound
+    ud_tests: []
+  - test_name: throwWhenReadCacheFileWithPermissionDifferentThanReadWriteForUserTest
+    ud_tests: []
+  - test_name: throwWhenSymlinkAsCache
+    ud_tests: []
+  core.HeaderCustomizerHttpRequestInterceptorTest.java:
+  - test_name: testAWSInterceptorAddsMultiValueHeader
+    ud_tests: []
+  - test_name: testAWSInterceptorDoesNotAllowCustomizerToOverrideHeader
+    ud_tests: []
+  - test_name: testAWSInterceptorWithCustomizerAddsHeaders
+    ud_tests: []
+  - test_name: testAWSInterceptorWithCustomizerWhichDoesNotApplyDoesNothing
+    ud_tests: []
+  - test_name: testAWSInterceptorWithoutCustomizersDoesNothing
+    ud_tests: []
+  - test_name: testApacheInterceptorDoesNotAllowCustomizerToOverrideHeader
+    ud_tests: []
+  - test_name: testApacheInterceptorWithCustomizerAddsHeaders
+    ud_tests: []
+  - test_name: testApacheInterceptorWithCustomizerWhichDoesNotApplyDoesNothing
+    ud_tests: []
+  - test_name: testApacheInterceptorWithInvokeOnceFalseAddsHeaderOnRetry
+    ud_tests: []
+  - test_name: testApacheInterceptorWithInvokeOnceTrueSkipsOnRetry
+    ud_tests: []
+  - test_name: testApacheInterceptorWithoutCustomizersDoesNothing
+    ud_tests: []
+  - test_name: testMultipleCustomizersAddingHeaders
+    ud_tests: []
+  core.HttpUtilLatestIT.java:
+  - test_name: shouldGetDefaultConnectionAndSocketTimeouts
+    ud_tests: []
+  - test_name: shouldOverrideConnectionAndSocketTimeouts
+    ud_tests: []
+  core.HttpUtilTest.java:
+  - test_name: buildHttpClientRace
+    ud_tests: []
+  - test_name: testConfigureTrustManagerIfNeededForOcsp
+    ud_tests: []
+  - test_name: testConfigureTrustManagerIfNeededWithCrlModes
+    ud_tests: []
+  - test_name: testConfigureTrustManagerIfNeededWithNullKey
+    ud_tests: []
+  - test_name: testConfigureTrustManagerIfNeededWithOcspDisabledAndNoCrlChecks
+    ud_tests: []
+  - test_name: testConfigureTrustManagerWithOcspAndCrlDisabled
+    ud_tests: []
+  core.HttpUtilWiremockLatestIT.java:
+  - test_name: testAddHttpInterceptorsIfPresent
+    ud_tests: []
+  core.IncidentUtilLatestIT.java:
+  - test_name: testDumpVmMetrics
+    ud_tests: []
+  - test_name: testOneLinerDescription
+    ud_tests: []
+  core.MinicoreTelemetryWiremockIT.java:
+  - test_name: testMinicoreTelemetryIncludedInLoginRequest
+    ud_tests: []
+  core.OAuthAuthorizationCodeFlowLatestIT.java:
+  - test_name: browserTimeoutFlowScenario
+    ud_tests: []
+  - test_name: customUrlsScenario
+    ud_tests: []
+  - test_name: invalidScopeFlowScenario
+    ud_tests: []
+  - test_name: invalidStateFlowScenario
+    ud_tests: []
+  - test_name: successfulFlowDPoPScenario
+    ud_tests: []
+  - test_name: successfulFlowDPoPScenarioWithNonce
+    ud_tests: []
+  - test_name: successfulFlowScenario
+    ud_tests: []
+  - test_name: successfulFlowWithSingleUseRefreshTokensScenario
+    ud_tests: []
+  - test_name: tokenRequestErrorFlowScenario
+    ud_tests: []
+  core.OAuthClientCredentialsFlowLatestIT.java:
+  - test_name: successfulFlowScenario
+    ud_tests: []
+  - test_name: successfulFlowScenarioDPoP
+    ud_tests: []
+  - test_name: successfulFlowScenarioDPoPNonceError
+    ud_tests: []
+  - test_name: tokenRequestErrorFlowScenario
+    ud_tests: []
+  core.OAuthLegacyFlowLatestIT.java:
+  - test_name: shouldThrowExpirationExceptionUponExpiredTokenResponse
+    ud_tests: []
+  core.OAuthTokenCacheLatestIT.java:
+  - test_name: shouldCacheAccessTokenAfterConnecting
+    ud_tests: []
+  - test_name: shouldCacheAccessTokenAndDPoPKeyAfterConnecting
+    ud_tests: []
+  - test_name: shouldCacheRefreshedAccessTokenAndNewRefreshToken
+    ud_tests: []
+  - test_name: shouldNotCacheTokensForClientCredentialsFlow
+    ud_tests: []
+  - test_name: shouldRefreshExpiredAccessTokenAndConnectSuccessfully
+    ud_tests: []
+  - test_name: shouldRefreshExpiredAccessTokenWithDPoPAndConnectSuccessfully
+    ud_tests: []
+  - test_name: shouldRefreshExpiredAccessTokenWithDPoPNonceErrorAndConnectSuccessfully
+    ud_tests: []
+  - test_name: shouldRestartFullFlowOnAccessTokenExpirationAndErrorWhenRefreshing
+    ud_tests: []
+  - test_name: shouldRestartFullFlowOnAccessTokenExpirationAndNoRefreshToken
+    ud_tests: []
+  - test_name: shouldReuseCachedAccessTokenWhenConnecting
+    ud_tests: []
+  core.OCSPCacheServerTest.java:
+  - test_name: shouldChooseOcspCacheServerUrls
+    ud_tests: []
+  core.ObjectMapperTest.java:
+  - test_name: testInvalidMaxJsonStringLength
+    ud_tests: []
+  - test_name: testObjectMapperWithLargeJsonString
+    ud_tests: []
+  core.PrivateLinkDetectorTest.java:
+  - test_name: shouldDetectPrivateLinkHost
+    ud_tests: []
+  core.ProgrammaticAccessTokenAuthFlowLatestIT.java:
+  - test_name: invalidTokenScenario
+    ud_tests: []
+  - test_name: successfulFlowScenarioPatAsToken
+    ud_tests: []
+  core.QueryContextCacheTest.java:
+  - test_name: testAddSameIDButStaleTimestamp
+    ud_tests: []
+  - test_name: testAddSamePriority
+    ud_tests: []
+  - test_name: testEmptyCacheWithEmptyResponseData
+    ud_tests: []
+  - test_name: testEmptyCacheWithNullData
+    ud_tests: []
+  - test_name: testIsEmpty
+    ud_tests: []
+  - test_name: testMoreThanCapacity
+    ud_tests: []
+  - test_name: testSerializeRequestAndDeserializeResponseData
+    ud_tests: []
+  - test_name: testSerializeRequestAndDeserializeResponseDataWithNullContext
+    ud_tests: []
+  - test_name: testUpdatePriority
+    ud_tests: []
+  - test_name: testUpdateTimestamp
+    ud_tests: []
+  - test_name: testWithSomeData
+    ud_tests: []
+  - test_name: testWithSomeDataInRandomOrder
+    ud_tests: []
+  core.QueryContextEntryDTOTest.java:
+  - test_name: testDefaultConstructor
+    ud_tests: []
+  - test_name: testParameterizedConstructor
+    ud_tests: []
+  - test_name: testSettersAndGetters
+    ud_tests: []
+  core.SFArrowResultSetIT.java:
+  - test_name: testEmptyResultSet
+    ud_tests: []
+  - test_name: testFirstResponseAndOfflineData
+    ud_tests: []
+  - test_name: testNoOfflineData
+    ud_tests: []
+  - test_name: testOnlyOfflineData
+    ud_tests: []
+  - test_name: testSortedResultChunk
+    ud_tests: []
+  - test_name: testSortedResultChunkWithStructVectors
+    ud_tests: []
+  core.SFCrlTrustManagerDelegationTest.java:
+  - test_name: testCheckClientTrustedDelegatesToTrustManager
+    ud_tests: []
+  - test_name: testCheckServerTrustedDelegatesToTrustManager
+    ud_tests: []
+  - test_name: testGetAcceptedIssuersDelegatesToTrustManager
+    ud_tests: []
+  core.SFCrlTrustManagerFactoryTest.java:
+  - test_name: testCreateProperCrlTrustManagerBasedOnJvmProvided
+    ud_tests: []
+  core.SFCrlTrustManagerLatestIT.java:
+  - test_name: shouldNotFailWhenSimpleTrustManagerIsUsed
+    ud_tests: []
+  - test_name: testCrl
+    ud_tests: []
+  core.SFExtendedCrlTrustManagerDelegationTest.java:
+  - test_name: testCheckClientTrustedDelegatesToTrustManager
+    ud_tests: []
+  - test_name: testCheckClientTrustedWithSSLEngineDelegatesToTrustManager
+    ud_tests: []
+  - test_name: testCheckClientTrustedWithSocketDelegatesToTrustManager
+    ud_tests: []
+  - test_name: testCheckServerTrustedDelegatesToTrustManager
+    ud_tests: []
+  - test_name: testCheckServerTrustedWithSSLEngineDelegatesToTrustManager
+    ud_tests: []
+  - test_name: testCheckServerTrustedWithSocketDelegatesToTrustManager
+    ud_tests: []
+  - test_name: testGetAcceptedIssuersDelegatesToTrustManager
+    ud_tests: []
+  core.SFLoginInputTest.java:
+  - test_name: testGetHostFromServerUrlWithProtocolShouldNotThrow
+    ud_tests: []
+  - test_name: testGetHostFromServerUrlWithoutProtocolShouldNotThrow
+    ud_tests: []
+  core.SFSSLConnectionSocketFactoryTest.java:
+  - test_name: testDefaultTlsVersions
+    ud_tests: []
+  - test_name: testMinGreaterThanMax
+    ud_tests: []
+  - test_name: testTlsConstraints
+    ud_tests: []
+  core.SFSessionPropertyTest.java:
+  - test_name: testCheckApplicationName
+    ud_tests: []
+  - test_name: testCustomSuffixForUserAgentHeaders
+    ud_tests: []
+  - test_name: testInvalidMaxRetries
+    ud_tests: []
+  - test_name: testInvalidPutGetMaxRetries
+    ud_tests: []
+  - test_name: testvalidMaxRetries
+    ud_tests: []
+  - test_name: testvalidPutGetMaxRetries
+    ud_tests: []
+  core.SFTrustManagerIT.java:
+  - test_name: shouldNotFailWhenSimpleTrustManagerIsUsed
+    ud_tests: []
+  - test_name: testInvalidCacheFile
+    ud_tests: []
+  - test_name: testOCSPCacheServerUrlWithProxy
+    ud_tests: []
+  - test_name: testOCSPCacheServerUrlWithoutProxy
+    ud_tests: []
+  - test_name: testOcsp
+    ud_tests: []
+  - test_name: testOcspWithFileCache
+    ud_tests: []
+  - test_name: testOcspWithServerCache
+    ud_tests: []
+  - test_name: testOcspWithoutServerCache
+    ud_tests: []
+  - test_name: testRevokedCertificate
+    ud_tests: []
+  core.SFTrustManagerMockitoMockLatestIT.java:
+  - test_name: testUnitOCSPWithCustomCacheDirectory
+    ud_tests: []
+  core.SFTrustManagerProxyWiremockIT.java:
+  - test_name: ocspRequestsUseConfiguredProxyPerConnection
+    ud_tests: []
+  core.SFTrustManagerTest.java:
+  - test_name: testBuildNewRetryURL
+    ud_tests: []
+  - test_name: testBuildRetryURL
+    ud_tests: []
+  - test_name: testSnowflakeResultSetSerializable_getResultSet
+    ud_tests: []
+  core.SQLInputOutputTest.java:
+  - test_name: testBaseSQLUnSupportedException
+    ud_tests: []
+  - test_name: testJsonSqlOutPutUnSupportedTest
+    ud_tests: []
+  core.SecureStorageManagerTest.java:
+  - test_name: testBuildCredentialsKey
+    ud_tests: []
+  - test_name: testLinuxManager
+    ud_tests: []
+  - test_name: testLoadNativeLibrary
+    ud_tests: []
+  - test_name: testMacManager
+    ud_tests: []
+  - test_name: testWindowsManager
+    ud_tests: []
+  core.SessionUtilExternalBrowserTest.java:
+  - test_name: testBuildDefaultHandler
+    ud_tests: []
+  - test_name: testEnableClientStoreTemporaryCredential
+    ud_tests: []
+  - test_name: testExternalBrowserTimeout
+    ud_tests: []
+  - test_name: testInvalidSSOUrl
+    ud_tests: []
+  - test_name: testSessionUtilExternalBrowser
+    ud_tests: []
+  - test_name: testSessionUtilExternalBrowserFail
+    ud_tests: []
+  core.SessionUtilKeyPairTest.java:
+  - test_name: testAccountNameWithDotsInJwtToken
+    ud_tests: []
+  core.SessionUtilLatestIT.java:
+  - test_name: testConvertSystemPropertyToIntValue
+    ud_tests: []
+  - test_name: testForwardInflightCtx
+    ud_tests: []
+  - test_name: testForwardedHeaders
+    ud_tests: []
+  - test_name: testInvalidOktaSamlFormat
+    ud_tests: []
+  - test_name: testJwtAuthTimeoutRetry
+    ud_tests: []
+  - test_name: testOktaAuthGetFail
+    ud_tests: []
+  - test_name: testOktaAuthMalformedUrl
+    ud_tests: []
+  - test_name: testOktaAuthPostFail
+    ud_tests: []
+  - test_name: testOktaAuthRetriesUsingTimeoutExceptionRaisedWhenAuthenticatingInSnowflakeUsingOTT
+    ud_tests: []
+  - test_name: testOktaAuthURISyntaxError
+    ud_tests: []
+  - test_name: testOktaDisableSamlUrlCheck
+    ud_tests: []
+  - test_name: testOktaWithInvalidHostName
+    ud_tests: []
+  core.SessionUtilTest.java:
+  - test_name: shouldDerivePrivateLinkOcspCacheServerUrlBasedOnHost
+    ud_tests: []
+  - test_name: testConvertSystemPropertyToIntValue
+    ud_tests: []
+  - test_name: testCreateClientEnvironmentInfo
+    ud_tests: []
+  - test_name: testGetCommonParams
+    ud_tests: []
+  - test_name: testIsLoginRequest
+    ud_tests: []
+  - test_name: testIsLoginRequestInvalidURIPath
+    ud_tests: []
+  - test_name: testIsPrefixEqual
+    ud_tests: []
+  - test_name: testMinicoreTelemetryWithFailedLoad
+    ud_tests: []
+  - test_name: testMinicoreTelemetryWithSuccessfulLoad
+    ud_tests: []
+  - test_name: testOktaAuthRequestsAreRetriedUsingLoginRetryStrategy
+    ud_tests: []
+  - test_name: testParameterParsing
+    ud_tests: []
+  core.SessionUtilWiremockIT.java:
+  - test_name: testErrorHandlingWhenOktaReturnsUnsupportedMfaInFederatedStep3
+    ud_tests: []
+  - test_name: testOktaRetriesUntilTimeoutThenRaisesAuthTimeoutExceptionWhen429InFederatedStep3
+    ud_tests: []
+  - test_name: testOktaRetryWaitsUsingDefaultRetryStrategyWhen429InFederatedStep3
+    ud_tests: []
+  - test_name: testOktaRetryWaitsUsingDefaultRetryStrategyWhen429InFederatedStep4
+    ud_tests: []
+  core.SnowflakeMFACacheTest.java:
+  - test_name: testEnableClientRequestMfaToken
+    ud_tests: []
+  - test_name: testMFAFunctionality
+    ud_tests: []
+  - test_name: testUnavailableLocalSecureStorage
+    ud_tests: []
+  core.SqlInputTimestampUtilTest.java:
+  - test_name: shouldGetTimestampForDifferentType
+    ud_tests: []
+  core.StmtUtilTest.java:
+  - test_name: testForwardedHeaders
+    ud_tests: []
+  core.URLUtilTest.java:
+  - test_name: testEncodeURL
+    ud_tests: []
+  - test_name: testInvalidURL
+    ud_tests: []
+  - test_name: testIsValidURL_InvalidCases
+    ud_tests: []
+  - test_name: testUrlEncode_NullInput
+    ud_tests: []
+  - test_name: testUrlEncode_ValidInputs
+    ud_tests: []
+  - test_name: testValidURL
+    ud_tests: []
+  core.arrow.ArrowResultUtilTest.java:
+  - test_name: testToJavaTimestamp
+    ud_tests: []
+  core.arrow.BigIntToFixedConverterTest.java:
+  - test_name: testFixedNoScale
+    ud_tests: []
+  - test_name: testFixedWithScale
+    ud_tests: []
+  - test_name: testGetBooleanNoScale
+    ud_tests: []
+  - test_name: testGetBooleanWithScale
+    ud_tests: []
+  - test_name: testGetSmallerIntegralType
+    ud_tests: []
+  - test_name: testInvalidConversion
+    ud_tests: []
+  core.arrow.BigIntToTimeConverterTest.java:
+  - test_name: testTime
+    ud_tests: []
+  core.arrow.BigIntToTimestampLTZConverterTest.java:
+  - test_name: testTimestampLTZ
+    ud_tests: []
+  core.arrow.BigIntToTimestampNTZConverterTest.java:
+  - test_name: testTimestampNTZ
+    ud_tests: []
+  - test_name: testWithNullTimezone
+    ud_tests: []
+  core.arrow.BitToBooleanConverterTest.java:
+  - test_name: testConvertToString
+    ud_tests: []
+  core.arrow.DateConverterTest.java:
+  - test_name: testDate
+    ud_tests: []
+  - test_name: testRandomDates
+    ud_tests: []
+  - test_name: testTimezoneDates
+    ud_tests: []
+  core.arrow.DoubleToRealConverterTest.java:
+  - test_name: testConvertToDouble
+    ud_tests: []
+  core.arrow.IntToFixedConverterTest.java:
+  - test_name: testFixedNoScale
+    ud_tests: []
+  - test_name: testFixedWithScale
+    ud_tests: []
+  - test_name: testGetBooleanNoScale
+    ud_tests: []
+  - test_name: testGetBooleanWithScale
+    ud_tests: []
+  - test_name: testGetSmallerIntegralType
+    ud_tests: []
+  - test_name: testInvalidConversion
+    ud_tests: []
+  core.arrow.IntToTimeConverterTest.java:
+  - test_name: testTime
+    ud_tests: []
+  core.arrow.SmallIntToFixedConverterTest.java:
+  - test_name: testFixedNoScale
+    ud_tests: []
+  - test_name: testFixedWithScale
+    ud_tests: []
+  - test_name: testGetBooleanNoScale
+    ud_tests: []
+  - test_name: testGetBooleanWithScale
+    ud_tests: []
+  - test_name: testGetSmallerIntegralType
+    ud_tests: []
+  - test_name: testInvalidConversion
+    ud_tests: []
+  core.arrow.ThreeFieldStructToTimestampTZConverterTest.java:
+  - test_name: testTimestampTZ
+    ud_tests: []
+  core.arrow.TinyIntToFixedConverterTest.java:
+  - test_name: testFixedNoScale
+    ud_tests: []
+  - test_name: testFixedWithScale
+    ud_tests: []
+  - test_name: testGetBooleanNoScale
+    ud_tests: []
+  - test_name: testGetBooleanWithScale
+    ud_tests: []
+  - test_name: testGetSmallerIntegralType
+    ud_tests: []
+  - test_name: testInvalidConversion
+    ud_tests: []
+  core.arrow.TwoFieldStructToTimestampLTZConverterTest.java:
+  - test_name: testTimestampLTZ
+    ud_tests: []
+  core.arrow.TwoFieldStructToTimestampNTZConverterTest.java:
+  - test_name: testTimestampNTZ
+    ud_tests: []
+  core.arrow.TwoFieldStructToTimestampTZConverterTest.java:
+  - test_name: testTimestampTZ
+    ud_tests: []
+  core.arrow.VarBinaryToBinaryConverterTest.java:
+  - test_name: testConvertToString
+    ud_tests: []
+  core.arrow.VarCharConverterTest.java:
+  - test_name: testConvertToString
+    ud_tests: []
+  - test_name: testGetBoolean
+    ud_tests: []
+  - test_name: testGetDate
+    ud_tests: []
+  core.auth.oauth.AuthorizationCodeRedirectRequestHandlerTest.java:
+  - test_name: shouldReturnAuthorizationCodeAbsentErrorResponse
+    ud_tests: []
+  - test_name: shouldReturnEscapedErrorResponse
+    ud_tests: []
+  - test_name: shouldReturnInvalidStateErrorResponse
+    ud_tests: []
+  - test_name: shouldReturnRandomErrorResponse
+    ud_tests: []
+  - test_name: shouldReturnSuccessResponse
+    ud_tests: []
+  core.auth.oauth.OAuthAccessTokenProviderFactoryTest.java:
+  - test_name: shouldFailToCreateAuthzCodeAccessTokenProviderWithDifferentUrlDomains
+    ud_tests: []
+  - test_name: shouldFailToCreateAuthzCodeAccessTokenProviderWithHttpsRedirectUri
+    ud_tests: []
+  - test_name: shouldFailToCreateAuthzCodeAccessTokenProviderWithInvalidAuthzUrl
+    ud_tests: []
+  - test_name: shouldFailToCreateAuthzCodeAccessTokenProviderWithInvalidTokenUrl
+    ud_tests: []
+  - test_name: shouldFailToCreateAuthzCodeAccessTokenProviderWithJustExtAuthzUrl
+    ud_tests: []
+  - test_name: shouldFailToCreateAuthzCodeAccessTokenProviderWithJustExtTokenUrl
+    ud_tests: []
+  - test_name: shouldFailToCreateAuthzCodeAccessTokenProviderWithoutClientId
+    ud_tests: []
+  - test_name: shouldFailToCreateAuthzCodeAccessTokenProviderWithoutClientSecret
+    ud_tests: []
+  - test_name: shouldFailToCreateClientCredentialsAccessTokenProviderWithoutClientId
+    ud_tests: []
+  - test_name: shouldFailToCreateClientCredentialsAccessTokenProviderWithoutClientSecret
+    ud_tests: []
+  - test_name: shouldFailToCreateClientCredentialsAccessTokenProviderWithoutExtTokenUrl
+    ud_tests: []
+  - test_name: shouldProperlyCheckIfIsEligibleForDefaultClientCredentials
+    ud_tests: []
+  - test_name: shouldProperlyCreateAuthorizationCodeAccessTokenProvider
+    ud_tests: []
+  - test_name: shouldProperlyCreateAuthzCodeAccessTokenProvider
+    ud_tests: []
+  - test_name: shouldProperlyCreateAuthzCodeAccessTokenProviderForExternalIdp
+    ud_tests: []
+  - test_name: shouldProperlyCreateAuthzCodeAccessTokenProviderWithDefaultClientCredentials
+    ud_tests: []
+  - test_name: shouldProperlyCreateClientCredentialsAccessTokenProvider
+    ud_tests: []
+  - test_name: shouldProperlyReturnIfAuthenticatorIsEligible
+    ud_tests: []
+  core.auth.oauth.OAuthUtilTest.java:
+  - test_name: shouldConvertToBaseAuthorizationRequest
+    ud_tests: []
+  - test_name: shouldCreateCustomRedirectUri
+    ud_tests: []
+  - test_name: shouldCreateDefaultAuthorizationUrl
+    ud_tests: []
+  - test_name: shouldCreateDefaultRedirectUri
+    ud_tests: []
+  - test_name: shouldCreateDefaultScope
+    ud_tests: []
+  - test_name: shouldCreateDefaultTokenRequestUrl
+    ud_tests: []
+  - test_name: shouldCreateUserSuppliedAuthorizationUrl
+    ud_tests: []
+  - test_name: shouldCreateUserSuppliedScope
+    ud_tests: []
+  - test_name: shouldCreateUserSuppliedTokenRequestUrl
+    ud_tests: []
+  core.auth.oauth.RandomStateProviderTest.java:
+  - test_name: testGetState_ShouldReturnNonNullState
+    ud_tests: []
+  - test_name: testGetState_ShouldReturnUniqueValues
+    ud_tests: []
+  core.auth.oauth.TokenResponseDTOTest.java:
+  - test_name: testConstructorAndGetters
+    ud_tests: []
+  - test_name: testJsonDeserialization
+    ud_tests: []
+  core.auth.wif.AwsIdentityAttestationCreatorTest.java:
+  - test_name: shouldCreateAttestationWithImpersonationPath
+    ud_tests: []
+  - test_name: shouldCreateAttestationWithoutImpersonationWhenImpersonationPathIsEmpty
+    ud_tests: []
+  - test_name: shouldReturnProperAttestationWithCnRegion
+    ud_tests: []
+  - test_name: shouldReturnProperAttestationWithStandardRegion
+    ud_tests: []
+  - test_name: shouldThrowExceptionWhenImpersonationFailsWithNoInitialCredentials
+    ud_tests: []
+  - test_name: shouldThrowExceptionWhenNoCredentialsFound
+    ud_tests: []
+  - test_name: shouldThrowExceptionWhenNoRegion
+    ud_tests: []
+  core.auth.wif.AzureIdentityAttestationCreatorLatestIT.java:
+  - test_name: azureCreatorDoesNotSupportImpersonationPath
+    ud_tests: []
+  - test_name: azureFunctionsFlowErrorNoIdentityHeader
+    ud_tests: []
+  - test_name: basicFlowErrorMissingIssuer
+    ud_tests: []
+  - test_name: basicFlowErrorMissingSub
+    ud_tests: []
+  - test_name: basicFlowErrorUnparsableToken
+    ud_tests: []
+  - test_name: basicFlowHttpError
+    ud_tests: []
+  - test_name: basicFlowUnparsableJsonError
+    ud_tests: []
+  - test_name: successfulFlowAzureFunctionsCustomEntraResourceScenario
+    ud_tests: []
+  - test_name: successfulFlowAzureFunctionsNoClientIdScenario
+    ud_tests: []
+  - test_name: successfulFlowAzureFunctionsScenario
+    ud_tests: []
+  - test_name: successfulFlowAzureFunctionsWithV2IssuerScenario
+    ud_tests: []
+  - test_name: successfulFlowBasicScenario
+    ud_tests: []
+  - test_name: successfulFlowV2IssuerScenario
+    ud_tests: []
+  core.auth.wif.GcpIdentityAttestationCreatorLatestIT.java:
+  - test_name: httpErrorScenario
+    ud_tests: []
+  - test_name: missingIssuerScenario
+    ud_tests: []
+  - test_name: missingSubScenario
+    ud_tests: []
+  - test_name: successfulFlowScenario
+    ud_tests: []
+  - test_name: successfulImpersonationFlowScenario
+    ud_tests: []
+  - test_name: unparsableTokenScenario
+    ud_tests: []
+  core.auth.wif.OidcIdentityAttestationCreatorTest.java:
+  - test_name: missingIssuerScenario
+    ud_tests: []
+  - test_name: missingSubScenario
+    ud_tests: []
+  - test_name: shouldReturnProperAttestation
+    ud_tests: []
+  - test_name: unparsableTokenScenario
+    ud_tests: []
+  core.auth.wif.PlatformDetectionUtilTest.java:
+  - test_name: testEmptyAccessKey
+    ud_tests: []
+  - test_name: testEmptyRegion
+    ud_tests: []
+  - test_name: testEmptySecretKey
+    ud_tests: []
+  - test_name: testGetCredentialsException
+    ud_tests: []
+  - test_name: testInvalidArnPatterns
+    ud_tests: []
+  - test_name: testMalformedAssumedRoleArns
+    ud_tests: []
+  - test_name: testMalformedIamUserArns
+    ud_tests: []
+  - test_name: testNonWifArnTypes
+    ud_tests: []
+  - test_name: testNullAccessKey
+    ud_tests: []
+  - test_name: testNullCredentials
+    ud_tests: []
+  - test_name: testNullRegion
+    ud_tests: []
+  - test_name: testNullSecretKey
+    ud_tests: []
+  - test_name: testValidAssumedRoleArn
+    ud_tests: []
+  - test_name: testValidIamUserArn
+    ud_tests: []
+  - test_name: testWhitespaceAccessKey
+    ud_tests: []
+  core.auth.wif.WorkloadIdentityAttestationProviderTest.java:
+  - test_name: shouldCreateAttestationWithExplicitAWSProvider
+    ud_tests: []
+  - test_name: shouldCreateProperAttestationCreatorByType
+    ud_tests: []
+  core.bind.BindExceptionTest.java:
+  - test_name: testBindExceptionConstructor
+    ud_tests: []
+  - test_name: testBindExceptionType
+    ud_tests: []
+  core.crl.CRLCacheManagerLatestIT.java:
+  - test_name: testCacheManagerPeriodicCleanup
+    ud_tests: []
+  - test_name: testCrlUpdateScenario
+    ud_tests: []
+  - test_name: testFileCacheCorruptedFileHandling
+    ud_tests: []
+  - test_name: testFileCacheExpiredCrlRemoval
+    ud_tests: []
+  - test_name: testFileCacheFilePermissions
+    ud_tests: []
+  - test_name: testFileCachePromotionToMemoryCache
+    ud_tests: []
+  - test_name: testFileCacheRemovalDelay
+    ud_tests: []
+  - test_name: testFileCacheStoreAndRetrieve
+    ud_tests: []
+  core.crl.CRLCacheManagerTest.java:
+  - test_name: shouldCreateDifferentCacheEntriesForSameCrlWithDifferentDownloadTimes
+    ud_tests: []
+  - test_name: shouldNotPromoteToMemoryCacheWhenFileCacheReturnsNull
+    ud_tests: []
+  - test_name: shouldPromoteFileCacheHitToMemoryCache
+    ud_tests: []
+  - test_name: shouldPutToBothMemoryAndFileCache
+    ud_tests: []
+  - test_name: shouldReturnCacheEntryWhenMemoryCacheHit
+    ud_tests: []
+  - test_name: shouldReturnNullWhenBothCachesMiss
+    ud_tests: []
+  core.crl.CRLFileCacheTest.java:
+  - test_name: testBasicPutAndGet
+    ud_tests: []
+  - test_name: testCleanupCorruptedFiles
+    ud_tests: []
+  - test_name: testCleanupEvictedEntries
+    ud_tests: []
+  - test_name: testCleanupExpiredCrl
+    ud_tests: []
+  - test_name: testEnabledCacheCreatesDirectory
+    ud_tests: []
+  - test_name: testFilePermissions
+    ud_tests: []
+  - test_name: testGetNonExistentEntry
+    ud_tests: []
+  - test_name: testMultipleEntries
+    ud_tests: []
+  - test_name: testOverwriteExistingEntry
+    ud_tests: []
+  core.crl.CRLInMemoryCacheTest.java:
+  - test_name: testBasicPutAndGet
+    ud_tests: []
+  - test_name: testCleanupEvictedEntries
+    ud_tests: []
+  - test_name: testCleanupExpiredCrl
+    ud_tests: []
+  - test_name: testGetNonExistentEntry
+    ud_tests: []
+  - test_name: testOverwriteExistingEntry
+    ud_tests: []
+  core.crl.CRLValidationUtilsTest.java:
+  - test_name: shouldApply10DayThresholdBetweenMarch2024AndMarch2026
+    ud_tests: []
+  - test_name: shouldApply7DayThresholdAfterMarch2026
+    ud_tests: []
+  - test_name: shouldConsiderShortCertificatesIssuedAfterMarch2024AsShortLived
+    ud_tests: []
+  - test_name: shouldExtractMultipleCRLDistributionPoints
+    ud_tests: []
+  - test_name: shouldFilterOnlyHttpAndHttpsUrls
+    ud_tests: []
+  - test_name: shouldHandleEdgeCaseWithExact7DaysAfter2026
+    ud_tests: []
+  - test_name: shouldHandleEmptyCRLDistributionPointsList
+    ud_tests: []
+  - test_name: shouldHandleIDPWithoutDistributionPoints
+    ud_tests: []
+  - test_name: shouldNotConsiderCertificatesIssuedBeforeMarch2024AsShortLived
+    ud_tests: []
+  - test_name: shouldRejectEndEntityCertificateWhenCRLOnlyCoversCACs
+    ud_tests: []
+  - test_name: shouldRejectURLNotMatchingIDPDistributionPoints
+    ud_tests: []
+  - test_name: shouldRejectUserCertificateWhenCRLOnlyCoversUserCerts
+    ud_tests: []
+  - test_name: shouldRejectWhenIDPHasEmptyDistributionPointsList
+    ud_tests: []
+  - test_name: shouldReturnEmptyListForCertificateWithoutCRLDistributionPoints
+    ud_tests: []
+  - test_name: shouldReturnTrueForCRLWithoutIDPExtension
+    ud_tests: []
+  - test_name: shouldValidateURLMatchingInIDPDistributionPoints
+    ud_tests: []
+  core.crl.CRLValidatorTest.java:
+  - test_name: shouldAllowCertificatesWithoutCRLUrlsWhenConfigured
+    ud_tests: []
+  - test_name: shouldAllowConnectionWhenCRLValidationDisabled
+    ud_tests: []
+  - test_name: shouldFailWithNullOrEmptyCertificateChains
+    ud_tests: []
+  - test_name: shouldHandleCertificatesWithoutCRLUrlsInEnabledMode
+    ud_tests: []
+  - test_name: shouldPassInAdvisoryModeEvenWithErrors
+    ud_tests: []
+  - test_name: shouldValidateMultipleChainsAndReturnFirstValid
+    ud_tests: []
+  core.crl.CRLValidatorWiremockIT.java:
+  - test_name: shouldAllowRevokedCertificateWhenCRLValidationDisabled
+    ud_tests: []
+  - test_name: shouldCacheCRLOnFirstRequestAndReuseOnSecond
+    ud_tests: []
+  - test_name: shouldEmitCrlTelemetry
+    ud_tests: []
+  - test_name: shouldFailForRevokedCertificate
+    ud_tests: []
+  - test_name: shouldFailInEnabledModeWithCRLErrors
+    ud_tests: []
+  - test_name: shouldHandleMultipleCRLDistributionPoints
+    ud_tests: []
+  - test_name: shouldPassInAdvisoryModeWithCRLErrors
+    ud_tests: []
+  - test_name: shouldRejectExpiredCRL
+    ud_tests: []
+  - test_name: shouldSkipShortLivedCertificates
+    ud_tests: []
+  - test_name: shouldValidateMultipleChainsAndReturnFirstValid
+    ud_tests: []
+  - test_name: shouldValidateNonRevokedCertificateSuccessfully
+    ud_tests: []
+  core.crl.VerifiedCertPathBuilderTest.java:
+  - test_name: shouldFindAllValidPathsInCrossSignedScenario
+    ud_tests: []
+  - test_name: shouldReturnEmptyForEmptyChain
+    ud_tests: []
+  - test_name: shouldValidateChainToUltimateRoot
+    ud_tests: []
+  - test_name: shouldValidateComplexCrossSignedChain
+    ud_tests: []
+  - test_name: shouldValidateSimpleCertificateChain
+    ud_tests: []
+  core.json.BooleanConverterTest.java:
+  - test_name: testConvertBoolean
+    ud_tests: []
+  - test_name: testConvertNumeric
+    ud_tests: []
+  - test_name: testConvertOtherType
+    ud_tests: []
+  - test_name: testConvertString
+    ud_tests: []
+  core.json.BytesConverterTest.java:
+  - test_name: testConvertBooleanToBytes
+    ud_tests: []
+  - test_name: testConvertFloatingPointToBytes
+    ud_tests: []
+  - test_name: testConvertIntegerNumberToBytes
+    ud_tests: []
+  - test_name: testString
+    ud_tests: []
+  core.json.DateTimeConverterTest.java:
+  - test_name: testGetDateWithDefaultTimeZone
+    ud_tests: []
+  - test_name: testGetDateWithSessionTimeZone
+    ud_tests: []
+  - test_name: testGetDateWithSpecificTimeZone
+    ud_tests: []
+  - test_name: testGetTimeWithDefaultTimeZone
+    ud_tests: []
+  - test_name: testGetTimeWithSessionTimeZone
+    ud_tests: []
+  - test_name: testGetTimestampWithDefaultTimeZone
+    ud_tests: []
+  - test_name: testGetTimestampWithSpecificTimeZone
+    ud_tests: []
+  - test_name: testGetVariousTypesWhenNullObjectGiven
+    ud_tests: []
+  core.json.NumberConverterTest.java:
+  - test_name: testBigDecimalFromNumber
+    ud_tests: []
+  - test_name: testBigDecimalFromString
+    ud_tests: []
+  - test_name: testBigDecimalWithScaleFromNumber
+    ud_tests: []
+  - test_name: testBigDecimalWithScaleFromString
+    ud_tests: []
+  - test_name: testBigIntFromNumber
+    ud_tests: []
+  - test_name: testBigIntFromString
+    ud_tests: []
+  - test_name: testByteFromNumber
+    ud_tests: []
+  - test_name: testByteFromString
+    ud_tests: []
+  - test_name: testDoubleFromNumber
+    ud_tests: []
+  - test_name: testDoubleFromString
+    ud_tests: []
+  - test_name: testFloatFromNumber
+    ud_tests: []
+  - test_name: testFloatFromString
+    ud_tests: []
+  - test_name: testIntFromNumber
+    ud_tests: []
+  - test_name: testIntFromString
+    ud_tests: []
+  - test_name: testLongFromNumber
+    ud_tests: []
+  - test_name: testLongFromString
+    ud_tests: []
+  - test_name: testShortFromNumber
+    ud_tests: []
+  - test_name: testShortFromString
+    ud_tests: []
+  core.json.StringConverterTest.java:
+  - test_name: testConvertingBinary
+    ud_tests: []
+  - test_name: testConvertingBoolean
+    ud_tests: []
+  - test_name: testConvertingDate
+    ud_tests: []
+  - test_name: testConvertingNumbers
+    ud_tests: []
+  - test_name: testConvertingString
+    ud_tests: []
+  - test_name: testConvertingTime
+    ud_tests: []
+  - test_name: testConvertingTimestamp
+    ud_tests: []
+  internal.core.minicore.LibcDetectorTest.java:
+  - test_name: testDetectLibcVariantOnLinux
+    ud_tests: []
+  - test_name: testDetectLibcVariantOnNonLinux
+    ud_tests: []
+  - test_name: testLibcVariantIdentifiers
+    ud_tests: []
+  internal.core.minicore.MinicoreLoaderTest.java:
+  - test_name: testHomeCacheDirectoryLinux
+    ud_tests: []
+  - test_name: testHomeCacheDirectoryMac
+    ud_tests: []
+  - test_name: testHomeCacheDirectoryReturnsNullWhenHomeNotSet
+    ud_tests: []
+  - test_name: testHomeCacheDirectoryWindows
+    ud_tests: []
+  - test_name: testLoadLibraryIsCached
+    ud_tests: []
+  - test_name: testLoadResultContainsAllFields
+    ud_tests: []
+  internal.core.minicore.MinicorePlatformTest.java:
+  - test_name: testAllSupportedPlatformsHaveMatchingResourceFiles
+    ud_tests: []
+  - test_name: testIsSupportedOnCurrentPlatform
+    ud_tests: []
+  - test_name: testLinuxPlatformFileName
+    ud_tests: []
+  - test_name: testMacOSPlatformFileName
+    ud_tests: []
+  - test_name: testPlatformDetection
+    ud_tests: []
+  - test_name: testWindowsPlatformFileName
+    ud_tests: []
+  internal.core.minicore.MinicoreTelemetryTest.java:
+  - test_name: testClientEnvTelemetryFromFailedLoad
+    ud_tests: []
+  - test_name: testClientEnvTelemetryFromSuccessfulLoad
+    ud_tests: []
+  - test_name: testFailedLoadPreservesDetailedErrorInLogs
+    ud_tests: []
+  - test_name: testInBandTelemetryNodeFromFailedLoad
+    ud_tests: []
+  - test_name: testInBandTelemetryNodeFromSuccessfulLoad
+    ud_tests: []
+  - test_name: testInBandTelemetryNodeWhenStillLoading
+    ud_tests: []
+  - test_name: testInBandTelemetryNodeWithEmptyLogs
+    ud_tests: []
+  - test_name: testTelemetryWhenStillLoading
+    ud_tests: []
+  internal.core.minicore.MinicoreTest.java:
+  - test_name: testAsyncInitializationCompletesInReasonableTime
+    ud_tests: []
+  - test_name: testMinicoreInitializationIsIdempotent
+    ud_tests: []
+  - test_name: testMinicoreInitializesSuccessfully
+    ud_tests: []
+  - test_name: testMinicoreLibraryFunctionConsistency
+    ud_tests: []
+  internal.core.minicore.MinicoreTestLatestIT.java:
+  - test_name: testExecuteSelectWithMinicorePerformance
+    ud_tests: []
+  jdbc.ArrowResultChunkTest.java:
+  - test_name: testEmptyChunkIterator
+    ud_tests: []
+  jdbc.AutoConnectionConfigurationLatestIT.java:
+  - test_name: testConnectionScenarios
+    ud_tests: []
+  jdbc.BatchExecutionIT.java:
+  - test_name: testClearingBatchAfterStatementExecution
+    ud_tests: []
+  jdbc.BatchExecutionLatestIT.java:
+  - test_name: testClearingBatchAfterPreparedStatementExecutionWithArrayBinding
+    ud_tests: []
+  - test_name: testClearingBatchAfterPreparedStatementExecutionWithArrayBindingDefaultBehaviour
+    ud_tests: []
+  - test_name: testClearingBatchAfterPreparedStatementExecutionWithoutArrayBinding
+    ud_tests: []
+  - test_name: testClearingBatchAfterPreparedStatementExecutionWithoutArrayBindingDefaultBehaviour
+    ud_tests: []
+  - test_name: testClearingBatchAfterStatementExecution
+    ud_tests: []
+  jdbc.BindUploaderIT.java:
+  - test_name: testArrayBindValueCountEmptyArray
+    ud_tests: []
+  - test_name: testArrayBindValueCountNonArray
+    ud_tests: []
+  - test_name: testArrayBindValueCountNonEmptyArray
+    ud_tests: []
+  - test_name: testArrayBindValueCountNull
+    ud_tests: []
+  - test_name: testIsArrayBindEmpty
+    ud_tests: []
+  - test_name: testIsArrayBindEmptyArray
+    ud_tests: []
+  - test_name: testIsArrayBindNonArray
+    ud_tests: []
+  - test_name: testIsArrayBindNonEmptyArray
+    ud_tests: []
+  - test_name: testIsArrayBindNull
+    ud_tests: []
+  - test_name: tetArrayBindValueCountEmpty
+    ud_tests: []
+  jdbc.BindUploaderLatestIT.java:
+  - test_name: testUploadStreamLargeBatch
+    ud_tests: []
+  - test_name: testUploadedResultsMultiple
+    ud_tests: []
+  - test_name: testUploadedResultsSimple
+    ud_tests: []
+  jdbc.BindingAndInsertingStructuredTypesLatestIT.java:
+  - test_name: testWriteArray
+    ud_tests: []
+  - test_name: testWriteArrayNoBinds
+    ud_tests: []
+  - test_name: testWriteMapOfInteger
+    ud_tests: []
+  - test_name: testWriteMapOfSqlData
+    ud_tests: []
+  - test_name: testWriteNullObject
+    ud_tests: []
+  - test_name: testWriteObject
+    ud_tests: []
+  - test_name: testWriteObjectAllTypes
+    ud_tests: []
+  - test_name: testWriteObjectBindingNull
+    ud_tests: []
+  jdbc.BindingDataIT.java:
+  - test_name: testBindByte
+    ud_tests: []
+  - test_name: testBindDate
+    ud_tests: []
+  - test_name: testBindDateWithCalendar
+    ud_tests: []
+  - test_name: testBindInt
+    ud_tests: []
+  - test_name: testBindNull
+    ud_tests: []
+  - test_name: testBindNullForAllTypes
+    ud_tests: []
+  - test_name: testBindObjectWithScaleZero
+    ud_tests: []
+  - test_name: testBindShort
+    ud_tests: []
+  - test_name: testBindShortViaSetObject
+    ud_tests: []
+  - test_name: testBindTime
+    ud_tests: []
+  - test_name: testBindTimeViaSetObject
+    ud_tests: []
+  - test_name: testBindTimeViaSetObjectCast
+    ud_tests: []
+  - test_name: testBindTimeWithCalendar
+    ud_tests: []
+  jdbc.BindingDataLatestIT.java:
+  - test_name: testBindArrayOfDates
+    ud_tests: []
+  - test_name: testBindTimestampTZ
+    ud_tests: []
+  - test_name: testGregorianJulianDateConversions
+    ud_tests: []
+  - test_name: testGregorianJulianDateConversionsWithStageBindings
+    ud_tests: []
+  - test_name: testGregorianJulianTimestampConversions
+    ud_tests: []
+  - test_name: testGregorianJulianTimestampConversionsWithStageBindings
+    ud_tests: []
+  - test_name: testInsertTimeColumnAsWallClockTimeRegardlessOfTimezone
+    ud_tests: []
+  - test_name: testInsertTimeColumnAsWallClockTimeRegardlessOfTimezoneWithStageBinding
+    ud_tests: []
+  - test_name: testInsertTimeColumnNotAsWallClockTimeAsUtc
+    ud_tests: []
+  - test_name: testTimestampBindingWithLTZType
+    ud_tests: []
+  - test_name: testTimestampBindingWithLTZTypeForDayLightSavingTimeZone
+    ud_tests: []
+  - test_name: testTimestampBindingWithNTZType
+    ud_tests: []
+  - test_name: testTimestampLtzBindingNoLongerBreaksOtherDatetimeBindings
+    ud_tests: []
+  jdbc.CallableStatementIT.java:
+  - test_name: testFeatureNotSupportedException
+    ud_tests: []
+  - test_name: testPrepareCall
+    ud_tests: []
+  jdbc.CallableStatementLatestIT.java:
+  - test_name: testParseSqlEscapeSyntaxFunction
+    ud_tests: []
+  - test_name: testPrepareCallWithCurlyBracketSyntax
+    ud_tests: []
+  jdbc.ChunkDownloaderS3RetryUrlLatestIT.java:
+  - test_name: testParamsInRetryS3Url
+    ud_tests: []
+  jdbc.ClientMemoryLimitParallelIT.java:
+  - test_name: testParallelQueries
+    ud_tests: []
+  - test_name: testQueryNotHanging
+    ud_tests: []
+  jdbc.CompressedStreamFactoryTest.java:
+  - test_name: testDetectContentEncodingAndGetInputStream_Gzip
+    ud_tests: []
+  - test_name: testDetectContentEncodingAndGetInputStream_Zstd
+    ud_tests: []
+  jdbc.ConnectStringParseTest.java:
+  - test_name: testParseAccountName
+    ud_tests: []
+  - test_name: testParseWithIllegalUriCharacters
+    ud_tests: []
+  jdbc.ConnectionAlreadyClosedIT.java:
+  - test_name: testClosedConnection
+    ud_tests: []
+  jdbc.ConnectionFeatureNotSupportedIT.java:
+  - test_name: testFeatureNotSupportedException
+    ud_tests: []
+  jdbc.ConnectionIT.java:
+  - test_name: test300ConnectionsWithSingleClientInstance
+    ud_tests: []
+  - test_name: testAbort
+    ud_tests: []
+  - test_name: testBadPrivateKey
+    ud_tests: []
+  - test_name: testClientMemoryJvmParameters
+    ud_tests: []
+  - test_name: testClientMemoryParameters
+    ud_tests: []
+  - test_name: testClientMixedMemoryJvmParameters
+    ud_tests: []
+  - test_name: testConnectUsingKeyPair
+    ud_tests: []
+  - test_name: testConnectViaDataSource
+    ud_tests: []
+  - test_name: testConnectionClientInfo
+    ud_tests: []
+  - test_name: testConnectionGetAndSetDBAndSchema
+    ud_tests: []
+  - test_name: testDataCompletenessInLowMemory
+    ud_tests: []
+  - test_name: testDataSourceOktaSerialization
+    ud_tests: []
+  - test_name: testDifferentKeyLength
+    ud_tests: []
+  - test_name: testFailOverOrgAccount
+    ud_tests: []
+  - test_name: testGetTypeMap
+    ud_tests: []
+  - test_name: testHeartbeatFrequencyTooLarge
+    ud_tests: []
+  - test_name: testHolderbility
+    ud_tests: []
+  - test_name: testIsValid
+    ud_tests: []
+  - test_name: testLoginTimeoutViaDataSource
+    ud_tests: []
+  - test_name: testNativeSQL
+    ud_tests: []
+  - test_name: testNetworkTimeout
+    ud_tests: []
+  - test_name: testNoValidateDefaultParameters
+    ud_tests: []
+  - test_name: testReadDateAfterSplittingResultSet
+    ud_tests: []
+  - test_name: testResultSetsClosedByStatement
+    ud_tests: []
+  - test_name: testSetCatalogSchema
+    ud_tests: []
+  - test_name: testSetQueryTimeoutInConnectionStr
+    ud_tests: []
+  - test_name: testSimpleConnection
+    ud_tests: []
+  - test_name: testStatementsAndResultSetsClosedByConnection
+    ud_tests: []
+  - test_name: testUnwrapper
+    ud_tests: []
+  - test_name: testValidateDefaultParameters
+    ud_tests: []
+  jdbc.ConnectionLatestIT.java:
+  - test_name: putGetStatementsHaveQueryID
+    ud_tests: []
+  - test_name: putGetStatementsHaveQueryIDEvenWhenFail
+    ud_tests: []
+  - test_name: shouldFailOnSslExceptionWithLinkToTroubleShootingGuide
+    ud_tests: []
+  - test_name: shouldGetDifferentTimestampLtzConsistentBetweenFormats
+    ud_tests: []
+  - test_name: shouldGetOverridenConnectionAndSocketTimeouts
+    ud_tests: []
+  - test_name: testAsyncAndSynchronousQueries
+    ud_tests: []
+  - test_name: testAsyncQueryOpenAndCloseConnection
+    ud_tests: []
+  - test_name: testAuthenticatorEndpointWithDashInAccountName
+    ud_tests: []
+  - test_name: testBasicDataSourceSerialization
+    ud_tests: []
+  - test_name: testDataSourceOktaGenerates429StatusCode
+    ud_tests: []
+  - test_name: testDisableQueryContextCache
+    ud_tests: []
+  - test_name: testDownloadStreamWithFileNotFoundException
+    ud_tests: []
+  - test_name: testGetChildQueryIdsForAsyncMultiStatement
+    ud_tests: []
+  - test_name: testGetChildQueryIdsForAsyncSingleStatement
+    ud_tests: []
+  - test_name: testGetChildQueryIdsNegativeTestQueryFailed
+    ud_tests: []
+  - test_name: testGetChildQueryIdsNegativeTestQueryIsRunning
+    ud_tests: []
+  - test_name: testGetErrorMessageFromAsyncQuery
+    ud_tests: []
+  - test_name: testHeartbeatFrequencyTooSmall
+    ud_tests: []
+  - test_name: testHeartbeatFrequencyValidValue
+    ud_tests: []
+  - test_name: testHttpsLoginTimeoutWithOutSSL
+    ud_tests: []
+  - test_name: testHttpsLoginTimeoutWithSSL
+    ud_tests: []
+  - test_name: testIsAnError
+    ud_tests: []
+  - test_name: testIsAsyncSession
+    ud_tests: []
+  - test_name: testIsStillRunning
+    ud_tests: []
+  - test_name: testKeyPairBase64DataSourceSerialization
+    ud_tests: []
+  - test_name: testKeyPairFileDataSourceSerialization
+    ud_tests: []
+  - test_name: testPbes2Support
+    ud_tests: []
+  - test_name: testPreparedStatementAsyncQuery
+    ud_tests: []
+  - test_name: testPrivateKeyBase64InConnectionString
+    ud_tests: []
+  - test_name: testPrivateKeyBase64InConnectionStringWithBouncyCastle
+    ud_tests: []
+  - test_name: testPrivateKeyInConnectionString
+    ud_tests: []
+  - test_name: testPrivateKeyInConnectionStringWithBouncyCastle
+    ud_tests: []
+  - test_name: testQueryStatusErrorMessageAndErrorCodeChangeOnAsyncQuery
+    ud_tests: []
+  - test_name: testQueryStatuses
+    ud_tests: []
+  - test_name: testReadOnly
+    ud_tests: []
+  - test_name: testSetHoldability
+    ud_tests: []
+  - test_name: testWrongHostNameTimeout
+    ud_tests: []
+  jdbc.ConnectionPoolingIT.java:
+  - test_name: testC3P0ConnectionPool
+    ud_tests: []
+  - test_name: testDBCPConnection
+    ud_tests: []
+  - test_name: testHikariConnectionPool
+    ud_tests: []
+  - test_name: testPoolingDataSource
+    ud_tests: []
+  jdbc.ConnectionWithDisableOCSPModeLatestIT.java:
+  - test_name: shouldConnectIfDisableOCSPChecksAndInsecureModeAreSet
+    ud_tests: []
+  - test_name: shouldThrowWhenThereIsMismatchInDisableOCSPChecksAndInsecureMode
+    ud_tests: []
+  jdbc.ConnectionWithOCSPModeIT.java:
+  - test_name: testCertAttachedInvalidFailClosed
+    ud_tests: []
+  - test_name: testCertAttachedInvalidFailOpen
+    ud_tests: []
+  - test_name: testNoOCSPResponderURLFailClosed
+    ud_tests: []
+  - test_name: testNoOCSPResponderURLFailOpen
+    ud_tests: []
+  - test_name: testOCSPCacheServerTimeoutFailClosed
+    ud_tests: []
+  - test_name: testOCSPCacheServerTimeoutFailOpen
+    ud_tests: []
+  - test_name: testOCSPResponder403FailClosed
+    ud_tests: []
+  - test_name: testOCSPResponder403FailOpen
+    ud_tests: []
+  - test_name: testOCSPResponderTimeoutFailClosed
+    ud_tests: []
+  - test_name: testOCSPResponderTimeoutFailOpen
+    ud_tests: []
+  - test_name: testRevokedCertFailOpen
+    ud_tests: []
+  - test_name: testUnknownOCSPCertFailClosed
+    ud_tests: []
+  - test_name: testUnknownOCSPCertFailOpen
+    ud_tests: []
+  - test_name: testValidityExpiredOCSPResponseFailClosed
+    ud_tests: []
+  - test_name: testValidityExpiredOCSPResponseFailOpen
+    ud_tests: []
+  - test_name: testValidityExpiredOCSPResponseInsecure
+    ud_tests: []
+  - test_name: testWrongHost
+    ud_tests: []
+  jdbc.CustomProxyLatestIT.java:
+  - test_name: test2ProxiesWithSameJVM
+    ud_tests: []
+  - test_name: testCorrectProxySettingFromConnectionString
+    ud_tests: []
+  - test_name: testInvalidProxyPortFromConnectionString
+    ud_tests: []
+  - test_name: testJVMParamsWithNonProxyHostsHonored
+    ud_tests: []
+  - test_name: testNonProxyHostAltering
+    ud_tests: []
+  - test_name: testNonProxyHostsFromConnectionString
+    ud_tests: []
+  - test_name: testProxyConnectionWithAzure
+    ud_tests: []
+  - test_name: testProxyConnectionWithAzureWithConnectionString
+    ud_tests: []
+  - test_name: testProxyConnectionWithAzureWithWrongConnectionString
+    ud_tests: []
+  - test_name: testProxyConnectionWithJVMParameters
+    ud_tests: []
+  - test_name: testProxyConnectionWithoutProxyPortOrHost
+    ud_tests: []
+  - test_name: testSetJVMProxyDefaultHttps
+    ud_tests: []
+  - test_name: testSetJVMProxyHttp
+    ud_tests: []
+  - test_name: testSetJVMProxyHttps
+    ud_tests: []
+  - test_name: testSizeOfHttpClientNoProxies
+    ud_tests: []
+  - test_name: testTLSIssue
+    ud_tests: []
+  - test_name: testTLSIssueWithConnectionStringAgainstS3
+    ud_tests: []
+  - test_name: testUnsetJvmPropertiesForInvalidSettings
+    ud_tests: []
+  - test_name: testWrongNonProxyHostsFromConnectionString
+    ud_tests: []
+  - test_name: testWrongProxyPasswordSettingFromConnectionString
+    ud_tests: []
+  - test_name: testWrongProxyPortSettingFromConnectionString
+    ud_tests: []
+  jdbc.DatabaseMetaDataIT.java:
+  - test_name: testDatabaseAndDriverInfo
+    ud_tests: []
+  - test_name: testDatabaseMetadata
+    ud_tests: []
+  - test_name: testFeatureNotSupportedException
+    ud_tests: []
+  - test_name: testGetCatalogs
+    ud_tests: []
+  - test_name: testGetConnection
+    ud_tests: []
+  - test_name: testGetCrossReferences
+    ud_tests: []
+  - test_name: testGetExportedKeys
+    ud_tests: []
+  - test_name: testGetImportedKeys
+    ud_tests: []
+  - test_name: testGetObjectsDoesNotExists
+    ud_tests: []
+  - test_name: testGetPrimarykeys
+    ud_tests: []
+  - test_name: testGetProcedures
+    ud_tests: []
+  - test_name: testGetSchemas
+    ud_tests: []
+  - test_name: testGetTablePrivileges
+    ud_tests: []
+  - test_name: testGetTableTypes
+    ud_tests: []
+  - test_name: testGetTables
+    ud_tests: []
+  - test_name: testOtherEmptyTables
+    ud_tests: []
+  - test_name: testProcedure
+    ud_tests: []
+  - test_name: testTypeInfo
+    ud_tests: []
+  jdbc.DatabaseMetaDataInternalIT.java:
+  - test_name: testGetFunctions
+    ud_tests: []
+  - test_name: testGetMetaDataUseConnectionCtx
+    ud_tests: []
+  jdbc.DatabaseMetaDataInternalLatestIT.java:
+  - test_name: testGetFunctionColumns
+    ud_tests: []
+  - test_name: testGetMetaDataUseConnectionCtx
+    ud_tests: []
+  - test_name: testGetTablesRaceCondition
+    ud_tests: []
+  jdbc.DatabaseMetaDataLatestIT.java:
+  - test_name: testDoubleQuotedDatabaseAndSchema
+    ud_tests: []
+  - test_name: testDoubleQuotedDatabaseInGetColumns
+    ud_tests: []
+  - test_name: testDoubleQuotedDatabaseInGetProcedures
+    ud_tests: []
+  - test_name: testDoubleQuotedDatabaseInGetSchemas
+    ud_tests: []
+  - test_name: testDoubleQuotedDatabaseInGetTablePrivileges
+    ud_tests: []
+  - test_name: testDoubleQuotedDatabaseInGetTables
+    ud_tests: []
+  - test_name: testDoubleQuotedDatabaseforGetPrimaryKeysAndForeignKeys
+    ud_tests: []
+  - test_name: testDoubleQuotedDatabaseforGetPrimaryKeysAndForeignKeysWithPatternSearchDisabled
+    ud_tests: []
+  - test_name: testExactSchemaSearching
+    ud_tests: []
+  - test_name: testGetColumns
+    ud_tests: []
+  - test_name: testGetColumns
+    ud_tests: []
+  - test_name: testGetColumns
+    ud_tests: []
+  - test_name: testGetColumnsNullable
+    ud_tests: []
+  - test_name: testGetFunctionColumns
+    ud_tests: []
+  - test_name: testGetFunctionSqlInjectionProtection
+    ud_tests: []
+  - test_name: testGetFunctions
+    ud_tests: []
+  - test_name: testGetFunctions
+    ud_tests: []
+  - test_name: testGetFunctions
+    ud_tests: []
+  - test_name: testGetJDBCVersion
+    ud_tests: []
+  - test_name: testGetProcedureColumns
+    ud_tests: []
+  - test_name: testGetProcedureColumnsReturnsNull
+    ud_tests: []
+  - test_name: testGetProcedureColumnsReturnsResultSet
+    ud_tests: []
+  - test_name: testGetProcedureColumnsReturnsValue
+    ud_tests: []
+  - test_name: testGetProcedureColumnsWildcards
+    ud_tests: []
+  - test_name: testGetProcedures
+    ud_tests: []
+  - test_name: testGetProcedures
+    ud_tests: []
+  - test_name: testGetProceduresWithReaderAccount
+    ud_tests: []
+  - test_name: testGetSchemas
+    ud_tests: []
+  - test_name: testGetSchemas
+    ud_tests: []
+  - test_name: testGetStreams
+    ud_tests: []
+  - test_name: testGetStringValueFromColumnDef
+    ud_tests: []
+  - test_name: testGetTables
+    ud_tests: []
+  - test_name: testGetTables
+    ud_tests: []
+  - test_name: testHandlingSpecialChars
+    ud_tests: []
+  - test_name: testKeywordsCount
+    ud_tests: []
+  - test_name: testNoPatternSearchAllowedForPrimaryAndForeignKeys
+    ud_tests: []
+  - test_name: testPatternSearchAllowedForPrimaryAndForeignKeys
+    ud_tests: []
+  - test_name: testSessionDatabaseParameter
+    ud_tests: []
+  - test_name: testTimestampWithTimezoneDataType
+    ud_tests: []
+  - test_name: testUnderscoreInSchemaNamePatternForPrimaryAndForeignKeys
+    ud_tests: []
+  - test_name: testUnderscoreInSchemaNamePatternForPrimaryAndForeignKeysWithPatternSearchDisabled
+    ud_tests: []
+  - test_name: testUpdateLocatorsCopyUnsupported
+    ud_tests: []
+  - test_name: testUseConnectionCtx
+    ud_tests: []
+  - test_name: testVectorDimension
+    ud_tests: []
+  jdbc.DatabaseMetaDataResultSetLatestIT.java:
+  - test_name: testGetObjectNotSupported
+    ud_tests: []
+  - test_name: testObjectColumn
+    ud_tests: []
+  jdbc.DatabaseMetaDataResultsetIT.java:
+  - test_name: testGetBoolean
+    ud_tests: []
+  - test_name: testGetDate
+    ud_tests: []
+  - test_name: testGetDouble
+    ud_tests: []
+  - test_name: testGetInt
+    ud_tests: []
+  - test_name: testGetObject
+    ud_tests: []
+  - test_name: testGetString
+    ud_tests: []
+  - test_name: testGetTime
+    ud_tests: []
+  - test_name: testGetTimestamp
+    ud_tests: []
+  - test_name: testRowIndex
+    ud_tests: []
+  jdbc.DecfloatTypeLatestIT.java:
+  - test_name: testBasicDecfloatConversions
+    ud_tests: []
+  - test_name: testDecfloatBigDecimalConversions
+    ud_tests: []
+  - test_name: testDecfloatBindingArray
+    ud_tests: []
+  - test_name: testDecfloatBindingBasicTypes
+    ud_tests: []
+  - test_name: testDecfloatBindingBatchInserts
+    ud_tests: []
+  - test_name: testDecfloatBindingExtremeValues
+    ud_tests: []
+  - test_name: testDecfloatIntegerConversions
+    ud_tests: []
+  jdbc.DefaultSFConnectionHandlerTest.java:
+  - test_name: testEmptyHttpHeaderCustomizersWhenEmptyListPassed
+    ud_tests: []
+  - test_name: testEmptyHttpHeaderCustomizersWhenIsNotList
+    ud_tests: []
+  - test_name: testEmptyHttpHeaderCustomizersWhenPropertyHasOnlyInvalidTypes
+    ud_tests: []
+  - test_name: testEmptyHttpHeaderCustomizersWhenPropertyNotSet
+    ud_tests: []
+  - test_name: testSetValidCustomizersFromProperty
+    ud_tests: []
+  - test_name: testSetsOnlyValidHttpHeaderCustomizersWhenPropertyHasMixedTypes
+    ud_tests: []
+  jdbc.FileConnectionConfigurationLatestIT.java:
+  - test_name: testSimpleConnectionUsingFileConfigurationToken
+    ud_tests: []
+  - test_name: testSimpleConnectionUsingFileConfigurationTokenFromFile
+    ud_tests: []
+  - test_name: testThrowExceptionIfConfigurationDoesNotExist
+    ud_tests: []
+  jdbc.FileUploaderExpandFileNamesTest.java:
+  - test_name: testFileListingDoesNotFailOnMissingFilesOfAnotherPattern
+    ud_tests: []
+  - test_name: testFileListingDoesNotFailOnNotExistingDirectory
+    ud_tests: []
+  - test_name: testProcessFileNames
+    ud_tests: []
+  - test_name: testProcessFileNamesException
+    ud_tests: []
+  - test_name: testSnowflakeFileTransferConfig
+    ud_tests: []
+  jdbc.FileUploaderLatestIT.java:
+  - test_name: testCompareAndSkipFilesException
+    ud_tests: []
+  - test_name: testCompressStreamWithGzipException
+    ud_tests: []
+  - test_name: testCompressStreamWithGzipNoDigestException
+    ud_tests: []
+  - test_name: testDownloadedFilePermissions
+    ud_tests: []
+  - test_name: testFileTransferMappingFromSourceFile
+    ud_tests: []
+  - test_name: testFileTransferStageInfo
+    ud_tests: []
+  - test_name: testGetFileTransferCommandType
+    ud_tests: []
+  - test_name: testGetObjectMetadataFileNotFoundWithGCS
+    ud_tests: []
+  - test_name: testGetObjectMetadataStorageExceptionWithGCS
+    ud_tests: []
+  - test_name: testGetObjectMetadataWithGCS
+    ud_tests: []
+  - test_name: testGetS3StageDataWithAzureSession
+    ud_tests: []
+  - test_name: testGetS3StageDataWithS3Session
+    ud_tests: []
+  - test_name: testGetS3StorageObjectMetadata
+    ud_tests: []
+  - test_name: testInitFileMetadataFileIsDirectory
+    ud_tests: []
+  - test_name: testInitFileMetadataFileNotFound
+    ud_tests: []
+  - test_name: testListObjectsStorageException
+    ud_tests: []
+  - test_name: testNullCommand
+    ud_tests: []
+  - test_name: testParseCommandException
+    ud_tests: []
+  - test_name: testPopulateStatusRowsWithSortOn
+    ud_tests: []
+  - test_name: testUploadFileCallableFileNotFound
+    ud_tests: []
+  - test_name: testUploadFileStreamWithNoOverwrite
+    ud_tests: []
+  - test_name: testUploadFileStreamWithOverwrite
+    ud_tests: []
+  - test_name: testUploadFileWithTildeInFolderName
+    ud_tests: []
+  - test_name: testUploadStreamInterruptedException
+    ud_tests: []
+  - test_name: testUploadWithTildeInPath
+    ud_tests: []
+  - test_name: testUploadWithTripleSlashFilePrefix
+    ud_tests: []
+  - test_name: testUploadWithoutConnectionException
+    ud_tests: []
+  jdbc.FileUploaderMimeTypeToCompressionTypeTest.java:
+  - test_name: testMimeTypeToCompressionType
+    ud_tests: []
+  jdbc.FileUploaderSessionlessTest.java:
+  - test_name: testGetAzureStageData
+    ud_tests: []
+  - test_name: testGetEncryptionMaterial
+    ud_tests: []
+  - test_name: testGetEncryptionMaterialMissing
+    ud_tests: []
+  - test_name: testGetFileMetadatasEncryptionMaterialsException
+    ud_tests: []
+  - test_name: testGetFileTransferMetadataGCSWithEndPoint
+    ud_tests: []
+  - test_name: testGetFileTransferMetadataGCSWithUseRegionalUrl
+    ud_tests: []
+  - test_name: testGetFileTransferMetadatasAzure
+    ud_tests: []
+  - test_name: testGetFileTransferMetadatasEncryptionMaterialError
+    ud_tests: []
+  - test_name: testGetFileTransferMetadatasGCS
+    ud_tests: []
+  - test_name: testGetFileTransferMetadatasS3
+    ud_tests: []
+  - test_name: testGetFileTransferMetadatasS3MissingEncryption
+    ud_tests: []
+  - test_name: testGetFileTransferMetadatasSrcLocationsArrayError
+    ud_tests: []
+  - test_name: testGetFileTransferMetadatasUnsupportedLocationError
+    ud_tests: []
+  - test_name: testGetFileTransferMetadatasUploadError
+    ud_tests: []
+  - test_name: testGetGCSStageData
+    ud_tests: []
+  - test_name: testGetS3StageData
+    ud_tests: []
+  - test_name: testGetS3StageDataWithStageEndpoint
+    ud_tests: []
+  jdbc.GitRepositoryDownloadLatestIT.java:
+  - test_name: shouldDownloadFileAndStreamFromGitRepository
+    ud_tests: []
+  jdbc.HeartbeatAsyncLatestIT.java:
+  - test_name: testIsValidWithInvalidSession
+    ud_tests: []
+  jdbc.HeartbeatIT.java:
+  - test_name: testFailure
+    ud_tests: []
+  - test_name: testSuccess
+    ud_tests: []
+  jdbc.IntervalDayTimeTypeLatestIT.java:
+  - test_name: testIntervalDayTimeBindingBasicTypes
+    ud_tests: []
+  - test_name: testIntervalDayTimeConversions
+    ud_tests: []
+  jdbc.IntervalYearMonthTypeLatestIT.java:
+  - test_name: testIntervalYearMonthBindingBasicTypes
+    ud_tests: []
+  - test_name: testIntervalYearMonthConversions
+    ud_tests: []
+  jdbc.MaxLobSizeLatestIT.java:
+  - test_name: testIncreasedMaxLobSize
+    ud_tests: []
+  jdbc.MockConnectionTest.java:
+  - test_name: testErrorHandlingWithLoggedExceptions
+    ud_tests: []
+  - test_name: testMockResponse
+    ud_tests: []
+  - test_name: testMockTransferAgent
+    ud_tests: []
+  - test_name: testMockedResponseWithRows
+    ud_tests: []
+  jdbc.MultiStatementIT.java:
+  - test_name: testMultiStmtAlterSessionParams
+    ud_tests: []
+  - test_name: testMultiStmtCommitRollback
+    ud_tests: []
+  - test_name: testMultiStmtCommitRollbackNoAutocommit
+    ud_tests: []
+  - test_name: testMultiStmtExecError
+    ud_tests: []
+  - test_name: testMultiStmtExecuteQueryFail
+    ud_tests: []
+  - test_name: testMultiStmtExecuteUpdateFail
+    ud_tests: []
+  - test_name: testMultiStmtLarge
+    ud_tests: []
+  - test_name: testMultiStmtMultiLine
+    ud_tests: []
+  - test_name: testMultiStmtParseError
+    ud_tests: []
+  - test_name: testMultiStmtQuotes
+    ud_tests: []
+  - test_name: testMultiStmtSetUnset
+    ud_tests: []
+  - test_name: testMultiStmtTempTable
+    ud_tests: []
+  - test_name: testMultiStmtUseStmt
+    ud_tests: []
+  jdbc.MultiStatementLatestIT.java:
+  - test_name: testAnonymousBlocksUse
+    ud_tests: []
+  - test_name: testMultiStatementResultFormat
+    ud_tests: []
+  - test_name: testMultiStmtExecute
+    ud_tests: []
+  - test_name: testMultiStmtExecuteQuery
+    ud_tests: []
+  - test_name: testMultiStmtExecuteUpdate
+    ud_tests: []
+  - test_name: testMultiStmtTransaction
+    ud_tests: []
+  - test_name: testMultiStmtTransactionRollback
+    ud_tests: []
+  - test_name: testMultiStmtUpdateCount
+    ud_tests: []
+  jdbc.OpenGroupCLIFuncIT.java:
+  - test_name: testDateTimeFunction
+    ud_tests: []
+  - test_name: testStringFunction
+    ud_tests: []
+  - test_name: testSystemFunctions
+    ud_tests: []
+  jdbc.OpenGroupCLIFuncLatestIT.java:
+  - test_name: testNumericFunctions
+    ud_tests: []
+  jdbc.PreparedMultiStmtIT.java:
+  - test_name: testExecuteLessBindings
+    ud_tests: []
+  - test_name: testExecuteMoreBindings
+    ud_tests: []
+  - test_name: testExecuteQueryBindings
+    ud_tests: []
+  - test_name: testExecuteQueryNoBindings
+    ud_tests: []
+  - test_name: testExecuteUpdateCount
+    ud_tests: []
+  jdbc.PreparedStatement1IT.java:
+  - test_name: manualTestForPreparedStatementLogging
+    ud_tests: []
+  - test_name: testBatchInsertWithCacheEnabled
+    ud_tests: []
+  - test_name: testClearBatch
+    ud_tests: []
+  - test_name: testClearParameters
+    ud_tests: []
+  - test_name: testDeleteOneRow
+    ud_tests: []
+  - test_name: testGetParameterMetaData
+    ud_tests: []
+  - test_name: testIncorrectTypes
+    ud_tests: []
+  - test_name: testInsertBatch
+    ud_tests: []
+  - test_name: testInsertBatchStage
+    ud_tests: []
+  - test_name: testInsertBatchStageMultipleTimes
+    ud_tests: []
+  - test_name: testInsertOneRow
+    ud_tests: []
+  - test_name: testInsertStageArrayBind
+    ud_tests: []
+  - test_name: testPrepareStatementWithKeys
+    ud_tests: []
+  - test_name: testSelectOneRow
+    ud_tests: []
+  - test_name: testStageBatchNull
+    ud_tests: []
+  - test_name: testStageBatchTimes
+    ud_tests: []
+  - test_name: testStageBatchTimestamps
+    ud_tests: []
+  - test_name: testStageString
+    ud_tests: []
+  - test_name: testUpdateBatch
+    ud_tests: []
+  - test_name: testUpdateOneRow
+    ud_tests: []
+  jdbc.PreparedStatement1LatestIT.java:
+  - test_name: testBatchInsertWithTimestampInputFormatSet
+    ud_tests: []
+  - test_name: testCallStatement
+    ud_tests: []
+  - test_name: testExecuteEmptyBatch
+    ud_tests: []
+  - test_name: testInsertStageArrayBindWithTime
+    ud_tests: []
+  - test_name: testPrepStWithCacheEnabled
+    ud_tests: []
+  - test_name: testSetObjectForTimestampTypes
+    ud_tests: []
+  - test_name: testSetObjectMethodWithBigIntegerColumn
+    ud_tests: []
+  - test_name: testSetObjectMethodWithLargeBigIntegerColumn
+    ud_tests: []
+  - test_name: testSetObjectMethodWithVarbinaryColumn
+    ud_tests: []
+  jdbc.PreparedStatement2IT.java:
+  - test_name: testAddBatchNumericNullFloatMixed
+    ud_tests: []
+  - test_name: testBindObjectLiteral
+    ud_tests: []
+  - test_name: testBindTimestampTZViaString
+    ud_tests: []
+  - test_name: testBindTimestampTZViaStringBatch
+    ud_tests: []
+  - test_name: testBindWithNullValue
+    ud_tests: []
+  - test_name: testCreatePreparedStatementWithParameters
+    ud_tests: []
+  - test_name: testInvalidUsageOfApi
+    ud_tests: []
+  - test_name: testPrepareAndGetMeta
+    ud_tests: []
+  - test_name: testPrepareDDL
+    ud_tests: []
+  - test_name: testPrepareSCL
+    ud_tests: []
+  - test_name: testPrepareShowCommand
+    ud_tests: []
+  - test_name: testPrepareTCL
+    ud_tests: []
+  - test_name: testPrepareTimeout
+    ud_tests: []
+  - test_name: testPreparedStatementWithSkipParsing
+    ud_tests: []
+  - test_name: testPreparedStatementWithSkipParsingAndBinding
+    ud_tests: []
+  - test_name: testSnow35923
+    ud_tests: []
+  - test_name: testSnow36284
+    ud_tests: []
+  - test_name: testSnow41620
+    ud_tests: []
+  - test_name: testSnow44393
+    ud_tests: []
+  - test_name: testSnow50141
+    ud_tests: []
+  - test_name: testStageBatchDates
+    ud_tests: []
+  jdbc.PreparedStatement2LatestIT.java:
+  - test_name: testAlreadyDescribedMultipleResults
+    ud_tests: []
+  - test_name: testConsecutiveBatchInsertError
+    ud_tests: []
+  - test_name: testConstOptLimitBind
+    ud_tests: []
+  - test_name: testExecuteLargeBatch
+    ud_tests: []
+  - test_name: testLimitBind
+    ud_tests: []
+  - test_name: testPrepareUDTF
+    ud_tests: []
+  - test_name: testRemoveExtraDescribeCalls
+    ud_tests: []
+  - test_name: testRemoveExtraDescribeCallsSanityCheck
+    ud_tests: []
+  - test_name: testSelectWithBinding
+    ud_tests: []
+  - test_name: testTableFuncBindInput
+    ud_tests: []
+  - test_name: testToString
+    ud_tests: []
+  jdbc.PreparedStatementFeatureNotSupportedIT.java:
+  - test_name: testFeatureNotSupportedException
+    ud_tests: []
+  jdbc.PreparedStatementLargeUpdateLatestIT.java:
+  - test_name: testExecuteLargeBatchOverIntMax
+    ud_tests: []
+  - test_name: testLargeUpdate
+    ud_tests: []
+  jdbc.PrivateKeyAuthenticationExceptionHandlingLatestIT.java:
+  - test_name: testConnectionAndSocketTimeout
+    ud_tests: []
+  - test_name: testPrivateKeyAuthTimeout
+    ud_tests: []
+  jdbc.ProxyLatestIT.java:
+  - test_name: testProxyIsUsedWhenNonProxyHostsNotMatchingInProperties
+    ud_tests: []
+  - test_name: testProxyIsUsedWhenSetInJVMParams
+    ud_tests: []
+  - test_name: testProxyIsUsedWhenSetInProperties
+    ud_tests: []
+  - test_name: testProxyNotUsedWhenNonProxyHostsMatchingInJVMParams
+    ud_tests: []
+  - test_name: testProxyNotUsedWhenNonProxyHostsMatchingInProperties
+    ud_tests: []
+  - test_name: testProxyUsedWhenNonProxyHostsNotMatchingInJVMParams
+    ud_tests: []
+  jdbc.PutFileWithSpaceIncludedIT.java:
+  - test_name: putFileWithSpaceIncluded
+    ud_tests: []
+  jdbc.PutUnescapeBackslashIT.java:
+  - test_name: testPutFileUnescapeBackslashes
+    ud_tests: []
+  jdbc.RestRequestTest.java:
+  - test_name: shouldGenerateBackoffInRangeExceptTheLastBackoff
+    ud_tests: []
+  - test_name: testConnectionClosedRetriesSuccessful
+    ud_tests: []
+  - test_name: testExceptionAuthBasedTimeout
+    ud_tests: []
+  - test_name: testExceptionAuthBasedTimeoutFor429ErrorCode
+    ud_tests: []
+  - test_name: testExecuteRequestFailsWithEventEmission
+    ud_tests: []
+  - test_name: testHandlingNotRetryableException_isProtocolVersionError
+    ud_tests: []
+  - test_name: testIllegalStateExceptionTriggersHttpClientRebuildParameterized
+    ud_tests: []
+  - test_name: testIsExceptionInGroup
+    ud_tests: []
+  - test_name: testIsNonRetryableHTTPCode
+    ud_tests: []
+  - test_name: testIsProtocolVersionError
+    ud_tests: []
+  - test_name: testLoginMaxRetries
+    ud_tests: []
+  - test_name: testLoginTimeout
+    ud_tests: []
+  - test_name: testMaxRetriesExceeded
+    ud_tests: []
+  - test_name: testMaxRetriesWithSuccessfulResponse
+    ud_tests: []
+  - test_name: testNoRetry
+    ud_tests: []
+  - test_name: testNoRetryOnSslHandshakeWithoutEof
+    ud_tests: []
+  - test_name: testOCSPCheckFailsWithEventEmission
+    ud_tests: []
+  - test_name: testRetryNoParamsInRequest
+    ud_tests: []
+  - test_name: testRetryOnTransientSslHandshakeEof
+    ud_tests: []
+  - test_name: testRetryParametersWithSocketTimeout
+    ud_tests: []
+  - test_name: testRetryParamsInRequest
+    ud_tests: []
+  - test_name: testSendIBHttpErrorEventWithNullSessionNoException
+    ud_tests: []
+  - test_name: testSendIBHttpErrorEventWithValidSession
+    ud_tests: []
+  jdbc.RestRequestTestRetriesWiremockIT.java:
+  - test_name: testElapsedTimeoutExceeded
+    ud_tests: []
+  - test_name: testHttpClientFailedAfterFiveRetries
+    ud_tests: []
+  - test_name: testHttpClientSuccessAfter307Retry
+    ud_tests: []
+  - test_name: testHttpClientSuccessAfter308Retry
+    ud_tests: []
+  - test_name: testHttpClientSuccessAfterFiveRetries
+    ud_tests: []
+  - test_name: testHttpClientSuccessWithoutRetries
+    ud_tests: []
+  - test_name: testRetryWhen503Code
+    ud_tests: []
+  jdbc.RestRequestWiremockLatestIT.java:
+  - test_name: testProxyIsUsedWhenSetInProperties
+    ud_tests: []
+  - test_name: testStickyHeaderPropagatedFromFirstQuery
+    ud_tests: []
+  - test_name: testStickyHeaderPropagatedFromLogin
+    ud_tests: []
+  - test_name: testStickyHeaderValueUpdated
+    ud_tests: []
+  jdbc.ResultJsonParserV2Test.java:
+  - test_name: LargestColumnTest
+    ud_tests: []
+  - test_name: simpleStreamingTest
+    ud_tests: []
+  - test_name: simpleTest
+    ud_tests: []
+  - test_name: testAsciiCharacter
+    ud_tests: []
+  - test_name: testAsciiSequential
+    ud_tests: []
+  jdbc.ResultSetAlreadyClosedIT.java:
+  - test_name: testEmptyResultSetAlreadyClosed
+    ud_tests: []
+  - test_name: testMetadataResultSetAlreadyClosed
+    ud_tests: []
+  - test_name: testQueryResultSetAlreadyClosed
+    ud_tests: []
+  - test_name: testResultSetAlreadyClosed
+    ud_tests: []
+  jdbc.ResultSetArrowForceLTZMultiTimeZoneIT.java:
+  - test_name: testTimestampLTZOutputFormat
+    ud_tests: []
+  - test_name: testTimestampLTZWithNanos
+    ud_tests: []
+  - test_name: testTimestampLTZWithNulls
+    ud_tests: []
+  - test_name: testTimestampLTZWithScale
+    ud_tests: []
+  jdbc.ResultSetArrowForceTZMultiTimeZoneIT.java:
+  - test_name: testTimestampTZWithMicros
+    ud_tests: []
+  - test_name: testTimestampTZWithNanos
+    ud_tests: []
+  - test_name: testTimestampTZWithScale
+    ud_tests: []
+  jdbc.ResultSetAsyncIT.java:
+  - test_name: testAsyncResultSetFunctionsWithNewSession
+    ud_tests: []
+  - test_name: testEmptyResultSet
+    ud_tests: []
+  - test_name: testGetMethods
+    ud_tests: []
+  - test_name: testOrderAndClosureFunctions
+    ud_tests: []
+  - test_name: testResultSetMetadata
+    ud_tests: []
+  - test_name: testWasNull
+    ud_tests: []
+  jdbc.ResultSetAsyncLatestIT.java:
+  - test_name: testAsyncResultSet
+    ud_tests: []
+  jdbc.ResultSetFeatureNotSupportedIT.java:
+  - test_name: testMetadataResultSetNotSupportedException
+    ud_tests: []
+  - test_name: testQueryResultSetNotSupportedException
+    ud_tests: []
+  jdbc.ResultSetIT.java:
+  - test_name: shouldSerializeArrayAndObjectAsStringOnGetObject
+    ud_tests: []
+  - test_name: testColumnMetaWithZeroPrecision
+    ud_tests: []
+  - test_name: testCursorPosition
+    ud_tests: []
+  - test_name: testFetchOnClosedResultSet
+    ud_tests: []
+  - test_name: testFindColumn
+    ud_tests: []
+  - test_name: testGetBigDecimal
+    ud_tests: []
+  - test_name: testGetBigDecimalNegative
+    ud_tests: []
+  - test_name: testGetBoolean
+    ud_tests: []
+  - test_name: testGetBytes
+    ud_tests: []
+  - test_name: testGetBytesInBase64
+    ud_tests: []
+  - test_name: testGetClob
+    ud_tests: []
+  - test_name: testGetColumnClassNameForBinary
+    ud_tests: []
+  - test_name: testGetColumnDisplaySizeAndPrecision
+    ud_tests: []
+  - test_name: testGetDouble
+    ud_tests: []
+  - test_name: testGetFloat
+    ud_tests: []
+  - test_name: testGetInt
+    ud_tests: []
+  - test_name: testGetLong
+    ud_tests: []
+  - test_name: testGetMethod
+    ud_tests: []
+  - test_name: testGetObjectOnDatabaseMetadataResultSet
+    ud_tests: []
+  - test_name: testGetObjectOnFixedView
+    ud_tests: []
+  - test_name: testGetShort
+    ud_tests: []
+  - test_name: testGetTimeNullTimestampAndTimestampNullTime
+    ud_tests: []
+  - test_name: testInvalidColumnIndex
+    ud_tests: []
+  - test_name: testIsLast
+    ud_tests: []
+  - test_name: testNextNegative
+    ud_tests: []
+  - test_name: testParseInfAndNaNNumber
+    ud_tests: []
+  - test_name: testReleaseDownloaderCurrentMemoryUsage
+    ud_tests: []
+  - test_name: testResultColumnSearchCaseSensitive
+    ud_tests: []
+  - test_name: testResultColumnSearchCaseSensitiveOld
+    ud_tests: []
+  - test_name: testTreatDecimalAsInt
+    ud_tests: []
+  - test_name: testUpdateCountOnCopyCmd
+    ud_tests: []
+  - test_name: testWasNull
+    ud_tests: []
+  jdbc.ResultSetJsonVsArrowIT.java:
+  - test_name: TestArrowFloatRoundTrip
+    ud_tests: []
+  - test_name: TestArrowStringRoundTrip
+    ud_tests: []
+  - test_name: TestTimestampNTZBinding
+    ud_tests: []
+  - test_name: TestTimestampNTZWithDLS
+    ud_tests: []
+  - test_name: testBigInt
+    ud_tests: []
+  - test_name: testBoolean
+    ud_tests: []
+  - test_name: testClientSideSorting
+    ud_tests: []
+  - test_name: testClientSideSortingOnBatchedChunk
+    ud_tests: []
+  - test_name: testDecimal
+    ud_tests: []
+  - test_name: testDecimalNoScale
+    ud_tests: []
+  - test_name: testDecimalWithLargeScale
+    ud_tests: []
+  - test_name: testDoublePrecision
+    ud_tests: []
+  - test_name: testGSResult
+    ud_tests: []
+  - test_name: testGSResultForEmptyAndSmallTable
+    ud_tests: []
+  - test_name: testGSResultReal
+    ud_tests: []
+  - test_name: testGSResultScan
+    ud_tests: []
+  - test_name: testInt
+    ud_tests: []
+  - test_name: testSNOW89737
+    ud_tests: []
+  - test_name: testScaledBigInt
+    ud_tests: []
+  - test_name: testScaledInt
+    ud_tests: []
+  - test_name: testScaledSmallInt
+    ud_tests: []
+  - test_name: testScaledTinyInt
+    ud_tests: []
+  - test_name: testSemiStructuredData
+    ud_tests: []
+  - test_name: testSmallInt
+    ud_tests: []
+  - test_name: testStructuredTypes
+    ud_tests: []
+  - test_name: testTimestampNTZAreAllNulls
+    ud_tests: []
+  - test_name: testTinyInt
+    ud_tests: []
+  jdbc.ResultSetJsonVsArrowMultiTZIT.java:
+  - test_name: testDate
+    ud_tests: []
+  - test_name: testTime
+    ud_tests: []
+  - test_name: testTimestampNTZWithNanos
+    ud_tests: []
+  - test_name: testTimestampNTZWithScale
+    ud_tests: []
+  jdbc.ResultSetLatestIT.java:
+  - test_name: testAutoIncrementResult
+    ud_tests: []
+  - test_name: testBytesCrossTypeTests
+    ud_tests: []
+  - test_name: testCallStatementType
+    ud_tests: []
+  - test_name: testChunkDownloaderNoHang
+    ud_tests: []
+  - test_name: testChunkDownloaderSetRetry
+    ud_tests: []
+  - test_name: testEmptyResultSet
+    ud_tests: []
+  - test_name: testGetBigDecimalWithScale
+    ud_tests: []
+  - test_name: testGetCharacterStreamNull
+    ud_tests: []
+  - test_name: testGetDataTypeWithTimestampTz
+    ud_tests: []
+  - test_name: testGetEmptyOrNullClob
+    ud_tests: []
+  - test_name: testGetObjectForArrowResultFormatJDBCArrowDecimalAsIntFalse
+    ud_tests: []
+  - test_name: testGetObjectForArrowResultFormatJDBCArrowDecimalAsIntTrue
+    ud_tests: []
+  - test_name: testGetObjectForJSONResultFormatUsingJDBCDecimalAsInt
+    ud_tests: []
+  - test_name: testGetObjectJsonResult
+    ud_tests: []
+  - test_name: testGetObjectWithBigInt
+    ud_tests: []
+  - test_name: testGetObjectWithType
+    ud_tests: []
+  - test_name: testGranularTimeFunctionsInSessionTimezone
+    ud_tests: []
+  - test_name: testGranularTimeFunctionsInUTC
+    ud_tests: []
+  - test_name: testInvalidUnWrap
+    ud_tests: []
+  - test_name: testLargeStringRetrieval
+    ud_tests: []
+  - test_name: testMemoryClearingAfterInterrupt
+    ud_tests: []
+  - test_name: testMetadataAPIMetricCollection
+    ud_tests: []
+  - test_name: testMetadataIsCaseSensitive
+    ud_tests: []
+  - test_name: testMultipleChunks
+    ud_tests: []
+  - test_name: testNewFeaturesNotSupportedExeceptions
+    ud_tests: []
+  - test_name: testResultChunkDownloaderException
+    ud_tests: []
+  - test_name: testResultSetMetadata
+    ud_tests: []
+  - test_name: testSetNullClob
+    ud_tests: []
+  jdbc.ResultSetMultiTimeZoneIT.java:
+  - test_name: testBindTimestampTZ
+    ud_tests: []
+  - test_name: testCurrentTime
+    ud_tests: []
+  - test_name: testDateTimeRelatedTypeConversion
+    ud_tests: []
+  - test_name: testGetDateAndTime
+    ud_tests: []
+  - test_name: testGetOldDate
+    ud_tests: []
+  - test_name: testGetOldTimestamp
+    ud_tests: []
+  - test_name: testGetStringForDates
+    ud_tests: []
+  - test_name: testPrepareOldTimestamp
+    ud_tests: []
+  - test_name: testTimeRange
+    ud_tests: []
+  jdbc.ResultSetMultiTimeZoneLatestIT.java:
+  - test_name: testDateAndTimestampWithTimezone
+    ud_tests: []
+  - test_name: testTimesWithGetTimestamp
+    ud_tests: []
+  - test_name: testTimestampNTZWithDaylightSavings
+    ud_tests: []
+  - test_name: testUseSessionTimeZoneHelper
+    ud_tests: []
+  jdbc.ResultSetVectorLatestIT.java:
+  - test_name: testGetFloatVectorAsFloatArray
+    ud_tests: []
+  - test_name: testGetFloatVectorFromTable
+    ud_tests: []
+  - test_name: testGetIntVectorAsIntArray
+    ud_tests: []
+  - test_name: testGetIntVectorAsLongArray
+    ud_tests: []
+  - test_name: testGetIntVectorFromTable
+    ud_tests: []
+  - test_name: testGetNullAsFloatVector
+    ud_tests: []
+  - test_name: testGetNullAsIntVector
+    ud_tests: []
+  - test_name: testGetVectorViaGetStringIsEqualToTheGetObject
+    ud_tests: []
+  jdbc.SSOConnectionTest.java:
+  - test_name: testIdTokenInSSO
+    ud_tests: []
+  jdbc.ServiceNameTest.java:
+  - test_name: testAddServiceNameToRequestHeader
+    ud_tests: []
+  jdbc.SessionVariablesIT.java:
+  - test_name: testSettingSessionVariablesInConnectionProperties
+    ud_tests: []
+  jdbc.SnowflakeAzureClientHandleExceptionLatestIT.java:
+  - test_name: error403NullSession
+    ud_tests: []
+  - test_name: error403OverMaxRetryThrow
+    ud_tests: []
+  - test_name: error403RenewExpired
+    ud_tests: []
+  - test_name: errorInterruptedException
+    ud_tests: []
+  - test_name: errorInvalidKey
+    ud_tests: []
+  - test_name: errorNoSpaceLeftOnDevice
+    ud_tests: []
+  - test_name: errorSocketTimeoutException
+    ud_tests: []
+  - test_name: errorUnknownException
+    ud_tests: []
+  jdbc.SnowflakeBasicDataSourceTest.java:
+  - test_name: testDataSourceSetters
+    ud_tests: []
+  - test_name: testDataSourceWithoutUsernameOrPasswordThrowsExplicitException
+    ud_tests: []
+  - test_name: testSetLoginTimeout
+    ud_tests: []
+  - test_name: testSetsHttpHeadersCustomizers
+    ud_tests: []
+  jdbc.SnowflakeChunkDownloaderLatestIT.java:
+  - test_name: testChunkDownloaderRetry
+    ud_tests: []
+  jdbc.SnowflakeClobTest.java:
+  - test_name: testFreeBuffer
+    ud_tests: []
+  - test_name: testGetSubString
+    ud_tests: []
+  - test_name: testInvalidPositionExceptions
+    ud_tests: []
+  - test_name: testReadCharacterStream
+    ud_tests: []
+  - test_name: testReadWriteAsciiStream
+    ud_tests: []
+  jdbc.SnowflakeConnectionV1Test.java:
+  - test_name: testMergeProperties
+    ud_tests: []
+  jdbc.SnowflakeDriverIT.java:
+  - test_name: testAutocommit
+    ud_tests: []
+  - test_name: testBind
+    ud_tests: []
+  - test_name: testBindInWithClause
+    ud_tests: []
+  - test_name: testBindTimestampNTZ
+    ud_tests: []
+  - test_name: testBoolean
+    ud_tests: []
+  - test_name: testCancelQuery
+    ud_tests: []
+  - test_name: testCancelQueryBySystemFunction
+    ud_tests: []
+  - test_name: testClientInfo
+    ud_tests: []
+  - test_name: testClientSideSorting
+    ud_tests: []
+  - test_name: testConnection
+    ud_tests: []
+  - test_name: testConnections
+    ud_tests: []
+  - test_name: testConstraints
+    ud_tests: []
+  - test_name: testDBMetadata
+    ud_tests: []
+  - test_name: testDDLs
+    ud_tests: []
+  - test_name: testDateParsing
+    ud_tests: []
+  - test_name: testExplainPlan
+    ud_tests: []
+  - test_name: testGetDoubleForNaN
+    ud_tests: []
+  - test_name: testGetDoubleForNull
+    ud_tests: []
+  - test_name: testGetObject
+    ud_tests: []
+  - test_name: testInvalidSQL
+    ud_tests: []
+  - test_name: testLargeResultSet
+    ud_tests: []
+  - test_name: testNotClosedSession
+    ud_tests: []
+  - test_name: testNullBind
+    ud_tests: []
+  - test_name: testOauthConnection
+    ud_tests: []
+  - test_name: testPut
+    ud_tests: []
+  - test_name: testPutGet
+    ud_tests: []
+  - test_name: testPutGetLargeFileGCP
+    ud_tests: []
+  - test_name: testPutGetToUnencryptedStage
+    ud_tests: []
+  - test_name: testPutOverwrite
+    ud_tests: []
+  - test_name: testPutViaExecuteQuery
+    ud_tests: []
+  - test_name: testPutWithWildcardGCP
+    ud_tests: []
+  - test_name: testQueryWithMaxRows
+    ud_tests: []
+  - test_name: testRowsPerResultset
+    ud_tests: []
+  - test_name: testSQLError42S02
+    ud_tests: []
+  - test_name: testShowColumns
+    ud_tests: []
+  - test_name: testSnow12603
+    ud_tests: []
+  - test_name: testSnow14774
+    ud_tests: []
+  - test_name: testSnow16332
+    ud_tests: []
+  - test_name: testSnow19172
+    ud_tests: []
+  - test_name: testSnow19819
+    ud_tests: []
+  - test_name: testSnow26503
+    ud_tests: []
+  - test_name: testSnow28530
+    ud_tests: []
+  - test_name: testSnow31104
+    ud_tests: []
+  - test_name: testSnow4245
+    ud_tests: []
+  - test_name: testSnow4394
+    ud_tests: []
+  - test_name: testSnow6290
+    ud_tests: []
+  - test_name: testTableBind
+    ud_tests: []
+  - test_name: testTimeParsing
+    ud_tests: []
+  - test_name: testTimestampParsing
+    ud_tests: []
+  - test_name: testToTimestampNullBind
+    ud_tests: []
+  - test_name: testUpdateCount
+    ud_tests: []
+  - test_name: testV1Query
+    ud_tests: []
+  jdbc.SnowflakeDriverLatestIT.java:
+  - test_name: shouldLoadDriverWithDisabledTelemetryOob
+    ud_tests: []
+  - test_name: testAzureS3FileTransferMetadataWithOneFile
+    ud_tests: []
+  - test_name: testAzureS3UploadStreamingIngestFileMetadata
+    ud_tests: []
+  - test_name: testClientInfoConnectionProperty
+    ud_tests: []
+  - test_name: testGCPFileTransferMetadataNegativeOnlySupportPut
+    ud_tests: []
+  - test_name: testGCPFileTransferMetadataWithOneFile
+    ud_tests: []
+  - test_name: testGeoMetadata
+    ud_tests: []
+  - test_name: testGeoOutputTypes
+    ud_tests: []
+  - test_name: testGeometryMetadata
+    ud_tests: []
+  - test_name: testGeometryOutputTypes
+    ud_tests: []
+  - test_name: testGetDisable
+    ud_tests: []
+  - test_name: testGetPropertyInfo
+    ud_tests: []
+  - test_name: testGetSessionID
+    ud_tests: []
+  - test_name: testHTAPOptimizations
+    ud_tests: []
+  - test_name: testHTAPStatementParameterCaching
+    ud_tests: []
+  - test_name: testNoSpaceLeftOnDeviceException
+    ud_tests: []
+  - test_name: testPutDisable
+    ud_tests: []
+  - test_name: testPutGetGcsDownscopedCredential
+    ud_tests: []
+  - test_name: testPutGetGcsDownscopedCredentialWithDisabledDefaultCredentials
+    ud_tests: []
+  - test_name: testPutGetLargeFileAzure
+    ud_tests: []
+  - test_name: testPutGetLargeFileGCSDownscopedCredential
+    ud_tests: []
+  - test_name: testPutOverwriteFalseNoDigest
+    ud_tests: []
+  - test_name: testPutS3RegionalUrl
+    ud_tests: []
+  - test_name: testPutThreshold
+    ud_tests: []
+  - test_name: testS3PutInGS
+    ud_tests: []
+  - test_name: testSnow76376
+    ud_tests: []
+  - test_name: testStaticVersionMatchesManifest
+    ud_tests: []
+  - test_name: testUploadWithGCSDownscopedCredentialAndDisabledGcsDefaultCredentialsWithoutConnection
+    ud_tests: []
+  - test_name: testUploadWithGCSDownscopedCredentialWithoutConnection
+    ud_tests: []
+  jdbc.SnowflakeDriverTest.java:
+  - test_name: testAcceptUrls
+    ud_tests: []
+  - test_name: testConnectWithMissingAccountIdentifier
+    ud_tests: []
+  - test_name: testGetParentLogger
+    ud_tests: []
+  - test_name: testGetVersion
+    ud_tests: []
+  - test_name: testInvalidNullConnect
+    ud_tests: []
+  - test_name: testJDBCCompliant
+    ud_tests: []
+  - test_name: testMain
+    ud_tests: []
+  - test_name: testParseConnectStringException
+    ud_tests: []
+  - test_name: testReturnsNullForOtherJdbcConnectString
+    ud_tests: []
+  - test_name: testSuppressIllegalReflectiveAccessWarning
+    ud_tests: []
+  jdbc.SnowflakeFileTransferConfigTest.java:
+  - test_name: shouldBuildConfig
+    ud_tests: []
+  - test_name: shouldBuildDefaultConfig
+    ud_tests: []
+  jdbc.SnowflakeGcsClientHandleExceptionLatestIT.java:
+  - test_name: error401OverMaxRetryThrow
+    ud_tests: []
+  - test_name: error401RenewExpired
+    ud_tests: []
+  - test_name: errorInterruptedException
+    ud_tests: []
+  - test_name: errorInvalidKey
+    ud_tests: []
+  - test_name: errorNoSpaceLeftOnDevice
+    ud_tests: []
+  - test_name: errorSocketTimeoutException
+    ud_tests: []
+  - test_name: errorUnknownException
+    ud_tests: []
+  - test_name: errorWithNullSession
+    ud_tests: []
+  jdbc.SnowflakeResultSetSerializableIT.java:
+  - test_name: testBasicTableWithEmptyResult
+    ud_tests: []
+  - test_name: testBasicTableWithOneFileChunk
+    ud_tests: []
+  - test_name: testBasicTableWithOnlyFirstChunk
+    ud_tests: []
+  - test_name: testBasicTableWithSerializeObjectsAfterReadResultSet
+    ud_tests: []
+  - test_name: testBasicTableWithSomeFileChunks
+    ud_tests: []
+  - test_name: testCloseUnconsumedResultSet
+    ud_tests: []
+  - test_name: testCustomProxyWithFiles
+    ud_tests: []
+  - test_name: testNegativeWithChunkFileNotExist
+    ud_tests: []
+  - test_name: testNegativeWithClosedResultSet
+    ud_tests: []
+  - test_name: testResultSetRetrieveConfig
+    ud_tests: []
+  - test_name: testRetrieveMetadata
+    ud_tests: []
+  - test_name: testSplitResultSetSerializable
+    ud_tests: []
+  - test_name: testTimestamp
+    ud_tests: []
+  jdbc.SnowflakeS3ClientHandleExceptionLatestIT.java:
+  - test_name: errorBadRequestTokenExpired
+    ud_tests: []
+  - test_name: errorClientUnknown
+    ud_tests: []
+  - test_name: errorInterruptedException
+    ud_tests: []
+  - test_name: errorInvalidKey
+    ud_tests: []
+  - test_name: errorNoSpaceLeftOnDevice
+    ud_tests: []
+  - test_name: errorNotFound
+    ud_tests: []
+  - test_name: errorRenewExpired
+    ud_tests: []
+  - test_name: errorRenewExpiredNullSession
+    ud_tests: []
+  - test_name: errorSocketTimeoutException
+    ud_tests: []
+  - test_name: errorUnknownException
+    ud_tests: []
+  jdbc.SnowflakeSerializableTest.java:
+  - test_name: shouldCreateSerializableWithNoOpChunksDownloader
+    ud_tests: []
+  - test_name: shouldProperlyCreateRichSerializableV1
+    ud_tests: []
+  - test_name: shouldProperlyCreateSerializableV1
+    ud_tests: []
+  jdbc.SnowflakeTimestampWithTimezoneTest.java:
+  - test_name: testGetTimezone
+    ud_tests: []
+  - test_name: testTimestampNTZ
+    ud_tests: []
+  - test_name: testToZonedDateTime
+    ud_tests: []
+  jdbc.SnowflakeTypeTest.java:
+  - test_name: testConvertStringToType
+    ud_tests: []
+  - test_name: testJavaSQLTypeFind
+    ud_tests: []
+  - test_name: testJavaSQLTypeLexicalValue
+    ud_tests: []
+  - test_name: testJavaTypeToClassName
+    ud_tests: []
+  - test_name: testJavaTypeToSFType
+    ud_tests: []
+  - test_name: testSnowflakeType
+    ud_tests: []
+  jdbc.SnowflakeUtilTest.java:
+  - test_name: shouldConvertCreateCaseInsensitiveMap
+    ud_tests: []
+  - test_name: shouldConvertHeadersCreateCaseInsensitiveMap
+    ud_tests: []
+  - test_name: testCreateFieldsMetadataForObject
+    ud_tests: []
+  - test_name: testCreateMetadata
+    ud_tests: []
+  - test_name: testCreateOwnerOnlyPermissionDir
+    ud_tests: []
+  - test_name: testFieldMetadataSetterMethods
+    ud_tests: []
+  - test_name: testValidateFilePermission
+    ud_tests: []
+  jdbc.SqlFeatureNotSupportedTelemetryTest.java:
+  - test_name: testCreateIBValue
+    ud_tests: []
+  - test_name: testCreateOOBValue
+    ud_tests: []
+  - test_name: testMaskStacktrace
+    ud_tests: []
+  jdbc.StatementAlreadyClosedIT.java:
+  - test_name: testStatementAlreadyClosed
+    ud_tests: []
+  jdbc.StatementFeatureNotSupportedIT.java:
+  - test_name: testFeatureNotSupportedException
+    ud_tests: []
+  jdbc.StatementIT.java:
+  - test_name: testAutogenerateKey
+    ud_tests: []
+  - test_name: testCallStoredProcedure
+    ud_tests: []
+  - test_name: testCreateStatementWithParameters
+    ud_tests: []
+  - test_name: testExecuteBatch
+    ud_tests: []
+  - test_name: testExecuteInsert
+    ud_tests: []
+  - test_name: testExecuteLargeBatch
+    ud_tests: []
+  - test_name: testExecuteMerge
+    ud_tests: []
+  - test_name: testExecuteMultiInsert
+    ud_tests: []
+  - test_name: testExecuteSelect
+    ud_tests: []
+  - test_name: testExecuteUpdateAndDelete
+    ud_tests: []
+  - test_name: testExecuteUpdateFail
+    ud_tests: []
+  - test_name: testExecuteUpdateZeroCount
+    ud_tests: []
+  - test_name: testFetchDirection
+    ud_tests: []
+  - test_name: testFetchSize
+    ud_tests: []
+  - test_name: testMaxRows
+    ud_tests: []
+  - test_name: testMultiStmtNotEnabled
+    ud_tests: []
+  - test_name: testQueryIdIsNullOnFreshStatement
+    ud_tests: []
+  - test_name: testQueryTimeOut
+    ud_tests: []
+  - test_name: testStatementClose
+    ud_tests: []
+  - test_name: testTelemetryBatch
+    ud_tests: []
+  - test_name: testUnwrapper
+    ud_tests: []
+  jdbc.StatementLargeUpdateIT.java:
+  - test_name: testLargeUpdate
+    ud_tests: []
+  jdbc.StatementLatestIT.java:
+  - test_name: testCopyAndUpload
+    ud_tests: []
+  - test_name: testCreatingPatReturnsResultSetForExecute
+    ud_tests: []
+  - test_name: testExecuteCreateAndDrop
+    ud_tests: []
+  - test_name: testExecuteOpenResultSets
+    ud_tests: []
+  - test_name: testPreparedStatementLogging
+    ud_tests: []
+  - test_name: testQueryIdIsSetOnFailedExecuteQuery
+    ud_tests: []
+  - test_name: testQueryIdIsSetOnFailedExecuteUpdate
+    ud_tests: []
+  - test_name: testQueryIdIsSetOnFailedQueryExecute
+    ud_tests: []
+  - test_name: testSetAsyncQueryTimeoutOverridesConnectionQueryTimeoutForAsyncQuery
+    ud_tests: []
+  - test_name: testSetQueryTimeoutForAsyncQuery
+    ud_tests: []
+  - test_name: testSetQueryTimeoutForAsyncQueryUsingConnectionProperty
+    ud_tests: []
+  jdbc.StatementNoOpLatestIT.java:
+  - test_name: testGetQueryID
+    ud_tests: []
+  - test_name: testSetNoOp
+    ud_tests: []
+  - test_name: testSnowflakeNoOpStatement
+    ud_tests: []
+  jdbc.StreamIT.java:
+  - test_name: testCompressAndUploadStream
+    ud_tests: []
+  - test_name: testDownloadStream
+    ud_tests: []
+  - test_name: testUploadStream
+    ud_tests: []
+  jdbc.StreamLatestIT.java:
+  - test_name: shouldDownloadStreamInDeterministicWay
+    ud_tests: []
+  - test_name: shouldFindLowercasedStageFileWhenQuotedIdentifiersIgnoreCaseIsEnabled
+    ud_tests: []
+  - test_name: testDownloadToStreamBlobNotFoundGCS
+    ud_tests: []
+  - test_name: testDownloadToStreamGCS
+    ud_tests: []
+  - test_name: testDownloadToStreamGCSPresignedUrl
+    ud_tests: []
+  - test_name: testSpecialCharactersInFileName
+    ud_tests: []
+  - test_name: testUnusualStageName
+    ud_tests: []
+  jdbc.cloud.storage.AwsSdkGCPSignerTest.java:
+  - test_name: testSign
+    ud_tests: []
+  jdbc.cloud.storage.CloudStorageClientLatestIT.java:
+  - test_name: testDownloadStreamShouldFailFastOnNotExistingFile
+    ud_tests: []
+  jdbc.cloud.storage.EncryptionProviderTest.java:
+  - test_name: testEncryptAndDecryptFile
+    ud_tests: []
+  - test_name: testEncryptAndDecryptStream
+    ud_tests: []
+  jdbc.cloud.storage.GcmEncryptionProviderTest.java:
+  - test_name: testDecryptStreamWithInvalidCipherText
+    ud_tests: []
+  - test_name: testDecryptStreamWithInvalidDataAad
+    ud_tests: []
+  - test_name: testDecryptStreamWithInvalidDataIV
+    ud_tests: []
+  - test_name: testDecryptStreamWithInvalidKey
+    ud_tests: []
+  - test_name: testDecryptStreamWithInvalidKeyAad
+    ud_tests: []
+  - test_name: testDecryptStreamWithInvalidKeyIV
+    ud_tests: []
+  - test_name: testDecryptStreamWithInvalidTag
+    ud_tests: []
+  - test_name: testEncryptAndDecryptFileWithAad
+    ud_tests: []
+  - test_name: testEncryptAndDecryptFileWithoutAad
+    ud_tests: []
+  - test_name: testEncryptAndDecryptStreamWithAad
+    ud_tests: []
+  - test_name: testEncryptAndDecryptStreamWithoutAad
+    ud_tests: []
+  jdbc.cloud.storage.SnowflakeAzureClientLatestIT.java:
+  - test_name: testAzureClientSetupInvalidEncryptionKeySize
+    ud_tests: []
+  - test_name: testCloudExceptionTest
+    ud_tests: []
+  jdbc.cloud.storage.SnowflakeAzureClientTest.java:
+  - test_name: testFormatStorageExtendedErrorEmptyInformation
+    ud_tests: []
+  - test_name: testFormatStorageExtendedErrorInformation
+    ud_tests: []
+  - test_name: testHandleStorageException503WhenOverMaxRetries
+    ud_tests: []
+  - test_name: testHandleStorageExceptionIOExceptionCausedBy503
+    ud_tests: []
+  - test_name: testHandleStorageExceptionRetry503
+    ud_tests: []
+  jdbc.cloud.storage.SnowflakeS3ClientLatestIT.java:
+  - test_name: testIsClientException400Or404
+    ud_tests: []
+  - test_name: testPutGetMaxRetries
+    ud_tests: []
+  - test_name: testS3Client256Encryption
+    ud_tests: []
+  - test_name: testS3ConnectionWithProxyEnvVariablesSet
+    ud_tests: []
+  jdbc.cloud.storage.SnowflakeS3ClientTest.java:
+  - test_name: shouldDetermineDomainForRegion
+    ud_tests: []
+  jdbc.cloud.storage.SnowflakeStorageClientTest.java:
+  - test_name: testAddEncryptionMetadataForGcm_NoExceptionThrown
+    ud_tests: []
+  - test_name: testDownloadToStream_DefaultMethodCallsOverloadedMethod
+    ud_tests: []
+  - test_name: testDownload_DefaultMethodCallsOverloadedMethod
+    ud_tests: []
+  - test_name: testHandleStorageException_DefaultMethodCallsOverloadedMethod
+    ud_tests: []
+  - test_name: testRequirePresignedUrl_DefaultReturnsFalse
+    ud_tests: []
+  - test_name: testUploadWithPresignedUrlWithoutConnection_ThrowsExceptionWhenNotPresignedUrl
+    ud_tests: []
+  - test_name: testUpload_DefaultMethodCallsOverloadedMethod
+    ud_tests: []
+  jdbc.cloud.storage.StageInfoGcsCustomEndpointTest.java:
+  - test_name: shouldReturnEmptyGCSRegionalUrlWhenNotMeCentral1AndNotUseRegionalUrl
+    ud_tests: []
+  jdbc.cloud.storage.StorageProviderExceptionTest.java:
+  - test_name: testStorageProviderExceptionConstructor
+    ud_tests: []
+  - test_name: testStorageProviderExceptionShouldReturnOriginalException
+    ud_tests: []
+  - test_name: testStorageProviderExceptionWhenAmazonServiceException404
+    ud_tests: []
+  - test_name: testStorageProviderExceptionWhenAmazonServiceExceptionNot404
+    ud_tests: []
+  - test_name: testStorageProviderExceptionWhenNotAmazonServiceException
+    ud_tests: []
+  jdbc.diagnostic.DiagnosticContextLatestIT.java:
+  - test_name: parseAllowListFileTest
+    ud_tests: []
+  - test_name: testEmptyProxyConfig
+    ud_tests: []
+  - test_name: testGetHttpProxyOnly
+    ud_tests: []
+  - test_name: testGetHttpsProxyOnly
+    ud_tests: []
+  - test_name: testGetProxy
+    ud_tests: []
+  - test_name: testProxyConfigSetOnJvm
+    ud_tests: []
+  - test_name: testProxyOverrideWithConnectionParameter
+    ud_tests: []
+  - test_name: testRunDiagnosticContextMethods
+    ud_tests: []
+  - test_name: testgetNoProxyAfterOverridingJvm
+    ud_tests: []
+  jdbc.diagnostic.SnowflakeEndpointTest.java:
+  - test_name: shouldDetectPrivateLinkEndpoint
+    ud_tests: []
+  jdbc.structuredtypes.ResultSetStructuredTypesLatestIT.java:
+  - test_name: testColumnTypeAndFieldsWhenStructureTypeIsReturned
+    ud_tests: []
+  - test_name: testColumnTypeWhenStructureTypeIsDisabled
+    ud_tests: []
+  - test_name: testMapArrayOfArrays
+    ud_tests: []
+  - test_name: testMapArrayOfStructToMap
+    ud_tests: []
+  - test_name: testMapBinaryArray
+    ud_tests: []
+  - test_name: testMapBooleanArray
+    ud_tests: []
+  - test_name: testMapDatesArray
+    ud_tests: []
+  - test_name: testMapDecimalArray
+    ud_tests: []
+  - test_name: testMapFixedToLongArray
+    ud_tests: []
+  - test_name: testMapIntegerArray
+    ud_tests: []
+  - test_name: testMapIntegerArrayGetObject
+    ud_tests: []
+  - test_name: testMapNestedStructures
+    ud_tests: []
+  - test_name: testMapNullStruct
+    ud_tests: []
+  - test_name: testMapStructAllTypes
+    ud_tests: []
+  - test_name: testMapStructToObjectWithFactory
+    ud_tests: []
+  - test_name: testMapStructToObjectWithReflection
+    ud_tests: []
+  - test_name: testMapStructsFromChunks
+    ud_tests: []
+  - test_name: testMapTimeArray
+    ud_tests: []
+  - test_name: testMapTimestampArray
+    ud_tests: []
+  - test_name: testMapVarcharArray
+    ud_tests: []
+  - test_name: testReturnAsArrayOfNullableFieldsInSqlData
+    ud_tests: []
+  - test_name: testReturnAsArrayOfNullableString
+    ud_tests: []
+  - test_name: testReturnAsArrayOfSqlData
+    ud_tests: []
+  - test_name: testReturnAsArrayOfString
+    ud_tests: []
+  - test_name: testReturnAsList
+    ud_tests: []
+  - test_name: testReturnAsListOfDouble
+    ud_tests: []
+  - test_name: testReturnAsListOfFloat
+    ud_tests: []
+  - test_name: testReturnAsListOfIntegers
+    ud_tests: []
+  - test_name: testReturnAsMap
+    ud_tests: []
+  - test_name: testReturnAsMapByGetObject
+    ud_tests: []
+  - test_name: testReturnAsMapOfBoolean
+    ud_tests: []
+  - test_name: testReturnAsMapOfDate
+    ud_tests: []
+  - test_name: testReturnAsMapOfLong
+    ud_tests: []
+  - test_name: testReturnAsMapOfTime
+    ud_tests: []
+  - test_name: testReturnAsMapOfTimestampsLtz
+    ud_tests: []
+  - test_name: testReturnAsMapOfTimestampsNtz
+    ud_tests: []
+  - test_name: testReturnAsMapWithNullableValues
+    ud_tests: []
+  - test_name: testReturnNullAsArray
+    ud_tests: []
+  - test_name: testReturnNullAsMap
+    ud_tests: []
+  - test_name: testReturnNullAsObjectOfTypeMap
+    ud_tests: []
+  - test_name: testReturnNullsForAllTpesInSqlData
+    ud_tests: []
+  - test_name: testReturnStructAsStringIfTypeWasNotIndicated
+    ud_tests: []
+  jdbc.structuredtypes.StructuredTypesArrowJsonCompatibilityLatestIT.java:
+  - test_name: testArrowJsonCompatibility
+    ud_tests: []
+  jdbc.telemetry.CSVMetricsExporterTest.java:
+  - test_name: shouldNotSaveAlreadyFlushedMetrics
+    ud_tests: []
+  - test_name: shouldSaveMetrics
+    ud_tests: []
+  jdbc.telemetry.NoOpTelemetryClientTest.java:
+  - test_name: testAddLogToBatch
+    ud_tests: []
+  - test_name: testClose
+    ud_tests: []
+  - test_name: testPostProcess
+    ud_tests: []
+  - test_name: testSendBatchAsync
+    ud_tests: []
+  jdbc.telemetry.PreSessionTelemetryClientTest.java:
+  - test_name: shouldFlushBufferedDataAndPassThroughAfterRealClientSet
+    ud_tests: []
+  jdbc.telemetry.TelemetryIT.java:
+  - test_name: close1
+    ud_tests: []
+  - test_name: close2
+    ud_tests: []
+  - test_name: close3
+    ud_tests: []
+  - test_name: testClosedJWTSessionlessTelemetry
+    ud_tests: []
+  - test_name: testClosedOAuthSessionlessTelemetry
+    ud_tests: []
+  - test_name: testDisableJWTSessionlessTelemetry
+    ud_tests: []
+  - test_name: testDisableOAuthSessionlessTelemetry
+    ud_tests: []
+  - test_name: testDisableTelemetry
+    ud_tests: []
+  - test_name: testJWTSessionlessTelemetry
+    ud_tests: []
+  - test_name: testOAuthSessionlessTelemetry
+    ud_tests: []
+  - test_name: testSessionlessTelemetry
+    ud_tests: []
+  - test_name: testTelemetry
+    ud_tests: []
+  jdbc.telemetry.TelemetryTest.java:
+  - test_name: testJsonConversion
+    ud_tests: []
+  jdbc.telemetry.TelemetryUtilTest.java:
+  - test_name: testBuildCrlData
+    ud_tests: []
+  - test_name: testCreateIBValueWithAllValues
+    ud_tests: []
+  - test_name: testCreateIBValueWithNullValue
+    ud_tests: []
+  jdbc.telemetryOOB.TelemetryServiceIT.java:
+  - test_name: stressTestCreateLog
+    ud_tests: []
+  - test_name: stressTestCreateUrgentEvent
+    ud_tests: []
+  - test_name: testCreateException
+    ud_tests: []
+  - test_name: testCreateLog
+    ud_tests: []
+  - test_name: testCreateLogInBlackList
+    ud_tests: []
+  - test_name: testCreateLogWithAWSSecret
+    ud_tests: []
+  - test_name: testCreateUrgentEvent
+    ud_tests: []
+  - test_name: testHTAPTelemetry
+    ud_tests: []
+  - test_name: testOOBTelemetryDisabled
+    ud_tests: []
+  - test_name: testOOBTelemetryEnabled
+    ud_tests: []
+  - test_name: testOOBTelemetryEnabledOnServerDisabledOnClient
+    ud_tests: []
+  - test_name: testSQLFeatureNotSupportedOOBTelemetry
+    ud_tests: []
+  - test_name: testSnowflakeSQLLoggedExceptionIBTelemetry
+    ud_tests: []
+  - test_name: testSnowflakeSQLLoggedExceptionOOBTelemetry
+    ud_tests: []
+  - test_name: testSqlFeatureNotSupportedExceptionIBTelemetry
+    ud_tests: []
+  - test_name: testWrongServerURL
+    ud_tests: []
+  jdbc.telemetryOOB.TelemetryServiceTest.java:
+  - test_name: testTelemetryConnectionString
+    ud_tests: []
+  - test_name: testTelemetryEnableDisable
+    ud_tests: []
+  - test_name: testTelemetryInitErrors
+    ud_tests: []
+  jdbc.telemetryOOB.TelemetryThreadPoolTest.java:
+  - test_name: testTelemetryThreadsAreDaemonThreads
+    ud_tests: []
+  - test_name: testThreadPoolScaling
+    ud_tests: []
+  loader.FlatfileReadMultithreadIT.java:
+  - test_name: testIssueSimpleDateFormat
+    ud_tests: []
+  loader.LoaderIT.java:
+  - test_name: testEmptyFieldAsEmpty
+    ud_tests: []
+  - test_name: testExecuteBeforeAfterSQLError
+    ud_tests: []
+  - test_name: testInjectBadStagedFileInsert
+    ud_tests: []
+  - test_name: testLoadTime
+    ud_tests: []
+  - test_name: testLoadTimestampMilliseconds
+    ud_tests: []
+  - test_name: testLoaderDelete
+    ud_tests: []
+  - test_name: testLoaderInsert
+    ud_tests: []
+  - test_name: testLoaderInsertAbortStatement
+    ud_tests: []
+  - test_name: testLoaderLargeInsert
+    ud_tests: []
+  - test_name: testLoaderModify
+    ud_tests: []
+  - test_name: testLoaderModifyWithOneMatchOneNot
+    ud_tests: []
+  - test_name: testLoaderUpsertWithError
+    ud_tests: []
+  - test_name: testSpacesInColumnTable
+    ud_tests: []
+  loader.LoaderLatestIT.java:
+  - test_name: testKeyClusteringTable
+    ud_tests: []
+  - test_name: testLoaderUpsert
+    ud_tests: []
+  - test_name: testLoaderUpsertWithErrorAndRollback
+    ud_tests: []
+  - test_name: testMultipleFloatVectorColumnsInTable
+    ud_tests: []
+  - test_name: testMultipleIntVectorColumnsInTable
+    ud_tests: []
+  - test_name: testMultipleTypesWithVectorColumnsInTable
+    ud_tests: []
+  - test_name: testVectorColumnInTable
+    ud_tests: []
+  loader.LoaderMultipleBatchIT.java:
+  - test_name: testLoaderMultipleBatch
+    ud_tests: []
+  loader.LoaderTimestampIT.java:
+  - test_name: testLoadTimestamp
+    ud_tests: []
+  - test_name: testLoadTimestampV1
+    ud_tests: []
+  loader.OnErrorTest.java:
+  - test_name: testValidate
+    ud_tests: []
+  log.AbstractLoggerIT.java:
+  - test_name: TestLambdaIsNotEvaluatedIfMsgIsNotLogged
+    ud_tests: []
+  - test_name: TestWithIsMaskedFalse
+    ud_tests: []
+  - test_name: TestWithIsMaskedTrue
+    ud_tests: []
+  - test_name: TestWithMultipleLambdaArgs
+    ud_tests: []
+  - test_name: TestWithNullArgs
+    ud_tests: []
+  - test_name: TestWithSingleLambdaArg
+    ud_tests: []
+  - test_name: testWithThrowable
+    ud_tests: []
+  log.CommonsLoggingWrapperModeTest.java:
+  - test_name: shouldDetectMode
+    ud_tests: []
+  - test_name: shouldPickDefaultMode
+    ud_tests: []
+  - test_name: shouldThrowOnUnknownMode
+    ud_tests: []
+  log.CommonsLoggingWrapperTest.java:
+  - test_name: testDebug
+    ud_tests: []
+  - test_name: testDebugWithThrowable
+    ud_tests: []
+  - test_name: testError
+    ud_tests: []
+  - test_name: testErrorWithThrowable
+    ud_tests: []
+  - test_name: testFatal
+    ud_tests: []
+  - test_name: testFatalWithThrowable
+    ud_tests: []
+  - test_name: testInfo
+    ud_tests: []
+  - test_name: testInfoWithThrowable
+    ud_tests: []
+  - test_name: testIsDebugEnabled
+    ud_tests: []
+  - test_name: testIsErrorEnabled
+    ud_tests: []
+  - test_name: testIsFatalEnabled
+    ud_tests: []
+  - test_name: testIsInfoEnabled
+    ud_tests: []
+  - test_name: testIsTraceEnabled
+    ud_tests: []
+  - test_name: testIsWarnEnabled
+    ud_tests: []
+  - test_name: testTrace
+    ud_tests: []
+  - test_name: testTraceWithThrowable
+    ud_tests: []
+  - test_name: testWarn
+    ud_tests: []
+  - test_name: testWarnWithThrowable
+    ud_tests: []
+  log.JDK14JCLWrapperLatestIT.java:
+  - test_name: testEnabledMessaging
+    ud_tests: []
+  - test_name: testNullLogMessages
+    ud_tests: []
+  log.JDK14LoggerConsoleHandlerOverrideLatestIT.java:
+  - test_name: shouldLogAllToStdErr
+    ud_tests: []
+  - test_name: shouldOverrideConsoleLoggerToStdOut
+    ud_tests: []
+  - test_name: shouldOverrideConsoleLoggerWithSpecificThreshold
+    ud_tests: []
+  - test_name: shouldThrowExceptionOnUnknownLevel
+    ud_tests: []
+  log.JDK14LoggerLatestIT.java:
+  - test_name: testInstantiateLoggerForCodeCov
+    ud_tests: []
+  - test_name: testInstantiateLoggerForCodeCovSTDOUT
+    ud_tests: []
+  log.JDK14LoggerTest.java:
+  - test_name: testLegacyLoggerInit
+    ud_tests: []
+  log.JDK14LoggerWithClientLatestIT.java:
+  - test_name: testJDK14LoggerWithBracesInMessage
+    ud_tests: []
+  - test_name: testJDK14LoggerWithQuotesInMessage
+    ud_tests: []
+  - test_name: testJDK14LoggingWithClientConfig
+    ud_tests: []
+  - test_name: testJDK14LoggingWithClientConfigInvalidConfigFilePath
+    ud_tests: []
+  - test_name: testJDK14LoggingWithClientConfigPermissionError
+    ud_tests: []
+  - test_name: testJDK14LoggingWithMissingLogPathClientConfig
+    ud_tests: []
+  - test_name: testJDK14LoggingWithMissingLogPathNoHomeDirClientConfig
+    ud_tests: []
+  log.SFFormatterTest.java:
+  - test_name: testUTCTimeStampSimple
+    ud_tests: []
+  - test_name: testUTCTimeStampStress
+    ud_tests: []
+  log.SFLogLevelTest.java:
+  - test_name: testFromString
+    ud_tests: []
+  log.SFLoggerFactoryTest.java:
+  - test_name: testGetLoggerByNameDefault
+    ud_tests: []
+  log.SFToJavaLogMapperTest.java:
+  - test_name: testToJavaUtilLoggingLevel
+    ud_tests: []
+  log.SLF4JJJCLWrapperLatestIT.java:
+  - test_name: testEnabledMessaging
+    ud_tests: []
+  - test_name: testNullLogMessages
+    ud_tests: []
+  pooling.ConnectionPoolingDataSourceIT.java:
+  - test_name: testPooledConnection
+    ud_tests: []
+  - test_name: testPooledConnectionUsernamePassword
+    ud_tests: []
+  pooling.LogicalConnectionAlreadyClosedLatestIT.java:
+  - test_name: testLogicalConnectionAlreadyClosed
+    ud_tests: []
+  pooling.LogicalConnectionFeatureNotSupportedLatestIT.java:
+  - test_name: testLogicalConnectionFeatureNotSupported
+    ud_tests: []
+  pooling.LogicalConnectionLatestIT.java:
+  - test_name: testAbort
+    ud_tests: []
+  - test_name: testClob
+    ud_tests: []
+  - test_name: testConnectionClientInfo
+    ud_tests: []
+  - test_name: testDatabaseMetaData
+    ud_tests: []
+  - test_name: testGetTypeMap
+    ud_tests: []
+  - test_name: testIsValid
+    ud_tests: []
+  - test_name: testLogicalConnection
+    ud_tests: []
+  - test_name: testLogicalConnectionWhenPhysicalConnectionThrowsErrors
+    ud_tests: []
+  - test_name: testNativeSQL
+    ud_tests: []
+  - test_name: testNetworkTimeout
+    ud_tests: []
+  - test_name: testPrepareCall
+    ud_tests: []
+  - test_name: testPreparedStatement
+    ud_tests: []
+  - test_name: testReadOnly
+    ud_tests: []
+  - test_name: testSetSchema
+    ud_tests: []
+  - test_name: testTransactionStatement
+    ud_tests: []
+  - test_name: testUnwrapper
+    ud_tests: []
+  util.DecorrelatedJitterBackoffTest.java:
+  - test_name: testNextSleepTime
+    ud_tests: []
+  util.PlatformDetectorLatestIT.java:
+  - test_name: testAzureFunctionWithAsyncExecution
+    ud_tests: []
+  - test_name: testCachedPlatformDetections
+    ud_tests: []
+  - test_name: testDetectAwsIdentity
+    ud_tests: []
+  - test_name: testDetectAwsLambda
+    ud_tests: []
+  - test_name: testDetectAzureFunction
+    ud_tests: []
+  - test_name: testDetectAzureManagedIdentity
+    ud_tests: []
+  - test_name: testDetectAzureVm
+    ud_tests: []
+  - test_name: testDetectEc2InstanceIMDSv1
+    ud_tests: []
+  - test_name: testDetectEc2InstanceIMDSv2
+    ud_tests: []
+  - test_name: testDetectGceVm
+    ud_tests: []
+  - test_name: testDetectGcpCloudRunJob
+    ud_tests: []
+  - test_name: testDetectGcpCloudRunService
+    ud_tests: []
+  - test_name: testDetectGcpIdentity
+    ud_tests: []
+  - test_name: testDetectGithubAction
+    ud_tests: []
+  - test_name: testDetectMultiplePlatforms
+    ud_tests: []
+  - test_name: testEnvVsEnvAndUnreachableEndpointsPerformance
+    ud_tests: []
+  - test_name: testGcpVmSlowButWithinTimeout
+    ud_tests: []
+  - test_name: testSlowResponseTimeout
+    ud_tests: []
+  - test_name: testTimeoutScenariosNoNetwork
+    ud_tests: []
+  util.SFPairTest.java:
+  - test_name: testEqualsMethod
+    ud_tests: []
+  - test_name: testHashCodeMethod
+    ud_tests: []
+  - test_name: testOfMethod
+    ud_tests: []
+  - test_name: testToStringMethod
+    ud_tests: []
+  util.SecretDetectorTest.java:
+  - test_name: sasTokenFilterTest
+    ud_tests: []
+  - test_name: testEncryptionMaterialFilter
+    ud_tests: []
+  - test_name: testMaskAWSSecret
+    ud_tests: []
+  - test_name: testMaskJacksonObject
+    ud_tests: []
+  - test_name: testMaskJsonArray
+    ud_tests: []
+  - test_name: testMaskJsonObject
+    ud_tests: []
+  - test_name: testMaskOAuthSecrets
+    ud_tests: []
+  - test_name: testMaskParameterValue
+    ud_tests: []
+  - test_name: testMaskPasswordFromConnectionString
+    ud_tests: []
+  - test_name: testMaskSASToken
+    ud_tests: []
+  - test_name: testMaskSecrets
+    ud_tests: []
+  - test_name: testMaskconnectionToken
+    ud_tests: []
+  util.StopwatchTest.java:
+  - test_name: testGetMillisWhenStopped
+    ud_tests: []
+  - test_name: testGetMillisWithoutStopping
+    ud_tests: []
+  - test_name: testShouldBeStarted
+    ud_tests: []
+  - test_name: testShouldBeStopped
+    ud_tests: []
+  - test_name: testShouldReset
+    ud_tests: []
+  - test_name: testShouldRestart
+    ud_tests: []
+  - test_name: testThrowsExceptionWhenElapsedMillisWithoutStarting
+    ud_tests: []
+  - test_name: testThrowsExceptionWhenStartedTwice
+    ud_tests: []
+  - test_name: testThrowsExceptionWhenStoppedTwice
+    ud_tests: []
+  - test_name: testThrowsExceptionWhenStoppedWithoutStarting
+    ud_tests: []
+  wif.WIFLatestIT.java:
+  - test_name: shouldAuthenticateUsingOIDC
+    ud_tests: []
+  - test_name: shouldAuthenticateUsingWIFWithDefinedProvider
+    ud_tests: []
+  - test_name: shouldAuthenticateUsingWIFWithImpersonation
+    ud_tests: []

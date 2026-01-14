@@ -1,0 +1,4147 @@
+title: Python Driver Test Coverage
+description: Mapping of old Python driver tests to new Universal Driver test suite.
+summary:
+  total_tests: 1956
+  total_test_files: 229
+tests:
+  auth/test_external_browser.py:
+  - test_name: test_external_browser_mismatched_user
+    ud_tests: []
+  - test_name: test_external_browser_successful
+    ud_tests: []
+  - test_name: test_external_browser_timeout
+    ud_tests: []
+  - test_name: test_external_browser_wrong_credentials
+    ud_tests: []
+  auth/test_external_session_with_PAT.py:
+  - test_name: test_pat_with_external_session_authN_fail
+    ud_tests: []
+  - test_name: test_pat_with_external_session_authN_success
+    ud_tests: []
+  auth/test_key_pair.py:
+  - test_name: test_key_pair_invalid_key
+    ud_tests: []
+  - test_name: test_key_pair_successful
+    ud_tests: []
+  auth/test_mfa.py:
+  - test_name: test_mfa_successful
+    ud_tests: []
+  auth/test_oauth.py:
+  - test_name: test_oauth_invalid_token
+    ud_tests: []
+  - test_name: test_oauth_mismatched_user
+    ud_tests: []
+  - test_name: test_oauth_successful
+    ud_tests: []
+  auth/test_okta.py:
+  - test_name: test_okta_successful
+    ud_tests: []
+  - test_name: test_okta_with_wrong_okta_username
+    ud_tests: []
+  - test_name: test_okta_wrong_url
+    ud_tests: []
+  - test_name: test_okta_wrong_url_2
+    ud_tests: []
+  auth/test_okta_authorization_code.py:
+  - test_name: test_okta_authorization_code_mismatched_user
+    ud_tests: []
+  - test_name: test_okta_authorization_code_successful
+    ud_tests: []
+  - test_name: test_okta_authorization_code_timeout
+    ud_tests: []
+  - test_name: test_okta_authorization_code_with_token_cache
+    ud_tests: []
+  auth/test_okta_client_credentials.py:
+  - test_name: test_okta_client_credentials_mismatched_user
+    ud_tests: []
+  - test_name: test_okta_client_credentials_successful
+    ud_tests: []
+  - test_name: test_okta_client_credentials_unauthorized
+    ud_tests: []
+  auth/test_pat.py:
+  - test_name: test_authenticate_with_pat_invalid_token
+    ud_tests: []
+  - test_name: test_authenticate_with_pat_mismatched_user
+    ud_tests: []
+  - test_name: test_authenticate_with_pat_successful
+    ud_tests: []
+  auth/test_snowflake_authorization_code.py:
+  - test_name: test_snowflake_authorization_code_mismatched_user
+    ud_tests: []
+  - test_name: test_snowflake_authorization_code_successful
+    ud_tests: []
+  - test_name: test_snowflake_authorization_code_timeout
+    ud_tests: []
+  - test_name: test_snowflake_authorization_code_without_token_cache
+    ud_tests: []
+  auth/test_snowflake_authorization_code_wildcards.py:
+  - test_name: test_snowflake_authorization_code_wildcards_mismatched_user
+    ud_tests: []
+  - test_name: test_snowflake_authorization_code_wildcards_successful
+    ud_tests: []
+  - test_name: test_snowflake_authorization_code_wildcards_timeout
+    ud_tests: []
+  - test_name: test_snowflake_authorization_code_wildcards_with_token_cache
+    ud_tests: []
+  - test_name: test_snowflake_authorization_code_wildcards_without_token_cache
+    ud_tests: []
+  integ/aio_it/lambda_it/test_basic_query_async.py:
+  - test_name: test_connection
+    ud_tests: []
+  - test_name: test_large_resultset
+    ud_tests: []
+  integ/aio_it/pandas_it/test_arrow_chunk_iterator_async.py:
+  - test_name: test_iterate_over_timestamp_chunk
+    ud_tests: []
+  integ/aio_it/pandas_it/test_arrow_pandas_async.py:
+  - test_name: test_arrow_fetch_result_scan
+    ud_tests: []
+  - test_name: test_arrow_number_to_decimal
+    ud_tests: []
+  - test_name: test_arrow_zero_rows
+    ud_tests: []
+  - test_name: test_batch_to_pandas_arrow
+    ud_tests: []
+  - test_name: test_boolean
+    ud_tests: []
+  - test_name: test_date
+    ud_tests: []
+  - test_name: test_decimal
+    ud_tests: []
+  - test_name: test_double
+    ud_tests: []
+  - test_name: test_empty
+    ud_tests: []
+  - test_name: test_execute_async_and_fetch_arrow_batches
+    ud_tests: []
+  - test_name: test_execute_async_and_fetch_pandas_batches
+    ud_tests: []
+  - test_name: test_fetch_with_pandas_nullable_types
+    ud_tests: []
+  - test_name: test_interval_day_time
+    ud_tests: []
+  - test_name: test_interval_year_month
+    ud_tests: []
+  - test_name: test_num_batch
+    ud_tests: []
+  - test_name: test_num_one
+    ud_tests: []
+  - test_name: test_number_fetchall_retrieve_type
+    ud_tests: []
+  - test_name: test_number_fetchbatches_retrieve_type
+    ud_tests: []
+  - test_name: test_number_iter_retrieve_type
+    ud_tests: []
+  - test_name: test_pandas_dtypes
+    ud_tests: []
+  - test_name: test_pandas_telemetry
+    ud_tests: []
+  - test_name: test_query_resultscan_combos
+    ud_tests: []
+  - test_name: test_resultbatches_pandas_functionality
+    ud_tests: []
+  - test_name: test_scaled_bigint
+    ud_tests: []
+  - test_name: test_scaled_decimal
+    ud_tests: []
+  - test_name: test_scaled_decimal_SNOW_133561
+    ud_tests: []
+  - test_name: test_scaled_int
+    ud_tests: []
+  - test_name: test_scaled_smallint
+    ud_tests: []
+  - test_name: test_scaled_tinyint
+    ud_tests: []
+  - test_name: test_semi_struct
+    ud_tests: []
+  - test_name: test_sessions_used
+    ud_tests: []
+  - test_name: test_simple_arrow_fetch
+    ud_tests: []
+  - test_name: test_simple_async_arrow
+    ud_tests: []
+  - test_name: test_simple_async_pandas
+    ud_tests: []
+  - test_name: test_time
+    ud_tests: []
+  - test_name: test_time_interval_microsecond
+    ud_tests: []
+  - test_name: test_timestamp_down_scale
+    ud_tests: []
+  - test_name: test_timestamp_raises_overflow
+    ud_tests: []
+  - test_name: test_timestamp_tz
+    ud_tests: []
+  - test_name: test_timestampltz
+    ud_tests: []
+  - test_name: test_timestampntz
+    ud_tests: []
+  - test_name: test_timestamptz
+    ud_tests: []
+  - test_name: test_to_arrow_datatypes
+    ud_tests: []
+  - test_name: test_vector
+    ud_tests: []
+  integ/aio_it/pandas_it/test_logging_async.py:
+  - test_name: test_rand_table_log
+    ud_tests: []
+  integ/aio_it/sso_it/test_connection_manual_async.py:
+  - test_name: test_connect_externalbrowser
+    ud_tests: []
+  integ/aio_it/sso_it/test_unit_mfa_cache_async.py:
+  - test_name: test_body
+    ud_tests: []
+  - test_name: test_mfa_cache
+    ud_tests: []
+  integ/aio_it/test_arrow_result_async.py:
+  - test_name: test_array
+    ud_tests: []
+  - test_name: test_arrow_bad_data
+    ud_tests: []
+  - test_name: test_datatypes
+    ud_tests: []
+  - test_name: test_dict_cursor
+    ud_tests: []
+  - test_name: test_fetch_as_numpy_val
+    ud_tests: []
+  - test_name: test_iceberg_negative
+    ud_tests: []
+  - test_name: test_iceberg_write_pandas
+    ud_tests: []
+  - test_name: test_map
+    ud_tests: []
+  - test_name: test_nested_types
+    ud_tests: []
+  - test_name: test_object
+    ud_tests: []
+  - test_name: test_scaled_decimal_SNOW_133561
+    ud_tests: []
+  - test_name: test_select_bigint
+    ud_tests: []
+  - test_name: test_select_boolean
+    ud_tests: []
+  - test_name: test_select_date
+    ud_tests: []
+  - test_name: test_select_decimal
+    ud_tests: []
+  - test_name: test_select_double_precision
+    ud_tests: []
+  - test_name: test_select_int
+    ud_tests: []
+  - test_name: test_select_large_scaled_decimal
+    ud_tests: []
+  - test_name: test_select_scaled_bigint
+    ud_tests: []
+  - test_name: test_select_scaled_decimal
+    ud_tests: []
+  - test_name: test_select_scaled_int
+    ud_tests: []
+  - test_name: test_select_scaled_smallint
+    ud_tests: []
+  - test_name: test_select_scaled_tinyint
+    ud_tests: []
+  - test_name: test_select_semi_structure
+    ud_tests: []
+  - test_name: test_select_smallint
+    ud_tests: []
+  - test_name: test_select_time
+    ud_tests: []
+  - test_name: test_select_timestamp_with_scale
+    ud_tests: []
+  - test_name: test_select_tinyint
+    ud_tests: []
+  - test_name: test_select_vector
+    ud_tests: []
+  - test_name: test_select_with_bool
+    ud_tests: []
+  - test_name: test_select_with_empty_resultset
+    ud_tests: []
+  - test_name: test_select_with_float
+    ud_tests: []
+  - test_name: test_select_with_large_resultset
+    ud_tests: []
+  - test_name: test_select_with_string
+    ud_tests: []
+  - test_name: test_structured_type_binds
+    ud_tests: []
+  integ/aio_it/test_async_async.py:
+  - test_name: test_async_error
+    ud_tests: []
+  - test_name: test_async_exec
+    ud_tests: []
+  - test_name: test_async_qmark
+    ud_tests: []
+  - test_name: test_async_result_iteration
+    ud_tests: []
+  - test_name: test_close_connection_with_completed_async_queries
+    ud_tests: []
+  - test_name: test_close_connection_with_running_async_queries
+    ud_tests: []
+  - test_name: test_done_caching
+    ud_tests: []
+  - test_name: test_invalid_uuid_get_status
+    ud_tests: []
+  - test_name: test_mix_sync_async
+    ud_tests: []
+  - test_name: test_not_fetching
+    ud_tests: []
+  - test_name: test_simple_async
+    ud_tests: []
+  - test_name: test_unknown_sfqid
+    ud_tests: []
+  - test_name: test_unknown_sfqid_results
+    ud_tests: []
+  integ/aio_it/test_autocommit_async.py:
+  - test_name: test_autocommit_attribute
+    ud_tests: []
+  - test_name: test_autocommit_parameters
+    ud_tests: []
+  integ/aio_it/test_bindings_async.py:
+  - test_name: test_binding
+    ud_tests: []
+  - test_name: test_binding_bulk_insert
+    ud_tests: []
+  - test_name: test_binding_bulk_insert_date
+    ud_tests: []
+  - test_name: test_binding_bulk_update
+    ud_tests: []
+  - test_name: test_binding_identifier
+    ud_tests: []
+  - test_name: test_binding_insert_date
+    ud_tests: []
+  - test_name: test_binding_timestamps
+    ud_tests: []
+  - test_name: test_binding_with_numeric
+    ud_tests: []
+  - test_name: test_bulk_insert_binding_fallback
+    ud_tests: []
+  - test_name: test_invalid_binding_option
+    ud_tests: []
+  - test_name: test_pendulum_binding
+    ud_tests: []
+  - test_name: test_timestamp_bindings
+    ud_tests: []
+  integ/aio_it/test_boolean_async.py:
+  - test_name: test_binding_fetching_boolean
+    ud_tests: []
+  - test_name: test_boolean_from_compiler
+    ud_tests: []
+  integ/aio_it/test_client_session_keep_alive_async.py:
+  - test_name: test_client_session_keep_alive
+    ud_tests: []
+  integ/aio_it/test_concurrent_create_objects_async.py:
+  - test_name: test_snow5871
+    ud_tests: []
+  integ/aio_it/test_concurrent_insert_async.py:
+  - test_name: test_concurrent_insert
+    ud_tests: []
+  - test_name: test_concurrent_insert_using_connection
+    ud_tests: []
+  integ/aio_it/test_connection_async.py:
+  - test_name: test_authenticate_error
+    ud_tests: []
+  - test_name: test_autocommit
+    ud_tests: []
+  - test_name: test_autocommit_closed_already
+    ud_tests: []
+  - test_name: test_autocommit_invalid_type
+    ud_tests: []
+  - test_name: test_autocommit_unsupported
+    ud_tests: []
+  - test_name: test_bad_db
+    ud_tests: []
+  - test_name: test_basic
+    ud_tests: []
+  - test_name: test_bogus
+    ud_tests: []
+  - test_name: test_client_prefetch_threads_setting
+    ud_tests: []
+  - test_name: test_conn_assigned_class
+    ud_tests: []
+  - test_name: test_conn_assigned_method
+    ud_tests: []
+  - test_name: test_conn_cnx_basic
+    ud_tests: []
+  - test_name: test_conn_with_class
+    ud_tests: []
+  - test_name: test_conn_with_method
+    ud_tests: []
+  - test_name: test_connection_atexit_close
+    ud_tests: []
+  - test_name: test_connection_cant_be_reused
+    ud_tests: []
+  - test_name: test_connection_gc
+    ud_tests: []
+  - test_name: test_connection_name_loading
+    ud_tests: []
+  - test_name: test_connection_without_database2
+    ud_tests: []
+  - test_name: test_connection_without_database_schema
+    ud_tests: []
+  - test_name: test_connection_without_schema
+    ud_tests: []
+  - test_name: test_copy_into_stats_with_stage
+    ud_tests: []
+  - test_name: test_create_view_stats
+    ud_tests: []
+  - test_name: test_ctas_stats
+    ud_tests: []
+  - test_name: test_cvas_one_cursor_stats
+    ud_tests: []
+  - test_name: test_cvas_separate_cursors_stats
+    ud_tests: []
+  - test_name: test_dashed_url
+    ud_tests: []
+  - test_name: test_dashed_url_account_name
+    ud_tests: []
+  - test_name: test_default_connection_name_loading
+    ud_tests: []
+  - test_name: test_disable_query_context_cache
+    ud_tests: []
+  - test_name: test_disable_request_pooling
+    ud_tests: []
+  - test_name: test_disable_request_pooling_setter
+    ud_tests: []
+  - test_name: test_disable_telemetry
+    ud_tests: []
+  - test_name: test_dml_stats_operations
+    ud_tests: []
+  - test_name: test_drop_create_user
+    ud_tests: []
+  - test_name: test_empty_response
+    ud_tests: []
+  - test_name: test_empty_result_stats
+    ud_tests: []
+  - test_name: test_eu_connection
+    ud_tests: []
+  - test_name: test_execute_async_stats
+    ud_tests: []
+  - test_name: test_execute_async_stats_multiple_queries
+    ud_tests: []
+  - test_name: test_imported_packages_telemetry
+    ud_tests: []
+  - test_name: test_invalid_account_timeout
+    ud_tests: []
+  - test_name: test_invalid_application
+    ud_tests: []
+  - test_name: test_invalid_connection_parameter
+    ud_tests: []
+  - test_name: test_invalid_connection_parameters_only_warns
+    ud_tests: []
+  - test_name: test_invalid_connection_parameters_turned_off
+    ud_tests: []
+  - test_name: test_invalid_default_parameters
+    ud_tests: []
+  - test_name: test_invalid_errorhander_error
+    ud_tests: []
+  - test_name: test_invalid_proxy
+    ud_tests: []
+  - test_name: test_invalid_proxy_not_impacting_env_vars
+    ud_tests: []
+  - test_name: test_is_valid
+    ud_tests: []
+  - test_name: test_keep_alive_heartbeat_frequency
+    ud_tests: []
+  - test_name: test_keep_alive_heartbeat_frequency_min
+    ud_tests: []
+  - test_name: test_keep_alive_heartbeat_send
+    ud_tests: []
+  - test_name: test_keep_alive_true
+    ud_tests: []
+  - test_name: test_logs_size_during_basic_query_stays_unchanged
+    ud_tests: []
+  - test_name: test_missing_account
+    ud_tests: []
+  - test_name: test_mock_non_existing_server
+    ud_tests: []
+  - test_name: test_multi_statement_in_one_execute
+    ud_tests: []
+  - test_name: test_multi_table_insert_overwrite_stats
+    ud_tests: []
+  - test_name: test_no_auth_connection_negative_case
+    ud_tests: []
+  - test_name: test_no_new_warnings_or_errors_on_successful_basic_select
+    ud_tests: []
+  - test_name: test_not_found_connection_name
+    ud_tests: []
+  - test_name: test_ocsp_cache_working
+    ud_tests: []
+  - test_name: test_ocsp_mode_disable_ocsp_checks
+    ud_tests: []
+  - test_name: test_ocsp_mode_insecure_mode
+    ud_tests: []
+  - test_name: test_ocsp_mode_insecure_mode_and_disable_ocsp_checks_match
+    ud_tests: []
+  - test_name: test_ocsp_mode_insecure_mode_and_disable_ocsp_checks_mismatch_ocsp_disabled
+    ud_tests: []
+  - test_name: test_ocsp_mode_insecure_mode_and_disable_ocsp_checks_mismatch_ocsp_enabled
+    ud_tests: []
+  - test_name: test_ocsp_mode_insecure_mode_deprecation_warning
+    ud_tests: []
+  - test_name: test_okta_url
+    ud_tests: []
+  - test_name: test_platform_detection_timeout
+    ud_tests: []
+  - test_name: test_platform_detection_zero_timeout
+    ud_tests: []
+  - test_name: test_privatelink
+    ud_tests: []
+  - test_name: test_privatelink_ocsp_url_concurrent
+    ud_tests: []
+  - test_name: test_privatelink_ocsp_url_concurrent_snowsql
+    ud_tests: []
+  - test_name: test_privatelink_ocsp_url_creation
+    ud_tests: []
+  - test_name: test_process_param_dict_error
+    ud_tests: []
+  - test_name: test_process_param_error
+    ud_tests: []
+  - test_name: test_process_qmark_params_error
+    ud_tests: []
+  - test_name: test_region_deprecation
+    ud_tests: []
+  - test_name: test_sequence_counter
+    ud_tests: []
+  - test_name: test_server_session_keep_alive
+    ud_tests: []
+  - test_name: test_snowflake_version
+    ud_tests: []
+  - test_name: test_stats_reset_on_select
+    ud_tests: []
+  - test_name: test_token_file_path
+    ud_tests: []
+  - test_name: test_truncate_stats
+    ud_tests: []
+  - test_name: test_unsafe_skip_file_permissions_check_skips_config_permissions_check
+    ud_tests: []
+  - test_name: test_update_with_dml_duplicates
+    ud_tests: []
+  - test_name: test_uppercase_privatelink_ocsp_url_creation
+    ud_tests: []
+  - test_name: test_us_west_connection
+    ud_tests: []
+  - test_name: test_valid_application
+    ud_tests: []
+  - test_name: test_with_config
+    ud_tests: []
+  - test_name: test_with_string_login_timeout
+    ud_tests: []
+  - test_name: test_with_tokens
+    ud_tests: []
+  - test_name: test_with_tokens_expired
+    ud_tests: []
+  integ/aio_it/test_converter_async.py:
+  - test_name: test_date_0001_9999
+    ud_tests: []
+  - test_name: test_fetch_fraction_timestamp
+    ud_tests: []
+  - test_name: test_fetch_timestamps
+    ud_tests: []
+  - test_name: test_fetch_timestamps_negative_epoch
+    ud_tests: []
+  - test_name: test_fetch_timestamps_snowsql
+    ud_tests: []
+  - test_name: test_five_or_more_digit_year_date_converter
+    ud_tests: []
+  - test_name: test_franction_followed_by_year_format
+    ud_tests: []
+  integ/aio_it/test_converter_more_timestamp_async.py:
+  - test_name: test_fetch_various_timestamps
+    ud_tests: []
+  integ/aio_it/test_converter_null_async.py:
+  - test_name: test_converter_no_converter_to_python
+    ud_tests: []
+  integ/aio_it/test_cursor_async.py:
+  - test_name: test__log_telemetry_job_data
+    ud_tests: []
+  - test_name: test_binding_negative
+    ud_tests: []
+  - test_name: test_check_can_use_arrow_resultset
+    ud_tests: []
+  - test_name: test_check_can_use_pandas
+    ud_tests: []
+  - test_name: test_check_cannot_use_arrow_resultset
+    ud_tests: []
+  - test_name: test_check_cannot_use_pandas
+    ud_tests: []
+  - test_name: test_close_twice
+    ud_tests: []
+  - test_name: test_closed_cursor
+    ud_tests: []
+  - test_name: test_custom_request_id
+    ud_tests: []
+  - test_name: test_custom_request_id_negative
+    ud_tests: []
+  - test_name: test_decoding_utf8_for_json_result
+    ud_tests: []
+  - test_name: test_desc_rewrite
+    ud_tests: []
+  - test_name: test_describe
+    ud_tests: []
+  - test_name: test_empty_execution
+    ud_tests: []
+  - test_name: test_execute_after_close
+    ud_tests: []
+  - test_name: test_execute_helper_cannot_use_arrow
+    ud_tests: []
+  - test_name: test_execute_helper_cannot_use_arrow_exception
+    ud_tests: []
+  - test_name: test_execute_helper_params_error
+    ud_tests: []
+  - test_name: test_execute_stores_query
+    ud_tests: []
+  - test_name: test_executemany
+    ud_tests: []
+  - test_name: test_executemany_bulk_insert_size_mismatch
+    ud_tests: []
+  - test_name: test_executemany_empty_params
+    ud_tests: []
+  - test_name: test_executemany_insert_rewrite
+    ud_tests: []
+  - test_name: test_executemany_params_iterator
+    ud_tests: []
+  - test_name: test_executemany_qmark_types
+    ud_tests: []
+  - test_name: test_fetch_batches_with_sessions
+    ud_tests: []
+  - test_name: test_fetch_before_execute
+    ud_tests: []
+  - test_name: test_fetch_download_timeout_setting
+    ud_tests: []
+  - test_name: test_fetch_out_of_range_timestamp_value
+    ud_tests: []
+  - test_name: test_fetchmany
+    ud_tests: []
+  - test_name: test_fetchmany_size_error
+    ud_tests: []
+  - test_name: test_file
+    ud_tests: []
+  - test_name: test_geography
+    ud_tests: []
+  - test_name: test_geometry
+    ud_tests: []
+  - test_name: test_insert_and_select_by_separate_connection
+    ud_tests: []
+  - test_name: test_insert_binary_select
+    ud_tests: []
+  - test_name: test_insert_binary_select_with_bytearray
+    ud_tests: []
+  - test_name: test_insert_select
+    ud_tests: []
+  - test_name: test_insert_timestamp_ltz
+    ud_tests: []
+  - test_name: test_insert_timestamp_select
+    ud_tests: []
+  - test_name: test_invalid_bind_data_type
+    ud_tests: []
+  - test_name: test_multi_statement_failure
+    ud_tests: []
+  - test_name: test_multi_table_insert
+    ud_tests: []
+  - test_name: test_none_errorhandler
+    ud_tests: []
+  - test_name: test_nope_errorhandler
+    ud_tests: []
+  - test_name: test_not_supported_pandas
+    ud_tests: []
+  - test_name: test_null_connection
+    ud_tests: []
+  - test_name: test_null_in_non_null
+    ud_tests: []
+  - test_name: test_optional_telemetry
+    ud_tests: []
+  - test_name: test_out_of_range_year
+    ud_tests: []
+  - test_name: test_out_of_range_year_followed_by_correct_year
+    ud_tests: []
+  - test_name: test_process_params
+    ud_tests: []
+  - test_name: test_process_params_empty
+    ud_tests: []
+  - test_name: test_query_cancellation
+    ud_tests: []
+  - test_name: test_real_decimal
+    ud_tests: []
+  - test_name: test_reset_fetch
+    ud_tests: []
+  - test_name: test_resultbatch
+    ud_tests: []
+  - test_name: test_resultbatch_lazy_fetching_and_schemas
+    ud_tests: []
+  - test_name: test_resultbatch_schema_exists_when_zero_rows
+    ud_tests: []
+  - test_name: test_rownumber
+    ud_tests: []
+  - test_name: test_scroll
+    ud_tests: []
+  - test_name: test_struct_time
+    ud_tests: []
+  - test_name: test_timeout_query
+    ud_tests: []
+  - test_name: test_values_set
+    ud_tests: []
+  - test_name: test_variant
+    ud_tests: []
+  - test_name: test_vector
+    ud_tests: []
+  integ/aio_it/test_cursor_binding_async.py:
+  - test_name: test_binding_list
+    ud_tests: []
+  - test_name: test_binding_security
+    ud_tests: []
+  - test_name: test_unsupported_binding
+    ud_tests: []
+  integ/aio_it/test_cursor_context_manager_async.py:
+  - test_name: test_context_manager
+    ud_tests: []
+  integ/aio_it/test_dataintegrity_async.py:
+  - test_name: test_BINARY
+    ud_tests: []
+  - test_name: test_DATE
+    ud_tests: []
+  - test_name: test_DATETIME
+    ud_tests: []
+  - test_name: test_DECIMAL
+    ud_tests: []
+  - test_name: test_DOUBLE
+    ud_tests: []
+  - test_name: test_FLOAT
+    ud_tests: []
+  - test_name: test_INT
+    ud_tests: []
+  - test_name: test_REAL
+    ud_tests: []
+  - test_name: test_REAL2
+    ud_tests: []
+  - test_name: test_STRING
+    ud_tests: []
+  - test_name: test_TEXT
+    ud_tests: []
+  - test_name: test_TIME
+    ud_tests: []
+  - test_name: test_TIMESTAMP
+    ud_tests: []
+  - test_name: test_TIMESTAMPLTZ
+    ud_tests: []
+  - test_name: test_TIMESTAMPNTZ
+    ud_tests: []
+  - test_name: test_TIMESTAMPNTZ_EXPLICIT
+    ud_tests: []
+  - test_name: test_TIMESTAMPTZ
+    ud_tests: []
+  - test_name: test_TIMESTAMPTZ_EXPLICIT
+    ud_tests: []
+  - test_name: test_TIMESTAMP_EXPLICIT
+    ud_tests: []
+  - test_name: test_VARCHAR
+    ud_tests: []
+  - test_name: test_fractional_TIMESTAMP
+    ud_tests: []
+  integ/aio_it/test_daylight_savings_async.py:
+  - test_name: test_daylight_savings_in_TIMESTAMP_LTZ
+    ud_tests: []
+  integ/aio_it/test_dbapi_async.py:
+  - test_name: test_BINARY
+    ud_tests: []
+  - test_name: test_DATETIME
+    ud_tests: []
+  - test_name: test_Date
+    ud_tests: []
+  - test_name: test_NUMBER
+    ud_tests: []
+  - test_name: test_None
+    ud_tests: []
+  - test_name: test_ROWID
+    ud_tests: []
+  - test_name: test_STRING
+    ud_tests: []
+  - test_name: test_Time
+    ud_tests: []
+  - test_name: test_Timestamp
+    ud_tests: []
+  - test_name: test_apilevel
+    ud_tests: []
+  - test_name: test_arraysize
+    ud_tests: []
+  - test_name: test_callproc
+    ud_tests: []
+  - test_name: test_callproc_invalid
+    ud_tests: []
+  - test_name: test_callproc_overload
+    ud_tests: []
+  - test_name: test_close
+    ud_tests: []
+  - test_name: test_closecursor
+    ud_tests: []
+  - test_name: test_commit
+    ud_tests: []
+  - test_name: test_connect
+    ud_tests: []
+  - test_name: test_cursor
+    ud_tests: []
+  - test_name: test_cursor_isolation
+    ud_tests: []
+  - test_name: test_description
+    ud_tests: []
+  - test_name: test_description2
+    ud_tests: []
+  - test_name: test_escape
+    ud_tests: []
+  - test_name: test_exceptions
+    ud_tests: []
+  - test_name: test_exceptions_as_connection_attributes
+    ud_tests: []
+  - test_name: test_execute
+    ud_tests: []
+  - test_name: test_executemany
+    ud_tests: []
+  - test_name: test_fetchall
+    ud_tests: []
+  - test_name: test_fetchmany
+    ud_tests: []
+  - test_name: test_fetchone
+    ud_tests: []
+  - test_name: test_mixedfetch
+    ud_tests: []
+  - test_name: test_paramstyle
+    ud_tests: []
+  - test_name: test_rollback
+    ud_tests: []
+  - test_name: test_rowcount
+    ud_tests: []
+  - test_name: test_setinputsizes
+    ud_tests: []
+  - test_name: test_setoutputsize_basic
+    ud_tests: []
+  - test_name: test_substring
+    ud_tests: []
+  - test_name: test_threadsafety
+    ud_tests: []
+  integ/aio_it/test_decfloat_async.py:
+  - test_name: test_decfloat_bindings
+    ud_tests: []
+  - test_name: test_decfloat_from_compiler
+    ud_tests: []
+  integ/aio_it/test_direct_file_operation_utils_async.py:
+  - test_name: test_upload
+    ud_tests: []
+  - test_name: test_upload_stream
+    ud_tests: []
+  integ/aio_it/test_errors_async.py:
+  - test_name: test_error_classes
+    ud_tests: []
+  - test_name: test_error_code
+    ud_tests: []
+  - test_name: test_error_telemetry
+    ud_tests: []
+  integ/aio_it/test_execute_multi_statements_async.py:
+  - test_name: test_execute_stream
+    ud_tests: []
+  - test_name: test_execute_stream_with_error
+    ud_tests: []
+  - test_name: test_execute_string
+    ud_tests: []
+  - test_name: test_execute_string_dict_cursor
+    ud_tests: []
+  - test_name: test_execute_string_empty_lines
+    ud_tests: []
+  - test_name: test_execute_string_kwargs
+    ud_tests: []
+  - test_name: test_execute_string_with_error
+    ud_tests: []
+  integ/aio_it/test_interval_types_async.py:
+  - test_name: test_select_day_time_interval
+    ud_tests: []
+  - test_name: test_select_year_month_interval
+    ud_tests: []
+  integ/aio_it/test_key_pair_authentication_async.py:
+  - test_name: test_bad_private_key
+    ud_tests: []
+  - test_name: test_different_key_length
+    ud_tests: []
+  - test_name: test_multiple_key_pair
+    ud_tests: []
+  integ/aio_it/test_large_put_async.py:
+  - test_name: test_put_copy_large_files
+    ud_tests: []
+  integ/aio_it/test_large_result_set_async.py:
+  - test_name: test_query_large_result_set
+    ud_tests: []
+  - test_name: test_query_large_result_set_n_threads
+    ud_tests: []
+  integ/aio_it/test_load_unload_async.py:
+  - test_name: test_data
+    ud_tests: []
+  - test_name: test_load_s3
+    ud_tests: []
+  - test_name: test_put_load_from_user_stage
+    ud_tests: []
+  - test_name: test_put_local_file
+    ud_tests: []
+  - test_name: test_unload
+    ud_tests: []
+  integ/aio_it/test_multi_statement_async.py:
+  - test_name: test_alter_session_multi
+    ud_tests: []
+  - test_name: test_async_error_multi
+    ud_tests: []
+  - test_name: test_async_exec_multi
+    ud_tests: []
+  - test_name: test_binding_multi
+    ud_tests: []
+  - test_name: test_done_caching_multi
+    ud_tests: []
+  - test_name: test_executemany_multi
+    ud_tests: []
+  - test_name: test_executmany_qmark_multi
+    ud_tests: []
+  - test_name: test_insert_select_multi
+    ud_tests: []
+  - test_name: test_mix_sync_async_multi
+    ud_tests: []
+  - test_name: test_multi_statement_basic
+    ud_tests: []
+  - test_name: test_multi_statement_wrong_count
+    ud_tests: []
+  integ/aio_it/test_network_async.py:
+  - test_name: test_no_auth
+    ud_tests: []
+  - test_name: test_none_object_when_querying_result
+    ud_tests: []
+  integ/aio_it/test_numpy_binding_async.py:
+  - test_name: test_numpy_datatype_binding
+    ud_tests: []
+  integ/aio_it/test_pandas_tools_async.py:
+  - test_name: test_all_pandas_types
+    ud_tests: []
+  - test_name: test_auto_create_table_similar_column_names
+    ud_tests: []
+  - test_name: test_autoincrement_insertion
+    ud_tests: []
+  - test_name: test_default_value_insertion
+    ud_tests: []
+  - test_name: test_empty_dataframe_write_pandas
+    ud_tests: []
+  - test_name: test_file_format_location_building
+    ud_tests: []
+  - test_name: test_fix_snow_746341
+    ud_tests: []
+  - test_name: test_invalid_table_type_write_pandas
+    ud_tests: []
+  - test_name: test_no_create_internal_object_privilege_in_target_schema
+    ud_tests: []
+  - test_name: test_pandas_with_single_quote
+    ud_tests: []
+  - test_name: test_special_name_quoting
+    ud_tests: []
+  - test_name: test_stage_location_building
+    ud_tests: []
+  - test_name: test_table_location_building
+    ud_tests: []
+  - test_name: test_use_scoped_object
+    ud_tests: []
+  - test_name: test_write_non_range_index_pandas
+    ud_tests: []
+  - test_name: test_write_pandas
+    ud_tests: []
+  - test_name: test_write_pandas_bulk_chunks_upload
+    ud_tests: []
+  - test_name: test_write_pandas_table_type
+    ud_tests: []
+  - test_name: test_write_pandas_use_logical_type
+    ud_tests: []
+  - test_name: test_write_pandas_with_on_error
+    ud_tests: []
+  - test_name: test_write_pandas_with_overwrite
+    ud_tests: []
+  - test_name: test_write_pandas_with_use_vectorized_scanner
+    ud_tests: []
+  integ/aio_it/test_pickle_timestamp_tz_async.py:
+  - test_name: test_pickle_timestamp_tz
+    ud_tests: []
+  integ/aio_it/test_put_get_async.py:
+  - test_name: test_get_empty_file
+    ud_tests: []
+  - test_name: test_get_file_permission
+    ud_tests: []
+  - test_name: test_get_multiple_files_with_same_name
+    ud_tests: []
+  - test_name: test_get_unsafe_file_permission_when_flag_set
+    ud_tests: []
+  - test_name: test_multipart_put
+    ud_tests: []
+  - test_name: test_put_md5
+    ud_tests: []
+  - test_name: test_put_special_file_name
+    ud_tests: []
+  - test_name: test_put_threshold
+    ud_tests: []
+  - test_name: test_transfer_error_message
+    ud_tests: []
+  - test_name: test_utf8_filename
+    ud_tests: []
+  integ/aio_it/test_put_get_compress_enc_async.py:
+  - test_name: test_auto_compress_switch
+    ud_tests: []
+  - test_name: test_get_gzip_content_encoding
+    ud_tests: []
+  - test_name: test_sse_get_gzip_content_encoding
+    ud_tests: []
+  integ/aio_it/test_put_get_medium_async.py:
+  - test_name: test_copy_get
+    ud_tests: []
+  - test_name: test_put_collision
+    ud_tests: []
+  - test_name: test_put_copy0
+    ud_tests: []
+  - test_name: test_put_copy_brotli_compressed
+    ud_tests: []
+  - test_name: test_put_copy_bz2_compressed
+    ud_tests: []
+  - test_name: test_put_copy_compressed
+    ud_tests: []
+  - test_name: test_put_copy_duplicated_files_s3
+    ud_tests: []
+  - test_name: test_put_copy_many_files
+    ud_tests: []
+  - test_name: test_put_copy_many_files_s3
+    ud_tests: []
+  - test_name: test_put_copy_orc_compressed
+    ud_tests: []
+  - test_name: test_put_copy_parquet_compressed
+    ud_tests: []
+  - test_name: test_put_copy_zstd_compressed
+    ud_tests: []
+  - test_name: test_put_get_large_files_s3
+    ud_tests: []
+  - test_name: test_put_get_with_hint
+    ud_tests: []
+  integ/aio_it/test_put_get_snow_4525_async.py:
+  - test_name: test_load_bogus_file
+    ud_tests: []
+  - test_name: test_load_bogus_json_file
+    ud_tests: []
+  integ/aio_it/test_put_get_user_stage_async.py:
+  - test_name: test_get_data_user_stage
+    ud_tests: []
+  - test_name: test_put_get_accelerate_user_stage
+    ud_tests: []
+  - test_name: test_put_get_duplicated_data_user_stage
+    ud_tests: []
+  - test_name: test_put_get_large_data_via_user_stage
+    ud_tests: []
+  - test_name: test_put_get_small_data_via_user_stage
+    ud_tests: []
+  - test_name: test_put_small_data_use_s3_regional_url
+    ud_tests: []
+  integ/aio_it/test_put_get_with_aws_token_async.py:
+  - test_name: test_put_get_with_aws
+    ud_tests: []
+  - test_name: test_put_with_invalid_token
+    ud_tests: []
+  integ/aio_it/test_put_get_with_azure_token_async.py:
+  - test_name: test_put_copy_duplicated_files_azure
+    ud_tests: []
+  - test_name: test_put_copy_many_files_azure
+    ud_tests: []
+  - test_name: test_put_get_large_files_azure
+    ud_tests: []
+  - test_name: test_put_get_with_azure
+    ud_tests: []
+  integ/aio_it/test_put_get_with_gcp_account_async.py:
+  - test_name: test_auto_compress_off_gcp
+    ud_tests: []
+  - test_name: test_put_copy_duplicated_files_gcp
+    ud_tests: []
+  - test_name: test_put_copy_many_files_gcp
+    ud_tests: []
+  - test_name: test_put_get_large_files_gcp
+    ud_tests: []
+  - test_name: test_put_get_with_gcp
+    ud_tests: []
+  - test_name: test_put_overwrite_with_downscope
+    ud_tests: []
+  integ/aio_it/test_put_windows_path_async.py:
+  - test_name: test_abc
+    ud_tests: []
+  integ/aio_it/test_qmark_async.py:
+  - test_name: test_binding_datetime_qmark
+    ud_tests: []
+  - test_name: test_binding_none
+    ud_tests: []
+  - test_name: test_numeric_paramstyle
+    ud_tests: []
+  - test_name: test_qmark_paramstyle
+    ud_tests: []
+  - test_name: test_qmark_paramstyle_enabled
+    ud_tests: []
+  integ/aio_it/test_query_cancelling_async.py:
+  - test_name: test_other_user_canceling
+    ud_tests: []
+  - test_name: test_same_user_canceling
+    ud_tests: []
+  integ/aio_it/test_results_async.py:
+  - test_name: test_results
+    ud_tests: []
+  - test_name: test_results_with_error
+    ud_tests: []
+  integ/aio_it/test_reuse_cursor_async.py:
+  - test_name: test_reuse_cursor
+    ud_tests: []
+  integ/aio_it/test_session_parameters_async.py:
+  - test_name: test_client_session_keep_alive
+    ud_tests: []
+  - test_name: test_htap_optimizations
+    ud_tests: []
+  - test_name: test_session_parameters
+    ud_tests: []
+  integ/aio_it/test_statement_parameter_binding_async.py:
+  - test_name: test_binding_security
+    ud_tests: []
+  integ/aio_it/test_structured_types_async.py:
+  - test_name: test_structured_array_types
+    ud_tests: []
+  - test_name: test_structured_map_types
+    ud_tests: []
+  integ/aio_it/test_transaction_async.py:
+  - test_name: test_connection_context_manager
+    ud_tests: []
+  - test_name: test_transaction
+    ud_tests: []
+  integ/lambda_it/test_basic_query.py:
+  - test_name: test_connection
+    ud_tests: []
+  - test_name: test_large_resultset
+    ud_tests: []
+  integ/pandas_it/test_arrow_chunk_iterator.py:
+  - test_name: test_iterate_over_timestamp_chunk
+    ud_tests: []
+  integ/pandas_it/test_arrow_pandas.py:
+  - test_name: test_arrow_fetch_result_scan
+    ud_tests: []
+  - test_name: test_arrow_number_to_decimal
+    ud_tests: []
+  - test_name: test_arrow_zero_rows
+    ud_tests: []
+  - test_name: test_batch_to_pandas_arrow
+    ud_tests: []
+  - test_name: test_boolean
+    ud_tests: []
+  - test_name: test_date
+    ud_tests: []
+  - test_name: test_decimal
+    ud_tests: []
+  - test_name: test_double
+    ud_tests: []
+  - test_name: test_empty
+    ud_tests: []
+  - test_name: test_execute_async_and_fetch_arrow_batches
+    ud_tests: []
+  - test_name: test_execute_async_and_fetch_pandas_batches
+    ud_tests: []
+  - test_name: test_fetch_with_pandas_nullable_types
+    ud_tests: []
+  - test_name: test_interval_day_time
+    ud_tests: []
+  - test_name: test_interval_year_month
+    ud_tests: []
+  - test_name: test_num_batch
+    ud_tests: []
+  - test_name: test_num_one
+    ud_tests: []
+  - test_name: test_number_fetchall_retrieve_type
+    ud_tests: []
+  - test_name: test_number_fetchbatches_retrieve_type
+    ud_tests: []
+  - test_name: test_number_iter_retrieve_type
+    ud_tests: []
+  - test_name: test_pandas_dtypes
+    ud_tests: []
+  - test_name: test_pandas_telemetry
+    ud_tests: []
+  - test_name: test_query_resultscan_combos
+    ud_tests: []
+  - test_name: test_resultbatches_pandas_functionality
+    ud_tests: []
+  - test_name: test_scaled_bigint
+    ud_tests: []
+  - test_name: test_scaled_decimal
+    ud_tests: []
+  - test_name: test_scaled_decimal_SNOW_133561
+    ud_tests: []
+  - test_name: test_scaled_int
+    ud_tests: []
+  - test_name: test_scaled_smallint
+    ud_tests: []
+  - test_name: test_scaled_tinyint
+    ud_tests: []
+  - test_name: test_semi_struct
+    ud_tests: []
+  - test_name: test_sessions_used
+    ud_tests: []
+  - test_name: test_simple_arrow_fetch
+    ud_tests: []
+  - test_name: test_simple_async_arrow
+    ud_tests: []
+  - test_name: test_simple_async_pandas
+    ud_tests: []
+  - test_name: test_time
+    ud_tests: []
+  - test_name: test_time_interval_microsecond
+    ud_tests: []
+  - test_name: test_timestamp_down_scale
+    ud_tests: []
+  - test_name: test_timestamp_raises_overflow
+    ud_tests: []
+  - test_name: test_timestamp_tz
+    ud_tests: []
+  - test_name: test_timestampltz
+    ud_tests: []
+  - test_name: test_timestampntz
+    ud_tests: []
+  - test_name: test_timestamptz
+    ud_tests: []
+  - test_name: test_to_arrow_datatypes
+    ud_tests: []
+  - test_name: test_vector
+    ud_tests: []
+  integ/pandas_it/test_error_arrow_pandas_stream.py:
+  - test_name: test_connector_error_base64_stream_chunk_remove_random_length_bytes
+    ud_tests: []
+  - test_name: test_connector_error_base64_stream_chunk_remove_single_byte
+    ud_tests: []
+  - test_name: test_connector_error_random_input
+    ud_tests: []
+  integ/pandas_it/test_logging.py:
+  - test_name: test_rand_table_log
+    ud_tests: []
+  integ/pandas_it/test_pandas_tools.py:
+  - test_name: test__iceberg_config_statement_helper
+    ud_tests: []
+  - test_name: test_all_pandas_types
+    ud_tests: []
+  - test_name: test_auto_create_table_similar_column_names
+    ud_tests: []
+  - test_name: test_autoincrement_insertion
+    ud_tests: []
+  - test_name: test_default_value_insertion
+    ud_tests: []
+  - test_name: test_empty_dataframe_write_pandas
+    ud_tests: []
+  - test_name: test_file_format_location_building
+    ud_tests: []
+  - test_name: test_fix_snow_746341
+    ud_tests: []
+  - test_name: test_invalid_table_type_write_pandas
+    ud_tests: []
+  - test_name: test_no_create_internal_object_privilege_in_target_schema
+    ud_tests: []
+  - test_name: test_pandas_with_single_quote
+    ud_tests: []
+  - test_name: test_special_name_quoting
+    ud_tests: []
+  - test_name: test_stage_location_building
+    ud_tests: []
+  - test_name: test_table_location_building
+    ud_tests: []
+  - test_name: test_use_scoped_object
+    ud_tests: []
+  - test_name: test_write_non_range_index_pandas
+    ud_tests: []
+  - test_name: test_write_pandas
+    ud_tests: []
+  - test_name: test_write_pandas_bulk_chunks_upload
+    ud_tests: []
+  - test_name: test_write_pandas_create_temp_table_deprecation_warning
+    ud_tests: []
+  - test_name: test_write_pandas_table_type
+    ud_tests: []
+  - test_name: test_write_pandas_use_logical_type
+    ud_tests: []
+  - test_name: test_write_pandas_with_on_error
+    ud_tests: []
+  - test_name: test_write_pandas_with_overwrite
+    ud_tests: []
+  - test_name: test_write_pandas_with_use_vectorized_scanner
+    ud_tests: []
+  integ/pandas_it/test_unit_arrow_chunk_iterator.py:
+  - test_name: test_iterate_over_binary_chunk
+    ud_tests: []
+  - test_name: test_iterate_over_bool_chunk
+    ud_tests: []
+  - test_name: test_iterate_over_date_chunk
+    ud_tests: []
+  - test_name: test_iterate_over_decimal_chunk
+    ud_tests: []
+  - test_name: test_iterate_over_float_chunk
+    ud_tests: []
+  - test_name: test_iterate_over_int16_chunk
+    ud_tests: []
+  - test_name: test_iterate_over_int32_chunk
+    ud_tests: []
+  - test_name: test_iterate_over_int64_chunk
+    ud_tests: []
+  - test_name: test_iterate_over_int8_chunk
+    ud_tests: []
+  - test_name: test_iterate_over_string_chunk
+    ud_tests: []
+  - test_name: test_iterate_over_time_chunk
+    ud_tests: []
+  integ/pandas_it/test_unit_options.py:
+  - test_name: test_pandas_option_reporting
+    ud_tests: []
+  integ/sso_it/test_connection_manual.py:
+  - test_name: test_connect_externalbrowser
+    ud_tests: []
+  integ/sso_it/test_unit_mfa_cache.py:
+  - test_name: test_body
+    ud_tests: []
+  - test_name: test_mfa_cache
+    ud_tests: []
+  integ/sso_it/test_unit_sso_connection.py:
+  - test_name: test_body
+    ud_tests: []
+  - test_name: test_connect_externalbrowser
+    ud_tests: []
+  integ/test_arrow_result.py:
+  - test_name: test_array
+    ud_tests: []
+  - test_name: test_arrow_bad_data
+    ud_tests: []
+  - test_name: test_datatypes
+    ud_tests: []
+  - test_name: test_dict_cursor
+    ud_tests: []
+  - test_name: test_fetch_as_numpy_val
+    ud_tests: []
+  - test_name: test_iceberg_negative
+    ud_tests: []
+  - test_name: test_iceberg_write_pandas
+    ud_tests: []
+  - test_name: test_map
+    ud_tests: []
+  - test_name: test_nested_types
+    ud_tests: []
+  - test_name: test_object
+    ud_tests: []
+  - test_name: test_scaled_decimal_SNOW_133561
+    ud_tests: []
+  - test_name: test_select_bigint
+    ud_tests: []
+  - test_name: test_select_boolean
+    ud_tests: []
+  - test_name: test_select_date
+    ud_tests: []
+  - test_name: test_select_decimal
+    ud_tests: []
+  - test_name: test_select_double_precision
+    ud_tests: []
+  - test_name: test_select_int
+    ud_tests: []
+  - test_name: test_select_large_scaled_decimal
+    ud_tests: []
+  - test_name: test_select_scaled_bigint
+    ud_tests: []
+  - test_name: test_select_scaled_decimal
+    ud_tests: []
+  - test_name: test_select_scaled_int
+    ud_tests: []
+  - test_name: test_select_scaled_smallint
+    ud_tests: []
+  - test_name: test_select_scaled_tinyint
+    ud_tests: []
+  - test_name: test_select_semi_structure
+    ud_tests: []
+  - test_name: test_select_smallint
+    ud_tests: []
+  - test_name: test_select_time
+    ud_tests: []
+  - test_name: test_select_timestamp_with_scale
+    ud_tests: []
+  - test_name: test_select_tinyint
+    ud_tests: []
+  - test_name: test_select_vector
+    ud_tests: []
+  - test_name: test_select_with_bool
+    ud_tests: []
+  - test_name: test_select_with_empty_resultset
+    ud_tests: []
+  - test_name: test_select_with_float
+    ud_tests: []
+  - test_name: test_select_with_large_resultset
+    ud_tests: []
+  - test_name: test_select_with_string
+    ud_tests: []
+  - test_name: test_structured_type_binds
+    ud_tests: []
+  integ/test_async.py:
+  - test_name: test_async_error
+    ud_tests: []
+  - test_name: test_async_exec
+    ud_tests: []
+  - test_name: test_async_qmark
+    ud_tests: []
+  - test_name: test_async_result_iteration
+    ud_tests: []
+  - test_name: test_close_connection_with_completed_async_queries
+    ud_tests: []
+  - test_name: test_close_connection_with_running_async_queries
+    ud_tests: []
+  - test_name: test_done_caching
+    ud_tests: []
+  - test_name: test_invalid_uuid_get_status
+    ud_tests: []
+  - test_name: test_mix_sync_async
+    ud_tests: []
+  - test_name: test_not_fetching
+    ud_tests: []
+  - test_name: test_simple_async
+    ud_tests: []
+  - test_name: test_unknown_sfqid
+    ud_tests: []
+  - test_name: test_unknown_sfqid_results
+    ud_tests: []
+  integ/test_autocommit.py:
+  - test_name: test_autocommit_attribute
+    ud_tests: []
+  - test_name: test_autocommit_parameters
+    ud_tests: []
+  integ/test_bindings.py:
+  - test_name: test_binding
+    ud_tests: []
+  - test_name: test_binding_bulk_insert
+    ud_tests: []
+  - test_name: test_binding_bulk_insert_date
+    ud_tests: []
+  - test_name: test_binding_bulk_update
+    ud_tests: []
+  - test_name: test_binding_identifier
+    ud_tests: []
+  - test_name: test_binding_insert_date
+    ud_tests: []
+  - test_name: test_binding_timestamps
+    ud_tests: []
+  - test_name: test_binding_with_numeric
+    ud_tests: []
+  - test_name: test_bulk_insert_binding_fallback
+    ud_tests: []
+  - test_name: test_invalid_binding_option
+    ud_tests: []
+  - test_name: test_pendulum_binding
+    ud_tests: []
+  - test_name: test_timestamp_bindings
+    ud_tests: []
+  integ/test_boolean.py:
+  - test_name: test_binding_fetching_boolean
+    ud_tests: []
+  - test_name: test_boolean_from_compiler
+    ud_tests: []
+  integ/test_client_session_keep_alive.py:
+  - test_name: test_client_session_keep_alive
+    ud_tests: []
+  integ/test_concurrent_create_objects.py:
+  - test_name: test_snow5871
+    ud_tests: []
+  integ/test_concurrent_insert.py:
+  - test_name: test_concurrent_insert
+    ud_tests: []
+  - test_name: test_concurrent_insert_using_connection
+    ud_tests: []
+  integ/test_connection.py:
+  - test_name: test_authenticate_error
+    ud_tests: []
+  - test_name: test_autocommit
+    ud_tests: []
+  - test_name: test_autocommit_closed_already
+    ud_tests: []
+  - test_name: test_autocommit_invalid_type
+    ud_tests: []
+  - test_name: test_autocommit_unsupported
+    ud_tests: []
+  - test_name: test_bad_db
+    ud_tests: []
+  - test_name: test_basic
+    ud_tests: []
+  - test_name: test_bogus
+    ud_tests: []
+  - test_name: test_client_fetch_threads_setting
+    ud_tests: []
+  - test_name: test_client_prefetch_threads_setting
+    ud_tests: []
+  - test_name: test_connection_atexit_close
+    ud_tests: []
+  - test_name: test_connection_cant_be_reused
+    ud_tests: []
+  - test_name: test_connection_gc
+    ud_tests: []
+  - test_name: test_connection_name_loading
+    ud_tests: []
+  - test_name: test_connection_without_database2
+    ud_tests: []
+  - test_name: test_connection_without_database_schema
+    ud_tests: []
+  - test_name: test_connection_without_schema
+    ud_tests: []
+  - test_name: test_copy_into_stats_with_stage
+    ud_tests: []
+  - test_name: test_create_view_stats
+    ud_tests: []
+  - test_name: test_ctas_stats
+    ud_tests: []
+  - test_name: test_cvas_one_cursor_stats
+    ud_tests: []
+  - test_name: test_cvas_separate_cursors_stats
+    ud_tests: []
+  - test_name: test_dashed_url
+    ud_tests: []
+  - test_name: test_dashed_url_account_name
+    ud_tests: []
+  - test_name: test_default_connection_name_loading
+    ud_tests: []
+  - test_name: test_disable_query_context_cache
+    ud_tests: []
+  - test_name: test_disable_request_pooling
+    ud_tests: []
+  - test_name: test_disable_request_pooling_setter
+    ud_tests: []
+  - test_name: test_disable_telemetry
+    ud_tests: []
+  - test_name: test_dml_stats_operations
+    ud_tests: []
+  - test_name: test_drop_create_user
+    ud_tests: []
+  - test_name: test_empty_response
+    ud_tests: []
+  - test_name: test_empty_result_stats
+    ud_tests: []
+  - test_name: test_eu_connection
+    ud_tests: []
+  - test_name: test_execute_async_stats
+    ud_tests: []
+  - test_name: test_execute_async_stats_multiple_queries
+    ud_tests: []
+  - test_name: test_file_utils_sanity_check
+    ud_tests: []
+  - test_name: test_imported_packages_telemetry
+    ud_tests: []
+  - test_name: test_invalid_account_timeout
+    ud_tests: []
+  - test_name: test_invalid_application
+    ud_tests: []
+  - test_name: test_invalid_connection_parameter
+    ud_tests: []
+  - test_name: test_invalid_connection_parameters_only_warns
+    ud_tests: []
+  - test_name: test_invalid_connection_parameters_turned_off
+    ud_tests: []
+  - test_name: test_invalid_default_parameters
+    ud_tests: []
+  - test_name: test_invalid_errorhander_error
+    ud_tests: []
+  - test_name: test_invalid_proxy
+    ud_tests: []
+  - test_name: test_invalid_proxy_not_impacting_env_vars
+    ud_tests: []
+  - test_name: test_is_valid
+    ud_tests: []
+  - test_name: test_keep_alive_heartbeat_frequency
+    ud_tests: []
+  - test_name: test_keep_alive_heartbeat_frequency_min
+    ud_tests: []
+  - test_name: test_keep_alive_true
+    ud_tests: []
+  - test_name: test_logs_size_during_basic_query_stays_unchanged
+    ud_tests: []
+  - test_name: test_minicore_import_telemetry
+    ud_tests: []
+  - test_name: test_missing_account
+    ud_tests: []
+  - test_name: test_mock_non_existing_server
+    ud_tests: []
+  - test_name: test_multi_statement_in_one_execute
+    ud_tests: []
+  - test_name: test_multi_table_insert_overwrite_stats
+    ud_tests: []
+  - test_name: test_no_auth_connection_negative_case
+    ud_tests: []
+  - test_name: test_no_new_warnings_or_errors_on_successful_basic_select
+    ud_tests: []
+  - test_name: test_not_found_connection_name
+    ud_tests: []
+  - test_name: test_ocsp_and_rest_pool_isolation
+    ud_tests: []
+  - test_name: test_ocsp_cache_working
+    ud_tests: []
+  - test_name: test_ocsp_mode_disable_ocsp_checks
+    ud_tests: []
+  - test_name: test_ocsp_mode_insecure_mode
+    ud_tests: []
+  - test_name: test_ocsp_mode_insecure_mode_and_disable_ocsp_checks_match
+    ud_tests: []
+  - test_name: test_ocsp_mode_insecure_mode_and_disable_ocsp_checks_mismatch_ocsp_disabled
+    ud_tests: []
+  - test_name: test_ocsp_mode_insecure_mode_and_disable_ocsp_checks_mismatch_ocsp_enabled
+    ud_tests: []
+  - test_name: test_ocsp_mode_insecure_mode_deprecation_warning
+    ud_tests: []
+  - test_name: test_okta_url
+    ud_tests: []
+  - test_name: test_platform_detection_timeout
+    ud_tests: []
+  - test_name: test_platform_detection_zero_timeout
+    ud_tests: []
+  - test_name: test_privatelink
+    ud_tests: []
+  - test_name: test_privatelink_ocsp_url_creation
+    ud_tests: []
+  - test_name: test_privatelink_ocsp_url_multithreaded
+    ud_tests: []
+  - test_name: test_privatelink_ocsp_url_multithreaded_snowsql
+    ud_tests: []
+  - test_name: test_process_param_dict_error
+    ud_tests: []
+  - test_name: test_process_param_error
+    ud_tests: []
+  - test_name: test_process_qmark_params_error
+    ud_tests: []
+  - test_name: test_region_deprecation
+    ud_tests: []
+  - test_name: test_root_certs_dict_lock_timeout_basic_config
+    ud_tests: []
+  - test_name: test_root_certs_dict_lock_timeout_fail_open
+    ud_tests: []
+  - test_name: test_root_certs_dict_lock_timeout_with_property_mock
+    ud_tests: []
+  - test_name: test_sequence_counter
+    ud_tests: []
+  - test_name: test_server_session_keep_alive
+    ud_tests: []
+  - test_name: test_snowflake_version
+    ud_tests: []
+  - test_name: test_stats_reset_on_select
+    ud_tests: []
+  - test_name: test_token_file_path
+    ud_tests: []
+  - test_name: test_truncate_stats
+    ud_tests: []
+  - test_name: test_unsafe_skip_file_permissions_check_skips_config_permissions_check
+    ud_tests: []
+  - test_name: test_update_with_dml_duplicates
+    ud_tests: []
+  - test_name: test_uppercase_privatelink_ocsp_url_creation
+    ud_tests: []
+  - test_name: test_us_west_connection
+    ud_tests: []
+  - test_name: test_valid_application
+    ud_tests: []
+  - test_name: test_with_config
+    ud_tests: []
+  - test_name: test_with_string_login_timeout
+    ud_tests: []
+  - test_name: test_with_tokens
+    ud_tests: []
+  - test_name: test_with_tokens_expired
+    ud_tests: []
+  integ/test_converter.py:
+  - test_name: test_date_0001_9999
+    ud_tests: []
+  - test_name: test_fetch_fraction_timestamp
+    ud_tests: []
+  - test_name: test_fetch_timestamps
+    ud_tests: []
+  - test_name: test_fetch_timestamps_negative_epoch
+    ud_tests: []
+  - test_name: test_fetch_timestamps_snowsql
+    ud_tests: []
+  - test_name: test_five_or_more_digit_year_date_converter
+    ud_tests: []
+  - test_name: test_franction_followed_by_year_format
+    ud_tests: []
+  integ/test_converter_more_timestamp.py:
+  - test_name: test_fetch_various_timestamps
+    ud_tests: []
+  integ/test_converter_null.py:
+  - test_name: test_converter_no_converter_to_python
+    ud_tests: []
+  integ/test_crl.py:
+  - test_name: test_crl_cache_configuration
+    ud_tests: []
+  - test_name: test_crl_validation_advisory_mode
+    ud_tests: []
+  - test_name: test_crl_validation_disabled_mode
+    ud_tests: []
+  - test_name: test_crl_validation_enabled_mode
+    ud_tests: []
+  - test_name: test_crl_validation_modes_parametrized
+    ud_tests: []
+  integ/test_cursor.py:
+  - test_name: test__log_telemetry_job_data
+    ud_tests: []
+  - test_name: test_binding_negative
+    ud_tests: []
+  - test_name: test_check_can_use_arrow_resultset
+    ud_tests: []
+  - test_name: test_check_can_use_pandas
+    ud_tests: []
+  - test_name: test_check_cannot_use_arrow_resultset
+    ud_tests: []
+  - test_name: test_check_cannot_use_pandas
+    ud_tests: []
+  - test_name: test_close_twice
+    ud_tests: []
+  - test_name: test_closed_cursor
+    ud_tests: []
+  - test_name: test_custom_request_id
+    ud_tests: []
+  - test_name: test_custom_request_id_negative
+    ud_tests: []
+  - test_name: test_decoding_utf8_for_json_result
+    ud_tests: []
+  - test_name: test_desc_rewrite
+    ud_tests: []
+  - test_name: test_describe
+    ud_tests: []
+  - test_name: test_empty_execution
+    ud_tests: []
+  - test_name: test_execute_after_close
+    ud_tests: []
+  - test_name: test_execute_helper_cannot_use_arrow
+    ud_tests: []
+  - test_name: test_execute_helper_cannot_use_arrow_exception
+    ud_tests: []
+  - test_name: test_execute_helper_params_error
+    ud_tests: []
+  - test_name: test_execute_stores_query
+    ud_tests: []
+  - test_name: test_executemany
+    ud_tests: []
+  - test_name: test_executemany_bulk_insert_size_mismatch
+    ud_tests: []
+  - test_name: test_executemany_empty_params
+    ud_tests: []
+  - test_name: test_executemany_insert_rewrite
+    ud_tests: []
+  - test_name: test_executemany_params_iterator
+    ud_tests: []
+  - test_name: test_executemany_qmark_types
+    ud_tests: []
+  - test_name: test_fetch_batches_with_sessions
+    ud_tests: []
+  - test_name: test_fetch_before_execute
+    ud_tests: []
+  - test_name: test_fetch_out_of_range_timestamp_value
+    ud_tests: []
+  - test_name: test_fetchmany
+    ud_tests: []
+  - test_name: test_fetchmany_size_error
+    ud_tests: []
+  - test_name: test_file
+    ud_tests: []
+  - test_name: test_geography
+    ud_tests: []
+  - test_name: test_geometry
+    ud_tests: []
+  - test_name: test_insert_and_select_by_separate_connection
+    ud_tests: []
+  - test_name: test_insert_binary_select
+    ud_tests: []
+  - test_name: test_insert_binary_select_with_bytearray
+    ud_tests: []
+  - test_name: test_insert_select
+    ud_tests: []
+  - test_name: test_insert_timestamp_ltz
+    ud_tests: []
+  - test_name: test_insert_timestamp_select
+    ud_tests: []
+  - test_name: test_invalid_bind_data_type
+    ud_tests: []
+  - test_name: test_multi_statement_failure
+    ud_tests: []
+  - test_name: test_multi_table_insert
+    ud_tests: []
+  - test_name: test_nanoarrow_usage_deprecation
+    ud_tests: []
+  - test_name: test_none_errorhandler
+    ud_tests: []
+  - test_name: test_nope_errorhandler
+    ud_tests: []
+  - test_name: test_not_supported_pandas
+    ud_tests: []
+  - test_name: test_null_connection
+    ud_tests: []
+  - test_name: test_null_in_non_null
+    ud_tests: []
+  - test_name: test_optional_telemetry
+    ud_tests: []
+  - test_name: test_out_of_range_year
+    ud_tests: []
+  - test_name: test_out_of_range_year_followed_by_correct_year
+    ud_tests: []
+  - test_name: test_process_params
+    ud_tests: []
+  - test_name: test_process_params_empty
+    ud_tests: []
+  - test_name: test_query_cancellation
+    ud_tests: []
+  - test_name: test_real_decimal
+    ud_tests: []
+  - test_name: test_reset_fetch
+    ud_tests: []
+  - test_name: test_resultbatch
+    ud_tests: []
+  - test_name: test_resultbatch_lazy_fetching_and_schemas
+    ud_tests: []
+  - test_name: test_resultbatch_schema_exists_when_zero_rows
+    ud_tests: []
+  - test_name: test_rownumber
+    ud_tests: []
+  - test_name: test_scroll
+    ud_tests: []
+  - test_name: test_struct_time
+    ud_tests: []
+  - test_name: test_timeout_query
+    ud_tests: []
+  - test_name: test_values_set
+    ud_tests: []
+  - test_name: test_variant
+    ud_tests: []
+  - test_name: test_vector
+    ud_tests: []
+  integ/test_cursor_binding.py:
+  - test_name: test_binding_list
+    ud_tests: []
+  - test_name: test_binding_security
+    ud_tests: []
+  - test_name: test_unsupported_binding
+    ud_tests: []
+  integ/test_cursor_context_manager.py:
+  - test_name: test_context_manager
+    ud_tests: []
+  integ/test_dataintegrity.py:
+  - test_name: test_BINARY
+    ud_tests: []
+  - test_name: test_DATE
+    ud_tests: []
+  - test_name: test_DATETIME
+    ud_tests: []
+  - test_name: test_DECIMAL
+    ud_tests: []
+  - test_name: test_DOUBLE
+    ud_tests: []
+  - test_name: test_FLOAT
+    ud_tests: []
+  - test_name: test_INT
+    ud_tests: []
+  - test_name: test_REAL
+    ud_tests: []
+  - test_name: test_REAL2
+    ud_tests: []
+  - test_name: test_STRING
+    ud_tests: []
+  - test_name: test_TEXT
+    ud_tests: []
+  - test_name: test_TIME
+    ud_tests: []
+  - test_name: test_TIMESTAMP
+    ud_tests: []
+  - test_name: test_TIMESTAMPLTZ
+    ud_tests: []
+  - test_name: test_TIMESTAMPNTZ
+    ud_tests: []
+  - test_name: test_TIMESTAMPNTZ_EXPLICIT
+    ud_tests: []
+  - test_name: test_TIMESTAMPTZ
+    ud_tests: []
+  - test_name: test_TIMESTAMPTZ_EXPLICIT
+    ud_tests: []
+  - test_name: test_TIMESTAMP_EXPLICIT
+    ud_tests: []
+  - test_name: test_VARCHAR
+    ud_tests: []
+  - test_name: test_fractional_TIMESTAMP
+    ud_tests: []
+  integ/test_daylight_savings.py:
+  - test_name: test_daylight_savings_in_TIMESTAMP_LTZ
+    ud_tests: []
+  integ/test_dbapi.py:
+  - test_name: test_BINARY
+    ud_tests: []
+  - test_name: test_DATETIME
+    ud_tests: []
+  - test_name: test_Date
+    ud_tests: []
+  - test_name: test_NUMBER
+    ud_tests: []
+  - test_name: test_None
+    ud_tests: []
+  - test_name: test_ROWID
+    ud_tests: []
+  - test_name: test_STRING
+    ud_tests: []
+  - test_name: test_Time
+    ud_tests: []
+  - test_name: test_Timestamp
+    ud_tests: []
+  - test_name: test_apilevel
+    ud_tests: []
+  - test_name: test_arraysize
+    ud_tests: []
+  - test_name: test_callproc
+    ud_tests: []
+  - test_name: test_callproc_invalid
+    ud_tests: []
+  - test_name: test_callproc_overload
+    ud_tests: []
+  - test_name: test_close
+    ud_tests: []
+  - test_name: test_closecursor
+    ud_tests: []
+  - test_name: test_commit
+    ud_tests: []
+  - test_name: test_connect
+    ud_tests: []
+  - test_name: test_cursor
+    ud_tests: []
+  - test_name: test_cursor_isolation
+    ud_tests: []
+  - test_name: test_description
+    ud_tests: []
+  - test_name: test_description2
+    ud_tests: []
+  - test_name: test_escape
+    ud_tests: []
+  - test_name: test_exceptions
+    ud_tests: []
+  - test_name: test_exceptions_as_connection_attributes
+    ud_tests: []
+  - test_name: test_execute
+    ud_tests: []
+  - test_name: test_executemany
+    ud_tests: []
+  - test_name: test_fetchall
+    ud_tests: []
+  - test_name: test_fetchmany
+    ud_tests: []
+  - test_name: test_fetchone
+    ud_tests: []
+  - test_name: test_mixedfetch
+    ud_tests: []
+  - test_name: test_paramstyle
+    ud_tests: []
+  - test_name: test_rollback
+    ud_tests: []
+  - test_name: test_rowcount
+    ud_tests: []
+  - test_name: test_setinputsizes
+    ud_tests: []
+  - test_name: test_setoutputsize_basic
+    ud_tests: []
+  - test_name: test_substring
+    ud_tests: []
+  - test_name: test_threadsafety
+    ud_tests: []
+  integ/test_decfloat.py:
+  - test_name: test_decfloat_bindings
+    ud_tests: []
+  - test_name: test_decfloat_from_compiler
+    ud_tests: []
+  integ/test_direct_file_operation_utils.py:
+  - test_name: test_upload
+    ud_tests: []
+  - test_name: test_upload_stream
+    ud_tests: []
+  integ/test_easy_logging.py:
+  - test_name: test_no_save_logs
+    ud_tests: []
+  - test_name: test_save_logs
+    ud_tests: []
+  integ/test_errors.py:
+  - test_name: test_error_classes
+    ud_tests: []
+  - test_name: test_error_code
+    ud_tests: []
+  - test_name: test_error_telemetry
+    ud_tests: []
+  integ/test_execute_multi_statements.py:
+  - test_name: test_execute_stream
+    ud_tests: []
+  - test_name: test_execute_stream_with_error
+    ud_tests: []
+  - test_name: test_execute_string
+    ud_tests: []
+  - test_name: test_execute_string_dict_cursor
+    ud_tests: []
+  - test_name: test_execute_string_empty_lines
+    ud_tests: []
+  - test_name: test_execute_string_kwargs
+    ud_tests: []
+  - test_name: test_execute_string_with_error
+    ud_tests: []
+  integ/test_interval_types.py:
+  - test_name: test_select_day_time_interval
+    ud_tests: []
+  - test_name: test_select_year_month_interval
+    ud_tests: []
+  integ/test_key_pair_authentication.py:
+  - test_name: test_bad_private_key
+    ud_tests: []
+  - test_name: test_different_key_length
+    ud_tests: []
+  - test_name: test_get_token_from_private_key
+    ud_tests: []
+  - test_name: test_multiple_key_pair
+    ud_tests: []
+  integ/test_large_put.py:
+  - test_name: test_put_copy_large_files
+    ud_tests: []
+  integ/test_large_result_set.py:
+  - test_name: test_cursor_download_uses_original_http_config
+    ud_tests: []
+  - test_name: test_query_large_result_set
+    ud_tests: []
+  - test_name: test_query_large_result_set_n_threads
+    ud_tests: []
+  integ/test_load_unload.py:
+  - test_name: test_data
+    ud_tests: []
+  - test_name: test_load_s3
+    ud_tests: []
+  - test_name: test_put_load_from_user_stage
+    ud_tests: []
+  - test_name: test_put_local_file
+    ud_tests: []
+  - test_name: test_unload
+    ud_tests: []
+  integ/test_multi_statement.py:
+  - test_name: test_alter_session_multi
+    ud_tests: []
+  - test_name: test_async_error_multi
+    ud_tests: []
+  - test_name: test_async_exec_multi
+    ud_tests: []
+  - test_name: test_binding_multi
+    ud_tests: []
+  - test_name: test_done_caching_multi
+    ud_tests: []
+  - test_name: test_executemany_multi
+    ud_tests: []
+  - test_name: test_executmany_qmark_multi
+    ud_tests: []
+  - test_name: test_insert_select_multi
+    ud_tests: []
+  - test_name: test_mix_sync_async_multi
+    ud_tests: []
+  - test_name: test_multi_statement_basic
+    ud_tests: []
+  - test_name: test_multi_statement_wrong_count
+    ud_tests: []
+  integ/test_network.py:
+  - test_name: test_no_auth
+    ud_tests: []
+  - test_name: test_none_object_when_querying_result
+    ud_tests: []
+  integ/test_numpy_binding.py:
+  - test_name: test_numpy_datatype_binding
+    ud_tests: []
+  integ/test_pickle_timestamp_tz.py:
+  - test_name: test_pickle_timestamp_tz
+    ud_tests: []
+  integ/test_proxies.py:
+  - test_name: test_put_with_https_proxy
+    ud_tests: []
+  - test_name: test_put_with_https_proxy_and_no_proxy_regression
+    ud_tests: []
+  integ/test_put_get.py:
+  - test_name: test_data
+    ud_tests: []
+  - test_name: test_get_empty_file
+    ud_tests: []
+  - test_name: test_get_file_permission
+    ud_tests: []
+  - test_name: test_get_multiple_files_with_same_name
+    ud_tests: []
+  - test_name: test_get_unsafe_file_permission_when_flag_set
+    ud_tests: []
+  - test_name: test_iobound_limit
+    ud_tests: []
+  - test_name: test_load_s3
+    ud_tests: []
+  - test_name: test_multipart_put
+    ud_tests: []
+  - test_name: test_put_load_from_user_stage
+    ud_tests: []
+  - test_name: test_put_local_file
+    ud_tests: []
+  - test_name: test_put_md5
+    ud_tests: []
+  - test_name: test_put_overwrite
+    ud_tests: []
+  - test_name: test_put_overwrite_skip_on_content_match
+    ud_tests: []
+  - test_name: test_put_special_file_name
+    ud_tests: []
+  - test_name: test_put_threshold
+    ud_tests: []
+  - test_name: test_put_with_auto_compress_false
+    ud_tests: []
+  - test_name: test_unload
+    ud_tests: []
+  - test_name: test_utf8_filename
+    ud_tests: []
+  integ/test_put_get_compress_enc.py:
+  - test_name: test_auto_compress_switch
+    ud_tests: []
+  - test_name: test_get_gzip_content_encoding
+    ud_tests: []
+  - test_name: test_sse_get_gzip_content_encoding
+    ud_tests: []
+  integ/test_put_get_medium.py:
+  - test_name: test_copy_get
+    ud_tests: []
+  - test_name: test_put_collision
+    ud_tests: []
+  - test_name: test_put_copy0
+    ud_tests: []
+  - test_name: test_put_copy_brotli_compressed
+    ud_tests: []
+  - test_name: test_put_copy_bz2_compressed
+    ud_tests: []
+  - test_name: test_put_copy_compressed
+    ud_tests: []
+  - test_name: test_put_copy_duplicated_files_s3
+    ud_tests: []
+  - test_name: test_put_copy_many_files
+    ud_tests: []
+  - test_name: test_put_copy_many_files_s3
+    ud_tests: []
+  - test_name: test_put_copy_orc_compressed
+    ud_tests: []
+  - test_name: test_put_copy_parquet_compressed
+    ud_tests: []
+  - test_name: test_put_copy_zstd_compressed
+    ud_tests: []
+  - test_name: test_put_get_large_files_s3
+    ud_tests: []
+  - test_name: test_put_get_with_hint
+    ud_tests: []
+  integ/test_put_get_snow_4525.py:
+  - test_name: test_load_bogus_file
+    ud_tests: []
+  - test_name: test_load_bogus_json_file
+    ud_tests: []
+  integ/test_put_get_user_stage.py:
+  - test_name: test_get_data_user_stage
+    ud_tests: []
+  - test_name: test_put_get_accelerate_user_stage
+    ud_tests: []
+  - test_name: test_put_get_duplicated_data_user_stage
+    ud_tests: []
+  - test_name: test_put_get_large_data_via_user_stage
+    ud_tests: []
+  - test_name: test_put_get_small_data_via_user_stage
+    ud_tests: []
+  - test_name: test_put_small_data_use_s3_regional_url
+    ud_tests: []
+  integ/test_put_get_with_aws_token.py:
+  - test_name: test_put_get_with_aws
+    ud_tests: []
+  - test_name: test_put_with_invalid_token
+    ud_tests: []
+  integ/test_put_get_with_azure_token.py:
+  - test_name: test_put_copy_duplicated_files_azure
+    ud_tests: []
+  - test_name: test_put_copy_many_files_azure
+    ud_tests: []
+  - test_name: test_put_get_large_files_azure
+    ud_tests: []
+  - test_name: test_put_get_with_azure
+    ud_tests: []
+  integ/test_put_get_with_gcp_account.py:
+  - test_name: test_auto_compress_off_gcp
+    ud_tests: []
+  - test_name: test_get_gcp_file_object_http_400_error
+    ud_tests: []
+  - test_name: test_get_gcp_file_object_http_recoverable_error_refresh_with_downscoped
+    ud_tests: []
+  - test_name: test_put_copy_duplicated_files_gcp
+    ud_tests: []
+  - test_name: test_put_copy_many_files_gcp
+    ud_tests: []
+  - test_name: test_put_get_large_files_gcp
+    ud_tests: []
+  - test_name: test_put_get_with_gcp
+    ud_tests: []
+  - test_name: test_put_overwrite_with_downscope
+    ud_tests: []
+  integ/test_put_windows_path.py:
+  - test_name: test_abc
+    ud_tests: []
+  integ/test_qmark.py:
+  - test_name: test_binding_datetime_qmark
+    ud_tests: []
+  - test_name: test_binding_none
+    ud_tests: []
+  - test_name: test_numeric_paramstyle
+    ud_tests: []
+  - test_name: test_qmark_paramstyle
+    ud_tests: []
+  - test_name: test_qmark_paramstyle_enabled
+    ud_tests: []
+  integ/test_query_cancelling.py:
+  - test_name: test_other_user_canceling
+    ud_tests: []
+  - test_name: test_same_user_canceling
+    ud_tests: []
+  integ/test_results.py:
+  - test_name: test_results
+    ud_tests: []
+  - test_name: test_results_with_error
+    ud_tests: []
+  integ/test_reuse_cursor.py:
+  - test_name: test_reuse_cursor
+    ud_tests: []
+  integ/test_session_parameters.py:
+  - test_name: test_client_session_keep_alive
+    ud_tests: []
+  - test_name: test_htap_optimizations
+    ud_tests: []
+  - test_name: test_session_parameters
+    ud_tests: []
+  integ/test_snowsql_timestamp_format.py:
+  - test_name: test_snowsql_timestamp_format
+    ud_tests: []
+  - test_name: test_snowsql_timestamp_negative_epoch
+    ud_tests: []
+  integ/test_statement_parameter_binding.py:
+  - test_name: test_binding_security
+    ud_tests: []
+  integ/test_structured_types.py:
+  - test_name: test_structured_array_types
+    ud_tests: []
+  - test_name: test_structured_map_types
+    ud_tests: []
+  integ/test_transaction.py:
+  - test_name: test_connection_context_manager
+    ud_tests: []
+  - test_name: test_transaction
+    ud_tests: []
+  integ/test_vendored_urllib.py:
+  - test_name: test_local_fix_for_closed_socket_bug
+    ud_tests: []
+  unit/aio/test_auth_async.py:
+  - test_name: test_auth_by_default_prepare_body_does_not_overwrite_client_environment_fields
+    ud_tests: []
+  - test_name: test_auth_mfa
+    ud_tests: []
+  - test_name: test_auth_password_change
+    ud_tests: []
+  - test_name: test_authbyplugin_abc_api
+    ud_tests: []
+  - test_name: test_mro
+    ud_tests: []
+  unit/aio/test_auth_keypair_async.py:
+  - test_name: test_auth_keypair
+    ud_tests: []
+  - test_name: test_auth_keypair_abc
+    ud_tests: []
+  - test_name: test_auth_keypair_bad_type
+    ud_tests: []
+  - test_name: test_auth_prepare_body_does_not_overwrite_client_environment_fields
+    ud_tests: []
+  - test_name: test_mro
+    ud_tests: []
+  - test_name: test_renew_token
+    ud_tests: []
+  unit/aio/test_auth_mfa_async.py:
+  - test_name: test_mfa_token_cache
+    ud_tests: []
+  unit/aio/test_auth_no_auth_async.py:
+  - test_name: test_auth_no_auth
+    ud_tests: []
+  - test_name: test_mro
+    ud_tests: []
+  unit/aio/test_auth_oauth_async.py:
+  - test_name: test_auth_oauth
+    ud_tests: []
+  - test_name: test_auth_prepare_body_does_not_overwrite_client_environment_fields
+    ud_tests: []
+  - test_name: test_mro
+    ud_tests: []
+  - test_name: test_oauth_authenticator_is_case_insensitive
+    ud_tests: []
+  unit/aio/test_auth_oauth_auth_code_async.py:
+  - test_name: test_auth_oauth_auth_code_oauth_type
+    ud_tests: []
+  - test_name: test_auth_oauth_auth_code_passes_uri_to_http_server
+    ud_tests: []
+  - test_name: test_auth_oauth_auth_code_single_use_refresh_tokens
+    ud_tests: []
+  - test_name: test_auth_oauth_auth_code_uses_redirect_uri
+    ud_tests: []
+  - test_name: test_auth_prepare_body_does_not_overwrite_client_environment_fields
+    ud_tests: []
+  - test_name: test_eligible_for_default_client_credentials_via_constructor
+    ud_tests: []
+  - test_name: test_mro
+    ud_tests: []
+  - test_name: test_oauth_authorization_code_allows_empty_user
+    ud_tests: []
+  - test_name: test_oauth_authorization_code_authenticator_is_case_insensitive
+    ud_tests: []
+  unit/aio/test_auth_oauth_code_async.py:
+  - test_name: test_auth_oauth_auth_code_single_use_refresh_tokens
+    ud_tests: []
+  - test_name: test_auth_oauth_code
+    ud_tests: []
+  - test_name: test_eligible_for_default_client_credentials_via_constructor
+    ud_tests: []
+  - test_name: test_mro
+    ud_tests: []
+  unit/aio/test_auth_oauth_credentials_async.py:
+  - test_name: test_auth_oauth_credentials_oauth_type
+    ud_tests: []
+  - test_name: test_auth_prepare_body_does_not_overwrite_client_environment_fields
+    ud_tests: []
+  - test_name: test_mro
+    ud_tests: []
+  - test_name: test_oauth_client_credentials_allows_empty_user
+    ud_tests: []
+  - test_name: test_oauth_client_credentials_authenticator_is_case_insensitive
+    ud_tests: []
+  - test_name: test_oauth_credentials_missing_client_id_raises_error
+    ud_tests: []
+  - test_name: test_oauth_credentials_missing_client_secret_raises_error
+    ud_tests: []
+  unit/aio/test_auth_okta_async.py:
+  - test_name: test_auth_okta
+    ud_tests: []
+  - test_name: test_auth_okta_step1_negative
+    ud_tests: []
+  - test_name: test_auth_okta_step2_negative
+    ud_tests: []
+  - test_name: test_auth_okta_step3_negative
+    ud_tests: []
+  - test_name: test_auth_okta_step4_negative
+    ud_tests: []
+  - test_name: test_auth_okta_step5_negative
+    ud_tests: []
+  - test_name: test_auth_prepare_body_does_not_overwrite_client_environment_fields
+    ud_tests: []
+  - test_name: test_mro
+    ud_tests: []
+  unit/aio/test_auth_pat_async.py:
+  - test_name: test_auth_pat
+    ud_tests: []
+  - test_name: test_auth_pat_reauthenticate
+    ud_tests: []
+  - test_name: test_mro
+    ud_tests: []
+  - test_name: test_pat_authenticator_creates_auth_by_pat
+    ud_tests: []
+  - test_name: test_pat_prepare_body_does_not_overwrite_client_environment_fields
+    ud_tests: []
+  unit/aio/test_auth_usrpwdmfa_async.py:
+  - test_name: test_mro
+    ud_tests: []
+  unit/aio/test_auth_webbrowser_async.py:
+  - test_name: test_auth_prepare_body_does_not_overwrite_client_environment_fields
+    ud_tests: []
+  - test_name: test_auth_webbrowser_fail_webbrowser
+    ud_tests: []
+  - test_name: test_auth_webbrowser_fail_webserver
+    ud_tests: []
+  - test_name: test_auth_webbrowser_force_auth_server
+    ud_tests: []
+  - test_name: test_auth_webbrowser_get
+    ud_tests: []
+  - test_name: test_auth_webbrowser_invalid_sso
+    ud_tests: []
+  - test_name: test_auth_webbrowser_post
+    ud_tests: []
+  - test_name: test_auth_webbrowser_socket_recv_blocking_stops_retries_after_15_attempts
+    ud_tests: []
+  - test_name: test_auth_webbrowser_socket_recv_does_not_block_with_env_var
+    ud_tests: []
+  - test_name: test_auth_webbrowser_socket_recv_loop_fails_after_15_attempts
+    ud_tests: []
+  - test_name: test_auth_webbrowser_socket_recv_retries_up_to_15_times_on_empty_bytearray
+    ud_tests: []
+  - test_name: test_auth_webbrowser_socket_reuseport_option_not_set_with_false_flag
+    ud_tests: []
+  - test_name: test_auth_webbrowser_socket_reuseport_option_not_set_with_no_flag
+    ud_tests: []
+  - test_name: test_auth_webbrowser_socket_reuseport_with_env_flag
+    ud_tests: []
+  - test_name: test_externalbrowser_authenticator_is_case_insensitive
+    ud_tests: []
+  - test_name: test_idtoken_reauth
+    ud_tests: []
+  - test_name: test_mro
+    ud_tests: []
+  unit/aio/test_auth_workload_identity_async.py:
+  - test_name: test_auth_prepare_body_does_not_overwrite_client_environment_fields
+    ud_tests: []
+  - test_name: test_aws_impersonation_calls_correct_apis_for_each_role_in_impersonation_path
+    ud_tests: []
+  - test_name: test_explicit_aws_encodes_audience_host_signature_to_api
+    ud_tests: []
+  - test_name: test_explicit_aws_generates_unique_assertion_content
+    ud_tests: []
+  - test_name: test_explicit_aws_no_auth_raises_error
+    ud_tests: []
+  - test_name: test_explicit_aws_uses_regional_hostnames
+    ud_tests: []
+  - test_name: test_explicit_azure_generates_unique_assertion_content
+    ud_tests: []
+  - test_name: test_explicit_azure_metadata_server_error_bubbles_up
+    ud_tests: []
+  - test_name: test_explicit_azure_omits_client_id_if_not_set
+    ud_tests: []
+  - test_name: test_explicit_azure_plumbs_token_to_api
+    ud_tests: []
+  - test_name: test_explicit_azure_uses_default_entra_resource_if_unspecified
+    ud_tests: []
+  - test_name: test_explicit_azure_uses_explicit_client_id_if_set
+    ud_tests: []
+  - test_name: test_explicit_azure_uses_explicit_entra_resource
+    ud_tests: []
+  - test_name: test_explicit_azure_v1_and_v2_issuers_accepted
+    ud_tests: []
+  - test_name: test_explicit_gcp_generates_unique_assertion_content
+    ud_tests: []
+  - test_name: test_explicit_gcp_metadata_server_error_bubbles_up
+    ud_tests: []
+  - test_name: test_explicit_gcp_plumbs_token_to_api
+    ud_tests: []
+  - test_name: test_explicit_oidc_invalid_inline_token_raises_error
+    ud_tests: []
+  - test_name: test_explicit_oidc_no_token_raises_error
+    ud_tests: []
+  - test_name: test_explicit_oidc_valid_inline_token_generates_unique_assertion_content
+    ud_tests: []
+  - test_name: test_explicit_oidc_valid_inline_token_plumbed_to_api
+    ud_tests: []
+  - test_name: test_gcp_calls_correct_apis_and_populates_auth_data_for_final_sa
+    ud_tests: []
+  - test_name: test_mro
+    ud_tests: []
+  - test_name: test_wif_authenticator_is_case_insensitive
+    ud_tests: []
+  - test_name: test_wif_authenticator_with_invalid_provider_raises_error
+    ud_tests: []
+  - test_name: test_wif_authenticator_with_no_provider_raises_error
+    ud_tests: []
+  unit/aio/test_bind_upload_agent_async.py:
+  - test_name: test_bind_upload_agent_row_size_exceed_buffer_size
+    ud_tests: []
+  - test_name: test_bind_upload_agent_uploading_multiple_files
+    ud_tests: []
+  unit/aio/test_connection_async_unit.py:
+  - test_name: test_cannot_set_dependent_params_without_wlid_authenticator
+    ud_tests: []
+  - test_name: test_connect_metadata_preservation
+    ud_tests: []
+  - test_name: test_connect_with_service_name
+    ud_tests: []
+  - test_name: test_connection_ignore_exception
+    ud_tests: []
+  - test_name: test_connection_params_are_plumbed_into_authbyworkloadidentity
+    ud_tests: []
+  - test_name: test_disable_saml_url_check_config
+    ud_tests: []
+  - test_name: test_encrypted_private_key_file_reading
+    ud_tests: []
+  - test_name: test_expired_detection
+    ud_tests: []
+  - test_name: test_handle_timeout
+    ud_tests: []
+  - test_name: test_imported_module
+    ud_tests: []
+  - test_name: test_invalid_authenticator
+    ud_tests: []
+  - test_name: test_invalid_backoff_policy
+    ud_tests: []
+  - test_name: test_is_still_running
+    ud_tests: []
+  - test_name: test_missing_default_connection
+    ud_tests: []
+  - test_name: test_missing_default_connection_conf_conn_file
+    ud_tests: []
+  - test_name: test_missing_default_connection_conf_file
+    ud_tests: []
+  - test_name: test_missing_default_connection_conn_file
+    ud_tests: []
+  - test_name: test_negative_custom_auth
+    ud_tests: []
+  - test_name: test_otel_error_message_async
+    ud_tests: []
+  - test_name: test_partner_env_var
+    ud_tests: []
+  - test_name: test_private_key_file_reading
+    ud_tests: []
+  - test_name: test_request_guid
+    ud_tests: []
+  - test_name: test_single_use_refresh_tokens_option_is_plumbed_into_authbyauthcode_async
+    ud_tests: []
+  - test_name: test_ssl_error_hint
+    ud_tests: []
+  - test_name: test_toml_connection_params_are_plumbed_into_authbyworkloadidentity
+    ud_tests: []
+  - test_name: test_workload_identity_impersonation_path_errors_for_unsupported_providers
+    ud_tests: []
+  - test_name: test_workload_identity_impersonation_path_populates_auth_class_for_supported_provider
+    ud_tests: []
+  - test_name: test_workload_identity_provider_is_required_for_wif_authenticator
+    ud_tests: []
+  unit/aio/test_cursor_async_unit.py:
+  - test_name: test_cursor_attribute
+    ud_tests: []
+  - test_name: test_cursor_execute_timeout
+    ud_tests: []
+  - test_name: test_download
+    ud_tests: []
+  - test_name: test_download_stream
+    ud_tests: []
+  - test_name: test_get_filetransfer_type
+    ud_tests: []
+  - test_name: test_query_can_be_empty_with_dataframe_ast
+    ud_tests: []
+  - test_name: test_upload
+    ud_tests: []
+  - test_name: test_upload_stream
+    ud_tests: []
+  unit/aio/test_errors_telemetry.py:
+  - test_name: test_error_telemetry_async_connection
+    ud_tests: []
+  unit/aio/test_gcs_client_async.py:
+  - test_name: test_download_retry_errors
+    ud_tests: []
+  - test_name: test_download_timeout
+    ud_tests: []
+  - test_name: test_download_uncaught_exception
+    ud_tests: []
+  - test_name: test_get_file_header_none_with_presigned_url
+    ud_tests: []
+  - test_name: test_stage_info_use_virtual_url
+    ud_tests: []
+  - test_name: test_upload_put_timeout
+    ud_tests: []
+  - test_name: test_upload_retry_errors
+    ud_tests: []
+  - test_name: test_upload_uncaught_exception
+    ud_tests: []
+  - test_name: test_url
+    ud_tests: []
+  - test_name: test_use_regional_url
+    ud_tests: []
+  unit/aio/test_mfa_no_cache_async.py:
+  - test_name: test_mfa_no_local_secure_storage
+    ud_tests: []
+  unit/aio/test_oauth_token_async.py:
+  - test_name: test_client_credentials_flow_through_proxy_async
+    ud_tests: []
+  - test_name: test_client_credentials_flow_via_explicit_proxy
+    ud_tests: []
+  - test_name: test_client_creds_expired_refresh_token_flow_async
+    ud_tests: []
+  - test_name: test_client_creds_oauth_type_async
+    ud_tests: []
+  - test_name: test_client_creds_successful_flow_async
+    ud_tests: []
+  - test_name: test_client_creds_token_request_error_async
+    ud_tests: []
+  - test_name: test_oauth_code_browser_timeout_async
+    ud_tests: []
+  - test_name: test_oauth_code_custom_urls_async
+    ud_tests: []
+  - test_name: test_oauth_code_expired_refresh_token_flow_async
+    ud_tests: []
+  - test_name: test_oauth_code_invalid_state_async
+    ud_tests: []
+  - test_name: test_oauth_code_local_application_custom_urls_successful_flow_async
+    ud_tests: []
+  - test_name: test_oauth_code_scope_error_async
+    ud_tests: []
+  - test_name: test_oauth_code_successful_flow_async
+    ud_tests: []
+  - test_name: test_oauth_code_successful_refresh_token_flow_async
+    ud_tests: []
+  - test_name: test_oauth_code_token_request_error_async
+    ud_tests: []
+  unit/aio/test_ocsp.py:
+  - test_name: test_concurrent_ocsp_requests
+    ud_tests: []
+  - test_name: test_ocsp
+    ud_tests: []
+  - test_name: test_ocsp_bad_validity
+    ud_tests: []
+  - test_name: test_ocsp_by_post_method
+    ud_tests: []
+  - test_name: test_ocsp_cache_when_server_is_down
+    ud_tests: []
+  - test_name: test_ocsp_fail_close_w_single_endpoint
+    ud_tests: []
+  - test_name: test_ocsp_fail_open_w_single_endpoint
+    ud_tests: []
+  - test_name: test_ocsp_single_endpoint
+    ud_tests: []
+  - test_name: test_ocsp_with_bogus_cache_files
+    ud_tests: []
+  - test_name: test_ocsp_with_file_cache
+    ud_tests: []
+  - test_name: test_ocsp_with_invalid_cache_file
+    ud_tests: []
+  - test_name: test_ocsp_with_outdated_cache
+    ud_tests: []
+  - test_name: test_ocsp_wo_cache_file
+    ud_tests: []
+  - test_name: test_ocsp_wo_cache_server
+    ud_tests: []
+  unit/aio/test_programmatic_access_token_async.py:
+  - test_name: test_invalid_pat_async
+    ud_tests: []
+  - test_name: test_valid_pat_async
+    ud_tests: []
+  unit/aio/test_proxies_async.py:
+  - test_name: test_basic_query_through_proxy_async
+    ud_tests: []
+  - test_name: test_large_query_through_proxy_async
+    ud_tests: []
+  - test_name: test_no_proxy_backend_matrix
+    ud_tests: []
+  - test_name: test_no_proxy_basic_param_proxy_bypass_backend
+    ud_tests: []
+  - test_name: test_no_proxy_bypass_backend_and_storage_param_only
+    ud_tests: []
+  - test_name: test_no_proxy_bypass_storage
+    ud_tests: []
+  - test_name: test_no_proxy_multiple_values_param_only
+    ud_tests: []
+  - test_name: test_no_proxy_source_vs_proxy_method_matrix
+    ud_tests: []
+  - test_name: test_proxy_env_vars_take_precedence_over_connection_params
+    ud_tests: []
+  unit/aio/test_put_get_async.py:
+  - test_name: test_get_empty_file
+    ud_tests: []
+  - test_name: test_put_error
+    ud_tests: []
+  - test_name: test_python_not_reraise_file_transfer_work_fn_error_as_is
+    ud_tests: []
+  - test_name: test_python_reraise_file_transfer_work_fn_error_as_is
+    ud_tests: []
+  - test_name: test_strip_stage_prefix_from_dst_file_name_for_download
+    ud_tests: []
+  - test_name: test_upload_file_with_azure_upload_failed_error
+    ud_tests: []
+  unit/aio/test_renew_session_async.py:
+  - test_name: test_mask_token_when_renew_session
+    ud_tests: []
+  - test_name: test_renew_session
+    ud_tests: []
+  unit/aio/test_result_batch_async.py:
+  - test_name: test_non_200_response_download
+    ud_tests: []
+  - test_name: test_ok_response_download
+    ud_tests: []
+  - test_name: test_retries_until_success
+    ud_tests: []
+  - test_name: test_retryable_response_download
+    ud_tests: []
+  - test_name: test_unauthorized_response_download
+    ud_tests: []
+  unit/aio/test_retry_network_async.py:
+  - test_name: test_fetch
+    ud_tests: []
+  - test_name: test_login_request_timeout
+    ud_tests: []
+  - test_name: test_request_exec
+    ud_tests: []
+  - test_name: test_retry_connection_reset_error
+    ud_tests: []
+  - test_name: test_retry_reason
+    ud_tests: []
+  - test_name: test_retry_request_timeout
+    ud_tests: []
+  - test_name: test_secret_masking
+    ud_tests: []
+  - test_name: test_sslerror_with_econnreset_retries
+    ud_tests: []
+  - test_name: test_sslerror_without_econnreset_does_not_retry
+    ud_tests: []
+  unit/aio/test_s3_util_async.py:
+  - test_name: test_accelerate_in_china_endpoint
+    ud_tests: []
+  - test_name: test_download_expiry_error
+    ud_tests: []
+  - test_name: test_download_retry_exceeded_error
+    ud_tests: []
+  - test_name: test_download_unknown_error
+    ud_tests: []
+  - test_name: test_extract_bucket_name_and_path
+    ud_tests: []
+  - test_name: test_get_header_expiry_error
+    ud_tests: []
+  - test_name: test_get_header_unknown_error
+    ud_tests: []
+  - test_name: test_s3_regional_url_logic_async
+    ud_tests: []
+  - test_name: test_upload_expiry_error
+    ud_tests: []
+  - test_name: test_upload_file_with_s3_upload_failed_error
+    ud_tests: []
+  - test_name: test_upload_unknown_error
+    ud_tests: []
+  unit/aio/test_session_manager_async.py:
+  - test_name: test_aio_http_config_get_connector_parametrized
+    ud_tests: []
+  - test_name: test_aio_http_config_get_connector_with_real_connector_factory
+    ud_tests: []
+  - test_name: test_clone_independence
+    ud_tests: []
+  - test_name: test_clone_independent_pools
+    ud_tests: []
+  - test_name: test_config_copy_with
+    ud_tests: []
+  - test_name: test_config_immutability
+    ud_tests: []
+  - test_name: test_config_propagation
+    ud_tests: []
+  - test_name: test_connector_factory_creates_sessions
+    ud_tests: []
+  - test_name: test_from_config
+    ud_tests: []
+  - test_name: test_multiple_hostnames_separate_pools
+    ud_tests: []
+  - test_name: test_pickle_session_manager
+    ud_tests: []
+  - test_name: test_pooling_disabled
+    ud_tests: []
+  - test_name: test_reuse_sessions_within_pool
+    ud_tests: []
+  - test_name: test_session_pool_lifecycle
+    ud_tests: []
+  - test_name: test_single_hostname_pooling
+    ud_tests: []
+  unit/aio/test_spcs_token_async.py:
+  - test_name: test_spcs_token_default_path_used_when_env_unset_async
+    ud_tests: []
+  - test_name: test_spcs_token_included_in_login_request_async
+    ud_tests: []
+  - test_name: test_spcs_token_not_included_when_file_missing_async
+    ud_tests: []
+  unit/aio/test_storage_client_async.py:
+  - test_name: test_status_when_num_of_chunks_is_zero
+    ud_tests: []
+  unit/aio/test_telemetry_async.py:
+  - test_name: test_raising_error_generates_telemetry_event_when_connection_is_present
+    ud_tests: []
+  - test_name: test_raising_error_with_send_telemetry_off_does_not_generate_telemetry_event_when_connection_is_present
+    ud_tests: []
+  - test_name: test_request_throws_http_exception_for_non_retryable
+    ud_tests: []
+  - test_name: test_request_throws_http_exception_for_retryable
+    ud_tests: []
+  - test_name: test_request_throws_revocation_check_error
+    ud_tests: []
+  - test_name: test_telemetry_add_batch_disabled
+    ud_tests: []
+  - test_name: test_telemetry_auto_disable
+    ud_tests: []
+  - test_name: test_telemetry_close
+    ud_tests: []
+  - test_name: test_telemetry_close_empty
+    ud_tests: []
+  - test_name: test_telemetry_data_to_dict
+    ud_tests: []
+  - test_name: test_telemetry_send_batch
+    ud_tests: []
+  - test_name: test_telemetry_send_batch_clear
+    ud_tests: []
+  - test_name: test_telemetry_send_batch_disabled
+    ud_tests: []
+  - test_name: test_telemetry_send_batch_empty
+    ud_tests: []
+  - test_name: test_telemetry_send_batch_with_retry_flag
+    ud_tests: []
+  - test_name: test_telemetry_simple_flush
+    ud_tests: []
+  unit/test_auth.py:
+  - test_name: test_auth_by_default_prepare_body_does_not_overwrite_client_environment_fields
+    ud_tests: []
+  - test_name: test_auth_mfa
+    ud_tests: []
+  - test_name: test_auth_password_change
+    ud_tests: []
+  - test_name: test_authbyplugin_abc_api
+    ud_tests: []
+  - test_name: test_oauth_token_expired_error_handling
+    ud_tests: []
+  unit/test_auth_callback_server.py:
+  - test_name: test_auth_callback_server_does_not_updates_nonlocalhost_redirect_uri_port_to_match_socket_port
+    ud_tests: []
+  - test_name: test_auth_callback_server_updates_localhost_redirect_uri_port_to_match_socket_port
+    ud_tests: []
+  - test_name: test_auth_callback_server_uses_redirect_uri_port_when_specified
+    ud_tests: []
+  - test_name: test_auth_callback_success
+    ud_tests: []
+  - test_name: test_auth_callback_timeout
+    ud_tests: []
+  unit/test_auth_keypair.py:
+  - test_name: test_auth_keypair
+    ud_tests: []
+  - test_name: test_auth_keypair_abc
+    ud_tests: []
+  - test_name: test_auth_keypair_bad_type
+    ud_tests: []
+  - test_name: test_auth_prepare_body_does_not_overwrite_client_environment_fields
+    ud_tests: []
+  - test_name: test_renew_token
+    ud_tests: []
+  unit/test_auth_mfa.py:
+  - test_name: test_mfa_token_cache
+    ud_tests: []
+  unit/test_auth_no_auth.py:
+  - test_name: test_auth_no_auth
+    ud_tests: []
+  unit/test_auth_oauth.py:
+  - test_name: test_auth_oauth
+    ud_tests: []
+  - test_name: test_auth_prepare_body_does_not_overwrite_client_environment_fields
+    ud_tests: []
+  - test_name: test_oauth_authenticator_is_case_insensitive
+    ud_tests: []
+  unit/test_auth_oauth_auth_code.py:
+  - test_name: test_auth_oauth_auth_code_oauth_type
+    ud_tests: []
+  - test_name: test_auth_oauth_auth_code_passes_uri_to_http_server
+    ud_tests: []
+  - test_name: test_auth_oauth_auth_code_single_use_refresh_tokens
+    ud_tests: []
+  - test_name: test_auth_oauth_auth_code_uses_redirect_uri
+    ud_tests: []
+  - test_name: test_auth_prepare_body_does_not_overwrite_client_environment_fields
+    ud_tests: []
+  - test_name: test_eligible_for_default_client_credentials_via_constructor
+    ud_tests: []
+  - test_name: test_oauth_authorization_code_allows_empty_user
+    ud_tests: []
+  - test_name: test_oauth_authorization_code_authenticator_is_case_insensitive
+    ud_tests: []
+  unit/test_auth_oauth_credentials.py:
+  - test_name: test_auth_oauth_credentials_oauth_type
+    ud_tests: []
+  - test_name: test_auth_prepare_body_does_not_overwrite_client_environment_fields
+    ud_tests: []
+  - test_name: test_oauth_client_credentials_allows_empty_user
+    ud_tests: []
+  - test_name: test_oauth_client_credentials_parameters
+    ud_tests: []
+  - test_name: test_oauth_credentials_missing_client_id_raises_error
+    ud_tests: []
+  - test_name: test_oauth_credentials_missing_client_secret_raises_error
+    ud_tests: []
+  unit/test_auth_okta.py:
+  - test_name: test_auth_okta
+    ud_tests: []
+  - test_name: test_auth_okta_step1_negative
+    ud_tests: []
+  - test_name: test_auth_okta_step2_negative
+    ud_tests: []
+  - test_name: test_auth_okta_step3_negative
+    ud_tests: []
+  - test_name: test_auth_okta_step4_negative
+    ud_tests: []
+  - test_name: test_auth_okta_step5_negative
+    ud_tests: []
+  - test_name: test_auth_prepare_body_does_not_overwrite_client_environment_fields
+    ud_tests: []
+  unit/test_auth_pat.py:
+  - test_name: test_auth_pat
+    ud_tests: []
+  - test_name: test_auth_pat_reauthenticate
+    ud_tests: []
+  - test_name: test_pat_authenticator_creates_auth_by_pat
+    ud_tests: []
+  - test_name: test_pat_prepare_body_does_not_overwrite_client_environment_fields
+    ud_tests: []
+  unit/test_auth_webbrowser.py:
+  - test_name: test_auth_prepare_body_does_not_overwrite_client_environment_fields
+    ud_tests: []
+  - test_name: test_auth_webbrowser_fail_webbrowser
+    ud_tests: []
+  - test_name: test_auth_webbrowser_fail_webserver
+    ud_tests: []
+  - test_name: test_auth_webbrowser_force_auth_server
+    ud_tests: []
+  - test_name: test_auth_webbrowser_get
+    ud_tests: []
+  - test_name: test_auth_webbrowser_invalid_sso
+    ud_tests: []
+  - test_name: test_auth_webbrowser_post
+    ud_tests: []
+  - test_name: test_auth_webbrowser_socket_recv_blocking_stops_retries_after_15_attempts
+    ud_tests: []
+  - test_name: test_auth_webbrowser_socket_recv_does_not_block_with_env_var
+    ud_tests: []
+  - test_name: test_auth_webbrowser_socket_recv_loop_fails_after_15_attempts
+    ud_tests: []
+  - test_name: test_auth_webbrowser_socket_recv_retries_up_to_15_times_on_empty_bytearray
+    ud_tests: []
+  - test_name: test_auth_webbrowser_socket_reuseport_option_not_set_with_false_flag
+    ud_tests: []
+  - test_name: test_auth_webbrowser_socket_reuseport_option_not_set_with_no_flag
+    ud_tests: []
+  - test_name: test_auth_webbrowser_socket_reuseport_with_env_flag
+    ud_tests: []
+  - test_name: test_externalbrowser_authenticator_is_case_insensitive
+    ud_tests: []
+  - test_name: test_idtoken_reauth
+    ud_tests: []
+  unit/test_auth_workload_identity.py:
+  - test_name: test_auth_prepare_body_does_not_overwrite_client_environment_fields
+    ud_tests: []
+  - test_name: test_aws_impersonation_calls_correct_apis_for_each_role_in_impersonation_path
+    ud_tests: []
+  - test_name: test_explicit_aws_encodes_audience_host_signature_to_api
+    ud_tests: []
+  - test_name: test_explicit_aws_generates_unique_assertion_content
+    ud_tests: []
+  - test_name: test_explicit_aws_no_auth_raises_error
+    ud_tests: []
+  - test_name: test_explicit_aws_uses_regional_hostnames
+    ud_tests: []
+  - test_name: test_explicit_azure_generates_unique_assertion_content
+    ud_tests: []
+  - test_name: test_explicit_azure_metadata_server_error_bubbles_up
+    ud_tests: []
+  - test_name: test_explicit_azure_omits_client_id_if_not_set
+    ud_tests: []
+  - test_name: test_explicit_azure_plumbs_token_to_api
+    ud_tests: []
+  - test_name: test_explicit_azure_uses_default_entra_resource_if_unspecified
+    ud_tests: []
+  - test_name: test_explicit_azure_uses_explicit_client_id_if_set
+    ud_tests: []
+  - test_name: test_explicit_azure_uses_explicit_entra_resource
+    ud_tests: []
+  - test_name: test_explicit_azure_v1_and_v2_issuers_accepted
+    ud_tests: []
+  - test_name: test_explicit_gcp_generates_unique_assertion_content
+    ud_tests: []
+  - test_name: test_explicit_gcp_metadata_server_error_bubbles_up
+    ud_tests: []
+  - test_name: test_explicit_gcp_plumbs_token_to_api
+    ud_tests: []
+  - test_name: test_explicit_oidc_invalid_inline_token_raises_error
+    ud_tests: []
+  - test_name: test_explicit_oidc_no_token_raises_error
+    ud_tests: []
+  - test_name: test_explicit_oidc_valid_inline_token_generates_unique_assertion_content
+    ud_tests: []
+  - test_name: test_explicit_oidc_valid_inline_token_plumbed_to_api
+    ud_tests: []
+  - test_name: test_gcp_calls_correct_apis_and_populates_auth_data_for_final_sa
+    ud_tests: []
+  - test_name: test_get_aws_sts_hostname_invalid_inputs
+    ud_tests: []
+  - test_name: test_get_aws_sts_hostname_valid_inputs
+    ud_tests: []
+  - test_name: test_wif_authenticator_is_case_insensitive
+    ud_tests: []
+  - test_name: test_wif_authenticator_with_invalid_provider_raises_error
+    ud_tests: []
+  - test_name: test_wif_authenticator_with_no_provider_raises_error
+    ud_tests: []
+  unit/test_backoff_policies.py:
+  - test_name: test_exponential_backoff
+    ud_tests: []
+  - test_name: test_linear_backoff
+    ud_tests: []
+  unit/test_binaryformat.py:
+  - test_name: test_basic
+    ud_tests: []
+  - test_name: test_binary_to_python
+    ud_tests: []
+  - test_name: test_binary_to_snowflake
+    ud_tests: []
+  unit/test_bind_upload_agent.py:
+  - test_name: test_bind_upload_agent_row_size_exceed_buffer_size
+    ud_tests: []
+  - test_name: test_bind_upload_agent_scoped_temp_object
+    ud_tests: []
+  - test_name: test_bind_upload_agent_uploading_multiple_files
+    ud_tests: []
+  unit/test_cache.py:
+  - test_name: test_access
+    ud_tests: []
+  - test_name: test_access_empty
+    ud_tests: []
+  - test_name: test_broken_pickle_objects
+    ud_tests: []
+  - test_name: test_cache_do_not_write_while_set_item
+    ud_tests: []
+  - test_name: test_cast_list
+    ud_tests: []
+  - test_name: test_clear
+    ud_tests: []
+  - test_name: test_clear
+    ud_tests: []
+  - test_name: test_clear_expired_entries
+    ud_tests: []
+  - test_name: test_contains
+    ud_tests: []
+  - test_name: test_delete
+    ud_tests: []
+  - test_name: test_expiration
+    ud_tests: []
+  - test_name: test_expiration
+    ud_tests: []
+  - test_name: test_file_is_not_updated
+    ud_tests: []
+  - test_name: test_filelock_hang
+    ud_tests: []
+  - test_name: test_get
+    ud_tests: []
+  - test_name: test_items
+    ud_tests: []
+  - test_name: test_iter
+    ud_tests: []
+  - test_name: test_keys
+    ud_tests: []
+  - test_name: test_load_with_expired_entries
+    ud_tests: []
+  - test_name: test_miss
+    ud_tests: []
+  - test_name: test_miss
+    ud_tests: []
+  - test_name: test_path_choosing
+    ud_tests: []
+  - test_name: test_pickle
+    ud_tests: []
+  - test_name: test_precise_save_load
+    ud_tests: []
+  - test_name: test_read_only
+    ud_tests: []
+  - test_name: test_simple_expiration
+    ud_tests: []
+  - test_name: test_simple_miss
+    ud_tests: []
+  - test_name: test_simple_usage
+    ud_tests: []
+  - test_name: test_simple_usage
+    ud_tests: []
+  - test_name: test_telemetry
+    ud_tests: []
+  - test_name: test_update
+    ud_tests: []
+  - test_name: test_update_newer
+    ud_tests: []
+  - test_name: test_values
+    ud_tests: []
+  unit/test_check_no_native_http.py:
+  - test_name: test_aiohttp_aliasing
+    ud_tests: []
+  - test_name: test_aiohttp_integration
+    ud_tests: []
+  - test_name: test_aliasing_and_chained_calls
+    ud_tests: []
+  - test_name: test_attribute_aliasing_on_self_filechecker
+    ud_tests: []
+  - test_name: test_chained_aiohttp_clientsession_variants
+    ud_tests: []
+  - test_name: test_chained_poolmanager_variants
+    ud_tests: []
+  - test_name: test_chained_proxymanager_variants_filechecker
+    ud_tests: []
+  - test_name: test_e2e_mixed_small_filechecker
+    ud_tests: []
+  - test_name: test_exemptions
+    ud_tests: []
+  - test_name: test_integration_class_definition
+    ud_tests: []
+  - test_name: test_integration_multiple_functions
+    ud_tests: []
+  - test_name: test_minimal_violation_snippets
+    ud_tests: []
+  - test_name: test_pep604_and_string_annotations
+    ud_tests: []
+  - test_name: test_syntax_error_handling_tempfile
+    ud_tests: []
+  - test_name: test_temporary_exemptions
+    ud_tests: []
+  - test_name: test_type_checking_guard_allows_imports
+    ud_tests: []
+  - test_name: test_type_hints_mixed_runtime_flags_runtime_only
+    ud_tests: []
+  - test_name: test_type_hints_only_allowed
+    ud_tests: []
+  - test_name: test_unicode_error_handling_tempfile
+    ud_tests: []
+  - test_name: test_valid_file_processing_tempfile
+    ud_tests: []
+  - test_name: test_vendored_and_deep_attribute_chains
+    ud_tests: []
+  unit/test_compute_chunk_size.py:
+  - test_name: test_check_chunk_size
+    ud_tests: []
+  unit/test_configmanager.py:
+  - test_name: test_complicated_nesting
+    ud_tests: []
+  - test_name: test_config_file_resolution_non_sfdirs
+    ud_tests: []
+  - test_name: test_config_file_resolution_sfdirs_default
+    ud_tests: []
+  - test_name: test_config_file_resolution_sfdirs_nondefault
+    ud_tests: []
+  - test_name: test_configoption_default_value
+    ud_tests: []
+  - test_name: test_configoption_missing_nest_path
+    ud_tests: []
+  - test_name: test_configoption_missing_root_manager
+    ud_tests: []
+  - test_name: test_defaultconnectionname
+    ud_tests: []
+  - test_name: test_deprecationwarning_add_subparser
+    ud_tests: []
+  - test_name: test_deprecationwarning_config_parser
+    ud_tests: []
+  - test_name: test_deprecationwarning_sub_parsers
+    ud_tests: []
+  - test_name: test_error_child_conflict
+    ud_tests: []
+  - test_name: test_error_config_file_writable_by_group
+    ud_tests: []
+  - test_name: test_error_config_file_writable_by_others
+    ud_tests: []
+  - test_name: test_error_contains
+    ud_tests: []
+  - test_name: test_error_invalid_toml
+    ud_tests: []
+  - test_name: test_error_missing_file_path
+    ud_tests: []
+  - test_name: test_error_missing_fp
+    ud_tests: []
+  - test_name: test_error_missing_fp_retrieve
+    ud_tests: []
+  - test_name: test_error_missing_item
+    ud_tests: []
+  - test_name: test_explicit_env_name
+    ud_tests: []
+  - test_name: test_incorrect_config_read
+    ud_tests: []
+  - test_name: test_log_debug_config_file_parent_dir_permissions
+    ud_tests: []
+  - test_name: test_missing_config_file
+    ud_tests: []
+  - test_name: test_missing_config_files_sliced
+    ud_tests: []
+  - test_name: test_missing_value
+    ud_tests: []
+  - test_name: test_missing_value_sliced
+    ud_tests: []
+  - test_name: test_only_in_slice
+    ud_tests: []
+  - test_name: test_sf_dirs
+    ud_tests: []
+  - test_name: test_simple_config_read
+    ud_tests: []
+  - test_name: test_simple_config_read_sliced
+    ud_tests: []
+  - test_name: test_simple_nesting
+    ud_tests: []
+  - test_name: test_skip_warning_config_file_permissions
+    ud_tests: []
+  - test_name: test_warn_config_file_owner
+    ud_tests: []
+  - test_name: test_warn_config_file_permissions
+    ud_tests: []
+  - test_name: test_warn_config_file_permissions_windows
+    ud_tests: []
+  unit/test_connection.py:
+  - test_name: test__get_private_bytes_from_file
+    ud_tests: []
+  - test_name: test_cannot_set_dependent_params_without_wlid_authenticator
+    ud_tests: []
+  - test_name: test_connect_metadata_preservation
+    ud_tests: []
+  - test_name: test_connect_with_service_name
+    ud_tests: []
+  - test_name: test_connection_ignore_exception
+    ud_tests: []
+  - test_name: test_connection_params_are_plumbed_into_authbyworkloadidentity
+    ud_tests: []
+  - test_name: test_connections_registry_lifecycle
+    ud_tests: []
+  - test_name: test_disable_saml_url_check_config
+    ud_tests: []
+  - test_name: test_encrypted_private_key_file_reading
+    ud_tests: []
+  - test_name: test_expired_detection
+    ud_tests: []
+  - test_name: test_handle_timeout
+    ud_tests: []
+  - test_name: test_imported_module
+    ud_tests: []
+  - test_name: test_invalid_authenticator
+    ud_tests: []
+  - test_name: test_invalid_backoff_policy
+    ud_tests: []
+  - test_name: test_is_still_running
+    ud_tests: []
+  - test_name: test_missing_default_connection
+    ud_tests: []
+  - test_name: test_missing_default_connection_conf_conn_file
+    ud_tests: []
+  - test_name: test_missing_default_connection_conf_file
+    ud_tests: []
+  - test_name: test_missing_default_connection_conn_file
+    ud_tests: []
+  - test_name: test_negative_custom_auth
+    ud_tests: []
+  - test_name: test_otel_error_message
+    ud_tests: []
+  - test_name: test_partner_env_var
+    ud_tests: []
+  - test_name: test_private_key_file_reading
+    ud_tests: []
+  - test_name: test_request_guid
+    ud_tests: []
+  - test_name: test_reraise_error_in_file_transfer_work_function_config
+    ud_tests: []
+  - test_name: test_single_use_refresh_tokens_option_is_plumbed_into_authbyauthcode
+    ud_tests: []
+  - test_name: test_ssl_error_hint
+    ud_tests: []
+  - test_name: test_toml_connection_params_are_plumbed_into_authbyworkloadidentity
+    ud_tests: []
+  - test_name: test_workload_identity_impersonation_path_errors_for_unsupported_providers
+    ud_tests: []
+  - test_name: test_workload_identity_impersonation_path_populates_auth_class_for_supported_provider
+    ud_tests: []
+  - test_name: test_workload_identity_provider_is_required_for_wif_authenticator
+    ud_tests: []
+  unit/test_connection_diagnostic.py:
+  - test_name: test_decode_dict
+    ud_tests: []
+  - test_name: test_exception_raise_during_diag_fail
+    ud_tests: []
+  - test_name: test_https_host_report
+    ud_tests: []
+  - test_name: test_report_message_if_bad_allowlist
+    ud_tests: []
+  - test_name: test_test_socket_get_cert
+    ud_tests: []
+  - test_name: test_validate_allowlist_file_works
+    ud_tests: []
+  - test_name: test_validate_whitelist_file_works
+    ud_tests: []
+  unit/test_construct_hostname.py:
+  - test_name: test_construct_hostname_basic
+    ud_tests: []
+  unit/test_converter.py:
+  - test_name: test_converter_to_snowflake_bindings_error
+    ud_tests: []
+  - test_name: test_converter_to_snowflake_error
+    ud_tests: []
+  - test_name: test_day_time_interval_decimal_to_timedelta
+    ud_tests: []
+  - test_name: test_day_time_interval_int_to_timedelta
+    ud_tests: []
+  - test_name: test_decfloat_to_decimal_converter
+    ud_tests: []
+  - test_name: test_is_dst
+    ud_tests: []
+  - test_name: test_more_timestamps
+    ud_tests: []
+  - test_name: test_year_month_interval_to_timedelta
+    ud_tests: []
+  unit/test_crl.py:
+  - test_name: test_check_certificate_against_crl_url_with_idp_mismatch
+    ud_tests: []
+  - test_name: test_crl_config_from_connection_disabled_mode
+    ud_tests: []
+  - test_name: test_crl_config_from_connection_enabled_mode
+    ud_tests: []
+  - test_name: test_crl_config_from_connection_enum_mode
+    ud_tests: []
+  - test_name: test_crl_config_from_connection_invalid_mode_string
+    ud_tests: []
+  - test_name: test_crl_config_from_connection_none_mode
+    ud_tests: []
+  - test_name: test_crl_config_from_connection_none_values
+    ud_tests: []
+  - test_name: test_crl_config_from_connection_unsupported_mode_type
+    ud_tests: []
+  - test_name: test_crl_signature_verification_exception_handling
+    ud_tests: []
+  - test_name: test_crl_signature_verification_failure_wrong_ca
+    ud_tests: []
+  - test_name: test_crl_signature_verification_integration_with_validation_flow
+    ud_tests: []
+  - test_name: test_crl_signature_verification_success
+    ud_tests: []
+  - test_name: test_crl_signature_verification_with_corrupted_signature
+    ud_tests: []
+  - test_name: test_crl_signature_verification_with_ec_key
+    ud_tests: []
+  - test_name: test_crl_signature_verification_with_issuer_mismatch_warning
+    ud_tests: []
+  - test_name: test_crl_validator_atexit_cleanup
+    ud_tests: []
+  - test_name: test_crl_validator_check_certificate_against_crl_expired
+    ud_tests: []
+  - test_name: test_crl_validator_check_certificate_against_crl_not_revoked
+    ud_tests: []
+  - test_name: test_crl_validator_check_certificate_against_crl_revoked
+    ud_tests: []
+  - test_name: test_crl_validator_creation
+    ud_tests: []
+  - test_name: test_crl_validator_download_crl_custom_size_limit
+    ud_tests: []
+  - test_name: test_crl_validator_download_crl_exceeds_size_during_streaming
+    ud_tests: []
+  - test_name: test_crl_validator_download_crl_exceeds_size_via_content_length
+    ud_tests: []
+  - test_name: test_crl_validator_download_crl_http_error
+    ud_tests: []
+  - test_name: test_crl_validator_download_crl_network_error
+    ud_tests: []
+  - test_name: test_crl_validator_download_crl_network_timeout
+    ud_tests: []
+  - test_name: test_crl_validator_download_crl_success
+    ud_tests: []
+  - test_name: test_crl_validator_download_crl_within_size_limit
+    ud_tests: []
+  - test_name: test_crl_validator_extract_certificate_chain_from_connection
+    ud_tests: []
+  - test_name: test_crl_validator_extract_crl_distribution_points_no_extension
+    ud_tests: []
+  - test_name: test_crl_validator_extract_crl_distribution_points_success
+    ud_tests: []
+  - test_name: test_crl_validator_freshness_validation
+    ud_tests: []
+  - test_name: test_crl_validator_validate_certificate_with_cache_hit
+    ud_tests: []
+  - test_name: test_crl_validator_validate_certificate_with_cache_miss
+    ud_tests: []
+  - test_name: test_crl_validator_validate_connection
+    ud_tests: []
+  - test_name: test_cross_signed_certificate_chain
+    ud_tests: []
+  - test_name: test_get_crl_last_update
+    ud_tests: []
+  - test_name: test_is_crl_more_recent
+    ud_tests: []
+  - test_name: test_is_short_lived_certificate
+    ud_tests: []
+  - test_name: test_is_within_validity_dates
+    ud_tests: []
+  - test_name: test_should_allow_certificates_without_crl_urls_when_configured
+    ud_tests: []
+  - test_name: test_should_allow_connection_when_crl_validation_disabled
+    ud_tests: []
+  - test_name: test_should_allow_connection_when_crl_validation_disabled_and_no_cert_chain
+    ud_tests: []
+  - test_name: test_should_allow_revoked_certificate_when_crl_validation_disabled
+    ud_tests: []
+  - test_name: test_should_fail_for_revoked_certificate
+    ud_tests: []
+  - test_name: test_should_fail_in_enabled_mode_with_crl_errors
+    ud_tests: []
+  - test_name: test_should_fail_with_null_or_empty_certificate_chains
+    ud_tests: []
+  - test_name: test_should_handle_certificates_without_crl_urls_in_enabled_mode
+    ud_tests: []
+  - test_name: test_should_handle_multiple_crl_distribution_points
+    ud_tests: []
+  - test_name: test_should_pass_in_advisory_mode_even_with_errors
+    ud_tests: []
+  - test_name: test_should_pass_in_advisory_mode_with_crl_errors
+    ud_tests: []
+  - test_name: test_should_reject_expired_crl
+    ud_tests: []
+  - test_name: test_should_skip_short_lived_certificates
+    ud_tests: []
+  - test_name: test_should_validate_non_revoked_certificate_successfully
+    ud_tests: []
+  - test_name: test_should_validate_non_revoked_certificate_successfully_if_root_not_provided_on_chain
+    ud_tests: []
+  - test_name: test_starfield_incident
+    ud_tests: []
+  - test_name: test_trusted_certificates_helpers
+    ud_tests: []
+  - test_name: test_validate_certificate_signatures
+    ud_tests: []
+  - test_name: test_validate_certificate_signatures_in_chain
+    ud_tests: []
+  - test_name: test_validate_expired_certificates
+    ud_tests: []
+  - test_name: test_validate_expired_certificates_in_chain
+    ud_tests: []
+  - test_name: test_validate_single_chain
+    ud_tests: []
+  - test_name: test_verify_against_idp_extension_no_extension
+    ud_tests: []
+  - test_name: test_verify_against_idp_extension_with_full_name
+    ud_tests: []
+  unit/test_crl_cache.py:
+  - test_name: test_atexit_handler_error_handling
+    ud_tests: []
+  - test_name: test_cache_directory_created_with_secure_permissions
+    ud_tests: []
+  - test_name: test_cache_directory_permission_validation
+    ud_tests: []
+  - test_name: test_cache_entry_creation
+    ud_tests: []
+  - test_name: test_cleanup_loop_calls_cleanup_on_both_caches_periodically
+    ud_tests: []
+  - test_name: test_cleanup_loop_double_start_is_safe_and_restarts
+    ud_tests: []
+  - test_name: test_cleanup_loop_double_stop_is_safe
+    ud_tests: []
+  - test_name: test_cleanup_loop_handles_exceptions_gracefully
+    ud_tests: []
+  - test_name: test_cleanup_loop_starts_and_stops_properly
+    ud_tests: []
+  - test_name: test_cleanup_loop_stops_gracefully_with_shutdown_event
+    ud_tests: []
+  - test_name: test_disk_get_nonexistent_returns_none
+    ud_tests: []
+  - test_name: test_disk_put_and_get
+    ud_tests: []
+  - test_name: test_factory_warning_messages_for_file_cache
+    ud_tests: []
+  - test_name: test_factory_warning_messages_for_memory_cache
+    ud_tests: []
+  - test_name: test_file_cache_cleanup_file_removal_error
+    ud_tests: []
+  - test_name: test_file_cache_creates_files_with_secure_permissions
+    ud_tests: []
+  - test_name: test_file_cache_directory_creation_error
+    ud_tests: []
+  - test_name: test_file_cache_file_read_error
+    ud_tests: []
+  - test_name: test_file_cache_file_write_error
+    ud_tests: []
+  - test_name: test_file_cache_permission_validation
+    ud_tests: []
+  - test_name: test_is_crl_expired_false_when_not_expired
+    ud_tests: []
+  - test_name: test_is_evicted_false_when_not_evicted
+    ud_tests: []
+  - test_name: test_is_evicted_true_when_evicted
+    ud_tests: []
+  - test_name: test_memory_cleanup_removes_evicted_entries
+    ud_tests: []
+  - test_name: test_memory_get_nonexistent_returns_none
+    ud_tests: []
+  - test_name: test_memory_put_and_get
+    ud_tests: []
+  - test_name: test_noop_cleanup_does_nothing
+    ud_tests: []
+  - test_name: test_noop_get_returns_none
+    ud_tests: []
+  - test_name: test_noop_put_does_nothing
+    ud_tests: []
+  - test_name: test_noop_singleton_behavior
+    ud_tests: []
+  - test_name: test_platform_specific_cache_path
+    ud_tests: []
+  - test_name: test_should_create_different_cache_entries_for_same_crl_with_different_download_times
+    ud_tests: []
+  - test_name: test_should_not_promote_to_memory_cache_when_file_cache_returns_none
+    ud_tests: []
+  - test_name: test_should_promote_file_cache_hit_to_memory_cache
+    ud_tests: []
+  - test_name: test_should_put_to_both_memory_and_file_cache
+    ud_tests: []
+  - test_name: test_should_return_cache_entry_when_memory_cache_hit
+    ud_tests: []
+  - test_name: test_should_return_none_when_both_caches_miss
+    ud_tests: []
+  unit/test_cursor.py:
+  - test_name: test_cursor_attribute
+    ud_tests: []
+  - test_name: test_cursor_execute_timeout
+    ud_tests: []
+  - test_name: test_dop_cap_for_download
+    ud_tests: []
+  - test_name: test_dop_cap_for_upload
+    ud_tests: []
+  - test_name: test_dop_cap_for_upload_stream
+    ud_tests: []
+  - test_name: test_download
+    ud_tests: []
+  - test_name: test_download_stream
+    ud_tests: []
+  - test_name: test_get_filetransfer_type
+    ud_tests: []
+  - test_name: test_query_can_be_empty_with_dataframe_ast
+    ud_tests: []
+  - test_name: test_upload
+    ud_tests: []
+  - test_name: test_upload_stream
+    ud_tests: []
+  unit/test_datetime.py:
+  - test_name: test_basic_datetime_format
+    ud_tests: []
+  - test_name: test_datetime_format_negative
+    ud_tests: []
+  - test_name: test_datetime_with_smaller_milliseconds
+    ud_tests: []
+  - test_name: test_struct_time_format
+    ud_tests: []
+  - test_name: test_struct_time_format_extreme_large
+    ud_tests: []
+  unit/test_dbapi.py:
+  - test_name: test_Binary
+    ud_tests: []
+  unit/test_dependencies.py:
+  - test_name: test_cryptography_deprecated
+    ud_tests: []
+  unit/test_detect_platforms.py:
+  - test_name: test_aws_ec2_empty_instance_document
+    ud_tests: []
+  - test_name: test_aws_identity_detection
+    ud_tests: []
+  - test_name: test_aws_lambda_detection
+    ud_tests: []
+  - test_name: test_aws_lambda_empty_task_root
+    ud_tests: []
+  - test_name: test_azure_function_detection
+    ud_tests: []
+  - test_name: test_azure_function_missing_identity_endpoint
+    ud_tests: []
+  - test_name: test_azure_function_with_managed_identity
+    ud_tests: []
+  - test_name: test_azure_managed_identity_no_token_endpoint
+    ud_tests: []
+  - test_name: test_azure_vm_detection
+    ud_tests: []
+  - test_name: test_detect_platforms_executes_in_parallel
+    ud_tests: []
+  - test_name: test_ec2_instance_detection
+    ud_tests: []
+  - test_name: test_gce_cloud_run_job_detection
+    ud_tests: []
+  - test_name: test_gce_cloud_run_job_missing_cloud_run_job
+    ud_tests: []
+  - test_name: test_gce_cloud_run_service_detection
+    ud_tests: []
+  - test_name: test_gce_cloud_run_service_missing_k_service
+    ud_tests: []
+  - test_name: test_gce_vm_detection
+    ud_tests: []
+  - test_name: test_gcp_identity_detection
+    ud_tests: []
+  - test_name: test_github_actions_detection
+    ud_tests: []
+  - test_name: test_github_actions_missing_environment_variable
+    ud_tests: []
+  - test_name: test_invalid_arn_handling
+    ud_tests: []
+  - test_name: test_missing_arn_handling
+    ud_tests: []
+  - test_name: test_multiple_platforms_detection
+    ud_tests: []
+  - test_name: test_no_platforms_detected
+    ud_tests: []
+  - test_name: test_platform_detection_completes_within_timeout
+    ud_tests: []
+  - test_name: test_platform_detection_default_timeout_is_200ms
+    ud_tests: []
+  - test_name: test_platform_detection_disable_env_var_values
+    ud_tests: []
+  - test_name: test_platform_detection_disabled_overrides_all_other_detection
+    ud_tests: []
+  - test_name: test_platform_detection_suppresses_all_library_logs
+    ud_tests: []
+  - test_name: test_timeout_handling
+    ud_tests: []
+  - test_name: test_zero_platform_detection_timeout_disables_endpoints_detection_on_cloud
+    ud_tests: []
+  - test_name: test_zero_platform_detection_timeout_disables_endpoints_detection_out_of_cloud
+    ud_tests: []
+  unit/test_easy_logging.py:
+  - test_name: test_config_file_inabsolute_path
+    ud_tests: []
+  - test_name: test_config_file_inaccessible_path
+    ud_tests: []
+  - test_name: test_config_file_nonexist_path
+    ud_tests: []
+  - test_name: test_no_save_logs
+    ud_tests: []
+  - test_name: test_save_logs
+    ud_tests: []
+  unit/test_encryption_util.py:
+  - test_name: test_encrypt_decrypt_file
+    ud_tests: []
+  - test_name: test_encrypt_decrypt_large_file
+    ud_tests: []
+  unit/test_error_arrow_stream.py:
+  - test_name: test_connector_error_base64_stream_chunk_remove_random_length_bytes
+    ud_tests: []
+  - test_name: test_connector_error_base64_stream_chunk_remove_single_byte
+    ud_tests: []
+  - test_name: test_connector_error_random_input
+    ud_tests: []
+  unit/test_errors.py:
+  - test_name: test_args
+    ud_tests: []
+  - test_name: test_detecting_duplicate_detail_insertion
+    ud_tests: []
+  unit/test_errors_telemetry.py:
+  - test_name: test_error_telemetry_sync_connection
+    ud_tests: []
+  unit/test_gcs_client.py:
+  - test_name: test_download_retry_errors
+    ud_tests: []
+  - test_name: test_download_timeout
+    ud_tests: []
+  - test_name: test_download_uncaught_exception
+    ud_tests: []
+  - test_name: test_get_file_header_none_with_presigned_url
+    ud_tests: []
+  - test_name: test_stage_info_use_virtual_url
+    ud_tests: []
+  - test_name: test_upload_put_timeout
+    ud_tests: []
+  - test_name: test_upload_retry_errors
+    ud_tests: []
+  - test_name: test_upload_uncaught_exception
+    ud_tests: []
+  - test_name: test_url
+    ud_tests: []
+  - test_name: test_use_regional_url
+    ud_tests: []
+  unit/test_linux_local_file_cache.py:
+  - test_name: test_basic_store
+    ud_tests: []
+  - test_name: test_cache_dir_does_not_exist
+    ud_tests: []
+  - test_name: test_cache_dir_home
+    ud_tests: []
+  - test_name: test_cache_dir_incorrect_permissions
+    ud_tests: []
+  - test_name: test_cache_dir_incorrect_permissions_with_skip_file_permissions_check
+    ud_tests: []
+  - test_name: test_cache_dir_is_not_a_directory
+    ud_tests: []
+  - test_name: test_cache_dir_xdg_cache_home
+    ud_tests: []
+  - test_name: test_cache_file_incorrect_permission_with_skip_file_permissions_check
+    ud_tests: []
+  - test_name: test_cache_file_incorrect_permissions
+    ud_tests: []
+  - test_name: test_delete_specific_item
+    ud_tests: []
+  - test_name: test_file_lock
+    ud_tests: []
+  - test_name: test_file_lock_stale
+    ud_tests: []
+  - test_name: test_file_missing_tokens_field
+    ud_tests: []
+  - test_name: test_file_tokens_is_not_dict
+    ud_tests: []
+  - test_name: test_malformed_json_cache
+    ud_tests: []
+  - test_name: test_malformed_utf_cache
+    ud_tests: []
+  unit/test_local_storage_client.py:
+  - test_name: test_multi_chunk_download
+    ud_tests: []
+  - test_name: test_multi_chunk_upload
+    ud_tests: []
+  unit/test_log_secret_detector.py:
+  - test_name: test_empty_string
+    ud_tests: []
+  - test_name: test_exception_in_masking
+    ud_tests: []
+  - test_name: test_exception_in_secret_detector_while_log_masking
+    ud_tests: []
+  - test_name: test_exception_while_log_masking
+    ud_tests: []
+  - test_name: test_mask_token
+    ud_tests: []
+  - test_name: test_no_masking
+    ud_tests: []
+  - test_name: test_none_string
+    ud_tests: []
+  - test_name: test_password
+    ud_tests: []
+  - test_name: test_token_false_positives
+    ud_tests: []
+  - test_name: test_token_password
+    ud_tests: []
+  unit/test_mfa_no_cache.py:
+  - test_name: test_mfa_no_local_secure_storage
+    ud_tests: []
+  unit/test_network.py:
+  - test_name: test_fetch
+    ud_tests: []
+  - test_name: test_fetch_auth
+    ud_tests: []
+  - test_name: test_json_serialize_uuid
+    ud_tests: []
+  unit/test_oauth_token.py:
+  - test_name: test_client_credentials_flow_via_explicit_proxy
+    ud_tests: []
+  - test_name: test_client_creds_expired_refresh_token_flow
+    ud_tests: []
+  - test_name: test_client_creds_oauth_type
+    ud_tests: []
+  - test_name: test_client_creds_successful_flow
+    ud_tests: []
+  - test_name: test_client_creds_token_request_error
+    ud_tests: []
+  - test_name: test_oauth_code_browser_timeout
+    ud_tests: []
+  - test_name: test_oauth_code_custom_urls
+    ud_tests: []
+  - test_name: test_oauth_code_expired_refresh_token_flow
+    ud_tests: []
+  - test_name: test_oauth_code_invalid_state
+    ud_tests: []
+  - test_name: test_oauth_code_local_application_custom_urls_successful_flow
+    ud_tests: []
+  - test_name: test_oauth_code_scope_error
+    ud_tests: []
+  - test_name: test_oauth_code_successful_flow
+    ud_tests: []
+  - test_name: test_oauth_code_successful_flow_through_proxy
+    ud_tests: []
+  - test_name: test_oauth_code_successful_refresh_token_flow
+    ud_tests: []
+  - test_name: test_oauth_code_token_request_error
+    ud_tests: []
+  unit/test_ocsp.py:
+  - test_name: test_building_new_retry
+    ud_tests: []
+  - test_name: test_building_retry_url
+    ud_tests: []
+  - test_name: test_concurrent_ocsp_requests
+    ud_tests: []
+  - test_name: test_json_cache_serialization_and_deserialization
+    ud_tests: []
+  - test_name: test_ocsp
+    ud_tests: []
+  - test_name: test_ocsp_bad_validity
+    ud_tests: []
+  - test_name: test_ocsp_by_post_method
+    ud_tests: []
+  - test_name: test_ocsp_cache_when_server_is_down
+    ud_tests: []
+  - test_name: test_ocsp_fail_close_w_single_endpoint
+    ud_tests: []
+  - test_name: test_ocsp_fail_open_w_single_endpoint
+    ud_tests: []
+  - test_name: test_ocsp_incomplete_chain
+    ud_tests: []
+  - test_name: test_ocsp_revoked_certificate
+    ud_tests: []
+  - test_name: test_ocsp_server_domain_name
+    ud_tests: []
+  - test_name: test_ocsp_single_endpoint
+    ud_tests: []
+  - test_name: test_ocsp_with_bogus_cache_files
+    ud_tests: []
+  - test_name: test_ocsp_with_file_cache
+    ud_tests: []
+  - test_name: test_ocsp_with_invalid_cache_file
+    ud_tests: []
+  - test_name: test_ocsp_with_outdated_cache
+    ud_tests: []
+  - test_name: test_ocsp_wo_cache_file
+    ud_tests: []
+  - test_name: test_ocsp_wo_cache_server
+    ud_tests: []
+  - test_name: test_signature_verification
+    ud_tests: []
+  unit/test_oob_secret_detector.py:
+  - test_name: test_mask_aws_secret
+    ud_tests: []
+  - test_name: test_mask_private_keys
+    ud_tests: []
+  - test_name: test_mask_sas_token
+    ud_tests: []
+  - test_name: test_mask_secrets
+    ud_tests: []
+  unit/test_parse_account.py:
+  - test_name: test_parse_account_basic
+    ud_tests: []
+  unit/test_programmatic_access_token.py:
+  - test_name: test_invalid_pat
+    ud_tests: []
+  - test_name: test_valid_pat
+    ud_tests: []
+  unit/test_proxies.py:
+  - test_name: test_basic_query_through_proxy
+    ud_tests: []
+  - test_name: test_get_proxy_url
+    ud_tests: []
+  - test_name: test_large_query_through_proxy
+    ud_tests: []
+  - test_name: test_no_proxy_backend_matrix
+    ud_tests: []
+  - test_name: test_no_proxy_basic_param_proxy_bypass_backend
+    ud_tests: []
+  - test_name: test_no_proxy_bypass_backend_and_storage_param_only
+    ud_tests: []
+  - test_name: test_no_proxy_bypass_storage
+    ud_tests: []
+  - test_name: test_no_proxy_bytes_url_regression_unit
+    ud_tests: []
+  - test_name: test_no_proxy_multiple_values_param_only
+    ud_tests: []
+  - test_name: test_no_proxy_source_vs_proxy_method_matrix
+    ud_tests: []
+  - test_name: test_proxy_env_vars_take_precedence_over_connection_params
+    ud_tests: []
+  - test_name: test_socks_5_proxy_missing_proxy_header_attribute
+    ud_tests: []
+  unit/test_put_get.py:
+  - test_name: test_get_empty_file
+    ud_tests: []
+  - test_name: test_iobound_limit
+    ud_tests: []
+  - test_name: test_percentage
+    ud_tests: []
+  - test_name: test_put_error
+    ud_tests: []
+  - test_name: test_python_not_reraise_file_transfer_work_fn_error_as_is
+    ud_tests: []
+  - test_name: test_python_reraise_file_transfer_work_fn_error_as_is
+    ud_tests: []
+  - test_name: test_server_dop_cap
+    ud_tests: []
+  - test_name: test_strip_stage_prefix_from_dst_file_name_for_download
+    ud_tests: []
+  - test_name: test_upload_file_with_azure_upload_failed_error
+    ud_tests: []
+  unit/test_query_context_cache.py:
+  - test_name: test_add_same_priority
+    ud_tests: []
+  - test_name: test_deserialize_type_error
+    ud_tests: []
+  - test_name: test_empty_cache_with_empty_response_data
+    ud_tests: []
+  - test_name: test_empty_cache_with_null_data
+    ud_tests: []
+  - test_name: test_eviction_order
+    ud_tests: []
+  - test_name: test_is_empty
+    ud_tests: []
+  - test_name: test_priority_switch_randomized
+    ud_tests: []
+  - test_name: test_same_id_with_stale_timestamp
+    ud_tests: []
+  - test_name: test_serialization_deserialization
+    ud_tests: []
+  - test_name: test_serialization_deserialization_with_null_context
+    ud_tests: []
+  - test_name: test_trim_cache
+    ud_tests: []
+  - test_name: test_update_priority
+    ud_tests: []
+  - test_name: test_update_timestamp
+    ud_tests: []
+  - test_name: test_with_data
+    ud_tests: []
+  - test_name: test_with_data_in_random_order
+    ud_tests: []
+  unit/test_renew_session.py:
+  - test_name: test_mask_token_when_renew_session
+    ud_tests: []
+  - test_name: test_renew_session
+    ud_tests: []
+  unit/test_result_batch.py:
+  - test_name: test_non_200_response_download
+    ud_tests: []
+  - test_name: test_ok_response_download
+    ud_tests: []
+  - test_name: test_retries_until_success
+    ud_tests: []
+  - test_name: test_retryable_response_download
+    ud_tests: []
+  - test_name: test_unauthorized_response_download
+    ud_tests: []
+  unit/test_retry_network.py:
+  - test_name: test_fetch
+    ud_tests: []
+  - test_name: test_login_request_timeout
+    ud_tests: []
+  - test_name: test_request_exec
+    ud_tests: []
+  - test_name: test_retry_connection_reset_error
+    ud_tests: []
+  - test_name: test_retry_reason
+    ud_tests: []
+  - test_name: test_retry_request_timeout
+    ud_tests: []
+  - test_name: test_secret_masking
+    ud_tests: []
+  - test_name: test_sslerror_with_econnreset_retries
+    ud_tests: []
+  - test_name: test_sslerror_without_econnreset_does_not_retry
+    ud_tests: []
+  unit/test_s3_util.py:
+  - test_name: test_accelerate_in_china_endpoint
+    ud_tests: []
+  - test_name: test_download_expiry_error
+    ud_tests: []
+  - test_name: test_download_retry_exceeded_error
+    ud_tests: []
+  - test_name: test_download_unknown_error
+    ud_tests: []
+  - test_name: test_extract_bucket_name_and_path
+    ud_tests: []
+  - test_name: test_get_header_expiry_error
+    ud_tests: []
+  - test_name: test_get_header_unknown_error
+    ud_tests: []
+  - test_name: test_upload_expiry_error
+    ud_tests: []
+  - test_name: test_upload_file_with_s3_upload_failed_error
+    ud_tests: []
+  - test_name: test_upload_unknown_error
+    ud_tests: []
+  unit/test_session_manager.py:
+  - test_name: test_clone_independence
+    ud_tests: []
+  - test_name: test_clone_independent_pools
+    ud_tests: []
+  - test_name: test_context_var_weakref_does_not_leak
+    ud_tests: []
+  - test_name: test_http_config_get_adapter_kwargs_override
+    ud_tests: []
+  - test_name: test_http_config_get_adapter_parametrized
+    ud_tests: []
+  - test_name: test_http_config_get_adapter_with_real_factory
+    ud_tests: []
+  - test_name: test_http_config_get_adapter_with_retry_object
+    ud_tests: []
+  - test_name: test_mount_adapters_and_pool_manager
+    ud_tests: []
+  - test_name: test_multiple_hostnames_separate_pools
+    ud_tests: []
+  - test_name: test_pooling_disabled
+    ud_tests: []
+  - test_name: test_reuse_sessions_within_pool
+    ud_tests: []
+  - test_name: test_single_hostname_pooling
+    ud_tests: []
+  unit/test_spcs_token.py:
+  - test_name: test_spcs_token_default_path_used_when_env_unset
+    ud_tests: []
+  - test_name: test_spcs_token_included_in_login_request
+    ud_tests: []
+  - test_name: test_spcs_token_not_included_when_file_missing
+    ud_tests: []
+  unit/test_split_statement.py:
+  - test_name: test_backslash
+    ud_tests: []
+  - test_name: test_backslash_quote_escape
+    ud_tests: []
+  - test_name: test_comment_in_values
+    ud_tests: []
+  - test_name: test_comments_with_semicolon
+    ud_tests: []
+  - test_name: test_empty_statement
+    ud_tests: []
+  - test_name: test_file_with_slash_star
+    ud_tests: []
+  - test_name: test_multiline_double_dollar_experssion_with_removed_comments
+    ud_tests: []
+  - test_name: test_multiple_comments
+    ud_tests: []
+  - test_name: test_multiple_line_sql
+    ud_tests: []
+  - test_name: test_quotes
+    ud_tests: []
+  - test_name: test_quotes_in_comments
+    ud_tests: []
+  - test_name: test_remove_comments_end_of_line
+    ud_tests: []
+  - test_name: test_simple_sql
+    ud_tests: []
+  - test_name: test_space_before_put
+    ud_tests: []
+  - test_name: test_sql_delimiter
+    ud_tests: []
+  - test_name: test_sql_example1
+    ud_tests: []
+  - test_name: test_sql_splitting_tokenization
+    ud_tests: []
+  - test_name: test_sql_splitting_various
+    ud_tests: []
+  - test_name: test_sql_with_commands
+    ud_tests: []
+  unit/test_ssl_partial_chain.py:
+  - test_name: test_wrapper_injects_pyopenssl_context
+    ud_tests: []
+  unit/test_ssl_partial_chain_handshake.py:
+  - test_name: test_partial_chain_handshake_succeeds_with_intermediate_as_anchor
+    ud_tests: []
+  unit/test_storage_client.py:
+  - test_name: test_status_when_num_of_chunks_is_zero
+    ud_tests: []
+  unit/test_telemetry.py:
+  - test_name: test_generate_telemetry_data
+    ud_tests: []
+  - test_name: test_generate_telemetry_data_dict_with_basic_info
+    ud_tests: []
+  - test_name: test_raising_error_generates_telemetry_event_when_connection_is_present
+    ud_tests: []
+  - test_name: test_raising_error_with_send_telemetry_off_does_not_generate_telemetry_event_when_connection_is_present
+    ud_tests: []
+  - test_name: test_request_throws_http_exception_for_non_retryable
+    ud_tests: []
+  - test_name: test_request_throws_http_exception_for_retryable
+    ud_tests: []
+  - test_name: test_request_throws_revocation_check_error
+    ud_tests: []
+  - test_name: test_telemetry_add_batch_disabled
+    ud_tests: []
+  - test_name: test_telemetry_auto_disable
+    ud_tests: []
+  - test_name: test_telemetry_close
+    ud_tests: []
+  - test_name: test_telemetry_close_empty
+    ud_tests: []
+  - test_name: test_telemetry_data_to_dict
+    ud_tests: []
+  - test_name: test_telemetry_send_batch
+    ud_tests: []
+  - test_name: test_telemetry_send_batch_clear
+    ud_tests: []
+  - test_name: test_telemetry_send_batch_disabled
+    ud_tests: []
+  - test_name: test_telemetry_send_batch_empty
+    ud_tests: []
+  - test_name: test_telemetry_send_batch_with_retry_flag
+    ud_tests: []
+  - test_name: test_telemetry_simple_flush
+    ud_tests: []
+  unit/test_telemetry_oob.py:
+  - test_name: test_get_instance_multithreaded
+    ud_tests: []
+  - test_name: test_telemetry_oob_disabled
+    ud_tests: []
+  unit/test_text_util.py:
+  - test_name: test_random_string_generation_with_same_global_seed
+    ud_tests: []
+  unit/test_url_util.py:
+  - test_name: test_encoder
+    ud_tests: []
+  - test_name: test_extract_top_level_domain_from_hostname
+    ud_tests: []
+  - test_name: test_url_validator
+    ud_tests: []
+  unit/test_util.py:
+  - test_name: test_build_minicore_usage_for_session_isa_matches_platform
+    ud_tests: []
+  - test_name: test_build_minicore_usage_for_session_returns_expected_keys
+    ud_tests: []
+  - test_name: test_build_minicore_usage_for_session_with_failed_load
+    ud_tests: []
+  - test_name: test_build_minicore_usage_for_session_with_mocked_core_loader
+    ud_tests: []
+  - test_name: test_build_minicore_usage_for_telemetry_includes_session_data
+    ud_tests: []
+  - test_name: test_build_minicore_usage_for_telemetry_os_matches_platform
+    ud_tests: []
+  - test_name: test_build_minicore_usage_for_telemetry_os_version_matches_platform
+    ud_tests: []
+  - test_name: test_build_minicore_usage_for_telemetry_returns_expected_keys
+    ud_tests: []
+  - test_name: test_build_minicore_usage_for_telemetry_with_disabled_core
+    ud_tests: []
+  - test_name: test_build_minicore_usage_for_telemetry_with_load_error
+    ud_tests: []
+  - test_name: test_build_minicore_usage_for_telemetry_with_mocked_values
+    ud_tests: []
+  - test_name: test_core_loader_error_captured_when_load_fails
+    ud_tests: []
+  - test_name: test_core_loader_fails_gracefully_on_incompatible_library
+    ud_tests: []
+  - test_name: test_core_loader_fails_gracefully_on_missing_library
+    ud_tests: []
+  - test_name: test_core_loader_initialization
+    ud_tests: []
+  - test_name: test_detect_arch
+    ud_tests: []
+  - test_name: test_detect_libc_alpine
+    ud_tests: []
+  - test_name: test_detect_libc_glibc_default
+    ud_tests: []
+  - test_name: test_detect_os
+    ud_tests: []
+  - test_name: test_e2e
+    ud_tests: []
+  - test_name: test_get_core_path_darwin
+    ud_tests: []
+  - test_name: test_get_core_path_linux
+    ud_tests: []
+  - test_name: test_get_core_path_windows
+    ud_tests: []
+  - test_name: test_get_core_version_no_version
+    ud_tests: []
+  - test_name: test_get_core_version_with_version
+    ud_tests: []
+  - test_name: test_get_file_name_no_path
+    ud_tests: []
+  - test_name: test_get_file_name_with_path
+    ud_tests: []
+  - test_name: test_get_lib_name
+    ud_tests: []
+  - test_name: test_get_load_error_no_error
+    ud_tests: []
+  - test_name: test_get_load_error_with_error
+    ud_tests: []
+  - test_name: test_get_platform_subdir
+    ud_tests: []
+  - test_name: test_get_platform_subdir_unsupported_os
+    ud_tests: []
+  - test_name: test_importing_snowflake_connector_triggers_core_loader_load
+    ud_tests: []
+  - test_name: test_is_core_disabled_returns_false
+    ud_tests: []
+  - test_name: test_is_core_disabled_returns_false_when_not_set
+    ud_tests: []
+  - test_name: test_is_core_disabled_returns_true
+    ud_tests: []
+  - test_name: test_load_failure
+    ud_tests: []
+  - test_name: test_load_minicore
+    ud_tests: []
+  - test_name: test_load_skips_loading_when_core_disabled
+    ud_tests: []
+  - test_name: test_load_success
+    ud_tests: []
+  - test_name: test_register_functions
+    ud_tests: []
+  - test_name: test_snowflake_connector_loads_when_core_loader_fails
+    ud_tests: []
+  - test_name: test_snowflake_connector_usable_when_core_loader_fails
+    ud_tests: []
+  - test_name: test_timer
+    ud_tests: []
+  unit/test_wiremock_client.py:
+  - test_name: test_wiremock
+    ud_tests: []
+  wif/test_wif.py:
+  - test_name: test_should_authenticate_using_oidc
+    ud_tests: []
+  - test_name: test_should_authenticate_with_impersonation
+    ud_tests: []
+  - test_name: test_wif_defined_provider
+    ud_tests: []
+  wif/test_wif_async.py:
+  - test_name: test_should_authenticate_using_oidc_async
+    ud_tests: []
+  - test_name: test_should_authenticate_with_impersonation_async
+    ud_tests: []
+  - test_name: test_wif_defined_provider_async
+    ud_tests: []
