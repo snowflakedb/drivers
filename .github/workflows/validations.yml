@@ -94,11 +94,11 @@ jobs:
             exit 0
           fi
           
-          # Check if any validation failed
-          if [[ "${{ needs.test-data.result }}" == "failure" ]] || \
-             [[ "${{ needs.proto.result }}" == "failure" ]] || \
-             [[ "${{ needs.tests-format-validator.result }}" == "failure" ]]; then
-            echo "✗ Validations were RUN and FAILED"
+          # Check if any validation failed or was cancelled
+          if [[ "${{ needs.test-data.result }}" =~ ^(failure|cancelled)$ ]] || \
+             [[ "${{ needs.proto.result }}" =~ ^(failure|cancelled)$ ]] || \
+             [[ "${{ needs.tests-format-validator.result }}" =~ ^(failure|cancelled)$ ]]; then
+            echo "✗ Validations were RUN and FAILED or CANCELLED"
             echo "  - test-data: ${{ needs.test-data.result }}"
             echo "  - proto: ${{ needs.proto.result }}"
             echo "  - tests-format-validator: ${{ needs.tests-format-validator.result }}"

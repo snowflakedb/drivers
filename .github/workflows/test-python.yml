@@ -248,12 +248,12 @@ jobs:
             exit 0
           fi
           
-          # Check if critical jobs failed
+          # Check if critical jobs failed or were cancelled
           # Note: python_tests_reference has continue-on-error:true, so we don't fail on it
-          if [[ "${{ needs.build_rust_core.result }}" == "failure" ]] || \
-             [[ "${{ needs.python_tests.result }}" == "failure" ]] || \
-             [[ "${{ needs.python_compare_results.result }}" == "failure" ]]; then
-            echo "✗ Python CI FAILED"
+          if [[ "${{ needs.build_rust_core.result }}" =~ ^(failure|cancelled)$ ]] || \
+             [[ "${{ needs.python_tests.result }}" =~ ^(failure|cancelled)$ ]] || \
+             [[ "${{ needs.python_compare_results.result }}" =~ ^(failure|cancelled)$ ]]; then
+            echo "✗ Python CI FAILED or CANCELLED"
             echo "  - build_rust_core: ${{ needs.build_rust_core.result }}"
             echo "  - python_tests: ${{ needs.python_tests.result }}"
             echo "  - python_tests_reference: ${{ needs.python_tests_reference.result }} (continue-on-error)"

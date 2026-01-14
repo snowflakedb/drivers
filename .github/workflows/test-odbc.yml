@@ -138,10 +138,10 @@ jobs:
             exit 0
           fi
           
-          # Check if tests failed
-          if [[ "${{ needs.odbc_tests_reference.result }}" == "failure" ]] || \
-             [[ "${{ needs.odbc_tests.result }}" == "failure" ]]; then
-            echo "✗ ODBC tests were RUN and FAILED"
+          # Check if tests failed or were cancelled
+          if [[ "${{ needs.odbc_tests_reference.result }}" =~ ^(failure|cancelled)$ ]] || \
+             [[ "${{ needs.odbc_tests.result }}" =~ ^(failure|cancelled)$ ]]; then
+            echo "✗ ODBC tests were RUN and FAILED or CANCELLED"
             echo "  - odbc_tests_reference: ${{ needs.odbc_tests_reference.result }}"
             echo "  - odbc_tests: ${{ needs.odbc_tests.result }}"
             exit 1

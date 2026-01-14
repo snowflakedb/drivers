@@ -78,9 +78,9 @@ jobs:
             exit 0
           fi
           
-          # Check if tests failed
-          if [[ "${{ needs.jdbc_tests.result }}" == "failure" ]]; then
-            echo "✗ JDBC tests were RUN and FAILED"
+          # Check if tests failed or were cancelled
+          if [[ "${{ needs.jdbc_tests.result }}" =~ ^(failure|cancelled)$ ]]; then
+            echo "✗ JDBC tests were RUN and FAILED or CANCELLED"
             exit 1
           fi
           
