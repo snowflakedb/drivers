@@ -47,7 +47,7 @@ trait ArrowWriter {
     fn arrow_type(&self) -> DataType;
     fn write(&self, binding: &ParameterBinding) -> Result<Arc<dyn Array>, ArrowBindingError> {
         match binding.value_type {
-            CDataType::Long => self.write_long(binding),
+            CDataType::Long | CDataType::SLong => self.write_long(binding),
             CDataType::Char => self.write_char(binding),
             _ => Err(ArrowBindingError::UnsupportedCDataType(binding.value_type)),
         }

@@ -1,6 +1,6 @@
 use crate::api::api_utils::cstr_to_string;
 use crate::api::error::{
-    ArrowArrayStreamReaderCreationSnafu, ArrowBindingSnafu, DisconnectedSnafu,
+    ArrowArrayStreamReaderCreationSnafu, ArrowBindingSnafu, DisconnectedSnafu, InvalidOptionSnafu,
     InvalidParameterNumberSnafu, Required,
 };
 use crate::api::{ConnectionState, OdbcResult, ParameterBinding, StatementState, stmt_from_handle};
@@ -214,4 +214,33 @@ pub fn bind_parameter(
         parameter_number
     );
     Ok(())
+}
+
+pub fn free_stmt(statement_handle: sql::Handle, option: sql::SmallInt) -> OdbcResult<()> {
+    let option = match option {
+        0 => sql::FreeStmtOption::Close,
+        2 => sql::FreeStmtOption::Unbind,
+        3 => sql::FreeStmtOption::ResetParams,
+        _ => return InvalidOptionSnafu { option }.fail(),
+    };
+    tracing::debug!(
+        "free_stmt: statement_handle={:?}, option={:?}",
+        statement_handle,
+        option
+    );
+    let stmt = stmt_from_handle(statement_handle);
+    match option {
+        sql::FreeStmtOption::Close => {
+            stmt.state = StatementState::Done.into();
+            Ok(())
+        }
+        sql::FreeStmtOption::Unbind => {
+            stmt.parameter_bindings.clear();
+            Ok(())
+        }
+        sql::FreeStmtOption::ResetParams => {
+            stmt.parameter_bindings.clear();
+            Ok(())
+        }
+    }
 }

@@ -21,6 +21,13 @@ use snafu::{Location, Snafu, location};
 #[derive(Snafu, Debug)]
 #[snafu(visibility(pub))]
 pub enum OdbcError {
+    #[snafu(display("Invalid option: {option}"))]
+    InvalidOption {
+        option: sql::SmallInt,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
     #[snafu(display("Connection is disconnected"))]
     Disconnected {
         #[snafu(implicit)]
@@ -247,6 +254,7 @@ impl OdbcError {
 
     pub fn to_sql_state(&self) -> SqlState {
         match self {
+            OdbcError::InvalidOption { .. } => SqlState::GeneralError,
             OdbcError::Disconnected { .. } => SqlState::ConnectionDoesNotExist,
             OdbcError::InvalidHandle { .. } => SqlState::InvalidConnectionName,
             OdbcError::InvalidRecordNumber { .. } => SqlState::InvalidDescriptorIndex,
