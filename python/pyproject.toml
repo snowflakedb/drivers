@@ -73,8 +73,7 @@ test = [
     "zstandard",
 ]
 dev = [
-    "black",
-    "flake8",
+    "ruff",
     "mypy",
 ]
 
@@ -116,36 +115,6 @@ exclude_lines = [
     "if __name__ == .__main__.:",
     "class .*\\bProtocol\\):",
     "@(abc\\.)?abstractmethod",
-]
-
-[tool.black]
-line-length = 88
-target-version = ['py39']
-include = '\.pyi?$'
-extend-exclude = '''
-/(
-  # directories
-  \.eggs
-  | \.git
-  | \.hg
-  | \.mypy_cache
-  | \.tox
-  | \.venv
-  | build
-  | dist
-)/
-'''
-
-[tool.flake8]
-max-line-length = 88
-extend-ignore = ["E203", "W503"]
-exclude = [
-    ".git",
-    "__pycache__",
-    "build",
-    "dist",
-    ".tox",
-    ".venv",
 ]
 
 [tool.mypy]
