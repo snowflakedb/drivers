@@ -20,24 +20,18 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 
 # Install Hatch
 uv tool install hatch
+
+# Install the driver
+uv pip install -e ".[dev]"
 ```
 
-Build the Rust core library:
-```bash
-hatch run build-core
-```
+**Note:** The Rust core library is built automatically during the build process via a custom Hatch build hook. You don't need to build it manually.
 
 ### Environment Variables
 
 **IMPORTANT:** Set up required environment variables before running tests:
 
 ```bash
-# Easy way (recommended) - use the setup script:
-source scripts/setup_env.sh
-
-# Or manually with auto-detection:
-eval $(python scripts/detect_core_path.py --export)
-
 # Or set manually:
 export PARAMETER_PATH="$(pwd)/../parameters.json"
 ```
@@ -46,8 +40,6 @@ You can verify the detected path with:
 ```bash
 hatch run show-paths
 ```
-
-**Note:** Unlike the old Makefile which auto-detected paths, you must explicitly set `PARAMETER_PATH` before running tests. If not set, it will be an empty string, which will cause test failures.
 
 ## Testing
 

@@ -114,3 +114,6 @@ core.*
 
 # Compiled Cython (auto-generated from .pyx files)
 src/snowflake/ud_connector/nanoarrow_cpp/ArrowIterator/arrow_batch_iterator.cpp
+
+# Driver core
+src/snowflake/ud_connector/_core/**

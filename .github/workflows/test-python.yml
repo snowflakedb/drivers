@@ -44,9 +44,9 @@ jobs:
       - name: Install Hatch
         run: uv tool install hatch
 
-      - name: Build Rust core library
+      - name: Build python and rust core library
         working-directory: ./python
-        run: hatch run build-core
+        run: hatch build
 
       - name: Upload Rust artifacts
         uses: actions/upload-artifact@v4

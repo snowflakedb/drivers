@@ -6,7 +6,7 @@
 - Python 3.9+
 - [uv](https://docs.astral.sh/uv/) package manager
 - [Hatch](https://hatch.pypa.io/) build tool
-- Rust core library: `../target/debug/libsf_core.{so,dylib}` (built with `hatch run build-core`)
+- Rust toolchain (core library is built automatically during the build process)
 - Credentials: `../parameters.json` (for integration tests)
 
 ### Installation
@@ -18,12 +18,11 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 # Install Hatch
 uv tool install hatch
 
-# Build Rust core library
-hatch run build-core
-
 # Set up environment variables (REQUIRED for tests)
 source scripts/setup_env.sh
 ```
+
+**Note:** The Rust core library is built automatically during the build process via a custom Hatch build hook.
 
 ### Environment Variables
 
@@ -113,8 +112,7 @@ hatch run precommit:fix      # Auto-fix formatting and linting
 ### Build
 
 ```bash
-hatch build              # Build wheel and sdist
-hatch run build-core     # Build Rust core library
+hatch build              # Build wheel and sdist (automatically builds Rust core library)
 ```
 
 ## Common Pytest Options
