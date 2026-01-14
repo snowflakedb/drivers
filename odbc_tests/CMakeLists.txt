@@ -30,6 +30,8 @@ if (NOT DEFINED DRIVER_TYPE)
   set(DRIVER_TYPE "NEW")
 endif()
 
+set(CATCH_TAGS "")
+
 if (DRIVER_TYPE STREQUAL "OLD")
   set(CATCH_TAGS "~[new_odbc]")
 endif()
@@ -38,6 +40,11 @@ if (DRIVER_TYPE STREQUAL "NEW")
   set(CATCH_TAGS "")
 endif()
 
+if (DEFINED ENV{CATCH_TAGS})
+  set(CATCH_TAGS $ENV{CATCH_TAGS})
+endif()
+
+message(STATUS "CATCH_TAGS: ${CATCH_TAGS}")
 
 # Find odbc library
 find_package(ODBC REQUIRED)
