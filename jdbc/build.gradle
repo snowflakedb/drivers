@@ -2,6 +2,8 @@ plugins {
     id 'java-library'
     id 'maven-publish'
     id 'jacoco'
+    id 'checkstyle'
+    id 'com.diffplug.spotless' version '6.13.0' // oldest version supporting Java 8
 }
 
 group = 'com.snowflake'
@@ -29,13 +31,40 @@ dependencies {
     implementation 'com.google.protobuf:protobuf-java:4.32.1'
 }
 
+spotless {
+    java {
+        removeUnusedImports()
+
+        googleJavaFormat('1.15.0')
+
+        target 'src/main/java/**/*.java', 'src/test/java/**/*.java'
+        targetExclude 'src/**/protobuf_gen/**/*.java'
+    }
+}
+
+checkstyle {
+    toolVersion = '10.12.4'
+    configFile = file('config/checkstyle/checkstyle.xml')
+    ignoreFailures = false
+    showViolations = true
+}
+
+tasks.withType(Checkstyle).configureEach {
+    // Don't check generated sources
+    exclude '**/protobuf_gen/**'
+    reports {
+        xml.required = true
+        html.required = true
+    }
+}
+
 sourceSets {
     main {
         java {
-            srcDirs = ['src/java']
+            srcDirs = ['src/main/java']
         }
         resources {
-            srcDirs = ['src/resources']
+            srcDirs = ['src/main/resources']
         }
     }
     test {
@@ -99,6 +128,8 @@ publishing {
 
 test {
     useJUnit()
+    finalizedBy jacocoTestReport
+
     if (JavaVersion.current().isJava9Compatible()) {
         jvmArgs '--add-opens=java.base/java.nio=org.apache.arrow.memory.core,ALL-UNNAMED'
     }
@@ -131,12 +162,7 @@ test {
 }
 
 jacoco {
-    toolVersion = "0.8.11"
-}
-
-test {
-    useJUnit()
-    finalizedBy jacocoTestReport
+    toolVersion = "0.8.12"
 }
 
 jacocoTestReport {

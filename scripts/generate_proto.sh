@@ -39,5 +39,5 @@ which protoc
 echo "--- Generating proto ---"
 cargo run --bin proto_generator -- --generator rust --input protobuf/database_driver_v1.proto --output sf_core/src/protobuf_gen/
 cargo run --bin proto_generator -- --generator python --input protobuf/database_driver_v1.proto --output python/src/snowflake/ud_connector/_internal/protobuf_gen/
-cargo run --bin proto_generator -- --generator java --input protobuf/database_driver_v1.proto --output jdbc/src/java/
+cargo run --bin proto_generator -- --generator java --input protobuf/database_driver_v1.proto --output jdbc/src/main/java/
 
