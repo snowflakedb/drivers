@@ -11,9 +11,7 @@ jobs:
 
   test-data:
     needs: detect-changes
-    if: |
-      github.event_name == 'push' ||
-      needs.detect-changes.outputs.docs_only == 'false'
+    if: github.event_name == 'push' || needs.detect-changes.outputs.docs_only == 'false'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -53,10 +51,7 @@ jobs:
 
   proto:
     needs: detect-changes
-    if: |
-      github.event_name == 'push' ||
-      needs.detect-changes.outputs.core == 'true' ||
-      needs.detect-changes.outputs.shared == 'true'
+    if: github.event_name == 'push' || needs.detect-changes.outputs.run_rust_core == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -72,9 +67,7 @@ jobs:
 
   tests-format-validator:
     needs: detect-changes
-    if: |
-      github.event_name == 'push' ||
-      needs.detect-changes.outputs.docs_only == 'false'
+    if: github.event_name == 'push' || needs.detect-changes.outputs.docs_only == 'false'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository

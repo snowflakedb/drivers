@@ -15,11 +15,7 @@ jobs:
 
   odbc_tests_reference:
     needs: detect-changes
-    if: |
-      github.event_name == 'push' ||
-      needs.detect-changes.outputs.odbc == 'true' ||
-      needs.detect-changes.outputs.core == 'true' ||
-      needs.detect-changes.outputs.shared == 'true'
+    if: github.event_name == 'push' || needs.detect-changes.outputs.run_odbc == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -59,11 +55,7 @@ jobs:
 
   odbc_tests:
     needs: detect-changes
-    if: |
-      github.event_name == 'push' ||
-      needs.detect-changes.outputs.odbc == 'true' ||
-      needs.detect-changes.outputs.core == 'true' ||
-      needs.detect-changes.outputs.shared == 'true'
+    if: github.event_name == 'push' || needs.detect-changes.outputs.run_odbc == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -131,6 +123,7 @@ jobs:
           fail_ci_if_error: false
 
   # Summary job that always runs to provide consistent status for branch protection
+  # Configure branch protection to require "odbc-status" instead of "odbc_tests (ubuntu-latest)"
   odbc-status:
     needs: [detect-changes, odbc_tests_reference, odbc_tests]
     if: always()
@@ -143,9 +136,7 @@ jobs:
           # Check if tests were skipped
           if [[ "${{ needs.odbc_tests.result }}" == "skipped" ]]; then
             echo "✓ ODBC tests were SKIPPED (no relevant changes detected)"
-            echo "  - odbc changed: ${{ needs.detect-changes.outputs.odbc }}"
-            echo "  - core changed: ${{ needs.detect-changes.outputs.core }}"
-            echo "  - shared changed: ${{ needs.detect-changes.outputs.shared }}"
+            echo "  - run_odbc: ${{ needs.detect-changes.outputs.run_odbc }}"
             exit 0
           fi
           

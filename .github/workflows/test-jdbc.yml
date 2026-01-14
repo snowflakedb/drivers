@@ -14,11 +14,7 @@ jobs:
 
   jdbc_tests:
     needs: detect-changes
-    if: |
-      github.event_name == 'push' ||
-      needs.detect-changes.outputs.jdbc == 'true' ||
-      needs.detect-changes.outputs.core == 'true' ||
-      needs.detect-changes.outputs.shared == 'true'
+    if: github.event_name == 'push' || needs.detect-changes.outputs.run_jdbc == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -67,6 +63,7 @@ jobs:
           fail_ci_if_error: false
 
   # Summary job that always runs to provide consistent status for branch protection
+  # Configure branch protection to require "jdbc-status" instead of "jdbc_tests (ubuntu-latest, 8)"
   jdbc-status:
     needs: [detect-changes, jdbc_tests]
     if: always()
@@ -79,9 +76,7 @@ jobs:
           # Check if tests were skipped
           if [[ "${{ needs.jdbc_tests.result }}" == "skipped" ]]; then
             echo "✓ JDBC tests were SKIPPED (no relevant changes detected)"
-            echo "  - jdbc changed: ${{ needs.detect-changes.outputs.jdbc }}"
-            echo "  - core changed: ${{ needs.detect-changes.outputs.core }}"
-            echo "  - shared changed: ${{ needs.detect-changes.outputs.shared }}"
+            echo "  - run_jdbc: ${{ needs.detect-changes.outputs.run_jdbc }}"
             exit 0
           fi
           

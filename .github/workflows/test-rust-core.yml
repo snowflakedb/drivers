@@ -14,10 +14,7 @@ jobs:
 
   format:
     needs: detect-changes
-    if: |
-      github.event_name == 'push' ||
-      needs.detect-changes.outputs.core == 'true' ||
-      needs.detect-changes.outputs.shared == 'true'
+    if: github.event_name == 'push' || needs.detect-changes.outputs.run_rust_core == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -31,10 +28,7 @@ jobs:
 
   clippy:
     needs: detect-changes
-    if: |
-      github.event_name == 'push' ||
-      needs.detect-changes.outputs.core == 'true' ||
-      needs.detect-changes.outputs.shared == 'true'
+    if: github.event_name == 'push' || needs.detect-changes.outputs.run_rust_core == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -48,10 +42,7 @@ jobs:
 
   test:
     needs: detect-changes
-    if: |
-      github.event_name == 'push' ||
-      needs.detect-changes.outputs.core == 'true' ||
-      needs.detect-changes.outputs.shared == 'true'
+    if: github.event_name == 'push' || needs.detect-changes.outputs.run_rust_core == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -127,8 +118,7 @@ jobs:
           # Check if tests were skipped
           if [[ "${{ needs.test.result }}" == "skipped" ]]; then
             echo "✓ Rust Core tests were SKIPPED (no relevant changes detected)"
-            echo "  - core changed: ${{ needs.detect-changes.outputs.core }}"
-            echo "  - shared changed: ${{ needs.detect-changes.outputs.shared }}"
+            echo "  - run_rust_core: ${{ needs.detect-changes.outputs.run_rust_core }}"
             exit 0
           fi
           

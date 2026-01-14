@@ -26,11 +26,7 @@ jobs:
   # Build Rust core library once and share across Python jobs
   build_rust_core:
     needs: detect-changes
-    if: |
-      github.event_name == 'push' ||
-      needs.detect-changes.outputs.python == 'true' ||
-      needs.detect-changes.outputs.core == 'true' ||
-      needs.detect-changes.outputs.shared == 'true'
+    if: github.event_name == 'push' || needs.detect-changes.outputs.run_python == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -61,11 +57,7 @@ jobs:
   # Combined unit + integration tests with universal connector
   python_tests:
     needs: [detect-changes, build_rust_core]
-    if: |
-      github.event_name == 'push' ||
-      needs.detect-changes.outputs.python == 'true' ||
-      needs.detect-changes.outputs.core == 'true' ||
-      needs.detect-changes.outputs.shared == 'true'
+    if: github.event_name == 'push' || needs.detect-changes.outputs.run_python == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -141,11 +133,7 @@ jobs:
   # Integration tests only with reference connector (for comparison)
   python_tests_reference:
     needs: [detect-changes, build_rust_core]
-    if: |
-      github.event_name == 'push' ||
-      needs.detect-changes.outputs.python == 'true' ||
-      needs.detect-changes.outputs.core == 'true' ||
-      needs.detect-changes.outputs.shared == 'true'
+    if: github.event_name == 'push' || needs.detect-changes.outputs.run_python == 'true'
     runs-on: ubuntu-latest
     continue-on-error: true  # Reference tests expected to fail due to behavioral differences
     steps:
@@ -208,10 +196,8 @@ jobs:
     needs: [detect-changes, python_tests, python_tests_reference]
     if: |
       always() &&
-      (github.event_name == 'push' ||
-       needs.detect-changes.outputs.python == 'true' ||
-       needs.detect-changes.outputs.core == 'true' ||
-       needs.detect-changes.outputs.shared == 'true')
+      needs.python_tests.result != 'skipped' &&
+      needs.python_tests_reference.result != 'skipped'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -247,6 +233,7 @@ jobs:
         working-directory: python
 
   # Summary job that always runs to provide consistent status for branch protection
+  # Configure branch protection to require "python-status" instead of "python_tests (ubuntu-latest, 3.x)"
   python-status:
     needs: [detect-changes, build_rust_core, python_tests, python_tests_reference, python_compare_results]
     if: always()
@@ -259,21 +246,27 @@ jobs:
           # Check if tests were skipped
           if [[ "${{ needs.python_tests.result }}" == "skipped" ]]; then
             echo "✓ Python tests were SKIPPED (no relevant changes detected)"
-            echo "  - python changed: ${{ needs.detect-changes.outputs.python }}"
-            echo "  - core changed: ${{ needs.detect-changes.outputs.core }}"
-            echo "  - shared changed: ${{ needs.detect-changes.outputs.shared }}"
+            echo "  - run_python: ${{ needs.detect-changes.outputs.run_python }}"
             exit 0
           fi
           
-          # Check if tests failed
+          # Check if critical jobs failed
+          # Note: python_tests_reference has continue-on-error:true, so we don't fail on it
           if [[ "${{ needs.build_rust_core.result }}" == "failure" ]] || \
-             [[ "${{ needs.python_tests.result }}" == "failure" ]]; then
-            echo "✗ Python tests were RUN and FAILED"
+             [[ "${{ needs.python_tests.result }}" == "failure" ]] || \
+             [[ "${{ needs.python_compare_results.result }}" == "failure" ]]; then
+            echo "✗ Python CI FAILED"
             echo "  - build_rust_core: ${{ needs.build_rust_core.result }}"
             echo "  - python_tests: ${{ needs.python_tests.result }}"
+            echo "  - python_tests_reference: ${{ needs.python_tests_reference.result }} (continue-on-error)"
+            echo "  - python_compare_results: ${{ needs.python_compare_results.result }}"
             exit 1
           fi
           
           # Tests ran and passed
-          echo "✓ Python tests were RUN and PASSED"
+          echo "✓ Python CI PASSED"
+          echo "  - build_rust_core: ${{ needs.build_rust_core.result }}"
+          echo "  - python_tests: ${{ needs.python_tests.result }}"
+          echo "  - python_tests_reference: ${{ needs.python_tests_reference.result }} (continue-on-error)"
+          echo "  - python_compare_results: ${{ needs.python_compare_results.result }}"
           exit 0

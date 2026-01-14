@@ -3,6 +3,7 @@ name: Detect Changes
 on:
   workflow_call:
     outputs:
+      # Raw detection outputs
       core:
         description: "True if core Rust code changed"
         value: ${{ jobs.detect.outputs.core }}
@@ -15,23 +16,42 @@ on:
       python:
         description: "True if Python wrapper code changed"
         value: ${{ jobs.detect.outputs.python }}
-      docs_only:
-        description: "True if only documentation changed"
-        value: ${{ jobs.detect.outputs.docs_only }}
       shared:
         description: "True if shared config/build files changed"
         value: ${{ jobs.detect.outputs.shared }}
+      docs_only:
+        description: "True if only documentation changed"
+        value: ${{ jobs.detect.outputs.docs_only }}
+      # Pre-computed "should run" outputs (DRY helper)
+      run_jdbc:
+        description: "True if JDBC tests should run (jdbc OR core OR shared changed)"
+        value: ${{ jobs.detect.outputs.run_jdbc }}
+      run_odbc:
+        description: "True if ODBC tests should run (odbc OR core OR shared changed)"
+        value: ${{ jobs.detect.outputs.run_odbc }}
+      run_python:
+        description: "True if Python tests should run (python OR core OR shared changed)"
+        value: ${{ jobs.detect.outputs.run_python }}
+      run_rust_core:
+        description: "True if Rust Core tests should run (core OR shared changed)"
+        value: ${{ jobs.detect.outputs.run_rust_core }}
 
 jobs:
   detect:
     runs-on: ubuntu-latest
     outputs:
+      # Raw outputs
       core: ${{ steps.filter.outputs.core }}
       jdbc: ${{ steps.filter.outputs.jdbc }}
       odbc: ${{ steps.filter.outputs.odbc }}
       python: ${{ steps.filter.outputs.python }}
-      docs_only: ${{ steps.docs_check.outputs.docs_only }}
       shared: ${{ steps.filter.outputs.shared }}
+      docs_only: ${{ steps.computed.outputs.docs_only }}
+      # Pre-computed "should run" outputs
+      run_jdbc: ${{ steps.computed.outputs.run_jdbc }}
+      run_odbc: ${{ steps.computed.outputs.run_odbc }}
+      run_python: ${{ steps.computed.outputs.run_python }}
+      run_rust_core: ${{ steps.computed.outputs.run_rust_core }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -65,6 +85,9 @@ jobs:
               - 'Cargo.lock'
               - 'build_common.rs'
               - 'rust-toolchain.toml'
+              - 'tests/**'
+              - '.github/workflows/**'
+              - 'scripts/**'
             docs_only:
               - '**/*.md'
               - 'LICENSE'
@@ -73,10 +96,10 @@ jobs:
               - '!**/requirements.txt'
               - '!**/CMakeLists.txt'
 
-      - name: Check if docs only
-        id: docs_check
+      - name: Compute combined conditions
+        id: computed
         run: |
-          # If docs_only is true but any other filter is also true, then it's not docs-only
+          # Docs only: true only if docs changed AND nothing else changed
           if [[ "${{ steps.filter.outputs.docs_only }}" == "true" ]] && \
              [[ "${{ steps.filter.outputs.core }}" == "false" ]] && \
              [[ "${{ steps.filter.outputs.jdbc }}" == "false" ]] && \
@@ -88,10 +111,46 @@ jobs:
             echo "docs_only=false" >> $GITHUB_OUTPUT
           fi
 
+          # JDBC should run if: jdbc OR core OR shared changed
+          if [[ "${{ steps.filter.outputs.jdbc }}" == "true" ]] || \
+             [[ "${{ steps.filter.outputs.core }}" == "true" ]] || \
+             [[ "${{ steps.filter.outputs.shared }}" == "true" ]]; then
+            echo "run_jdbc=true" >> $GITHUB_OUTPUT
+          else
+            echo "run_jdbc=false" >> $GITHUB_OUTPUT
+          fi
+
+          # ODBC should run if: odbc OR core OR shared changed
+          if [[ "${{ steps.filter.outputs.odbc }}" == "true" ]] || \
+             [[ "${{ steps.filter.outputs.core }}" == "true" ]] || \
+             [[ "${{ steps.filter.outputs.shared }}" == "true" ]]; then
+            echo "run_odbc=true" >> $GITHUB_OUTPUT
+          else
+            echo "run_odbc=false" >> $GITHUB_OUTPUT
+          fi
+
+          # Python should run if: python OR core OR shared changed
+          if [[ "${{ steps.filter.outputs.python }}" == "true" ]] || \
+             [[ "${{ steps.filter.outputs.core }}" == "true" ]] || \
+             [[ "${{ steps.filter.outputs.shared }}" == "true" ]]; then
+            echo "run_python=true" >> $GITHUB_OUTPUT
+          else
+            echo "run_python=false" >> $GITHUB_OUTPUT
+          fi
+
+          # Rust Core should run if: core OR shared changed
+          if [[ "${{ steps.filter.outputs.core }}" == "true" ]] || \
+             [[ "${{ steps.filter.outputs.shared }}" == "true" ]]; then
+            echo "run_rust_core=true" >> $GITHUB_OUTPUT
+          else
+            echo "run_rust_core=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Output summary
         run: |
           echo "### Change Detection Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
+          echo "#### Files Changed" >> $GITHUB_STEP_SUMMARY
           echo "| Component | Changed |" >> $GITHUB_STEP_SUMMARY
           echo "|-----------|---------|" >> $GITHUB_STEP_SUMMARY
           echo "| Core | ${{ steps.filter.outputs.core }} |" >> $GITHUB_STEP_SUMMARY
@@ -99,5 +158,12 @@ jobs:
           echo "| ODBC | ${{ steps.filter.outputs.odbc }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Python | ${{ steps.filter.outputs.python }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Shared | ${{ steps.filter.outputs.shared }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Docs Only | ${{ steps.docs_check.outputs.docs_only }} |" >> $GITHUB_STEP_SUMMARY
-
+          echo "| Docs Only | ${{ steps.computed.outputs.docs_only }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "#### Tests to Run" >> $GITHUB_STEP_SUMMARY
+          echo "| Test Suite | Should Run |" >> $GITHUB_STEP_SUMMARY
+          echo "|------------|------------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Rust Core | ${{ steps.computed.outputs.run_rust_core }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| JDBC | ${{ steps.computed.outputs.run_jdbc }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| ODBC | ${{ steps.computed.outputs.run_odbc }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Python | ${{ steps.computed.outputs.run_python }} |" >> $GITHUB_STEP_SUMMARY
