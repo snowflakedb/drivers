@@ -8,6 +8,20 @@ Wiremock is used to mock Snowflake server responses for integration tests, allow
 - Test client behavior without connecting to real Snowflake instances
 - Test error handling and edge cases
 
+## Host Requirements
+
+Wiremock is run via the **standalone JAR**, so your machine must have **Java installed** and `java` available on `PATH`:
+
+```bash
+java -version
+```
+
+macOS (Homebrew):
+
+```bash
+brew install --cask temurin
+```
+
 ## Shared Infrastructure
 
 The Wiremock setup is **shared across all drivers**:

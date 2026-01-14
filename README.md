@@ -24,6 +24,14 @@ All integration tests require access to Snowflake credentials. To set up the req
 
 This will create a `parameters.json` file in the project root containing test credentials.
 
+### Environment: `PARAMETER_PATH`
+
+Some test suites read credentials from `parameters.json` via the `PARAMETER_PATH` environment variable.
+
+```bash
+export PARAMETER_PATH="$(pwd)/parameters.json"
+```
+
 **Alternative:** If you don't have 1Password CLI installed you can provide encryption password via environment variable:
 ```bash
 PARAMETERS_SECRET=<encryption-password> ./scripts/decode_secrets.sh 
@@ -57,6 +65,21 @@ cargo build
 # Or build specific packages
 cargo build --package sf_core
 cargo build --package jdbc_bridge
+```
+
+### 3. Java (required for Wiremock-based tests)
+
+Some integration tests use the Wiremock standalone JAR (started via `java -jar ...`) to mock Snowflake endpoints.
+To run those tests, make sure **Java is installed and `java` is available on your PATH**:
+
+```bash
+java -version
+```
+
+On macOS with Homebrew:
+
+```bash
+brew install --cask temurin
 ```
 
 ## Driver-Specific Testing

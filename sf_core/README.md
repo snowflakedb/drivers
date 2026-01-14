@@ -7,11 +7,11 @@ The core Rust library that powers the universal driver. This library provides th
 ### Prerequisites
 
 See [Prerequisites](../README.md#prerequisites) section in the top-level README for required setup steps.
+Note: some `sf_core` integration tests use Wiremock (standalone JAR) and require **Java** installed on the host.
 
 ### Running Tests
 
 ```bash
-# Set required environment variable
 export PARAMETER_PATH=$(pwd)/parameters.json
 
 # Run all tests
