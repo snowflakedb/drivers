@@ -3,6 +3,7 @@
 
 from cpython.ref cimport PyObject
 from libc.stdint cimport int64_t
+from libcpp.memory cimport unique_ptr
 
 
 # Import ReturnVal from C++ (defined in CArrowIterator.hpp)
@@ -15,14 +16,14 @@ cdef extern from "CArrowIterator.hpp" namespace "sf":
 # Import the C++ stream iterator
 cdef extern from "CArrowStreamIterator.hpp" namespace "sf":
     cdef cppclass CArrowStreamIterator:
-        CArrowStreamIterator(
+        @staticmethod
+        unique_ptr[CArrowStreamIterator] from_stream(
             int64_t stream_ptr,
             PyObject* context,
-            PyObject* use_numpy,
-            PyObject* use_dict_result
+            bint use_numpy,
+            bint use_dict_result
         )
         ReturnVal next()
-        ReturnVal checkInitializationStatus()
 
 
 cdef class ArrowStreamIterator:
@@ -33,7 +34,7 @@ cdef class ArrowStreamIterator:
     uses Py_BEGIN_ALLOW_THREADS/Py_END_ALLOW_THREADS to release the GIL during
     potentially blocking I/O operations (e.g., fetching data chunks from S3).
     """
-    cdef CArrowStreamIterator* iterator
+    cdef unique_ptr[CArrowStreamIterator] iterator
     cdef object arrow_context
     
     def __cinit__(
@@ -58,28 +59,18 @@ cdef class ArrowStreamIterator:
             If True, use numpy types for numeric data
         """
         self.arrow_context = arrow_context
-        self.iterator = NULL
         
-        # Declare ReturnVal variable at function scope (Cython requirement)
-        cdef ReturnVal init_ret
-        
-        # Create the C++ stream iterator
-        self.iterator = new CArrowStreamIterator(
+        # Create the C++ stream iterator using factory method
+        self.iterator = CArrowStreamIterator.from_stream(
             stream_ptr,
             <PyObject*>arrow_context,
-            <PyObject*>use_numpy,
-            <PyObject*>use_dict_result
+            use_numpy,
+            use_dict_result
         )
         
-        # Check initialization
-        init_ret = self.iterator.checkInitializationStatus()
-        if init_ret.exception != NULL:
-            error_msg = <object>init_ret.exception
-            raise RuntimeError(f"Failed to initialize stream iterator: {error_msg}")
-    
-    def __dealloc__(self):
-        if self.iterator != NULL:
-            del self.iterator
+        # Check if creation failed (nullptr returned)
+        if self.iterator.get() == NULL:
+            raise RuntimeError("Failed to initialize stream iterator")
     
     def __iter__(self):
         return self
@@ -88,7 +79,7 @@ cdef class ArrowStreamIterator:
         """Get next row from stream."""
         cdef ReturnVal ret
         
-        ret = self.iterator.next()
+        ret = self.iterator.get().next()
         
         # Check for exception
         if ret.exception != NULL:

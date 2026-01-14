@@ -21,19 +21,16 @@ namespace sf {
 class CArrowStreamIterator {
  public:
   /**
-   * Constructor - takes ArrowArrayStream pointer directly
+   * Factory method to create a CArrowStreamIterator from a stream pointer.
+   * Validates the stream and reads the schema.
    * @param stream_ptr Pointer to ArrowArrayStream (as integer from Python)
    * @param context Python context object for conversions
    * @param use_numpy Whether to use numpy types
    * @param use_dict_result Whether to return dicts instead of tuples
+   * @return Unique pointer to the iterator, or nullptr on error (with Python exception set)
    */
-  CArrowStreamIterator(int64_t stream_ptr, PyObject* context, PyObject* use_numpy,
-                       PyObject* use_dict_result);
-
-  /**
-   * Destructor - releases the stream
-   */
-  virtual ~CArrowStreamIterator();
+  static std::unique_ptr<CArrowStreamIterator> from_stream(int64_t stream_ptr, PyObject* context,
+                                                           bool use_numpy, bool use_dict_result);
 
   /**
    * Get the next row as a Python tuple or dict
@@ -41,11 +38,13 @@ class CArrowStreamIterator {
    */
   ReturnVal next();
 
+ private:
   /**
-   * Check if initialization was successful
-   * @return ReturnVal indicating success or error
+   * Private constructor - use from_stream() factory method instead.
+   * Only initializes member variables without validation.
    */
-  ReturnVal checkInitializationStatus();
+  CArrowStreamIterator(ArrowArrayStream* stream, PyObject* context, bool use_numpy,
+                       bool use_dict_result);
 
  protected:
   /**
@@ -69,11 +68,8 @@ class CArrowStreamIterator {
    */
   void createDictRowPyObject();
 
-  /** The Arrow stream we're reading from */
-  ArrowArrayStream* m_stream;
-
-  /** Whether we own the stream (and should release it) */
-  bool m_ownsStream;
+  /** The Arrow stream we're reading from (owned by this iterator) */
+  std::unique_ptr<ArrowArrayStream, void (*)(ArrowArrayStream*)> m_stream;
 
   /** Schema read from stream */
   nanoarrow::UniqueSchema m_schema;
@@ -113,9 +109,6 @@ class CArrowStreamIterator {
 
   /** Current Python exception if any */
   py::UniqueRef m_currentPyException;
-
-  /** Whether initialization succeeded */
-  bool m_initialized;
 
   /** Whether stream is exhausted */
   bool m_streamExhausted;

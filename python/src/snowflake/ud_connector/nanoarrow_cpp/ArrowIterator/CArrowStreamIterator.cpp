@@ -6,57 +6,66 @@
 
 namespace sf {
 
+
+
 Logger* CArrowStreamIterator::logger = new Logger("snowflake.connector.CArrowStreamIterator");
 
-CArrowStreamIterator::CArrowStreamIterator(int64_t stream_ptr, PyObject* context,
-                                           PyObject* use_numpy, PyObject* use_dict_result)
-    : m_stream(reinterpret_cast<ArrowArrayStream*>(stream_ptr)),
-      m_ownsStream(true),
-      m_currentRowIndex(0),
-      m_rowCount(0),
-      m_columnCount(0),
-      m_context(context),
-      m_useNumpy(use_numpy == Py_True),
-      m_useDictResult(use_dict_result == Py_True),
-      m_initialized(false),
-      m_streamExhausted(false),
-      m_totalRowsReturned(0) {
-  int returnCode = 0;
+std::unique_ptr<CArrowStreamIterator> CArrowStreamIterator::from_stream(int64_t stream_ptr,
+                                                                        PyObject* context,
+                                                                        bool use_numpy,
+                                                                        bool use_dict_result) {
+  auto* stream = reinterpret_cast<ArrowArrayStream*>(stream_ptr);
 
   // Validate stream pointer
-  if (m_stream == nullptr || m_stream->release == nullptr) {
+  if (stream == nullptr || stream->release == nullptr) {
     std::string errorInfo = "[Snowflake Exception] Invalid ArrowArrayStream pointer";
     logger->error(__FILE__, __func__, __LINE__, errorInfo.c_str());
     PyErr_SetString(PyExc_Exception, errorInfo.c_str());
-    return;
+    return nullptr;
   }
 
+  // Create the iterator (constructor only sets attributes)
+  auto iterator = std::unique_ptr<CArrowStreamIterator>(
+      new CArrowStreamIterator(stream, context, use_numpy, use_dict_result));
+
   // Get schema from stream
-  returnCode = m_stream->get_schema(m_stream, m_schema.get());
+  int returnCode = stream->get_schema(stream, iterator->m_schema.get());
   if (returnCode != 0) {
-    const char* error_msg = m_stream->get_last_error(m_stream);
+    const char* error_msg = stream->get_last_error(stream);
     std::string errorInfo = Logger::formatString(
         "[Snowflake Exception] error getting schema from stream: %s, error code: %d",
         error_msg ? error_msg : "unknown", returnCode);
     logger->error(__FILE__, __func__, __LINE__, errorInfo.c_str());
     PyErr_SetString(PyExc_Exception, errorInfo.c_str());
-    return;
+    return nullptr;
   }
 
-  m_columnCount = m_schema->n_children;
-  logger->debug(__FILE__, __func__, __LINE__,
-                "CArrowStreamIterator initialized with %lld columns", m_columnCount);
+  iterator->m_columnCount = iterator->m_schema->n_children;
+  logger->debug(__FILE__, __func__, __LINE__, "CArrowStreamIterator initialized with %lld columns",
+                iterator->m_columnCount);
 
-  m_initialized = true;
+  return iterator;
 }
 
-CArrowStreamIterator::~CArrowStreamIterator() {
-  // Release the stream if we own it
-  if (m_ownsStream && m_stream != nullptr && m_stream->release != nullptr) {
-    m_stream->release(m_stream);
-    m_stream = nullptr;
+namespace {
+  void releaseArrowArrayStream(ArrowArrayStream* stream) {
+    if (stream != nullptr && stream->release != nullptr) {
+      stream->release(stream);
+    }
   }
-}
+}  // namespace
+
+CArrowStreamIterator::CArrowStreamIterator(ArrowArrayStream* stream, PyObject* context,
+                                           bool use_numpy, bool use_dict_result)
+    : m_stream(stream, releaseArrowArrayStream),
+      m_currentRowIndex(0),
+      m_rowCount(0),
+      m_columnCount(0),
+      m_context(context),
+      m_useNumpy(use_numpy),
+      m_useDictResult(use_dict_result),
+      m_streamExhausted(false),
+      m_totalRowsReturned(0) {}
 
 bool CArrowStreamIterator::loadNextBatch() {
   if (m_streamExhausted) {
@@ -76,14 +85,15 @@ bool CArrowStreamIterator::loadNextBatch() {
   // IMPORTANT: Release the GIL during get_next() to avoid deadlocks.
   // Similar practice happens in pyarrow.
   int returnCode;
+  ArrowArrayStream* stream = m_stream.get();
   {
     Py_BEGIN_ALLOW_THREADS
-    returnCode = m_stream->get_next(m_stream, m_currentArray.get());
+    returnCode = stream->get_next(stream, m_currentArray.get());
     Py_END_ALLOW_THREADS
   }
 
   if (returnCode != 0) {
-    const char* error_msg = m_stream->get_last_error(m_stream);
+    const char* error_msg = stream->get_last_error(stream);
     std::string errorInfo = Logger::formatString(
         "[Snowflake Exception] error getting next batch from stream: %s, error code: %d",
         error_msg ? error_msg : "unknown", returnCode);
@@ -157,28 +167,6 @@ void CArrowStreamIterator::initColumnConverters() {
 
   logger->debug(__FILE__, __func__, __LINE__, "Initialized %zu column converters",
                 m_columnConverters.size());
-}
-
-ReturnVal CArrowStreamIterator::checkInitializationStatus() {
-  if (PyErr_Occurred()) {
-    PyObject *type, *val, *traceback;
-    PyErr_Fetch(&type, &val, &traceback);
-    PyErr_Clear();
-    m_currentPyException.reset(val);
-    Py_XDECREF(type);
-    Py_XDECREF(traceback);
-    return ReturnVal(nullptr, m_currentPyException.get());
-  }
-
-  if (!m_initialized) {
-    std::string errorInfo = "[Snowflake Exception] Stream iterator initialization failed";
-    logger->error(__FILE__, __func__, __LINE__, errorInfo.c_str());
-    PyErr_SetString(PyExc_Exception, errorInfo.c_str());
-    m_currentPyException.reset(PyErr_Occurred());
-    return ReturnVal(nullptr, m_currentPyException.get());
-  }
-
-  return ReturnVal(Py_True, nullptr);
 }
 
 ReturnVal CArrowStreamIterator::next() {
