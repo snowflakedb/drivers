@@ -11,8 +11,8 @@ from ._internal.protobuf_gen.database_driver_v1_pb2 import (
     StatementSetSqlQueryRequest,
     StatementExecuteQueryRequest,
 )
-from ._arrow_stream_iterator import ArrowStreamIterator
-from .arrow_context import ArrowConverterContext
+from ._internal.arrow_stream_iterator import ArrowStreamIterator
+from ._internal.arrow_context import ArrowConverterContext
 
 
 class Cursor:

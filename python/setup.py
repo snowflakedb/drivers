@@ -8,7 +8,8 @@ from setuptools import Extension, setup
 from setuptools.command.build_ext import build_ext
 
 CONNECTOR_SRC_DIR = os.path.join("src", "snowflake", "ud_connector")
-NANOARROW_SRC_DIR = os.path.join(CONNECTOR_SRC_DIR, "nanoarrow_cpp", "ArrowIterator")
+INTERNAL_SRC_DIR = os.path.join(CONNECTOR_SRC_DIR, "_internal")
+NANOARROW_SRC_DIR = os.path.join(INTERNAL_SRC_DIR, "nanoarrow_cpp", "ArrowIterator")
 
 # Parse command line flags
 options_def = {
@@ -46,7 +47,7 @@ if _ABLE_TO_COMPILE_EXTENSIONS and not SNOWFLAKE_DISABLE_COMPILE_ARROW_EXTENSION
     extensions = cythonize(
         [
             Extension(
-                name="snowflake.ud_connector._arrow_stream_iterator",
+                name="snowflake.ud_connector._internal.arrow_stream_iterator",
                 sources=[os.path.join(NANOARROW_SRC_DIR, "arrow_stream_iterator.pyx")],
                 language="c++",
             ),
@@ -60,8 +61,8 @@ if _ABLE_TO_COMPILE_EXTENSIONS and not SNOWFLAKE_DISABLE_COMPILE_ARROW_EXTENSION
                 ext.extra_link_args.extend(["-g", "-O0"])
             current_dir = os.getcwd()
 
-            if ext.name == "snowflake.ud_connector._arrow_stream_iterator":
-                NANOARROW_CPP_SRC_DIR = os.path.join(CONNECTOR_SRC_DIR, "nanoarrow_cpp")
+            if ext.name == "snowflake.ud_connector._internal.arrow_stream_iterator":
+                NANOARROW_CPP_SRC_DIR = os.path.join(INTERNAL_SRC_DIR, "nanoarrow_cpp")
                 NANOARROW_ARROW_ITERATOR_SRC_DIR = os.path.join(
                     NANOARROW_CPP_SRC_DIR, "ArrowIterator"
                 )
@@ -132,7 +133,11 @@ if _ABLE_TO_COMPILE_EXTENSIONS and not SNOWFLAKE_DISABLE_COMPILE_ARROW_EXTENSION
 
                 ext.library_dirs.append(
                     os.path.join(
-                        current_dir, self.build_lib, "snowflake", "ud_connector"
+                        current_dir,
+                        self.build_lib,
+                        "snowflake",
+                        "ud_connector",
+                        "_internal",
                     )
                 )
 
