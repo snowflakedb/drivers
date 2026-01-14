@@ -64,5 +64,3 @@ __all__ = [
     # Type objects
     'STRING', 'BINARY', 'NUMBER', 'DATETIME', 'ROWID'
 ]
-
-#TODO: Testing CICD behaviour
