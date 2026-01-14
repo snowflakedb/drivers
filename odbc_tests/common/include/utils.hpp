@@ -18,6 +18,10 @@
 namespace test_utils {
 
 inline std::filesystem::path repo_root() {
+  const char* git_root_env_value = std::getenv("GIT_ROOT");
+  if (git_root_env_value != nullptr && git_root_env_value[0] != '\0') {
+    return std::filesystem::path(git_root_env_value);
+  }
   const char* cmd = "git rev-parse --show-toplevel";
 #ifdef _WIN32
   FILE* pipe = _popen(cmd, "r");
