@@ -1,9 +1,9 @@
-#!/usr/bin/env python
 """Arrow converter context for type conversions.
 
 This module is based on the original snowflake-connector-python arrow_context.py
 and provides Python helper functions for Arrow conversions in the C++ converters.
 """
+
 from __future__ import annotations
 
 import decimal

@@ -37,7 +37,7 @@ dependencies = [
 [tool.hatch.build.targets.sdist]
 include = [
     "src/",
-    "hatch_build_nanoarrow.py",
+    "hatch_build_hooks.py",
     "LICENSE",
     "README.md",
 ]
@@ -57,7 +57,7 @@ artifacts = [
 ]
 
 [tool.hatch.build.targets.wheel.hooks.custom]
-path = "hatch_build_nanoarrow.py"
+path = "hatch_build_hooks.py"
 
 [project.optional-dependencies]
 test = [
