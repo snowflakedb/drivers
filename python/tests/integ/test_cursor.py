@@ -295,8 +295,10 @@ class TestCursorDictResult:
     def test_next_returns_dict(self, cursor):
         """Test next() returns dict with column names as keys."""
         # TODO: Replace with DictCursor when implemented
-        from snowflake.ud_connector._arrow_stream_iterator import ArrowStreamIterator
-        from snowflake.ud_connector.arrow_context import ArrowConverterContext
+        from snowflake.ud_connector._internal.arrow_stream_iterator import (
+            ArrowStreamIterator,
+        )
+        from snowflake.ud_connector._internal.arrow_context import ArrowConverterContext
 
         cursor.execute("SELECT 1 AS id, 'hello' AS name")
         stream_ptr = cursor._get_stream_ptr()
@@ -310,8 +312,10 @@ class TestCursorDictResult:
     def test_dict_result_large_result(self, cursor):
         """Test dict result with large result set spanning multiple batches."""
         # TODO: Replace with DictCursor when implemented
-        from snowflake.ud_connector._arrow_stream_iterator import ArrowStreamIterator
-        from snowflake.ud_connector.arrow_context import ArrowConverterContext
+        from snowflake.ud_connector._internal.arrow_stream_iterator import (
+            ArrowStreamIterator,
+        )
+        from snowflake.ud_connector._internal.arrow_context import ArrowConverterContext
 
         cursor.execute(
             """
