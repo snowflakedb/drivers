@@ -2,7 +2,8 @@
 
 namespace sf {
 
-TimeConverter::TimeConverter(ArrowArrayView* array, int32_t scale) : m_array(array), m_scale(scale) {}
+TimeConverter::TimeConverter(ArrowArrayView* array, int32_t scale)
+    : m_array(array), m_scale(scale) {}
 
 PyObject* TimeConverter::toPyObject(int64_t rowIndex) const {
   if (ArrowArrayViewIsNull(m_array, rowIndex)) {
@@ -12,9 +13,10 @@ PyObject* TimeConverter::toPyObject(int64_t rowIndex) const {
   int64_t seconds = ArrowArrayViewGetIntUnsafe(m_array, rowIndex);
   using namespace internal;
   py::PyUniqueLock lock;
-  return PyObject_CallFunction(m_pyDatetimeTime().get(), "iiii", getHourFromSeconds(seconds, m_scale),
-                               getMinuteFromSeconds(seconds, m_scale), getSecondFromSeconds(seconds, m_scale),
-                               getMicrosecondFromSeconds(seconds, m_scale));
+  return PyObject_CallFunction(
+      m_pyDatetimeTime().get(), "iiii", getHourFromSeconds(seconds, m_scale),
+      getMinuteFromSeconds(seconds, m_scale), getSecondFromSeconds(seconds, m_scale),
+      getMicrosecondFromSeconds(seconds, m_scale));
 }
 
 py::UniqueRef& TimeConverter::m_pyDatetimeTime() {

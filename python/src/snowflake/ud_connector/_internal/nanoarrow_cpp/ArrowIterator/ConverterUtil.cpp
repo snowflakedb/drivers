@@ -24,8 +24,10 @@
 
 namespace sf {
 
-std::shared_ptr<sf::IColumnConverter> getConverterFromSchema(ArrowSchema* schema, ArrowArrayView* array,
-                                                             PyObject* context, bool useNumpy, Logger* logger) {
+std::shared_ptr<sf::IColumnConverter> getConverterFromSchema(ArrowSchema* schema,
+                                                             ArrowArrayView* array,
+                                                             PyObject* context, bool useNumpy,
+                                                             Logger* logger) {
   std::shared_ptr<sf::IColumnConverter> converter = nullptr;
   ArrowSchemaView schemaView;
   ArrowError error;
@@ -46,8 +48,8 @@ std::shared_ptr<sf::IColumnConverter> getConverterFromSchema(ArrowSchema* schema
                                "Arrow metadata, error code: %d",
                                returnCode);
 
-  SnowflakeType::Type sfType =
-      SnowflakeType::snowflakeTypeFromString(std::string(snowflakeLogicalType.data, snowflakeLogicalType.size_bytes));
+  SnowflakeType::Type sfType = SnowflakeType::snowflakeTypeFromString(
+      std::string(snowflakeLogicalType.data, snowflakeLogicalType.size_bytes));
 
   switch (sfType) {
     case SnowflakeType::Type::FIXED: {
@@ -193,7 +195,8 @@ std::shared_ptr<sf::IColumnConverter> getConverterFromSchema(ArrowSchema* schema
       switch (schemaView.type) {
         case NANOARROW_TYPE_INT64: {
           if (useNumpy) {
-            converter = std::make_shared<sf::NumpyOneFieldTimeStampNTZConverter>(array, scale, context);
+            converter =
+                std::make_shared<sf::NumpyOneFieldTimeStampNTZConverter>(array, scale, context);
           } else {
             converter = std::make_shared<sf::OneFieldTimeStampNTZConverter>(array, scale, context);
           }
@@ -202,9 +205,11 @@ std::shared_ptr<sf::IColumnConverter> getConverterFromSchema(ArrowSchema* schema
 
         case NANOARROW_TYPE_STRUCT: {
           if (useNumpy) {
-            converter = std::make_shared<sf::NumpyTwoFieldTimeStampNTZConverter>(array, &schemaView, scale, context);
+            converter = std::make_shared<sf::NumpyTwoFieldTimeStampNTZConverter>(array, &schemaView,
+                                                                                 scale, context);
           } else {
-            converter = std::make_shared<sf::TwoFieldTimeStampNTZConverter>(array, &schemaView, scale, context);
+            converter = std::make_shared<sf::TwoFieldTimeStampNTZConverter>(array, &schemaView,
+                                                                            scale, context);
           }
           break;
         }
@@ -240,7 +245,8 @@ std::shared_ptr<sf::IColumnConverter> getConverterFromSchema(ArrowSchema* schema
         }
 
         case NANOARROW_TYPE_STRUCT: {
-          converter = std::make_shared<sf::TwoFieldTimeStampLTZConverter>(array, &schemaView, scale, context);
+          converter = std::make_shared<sf::TwoFieldTimeStampLTZConverter>(array, &schemaView, scale,
+                                                                          context);
           break;
         }
 
@@ -268,7 +274,8 @@ std::shared_ptr<sf::IColumnConverter> getConverterFromSchema(ArrowSchema* schema
                                      "[Snowflake Exception] error getting 'scale' from "
                                      "Arrow metadata, error code: %d",
                                      returnCode);
-        returnCode = ArrowMetadataGetValue(metadata, ArrowCharView("byteLength"), &byteLengthString);
+        returnCode =
+            ArrowMetadataGetValue(metadata, ArrowCharView("byteLength"), &byteLengthString);
         SF_CHECK_ARROW_RC_AND_RETURN(returnCode, nullptr,
                                      "[Snowflake Exception] error getting 'byteLength' "
                                      "from Arrow metadata, error code: %d",
@@ -283,12 +290,14 @@ std::shared_ptr<sf::IColumnConverter> getConverterFromSchema(ArrowSchema* schema
       }
       switch (byteLength) {
         case 8: {
-          converter = std::make_shared<sf::TwoFieldTimeStampTZConverter>(array, &schemaView, scale, context);
+          converter = std::make_shared<sf::TwoFieldTimeStampTZConverter>(array, &schemaView, scale,
+                                                                         context);
           break;
         }
 
         case 16: {
-          converter = std::make_shared<sf::ThreeFieldTimeStampTZConverter>(array, &schemaView, scale, context);
+          converter = std::make_shared<sf::ThreeFieldTimeStampTZConverter>(array, &schemaView,
+                                                                           scale, context);
           break;
         }
 
@@ -374,7 +383,8 @@ std::shared_ptr<sf::IColumnConverter> getConverterFromSchema(ArrowSchema* schema
           converter = std::make_shared<sf::IntervalDayTimeConverterInt>(array, context, useNumpy);
           break;
         case NANOARROW_TYPE_DECIMAL128:
-          converter = std::make_shared<sf::IntervalDayTimeConverterDecimal>(array, context, useNumpy);
+          converter =
+              std::make_shared<sf::IntervalDayTimeConverterDecimal>(array, context, useNumpy);
           break;
         default: {
           std::string errorInfo = Logger::formatString(
@@ -390,7 +400,8 @@ std::shared_ptr<sf::IColumnConverter> getConverterFromSchema(ArrowSchema* schema
     }
 
     default: {
-      std::string errorInfo = Logger::formatString("[Snowflake Exception] unknown snowflake data type : %d", sfType);
+      std::string errorInfo =
+          Logger::formatString("[Snowflake Exception] unknown snowflake data type : %d", sfType);
       logger->error(__FILE__, __func__, __LINE__, errorInfo.c_str());
       PyErr_SetString(PyExc_Exception, errorInfo.c_str());
       break;
@@ -400,3 +411,4 @@ std::shared_ptr<sf::IColumnConverter> getConverterFromSchema(ArrowSchema* schema
 }
 
 }  // namespace sf
+

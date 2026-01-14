@@ -40,10 +40,10 @@ extern "C" {
  * NOTE: flatcc_types.h must be included BEFORE flatcc_endian.h as it defines
  * types like flatbuffers_bool_t that flatcc_endian.h uses.
  */
+#include "flatcc/portable/pendian.h"
+#include "flatcc/flatcc_types.h"
 #include "flatcc/flatcc_endian.h"
 #include "flatcc/flatcc_identifier.h"
-#include "flatcc/flatcc_types.h"
-#include "flatcc/portable/pendian.h"
 
 #ifndef FLATBUFFERS_WRAP_NAMESPACE
 #define FLATBUFFERS_WRAP_NAMESPACE(ns, x) ns##_##x

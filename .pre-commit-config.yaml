@@ -28,6 +28,8 @@ repos:
         entry: clang-format -i
         pass_filenames: true
         types_or: [c, c++]
+        # to avoid huge diffs in case we need to upgrade nanoarrow
+        exclude: ^python/src/snowflake/ud_connector/_internal/nanoarrow_cpp/
         language: system
     -   id: tests-format-validator
         name: Tests format validator

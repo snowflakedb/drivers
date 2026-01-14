@@ -22,7 +22,8 @@ class CArrowTableIterator : public CArrowIterator {
   /**
    * Constructor
    */
-  CArrowTableIterator(PyObject* context, char* arrow_bytes, int64_t arrow_bytes_size, bool number_to_decimal);
+  CArrowTableIterator(PyObject* context, char* arrow_bytes, int64_t arrow_bytes_size,
+                      bool number_to_decimal);
 
   /**
    * Destructor
@@ -72,13 +73,15 @@ class CArrowTableIterator : public CArrowIterator {
   /**
    * convert scaled fixed number column to Decimal column
    */
-  void convertScaledFixedNumberColumnToDecimalColumn_nanoarrow(ArrowSchemaView* field, ArrowArrayView* columnArray,
+  void convertScaledFixedNumberColumnToDecimalColumn_nanoarrow(ArrowSchemaView* field,
+                                                               ArrowArrayView* columnArray,
                                                                const unsigned int scale);
 
   /**
    * convert scaled fixed number column to Double column
    */
-  void convertScaledFixedNumberColumnToDoubleColumn_nanoarrow(ArrowSchemaView* field, ArrowArrayView* columnArray,
+  void convertScaledFixedNumberColumnToDoubleColumn_nanoarrow(ArrowSchemaView* field,
+                                                              ArrowArrayView* columnArray,
                                                               const unsigned int scale);
 
   /**
@@ -86,28 +89,31 @@ class CArrowTableIterator : public CArrowIterator {
    * Since Python/Pandas Time does not support nanoseconds, this function
    * truncates values to microseconds if necessary
    */
-  void convertTimeColumn_nanoarrow(ArrowSchemaView* field, ArrowArrayView* columnArray, const int scale);
+  void convertTimeColumn_nanoarrow(ArrowSchemaView* field, ArrowArrayView* columnArray,
+                                   const int scale);
 
   /**
    * convert Snowflake Interval Day-Time column (Arrow int64/decimal128) to
    * Arrow Duration column
    */
-  void convertIntervalDayTimeColumn_nanoarrow(ArrowSchemaView* field, ArrowArrayView* columnArray, const int scale);
+  void convertIntervalDayTimeColumn_nanoarrow(ArrowSchemaView* field, ArrowArrayView* columnArray,
+                                              const int scale);
 
   /**
    * convert Snowflake TimestampNTZ/TimestampLTZ column to Arrow Timestamp
    * column
    */
-  void convertTimestampColumn_nanoarrow(ArrowSchemaView* field, ArrowArrayView* columnArray, const int scale,
-                                        const std::string timezone = "");
+  void convertTimestampColumn_nanoarrow(ArrowSchemaView* field, ArrowArrayView* columnArray,
+                                        const int scale, const std::string timezone = "");
 
   /**
    * convert Snowflake TimestampTZ column to Arrow Timestamp column in UTC
    * Arrow Timestamp does not support time zone info in each value, so this
    * method convert TimestampTZ to Arrow timestamp with UTC timezone
    */
-  void convertTimestampTZColumn_nanoarrow(ArrowSchemaView* field, ArrowArrayView* columnArray, const int scale,
-                                          const int byteLength, const std::string timezone);
+  void convertTimestampTZColumn_nanoarrow(ArrowSchemaView* field, ArrowArrayView* columnArray,
+                                          const int scale, const int byteLength,
+                                          const std::string timezone);
 
   /**
    * convert scaled fixed number to double

@@ -6,9 +6,13 @@ namespace sf {
 
 namespace internal {
 
-int32_t getHourFromSeconds(int64_t seconds, int32_t scale) { return seconds / powTenSB4[scale] / SECONDS_PER_HOUR; }
+int32_t getHourFromSeconds(int64_t seconds, int32_t scale) {
+  return seconds / powTenSB4[scale] / SECONDS_PER_HOUR;
+}
 
-int32_t getHourFromSeconds(int32_t seconds, int32_t scale) { return seconds / powTenSB4[scale] / SECONDS_PER_HOUR; }
+int32_t getHourFromSeconds(int32_t seconds, int32_t scale) {
+  return seconds / powTenSB4[scale] / SECONDS_PER_HOUR;
+}
 
 int32_t getMinuteFromSeconds(int64_t seconds, int32_t scale) {
   return seconds / powTenSB4[scale] % SECONDS_PER_HOUR / SECONDS_PER_MINUTE;
@@ -18,9 +22,13 @@ int32_t getMinuteFromSeconds(int32_t seconds, int32_t scale) {
   return seconds / powTenSB4[scale] % SECONDS_PER_HOUR / SECONDS_PER_MINUTE;
 }
 
-int32_t getSecondFromSeconds(int64_t seconds, int32_t scale) { return seconds / powTenSB4[scale] % SECONDS_PER_MINUTE; }
+int32_t getSecondFromSeconds(int64_t seconds, int32_t scale) {
+  return seconds / powTenSB4[scale] % SECONDS_PER_MINUTE;
+}
 
-int32_t getSecondFromSeconds(int32_t seconds, int32_t scale) { return seconds / powTenSB4[scale] % SECONDS_PER_MINUTE; }
+int32_t getSecondFromSeconds(int32_t seconds, int32_t scale) {
+  return seconds / powTenSB4[scale] % SECONDS_PER_MINUTE;
+}
 
 int32_t getMicrosecondFromSeconds(int64_t seconds, int32_t scale) {
   int32_t microsec = seconds % powTenSB4[scale];

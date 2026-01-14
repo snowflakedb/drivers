@@ -123,7 +123,8 @@ flatcc_refmap_ref_t flatcc_refmap_find(flatcc_refmap_t* refmap, const void* src)
  *
  * Returns the input ref or not_found on allocation error.
  */
-flatcc_refmap_ref_t flatcc_refmap_insert(flatcc_refmap_t* refmap, const void* src, flatcc_refmap_ref_t ref);
+flatcc_refmap_ref_t flatcc_refmap_insert(flatcc_refmap_t* refmap, const void* src,
+                                         flatcc_refmap_ref_t ref);
 
 /*
  * Set the hash table to accommodate at least `count` items while staying

@@ -54,7 +54,8 @@ CArrowIterator::CArrowIterator(char* arrow_bytes, int64_t arrow_bytes_size) {
   ArrowBuffer input_buffer;
   ArrowBufferInit(&input_buffer);
   returnCode = ArrowBufferAppend(&input_buffer, arrow_bytes, arrow_bytes_size);
-  SF_CHECK_ARROW_RC(returnCode, "[Snowflake Exception] error loading arrow bytes, error code: %d", returnCode);
+  SF_CHECK_ARROW_RC(returnCode, "[Snowflake Exception] error loading arrow bytes, error code: %d",
+                    returnCode);
   ArrowIpcInputStream input;
   returnCode = ArrowIpcInputStreamInitBuffer(&input, &input_buffer);
   SF_CHECK_ARROW_RC(returnCode,
@@ -63,13 +64,15 @@ CArrowIterator::CArrowIterator(char* arrow_bytes, int64_t arrow_bytes_size) {
                     returnCode);
   ArrowArrayStream stream;
   returnCode = ArrowIpcArrayStreamReaderInit(&stream, &input, nullptr);
-  SF_CHECK_ARROW_RC_AND_RELEASE_ARROW_STREAM(returnCode, stream,
-                                             "[Snowflake Exception] error initializing ArrowIpcArrayStreamReader, "
-                                             "error code: %d",
-                                             returnCode);
+  SF_CHECK_ARROW_RC_AND_RELEASE_ARROW_STREAM(
+      returnCode, stream,
+      "[Snowflake Exception] error initializing ArrowIpcArrayStreamReader, "
+      "error code: %d",
+      returnCode);
   returnCode = stream.get_schema(&stream, m_ipcArrowSchema.get());
   SF_CHECK_ARROW_RC_AND_RELEASE_ARROW_STREAM(
-      returnCode, stream, "[Snowflake Exception] error getting schema from stream, error code: %d", returnCode);
+      returnCode, stream, "[Snowflake Exception] error getting schema from stream, error code: %d",
+      returnCode);
 
   while (true) {
     nanoarrow::UniqueArray newUniqueArray;
@@ -79,23 +82,27 @@ CArrowIterator::CArrowIterator(char* arrow_bytes, int64_t arrow_bytes_size) {
       m_ipcArrowArrayVec.push_back(std::move(newUniqueArray));
 
       ArrowError error;
-      returnCode = ArrowArrayViewInitFromSchema(newUniqueArrayView.get(), m_ipcArrowSchema.get(), &error);
-      SF_CHECK_ARROW_RC_AND_RELEASE_ARROW_STREAM(returnCode, stream,
-                                                 "[Snowflake Exception] error initializing ArrowArrayView from schema "
-                                                 ": %s, error code: %d",
-                                                 ArrowErrorMessage(&error), returnCode);
+      returnCode =
+          ArrowArrayViewInitFromSchema(newUniqueArrayView.get(), m_ipcArrowSchema.get(), &error);
+      SF_CHECK_ARROW_RC_AND_RELEASE_ARROW_STREAM(
+          returnCode, stream,
+          "[Snowflake Exception] error initializing ArrowArrayView from schema "
+          ": %s, error code: %d",
+          ArrowErrorMessage(&error), returnCode);
 
       returnCode = ArrowArrayViewSetArray(newUniqueArrayView.get(), newUniqueArray.get(), &error);
-      SF_CHECK_ARROW_RC_AND_RELEASE_ARROW_STREAM(returnCode, stream,
-                                                 "[Snowflake Exception] error setting ArrowArrayView from array : %s, "
-                                                 "error code: %d",
-                                                 ArrowErrorMessage(&error), returnCode);
+      SF_CHECK_ARROW_RC_AND_RELEASE_ARROW_STREAM(
+          returnCode, stream,
+          "[Snowflake Exception] error setting ArrowArrayView from array : %s, "
+          "error code: %d",
+          ArrowErrorMessage(&error), returnCode);
       m_ipcArrowArrayViewVec.push_back(std::move(newUniqueArrayView));
     } else {
-      SF_CHECK_ARROW_RC_AND_RELEASE_ARROW_STREAM(retcode, stream,
-                                                 "[Snowflake Exception] error getting schema from stream, error code: "
-                                                 "%d",
-                                                 returnCode);
+      SF_CHECK_ARROW_RC_AND_RELEASE_ARROW_STREAM(
+          retcode, stream,
+          "[Snowflake Exception] error getting schema from stream, error code: "
+          "%d",
+          returnCode);
       break;
     }
   }

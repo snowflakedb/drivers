@@ -10,8 +10,9 @@
 
 template <typename T>
 constexpr char toType() {
-  static_assert(std::is_same<T, signed char>::value || std::is_same<T, short>::value || std::is_same<T, int>::value ||
-                    std::is_same<T, long>::value || std::is_same<T, long long>::value,
+  static_assert(std::is_same<T, signed char>::value || std::is_same<T, short>::value ||
+                    std::is_same<T, int>::value || std::is_same<T, long>::value ||
+                    std::is_same<T, long long>::value,
                 "Unknown type");
   return std::is_same<T, signed char>::value ? 'b'
          : std::is_same<T, short>::value     ? 'h'
@@ -40,16 +41,22 @@ struct FormatArgs3 {
 
 namespace sf {
 
-Logger* TwoFieldTimeStampNTZConverter::logger = new Logger("snowflake.connector.TwoFieldTimeStampNTZConverter");
+Logger* TwoFieldTimeStampNTZConverter::logger =
+    new Logger("snowflake.connector.TwoFieldTimeStampNTZConverter");
 Logger* NumpyTwoFieldTimeStampNTZConverter::logger =
     new Logger("snowflake.connector.NumpyTwoFieldTimeStampNTZConverter");
-Logger* TwoFieldTimeStampLTZConverter::logger = new Logger("snowflake.connector.TwoFieldTimeStampLTZConverter");
-Logger* TwoFieldTimeStampTZConverter::logger = new Logger("snowflake.connector.TwoFieldTimeStampTZConverter");
-Logger* ThreeFieldTimeStampTZConverter::logger = new Logger("snowflake.connector.ThreeFieldTimeStampTZConverter");
+Logger* TwoFieldTimeStampLTZConverter::logger =
+    new Logger("snowflake.connector.TwoFieldTimeStampLTZConverter");
+Logger* TwoFieldTimeStampTZConverter::logger =
+    new Logger("snowflake.connector.TwoFieldTimeStampTZConverter");
+Logger* ThreeFieldTimeStampTZConverter::logger =
+    new Logger("snowflake.connector.ThreeFieldTimeStampTZConverter");
 
-TimeStampBaseConverter::TimeStampBaseConverter(PyObject* context, int32_t scale) : m_context(context), m_scale(scale) {}
+TimeStampBaseConverter::TimeStampBaseConverter(PyObject* context, int32_t scale)
+    : m_context(context), m_scale(scale) {}
 
-OneFieldTimeStampNTZConverter::OneFieldTimeStampNTZConverter(ArrowArrayView* array, int32_t scale, PyObject* context)
+OneFieldTimeStampNTZConverter::OneFieldTimeStampNTZConverter(ArrowArrayView* array, int32_t scale,
+                                                             PyObject* context)
     : TimeStampBaseConverter(context, scale), m_array(array) {}
 
 PyObject* OneFieldTimeStampNTZConverter::toPyObject(int64_t rowIndex) const {
@@ -61,13 +68,16 @@ PyObject* OneFieldTimeStampNTZConverter::toPyObject(int64_t rowIndex) const {
 
   static constexpr FormatArgs2<decltype(ts.seconds), decltype(ts.microseconds)> format;
 #ifdef _WIN32
-  return PyObject_CallMethod(m_context, "TIMESTAMP_NTZ_to_python_windows", format.format, ts.seconds, ts.microseconds);
+  return PyObject_CallMethod(m_context, "TIMESTAMP_NTZ_to_python_windows", format.format,
+                             ts.seconds, ts.microseconds);
 #else
-  return PyObject_CallMethod(m_context, "TIMESTAMP_NTZ_to_python", format.format, ts.seconds, ts.microseconds);
+  return PyObject_CallMethod(m_context, "TIMESTAMP_NTZ_to_python", format.format, ts.seconds,
+                             ts.microseconds);
 #endif
 }
 
-NumpyOneFieldTimeStampNTZConverter::NumpyOneFieldTimeStampNTZConverter(ArrowArrayView* array, int32_t scale,
+NumpyOneFieldTimeStampNTZConverter::NumpyOneFieldTimeStampNTZConverter(ArrowArrayView* array,
+                                                                       int32_t scale,
                                                                        PyObject* context)
     : TimeStampBaseConverter(context, scale), m_array(array) {}
 
@@ -76,11 +86,13 @@ PyObject* NumpyOneFieldTimeStampNTZConverter::toPyObject(int64_t rowIndex) const
     Py_RETURN_NONE;
   }
   int64_t val = ArrowArrayViewGetIntUnsafe(m_array, rowIndex);
-  return PyObject_CallMethod(m_context, "TIMESTAMP_NTZ_ONE_FIELD_to_numpy_datetime64", "Li", val, m_scale);
+  return PyObject_CallMethod(m_context, "TIMESTAMP_NTZ_ONE_FIELD_to_numpy_datetime64", "Li", val,
+                             m_scale);
 }
 
-TwoFieldTimeStampNTZConverter::TwoFieldTimeStampNTZConverter(ArrowArrayView* array, ArrowSchemaView* schema,
-                                                             int32_t scale, PyObject* context)
+TwoFieldTimeStampNTZConverter::TwoFieldTimeStampNTZConverter(ArrowArrayView* array,
+                                                             ArrowSchemaView* schema, int32_t scale,
+                                                             PyObject* context)
     : TimeStampBaseConverter(context, scale), m_array(array) {
   if (schema->schema->n_children != 2) {
     std::string errorInfo = Logger::formatString(
@@ -112,14 +124,18 @@ PyObject* TwoFieldTimeStampNTZConverter::toPyObject(int64_t rowIndex) const {
 
   static constexpr FormatArgs2<decltype(seconds), decltype(microseconds)> format;
 #ifdef _WIN32
-  return PyObject_CallMethod(m_context, "TIMESTAMP_NTZ_to_python_windows", format.format, seconds, microseconds);
+  return PyObject_CallMethod(m_context, "TIMESTAMP_NTZ_to_python_windows", format.format, seconds,
+                             microseconds);
 #else
-  return PyObject_CallMethod(m_context, "TIMESTAMP_NTZ_to_python", format.format, seconds, microseconds);
+  return PyObject_CallMethod(m_context, "TIMESTAMP_NTZ_to_python", format.format, seconds,
+                             microseconds);
 #endif
 }
 
-NumpyTwoFieldTimeStampNTZConverter::NumpyTwoFieldTimeStampNTZConverter(ArrowArrayView* array, ArrowSchemaView* schema,
-                                                                       int32_t scale, PyObject* context)
+NumpyTwoFieldTimeStampNTZConverter::NumpyTwoFieldTimeStampNTZConverter(ArrowArrayView* array,
+                                                                       ArrowSchemaView* schema,
+                                                                       int32_t scale,
+                                                                       PyObject* context)
     : TimeStampBaseConverter(context, scale), m_array(array) {
   if (schema->schema->n_children != 2) {
     std::string errorInfo = Logger::formatString(
@@ -148,10 +164,12 @@ PyObject* NumpyTwoFieldTimeStampNTZConverter::toPyObject(int64_t rowIndex) const
   }
   int64_t epoch = ArrowArrayViewGetIntUnsafe(m_epoch, rowIndex);
   int32_t frac = ArrowArrayViewGetIntUnsafe(m_fraction, rowIndex);
-  return PyObject_CallMethod(m_context, "TIMESTAMP_NTZ_TWO_FIELD_to_numpy_datetime64", "Li", epoch, frac);
+  return PyObject_CallMethod(m_context, "TIMESTAMP_NTZ_TWO_FIELD_to_numpy_datetime64", "Li", epoch,
+                             frac);
 }
 
-OneFieldTimeStampLTZConverter::OneFieldTimeStampLTZConverter(ArrowArrayView* array, int32_t scale, PyObject* context)
+OneFieldTimeStampLTZConverter::OneFieldTimeStampLTZConverter(ArrowArrayView* array, int32_t scale,
+                                                             PyObject* context)
     : TimeStampBaseConverter(context, scale), m_array(array) {}
 
 PyObject* OneFieldTimeStampLTZConverter::toPyObject(int64_t rowIndex) const {
@@ -164,14 +182,17 @@ PyObject* OneFieldTimeStampLTZConverter::toPyObject(int64_t rowIndex) const {
   static constexpr FormatArgs2<decltype(ts.seconds), decltype(ts.microseconds)> format;
 
 #ifdef _WIN32
-  return PyObject_CallMethod(m_context, "TIMESTAMP_LTZ_to_python_windows", format.format, ts.seconds, ts.microseconds);
+  return PyObject_CallMethod(m_context, "TIMESTAMP_LTZ_to_python_windows", format.format,
+                             ts.seconds, ts.microseconds);
 #else
-  return PyObject_CallMethod(m_context, "TIMESTAMP_LTZ_to_python", format.format, ts.seconds, ts.microseconds);
+  return PyObject_CallMethod(m_context, "TIMESTAMP_LTZ_to_python", format.format, ts.seconds,
+                             ts.microseconds);
 #endif
 }
 
-TwoFieldTimeStampLTZConverter::TwoFieldTimeStampLTZConverter(ArrowArrayView* array, ArrowSchemaView* schema,
-                                                             int32_t scale, PyObject* context)
+TwoFieldTimeStampLTZConverter::TwoFieldTimeStampLTZConverter(ArrowArrayView* array,
+                                                             ArrowSchemaView* schema, int32_t scale,
+                                                             PyObject* context)
     : TimeStampBaseConverter(context, scale), m_array(array) {
   if (schema->schema->n_children != 2) {
     std::string errorInfo = Logger::formatString(
@@ -203,14 +224,17 @@ PyObject* TwoFieldTimeStampLTZConverter::toPyObject(int64_t rowIndex) const {
 
   static constexpr FormatArgs2<decltype(seconds), decltype(microseconds)> format;
 #ifdef _WIN32
-  return PyObject_CallMethod(m_context, "TIMESTAMP_LTZ_to_python_windows", format.format, seconds, microseconds);
+  return PyObject_CallMethod(m_context, "TIMESTAMP_LTZ_to_python_windows", format.format, seconds,
+                             microseconds);
 #else
-  return PyObject_CallMethod(m_context, "TIMESTAMP_LTZ_to_python", format.format, seconds, microseconds);
+  return PyObject_CallMethod(m_context, "TIMESTAMP_LTZ_to_python", format.format, seconds,
+                             microseconds);
 #endif
 }
 
-TwoFieldTimeStampTZConverter::TwoFieldTimeStampTZConverter(ArrowArrayView* array, ArrowSchemaView* schema,
-                                                           int32_t scale, PyObject* context)
+TwoFieldTimeStampTZConverter::TwoFieldTimeStampTZConverter(ArrowArrayView* array,
+                                                           ArrowSchemaView* schema, int32_t scale,
+                                                           PyObject* context)
     : TimeStampBaseConverter(context, scale), m_array(array) {
   if (schema->schema->n_children != 2) {
     std::string errorInfo = Logger::formatString(
@@ -241,16 +265,19 @@ PyObject* TwoFieldTimeStampTZConverter::toPyObject(int64_t rowIndex) const {
   int32_t timezone = ArrowArrayViewGetIntUnsafe(m_timezone, rowIndex);
   internal::TimeSpec ts(ArrowArrayViewGetIntUnsafe(m_epoch, rowIndex), m_scale);
 
-  static constexpr FormatArgs3<decltype(ts.seconds), decltype(ts.microseconds), decltype(timezone)> format;
+  static constexpr FormatArgs3<decltype(ts.seconds), decltype(ts.microseconds), decltype(timezone)>
+      format;
 #if _WIN32
-  return PyObject_CallMethod(m_context, "TIMESTAMP_TZ_to_python_windows", format.format, ts.seconds, ts.microseconds,
-                             timezone);
+  return PyObject_CallMethod(m_context, "TIMESTAMP_TZ_to_python_windows", format.format, ts.seconds,
+                             ts.microseconds, timezone);
 #else
-  return PyObject_CallMethod(m_context, "TIMESTAMP_TZ_to_python", format.format, ts.seconds, ts.microseconds, timezone);
+  return PyObject_CallMethod(m_context, "TIMESTAMP_TZ_to_python", format.format, ts.seconds,
+                             ts.microseconds, timezone);
 #endif
 }
 
-ThreeFieldTimeStampTZConverter::ThreeFieldTimeStampTZConverter(ArrowArrayView* array, ArrowSchemaView* schema,
+ThreeFieldTimeStampTZConverter::ThreeFieldTimeStampTZConverter(ArrowArrayView* array,
+                                                               ArrowSchemaView* schema,
                                                                int32_t scale, PyObject* context)
     : TimeStampBaseConverter(context, scale), m_array(array) {
   if (schema->schema->n_children != 3) {
@@ -285,12 +312,14 @@ PyObject* ThreeFieldTimeStampTZConverter::toPyObject(int64_t rowIndex) const {
   int64_t seconds = ArrowArrayViewGetIntUnsafe(m_epoch, rowIndex);
   int64_t microseconds = ArrowArrayViewGetIntUnsafe(m_fraction, rowIndex) / 1000;
 
-  static constexpr FormatArgs3<decltype(seconds), decltype(microseconds), decltype(timezone)> format;
+  static constexpr FormatArgs3<decltype(seconds), decltype(microseconds), decltype(timezone)>
+      format;
 #ifdef _WIN32
-  return PyObject_CallMethod(m_context, "TIMESTAMP_TZ_to_python_windows", format.format, seconds, microseconds,
-                             timezone);
+  return PyObject_CallMethod(m_context, "TIMESTAMP_TZ_to_python_windows", format.format, seconds,
+                             microseconds, timezone);
 #else
-  return PyObject_CallMethod(m_context, "TIMESTAMP_TZ_to_python", format.format, seconds, microseconds, timezone);
+  return PyObject_CallMethod(m_context, "TIMESTAMP_TZ_to_python", format.format, seconds,
+                             microseconds, timezone);
 #endif
 }
 

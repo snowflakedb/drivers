@@ -71,10 +71,12 @@ static inline void flatbuffers_identifier_from_type_hash(flatbuffers_thash_t typ
 }
 
 /* Native integer encoding of file identifier. */
-static inline flatbuffers_thash_t flatbuffers_type_hash_from_identifier(const flatbuffers_fid_t identifier) {
+static inline flatbuffers_thash_t flatbuffers_type_hash_from_identifier(
+    const flatbuffers_fid_t identifier) {
   uint8_t* p = (uint8_t*)identifier;
 
-  return identifier ? (uint32_t)p[0] + (((uint32_t)p[1]) << 8) + (((uint32_t)p[2]) << 16) + (((uint32_t)p[3]) << 24)
+  return identifier ? (uint32_t)p[0] + (((uint32_t)p[1]) << 8) + (((uint32_t)p[2]) << 16) +
+                          (((uint32_t)p[3]) << 24)
                     : 0;
 }
 
@@ -105,7 +107,8 @@ static inline flatbuffers_thash_t flatbuffers_type_hash_from_string(const char* 
  * `flatbuffers_fid_t` is just `char [4]` for the default flatbuffers
  * type system defined in `flatcc/flatcc_types.h`.
  */
-static inline void flatbuffers_identifier_from_name(const char* name, flatbuffers_fid_t out_identifier) {
+static inline void flatbuffers_identifier_from_name(const char* name,
+                                                    flatbuffers_fid_t out_identifier) {
   flatbuffers_identifier_from_type_hash(flatbuffers_type_hash_from_name(name), out_identifier);
 }
 

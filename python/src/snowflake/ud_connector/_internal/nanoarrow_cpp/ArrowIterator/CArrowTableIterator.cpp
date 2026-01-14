@@ -29,8 +29,8 @@ void CArrowTableIterator::convertIfNeeded(ArrowSchema* columnSchema, ArrowArrayV
                     "[Snowflake Exception] error getting 'logicalType' "
                     "from Arrow metadata, error code: %d",
                     returnCode);
-  SnowflakeType::Type st =
-      SnowflakeType::snowflakeTypeFromString(std::string(snowflakeLogicalType.data, snowflakeLogicalType.size_bytes));
+  SnowflakeType::Type st = SnowflakeType::snowflakeTypeFromString(
+      std::string(snowflakeLogicalType.data, snowflakeLogicalType.size_bytes));
 
   // reconstruct columnArray in place
   switch (st) {
@@ -239,7 +239,8 @@ void CArrowTableIterator::convertIfNeeded(ArrowSchema* columnSchema, ArrowArrayV
                           "[Snowflake Exception] error getting 'scale' "
                           "from Arrow metadata, error code: %d",
                           returnCode);
-        returnCode = ArrowMetadataGetValue(metadata, ArrowCharView("byteLength"), &byteLengthString);
+        returnCode =
+            ArrowMetadataGetValue(metadata, ArrowCharView("byteLength"), &byteLengthString);
         SF_CHECK_ARROW_RC(returnCode,
                           "[Snowflake Exception] error getting 'byteLength' from Arrow "
                           "metadata, error code: %d",
@@ -252,13 +253,14 @@ void CArrowTableIterator::convertIfNeeded(ArrowSchema* columnSchema, ArrowArrayV
         }
       }
 
-      convertTimestampTZColumn_nanoarrow(&columnSchemaView, columnArray, scale, byteLength, m_timezone);
+      convertTimestampTZColumn_nanoarrow(&columnSchemaView, columnArray, scale, byteLength,
+                                         m_timezone);
       break;
     }
 
     default: {
-      std::string errorInfo =
-          Logger::formatString("[Snowflake Exception] unknown snowflake data type : %s", snowflakeLogicalType.data);
+      std::string errorInfo = Logger::formatString(
+          "[Snowflake Exception] unknown snowflake data type : %s", snowflakeLogicalType.data);
       logger->error(__FILE__, __func__, __LINE__, errorInfo.c_str());
       PyErr_SetString(PyExc_Exception, errorInfo.c_str());
       return;
@@ -288,7 +290,8 @@ void CArrowTableIterator::reconstructRecordBatches_nanoarrow() {
   for (unsigned int batchIdx = 0; batchIdx < m_ipcArrowArrayViewVec.size(); batchIdx++) {
     nanoarrow::UniqueSchema copiedSchema;
     returnCode = ArrowSchemaDeepCopy(m_ipcArrowSchema.get(), copiedSchema.get());
-    SF_CHECK_ARROW_RC(returnCode, "[Snowflake Exception] error copying arrow schema, error code: %d", returnCode);
+    SF_CHECK_ARROW_RC(
+        returnCode, "[Snowflake Exception] error copying arrow schema, error code: %d", returnCode);
     m_ipcSchemaArrayVec.push_back(std::move(copiedSchema));
 
     for (int colIdx = 0; colIdx < m_ipcSchemaArrayVec[batchIdx]->n_children; colIdx++) {
@@ -300,8 +303,8 @@ void CArrowTableIterator::reconstructRecordBatches_nanoarrow() {
   }
 }
 
-CArrowTableIterator::CArrowTableIterator(PyObject* context, char* arrow_bytes, int64_t arrow_bytes_size,
-                                         const bool number_to_decimal)
+CArrowTableIterator::CArrowTableIterator(PyObject* context, char* arrow_bytes,
+                                         int64_t arrow_bytes_size, const bool number_to_decimal)
     : CArrowIterator(arrow_bytes, arrow_bytes_size),
       m_context(context),
       m_convert_number_to_decimal(number_to_decimal) {
@@ -322,7 +325,8 @@ ReturnVal CArrowTableIterator::next() {
 }
 
 template <typename T>
-double CArrowTableIterator::convertScaledFixedNumberToDouble(const unsigned int scale, T originalValue) {
+double CArrowTableIterator::convertScaledFixedNumberToDouble(const unsigned int scale,
+                                                             T originalValue) {
   if (scale < 9) {
     // simply use divide to convert decimal value in double
     return (double)originalValue / sf::internal::powTenSB4[scale];
@@ -342,7 +346,8 @@ double CArrowTableIterator::convertScaledFixedNumberToDouble(const unsigned int 
   }
 }
 
-void CArrowTableIterator::convertScaledFixedNumberColumn_nanoarrow(ArrowSchemaView* field, ArrowArrayView* columnArray,
+void CArrowTableIterator::convertScaledFixedNumberColumn_nanoarrow(ArrowSchemaView* field,
+                                                                   ArrowArrayView* columnArray,
                                                                    const unsigned int scale) {
   // Convert scaled fixed number to either Double, or Decimal based on setting
   if (m_convert_number_to_decimal) {
@@ -352,9 +357,8 @@ void CArrowTableIterator::convertScaledFixedNumberColumn_nanoarrow(ArrowSchemaVi
   }
 }
 
-void CArrowTableIterator::convertScaledFixedNumberColumnToDecimalColumn_nanoarrow(ArrowSchemaView* field,
-                                                                                  ArrowArrayView* columnArray,
-                                                                                  const unsigned int scale) {
+void CArrowTableIterator::convertScaledFixedNumberColumnToDecimalColumn_nanoarrow(
+    ArrowSchemaView* field, ArrowArrayView* columnArray, const unsigned int scale) {
   int returnCode = 0;
   // Convert to arrow double/float64 column
   nanoarrow::UniqueSchema newUniqueField;
@@ -371,7 +375,8 @@ void CArrowTableIterator::convertScaledFixedNumberColumnToDecimalColumn_nanoarro
                     "decimal, error code: %d",
                     returnCode);
   returnCode = ArrowSchemaSetName(newSchema, field->schema->name);
-  SF_CHECK_ARROW_RC(returnCode, "[Snowflake Exception] error setting schema name, error code: %d", returnCode);
+  SF_CHECK_ARROW_RC(returnCode, "[Snowflake Exception] error setting schema name, error code: %d",
+                    returnCode);
 
   ArrowError error;
   returnCode = ArrowArrayInitFromSchema(newArray, newSchema, &error);
@@ -381,7 +386,8 @@ void CArrowTableIterator::convertScaledFixedNumberColumnToDecimalColumn_nanoarro
                     ArrowErrorMessage(&error), returnCode);
 
   returnCode = ArrowArrayStartAppending(newArray);
-  SF_CHECK_ARROW_RC(returnCode, "[Snowflake Exception] error appending arrow array, error code: %d", returnCode);
+  SF_CHECK_ARROW_RC(returnCode, "[Snowflake Exception] error appending arrow array, error code: %d",
+                    returnCode);
 
   for (int64_t rowIdx = 0; rowIdx < columnArray->array->length; rowIdx++) {
     if (ArrowArrayViewIsNull(columnArray, rowIdx)) {
@@ -413,9 +419,8 @@ void CArrowTableIterator::convertScaledFixedNumberColumnToDecimalColumn_nanoarro
   ArrowArrayMove(newArray, columnArray->array);
 }
 
-void CArrowTableIterator::convertScaledFixedNumberColumnToDoubleColumn_nanoarrow(ArrowSchemaView* field,
-                                                                                 ArrowArrayView* columnArray,
-                                                                                 const unsigned int scale) {
+void CArrowTableIterator::convertScaledFixedNumberColumnToDoubleColumn_nanoarrow(
+    ArrowSchemaView* field, ArrowArrayView* columnArray, const unsigned int scale) {
   int returnCode = 0;
   // Convert to arrow double/float64 column
   nanoarrow::UniqueSchema newUniqueField;
@@ -432,7 +437,8 @@ void CArrowTableIterator::convertScaledFixedNumberColumnToDoubleColumn_nanoarrow
                     "double, error code: %d",
                     returnCode);
   returnCode = ArrowSchemaSetName(newSchema, field->schema->name);
-  SF_CHECK_ARROW_RC(returnCode, "[Snowflake Exception] error setting schema name, error code: %d", returnCode);
+  SF_CHECK_ARROW_RC(returnCode, "[Snowflake Exception] error setting schema name, error code: %d",
+                    returnCode);
 
   ArrowError error;
   returnCode = ArrowArrayInitFromSchema(newArray, newSchema, &error);
@@ -469,7 +475,8 @@ void CArrowTableIterator::convertScaledFixedNumberColumnToDoubleColumn_nanoarrow
   ArrowArrayMove(newArray, columnArray->array);
 }
 
-void CArrowTableIterator::convertIntervalDayTimeColumn_nanoarrow(ArrowSchemaView* field, ArrowArrayView* columnArray,
+void CArrowTableIterator::convertIntervalDayTimeColumn_nanoarrow(ArrowSchemaView* field,
+                                                                 ArrowArrayView* columnArray,
                                                                  const int scale) {
   int returnCode = 0;
   nanoarrow::UniqueSchema newUniqueField;
@@ -482,14 +489,16 @@ void CArrowTableIterator::convertIntervalDayTimeColumn_nanoarrow(ArrowSchemaView
   ArrowSchemaInit(newSchema);
   newSchema->flags &= (field->schema->flags & ARROW_FLAG_NULLABLE);  // map to nullable()
 
-  returnCode = ArrowSchemaSetTypeDateTime(newSchema, NANOARROW_TYPE_DURATION, NANOARROW_TIME_UNIT_NANO, NULL);
+  returnCode = ArrowSchemaSetTypeDateTime(newSchema, NANOARROW_TYPE_DURATION,
+                                          NANOARROW_TIME_UNIT_NANO, NULL);
   SF_CHECK_ARROW_RC(returnCode,
                     "[Snowflake Exception] error setting arrow schema type "
                     "DateTime, error code: %d",
                     returnCode);
 
   returnCode = ArrowSchemaSetName(newSchema, field->schema->name);
-  SF_CHECK_ARROW_RC(returnCode, "[Snowflake Exception] error setting schema name, error code: %d", returnCode);
+  SF_CHECK_ARROW_RC(returnCode, "[Snowflake Exception] error setting schema name, error code: %d",
+                    returnCode);
 
   returnCode = ArrowArrayInitFromSchema(newArray, newSchema, &error);
   SF_CHECK_ARROW_RC(returnCode,
@@ -498,7 +507,8 @@ void CArrowTableIterator::convertIntervalDayTimeColumn_nanoarrow(ArrowSchemaView
                     ArrowErrorMessage(&error), returnCode);
 
   returnCode = ArrowArrayStartAppending(newArray);
-  SF_CHECK_ARROW_RC(returnCode, "[Snowflake Exception] error appending arrow array, error code: %d", returnCode);
+  SF_CHECK_ARROW_RC(returnCode, "[Snowflake Exception] error appending arrow array, error code: %d",
+                    returnCode);
 
   for (int64_t rowIdx = 0; rowIdx < columnArray->array->length; rowIdx++) {
     if (ArrowArrayViewIsNull(columnArray, rowIdx)) {
@@ -531,7 +541,8 @@ void CArrowTableIterator::convertIntervalDayTimeColumn_nanoarrow(ArrowSchemaView
   ArrowArrayMove(newArray, columnArray->array);
 }
 
-void CArrowTableIterator::convertTimeColumn_nanoarrow(ArrowSchemaView* field, ArrowArrayView* columnArray,
+void CArrowTableIterator::convertTimeColumn_nanoarrow(ArrowSchemaView* field,
+                                                      ArrowArrayView* columnArray,
                                                       const int scale) {
   int returnCode = 0;
   nanoarrow::UniqueSchema newUniqueField;
@@ -545,27 +556,31 @@ void CArrowTableIterator::convertTimeColumn_nanoarrow(ArrowSchemaView* field, Ar
   int64_t powTenSB4Val = 1;
   newSchema->flags &= (field->schema->flags & ARROW_FLAG_NULLABLE);  // map to nullable()
   if (scale == 0) {
-    returnCode = ArrowSchemaSetTypeDateTime(newSchema, NANOARROW_TYPE_TIME32, NANOARROW_TIME_UNIT_SECOND, NULL);
+    returnCode = ArrowSchemaSetTypeDateTime(newSchema, NANOARROW_TYPE_TIME32,
+                                            NANOARROW_TIME_UNIT_SECOND, NULL);
     SF_CHECK_ARROW_RC(returnCode,
                       "[Snowflake Exception] error setting arrow schema type "
                       "DateTime, error code: %d",
                       returnCode);
   } else if (scale <= 3) {
-    returnCode = ArrowSchemaSetTypeDateTime(newSchema, NANOARROW_TYPE_TIME32, NANOARROW_TIME_UNIT_MILLI, NULL);
+    returnCode = ArrowSchemaSetTypeDateTime(newSchema, NANOARROW_TYPE_TIME32,
+                                            NANOARROW_TIME_UNIT_MILLI, NULL);
     SF_CHECK_ARROW_RC(returnCode,
                       "[Snowflake Exception] error setting arrow schema type "
                       "DateTime, error code: %d",
                       returnCode);
     powTenSB4Val = sf::internal::powTenSB4[3 - scale];
   } else if (scale <= 6) {
-    returnCode = ArrowSchemaSetTypeDateTime(newSchema, NANOARROW_TYPE_TIME64, NANOARROW_TIME_UNIT_MICRO, NULL);
+    returnCode = ArrowSchemaSetTypeDateTime(newSchema, NANOARROW_TYPE_TIME64,
+                                            NANOARROW_TIME_UNIT_MICRO, NULL);
     SF_CHECK_ARROW_RC(returnCode,
                       "[Snowflake Exception] error setting arrow schema type "
                       "DateTime, error code: %d",
                       returnCode);
     powTenSB4Val = sf::internal::powTenSB4[6 - scale];
   } else {
-    returnCode = ArrowSchemaSetTypeDateTime(newSchema, NANOARROW_TYPE_TIME64, NANOARROW_TIME_UNIT_MICRO, NULL);
+    returnCode = ArrowSchemaSetTypeDateTime(newSchema, NANOARROW_TYPE_TIME64,
+                                            NANOARROW_TIME_UNIT_MICRO, NULL);
     SF_CHECK_ARROW_RC(returnCode,
                       "[Snowflake Exception] error setting arrow schema type "
                       "DateTime, error code: %d",
@@ -573,7 +588,8 @@ void CArrowTableIterator::convertTimeColumn_nanoarrow(ArrowSchemaView* field, Ar
     powTenSB4Val = sf::internal::powTenSB4[scale - 6];
   }
   returnCode = ArrowSchemaSetName(newSchema, field->schema->name);
-  SF_CHECK_ARROW_RC(returnCode, "[Snowflake Exception] error setting schema name, error code: %d", returnCode);
+  SF_CHECK_ARROW_RC(returnCode, "[Snowflake Exception] error setting schema name, error code: %d",
+                    returnCode);
 
   returnCode = ArrowArrayInitFromSchema(newArray, newSchema, &error);
   SF_CHECK_ARROW_RC(returnCode,
@@ -582,7 +598,8 @@ void CArrowTableIterator::convertTimeColumn_nanoarrow(ArrowSchemaView* field, Ar
                     ArrowErrorMessage(&error), returnCode);
 
   returnCode = ArrowArrayStartAppending(newArray);
-  SF_CHECK_ARROW_RC(returnCode, "[Snowflake Exception] error appending arrow array, error code: %d", returnCode);
+  SF_CHECK_ARROW_RC(returnCode, "[Snowflake Exception] error appending arrow array, error code: %d",
+                    returnCode);
 
   for (int64_t rowIdx = 0; rowIdx < columnArray->array->length; rowIdx++) {
     if (ArrowArrayViewIsNull(columnArray, rowIdx)) {
@@ -628,7 +645,8 @@ void CArrowTableIterator::convertTimeColumn_nanoarrow(ArrowSchemaView* field, Ar
  * @throws std::overflow_error if overflow is detected but downscaling would
  * lose precision
  */
-static bool _checkNanosecondTimestampOverflowAndDownscale(ArrowArrayView* columnArray, ArrowArrayView* epochArray,
+static bool _checkNanosecondTimestampOverflowAndDownscale(ArrowArrayView* columnArray,
+                                                          ArrowArrayView* epochArray,
                                                           ArrowArrayView* fractionArray) {
   int powTenSB4 = sf::internal::powTenSB4[9];
   for (int64_t rowIdx = 0; rowIdx < columnArray->array->length; rowIdx++) {
@@ -655,8 +673,10 @@ static bool _checkNanosecondTimestampOverflowAndDownscale(ArrowArrayView* column
   return false;
 }
 
-void CArrowTableIterator::convertTimestampColumn_nanoarrow(ArrowSchemaView* field, ArrowArrayView* columnArray,
-                                                           const int scale, const std::string timezone) {
+void CArrowTableIterator::convertTimestampColumn_nanoarrow(ArrowSchemaView* field,
+                                                           ArrowArrayView* columnArray,
+                                                           const int scale,
+                                                           const std::string timezone) {
   int returnCode = 0;
   nanoarrow::UniqueSchema newUniqueField;
   nanoarrow::UniqueArray newUniqueArray;
@@ -682,7 +702,8 @@ void CArrowTableIterator::convertTimestampColumn_nanoarrow(ArrowSchemaView* fiel
         // do nothing
       }
     }
-    has_overflow_to_downscale = _checkNanosecondTimestampOverflowAndDownscale(columnArray, epochArray, fractionArray);
+    has_overflow_to_downscale =
+        _checkNanosecondTimestampOverflowAndDownscale(columnArray, epochArray, fractionArray);
   }
 
   if (scale <= 6) {
@@ -699,7 +720,8 @@ void CArrowTableIterator::convertTimestampColumn_nanoarrow(ArrowSchemaView* fiel
       powTenSB4Val = sf::internal::powTenSB4[6 - scale];
     }
     if (!timezone.empty()) {
-      returnCode = ArrowSchemaSetTypeDateTime(newSchema, NANOARROW_TYPE_TIMESTAMP, timeunit, timezone.c_str());
+      returnCode = ArrowSchemaSetTypeDateTime(newSchema, NANOARROW_TYPE_TIMESTAMP, timeunit,
+                                              timezone.c_str());
       SF_CHECK_ARROW_RC(returnCode,
                         "[Snowflake Exception] error setting arrow schema type "
                         "DateTime, error code: %d",
@@ -712,7 +734,8 @@ void CArrowTableIterator::convertTimestampColumn_nanoarrow(ArrowSchemaView* fiel
                         returnCode);
     }
     returnCode = ArrowSchemaSetName(newSchema, field->schema->name);
-    SF_CHECK_ARROW_RC(returnCode, "[Snowflake Exception] error setting schema name, error code: %d", returnCode);
+    SF_CHECK_ARROW_RC(returnCode, "[Snowflake Exception] error setting schema name, error code: %d",
+                      returnCode);
     returnCode = ArrowArrayInitFromSchema(newArray, newSchema, &error);
     SF_CHECK_ARROW_RC(returnCode,
                       "[Snowflake Exception] error initializing ArrowArrayView "
@@ -752,22 +775,27 @@ void CArrowTableIterator::convertTimestampColumn_nanoarrow(ArrowSchemaView* fiel
         }
       }
 
-      auto timeunit = has_overflow_to_downscale ? NANOARROW_TIME_UNIT_MICRO : NANOARROW_TIME_UNIT_NANO;
+      auto timeunit =
+          has_overflow_to_downscale ? NANOARROW_TIME_UNIT_MICRO : NANOARROW_TIME_UNIT_NANO;
       if (!timezone.empty()) {
-        returnCode = ArrowSchemaSetTypeDateTime(newSchema, NANOARROW_TYPE_TIMESTAMP, timeunit, timezone.c_str());
+        returnCode = ArrowSchemaSetTypeDateTime(newSchema, NANOARROW_TYPE_TIMESTAMP, timeunit,
+                                                timezone.c_str());
         SF_CHECK_ARROW_RC(returnCode,
                           "[Snowflake Exception] error setting arrow schema "
                           "type DateTime, error code: %d",
                           returnCode);
       } else {
-        returnCode = ArrowSchemaSetTypeDateTime(newSchema, NANOARROW_TYPE_TIMESTAMP, timeunit, NULL);
+        returnCode =
+            ArrowSchemaSetTypeDateTime(newSchema, NANOARROW_TYPE_TIMESTAMP, timeunit, NULL);
         SF_CHECK_ARROW_RC(returnCode,
                           "[Snowflake Exception] error setting arrow schema "
                           "type DateTime, error code: %d",
                           returnCode);
       }
       returnCode = ArrowSchemaSetName(newSchema, field->schema->name);
-      SF_CHECK_ARROW_RC(returnCode, "[Snowflake Exception] error setting schema name, error code: %d", returnCode);
+      SF_CHECK_ARROW_RC(returnCode,
+                        "[Snowflake Exception] error setting schema name, error code: %d",
+                        returnCode);
 
       returnCode = ArrowArrayInitFromSchema(newArray, newSchema, &error);
       SF_CHECK_ARROW_RC(returnCode,
@@ -798,22 +826,27 @@ void CArrowTableIterator::convertTimestampColumn_nanoarrow(ArrowSchemaView* fiel
         }
       }
     } else if (field->type == NANOARROW_TYPE_INT64) {
-      auto timeunit = has_overflow_to_downscale ? NANOARROW_TIME_UNIT_MICRO : NANOARROW_TIME_UNIT_NANO;
+      auto timeunit =
+          has_overflow_to_downscale ? NANOARROW_TIME_UNIT_MICRO : NANOARROW_TIME_UNIT_NANO;
       if (!timezone.empty()) {
-        returnCode = ArrowSchemaSetTypeDateTime(newSchema, NANOARROW_TYPE_TIMESTAMP, timeunit, timezone.c_str());
+        returnCode = ArrowSchemaSetTypeDateTime(newSchema, NANOARROW_TYPE_TIMESTAMP, timeunit,
+                                                timezone.c_str());
         SF_CHECK_ARROW_RC(returnCode,
                           "[Snowflake Exception] error setting arrow schema "
                           "type DateTime, error code: %d",
                           returnCode);
       } else {
-        returnCode = ArrowSchemaSetTypeDateTime(newSchema, NANOARROW_TYPE_TIMESTAMP, timeunit, NULL);
+        returnCode =
+            ArrowSchemaSetTypeDateTime(newSchema, NANOARROW_TYPE_TIMESTAMP, timeunit, NULL);
         SF_CHECK_ARROW_RC(returnCode,
                           "[Snowflake Exception] error setting arrow schema "
                           "type DateTime, error code: %d",
                           returnCode);
       }
       returnCode = ArrowSchemaSetName(newSchema, field->schema->name);
-      SF_CHECK_ARROW_RC(returnCode, "[Snowflake Exception] error setting schema name, error code: %d", returnCode);
+      SF_CHECK_ARROW_RC(returnCode,
+                        "[Snowflake Exception] error setting schema name, error code: %d",
+                        returnCode);
 
       returnCode = ArrowArrayInitFromSchema(newArray, newSchema, &error);
       SF_CHECK_ARROW_RC(returnCode,
@@ -852,7 +885,8 @@ void CArrowTableIterator::convertTimestampColumn_nanoarrow(ArrowSchemaView* fiel
   ArrowArrayMove(newArray, columnArray->array);
 }
 
-void CArrowTableIterator::convertTimestampTZColumn_nanoarrow(ArrowSchemaView* field, ArrowArrayView* columnArray,
+void CArrowTableIterator::convertTimestampTZColumn_nanoarrow(ArrowSchemaView* field,
+                                                             ArrowArrayView* columnArray,
                                                              const int scale, const int byteLength,
                                                              const std::string timezone) {
   int returnCode = 0;
@@ -881,7 +915,8 @@ void CArrowTableIterator::convertTimestampTZColumn_nanoarrow(ArrowSchemaView* fi
   // Check for timestamp overflow and determine if downscaling is needed
   bool has_overflow_to_downscale = false;
   if (scale > 6 && byteLength == 16) {
-    has_overflow_to_downscale = _checkNanosecondTimestampOverflowAndDownscale(columnArray, epochArray, fractionArray);
+    has_overflow_to_downscale =
+        _checkNanosecondTimestampOverflowAndDownscale(columnArray, epochArray, fractionArray);
   }
 
   auto timeunit = NANOARROW_TIME_UNIT_SECOND;
@@ -897,7 +932,8 @@ void CArrowTableIterator::convertTimestampTZColumn_nanoarrow(ArrowSchemaView* fi
   }
 
   if (!timezone.empty()) {
-    returnCode = ArrowSchemaSetTypeDateTime(newSchema, NANOARROW_TYPE_TIMESTAMP, timeunit, timezone.c_str());
+    returnCode =
+        ArrowSchemaSetTypeDateTime(newSchema, NANOARROW_TYPE_TIMESTAMP, timeunit, timezone.c_str());
     SF_CHECK_ARROW_RC(returnCode,
                       "[Snowflake Exception] error setting arrow schema type "
                       "DateTime, error code: %d",
@@ -910,7 +946,8 @@ void CArrowTableIterator::convertTimestampTZColumn_nanoarrow(ArrowSchemaView* fi
                       returnCode);
   }
   returnCode = ArrowSchemaSetName(newSchema, field->schema->name);
-  SF_CHECK_ARROW_RC(returnCode, "[Snowflake Exception] error setting schema name, error code: %d", returnCode);
+  SF_CHECK_ARROW_RC(returnCode, "[Snowflake Exception] error setting schema name, error code: %d",
+                    returnCode);
 
   returnCode = ArrowArrayInitFromSchema(newArray, newSchema, &error);
   SF_CHECK_ARROW_RC(returnCode,
@@ -946,17 +983,19 @@ void CArrowTableIterator::convertTimestampTZColumn_nanoarrow(ArrowSchemaView* fi
         if (scale == 0) {
           returnCode = ArrowArrayAppendInt(newArray, epoch);
         } else if (scale <= 3) {
-          returnCode = ArrowArrayAppendInt(
-              newArray, epoch * sf::internal::powTenSB4[3 - scale] + fraction / sf::internal::powTenSB4[6]);
+          returnCode = ArrowArrayAppendInt(newArray, epoch * sf::internal::powTenSB4[3 - scale] +
+                                                         fraction / sf::internal::powTenSB4[6]);
         } else if (scale <= 6) {
-          returnCode =
-              ArrowArrayAppendInt(newArray, epoch * sf::internal::powTenSB4[6] + fraction / sf::internal::powTenSB4[3]);
+          returnCode = ArrowArrayAppendInt(
+              newArray, epoch * sf::internal::powTenSB4[6] + fraction / sf::internal::powTenSB4[3]);
         } else {
           // Handle overflow by falling back to microsecond precision
           if (has_overflow_to_downscale) {
-            returnCode = ArrowArrayAppendInt(newArray, epoch * sf::internal::powTenSB4[6] + fraction / 1000);
+            returnCode =
+                ArrowArrayAppendInt(newArray, epoch * sf::internal::powTenSB4[6] + fraction / 1000);
           } else {
-            returnCode = ArrowArrayAppendInt(newArray, epoch * sf::internal::powTenSB4[9] + fraction);
+            returnCode =
+                ArrowArrayAppendInt(newArray, epoch * sf::internal::powTenSB4[9] + fraction);
           }
         }
         SF_CHECK_ARROW_RC(returnCode,

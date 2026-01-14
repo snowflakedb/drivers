@@ -19,9 +19,12 @@ namespace sf {
  * @param logger Logger instance for error reporting
  * @return Shared pointer to column converter, or nullptr on error
  */
-std::shared_ptr<sf::IColumnConverter> getConverterFromSchema(ArrowSchema* schema, ArrowArrayView* array,
-                                                             PyObject* context, bool useNumpy, Logger* logger);
+std::shared_ptr<sf::IColumnConverter> getConverterFromSchema(ArrowSchema* schema,
+                                                             ArrowArrayView* array,
+                                                             PyObject* context, bool useNumpy,
+                                                             Logger* logger);
 
 }  // namespace sf
 
 #endif  // PC_CONVERTERUTIL_HPP
+

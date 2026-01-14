@@ -18,7 +18,8 @@ py::UniqueRef& DateConverter::initPyDatetimeDate() {
   return pyDatetimeDate;
 }
 
-DateConverter::DateConverter(ArrowArrayView* array) : m_array(array), m_pyDatetimeDate(initPyDatetimeDate()) {}
+DateConverter::DateConverter(ArrowArrayView* array)
+    : m_array(array), m_pyDatetimeDate(initPyDatetimeDate()) {}
 
 PyObject* DateConverter::toPyObject(int64_t rowIndex) const {
   if (ArrowArrayViewIsNull(m_array, rowIndex)) {
@@ -29,7 +30,8 @@ PyObject* DateConverter::toPyObject(int64_t rowIndex) const {
   return PyObject_CallMethod(m_pyDatetimeDate.get(), "fromordinal", "i", epochDay + deltaDays);
 }
 
-NumpyDateConverter::NumpyDateConverter(ArrowArrayView* array, PyObject* context) : m_array(array), m_context(context) {}
+NumpyDateConverter::NumpyDateConverter(ArrowArrayView* array, PyObject* context)
+    : m_array(array), m_context(context) {}
 
 PyObject* NumpyDateConverter::toPyObject(int64_t rowIndex) const {
   if (ArrowArrayViewIsNull(m_array, rowIndex)) {

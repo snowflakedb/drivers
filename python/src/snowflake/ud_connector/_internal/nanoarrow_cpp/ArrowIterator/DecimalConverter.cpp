@@ -34,7 +34,8 @@ PyObject* DecimalFromIntConverter::toPyObject(int64_t rowIndex) const {
   return PyObject_CallMethod(decimal.get(), "scaleb", "i", -m_scale);
 }
 
-NumpyDecimalConverter::NumpyDecimalConverter(ArrowArrayView* array, int precision, int scale, PyObject* context)
+NumpyDecimalConverter::NumpyDecimalConverter(ArrowArrayView* array, int precision, int scale,
+                                             PyObject* context)
     : m_array(array), m_precision(precision), m_scale(scale), m_context(context) {}
 
 PyObject* NumpyDecimalConverter::toPyObject(int64_t rowIndex) const {
@@ -45,7 +46,8 @@ PyObject* NumpyDecimalConverter::toPyObject(int64_t rowIndex) const {
   return PyObject_CallMethod(m_context, "FIXED_to_numpy_float64", "Li", val, m_scale);
 }
 
-DecimalFromDecimalConverter::DecimalFromDecimalConverter(PyObject* context, ArrowArrayView* array, int scale)
+DecimalFromDecimalConverter::DecimalFromDecimalConverter(PyObject* context, ArrowArrayView* array,
+                                                         int scale)
     : m_array(array), m_context(context), m_scale(scale) {}
 
 PyObject* DecimalFromDecimalConverter::toPyObject(int64_t rowIndex) const {
@@ -68,7 +70,8 @@ PyObject* DecimalFromDecimalConverter::toPyObject(int64_t rowIndex) const {
   ArrowDecimalGetBytes(&arrowDecimal, outBytes);
   PyObject* int128_bytes = PyBytes_FromStringAndSize(&outBytes, 16);
   */
-  PyObject* return_object = PyObject_CallMethod(m_context, "DECIMAL128_to_decimal", "Si", int128_bytes, m_scale);
+  PyObject* return_object =
+      PyObject_CallMethod(m_context, "DECIMAL128_to_decimal", "Si", int128_bytes, m_scale);
   /**
   int128_bytes is a new referenced created by PyBytes_FromStringAndSize,
   to avoid memory leak we need to free it after usage

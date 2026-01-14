@@ -98,10 +98,12 @@ extern "C" {
 #endif
 
 #ifndef bswap64
-#define bswap64(v)                                                                                                  \
-  ((((uint64_t)(v) << 56)) | (((uint64_t)(v) << 40) & UINT64_C(0x00FF000000000000)) |                               \
-   (((uint64_t)(v) << 24) & UINT64_C(0x0000FF0000000000)) | (((uint64_t)(v) << 8) & UINT64_C(0x000000FF00000000)) | \
-   (((uint64_t)(v) >> 8) & UINT64_C(0x00000000FF000000)) | (((uint64_t)(v) >> 24) & UINT64_C(0x0000000000FF0000)) | \
+#define bswap64(v)                                                                    \
+  ((((uint64_t)(v) << 56)) | (((uint64_t)(v) << 40) & UINT64_C(0x00FF000000000000)) | \
+   (((uint64_t)(v) << 24) & UINT64_C(0x0000FF0000000000)) |                           \
+   (((uint64_t)(v) << 8) & UINT64_C(0x000000FF00000000)) |                            \
+   (((uint64_t)(v) >> 8) & UINT64_C(0x00000000FF000000)) |                            \
+   (((uint64_t)(v) >> 24) & UINT64_C(0x0000000000FF0000)) |                           \
    (((uint64_t)(v) >> 40) & UINT64_C(0x000000000000FF00)) | (((uint64_t)(v) >> 56)))
 #endif
 

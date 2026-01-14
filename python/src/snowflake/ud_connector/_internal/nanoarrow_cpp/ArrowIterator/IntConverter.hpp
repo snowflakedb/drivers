@@ -25,7 +25,8 @@ class IntConverter : public IColumnConverter {
 
 class NumpyIntConverter : public IColumnConverter {
  public:
-  explicit NumpyIntConverter(ArrowArrayView* array, PyObject* context) : m_array(array), m_context(context) {}
+  explicit NumpyIntConverter(ArrowArrayView* array, PyObject* context)
+      : m_array(array), m_context(context) {}
 
   PyObject* toPyObject(int64_t rowIndex) const override;
 
