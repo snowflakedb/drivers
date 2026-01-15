@@ -1,0 +1,857 @@
+[
+  {
+    "name": "SQLAllocHandle",
+    "return_type": "SQLRETURN",
+    "args": [
+      {"name": "HandleType", "type": "SQLSMALLINT"},
+      {"name": "InputHandle", "type": "SQLHANDLE"},
+      {"name": "OutputHandlePtr", "type": "SQLHANDLE*"}
+    ]
+  },
+  {
+    "name": "SQLAllocEnv",
+    "return_type": "SQLRETURN",
+    "args": [
+      {"name": "EnvironmentHandle", "type": "SQLHENV*"}
+    ]
+  },
+  {
+    "name": "SQLAllocConnect",
+    "return_type": "SQLRETURN",
+    "args": [
+      {"name": "EnvironmentHandle", "type": "SQLHENV"},
+      {"name": "ConnectionHandle", "type": "SQLHDBC*"}
+    ]
+  },
+  {
+    "name": "SQLAllocStmt",
+    "return_type": "SQLRETURN",
+    "args": [
+      {"name": "ConnectionHandle", "type": "SQLHDBC"},
+      {"name": "StatementHandle", "type": "SQLHSTMT*"}
+    ]
+  },
+  {
+    "name": "SQLBindCol",
+    "return_type": "SQLRETURN",
+    "args": [
+      {"name": "StatementHandle", "type": "SQLHSTMT"},
+      {"name": "ColumnNumber", "type": "SQLUSMALLINT"},
+      {"name": "TargetType", "type": "SQLSMALLINT"},
+      {"name": "TargetValuePtr", "type": "SQLPOINTER"},
+      {"name": "BufferLength", "type": "SQLLEN"},
+      {"name": "StrLen_or_Ind", "type": "SQLLEN*"}
+    ]
+  },
+  {
+    "name": "SQLBindParameter",
+    "return_type": "SQLRETURN",
+    "args": [
+      {"name": "StatementHandle", "type": "SQLHSTMT"},
+      {"name": "ParameterNumber", "type": "SQLUSMALLINT"},
+      {"name": "InputOutputType", "type": "SQLSMALLINT"},
+      {"name": "ValueType", "type": "SQLSMALLINT"},
+      {"name": "ParameterType", "type": "SQLSMALLINT"},
+      {"name": "ColumnSize", "type": "SQLULEN"},
+      {"name": "DecimalDigits", "type": "SQLSMALLINT"},
+      {"name": "ParameterValuePtr", "type": "SQLPOINTER"},
+      {"name": "BufferLength", "type": "SQLLEN"},
+      {"name": "StrLen_or_IndPtr", "type": "SQLLEN*"}
+    ]
+  },
+  {
+    "name": "SQLBindParam",
+    "return_type": "SQLRETURN",
+    "args": [
+      {"name": "StatementHandle", "type": "SQLHSTMT"},
+      {"name": "ParameterNumber", "type": "SQLUSMALLINT"},
+      {"name": "ValueType", "type": "SQLSMALLINT"},
+      {"name": "ParameterType", "type": "SQLSMALLINT"},
+      {"name": "LengthPrecision", "type": "SQLULEN"},
+      {"name": "ParameterScale", "type": "SQLSMALLINT"},
+      {"name": "ParameterValue", "type": "SQLPOINTER"},
+      {"name": "StrLen_or_Ind", "type": "SQLLEN*"}
+    ]
+  },
+  {
+    "name": "SQLBrowseConnect",
+    "return_type": "SQLRETURN",
+    "args": [
+      {"name": "ConnectionHandle", "type": "SQLHDBC"},
+      {"name": "InConnectionString", "type": "SQLCHAR*"},
+      {"name": "StringLength1", "type": "SQLSMALLINT"},
+      {"name": "OutConnectionString", "type": "SQLCHAR*"},
+      {"name": "BufferLength", "type": "SQLSMALLINT"},
+      {"name": "StringLength2Ptr", "type": "SQLSMALLINT*"}
+    ]
+  },
+  {
+    "name": "SQLBulkOperations",
+    "return_type": "SQLRETURN",
+    "args": [
+      {"name": "StatementHandle", "type": "SQLHSTMT"},
+      {"name": "Operation", "type": "SQLSMALLINT"}
+    ]
+  },
+  {
+    "name": "SQLCancel",
+    "return_type": "SQLRETURN",
+    "args": [
+      {"name": "StatementHandle", "type": "SQLHSTMT"}
+    ]
+  },
+  {
+    "name": "SQLCancelHandle",
+    "return_type": "SQLRETURN",
+    "args": [
+      {"name": "HandleType", "type": "SQLSMALLINT"},
+      {"name": "Handle", "type": "SQLHANDLE"}
+    ]
+  },
+  {
+    "name": "SQLCloseCursor",
+    "return_type": "SQLRETURN",
+    "args": [
+      {"name": "StatementHandle", "type": "SQLHSTMT"}
+    ]
+  },
+  {
+    "name": "SQLColAttribute",
+    "return_type": "SQLRETURN",
+    "args": [
+      {"name": "StatementHandle", "type": "SQLHSTMT"},
+      {"name": "ColumnNumber", "type": "SQLUSMALLINT"},
+      {"name": "FieldIdentifier", "type": "SQLUSMALLINT"},
+      {"name": "CharacterAttributePtr", "type": "SQLPOINTER"},
+      {"name": "BufferLength", "type": "SQLSMALLINT"},
+      {"name": "StringLengthPtr", "type": "SQLSMALLINT*"},
+      {"name": "NumericAttributePtr", "type": "SQLLEN*"}
+    ]
+  },
+  {
+    "name": "SQLColAttributes",
+    "return_type": "SQLRETURN",
+    "args": [
+      {"name": "StatementHandle", "type": "SQLHSTMT"},
+      {"name": "ColumnNumber", "type": "SQLUSMALLINT"},
+      {"name": "FieldIdentifier", "type": "SQLUSMALLINT"},
+      {"name": "CharacterAttributePtr", "type": "SQLPOINTER"},
+      {"name": "BufferLength", "type": "SQLSMALLINT"},
+      {"name": "StringLengthPtr", "type": "SQLSMALLINT*"},
+      {"name": "NumericAttributePtr", "type": "SQLLEN*"}
+    ]
+  },
+  {
+    "name": "SQLColumnPrivileges",
+    "return_type": "SQLRETURN",
+    "args": [
+      {"name": "StatementHandle", "type": "SQLHSTMT"},
+      {"name": "CatalogName", "type": "SQLCHAR*"},
+      {"name": "NameLength1", "type": "SQLSMALLINT"},
+      {"name": "SchemaName", "type": "SQLCHAR*"},
+      {"name": "NameLength2", "type": "SQLSMALLINT"},
+      {"name": "TableName", "type": "SQLCHAR*"},
+      {"name": "NameLength3", "type": "SQLSMALLINT"},
+      {"name": "ColumnName", "type": "SQLCHAR*"},
+      {"name": "NameLength4", "type": "SQLSMALLINT"}
+    ]
+  },
+  {
+    "name": "SQLColumns",
+    "return_type": "SQLRETURN",
+    "args": [
+      {"name": "StatementHandle", "type": "SQLHSTMT"},
+      {"name": "CatalogName", "type": "SQLCHAR*"},
+      {"name": "NameLength1", "type": "SQLSMALLINT"},
+      {"name": "SchemaName", "type": "SQLCHAR*"},
+      {"name": "NameLength2", "type": "SQLSMALLINT"},
+      {"name": "TableName", "type": "SQLCHAR*"},
+      {"name": "NameLength3", "type": "SQLSMALLINT"},
+      {"name": "ColumnName", "type": "SQLCHAR*"},
+      {"name": "NameLength4", "type": "SQLSMALLINT"}
+    ]
+  },
+  {
+    "name": "SQLCompleteAsync",
+    "return_type": "SQLRETURN",
+    "args": [
+      {"name": "HandleType", "type": "SQLSMALLINT"},
+      {"name": "Handle", "type": "SQLHANDLE"},
+      {"name": "AsyncRetCodePtr", "type": "RETCODE*"}
+    ]
+  },
+  {
+    "name": "SQLConnect",
+    "return_type": "SQLRETURN",
+    "args": [
+      {"name": "ConnectionHandle", "type": "SQLHDBC"},
+      {"name": "ServerName", "type": "SQLCHAR*"},
+      {"name": "NameLength1", "type": "SQLSMALLINT"},
+      {"name": "UserName", "type": "SQLCHAR*"},
+      {"name": "NameLength2", "type": "SQLSMALLINT"},
+      {"name": "Authentication", "type": "SQLCHAR*"},
+      {"name": "NameLength3", "type": "SQLSMALLINT"}
+    ]
+  },
+  {
+    "name": "SQLCopyDesc",
+    "return_type": "SQLRETURN",
+    "args": [
+      {"name": "SourceDescHandle", "type": "SQLHDESC"},
+      {"name": "TargetDescHandle", "type": "SQLHDESC"}
+    ]
+  },
+  {
+    "name": "SQLDataSources",
+    "return_type": "SQLRETURN",
+    "args": [
+      {"name": "EnvironmentHandle", "type": "SQLHENV"},
+      {"name": "Direction", "type": "SQLUSMALLINT"},
+      {"name": "ServerName", "type": "SQLCHAR*"},
+      {"name": "BufferLength1", "type": "SQLSMALLINT"},
+      {"name": "NameLength1Ptr", "type": "SQLSMALLINT*"},
+      {"name": "Description", "type": "SQLCHAR*"},
+      {"name": "BufferLength2", "type": "SQLSMALLINT"},
+      {"name": "NameLength2Ptr", "type": "SQLSMALLINT*"}
+    ]
+  },
+  {
+    "name": "SQLDescribeCol",
+    "return_type": "SQLRETURN",
+    "args": [
+      {"name": "StatementHandle", "type": "SQLHSTMT"},
+      {"name": "ColumnNumber", "type": "SQLUSMALLINT"},
+      {"name": "ColumnName", "type": "SQLCHAR*"},
+      {"name": "BufferLength", "type": "SQLSMALLINT"},
+      {"name": "NameLengthPtr", "type": "SQLSMALLINT*"},
+      {"name": "DataTypePtr", "type": "SQLSMALLINT*"},
+      {"name": "ColumnSizePtr", "type": "SQLULEN*"},
+      {"name": "DecimalDigitsPtr", "type": "SQLSMALLINT*"},
+      {"name": "NullablePtr", "type": "SQLSMALLINT*"}
+    ]
+  },
+  {
+    "name": "SQLDescribeParam",
+    "return_type": "SQLRETURN",
+    "args": [
+      {"name": "StatementHandle", "type": "SQLHSTMT"},
+      {"name": "ParameterNumber", "type": "SQLUSMALLINT"},
+      {"name": "DataTypePtr", "type": "SQLSMALLINT*"},
+      {"name": "ParameterSizePtr", "type": "SQLULEN*"},
+      {"name": "DecimalDigitsPtr", "type": "SQLSMALLINT*"},
+      {"name": "NullablePtr", "type": "SQLSMALLINT*"}
+    ]
+  },
+  {
+    "name": "SQLDisconnect",
+    "return_type": "SQLRETURN",
+    "args": [
+      {"name": "ConnectionHandle", "type": "SQLHDBC"}
+    ]
+  },
+  {
+    "name": "SQLDriverConnect",
+    "return_type": "SQLRETURN",
+    "args": [
+      {"name": "ConnectionHandle", "type": "SQLHDBC"},
+      {"name": "WindowHandle", "type": "SQLHWND"},
+      {"name": "InConnectionString", "type": "SQLCHAR*"},
+      {"name": "StringLength1", "type": "SQLSMALLINT"},
+      {"name": "OutConnectionString", "type": "SQLCHAR*"},
+      {"name": "BufferLength", "type": "SQLSMALLINT"},
+      {"name": "StringLength2Ptr", "type": "SQLSMALLINT*"},
+      {"name": "DriverCompletion", "type": "SQLUSMALLINT"}
+    ]
+  },
+  {
+    "name": "SQLDrivers",
+    "return_type": "SQLRETURN",
+    "args": [
+      {"name": "EnvironmentHandle", "type": "SQLHENV"},
+      {"name": "Direction", "type": "SQLUSMALLINT"},
+      {"name": "DriverDescription", "type": "SQLCHAR*"},
+      {"name": "BufferLength1", "type": "SQLSMALLINT"},
+      {"name": "DescriptionLengthPtr", "type": "SQLSMALLINT*"},
+      {"name": "DriverAttributes", "type": "SQLCHAR*"},
+      {"name": "BufferLength2", "type": "SQLSMALLINT"},
+      {"name": "AttributesLengthPtr", "type": "SQLSMALLINT*"}
+    ]
+  },
+  {
+    "name": "SQLEndTran",
+    "return_type": "SQLRETURN",
+    "args": [
+      {"name": "HandleType", "type": "SQLSMALLINT"},
+      {"name": "Handle", "type": "SQLHANDLE"},
+      {"name": "CompletionType", "type": "SQLSMALLINT"}
+    ]
+  },
+  {
+    "name": "SQLError",
+    "return_type": "SQLRETURN",
+    "args": [
+      {"name": "EnvironmentHandle", "type": "SQLHENV"},
+      {"name": "ConnectionHandle", "type": "SQLHDBC"},
+      {"name": "StatementHandle", "type": "SQLHSTMT"},
+      {"name": "SqlState", "type": "SQLCHAR*"},
+      {"name": "NativeErrorPtr", "type": "SQLINTEGER*"},
+      {"name": "MessageText", "type": "SQLCHAR*"},
+      {"name": "BufferLength", "type": "SQLSMALLINT"},
+      {"name": "TextLengthPtr", "type": "SQLSMALLINT*"}
+    ]
+  },
+  {
+    "name": "SQLExecDirect",
+    "return_type": "SQLRETURN",
+    "args": [
+      {"name": "StatementHandle", "type": "SQLHSTMT"},
+      {"name": "StatementText", "type": "SQLCHAR*"},
+      {"name": "TextLength", "type": "SQLINTEGER"}
+    ]
+  },
+  {
+    "name": "SQLExecute",
+    "return_type": "SQLRETURN",
+    "args": [
+      {"name": "StatementHandle", "type": "SQLHSTMT"}
+    ]
+  },
+  {
+    "name": "SQLExtendedFetch",
+    "return_type": "SQLRETURN",
+    "args": [
+      {"name": "StatementHandle", "type": "SQLHSTMT"},
+      {"name": "FetchOrientation", "type": "SQLUSMALLINT"},
+      {"name": "FetchOffset", "type": "SQLLEN"},
+      {"name": "RowCountPtr", "type": "SQLULEN*"},
+      {"name": "RowStatusArray", "type": "SQLUSMALLINT*"}
+    ]
+  },
+  {
+    "name": "SQLFetch",
+    "return_type": "SQLRETURN",
+    "args": [
+      {"name": "StatementHandle", "type": "SQLHSTMT"}
+    ]
+  },
+  {
+    "name": "SQLFetchScroll",
+    "return_type": "SQLRETURN",
+    "args": [
+      {"name": "StatementHandle", "type": "SQLHSTMT"},
+      {"name": "FetchOrientation", "type": "SQLSMALLINT"},
+      {"name": "FetchOffset", "type": "SQLLEN"}
+    ]
+  },
+  {
+    "name": "SQLForeignKeys",
+    "return_type": "SQLRETURN",
+    "args": [
+      {"name": "StatementHandle", "type": "SQLHSTMT"},
+      {"name": "PKCatalogName", "type": "SQLCHAR*"},
+      {"name": "NameLength1", "type": "SQLSMALLINT"},
+      {"name": "PKSchemaName", "type": "SQLCHAR*"},
+      {"name": "NameLength2", "type": "SQLSMALLINT"},
+      {"name": "PKTableName", "type": "SQLCHAR*"},
+      {"name": "NameLength3", "type": "SQLSMALLINT"},
+      {"name": "FKCatalogName", "type": "SQLCHAR*"},
+      {"name": "NameLength4", "type": "SQLSMALLINT"},
+      {"name": "FKSchemaName", "type": "SQLCHAR*"},
+      {"name": "NameLength5", "type": "SQLSMALLINT"},
+      {"name": "FKTableName", "type": "SQLCHAR*"},
+      {"name": "NameLength6", "type": "SQLSMALLINT"}
+    ]
+  },
+  {
+    "name": "SQLFreeConnect",
+    "return_type": "SQLRETURN",
+    "args": [
+      {"name": "ConnectionHandle", "type": "SQLHDBC"}
+    ]
+  },
+  {
+    "name": "SQLFreeEnv",
+    "return_type": "SQLRETURN",
+    "args": [
+      {"name": "EnvironmentHandle", "type": "SQLHENV"}
+    ]
+  },
+  {
+    "name": "SQLFreeHandle",
+    "return_type": "SQLRETURN",
+    "args": [
+      {"name": "HandleType", "type": "SQLSMALLINT"},
+      {"name": "Handle", "type": "SQLHANDLE"}
+    ]
+  },
+  {
+    "name": "SQLFreeStmt",
+    "return_type": "SQLRETURN",
+    "args": [
+      {"name": "StatementHandle", "type": "SQLHSTMT"},
+      {"name": "Option", "type": "SQLUSMALLINT"}
+    ]
+  },
+  {
+    "name": "SQLGetConnectAttr",
+    "return_type": "SQLRETURN",
+    "args": [
+      {"name": "ConnectionHandle", "type": "SQLHDBC"},
+      {"name": "Attribute", "type": "SQLINTEGER"},
+      {"name": "ValuePtr", "type": "SQLPOINTER"},
+      {"name": "BufferLength", "type": "SQLINTEGER"},
+      {"name": "StringLengthPtr", "type": "SQLINTEGER*"}
+    ]
+  },
+  {
+    "name": "SQLGetConnectOption",
+    "return_type": "SQLRETURN",
+    "args": [
+      {"name": "ConnectionHandle", "type": "SQLHDBC"},
+      {"name": "Option", "type": "SQLUSMALLINT"},
+      {"name": "ValuePtr", "type": "SQLPOINTER"}
+    ]
+  },
+  {
+    "name": "SQLGetCursorName",
+    "return_type": "SQLRETURN",
+    "args": [
+      {"name": "StatementHandle", "type": "SQLHSTMT"},
+      {"name": "CursorName", "type": "SQLCHAR*"},
+      {"name": "BufferLength", "type": "SQLSMALLINT"},
+      {"name": "NameLengthPtr", "type": "SQLSMALLINT*"}
+    ]
+  },
+  {
+    "name": "SQLGetData",
+    "return_type": "SQLRETURN",
+    "args": [
+      {"name": "StatementHandle", "type": "SQLHSTMT"},
+      {"name": "ColumnNumber", "type": "SQLUSMALLINT"},
+      {"name": "TargetType", "type": "SQLSMALLINT"},
+      {"name": "TargetValuePtr", "type": "SQLPOINTER"},
+      {"name": "BufferLength", "type": "SQLLEN"},
+      {"name": "StrLen_or_IndPtr", "type": "SQLLEN*"}
+    ]
+  },
+  {
+    "name": "SQLGetDescField",
+    "return_type": "SQLRETURN",
+    "args": [
+      {"name": "DescriptorHandle", "type": "SQLHDESC"},
+      {"name": "RecNumber", "type": "SQLSMALLINT"},
+      {"name": "FieldIdentifier", "type": "SQLSMALLINT"},
+      {"name": "ValuePtr", "type": "SQLPOINTER"},
+      {"name": "BufferLength", "type": "SQLINTEGER"},
+      {"name": "StringLengthPtr", "type": "SQLINTEGER*"}
+    ]
+  },
+  {
+    "name": "SQLGetDescRec",
+    "return_type": "SQLRETURN",
+    "args": [
+      {"name": "DescriptorHandle", "type": "SQLHDESC"},
+      {"name": "RecNumber", "type": "SQLSMALLINT"},
+      {"name": "Name", "type": "SQLCHAR*"},
+      {"name": "BufferLength", "type": "SQLSMALLINT"},
+      {"name": "StringLengthPtr", "type": "SQLSMALLINT*"},
+      {"name": "TypePtr", "type": "SQLSMALLINT*"},
+      {"name": "SubTypePtr", "type": "SQLSMALLINT*"},
+      {"name": "LengthPtr", "type": "SQLLEN*"},
+      {"name": "PrecisionPtr", "type": "SQLSMALLINT*"},
+      {"name": "ScalePtr", "type": "SQLSMALLINT*"},
+      {"name": "NullablePtr", "type": "SQLSMALLINT*"}
+    ]
+  },
+  {
+    "name": "SQLGetDiagField",
+    "return_type": "SQLRETURN",
+    "args": [
+      {"name": "HandleType", "type": "SQLSMALLINT"},
+      {"name": "Handle", "type": "SQLHANDLE"},
+      {"name": "RecNumber", "type": "SQLSMALLINT"},
+      {"name": "DiagIdentifier", "type": "SQLSMALLINT"},
+      {"name": "DiagInfoPtr", "type": "SQLPOINTER"},
+      {"name": "BufferLength", "type": "SQLSMALLINT"},
+      {"name": "StringLengthPtr", "type": "SQLSMALLINT*"}
+    ]
+  },
+  {
+    "name": "SQLGetDiagRec",
+    "return_type": "SQLRETURN",
+    "args": [
+      {"name": "HandleType", "type": "SQLSMALLINT"},
+      {"name": "Handle", "type": "SQLHANDLE"},
+      {"name": "RecNumber", "type": "SQLSMALLINT"},
+      {"name": "SqlState", "type": "SQLCHAR*"},
+      {"name": "NativeErrorPtr", "type": "SQLINTEGER*"},
+      {"name": "MessageText", "type": "SQLCHAR*"},
+      {"name": "BufferLength", "type": "SQLSMALLINT"},
+      {"name": "TextLengthPtr", "type": "SQLSMALLINT*"}
+    ]
+  },
+  {
+    "name": "SQLGetEnvAttr",
+    "return_type": "SQLRETURN",
+    "args": [
+      {"name": "EnvironmentHandle", "type": "SQLHENV"},
+      {"name": "Attribute", "type": "SQLINTEGER"},
+      {"name": "ValuePtr", "type": "SQLPOINTER"},
+      {"name": "BufferLength", "type": "SQLINTEGER"},
+      {"name": "StringLengthPtr", "type": "SQLINTEGER*"}
+    ]
+  },
+  {
+    "name": "SQLGetFunctions",
+    "return_type": "SQLRETURN",
+    "args": [
+      {"name": "ConnectionHandle", "type": "SQLHDBC"},
+      {"name": "FunctionId", "type": "SQLUSMALLINT"},
+      {"name": "SupportedPtr", "type": "SQLUSMALLINT*"}
+    ]
+  },
+  {
+    "name": "SQLGetInfo",
+    "return_type": "SQLRETURN",
+    "args": [
+      {"name": "ConnectionHandle", "type": "SQLHDBC"},
+      {"name": "InfoType", "type": "SQLUSMALLINT"},
+      {"name": "InfoValuePtr", "type": "SQLPOINTER"},
+      {"name": "BufferLength", "type": "SQLSMALLINT"},
+      {"name": "StringLengthPtr", "type": "SQLSMALLINT*"}
+    ]
+  },
+  {
+    "name": "SQLGetStmtAttr",
+    "return_type": "SQLRETURN",
+    "args": [
+      {"name": "StatementHandle", "type": "SQLHSTMT"},
+      {"name": "Attribute", "type": "SQLINTEGER"},
+      {"name": "ValuePtr", "type": "SQLPOINTER"},
+      {"name": "BufferLength", "type": "SQLINTEGER"},
+      {"name": "StringLengthPtr", "type": "SQLINTEGER*"}
+    ]
+  },
+  {
+    "name": "SQLGetStmtOption",
+    "return_type": "SQLRETURN",
+    "args": [
+      {"name": "StatementHandle", "type": "SQLHSTMT"},
+      {"name": "Option", "type": "SQLUSMALLINT"},
+      {"name": "ValuePtr", "type": "SQLPOINTER"}
+    ]
+  },
+  {
+    "name": "SQLGetTypeInfo",
+    "return_type": "SQLRETURN",
+    "args": [
+      {"name": "StatementHandle", "type": "SQLHSTMT"},
+      {"name": "DataType", "type": "SQLSMALLINT"}
+    ]
+  },
+  {
+    "name": "SQLMoreResults",
+    "return_type": "SQLRETURN",
+    "args": [
+      {"name": "StatementHandle", "type": "SQLHSTMT"}
+    ]
+  },
+  {
+    "name": "SQLNativeSql",
+    "return_type": "SQLRETURN",
+    "args": [
+      {"name": "ConnectionHandle", "type": "SQLHDBC"},
+      {"name": "InStatementText", "type": "SQLCHAR*"},
+      {"name": "TextLength1", "type": "SQLINTEGER"},
+      {"name": "OutStatementText", "type": "SQLCHAR*"},
+      {"name": "BufferLength", "type": "SQLINTEGER"},
+      {"name": "TextLength2Ptr", "type": "SQLINTEGER*"}
+    ]
+  },
+  {
+    "name": "SQLNumParams",
+    "return_type": "SQLRETURN",
+    "args": [
+      {"name": "StatementHandle", "type": "SQLHSTMT"},
+      {"name": "ParameterCountPtr", "type": "SQLSMALLINT*"}
+    ]
+  },
+  {
+    "name": "SQLNumResultCols",
+    "return_type": "SQLRETURN",
+    "args": [
+      {"name": "StatementHandle", "type": "SQLHSTMT"},
+      {"name": "ColumnCountPtr", "type": "SQLSMALLINT*"}
+    ]
+  },
+  {
+    "name": "SQLParamData",
+    "return_type": "SQLRETURN",
+    "args": [
+      {"name": "StatementHandle", "type": "SQLHSTMT"},
+      {"name": "ValuePtrPtr", "type": "SQLPOINTER*"}
+    ]
+  },
+  {
+    "name": "SQLParamOptions",
+    "return_type": "SQLRETURN",
+    "args": [
+      {"name": "StatementHandle", "type": "SQLHSTMT"},
+      {"name": "RowCount", "type": "SQLULEN"},
+      {"name": "RowNumberPtr", "type": "SQLULEN*"}
+    ]
+  },
+  {
+    "name": "SQLPrepare",
+    "return_type": "SQLRETURN",
+    "args": [
+      {"name": "StatementHandle", "type": "SQLHSTMT"},
+      {"name": "StatementText", "type": "SQLCHAR*"},
+      {"name": "TextLength", "type": "SQLINTEGER"}
+    ]
+  },
+  {
+    "name": "SQLPrimaryKeys",
+    "return_type": "SQLRETURN",
+    "args": [
+      {"name": "StatementHandle", "type": "SQLHSTMT"},
+      {"name": "CatalogName", "type": "SQLCHAR*"},
+      {"name": "NameLength1", "type": "SQLSMALLINT"},
+      {"name": "SchemaName", "type": "SQLCHAR*"},
+      {"name": "NameLength2", "type": "SQLSMALLINT"},
+      {"name": "TableName", "type": "SQLCHAR*"},
+      {"name": "NameLength3", "type": "SQLSMALLINT"}
+    ]
+  },
+  {
+    "name": "SQLProcedureColumns",
+    "return_type": "SQLRETURN",
+    "args": [
+      {"name": "StatementHandle", "type": "SQLHSTMT"},
+      {"name": "CatalogName", "type": "SQLCHAR*"},
+      {"name": "NameLength1", "type": "SQLSMALLINT"},
+      {"name": "SchemaName", "type": "SQLCHAR*"},
+      {"name": "NameLength2", "type": "SQLSMALLINT"},
+      {"name": "ProcName", "type": "SQLCHAR*"},
+      {"name": "NameLength3", "type": "SQLSMALLINT"},
+      {"name": "ColumnName", "type": "SQLCHAR*"},
+      {"name": "NameLength4", "type": "SQLSMALLINT"}
+    ]
+  },
+  {
+    "name": "SQLProcedures",
+    "return_type": "SQLRETURN",
+    "args": [
+      {"name": "StatementHandle", "type": "SQLHSTMT"},
+      {"name": "CatalogName", "type": "SQLCHAR*"},
+      {"name": "NameLength1", "type": "SQLSMALLINT"},
+      {"name": "SchemaName", "type": "SQLCHAR*"},
+      {"name": "NameLength2", "type": "SQLSMALLINT"},
+      {"name": "ProcName", "type": "SQLCHAR*"},
+      {"name": "NameLength3", "type": "SQLSMALLINT"}
+    ]
+  },
+  {
+    "name": "SQLPutData",
+    "return_type": "SQLRETURN",
+    "args": [
+      {"name": "StatementHandle", "type": "SQLHSTMT"},
+      {"name": "DataPtr", "type": "SQLPOINTER"},
+      {"name": "StrLen_or_Ind", "type": "SQLLEN"}
+    ]
+  },
+  {
+    "name": "SQLRowCount",
+    "return_type": "SQLRETURN",
+    "args": [
+      {"name": "StatementHandle", "type": "SQLHSTMT"},
+      {"name": "RowCountPtr", "type": "SQLLEN*"}
+    ]
+  },
+  {
+    "name": "SQLSetConnectAttr",
+    "return_type": "SQLRETURN",
+    "args": [
+      {"name": "ConnectionHandle", "type": "SQLHDBC"},
+      {"name": "Attribute", "type": "SQLINTEGER"},
+      {"name": "ValuePtr", "type": "SQLPOINTER"},
+      {"name": "StringLength", "type": "SQLINTEGER"}
+    ]
+  },
+  {
+    "name": "SQLSetConnectOption",
+    "return_type": "SQLRETURN",
+    "args": [
+      {"name": "ConnectionHandle", "type": "SQLHDBC"},
+      {"name": "Option", "type": "SQLUSMALLINT"},
+      {"name": "ValuePtr", "type": "SQLUPOINTER"}
+    ]
+  },
+  {
+    "name": "SQLSetCursorName",
+    "return_type": "SQLRETURN",
+    "args": [
+      {"name": "StatementHandle", "type": "SQLHSTMT"},
+      {"name": "CursorName", "type": "SQLCHAR*"},
+      {"name": "NameLength", "type": "SQLSMALLINT"}
+    ]
+  },
+  {
+    "name": "SQLSetDescField",
+    "return_type": "SQLRETURN",
+    "args": [
+      {"name": "DescriptorHandle", "type": "SQLHDESC"},
+      {"name": "RecNumber", "type": "SQLSMALLINT"},
+      {"name": "FieldIdentifier", "type": "SQLSMALLINT"},
+      {"name": "ValuePtr", "type": "SQLPOINTER"},
+      {"name": "BufferLength", "type": "SQLINTEGER"}
+    ]
+  },
+  {
+    "name": "SQLSetDescRec",
+    "return_type": "SQLRETURN",
+    "args": [
+      {"name": "DescriptorHandle", "type": "SQLHDESC"},
+      {"name": "RecNumber", "type": "SQLSMALLINT"},
+      {"name": "Type", "type": "SQLSMALLINT"},
+      {"name": "SubType", "type": "SQLSMALLINT"},
+      {"name": "Length", "type": "SQLLEN"},
+      {"name": "Precision", "type": "SQLSMALLINT"},
+      {"name": "Scale", "type": "SQLSMALLINT"},
+      {"name": "DataPtr", "type": "SQLPOINTER"},
+      {"name": "StringLengthPtr", "type": "SQLLEN*"},
+      {"name": "IndicatorPtr", "type": "SQLLEN*"}
+    ]
+  },
+  {
+    "name": "SQLSetEnvAttr",
+    "return_type": "SQLRETURN",
+    "args": [
+      {"name": "EnvironmentHandle", "type": "SQLHENV"},
+      {"name": "Attribute", "type": "SQLINTEGER"},
+      {"name": "ValuePtr", "type": "SQLPOINTER"},
+      {"name": "StringLength", "type": "SQLINTEGER"}
+    ]
+  },
+  {
+    "name": "SQLSetParam",
+    "return_type": "SQLRETURN",
+    "args": [
+      {"name": "StatementHandle", "type": "SQLHSTMT"},
+      {"name": "ParameterNumber", "type": "SQLUSMALLINT"},
+      {"name": "ValueType", "type": "SQLSMALLINT"},
+      {"name": "ParameterType", "type": "SQLSMALLINT"},
+      {"name": "LengthPrecision", "type": "SQLULEN"},
+      {"name": "ParameterScale", "type": "SQLSMALLINT"},
+      {"name": "ParameterValuePtr", "type": "SQLPOINTER"},
+      {"name": "StrLen_or_IndPtr", "type": "SQLLEN*"}
+    ]
+  },
+  {
+    "name": "SQLSetPos",
+    "return_type": "SQLRETURN",
+    "args": [
+      {"name": "StatementHandle", "type": "SQLHSTMT"},
+      {"name": "RowNumber", "type": "SQLSETPOSIROW"},
+      {"name": "Operation", "type": "SQLUSMALLINT"},
+      {"name": "LockType", "type": "SQLUSMALLINT"}
+    ]
+  },
+  {
+    "name": "SQLSetScrollOptions",
+    "return_type": "SQLRETURN",
+    "args": [
+      {"name": "StatementHandle", "type": "SQLHSTMT"},
+      {"name": "Concurrency", "type": "SQLUSMALLINT"},
+      {"name": "KeysetSize", "type": "SQLLEN"},
+      {"name": "RowsetSize", "type": "SQLUSMALLINT"}
+    ]
+  },
+  {
+    "name": "SQLSetStmtAttr",
+    "return_type": "SQLRETURN",
+    "args": [
+      {"name": "StatementHandle", "type": "SQLHSTMT"},
+      {"name": "Attribute", "type": "SQLINTEGER"},
+      {"name": "ValuePtr", "type": "SQLPOINTER"},
+      {"name": "StringLength", "type": "SQLINTEGER"}
+    ]
+  },
+  {
+    "name": "SQLSetStmtOption",
+    "return_type": "SQLRETURN",
+    "args": [
+      {"name": "StatementHandle", "type": "SQLHSTMT"},
+      {"name": "Option", "type": "SQLUSMALLINT"},
+      {"name": "ValuePtr", "type": "SQLULEN"}
+    ]
+  },
+  {
+    "name": "SQLSpecialColumns",
+    "return_type": "SQLRETURN",
+    "args": [
+      {"name": "StatementHandle", "type": "SQLHSTMT"},
+      {"name": "IdentifierType", "type": "SQLUSMALLINT"},
+      {"name": "CatalogName", "type": "SQLCHAR*"},
+      {"name": "NameLength1", "type": "SQLSMALLINT"},
+      {"name": "SchemaName", "type": "SQLCHAR*"},
+      {"name": "NameLength2", "type": "SQLSMALLINT"},
+      {"name": "TableName", "type": "SQLCHAR*"},
+      {"name": "NameLength3", "type": "SQLSMALLINT"},
+      {"name": "Scope", "type": "SQLUSMALLINT"},
+      {"name": "Nullable", "type": "SQLUSMALLINT"}
+    ]
+  },
+  {
+    "name": "SQLStatistics",
+    "return_type": "SQLRETURN",
+    "args": [
+      {"name": "StatementHandle", "type": "SQLHSTMT"},
+      {"name": "CatalogName", "type": "SQLCHAR*"},
+      {"name": "NameLength1", "type": "SQLSMALLINT"},
+      {"name": "SchemaName", "type": "SQLCHAR*"},
+      {"name": "NameLength2", "type": "SQLSMALLINT"},
+      {"name": "TableName", "type": "SQLCHAR*"},
+      {"name": "NameLength3", "type": "SQLSMALLINT"},
+      {"name": "Unique", "type": "SQLUSMALLINT"},
+      {"name": "Reserved", "type": "SQLUSMALLINT"}
+    ]
+  },
+  {
+    "name": "SQLTablePrivileges",
+    "return_type": "SQLRETURN",
+    "args": [
+      {"name": "StatementHandle", "type": "SQLHSTMT"},
+      {"name": "CatalogName", "type": "SQLCHAR*"},
+      {"name": "NameLength1", "type": "SQLSMALLINT"},
+      {"name": "SchemaName", "type": "SQLCHAR*"},
+      {"name": "NameLength2", "type": "SQLSMALLINT"},
+      {"name": "TableName", "type": "SQLCHAR*"},
+      {"name": "NameLength3", "type": "SQLSMALLINT"}
+    ]
+  },
+  {
+    "name": "SQLTables",
+    "return_type": "SQLRETURN",
+    "args": [
+      {"name": "StatementHandle", "type": "SQLHSTMT"},
+      {"name": "CatalogName", "type": "SQLCHAR*"},
+      {"name": "NameLength1", "type": "SQLSMALLINT"},
+      {"name": "SchemaName", "type": "SQLCHAR*"},
+      {"name": "NameLength2", "type": "SQLSMALLINT"},
+      {"name": "TableName", "type": "SQLCHAR*"},
+      {"name": "NameLength3", "type": "SQLSMALLINT"},
+      {"name": "TableType", "type": "SQLCHAR*"},
+      {"name": "NameLength4", "type": "SQLSMALLINT"}
+    ]
+  },
+  {
+    "name": "SQLTransact",
+    "return_type": "SQLRETURN",
+    "args": [
+      {"name": "EnvironmentHandle", "type": "SQLHENV"},
+      {"name": "ConnectionHandle", "type": "SQLHDBC"},
+      {"name": "CompletionType", "type": "SQLUSMALLINT"}
+    ]
+  }
+]
