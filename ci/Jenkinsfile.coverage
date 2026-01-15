@@ -197,7 +197,7 @@ pipeline {
                                     dir('python') {
                                         sh label: 'Build Python Package', script: '''
                                             set +x
-                                            RUSTFLAGS="" hatch run build-core
+                                            RUSTFLAGS="" hatch run builad-core
                                         '''
                                         
                                         sh label: 'Run Tests with Coverage', script: '''
