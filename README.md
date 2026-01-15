@@ -12,6 +12,8 @@ This project contains multiple test suites across different driver implementatio
 
 ## Prerequisites
 
+> **_NOTE:_** For snowflake cloud workspace developers: Run `./scripts/install_prerequisites_cloud_ws.sh` to install required global dependencies
+
 ### 1. Decode Secrets
 
 All integration tests require access to Snowflake credentials. To set up the required `parameters.json` file:
