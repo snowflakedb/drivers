@@ -27,8 +27,8 @@ def _get_core_path() -> Any:
     else:
         lib_name = f"{_CORE_LIB_NAME}.so"
 
-    files = resources.files("snowflake.ud_connector._core")
-    return files.joinpath(lib_name)
+    files = resources.files("snowflake.ud_connector")
+    return files.joinpath("_core").joinpath(lib_name)
 
 
 def _load_core() -> ctypes.CDLL:
@@ -44,8 +44,8 @@ def _load_core() -> ctypes.CDLL:
 
 try:
     core = _load_core()
-except OSError:
-    raise RuntimeError("Missing core driver dependency") from None
+except OSError as err:
+    raise RuntimeError("Couldn't load core driver dependency") from err
 
 LOGGER_CALLBACK = ctypes.CFUNCTYPE(
     ctypes.c_uint32, ctypes.c_uint32, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint32, ctypes.c_char_p

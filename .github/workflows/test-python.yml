@@ -17,7 +17,6 @@ env:
   REFERENCE_PYTHON_VERSION: "3.13"
   # OS version for consistent naming across jobs
   REFERENCE_OS_VERSION: "ubuntu-latest"
-  PYTHON_CORE_MODULE_PATH: "${{ github.workspace }}/python/src/snowflake/ud_connector/_core"
 
 jobs:
   detect-changes:
@@ -26,6 +25,7 @@ jobs:
   # Build Rust core library once and share across Python jobs
   build_rust_core:
     needs: detect-changes
+    name: "Build wheel"
     if: github.event_name == 'push' || needs.detect-changes.outputs.run_python == 'true'
     runs-on: ubuntu-latest
     steps:
@@ -44,15 +44,19 @@ jobs:
       - name: Install Hatch
         run: uv tool install hatch
 
-      - name: Build python and rust core library
+      - name: Build python wheel
         working-directory: ./python
         run: hatch build
 
-      - name: Upload Rust artifacts
+      - name: Inspect wheel
+        working-directory: ./python
+        run: python -m zipfile -l dist/*.whl
+
+      - name: Upload Python wheel
         uses: actions/upload-artifact@v4
         with:
-          name: rust-core-library
-          path: "${{ env.PYTHON_CORE_MODULE_PATH }}/libsf_core.so"
+          name: python-wheel
+          path: python/dist/*.whl
 
   # Format and lint checking
   format:
@@ -108,11 +112,11 @@ jobs:
       - name: Set up Python ${{ matrix.py }}
         run: uv python install ${{ matrix.py }}
 
-      - name: Download Rust artifacts
+      - name: Download Python wheel
         uses: actions/download-artifact@v4
         with:
-          name: rust-core-library
-          path: ${{ env.PYTHON_CORE_MODULE_PATH }}
+          name: python-wheel
+          path: python/dist
 
       - name: Decode secrets
         run: ./scripts/decode_secrets.sh
@@ -126,7 +130,6 @@ jobs:
         env:
           PARAMETER_PATH: ${{ github.workspace }}/parameters.json
           REFERENCE_DRIVER_VERSION: ${{ env.PYTHON_REFERENCE_DRIVER_VERSION }}
-          CORE_PATH: ${{ env.PYTHON_CORE_MODULE_PATH }}/libsf_core.so
         run: |
           mkdir -p reports
           hatch run test.py${{ matrix.py }}:all-cov \
@@ -180,11 +183,11 @@ jobs:
       - name: Set up Python ${{ env.REFERENCE_PYTHON_VERSION }}
         run: uv python install ${{ env.REFERENCE_PYTHON_VERSION }}
 
-      - name: Download Rust artifacts
+      - name: Download Python wheel
         uses: actions/download-artifact@v4
         with:
-          name: rust-core-library
-          path: ${{ env.PYTHON_CORE_MODULE_PATH }}
+          name: python-wheel
+          path: python/dist
 
       - name: Decode secrets
         run: ./scripts/decode_secrets.sh
@@ -198,7 +201,6 @@ jobs:
         env:
           PARAMETER_PATH: ${{ github.workspace }}/parameters.json
           REFERENCE_DRIVER_VERSION: ${{ env.PYTHON_REFERENCE_DRIVER_VERSION }}
-          CORE_PATH: ${{ env.PYTHON_CORE_MODULE_PATH }}/libsf_core.so
         run: |
           mkdir -p reports
           hatch run reference:run \

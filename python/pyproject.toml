@@ -38,7 +38,7 @@ dependencies = [
 [tool.hatch.build.targets.sdist]
 include = [
     "src/",
-    "hatch_build_hooks.py",
+    "hatch_build.py",
     "LICENSE",
     "README.md",
 ]
@@ -57,8 +57,11 @@ artifacts = [
     "src/snowflake/ud_connector/_internal/*.pyd",
 ]
 
+[tool.hatch.build.targets.sdist.hooks.custom]
+path = "hatch_build.py"
+
 [tool.hatch.build.targets.wheel.hooks.custom]
-path = "hatch_build_hooks.py"
+path = "hatch_build.py"
 
 [tool.hatch.build.hooks.custom]
 
@@ -150,10 +153,6 @@ disallow_incomplete_defs = false
 [tool.hatch.envs.default]
 features = ["test", "dev"]
 
-[tool.hatch.envs.default.scripts]
-# Detect and display paths (for convenience)
-show-paths = "python scripts/detect_core_path.py --export"
-
 # Precommit environment
 [tool.hatch.envs.precommit.scripts]
 check = [
@@ -177,6 +176,11 @@ scripts.run = "mypy src/snowflake"
 # Test environment matrix
 [tool.hatch.envs.test]
 features = ["test"]
+dev-mode = false
+
+pre-install-commands = [
+    "pip install {env:WHEEL_PATH:dist/*.whl}"
+]
 
 [tool.hatch.envs.test.env-vars]
 # IMPORTANT: PARAMETER_PATH must be explicitly set
@@ -186,6 +190,8 @@ PARAMETER_PATH = "{env:PARAMETER_PATH:../parameters.json}"
 python = ["3.9", "3.10", "3.11", "3.12", "3.13"]
 
 [tool.hatch.envs.test.scripts]
+# Install from source
+install-wheel = "pip install dist/*.whl"
 # Unit tests
 unit = "pytest tests/unit {args}"
 # Integration tests
