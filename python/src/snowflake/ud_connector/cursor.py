@@ -9,8 +9,6 @@ from __future__ import annotations
 from collections.abc import Iterator, Sequence
 from typing import TYPE_CHECKING, Any
 
-import pyarrow  # type: ignore[import-untyped]
-
 from ._internal.arrow_context import ArrowConverterContext
 from ._internal.arrow_stream_iterator import ArrowStreamIterator  # type: ignore[import-untyped]
 from ._internal.protobuf_gen.database_driver_v1_pb2 import (  # type: ignore[attr-defined]
@@ -49,8 +47,8 @@ class Cursor:
         self.arraysize = 1  # Instance attribute overrides class attribute
         self._closed = False
         # Streaming state for Arrow results
-        self._reader: pyarrow.RecordBatchReader | None = None
-        self._current_batch: pyarrow.RecordBatch | None = None
+        self._reader = None
+        self._current_batch = None
         self._current_row_in_batch = 0
         self.execute_result: Any = None
         self._iterator: Iterator[Row] | None = None
@@ -142,7 +140,7 @@ class Cursor:
         """
         raise NotSupportedError("executemany is not implemented")
 
-    def _get_stream_ptr(self) -> pyarrow.RecordBatchReader:
+    def _get_stream_ptr(self) -> int:
         """Get the ArrowArrayStream pointer from execute result."""
         stream_ptr = int.from_bytes(self.execute_result.stream.value, byteorder="little", signed=False)
         return stream_ptr
