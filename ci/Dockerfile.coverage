@@ -34,7 +34,7 @@ RUN dnf install -y gcc-toolset-11-gcc gcc-toolset-11-gcc-c++
 # ============================================================
 RUN dnf install -y python39 python39-pip python39-devel && \
     alternatives --set python3 /usr/bin/python3.9 && \
-    pip3 install --upgrade pip setuptools wheel uv
+    pip3 install --upgrade pip setuptools wheel uv hatch tox
 
 # ============================================================
 # Java 11 (for JDBC tests and Wiremock which requires Java 11+)

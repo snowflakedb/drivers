@@ -4,7 +4,7 @@
 
 import groovy.transform.Field
 
-@Field String DOCKER_IMAGE = 'nexus.int.snowflakecomputing.com:8086/docker/rhel8-universal-driver-coverage:1'
+@Field String DOCKER_IMAGE = 'nexus.int.snowflakecomputing.com:8086/docker/rhel8-universal-driver-coverage:3'
 @Field String CODECOV_CREDENTIAL_ID = 'ud_repo_codecov'
 @Field String NEXUS_CREDENTIAL_ID = 'a791118f-a1ea-46cd-b876-56da1b9bc71c'
 @Field String PARAMS_CREDENTIAL_ID = 'sfctest0-parameters-secret'
@@ -197,7 +197,7 @@ pipeline {
                                     dir('python') {
                                         sh label: 'Build Python Package', script: '''
                                             set +x
-                                            RUSTFLAGS="" hatch run builad-core
+                                            RUSTFLAGS="" hatch run build-core
                                         '''
                                         
                                         sh label: 'Run Tests with Coverage', script: '''
