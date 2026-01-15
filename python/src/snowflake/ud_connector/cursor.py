@@ -6,25 +6,25 @@ This module defines the Cursor class as specified in PEP 249.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from typing import TYPE_CHECKING, Any
 
 import pyarrow  # type: ignore[import-untyped]
 
-from .exceptions import NotSupportedError
-
+from ._internal.arrow_context import ArrowConverterContext
+from ._internal.arrow_stream_iterator import ArrowStreamIterator  # type: ignore[import-untyped]
 from ._internal.protobuf_gen.database_driver_v1_pb2 import (  # type: ignore[attr-defined]
     StatementExecuteQueryRequest,
     StatementNewRequest,
     StatementSetSqlQueryRequest,
 )
-
-from ._internal.arrow_stream_iterator import ArrowStreamIterator
-from ._internal.arrow_context import ArrowConverterContext
+from .exceptions import NotSupportedError
 
 
 if TYPE_CHECKING:
     from .connection import Connection
+
+Row = tuple[Any, ...]
 
 
 class Cursor:
@@ -53,7 +53,7 @@ class Cursor:
         self._current_batch: pyarrow.RecordBatch | None = None
         self._current_row_in_batch = 0
         self.execute_result: Any = None
-        self._iterator = None
+        self._iterator: Iterator[Row] | None = None
         self.execute_result = None
 
     @property
@@ -122,8 +122,8 @@ class Cursor:
         ).stmt_handle
         self.connection.db_api.statement_set_sql_query(
             StatementSetSqlQueryRequest(stmt_handle=stmt_handle, query=operation)
-
-        )self.execute_result = self.connection.db_api.statement_execute_query(
+        )
+        self.execute_result = self.connection.db_api.statement_execute_query(
             StatementExecuteQueryRequest(stmt_handle=stmt_handle)
         ).result
         # Reset streaming state for a new result
@@ -144,9 +144,7 @@ class Cursor:
 
     def _get_stream_ptr(self) -> pyarrow.RecordBatchReader:
         """Get the ArrowArrayStream pointer from execute result."""
-        stream_ptr = int.from_bytes(
-            self.execute_result.stream.value, byteorder="little", signed=False
-        )
+        stream_ptr = int.from_bytes(self.execute_result.stream.value, byteorder="little", signed=False)
         return stream_ptr
 
     def _ensure_iterator(self) -> None:
@@ -161,7 +159,7 @@ class Cursor:
                 use_numpy=False,
             )
 
-    def fetchone(self) -> tuple[Any, ...] | None:
+    def fetchone(self) -> Row | None:
         """
         Fetch the next row of a query result set.
 
@@ -172,12 +170,13 @@ class Cursor:
             NotSupportedError: If not implemented
         """
         self._ensure_iterator()
+        assert self._iterator is not None
         try:
             return next(self._iterator)
         except StopIteration:
             return None
 
-    def fetchmany(self, size: int | None = None) -> list[tuple[Any, ...]]:
+    def fetchmany(self, size: int | None = None) -> list[Row]:
         """
         Fetch the next set of rows of a query result.
 
@@ -192,7 +191,7 @@ class Cursor:
         """
         raise NotSupportedError("fetchmany is not implemented")
 
-    def fetchall(self) -> list[tuple[Any, ...]]:
+    def fetchall(self) -> list[Row]:
         """
         Fetch all (remaining) rows of a query result.
 
@@ -203,8 +202,10 @@ class Cursor:
             NotSupportedError: If not implemented
         """
         self._ensure_iterator()
+        assert self._iterator is not None
         return list(self._iterator)
-    def nextset(self):
+
+    def nextset(self) -> None:
         """
         Skip to the next available set, discarding any remaining rows from current set.
 
@@ -246,7 +247,7 @@ class Cursor:
         """
         return self
 
-    def __next__(self) -> tuple[Any, ...]:
+    def __next__(self) -> Row:
         """
         Fetch the next row from the currently executed statement.
 
@@ -262,7 +263,7 @@ class Cursor:
         return row
 
     # Python 2 compatibility
-    def next(self) -> tuple[Any, ...]:
+    def next(self) -> Row:
         """Python 2 compatibility method."""
         return self.__next__()
 

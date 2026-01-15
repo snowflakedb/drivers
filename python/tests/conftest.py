@@ -42,9 +42,7 @@ def connector_adapter(request, connector_type):
     reference_package = request.config.getoption("--reference-package")
 
     if connector_type == ConnectorType.REFERENCE:
-        return ConnectorFactory.create_adapter(
-            connector_type, package_name=reference_package
-        )
+        return ConnectorFactory.create_adapter(connector_type, package_name=reference_package)
 
     return ConnectorFactory.create_adapter(connector_type)
 

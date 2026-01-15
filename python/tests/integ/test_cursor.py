@@ -2,10 +2,11 @@
 Integration tests for PEP 249 Cursor objects.
 """
 
+from decimal import Decimal
+
 import pytest
 
 from snowflake.ud_connector.exceptions import NotSupportedError
-from decimal import Decimal
 
 
 class TestCursorMethods:
@@ -103,9 +104,7 @@ class TestCursorDatabaseQueries:
     @pytest.mark.parametrize("data_size", [1000, 10000])
     def test_large_result(self, cursor, data_size):
         """Test large result."""
-        cursor.execute(
-            f"SELECT seq8() as id FROM TABLE(GENERATOR(ROWCOUNT => {data_size})) v ORDER BY id"
-        )
+        cursor.execute(f"SELECT seq8() as id FROM TABLE(GENERATOR(ROWCOUNT => {data_size})) v ORDER BY id")
         rows = cursor.fetchall()
         assert len(rows) == data_size
 
@@ -175,9 +174,7 @@ class TestCursorIteration:
 
     def test_cursor_iteration_order(self, cursor):
         """Test cursor iteration maintains order."""
-        cursor.execute(
-            "SELECT seq4() as n FROM TABLE(GENERATOR(ROWCOUNT => 100)) ORDER BY n DESC"
-        )
+        cursor.execute("SELECT seq4() as n FROM TABLE(GENERATOR(ROWCOUNT => 100)) ORDER BY n DESC")
         rows = list(cursor)
         for i, row in enumerate(rows):
             assert row == (99 - i,), f"Expected ({99 - i},), got {row}"
@@ -200,17 +197,13 @@ class TestCursorLargeResults:
 
     def test_large_result_fetchall(self, cursor):
         """Test fetchall with large results."""
-        cursor.execute(
-            f"SELECT seq4() FROM TABLE(GENERATOR(ROWCOUNT => {self.N_ROWS}))"
-        )
+        cursor.execute(f"SELECT seq4() FROM TABLE(GENERATOR(ROWCOUNT => {self.N_ROWS}))")
         result = cursor.fetchall()
         assert result == [(i,) for i in range(self.N_ROWS)]
 
     def test_large_result_iteration(self, cursor):
         """Test iteration over large results."""
-        cursor.execute(
-            f"SELECT seq4() FROM TABLE(GENERATOR(ROWCOUNT => {self.N_ROWS}))"
-        )
+        cursor.execute(f"SELECT seq4() FROM TABLE(GENERATOR(ROWCOUNT => {self.N_ROWS}))")
         rows = list(cursor)
         assert rows == [(i,) for i in range(self.N_ROWS)]
 
@@ -218,7 +211,7 @@ class TestCursorLargeResults:
         """Test large result with multiple columns."""
         cursor.execute(
             f"""
-            SELECT 
+            SELECT
                 seq4() as id,
                 seq4() * 2 as doubled,
                 seq4() % 10 as mod10
@@ -230,9 +223,7 @@ class TestCursorLargeResults:
 
     def test_partial_batch_consumption(self, cursor):
         """Test partial consumption of batches."""
-        cursor.execute(
-            f"SELECT seq4() FROM TABLE(GENERATOR(ROWCOUNT => {self.N_ROWS}))"
-        )
+        cursor.execute(f"SELECT seq4() FROM TABLE(GENERATOR(ROWCOUNT => {self.N_ROWS}))")
         # Fetch only some rows
         for _ in range(self.N_ROWS // 10):
             cursor.fetchone()
@@ -268,9 +259,7 @@ class TestCursorMultipleQueries:
 
     def test_fetchall_after_partial_fetch(self, cursor):
         """Test fetchall after partial fetchone calls."""
-        cursor.execute(
-            "SELECT seq4() as n FROM TABLE(GENERATOR(ROWCOUNT => 10)) ORDER BY n"
-        )
+        cursor.execute("SELECT seq4() as n FROM TABLE(GENERATOR(ROWCOUNT => 10)) ORDER BY n")
         # Fetch first 3
         r1 = cursor.fetchone()
         r2 = cursor.fetchone()
@@ -295,10 +284,10 @@ class TestCursorDictResult:
     def test_next_returns_dict(self, cursor):
         """Test next() returns dict with column names as keys."""
         # TODO: Replace with DictCursor when implemented
+        from snowflake.ud_connector._internal.arrow_context import ArrowConverterContext
         from snowflake.ud_connector._internal.arrow_stream_iterator import (
             ArrowStreamIterator,
         )
-        from snowflake.ud_connector._internal.arrow_context import ArrowConverterContext
 
         cursor.execute("SELECT 1 AS id, 'hello' AS name")
         stream_ptr = cursor._get_stream_ptr()
@@ -312,14 +301,14 @@ class TestCursorDictResult:
     def test_dict_result_large_result(self, cursor):
         """Test dict result with large result set spanning multiple batches."""
         # TODO: Replace with DictCursor when implemented
+        from snowflake.ud_connector._internal.arrow_context import ArrowConverterContext
         from snowflake.ud_connector._internal.arrow_stream_iterator import (
             ArrowStreamIterator,
         )
-        from snowflake.ud_connector._internal.arrow_context import ArrowConverterContext
 
         cursor.execute(
             """
-            SELECT 
+            SELECT
                 seq4() AS id,
                 seq4() * 2 AS doubled
             FROM TABLE(GENERATOR(ROWCOUNT => 5000))

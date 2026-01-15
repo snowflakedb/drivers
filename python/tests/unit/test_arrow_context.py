@@ -6,15 +6,15 @@ This module tests the Python helper functions used for Arrow conversions.
 
 import decimal
 import sys
-from datetime import datetime, timedelta, timezone
+
+from datetime import datetime, timedelta
 
 import pytest
-import pytz
 
 from snowflake.ud_connector._internal.arrow_context import (
-    ArrowConverterContext,
-    ZERO_EPOCH,
     PARAMETER_TIMEZONE,
+    ZERO_EPOCH,
+    ArrowConverterContext,
     _generate_tzinfo_from_tzoffset,
     interval_year_month_to_string,
 )
@@ -111,9 +111,7 @@ class TestTimestampTzToPython:
         ],
         ids=["utc", "plus_1h", "minus_5h", "plus_8h", "minus_8h"],
     )
-    def test_timestamp_tz_to_python_offsets(
-        self, epoch, microseconds, tz_offset, expected_tz_minutes
-    ):
+    def test_timestamp_tz_to_python_offsets(self, epoch, microseconds, tz_offset, expected_tz_minutes):
         """Test TIMESTAMP_TZ conversion with various timezone offsets."""
         context = ArrowConverterContext()
         result = context.TIMESTAMP_TZ_to_python(epoch, microseconds, tz_offset)
@@ -146,9 +144,7 @@ class TestTimestampTzToPython:
         ],
         ids=["1969_utc", "1969_plus1h", "1969_minus5h", "epoch_utc", "1970_plus8h"],
     )
-    def test_timestamp_tz_to_python_windows(
-        self, epoch, microseconds, tz_offset, expected_year
-    ):
+    def test_timestamp_tz_to_python_windows(self, epoch, microseconds, tz_offset, expected_year):
         """Test Windows-specific TIMESTAMP_TZ for negative epochs (before 1970)."""
         context = ArrowConverterContext()
         result = context.TIMESTAMP_TZ_to_python_windows(epoch, microseconds, tz_offset)
@@ -171,9 +167,7 @@ class TestTimestampNtzToPython:
         ],
         ids=["epoch_zero", "2021", "2023", "one_day"],
     )
-    def test_timestamp_ntz_to_python_dates(
-        self, epoch, microseconds, expected_year, expected_month, expected_day
-    ):
+    def test_timestamp_ntz_to_python_dates(self, epoch, microseconds, expected_year, expected_month, expected_day):
         """Test TIMESTAMP_NTZ conversion for various dates."""
         context = ArrowConverterContext()
         result = context.TIMESTAMP_NTZ_to_python(epoch, microseconds)
@@ -207,9 +201,7 @@ class TestTimestampNtzToPython:
         ],
         ids=["1969_dec_31", "1969_jan_1", "1900", "epoch", "1970_jan_2"],
     )
-    def test_timestamp_ntz_to_python_windows(
-        self, epoch, microseconds, expected_year, expected_month, expected_day
-    ):
+    def test_timestamp_ntz_to_python_windows(self, epoch, microseconds, expected_year, expected_month, expected_day):
         """Test Windows-specific TIMESTAMP_NTZ for negative epochs (before 1970)."""
         context = ArrowConverterContext()
         result = context.TIMESTAMP_NTZ_to_python_windows(epoch, microseconds)
@@ -231,9 +223,7 @@ class TestTimestampLtzToPython:
     )
     def test_timestamp_ltz_to_python_timezones(self, timezone_str):
         """Test TIMESTAMP_LTZ conversion with various session timezones."""
-        context = ArrowConverterContext(
-            session_parameters={PARAMETER_TIMEZONE: timezone_str}
-        )
+        context = ArrowConverterContext(session_parameters={PARAMETER_TIMEZONE: timezone_str})
         result = context.TIMESTAMP_LTZ_to_python(1609459200, 0)
         assert isinstance(result, datetime)
         assert result.tzinfo is not None
@@ -279,9 +269,7 @@ class TestTimestampLtzToPython:
     )
     def test_timestamp_ltz_to_python_windows(self, epoch, microseconds, timezone_str):
         """Test Windows-specific TIMESTAMP_LTZ for negative epochs (before 1970)."""
-        context = ArrowConverterContext(
-            session_parameters={PARAMETER_TIMEZONE: timezone_str}
-        )
+        context = ArrowConverterContext(session_parameters={PARAMETER_TIMEZONE: timezone_str})
         result = context.TIMESTAMP_LTZ_to_python_windows(epoch, microseconds)
         assert isinstance(result, datetime)
         assert result.tzinfo is not None
@@ -510,9 +498,7 @@ class TestIntervalConversions:
         ],
         ids=["1500us", "1us", "999us"],
     )
-    def test_interval_day_time_int_to_timedelta_microseconds(
-        self, nanos, expected_microseconds
-    ):
+    def test_interval_day_time_int_to_timedelta_microseconds(self, nanos, expected_microseconds):
         """Test INTERVAL_DAY_TIME int precision (microseconds)."""
         context = ArrowConverterContext()
         result = context.INTERVAL_DAY_TIME_int_to_timedelta(nanos)
@@ -544,9 +530,7 @@ class TestIntervalNumpyConversions:
         """Skip tests if numpy not available."""
         pytest.importorskip("numpy")
 
-    @pytest.mark.parametrize(
-        "months", [12, 0, 24, 1, 100], ids=["1y", "0", "2y", "1m", "8y4m"]
-    )
+    @pytest.mark.parametrize("months", [12, 0, 24, 1, 100], ids=["1y", "0", "2y", "1m", "8y4m"])
     def test_interval_year_month_to_numpy_timedelta(self, months):
         """Test INTERVAL_YEAR_MONTH to numpy timedelta."""
         import numpy as np
