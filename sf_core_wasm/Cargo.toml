@@ -1,0 +1,40 @@
+[package]
+name = "sf_core_wasm"
+version = "0.1.0"
+edition = "2021"
+description = "Snowflake driver core as a WASM component"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+# Core library with WASM feature
+sf_core = { path = "../sf_core", default-features = false, features = ["wasm"] }
+
+# WASM component tooling
+wit-bindgen = "0.36"
+
+# Protobuf
+prost = "0.14"
+proto_utils = { path = "../proto_utils" }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+[dev-dependencies]
+wasmtime = { version = "31", features = ["component-model"] }
+wasmtime-wasi = "31"
+prost = "0.14"
+serde_json = "1.0"
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+
+[package.metadata.component]
+package = "snowflake:driver"
+
+[package.metadata.component.dependencies]
+
+[package.metadata.component.target]
+path = "wit"
+world = "driver"
+

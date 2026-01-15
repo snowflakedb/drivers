@@ -1,7 +1,8 @@
 use arrow::array::{Array, Int64Array, StringArray};
 use arrow::datatypes::{DataType, Field, Schema};
 use arrow::error::ArrowError;
-use arrow::record_batch::RecordBatch;
+use arrow::ipc::writer::StreamWriter;
+use arrow::record_batch::{RecordBatch, RecordBatchReader};
 use snafu::{Location, ResultExt, Snafu};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -120,6 +121,59 @@ pub fn boxed_arrow_reader(
         vec![Ok(batch)],
         schema,
     )))
+}
+
+/// Creates a boxed Arrow RecordBatchReader from existing RecordBatches.
+pub fn convert_arrow_record_batches_to_arrow_reader(
+    schema: Arc<Schema>,
+    batches: Vec<RecordBatch>,
+) -> Result<Box<dyn RecordBatchReader + Send>, ArrowError> {
+    Ok(Box::new(arrow::record_batch::RecordBatchIterator::new(
+        batches.into_iter().map(Ok),
+        schema,
+    )))
+}
+
+/// Serialize a RecordBatchReader to Arrow IPC stream format (bytes).
+/// This is useful for passing Arrow data across process boundaries (e.g., WASM to host).
+pub fn serialize_reader_to_ipc(
+    reader: Box<dyn RecordBatchReader + Send>,
+) -> Result<Vec<u8>, ArrowUtilsError> {
+    let schema = reader.schema();
+    let mut buffer = Vec::new();
+
+    {
+        let mut writer = StreamWriter::try_new(&mut buffer, &schema).context(ArrowSnafu)?;
+
+        for batch_result in reader {
+            let batch = batch_result.context(ArrowSnafu)?;
+            writer.write(&batch).context(ArrowSnafu)?;
+        }
+
+        writer.finish().context(ArrowSnafu)?;
+    }
+
+    Ok(buffer)
+}
+
+/// Serialize record batches directly to Arrow IPC stream format (bytes).
+pub fn serialize_batches_to_ipc(
+    schema: Arc<Schema>,
+    batches: &[RecordBatch],
+) -> Result<Vec<u8>, ArrowUtilsError> {
+    let mut buffer = Vec::new();
+
+    {
+        let mut writer = StreamWriter::try_new(&mut buffer, &schema).context(ArrowSnafu)?;
+
+        for batch in batches {
+            writer.write(batch).context(ArrowSnafu)?;
+        }
+
+        writer.finish().context(ArrowSnafu)?;
+    }
+
+    Ok(buffer)
 }
 
 #[derive(Snafu, Debug)]

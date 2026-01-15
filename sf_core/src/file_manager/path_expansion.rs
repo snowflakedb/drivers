@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use snafu::{Location, ResultExt, Snafu};
 
 /// Expands file names using glob patterns, returning a list of valid file paths

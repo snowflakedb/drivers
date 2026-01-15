@@ -1,3 +1,8 @@
+//! Chunk downloading and reading for query results.
+//!
+//! This module handles downloading and decoding Arrow IPC chunks from Snowflake.
+//! It is only available for native builds (requires reqwest/tokio).
+
 use std::collections::{HashMap, VecDeque};
 use std::io;
 use std::str::FromStr;

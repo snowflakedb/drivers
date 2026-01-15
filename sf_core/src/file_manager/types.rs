@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use crate::compression_types::CompressionType;
 use serde::{Deserialize, Serialize};
 

@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use flate2::{Compression, GzBuilder, bufread::GzDecoder};
 use snafu::{Location, ResultExt, Snafu};
 use std::io::{Read, Write};

@@ -1,0 +1,13 @@
+[package]
+name = "sf_core_wasm_reactor"
+version = "0.1.0"
+edition = "2021"
+description = "Snowflake driver core as a WASI reactor (core module for Go/wazero)"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+# Core library with wasm feature (uses wstd + wasi:sockets)
+sf_core = { path = "../sf_core", default-features = false, features = ["wasm"] }
+proto_utils = { path = "../proto_utils" }

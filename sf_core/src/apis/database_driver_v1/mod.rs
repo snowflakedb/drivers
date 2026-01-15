@@ -20,6 +20,7 @@ pub use database::database_release;
 pub use database::database_set_option;
 pub use error::ApiError;
 pub use statement::statement_bind;
+pub use statement::statement_bind_stream;
 pub use statement::statement_execute_query;
 pub use statement::statement_new;
 pub use statement::statement_prepare;

@@ -1,5 +1,9 @@
+//! Legacy native protobuf handler.
+//!
+//! This module is kept for backward compatibility. New code should use the
+//! `unified` module instead.
+
 use crate::apis::database_driver_v1::ApiError;
-use crate::apis::database_driver_v1::Handle;
 use crate::apis::database_driver_v1::Setting;
 use crate::apis::database_driver_v1::error::ConfigError;
 use crate::apis::database_driver_v1::error::RestError;
@@ -11,99 +15,14 @@ use crate::apis::database_driver_v1::{
     database_init, database_new, database_release, database_set_option,
 };
 use crate::apis::database_driver_v1::{
-    statement_execute_query, statement_new, statement_prepare, statement_release,
-    statement_set_option, statement_set_sql_query,
+    statement_bind_stream, statement_execute_query, statement_new, statement_prepare,
+    statement_release, statement_set_option, statement_set_sql_query,
 };
 use crate::protobuf_gen::database_driver_v1::*;
-use arrow::ffi::FFI_ArrowArray;
-use arrow::ffi::FFI_ArrowSchema;
-use arrow::ffi_stream::FFI_ArrowArrayStream;
 use snafu::Report;
 use tracing::instrument;
 
-impl From<ArrowArrayStreamPtr> for *mut FFI_ArrowArrayStream {
-    fn from(ptr: ArrowArrayStreamPtr) -> Self {
-        unsafe { std::ptr::read(ptr.value.as_ptr() as *const *mut FFI_ArrowArrayStream) }
-    }
-}
-#[allow(clippy::from_over_into)]
-impl Into<*mut FFI_ArrowSchema> for ArrowSchemaPtr {
-    fn into(self) -> *mut FFI_ArrowSchema {
-        unsafe { std::ptr::read(self.value.as_ptr() as *const *mut FFI_ArrowSchema) }
-    }
-}
-
-#[allow(clippy::from_over_into)]
-impl Into<*mut FFI_ArrowArray> for ArrowArrayPtr {
-    fn into(self) -> *mut FFI_ArrowArray {
-        unsafe { std::ptr::read(self.value.as_ptr() as *const *mut FFI_ArrowArray) }
-    }
-}
-
-impl From<*mut FFI_ArrowArrayStream> for ArrowArrayStreamPtr {
-    fn from(raw: *mut FFI_ArrowArrayStream) -> Self {
-        let len = size_of::<*mut FFI_ArrowArrayStream>();
-        let buf_ptr = std::ptr::addr_of!(raw) as *const u8;
-        let slice = unsafe { std::slice::from_raw_parts(buf_ptr, len) };
-        let vec = slice.to_vec();
-        ArrowArrayStreamPtr { value: vec }
-    }
-}
-
-// Handle conversions from protobuf types to internal Handle type
-impl From<DatabaseHandle> for Handle {
-    fn from(handle: DatabaseHandle) -> Self {
-        Handle {
-            id: handle.id as u64,
-            magic: handle.magic as u64,
-        }
-    }
-}
-
-impl From<Handle> for DatabaseHandle {
-    fn from(handle: Handle) -> Self {
-        DatabaseHandle {
-            id: handle.id as i64,
-            magic: handle.magic as i64,
-        }
-    }
-}
-
-impl From<ConnectionHandle> for Handle {
-    fn from(handle: ConnectionHandle) -> Self {
-        Handle {
-            id: handle.id as u64,
-            magic: handle.magic as u64,
-        }
-    }
-}
-
-impl From<Handle> for ConnectionHandle {
-    fn from(handle: Handle) -> Self {
-        ConnectionHandle {
-            id: handle.id as i64,
-            magic: handle.magic as i64,
-        }
-    }
-}
-
-impl From<StatementHandle> for Handle {
-    fn from(handle: StatementHandle) -> Self {
-        Handle {
-            id: handle.id as u64,
-            magic: handle.magic as u64,
-        }
-    }
-}
-
-impl From<Handle> for StatementHandle {
-    fn from(handle: Handle) -> Self {
-        StatementHandle {
-            id: handle.id as i64,
-            magic: handle.magic as i64,
-        }
-    }
-}
+// Note: Type conversions are now in the `conversions` module
 
 // Convert ApiError to DriverException
 fn to_driver_error(error: &ApiError) -> DriverError {
@@ -602,14 +521,13 @@ impl DatabaseDriver for DatabaseDriverImpl {
         Ok(StatementBindResponse {})
     }
 
-    #[instrument(name = "DatabaseDriverV1::statement_bind_stream", skip(_input))]
+    #[instrument(name = "DatabaseDriverV1::statement_bind_stream", skip(input))]
     fn statement_bind_stream(
-        _input: StatementBindStreamRequest,
+        input: StatementBindStreamRequest,
     ) -> Result<StatementBindStreamResponse, DriverException> {
-        // TODO: Implement when corresponding API method is available
-        Err(not_implemented(
-            "statement_bind_stream is not yet implemented",
-        ))
+        let stmt_handle = required(input.stmt_handle, "Statement handle is required")?;
+        statement_bind_stream(stmt_handle.into(), &input.stream).to_protobuf()?;
+        Ok(StatementBindStreamResponse {})
     }
 
     #[instrument(name = "DatabaseDriverV1::statement_execute_query", skip(input))]
@@ -625,6 +543,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
             result: Some(ExecuteResult {
                 stream: Some(stream_ptr),
                 rows_affected: result.rows_affected,
+                wasm_result: None, // Not used for native
             }),
         })
     }

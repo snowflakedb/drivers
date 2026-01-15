@@ -1,0 +1,51 @@
+/// WIT definition for the Snowflake driver WASM component.
+/// 
+/// This component provides a protobuf-based API for database operations.
+
+package snowflake:driver@0.1.0;
+
+/// The main driver world that defines the component interface.
+world driver {
+    // Export the driver API
+    export api;
+}
+
+/// The driver API interface.
+interface api {
+    /// Result type for API calls.
+    /// Returns either the response bytes on success, or error bytes on failure.
+    variant api-result {
+        /// Successful response with protobuf-encoded response data.
+        ok(list<u8>),
+        /// Application error with protobuf-encoded error data.
+        application-error(list<u8>),
+        /// Transport/internal error with error message.
+        transport-error(string),
+    }
+
+    /// Call a protobuf API method.
+    /// 
+    /// # Arguments
+    /// * `api` - The API name (e.g., "DatabaseDriver")
+    /// * `method` - The method name (e.g., "Connect", "Query")
+    /// * `request` - Protobuf-encoded request data
+    /// 
+    /// # Returns
+    /// The result of the API call
+    api-call: func(api: string, method: string, request: list<u8>) -> api-result;
+
+    /// Initialize the logger with a specific log level.
+    /// 
+    /// # Arguments
+    /// * `level` - Log level (0=error, 1=warn, 2=info, 3=debug, 4=trace)
+    /// 
+    /// # Returns
+    /// 0 on success, non-zero on failure
+    init-logger: func(level: u32) -> u32;
+
+    /// Get the version of the driver.
+    /// 
+    /// # Returns
+    /// Version string
+    get-version: func() -> string;
+}

@@ -2,6 +2,8 @@
 [workspace]
 members = [
     "sf_core",
+    "sf_core_wasm",
+    "sf_core_wasm_reactor",
     "sf_mini_core",
     "sf_mini_core_static",
     "odbc",

@@ -1,10 +1,11 @@
-use jwt::PKeyWithDigest;
-use jwt::SignWithKey;
-use openssl::hash::MessageDigest;
-use serde::Serialize;
-use snafu::{Location, ResultExt, Snafu};
+//! Authentication module for Snowflake login.
+//!
+//! This module handles credential creation for various authentication methods.
+
+use snafu::{Location, Snafu};
 
 use crate::config::rest_parameters::{LoginMethod, LoginParameters};
+use crate::crypto::{CryptoError, DefaultJwtSigner, JwtSigner};
 
 /// Extracts the account locator from a full account identifier.
 ///
@@ -26,85 +27,6 @@ pub enum Credentials {
     Pat { username: String, token: String },
 }
 
-#[derive(Debug, Serialize)]
-struct Claim {
-    sub: String,
-    iss: String,
-    iat: i64,
-    exp: i64,
-}
-
-fn generate_jwt_token(
-    account: &str,
-    username: &str,
-    private_key: &str,
-    passphrase: Option<&str>,
-) -> Result<String, AuthError> {
-    use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
-    use jwt::{Header, Token};
-    use openssl::{pkey::PKey, rsa::Rsa};
-    use std::time::{SystemTime, UNIX_EPOCH};
-
-    // Parse RSA private key
-    let rsa = if let Some(passphrase) = passphrase {
-        Rsa::private_key_from_pem_passphrase(private_key.as_bytes(), passphrase.as_bytes())
-    } else {
-        Rsa::private_key_from_pem(private_key.as_bytes())
-    }
-    .context(InvalidPrivateKeyFormatSnafu)?;
-    let private_key = PKey::from_rsa(rsa).context(PrivateKeyCreationSnafu)?;
-
-    // Extract public key and hash it
-    let public_key_der = private_key
-        .public_key_to_der()
-        .context(PublicKeyExtractionSnafu)?;
-    let mut hasher = openssl::sha::Sha256::new();
-    hasher.update(&public_key_der);
-    let public_key_hash = hasher.finish();
-    let public_key_b64 = BASE64.encode(public_key_hash);
-
-    let pkey_with_digest = PKeyWithDigest {
-        digest: MessageDigest::sha256(),
-        key: private_key,
-    };
-
-    // Create JWT header
-    let header = Header {
-        algorithm: jwt::AlgorithmType::Rs256,
-        ..Default::default()
-    };
-
-    // Create claims
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .context(SystemTimeSnafu)?
-        .as_secs() as i64;
-
-    // Normalize the account name to just the account locator (first segment before any dots).
-    // Per Snowflake documentation, the JWT `iss` field must use the account locator without
-    // region information, and both account and username must be uppercase.
-    // See: https://docs.snowflake.com/en/developer-guide/sql-api/authenticating#using-key-pair-authentication
-    // Format: <account_locator>.<user>.SHA256:<public_key_fingerprint>
-    // Example: "driverspreprod6.preprod6.us-west-2.aws" -> "DRIVERSPREPROD6"
-    let account_locator = extract_account_locator(account);
-
-    let sub = format!("{}.{}", account_locator, username.to_uppercase());
-    let iss = format!("{sub}.SHA256:{public_key_b64}");
-    let claim: Claim = Claim {
-        sub,
-        iss,
-        iat: now,
-        exp: now + 120,
-    };
-
-    // Create and sign token
-    let token = Token::new(header, claim)
-        .sign_with_key(&pkey_with_digest)
-        .context(JWTSigningSnafu)?;
-
-    Ok(token.as_str().to_string())
-}
-
 pub fn create_credentials(login_parameters: &LoginParameters) -> Result<Credentials, AuthError> {
     match &login_parameters.login_method {
         LoginMethod::Password { username, password } => Ok(Credentials::Password {
@@ -116,12 +38,18 @@ pub fn create_credentials(login_parameters: &LoginParameters) -> Result<Credenti
             private_key,
             passphrase,
         } => {
-            let token = generate_jwt_token(
-                &login_parameters.account_name,
-                username,
-                private_key,
-                passphrase.as_deref(),
-            )?;
+            let signer = DefaultJwtSigner;
+            let token = signer
+                .sign_rs256(
+                    private_key.as_bytes(),
+                    passphrase.as_ref().map(|p| p.as_bytes()),
+                    &login_parameters.account_name,
+                    username,
+                )
+                .map_err(|e| AuthError::JwtGeneration {
+                    source: e,
+                    location: snafu::Location::new(file!(), line!(), column!()),
+                })?;
             Ok(Credentials::Jwt {
                 username: username.clone(),
                 token,
@@ -136,33 +64,9 @@ pub fn create_credentials(login_parameters: &LoginParameters) -> Result<Credenti
 
 #[derive(Debug, Snafu)]
 pub enum AuthError {
-    #[snafu(display("Invalid private key format"))]
-    InvalidPrivateKeyFormat {
-        source: openssl::error::ErrorStack,
-        #[snafu(implicit)]
-        location: Location,
-    },
-    #[snafu(display("Failed to create private key from RSA"))]
-    PrivateKeyCreation {
-        source: openssl::error::ErrorStack,
-        #[snafu(implicit)]
-        location: Location,
-    },
-    #[snafu(display("Failed to extract public key from private key"))]
-    PublicKeyExtraction {
-        source: openssl::error::ErrorStack,
-        #[snafu(implicit)]
-        location: Location,
-    },
-    #[snafu(display("Failed to get current system time"))]
-    SystemTime {
-        source: std::time::SystemTimeError,
-        #[snafu(implicit)]
-        location: Location,
-    },
-    #[snafu(display("Failed to sign JWT token"))]
-    JWTSigning {
-        source: jwt::Error,
+    #[snafu(display("JWT generation failed"))]
+    JwtGeneration {
+        source: CryptoError,
         #[snafu(implicit)]
         location: Location,
     },

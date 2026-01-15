@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 extern crate infer;
 use snafu::{Location, Snafu};
 

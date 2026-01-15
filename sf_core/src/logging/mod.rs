@@ -1,10 +1,17 @@
+//! Logging and tracing module.
+//!
+//! This module provides logging infrastructure. OpenTelemetry support
+//! is only available for native builds.
+
 use std::path::PathBuf;
 
 pub use crate::logging::callback_layer::CLogCallback;
 pub use crate::logging::callback_layer::CallbackLayer;
 pub use crate::logging::error::LogError;
+#[cfg(feature = "native")]
 use crate::logging::opentelemetry::init_tracer;
 use tracing::level_filters::LevelFilter;
+#[cfg(feature = "native")]
 use tracing_opentelemetry::OpenTelemetryLayer;
 use tracing_subscriber::Layer;
 use tracing_subscriber::Registry;
@@ -12,6 +19,7 @@ use tracing_subscriber::layer::SubscriberExt;
 
 mod callback_layer;
 mod error;
+#[cfg(feature = "native")]
 mod opentelemetry;
 
 pub struct LoggingConfig {
@@ -55,13 +63,25 @@ where
     };
     let subscriber = subscriber.with(file_layer);
 
-    let opentelemetry_layer = if config.opentelemetry {
-        let tracer_layer = init_tracer()?;
-        Some(OpenTelemetryLayer::new(tracer_layer))
-    } else {
-        None
+    #[cfg(feature = "native")]
+    let subscriber = {
+        let opentelemetry_layer = if config.opentelemetry {
+            let tracer_layer = init_tracer()?;
+            Some(OpenTelemetryLayer::new(tracer_layer))
+        } else {
+            None
+        };
+        subscriber.with(opentelemetry_layer)
     };
-    let subscriber = subscriber.with(opentelemetry_layer);
+
+    #[cfg(not(feature = "native"))]
+    let subscriber = {
+        // OpenTelemetry not available in WASM builds
+        if config.opentelemetry {
+            tracing::warn!("OpenTelemetry is not available in WASM builds");
+        }
+        subscriber
+    };
 
     let stderr_layer = if config.stderr {
         Some(

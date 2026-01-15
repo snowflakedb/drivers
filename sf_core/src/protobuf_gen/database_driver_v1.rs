@@ -80,12 +80,63 @@ pub struct DriverException {
     pub report: ::prost::alloc::string::String,
 }
 /// Execute result
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+#[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ExecuteResult {
     #[prost(message, optional, tag = "1")]
     pub stream: ::core::option::Option<ArrowArrayStreamPtr>,
     #[prost(int64, tag = "2")]
     pub rows_affected: i64,
+    /// For WASM: zero-copy Arrow result with buffer offsets into WASM memory
+    #[prost(message, optional, tag = "3")]
+    pub wasm_result: ::core::option::Option<WasmArrowResult>,
+}
+/// WASM Arrow result - zero-copy access to Arrow data in WASM memory
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct WasmArrowResult {
+    /// Schema serialized as Arrow IPC (small, one-time overhead)
+    #[prost(bytes = "vec", tag = "1")]
+    pub schema_ipc: ::prost::alloc::vec::Vec<u8>,
+    /// Record batches as buffer descriptors pointing into WASM memory
+    #[prost(message, repeated, tag = "2")]
+    pub batches: ::prost::alloc::vec::Vec<WasmRecordBatch>,
+    /// Total number of rows across all batches
+    #[prost(int64, tag = "3")]
+    pub total_rows: i64,
+    /// Handle to release the Arrow data when done (call release_arrow_result with this)
+    #[prost(uint64, tag = "4")]
+    pub release_handle: u64,
+}
+/// A record batch in WASM memory
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct WasmRecordBatch {
+    #[prost(int64, tag = "1")]
+    pub num_rows: i64,
+    /// Column buffers - one per column in schema order
+    #[prost(message, repeated, tag = "2")]
+    pub columns: ::prost::alloc::vec::Vec<WasmArrowColumn>,
+}
+/// A column's buffers in WASM memory
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct WasmArrowColumn {
+    /// Validity bitmap buffer (may be empty if no nulls)
+    #[prost(message, optional, tag = "1")]
+    pub validity: ::core::option::Option<WasmBuffer>,
+    /// Data buffer(s) - interpretation depends on type
+    #[prost(message, repeated, tag = "2")]
+    pub data: ::prost::alloc::vec::Vec<WasmBuffer>,
+    /// Offsets buffer (for variable-length types like strings)
+    #[prost(message, optional, tag = "3")]
+    pub offsets: ::core::option::Option<WasmBuffer>,
+}
+/// A buffer in WASM linear memory
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct WasmBuffer {
+    /// Offset into WASM linear memory
+    #[prost(uint32, tag = "1")]
+    pub offset: u32,
+    /// Length in bytes
+    #[prost(uint32, tag = "2")]
+    pub length: u32,
 }
 /// Partitioned result
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
@@ -466,7 +517,7 @@ pub struct StatementExecuteQueryRequest {
     #[prost(message, optional, tag = "1")]
     pub stmt_handle: ::core::option::Option<StatementHandle>,
 }
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+#[derive(Clone, PartialEq, ::prost::Message)]
 pub struct StatementExecuteQueryResponse {
     #[prost(message, optional, tag = "1")]
     pub result: ::core::option::Option<ExecuteResult>,

@@ -128,6 +128,11 @@ pub enum LoginMethod {
 
 impl LoginMethod {
     fn read_private_key(settings: &dyn Settings) -> Result<String, ConfigError> {
+        // First, check if private key contents are provided directly
+        if let Some(private_key) = settings.get_string("private_key") {
+            return Ok(private_key);
+        }
+        // Otherwise, read from file
         if let Some(private_key_file) = settings.get_string("private_key_file") {
             let private_key = fs::read_to_string(private_key_file.clone()).map_err(|e| {
                 InvalidParameterValueSnafu {
@@ -140,7 +145,7 @@ impl LoginMethod {
             Ok(private_key)
         } else {
             MissingParameterSnafu {
-                parameter: "private_key_file",
+                parameter: "private_key or private_key_file",
             }
             .fail()?
         }

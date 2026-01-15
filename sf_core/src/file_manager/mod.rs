@@ -1,21 +1,42 @@
+//! File manager for stage uploads and downloads.
+//!
+//! Most functionality is only available for native builds (requires aws-sdk-s3).
+#![allow(dead_code)]
+
 mod encryption;
+
+#[cfg(feature = "native")]
 mod file_transfer;
 
 mod path_expansion;
+pub mod s3;
 pub mod types;
 
+#[allow(unused_imports)]
 pub use self::types::*;
 
+#[cfg(feature = "native")]
 use crate::compression::{CompressionError, compress_data};
+#[cfg(feature = "native")]
 use crate::compression_types::{CompressionType, CompressionTypeError, try_guess_compression_type};
-use encryption::{EncryptionError, decrypt_file_data, encrypt_file_data};
+use encryption::EncryptionError;
+#[cfg(feature = "native")]
+use encryption::{decrypt_file_data, encrypt_file_data};
+#[cfg(feature = "native")]
 use file_transfer::{DownloadFileError, UploadFileError, download_from_s3, upload_to_s3_or_skip};
+#[cfg(feature = "native")]
 use path_expansion::{PathExpansionError, expand_filenames};
-use snafu::{Location, ResultExt, Snafu};
+#[cfg(feature = "native")]
+use snafu::ResultExt;
+use snafu::{Location, Snafu};
+#[cfg(feature = "native")]
 use std::fs::File;
+#[cfg(feature = "native")]
 use std::io::{Read, Write};
+#[cfg(feature = "native")]
 use std::path::Path;
 
+#[cfg(feature = "native")]
 pub async fn upload_files(data: &UploadData) -> Result<Vec<UploadResult>, FileManagerError> {
     let file_locations =
         expand_filenames(&data.src_location_pattern).context(PathExpansionSnafu)?;
@@ -41,6 +62,7 @@ pub async fn upload_files(data: &UploadData) -> Result<Vec<UploadResult>, FileMa
     Ok(results)
 }
 
+#[cfg(feature = "native")]
 pub async fn upload_single_file(data: SingleUploadData) -> Result<UploadResult, FileManagerError> {
     let mut input_file = File::open(&data.file_path).context(IoSnafu)?;
 
@@ -80,6 +102,8 @@ pub async fn upload_single_file(data: SingleUploadData) -> Result<UploadResult, 
 }
 
 /// Sets file metadata, compresses the file if needed, and encrypts the data before uploading it to S3.
+#[cfg(feature = "native")]
+#[allow(clippy::result_large_err)]
 fn preprocess_file_before_upload(
     mut file_buffer: Vec<u8>,
     data: &SingleUploadData,
@@ -125,6 +149,7 @@ fn preprocess_file_before_upload(
 }
 
 /// Uses user-specified compression type or auto-detects the compression type based on the file name and content.
+#[cfg(feature = "native")]
 fn get_source_compression(
     filename: &str,
     file_buffer: &[u8],
@@ -142,6 +167,7 @@ fn get_source_compression(
     }
 }
 
+#[cfg(feature = "native")]
 pub async fn download_files(
     mut data: DownloadData,
 ) -> Result<Vec<DownloadResult>, FileManagerError> {
@@ -166,6 +192,7 @@ pub async fn download_files(
     Ok(results)
 }
 
+#[cfg(feature = "native")]
 pub async fn download_single_file(
     data: SingleDownloadData,
 ) -> Result<DownloadResult, FileManagerError> {
@@ -224,30 +251,35 @@ pub enum FileManagerError {
         #[snafu(implicit)]
         location: Location,
     },
+    #[cfg(feature = "native")]
     #[snafu(display("Failed to compress data"))]
     Compression {
         source: CompressionError,
         #[snafu(implicit)]
         location: Location,
     },
+    #[cfg(feature = "native")]
     #[snafu(display("Failed to upload file to S3"))]
     S3Upload {
         source: UploadFileError,
         #[snafu(implicit)]
         location: Location,
     },
+    #[cfg(feature = "native")]
     #[snafu(display("Failed to download file from S3"))]
     S3Download {
         source: DownloadFileError,
         #[snafu(implicit)]
         location: Location,
     },
+    #[cfg(feature = "native")]
     #[snafu(display("Failed to expand file paths"))]
     PathExpansion {
         source: PathExpansionError,
         #[snafu(implicit)]
         location: Location,
     },
+    #[cfg(feature = "native")]
     #[snafu(display("Failed to get compression type"))]
     CompressionType {
         source: CompressionTypeError,

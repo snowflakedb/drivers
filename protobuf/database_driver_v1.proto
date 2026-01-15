@@ -2,6 +2,7 @@ syntax = "proto3";
 
 package database_driver_v1;
 option java_package = "com.snowflake.unicore.protobuf_gen";
+option go_package = "github.com/snowflakedb/universal-driver/go/protobuf";
 
 import "google/protobuf/descriptor.proto";
 
@@ -112,6 +113,43 @@ message DriverException {
 message ExecuteResult {
   ArrowArrayStreamPtr stream = 1;
   int64 rows_affected = 2;
+  // For WASM: zero-copy Arrow result with buffer offsets into WASM memory
+  WasmArrowResult wasm_result = 3;
+}
+
+// WASM Arrow result - zero-copy access to Arrow data in WASM memory
+message WasmArrowResult {
+  // Schema serialized as Arrow IPC (small, one-time overhead)
+  bytes schema_ipc = 1;
+  // Record batches as buffer descriptors pointing into WASM memory
+  repeated WasmRecordBatch batches = 2;
+  // Total number of rows across all batches
+  int64 total_rows = 3;
+  // Handle to release the Arrow data when done (call release_arrow_result with this)
+  uint64 release_handle = 4;
+}
+
+// A record batch in WASM memory
+message WasmRecordBatch {
+  int64 num_rows = 1;
+  // Column buffers - one per column in schema order
+  repeated WasmArrowColumn columns = 2;
+}
+
+// A column's buffers in WASM memory
+message WasmArrowColumn {
+  // Validity bitmap buffer (may be empty if no nulls)
+  WasmBuffer validity = 1;
+  // Data buffer(s) - interpretation depends on type
+  repeated WasmBuffer data = 2;
+  // Offsets buffer (for variable-length types like strings)
+  WasmBuffer offsets = 3;
+}
+
+// A buffer in WASM linear memory
+message WasmBuffer {
+  uint32 offset = 1;  // Offset into WASM linear memory
+  uint32 length = 2;  // Length in bytes
 }
 
 // Partitioned result

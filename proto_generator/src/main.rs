@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use lazy_static::lazy_static;
 
 lazy_static! {
-    static ref generators: Vec<Box<dyn CodeGenerator + Sync>> = vec![
+    static ref generators: Vec<Box<dyn CodeGenerator + Send + Sync>> = vec![
         Box::new(RustGenerator::new()),
         Box::new(JsonGenerator::new()),
         Box::new(PythonGenerator::new()),

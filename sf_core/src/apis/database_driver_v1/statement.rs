@@ -134,6 +134,29 @@ pub unsafe fn statement_bind(
     })
 }
 
+/// Bind parameters from JSON-encoded stream.
+/// This provides an FFI-free way to bind parameters from Go without CGO FFI.
+pub fn statement_bind_stream(stmt_handle: Handle, stream: &[u8]) -> Result<(), ApiError> {
+    // Parse JSON into BindParameter format
+    // The format is {"1": {"type": "TEXT", "value": "..."}, "2": ...}
+    let params: HashMap<String, query_request::BindParameter> = serde_json::from_slice(stream)
+        .map_err(|e| {
+            InvalidArgumentSnafu {
+                argument: format!("Failed to parse parameter bindings: {}", e),
+            }
+            .build()
+        })?;
+
+    with_statement(stmt_handle, |mut stmt| {
+        stmt.bind_json_parameters(params).map_err(|_| {
+            InvalidArgumentSnafu {
+                argument: "Failed to bind JSON parameters".to_string(),
+            }
+            .build()
+        })
+    })
+}
+
 pub struct ExecuteResult {
     pub stream: Box<FFI_ArrowArrayStream>,
     pub rows_affected: i64,
@@ -272,6 +295,8 @@ pub struct Statement {
     pub settings: HashMap<String, Setting>,
     pub query: Option<String>,
     pub parameter_bindings: Option<RecordBatch>,
+    /// JSON-based parameter bindings (alternative to RecordBatch for FFI-free binding)
+    pub json_parameters: Option<HashMap<String, query_request::BindParameter>>,
     pub conn: Arc<Mutex<Connection>>,
 }
 
@@ -288,6 +313,7 @@ impl Statement {
             state: StatementState::Initialized,
             query: None,
             parameter_bindings: None,
+            json_parameters: None,
             conn,
         }
     }
@@ -307,9 +333,32 @@ impl Statement {
         Ok(())
     }
 
+    /// Bind parameters from JSON format (FFI-free, works from Go without CGO FFI)
+    pub fn bind_json_parameters(
+        &mut self,
+        params: HashMap<String, query_request::BindParameter>,
+    ) -> Result<(), StatementError> {
+        match self.state {
+            StatementState::Initialized => {
+                self.json_parameters = Some(params);
+            }
+            _ => {
+                InvalidStateTransitionSnafu {
+                    msg: format!("Cannot bind parameters in state={:?}", self.state),
+                }
+                .fail()?;
+            }
+        }
+        Ok(())
+    }
+
     pub fn get_query_parameter_bindings(
         &self,
     ) -> Result<Option<HashMap<String, query_request::BindParameter>>, StatementError> {
+        // First check JSON parameters, then fall back to RecordBatch
+        if let Some(params) = &self.json_parameters {
+            return Ok(Some(params.clone()));
+        }
         match self.parameter_bindings.as_ref() {
             Some(parameters) => Ok(Some(parameters_from_record_batch(parameters)?)),
             None => Ok(None),

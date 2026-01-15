@@ -1,3 +1,10 @@
+//! C API for FFI bindings.
+//!
+//! This module provides a C-compatible API for external language bindings
+//! (Python, Java, etc.). It is only available for native builds.
+
+#![cfg(feature = "native")]
+
 use crate::logging;
 use crate::protobuf_apis::call_proto;
 use proto_utils::ProtoError;

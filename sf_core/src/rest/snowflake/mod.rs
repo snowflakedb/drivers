@@ -1,6 +1,6 @@
 #![allow(clippy::result_large_err)]
 pub mod async_exec;
-mod auth;
+pub mod auth;
 pub mod error;
 pub mod query_request;
 pub mod query_response;
@@ -756,6 +756,15 @@ where
     let response_text = response.text().await;
 
     if !response_status.is_success() {
+        let body = response_text
+            .as_ref()
+            .map(|s| s.as_str())
+            .unwrap_or("<no body>");
+        tracing::error!(
+            status = %response_status,
+            body = %body,
+            "Snowflake returned error response"
+        );
         // Return SessionExpired so caller can refresh and retry
         if response_status == reqwest::StatusCode::UNAUTHORIZED {
             return SessionExpiredSnafu.fail();
