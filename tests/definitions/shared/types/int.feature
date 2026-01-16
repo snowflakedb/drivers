@@ -33,6 +33,16 @@ Feature: INT type support
     Then Result should contain integers [-99999999999999999999999999999999999999, 99999999999999999999999999999999999999]
 
   @python_e2e
+  Scenario: should select corner case values from table for int and synonyms
+    Given Snowflake client is logged in
+    And Table with columns (tinyint_col TINYINT, byteint_col BYTEINT, smallint_col SMALLINT, int_col INT, integer_col INTEGER, bigint_col BIGINT, int38_col INT) exists
+    And Row with positive values (127, 255, 32767, 2147483647, 2147483647, 9223372036854775807, 99999999999999999999999999999999999999) is inserted
+    And Row with negative values (-128, -1, -32768, -2147483648, -2147483648, -9223372036854775808, -99999999999999999999999999999999999999) is inserted
+    And Row with zeroes and nulls (0, NULL, 0, NULL, 0, NULL, 0) is inserted
+    When Query "SELECT * FROM corner_case_table" is executed
+    Then Result should contain 3 rows with expected corner case values for all int type synonyms
+
+  @python_e2e
   Scenario: should handle NULL values for int and synonyms
     Given Snowflake client is logged in
     When Query "SELECT NULL::<type>, 42::<type>, NULL::<type>" is executed

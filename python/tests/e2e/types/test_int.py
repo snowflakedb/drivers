@@ -123,6 +123,89 @@ class TestInt:
             "Python int supports arbitrary precision and should handle 38-digit integers"
         )
 
+    def test_should_select_corner_case_values_from_table_for_int_and_synonyms(self, cursor):
+        # Given Snowflake client is logged in
+        assert not cursor.connection.is_closed(), "Connection should be open"
+
+        # And Table with columns (tinyint_col TINYINT, byteint_col BYTEINT, smallint_col SMALLINT,
+        # int_col INT, integer_col INTEGER, bigint_col BIGINT, int38_col INT) exists
+        table_name = "corner_case_table"
+        # weird definition format as tests validator is getting a stroke trying to read multiline strings
+        cursor.execute(
+            f"CREATE TEMP TABLE {table_name} ("
+            "tinyint_col TINYINT, "
+            "byteint_col BYTEINT, "
+            "smallint_col SMALLINT, "
+            "int_col INT, "
+            "integer_col INTEGER, "
+            "bigint_col BIGINT, "
+            "int38_col INT)"
+        )
+
+        # And Row with positive values (127, 255, 32767, 2147483647, 2147483647, 9223372036854775807,
+        # 99999999999999999999999999999999999999) is inserted
+        positive_row = (
+            127,  # 8-bit signed max
+            255,  # 8-bit unsigned max
+            32767,  # 16-bit signed max
+            2147483647,  # 32-bit signed max
+            2147483647,  # 32-bit signed max
+            9223372036854775807,  # 64-bit signed max
+            99999999999999999999999999999999999999,  # 38-digit max
+        )
+        cursor.execute(
+            f"INSERT INTO {table_name} VALUES ({positive_row[0]}, {positive_row[1]}, {positive_row[2]}, "
+            f"{positive_row[3]}, {positive_row[4]}, {positive_row[5]}, {positive_row[6]})"
+        )
+
+        # And Row with negative values (-128, -1, -32768, -2147483648, -2147483648, -9223372036854775808,
+        # -99999999999999999999999999999999999999) is inserted
+        negative_row = (
+            -128,  # 8-bit signed min
+            -1,  # simple negative
+            -32768,  # 16-bit signed min
+            -2147483648,  # 32-bit signed min
+            -2147483648,  # 32-bit signed min
+            -9223372036854775808,  # 64-bit signed min
+            -99999999999999999999999999999999999999,  # 38-digit min
+        )
+        cursor.execute(
+            f"INSERT INTO {table_name} VALUES ({negative_row[0]}, {negative_row[1]}, {negative_row[2]}, "
+            f"{negative_row[3]}, {negative_row[4]}, {negative_row[5]}, {negative_row[6]})"
+        )
+
+        # And Row with zeroes and nulls (0, NULL, 0, NULL, 0, NULL, 0) is inserted
+        zeroes_nulls_row = (0, None, 0, None, 0, None, 0)
+        cursor.execute(f"INSERT INTO {table_name} VALUES (0, NULL, 0, NULL, 0, NULL, 0)")
+
+        # When Query "SELECT * FROM corner_case_table" is executed
+        cursor.execute(f"SELECT * FROM {table_name}")
+        rows = cursor.fetchall()
+
+        # Then Result should contain 3 rows with expected corner case values for all int type synonyms
+        assert len(rows) == 3, f"Expected 3 rows, got {len(rows)}"
+
+        # Verify positive row
+        assert rows[0] == positive_row, f"Positive row: Expected {positive_row}, got {rows[0]}"
+        for val in rows[0]:
+            assert isinstance(val, int), f"Value {val} in positive row should be Python int type"
+
+        # Verify negative row
+        assert rows[1] == negative_row, f"Negative row: Expected {negative_row}, got {rows[1]}"
+        for val in rows[1]:
+            assert isinstance(val, int), f"Value {val} in negative row should be Python int type"
+
+        # Verify zeroes and nulls row
+        assert rows[2] == zeroes_nulls_row, f"Zeroes/nulls row: Expected {zeroes_nulls_row}, got {rows[2]}"
+        for i, val in enumerate(rows[2]):
+            if val is not None:
+                assert isinstance(val, int), f"Value {val} at index {i} should be Python int type"
+            else:
+                assert val is None, f"Value at index {i} should be NULL (None)"
+
+        # Cleanup
+        cursor.execute(f"DROP TABLE IF EXISTS {table_name}")
+
     @pytest.mark.parametrize("int_type", ["INT", "INTEGER", "BIGINT", "SMALLINT", "TINYINT", "BYTEINT"])
     def test_should_handle_null_values_for_int_and_synonyms(self, cursor, int_type):
         # Given Snowflake client is logged in
