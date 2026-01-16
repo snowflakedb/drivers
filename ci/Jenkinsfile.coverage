@@ -47,7 +47,9 @@ def parseLcovCoverage(String lcovFile) {
 def parseJacocoCoverage(String xmlFile) {
     def result = sh(label: 'Parse JaCoCo Coverage', script: """
         set +x
-        grep 'type="LINE"' "${xmlFile}" | tail -1 | sed 's/.*missed="\\([0-9]*\\)".*covered="\\([0-9]*\\)".*/\\1 \\2/' | awk '{
+        # Extract the last LINE counter (report-level total)
+        # Use tac to reverse file, find first LINE counter, which is the report total
+        tac "${xmlFile}" | grep -m1 'type="LINE"' | sed 's/.*missed="\\([0-9]*\\)".*covered="\\([0-9]*\\)".*/\\1 \\2/' | awk '{
             total = \$1 + \$2
             if (total > 0) printf "%.2f", \$2 * 100 / total
         }'
