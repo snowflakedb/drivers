@@ -204,7 +204,7 @@ pipeline {
                                             set +x
                                             export PARAMETER_PATH=$(pwd)/../parameters.json
                                             mkdir -p reports
-                                            uv run tox -e py39-all -- \
+                                            hatch run test.py3.9:all -- \
                                                 --cov=src/snowflake \
                                                 --cov-report=term \
                                                 --cov-report=xml:reports/coverage-python.xml
