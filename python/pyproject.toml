@@ -159,8 +159,8 @@ show-paths = "python scripts/detect_core_path.py --export"
 # Precommit environment
 [tool.hatch.envs.precommit.scripts]
 check = [
-    'ruff format --check src/snowflake tests',
-    'ruff check src/snowflake tests',
+    'ruff format --check {args:src/snowflake tests}',
+    'ruff check {args:src/snowflake tests}',
     'mypy --install-types --non-interactive -p snowflake.ud_connector',
 ]
 fix = [
