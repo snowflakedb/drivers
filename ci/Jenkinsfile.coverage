@@ -269,9 +269,12 @@ pipeline {
                                             -format=lcov \
                                             -sources=$(pwd)/odbc \
                                             -sources=$(pwd)/sf_core > lcov-odbc.info
+                                        
+                                        # Filter to only odbc/ files for local percentage calculation
+                                        lcov --extract lcov-odbc.info "*/odbc/*" -o lcov-odbc-filtered.info
                                     '''
                                     
-                                    def coverage = parseLcovCoverage('lcov-odbc.info')
+                                    def coverage = parseLcovCoverage('lcov-odbc-filtered.info')
                                     uploadToCodecov('odbc', 'lcov-odbc.info')
                                     reportStatus('odbc', coverage)
                                 }

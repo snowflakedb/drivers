@@ -68,6 +68,9 @@ component_management:
       paths:
         - "odbc/**"
 
+fixes:
+  - "com/snowflake/::jdbc/src/java/com/snowflake/"
+
 ignore:
   # Test files
   - "tests/**"
