@@ -86,6 +86,7 @@ source = ["snowflake"]
 omit = [
     "*/tests/*",
     "*/test_*",
+    "*/protobuf_gen/*",
 ]
 
 [tool.coverage.report]
