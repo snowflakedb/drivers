@@ -7,7 +7,6 @@ and provides Python helper functions for Arrow conversions in the C++ converters
 from __future__ import annotations
 
 import decimal
-import time
 
 from datetime import datetime, timedelta, timezone, tzinfo
 from logging import getLogger
@@ -15,8 +14,6 @@ from sys import byteorder
 from typing import TYPE_CHECKING
 
 import pytz
-
-from pytz import UTC
 
 
 if TYPE_CHECKING:
@@ -143,10 +140,10 @@ class ArrowConverterContext:
         nanoseconds = int(decimal.Decimal(epoch).scaleb(9) + decimal.Decimal(fraction))
         return numpy.datetime64(nanoseconds, "ns")
 
-    def DECIMAL128_to_decimal(self, int128_bytes: bytes, scale: int) -> decimal.Decimal:
+    def DECIMAL128_to_decimal(self, int128_bytes: bytes, scale: int) -> decimal.Decimal | int:
         int128 = int.from_bytes(int128_bytes, byteorder=byteorder, signed=True)
         if scale == 0:
-            return decimal.Decimal(int128)
+            return int128
         digits = [int(digit) for digit in str(int128) if digit != "-"]
         sign = int128 < 0
         return decimal.Decimal((sign, digits, -scale))

@@ -287,21 +287,27 @@ class TestDecimal128ToDecimal:
     """Test DECIMAL128 conversion."""
 
     @pytest.mark.parametrize(
-        "int_value,scale,expected",
+        "int_value,scale,expected,expected_type",
         [
-            (123, 0, 123),  # no scale
-            (12345, 2, decimal.Decimal("123.45")),  # scale 2
-            (-12345, 2, decimal.Decimal("-123.45")),  # negative
-            (123456789, 6, decimal.Decimal("123.456789")),  # large scale
-            (1, 0, 1),  # minimal value
-            (0, 0, 0),  # zero
-            (0, 5, decimal.Decimal("0")),  # zero with scale
-            (100, 2, decimal.Decimal("1.00")),  # trailing zeros
+            (123, 0, 123, int),  # no scale - returns int
+            (12345, 2, decimal.Decimal("123.45"), decimal.Decimal),  # scale 2
+            (-12345, 2, decimal.Decimal("-123.45"), decimal.Decimal),  # negative
+            (
+                123456789,
+                6,
+                decimal.Decimal("123.456789"),
+                decimal.Decimal,
+            ),  # large scale
+            (1, 0, 1, int),  # minimal value - returns int
+            (0, 0, 0, int),  # zero - returns int
+            (0, 5, decimal.Decimal("0"), decimal.Decimal),  # zero with scale
+            (100, 2, decimal.Decimal("1.00"), decimal.Decimal),  # trailing zeros
             (
                 99999999999999999999999999999999999999,
                 0,
                 99999999999999999999999999999999999999,
-            ),  # max 38-digit
+                int,
+            ),  # max 38-digit - returns int
         ],
         ids=[
             "no_scale",
@@ -315,12 +321,17 @@ class TestDecimal128ToDecimal:
             "max_38_digit",
         ],
     )
-    def test_decimal128_to_decimal(self, int_value, scale, expected):
-        """Test DECIMAL128 conversion with various values and scales."""
+    def test_decimal128_to_decimal(self, int_value, scale, expected, expected_type):
+        """Test DECIMAL128 conversion with various values and scales.
+
+        When scale=0 (integer), returns Python int to match old driver behavior.
+        When scale>0 (decimal), returns decimal.Decimal.
+        """
         context = ArrowConverterContext()
         int128_bytes = int_value.to_bytes(16, byteorder=sys.byteorder, signed=True)
         result = context.DECIMAL128_to_decimal(int128_bytes, scale)
         assert result == expected
+        assert isinstance(result, expected_type), f"Expected {expected_type}, got {type(result)}"
 
 
 class TestDecfloatConversions:

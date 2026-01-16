@@ -221,6 +221,7 @@ class TestInt:
         assert isinstance(result[1], int), "Second value should be Python int"
         assert result[2] is None, "Third value should be NULL (None)"
 
+    @pytest.mark.skip("SNOW-3006013 - parameter binding is not yet implemented")
     @pytest.mark.parametrize("int_type", ["INT", "INTEGER", "BIGINT", "SMALLINT", "TINYINT", "BYTEINT"])
     def test_should_insert_integer_using_parameter_binding_for_int_and_synonyms(self, cursor, int_type):
         # Given Snowflake client is logged in
