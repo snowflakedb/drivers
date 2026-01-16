@@ -28,13 +28,13 @@ class TestInt:
         assert all(isinstance(val, int) for val in result), "All values should be Python int type"
 
     @pytest.mark.parametrize("int_type", ["INT", "INTEGER", "BIGINT", "SMALLINT", "TINYINT", "BYTEINT"])
-    def test_should_select_integers_from_table_for_int_and_synonyms(self, cursor, int_type):
+    def test_should_select_integers_from_table_for_int_and_synonyms(self, cursor, tmp_schema, int_type):
         # Given Snowflake client is logged in
         assert not cursor.connection.is_closed(), "Connection should be open"
 
         # And Table with <type> column exists with values [0, 1, -1, 100]
-        table_name = f"int_table_{int_type.lower()}"
-        cursor.execute(f"CREATE TEMP TABLE {table_name} (col {int_type})")
+        table_name = f"{tmp_schema}.int_table_{int_type.lower()}"
+        cursor.execute(f"CREATE TABLE {table_name} (col {int_type})")
 
         test_values = [0, 1, -1, 100]
         for val in test_values:
@@ -49,9 +49,6 @@ class TestInt:
         expected = [-1, 0, 1, 100]
         assert result == expected, f"Expected {expected}, got {result}"
         assert all(isinstance(val, int) for val in result), "All values should be Python int type"
-
-        # Cleanup
-        cursor.execute(f"DROP TABLE IF EXISTS {table_name}")
 
     @pytest.mark.parametrize("int_type", ["INT", "INTEGER", "BIGINT", "SMALLINT", "TINYINT", "BYTEINT"])
     def test_should_handle_integer_boundary_values_for_int_and_synonyms(self, cursor, int_type):
@@ -123,16 +120,16 @@ class TestInt:
             "Python int supports arbitrary precision and should handle 38-digit integers"
         )
 
-    def test_should_select_corner_case_values_from_table_for_int_and_synonyms(self, cursor):
+    def test_should_select_corner_case_values_from_table_for_int_and_synonyms(self, cursor, tmp_schema):
         # Given Snowflake client is logged in
         assert not cursor.connection.is_closed(), "Connection should be open"
 
         # And Table with columns (tinyint_col TINYINT, byteint_col BYTEINT, smallint_col SMALLINT,
         # int_col INT, integer_col INTEGER, bigint_col BIGINT, int38_col INT) exists
-        table_name = "corner_case_table"
+        table_name = f"{tmp_schema}.corner_case_table"
         # weird definition format as tests validator is getting a stroke trying to read multiline strings
         cursor.execute(
-            f"CREATE TEMP TABLE {table_name} ("
+            f"CREATE TABLE {table_name} ("
             "tinyint_col TINYINT, "
             "byteint_col BYTEINT, "
             "smallint_col SMALLINT, "
@@ -203,9 +200,6 @@ class TestInt:
             else:
                 assert val is None, f"Value at index {i} should be NULL (None)"
 
-        # Cleanup
-        cursor.execute(f"DROP TABLE IF EXISTS {table_name}")
-
     @pytest.mark.parametrize("int_type", ["INT", "INTEGER", "BIGINT", "SMALLINT", "TINYINT", "BYTEINT"])
     def test_should_handle_null_values_for_int_and_synonyms(self, cursor, int_type):
         # Given Snowflake client is logged in
@@ -223,13 +217,13 @@ class TestInt:
 
     @pytest.mark.skip("SNOW-3006013 - parameter binding is not yet implemented")
     @pytest.mark.parametrize("int_type", ["INT", "INTEGER", "BIGINT", "SMALLINT", "TINYINT", "BYTEINT"])
-    def test_should_insert_integer_using_parameter_binding_for_int_and_synonyms(self, cursor, int_type):
+    def test_should_insert_integer_using_parameter_binding_for_int_and_synonyms(self, cursor, tmp_schema, int_type):
         # Given Snowflake client is logged in
         assert not cursor.connection.is_closed(), "Connection should be open"
 
         # And Table with <type> column exists
-        table_name = f"int_bind_table_{int_type.lower()}"
-        cursor.execute(f"CREATE TEMP TABLE {table_name} (col {int_type})")
+        table_name = f"{tmp_schema}.int_bind_table_{int_type.lower()}"
+        cursor.execute(f"CREATE TABLE {table_name} (col {int_type})")
 
         # When Integer values [0, -2147483648, 2147483647, 9223372036854775807] are inserted using binding
         test_values = [0, -2147483648, 2147483647, 9223372036854775807]
@@ -244,8 +238,31 @@ class TestInt:
         assert result == test_values, f"Expected {test_values}, got {result}"
         assert all(isinstance(val, int) for val in result), "All values should be Python int type after round-trip"
 
-        # Cleanup
-        cursor.execute(f"DROP TABLE IF EXISTS {table_name}")
+    @pytest.mark.skip("SNOW-3006013 - parameter binding is not yet implemented")
+    @pytest.mark.parametrize("int_type", ["INT", "INTEGER", "BIGINT", "SMALLINT", "TINYINT", "BYTEINT"])
+    def test_should_insert_and_select_integers_from_table_using_parameter_binding_for_int_and_synonyms(
+        self, cursor, tmp_schema, int_type
+    ):
+        # Given Snowflake client is logged in
+        assert not cursor.connection.is_closed(), "Connection should be open"
+
+        # And Table with <type> column exists
+        table_name = f"{tmp_schema}.int_bind_table_{int_type.lower()}"
+        cursor.execute(f"CREATE TABLE {table_name} (col {int_type})")
+
+        # When Integer values [0, 42, -2147483648, 9223372036854775807] are inserted using binding
+        test_values = [0, 42, -2147483648, 9223372036854775807]
+        for val in test_values:
+            cursor.execute(f"INSERT INTO {table_name} VALUES (?)", (val,))
+
+        # And Query "SELECT * FROM int_table" is executed
+        cursor.execute(f"SELECT * FROM {table_name}")
+        rows = cursor.fetchall()
+
+        # Then Result should contain integers [0, 42, -2147483648, 9223372036854775807]
+        result = [row[0] for row in rows]
+        assert result == test_values, f"Expected {test_values}, got {result}"
+        assert all(isinstance(val, int) for val in result), "All values should be Python int type"
 
     @pytest.mark.parametrize("int_type", ["INT", "INTEGER", "BIGINT", "SMALLINT", "TINYINT", "BYTEINT"])
     def test_should_download_large_result_set_with_multiple_chunks_for_int_and_synonyms(self, cursor, int_type):
@@ -255,6 +272,29 @@ class TestInt:
         # When Query "SELECT seq8()::<type> as id FROM TABLE(GENERATOR(ROWCOUNT => 1000000)) v ORDER BY id" is executed
         sql = f"SELECT seq8()::{int_type} as id FROM TABLE(GENERATOR(ROWCOUNT => 1000000)) v ORDER BY id"
         cursor.execute(sql)
+        rows = cursor.fetchall()
+
+        # Then Result should contain 1000000 sequentially numbered rows from 0 to 999999
+        expected_count = 1000000
+        assert len(rows) == expected_count, f"Expected {expected_count} rows, got {len(rows)}"
+
+        # Verify sequential values (0 to 999999)
+        for i, row in enumerate(rows):
+            assert row[0] == i, f"Expected row {i} to have value {i}, got {row[0]}"
+            assert isinstance(row[0], int), f"Value at row {i} should be Python int type"
+
+    @pytest.mark.parametrize("int_type", ["INT", "INTEGER", "BIGINT", "SMALLINT", "TINYINT", "BYTEINT"])
+    def test_should_select_large_result_set_from_table_for_int_and_synonyms(self, cursor, tmp_schema, int_type):
+        # Given Snowflake client is logged in
+        assert not cursor.connection.is_closed(), "Connection should be open"
+
+        # And Table with <type> column exists with 1000000 sequential values
+        table_name = f"{tmp_schema}.large_int_table_{int_type.lower()}"
+        cursor.execute(f"CREATE TABLE {table_name} (col {int_type})")
+        cursor.execute(f"INSERT INTO {table_name} SELECT seq8()::{int_type} FROM TABLE(GENERATOR(ROWCOUNT => 1000000))")
+
+        # When Query "SELECT * FROM large_int_table ORDER BY col" is executed
+        cursor.execute(f"SELECT * FROM {table_name} ORDER BY col")
         rows = cursor.fetchall()
 
         # Then Result should contain 1000000 sequentially numbered rows from 0 to 999999

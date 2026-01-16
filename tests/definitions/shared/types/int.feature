@@ -56,9 +56,24 @@ Feature: INT type support
     Then SELECT should return the same values in order
 
   @python_e2e
+  Scenario: should insert and select integers from table using parameter binding for int and synonyms
+    Given Snowflake client is logged in
+    And Table with <type> column exists
+    When Integer values [0, 42, -2147483648, 9223372036854775807] are inserted using binding
+    And Query "SELECT * FROM int_table" is executed
+    Then Result should contain integers [0, 42, -2147483648, 9223372036854775807]
+
+  @python_e2e
   Scenario: should download large result set with multiple chunks for int and synonyms
     Given Snowflake client is logged in
     When Query "SELECT seq8()::<type> as id FROM TABLE(GENERATOR(ROWCOUNT => 1000000)) v ORDER BY id" is executed
+    Then Result should contain 1000000 sequentially numbered rows from 0 to 999999
+
+  @python_e2e
+  Scenario: should select large result set from table for int and synonyms
+    Given Snowflake client is logged in
+    And Table with <type> column exists with 1000000 sequential values
+    When Query "SELECT * FROM large_int_table ORDER BY col" is executed
     Then Result should contain 1000000 sequentially numbered rows from 0 to 999999
 
   @python_e2e
