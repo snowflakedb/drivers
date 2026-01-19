@@ -8,12 +8,11 @@ All tests are parameterized to run with each type synonym to verify they behave 
 All type synonyms are treated as 64-bit IEEE 754 double precision.
 """
 
-from collections.abc import Iterable
-from math import inf, isinf, isnan, nan
+from math import inf, nan
 
 import pytest
 
-from .utils import assert_types
+from .utils import FLOAT_MIN_NORMAL, assert_floats_equal, assert_types
 
 
 # =============================================================================
@@ -37,8 +36,6 @@ float_type_parametrize = pytest.mark.parametrize("float_type", FLOAT_TYPE_SYNONY
 FLOAT_MAX = 1.7976931348623157e308
 # Maximum normalized negative value
 FLOAT_MIN = -1.7976931348623157e308
-# Minimum normalized positive value (smallest normal number)
-FLOAT_MIN_NORMAL = 2.2250738585072014e-308
 # Minimum subnormal positive value (smallest representable positive number)
 FLOAT_MIN_SUBNORMAL = 5e-324
 
@@ -55,58 +52,6 @@ FLOAT_16_DIGITS = 1234567890123456.0
 # LARGE RESULT SET SIZE
 # =============================================================================
 LARGE_RESULT_SET_SIZE = 1_000_000
-
-
-# =============================================================================
-# FLOAT COMPARISON HELPERS
-# =============================================================================
-def assert_float_equal(actual: float, expected: float | None, msg: str = "") -> None:
-    """Assert two float values are equal within appropriate tolerance.
-
-    Selects comparison strategy based on IEEE 754 value magnitude:
-    - Subnormal (|x| < 2.2e-308): absolute tolerance 1e-325
-    - Large (|x| > 1e10): relative tolerance 1e-14
-    - Regular: absolute tolerance 1e-10
-    """
-    error_msg = msg or f"Expected {expected}, got {actual}"
-
-    # None
-    if expected is None:
-        assert actual is None, error_msg
-        return
-    # NaN
-    if isnan(expected):
-        assert isnan(actual), error_msg
-        return
-    # inf, -inf
-    if isinf(expected):
-        assert actual == expected, error_msg
-        return
-
-    abs_expected = abs(expected)
-    diff = abs(actual - expected)
-
-    # Subnormal range (very small numbers near minimum representable)
-    if abs_expected < FLOAT_MIN_NORMAL:
-        assert diff <= 1e-325, error_msg
-    # Large values - use relative tolerance for ~15 digit precision
-    elif abs_expected > 1e10:
-        assert diff <= abs_expected * 1e-14, error_msg
-    # Regular values - absolute tolerance
-    else:
-        assert diff < 1e-10, error_msg
-
-
-def assert_floats_equal(actual: Iterable[float], expected: Iterable[float]) -> None:
-    """Assert two iterables of float values are equal element-wise.
-
-    Calls assert_float_equal on consecutive elements.
-    """
-    actual_list = list(actual)
-    expected_list = list(expected)
-    assert len(actual_list) == len(expected_list), f"Length mismatch: {len(actual_list)} != {len(expected_list)}"
-    for i, (a, e) in enumerate(zip(actual_list, expected_list)):
-        assert_float_equal(a, e, f"Mismatch at index {i}: expected {e}, got {a}")
 
 
 class TestFloatTypeCasting:

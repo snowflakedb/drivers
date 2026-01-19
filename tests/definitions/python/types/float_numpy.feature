@@ -13,8 +13,6 @@ Feature: FLOAT type NumPy support (Python-specific)
     Given Snowflake client is logged in with NumPy mode enabled
     When Query "SELECT 'NaN'::<type>, 'inf'::<type>, '-inf'::<type>" is executed
     Then All values should be returned as numpy.float64 type
-    And First value should be NaN
-    And Second value should be positive infinity
-    And Third value should be negative infinity
+    And Result should contain [NaN, positive_infinity, negative_infinity]
 
 
