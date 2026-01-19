@@ -1,6 +1,12 @@
 use anyhow::{Context, Result};
+use lazy_static::lazy_static;
 use regex::Regex;
 use std::path::{Path, PathBuf};
+
+lazy_static! {
+    static ref TAG_REGEX: Regex = Regex::new(r"@(\w+)").unwrap();
+    static ref STEP_REGEX: Regex = Regex::new(r"^\s*(Given|When|Then|And|But)\s+(.+)$").unwrap();
+}
 
 #[derive(Debug, Clone)]
 pub struct Feature {
@@ -87,8 +93,7 @@ impl Feature {
     }
 
     fn parse_tags(line: &str) -> Vec<String> {
-        let tag_regex = Regex::new(r"@(\w+)").unwrap();
-        tag_regex
+        TAG_REGEX
             .captures_iter(line)
             .map(|cap| cap[1].to_string())
             .collect()
@@ -150,9 +155,7 @@ impl Feature {
     }
 
     fn parse_step(line: &str) -> Option<Step> {
-        let step_regex = Regex::new(r"^\s*(Given|When|Then|And|But)\s+(.+)$").unwrap();
-
-        if let Some(captures) = step_regex.captures(line) {
+        if let Some(captures) = STEP_REGEX.captures(line) {
             let step_type = match &captures[1] {
                 "Given" => StepType::Given,
                 "When" => StepType::When,

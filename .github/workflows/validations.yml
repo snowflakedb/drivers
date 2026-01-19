@@ -75,7 +75,7 @@ jobs:
 
       - name: Run tests format validator
         run: |
-          cargo run --bin tests_format_validator --manifest-path tests/tests_format_validator/Cargo.toml
+          ./tests/tests_format_validator/run_validator.sh
 
   validations-status:
     needs: [detect-changes, test-data, proto, tests-format-validator]

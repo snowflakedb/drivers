@@ -34,7 +34,7 @@ repos:
     -   id: tests-format-validator
         name: Tests format validator
         description: Validate that test implementations match Gherkin feature scenarios
-        entry: cargo run --bin tests_format_validator --manifest-path tests/tests_format_validator/Cargo.toml
+        entry: ./tests/tests_format_validator/run_validator.sh
         pass_filenames: false
         language: system
     -   id: python-checks
