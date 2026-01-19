@@ -26,7 +26,6 @@
       FAIL("ODBC Error Status:" << ret << " (no diagnostics; SQLGetDiagRec ret=" << diag_ret                        \
                                 << "). HandleType=" << handleType << " Handle=" << handle);                         \
     }                                                                                                               \
-    REQUIRE(false);                                                                                                 \
   }
 
 #endif  // ODBC_TESTS_MACROS_HPP

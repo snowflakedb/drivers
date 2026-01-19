@@ -265,7 +265,7 @@ pipeline {
                                         export LLVM_PROFILE_FILE="${WORKSPACE_ROOT}/odbc-%p-%m.profraw"
                                         
                                         cd odbc_tests
-                                        # Exclude CRL tests - they require Wiremock which is not available on Jenkins
+                                        # Exclude CRL tests - they require Wiremock server which is not started in coverage job
                                         ctest -j 1 -C Debug --test-dir cmake-build --output-on-failure -E "crl"
                                     ''')
                                     if (testExitCode != 0) {
