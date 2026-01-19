@@ -250,6 +250,24 @@ class TestFloat:
             assert abs(actual - expect) < 1e-10, f"Expected {expect}, got {actual}"
             assert isinstance(actual, float), f"Value {actual} should be Python float type"
 
+        # When Query "SELECT ?::<type>, ?::<type>, ?::<type>" is executed
+        # with bound special values [NaN, inf, -inf]
+        cursor.execute(sql, (float("nan"), float("inf"), float("-inf")))
+        result = cursor.fetchone()
+
+        # Then Result should contain special values [NaN, inf, -inf]
+        assert math.isnan(result[0]), "First value should be NaN"
+        assert result[1] == float("inf"), "Second value should be positive infinity"
+        assert result[2] == float("-inf"), "Third value should be negative infinity"
+
+        # When Query "SELECT ?::<type>" is executed with bound NULL value
+        sql_null = f"SELECT ?::{float_type}"
+        cursor.execute(sql_null, (None,))
+        result = cursor.fetchone()
+
+        # Then Result should contain NULL
+        assert result[0] is None, "Value should be NULL (None)"
+
     @pytest.mark.skip("SNOW-3006013 - parameter binding is not yet implemented")
     @float_type_parametrize
     def test_should_insert_float_using_parameter_binding_for_float_and_synonyms(self, cursor, tmp_schema, float_type):
@@ -260,8 +278,16 @@ class TestFloat:
         table_name = f"{tmp_schema}.float_bind_table_{float_type.replace(' ', '_').lower()}"
         cursor.execute(f"CREATE TABLE {table_name} (col {float_type})")
 
-        # When Float values [0.0, 123.456, -789.012, 1.23e10] are inserted using binding
-        test_values = [0.0, 123.456, -789.012, 1.23e10]
+        # When Float values [0.0, 123.456, -789.012, NaN, inf, -inf, NULL] are inserted using binding
+        test_values = [
+            0.0,
+            123.456,
+            -789.012,
+            float("nan"),
+            float("inf"),
+            float("-inf"),
+            None,
+        ]
         for val in test_values:
             cursor.execute(f"INSERT INTO {table_name} VALUES (?)", (val,))
 
@@ -269,12 +295,22 @@ class TestFloat:
         cursor.execute(f"SELECT * FROM {table_name}")
         rows = cursor.fetchall()
 
-        # Then Result should contain floats [0.0, 123.456, -789.012, 1.23e10]
+        # Then Result should contain the same values including special values and NULL
         result = [row[0] for row in rows]
         assert len(result) == len(test_values), f"Expected {len(test_values)} values, got {len(result)}"
-        for actual, expect in zip(result, test_values):
-            assert abs(actual - expect) <= abs(expect) * 1e-14 + 1e-10, f"Expected {expect}, got {actual}"
-            assert isinstance(actual, float), f"Value {actual} should be Python float type"
+
+        # Verify regular floats
+        assert abs(result[0] - 0.0) < 1e-10, f"Expected 0.0, got {result[0]}"
+        assert abs(result[1] - 123.456) < 1e-10, f"Expected 123.456, got {result[1]}"
+        assert abs(result[2] - (-789.012)) < 1e-10, f"Expected -789.012, got {result[2]}"
+
+        # Verify special values
+        assert math.isnan(result[3]), "Fourth value should be NaN"
+        assert result[4] == float("inf"), "Fifth value should be positive infinity"
+        assert result[5] == float("-inf"), "Sixth value should be negative infinity"
+
+        # Verify NULL
+        assert result[6] is None, "Seventh value should be NULL (None)"
 
     @float_type_parametrize
     def test_should_download_large_result_set_with_multiple_chunks_from_generator_for_float_and_synonyms(

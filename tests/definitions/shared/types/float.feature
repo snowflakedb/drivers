@@ -66,14 +66,18 @@ Feature: FLOAT type support
     Given Snowflake client is logged in
     When Query "SELECT ?::<type>, ?::<type>, ?::<type>" is executed with bound float values [123.456, -789.012, 42.0]
     Then Result should contain floats [123.456, -789.012, 42.0]
+    When Query "SELECT ?::<type>, ?::<type>, ?::<type>" is executed with bound special values [NaN, inf, -inf]
+    Then Result should contain special values [NaN, inf, -inf]
+    When Query "SELECT ?::<type>" is executed with bound NULL value
+    Then Result should contain NULL
 
   @python_e2e
   Scenario: should insert float using parameter binding for float and synonyms
     Given Snowflake client is logged in
     And Table with <type> column exists
-    When Float values [0.0, 123.456, -789.012, 1.23e10] are inserted using binding
+    When Float values [0.0, 123.456, -789.012, NaN, inf, -inf, NULL] are inserted using binding
     And Query "SELECT * FROM float_table" is executed
-    Then Result should contain floats [0.0, 123.456, -789.012, 1.23e10]
+    Then Result should contain the same values including special values and NULL
 
   @python_e2e
   Scenario: should download large result set with multiple chunks from GENERATOR for float and synonyms
