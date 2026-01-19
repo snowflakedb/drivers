@@ -6,7 +6,14 @@ set -x
 # Requires odbc_config to be available in PATH
 
 cargo build
-export DRIVER_PATH=$(pwd)/target/debug/libsfodbc.dylib
+
+if [[ "$OSTYPE" == "darwin"* ]]; then
+    DYLIB_EXT="dylib"
+else
+    DYLIB_EXT="so"
+fi
+
+export DRIVER_PATH=$(pwd)/target/debug/libsfodbc.${DYLIB_EXT}
 
 pushd odbc_tests
     if [ ! -d cmake-build ]; then
@@ -14,7 +21,7 @@ pushd odbc_tests
         cmake -B cmake-build \
             -DCMAKE_CXX_FLAGS="-O0" \
             -DCMAKE_BUILD_TYPE=Debug \
-            -D ODBC_LIBRARY="$(odbc_config --lib-prefix)/libodbc.dylib" \
+            -D ODBC_LIBRARY="$(odbc_config --lib-prefix)/libodbc.${DYLIB_EXT}" \
             -D ODBC_INCLUDE_DIR="$(odbc_config --include-prefix)" \
             -D DRIVER_TYPE=NEW \
             .

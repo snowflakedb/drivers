@@ -4,7 +4,7 @@ set -e
 
 echo "--- Installing system dependencies ---"
 sudo dnf config-manager --set-enabled crb
-sudo dnf install -y openssl-devel pkg-config cmake unixODBC-devel
+sudo dnf install -y openssl-devel pkg-config cmake unixODBC-devel zlib-devel
 echo "--- System dependencies installed ---"
 
 echo "--- Installing Rust ---"
