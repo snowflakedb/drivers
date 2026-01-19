@@ -13,7 +13,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 GHERKIN_SCRIPT="${SCRIPT_DIR}/generate_gherkin_tests.sh"
 CATCH_SCRIPT="${SCRIPT_DIR}/generate_catch_tests.sh"
-BASE_BRANCH="main"
+BASE_BRANCH=$(git rev-parse --abbrev-ref HEAD)
 
 # Colors for output
 RED='\033[0;31m'
