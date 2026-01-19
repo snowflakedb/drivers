@@ -1,5 +1,7 @@
 """Utility functions for type tests."""
 
+from __future__ import annotations
+
 from collections.abc import Iterable
 from math import isinf, isnan
 
