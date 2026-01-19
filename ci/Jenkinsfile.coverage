@@ -143,6 +143,7 @@ pipeline {
     
     stages {
         stage('Setup') {
+            agent any
             steps {
                 script {
                     publishChecks name: 'Universal Driver Code Coverage',
