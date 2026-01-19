@@ -80,6 +80,19 @@ def cursor(connection):
 
 
 @pytest.fixture
+def execute_query(cursor):
+    """Create a cursor with NumPy mode enabled."""
+
+    def _execute_query(*args, single_row: bool = False, **kwargs):
+        cursor.execute(*args, **kwargs)
+        if single_row:
+            return cursor.fetchone()
+        return cursor.fetchall()
+
+    return _execute_query
+
+
+@pytest.fixture
 def tmp_schema(cursor):
     """Create a temporary schema."""
     import uuid

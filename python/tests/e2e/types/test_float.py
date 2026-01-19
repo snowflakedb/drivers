@@ -8,11 +8,18 @@ All tests are parameterized to run with each type synonym to verify they behave 
 All type synonyms are treated as 64-bit IEEE 754 double precision.
 """
 
-import math
+from collections.abc import Iterable
+from math import inf, isinf, isnan, nan
 
 import pytest
 
+from .utils import assert_types
 
+
+# =============================================================================
+# TYPE SYNONYMS
+# =============================================================================
+# https://docs.snowflake.com/en/sql-reference/data-types-numeric
 FLOAT_TYPE_SYNONYMS = [
     "FLOAT",
     "FLOAT4",
@@ -23,81 +30,228 @@ FLOAT_TYPE_SYNONYMS = [
 ]
 float_type_parametrize = pytest.mark.parametrize("float_type", FLOAT_TYPE_SYNONYMS)
 
+# =============================================================================
+# IEEE 754 BOUNDARY VALUES
+# =============================================================================
+# Maximum normalized positive value (approximately 1.8e308)
+FLOAT_MAX = 1.7976931348623157e308
+# Maximum normalized negative value
+FLOAT_MIN = -1.7976931348623157e308
+# Minimum normalized positive value (smallest normal number)
+FLOAT_MIN_NORMAL = 2.2250738585072014e-308
+# Minimum subnormal positive value (smallest representable positive number)
+FLOAT_MIN_SUBNORMAL = 5e-324
 
-class TestFloat:
-    """Test suite for FLOAT type and synonyms."""
+# =============================================================================
+# PRECISION TEST VALUES
+# =============================================================================
+# IEEE 754 double precision has ~15.95 decimal digits of precision
+# 15-digit value: exact representation guaranteed
+FLOAT_15_DIGITS = 123456789012345.0
+# 16-digit value: may have precision loss
+FLOAT_16_DIGITS = 1234567890123456.0
+
+# =============================================================================
+# LARGE RESULT SET SIZE
+# =============================================================================
+LARGE_RESULT_SET_SIZE = 1_000_000
+
+
+# =============================================================================
+# FLOAT COMPARISON HELPERS
+# =============================================================================
+def assert_float_equal(actual: float, expected: float | None, msg: str = "") -> None:
+    """Assert two float values are equal within appropriate tolerance.
+
+    Selects comparison strategy based on IEEE 754 value magnitude:
+    - Subnormal (|x| < 2.2e-308): absolute tolerance 1e-325
+    - Large (|x| > 1e10): relative tolerance 1e-14
+    - Regular: absolute tolerance 1e-10
+    """
+    error_msg = msg or f"Expected {expected}, got {actual}"
+
+    # None
+    if expected is None:
+        assert actual is None, error_msg
+        return
+    # NaN
+    if isnan(expected):
+        assert isnan(actual), error_msg
+        return
+    # inf, -inf
+    if isinf(expected):
+        assert actual == expected, error_msg
+        return
+
+    abs_expected = abs(expected)
+    diff = abs(actual - expected)
+
+    # Subnormal range (very small numbers near minimum representable)
+    if abs_expected < FLOAT_MIN_NORMAL:
+        assert diff <= 1e-325, error_msg
+    # Large values - use relative tolerance for ~15 digit precision
+    elif abs_expected > 1e10:
+        assert diff <= abs_expected * 1e-14, error_msg
+    # Regular values - absolute tolerance
+    else:
+        assert diff < 1e-10, error_msg
+
+
+def assert_floats_equal(actual: Iterable[float], expected: Iterable[float]) -> None:
+    """Assert two iterables of float values are equal element-wise.
+
+    Calls assert_float_equal on consecutive elements.
+    """
+    actual_list = list(actual)
+    expected_list = list(expected)
+    assert len(actual_list) == len(expected_list), f"Length mismatch: {len(actual_list)} != {len(expected_list)}"
+    for i, (a, e) in enumerate(zip(actual_list, expected_list)):
+        assert_float_equal(a, e, f"Mismatch at index {i}: expected {e}, got {a}")
+
+
+class TestFloatTypeCasting:
+    """Tests for FLOAT type casting to appropriate type."""
 
     @float_type_parametrize
-    def test_should_select_float_literals_for_float_and_synonyms(self, cursor, float_type):
+    def test_should_cast_float_values_to_appropriate_type_for_float_and_synonyms(self, execute_query, float_type):
         # Given Snowflake client is logged in
-        assert not cursor.connection.is_closed(), "Connection should be open"
+
+        # When Query "SELECT 0.0::<type>, 123.456::<type>, 1.23e10::<type>, 'NaN'::<type>, 'inf'::<type>" is executed
+        sql = (
+            f"SELECT 0.0::{float_type}, 123.456::{float_type}, 1.23e10::{float_type}, "
+            f"'NaN'::{float_type}, 'inf'::{float_type}"
+        )
+        result = execute_query(sql, single_row=True)
+
+        # Then All values should be returned as appropriate type
+        assert_types(result, float)
+
+        # And Regular values should have approximately 15 decimal digits precision
+        # And NaN and inf values should be identified correctly
+        assert_floats_equal(result, (0.0, 123.456, 1.23e10, nan, inf))
+
+
+class TestFloatLiteral:
+    """Tests for FLOAT type using SELECT with literals (no tables)."""
+
+    @float_type_parametrize
+    def test_should_select_float_literals_for_float_and_synonyms(self, execute_query, float_type):
+        # Given Snowflake client is logged in
 
         # When Query "SELECT 0.0::<type>, 1.0::<type>, -1.0::<type>, 123.456::<type>, -123.456::<type>" is executed
         sql = (
             f"SELECT 0.0::{float_type}, 1.0::{float_type}, -1.0::{float_type}, "
             f"123.456::{float_type}, -123.456::{float_type}"
         )
-        cursor.execute(sql)
-        result = cursor.fetchone()
+        result = execute_query(sql, single_row=True)
 
         # Then Result should contain floats [0.0, 1.0, -1.0, 123.456, -123.456]
-        expected = (0.0, 1.0, -1.0, 123.456, -123.456)
-        assert len(result) == len(expected), f"Expected {len(expected)} values, got {len(result)}"
-        for actual, expect in zip(result, expected):
-            assert abs(actual - expect) < 1e-10, f"Expected {expect}, got {actual}"
-            assert isinstance(actual, float), f"Value {actual} should be Python float type"
+        assert_floats_equal(result, (0.0, 1.0, -1.0, 123.456, -123.456))
+        assert_types(result, float)
 
     @float_type_parametrize
-    def test_should_select_floats_from_table_for_float_and_synonyms(self, cursor, tmp_schema, float_type):
+    def test_should_handle_special_float_values_from_literals_for_float_and_synonyms(self, execute_query, float_type):
         # Given Snowflake client is logged in
-        assert not cursor.connection.is_closed(), "Connection should be open"
-
-        # And Table with <type> column exists with values [0.0, 123.456, -789.012, 1.23e5, -9.87e-3]
-        table_name = f"{tmp_schema}.float_table_{float_type.replace(' ', '_').lower()}"
-        cursor.execute(f"CREATE TABLE {table_name} (col {float_type})")
-        test_values = [0.0, 123.456, -789.012, 1.23e5, -9.87e-3]
-        for val in test_values:
-            cursor.execute(f"INSERT INTO {table_name} VALUES ({val})")
-
-        # When Query "SELECT * FROM float_table" is executed
-        cursor.execute(f"SELECT * FROM {table_name}")
-        rows = cursor.fetchall()
-
-        # Then Result should contain floats [0.0, 123.456, -789.012, 123000.0, -0.00987]
-        result = [row[0] for row in rows]
-        expected = [0.0, 123.456, -789.012, 123000.0, -0.00987]
-
-        for actual, expect in zip(result, expected):
-            assert abs(actual - expect) < 1e-10, f"Expected {expect}, got {actual}"
-            assert isinstance(actual, float), f"Value {actual} should be Python float type"
-
-    @float_type_parametrize
-    def test_should_handle_special_float_values_from_literals_for_float_and_synonyms(self, cursor, float_type):
-        # Given Snowflake client is logged in
-        assert not cursor.connection.is_closed(), "Connection should be open"
 
         # When Query "SELECT 'NaN'::<type>, 'inf'::<type>, '-inf'::<type>" is executed
         sql = f"SELECT 'NaN'::{float_type}, 'inf'::{float_type}, '-inf'::{float_type}"
-        cursor.execute(sql)
-        result = cursor.fetchone()
+        result = execute_query(sql, single_row=True)
 
         # Then Result should contain [NaN, positive_infinity, negative_infinity]
-        assert math.isnan(result[0]), "First value should be NaN"
-        assert result[1:] == (
-            float("inf"),
-            float("-inf"),
-        ), "Remaining values should be inf, -inf"
-        assert all(isinstance(val, float) for val in result), "All values should be Python float type"
+        assert_floats_equal(result, (nan, inf, -inf))
+        assert_types(result, float)
 
     @float_type_parametrize
-    def test_should_handle_special_float_values_from_table_for_float_and_synonyms(self, cursor, tmp_schema, float_type):
+    def test_should_handle_float_boundary_values_from_literals_for_float_and_synonyms(self, execute_query, float_type):
         # Given Snowflake client is logged in
-        assert not cursor.connection.is_closed(), "Connection should be open"
+
+        # When Query "SELECT 1.7976931348623157e308::<type>, -1.7976931348623157e308::<type>" is executed
+        sql = f"SELECT {FLOAT_MAX}::{float_type}, {FLOAT_MIN}::{float_type}"
+        result = execute_query(sql, single_row=True)
+
+        # Then Result should contain floats [1.7976931348623157e308, -1.7976931348623157e308]
+        assert_floats_equal(result, (FLOAT_MAX, FLOAT_MIN))
+
+        # When Query "SELECT 2.2250738585072014e-308::<type>, 5e-324::<type>" is executed
+        sql = f"SELECT {FLOAT_MIN_NORMAL}::{float_type}, {FLOAT_MIN_SUBNORMAL}::{float_type}"
+        result = execute_query(sql, single_row=True)
+
+        # Then Result should contain floats [2.2250738585072014e-308, approximately 5e-324]
+        assert_floats_equal(result, (FLOAT_MIN_NORMAL, FLOAT_MIN_SUBNORMAL))
+
+        # When Query "SELECT 123456789012345.0::<type>, 1234567890123456.0::<type>" is executed
+        sql = f"SELECT {FLOAT_15_DIGITS}::{float_type}, {FLOAT_16_DIGITS}::{float_type}"
+        result = execute_query(sql, single_row=True)
+
+        # Then Result should verify precision around 15 decimal digits
+        assert_floats_equal(result, (FLOAT_15_DIGITS, FLOAT_16_DIGITS))
+
+    @float_type_parametrize
+    def test_should_handle_null_values_from_literals_for_float_and_synonyms(self, execute_query, float_type):
+        # Given Snowflake client is logged in
+
+        # When Query "SELECT NULL::<type>, 42.5::<type>, NULL::<type>" is executed
+        sql = f"SELECT NULL::{float_type}, 42.5::{float_type}, NULL::{float_type}"
+        result = execute_query(sql, single_row=True)
+
+        # Then Result should contain [NULL, 42.5, NULL]
+        assert_floats_equal(result, (None, 42.5, None))
+        assert_types(result, float, can_be_none=True)
+
+    @float_type_parametrize
+    def test_should_download_large_result_set_with_multiple_chunks_from_generator_for_float_and_synonyms(
+        self, execute_query, float_type
+    ):
+        # Given Snowflake client is logged in
+
+        # When Query "SELECT seq8()::<type> as id FROM TABLE(GENERATOR(ROWCOUNT => 1000000)) v" is executed
+        sql = (
+            f"SELECT seq8()::{float_type} as id "
+            f"FROM TABLE(GENERATOR(ROWCOUNT => {LARGE_RESULT_SET_SIZE})) v ORDER BY id"
+        )
+        rows = execute_query(sql)
+
+        # Then Result should contain 1000000 rows
+        assert len(rows) == LARGE_RESULT_SET_SIZE, f"Expected {LARGE_RESULT_SET_SIZE} rows, got {len(rows)}"
+
+        # And All values should be returned as appropriate float type
+        values = [row[0] for row in rows]
+        assert_types(values, float)
+        assert_floats_equal(values, [float(i) for i in range(LARGE_RESULT_SET_SIZE)])
+
+
+class TestFloatTable:
+    """Tests for FLOAT type using table operations."""
+
+    @float_type_parametrize
+    def test_should_select_floats_from_table_for_float_and_synonyms(self, execute_query, tmp_schema, float_type):
+        # Given Snowflake client is logged in
+
+        # And Table with <type> column exists with values [0.0, 123.456, -789.012, 1.23e5, -9.87e-3]
+        table_name = f"{tmp_schema}.float_table_{float_type.replace(' ', '_').lower()}"
+        execute_query(f"CREATE TABLE {table_name} (col {float_type})")
+        test_values = [0.0, 123.456, -789.012, 1.23e5, -9.87e-3]
+        for val in test_values:
+            execute_query(f"INSERT INTO {table_name} VALUES ({val})")
+
+        # When Query "SELECT * FROM float_table" is executed
+        rows = execute_query(f"SELECT * FROM {table_name}")
+
+        # Then Result should contain floats [0.0, 123.456, -789.012, 123000.0, -0.00987]
+        result = [row[0] for row in rows]
+        assert_floats_equal(result, [0.0, 123.456, -789.012, 123000.0, -0.00987])
+        assert_types(result, float)
+
+    @float_type_parametrize
+    def test_should_handle_special_float_values_from_table_for_float_and_synonyms(
+        self, execute_query, tmp_schema, float_type
+    ):
+        # Given Snowflake client is logged in
 
         # And Table with <type> column exists with values [NaN, inf, -inf, 42.0, -42.0]
         table_name = f"{tmp_schema}.special_float_table_{float_type.replace(' ', '_').lower()}"
-        cursor.execute(f"CREATE TABLE {table_name} (col {float_type})")
-        cursor.execute(
+        execute_query(f"CREATE TABLE {table_name} (col {float_type})")
+        execute_query(
             f"INSERT INTO {table_name} VALUES\n"
             f"('NaN'::{float_type}),\n"
             f"('inf'::{float_type}),\n"
@@ -106,279 +260,136 @@ class TestFloat:
             f"(-42.0::{float_type})"
         )
 
-        # When Query "SELECT * FROM special_float_table" is executed
-        cursor.execute(f"SELECT * FROM {table_name}")
-        rows = cursor.fetchall()
+        # When Query "SELECT * FROM <table>" is executed
+        rows = execute_query(f"SELECT * FROM {table_name}")
         values = [row[0] for row in rows]
 
         # Then Result should contain [NaN, positive_infinity, negative_infinity, 42.0, -42.0]
-        assert all(isinstance(v, float) for v in values), "All values should be floats"
-        assert math.isnan(values[0]), "First value should be NaN"
-        assert values[1:] == [
-            float("inf"),
-            float("-inf"),
-            42.0,
-            -42.0,
-        ], "Remaining values should be inf, -inf, 42.0, -42.0"
-
-    @float_type_parametrize
-    def test_should_handle_float_boundary_values_from_literals_for_float_and_synonyms(self, cursor, float_type):
-        # Given Snowflake client is logged in
-        assert not cursor.connection.is_closed(), "Connection should be open"
-
-        # When Query "SELECT 1.7976931348623157e308::<type>, -1.7976931348623157e308::<type>" is executed
-        sql = f"SELECT 1.7976931348623157e308::{float_type}, -1.7976931348623157e308::{float_type}"
-        cursor.execute(sql)
-        result = cursor.fetchone()
-
-        # Then Result should contain floats [1.7976931348623157e308, -1.7976931348623157e308]
-        assert abs(result[0] - 1.7976931348623157e308) <= abs(1.7976931348623157e308) * 1e-14
-        assert abs(result[1] - (-1.7976931348623157e308)) <= abs(-1.7976931348623157e308) * 1e-14
-
-        # When Query "SELECT 2.2250738585072014e-308::<type>, 5e-324::<type>" is executed
-        sql = f"SELECT 2.2250738585072014e-308::{float_type}, 5e-324::{float_type}"
-        cursor.execute(sql)
-        result = cursor.fetchone()
-
-        # Then Result should contain floats [2.2250738585072014e-308, approximately 5e-324]
-        assert abs(result[0] - 2.2250738585072014e-308) <= 1e-320
-        assert abs(result[1] - 5e-324) <= 1e-325  # Subnormal tolerance
-
-        # When Query "SELECT 123456789012345.0::<type>, 1234567890123456.0::<type>" is executed
-        sql = f"SELECT 123456789012345.0::{float_type}, 1234567890123456.0::{float_type}"
-        cursor.execute(sql)
-        result = cursor.fetchone()
-
-        # Then Result should verify precision around 15 decimal digits
-        assert abs(result[0] - 123456789012345.0) <= abs(123456789012345.0) * 1e-14
-        # 16-digit value may have precision loss, verify it's close
-        assert abs(result[1] - 1234567890123456.0) <= abs(1234567890123456.0) * 1e-13
+        assert_floats_equal(values, [nan, inf, -inf, 42.0, -42.0])
+        assert_types(values, float)
 
     @float_type_parametrize
     def test_should_handle_float_boundary_values_from_table_for_float_and_synonyms(
-        self, cursor, tmp_schema, float_type
+        self, execute_query, tmp_schema, float_type
     ):
         # Given Snowflake client is logged in
-        assert not cursor.connection.is_closed(), "Connection should be open"
 
         # And Table with <type> column exists with boundary values
         # [1.7976931348623157e308, -1.7976931348623157e308, 2.2250738585072014e-308, 5e-324, 123456789012345.0]
         table_name = f"{tmp_schema}.boundary_table_{float_type.replace(' ', '_').lower()}"
-        cursor.execute(f"CREATE TABLE {table_name} (col {float_type})")
+        execute_query(f"CREATE TABLE {table_name} (col {float_type})")
         boundary_values = [
-            1.7976931348623157e308,
-            -1.7976931348623157e308,
-            2.2250738585072014e-308,
-            5e-324,
-            123456789012345.0,
+            FLOAT_MAX,
+            FLOAT_MIN,
+            FLOAT_MIN_NORMAL,
+            FLOAT_MIN_SUBNORMAL,
+            FLOAT_15_DIGITS,
         ]
         for val in boundary_values:
-            cursor.execute(f"INSERT INTO {table_name} VALUES ({val})")
+            execute_query(f"INSERT INTO {table_name} VALUES ({val})")
 
-        # When Query "SELECT * FROM boundary_table" is executed
-        cursor.execute(f"SELECT * FROM {table_name}")
-        rows = cursor.fetchall()
+        # When Query "SELECT * FROM <table>" is executed
+        rows = execute_query(f"SELECT * FROM {table_name}")
         result = [row[0] for row in rows]
 
         # Then Result should contain maximum, minimum, and precision boundary values
-        assert len(result) == 5, f"Expected 5 values, got {len(result)}"
-
         # And All values should be preserved within float precision limits
-        assert abs(result[0] - 1.7976931348623157e308) <= abs(1.7976931348623157e308) * 1e-14
-        assert abs(result[1] - (-1.7976931348623157e308)) <= abs(-1.7976931348623157e308) * 1e-14
-        assert abs(result[2] - 2.2250738585072014e-308) <= 1e-320
-        assert abs(result[3] - 5e-324) <= 1e-325
-        assert abs(result[4] - 123456789012345.0) <= abs(123456789012345.0) * 1e-14
+        assert_floats_equal(result, boundary_values)
 
     @float_type_parametrize
-    def test_should_handle_null_values_from_literals_for_float_and_synonyms(self, cursor, float_type):
+    def test_should_handle_null_values_from_table_for_float_and_synonyms(self, execute_query, tmp_schema, float_type):
         # Given Snowflake client is logged in
-        assert not cursor.connection.is_closed(), "Connection should be open"
-
-        # When Query "SELECT NULL::<type>, 42.5::<type>, NULL::<type>" is executed
-        sql = f"SELECT NULL::{float_type}, 42.5::{float_type}, NULL::{float_type}"
-        cursor.execute(sql)
-        result = cursor.fetchone()
-
-        # Then Result should contain [NULL, 42.5, NULL]
-        assert result[0] is None, "First value should be NULL (None)"
-        assert abs(result[1] - 42.5) < 1e-10, f"Second value should be 42.5, got {result[1]}"
-        assert isinstance(result[1], float), "Second value should be Python float"
-        assert result[2] is None, "Third value should be NULL (None)"
-
-    @float_type_parametrize
-    def test_should_handle_null_values_from_table_for_float_and_synonyms(self, cursor, tmp_schema, float_type):
-        # Given Snowflake client is logged in
-        assert not cursor.connection.is_closed(), "Connection should be open"
 
         # And Table with <type> column exists with values [NULL, 123.456, NULL, -789.012]
         table_name = f"{tmp_schema}.null_table_{float_type.replace(' ', '_').lower()}"
-        cursor.execute(f"CREATE TABLE {table_name} (col {float_type})")
-        cursor.execute(f"INSERT INTO {table_name} VALUES (NULL), (123.456), (NULL), (-789.012)")
+        execute_query(f"CREATE TABLE {table_name} (col {float_type})")
+        execute_query(f"INSERT INTO {table_name} VALUES (NULL), (123.456), (NULL), (-789.012)")
 
-        # When Query "SELECT * FROM null_table" is executed
-        cursor.execute(f"SELECT * FROM {table_name}")
-        rows = cursor.fetchall()
+        # When Query "SELECT * FROM <table>" is executed
+        rows = execute_query(f"SELECT * FROM {table_name}")
         values = [row[0] for row in rows]
 
-        # Then Result should contain 4 values
-        assert len(values) == 4, f"Expected 4 values, got {len(values)}"
+        # Then Result should contain [NULL, 123.456, NULL, -789.012]
+        assert_floats_equal(values, [None, 123.456, None, -789.012])
+        assert_types(values, float, can_be_none=True)
 
-        # And Two values should be NULL
-        null_count = sum(1 for v in values if v is None)
-        assert null_count == 2, f"Expected exactly two NULLs, got {null_count}"
+    @float_type_parametrize
+    def test_should_select_large_result_set_from_table_for_float_and_synonyms(
+        self, execute_query, tmp_schema, float_type
+    ):
+        # Given Snowflake client is logged in
 
-        # And Two values should be floats
-        float_count = sum(1 for v in values if v is not None and isinstance(v, float))
-        assert float_count == 2, f"Expected exactly two floats, got {float_count}"
+        # And Table with <type> column exists with 1000000 sequential values
+        table_name = f"{tmp_schema}.large_float_table_{float_type.replace(' ', '_').lower()}"
+        execute_query(f"CREATE TABLE {table_name} (col {float_type})")
+        execute_query(
+            f"INSERT INTO {table_name} SELECT seq8()::{float_type} "
+            f"FROM TABLE(GENERATOR(ROWCOUNT => {LARGE_RESULT_SET_SIZE}))"
+        )
+
+        # When Query "SELECT * FROM <table>" is executed
+        rows = execute_query(f"SELECT * FROM {table_name} ORDER BY col")
+
+        # Then Result should contain 1000000 rows
+        assert len(rows) == LARGE_RESULT_SET_SIZE, f"Expected {LARGE_RESULT_SET_SIZE} rows, got {len(rows)}"
+
+        # And All values should be returned as appropriate float type
+        values = [row[0] for row in rows]
+        assert_types(values, float)
+        assert_floats_equal(values, [float(i) for i in range(LARGE_RESULT_SET_SIZE)])
+
+
+class TestFloatBinding:
+    """Tests for FLOAT type using parameter binding."""
 
     @pytest.mark.skip("SNOW-3006013 - parameter binding is not yet implemented")
     @float_type_parametrize
-    def test_should_select_float_using_parameter_binding_for_float_and_synonyms(self, cursor, float_type):
+    def test_should_select_float_using_parameter_binding_for_float_and_synonyms(self, execute_query, float_type):
         # Given Snowflake client is logged in
-        assert not cursor.connection.is_closed(), "Connection should be open"
 
         # When Query "SELECT ?::<type>, ?::<type>, ?::<type>" is executed
         # with bound float values [123.456, -789.012, 42.0]
         sql = f"SELECT ?::{float_type}, ?::{float_type}, ?::{float_type}"
-        cursor.execute(sql, (123.456, -789.012, 42.0))
-        result = cursor.fetchone()
+        result = execute_query(sql, (123.456, -789.012, 42.0), single_row=True)
 
         # Then Result should contain floats [123.456, -789.012, 42.0]
-        expected = (123.456, -789.012, 42.0)
-        for actual, expect in zip(result, expected):
-            assert abs(actual - expect) < 1e-10, f"Expected {expect}, got {actual}"
-            assert isinstance(actual, float), f"Value {actual} should be Python float type"
+        assert_floats_equal(result, [123.456, -789.012, 42.0])
+        assert_types(result, float)
 
         # When Query "SELECT ?::<type>, ?::<type>, ?::<type>" is executed
         # with bound special values [NaN, inf, -inf]
-        cursor.execute(sql, (float("nan"), float("inf"), float("-inf")))
-        result = cursor.fetchone()
+        result = execute_query(sql, (nan, inf, -inf), single_row=True)
 
         # Then Result should contain special values [NaN, inf, -inf]
-        assert math.isnan(result[0]), "First value should be NaN"
-        assert result[1] == float("inf"), "Second value should be positive infinity"
-        assert result[2] == float("-inf"), "Third value should be negative infinity"
+        assert_floats_equal(result, [nan, inf, -inf])
 
         # When Query "SELECT ?::<type>" is executed with bound NULL value
         sql_null = f"SELECT ?::{float_type}"
-        cursor.execute(sql_null, (None,))
-        result = cursor.fetchone()
+        result = execute_query(sql_null, (None,), single_row=True)
 
         # Then Result should contain NULL
-        assert result[0] is None, "Value should be NULL (None)"
+        assert_floats_equal(result, [None])
 
     @pytest.mark.skip("SNOW-3006013 - parameter binding is not yet implemented")
     @float_type_parametrize
-    def test_should_insert_float_using_parameter_binding_for_float_and_synonyms(self, cursor, tmp_schema, float_type):
+    def test_should_insert_float_using_parameter_binding_for_float_and_synonyms(
+        self, execute_query, tmp_schema, float_type
+    ):
         # Given Snowflake client is logged in
-        assert not cursor.connection.is_closed(), "Connection should be open"
 
         # And Table with <type> column exists
         table_name = f"{tmp_schema}.float_bind_table_{float_type.replace(' ', '_').lower()}"
-        cursor.execute(f"CREATE TABLE {table_name} (col {float_type})")
+        execute_query(f"CREATE TABLE {table_name} (col {float_type})")
 
         # When Float values [0.0, 123.456, -789.012, NaN, inf, -inf, NULL] are inserted using binding
-        test_values = [
-            0.0,
-            123.456,
-            -789.012,
-            float("nan"),
-            float("inf"),
-            float("-inf"),
-            None,
-        ]
+        test_values = [0.0, 123.456, -789.012, nan, inf, -inf, None]
         for val in test_values:
-            cursor.execute(f"INSERT INTO {table_name} VALUES (?)", (val,))
+            execute_query(f"INSERT INTO {table_name} VALUES (?)", (val,))
 
         # And Query "SELECT * FROM float_table" is executed
-        cursor.execute(f"SELECT * FROM {table_name}")
-        rows = cursor.fetchall()
+        rows = execute_query(f"SELECT * FROM {table_name}")
 
         # Then Result should contain the same values including special values and NULL
         result = [row[0] for row in rows]
-        assert len(result) == len(test_values), f"Expected {len(test_values)} values, got {len(result)}"
-
-        # Verify regular floats
-        assert abs(result[0] - 0.0) < 1e-10, f"Expected 0.0, got {result[0]}"
-        assert abs(result[1] - 123.456) < 1e-10, f"Expected 123.456, got {result[1]}"
-        assert abs(result[2] - (-789.012)) < 1e-10, f"Expected -789.012, got {result[2]}"
-
-        # Verify special values
-        assert math.isnan(result[3]), "Fourth value should be NaN"
-        assert result[4] == float("inf"), "Fifth value should be positive infinity"
-        assert result[5] == float("-inf"), "Sixth value should be negative infinity"
-
-        # Verify NULL
-        assert result[6] is None, "Seventh value should be NULL (None)"
-
-    @float_type_parametrize
-    def test_should_download_large_result_set_with_multiple_chunks_from_generator_for_float_and_synonyms(
-        self, cursor, float_type
-    ):
-        # Given Snowflake client is logged in
-        assert not cursor.connection.is_closed(), "Connection should be open"
-
-        # When Query "SELECT seq8()::<type> as id FROM TABLE(GENERATOR(ROWCOUNT => 1000000)) v" is executed
-        sql = f"SELECT seq8()::{float_type} as id FROM TABLE(GENERATOR(ROWCOUNT => 1000000)) v ORDER BY id"
-        cursor.execute(sql)
-        rows = cursor.fetchall()
-
-        # Then Result should contain 1000000 rows
-        expected_count = 1000000
-        assert len(rows) == expected_count, f"Expected {expected_count} rows, got {len(rows)}"
-
-        # And All values should be returned as appropriate float type
-        for i, row in enumerate(rows):
-            assert isinstance(row[0], float), f"Value at row {i} should be Python float type"
-            assert int(row[0]) == i, f"Expected row {i} to have value {i}, got {row[0]}"
-
-    @float_type_parametrize
-    def test_should_select_large_result_set_from_table_for_float_and_synonyms(self, cursor, tmp_schema, float_type):
-        # Given Snowflake client is logged in
-        assert not cursor.connection.is_closed(), "Connection should be open"
-
-        # And Table with <type> column exists with 1000000 sequential values
-        table_name = f"{tmp_schema}.large_float_table_{float_type.replace(' ', '_').lower()}"
-        cursor.execute(f"CREATE TABLE {table_name} (col {float_type})")
-        cursor.execute(
-            f"INSERT INTO {table_name} SELECT seq8()::{float_type} FROM TABLE(GENERATOR(ROWCOUNT => 1000000))"
-        )
-
-        # When Query "SELECT * FROM large_float_table" is executed
-        cursor.execute(f"SELECT * FROM {table_name} ORDER BY col")
-        rows = cursor.fetchall()
-
-        # Then Result should contain 1000000 rows
-        expected_count = 1000000
-        assert len(rows) == expected_count, f"Expected {expected_count} rows, got {len(rows)}"
-
-        # And All values should be returned as appropriate float type
-        for i, row in enumerate(rows):
-            assert isinstance(row[0], float), f"Value at row {i} should be Python float type"
-            assert row[0] == float(i), f"Expected row {i} to have value {float(i)}, got {row[0]}"
-
-    @float_type_parametrize
-    def test_should_cast_float_values_to_appropriate_type_for_float_and_synonyms(self, cursor, float_type):
-        # Given Snowflake client is logged in
-        assert not cursor.connection.is_closed(), "Connection should be open"
-
-        # When Query "SELECT 0.0::<type>, 123.456::<type>, 1.23e10::<type>, 'NaN'::<type>, 'inf'::<type>" is executed
-        sql = (
-            f"SELECT 0.0::{float_type}, 123.456::{float_type}, 1.23e10::{float_type}, "
-            f"'NaN'::{float_type}, 'inf'::{float_type}"
-        )
-        cursor.execute(sql)
-        result = cursor.fetchone()
-
-        # Then All values should be returned as appropriate type
-        assert all(isinstance(val, float) for val in result), "All values should be Python float type"
-
-        # And Regular values should have approximately 15 decimal digits precision
-        assert result[0] == 0.0, "First value should be 0.0"
-        assert abs(result[1] - 123.456) < 1e-10, f"Second value should be 123.456, got {result[1]}"
-        assert abs(result[2] - 1.23e10) <= abs(1.23e10) * 1e-14, f"Third value should be 1.23e10, got {result[2]}"
-
-        # And NaN and inf values should be identified correctly
-        assert math.isnan(result[3]), "Fourth value should be NaN"
-        assert result[4] == float("inf"), "Fifth value should be positive infinity"
+        assert_floats_equal(result, test_values)
+        assert_types(result, float, can_be_none=True)
