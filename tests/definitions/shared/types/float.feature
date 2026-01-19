@@ -95,10 +95,10 @@ Feature: FLOAT type support
     And All values should be returned as appropriate float type
 
   @python_e2e
-  Scenario: should cast float values to native language float type for float and synonyms
+  Scenario: should cast float values to appropriate type for float and synonyms
     # Python: Values should be cast to 'float' type (64-bit)
     Given Snowflake client is logged in
     When Query "SELECT 0.0::<type>, 123.456::<type>, 1.23e10::<type>, 'NaN'::<type>, 'inf'::<type>" is executed
-    Then All values should be returned as appropriate float type
+    Then All values should be returned as appropriate type
     And Regular values should have approximately 15 decimal digits precision
     And NaN and inf values should be identified correctly

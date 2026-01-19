@@ -142,7 +142,7 @@ class TestFloat:
 
         # Then Result should contain floats [2.2250738585072014e-308, approximately 5e-324]
         assert abs(result[0] - 2.2250738585072014e-308) <= 1e-320
-        assert abs(result[1] - 5e-324) <= 1e-320  # Subnormal tolerance
+        assert abs(result[1] - 5e-324) <= 1e-325  # Subnormal tolerance
 
         # When Query "SELECT 123456789012345.0::<type>, 1234567890123456.0::<type>" is executed
         sql = f"SELECT 123456789012345.0::{float_type}, 1234567890123456.0::{float_type}"
@@ -187,7 +187,7 @@ class TestFloat:
         assert abs(result[0] - 1.7976931348623157e308) <= abs(1.7976931348623157e308) * 1e-14
         assert abs(result[1] - (-1.7976931348623157e308)) <= abs(-1.7976931348623157e308) * 1e-14
         assert abs(result[2] - 2.2250738585072014e-308) <= 1e-320
-        assert abs(result[3] - 5e-324) <= 1e-320
+        assert abs(result[3] - 5e-324) <= 1e-325
         assert abs(result[4] - 123456789012345.0) <= abs(123456789012345.0) * 1e-14
 
     @float_type_parametrize
@@ -359,7 +359,7 @@ class TestFloat:
             assert row[0] == float(i), f"Expected row {i} to have value {float(i)}, got {row[0]}"
 
     @float_type_parametrize
-    def test_should_cast_float_values_to_native_language_float_type_for_float_and_synonyms(self, cursor, float_type):
+    def test_should_cast_float_values_to_appropriate_type_for_float_and_synonyms(self, cursor, float_type):
         # Given Snowflake client is logged in
         assert not cursor.connection.is_closed(), "Connection should be open"
 
@@ -371,7 +371,7 @@ class TestFloat:
         cursor.execute(sql)
         result = cursor.fetchone()
 
-        # Then All values should be returned as appropriate float type
+        # Then All values should be returned as appropriate type
         assert all(isinstance(val, float) for val in result), "All values should be Python float type"
 
         # And Regular values should have approximately 15 decimal digits precision
