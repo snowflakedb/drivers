@@ -83,10 +83,10 @@ class TestFloat:
 
         # Then Result should contain [NaN, positive_infinity, negative_infinity]
         assert math.isnan(result[0]), "First value should be NaN"
-        assert result[1:] == [
+        assert result[1:] == (
             float("inf"),
             float("-inf"),
-        ], "Remaining values should be inf, -inf"
+        ), "Remaining values should be inf, -inf"
         assert all(isinstance(val, float) for val in result), "All values should be Python float type"
 
     @float_type_parametrize
@@ -97,7 +97,14 @@ class TestFloat:
         # And Table with <type> column exists with values [NaN, inf, -inf, 42.0, -42.0]
         table_name = f"{tmp_schema}.special_float_table_{float_type.replace(' ', '_').lower()}"
         cursor.execute(f"CREATE TABLE {table_name} (col {float_type})")
-        cursor.execute(f"INSERT INTO {table_name} VALUES ('NaN'), ('inf'), ('-inf'), (42.0), (-42.0)")
+        cursor.execute(
+            f"INSERT INTO {table_name} VALUES\n"
+            f"('NaN'::{float_type}),\n"
+            f"('inf'::{float_type}),\n"
+            f"('-inf'::{float_type}),\n"
+            f"(42.0::{float_type}),\n"
+            f"(-42.0::{float_type})"
+        )
 
         # When Query "SELECT * FROM special_float_table" is executed
         cursor.execute(f"SELECT * FROM {table_name}")
