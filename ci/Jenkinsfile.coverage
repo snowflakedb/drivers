@@ -18,7 +18,7 @@ import groovy.transform.Field
 
 def dockerSetup() {
     withCredentials([string(credentialsId: NEXUS_CREDENTIAL_ID, variable: 'NEXUS_PASSWORD')]) {
-        sh label: 'Docker Login', script: 'source ./scripts/login_internal_docker.sh'
+        sh label: 'Docker Login', script: 'export USERNAME=jenkins && source ./scripts/login_internal_docker.sh'
     }
     sh label: 'Docker Pull', script: "docker pull ${DOCKER_IMAGE}"
 }
@@ -166,13 +166,16 @@ pipeline {
                                 docker.image(DOCKER_IMAGE).inside('-u root --privileged') {
                                     decodeSecrets()
                                     
-                                    sh label: 'Run Tests with Coverage', script: '''
+                                    def testExitCode = sh(label: 'Run Tests with Coverage', returnStatus: true, script: '''
                                         set +x
                                         export PARAMETER_PATH=$(pwd)/parameters.json
-                                        # Continue even if tests fail - we still want coverage report
-                                        cargo tarpaulin --packages sf_core --all-features --skip-clean --no-fail-fast --out lcov --output-dir . || true
-                                        mv lcov.info lcov-rust-core.info
-                                    '''
+                                        cargo tarpaulin --packages sf_core --all-features --skip-clean --no-fail-fast --out lcov --output-dir .
+                                    ''')
+                                    if (testExitCode != 0) {
+                                        echo "Rust Core tests failed with exit code ${testExitCode}, continuing to generate coverage"
+                                        unstable(message: "Rust Core tests failed")
+                                    }
+                                    sh 'mv lcov.info lcov-rust-core.info'
                                     
                                     def coverage = parseLcovCoverage('lcov-rust-core.info')
                                     uploadToCodecov('rust-core', 'lcov-rust-core.info')
@@ -202,7 +205,7 @@ pipeline {
                                             RUSTFLAGS="" hatch run build-core
                                         '''
                                         
-                                        sh label: 'Run Tests with Coverage', script: '''
+                                        def testExitCode = sh(label: 'Run Tests with Coverage', returnStatus: true, script: '''
                                             set +x
                                             export PARAMETER_PATH=$(pwd)/../parameters.json
                                             mkdir -p reports
@@ -210,7 +213,11 @@ pipeline {
                                                 --cov=src/snowflake \
                                                 --cov-report=term \
                                                 --cov-report=xml:reports/coverage-python.xml
-                                        '''
+                                        ''')
+                                        if (testExitCode != 0) {
+                                            echo "Python tests failed with exit code ${testExitCode}, continuing to generate coverage"
+                                            unstable(message: "Python tests failed")
+                                        }
                                     }
                                     
                                     def coverage = parseCoberturaCoverage('python/reports/coverage-python.xml')
@@ -249,7 +256,7 @@ pipeline {
                                         cmake --build cmake-build -- -j $(nproc)
                                     '''
                                     
-                                    sh label: 'Run ODBC Tests', script: '''
+                                    def testExitCode = sh(label: 'Run ODBC Tests', returnStatus: true, script: '''
                                         set +x
                                         WORKSPACE_ROOT=$(pwd)
                                         export DRIVER_PATH=${WORKSPACE_ROOT}/target/debug/libsfodbc.so
@@ -257,8 +264,13 @@ pipeline {
                                         export LLVM_PROFILE_FILE="${WORKSPACE_ROOT}/odbc-%p-%m.profraw"
                                         
                                         cd odbc_tests
+                                        # Exclude CRL tests - they require Wiremock which is not available on Jenkins
                                         ctest -j 1 -C Debug --test-dir cmake-build --output-on-failure -E "crl"
-                                    '''
+                                    ''')
+                                    if (testExitCode != 0) {
+                                        echo "ODBC tests failed with exit code ${testExitCode}, continuing to generate coverage"
+                                        unstable(message: "ODBC tests failed")
+                                    }
                                     
                                     sh label: 'Generate Coverage Report', script: '''
                                         set +x
@@ -304,14 +316,18 @@ pipeline {
                                         cargo build --package jdbc_bridge
                                     '''
                                     
-                                    sh label: 'Run Tests with Coverage', script: '''
+                                    def testExitCode = sh(label: 'Run Tests with Coverage', returnStatus: true, script: '''
                                         set +x
                                         export PARAMETER_PATH=$(pwd)/parameters.json
                                         export CORE_PATH=$(pwd)/target/debug/libjdbc_bridge.so
                                         chmod +x jdbc/gradlew
                                         cd jdbc
                                         ./gradlew test jacocoTestReport --stacktrace
-                                    '''
+                                    ''')
+                                    if (testExitCode != 0) {
+                                        echo "JDBC tests failed with exit code ${testExitCode}, continuing to generate coverage"
+                                        unstable(message: "JDBC tests failed")
+                                    }
                                     
                                     def jdbcReportPath = "${env.WORKSPACE}/jdbc/build/reports/jacoco/test/jacocoTestReport.xml"
                                     def coverage = parseJacocoCoverage(jdbcReportPath)

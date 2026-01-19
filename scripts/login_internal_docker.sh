@@ -14,7 +14,7 @@ if [[ -z "$NEXUS_PASSWORD" ]]; then
     exit 1
 fi
 
-if ! docker login --username "$NEXUS_USER" --password "$NEXUS_PASSWORD" "$INTERNAL_REPO"; then
+if ! docker login --username "$NEXUS_USER" --password-stdin "$INTERNAL_REPO" <<< "$NEXUS_PASSWORD"; then
     echo "[ERROR] Failed to connect to the nexus server. Verify the environment variable NEXUS_PASSWORD is set correctly for NEXUS_USER: $NEXUS_USER"
     exit 1
 fi
