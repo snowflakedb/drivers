@@ -1,11 +1,11 @@
 use odbc_sys as sql;
 
 use crate::cdata_types::CDataType;
-use crate::conversion::ConversionError;
+use crate::conversion::error::{ReadArrowError, WriteOdbcError};
 
 pub struct Binding {
     pub target_type: CDataType,
-    pub value: sql::Pointer,
+    pub target_value_ptr: sql::Pointer,
     pub buffer_length: sql::Len,
     pub str_len_or_ind_ptr: *mut sql::Len,
 }
@@ -15,7 +15,7 @@ pub trait WriteODBCType: SnowflakeType {
         &self,
         snowflake_value: Self::Representation<'_>,
         binding: &Binding,
-    ) -> Result<(), ConversionError>;
+    ) -> Result<(), WriteOdbcError>;
 }
 
 pub trait SnowflakeType {
@@ -28,5 +28,5 @@ pub trait ReadArrowType<ArrowArrayType>: SnowflakeType {
         &self,
         array: &'a ArrowArrayType,
         row_idx: usize,
-    ) -> Result<Self::Representation<'a>, ConversionError>;
+    ) -> Result<Self::Representation<'a>, ReadArrowError>;
 }

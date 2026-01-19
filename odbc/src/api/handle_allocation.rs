@@ -50,6 +50,7 @@ pub fn alloc_statement(input_handle: sql::Handle) -> OdbcResult<*mut Statement<'
                 stmt_handle,
                 state: StatementState::Created.into(),
                 parameter_bindings: std::collections::HashMap::new(),
+                column_bindings: std::collections::HashMap::new(),
                 diagnostic_info: DiagnosticInfo::default(),
             });
             Ok(Box::into_raw(stmt))

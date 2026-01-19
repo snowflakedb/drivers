@@ -1,10 +1,11 @@
-use crate::api::api_utils::cstr_to_string;
+use crate::api::api_utils::{cstr_to_string, utf16_to_string};
 use crate::api::error::{
     ArrowArrayStreamReaderCreationSnafu, ArrowBindingSnafu, DisconnectedSnafu,
     InvalidParameterNumberSnafu, Required,
 };
 use crate::api::{ConnectionState, OdbcResult, ParameterBinding, StatementState, stmt_from_handle};
 use crate::cdata_types::CDataType;
+use crate::conversion::Binding;
 use crate::write_arrow::odbc_bindings_to_arrow_bindings;
 use arrow::ffi::{FFI_ArrowArray, FFI_ArrowSchema};
 use arrow::ffi_stream::{ArrowArrayStreamReader, FFI_ArrowArrayStream};
@@ -33,12 +34,26 @@ fn protobuf_from_ffi_arrow_schema(raw: *mut FFI_ArrowSchema) -> ArrowSchemaPtr {
     ArrowSchemaPtr { value: vec }
 }
 
-/// Execute a SQL statement directly
-pub fn exec_direct(
+pub fn exec_direct_n(
     statement_handle: sql::Handle,
     statement_text: *const sql::Char,
     text_length: sql::Integer,
 ) -> OdbcResult<()> {
+    let query = cstr_to_string(statement_text, text_length)?;
+    exec_direct(statement_handle, &query)
+}
+
+pub fn exec_direct_w(
+    statement_handle: sql::Handle,
+    statement_text: *const sql::WChar,
+    text_length: sql::Integer,
+) -> OdbcResult<()> {
+    let query = utf16_to_string(statement_text, text_length)?;
+    exec_direct(statement_handle, &query)
+}
+
+/// Execute a SQL statement directly
+pub fn exec_direct(statement_handle: sql::Handle, statement_text: &str) -> OdbcResult<()> {
     let stmt = stmt_from_handle(statement_handle);
     tracing::debug!("exec_direct: statement_handle={:?}", statement_handle);
 
@@ -47,11 +62,9 @@ pub fn exec_direct(
             db_handle: _,
             conn_handle: _,
         } => {
-            let query = cstr_to_string(statement_text, text_length)?;
-
             DatabaseDriverClient::statement_set_sql_query(StatementSetSqlQueryRequest {
                 stmt_handle: Some(stmt.stmt_handle),
-                query,
+                query: statement_text.to_string(),
             })?;
 
             let response =
@@ -212,6 +225,36 @@ pub fn bind_parameter(
     tracing::info!(
         "bind_parameter: Successfully bound parameter {}",
         parameter_number
+    );
+    Ok(())
+}
+
+/// Bind a column to a statement
+pub fn bind_col(
+    statement_handle: sql::Handle,
+    column_number: sql::USmallInt,
+    target_type: CDataType,
+    target_value_ptr: sql::Pointer,
+    buffer_length: sql::Len,
+    str_len_or_ind_ptr: *mut sql::Len,
+) -> OdbcResult<()> {
+    tracing::debug!(
+        "bind_col: statement_handle={:?}, column_number={}, target_type={:?}",
+        statement_handle,
+        column_number,
+        target_type
+    );
+
+    let stmt = stmt_from_handle(statement_handle);
+
+    stmt.column_bindings.insert(
+        column_number,
+        Binding {
+            target_type,
+            target_value_ptr,
+            buffer_length,
+            str_len_or_ind_ptr,
+        },
     );
     Ok(())
 }

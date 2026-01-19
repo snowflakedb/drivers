@@ -1,8 +1,8 @@
 use crate::api::error::{
-    ArrowReadSnafu, DataNotFetchedSnafu, ExecutionDoneSnafu, FetchDataSnafu, NoMoreDataSnafu,
+    ConversionSnafu, DataNotFetchedSnafu, ExecutionDoneSnafu, FetchDataSnafu, NoMoreDataSnafu,
     StatementErrorStateSnafu, StatementNotExecutedSnafu,
 };
-use crate::api::{OdbcResult, StatementState, WithState, stmt_from_handle};
+use crate::api::{OdbcResult, Statement, StatementState, WithState, stmt_from_handle};
 use crate::cdata_types::CDataType;
 use crate::conversion::{Binding, ConversionError, make_converter};
 use arrow::array::Array;
@@ -25,7 +25,7 @@ fn read_arrow_value(
         batch_idx,
         &Binding {
             target_type,
-            value: target_value_ptr,
+            target_value_ptr,
             buffer_length,
             str_len_or_ind_ptr,
         },
@@ -105,7 +105,35 @@ pub fn fetch(statement_handle: sql::Handle) -> OdbcResult<()> {
             tracing::error!("fetch: statement not executed");
             StatementNotExecutedSnafu.fail().with_state(state)
         }
-    })
+    })?;
+    execute_bindings(stmt)?;
+    Ok(())
+}
+
+fn execute_bindings(stmt: &mut Statement) -> OdbcResult<()> {
+    if let StatementState::Fetching {
+        reader: _,
+        record_batch,
+        batch_idx,
+    } = &stmt.state.as_ref()
+    {
+        for (column_number, binding) in &stmt.column_bindings {
+            let array_ref = record_batch.column((column_number - 1) as usize);
+            let schema = record_batch.schema();
+            let field = schema.field((column_number - 1) as usize);
+            read_arrow_value(
+                binding.target_type,
+                binding.target_value_ptr,
+                binding.buffer_length,
+                binding.str_len_or_ind_ptr,
+                array_ref,
+                field,
+                *batch_idx,
+            )
+            .context(ConversionSnafu)?;
+        }
+    }
+    Ok(())
 }
 
 /// Get data from a specific column
@@ -138,7 +166,7 @@ pub fn get_data(
                 field,
                 *batch_idx,
             )
-            .context(ArrowReadSnafu)?;
+            .context(ConversionSnafu)?;
 
             Ok(())
         }
@@ -681,7 +709,7 @@ mod tests {
 
             assert!(matches!(
                 result,
-                Err(ConversionError::UnsupportedOdbcType { .. })
+                Err(ConversionError::WriteOdbcValue { .. })
             ));
         }
 
@@ -703,7 +731,7 @@ mod tests {
 
             assert!(matches!(
                 result,
-                Err(ConversionError::UnsupportedOdbcType { .. })
+                Err(ConversionError::WriteOdbcValue { .. })
             ));
         }
     }

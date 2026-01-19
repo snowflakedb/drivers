@@ -279,7 +279,9 @@ pub unsafe fn get_diag_rec(
         *native_error_ptr = record.native_error;
         let max_msg_len = (buffer_length - 1).max(0) as usize;
         let written = std::cmp::min(record.message_text.len(), max_msg_len);
-        *text_length_ptr = written as sql::SmallInt;
+        if !text_length_ptr.is_null() {
+            std::ptr::write(text_length_ptr, written as sql::SmallInt);
+        }
     }
     Ok(())
 }

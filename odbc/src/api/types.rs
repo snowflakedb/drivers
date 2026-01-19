@@ -1,5 +1,6 @@
 use crate::api::{OdbcError, diagnostic::DiagnosticInfo};
 use crate::cdata_types::CDataType;
+use crate::conversion::Binding;
 use arrow::{array::RecordBatch, ffi_stream::ArrowArrayStreamReader};
 use odbc_sys as sql;
 use sf_core::protobuf_gen::database_driver_v1::{
@@ -138,6 +139,7 @@ pub struct Statement<'a> {
     pub stmt_handle: StatementHandle,
     pub state: State<StatementState>,
     pub parameter_bindings: HashMap<u16, ParameterBinding>,
+    pub column_bindings: HashMap<u16, Binding>,
     pub diagnostic_info: DiagnosticInfo,
 }
 
