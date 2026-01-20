@@ -36,6 +36,16 @@ pub struct Parameters {
     pub private_key_contents: Option<Vec<String>>,
     #[serde(rename = "SNOWFLAKE_TEST_PRIVATE_KEY_PASSWORD")]
     pub private_key_password: Option<String>,
+    #[serde(rename = "SNOWFLAKE_TEST_OKTA_URL")]
+    pub okta_url: Option<String>,
+    #[serde(rename = "SNOWFLAKE_TEST_OKTA_USER")]
+    pub okta_user: Option<String>,
+    #[serde(rename = "SNOWFLAKE_TEST_OKTA_PASSWORD")]
+    pub okta_password: Option<String>,
+    #[serde(rename = "SNOWFLAKE_TEST_OKTA_ACCOUNT")]
+    pub okta_account: Option<String>,
+    #[serde(rename = "SNOWFLAKE_TEST_OKTA_HOST")]
+    pub okta_host: Option<String>,
 }
 
 impl Parameters {

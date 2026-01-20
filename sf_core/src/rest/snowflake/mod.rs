@@ -1,6 +1,7 @@
 #![allow(clippy::result_large_err)]
 pub mod async_exec;
 mod auth;
+mod okta;
 pub mod error;
 pub mod query_request;
 pub mod query_response;
@@ -9,12 +10,13 @@ use std::collections::HashMap;
 
 use crate::auth::{AuthError, Credentials, create_credentials};
 use crate::config::rest_parameters::ClientInfo;
-use crate::config::rest_parameters::{LoginParameters, QueryParameters};
+use crate::config::rest_parameters::{LoginMethod, LoginParameters, QueryParameters};
 use crate::config::retry::RetryPolicy;
 use crate::rest::snowflake::auth::{
     AuthRequest, AuthRequestClientEnvironment, AuthRequestData, AuthResponse,
 };
 use crate::rest::snowflake::error::SfError;
+use crate::rest::snowflake::okta::fetch_okta_saml_html;
 use crate::tls::client::create_tls_client_with_config;
 use crate::tls::error::TlsError;
 use reqwest::{self, header};
@@ -121,11 +123,8 @@ pub fn user_agent(client_info: &ClientInfo) -> String {
     )
 }
 
-pub fn auth_request_data(
-    login_parameters: &LoginParameters,
-    session_parameters: Option<&HashMap<String, String>>,
-) -> Result<AuthRequestData, RestError> {
-    let mut data = AuthRequestData {
+fn base_auth_request_data(login_parameters: &LoginParameters) -> AuthRequestData {
+    AuthRequestData {
         account_name: login_parameters.account_name.clone(),
         client_app_id: login_parameters.client_info.application.clone(),
         client_app_version: login_parameters.client_info.version.clone(),
@@ -139,9 +138,15 @@ pub fn auth_request_data(
             python_compiler: Some("Clang 13.0.0 (clang-1300.0.29.30)".to_string()),
         },
         ..Default::default()
-    };
+    }
+}
 
-    // Convert session_parameters to JSON values for the auth request
+pub fn auth_request_data(
+    login_parameters: &LoginParameters,
+    session_parameters: Option<&HashMap<String, String>>,
+) -> Result<AuthRequestData, RestError> {
+    let mut data = base_auth_request_data(login_parameters);
+
     if let Some(params) = session_parameters {
         let json_params = params
             .iter()
@@ -206,8 +211,44 @@ pub async fn snowflake_login_with_client(
         "Extracted connection settings"
     );
 
-    // Build the login request
-    let auth_request_data = auth_request_data(login_parameters, session_parameters)?;
+    // Build the login request. For Okta, we must obtain RAW_SAML_RESPONSE first.
+    let auth_request_data = match &login_parameters.login_method {
+        LoginMethod::Okta {
+            username,
+            password,
+            okta_url,
+            disable_saml_url_check,
+            authentication_timeout_secs,
+        } => {
+            let retry_policy = RetryPolicy::default();
+            let saml_html = fetch_okta_saml_html(
+                client,
+                login_parameters,
+                &retry_policy,
+                okta_url,
+                username,
+                password,
+                *disable_saml_url_check,
+                *authentication_timeout_secs,
+            )
+            .await
+            .context(OktaSnafu)?;
+
+            let mut data = base_auth_request_data(login_parameters);
+            if let Some(params) = session_parameters {
+                let json_params = params
+                    .iter()
+                    .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
+                    .collect();
+                data.session_parameters = Some(json_params);
+            }
+            data.login_name = Some(username.clone());
+            data.authenticator = Some(okta_url.clone());
+            data.raw_saml_response = Some(saml_html);
+            data
+        }
+        _ => auth_request_data(login_parameters, session_parameters)?,
+    };
     tracing::Span::current().record("login_name", &auth_request_data.login_name);
     let login_request = AuthRequest {
         data: auth_request_data,
@@ -870,6 +911,12 @@ pub enum RestError {
     #[snafu(display("Authentication failed"))]
     Authentication {
         source: AuthError,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Okta native SSO failed"))]
+    Okta {
+        source: okta::OktaError,
         #[snafu(implicit)]
         location: Location,
     },

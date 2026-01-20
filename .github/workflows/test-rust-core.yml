@@ -60,6 +60,12 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Set up Java (required for Wiremock HTTPS tests)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
       - name: Cache Rust dependencies
         uses: actions/cache@v4
         with:

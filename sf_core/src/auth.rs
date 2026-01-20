@@ -111,6 +111,7 @@ pub fn create_credentials(login_parameters: &LoginParameters) -> Result<Credenti
             username: username.clone(),
             password: password.clone(),
         }),
+        LoginMethod::Okta { .. } => UnsupportedLoginMethodSnafu { method: "OKTA" }.fail(),
         LoginMethod::PrivateKey {
             username,
             private_key,
@@ -163,6 +164,12 @@ pub enum AuthError {
     #[snafu(display("Failed to sign JWT token"))]
     JWTSigning {
         source: jwt::Error,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Unsupported login method for this operation: {method}"))]
+    UnsupportedLoginMethod {
+        method: &'static str,
         #[snafu(implicit)]
         location: Location,
     },

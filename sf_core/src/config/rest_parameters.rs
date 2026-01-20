@@ -120,6 +120,18 @@ pub enum LoginMethod {
         username: String,
         password: String,
     },
+    Okta {
+        /// Snowflake user / IdP login name (UD currently uses a single username for both).
+        username: String,
+        /// IdP password (Okta native SSO).
+        password: String,
+        /// Okta authenticator URL endpoint (native Okta SSO).
+        okta_url: String,
+        /// Disable SAML destination/postback validation (default false; discouraged).
+        disable_saml_url_check: bool,
+        /// End-to-end auth budget for the Okta flow, mapped onto retry max_elapsed.
+        authentication_timeout_secs: u64,
+    },
     PrivateKey {
         username: String,
         private_key: String,
@@ -273,10 +285,46 @@ impl LoginMethod {
                     .get_string("token")
                     .context(MissingParameterSnafu { parameter: "token" })?,
             }),
+            _ if authenticator.to_ascii_lowercase().starts_with("https://") => {
+                // Native Okta SSO is configured by passing the Okta URL endpoint as `authenticator`.
+                // This is intentionally broad (vanity domains may not contain "okta").
+                let username = settings
+                    .get_string("user")
+                    .context(MissingParameterSnafu { parameter: "user" })?;
+                let password = settings
+                    .get_string("password")
+                    .context(MissingParameterSnafu {
+                        parameter: "password",
+                    })?;
+
+                let disable_saml_url_check = settings
+                    .get_string("disable_saml_url_check")
+                    .map(|v| v.eq_ignore_ascii_case("true") || v == "1")
+                    .or_else(|| settings.get_int("disable_saml_url_check").map(|v| v != 0))
+                    .unwrap_or(false);
+
+                let authentication_timeout_secs = settings
+                    .get_int("authentication_timeout")
+                    .and_then(|v| u64::try_from(v).ok())
+                    .or_else(|| {
+                        settings
+                            .get_string("authentication_timeout")
+                            .and_then(|s| s.parse::<u64>().ok())
+                    })
+                    .unwrap_or(120);
+
+                Ok(Self::Okta {
+                    username,
+                    password,
+                    okta_url: authenticator,
+                    disable_saml_url_check,
+                    authentication_timeout_secs,
+                })
+            }
             _ => InvalidParameterValueSnafu {
                 parameter: "authenticator",
                 value: authenticator,
-                explanation: "Allowed values are SNOWFLAKE_JWT, SNOWFLAKE_PASSWORD, and PROGRAMMATIC_ACCESS_TOKEN",
+                explanation: "Allowed values are SNOWFLAKE_JWT, SNOWFLAKE_PASSWORD, PROGRAMMATIC_ACCESS_TOKEN, or an https:// URL for native Okta SSO",
             }
             .fail()?,
         }

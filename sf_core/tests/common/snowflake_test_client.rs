@@ -92,6 +92,11 @@ impl SnowflakeTestClient {
             protocol: Some("http".to_string()),
             private_key_contents: None,
             private_key_password: None,
+            okta_url: None,
+            okta_user: None,
+            okta_password: None,
+            okta_account: None,
+            okta_host: None,
         };
 
         let db_response = DatabaseDriverClient::database_new(DatabaseNewRequest {}).unwrap();

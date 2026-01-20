@@ -1,0 +1,17 @@
+{
+  "name": "Okta token 401 Unauthorized",
+  "request": {
+    "urlPathPattern": "/api/v1/authn.*",
+    "method": "POST"
+  },
+  "response": {
+    "status": 401,
+    "jsonBody": {
+      "errorCode": "E0000004",
+      "errorSummary": "Authentication failed",
+      "errorLink": "E0000004",
+      "errorId": "oaeWq9j-VQ1v3cP2_VkAg",
+      "errorCauses": []
+    }
+  }
+}
