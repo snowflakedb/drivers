@@ -11,28 +11,11 @@ All values are returned as Python Decimal type with full 38-digit precision.
 
 from __future__ import annotations
 
-from decimal import Decimal, getcontext
+from decimal import Decimal
 
 import pytest
 
 from .utils import assert_type
-
-
-# =============================================================================
-# DECIMAL CONTEXT CONFIGURATION
-# =============================================================================
-# DECFLOAT requires Python's Decimal context to have 38-digit precision
-# to properly represent all values without rounding
-DECFLOAT_PRECISION = 38
-
-
-@pytest.fixture(autouse=True)
-def setup_decimal_precision():
-    """Set decimal context precision to 38 for all DECFLOAT tests."""
-    old_prec = getcontext().prec
-    getcontext().prec = DECFLOAT_PRECISION
-    yield
-    getcontext().prec = old_prec
 
 
 # =============================================================================

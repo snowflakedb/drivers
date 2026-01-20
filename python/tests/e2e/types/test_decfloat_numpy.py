@@ -13,8 +13,6 @@ Use standard mode (Python Decimal) when precision is critical.
 
 from __future__ import annotations
 
-from decimal import getcontext
-
 import pytest
 
 from .utils import assert_floats_equal, assert_type
@@ -22,20 +20,6 @@ from .utils import assert_floats_equal, assert_type
 
 # NumPy is optional for these tests
 np = pytest.importorskip("numpy")
-
-# =============================================================================
-# DECIMAL CONTEXT CONFIGURATION
-# =============================================================================
-DECFLOAT_PRECISION = 38
-
-
-@pytest.fixture(autouse=True)
-def setup_decimal_precision():
-    """Set decimal context precision to 38 for all DECFLOAT tests."""
-    old_prec = getcontext().prec
-    getcontext().prec = DECFLOAT_PRECISION
-    yield
-    getcontext().prec = old_prec
 
 
 class TestDecfloatNumPy:
