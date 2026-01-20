@@ -12,7 +12,7 @@ from math import inf, nan
 
 import pytest
 
-from .utils import FLOAT_MIN_NORMAL, assert_floats_equal, assert_types
+from .utils import FLOAT_MIN_NORMAL, assert_floats_equal, assert_type
 
 
 # =============================================================================
@@ -69,7 +69,7 @@ class TestFloatTypeCasting:
         result = execute_query(sql, single_row=True)
 
         # Then All values should be returned as appropriate type
-        assert_types(result, float)
+        assert_type(result, float)
 
         # And Regular values should have approximately 15 decimal digits precision
         # And NaN and inf values should be identified correctly
@@ -92,7 +92,7 @@ class TestFloatLiteral:
 
         # Then Result should contain floats [0.0, 1.0, -1.0, 123.456, -123.456]
         assert_floats_equal(result, (0.0, 1.0, -1.0, 123.456, -123.456))
-        assert_types(result, float)
+        assert_type(result, float)
 
     @float_type_parametrize
     def test_should_handle_special_float_values_from_literals_for_float_and_synonyms(self, execute_query, float_type):
@@ -104,7 +104,7 @@ class TestFloatLiteral:
 
         # Then Result should contain [NaN, positive_infinity, negative_infinity]
         assert_floats_equal(result, (nan, inf, -inf))
-        assert_types(result, float)
+        assert_type(result, float)
 
     @float_type_parametrize
     def test_should_handle_float_boundary_values_from_literals_for_float_and_synonyms(self, execute_query, float_type):
@@ -141,7 +141,7 @@ class TestFloatLiteral:
 
         # Then Result should contain [NULL, 42.5, NULL]
         assert_floats_equal(result, (None, 42.5, None))
-        assert_types(result, float, can_be_none=True)
+        assert_type(result, float, can_be_none=True)
 
     @float_type_parametrize
     def test_should_download_large_result_set_with_multiple_chunks_from_generator_for_float_and_synonyms(
@@ -161,7 +161,7 @@ class TestFloatLiteral:
 
         # And All values should be returned as appropriate float type
         values = [row[0] for row in rows]
-        assert_types(values, float)
+        assert_type(values, float)
         assert_floats_equal(values, [float(i) for i in range(LARGE_RESULT_SET_SIZE)])
 
 
@@ -185,7 +185,7 @@ class TestFloatTable:
         # Then Result should contain floats [0.0, 123.456, -789.012, 123000.0, -0.00987]
         result = [row[0] for row in rows]
         assert_floats_equal(result, [0.0, 123.456, -789.012, 123000.0, -0.00987])
-        assert_types(result, float)
+        assert_type(result, float)
 
     @float_type_parametrize
     def test_should_handle_special_float_values_from_table_for_float_and_synonyms(
@@ -211,7 +211,7 @@ class TestFloatTable:
 
         # Then Result should contain [NaN, positive_infinity, negative_infinity, 42.0, -42.0]
         assert_floats_equal(values, [nan, inf, -inf, 42.0, -42.0])
-        assert_types(values, float)
+        assert_type(values, float)
 
     @float_type_parametrize
     def test_should_handle_float_boundary_values_from_table_for_float_and_synonyms(
@@ -256,7 +256,7 @@ class TestFloatTable:
 
         # Then Result should contain [NULL, 123.456, NULL, -789.012]
         assert_floats_equal(values, [None, 123.456, None, -789.012])
-        assert_types(values, float, can_be_none=True)
+        assert_type(values, float, can_be_none=True)
 
     @float_type_parametrize
     def test_should_select_large_result_set_from_table_for_float_and_synonyms(
@@ -280,7 +280,7 @@ class TestFloatTable:
 
         # And All values should be returned as appropriate float type
         values = [row[0] for row in rows]
-        assert_types(values, float)
+        assert_type(values, float)
         assert_floats_equal(values, [float(i) for i in range(LARGE_RESULT_SET_SIZE)])
 
 
@@ -299,7 +299,7 @@ class TestFloatBinding:
 
         # Then Result should contain floats [123.456, -789.012, 42.0]
         assert_floats_equal(result, [123.456, -789.012, 42.0])
-        assert_types(result, float)
+        assert_type(result, float)
 
         # When Query "SELECT ?::<type>, ?::<type>, ?::<type>" is executed
         # with bound special values [NaN, inf, -inf]
@@ -337,4 +337,4 @@ class TestFloatBinding:
         # Then Result should contain the same values including special values and NULL
         result = [row[0] for row in rows]
         assert_floats_equal(result, test_values)
-        assert_types(result, float, can_be_none=True)
+        assert_type(result, float, can_be_none=True)

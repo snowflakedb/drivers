@@ -10,7 +10,7 @@ from math import inf, nan
 
 import pytest
 
-from .utils import assert_floats_equal, assert_types
+from .utils import assert_floats_equal, assert_type
 
 
 # NumPy is optional for these tests
@@ -41,7 +41,7 @@ class TestFloatNumPy:
         result = cursor_with_numpy.fetchone()
 
         # Then All values should be returned as numpy.float64 type
-        assert_types(result, np.float64)
+        assert_type(result, np.float64)
 
         # And Values should match expected floats [0.0, 123.456, -789.012, 1.23e10]
         assert_floats_equal(result, (0.0, 123.456, -789.012, 1.23e10))
@@ -57,7 +57,7 @@ class TestFloatNumPy:
         result = cursor_with_numpy.fetchone()
 
         # Then All values should be returned as numpy.float64 type
-        assert_types(result, np.float64)
+        assert_type(result, np.float64)
 
         # And Result should contain [NaN, positive_infinity, negative_infinity]
         assert_floats_equal(result, (nan, inf, -inf))

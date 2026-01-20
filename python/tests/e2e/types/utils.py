@@ -11,7 +11,7 @@ from math import isinf, isnan
 FLOAT_MIN_NORMAL = 2.2250738585072014e-308
 
 
-def assert_types(values: Iterable, expected_type: type, can_be_none: bool = False) -> None:
+def assert_type(values: Iterable, expected_type: type, can_be_none: bool = False) -> None:
     """Assert all values in an iterable are of the expected type.
 
     Args:

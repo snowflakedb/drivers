@@ -2,6 +2,9 @@
 pytest configuration and fixtures for PEP 249 tests.
 """
 
+from __future__ import annotations
+
+from typing import Any
 from urllib.parse import urlparse
 
 import pytest
@@ -10,6 +13,10 @@ from .compatibility import set_current_connector
 from .connector_factory import ConnectorFactory, create_connection_with_adapter
 from .connector_types import ConnectorType
 from .private_key_helper import get_test_private_key_path
+
+
+# Type alias for a single row returned from cursor
+Row = tuple[Any, ...]
 
 
 def pytest_addoption(parser):
@@ -81,9 +88,9 @@ def cursor(connection):
 
 @pytest.fixture
 def execute_query(cursor):
-    """Create a cursor with NumPy mode enabled."""
+    """Helper replacing cursor if your only use case is to execute a query."""
 
-    def _execute_query(*args, single_row: bool = False, **kwargs):
+    def _execute_query(*args: Any, single_row: bool = False, **kwargs: Any) -> Row | list[Row] | None:
         cursor.execute(*args, **kwargs)
         if single_row:
             return cursor.fetchone()
