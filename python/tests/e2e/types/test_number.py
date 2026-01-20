@@ -16,7 +16,7 @@ FLOAT's binary approximation and DECFLOAT's dynamic scale.
 
 from __future__ import annotations
 
-from decimal import Decimal, getcontext
+from decimal import Decimal
 
 import pytest
 
@@ -34,23 +34,6 @@ NUMBER_TYPE_SYNONYMS = [
     "NUMERIC",
 ]
 number_type_parametrize = pytest.mark.parametrize("num_type", NUMBER_TYPE_SYNONYMS)
-
-# =============================================================================
-# DECIMAL CONTEXT CONFIGURATION
-# =============================================================================
-# NUMBER type supports up to 38 digits of precision
-# Python's Decimal context must be set to 38 to properly represent all values
-NUMBER_PRECISION = 38
-
-
-@pytest.fixture(autouse=True)
-def setup_decimal_precision():
-    """Set decimal context precision to 38 for all NUMBER tests."""
-    old_prec = getcontext().prec
-    getcontext().prec = NUMBER_PRECISION
-    yield
-    getcontext().prec = old_prec
-
 
 # =============================================================================
 # 38-DIGIT PRECISION VALUES
@@ -158,14 +141,25 @@ class TestNumberLiteral:
     ):
         # Given Snowflake client is logged in
 
-        # When Query "SELECT 999.99::<type>(5,2), -999.99::<type>(5,2)" is executed
-        sql = f"SELECT {NUMBER_5_2_MAX}::{num_type}(5,2), {NUMBER_5_2_MIN}::{num_type}(5,2)"
+        # When Query "SELECT 999.99::<type>(5,2), -999.99::<type>(5,2), 99999999::<type>(8,0),
+        # -99999999::<type>(8,0)" is executed
+        sql = (
+            f"SELECT {NUMBER_5_2_MAX}::{num_type}(5,2), {NUMBER_5_2_MIN}::{num_type}(5,2), "
+            f"{NUMBER_8_0_MAX}::{num_type}(8,0), {NUMBER_8_0_MIN}::{num_type}(8,0)"
+        )
         result = execute_query(sql, single_row=True)
 
-        # Then Result should contain [999.99, -999.99]
-        assert result == (NUMBER_5_2_MAX, NUMBER_5_2_MIN)
-        # Python: scale>0 -> Decimal
-        assert_type(result, Decimal)
+        # Then Result should contain [999.99, -999.99, 99999999, -99999999]
+        assert result == (NUMBER_5_2_MAX, NUMBER_5_2_MIN, NUMBER_8_0_MAX, NUMBER_8_0_MIN)
+        # Python: scale>0 -> Decimal, scale=0 -> int
+        assert_type(result[:2], Decimal)
+        assert_type(result[2:], int)
+
+    @number_type_parametrize
+    def test_should_handle_high_precision_boundaries_from_literals_for_number_and_synonyms(
+        self, execute_query, num_type
+    ):
+        # Given Snowflake client is logged in
 
         # When Query "SELECT 99999999999999999999999999999999999999::<type>(38,0),
         # -99999999999999999999999999999999999999::<type>(38,0)" is executed
@@ -310,24 +304,22 @@ class TestNumberTable:
     ):
         # Given Snowflake client is logged in
 
-        # And Table with columns (<type>(5,2), <type>(8,0), <type>(38,37)) exists
+        # And Table with columns (<type>(5,2), <type>(8,0)) exists
         table_name = f"{tmp_schema}.boundary_table_{num_type.lower()}"
-        execute_query(
-            f"CREATE TABLE {table_name} (col_5_2 {num_type}(5,2), col_8_0 {num_type}(8,0), col_38_37 {num_type}(38,37))"
-        )
+        execute_query(f"CREATE TABLE {table_name} (col_5_2 {num_type}(5,2), col_8_0 {num_type}(8,0))")
 
-        # And Row (999.99, 99999999, 1.2345678901234567890123456789012345678) is inserted
-        # And Row (-999.99, -99999999, -1.2345678901234567890123456789012345678) is inserted
-        # And Row (123.45, 12345678, 0.0000000000000000000000000000000000001) is inserted
-        # And Row (0.01, 0, 0) is inserted
+        # And Row (999.99, 99999999) is inserted
+        # And Row (-999.99, -99999999) is inserted
+        # And Row (123.45, 12345678) is inserted
+        # And Row (0.01, 0) is inserted
         test_data = [
-            (NUMBER_5_2_MAX, NUMBER_8_0_MAX, NUMBER_38_DIGITS_SCALE37),
-            (NUMBER_5_2_MIN, NUMBER_8_0_MIN, -NUMBER_38_DIGITS_SCALE37),
-            (Decimal("123.45"), 12345678, NUMBER_38_37_MIN_POSITIVE),
-            (Decimal("0.01"), 0, Decimal("0")),
+            (NUMBER_5_2_MAX, NUMBER_8_0_MAX),
+            (NUMBER_5_2_MIN, NUMBER_8_0_MIN),
+            (Decimal("123.45"), 12345678),
+            (Decimal("0.01"), 0),
         ]
         for row in test_data:
-            execute_query(f"INSERT INTO {table_name} VALUES ({row[0]}, {row[1]}, {row[2]})")
+            execute_query(f"INSERT INTO {table_name} VALUES ({row[0]}, {row[1]})")
 
         # When Query "SELECT * FROM <table>" is executed
         rows = execute_query(f"SELECT * FROM {table_name}")
@@ -337,8 +329,38 @@ class TestNumberTable:
         assert rows == test_data
         for row in rows:
             assert_type(row[:1], Decimal)
-            assert_type(row[1:2], int)
-            assert_type(row[2:], Decimal)
+            assert_type(row[1:], int)
+
+    @number_type_parametrize
+    def test_should_handle_high_precision_boundaries_from_table_for_number_and_synonyms(
+        self, execute_query, tmp_schema, num_type
+    ):
+        # Given Snowflake client is logged in
+
+        # And Table with columns (<type>(38,0), <type>(38,37)) exists
+        table_name = f"{tmp_schema}.high_precision_boundary_table_{num_type.lower()}"
+        execute_query(f"CREATE TABLE {table_name} (col_38_0 {num_type}(38,0), col_38_37 {num_type}(38,37))")
+
+        # And Row (99999999999999999999999999999999999999, 1.2345678901234567890123456789012345678) is inserted
+        # And Row (-99999999999999999999999999999999999999, -1.2345678901234567890123456789012345678) is inserted
+        # And Row (12345678901234567890123456789012345678, 0.0000000000000000000000000000000000001) is inserted
+        test_data = [
+            (NUMBER_38_0_MAX, NUMBER_38_DIGITS_SCALE37),
+            (NUMBER_38_0_MIN, -NUMBER_38_DIGITS_SCALE37),
+            (NUMBER_38_DIGITS_INT, NUMBER_38_37_MIN_POSITIVE),
+        ]
+        for row in test_data:
+            execute_query(f"INSERT INTO {table_name} VALUES ({row[0]}, {row[1]})")
+
+        # When Query "SELECT * FROM <table>" is executed
+        rows = execute_query(f"SELECT * FROM {table_name}")
+
+        # Then Result should contain 3 rows with expected high precision boundary values
+        assert len(rows) == 3
+        assert rows == test_data
+        for row in rows:
+            assert_type(row[:1], int)
+            assert_type(row[1:], Decimal)
 
     @number_type_parametrize
     def test_should_handle_null_values_from_table_with_multiple_scales_for_number_and_synonyms(
@@ -441,6 +463,28 @@ class TestNumberBinding:
 
     @pytest.mark.skip("SNOW-3006013 - parameter binding is not yet implemented")
     @number_type_parametrize
+    def test_should_select_high_precision_number_using_parameter_binding_for_number_and_synonyms(
+        self, execute_query, num_type
+    ):
+        # Given Snowflake client is logged in
+
+        # When Query "SELECT ?::<type>(38,0), ?::<type>(38,2)" is executed
+        # with bound values [12345678901234567890123456789012345678, 123456789012345678901234567890123456.78]
+        sql = f"SELECT ?::{num_type}(38,0), ?::{num_type}(38,2)"
+        result = execute_query(
+            sql,
+            (NUMBER_38_DIGITS_INT, NUMBER_38_DIGITS_SCALE2),
+            single_row=True,
+        )
+
+        # Then Result should contain [12345678901234567890123456789012345678, 123456789012345678901234567890123456.78]
+        assert result == (NUMBER_38_DIGITS_INT, NUMBER_38_DIGITS_SCALE2)
+        # Python: scale=0 -> int, scale>0 -> Decimal
+        assert_type([result[0]], int)
+        assert_type([result[1]], Decimal)
+
+    @pytest.mark.skip("SNOW-3006013 - parameter binding is not yet implemented")
+    @number_type_parametrize
     def test_should_insert_number_using_parameter_binding_for_number_and_synonyms(
         self, execute_query, tmp_schema, num_type
     ):
@@ -471,3 +515,34 @@ class TestNumberBinding:
         assert_type(col_dec_values, Decimal, can_be_none=True)
         assert set(col_int_values) == {0, 123, -456, 999999, None}
         assert set(col_dec_values) == {Decimal("0.00"), Decimal("123.45"), Decimal("-67.89"), Decimal("999.99"), None}
+
+    @pytest.mark.skip("SNOW-3006013 - parameter binding is not yet implemented")
+    @number_type_parametrize
+    def test_should_insert_high_precision_number_using_parameter_binding_for_number_and_synonyms(
+        self, execute_query, tmp_schema, num_type
+    ):
+        # Given Snowflake client is logged in
+
+        # And Table with columns (<type>(38,0), <type>(38,2)) exists
+        table_name = f"{tmp_schema}.high_precision_bind_{num_type.lower()}"
+        execute_query(f"CREATE TABLE {table_name} (col_38_0 {num_type}(38,0), col_38_2 {num_type}(38,2))")
+
+        # When Rows (12345678901234567890123456789012345678, 123456789012345678901234567890123456.78),
+        # (99999999999999999999999999999999999999, 0.01), (-99999999999999999999999999999999999999, -0.01)
+        # are inserted using binding
+        test_data = [
+            (NUMBER_38_DIGITS_INT, NUMBER_38_DIGITS_SCALE2),
+            (NUMBER_38_0_MAX, Decimal("0.01")),
+            (NUMBER_38_0_MIN, Decimal("-0.01")),
+        ]
+        for row in test_data:
+            execute_query(f"INSERT INTO {table_name} VALUES (?, ?)", row)
+
+        # Then Result should contain 3 rows with expected values keeping the precision
+        rows = execute_query(f"SELECT * FROM {table_name}")
+        assert len(rows) == 3
+        assert rows == test_data
+        for row in rows:
+            # Python: scale=0 -> int, scale>0 -> Decimal
+            assert_type([row[0]], int)
+            assert_type([row[1]], Decimal)

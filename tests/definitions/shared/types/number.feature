@@ -32,8 +32,12 @@ Feature: NUMBER type support
   @python_e2e
   Scenario: should handle scale and precision boundaries from literals for number and synonyms
     Given Snowflake client is logged in
-    When Query "SELECT 999.99::<type>(5,2), -999.99::<type>(5,2)" is executed
-    Then Result should contain [999.99, -999.99]
+    When Query "SELECT 999.99::<type>(5,2), -999.99::<type>(5,2), 99999999::<type>(8,0), -99999999::<type>(8,0)" is executed
+    Then Result should contain [999.99, -999.99, 99999999, -99999999]
+
+  @python_e2e
+  Scenario: should handle high precision boundaries from literals for number and synonyms
+    Given Snowflake client is logged in
     When Query "SELECT 99999999999999999999999999999999999999::<type>(38,0), -99999999999999999999999999999999999999::<type>(38,0)" is executed
     Then Result should contain max and min 38-digit integers
 
@@ -76,13 +80,23 @@ Feature: NUMBER type support
   @python_e2e
   Scenario: should handle scale and precision boundaries from table for number and synonyms
     Given Snowflake client is logged in
-    And Table with columns (<type>(5,2), <type>(8,0), <type>(38,37)) exists
-    And Row (999.99, 99999999, 1.2345678901234567890123456789012345678) is inserted
-    And Row (-999.99, -99999999, -1.2345678901234567890123456789012345678) is inserted
-    And Row (123.45, 12345678, 0.0000000000000000000000000000000000001) is inserted
-    And Row (0.01, 0, 0) is inserted
+    And Table with columns (<type>(5,2), <type>(8,0)) exists
+    And Row (999.99, 99999999) is inserted
+    And Row (-999.99, -99999999) is inserted
+    And Row (123.45, 12345678) is inserted
+    And Row (0.01, 0) is inserted
     When Query "SELECT * FROM <table>" is executed
     Then Result should contain 4 rows with expected boundary values
+
+  @python_e2e
+  Scenario: should handle high precision boundaries from table for number and synonyms
+    Given Snowflake client is logged in
+    And Table with columns (<type>(38,0), <type>(38,37)) exists
+    And Row (99999999999999999999999999999999999999, 1.2345678901234567890123456789012345678) is inserted
+    And Row (-99999999999999999999999999999999999999, -1.2345678901234567890123456789012345678) is inserted
+    And Row (12345678901234567890123456789012345678, 0.0000000000000000000000000000000000001) is inserted
+    When Query "SELECT * FROM <table>" is executed
+    Then Result should contain 3 rows with expected high precision boundary values
 
   @python_e2e
   Scenario: should handle NULL values from table with multiple scales for number and synonyms
@@ -114,9 +128,22 @@ Feature: NUMBER type support
     Then Result should contain [123, -456, 12.34, -56.78, NULL]
 
   @python_e2e
+  Scenario: should select high precision number using parameter binding for number and synonyms
+    Given Snowflake client is logged in
+    When Query "SELECT ?::<type>(38,0), ?::<type>(38,2)" is executed with bound values [12345678901234567890123456789012345678, 123456789012345678901234567890123456.78]
+    Then Result should contain [12345678901234567890123456789012345678, 123456789012345678901234567890123456.78]
+
+  @python_e2e
   Scenario: should insert number using parameter binding for number and synonyms
     Given Snowflake client is logged in
     And Table with columns (<type>(10,0), <type>(10,2)) exists
     When Rows (0, 0.00), (123, 123.45), (-456, -67.89), (999999, 999.99), (NULL, NULL) are inserted using binding
     Then Result should contain 5 rows with expected values
+
+  @python_e2e
+  Scenario: should insert high precision number using parameter binding for number and synonyms
+    Given Snowflake client is logged in
+    And Table with columns (<type>(38,0), <type>(38,2)) exists
+    When Rows (12345678901234567890123456789012345678, 123456789012345678901234567890123456.78), (99999999999999999999999999999999999999, 0.01), (-99999999999999999999999999999999999999, -0.01) are inserted using binding
+    Then Result should contain 3 rows with expected values keeping the precision
 
