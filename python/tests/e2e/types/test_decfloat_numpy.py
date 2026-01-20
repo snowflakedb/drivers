@@ -17,6 +17,8 @@ from decimal import getcontext
 
 import pytest
 
+from .utils import assert_floats_equal, assert_type
+
 
 # NumPy is optional for these tests
 np = pytest.importorskip("numpy")
@@ -49,14 +51,10 @@ class TestDecfloatNumPy:
         result = cursor_with_numpy.fetchone()
 
         # Then All values should be returned as numpy.float64 type
-        expected = [1.234, 123.456, -789.012]
-        assert len(result) == len(expected)
-        for actual in result:
-            assert isinstance(actual, np.float64), f"Expected numpy.float64, got {type(actual)}"
+        assert_type(result, np.float64)
 
         # And Values should match approximately [1.234, 123.456, -789.012] within float64 precision
-        for actual, expect in zip(result, expected):
-            assert np.isclose(actual, expect, rtol=1e-14), f"Expected {expect}, got {actual}"
+        assert_floats_equal(result, (1.234, 123.456, -789.012))
 
     @pytest.mark.skip("SNOW-2997786 - use_numpy is currently hardcoded to False in cursor")
     def test_numpy_handles_extreme_exponents_within_float64_range(self, cursor_with_numpy):
@@ -68,12 +66,10 @@ class TestDecfloatNumPy:
         result = cursor_with_numpy.fetchone()
 
         # Then Values should be numpy.float64
-        assert isinstance(result[0], np.float64)
-        assert isinstance(result[1], np.float64)
+        assert_type(result, np.float64)
 
         # And Values should be approximately correct
-        assert np.isclose(result[0], 1.23e100, rtol=1e-14)
-        assert np.isclose(result[1], 9.87e-100, rtol=1e-14)
+        assert_floats_equal(result, (1.23e100, 9.87e-100))
 
     @pytest.mark.skip("SNOW-2997786 - use_numpy is currently hardcoded to False in cursor")
     def test_numpy_overflows_extreme_exponents_beyond_float64_range(self, cursor_with_numpy):
@@ -85,7 +81,6 @@ class TestDecfloatNumPy:
         result = cursor_with_numpy.fetchone()
 
         # Then e16384 exceeds float64 max (~e308) and becomes infinity
-        assert np.isinf(result[0])
-
         # And e-16383 is below float64 min (~e-308) and becomes 0
-        assert result[1] == 0.0 or np.isclose(result[1], 0.0)
+        assert_floats_equal(result, (float("inf"), 0.0))
+        assert_type(result, np.float64)
