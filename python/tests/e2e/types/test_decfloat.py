@@ -15,7 +15,7 @@ from decimal import Decimal, getcontext
 
 import pytest
 
-from .utils import assert_types
+from .utils import assert_type
 
 
 # =============================================================================
@@ -73,7 +73,7 @@ class TestDecfloatTypeCasting:
         result = execute_query(sql, single_row=True)
 
         # Then All values should be returned as appropriate type
-        assert_types(result, Decimal)
+        assert_type(result, Decimal)
 
         # And Values should maintain full 38-digit precision
         assert result == (Decimal("0"), Decimal("123.456"), Decimal("1.23E+37"), DECFLOAT_38_DIGITS)
@@ -99,7 +99,7 @@ class TestDecfloatLiteral:
             Decimal("-987.654321"),
         )
         assert result == expected
-        assert_types(result, Decimal)
+        assert_type(result, Decimal)
 
     def test_should_handle_full_38_digit_precision_values_from_literals(self, execute_query):
         # Given Snowflake client is logged in
@@ -116,7 +116,7 @@ class TestDecfloatLiteral:
 
         # Then Result should preserve all 38 digits for each value
         assert result == (DECFLOAT_38_DIGITS, DECFLOAT_38_DIGITS_POS_EXP, DECFLOAT_38_DIGITS_NEG_EXP)
-        assert_types(result, Decimal)
+        assert_type(result, Decimal)
 
     def test_should_handle_extreme_exponent_values_from_literals(self, execute_query):
         # Given Snowflake client is logged in
@@ -128,7 +128,7 @@ class TestDecfloatLiteral:
         )
         # Then Result should contain [1E+16384, 1E-16383]
         assert result == (DECFLOAT_MAX_EXPONENT, DECFLOAT_MIN_EXPONENT)
-        assert_types(result, Decimal)
+        assert_type(result, Decimal)
 
         # When Query "SELECT '-1.234E+8000'::DECFLOAT, '9.876E-8000'::DECFLOAT" is executed
         result = execute_query(
@@ -137,7 +137,7 @@ class TestDecfloatLiteral:
         )
         # Then Result should contain [-1.234E+8000, 9.876E-8000]
         assert result == (DECFLOAT_LARGE_POS_EXPONENT, DECFLOAT_LARGE_NEG_EXPONENT)
-        assert_types(result, Decimal)
+        assert_type(result, Decimal)
 
     def test_should_handle_null_values_from_literals(self, execute_query):
         # Given Snowflake client is logged in
@@ -147,7 +147,7 @@ class TestDecfloatLiteral:
 
         # Then Result should contain [NULL, 42.5, NULL]
         assert result == (None, Decimal("42.5"), None)
-        assert_types(result, Decimal, can_be_none=True)
+        assert_type(result, Decimal, can_be_none=True)
 
     def test_should_download_large_result_set_with_multiple_chunks_from_generator(self, execute_query):
         # Given Snowflake client is logged in
@@ -161,7 +161,7 @@ class TestDecfloatLiteral:
         assert values == [Decimal(i) for i in range(LARGE_RESULT_SET_SIZE)]
 
         # And All values should be returned as appropriate type
-        assert_types(values, Decimal)
+        assert_type(values, Decimal)
 
 
 class TestDecfloatTable:
@@ -189,7 +189,7 @@ class TestDecfloatTable:
         # Then Result should contain exact decimals [0, 123.456, -789.012, 1.23e20, -9.87e-15]
         result = [row[0] for row in rows]
         assert result == test_values
-        assert_types(result, Decimal)
+        assert_type(result, Decimal)
 
     def test_should_handle_full_38_digit_precision_values_from_table(self, execute_query, tmp_schema):
         # Given Snowflake client is logged in
@@ -210,7 +210,7 @@ class TestDecfloatTable:
         # Then Result should preserve all 38 digits for each value
         result = [row[0] for row in rows]
         assert result == precision_values
-        assert_types(result, Decimal)
+        assert_type(result, Decimal)
 
     def test_should_handle_extreme_exponent_values_from_table(self, execute_query, tmp_schema):
         # Given Snowflake client is logged in
@@ -234,7 +234,7 @@ class TestDecfloatTable:
         # Then Result should contain [1E+16384, 1E-16383, -1.234E+8000, 9.876E-8000]
         result = [row[0] for row in rows]
         assert result == extreme_values
-        assert_types(result, Decimal)
+        assert_type(result, Decimal)
 
     def test_should_handle_null_values_from_table(self, execute_query, tmp_schema):
         # Given Snowflake client is logged in
@@ -250,7 +250,7 @@ class TestDecfloatTable:
 
         # Then Result should contain [NULL, 123.456, NULL, -789.012]
         assert values == [None, Decimal("123.456"), None, Decimal("-789.012")]
-        assert_types(values, Decimal, can_be_none=True)
+        assert_type(values, Decimal, can_be_none=True)
 
     def test_should_download_large_result_set_with_multiple_chunks_from_table(self, execute_query, tmp_schema):
         # Given Snowflake client is logged in
@@ -271,7 +271,7 @@ class TestDecfloatTable:
         assert values == [Decimal(i) for i in range(LARGE_RESULT_SET_SIZE)]
 
         # And All values should be returned as appropriate type
-        assert_types(values, Decimal)
+        assert_type(values, Decimal)
 
 
 class TestDecfloatBinding:
@@ -291,7 +291,7 @@ class TestDecfloatBinding:
 
         # Then Result should contain [123.456, -789.012, 42.0]
         assert result == (Decimal("123.456"), Decimal("-789.012"), Decimal("42.0"))
-        assert_types(result, Decimal)
+        assert_type(result, Decimal)
 
         # When Query "SELECT ?::DECFLOAT" is executed with bound NULL value
         result = execute_query("SELECT ?::DECFLOAT", (None,), single_row=True)
@@ -338,4 +338,4 @@ class TestDecfloatBinding:
         # And All precision should be preserved
         result = [row[0] for row in rows]
         assert result == test_values
-        assert_types(result, Decimal, can_be_none=True)
+        assert_type(result, Decimal, can_be_none=True)
