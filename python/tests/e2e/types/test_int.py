@@ -9,7 +9,7 @@ All tests are parameterized to run with each type synonym to verify they behave 
 
 import pytest
 
-from .utils import assert_types
+from .utils import assert_type
 
 
 # =============================================================================
@@ -86,7 +86,7 @@ class TestIntTypeCasting:
         result = execute_query(sql, single_row=True)
 
         # Then All values should be returned as appropriate type
-        assert_types(result, int)
+        assert_type(result, int)
 
         # And No precision loss should occur
         assert result == (0, 1000000, INT64_SIGNED_MAX)
@@ -105,7 +105,7 @@ class TestIntLiteral:
 
         # Then Result should contain integers [0, 1, -1, 42]
         assert result == (0, 1, -1, 42)
-        assert_types(result, int)
+        assert_type(result, int)
 
     @int_type_parametrize
     def test_should_handle_integer_boundary_values_for_int_and_synonyms(self, execute_query, int_type):
@@ -118,7 +118,7 @@ class TestIntLiteral:
         )
         # Then Result should contain integers [-128, 127, 255]
         assert result == (INT8_SIGNED_MIN, INT8_SIGNED_MAX, INT8_UNSIGNED_MAX)
-        assert_types(result, int)
+        assert_type(result, int)
 
         # When Query "SELECT -32768::<type>, 32767::<type>, 65535::<type>" is executed
         result = execute_query(
@@ -127,7 +127,7 @@ class TestIntLiteral:
         )
         # Then Result should contain integers [-32768, 32767, 65535]
         assert result == (INT16_SIGNED_MIN, INT16_SIGNED_MAX, INT16_UNSIGNED_MAX)
-        assert_types(result, int)
+        assert_type(result, int)
 
         # When Query "SELECT -2147483648::<type>, 2147483647::<type>, 4294967295::<type>" is executed
         result = execute_query(
@@ -136,7 +136,7 @@ class TestIntLiteral:
         )
         # Then Result should contain integers [-2147483648, 2147483647, 4294967295]
         assert result == (INT32_SIGNED_MIN, INT32_SIGNED_MAX, INT32_UNSIGNED_MAX)
-        assert_types(result, int)
+        assert_type(result, int)
 
         # When Query "SELECT -9223372036854775808::<type>, 9223372036854775807::<type>" is executed
         result = execute_query(
@@ -145,7 +145,7 @@ class TestIntLiteral:
         )
         # Then Result should contain integers [-9223372036854775808, 9223372036854775807]
         assert result == (INT64_SIGNED_MIN, INT64_SIGNED_MAX)
-        assert_types(result, int)
+        assert_type(result, int)
 
     @int_type_parametrize
     def test_should_handle_large_integer_values_for_int_and_synonyms(self, execute_query, int_type):
@@ -158,7 +158,7 @@ class TestIntLiteral:
         # Then Result should contain integers [-99999999999999999999999999999999999999,
         #   99999999999999999999999999999999999999]
         assert result == (INT38_MIN, INT38_MAX)
-        assert_types(result, int)
+        assert_type(result, int)
 
     @int_type_parametrize
     def test_should_handle_null_values_for_int_and_synonyms(self, execute_query, int_type):
@@ -172,7 +172,7 @@ class TestIntLiteral:
 
         # Then Result should contain [NULL, 42, NULL]
         assert result == (None, 42, None)
-        assert_types(result, int, can_be_none=True)
+        assert_type(result, int, can_be_none=True)
 
     @int_type_parametrize
     def test_should_download_large_result_set_with_multiple_chunks_for_int_and_synonyms(self, execute_query, int_type):
@@ -188,7 +188,7 @@ class TestIntLiteral:
         assert len(rows) == LARGE_RESULT_SET_SIZE, f"Expected {LARGE_RESULT_SET_SIZE} rows, got {len(rows)}"
 
         values = [row[0] for row in rows]
-        assert_types(values, int)
+        assert_type(values, int)
         assert values == list(range(LARGE_RESULT_SET_SIZE))
 
 
@@ -212,7 +212,7 @@ class TestIntTable:
         # Then Result should contain integers [-1, 0, 1, 100]
         result = [row[0] for row in rows]
         assert result == [-1, 0, 1, 100]
-        assert_types(result, int)
+        assert_type(result, int)
 
     def test_should_select_corner_case_values_from_table_for_int_and_synonyms(self, execute_query, tmp_schema):
         # Given Snowflake client is logged in
@@ -275,15 +275,15 @@ class TestIntTable:
 
         # Verify positive row
         assert rows[0] == positive_row
-        assert_types(rows[0], int)
+        assert_type(rows[0], int)
 
         # Verify negative row
         assert rows[1] == negative_row
-        assert_types(rows[1], int)
+        assert_type(rows[1], int)
 
         # Verify zeroes and nulls row
         assert rows[2] == zeroes_nulls_row
-        assert_types(rows[2], int, can_be_none=True)
+        assert_type(rows[2], int, can_be_none=True)
 
     @int_type_parametrize
     def test_should_select_large_result_set_from_table_for_int_and_synonyms(self, execute_query, tmp_schema, int_type):
@@ -304,7 +304,7 @@ class TestIntTable:
         assert len(rows) == LARGE_RESULT_SET_SIZE, f"Expected {LARGE_RESULT_SET_SIZE} rows, got {len(rows)}"
 
         values = [row[0] for row in rows]
-        assert_types(values, int)
+        assert_type(values, int)
         assert values == list(range(LARGE_RESULT_SET_SIZE))
 
 
@@ -333,7 +333,7 @@ class TestIntBinding:
         # Then Result should contain integers [0, -2147483648, 2147483647, 9223372036854775807]
         result = [row[0] for row in rows]
         assert result == test_values
-        assert_types(result, int)
+        assert_type(result, int)
 
     @pytest.mark.skip("SNOW-3006013 - parameter binding is not yet implemented")
     @int_type_parametrize
@@ -357,4 +357,4 @@ class TestIntBinding:
         # Then Result should contain integers [0, 42, -2147483648, 9223372036854775807]
         result = [row[0] for row in rows]
         assert result == test_values
-        assert_types(result, int)
+        assert_type(result, int)
