@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 use std::fs;
 
+use url::Url;
+
 use crate::config::InvalidParameterValueSnafu;
 use crate::config::settings::Setting;
 use crate::config::settings::Settings;
@@ -288,6 +290,16 @@ impl LoginMethod {
             _ if authenticator.to_ascii_lowercase().starts_with("https://") => {
                 // Native Okta SSO is configured by passing the Okta URL endpoint as `authenticator`.
                 // This is intentionally broad (vanity domains may not contain "okta").
+                // Validate the URL is well-formed early to provide a clear error message.
+                if Url::parse(&authenticator).is_err() {
+                    return InvalidParameterValueSnafu {
+                        parameter: "authenticator",
+                        value: authenticator,
+                        explanation: "The authenticator URL is not a valid URL",
+                    }
+                    .fail();
+                }
+
                 let username = settings
                     .get_string("user")
                     .context(MissingParameterSnafu { parameter: "user" })?;
