@@ -3,7 +3,7 @@ name: Detect Changes
 on:
   workflow_call:
     outputs:
-      # Raw detection outputs
+      # Raw detection outputs - small changes to trigger all!
       core:
         description: "True if core Rust code changed"
         value: ${{ jobs.detect.outputs.core }}
@@ -56,7 +56,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # Needed for comparing commits
+          fetch-depth: 0 # Needed for comparing commits
 
       - name: Detect changed files
         id: filter
