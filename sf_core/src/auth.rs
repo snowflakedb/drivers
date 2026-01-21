@@ -112,7 +112,9 @@ pub fn create_credentials(login_parameters: &LoginParameters) -> Result<Credenti
             password: password.clone(),
         }),
         // Note: NativeOkta is handled directly in auth_request_data() before create_credentials() is called
-        LoginMethod::NativeOkta { .. } => unreachable!("NativeOkta is handled in auth_request_data"),
+        LoginMethod::NativeOkta { .. } => {
+            unreachable!("NativeOkta is handled in auth_request_data")
+        }
         LoginMethod::PrivateKey {
             username,
             private_key,

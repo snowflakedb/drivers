@@ -182,25 +182,23 @@ pub async fn auth_request_data(
             data.authenticator = Some(okta_url.clone());
             data.raw_saml_response = Some(saml_html);
         }
-        _ => {
-            match create_credentials(login_parameters).context(AuthenticationSnafu)? {
-                Credentials::Password { username, password } => {
-                    data.login_name = Some(username);
-                    data.password = Some(password);
-                    data.authenticator = Some("SNOWFLAKE".to_string());
-                }
-                Credentials::Jwt { username, token } => {
-                    data.login_name = Some(username);
-                    data.token = Some(token);
-                    data.authenticator = Some("SNOWFLAKE_JWT".to_string());
-                }
-                Credentials::Pat { username, token } => {
-                    data.login_name = Some(username);
-                    data.token = Some(token);
-                    data.authenticator = Some("PROGRAMMATIC_ACCESS_TOKEN".to_string());
-                }
+        _ => match create_credentials(login_parameters).context(AuthenticationSnafu)? {
+            Credentials::Password { username, password } => {
+                data.login_name = Some(username);
+                data.password = Some(password);
+                data.authenticator = Some("SNOWFLAKE".to_string());
             }
-        }
+            Credentials::Jwt { username, token } => {
+                data.login_name = Some(username);
+                data.token = Some(token);
+                data.authenticator = Some("SNOWFLAKE_JWT".to_string());
+            }
+            Credentials::Pat { username, token } => {
+                data.login_name = Some(username);
+                data.token = Some(token);
+                data.authenticator = Some("PROGRAMMATIC_ACCESS_TOKEN".to_string());
+            }
+        },
     }
     Ok(data)
 }
