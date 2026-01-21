@@ -226,7 +226,7 @@ pipeline {
     
     post {
         always {
-            node {
+            node(label: 'any') {
                 script {
                     try {
                         checkout scm
