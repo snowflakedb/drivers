@@ -8,13 +8,6 @@ import groovy.transform.Field
 @Field String CODECOV_CREDENTIAL_ID = 'ud_repo_codecov'
 @Field String NEXUS_CREDENTIAL_ID = 'a791118f-a1ea-46cd-b876-56da1b9bc71c'
 @Field String PARAMS_CREDENTIAL_ID = 'sfctest0-parameters-secret'
-@Field Map coverageResults = [:]
-@Field Map DISPLAY_NAMES = [
-    'rust-core': 'Rust Core',
-    'python': 'Python',
-    'odbc': 'ODBC',
-    'jdbc': 'JDBC'
-]
 
 def dockerSetup() {
     withCredentials([string(credentialsId: NEXUS_CREDENTIAL_ID, variable: 'NEXUS_PASSWORD')]) {
@@ -27,77 +20,6 @@ def decodeSecrets() {
     withCredentials([string(credentialsId: PARAMS_CREDENTIAL_ID, variable: 'PARAMETERS_SECRET')]) {
         sh label: 'Decode Secrets', script: './scripts/decode_secrets.sh'
     }
-}
-
-def parseLcovCoverage(String lcovFile) {
-    def result = sh(label: 'Parse LCOV Coverage', script: """
-        set +x
-        awk '
-            /^LH:/ { hit += substr(\$0, 4) }
-            /^LF:/ { found += substr(\$0, 4) }
-            END {
-                if (found > 0) printf "%.2f", hit * 100 / found
-                else print ""
-            }
-        ' "${lcovFile}"
-    """, returnStdout: true).trim()
-    return result ?: null
-}
-
-def parseJacocoCoverage(String xmlFile) {
-    def result = sh(label: 'Parse JaCoCo Coverage', script: """
-        set +x
-        # Extract LINE counters only (handles both formatted and minified XML)
-        # grep -o extracts just the LINE counter tag, tail -1 gets the last (report-level)
-        grep -o '<counter type="LINE"[^/]*' "${xmlFile}" | tail -1 | sed 's/.*missed="\\([0-9]*\\)".*covered="\\([0-9]*\\)".*/\\1 \\2/' | awk '{
-            total = \$1 + \$2
-            if (total > 0) printf "%.2f", \$2 * 100 / total
-        }'
-    """, returnStdout: true).trim()
-    return result ?: null
-}
-
-def parseCoberturaCoverage(String xmlFile) {
-    def result = sh(label: 'Parse Cobertura Coverage', script: """
-        set +x
-        grep -o 'line-rate="[^"]*"' "${xmlFile}" | head -1 | sed 's/line-rate="\\([^"]*\\)"/\\1/' | awk '{printf "%.2f", \$1 * 100}'
-    """, returnStdout: true).trim()
-    return result ?: null
-}
-
-def reportStatus(String component, String coverage) {
-    def displayName = DISPLAY_NAMES[component] ?: component
-    def codecovUrl = "https://snowflake.codecov.io/gh/snowflakedb/universal-driver?flags%5B0%5D=${component}"
-    
-    if (coverage) {
-        coverageResults[component] = coverage
-        publishChecks name: "Code Coverage - ${displayName}",
-                      title: "Coverage: ${coverage}%",
-                      summary: "Code coverage for ${displayName}: ${coverage}%",
-                      detailsURL: codecovUrl,
-                      status: 'COMPLETED',
-                      conclusion: 'SUCCESS'
-    } else {
-        coverageResults[component] = 'FAILED'
-        publishChecks name: "Code Coverage - ${displayName}",
-                      title: "Coverage failed",
-                      summary: "Could not calculate coverage percentage from report.",
-                      detailsURL: codecovUrl,
-                      status: 'COMPLETED',
-                      conclusion: 'FAILURE'
-    }
-}
-
-def reportFailure(String component) {
-    def displayName = DISPLAY_NAMES[component] ?: component
-    coverageResults[component] = 'FAILED'
-    
-    publishChecks name: "Code Coverage - ${displayName}",
-                  title: "Coverage failed",
-                  summary: "Coverage collection failed for ${displayName}",
-                  detailsURL: "https://snowflake.codecov.io/gh/snowflakedb/universal-driver",
-                  status: 'COMPLETED',
-                  conclusion: 'FAILURE'
 }
 
 def uploadToCodecov(String flag, String file) {
@@ -142,19 +64,6 @@ pipeline {
     }
     
     stages {
-        stage('Setup') {
-            agent any
-            steps {
-                script {
-                    publishChecks name: 'Universal Driver Code Coverage',
-                                  title: 'Build In Progress',
-                                  summary: "Jenkins Build ${env.BUILD_NUMBER} is running...",
-                                  detailsURL: env.BUILD_URL,
-                                  status: 'IN_PROGRESS'
-                }
-            }
-        }
-        
         stage('Coverage') {
             failFast false
             parallel {
@@ -162,31 +71,24 @@ pipeline {
                     agent { label 'build-node-extra-large' }
                     steps {
                         script {
-                            try {
-                                dockerSetup()
-                                docker.image(DOCKER_IMAGE).inside('-u root --privileged') {
-                                    decodeSecrets()
-                                    
-                                    def testExitCode = sh(label: 'Run Tests with Coverage', returnStatus: true, script: '''
-                                        set +x
-                                        export PARAMETER_PATH=$(pwd)/parameters.json
-                                        cargo tarpaulin --packages sf_core --all-features --skip-clean --no-fail-fast --out lcov --output-dir .
-                                    ''')
-                                    if (testExitCode != 0) {
-                                        echo "Rust Core tests failed with exit code ${testExitCode}, continuing to generate coverage"
-                                        unstable(message: "Rust Core tests failed")
-                                    }
-                                    sh 'mv lcov.info lcov-rust-core.info'
-                                    
-                                    def coverage = parseLcovCoverage('lcov-rust-core.info')
-                                    uploadToCodecov('rust-core', 'lcov-rust-core.info')
-                                    reportStatus('rust-core', coverage)
+                            dockerSetup()
+                            docker.image(DOCKER_IMAGE).inside('-u root --privileged') {
+                                decodeSecrets()
+                                
+                                def testExitCode = sh(label: 'Run Tests with Coverage', returnStatus: true, script: '''
+                                    set +x
+                                    export PARAMETER_PATH=$(pwd)/parameters.json
+                                    cargo tarpaulin --packages sf_core --all-features --skip-clean --no-fail-fast --out lcov --output-dir .
+                                ''')
+                                if (testExitCode != 0) {
+                                    echo "Rust Core tests failed with exit code ${testExitCode}, continuing to generate coverage"
+                                    unstable(message: "Rust Core tests failed")
                                 }
-                                archiveArtifacts artifacts: 'lcov-rust-core.info', allowEmptyArchive: true
-                            } catch (Exception e) {
-                                reportFailure('rust-core')
-                                throw e
+                                sh 'mv lcov.info lcov-rust-core.info'
+                                
+                                uploadToCodecov('rust-core', 'lcov-rust-core.info')
                             }
+                            archiveArtifacts artifacts: 'lcov-rust-core.info', allowEmptyArchive: true
                         }
                     }
                 }
@@ -195,41 +97,34 @@ pipeline {
                     agent { label 'build-node-extra-large' }
                     steps {
                         script {
-                            try {
-                                dockerSetup()
-                                docker.image(DOCKER_IMAGE).inside('-u root --privileged') {
-                                    decodeSecrets()
+                            dockerSetup()
+                            docker.image(DOCKER_IMAGE).inside('-u root --privileged') {
+                                decodeSecrets()
+                                
+                                dir('python') {
+                                    sh label: 'Build Python Package', script: '''
+                                        set +x
+                                        RUSTFLAGS="" hatch run build-core
+                                    '''
                                     
-                                    dir('python') {
-                                        sh label: 'Build Python Package', script: '''
-                                            set +x
-                                            RUSTFLAGS="" hatch run build-core
-                                        '''
-                                        
-                                        def testExitCode = sh(label: 'Run Tests with Coverage', returnStatus: true, script: '''
-                                            set +x
-                                            export PARAMETER_PATH=$(pwd)/../parameters.json
-                                            mkdir -p reports
-                                            hatch run test.py3.9:all -- \
-                                                --cov=src/snowflake \
-                                                --cov-report=term \
-                                                --cov-report=xml:reports/coverage-python.xml
-                                        ''')
-                                        if (testExitCode != 0) {
-                                            echo "Python tests failed with exit code ${testExitCode}, continuing to generate coverage"
-                                            unstable(message: "Python tests failed")
-                                        }
+                                    def testExitCode = sh(label: 'Run Tests with Coverage', returnStatus: true, script: '''
+                                        set +x
+                                        export PARAMETER_PATH=$(pwd)/../parameters.json
+                                        mkdir -p reports
+                                        hatch run test.py3.9:all -- \
+                                            --cov=src/snowflake \
+                                            --cov-report=term \
+                                            --cov-report=xml:reports/coverage-python.xml
+                                    ''')
+                                    if (testExitCode != 0) {
+                                        echo "Python tests failed with exit code ${testExitCode}, continuing to generate coverage"
+                                        unstable(message: "Python tests failed")
                                     }
-                                    
-                                    def coverage = parseCoberturaCoverage('python/reports/coverage-python.xml')
-                                    uploadToCodecov('python', 'python/reports/coverage-python.xml')
-                                    reportStatus('python', coverage)
                                 }
-                                archiveArtifacts artifacts: 'python/reports/coverage-python.xml', allowEmptyArchive: true
-                            } catch (Exception e) {
-                                reportFailure('python')
-                                throw e
+                                
+                                uploadToCodecov('python', 'python/reports/coverage-python.xml')
                             }
+                            archiveArtifacts artifacts: 'python/reports/coverage-python.xml', allowEmptyArchive: true
                         }
                     }
                 }
@@ -238,66 +133,56 @@ pipeline {
                     agent { label 'build-node-extra-large' }
                     steps {
                         script {
-                            try {
-                                dockerSetup()
-                                docker.image(DOCKER_IMAGE).inside('-u root --privileged') {
-                                    decodeSecrets()
+                            dockerSetup()
+                            docker.image(DOCKER_IMAGE).inside('-u root --privileged') {
+                                decodeSecrets()
+                                
+                                sh label: 'Build ODBC Driver', script: '''
+                                    set +x
+                                    RUSTFLAGS="-C instrument-coverage" cargo build
+                                    source /opt/rh/gcc-toolset-11/enable
+                                    cd odbc_tests
+                                    mkdir -p cmake-build
+                                    cmake -B cmake-build \
+                                        -D ODBC_LIBRARY="/usr/lib64/libodbc.so" \
+                                        -D ODBC_INCLUDE_DIR="/usr/include" \
+                                        -D DRIVER_TYPE=NEW \
+                                        .
+                                    cmake --build cmake-build -- -j $(nproc)
+                                '''
+                                
+                                def testExitCode = sh(label: 'Run ODBC Tests', returnStatus: true, script: '''
+                                    set +x
+                                    WORKSPACE_ROOT=$(pwd)
+                                    export DRIVER_PATH=${WORKSPACE_ROOT}/target/debug/libsfodbc.so
+                                    export PARAMETER_PATH=${WORKSPACE_ROOT}/parameters.json
+                                    export LLVM_PROFILE_FILE="${WORKSPACE_ROOT}/odbc-%p-%m.profraw"
                                     
-                                    sh label: 'Build ODBC Driver', script: '''
-                                        set +x
-                                        RUSTFLAGS="-C instrument-coverage" cargo build
-                                        source /opt/rh/gcc-toolset-11/enable
-                                        cd odbc_tests
-                                        mkdir -p cmake-build
-                                        cmake -B cmake-build \
-                                            -D ODBC_LIBRARY="/usr/lib64/libodbc.so" \
-                                            -D ODBC_INCLUDE_DIR="/usr/include" \
-                                            -D DRIVER_TYPE=NEW \
-                                            .
-                                        cmake --build cmake-build -- -j $(nproc)
-                                    '''
-                                    
-                                    def testExitCode = sh(label: 'Run ODBC Tests', returnStatus: true, script: '''
-                                        set +x
-                                        WORKSPACE_ROOT=$(pwd)
-                                        export DRIVER_PATH=${WORKSPACE_ROOT}/target/debug/libsfodbc.so
-                                        export PARAMETER_PATH=${WORKSPACE_ROOT}/parameters.json
-                                        export LLVM_PROFILE_FILE="${WORKSPACE_ROOT}/odbc-%p-%m.profraw"
-                                        
-                                        cd odbc_tests
-                                        # Exclude CRL tests - they require Wiremock server which is not started in coverage job
-                                        ctest -j 1 -C Debug --test-dir cmake-build --output-on-failure -E "crl"
-                                    ''')
-                                    if (testExitCode != 0) {
-                                        echo "ODBC tests failed with exit code ${testExitCode}, continuing to generate coverage"
-                                        unstable(message: "ODBC tests failed")
-                                    }
-                                    
-                                    sh label: 'Generate Coverage Report', script: '''
-                                        set +x
-                                        LLVM_PROFDATA=$(find /root/.rustup -name "llvm-profdata" -type f 2>/dev/null | head -1)
-                                        LLVM_COV=$(find /root/.rustup -name "llvm-cov" -type f 2>/dev/null | head -1)
-                                        find . -name "odbc-*.profraw" -type f | xargs $LLVM_PROFDATA merge -sparse -o coverage.profdata
-                                        
-                                        $LLVM_COV export target/debug/libsfodbc.so \
-                                            -instr-profile=coverage.profdata \
-                                            -format=lcov \
-                                            -sources=$(pwd)/odbc \
-                                            -sources=$(pwd)/sf_core > lcov-odbc.info
-                                        
-                                        # Filter to only odbc/ files for local percentage calculation
-                                        lcov --extract lcov-odbc.info "*/odbc/*" -o lcov-odbc-filtered.info
-                                    '''
-                                    
-                                    def coverage = parseLcovCoverage('lcov-odbc-filtered.info')
-                                    uploadToCodecov('odbc', 'lcov-odbc.info')
-                                    reportStatus('odbc', coverage)
+                                    cd odbc_tests
+                                    # Exclude CRL tests - they require Wiremock server which is not started in coverage job
+                                    ctest -j 1 -C Debug --test-dir cmake-build --output-on-failure -E "crl"
+                                ''')
+                                if (testExitCode != 0) {
+                                    echo "ODBC tests failed with exit code ${testExitCode}, continuing to generate coverage"
+                                    unstable(message: "ODBC tests failed")
                                 }
-                                archiveArtifacts artifacts: 'lcov-odbc.info', allowEmptyArchive: true
-                            } catch (Exception e) {
-                                reportFailure('odbc')
-                                throw e
+                                
+                                sh label: 'Generate Coverage Report', script: '''
+                                    set +x
+                                    LLVM_PROFDATA=$(find /root/.rustup -name "llvm-profdata" -type f 2>/dev/null | head -1)
+                                    LLVM_COV=$(find /root/.rustup -name "llvm-cov" -type f 2>/dev/null | head -1)
+                                    find . -name "odbc-*.profraw" -type f | xargs $LLVM_PROFDATA merge -sparse -o coverage.profdata
+                                    
+                                    $LLVM_COV export target/debug/libsfodbc.so \
+                                        -instr-profile=coverage.profdata \
+                                        -format=lcov \
+                                        -sources=$(pwd)/odbc \
+                                        -sources=$(pwd)/sf_core > lcov-odbc.info
+                                '''
+                                
+                                uploadToCodecov('odbc', 'lcov-odbc.info')
                             }
+                            archiveArtifacts artifacts: 'lcov-odbc.info', allowEmptyArchive: true
                         }
                     }
                 }
@@ -306,40 +191,32 @@ pipeline {
                     agent { label 'build-node-extra-large' }
                     steps {
                         script {
-                            try {
-                                dockerSetup()
-                                docker.image(DOCKER_IMAGE).inside('-u root --privileged') {
-                                    decodeSecrets()
-                                    
-                                    sh label: 'Build JDBC Bridge', script: '''
-                                        set +x
-                                        cargo build --package sf_core
-                                        cargo build --package jdbc_bridge
-                                    '''
-                                    
-                                    def testExitCode = sh(label: 'Run Tests with Coverage', returnStatus: true, script: '''
-                                        set +x
-                                        export PARAMETER_PATH=$(pwd)/parameters.json
-                                        export CORE_PATH=$(pwd)/target/debug/libjdbc_bridge.so
-                                        chmod +x jdbc/gradlew
-                                        cd jdbc
-                                        ./gradlew test jacocoTestReport --stacktrace
-                                    ''')
-                                    if (testExitCode != 0) {
-                                        echo "JDBC tests failed with exit code ${testExitCode}, continuing to generate coverage"
-                                        unstable(message: "JDBC tests failed")
-                                    }
-                                    
-                                    def jdbcReportPath = "${env.WORKSPACE}/jdbc/build/reports/jacoco/test/jacocoTestReport.xml"
-                                    def coverage = parseJacocoCoverage(jdbcReportPath)
-                                    uploadToCodecov('jdbc', jdbcReportPath)
-                                    reportStatus('jdbc', coverage)
+                            dockerSetup()
+                            docker.image(DOCKER_IMAGE).inside('-u root --privileged') {
+                                decodeSecrets()
+                                
+                                sh label: 'Build JDBC Bridge', script: '''
+                                    set +x
+                                    cargo build --package sf_core
+                                    cargo build --package jdbc_bridge
+                                '''
+                                
+                                def testExitCode = sh(label: 'Run Tests with Coverage', returnStatus: true, script: '''
+                                    set +x
+                                    export PARAMETER_PATH=$(pwd)/parameters.json
+                                    export CORE_PATH=$(pwd)/target/debug/libjdbc_bridge.so
+                                    chmod +x jdbc/gradlew
+                                    cd jdbc
+                                    ./gradlew test jacocoTestReport --stacktrace
+                                ''')
+                                if (testExitCode != 0) {
+                                    echo "JDBC tests failed with exit code ${testExitCode}, continuing to generate coverage"
+                                    unstable(message: "JDBC tests failed")
                                 }
-                                archiveArtifacts artifacts: 'jdbc/build/reports/jacoco/test/jacocoTestReport.xml', allowEmptyArchive: true
-                            } catch (Exception e) {
-                                reportFailure('jdbc')
-                                throw e
+                                
+                                uploadToCodecov('jdbc', "${env.WORKSPACE}/jdbc/build/reports/jacoco/test/jacocoTestReport.xml")
                             }
+                            archiveArtifacts artifacts: 'jdbc/build/reports/jacoco/test/jacocoTestReport.xml', allowEmptyArchive: true
                         }
                     }
                 }
@@ -375,28 +252,6 @@ pipeline {
                 } catch (Exception e) {
                     echo "Error notifying Codecov: ${e.message}"
                 }
-
-                if (coverageResults.isEmpty()) {
-                    currentBuild.description = "No coverage data"
-                } else {
-                    def parts = []
-                    coverageResults.each { component, value ->
-                        def displayName = DISPLAY_NAMES[component] ?: component
-                        if (value == 'FAILED') {
-                            parts << "${displayName}: FAILED"
-                        } else {
-                            parts << "${displayName}: ${value}%"
-                        }
-                    }
-                    currentBuild.description = parts.join(' | ')
-                }
-                
-                publishChecks name: 'Universal Driver Code Coverage',
-                              title: "Build ${currentBuild.currentResult}",
-                              summary: "Jenkins Build ${env.BUILD_NUMBER}: ${currentBuild.currentResult}\n${currentBuild.description ?: ''}",
-                              detailsURL: env.BUILD_URL,
-                              status: 'COMPLETED',
-                              conclusion: currentBuild.currentResult == 'SUCCESS' ? 'SUCCESS' : 'FAILURE'
             }
         }
     }
