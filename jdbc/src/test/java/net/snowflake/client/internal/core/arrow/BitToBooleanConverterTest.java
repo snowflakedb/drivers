@@ -71,9 +71,12 @@ public class BitToBooleanConverterTest extends BaseConverterTest {
       } else {
         assertEquals(expectedValues.get(i), boolVal);
         assertEquals(expectedValues.get(i), objectVal);
-        assertEquals(Boolean.toString(expectedValues.get(i)), stringVal);
-        int index = i;
-        TestHelper.assertSFException(invalidConversionErrorCode, () -> converter.toBytes(index));
+        assertEquals(Boolean.toString(expectedValues.get(i)).toUpperCase(), stringVal);
+        if (boolVal) {
+          assertEquals((byte) 0x1, converter.toBytes(i)[0]);
+        } else {
+          assertEquals((byte) 0x0, converter.toBytes(i)[0]);
+        }
       }
     }
     vector.clear();

@@ -1,24 +1,54 @@
 package net.snowflake.client.internal.core.arrow;
 
-import net.snowflake.client.jdbc.ErrorCode;
+import java.math.BigDecimal;
 import net.snowflake.client.jdbc.SFException;
 import net.snowflake.client.jdbc.SnowflakeType;
-import net.snowflake.client.jdbc.SnowflakeUtil;
 import org.apache.arrow.vector.BitVector;
 import org.apache.arrow.vector.ValueVector;
 
 public class BitToBooleanConverter extends AbstractArrowVectorConverter {
-  private final BitVector bitVector;
+  private BitVector bitVector;
 
+  /**
+   * @param fieldVector ValueVector
+   * @param columnIndex column index
+   * @param context DataConversionContext
+   */
   public BitToBooleanConverter(
       ValueVector fieldVector, int columnIndex, DataConversionContext context) {
     super(SnowflakeType.BOOLEAN.name(), fieldVector, columnIndex, context);
     this.bitVector = (BitVector) fieldVector;
   }
 
+  private int getBit(int index) {
+    // read a bit from the bitVector
+    // first find the byte value
+    final int byteIndex = index >> 3;
+    final byte b = bitVector.getDataBuffer().getByte(byteIndex);
+    // then get the bit value
+    final int bitIndex = index & 7;
+    return (b >> bitIndex) & 0x01;
+  }
+
   @Override
   public boolean toBoolean(int index) {
-    return !isNull(index) && bitVector.get(index) == 1;
+    if (isNull(index)) {
+      return false;
+    } else {
+      return getBit(index) != 0;
+    }
+  }
+
+  @Override
+  public byte[] toBytes(int index) {
+    if (isNull(index)) {
+      return null;
+    } else if (toBoolean(index)) {
+
+      return new byte[] {1};
+    } else {
+      return new byte[] {0};
+    }
   }
 
   @Override
@@ -28,13 +58,36 @@ public class BitToBooleanConverter extends AbstractArrowVectorConverter {
 
   @Override
   public String toString(int index) {
-    return isNull(index) ? null : Boolean.toString(toBoolean(index));
+    return isNull(index) ? null : toBoolean(index) ? "TRUE" : "FALSE";
   }
 
   @Override
-  public byte toByte(int index) throws SFException {
-    boolean val = toBoolean(index);
-    throw new SFException(
-        ErrorCode.INVALID_VALUE_CONVERT, logicalTypeStr, SnowflakeUtil.BYTE_STR, val);
+  public short toShort(int rowIndex) throws SFException {
+    return (short) (toBoolean(rowIndex) ? 1 : 0);
+  }
+
+  @Override
+  public int toInt(int rowIndex) throws SFException {
+    return toBoolean(rowIndex) ? 1 : 0;
+  }
+
+  @Override
+  public long toLong(int rowIndex) throws SFException {
+    return toBoolean(rowIndex) ? 1 : 0;
+  }
+
+  @Override
+  public float toFloat(int rowIndex) throws SFException {
+    return toBoolean(rowIndex) ? 1 : 0;
+  }
+
+  @Override
+  public double toDouble(int rowIndex) throws SFException {
+    return toBoolean(rowIndex) ? 1 : 0;
+  }
+
+  @Override
+  public BigDecimal toBigDecimal(int rowIndex) throws SFException {
+    return isNull(rowIndex) ? null : toBoolean(rowIndex) ? BigDecimal.ONE : BigDecimal.ZERO;
   }
 }
