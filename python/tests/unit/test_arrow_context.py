@@ -324,7 +324,7 @@ class TestDecimal128ToDecimal:
     def test_decimal128_to_decimal(self, int_value, scale, expected, expected_type):
         """Test DECIMAL128 conversion with various values and scales.
 
-        When scale=0 (integer), returns Python int to match old driver behavior.
+        When scale=0 (integer), returns Python int.
         When scale>0 (decimal), returns decimal.Decimal.
         """
         context = ArrowConverterContext()
