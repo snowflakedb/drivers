@@ -4,15 +4,30 @@ use crate::common::snowflake_test_client::SnowflakeTestClient;
 fn should_authenticate_using_native_okta() {
     // Given Okta authentication is configured with valid credentials
     let client = SnowflakeTestClient::with_default_params();
-    let okta_url = client.parameters.okta_url.clone()
+    let okta_url = client
+        .parameters
+        .okta_url
+        .clone()
         .expect("SNOWFLAKE_TEST_OKTA_URL must be set for Okta E2E tests");
-    let okta_user = client.parameters.okta_user.clone()
+    let okta_user = client
+        .parameters
+        .okta_user
+        .clone()
         .expect("SNOWFLAKE_TEST_OKTA_USER must be set for Okta E2E tests");
-    let okta_password = client.parameters.okta_password.clone()
+    let okta_password = client
+        .parameters
+        .okta_password
+        .clone()
         .expect("SNOWFLAKE_TEST_OKTA_PASSWORD must be set for Okta E2E tests");
-    let okta_account = client.parameters.okta_account.clone()
+    let okta_account = client
+        .parameters
+        .okta_account
+        .clone()
         .expect("SNOWFLAKE_TEST_OKTA_ACCOUNT must be set for Okta E2E tests");
-    let okta_host = client.parameters.okta_host.clone()
+    let okta_host = client
+        .parameters
+        .okta_host
+        .clone()
         .expect("SNOWFLAKE_TEST_OKTA_HOST must be set for Okta E2E tests");
 
     // Use the Okta-enabled Snowflake account with its specific settings
@@ -35,13 +50,25 @@ fn should_authenticate_using_native_okta() {
 fn should_fail_native_okta_authentication_with_wrong_credentials() {
     // Given Okta authentication is configured with wrong password
     let client = SnowflakeTestClient::with_default_params();
-    let okta_url = client.parameters.okta_url.clone()
+    let okta_url = client
+        .parameters
+        .okta_url
+        .clone()
         .expect("SNOWFLAKE_TEST_OKTA_URL must be set for Okta E2E tests");
-    let okta_user = client.parameters.okta_user.clone()
+    let okta_user = client
+        .parameters
+        .okta_user
+        .clone()
         .expect("SNOWFLAKE_TEST_OKTA_USER must be set for Okta E2E tests");
-    let okta_account = client.parameters.okta_account.clone()
+    let okta_account = client
+        .parameters
+        .okta_account
+        .clone()
         .expect("SNOWFLAKE_TEST_OKTA_ACCOUNT must be set for Okta E2E tests");
-    let okta_host = client.parameters.okta_host.clone()
+    let okta_host = client
+        .parameters
+        .okta_host
+        .clone()
         .expect("SNOWFLAKE_TEST_OKTA_HOST must be set for Okta E2E tests");
 
     // Use the Okta-enabled Snowflake account with its specific settings
@@ -63,13 +90,25 @@ fn should_fail_native_okta_authentication_with_wrong_credentials() {
 fn should_fail_native_okta_authentication_with_wrong_okta_url() {
     // Given Okta authentication is configured with invalid okta url
     let client = SnowflakeTestClient::with_default_params();
-    let okta_user = client.parameters.okta_user.clone()
+    let okta_user = client
+        .parameters
+        .okta_user
+        .clone()
         .expect("SNOWFLAKE_TEST_OKTA_USER must be set for Okta E2E tests");
-    let okta_password = client.parameters.okta_password.clone()
+    let okta_password = client
+        .parameters
+        .okta_password
+        .clone()
         .expect("SNOWFLAKE_TEST_OKTA_PASSWORD must be set for Okta E2E tests");
-    let okta_account = client.parameters.okta_account.clone()
+    let okta_account = client
+        .parameters
+        .okta_account
+        .clone()
         .expect("SNOWFLAKE_TEST_OKTA_ACCOUNT must be set for Okta E2E tests");
-    let okta_host = client.parameters.okta_host.clone()
+    let okta_host = client
+        .parameters
+        .okta_host
+        .clone()
         .expect("SNOWFLAKE_TEST_OKTA_HOST must be set for Okta E2E tests");
 
     // Use the Okta-enabled Snowflake account with invalid Okta URL

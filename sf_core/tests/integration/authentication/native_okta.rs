@@ -34,7 +34,10 @@ fn should_login_with_native_okta_using_saml_flow() {
     let result = client.connect();
 
     // Then Login is successful
-    assert!(result.is_ok(), "Expected Okta login to succeed, got: {result:?}");
+    assert!(
+        result.is_ok(),
+        "Expected Okta login to succeed, got: {result:?}"
+    );
 }
 
 // =============================================================================
@@ -164,7 +167,10 @@ fn should_fail_when_tokenurl_does_not_match_configured_okta_url_origin() {
     placeholders.insert("{{OKTA_BASE_URL}}".to_string(), wiremock.https_url());
     placeholders.insert("{{SNOWFLAKE_BASE_URL}}".to_string(), wiremock.http_url());
 
-    wiremock.add_mapping("auth/authenticator_request_okta_mismatched_token_url.json", Some(&placeholders));
+    wiremock.add_mapping(
+        "auth/authenticator_request_okta_mismatched_token_url.json",
+        Some(&placeholders),
+    );
 
     // And Snowflake client is configured for native Okta
     // And TLS certificate verification is disabled for the Okta HTTPS mock
@@ -181,7 +187,9 @@ fn should_fail_when_tokenurl_does_not_match_configured_okta_url_origin() {
     // Then Connection fails with IdP URL mismatch error
     let error = result.expect_err("Expected connection to fail");
     assert!(
-        error.contains("IdpUrlMismatch") || error.contains("mismatch") || error.contains("does not match"),
+        error.contains("IdpUrlMismatch")
+            || error.contains("mismatch")
+            || error.contains("does not match"),
         "Expected IdP URL mismatch error, got: {error}"
     );
 }
@@ -196,7 +204,10 @@ fn should_fail_when_ssourl_does_not_match_configured_okta_url_origin() {
     placeholders.insert("{{OKTA_BASE_URL}}".to_string(), wiremock.https_url());
     placeholders.insert("{{SNOWFLAKE_BASE_URL}}".to_string(), wiremock.http_url());
 
-    wiremock.add_mapping("auth/authenticator_request_okta_mismatched_sso_url.json", Some(&placeholders));
+    wiremock.add_mapping(
+        "auth/authenticator_request_okta_mismatched_sso_url.json",
+        Some(&placeholders),
+    );
 
     // And Snowflake client is configured for native Okta
     // And TLS certificate verification is disabled for the Okta HTTPS mock
@@ -213,7 +224,9 @@ fn should_fail_when_ssourl_does_not_match_configured_okta_url_origin() {
     // Then Connection fails with IdP URL mismatch error
     let error = result.expect_err("Expected connection to fail");
     assert!(
-        error.contains("IdpUrlMismatch") || error.contains("mismatch") || error.contains("does not match"),
+        error.contains("IdpUrlMismatch")
+            || error.contains("mismatch")
+            || error.contains("does not match"),
         "Expected IdP URL mismatch error, got: {error}"
     );
 }
@@ -255,7 +268,9 @@ fn should_fail_when_saml_postback_url_does_not_match_snowflake_server() {
     // Then Connection fails with SAML destination mismatch error
     let error = result.expect_err("Expected connection to fail");
     assert!(
-        error.contains("SamlDestinationMismatch") || error.contains("postback") || error.contains("destination"),
+        error.contains("SamlDestinationMismatch")
+            || error.contains("postback")
+            || error.contains("destination"),
         "Expected SAML destination mismatch error, got: {error}"
     );
 }
@@ -295,7 +310,10 @@ fn should_succeed_with_mismatched_postback_when_disable_saml_url_check_is_true()
     let result = client.connect();
 
     // Then Login is successful
-    assert!(result.is_ok(), "Expected Okta login to succeed with disable_saml_url_check, got: {result:?}");
+    assert!(
+        result.is_ok(),
+        "Expected Okta login to succeed with disable_saml_url_check, got: {result:?}"
+    );
 }
 
 #[test]
@@ -333,7 +351,9 @@ fn should_fail_when_saml_html_is_missing_form_action() {
     // Then Connection fails with missing SAML postback error
     let error = result.expect_err("Expected connection to fail");
     assert!(
-        error.contains("MissingSamlPostback") || error.contains("postback") || error.contains("form action"),
+        error.contains("MissingSamlPostback")
+            || error.contains("postback")
+            || error.contains("form action"),
         "Expected missing SAML postback error, got: {error}"
     );
 }
@@ -376,7 +396,10 @@ fn should_use_cookietoken_when_sessiontoken_is_missing() {
     let result = client.connect();
 
     // Then Login is successful
-    assert!(result.is_ok(), "Expected Okta login with cookieToken to succeed, got: {result:?}");
+    assert!(
+        result.is_ok(),
+        "Expected Okta login with cookieToken to succeed, got: {result:?}"
+    );
 }
 
 // =============================================================================
@@ -403,7 +426,10 @@ fn should_retry_saml_fetch_with_fresh_token_on_transient_error() {
     wiremock.set_scenario_state("okta-sso-retry", "Retry Test Started");
 
     // And Wiremock has Okta SSO returning success on retry (scenario: First SSO Failed)
-    wiremock.add_mapping("auth/okta_sso_success_after_retry.json", Some(&placeholders));
+    wiremock.add_mapping(
+        "auth/okta_sso_success_after_retry.json",
+        Some(&placeholders),
+    );
 
     // And Wiremock has Snowflake login success for Okta
     wiremock.add_mapping("auth/login_success_okta.json", Some(&placeholders));

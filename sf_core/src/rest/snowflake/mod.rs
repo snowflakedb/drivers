@@ -1,8 +1,8 @@
 #![allow(clippy::result_large_err)]
 pub mod async_exec;
 mod auth;
-mod okta;
 pub mod error;
+mod okta;
 pub mod query_request;
 pub mod query_response;
 

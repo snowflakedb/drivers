@@ -25,14 +25,18 @@ pub enum OktaError {
         #[snafu(implicit)]
         location: Location,
     },
-    #[snafu(display("IdP URL safety validation failed: returned {returned} does not match configured Okta URL {configured}"))]
+    #[snafu(display(
+        "IdP URL safety validation failed: returned {returned} does not match configured Okta URL {configured}"
+    ))]
     IdpUrlMismatch {
         configured: String,
         returned: String,
         #[snafu(implicit)]
         location: Location,
     },
-    #[snafu(display("SAML postback destination validation failed: postback {postback} does not match Snowflake server {server}"))]
+    #[snafu(display(
+        "SAML postback destination validation failed: postback {postback} does not match Snowflake server {server}"
+    ))]
     SamlDestinationMismatch {
         server: String,
         postback: String,
@@ -128,14 +132,14 @@ struct OktaTokenResponse {
 fn enrich_okta_error_body(body: &str) -> String {
     // Okta often returns a JSON error object with `errorCode` + `errorSummary`.
     // Use them to provide a clearer error message (and to avoid dead_code warnings).
-    if let Ok(parsed) = serde_json::from_str::<OktaTokenResponse>(body) {
-        if parsed.error_code.is_some() || parsed.error_summary.is_some() {
-            let code = parsed.error_code.unwrap_or_else(|| "unknown".to_string());
-            let summary = parsed
-                .error_summary
-                .unwrap_or_else(|| "unknown".to_string());
-            return format!("Okta errorCode={code}, errorSummary={summary}; rawBody={body}");
-        }
+    if let Ok(parsed) = serde_json::from_str::<OktaTokenResponse>(body)
+        && (parsed.error_code.is_some() || parsed.error_summary.is_some())
+    {
+        let code = parsed.error_code.unwrap_or_else(|| "unknown".to_string());
+        let summary = parsed
+            .error_summary
+            .unwrap_or_else(|| "unknown".to_string());
+        return format!("Okta errorCode={code}, errorSummary={summary}; rawBody={body}");
     }
     body.to_string()
 }
@@ -256,19 +260,20 @@ async fn request_text_with_retry(
 ) -> Result<(StatusCode, String), HttpError> {
     execute_with_retry(build, ctx, policy, |resp| async move {
         let status = resp.status();
-        let text = resp
-            .text()
-            .await
-            .map_err(|e| HttpError::Transport {
-                source: e,
-                location: Location::new(file!(), line!(), column!()),
-            })?;
+        let text = resp.text().await.map_err(|e| HttpError::Transport {
+            source: e,
+            location: Location::new(file!(), line!(), column!()),
+        })?;
         Ok((status, text))
     })
     .await
 }
 
-fn remaining_policy(base: &RetryPolicy, start: Instant, budget: Duration) -> Result<RetryPolicy, OktaError> {
+fn remaining_policy(
+    base: &RetryPolicy,
+    start: Instant,
+    budget: Duration,
+) -> Result<RetryPolicy, OktaError> {
     let elapsed = start.elapsed();
     if elapsed >= budget {
         return AuthenticationTimeoutSnafu { budget }.fail();
@@ -278,6 +283,7 @@ fn remaining_policy(base: &RetryPolicy, start: Instant, budget: Duration) -> Res
     Ok(p)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn fetch_okta_saml_html(
     client: &reqwest::Client,
     login_parameters: &LoginParameters,
@@ -297,7 +303,10 @@ pub(crate) async fn fetch_okta_saml_html(
     data.login_name = Some(username.to_string());
     data.authenticator = Some(okta_url.to_string());
     let authn_req = AuthRequest { data };
-    let authn_url = format!("{}/session/authenticator-request", login_parameters.server_url);
+    let authn_url = format!(
+        "{}/session/authenticator-request",
+        login_parameters.server_url
+    );
 
     let body_string = serde_json::to_string(&authn_req).context(JsonParseSnafu)?;
     let ctx = HttpContext::new(Method::POST, "/session/authenticator-request").allow_post_retry();
@@ -307,7 +316,10 @@ pub(crate) async fn fetch_okta_saml_html(
                 .post(&authn_url)
                 .header(header::CONTENT_TYPE, "application/json")
                 .header(header::ACCEPT, "application/json")
-                .header("User-Agent", super::user_agent(&login_parameters.client_info))
+                .header(
+                    "User-Agent",
+                    super::user_agent(&login_parameters.client_info),
+                )
                 .body(body_string.clone())
         },
         &ctx,
@@ -335,12 +347,10 @@ pub(crate) async fn fetch_okta_saml_html(
         }
         .fail();
     }
-    let idp_data = idp
-        .data
-        .ok_or_else(|| OktaError::MissingField {
-            field: "data",
-            location: Location::new(file!(), line!(), column!()),
-        })?;
+    let idp_data = idp.data.ok_or_else(|| OktaError::MissingField {
+        field: "data",
+        location: Location::new(file!(), line!(), column!()),
+    })?;
 
     // Step 2: IdP URL safety validation
     let configured = Url::parse(okta_url).context(UrlParseSnafu { url: okta_url })?;
@@ -393,7 +403,10 @@ pub(crate) async fn fetch_okta_saml_html(
         .context(RetryExhaustedSnafu)?;
 
         if token_status == StatusCode::UNAUTHORIZED || token_status == StatusCode::FORBIDDEN {
-            return BadCredentialsSnafu { status: token_status }.fail();
+            return BadCredentialsSnafu {
+                status: token_status,
+            }
+            .fail();
         }
         if !token_status.is_success() {
             return HttpStatusSnafu {
@@ -423,9 +436,10 @@ pub(crate) async fn fetch_okta_saml_html(
         let saml_ctx = HttpContext::new(Method::GET, "okta:saml");
         let (saml_status, saml_html) = request_text_with_retry(
             || {
-                client
-                    .get(sso_url.clone())
-                    .query(&[("RelayState", relay_state.as_str()), ("onetimetoken", one_time.as_str())])
+                client.get(sso_url.clone()).query(&[
+                    ("RelayState", relay_state.as_str()),
+                    ("onetimetoken", one_time.as_str()),
+                ])
             },
             &saml_ctx,
             &policy,
@@ -467,7 +481,9 @@ pub(crate) async fn fetch_okta_saml_html(
             let server = Url::parse(&login_parameters.server_url).context(UrlParseSnafu {
                 url: login_parameters.server_url.clone(),
             })?;
-            let postback_url = Url::parse(&postback).context(UrlParseSnafu { url: postback.clone() })?;
+            let postback_url = Url::parse(&postback).context(UrlParseSnafu {
+                url: postback.clone(),
+            })?;
             if !url_origin_matches(&server, &postback_url) {
                 return SamlDestinationMismatchSnafu {
                     server: login_parameters.server_url.clone(),
@@ -504,7 +520,10 @@ mod tests {
     fn test_decode_html_entities_named_entities() {
         assert_eq!(decode_html_entities_minimal("a&amp;b"), "a&b");
         assert_eq!(decode_html_entities_minimal("&lt;tag&gt;"), "<tag>");
-        assert_eq!(decode_html_entities_minimal("&quot;quoted&quot;"), "\"quoted\"");
+        assert_eq!(
+            decode_html_entities_minimal("&quot;quoted&quot;"),
+            "\"quoted\""
+        );
         assert_eq!(decode_html_entities_minimal("it&apos;s"), "it's");
     }
 
@@ -647,4 +666,3 @@ mod tests {
         assert!(url_origin_matches(&a, &b));
     }
 }
-

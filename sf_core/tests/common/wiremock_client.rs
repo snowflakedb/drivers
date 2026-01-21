@@ -1,10 +1,10 @@
+use std::env;
 use std::fs;
 use std::net::TcpListener;
 use std::path::PathBuf;
 use std::process::{Child, Command};
 use std::thread;
 use std::time::Duration;
-use std::env;
 
 use super::file_utils;
 
@@ -58,9 +58,9 @@ impl WiremockClient {
         // Try multiple keytool locations since macOS /usr/bin/keytool may not work
         // without a system Java installation, but Homebrew OpenJDK has its own keytool.
         let keytool_candidates = [
-            "/opt/homebrew/opt/openjdk/bin/keytool",      // Homebrew Apple Silicon (most common)
-            "/usr/local/opt/openjdk/bin/keytool",         // Homebrew Intel Mac
-            "keytool",                                    // PATH lookup (fallback)
+            "/opt/homebrew/opt/openjdk/bin/keytool", // Homebrew Apple Silicon (most common)
+            "/usr/local/opt/openjdk/bin/keytool",    // Homebrew Intel Mac
+            "keytool",                               // PATH lookup (fallback)
         ];
 
         let mut keytool_success = false;
