@@ -1,1 +1,1 @@
-# INT type tests for Universal Driver
+# Type tests for Universal Driver
