@@ -418,14 +418,13 @@ fn should_retry_saml_fetch_with_fresh_token_on_transient_error() {
 
     wiremock.add_mapping("auth/authenticator_request_okta.json", Some(&placeholders));
 
-    // And Wiremock has Okta token success mapping (will be called twice - once per attempt)
+    // And Wiremock has Okta token success mapping
     wiremock.add_mapping("auth/okta_token_success.json", Some(&placeholders));
 
-    // And Wiremock has Okta SSO returning 503 on first attempt (scenario: Retry Test Started -> First SSO Failed)
-    // Note: The scenario file requires "Retry Test Started" state, so we set it explicitly
+    // And Wiremock has Okta SSO returning 503 on first attempt
     wiremock.set_scenario_state("okta-sso-retry", "Retry Test Started");
 
-    // And Wiremock has Okta SSO returning success on retry (scenario: First SSO Failed)
+    // And Wiremock has Okta SSO returning success on retry
     wiremock.add_mapping(
         "auth/okta_sso_success_after_retry.json",
         Some(&placeholders),
@@ -446,7 +445,7 @@ fn should_retry_saml_fetch_with_fresh_token_on_transient_error() {
     // When Trying to Connect
     let result = client.connect();
 
-    // Then Login is successful (transient 503 was retried with fresh token)
+    // Then Login is successful
     assert!(
         result.is_ok(),
         "Expected Okta login to succeed after retrying transient error, got: {result:?}"
