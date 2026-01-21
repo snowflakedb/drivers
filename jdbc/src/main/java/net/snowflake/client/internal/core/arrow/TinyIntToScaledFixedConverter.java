@@ -4,6 +4,7 @@ import java.math.BigDecimal;
 import net.snowflake.client.jdbc.ErrorCode;
 import net.snowflake.client.jdbc.SFException;
 import net.snowflake.client.jdbc.SnowflakeType;
+import net.snowflake.client.jdbc.SnowflakeUtil;
 import org.apache.arrow.vector.ValueVector;
 
 public class TinyIntToScaledFixedConverter extends TinyIntToFixedConverter {
@@ -28,7 +29,8 @@ public class TinyIntToScaledFixedConverter extends TinyIntToFixedConverter {
       return 0;
     }
     float val = toFloat(index);
-    throw new SFException(ErrorCode.INVALID_VALUE_CONVERT, logicalTypeStr, "Short", val);
+    throw new SFException(
+        ErrorCode.INVALID_VALUE_CONVERT, logicalTypeStr, SnowflakeUtil.SHORT_STR, val);
   }
 
   @Override
@@ -37,7 +39,8 @@ public class TinyIntToScaledFixedConverter extends TinyIntToFixedConverter {
       return 0;
     }
     float val = toFloat(index);
-    throw new SFException(ErrorCode.INVALID_VALUE_CONVERT, logicalTypeStr, "Int", val);
+    throw new SFException(
+        ErrorCode.INVALID_VALUE_CONVERT, logicalTypeStr, SnowflakeUtil.INT_STR, val);
   }
 
   @Override
@@ -54,7 +57,8 @@ public class TinyIntToScaledFixedConverter extends TinyIntToFixedConverter {
       return 0;
     }
     float val = toFloat(index);
-    throw new SFException(ErrorCode.INVALID_VALUE_CONVERT, logicalTypeStr, "Long", val);
+    throw new SFException(
+        ErrorCode.INVALID_VALUE_CONVERT, logicalTypeStr, SnowflakeUtil.LONG_STR, val);
   }
 
   @Override
@@ -83,6 +87,9 @@ public class TinyIntToScaledFixedConverter extends TinyIntToFixedConverter {
       return true;
     }
     throw new SFException(
-        ErrorCode.INVALID_VALUE_CONVERT, logicalTypeStr, "Boolean", val.toPlainString());
+        ErrorCode.INVALID_VALUE_CONVERT,
+        logicalTypeStr,
+        SnowflakeUtil.BOOLEAN_STR,
+        val.toPlainString());
   }
 }

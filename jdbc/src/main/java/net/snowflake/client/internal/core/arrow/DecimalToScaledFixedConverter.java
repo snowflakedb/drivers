@@ -4,6 +4,7 @@ import java.math.BigDecimal;
 import net.snowflake.client.jdbc.ErrorCode;
 import net.snowflake.client.jdbc.SFException;
 import net.snowflake.client.jdbc.SnowflakeType;
+import net.snowflake.client.jdbc.SnowflakeUtil;
 import org.apache.arrow.vector.DecimalVector;
 import org.apache.arrow.vector.ValueVector;
 
@@ -61,14 +62,20 @@ public class DecimalToScaledFixedConverter extends AbstractArrowVectorConverter 
     BigDecimal bigDecimal = toBigDecimal(index);
     if (bigDecimal.scale() == 0) {
       short shortValue = bigDecimal.shortValue();
-      if (bigDecimal.compareTo(BigDecimal.valueOf((long) shortValue)) == 0) {
+      if (bigDecimal.compareTo(BigDecimal.valueOf(shortValue)) == 0) {
         return shortValue;
       }
       throw new SFException(
-          ErrorCode.INVALID_VALUE_CONVERT, logicalTypeStr, "Short", bigDecimal.toPlainString());
+          ErrorCode.INVALID_VALUE_CONVERT,
+          logicalTypeStr,
+          SnowflakeUtil.SHORT_STR,
+          bigDecimal.toPlainString());
     }
     throw new SFException(
-        ErrorCode.INVALID_VALUE_CONVERT, logicalTypeStr, "Short", bigDecimal.toPlainString());
+        ErrorCode.INVALID_VALUE_CONVERT,
+        logicalTypeStr,
+        SnowflakeUtil.SHORT_STR,
+        bigDecimal.toPlainString());
   }
 
   @Override
@@ -79,14 +86,20 @@ public class DecimalToScaledFixedConverter extends AbstractArrowVectorConverter 
     BigDecimal bigDecimal = toBigDecimal(index);
     if (bigDecimal.scale() == 0) {
       int intValue = bigDecimal.intValue();
-      if (bigDecimal.compareTo(BigDecimal.valueOf((long) intValue)) == 0) {
+      if (bigDecimal.compareTo(BigDecimal.valueOf(intValue)) == 0) {
         return intValue;
       }
       throw new SFException(
-          ErrorCode.INVALID_VALUE_CONVERT, logicalTypeStr, "Int", bigDecimal.toPlainString());
+          ErrorCode.INVALID_VALUE_CONVERT,
+          logicalTypeStr,
+          SnowflakeUtil.INT_STR,
+          bigDecimal.toPlainString());
     }
     throw new SFException(
-        ErrorCode.INVALID_VALUE_CONVERT, logicalTypeStr, "Int", bigDecimal.toPlainString());
+        ErrorCode.INVALID_VALUE_CONVERT,
+        logicalTypeStr,
+        SnowflakeUtil.INT_STR,
+        bigDecimal.toPlainString());
   }
 
   @Override
@@ -101,10 +114,16 @@ public class DecimalToScaledFixedConverter extends AbstractArrowVectorConverter 
         return longValue;
       }
       throw new SFException(
-          ErrorCode.INVALID_VALUE_CONVERT, logicalTypeStr, "Long", bigDecimal.toPlainString());
+          ErrorCode.INVALID_VALUE_CONVERT,
+          logicalTypeStr,
+          SnowflakeUtil.LONG_STR,
+          bigDecimal.toPlainString());
     }
     throw new SFException(
-        ErrorCode.INVALID_VALUE_CONVERT, logicalTypeStr, "Long", bigDecimal.toPlainString());
+        ErrorCode.INVALID_VALUE_CONVERT,
+        logicalTypeStr,
+        SnowflakeUtil.LONG_STR,
+        bigDecimal.toPlainString());
   }
 
   @Override
@@ -151,6 +170,9 @@ public class DecimalToScaledFixedConverter extends AbstractArrowVectorConverter 
       return true;
     }
     throw new SFException(
-        ErrorCode.INVALID_VALUE_CONVERT, logicalTypeStr, "Boolean", val.toPlainString());
+        ErrorCode.INVALID_VALUE_CONVERT,
+        logicalTypeStr,
+        SnowflakeUtil.BOOLEAN_STR,
+        val.toPlainString());
   }
 }

@@ -90,7 +90,8 @@ abstract class AbstractArrowVectorConverter implements ArrowVectorConverter {
     if (isNull(index)) {
       return null;
     }
-    throw new SFException(ErrorCode.INVALID_VALUE_CONVERT, logicalTypeStr, "byteArray", "");
+    throw new SFException(
+        ErrorCode.INVALID_VALUE_CONVERT, logicalTypeStr, SnowflakeUtil.BYTE_STR, "");
   }
 
   @Override

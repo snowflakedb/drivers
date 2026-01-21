@@ -4,6 +4,7 @@ import java.math.BigDecimal;
 import net.snowflake.client.jdbc.ErrorCode;
 import net.snowflake.client.jdbc.SFException;
 import net.snowflake.client.jdbc.SnowflakeType;
+import net.snowflake.client.jdbc.SnowflakeUtil;
 import org.apache.arrow.vector.ValueVector;
 
 public class BigIntToScaledFixedConverter extends BigIntToFixedConverter {
@@ -44,7 +45,10 @@ public class BigIntToScaledFixedConverter extends BigIntToFixedConverter {
     }
     BigDecimal val = toBigDecimal(index);
     throw new SFException(
-        ErrorCode.INVALID_VALUE_CONVERT, logicalTypeStr, "Short", val.toPlainString());
+        ErrorCode.INVALID_VALUE_CONVERT,
+        logicalTypeStr,
+        SnowflakeUtil.SHORT_STR,
+        val.toPlainString());
   }
 
   @Override
@@ -54,7 +58,10 @@ public class BigIntToScaledFixedConverter extends BigIntToFixedConverter {
     }
     BigDecimal val = toBigDecimal(index);
     throw new SFException(
-        ErrorCode.INVALID_VALUE_CONVERT, logicalTypeStr, "Int", val.toPlainString());
+        ErrorCode.INVALID_VALUE_CONVERT,
+        logicalTypeStr,
+        SnowflakeUtil.INT_STR,
+        val.toPlainString());
   }
 
   @Override
@@ -64,7 +71,10 @@ public class BigIntToScaledFixedConverter extends BigIntToFixedConverter {
     }
     BigDecimal val = toBigDecimal(index);
     throw new SFException(
-        ErrorCode.INVALID_VALUE_CONVERT, logicalTypeStr, "Long", val.toPlainString());
+        ErrorCode.INVALID_VALUE_CONVERT,
+        logicalTypeStr,
+        SnowflakeUtil.LONG_STR,
+        val.toPlainString());
   }
 
   @Override
@@ -89,7 +99,10 @@ public class BigIntToScaledFixedConverter extends BigIntToFixedConverter {
       return true;
     }
     throw new SFException(
-        ErrorCode.INVALID_VALUE_CONVERT, logicalTypeStr, "Boolean", val.toPlainString());
+        ErrorCode.INVALID_VALUE_CONVERT,
+        logicalTypeStr,
+        SnowflakeUtil.BOOLEAN_STR,
+        val.toPlainString());
   }
 
   @Override
