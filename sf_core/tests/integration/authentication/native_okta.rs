@@ -423,6 +423,7 @@ fn should_retry_saml_fetch_with_fresh_token_on_transient_error() {
 
     // And Wiremock has Okta SSO returning 503 on first attempt
     wiremock.set_scenario_state("okta-sso-retry", "Retry Test Started");
+    wiremock.add_mapping("auth/okta_sso_503_first_attempt.json", None);
 
     // And Wiremock has Okta SSO returning success on retry
     wiremock.add_mapping(
