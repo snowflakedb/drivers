@@ -226,31 +226,30 @@ pipeline {
     
     post {
         always {
-            script {
-                try {
-                    node {
-                        def commitSha = ""
-                        if (env.CHANGE_BRANCH) {
-                            commitSha = sh(script: "git ls-remote origin refs/heads/${env.CHANGE_BRANCH} | cut -f1", returnStdout: true).trim()
-                        }
-                        if (!commitSha) {
-                            commitSha = env.GIT_COMMIT
-                        }
+            node {
+                script {
+                    try {
+                        checkout scm
+                        dockerSetup()
                         
-                        echo "Notifying Codecov for commit: ${commitSha}"
-                        
-                        withCredentials([string(credentialsId: CODECOV_CREDENTIAL_ID, variable: 'CODECOV_TOKEN')]) {
-                            sh label: 'Notify Codecov', script: """
-                                codecovcli --enterprise-url https://snowflake.codecov.io \\
-                                    send-notifications \\
-                                    -t "\${CODECOV_TOKEN}" \\
-                                    --git-service github \\
-                                    -C ${commitSha} || true
-                            """
+                        docker.image(DOCKER_IMAGE).inside('-u root') {
+                            def commitSha = env.GIT_COMMIT ?: sh(script: 'git rev-parse HEAD', returnStdout: true).trim()
+                            
+                            echo "Notifying Codecov for commit: ${commitSha}"
+                            
+                            withCredentials([string(credentialsId: CODECOV_CREDENTIAL_ID, variable: 'CODECOV_TOKEN')]) {
+                                sh label: 'Notify Codecov', script: """
+                                    codecovcli --enterprise-url https://snowflake.codecov.io \
+                                        send-notifications \
+                                        -t "\${CODECOV_TOKEN}" \
+                                        --git-service github \
+                                        -C ${commitSha}
+                                """
+                            }
                         }
+                    } catch (Exception e) {
+                        echo "Warning: Failed to notify Codecov: ${e.message}"
                     }
-                } catch (Exception e) {
-                    echo "Error notifying Codecov: ${e.message}"
                 }
             }
         }
