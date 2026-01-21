@@ -66,6 +66,7 @@ keyring = { version = "3", features = ["apple-native", "windows-native", "linux-
 lru = "0.12"
 chrono = { version = "0.4", features = ["serde"] }
 url = "2.5"
+html-escape = "0.2"
 urlencoding = "2.1"
 hex = "0.4"
 sha2 = "0.10"

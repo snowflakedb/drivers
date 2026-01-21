@@ -2,6 +2,7 @@ use crate::config::rest_parameters::LoginParameters;
 use crate::config::retry::RetryPolicy;
 use crate::http::retry::{HttpContext, HttpError, execute_with_retry};
 use crate::rest::snowflake::auth::{AuthRequest, AuthRequestData};
+use html_escape::decode_html_entities;
 use reqwest::header;
 use reqwest::{Method, StatusCode};
 use serde::Deserialize;
@@ -150,83 +151,6 @@ fn url_origin_matches(a: &Url, b: &Url) -> bool {
     a.scheme() == b.scheme() && a.host_str() == b.host_str() && a_port == b_port
 }
 
-fn decode_html_entities_minimal(input: &str) -> String {
-    // Minimal decoding sufficient for common SAML form action encodings we see in drivers.
-    // Supports: &amp; &quot; &apos; &lt; &gt; and numeric entities (&#...; and &#x...;).
-    fn starts_with_at(haystack: &[u8], i: usize, needle: &[u8]) -> bool {
-        haystack.get(i..i + needle.len()) == Some(needle)
-    }
-
-    let mut out = String::with_capacity(input.len());
-    let bytes = input.as_bytes();
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] != b'&' {
-            out.push(bytes[i] as char);
-            i += 1;
-            continue;
-        }
-
-        // named entities
-        if starts_with_at(bytes, i, b"&amp;") {
-            out.push('&');
-            i += 5;
-            continue;
-        }
-        if starts_with_at(bytes, i, b"&quot;") {
-            out.push('"');
-            i += 6;
-            continue;
-        }
-        if starts_with_at(bytes, i, b"&apos;") {
-            out.push('\'');
-            i += 6;
-            continue;
-        }
-        if starts_with_at(bytes, i, b"&lt;") {
-            out.push('<');
-            i += 4;
-            continue;
-        }
-        if starts_with_at(bytes, i, b"&gt;") {
-            out.push('>');
-            i += 4;
-            continue;
-        }
-
-        // numeric entity
-        if i + 3 < bytes.len() && bytes[i + 1] == b'#' {
-            let mut j = i + 2;
-            let hex = j < bytes.len() && (bytes[j] == b'x' || bytes[j] == b'X');
-            if hex {
-                j += 1;
-            }
-            let start = j;
-            while j < bytes.len() && bytes[j] != b';' {
-                j += 1;
-            }
-            if j < bytes.len() && bytes[j] == b';' {
-                let num_str = &input[start..j];
-                let parsed = if hex {
-                    u32::from_str_radix(num_str, 16).ok()
-                } else {
-                    num_str.parse::<u32>().ok()
-                };
-                if let Some(cp) = parsed.and_then(char::from_u32) {
-                    out.push(cp);
-                    i = j + 1;
-                    continue;
-                }
-            }
-        }
-
-        // fallback: keep raw '&'
-        out.push('&');
-        i += 1;
-    }
-    out
-}
-
 fn extract_form_action(html: &str) -> Option<String> {
     // Fast, non-validating extraction similar to other drivers: locate the first action="...".
     let lower = html.to_ascii_lowercase();
@@ -250,7 +174,7 @@ fn extract_form_action(html: &str) -> Option<String> {
         return None;
     }
     let raw = &html[start..end];
-    Some(decode_html_entities_minimal(raw))
+    Some(decode_html_entities(raw).into_owned())
 }
 
 async fn request_text_with_retry(
@@ -500,47 +424,6 @@ pub(crate) async fn fetch_okta_saml_html(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // =========================================================================
-    // HTML Entity Decoding Tests
-    // =========================================================================
-
-    #[test]
-    fn should_decode_html_entities_in_form_action_url() {
-        // Given HTML containing form action with encoded entities
-        // When Extracting form action from HTML
-        // Then Form action URL is correctly decoded
-        assert_eq!(
-            decode_html_entities_minimal("https&#x3a;&#x2f;&#x2f;example.com&#x2f;f"),
-            "https://example.com/f"
-        );
-    }
-
-    #[test]
-    fn test_decode_html_entities_named_entities() {
-        assert_eq!(decode_html_entities_minimal("a&amp;b"), "a&b");
-        assert_eq!(decode_html_entities_minimal("&lt;tag&gt;"), "<tag>");
-        assert_eq!(
-            decode_html_entities_minimal("&quot;quoted&quot;"),
-            "\"quoted\""
-        );
-        assert_eq!(decode_html_entities_minimal("it&apos;s"), "it's");
-    }
-
-    #[test]
-    fn test_decode_html_entities_numeric_decimal() {
-        assert_eq!(decode_html_entities_minimal("&#58;"), ":");
-        assert_eq!(decode_html_entities_minimal("&#47;"), "/");
-        assert_eq!(decode_html_entities_minimal("&#65;"), "A");
-    }
-
-    #[test]
-    fn test_decode_html_entities_passthrough_invalid() {
-        // Invalid/incomplete entities should be preserved
-        assert_eq!(decode_html_entities_minimal("&unknown;"), "&unknown;");
-        assert_eq!(decode_html_entities_minimal("&#;"), "&#;");
-        assert_eq!(decode_html_entities_minimal("&#xZZZ;"), "&#xZZZ;");
-    }
 
     // =========================================================================
     // Form Action Extraction Tests
