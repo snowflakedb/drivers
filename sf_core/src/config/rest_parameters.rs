@@ -315,15 +315,8 @@ impl LoginMethod {
                     .or_else(|| settings.get_int("disable_saml_url_check").map(|v| v != 0))
                     .unwrap_or(false);
 
-                let authentication_timeout_secs = settings
-                    .get_int("authentication_timeout")
-                    .and_then(|v| u64::try_from(v).ok())
-                    .or_else(|| {
-                        settings
-                            .get_string("authentication_timeout")
-                            .and_then(|s| s.parse::<u64>().ok())
-                    })
-                    .unwrap_or(120);
+                let authentication_timeout_secs =
+                    settings.get_u64("authentication_timeout").unwrap_or(120);
 
                 Ok(Self::Okta {
                     username,

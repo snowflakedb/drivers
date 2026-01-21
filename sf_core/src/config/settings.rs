@@ -54,6 +54,12 @@ pub trait Settings {
         let setting = self.get(key)?;
         setting.as_int().cloned()
     }
+    /// Get a value as u64, trying integer first, then parsing string.
+    fn get_u64(&self, key: &str) -> Option<u64> {
+        self.get_int(key)
+            .and_then(|v| u64::try_from(v).ok())
+            .or_else(|| self.get_string(key).and_then(|s| s.parse::<u64>().ok()))
+    }
     #[allow(dead_code)]
     fn get_double(&self, key: &str) -> Option<f64> {
         let setting = self.get(key)?;
