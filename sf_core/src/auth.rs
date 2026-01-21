@@ -111,9 +111,8 @@ pub fn create_credentials(login_parameters: &LoginParameters) -> Result<Credenti
             username: username.clone(),
             password: password.clone(),
         }),
-        // Okta uses a SAML exchange flow handled earlier in snowflake_login_with_client().
-        // If we reach here, the code structure was broken - Okta should never go through create_credentials().
-        LoginMethod::Okta { .. } => LoginMethodBypassesCredentialsSnafu { method: "Okta" }.fail(),
+        // Note: Okta is handled directly in auth_request_data() before create_credentials() is called
+        LoginMethod::Okta { .. } => unreachable!("Okta is handled in auth_request_data"),
         LoginMethod::PrivateKey {
             username,
             private_key,
@@ -166,14 +165,6 @@ pub enum AuthError {
     #[snafu(display("Failed to sign JWT token"))]
     JWTSigning {
         source: jwt::Error,
-        #[snafu(implicit)]
-        location: Location,
-    },
-    /// Login method uses a different authentication flow and should not reach create_credentials().
-    /// This error indicates a bug in the code structure if ever triggered.
-    #[snafu(display("{method} login bypasses create_credentials() - this is a code structure bug"))]
-    LoginMethodBypassesCredentials {
-        method: &'static str,
         #[snafu(implicit)]
         location: Location,
     },

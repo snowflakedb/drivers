@@ -141,7 +141,8 @@ fn base_auth_request_data(login_parameters: &LoginParameters) -> AuthRequestData
     }
 }
 
-pub fn auth_request_data(
+pub async fn auth_request_data(
+    client: &reqwest::Client,
     login_parameters: &LoginParameters,
     session_parameters: Option<&HashMap<String, String>>,
 ) -> Result<AuthRequestData, RestError> {
@@ -155,21 +156,50 @@ pub fn auth_request_data(
         data.session_parameters = Some(json_params);
     }
 
-    match create_credentials(login_parameters).context(AuthenticationSnafu)? {
-        Credentials::Password { username, password } => {
-            data.login_name = Some(username);
-            data.password = Some(password);
-            data.authenticator = Some("SNOWFLAKE".to_string());
+    match &login_parameters.login_method {
+        LoginMethod::Okta {
+            username,
+            password,
+            okta_url,
+            disable_saml_url_check,
+            authentication_timeout_secs,
+        } => {
+            let retry_policy = RetryPolicy::default();
+            let saml_html = fetch_okta_saml_html(
+                client,
+                login_parameters,
+                &retry_policy,
+                okta_url,
+                username,
+                password,
+                *disable_saml_url_check,
+                *authentication_timeout_secs,
+            )
+            .await
+            .context(OktaSnafu)?;
+
+            data.login_name = Some(username.clone());
+            data.authenticator = Some(okta_url.clone());
+            data.raw_saml_response = Some(saml_html);
         }
-        Credentials::Jwt { username, token } => {
-            data.login_name = Some(username);
-            data.token = Some(token);
-            data.authenticator = Some("SNOWFLAKE_JWT".to_string());
-        }
-        Credentials::Pat { username, token } => {
-            data.login_name = Some(username);
-            data.token = Some(token);
-            data.authenticator = Some("PROGRAMMATIC_ACCESS_TOKEN".to_string());
+        _ => {
+            match create_credentials(login_parameters).context(AuthenticationSnafu)? {
+                Credentials::Password { username, password } => {
+                    data.login_name = Some(username);
+                    data.password = Some(password);
+                    data.authenticator = Some("SNOWFLAKE".to_string());
+                }
+                Credentials::Jwt { username, token } => {
+                    data.login_name = Some(username);
+                    data.token = Some(token);
+                    data.authenticator = Some("SNOWFLAKE_JWT".to_string());
+                }
+                Credentials::Pat { username, token } => {
+                    data.login_name = Some(username);
+                    data.token = Some(token);
+                    data.authenticator = Some("PROGRAMMATIC_ACCESS_TOKEN".to_string());
+                }
+            }
         }
     }
     Ok(data)
@@ -211,44 +241,9 @@ pub async fn snowflake_login_with_client(
         "Extracted connection settings"
     );
 
-    // Build the login request. For Okta, we must obtain RAW_SAML_RESPONSE first.
-    let auth_request_data = match &login_parameters.login_method {
-        LoginMethod::Okta {
-            username,
-            password,
-            okta_url,
-            disable_saml_url_check,
-            authentication_timeout_secs,
-        } => {
-            let retry_policy = RetryPolicy::default();
-            let saml_html = fetch_okta_saml_html(
-                client,
-                login_parameters,
-                &retry_policy,
-                okta_url,
-                username,
-                password,
-                *disable_saml_url_check,
-                *authentication_timeout_secs,
-            )
-            .await
-            .context(OktaSnafu)?;
-
-            let mut data = base_auth_request_data(login_parameters);
-            if let Some(params) = session_parameters {
-                let json_params = params
-                    .iter()
-                    .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
-                    .collect();
-                data.session_parameters = Some(json_params);
-            }
-            data.login_name = Some(username.clone());
-            data.authenticator = Some(okta_url.clone());
-            data.raw_saml_response = Some(saml_html);
-            data
-        }
-        _ => auth_request_data(login_parameters, session_parameters)?,
-    };
+    // Build the login request data (handles all auth methods including Okta SAML exchange)
+    let auth_request_data =
+        auth_request_data(client, login_parameters, session_parameters).await?;
     tracing::Span::current().record("login_name", &auth_request_data.login_name);
     let login_request = AuthRequest {
         data: auth_request_data,
