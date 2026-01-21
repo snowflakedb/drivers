@@ -16,8 +16,7 @@ repositories {
 }
 
 dependencies {
-    // No external dependencies for the stub implementation
-    testImplementation 'junit:junit:4.13.2'
+    testImplementation 'org.junit.jupiter:junit-jupiter:5.10.2'
     testImplementation 'org.mockito:mockito-core:4.6.1'
     testImplementation 'org.json:json:20231013'
     implementation 'org.slf4j:slf4j-api:2.0.9'
@@ -127,7 +126,7 @@ publishing {
 }
 
 test {
-    useJUnit()
+    useJUnitPlatform()
     finalizedBy jacocoTestReport
 
     if (JavaVersion.current().isJava9Compatible()) {
@@ -142,6 +141,9 @@ test {
         showExceptions true
         showCauses true
         showStackTraces true
+    }
+    afterTest { desc, result ->
+        println "TEST ${desc.className}.${desc.name}: ${result.resultType}"
     }
     // Set CORE_PATH environment variable for tests
     def libPath = file('../target/debug').exists() ? '../target/debug' : '../target/release'

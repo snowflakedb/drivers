@@ -1,16 +1,17 @@
 package com.snowflake.jdbc;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.sql.Driver;
 import java.sql.DriverManager;
 import java.sql.DriverPropertyInfo;
 import java.sql.SQLException;
 import java.sql.SQLFeatureNotSupportedException;
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 
 /** Basic tests for the Snowflake JDBC Driver */
 public class SnowflakeDriverTest {
@@ -19,8 +20,8 @@ public class SnowflakeDriverTest {
   public void testDriverRegistration() throws SQLException {
     // Test that the driver is properly registered
     Driver driver = DriverManager.getDriver("jdbc:snowflake://test.snowflakecomputing.com");
-    assertNotNull("Driver should be registered", driver);
-    assertTrue("Driver should be instance of SnowflakeDriver", driver instanceof SnowflakeDriver);
+    assertNotNull(driver, "Driver should be registered");
+    assertTrue(driver instanceof SnowflakeDriver, "Driver should be instance of SnowflakeDriver");
   }
 
   @Test
@@ -29,32 +30,35 @@ public class SnowflakeDriverTest {
 
     // Test valid URLs
     assertTrue(
-        "Should accept snowflake URL",
-        driver.acceptsURL("jdbc:snowflake://test.snowflakecomputing.com"));
+        driver.acceptsURL("jdbc:snowflake://test.snowflakecomputing.com"),
+        "Should accept snowflake URL");
     assertTrue(
-        "Should accept snowflake URL with parameters",
-        driver.acceptsURL("jdbc:snowflake://test.snowflakecomputing.com?db=test"));
+        driver.acceptsURL("jdbc:snowflake://test.snowflakecomputing.com?db=test"),
+        "Should accept snowflake URL with parameters");
 
     // Test invalid URLs
-    assertFalse("Should not accept null URL", driver.acceptsURL(null));
+    assertFalse(driver.acceptsURL(null), "Should not accept null URL");
     assertFalse(
-        "Should not accept non-snowflake URL",
-        driver.acceptsURL("jdbc:mysql://localhost:3306/test"));
-    assertFalse("Should not accept malformed URL", driver.acceptsURL("not-a-url"));
+        driver.acceptsURL("jdbc:mysql://localhost:3306/test"),
+        "Should not accept non-snowflake URL");
+    assertFalse(driver.acceptsURL("not-a-url"), "Should not accept malformed URL");
   }
 
   @Test
   public void testDriverVersion() {
     SnowflakeDriver driver = new SnowflakeDriver();
-    assertEquals("Major version should be 0", 0, driver.getMajorVersion());
-    assertEquals("Minor version should be 1", 1, driver.getMinorVersion());
-    assertFalse("Driver should not claim JDBC compliance in stub", driver.jdbcCompliant());
+    assertEquals(0, driver.getMajorVersion(), "Major version should be 0");
+    assertEquals(1, driver.getMinorVersion(), "Minor version should be 1");
+    assertFalse(driver.jdbcCompliant(), "Driver should not claim JDBC compliance in stub");
   }
 
-  @Test(expected = SQLFeatureNotSupportedException.class)
+  @Test
   public void testGetParentLogger() throws SQLException {
     SnowflakeDriver driver = new SnowflakeDriver();
-    driver.getParentLogger(); // Should throw SQLFeatureNotSupportedException
+    assertThrows(
+        SQLFeatureNotSupportedException.class,
+        driver::getParentLogger,
+        "Expected getParentLogger to throw");
   }
 
   @Test
@@ -62,7 +66,7 @@ public class SnowflakeDriverTest {
     SnowflakeDriver driver = new SnowflakeDriver();
     DriverPropertyInfo[] props =
         driver.getPropertyInfo("jdbc:snowflake://test.snowflakecomputing.com", null);
-    assertNotNull("Property info should not be null", props);
-    assertEquals("Should return empty array in stub", 0, props.length);
+    assertNotNull(props, "Property info should not be null");
+    assertEquals(0, props.length, "Should return empty array in stub");
   }
 }

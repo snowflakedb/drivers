@@ -1,8 +1,8 @@
 package com.snowflake.jdbc;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.InputStream;
 import java.io.InputStreamReader;
@@ -13,7 +13,7 @@ import java.sql.Statement;
 import java.util.Properties;
 import org.json.JSONObject;
 import org.json.JSONTokener;
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 
 /** Tests for executing queries through the Snowflake JDBC Driver */
 public class SnowflakeQueryTest {
@@ -85,9 +85,9 @@ public class SnowflakeQueryTest {
       ResultSet rs = stmt.executeQuery("SELECT 1");
 
       // Verify result
-      assertNotNull("ResultSet should not be null", rs);
-      assertTrue("ResultSet should have one row", rs.next());
-      assertEquals("Result should be 1", 1, rs.getInt(1));
+      assertNotNull(rs, "ResultSet should not be null");
+      assertTrue(rs.next(), "ResultSet should have one row");
+      assertEquals(1, rs.getInt(1), "Result should be 1");
 
       // Clean up
       rs.close();

@@ -1,9 +1,9 @@
 package com.snowflake.jdbc;
 
-import static org.junit.Assert.assertArrayEquals;
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.InputStream;
 import java.io.InputStreamReader;
@@ -15,7 +15,7 @@ import java.sql.Statement;
 import java.util.Properties;
 import org.json.JSONObject;
 import org.json.JSONTokener;
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 
 public class SnowflakeResultSetGettersTest {
 
