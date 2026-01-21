@@ -33,15 +33,6 @@ np = pytest.importorskip("numpy")
 NUMBER_PRECISION = 38
 
 
-@pytest.fixture(autouse=True)
-def setup_decimal_precision():
-    """Set decimal context precision to 38 for all NUMBER tests."""
-    old_prec = getcontext().prec
-    getcontext().prec = NUMBER_PRECISION
-    yield
-    getcontext().prec = old_prec
-
-
 class TestNumberNumPy:
     """Test suite for NUMBER type NumPy conversion (Python-specific)."""
 
