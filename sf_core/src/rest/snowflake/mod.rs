@@ -2,7 +2,7 @@
 pub mod async_exec;
 mod auth;
 pub mod error;
-mod okta;
+mod native_okta;
 pub mod query_request;
 pub mod query_response;
 
@@ -16,7 +16,7 @@ use crate::rest::snowflake::auth::{
     AuthRequest, AuthRequestClientEnvironment, AuthRequestData, AuthResponse,
 };
 use crate::rest::snowflake::error::SfError;
-use crate::rest::snowflake::okta::fetch_okta_saml_html;
+use crate::rest::snowflake::native_okta::fetch_native_okta_saml;
 use crate::tls::client::create_tls_client_with_config;
 use crate::tls::error::TlsError;
 use reqwest::{self, header};
@@ -157,7 +157,7 @@ pub async fn auth_request_data(
     }
 
     match &login_parameters.login_method {
-        LoginMethod::Okta {
+        LoginMethod::NativeOkta {
             username,
             password,
             okta_url,
@@ -165,7 +165,7 @@ pub async fn auth_request_data(
             authentication_timeout_secs,
         } => {
             let retry_policy = RetryPolicy::default();
-            let saml_html = fetch_okta_saml_html(
+            let saml_html = fetch_native_okta_saml(
                 client,
                 login_parameters,
                 &retry_policy,
@@ -176,7 +176,7 @@ pub async fn auth_request_data(
                 *authentication_timeout_secs,
             )
             .await
-            .context(OktaSnafu)?;
+            .context(NativeOktaSnafu)?;
 
             data.login_name = Some(username.clone());
             data.authenticator = Some(okta_url.clone());
@@ -909,9 +909,9 @@ pub enum RestError {
         #[snafu(implicit)]
         location: Location,
     },
-    #[snafu(display("Okta native SSO failed"))]
-    Okta {
-        source: okta::OktaError,
+    #[snafu(display("Native Okta SSO failed"))]
+    NativeOkta {
+        source: native_okta::NativeOktaError,
         #[snafu(implicit)]
         location: Location,
     },

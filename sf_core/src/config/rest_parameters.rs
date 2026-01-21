@@ -122,10 +122,10 @@ pub enum LoginMethod {
         username: String,
         password: String,
     },
-    Okta {
+    NativeOkta {
         /// Snowflake user / IdP login name (UD currently uses a single username for both).
         username: String,
-        /// IdP password (Okta native SSO).
+        /// IdP password (native Okta SSO).
         password: String,
         /// Okta authenticator URL endpoint (native Okta SSO).
         okta_url: String,
@@ -318,7 +318,7 @@ impl LoginMethod {
                 let authentication_timeout_secs =
                     settings.get_u64("authentication_timeout").unwrap_or(120);
 
-                Ok(Self::Okta {
+                Ok(Self::NativeOkta {
                     username,
                     password,
                     okta_url: authenticator,

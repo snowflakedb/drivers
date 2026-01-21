@@ -12,7 +12,7 @@ use url::Url;
 
 #[derive(Debug, Snafu)]
 #[snafu(visibility(pub(crate)))]
-pub enum OktaError {
+pub enum NativeOktaError {
     #[snafu(display("Authentication timeout exceeded (budget {budget:?})"))]
     AuthenticationTimeout {
         budget: Duration,
@@ -197,7 +197,7 @@ fn remaining_policy(
     base: &RetryPolicy,
     start: Instant,
     budget: Duration,
-) -> Result<RetryPolicy, OktaError> {
+) -> Result<RetryPolicy, NativeOktaError> {
     let elapsed = start.elapsed();
     if elapsed >= budget {
         return AuthenticationTimeoutSnafu { budget }.fail();
@@ -208,7 +208,7 @@ fn remaining_policy(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(crate) async fn fetch_okta_saml_html(
+pub(crate) async fn fetch_native_okta_saml(
     client: &reqwest::Client,
     login_parameters: &LoginParameters,
     base_policy: &RetryPolicy,
@@ -217,7 +217,7 @@ pub(crate) async fn fetch_okta_saml_html(
     password: &str,
     disable_saml_url_check: bool,
     authentication_timeout_secs: u64,
-) -> Result<String, OktaError> {
+) -> Result<String, NativeOktaError> {
     let budget = Duration::from_secs(authentication_timeout_secs);
     let start = Instant::now();
 
@@ -271,7 +271,7 @@ pub(crate) async fn fetch_okta_saml_html(
         }
         .fail();
     }
-    let idp_data = idp.data.ok_or_else(|| OktaError::MissingField {
+    let idp_data = idp.data.ok_or_else(|| NativeOktaError::MissingField {
         field: "data",
         location: Location::new(file!(), line!(), column!()),
     })?;
@@ -349,7 +349,7 @@ pub(crate) async fn fetch_okta_saml_html(
         let one_time = token_resp
             .session_token
             .or(token_resp.cookie_token)
-            .ok_or_else(|| OktaError::MissingOneTimeToken {
+            .ok_or_else(|| NativeOktaError::MissingOneTimeToken {
                 location: Location::new(file!(), line!(), column!()),
             })?;
         // relayState is optional - Okta doesn't always return it
