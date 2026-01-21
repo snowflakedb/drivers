@@ -24,5 +24,7 @@ def setup_decimal_precision():
     """
     old_prec = getcontext().prec
     getcontext().prec = DECIMAL_PRECISION_38
-    yield
-    getcontext().prec = old_prec
+    try:
+        yield
+    finally:
+        getcontext().prec = old_prec
