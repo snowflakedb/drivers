@@ -329,7 +329,7 @@ class TestDecimal128ToDecimal:
         """
         context = ArrowConverterContext()
         int128_bytes = int_value.to_bytes(16, byteorder=sys.byteorder, signed=True)
-        result = context.DECIMAL128_to_decimal(int128_bytes, scale)
+        result = context.DECIMAL128_to_decimal_or_int(int128_bytes, scale)
         assert result == expected
         assert isinstance(result, expected_type), f"Expected {expected_type}, got {type(result)}"
 

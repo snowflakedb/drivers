@@ -140,7 +140,7 @@ class ArrowConverterContext:
         nanoseconds = int(decimal.Decimal(epoch).scaleb(9) + decimal.Decimal(fraction))
         return numpy.datetime64(nanoseconds, "ns")
 
-    def DECIMAL128_to_decimal(self, int128_bytes: bytes, scale: int) -> decimal.Decimal | int:
+    def DECIMAL128_to_decimal_or_int(self, int128_bytes: bytes, scale: int) -> decimal.Decimal | int:
         """When scale=0 (integer), returns Python int. When scale>0 (decimal), returns Python Decimal.
 
         Large scale integers (int128) fall back here as they're not supported by native C++ conversion.

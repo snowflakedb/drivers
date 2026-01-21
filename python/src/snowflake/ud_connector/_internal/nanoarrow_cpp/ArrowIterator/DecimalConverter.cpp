@@ -71,7 +71,7 @@ PyObject* DecimalFromDecimalConverter::toPyObject(int64_t rowIndex) const {
   PyObject* int128_bytes = PyBytes_FromStringAndSize(&outBytes, 16);
   */
   PyObject* return_object =
-      PyObject_CallMethod(m_context, "DECIMAL128_to_decimal", "Si", int128_bytes, m_scale);
+      PyObject_CallMethod(m_context, "DECIMAL128_to_decimal_or_int", "Si", int128_bytes, m_scale);
   /**
   int128_bytes is a new referenced created by PyBytes_FromStringAndSize,
   to avoid memory leak we need to free it after usage
