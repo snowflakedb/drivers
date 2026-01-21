@@ -1,3 +1,4 @@
+use rand::random;
 use std::env;
 use std::fs;
 use std::net::TcpListener;
@@ -46,7 +47,7 @@ impl WiremockClient {
         // Create a throwaway keystore for HTTPS. This is test-only and pairs with
         // verify_certificates=false in the client TLS config (option A).
         // Use a unique ID per WireMock instance to avoid conflicts when tests run in parallel
-        let unique_id = format!("{}-{:x}", std::process::id(), rand::random::<u64>());
+        let unique_id = format!("{}-{:x}", std::process::id(), random::<u64>());
         let keystore_dir = env::temp_dir().join(format!("ud-wiremock-{}", unique_id));
         fs::create_dir_all(&keystore_dir).expect("Failed to create temp keystore dir");
         // Use a simple JKS keystore for Wiremock HTTPS (server mode, no MITM).
