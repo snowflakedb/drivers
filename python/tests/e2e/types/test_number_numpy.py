@@ -17,8 +17,6 @@ Use standard mode (Python int/Decimal) when precision is critical.
 
 from __future__ import annotations
 
-from decimal import getcontext
-
 import pytest
 
 from .utils import assert_floats_equal, assert_type
