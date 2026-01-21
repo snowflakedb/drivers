@@ -28,7 +28,6 @@ Feature: BOOLEAN type support
     Given Snowflake client is logged in
     When Query "SELECT FALSE::BOOLEAN, NULL::BOOLEAN, TRUE::BOOLEAN, NULL::BOOLEAN" is executed
     Then Result should contain [FALSE, NULL, TRUE, NULL]
-    
   @python_e2e
   Scenario: should download large result set with multiple chunks from GENERATOR
     Given Snowflake client is logged in
