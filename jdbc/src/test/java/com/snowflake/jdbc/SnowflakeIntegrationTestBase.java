@@ -5,6 +5,7 @@ import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.sql.Connection;
 import java.sql.DriverManager;
+import java.sql.Statement;
 import java.util.Properties;
 import org.json.JSONObject;
 import org.json.JSONTokener;
@@ -49,6 +50,20 @@ public abstract class SnowflakeIntegrationTestBase {
       defaultUrl += ":" + props.getProperty("port");
     }
     return props.getProperty("url", defaultUrl);
+  }
+
+  protected void ensureDatabaseAndSchema(Connection conn) throws Exception {
+    Properties props = loadConnectionProperties();
+    String database = props.getProperty("db");
+    String schema = props.getProperty("schema");
+    try (Statement stmt = conn.createStatement()) {
+      if (database != null && !database.isEmpty()) {
+        stmt.execute("use database " + database);
+      }
+      if (schema != null && !schema.isEmpty()) {
+        stmt.execute("use schema " + schema);
+      }
+    }
   }
 
   private void addOptionalConnectionProperties(JSONObject params, Properties props) {
