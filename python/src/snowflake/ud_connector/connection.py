@@ -2,6 +2,8 @@
 PEP 249 Database API 2.0 Connection Objects
 
 This module defines the Connection class as specified in PEP 249.
+
+# TODO: Remove this comment - testing codecov PR comments
 """
 
 from __future__ import annotations
