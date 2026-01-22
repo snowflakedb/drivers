@@ -67,6 +67,22 @@ public class SnowflakeResultSetCursorTest extends SnowflakeIntegrationTestBase {
   }
 
   @Test
+  public void testCloseAfterIsLastPrefetch() throws Exception {
+    try (Connection conn = openConnection();
+        Statement stmt = conn.createStatement()) {
+      ensureDatabaseAndSchema(conn);
+      try (ResultSet rs =
+          stmt.executeQuery("select 1 as id union all select 2 as id order by id")) {
+        assertTrue(rs.next());
+        assertTrue(rs.next());
+        assertTrue(rs.isLast());
+        rs.close();
+        assertTrue(rs.isClosed());
+      }
+    }
+  }
+
+  @Test
   public void testNextAfterCloseReturnsFalse() throws Exception {
     try (Connection conn = openConnection();
         Statement stmt = conn.createStatement()) {

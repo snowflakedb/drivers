@@ -108,7 +108,61 @@ public class SnowflakeResultSet implements ResultSet {
 
   @Override
   public void close() throws SQLException {
+    if (closed) {
+      return;
+    }
     closed = true;
+    SQLException failure = null;
+    try {
+      if (currentRootOwned && currentRoot != null) {
+        currentRoot.close();
+      }
+    } catch (Exception e) {
+      failure = appendCloseFailure(failure, "Failed to close current Arrow batch", e);
+    }
+    try {
+      if (prefetchedRoot != null) {
+        prefetchedRoot.close();
+      }
+    } catch (Exception e) {
+      failure = appendCloseFailure(failure, "Failed to close prefetched Arrow batch", e);
+    }
+    try {
+      if (reader != null) {
+        reader.close();
+      }
+    } catch (IOException e) {
+      failure = appendCloseFailure(failure, "Failed to close Arrow reader", e);
+    }
+    try {
+      if (stream != null) {
+        stream.close();
+      }
+    } catch (Exception e) {
+      failure = appendCloseFailure(failure, "Failed to close Arrow stream", e);
+    }
+    try {
+      if (allocator != null) {
+        allocator.close();
+      }
+    } catch (Exception e) {
+      failure = appendCloseFailure(failure, "Failed to close Arrow allocator", e);
+    } finally {
+      currentRoot = null;
+      currentRootOwned = false;
+      prefetchedRoot = null;
+      reader = null;
+      stream = null;
+      allocator = null;
+      converterCache.clear();
+      hasLoadedBatch = false;
+      hasPrefetchedBatch = false;
+      currentBatchRowCount = 0;
+      currentRowInBatch = -1;
+    }
+    if (failure != null) {
+      throw failure;
+    }
   }
 
   @Override
@@ -1243,6 +1297,15 @@ public class SnowflakeResultSet implements ResultSet {
     if (closed) {
       throw new SQLException("ResultSet is closed");
     }
+  }
+
+  private SQLException appendCloseFailure(SQLException failure, String message, Exception cause) {
+    SQLException next = new SQLException(message, cause);
+    if (failure == null) {
+      return next;
+    }
+    failure.addSuppressed(next);
+    return failure;
   }
 
   private void checkRowPosition() throws SQLException {
