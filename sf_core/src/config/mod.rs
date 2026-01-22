@@ -20,4 +20,10 @@ pub enum ConfigError {
         #[snafu(implicit)]
         location: Location,
     },
+    #[snafu(display("Conflicting parameters: {explanation}"))]
+    ConflictingParameters {
+        explanation: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
 }

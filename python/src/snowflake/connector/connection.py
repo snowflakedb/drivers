@@ -15,6 +15,7 @@ from snowflake.connector._internal.protobuf_gen.database_driver_v1_services impo
     ConnectionGetInfoResponse,
     ConnectionInitRequest,
     ConnectionNewRequest,
+    ConnectionSetOptionBytesRequest,
     ConnectionSetOptionDoubleRequest,
     ConnectionSetOptionIntRequest,
     ConnectionSetOptionStringRequest,
@@ -24,6 +25,7 @@ from snowflake.connector._internal.protobuf_gen.database_driver_v1_services impo
 from snowflake.connector._internal.snowflake_restful import SnowflakeRestful
 
 from ._internal import internal_api
+from ._internal._private_key_helper import normalize_private_key
 from ._internal.api_client.client_api import database_driver_client
 from ._internal.decorators import backward_compatibility
 from ._internal.text_utils import split_statements
@@ -48,30 +50,40 @@ class Connection:
             password: Password
             host: Host name
             port: Port number
+            private_key: Private key in bytes, str (base64), or RSAPrivateKey format
             **kwargs: Additional connection parameters
         """
         kwargs = self._check_if_read_from_config(kwargs)
         kwargs = self._rewrite_private_key_password(kwargs)
-        kwargs = self._rewrite_authenticator(kwargs)
 
         self.db_api = database_driver_client()
         self.db_handle = self.db_api.database_new(DatabaseNewRequest()).db_handle
         self.db_api.database_init(DatabaseInitRequest(db_handle=self.db_handle))
         self.conn_handle = self.db_api.connection_new(ConnectionNewRequest()).conn_handle
+
+        # Pre-process private_key if present - normalize for Rust core
+        if "private_key" in kwargs:
+            kwargs["private_key"] = normalize_private_key(kwargs["private_key"])  # type: ignore
+
         for key, value in kwargs.items():
             if isinstance(value, int):
                 self.db_api.connection_set_option_int(
                     ConnectionSetOptionIntRequest(conn_handle=self.conn_handle, key=key, value=value)
                 )
 
-            if isinstance(value, str):
+            elif isinstance(value, str):
                 self.db_api.connection_set_option_string(
                     ConnectionSetOptionStringRequest(conn_handle=self.conn_handle, key=key, value=value)
                 )
 
-            if isinstance(value, float):
+            elif isinstance(value, float):
                 self.db_api.connection_set_option_double(
                     ConnectionSetOptionDoubleRequest(conn_handle=self.conn_handle, key=key, value=value)
+                )
+
+            elif isinstance(value, bytes):  # type: ignore
+                self.db_api.connection_set_option_bytes(
+                    ConnectionSetOptionBytesRequest(conn_handle=self.conn_handle, key=key, value=value)
                 )
 
         self.db_api.connection_init(ConnectionInitRequest(conn_handle=self.conn_handle, db_handle=self.db_handle))
@@ -284,13 +296,6 @@ class Connection:
     def _rewrite_private_key_password(self, kwargs: ConnectionParameters) -> ConnectionParameters:
         if "private_key_file_pwd" in kwargs:
             kwargs = {**kwargs, "private_key_password": kwargs["private_key_file_pwd"]}
-        return kwargs
-
-    @backward_compatibility
-    def _rewrite_authenticator(self, kwargs: ConnectionParameters) -> ConnectionParameters:
-        # Old python driver rewrites the authenticator if private key is present
-        if "private_key_file" in kwargs:
-            kwargs = {**kwargs, "authenticator": "SNOWFLAKE_JWT"}
         return kwargs
 
 
