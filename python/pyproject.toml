@@ -25,6 +25,7 @@ classifiers = [
 ]
 requires-python = ">=3.9"
 dependencies = [
+    "cryptography>=44.0.1",
     "protobuf>=6.32.1",
     "pytz",
 ]

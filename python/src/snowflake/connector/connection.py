@@ -11,6 +11,7 @@ from typing import Any
 from snowflake.connector._internal.protobuf_gen.database_driver_v1_services import (  # type: ignore[attr-defined]
     ConnectionInitRequest,
     ConnectionNewRequest,
+    ConnectionSetOptionBytesRequest,
     ConnectionSetOptionDoubleRequest,
     ConnectionSetOptionIntRequest,
     ConnectionSetOptionStringRequest,
@@ -18,6 +19,7 @@ from snowflake.connector._internal.protobuf_gen.database_driver_v1_services impo
     DatabaseNewRequest,
 )
 
+from ._internal._private_key_helper import normalize_private_key
 from ._internal.api_client.client_api import database_driver_client
 from .cursor import Cursor
 from .exceptions import InterfaceError, NotSupportedError
@@ -36,30 +38,40 @@ class Connection:
             password: Password
             host: Host name
             port: Port number
+            private_key: Private key in bytes, str (base64), or RSAPrivateKey format
             **kwargs: Additional connection parameters
         """
         self.db_api = database_driver_client()
         self.db_handle = self.db_api.database_new(DatabaseNewRequest()).db_handle
         self.db_api.database_init(DatabaseInitRequest(db_handle=self.db_handle))
         self.conn_handle = self.db_api.connection_new(ConnectionNewRequest()).conn_handle
+
+        # Pre-process private_key if present - normalize for Rust core
+        if "private_key" in kwargs:
+            kwargs["private_key"] = normalize_private_key(kwargs["private_key"])
+
         for key, value in kwargs.items():
             if isinstance(value, int):
                 self.db_api.connection_set_option_int(
                     ConnectionSetOptionIntRequest(conn_handle=self.conn_handle, key=key, value=value)
                 )
 
-            if isinstance(value, str):
+            elif isinstance(value, str):
                 self.db_api.connection_set_option_string(
                     ConnectionSetOptionStringRequest(conn_handle=self.conn_handle, key=key, value=value)
                 )
 
-            if isinstance(value, float):
+            elif isinstance(value, float):
                 self.db_api.connection_set_option_double(
                     ConnectionSetOptionDoubleRequest(conn_handle=self.conn_handle, key=key, value=value)
                 )
 
+            elif isinstance(value, bytes):
+                self.db_api.connection_set_option_bytes(
+                    ConnectionSetOptionBytesRequest(conn_handle=self.conn_handle, key=key, value=value)
+                )
+
         self.db_api.connection_init(ConnectionInitRequest(conn_handle=self.conn_handle, db_handle=self.db_handle))
-        self.kwargs = kwargs
         self._closed = False
         self._autocommit = False
 

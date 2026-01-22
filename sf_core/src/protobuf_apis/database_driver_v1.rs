@@ -142,6 +142,18 @@ fn to_driver_error(error: &ApiError) -> DriverError {
                 },
             )),
         },
+        ApiError::Configuration {
+            source: ConfigError::ConflictingParameters { explanation, .. },
+            ..
+        } => DriverError {
+            error_type: Some(driver_error::ErrorType::InvalidParameterValue(
+                InvalidParameterValue {
+                    parameter: "private_key/private_key_file".to_string(),
+                    value: "(both set)".to_string(),
+                    explanation: Some(explanation.clone()),
+                },
+            )),
+        },
         ApiError::InvalidArgument { .. } => DriverError {
             error_type: Some(driver_error::ErrorType::InternalError(InternalError {})),
         },
@@ -210,6 +222,10 @@ fn to_driver_exception(error: ApiError) -> DriverException {
             source: ConfigError::MissingParameter { .. },
             ..
         } => StatusCode::MissingParameter,
+        ApiError::Configuration {
+            source: ConfigError::ConflictingParameters { .. },
+            ..
+        } => StatusCode::InvalidParameterValue,
         ApiError::InvalidArgument { .. } => StatusCode::InvalidArgument,
         ApiError::Login {
             source: RestError::LoginError { .. },
