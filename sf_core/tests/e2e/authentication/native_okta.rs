@@ -1,7 +1,12 @@
 use crate::common::snowflake_test_client::SnowflakeTestClient;
 
+// Native Okta E2E tests require VPN access to preprod Snowflake account.
+// Skipped in GH Actions (no VPN), run on Jenkins or locally with:
+//   PARAMETER_PATH=parameters.json cargo test -- --ignored vpn_
+
 #[test]
-fn should_authenticate_using_native_okta() {
+#[ignore = "Requires VPN to access preprod account (run on Jenkins)"]
+fn vpn_should_authenticate_using_native_okta() {
     // Given Okta authentication is configured with valid credentials
     let client = SnowflakeTestClient::with_default_params();
     let okta_url = client
@@ -47,7 +52,8 @@ fn should_authenticate_using_native_okta() {
 }
 
 #[test]
-fn should_fail_native_okta_authentication_with_wrong_credentials() {
+#[ignore = "Requires VPN to access preprod account (run on Jenkins)"]
+fn vpn_should_fail_native_okta_authentication_with_wrong_credentials() {
     // Given Okta authentication is configured with wrong password
     let client = SnowflakeTestClient::with_default_params();
     let okta_url = client
@@ -87,7 +93,8 @@ fn should_fail_native_okta_authentication_with_wrong_credentials() {
 }
 
 #[test]
-fn should_fail_native_okta_authentication_with_wrong_okta_url() {
+#[ignore = "Requires VPN to access preprod account (run on Jenkins)"]
+fn vpn_should_fail_native_okta_authentication_with_wrong_okta_url() {
     // Given Okta authentication is configured with invalid okta url
     let client = SnowflakeTestClient::with_default_params();
     let okta_user = client
