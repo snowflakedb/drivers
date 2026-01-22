@@ -241,6 +241,7 @@ pipeline {
                                     "https://snowflake.codecov.io/upload/github/snowflakedb/universal-driver/commits/${commitSha}/notifications" \
                                     -H "Authorization: token \${CODECOV_TOKEN}" \
                                     -H "Content-Type: application/json" \
+                                    -d '{}' \
                                     || true
                             """
                         }

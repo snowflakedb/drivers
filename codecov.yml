@@ -38,7 +38,7 @@ comment:
   layout: "header,diff,components,tree"
   behavior: default
   require_changes: false
-  require_base: true
+  require_base: false
   require_head: true
   show_carryforward_flags: false
 
