@@ -9,7 +9,7 @@
 # Example: ./scripts/generate_characterization_tests.sh VARCHAR SQL_C_NUMERIC
 #
 # Environment variables:
-#   PARENT_BRANCH - Parent branch to create characterization branch from (default: main)
+#   PARENT_BRANCH - Parent branch to create characterization branch from (default: NO-SNOW-characterization-tests)
 #   CLAUDE_MODEL - Claude model to use (default: sonnet)
 
 set -e
@@ -19,7 +19,8 @@ PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 PROMPT_TEMPLATE="$SCRIPT_DIR/characterization_prompt.md"
 
 # Configuration
-PARENT_BRANCH="${PARENT_BRANCH:-main}"
+# Default parent branch for all characterization test branches
+PARENT_BRANCH="${PARENT_BRANCH:-NO-SNOW-characterization-tests}"
 CLAUDE_MODEL="${CLAUDE_MODEL:-sonnet}"
 
 # Valid Snowflake types
@@ -82,7 +83,7 @@ print_usage() {
     echo "  SQL_C_TYPE       The SQL C type to convert to (e.g., SQL_C_CHAR, SQL_C_NUMERIC)"
     echo ""
     echo "Environment variables:"
-    echo "  PARENT_BRANCH    Parent branch to create from (default: main)"
+    echo "  PARENT_BRANCH    Parent branch to create from (default: NO-SNOW-characterization-tests)"
     echo "  CLAUDE_MODEL     Claude model to use (default: sonnet)"
     echo ""
     echo "Valid Snowflake types:"
