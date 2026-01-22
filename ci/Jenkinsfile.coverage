@@ -226,7 +226,7 @@ pipeline {
     
     post {
         always {
-            node('') {
+            node('build-node-large') {
                 script {
                     try {
                         checkout scm
