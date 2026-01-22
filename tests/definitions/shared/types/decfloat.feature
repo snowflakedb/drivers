@@ -125,4 +125,3 @@ Feature: DECFLOAT type support
     When DECFLOAT values [1E+16384, 1E-16383, -1.234E+8000] are inserted using explicit binding
     And Query "SELECT * FROM <table>" is executed
     Then SELECT should return the same exact values
-
