@@ -40,7 +40,6 @@ comment:
   require_changes: false
   require_base: true
   require_head: true
-  branches: ["main", "develop"]
   show_carryforward_flags: false
 
 component_management:

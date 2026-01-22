@@ -230,22 +230,19 @@ pipeline {
                 script {
                     try {
                         checkout scm
-                        dockerSetup()
                         
-                        docker.image(DOCKER_IMAGE).inside('-u root') {
-                            def commitSha = env.GIT_COMMIT ?: sh(script: 'git rev-parse HEAD', returnStdout: true).trim()
-                            
-                            echo "Notifying Codecov for commit: ${commitSha}"
-                            
-                            withCredentials([string(credentialsId: CODECOV_CREDENTIAL_ID, variable: 'CODECOV_TOKEN')]) {
-                                sh label: 'Notify Codecov', script: """
-                                    codecovcli --enterprise-url https://snowflake.codecov.io \
-                                        send-notifications \
-                                        -t "\${CODECOV_TOKEN}" \
-                                        --git-service github \
-                                        -C ${commitSha}
-                                """
-                            }
+                        def commitSha = env.GIT_COMMIT ?: sh(script: 'git rev-parse HEAD', returnStdout: true).trim()
+                        
+                        echo "Notifying Codecov for commit: ${commitSha}"
+                        
+                        withCredentials([string(credentialsId: CODECOV_CREDENTIAL_ID, variable: 'CODECOV_TOKEN')]) {
+                            sh label: 'Notify Codecov', script: """
+                                curl -X POST \
+                                    "https://snowflake.codecov.io/upload/github/snowflakedb/universal-driver/commits/${commitSha}/notifications" \
+                                    -H "Authorization: token \${CODECOV_TOKEN}" \
+                                    -H "Content-Type: application/json" \
+                                    || true
+                            """
                         }
                     } catch (Exception e) {
                         echo "Warning: Failed to notify Codecov: ${e.message}"
