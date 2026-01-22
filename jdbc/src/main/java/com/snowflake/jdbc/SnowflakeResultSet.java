@@ -41,6 +41,7 @@ import org.apache.arrow.c.Data;
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.vector.FieldVector;
+import org.apache.arrow.vector.VectorSchemaRoot;
 import org.apache.arrow.vector.ipc.ArrowReader;
 import org.apache.arrow.vector.types.pojo.Field;
 
@@ -55,6 +56,15 @@ public class SnowflakeResultSet implements ResultSet {
   private boolean closed = false;
   private boolean wasNull = false;
   private int currentRow = -1;
+  private int currentRowInBatch = -1;
+  private int currentBatchRowCount = 0;
+  private boolean afterLast = false;
+  private boolean onLastRow = false;
+  private boolean hasLoadedBatch = false;
+  private boolean hasPrefetchedBatch = false;
+  private VectorSchemaRoot currentRoot;
+  private boolean currentRootOwned = false;
+  private VectorSchemaRoot prefetchedRoot;
   private int fetchSize = 0;
   private int fetchDirection = FETCH_FORWARD;
 
@@ -78,11 +88,18 @@ public class SnowflakeResultSet implements ResultSet {
 
   @Override
   public boolean next() throws SQLException {
-    checkClosed();
+    if (closed) {
+      return false;
+    }
     try {
-      reader.loadNextBatch();
-      currentRow = 0;
-      ensureSchemaInitialized();
+      boolean hasNext = fetchNextRow();
+      if (!hasNext) {
+        afterLast = true;
+        onLastRow = false;
+        return false;
+      }
+      currentRow++;
+      onLastRow = false;
     } catch (IOException e) {
       throw new RuntimeException(e);
     }
@@ -107,8 +124,8 @@ public class SnowflakeResultSet implements ResultSet {
     checkColumnIndex(columnIndex);
     ArrowVectorConverter converter = getConverter(columnIndex);
     try {
-      String value = converter.toString(0);
-      wasNull = converter.isNull(0);
+      String value = converter.toString(currentRowInBatch);
+      wasNull = converter.isNull(currentRowInBatch);
       return value;
     } catch (SFException e) {
       throw new SQLException("Cannot convert column " + columnIndex + " to String", e);
@@ -117,45 +134,58 @@ public class SnowflakeResultSet implements ResultSet {
 
   @Override
   public boolean getBoolean(int columnIndex) throws SQLException {
-    String value = getString(columnIndex);
-    if (wasNull) {
-      return false;
+    checkClosed();
+    checkRowPosition();
+    checkColumnIndex(columnIndex);
+    ArrowVectorConverter converter = getConverter(columnIndex);
+    try {
+      boolean value = converter.toBoolean(currentRowInBatch);
+      wasNull = converter.isNull(currentRowInBatch);
+      return value;
+    } catch (SFException e) {
+      throw new SQLException("Cannot convert column " + columnIndex + " to boolean", e);
     }
-    return Boolean.parseBoolean(value);
   }
 
   @Override
   public byte getByte(int columnIndex) throws SQLException {
-    String value = getString(columnIndex);
-    if (wasNull) {
-      return 0;
-    }
+    checkClosed();
+    checkRowPosition();
+    checkColumnIndex(columnIndex);
+    ArrowVectorConverter converter = getConverter(columnIndex);
     try {
-      return Byte.parseByte(value);
-    } catch (NumberFormatException e) {
-      throw new SQLException("Cannot convert '" + value + "' to byte", e);
+      byte value = converter.toByte(currentRowInBatch);
+      wasNull = converter.isNull(currentRowInBatch);
+      return value;
+    } catch (SFException e) {
+      throw new SQLException("Cannot convert column " + columnIndex + " to byte", e);
     }
   }
 
   @Override
   public short getShort(int columnIndex) throws SQLException {
-    String value = getString(columnIndex);
-    if (wasNull) {
-      return 0;
-    }
+    checkClosed();
+    checkRowPosition();
+    checkColumnIndex(columnIndex);
+    ArrowVectorConverter converter = getConverter(columnIndex);
     try {
-      return Short.parseShort(value);
-    } catch (NumberFormatException e) {
-      throw new SQLException("Cannot convert '" + value + "' to short", e);
+      short value = converter.toShort(currentRowInBatch);
+      wasNull = converter.isNull(currentRowInBatch);
+      return value;
+    } catch (SFException e) {
+      throw new SQLException("Cannot convert column " + columnIndex + " to short", e);
     }
   }
 
   @Override
   public int getInt(int columnIndex) throws SQLException {
+    checkClosed();
+    checkRowPosition();
+    checkColumnIndex(columnIndex);
     ArrowVectorConverter converter = getConverter(columnIndex);
     try {
-      int value = converter.toInt(0);
-      wasNull = converter.isNull(0);
+      int value = converter.toInt(currentRowInBatch);
+      wasNull = converter.isNull(currentRowInBatch);
       return value;
     } catch (SFException e) {
       throw new SQLException("Cannot convert column " + columnIndex + " to int", e);
@@ -164,23 +194,28 @@ public class SnowflakeResultSet implements ResultSet {
 
   @Override
   public long getLong(int columnIndex) throws SQLException {
-    String value = getString(columnIndex);
-    if (wasNull) {
-      return 0L;
-    }
+    checkClosed();
+    checkRowPosition();
+    checkColumnIndex(columnIndex);
+    ArrowVectorConverter converter = getConverter(columnIndex);
     try {
-      return Long.parseLong(value);
-    } catch (NumberFormatException e) {
-      throw new SQLException("Cannot convert '" + value + "' to long", e);
+      long value = converter.toLong(currentRowInBatch);
+      wasNull = converter.isNull(currentRowInBatch);
+      return value;
+    } catch (SFException e) {
+      throw new SQLException("Cannot convert column " + columnIndex + " to long", e);
     }
   }
 
   @Override
   public float getFloat(int columnIndex) throws SQLException {
+    checkClosed();
+    checkRowPosition();
+    checkColumnIndex(columnIndex);
     ArrowVectorConverter converter = getConverter(columnIndex);
     try {
-      float value = converter.toFloat(0);
-      wasNull = converter.isNull(0);
+      float value = converter.toFloat(currentRowInBatch);
+      wasNull = converter.isNull(currentRowInBatch);
       return value;
     } catch (SFException e) {
       throw new SQLException("Cannot convert column " + columnIndex + " to float", e);
@@ -189,10 +224,13 @@ public class SnowflakeResultSet implements ResultSet {
 
   @Override
   public double getDouble(int columnIndex) throws SQLException {
+    checkClosed();
+    checkRowPosition();
+    checkColumnIndex(columnIndex);
     ArrowVectorConverter converter = getConverter(columnIndex);
     try {
-      double value = converter.toDouble(0);
-      wasNull = converter.isNull(0);
+      double value = converter.toDouble(currentRowInBatch);
+      wasNull = converter.isNull(currentRowInBatch);
       return value;
     } catch (SFException e) {
       throw new SQLException("Cannot convert column " + columnIndex + " to double", e);
@@ -210,10 +248,13 @@ public class SnowflakeResultSet implements ResultSet {
 
   @Override
   public byte[] getBytes(int columnIndex) throws SQLException {
+    checkClosed();
+    checkRowPosition();
+    checkColumnIndex(columnIndex);
     ArrowVectorConverter converter = getConverter(columnIndex);
     try {
-      byte[] value = converter.toBytes(0);
-      wasNull = converter.isNull(0);
+      byte[] value = converter.toBytes(currentRowInBatch);
+      wasNull = converter.isNull(currentRowInBatch);
       return value;
     } catch (SFException e) {
       throw new SQLException("Cannot convert column " + columnIndex + " to bytes", e);
@@ -222,41 +263,17 @@ public class SnowflakeResultSet implements ResultSet {
 
   @Override
   public Date getDate(int columnIndex) throws SQLException {
-    String value = getString(columnIndex);
-    if (wasNull) {
-      return null;
-    }
-    try {
-      return Date.valueOf(value);
-    } catch (IllegalArgumentException e) {
-      throw new SQLException("Cannot convert '" + value + "' to Date", e);
-    }
+    throw new SQLFeatureNotSupportedException("getDate not supported");
   }
 
   @Override
   public Time getTime(int columnIndex) throws SQLException {
-    String value = getString(columnIndex);
-    if (wasNull) {
-      return null;
-    }
-    try {
-      return Time.valueOf(value);
-    } catch (IllegalArgumentException e) {
-      throw new SQLException("Cannot convert '" + value + "' to Time", e);
-    }
+    throw new SQLFeatureNotSupportedException("getTime not supported");
   }
 
   @Override
   public Timestamp getTimestamp(int columnIndex) throws SQLException {
-    String value = getString(columnIndex);
-    if (wasNull) {
-      return null;
-    }
-    try {
-      return Timestamp.valueOf(value);
-    } catch (IllegalArgumentException e) {
-      throw new SQLException("Cannot convert '" + value + "' to Timestamp", e);
-    }
+    throw new SQLFeatureNotSupportedException("getTimestamp not supported");
   }
 
   @Override
@@ -381,10 +398,13 @@ public class SnowflakeResultSet implements ResultSet {
 
   @Override
   public Object getObject(int columnIndex) throws SQLException {
+    checkClosed();
+    checkRowPosition();
+    checkColumnIndex(columnIndex);
     ArrowVectorConverter converter = getConverter(columnIndex);
     try {
-      Object value = converter.toObject(0);
-      wasNull = converter.isNull(0);
+      Object value = converter.toObject(currentRowInBatch);
+      wasNull = converter.isNull(currentRowInBatch);
       return value;
     } catch (SFException e) {
       throw new SQLException("Cannot convert column " + columnIndex + " to Object", e);
@@ -419,10 +439,13 @@ public class SnowflakeResultSet implements ResultSet {
 
   @Override
   public BigDecimal getBigDecimal(int columnIndex) throws SQLException {
+    checkClosed();
+    checkRowPosition();
+    checkColumnIndex(columnIndex);
     ArrowVectorConverter converter = getConverter(columnIndex);
     try {
-      BigDecimal value = converter.toBigDecimal(0);
-      wasNull = converter.isNull(0);
+      BigDecimal value = converter.toBigDecimal(currentRowInBatch);
+      wasNull = converter.isNull(currentRowInBatch);
       return value;
     } catch (SFException e) {
       throw new SQLException("Cannot convert column " + columnIndex + " to BigDecimal", e);
@@ -437,25 +460,31 @@ public class SnowflakeResultSet implements ResultSet {
   @Override
   public boolean isBeforeFirst() throws SQLException {
     checkClosed();
-    return currentRow == -1;
+    return currentRow < 0 && !afterLast;
   }
 
   @Override
   public boolean isAfterLast() throws SQLException {
     checkClosed();
-    return currentRow > 0;
+    return afterLast;
   }
 
   @Override
   public boolean isFirst() throws SQLException {
     checkClosed();
-    return currentRow == 0;
+    return currentRow == 0 && !afterLast;
   }
 
   @Override
   public boolean isLast() throws SQLException {
     checkClosed();
-    return currentRow == 0;
+    if (afterLast || currentRow < 0) {
+      return false;
+    }
+    if (!onLastRow && currentRowInBatch == currentBatchRowCount - 1) {
+      prefetchNextBatchForIsLast();
+    }
+    return onLastRow && !afterLast;
   }
 
   @Override
@@ -481,6 +510,9 @@ public class SnowflakeResultSet implements ResultSet {
   @Override
   public int getRow() throws SQLException {
     checkClosed();
+    if (currentRow < 0 || afterLast) {
+      return 0;
+    }
     return currentRow + 1; // JDBC rows are 1-based
   }
 
@@ -1207,7 +1239,6 @@ public class SnowflakeResultSet implements ResultSet {
     return iface.isAssignableFrom(getClass());
   }
 
-  // Helper methods
   private void checkClosed() throws SQLException {
     if (closed) {
       throw new SQLException("ResultSet is closed");
@@ -1215,11 +1246,11 @@ public class SnowflakeResultSet implements ResultSet {
   }
 
   private void checkRowPosition() throws SQLException {
-    if (currentRow < 0) {
-      throw new SQLException("Before first row");
-    }
-    if (columnNames != null && currentRow >= 1) {
+    if (afterLast) {
       throw new SQLException("After last row");
+    }
+    if (currentRowInBatch < 0) {
+      throw new SQLException("Before first row");
     }
   }
 
@@ -1237,15 +1268,13 @@ public class SnowflakeResultSet implements ResultSet {
       return converterCache.get(columnIndex);
     }
     try {
-      FieldVector vector = reader.getVectorSchemaRoot().getVector(columnIndex - 1);
+      FieldVector vector = getActiveRoot().getVector(columnIndex - 1);
       ArrowVectorConverter converter =
           ArrowVectorConverterUtil.initConverter(vector, EMPTY_CONTEXT, columnIndex - 1);
       converterCache.put(columnIndex, converter);
       return converter;
     } catch (SnowflakeSQLException e) {
       throw new SQLException("Unable to create converter for column " + columnIndex, e);
-    } catch (IOException e) {
-      throw new SQLException("Unable to read Arrow schema for column " + columnIndex, e);
     }
   }
 
@@ -1253,12 +1282,7 @@ public class SnowflakeResultSet implements ResultSet {
     if (columnNames != null && columnTypes != null) {
       return;
     }
-    List<Field> fields;
-    try {
-      fields = reader.getVectorSchemaRoot().getSchema().getFields();
-    } catch (IOException e) {
-      throw new SQLException("Unable to read Arrow schema", e);
-    }
+    List<Field> fields = getActiveRoot().getSchema().getFields();
     columnNames = new String[fields.size()];
     columnTypes = new int[fields.size()];
     for (int i = 0; i < fields.size(); i++) {
@@ -1289,6 +1313,102 @@ public class SnowflakeResultSet implements ResultSet {
       default:
         return Types.OTHER;
     }
+  }
+
+  private boolean fetchNextRow() throws IOException, SQLException {
+    if (afterLast) {
+      return false;
+    }
+    if (!hasLoadedBatch || currentRowInBatch + 1 >= currentBatchRowCount) {
+      if (hasPrefetchedBatch) {
+        setCurrentRoot(prefetchedRoot, false);
+        prefetchedRoot = null;
+        hasPrefetchedBatch = false;
+      } else {
+        VectorSchemaRoot nextRoot = loadNextNonEmptyBatch();
+        if (nextRoot == null) {
+          afterLast = true;
+          return false;
+        }
+        setCurrentRoot(nextRoot, false);
+      }
+      currentBatchRowCount = currentRoot.getRowCount();
+      currentRowInBatch = 0;
+      hasLoadedBatch = true;
+      converterCache.clear();
+      ensureSchemaInitialized();
+      return true;
+    }
+    currentRowInBatch++;
+    return true;
+  }
+
+  private VectorSchemaRoot loadNextNonEmptyBatch() throws IOException {
+    while (reader.loadNextBatch()) {
+      VectorSchemaRoot root = reader.getVectorSchemaRoot();
+      if (root.getRowCount() > 0) {
+        return root;
+      }
+    }
+    return null;
+  }
+
+  private void prefetchNextBatchForIsLast() throws SQLException {
+    if (hasPrefetchedBatch || afterLast) {
+      return;
+    }
+    VectorSchemaRoot snapshot = copyVectorSchemaRoot(getActiveRoot());
+    setCurrentRoot(snapshot, true);
+    converterCache.clear();
+    try {
+      VectorSchemaRoot nextRoot = loadNextNonEmptyBatch();
+      if (nextRoot == null) {
+        onLastRow = true;
+        return;
+      }
+      prefetchedRoot = nextRoot;
+      hasPrefetchedBatch = true;
+      onLastRow = false;
+    } catch (IOException e) {
+      throw new SQLException("Unable to prefetch next batch", e);
+    }
+  }
+
+  private VectorSchemaRoot copyVectorSchemaRoot(VectorSchemaRoot source) {
+    VectorSchemaRoot copy = VectorSchemaRoot.create(source.getSchema(), allocator);
+    int rowCount = source.getRowCount();
+    copy.setRowCount(rowCount);
+    List<FieldVector> sourceVectors = source.getFieldVectors();
+    List<FieldVector> targetVectors = copy.getFieldVectors();
+    for (int vectorIndex = 0; vectorIndex < sourceVectors.size(); vectorIndex++) {
+      FieldVector sourceVector = sourceVectors.get(vectorIndex);
+      FieldVector targetVector = targetVectors.get(vectorIndex);
+      targetVector.allocateNew();
+      for (int rowIndex = 0; rowIndex < rowCount; rowIndex++) {
+        targetVector.copyFromSafe(rowIndex, rowIndex, sourceVector);
+      }
+      targetVector.setValueCount(rowCount);
+    }
+    return copy;
+  }
+
+  private VectorSchemaRoot getActiveRoot() throws SQLException {
+    if (currentRoot != null) {
+      return currentRoot;
+    }
+    try {
+      return reader.getVectorSchemaRoot();
+    } catch (IOException e) {
+      throw new SQLException("Unable to read Arrow schema", e);
+    }
+  }
+
+  private void setCurrentRoot(VectorSchemaRoot root, boolean owned) {
+    if (currentRoot != null && currentRootOwned) {
+      currentRoot.close();
+    }
+    currentRoot = root;
+    currentRootOwned = owned;
   }
 
   /** Simple ResultSetMetaData implementation */
