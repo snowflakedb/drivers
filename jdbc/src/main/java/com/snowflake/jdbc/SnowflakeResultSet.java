@@ -76,6 +76,10 @@ public class SnowflakeResultSet implements ResultSet {
   private final Map<Integer, ArrowVectorConverter> converterCache = new HashMap<>();
   private static final DataConversionContext EMPTY_CONTEXT = new DataConversionContext() {};
 
+  private interface ConverterFunction<T> {
+    T convert(ArrowVectorConverter converter, int rowIndex) throws SFException;
+  }
+
   public SnowflakeResultSet(SnowflakeStatement statement, ExecuteResult result) {
     this.statement = statement;
     ByteString stream_ptr_bytes = result.getStream().getValue();
@@ -173,122 +177,42 @@ public class SnowflakeResultSet implements ResultSet {
 
   @Override
   public String getString(int columnIndex) throws SQLException {
-    checkClosed();
-    checkRowPosition();
-    checkColumnIndex(columnIndex);
-    ArrowVectorConverter converter = getConverter(columnIndex);
-    try {
-      String value = converter.toString(currentRowInBatch);
-      wasNull = converter.isNull(currentRowInBatch);
-      return value;
-    } catch (SFException e) {
-      throw new SQLException("Cannot convert column " + columnIndex + " to String", e);
-    }
+    return getConverted(columnIndex, ArrowVectorConverter::toString);
   }
 
   @Override
   public boolean getBoolean(int columnIndex) throws SQLException {
-    checkClosed();
-    checkRowPosition();
-    checkColumnIndex(columnIndex);
-    ArrowVectorConverter converter = getConverter(columnIndex);
-    try {
-      boolean value = converter.toBoolean(currentRowInBatch);
-      wasNull = converter.isNull(currentRowInBatch);
-      return value;
-    } catch (SFException e) {
-      throw new SQLException("Cannot convert column " + columnIndex + " to boolean", e);
-    }
+    return getConverted(columnIndex, ArrowVectorConverter::toBoolean);
   }
 
   @Override
   public byte getByte(int columnIndex) throws SQLException {
-    checkClosed();
-    checkRowPosition();
-    checkColumnIndex(columnIndex);
-    ArrowVectorConverter converter = getConverter(columnIndex);
-    try {
-      byte value = converter.toByte(currentRowInBatch);
-      wasNull = converter.isNull(currentRowInBatch);
-      return value;
-    } catch (SFException e) {
-      throw new SQLException("Cannot convert column " + columnIndex + " to byte", e);
-    }
+    return getConverted(columnIndex, ArrowVectorConverter::toByte);
   }
 
   @Override
   public short getShort(int columnIndex) throws SQLException {
-    checkClosed();
-    checkRowPosition();
-    checkColumnIndex(columnIndex);
-    ArrowVectorConverter converter = getConverter(columnIndex);
-    try {
-      short value = converter.toShort(currentRowInBatch);
-      wasNull = converter.isNull(currentRowInBatch);
-      return value;
-    } catch (SFException e) {
-      throw new SQLException("Cannot convert column " + columnIndex + " to short", e);
-    }
+    return getConverted(columnIndex, ArrowVectorConverter::toShort);
   }
 
   @Override
   public int getInt(int columnIndex) throws SQLException {
-    checkClosed();
-    checkRowPosition();
-    checkColumnIndex(columnIndex);
-    ArrowVectorConverter converter = getConverter(columnIndex);
-    try {
-      int value = converter.toInt(currentRowInBatch);
-      wasNull = converter.isNull(currentRowInBatch);
-      return value;
-    } catch (SFException e) {
-      throw new SQLException("Cannot convert column " + columnIndex + " to int", e);
-    }
+    return getConverted(columnIndex, ArrowVectorConverter::toInt);
   }
 
   @Override
   public long getLong(int columnIndex) throws SQLException {
-    checkClosed();
-    checkRowPosition();
-    checkColumnIndex(columnIndex);
-    ArrowVectorConverter converter = getConverter(columnIndex);
-    try {
-      long value = converter.toLong(currentRowInBatch);
-      wasNull = converter.isNull(currentRowInBatch);
-      return value;
-    } catch (SFException e) {
-      throw new SQLException("Cannot convert column " + columnIndex + " to long", e);
-    }
+    return getConverted(columnIndex, ArrowVectorConverter::toLong);
   }
 
   @Override
   public float getFloat(int columnIndex) throws SQLException {
-    checkClosed();
-    checkRowPosition();
-    checkColumnIndex(columnIndex);
-    ArrowVectorConverter converter = getConverter(columnIndex);
-    try {
-      float value = converter.toFloat(currentRowInBatch);
-      wasNull = converter.isNull(currentRowInBatch);
-      return value;
-    } catch (SFException e) {
-      throw new SQLException("Cannot convert column " + columnIndex + " to float", e);
-    }
+    return getConverted(columnIndex, ArrowVectorConverter::toFloat);
   }
 
   @Override
   public double getDouble(int columnIndex) throws SQLException {
-    checkClosed();
-    checkRowPosition();
-    checkColumnIndex(columnIndex);
-    ArrowVectorConverter converter = getConverter(columnIndex);
-    try {
-      double value = converter.toDouble(currentRowInBatch);
-      wasNull = converter.isNull(currentRowInBatch);
-      return value;
-    } catch (SFException e) {
-      throw new SQLException("Cannot convert column " + columnIndex + " to double", e);
-    }
+    return getConverted(columnIndex, ArrowVectorConverter::toDouble);
   }
 
   @Override
@@ -302,17 +226,7 @@ public class SnowflakeResultSet implements ResultSet {
 
   @Override
   public byte[] getBytes(int columnIndex) throws SQLException {
-    checkClosed();
-    checkRowPosition();
-    checkColumnIndex(columnIndex);
-    ArrowVectorConverter converter = getConverter(columnIndex);
-    try {
-      byte[] value = converter.toBytes(currentRowInBatch);
-      wasNull = converter.isNull(currentRowInBatch);
-      return value;
-    } catch (SFException e) {
-      throw new SQLException("Cannot convert column " + columnIndex + " to bytes", e);
-    }
+    return getConverted(columnIndex, ArrowVectorConverter::toBytes);
   }
 
   @Override
@@ -452,17 +366,7 @@ public class SnowflakeResultSet implements ResultSet {
 
   @Override
   public Object getObject(int columnIndex) throws SQLException {
-    checkClosed();
-    checkRowPosition();
-    checkColumnIndex(columnIndex);
-    ArrowVectorConverter converter = getConverter(columnIndex);
-    try {
-      Object value = converter.toObject(currentRowInBatch);
-      wasNull = converter.isNull(currentRowInBatch);
-      return value;
-    } catch (SFException e) {
-      throw new SQLException("Cannot convert column " + columnIndex + " to Object", e);
-    }
+    return getConverted(columnIndex, ArrowVectorConverter::toObject);
   }
 
   @Override
@@ -493,17 +397,7 @@ public class SnowflakeResultSet implements ResultSet {
 
   @Override
   public BigDecimal getBigDecimal(int columnIndex) throws SQLException {
-    checkClosed();
-    checkRowPosition();
-    checkColumnIndex(columnIndex);
-    ArrowVectorConverter converter = getConverter(columnIndex);
-    try {
-      BigDecimal value = converter.toBigDecimal(currentRowInBatch);
-      wasNull = converter.isNull(currentRowInBatch);
-      return value;
-    } catch (SFException e) {
-      throw new SQLException("Cannot convert column " + columnIndex + " to BigDecimal", e);
-    }
+    return getConverted(columnIndex, ArrowVectorConverter::toBigDecimal);
   }
 
   @Override
@@ -1338,6 +1232,21 @@ public class SnowflakeResultSet implements ResultSet {
       return converter;
     } catch (SnowflakeSQLException e) {
       throw new SQLException("Unable to create converter for column " + columnIndex, e);
+    }
+  }
+
+  private <T> T getConverted(int columnIndex, ConverterFunction<T> converterFn)
+      throws SQLException {
+    checkClosed();
+    checkRowPosition();
+    checkColumnIndex(columnIndex);
+    ArrowVectorConverter converter = getConverter(columnIndex);
+    try {
+      T value = converterFn.convert(converter, currentRowInBatch);
+      wasNull = converter.isNull(currentRowInBatch);
+      return value;
+    } catch (SFException e) {
+      throw new SQLException("Cannot convert column " + columnIndex, e);
     }
   }
 
