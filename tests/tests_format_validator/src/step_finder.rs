@@ -685,9 +685,13 @@ impl StepFinder {
         let snake_scenario = to_snake_case(scenario_name);
 
         // Filter methods that match the scenario name
+        // Strip vpn_ prefix for VPN-required tests
         let matching_methods = all_methods
             .into_iter()
-            .filter(|(method_name, _line)| strings_match_normalized(method_name, &snake_scenario))
+            .filter(|(method_name, _line)| {
+                let clean_name = method_name.trim_start_matches("vpn_");
+                strings_match_normalized(clean_name, &snake_scenario)
+            })
             .collect();
 
         Ok(matching_methods)
