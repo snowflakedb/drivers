@@ -11,7 +11,7 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from snowflake.ud_connector._internal.arrow_context import (
+from snowflake.connector._internal.arrow_context import (
     PARAMETER_TIMEZONE,
     ZERO_EPOCH,
     ArrowConverterContext,

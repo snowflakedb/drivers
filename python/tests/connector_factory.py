@@ -48,9 +48,9 @@ class UniversalConnectorAdapter(ConnectorAdapter):
 
     def __init__(self):
         # Import the universal connector
-        from snowflake import ud_connector
+        from snowflake import connector
 
-        self.connector = ud_connector
+        self.connector = connector
 
     def connect(self, **kwargs) -> Any:
         """Create a connection using the universal connector."""
@@ -75,7 +75,7 @@ class UniversalConnectorAdapter(ConnectorAdapter):
 class ReferenceConnectorAdapter(ConnectorAdapter):
     """Adapter for the reference Snowflake connector implementation."""
 
-    def __init__(self, package_name: str = "snowflake.connector"):
+    def __init__(self, package_name: str = "old_connector.snowflake.connector"):
         self.package_name = package_name
         try:
             self.connector = importlib.import_module(package_name)

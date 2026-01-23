@@ -13,8 +13,8 @@ WORKDIR /workdir
 COPY python/ /workdir/python/
 
 # Copy the pre-built sf_core library and rust version
-RUN mkdir -p /workdir/python/src/snowflake/ud_connector/_core
-COPY tests/performance/.tmp/libsf_core.so /workdir/python/src/snowflake/ud_connector/_core/libsf_core.so
+RUN mkdir -p /workdir/python/src/snowflake/connector/_core
+COPY tests/performance/.tmp/libsf_core.so /workdir/python/src/snowflake/connector/_core/libsf_core.so
 COPY tests/performance/.tmp/rust_version /etc/rust_version
 
 RUN pip install --no-cache-dir /workdir/python/

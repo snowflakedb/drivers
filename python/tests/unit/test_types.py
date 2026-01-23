@@ -5,7 +5,7 @@ Tests for PEP 249 type objects and constructors.
 import datetime
 import time
 
-from snowflake.ud_connector.types import (
+from snowflake.connector.types import (
     BINARY,
     DATETIME,
     NUMBER,

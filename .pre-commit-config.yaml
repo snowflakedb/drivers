@@ -29,7 +29,7 @@ repos:
         pass_filenames: true
         types_or: [c, c++]
         # to avoid huge diffs in case we need to upgrade nanoarrow
-        exclude: ^python/src/snowflake/ud_connector/_internal/nanoarrow_cpp/
+        exclude: ^python/src/snowflake/connector/_internal/nanoarrow_cpp/
         language: system
     -   id: tests-format-validator
         name: Tests format validator
@@ -40,7 +40,7 @@ repos:
     -   id: python-checks
         name: Python code checks (ruff + mypy)
         description: Run linting, formatting, and type checks on changed Python files
-        entry: bash -c 'cd python && hatch run precommit:check $(echo "$@" | sed "s|python/||g")' --
+        entry: bash -c 'cd python && hatch run precommit:check'
         pass_filenames: true
         files: ^python/.*\.py$
         language: system

@@ -4,7 +4,7 @@ Tests for PEP 249 exception classes.
 
 import pytest
 
-from snowflake.ud_connector.exceptions import (
+from snowflake.connector.exceptions import (
     DatabaseError,
     DataError,
     Error,

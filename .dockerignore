@@ -23,7 +23,7 @@ python/uv.lock
 python/poetry.lock
 
 # Python build artifacts and compiled libraries
-python/src/snowflake/ud_connector/_core/
+python/src/snowflake/connector/_core/
 **/incremental/
 **/*.rlib
 **/deps/*.dylib

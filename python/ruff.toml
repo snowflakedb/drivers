@@ -1,8 +1,9 @@
 line-length = 120
 extend-exclude = [
-    'src/snowflake/ud_connector/_core',
-    'src/snowflake/ud_connector/_internal/protobuf_gen',
-    'src/snowflake/ud_connector/_internal/arrow_context.py'
+    '.hatch/',
+    'src/snowflake/connector/_core',
+    'src/snowflake/connector/_internal/protobuf_gen',
+    'src/snowflake/connector/_internal/arrow_context.py'
 ]
 
 [lint]

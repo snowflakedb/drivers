@@ -2,9 +2,9 @@
 Tests for PEP 249 module interface.
 """
 
-import snowflake.ud_connector as pep249_dbapi
+import snowflake.connector as pep249_dbapi
 
-from snowflake.ud_connector import (
+from snowflake.connector import (
     Binary,
     Connection,
     Cursor,

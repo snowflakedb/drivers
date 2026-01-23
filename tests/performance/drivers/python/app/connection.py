@@ -55,11 +55,11 @@ def execute_setup_queries(cursor, setup_queries):
 def _get_connector(driver_type):
     """Get the appropriate connector module based on driver type."""
     if driver_type == "old":
-        import snowflake.connector
-        return snowflake.connector
+        import old_connector.snowflake.connector
+        return old_connector.snowflake.connector
     else:  # universal
-        from snowflake import ud_connector
-        return ud_connector
+        from snowflake import connector
+        return connector
 
 
 def _get_driver_version(driver_type):

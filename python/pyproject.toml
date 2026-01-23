@@ -44,17 +44,17 @@ include = [
 ]
 exclude = [
     "__pycache__",
-    "src/snowflake/ud_connector/_internal/nanoarrow_cpp/scripts",
+    "src/snowflake/connector/_internal/nanoarrow_cpp/scripts",
 ]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/snowflake"]
 artifacts = [
-    "src/snowflake/ud_connector/_core/*.so",
-    "src/snowflake/ud_connector/_core/*.dylib",
-    "src/snowflake/ud_connector/_core/*.dll",
-    "src/snowflake/ud_connector/_internal/*.so",
-    "src/snowflake/ud_connector/_internal/*.pyd",
+    "src/snowflake/connector/_core/*.so",
+    "src/snowflake/connector/_core/*.dylib",
+    "src/snowflake/connector/_core/*.dll",
+    "src/snowflake/connector/_internal/*.so",
+    "src/snowflake/connector/_internal/*.pyd",
 ]
 
 [tool.hatch.build.targets.sdist.hooks.custom]
@@ -138,9 +138,10 @@ warn_unused_ignores = true
 warn_no_return = true
 warn_unreachable = true
 strict_equality = true
+files = "src/**/"
 
 [[tool.mypy.overrides]]
-module = "snowflake.ud_connector._internal.protobuf_gen.*"
+module = "snowflake.connector._internal.protobuf_gen.*"
 ignore_errors = true
 
 [[tool.mypy.overrides]]
@@ -158,14 +159,14 @@ features = ["test", "dev"]
 check = [
     'ruff format --check {args:src/snowflake tests}',
     'ruff check {args:src/snowflake tests}',
-    'mypy --install-types --non-interactive -p snowflake.ud_connector',
+    'mypy --install-types --non-interactive -p snowflake.connector',
 ]
 fix = [
     'ruff format src/snowflake tests',
     'ruff check --fix src/snowflake tests',
     # Run format once again as linting may have changed files.
     'ruff format src/snowflake tests',
-    'mypy --install-types --non-interactive -p snowflake.ud_connector',
+    'mypy --install-types --non-interactive -p snowflake.connector',
 ]
 
 # Type checking environment
@@ -207,7 +208,8 @@ all-cov = "pytest tests/ --connector=universal --cov=src/snowflake --cov-report=
 [tool.hatch.envs.reference]
 features = ["test"]
 dependencies = [
-    "snowflake-connector-python=={env:REFERENCE_DRIVER_VERSION:3.17.2}",
+    # Install the old version as a specific alias
+    "old_connector@git+https://github.com/snowflakedb/snowflake-connector-python.git@{env:REFERENCE_DRIVER_VERSION:3.17.2}",
 ]
 
 [tool.hatch.envs.reference.scripts]

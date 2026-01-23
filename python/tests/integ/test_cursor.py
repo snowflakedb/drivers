@@ -6,7 +6,7 @@ from decimal import Decimal
 
 import pytest
 
-from snowflake.ud_connector.exceptions import NotSupportedError
+from snowflake.connector.exceptions import NotSupportedError
 
 
 class TestCursorMethods:
@@ -284,8 +284,8 @@ class TestCursorDictResult:
     def test_next_returns_dict(self, cursor):
         """Test next() returns dict with column names as keys."""
         # TODO: Replace with DictCursor when implemented
-        from snowflake.ud_connector._internal.arrow_context import ArrowConverterContext
-        from snowflake.ud_connector._internal.arrow_stream_iterator import (
+        from snowflake.connector._internal.arrow_context import ArrowConverterContext
+        from snowflake.connector._internal.arrow_stream_iterator import (
             ArrowStreamIterator,
         )
 
@@ -301,8 +301,8 @@ class TestCursorDictResult:
     def test_dict_result_large_result(self, cursor):
         """Test dict result with large result set spanning multiple batches."""
         # TODO: Replace with DictCursor when implemented
-        from snowflake.ud_connector._internal.arrow_context import ArrowConverterContext
-        from snowflake.ud_connector._internal.arrow_stream_iterator import (
+        from snowflake.connector._internal.arrow_context import ArrowConverterContext
+        from snowflake.connector._internal.arrow_stream_iterator import (
             ArrowStreamIterator,
         )
 

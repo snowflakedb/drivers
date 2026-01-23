@@ -27,7 +27,7 @@ def _get_core_path() -> Any:
     else:
         lib_name = f"{_CORE_LIB_NAME}.so"
 
-    files = resources.files("snowflake.ud_connector")
+    files = resources.files("snowflake.connector")
     return files.joinpath("_core").joinpath(lib_name)
 
 

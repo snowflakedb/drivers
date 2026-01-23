@@ -36,14 +36,14 @@ class NanoarrowBuildHook(BuildHookInterface):
     PLUGIN_NAME = "nanoarrow"
 
     # Relative paths from src/
-    CONNECTOR_DIR = Path("snowflake") / "ud_connector"
+    CONNECTOR_DIR = Path("snowflake") / "connector"
     INTERNAL_DIR = CONNECTOR_DIR / "_internal"
     NANOARROW_CPP_DIR = INTERNAL_DIR / "nanoarrow_cpp"
     ARROW_ITERATOR_DIR = NANOARROW_CPP_DIR / "ArrowIterator"
     LOGGING_DIR = NANOARROW_CPP_DIR / "Logging"
 
     # Extension module name
-    EXTENSION_NAME = "snowflake.ud_connector._internal.arrow_stream_iterator"
+    EXTENSION_NAME = "snowflake.connector._internal.arrow_stream_iterator"
     PYX_SOURCE = ARROW_ITERATOR_DIR / "arrow_stream_iterator.pyx"
 
     # C++ source files in ArrowIterator directory

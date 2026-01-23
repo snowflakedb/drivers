@@ -31,8 +31,8 @@ def pytest_addoption(parser):
     parser.addoption(
         "--reference-package",
         action="store",
-        default="snowflake.connector",
-        help="Package name for reference connector (default: snowflake.connector)",
+        default="old_connector.snowflake.connector",
+        help="Package name for reference connector (default: old_connector.snowflake.connector)",
     )
 
 

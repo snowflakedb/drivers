@@ -24,7 +24,7 @@ dependencies = [
     "pyyaml>=6.0",
     "benchstore-client-library>=3.9.0",
     # Snowflake connector with secure local storage (includes keyring for token caching)
-    "snowflake-connector-python[secure-local-storage]",
+    "old_connector[secure-local-storage]@git+https://github.com/snowflakedb/snowflake-connector-python.git",
 ]
 
 [tool.hatch.envs.default.env-vars]
