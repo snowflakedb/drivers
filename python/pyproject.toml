@@ -57,9 +57,6 @@ artifacts = [
     "src/snowflake/connector/_internal/*.pyd",
 ]
 
-[tool.hatch.build.targets.sdist.hooks.custom]
-path = "hatch_build.py"
-
 [tool.hatch.build.targets.wheel.hooks.custom]
 path = "hatch_build.py"
 
@@ -180,7 +177,7 @@ features = ["test"]
 dev-mode = false
 
 pre-install-commands = [
-    "pip install {env:WHEEL_PATH:dist/*.whl}"
+    "pip install {env:WHEEL_PATH:dist/*.whl}",
 ]
 
 [tool.hatch.envs.test.env-vars]
@@ -207,9 +204,8 @@ all-cov = "pytest tests/ --connector=universal --cov=src/snowflake --cov-report=
 # Reference connector environment (installs local package + reference connector)
 [tool.hatch.envs.reference]
 features = ["test"]
-dependencies = [
-    # Install the old version as a specific alias
-    "old_connector@git+https://github.com/snowflakedb/snowflake-connector-python.git@{env:REFERENCE_DRIVER_VERSION:3.17.2}",
+pre-install-commands = [
+    "pip install snowflake-connector-python -t old_driver_src"
 ]
 
 [tool.hatch.envs.reference.scripts]

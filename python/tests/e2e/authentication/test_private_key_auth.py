@@ -22,7 +22,9 @@ class TestPrivateKeyAuthentication:
         with connection:
             verify_simple_query_execution(connection)
 
-    def test_should_fail_jwt_authentication_when_invalid_private_key_provided(self, connection_factory):
+    def test_should_fail_jwt_authentication_when_invalid_private_key_provided(
+        self, connection_factory, reference_connector
+    ):
         # Given Authentication is set to JWT and invalid private key file is provided
         invalid_private_key_file = get_test_private_key_path()
 
@@ -34,7 +36,7 @@ class TestPrivateKeyAuthentication:
             )
 
         # Then There is error returned
-        verify_login_error(exception)
+        verify_login_error(exception, reference_connector)
 
 
 def create_jwt_connection(connection_factory, private_key_file, private_key_password=None):

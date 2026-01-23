@@ -5,9 +5,10 @@ This module provides a unified interface to test different Snowflake connector
 implementations with the same test suite.
 """
 
-import importlib
+import importlib.util
 
 from abc import ABC, abstractmethod
+from pathlib import Path
 from typing import Any
 
 from .compatibility import is_new_driver, is_old_driver
@@ -75,12 +76,22 @@ class UniversalConnectorAdapter(ConnectorAdapter):
 class ReferenceConnectorAdapter(ConnectorAdapter):
     """Adapter for the reference Snowflake connector implementation."""
 
-    def __init__(self, package_name: str = "old_connector.snowflake.connector"):
+    def __init__(self, package_name: str = "snowflake.connector"):
         self.package_name = package_name
         try:
-            self.connector = importlib.import_module(package_name)
+            self.connector = self._load_from_sources(package_name)
         except ImportError as e:
             raise ImportError(f"Could not import reference connector '{package_name}': {e}") from e
+
+    def _load_from_sources(self, package_name: str):
+        legacy_path = Path(__file__).parent.parent / "old_driver_src"
+
+        spec = importlib.util.find_spec(package_name, [legacy_path])
+        if spec is None:
+            raise ImportError(f"Could not find '{package_name}' in {legacy_path}")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
 
     def connect(self, **kwargs) -> Any:
         """Create a connection using the reference connector."""

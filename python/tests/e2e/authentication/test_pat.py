@@ -41,7 +41,7 @@ class TestPATAuthentication:
         with connection:
             verify_simple_query_execution(connection)
 
-    def test_should_fail_pat_authentication_when_invalid_token_provided(self, connection_factory):
+    def test_should_fail_pat_authentication_when_invalid_token_provided(self, connection_factory, reference_connector):
         # Given Authentication is set to Programmatic Access Token and invalid PAT token is provided
         authenticator = "PROGRAMMATIC_ACCESS_TOKEN"
         invalid_token = get_invalid_pat_token()
@@ -51,7 +51,7 @@ class TestPATAuthentication:
             connection_factory(authenticator=authenticator, token=invalid_token)
 
         # Then There is error returned
-        verify_login_error(exception)
+        verify_login_error(exception, reference_connector)
 
 
 class PAT:

@@ -17,7 +17,7 @@ std::string Logger::formatString(const char* format, ...) {
 
 void Logger::setupPyLogger() {
   py::UniqueRef pyLoggingModule;
-  py::importPythonModule("snowflake.ud_connector._internal.snow_logging", pyLoggingModule);
+  py::importPythonModule("snowflake.connector._internal.snow_logging", pyLoggingModule);
   PyObject* logger = PyObject_CallMethod(pyLoggingModule.get(), "get_snow_logger", "s", m_name);
 
   m_pyLogger.reset(logger);

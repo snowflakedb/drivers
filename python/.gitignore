@@ -120,3 +120,6 @@ src/snowflake/ud_connector/_core/**
 
 # Hatch
 .hatch/
+
+# Old driver source code
+old_driver_src/

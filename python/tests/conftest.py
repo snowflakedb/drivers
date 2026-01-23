@@ -54,6 +54,12 @@ def connector_adapter(request, connector_type):
     return ConnectorFactory.create_adapter(connector_type)
 
 
+@pytest.fixture(scope="session")
+def reference_connector(request, connector_type):
+    reference_package = request.config.getoption("--reference-package")
+    return ConnectorFactory.create_adapter(connector_type, package_name=reference_package)
+
+
 @pytest.fixture
 def connection(connector_adapter):
     """Create a test connection using the configured connector adapter."""
