@@ -203,7 +203,7 @@ pipeline {
                                     dir('python') {
                                         sh label: 'Build Python Package', script: '''
                                             set +x
-                                            hatch run build
+                                            RUSTFLAGS="" hatch build -t wheel
                                         '''
                                         
                                         def testExitCode = sh(label: 'Run Tests with Coverage', returnStatus: true, script: '''
