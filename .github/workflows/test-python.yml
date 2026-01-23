@@ -25,7 +25,6 @@ jobs:
   # Build Rust core library once and share across Python jobs
   build_rust_core:
     needs: detect-changes
-    name: "Build wheel"
     if: github.event_name == 'push' || needs.detect-changes.outputs.run_python == 'true'
     runs-on: ubuntu-latest
     steps:
