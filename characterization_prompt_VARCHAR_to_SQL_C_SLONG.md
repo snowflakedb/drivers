@@ -4,8 +4,8 @@ You are generating characterization tests for the Snowflake ODBC driver. Your go
 
 ## Conversion to Test
 
-- **Source Snowflake Type**: `{{SNOWFLAKE_TYPE}}`
-- **Target SQL C Type**: `{{SQL_C_TYPE}}`
+- **Source Snowflake Type**: `VARCHAR`
+- **Target SQL C Type**: `SQL_C_SLONG`
 
 ## Critical Context
 
@@ -19,7 +19,7 @@ The penalty for behavioral differences is very high (data incidents), so be thor
 
 Create a C++ test file at:
 ```
-odbc_tests/tests/characterization/conversion/{{SNOWFLAKE_TYPE}}_to_{{SQL_C_TYPE}}.cpp
+odbc_tests/tests/characterization/conversion/VARCHAR_to_SQL_C_SLONG.cpp
 ```
 
 Use lowercase and underscores for the filename (e.g., `varchar_to_sql_c_numeric.cpp`).
@@ -88,11 +88,11 @@ Use lowercase and underscores for the filename (e.g., `varchar_to_sql_c_numeric.
 #include "test_setup.hpp"
 
 // Use descriptive test names that include the conversion being tested
-TEST_CASE("{{SNOWFLAKE_TYPE}} to {{SQL_C_TYPE}} - normal values", "[characterization][conversion][{{SNOWFLAKE_TYPE}}][{{SQL_C_TYPE}}]") {
+TEST_CASE("VARCHAR to SQL_C_SLONG - normal values", "[characterization][conversion][VARCHAR][SQL_C_SLONG]") {
     Connection conn;
     auto random_schema = Schema::use_random_schema(conn);
     
-    auto stmt = conn.execute_fetch("SELECT <value1>::{{SNOWFLAKE_TYPE}} as c1, <value2>::{{SNOWFLAKE_TYPE}} as c2, ..., <value10>::{{SNOWFLAKE_TYPE}} as c10");
+    auto stmt = conn.execute_fetch("SELECT <value1>::VARCHAR as c1, <value2>::VARCHAR as c2, ..., <value10>::VARCHAR as c10");
     
     // Verify conversion
     // Use SQLGetData directly assert on each collumn
@@ -123,7 +123,7 @@ SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_CHAR, buffer, sizeof(buffe
 
 ### Testing for Expected Errors
 ```cpp
-TEST_CASE("{{SNOWFLAKE_TYPE}} to {{SQL_C_TYPE}} - overflow error", "[characterization][conversion][{{SNOWFLAKE_TYPE}}][{{SQL_C_TYPE}}]") {
+TEST_CASE("VARCHAR to SQL_C_SLONG - overflow error", "[characterization][conversion][VARCHAR][SQL_C_SLONG]") {
     // Test setup ...
     
     // Assertions
@@ -144,13 +144,13 @@ TEST_CASE("{{SNOWFLAKE_TYPE}} to {{SQL_C_TYPE}} - overflow error", "[characteriz
 
 ### Testing NULL Values
 ```cpp
-TEST_CASE("{{SNOWFLAKE_TYPE}} to {{SQL_C_TYPE}} - NULL handling", "[characterization][{{SNOWFLAKE_TYPE}}][{{SQL_C_TYPE}}]") {
+TEST_CASE("VARCHAR to SQL_C_SLONG - NULL handling", "[characterization][VARCHAR][SQL_C_SLONG]") {
     // Test setup ...
     
     // Assertions
     char buffer[100];
     SQLLEN indicator;
-    SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, {{SQL_C_TYPE}}, buffer, sizeof(buffer), &indicator);
+    SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_SLONG, buffer, sizeof(buffer), &indicator);
     
     CHECK(ret == SQL_SUCCESS);
     CHECK(indicator == SQL_NULL_DATA);
@@ -182,8 +182,8 @@ TEST_CASE("{{SNOWFLAKE_TYPE}} to {{SQL_C_TYPE}} - NULL handling", "[characteriza
 
 Use descriptive test names with tags:
 - `[characterization]` - Always include this tag
-- `[{{SNOWFLAKE_TYPE}}]` - Source type tag (lowercase)
-- `[{{SQL_C_TYPE}}]` - Target type tag (lowercase)
+- `[VARCHAR]` - Source type tag (lowercase)
+- `[SQL_C_SLONG]` - Target type tag (lowercase)
 
 Example:
 ```cpp
@@ -256,14 +256,14 @@ Antipattern:
 - Merge test cases into one if possible, each connection establishment costs test run time
 - Try to test at least 10 values in each test
 - Don't create a table in each tests 
-- Test type aliases for {{SQL_C_TYPE}} 
+- Test type aliases for SQL_C_SLONG 
 
 ## Capture the exact behaviour of the old driver
 
 Do this until tests pass:
 1. Build and run the tests:
    ```bash
-   RUN_CHARACTERIZATION=1 ./odbc_tests/run_reference.sh -R characterization_{{SNOWFLAKE_TYPE}}_to_{{SQL_C_TYPE}}
+   RUN_CHARACTERIZATION=1 ./odbc_tests/run_reference.sh -R characterization_VARCHAR_to_SQL_C_SLONG
    ```
 2. Make changes so that the test suite captures driver behaviour
    - Make assertion on all returns and output arguments
@@ -275,9 +275,9 @@ Do this until tests pass:
 
 ## Report on the task
 
-Once the tests are ready create a {{SNOWFLAKE_TYPE}}_to_{{SQL_C_TYPE}}.md file that summarizes
+Once the tests are ready create a VARCHAR_to_SQL_C_SLONG.md file that summarizes
 - test coverage - summary of test suite
 - key findings - interesting findings about old driver behaviour
 Make sure that the md file is small and concise, the most important thing is to capture key findings
 
-Now, please create the characterization test file for `{{SNOWFLAKE_TYPE}}` to `{{SQL_C_TYPE}}` conversion.
+Now, please create the characterization test file for `VARCHAR` to `SQL_C_SLONG` conversion.

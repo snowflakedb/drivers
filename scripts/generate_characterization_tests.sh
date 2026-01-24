@@ -5,8 +5,11 @@
 # It creates a new branch, invokes Claude Code with a specially prepared prompt, and generates
 # tests that characterize the OLD ODBC driver's behavior.
 #
-# Usage: ./scripts/generate_characterization_tests.sh <SNOWFLAKE_TYPE> <SQL_C_TYPE>
+# Usage: ./scripts/generate_characterization_tests.sh [--no-checkout] <SNOWFLAKE_TYPE> <SQL_C_TYPE>
 # Example: ./scripts/generate_characterization_tests.sh VARCHAR SQL_C_NUMERIC
+#
+# Options:
+#   --no-checkout  Skip branch creation and checkout (use current branch)
 #
 # Environment variables:
 #   PARENT_BRANCH - Parent branch to create characterization branch from (default: NO-SNOW-characterization-tests)
@@ -22,6 +25,24 @@ PROMPT_TEMPLATE="$SCRIPT_DIR/characterization_prompt.md"
 # Default parent branch for all characterization test branches
 PARENT_BRANCH="${PARENT_BRANCH:-NO-SNOW-characterization-tests}"
 CLAUDE_MODEL="${CLAUDE_MODEL:-sonnet}"
+SKIP_CHECKOUT=false
+
+# Parse options
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --no-checkout)
+            SKIP_CHECKOUT=true
+            shift
+            ;;
+        -*)
+            echo -e "${RED}Error: Unknown option: $1${NC}"
+            exit 1
+            ;;
+        *)
+            break
+            ;;
+    esac
+done
 
 # Valid Snowflake types
 VALID_SNOWFLAKE_TYPES=(
@@ -74,13 +95,16 @@ YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
 print_usage() {
-    echo "Usage: $0 <SNOWFLAKE_TYPE> <SQL_C_TYPE>"
+    echo "Usage: $0 [--no-checkout] <SNOWFLAKE_TYPE> <SQL_C_TYPE>"
     echo ""
     echo "Generate characterization tests for Snowflake type to SQL C type conversion."
     echo ""
     echo "Arguments:"
     echo "  SNOWFLAKE_TYPE   The Snowflake data type (e.g., VARCHAR, NUMBER, DATE)"
     echo "  SQL_C_TYPE       The SQL C type to convert to (e.g., SQL_C_CHAR, SQL_C_NUMERIC)"
+    echo ""
+    echo "Options:"
+    echo "  --no-checkout    Skip branch creation and checkout (use current branch)"
     echo ""
     echo "Environment variables:"
     echo "  PARENT_BRANCH    Parent branch to create from (default: NO-SNOW-characterization-tests)"
@@ -94,7 +118,7 @@ print_usage() {
     echo ""
     echo "Examples:"
     echo "  $0 VARCHAR SQL_C_NUMERIC"
-    echo "  $0 NUMBER SQL_C_CHAR"
+    echo "  $0 --no-checkout NUMBER SQL_C_CHAR"
     echo "  PARENT_BRANCH=develop $0 DATE SQL_C_TYPE_DATE"
 }
 
@@ -165,47 +189,57 @@ BRANCH_NAME="characterization/${SNOWFLAKE_TYPE_LOWER}-to-${SQL_C_TYPE_LOWER}"
 echo -e "${GREEN}=== Characterization Test Generator ===${NC}"
 echo "Snowflake Type: $SNOWFLAKE_TYPE"
 echo "SQL C Type: $SQL_C_TYPE"
-echo "Parent Branch: $PARENT_BRANCH"
-echo "New Branch: $BRANCH_NAME"
+
+if [[ "$SKIP_CHECKOUT" == "true" ]]; then
+    echo "Skip checkout: yes (using current branch)"
+    BRANCH_NAME=$(git branch --show-current)
+    echo "Current Branch: $BRANCH_NAME"
+else
+    echo "Parent Branch: $PARENT_BRANCH"
+    echo "New Branch: $BRANCH_NAME"
+fi
 echo ""
 
-# Check for uncommitted changes
-if [[ -n $(git status --porcelain) ]]; then
-    echo -e "${YELLOW}Warning: You have uncommitted changes.${NC}"
-    read -p "Continue anyway? (y/N) " -n 1 -r
-    echo
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-        echo "Aborted."
-        exit 1
+if [[ "$SKIP_CHECKOUT" == "false" ]]; then
+    # Check for uncommitted changes
+    if [[ -n $(git status --porcelain) ]]; then
+        echo -e "${YELLOW}Warning: You have uncommitted changes.${NC}"
+        read -p "Continue anyway? (y/N) " -n 1 -r
+        echo
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            echo "Aborted."
+            exit 1
+        fi
     fi
-fi
 
-# Fetch latest from remote
-echo -e "${GREEN}Fetching latest from remote...${NC}"
-git fetch origin "$PARENT_BRANCH"
+    # Fetch latest from remote
+    echo -e "${GREEN}Fetching latest from remote...${NC}"
+    git fetch origin "$PARENT_BRANCH"
 
-# Check if branch already exists
-if git show-ref --verify --quiet "refs/heads/$BRANCH_NAME"; then
-    echo -e "${YELLOW}Branch $BRANCH_NAME already exists.${NC}"
-    read -p "Delete and recreate? (y/N) " -n 1 -r
-    echo
-    if [[ $REPLY =~ ^[Yy]$ ]]; then
-        git branch -D "$BRANCH_NAME"
-    else
-        echo "Aborted."
-        exit 1
+    # Check if branch already exists
+    if git show-ref --verify --quiet "refs/heads/$BRANCH_NAME"; then
+        echo -e "${YELLOW}Branch $BRANCH_NAME already exists.${NC}"
+        read -p "Delete and recreate? (y/N) " -n 1 -r
+        echo
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            git branch -D "$BRANCH_NAME"
+        else
+            echo "Aborted."
+            exit 1
+        fi
     fi
-fi
 
-# Create new branch from parent
-echo -e "${GREEN}Creating branch $BRANCH_NAME from origin/$PARENT_BRANCH...${NC}"
-git checkout -b "$BRANCH_NAME" "origin/$PARENT_BRANCH"
+    # Create new branch from parent
+    echo -e "${GREEN}Creating branch $BRANCH_NAME from origin/$PARENT_BRANCH...${NC}"
+    git checkout -b "$BRANCH_NAME" "origin/$PARENT_BRANCH"
+fi
 
 # Prepare the prompt by replacing placeholders
 echo -e "${GREEN}Preparing prompt...${NC}"
-PROMPT=$(cat "$PROMPT_TEMPLATE" | \
+PROMPT_FILE="characterization_prompt_${SNOWFLAKE_TYPE}_to_${SQL_C_TYPE}.md" 
+cat "$PROMPT_TEMPLATE" | \
     sed "s/{{SNOWFLAKE_TYPE}}/$SNOWFLAKE_TYPE/g" | \
-    sed "s/{{SQL_C_TYPE}}/$SQL_C_TYPE/g")
+    sed "s/{{SQL_C_TYPE}}/$SQL_C_TYPE/g" | tee "$PROMPT_FILE"
 
 # Create test directory if it doesn't exist
 TEST_DIR="odbc_tests/tests/characterization/conversion"
@@ -221,7 +255,7 @@ echo ""
 # Using --dangerously-skip-permissions to allow file operations without prompts
 claude --model "$CLAUDE_MODEL" \
     --dangerously-skip-permissions \
-    -p "$PROMPT"
+    "$PROMPT_FILE"
 
 echo ""
 echo -e "${GREEN}=== Generation Complete ===${NC}"

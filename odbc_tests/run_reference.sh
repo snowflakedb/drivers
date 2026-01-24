@@ -18,6 +18,7 @@ docker run --rm \
     -e DRIVER_PATH="/usr/lib/snowflake/odbc/lib/libSnowflake.so" \
     -e PARAMETER_PATH="/workspace/parameters.json" \
     -e GIT_ROOT="/workspace" \
+    -e RUN_CHARACTERIZATION=${RUN_CHARACTERIZATION:-0} \
     odbc-reference-tests \
     bash -c "
         set -e
