@@ -7,9 +7,18 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+# Calculate Dockerfile hash for cache invalidation
+DOCKERFILE_HASH=$(sha256sum "$SCRIPT_DIR/Dockerfile" | cut -d' ' -f1)
+IMAGE_TAG="odbc-reference-tests:$DOCKERFILE_HASH"
+
 
 echo "Building Docker image for ODBC reference tests..."
-docker build -t odbc-reference-tests "$SCRIPT_DIR"
+# Check if image already exists
+if ! docker image inspect "$IMAGE_TAG" >/dev/null 2>&1; then
+    docker build -t "$IMAGE_TAG" "$SCRIPT_DIR"
+else
+    echo "Docker image $IMAGE_TAG already exists, skipping build..."
+fi
 
 echo "Running ODBC reference tests in Docker container..."
 docker run --rm \
@@ -19,7 +28,7 @@ docker run --rm \
     -e PARAMETER_PATH="/workspace/parameters.json" \
     -e GIT_ROOT="/workspace" \
     -e RUN_CHARACTERIZATION=${RUN_CHARACTERIZATION:-0} \
-    odbc-reference-tests \
+    "$IMAGE_TAG" \
     bash -c "
         set -e
         set -x

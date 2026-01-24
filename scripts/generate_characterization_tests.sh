@@ -2,18 +2,17 @@
 
 # Characterization Test Generator
 # This script generates characterization tests for Snowflake type to SQL C type conversions.
-# It creates a new branch, invokes Claude Code with a specially prepared prompt, and generates
-# tests that characterize the OLD ODBC driver's behavior.
+# It creates a new branch in a separate worktree, invokes Claude Code with a specially prepared
+# prompt, and generates tests that characterize the OLD ODBC driver's behavior.
 #
-# Usage: ./scripts/generate_characterization_tests.sh [--no-checkout] <SNOWFLAKE_TYPE> <SQL_C_TYPE>
+# Usage: ./scripts/generate_characterization_tests.sh <SNOWFLAKE_TYPE> <SQL_C_TYPE>
 # Example: ./scripts/generate_characterization_tests.sh VARCHAR SQL_C_NUMERIC
 #
-# Options:
-#   --no-checkout  Skip branch creation and checkout (use current branch)
-#
 # Environment variables:
-#   PARENT_BRANCH - Parent branch to create characterization branch from (default: NO-SNOW-characterization-tests)
+#   PARENT_BRANCH - Parent branch to rebase on (default: NO-SNOW-characterization-tests)
 #   CLAUDE_MODEL - Claude model to use (default: sonnet)
+#   WORKTREE_BASE - Base directory for worktrees (default: parent of project root)
+#   PARAMETER_PATH - Path to parameters.json file (default: $PROJECT_ROOT/parameters.json)
 
 set -e
 
@@ -25,15 +24,15 @@ PROMPT_TEMPLATE="$SCRIPT_DIR/characterization_prompt.md"
 # Default parent branch for all characterization test branches
 PARENT_BRANCH="${PARENT_BRANCH:-NO-SNOW-characterization-tests}"
 CLAUDE_MODEL="${CLAUDE_MODEL:-sonnet}"
-SKIP_CHECKOUT=false
+WORKTREE_BASE="${WORKTREE_BASE:-$(dirname "$PROJECT_ROOT")/universal-driver-wt}"
+PARAMETER_PATH="${PARAMETER_PATH:-$PROJECT_ROOT/parameters.json}"
+
+# Internal flag to indicate we're running inside tmux (set by the script itself)
+INSIDE_TMUX_SESSION="${_CHARGEN_INSIDE_TMUX:-false}"
 
 # Parse options
 while [[ $# -gt 0 ]]; do
     case $1 in
-        --no-checkout)
-            SKIP_CHECKOUT=true
-            shift
-            ;;
         -*)
             echo -e "${RED}Error: Unknown option: $1${NC}"
             exit 1
@@ -95,20 +94,20 @@ YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
 print_usage() {
-    echo "Usage: $0 [--no-checkout] <SNOWFLAKE_TYPE> <SQL_C_TYPE>"
+    echo "Usage: $0 <SNOWFLAKE_TYPE> <SQL_C_TYPE>"
     echo ""
     echo "Generate characterization tests for Snowflake type to SQL C type conversion."
+    echo "The script runs in a new tmux session and creates a separate git worktree."
     echo ""
     echo "Arguments:"
     echo "  SNOWFLAKE_TYPE   The Snowflake data type (e.g., VARCHAR, NUMBER, DATE)"
     echo "  SQL_C_TYPE       The SQL C type to convert to (e.g., SQL_C_CHAR, SQL_C_NUMERIC)"
     echo ""
-    echo "Options:"
-    echo "  --no-checkout    Skip branch creation and checkout (use current branch)"
-    echo ""
     echo "Environment variables:"
-    echo "  PARENT_BRANCH    Parent branch to create from (default: NO-SNOW-characterization-tests)"
+    echo "  PARENT_BRANCH    Parent branch to rebase on (default: NO-SNOW-characterization-tests)"
     echo "  CLAUDE_MODEL     Claude model to use (default: sonnet)"
+    echo "  WORKTREE_BASE    Base directory for worktrees (default: parent of project root)"
+    echo "  PARAMETER_PATH   Path to parameters.json file (default: \$PROJECT_ROOT/parameters.json)"
     echo ""
     echo "Valid Snowflake types:"
     echo "  ${VALID_SNOWFLAKE_TYPES[*]}"
@@ -118,7 +117,6 @@ print_usage() {
     echo ""
     echo "Examples:"
     echo "  $0 VARCHAR SQL_C_NUMERIC"
-    echo "  $0 --no-checkout NUMBER SQL_C_CHAR"
     echo "  PARENT_BRANCH=develop $0 DATE SQL_C_TYPE_DATE"
 }
 
@@ -178,6 +176,12 @@ if ! command -v claude &> /dev/null; then
     exit 1
 fi
 
+# Check if tmux is available
+if ! command -v tmux &> /dev/null; then
+    echo -e "${RED}Error: tmux not found. Please install it first.${NC}"
+    exit 1
+fi
+
 # Navigate to project root
 cd "$PROJECT_ROOT"
 
@@ -185,54 +189,123 @@ cd "$PROJECT_ROOT"
 SNOWFLAKE_TYPE_LOWER=$(echo "$SNOWFLAKE_TYPE" | tr '[:upper:]' '[:lower:]')
 SQL_C_TYPE_LOWER=$(echo "$SQL_C_TYPE" | tr '[:upper:]' '[:lower:]' | sed 's/_/-/g')
 BRANCH_NAME="characterization/${SNOWFLAKE_TYPE_LOWER}-to-${SQL_C_TYPE_LOWER}"
+TMUX_SESSION_NAME="chargen-${SNOWFLAKE_TYPE_LOWER}-${SQL_C_TYPE_LOWER}"
+WORKTREE_DIR="$WORKTREE_BASE/universal-driver-${SNOWFLAKE_TYPE_LOWER}-to-${SQL_C_TYPE_LOWER}"
 
-echo -e "${GREEN}=== Characterization Test Generator ===${NC}"
-echo "Snowflake Type: $SNOWFLAKE_TYPE"
-echo "SQL C Type: $SQL_C_TYPE"
-
-if [[ "$SKIP_CHECKOUT" == "true" ]]; then
-    echo "Skip checkout: yes (using current branch)"
-    BRANCH_NAME=$(git branch --show-current)
-    echo "Current Branch: $BRANCH_NAME"
-else
-    echo "Parent Branch: $PARENT_BRANCH"
-    echo "New Branch: $BRANCH_NAME"
+# Check if parameters.json exists
+if [[ ! -f "$PARAMETER_PATH" ]]; then
+    echo -e "${RED}Error: parameters.json not found at $PARAMETER_PATH${NC}"
+    echo "Please set PARAMETER_PATH environment variable or create parameters.json in project root."
+    exit 1
 fi
-echo ""
 
-if [[ "$SKIP_CHECKOUT" == "false" ]]; then
-    # Check for uncommitted changes
-    if [[ -n $(git status --porcelain) ]]; then
-        echo -e "${YELLOW}Warning: You have uncommitted changes.${NC}"
-        read -p "Continue anyway? (y/N) " -n 1 -r
-        echo
-        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-            echo "Aborted."
-            exit 1
-        fi
-    fi
-
-    # Fetch latest from remote
-    echo -e "${GREEN}Fetching latest from remote...${NC}"
-    git fetch origin "$PARENT_BRANCH"
-
-    # Check if branch already exists
-    if git show-ref --verify --quiet "refs/heads/$BRANCH_NAME"; then
-        echo -e "${YELLOW}Branch $BRANCH_NAME already exists.${NC}"
-        read -p "Delete and recreate? (y/N) " -n 1 -r
+# If not already inside tmux session started by this script, create one and re-run
+if [[ "$INSIDE_TMUX_SESSION" != "true" ]]; then
+    echo -e "${GREEN}=== Characterization Test Generator ===${NC}"
+    echo "Snowflake Type: $SNOWFLAKE_TYPE"
+    echo "SQL C Type: $SQL_C_TYPE"
+    echo "Tmux Session: $TMUX_SESSION_NAME"
+    echo "Parent Branch: $PARENT_BRANCH (will rebase on it)"
+    echo "New Branch: $BRANCH_NAME"
+    echo "Worktree: $WORKTREE_DIR"
+    echo ""
+    
+    # Check if tmux session already exists
+    if tmux has-session -t "$TMUX_SESSION_NAME" 2>/dev/null; then
+        echo -e "${YELLOW}Tmux session '$TMUX_SESSION_NAME' already exists.${NC}"
+        echo "To attach: tmux attach-session -t $TMUX_SESSION_NAME"
+        read -p "Kill and recreate? (y/N) " -n 1 -r
         echo
         if [[ $REPLY =~ ^[Yy]$ ]]; then
-            git branch -D "$BRANCH_NAME"
+            tmux kill-session -t "$TMUX_SESSION_NAME"
         else
-            echo "Aborted."
-            exit 1
+            echo "Keeping existing session."
+            exit 0
         fi
     fi
-
-    # Create new branch from parent
-    echo -e "${GREEN}Creating branch $BRANCH_NAME from origin/$PARENT_BRANCH...${NC}"
-    git checkout -b "$BRANCH_NAME" "origin/$PARENT_BRANCH"
+    
+    echo -e "${GREEN}Starting tmux session '$TMUX_SESSION_NAME'...${NC}"
+    
+    # Build the command to run inside tmux
+    TMUX_CMD="_CHARGEN_INSIDE_TMUX=true"
+    TMUX_CMD+=" PARENT_BRANCH='$PARENT_BRANCH'"
+    TMUX_CMD+=" CLAUDE_MODEL='$CLAUDE_MODEL'"
+    TMUX_CMD+=" WORKTREE_BASE='$WORKTREE_BASE'"
+    TMUX_CMD+=" PARAMETER_PATH='$PARAMETER_PATH'"
+    TMUX_CMD+=" '$SCRIPT_DIR/generate_characterization_tests.sh' '$SNOWFLAKE_TYPE' '$SQL_C_TYPE'"
+    
+    # Create new tmux session and run the script inside it
+    # After script completes, cd to worktree directory and start a new bash shell
+    tmux new-session -d -s "$TMUX_SESSION_NAME" -c "$PROJECT_ROOT" "bash -c '$TMUX_CMD; cd \"$WORKTREE_DIR\" && exec bash'"
+    
+    echo -e "${GREEN}Tmux session '$TMUX_SESSION_NAME' started in background.${NC}"
+    read -p "Attach to session? (y/N) " -n 1 -r
+    echo
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+        tmux attach-session -t "$TMUX_SESSION_NAME"
+    else
+        echo "To attach later: tmux attach-session -t $TMUX_SESSION_NAME"
+    fi
+    exit 0
 fi
+
+# === From here on, we're running inside the tmux session ===
+
+echo -e "${GREEN}=== Characterization Test Generator (in tmux) ===${NC}"
+echo "Snowflake Type: $SNOWFLAKE_TYPE"
+echo "SQL C Type: $SQL_C_TYPE"
+echo "Parent Branch: $PARENT_BRANCH (rebasing on it)"
+echo "New Branch: $BRANCH_NAME"
+echo "Worktree: $WORKTREE_DIR"
+echo ""
+
+# Fetch latest from remote
+echo -e "${GREEN}Fetching latest from remote...${NC}"
+git fetch origin "$PARENT_BRANCH"
+
+# Check if worktree already exists
+if [[ -d "$WORKTREE_DIR" ]]; then
+    echo -e "${YELLOW}Worktree directory $WORKTREE_DIR already exists.${NC}"
+    read -p "Remove and recreate? (y/N) " -n 1 -r
+    echo
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+        git worktree remove --force "$WORKTREE_DIR" 2>/dev/null || rm -rf "$WORKTREE_DIR"
+    else
+        echo "Aborted."
+        exit 1
+    fi
+fi
+
+# Check if branch already exists
+if git show-ref --verify --quiet "refs/heads/$BRANCH_NAME"; then
+    echo -e "${YELLOW}Branch $BRANCH_NAME already exists.${NC}"
+    read -p "Delete and recreate? (y/N) " -n 1 -r
+    echo
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+        git branch -D "$BRANCH_NAME"
+    else
+        echo "Aborted."
+        exit 1
+    fi
+fi
+
+# Create new branch and worktree
+echo -e "${GREEN}Creating worktree at $WORKTREE_DIR with branch $BRANCH_NAME...${NC}"
+git worktree add -b "$BRANCH_NAME" "$WORKTREE_DIR" "origin/$PARENT_BRANCH"
+
+# Copy parameters.json to the new worktree
+echo -e "${GREEN}Copying parameters.json to worktree...${NC}"
+cp "$PARAMETER_PATH" "$WORKTREE_DIR/parameters.json"
+
+# Change to the worktree directory
+cd "$WORKTREE_DIR"
+
+# Rebase on the parent branch to ensure we're up to date
+echo -e "${GREEN}Rebasing on origin/$PARENT_BRANCH...${NC}"
+git rebase "origin/$PARENT_BRANCH"
+
+# Update PROJECT_ROOT for the worktree
+PROJECT_ROOT="$WORKTREE_DIR"
 
 # Prepare the prompt by replacing placeholders
 echo -e "${GREEN}Preparing prompt...${NC}"
@@ -259,15 +332,3 @@ claude --model "$CLAUDE_MODEL" \
 
 echo ""
 echo -e "${GREEN}=== Generation Complete ===${NC}"
-echo "Branch: $BRANCH_NAME"
-echo "Test directory: $TEST_DIR"
-echo ""
-echo "Next steps:"
-echo "1. Review the generated tests"
-echo "2. Build the tests:"
-echo "   cd odbc_tests && cmake -B cmake-build -DDRIVER_TYPE=OLD . && cmake --build cmake-build"
-echo "3. Run characterization tests against OLD driver:"
-echo "   RUN_CHARACTERIZATION=1 ctest --test-dir cmake-build -R characterization --output-on-failure"
-echo "   (Note: characterization tests are skipped by default unless RUN_CHARACTERIZATION=1)"
-echo "4. Fix any issues and iterate"
-echo "5. Commit and create PR"
