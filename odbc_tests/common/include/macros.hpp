@@ -7,10 +7,8 @@
 
 #include <catch2/catch_test_macros.hpp>
 
-#define CHECK_ODBC(ret, handle) CHECK_ODBC_ERROR(ret, handle.getHandle(), handle.getType())
-
-#define CHECK_ODBC_ERROR(ret, handle, handleType)                                                                   \
-  if (ret != SQL_SUCCESS && ret != SQL_SUCCESS_WITH_INFO) {                                                         \
+#define CHECK_ODBC_RESULT(ret, handle, handleType, condition)                                                       \
+  if (!condition) {                                                                                                 \
     if (ret == SQL_INVALID_HANDLE) {                                                                                \
       FAIL("ODBC Error Status:" << ret << " (SQL_INVALID_HANDLE). "                                                 \
                                 << "HandleType=" << handleType << " Handle=" << handle);                            \
@@ -20,12 +18,22 @@
     SQLCHAR message[1024] = {0};                                                                                    \
     SQLRETURN diag_ret = SQLGetDiagRec(handleType, handle, 1, state, &nativeError, message, sizeof(message), NULL); \
     if (diag_ret == SQL_SUCCESS || diag_ret == SQL_SUCCESS_WITH_INFO) {                                             \
-      FAIL("ODBC Error Status:" << ret << " Error: " << message << " State: " << state                              \
+      INFO("ODBC Error Status:" << ret << " Error: " << message << " State: " << state                              \
                                 << " NativeError: " << nativeError);                                                \
+      REQUIRE(condition);                                                                                           \
     } else {                                                                                                        \
-      FAIL("ODBC Error Status:" << ret << " (no diagnostics; SQLGetDiagRec ret=" << diag_ret                        \
+      INFO("ODBC Error Status:" << ret << " (no diagnostics; SQLGetDiagRec ret=" << diag_ret                        \
                                 << "). HandleType=" << handleType << " Handle=" << handle);                         \
+      REQUIRE(condition);                                                                                           \
     }                                                                                                               \
   }
+
+#define CHECK_ODBC(ret, handle) CHECK_ODBC_ERROR(ret, handle.getHandle(), handle.getType())
+
+#define CHECK_ODBC_ERROR(ret, handle, handleType) \
+  CHECK_ODBC_RESULT(ret, handle, handleType, (ret == SQL_SUCCESS || ret == SQL_SUCCESS_WITH_INFO))
+
+#define CHECK_ODBC_CODE(ret, handle, return_code) \
+  CHECK_ODBC_RESULT(ret, handle.getHandle(), handle.getType(), (ret == return_code))
 
 #endif  // ODBC_TESTS_MACROS_HPP

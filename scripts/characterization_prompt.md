@@ -61,6 +61,12 @@ Use lowercase and underscores for the filename (e.g., `varchar_to_sql_c_numeric.
 - Capture exact SQLSTATE codes (e.g., "22003" for numeric overflow)
 - Capture exact error messages
 
+### 7. Impossible values
+- Find value class that seem impossible to convert
+- For VARIANT to SQL_TYPE_DATE: Can you convert VARIANT that contains date fields to SQL_TYPE_DATE?
+- For VARCHAR to C_BIT: Can you convert VARCHAR containing date to C_BIT?
+- Think of values that we might test to generate more edge / impossible cases
+
 ### 7. Review the tests at the end and add tests that fill the gaps detected
  - You want to see if there is anything missing
  - It's better to add a test or example that's not needed than regret it later
@@ -92,7 +98,7 @@ TEST_CASE("{{SNOWFLAKE_TYPE}} to {{SQL_C_TYPE}} - normal values", "[characteriza
     Connection conn;
     auto random_schema = Schema::use_random_schema(conn);
     
-    auto stmt = conn.execute_fetch("SELECT <value1>::{{SNOWFLAKE_TYPE}} as c1, <value2>::{{SNOWFLAKE_TYPE}} as c2, ..., <value10>::{{SNOWFLAKE_TYPE}} as c10");
+    auto stmt = conn.execute_fetch("SELECT <value1>::{{SNOWFLAKE_TYPE}} as c1, <value2>::{{SNOWFLAKE_TYPE}} as c2, ..., <value5>::{{SNOWFLAKE_TYPE}} as c5");
     
     // Verify conversion
     // Use SQLGetData directly assert on each collumn
@@ -106,13 +112,9 @@ TEST_CASE("{{SNOWFLAKE_TYPE}} to {{SQL_C_TYPE}} - normal values", "[characteriza
    - `conn.execute_fetch(query)` - Execute and fetch first row
    - `conn.createStatement()` - Create statement handle
 
-2. **get_data template** (`get_data.hpp`):
-   - `get_data<SQL_C_TYPE>(stmt, col)` - Simple get with default buffer
-
-3. **Diagnostic records** (`get_diag_rec.hpp`):
-   - `get_diag_rec(handle)` - Get all diagnostic records after error
-
-4. **Direct SQLGetData** for buffer size testing:
+2. **Custom assertions** (`macros.hpp`):
+   - `CHECK_ODBC(ret, handle)`
+3. **Direct SQLGetData** for buffer size testing:
 ```cpp
 char buffer[100];
 SQLLEN indicator;
@@ -159,35 +161,17 @@ TEST_CASE("{{SNOWFLAKE_TYPE}} to {{SQL_C_TYPE}} - NULL handling", "[characteriza
 
 ## Workflow Requirements
 
-1. **First, run tests against OLD driver**:
-   - Build with `DRIVER_TYPE=OLD`
-   - Characterization tests are skipped by default - set `RUN_CHARACTERIZATION=1` to run them:
-     ```bash
-     cd odbc_tests
-     cmake -B cmake-build -DDRIVER_TYPE=OLD .
-     cmake --build cmake-build
-     RUN_CHARACTERIZATION=1 ctest --test-dir cmake-build -R characterization --output-on-failure
-     ```
-   - Tests MUST pass against the old driver before proceeding
-
-2. **Document observed behavior**:
-   - Add comments explaining any surprising behavior
-   - Note exact SQLSTATE codes and error messages
-
-3. **If you discover behavior differences** (when later testing NEW driver):
-   - Use `OLD_DRIVER_ONLY("BD#N")` and `NEW_DRIVER_ONLY("BD#N")` macros
-   - Document in `odbc_tests/BehaviorDifferences.yaml`
-
 ## Test Naming Convention
 
 Use descriptive test names with tags:
 - `[characterization]` - Always include this tag
 - `[{{SNOWFLAKE_TYPE}}]` - Source type tag (lowercase)
 - `[{{SQL_C_TYPE}}]` - Target type tag (lowercase)
+- `[conversion]` - Always include conversion tag
 
 Example:
 ```cpp
-TEST_CASE("VARCHAR to SQL_C_NUMERIC - precision 38 scale 10", "[characterization][varchar][sql_c_numeric]")
+TEST_CASE("VARCHAR to SQL_C_NUMERIC - precision 38 scale 10", "[characterization][conversion][varchar][sql_c_numeric]")
 ```
 
 ## Avoid antipatterns
@@ -200,12 +184,12 @@ Always assert and never test values with if statements.
 
 Expected pattern:
 ```cpp
-   REQUIRE(ret == SQL_SUCCESS);
+   CHECK_ODBC_CODE(ret, stmt, SQL_SUCCESS) // equivalent to REQUIRE(ret == SQL_SUCCESS), but with extra debug
 ```
 
 Antipattern:
 ```cpp
-   if (ret == SUCCESS) {
+   if (ret == SQL_SUCCESS) { // or == SQL_ERROR
       // Some assertions
    }
    else {
@@ -247,14 +231,17 @@ Antipattern:
    CHECK((<condition-a> || <condition-b>)); // We should assert either a or b
 ```
 
-## Additional Notes
+## Guidelines
 
+- **Document observed behavior**:
+   - Add comments explaining any surprising behavior
+   - Note exact SQLSTATE codes and error messages
 - Create ONE test file for this specific conversion
 - Be thorough - test every edge case you can think of
 - Document your findings in comments
 - If the conversion is not supported, create a test that documents this with the expected error
 - Merge test cases into one if possible, each connection establishment costs test run time
-- Try to test at least 10 values in each test
+- Try to test at least 5 values in each test
 - Don't create a table in each tests 
 - Test type aliases for {{SQL_C_TYPE}} 
 
@@ -267,17 +254,32 @@ Do this until tests pass:
    ```
 2. Make changes so that the test suite captures driver behaviour
    - Make assertion on all returns and output arguments
-   - Make sure the assertions are strict as possible
-      - Don't check for emptiness -> asssert size
-      - Don't use (a || b) in assertion -> assert a or assert b
+   - Make sure the assertions are as strict as possible
    - Make sure we don't use any antipatterns in tests
 4. Repeat until the all tests pass
 
-## Report on the task
+# Plan
 
-Once the tests are ready create a {{SNOWFLAKE_TYPE}}_to_{{SQL_C_TYPE}}.md file that summarizes
-- test coverage - summary of test suite
-- key findings - interesting findings about old driver behaviour
-Make sure that the md file is small and concise, the most important thing is to capture key findings
+## Generate test file
+   - Avoid antipatterns
+   - Follow guidelines
+   - Use the code structure described above
+   - Cover all test categories
+   - Adjust the tests to reflect driver behaviour - check by running
+   ```sh
+   RUN_CHARACTERIZATION=1 ./odbc_tests/run_reference.sh -R characterization_{{SNOWFLAKE_TYPE}}_to_{{SQL_C_TYPE}}
+   ```
 
-Now, please create the characterization test file for `{{SNOWFLAKE_TYPE}}` to `{{SQL_C_TYPE}}` conversion.
+## Iterate until all tests pass and we captured the exact behavour of the driver
+   1. Review the test cases and add new if there are gaps in testing the {{SNOWFLAKE_TYPE}} to {{SQL_C_TYPE}} conversion
+      - You can go above and beyond predefined test categories
+      - You can search the internet for bugs, questions and docs about ODBC conversion
+   2. Make sure that all the guidelines are followed and antipatterns avoided
+   3. Test the tests using command below and adjust assert, checks and requires as often as possible.
+   ```sh
+      RUN_CHARACTERIZATION=1 ./odbc_tests/run_reference.sh -R characterization_{{SNOWFLAKE_TYPE}}_to_{{SQL_C_TYPE}}
+   ```
+   4. Repeat those actions until all the requirements are satisfied and you came up with best characterization test suite possible
+
+# Task
+Now generate the tests and make sure you follow guidelines, avoid antipatterns and capture old driver behaviour
