@@ -148,10 +148,6 @@ disallow_incomplete_defs = false
 [tool.hatch.envs.default]
 features = ["test", "dev"]
 
-[tool.hatch.envs.default.env-vars]
-# IMPORTANT: PARAMETER_PATH must be explicitly set
-PARAMETER_PATH = "{env:PARAMETER_PATH:}"
-
 [tool.hatch.envs.default.scripts]
 # Build Rust core library
 build-core = "cargo build --package sf_core --manifest-path=../Cargo.toml --target-dir=src/snowflake/ud_connector/_core && cd src/snowflake/ud_connector/_core && cp -rf debug/* . && rm -rf debug/"
@@ -181,6 +177,10 @@ scripts.run = "mypy src/snowflake"
 # Test environment matrix
 [tool.hatch.envs.test]
 features = ["test"]
+
+[tool.hatch.envs.test.env-vars]
+# IMPORTANT: PARAMETER_PATH must be explicitly set
+PARAMETER_PATH = "{env:PARAMETER_PATH:../parameters.json}"
 
 [[tool.hatch.envs.test.matrix]]
 python = ["3.9", "3.10", "3.11", "3.12", "3.13"]
