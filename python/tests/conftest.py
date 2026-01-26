@@ -61,7 +61,7 @@ def connection(connector_adapter):
         yield conn
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def connection_factory(connector_adapter):
     """Factory function for creating connections with custom parameters."""
 
