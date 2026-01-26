@@ -10,8 +10,7 @@ from .utils import assert_type
 # =============================================================================
 # LARGE RESULT SET SIZE
 # =============================================================================
-LARGE_RESULT_SET_SIZE_GENERATOR = 1_000_000
-LARGE_RESULT_SET_SIZE_TABLE = 1_000_000
+LARGE_RESULT_SET_SIZE = 1_000_000
 
 
 class TestBooleanTypeCasting:
@@ -57,13 +56,13 @@ class TestBooleanLiteral:
         # Given Snowflake client is logged in
 
         # When Query "SELECT (seq8() % 2 = 0)::BOOLEAN FROM TABLE(GENERATOR(ROWCOUNT => 1000000)) v" is executed
-        sql = f"SELECT (seq8() % 2 = 0)::BOOLEAN FROM TABLE(GENERATOR(ROWCOUNT => {LARGE_RESULT_SET_SIZE_GENERATOR})) v"
+        sql = f"SELECT (seq8() % 2 = 0)::BOOLEAN FROM TABLE(GENERATOR(ROWCOUNT => {LARGE_RESULT_SET_SIZE})) v"
         rows = execute_query(sql)
         result = [row[0] for row in rows]
 
         # Then Result should contain 1000000 alternating TRUE and FALSE values
         assert_type(result, bool)
-        assert result == [True, False] * (LARGE_RESULT_SET_SIZE_GENERATOR // 2)
+        assert result == [True, False] * (LARGE_RESULT_SET_SIZE // 2)
 
 
 class TestBooleanTable:
@@ -112,7 +111,7 @@ class TestBooleanTable:
         execute_query(f"CREATE TABLE {table_name} (col BOOLEAN)")
         execute_query(
             f"INSERT INTO {table_name} SELECT (seq8() % 2 = 0)::BOOLEAN "
-            f"FROM TABLE(GENERATOR(ROWCOUNT => {LARGE_RESULT_SET_SIZE_TABLE}))"
+            f"FROM TABLE(GENERATOR(ROWCOUNT => {LARGE_RESULT_SET_SIZE}))"
         )
 
         # When Query "SELECT * FROM <table>" is executed
@@ -121,7 +120,7 @@ class TestBooleanTable:
 
         # Then Result should contain 1000000 alternating boolean values
         assert_type(result, bool)
-        assert result == [True, False] * (LARGE_RESULT_SET_SIZE_GENERATOR // 2)
+        assert result == [True, False] * (LARGE_RESULT_SET_SIZE // 2)
 
 
 class TestBooleanBinding:
