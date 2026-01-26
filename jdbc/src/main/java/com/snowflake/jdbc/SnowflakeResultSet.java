@@ -27,7 +27,6 @@ import java.sql.Time;
 import java.sql.Timestamp;
 import java.sql.Types;
 import java.util.Calendar;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import net.snowflake.client.internal.core.arrow.ArrowVectorConverter;
@@ -63,7 +62,7 @@ public class SnowflakeResultSet implements ResultSet {
   private ArrowArrayStream stream;
   private ArrowReader reader;
   private BufferAllocator allocator;
-  private final Map<Integer, ArrowVectorConverter> converterCache = new HashMap<>();
+  private ArrowVectorConverter[] converterCache;
   private static final DataConversionContext EMPTY_CONTEXT = new DataConversionContext() {};
 
   public SnowflakeResultSet(SnowflakeStatement statement, ExecuteResult result) {
@@ -1233,14 +1232,20 @@ public class SnowflakeResultSet implements ResultSet {
   }
 
   private ArrowVectorConverter getConverter(int columnIndex) throws SQLException {
-    if (converterCache.containsKey(columnIndex)) {
-      return converterCache.get(columnIndex);
+    ensureSchemaInitialized();
+    int index = columnIndex - 1;
+    if (index < 0 || index >= converterCache.length) {
+      throw new SQLException("Invalid column index: " + columnIndex);
+    }
+    ArrowVectorConverter cached = converterCache[index];
+    if (cached != null) {
+      return cached;
     }
     try {
-      FieldVector vector = reader.getVectorSchemaRoot().getVector(columnIndex - 1);
+      FieldVector vector = reader.getVectorSchemaRoot().getVector(index);
       ArrowVectorConverter converter =
-          ArrowVectorConverterUtil.initConverter(vector, EMPTY_CONTEXT, columnIndex - 1);
-      converterCache.put(columnIndex, converter);
+          ArrowVectorConverterUtil.initConverter(vector, EMPTY_CONTEXT, index);
+      converterCache[index] = converter;
       return converter;
     } catch (SnowflakeSQLException e) {
       throw new SQLException("Unable to create converter for column " + columnIndex, e);
@@ -1250,7 +1255,7 @@ public class SnowflakeResultSet implements ResultSet {
   }
 
   private void ensureSchemaInitialized() throws SQLException {
-    if (columnNames != null && columnTypes != null) {
+    if (columnNames != null && columnTypes != null && converterCache != null) {
       return;
     }
     List<Field> fields;
@@ -1261,6 +1266,7 @@ public class SnowflakeResultSet implements ResultSet {
     }
     columnNames = new String[fields.size()];
     columnTypes = new int[fields.size()];
+    converterCache = new ArrowVectorConverter[fields.size()];
     for (int i = 0; i < fields.size(); i++) {
       Field field = fields.get(i);
       columnNames[i] = field.getName();
