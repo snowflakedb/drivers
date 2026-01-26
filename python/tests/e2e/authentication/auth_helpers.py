@@ -1,5 +1,3 @@
-import snowflake.connector.errors
-
 from snowflake.ud_connector._internal.protobuf_gen.database_driver_v1_pb2 import DriverException
 
 from ...compatibility import NEW_DRIVER_ONLY, OLD_DRIVER_ONLY
@@ -29,6 +27,8 @@ def verify_login_error(exception):
         assert exception.value.error.login_error.message.strip() != "", "Login error message should not be empty"
 
     if OLD_DRIVER_ONLY("BD#4"):
+        import snowflake.connector.errors
+
         # Reference driver uses DatabaseError from snowflake.connector.errors
         assert isinstance(exception.value, snowflake.connector.errors.DatabaseError), (
             f"Expected DatabaseError, got: {type(exception.value)}"
