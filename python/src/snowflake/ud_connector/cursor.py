@@ -53,9 +53,6 @@ class Cursor:
         self.execute_result: Any = None
         self._iterator: Iterator[Row] | None = None
         self.execute_result = None
-        # Keep arrow_context and stream alive to prevent C++ from accessing freed memory
-        self._arrow_context: Any = None
-        self._stream: Any = None
 
     @property
     def description(self) -> Any:
@@ -106,10 +103,6 @@ class Cursor:
     def close(self) -> None:
         """Close the cursor now (rather than whenever __del__ is called)."""
         self._closed = True
-        # Release references to allow garbage collection
-        self._iterator = None
-        self._arrow_context = None
-        self._stream = None
 
     def execute(self, operation: str, parameters: Sequence[Any] | dict[str, Any] | None = None) -> None:
         """
@@ -131,10 +124,6 @@ class Cursor:
         self.execute_result = self.connection.db_api.statement_execute_query(
             StatementExecuteQueryRequest(stmt_handle=stmt_handle)
         ).result
-        # Reset streaming state for a new result
-        self._iterator = None
-        self._arrow_context = None
-        self._stream = None
 
     def executemany(self, operation: str, seq_of_parameters: Sequence[Sequence[Any]]) -> None:
         """
@@ -180,17 +169,11 @@ class Cursor:
 
     def _ensure_iterator(self) -> None:
         if self._iterator is None:
-            # Keep references to prevent garbage collection while C++ code uses them:
-            # - execute_result: Contains the protobuf response
-            # - self._stream: The stream object that owns the ArrowArrayStream
-            # - self._arrow_context: C++ holds a raw PyObject* pointer to it
-            # Without these references, Python will free the memory causing segfaults
-            self._stream = self.execute_result.stream
             stream_ptr = self._get_stream_ptr()
-            self._arrow_context = ArrowConverterContext()
+            arrow_context = ArrowConverterContext()
             self._iterator = ArrowStreamIterator(
                 stream_ptr,
-                self._arrow_context,
+                arrow_context,
                 # TODO: SNOW-2997742, SNOW-2997786, temporarily hardcoded
                 use_dict_result=False,
                 use_numpy=False,

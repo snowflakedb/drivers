@@ -69,7 +69,6 @@ test = [
     "pytest-cov",
     "hypothesis",
     "requests",
-#    "snowflake-connector-python>=3.6.0",
     "brotli",
     "zstandard",
 ]
@@ -201,7 +200,7 @@ all-cov = "pytest tests/ --connector=universal --cov=src/snowflake --cov-report=
 [tool.hatch.envs.reference]
 features = ["test"]
 dependencies = [
-#    "snowflake-connector-python=={env:REFERENCE_DRIVER_VERSION:3.17.2}",
+    "snowflake-connector-python=={env:REFERENCE_DRIVER_VERSION:3.17.2}",
 ]
 
 [tool.hatch.envs.reference.scripts]
