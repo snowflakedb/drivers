@@ -7,7 +7,7 @@ from ...config import get_test_parameters
 from .auth_helpers import verify_login_error, verify_simple_query_execution
 
 
-@pytest.fixture
+@pytest.fixture(scope="class")
 def pat_token(connection_factory):
     pat_token = PAT(connection_factory)
     try:
