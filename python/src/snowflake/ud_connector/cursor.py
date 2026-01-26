@@ -125,6 +125,9 @@ class Cursor:
             StatementExecuteQueryRequest(stmt_handle=stmt_handle)
         ).result
 
+        # Reset streaming state for a new result
+        self._iterator = None
+
     def executemany(self, operation: str, seq_of_parameters: Sequence[Sequence[Any]]) -> None:
         """
         Execute a database operation repeatedly for each element in seq_of_parameters.
