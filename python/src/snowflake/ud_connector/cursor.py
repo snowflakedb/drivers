@@ -53,6 +53,9 @@ class Cursor:
         self.execute_result: Any = None
         self._iterator: Iterator[Row] | None = None
         self.execute_result = None
+        # Keep arrow_context and stream alive to prevent C++ from accessing freed memory
+        self._arrow_context: Any = None
+        self._stream: Any = None
 
     @property
     def description(self) -> Any:
@@ -103,6 +106,10 @@ class Cursor:
     def close(self) -> None:
         """Close the cursor now (rather than whenever __del__ is called)."""
         self._closed = True
+        # Release references to allow garbage collection
+        self._iterator = None
+        self._arrow_context = None
+        self._stream = None
 
     def execute(self, operation: str, parameters: Sequence[Any] | dict[str, Any] | None = None) -> None:
         """
@@ -126,6 +133,8 @@ class Cursor:
         ).result
         # Reset streaming state for a new result
         self._iterator = None
+        self._arrow_context = None
+        self._stream = None
 
     def executemany(self, operation: str, seq_of_parameters: Sequence[Sequence[Any]]) -> None:
         """
@@ -141,17 +150,47 @@ class Cursor:
         raise NotSupportedError("executemany is not implemented")
 
     def _get_stream_ptr(self) -> int:
-        """Get the ArrowArrayStream pointer from execute result."""
-        stream_ptr = int.from_bytes(self.execute_result.stream.value, byteorder="little", signed=False)
+        """Get the ArrowArrayStream pointer from execute result.
+
+        Returns:
+            int: The ArrowArrayStream pointer as an integer
+
+        Raises:
+            RuntimeError: If execute_result is invalid or stream pointer is null
+        """
+        if self.execute_result is None:
+            raise RuntimeError("No query has been executed")
+
+        if not hasattr(self.execute_result, "stream") or self.execute_result.stream is None:
+            raise RuntimeError("Execute result does not contain a valid stream")
+
+        if not hasattr(self.execute_result.stream, "value") or self.execute_result.stream.value is None:
+            raise RuntimeError("Stream does not contain a valid pointer value")
+
+        stream_value = self.execute_result.stream.value
+        if len(stream_value) != 8:
+            raise RuntimeError(f"Stream pointer value has wrong length: {len(stream_value)} (expected 8)")
+
+        stream_ptr = int.from_bytes(stream_value, byteorder="little", signed=False)
+
+        if stream_ptr == 0:
+            raise RuntimeError("Stream pointer is null")
+
         return stream_ptr
 
     def _ensure_iterator(self) -> None:
         if self._iterator is None:
+            # Keep references to prevent garbage collection while C++ code uses them:
+            # - execute_result: Contains the protobuf response
+            # - self._stream: The stream object that owns the ArrowArrayStream
+            # - self._arrow_context: C++ holds a raw PyObject* pointer to it
+            # Without these references, Python will free the memory causing segfaults
+            self._stream = self.execute_result.stream
             stream_ptr = self._get_stream_ptr()
-            arrow_context = ArrowConverterContext()
+            self._arrow_context = ArrowConverterContext()
             self._iterator = ArrowStreamIterator(
                 stream_ptr,
-                arrow_context,
+                self._arrow_context,
                 # TODO: SNOW-2997742, SNOW-2997786, temporarily hardcoded
                 use_dict_result=False,
                 use_numpy=False,
