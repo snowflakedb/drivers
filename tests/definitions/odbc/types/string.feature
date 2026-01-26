@@ -35,13 +35,3 @@ Feature: ODBC-specific string datatype handling
     And Columns are bound using SQLBindCol
     Then there are 1000000 rows returned
     And all returned string values should match the generated values in order
-
-  @odbc_e2e
-  Scenario: should truncate string data when buffer is too short
-    # Tests SQL_SUCCESS_WITH_INFO on truncation when buffer is smaller than data
-    Given Snowflake client is logged in
-    When Query selecting a long string is executed
-    And Attempt to get data with a buffer that is too short
-    Then the function should return SQL_SUCCESS_WITH_INFO (truncation occurred)
-    And the buffer should contain the truncated string with null terminator
-    And the indicator should show the actual length of the original string

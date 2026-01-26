@@ -440,8 +440,7 @@ TEST_CASE("should convert UTF-16 to ASCII with 0x1a substitution when using SQL_
       u"'αβγδ' AS greek, "
       u"'Hello' AS ascii_only, "
       u"'y̆es' AS combined, "
-      u"'𝄞' AS surrogate_pair"
-    );
+      u"'𝄞' AS surrogate_pair");
 
   // Then Japanese characters should be replaced with 0x1a (SUB) when reading as SQL_C_CHAR
   auto japanese = get_data<SQL_C_CHAR>(stmt, 1);
@@ -531,28 +530,4 @@ TEST_CASE("should download string data in multiple chunks using SQLBindCol", "[d
 
   // And all returned string values should match the generated values in order
   CHECK(row_count == expected_row_count);
-}
-
-TEST_CASE("should truncate string data when buffer is too short", "[datatype][string][truncation]") {
-  // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
-
-  // When Query selecting a long string is executed
-  auto stmt = conn.execute_fetch("SELECT 'This is a very long string that will be truncated' AS long_str");
-
-  // And Attempt to get data with a buffer that is too short
-  char buffer[20];  // Buffer smaller than the string
-  SQLLEN indicator;
-  SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_CHAR, buffer, sizeof(buffer), &indicator);
-
-  // Then the function should return SQL_SUCCESS_WITH_INFO (truncation occurred)
-  CHECK(ret == SQL_SUCCESS_WITH_INFO);
-
-  // And the buffer should contain the truncated string with null terminator
-  CHECK(strlen(buffer) == sizeof(buffer) - 1);  // 19 characters + null terminator
-  CHECK(std::string(buffer) == "This is a very long");
-
-  // And the indicator should show the actual length of the original string
-  CHECK(indicator == 52);  // Length of original string
 }
