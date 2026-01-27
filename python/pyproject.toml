@@ -172,19 +172,12 @@ fix = [
     'mypy --install-types --non-interactive -p snowflake.connector',
 ]
 
-# Type checking environment
-[tool.hatch.envs.type]
-features = ["dev"]
-scripts.run = "mypy src/snowflake"
-
 # Test environment matrix
 [tool.hatch.envs.test]
 features = ["test"]
+# This skips installing the ud version from sources, installs from wheel via pre-install
+skip-install = true
 dev-mode = false
-
-pre-install-commands = [
-    "pip install {env:WHEEL_PATH:dist/*.whl}",
-]
 
 [tool.hatch.envs.test.env-vars]
 # IMPORTANT: PARAMETER_PATH must be explicitly set
@@ -195,33 +188,31 @@ python = ["3.9", "3.10", "3.11", "3.12", "3.13"]
 
 [tool.hatch.envs.test.scripts]
 # Install from source
-install-wheel = "pip install dist/*.whl"
+install-wheel = "pip install {env:WHEEL_PATH:dist/*.whl}"
 # Unit tests
 unit = "pytest tests/unit {args}"
 # Integration tests
-integ = "pytest tests/integ --connector=universal {args}"
+integ = "pytest tests/integ {args}"
 # End-to-end tests
-e2e = "pytest tests/e2e --connector=universal {args}"
+e2e = "pytest tests/e2e {args}"
 # All tests
-all = "pytest tests/ --connector=universal {args}"
+all = "pytest tests/ {args}"
 # All tests with coverage
-all-cov = "pytest tests/ --connector=universal --cov=src/snowflake --cov-report=xml --cov-report=html {args}"
+all-cov = "pytest tests/ --cov=src/snowflake --cov-report=xml --cov-report=html {args}"
 
-# Reference connector environment (installs local package + reference connector)
+# Reference connector environment installs only reference connector
 [tool.hatch.envs.reference]
 features = ["test"]
-pre-install-commands = [
-    "pip install snowflake-connector-python -t old_driver_src"
-]
+# This skips installing the ud version of driver
+skip-install = true
+dev-mode = false
 
 [tool.hatch.envs.reference.scripts]
-run = "pytest tests/integ tests/e2e --connector=reference {args}"
-
-# CI environment for special CI tasks
-[tool.hatch.envs.ci]
-skip-install = false
-dependencies = [
-    "requests",
+# This environment runs with old driver only. UD driver is not installed.
+test = [
+    "pip uninstall --yes snowflake-connector-python-ud",
+    "pip install snowflake-connector-python=={env:PYTHON_REFERENCE_DRIVER_VERSION:3.17.2}",
+    "pytest tests/integ tests/e2e {args}"
 ]
 
 [tool.hatch.envs.ci.scripts]
