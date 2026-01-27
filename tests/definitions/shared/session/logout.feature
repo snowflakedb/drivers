@@ -96,7 +96,7 @@ Feature: Session Logout
     # Phase 3 (doc for: SNOW-2314152) default. Phase 2 drivers (Python/JDBC) default this to true for backward compatibility.
     # Parameter names follow driver convention: enable_server_session_keep_alive_auto_detection (Python/Core) or ENABLE_SERVER_SESSION_KEEP_ALIVE_AUTO_DETECTION (ODBC)
     Given Snowflake client is created without enable_server_session_keep_alive_auto_detection parameter
-    When Connection is created
+    When Connection configuration is checked
     Then enable_server_session_keep_alive_auto_detection defaults to false
     And Auto-detection is disabled by default
 

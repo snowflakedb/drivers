@@ -8,38 +8,90 @@ Feature: Session Logout - Python-specific behavior
   # when server_session_keep_alive is null. This will change in Phase 3 to
   # always logout by default. ODBC already implements Phase 3 behavior.
 
-  Scenario: should have auto_detection enabled by default with Python default configuration
-    # Phase 2 (doc for: SNOW-2314152) behavior. Will change in Phase 3 to always logout by default.
-    # Python defaults: server_session_keep_alive=null, enable_server_session_keep_alive_auto_detection=true
-    Given Snowflake Python client is created with default parameters
-    And server_session_keep_alive defaults to null
-    When Client connects
-    Then enable_server_session_keep_alive_auto_detection defaults to true
-    And Auto-detection will be performed on close
-
-  Scenario: should skip logout with Python default configuration when async query detected
-    # Phase 2 (doc for: SNOW-2314152) behavior. Will migrate to Phase 3 compliant behavior where null means "always logout".
-    # Python defaults: server_session_keep_alive=null, enable_server_session_keep_alive_auto_detection=true
+  Scenario: should have Phase 2 defaults that enable auto_detection
+    # Phase 2 (doc for: SNOW-2314152) defaults for backward compatibility. Will change in Phase 3.
+    # Python Phase 2 defaults: server_session_keep_alive=null, enable_server_session_keep_alive_auto_detection=true
     Given Snowflake Python client is created with default parameters
     And server_session_keep_alive defaults to null
     And enable_server_session_keep_alive_auto_detection defaults to true
+    When Client connects and then closes
+    Then Auto-detection is performed
+
+  # ===========================================================================
+  #                   Phase 2 Truth Table - Explicit Tests
+  # ===========================================================================
+
+  Scenario: should skip logout when server_session_keep_alive is null and auto_detection true and async queries found
+    # Phase 2 (doc for: SNOW-2314152) truth table: null + true + queries found → No logout, No deprecation
+    Given Snowflake Python client is created with server_session_keep_alive set to null
+    And enable_server_session_keep_alive_auto_detection is set to true
     And Long-running async query is executed using SYSTEM$SLEEP(300)
     When Client closes connection
-    Then Auto-detection is performed and finds running query
+    Then Auto-detection finds running query
     And No logout request is sent
-    And Session is kept alive
+    And Connection close metrics are recorded in telemetry
+    And No deprecation warning is emitted
     And Test cleans up the running query after assertions complete
 
-  Scenario: should emit deprecation warning when using auto_detection fallback with null or unset param
-    # Phase 2 (doc for: SNOW-2314152) behavior. Warning users of upcoming breaking change to Phase 3 compliant behavior.
-    Given Snowflake Python client is created with server_session_keep_alive unset or explicitly null
-    And enable_server_session_keep_alive_auto_detection defaults to true
+  Scenario: should send logout when server_session_keep_alive is null and auto_detection true and no async queries found
+    # Phase 2 (doc for: SNOW-2314152) truth table: null + true + no queries → Send logout, No deprecation
+    Given Snowflake Python client is created with server_session_keep_alive set to null
+    And enable_server_session_keep_alive_auto_detection is set to true
+    And No async queries are running
+    When Client closes connection
+    Then Auto-detection finds no running queries
+    And Logout request is sent
+    And Connection close metrics are recorded in telemetry
+    And No deprecation warning is emitted
+
+  Scenario: should send logout when server_session_keep_alive is null and auto_detection false
+    # Phase 2 (doc for: SNOW-2314152) truth table: null + false → Send logout (no detection)
+    Given Snowflake Python client is created with server_session_keep_alive set to null
+    And enable_server_session_keep_alive_auto_detection is set to false
+    When Client closes connection
+    Then Auto-detection is not performed
+    And Logout request is sent
+    And Connection close metrics are recorded in telemetry
+    And No deprecation warning is emitted
+
+  Scenario: should skip logout when server_session_keep_alive is false and auto_detection true and async queries found
+    # Phase 2 (doc for: SNOW-2314152) truth table: false + true + queries found → No logout + deprecation
+    # Legacy Python behavior: false still allows auto-detection to run
+    Given Snowflake Python client is created with server_session_keep_alive set to false
+    And enable_server_session_keep_alive_auto_detection is set to true
     And Long-running async query is executed using SYSTEM$SLEEP(300)
-    When Client closes connection and logout is skipped due to auto-detection
-    Then Deprecation warning is emitted
-    And Warning mentions upcoming migration to Phase 3 compliant behavior
-    And Warning states that explicit configuration will be required to keep current behavior
+    When Client closes connection
+    Then Auto-detection finds running query
+    And No logout request is sent
+    And Connection close metrics are recorded in telemetry
+    And Deprecation warning is emitted
+    And Warning mentions that false will force logout in Phase 3
     And Test cleans up the running query after assertions complete
+
+  Scenario: should skip logout when server_session_keep_alive is false and auto_detection true and no async queries found
+    # Phase 2 (doc for: SNOW-2314152) truth table: false + true + no queries → No logout + deprecation
+    # Legacy Python behavior: false means "don't logout" rather than "force logout"
+    Given Snowflake Python client is created with server_session_keep_alive set to false
+    And enable_server_session_keep_alive_auto_detection is set to true
+    And No async queries are running
+    When Client closes connection
+    Then Auto-detection finds no running queries
+    And No logout request is sent
+    And Connection close metrics are recorded in telemetry
+    And Deprecation warning is emitted
+    And Warning mentions that false will force logout in Phase 3
+
+  Scenario: should skip logout when server_session_keep_alive is false and auto_detection false
+    # Phase 2 (doc for: SNOW-2314152) truth table: false + false → No logout + deprecation
+    # Legacy Python behavior: false means "keep session alive"
+    Given Snowflake Python client is created with server_session_keep_alive set to false
+    And enable_server_session_keep_alive_auto_detection is set to false
+    When Client closes connection
+    Then Auto-detection is not performed
+    And No logout request is sent
+    And Connection close metrics are recorded in telemetry
+    And Deprecation warning is emitted
+    And Warning mentions that false will force logout in Phase 3
 
   # ===========================================================================
   #                     Python-Specific Defaults
@@ -48,13 +100,13 @@ Feature: Session Logout - Python-specific behavior
   Scenario: should have enable_server_session_keep_alive_auto_detection default to true
     # Phase 2 (doc for: SNOW-2314152) default for backward compatibility. Phase 3 defaults to false.
     Given Snowflake Python client is created without enable_server_session_keep_alive_auto_detection parameter
-    When Connection is created
+    When Connection configuration is checked
     Then enable_server_session_keep_alive_auto_detection defaults to true
     And Auto-detection is enabled by default
 
   Scenario: should perform auto_detection when server_session_keep_alive is explicitly false
     # Phase 2 (doc for: SNOW-2314152) behavior. In Phase 3, false will mean "force logout" without auto-detection.
-    # Python Phase 2: sska=false still runs auto-detection (legacy behavior)
+    # Python Phase 2: server_session_keep_alive=false still runs auto-detection (legacy behavior)
     Given Snowflake Python client is created with server_session_keep_alive explicitly set to false
     And enable_server_session_keep_alive_auto_detection defaults to true
     And Long-running async query is executed using SYSTEM$SLEEP(300)

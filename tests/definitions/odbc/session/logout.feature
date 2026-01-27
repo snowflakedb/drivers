@@ -11,7 +11,7 @@ Feature: Session Logout - ODBC-specific behavior
 
   Scenario: should have server_session_keep_alive default to null
     Given Snowflake ODBC connection is created without SERVER_SESSION_KEEP_ALIVE attribute
-    When Connection is created
+    When Connection configuration is checked
     Then server_session_keep_alive defaults to null
 
   # ===========================================================================
