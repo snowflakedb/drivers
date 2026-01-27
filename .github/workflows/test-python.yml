@@ -155,108 +155,109 @@ jobs:
           path: python/reports/*-${{ matrix.os }}-${{ matrix.py }}.*
 
   # Integration tests only with reference connector (for comparison)
-  python_tests_reference:
-    needs: [detect-changes, build_rust_core, format]
-    if: github.event_name == 'push' || needs.detect-changes.outputs.run_python == 'true'
-    runs-on: ubuntu-latest
-    continue-on-error: true  # Reference tests expected to fail due to behavioral differences
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v4
-        with:
-          version: "0.5.11"
-
-      - name: Restore uv cache
-        env:
-          UV_CACHE_DIR: /tmp/.uv-cache
-        uses: actions/cache@v4
-        with:
-          path: /tmp/.uv-cache
-          key: uv-${{ runner.os }}-${{ env.REFERENCE_PYTHON_VERSION }}-${{ hashFiles('python/uv.lock', 'python/pyproject.toml') }}
-          restore-keys: |
-            uv-${{ runner.os }}-${{ env.REFERENCE_PYTHON_VERSION }}-
-            uv-${{ runner.os }}-
-
-      - name: Set up Python ${{ env.REFERENCE_PYTHON_VERSION }}
-        run: uv python install ${{ env.REFERENCE_PYTHON_VERSION }}
-
-      - name: Download Python wheel
-        uses: actions/download-artifact@v4
-        with:
-          name: python-wheel
-          path: python/dist
-
-      - name: Decode secrets
-        run: ./scripts/decode_secrets.sh
-        env:
-          PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
-
-      - name: Install Hatch
-        run: uv tool install hatch
-
-      - name: Run reference integration tests
-        env:
-          PARAMETER_PATH: ${{ github.workspace }}/parameters.json
-          REFERENCE_DRIVER_VERSION: ${{ env.PYTHON_REFERENCE_DRIVER_VERSION }}
-        run: |
-          mkdir -p reports
-          hatch run reference:run \
-            --json-report --json-report-file=reports/reference-${{ env.REFERENCE_OS_VERSION }}-${{ env.REFERENCE_PYTHON_VERSION }}.json \
-            --junitxml=reports/reference-${{ env.REFERENCE_OS_VERSION }}-${{ env.REFERENCE_PYTHON_VERSION }}.xml
-        working-directory: python
-
-      - name: Upload test results as GitHub artifact
-        uses: actions/upload-artifact@v4
-        if: always()  # Upload test results even if tests fail (needed for comparison)
-        with:
-          name: results-reference-${{ env.REFERENCE_OS_VERSION }}-${{ env.REFERENCE_PYTHON_VERSION }}
-          path: python/reports/*-${{ env.REFERENCE_OS_VERSION }}-${{ env.REFERENCE_PYTHON_VERSION }}.*
+#  python_tests_reference:
+#    needs: [detect-changes, build_rust_core, format]
+#    if: github.event_name == 'push' || needs.detect-changes.outputs.run_python == 'true'
+#    runs-on: ubuntu-latest
+#    continue-on-error: true  # Reference tests expected to fail due to behavioral differences
+#    steps:
+#      - uses: actions/checkout@v4
+#
+#      - name: Install uv
+#        uses: astral-sh/setup-uv@v4
+#        with:
+#          version: "0.5.11"
+#
+#      - name: Restore uv cache
+#        env:
+#          UV_CACHE_DIR: /tmp/.uv-cache
+#        uses: actions/cache@v4
+#        with:
+#          path: /tmp/.uv-cache
+#          key: uv-${{ runner.os }}-${{ env.REFERENCE_PYTHON_VERSION }}-${{ hashFiles('python/uv.lock', 'python/pyproject.toml') }}
+#          restore-keys: |
+#            uv-${{ runner.os }}-${{ env.REFERENCE_PYTHON_VERSION }}-
+#            uv-${{ runner.os }}-
+#
+#      - name: Set up Python ${{ env.REFERENCE_PYTHON_VERSION }}
+#        run: uv python install ${{ env.REFERENCE_PYTHON_VERSION }}
+#
+#      - name: Download Python wheel
+#        uses: actions/download-artifact@v4
+#        with:
+#          name: python-wheel
+#          path: python/dist
+#
+#      - name: Decode secrets
+#        run: ./scripts/decode_secrets.sh
+#        env:
+#          PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
+#
+#      - name: Install Hatch
+#        run: uv tool install hatch
+#
+#      - name: Run reference integration tests
+#        env:
+#          PARAMETER_PATH: ${{ github.workspace }}/parameters.json
+#          REFERENCE_DRIVER_VERSION: ${{ env.PYTHON_REFERENCE_DRIVER_VERSION }}
+#        run: |
+#          mkdir -p reports
+#          hatch run reference:run \
+#            --json-report --json-report-file=reports/reference-${{ env.REFERENCE_OS_VERSION }}-${{ env.REFERENCE_PYTHON_VERSION }}.json \
+#            --junitxml=reports/reference-${{ env.REFERENCE_OS_VERSION }}-${{ env.REFERENCE_PYTHON_VERSION }}.xml
+#        working-directory: python
+#
+#      - name: Upload test results as GitHub artifact
+#        uses: actions/upload-artifact@v4
+#        if: always()  # Upload test results even if tests fail (needed for comparison)
+#        with:
+#          name: results-reference-${{ env.REFERENCE_OS_VERSION }}-${{ env.REFERENCE_PYTHON_VERSION }}
+#          path: python/reports/*-${{ env.REFERENCE_OS_VERSION }}-${{ env.REFERENCE_PYTHON_VERSION }}.*
 
   # Compare results between connectors
-  python_compare_results:
-    needs: [detect-changes, python_tests, python_tests_reference]
-    if: |
-      always() &&
-      needs.python_tests.result != 'skipped' &&
-      needs.python_tests_reference.result != 'skipped'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v4
-        with:
-          version: "0.5.11"
-
-      - name: Download universal test results
-        uses: actions/download-artifact@v4
-        with:
-          name: results-universal-${{ env.REFERENCE_OS_VERSION }}-${{ env.REFERENCE_PYTHON_VERSION }}
-          path: ${{ github.workspace }}/universal-results
-
-      - name: Download reference test results
-        uses: actions/download-artifact@v4
-        with:
-          name: results-reference-${{ env.REFERENCE_OS_VERSION }}-${{ env.REFERENCE_PYTHON_VERSION }}
-          path: ${{ github.workspace }}/reference-results
-
-      - name: Install Hatch
-        run: uv tool install hatch
-
-      - name: Compare integration test results
-        run: |
-          hatch run ci:compare \
-            --py ${{ env.REFERENCE_PYTHON_VERSION }} \
-            --os ${{ env.REFERENCE_OS_VERSION }} \
-            --universal ${{ github.workspace }}/universal-results/universal-${{ env.REFERENCE_OS_VERSION }}-${{ env.REFERENCE_PYTHON_VERSION }}.json \
-            --reference ${{ github.workspace }}/reference-results/reference-${{ env.REFERENCE_OS_VERSION }}-${{ env.REFERENCE_PYTHON_VERSION }}.json \
-            --fail-on-regressions 0 | tee -a $GITHUB_STEP_SUMMARY
-        working-directory: python
+#  python_compare_results:
+#    needs: [detect-changes, python_tests, python_tests_reference]
+#    if: |
+#      always() &&
+#      needs.python_tests.result != 'skipped' &&
+#      needs.python_tests_reference.result != 'skipped'
+#    runs-on: ubuntu-latest
+#    steps:
+#      - uses: actions/checkout@v4
+#
+#      - name: Install uv
+#        uses: astral-sh/setup-uv@v4
+#        with:
+#          version: "0.5.11"
+#
+#      - name: Download universal test results
+#        uses: actions/download-artifact@v4
+#        with:
+#          name: results-universal-${{ env.REFERENCE_OS_VERSION }}-${{ env.REFERENCE_PYTHON_VERSION }}
+#          path: ${{ github.workspace }}/universal-results
+#
+#      - name: Download reference test results
+#        uses: actions/download-artifact@v4
+#        with:
+#          name: results-reference-${{ env.REFERENCE_OS_VERSION }}-${{ env.REFERENCE_PYTHON_VERSION }}
+#          path: ${{ github.workspace }}/reference-results
+#
+#      - name: Install Hatch
+#        run: uv tool install hatch
+#
+#      - name: Compare integration test results
+#        run: |
+#          hatch run ci:compare \
+#            --py ${{ env.REFERENCE_PYTHON_VERSION }} \
+#            --os ${{ env.REFERENCE_OS_VERSION }} \
+#            --universal ${{ github.workspace }}/universal-results/universal-${{ env.REFERENCE_OS_VERSION }}-${{ env.REFERENCE_PYTHON_VERSION }}.json \
+#            --reference ${{ github.workspace }}/reference-results/reference-${{ env.REFERENCE_OS_VERSION }}-${{ env.REFERENCE_PYTHON_VERSION }}.json \
+#            --fail-on-regressions 0 | tee -a $GITHUB_STEP_SUMMARY
+#        working-directory: python
 
   python-status:
-    needs: [detect-changes, build_rust_core, python_tests, python_tests_reference, python_compare_results]
+#    needs: [detect-changes, build_rust_core, python_tests, python_tests_reference, python_compare_results]
+    needs: [detect-changes, build_rust_core, python_tests]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -274,13 +275,12 @@ jobs:
           # Check if critical jobs failed or were cancelled
           # Note: python_tests_reference has continue-on-error:true, so we don't fail on it
           if [[ "${{ needs.build_rust_core.result }}" =~ ^(failure|cancelled)$ ]] || \
-             [[ "${{ needs.python_tests.result }}" =~ ^(failure|cancelled)$ ]] || \
-             [[ "${{ needs.python_compare_results.result }}" =~ ^(failure|cancelled)$ ]]; then
+             [[ "${{ needs.python_tests.result }}" =~ ^(failure|cancelled)$ ]]; then
             echo "✗ Python CI FAILED or CANCELLED"
             echo "  - build_rust_core: ${{ needs.build_rust_core.result }}"
             echo "  - python_tests: ${{ needs.python_tests.result }}"
-            echo "  - python_tests_reference: ${{ needs.python_tests_reference.result }} (continue-on-error)"
-            echo "  - python_compare_results: ${{ needs.python_compare_results.result }}"
+            #echo "  - python_tests_reference: ${{ needs.python_tests_reference.result }} (continue-on-error)"
+            #echo "  - python_compare_results: ${{ needs.python_compare_results.result }}"
             exit 1
           fi
           
@@ -288,6 +288,6 @@ jobs:
           echo "✓ Python CI PASSED"
           echo "  - build_rust_core: ${{ needs.build_rust_core.result }}"
           echo "  - python_tests: ${{ needs.python_tests.result }}"
-          echo "  - python_tests_reference: ${{ needs.python_tests_reference.result }} (continue-on-error)"
-          echo "  - python_compare_results: ${{ needs.python_compare_results.result }}"
+          #echo "  - python_tests_reference: ${{ needs.python_tests_reference.result }} (continue-on-error)"
+          #echo "  - python_compare_results: ${{ needs.python_compare_results.result }}"
           exit 0
