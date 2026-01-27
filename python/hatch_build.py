@@ -210,7 +210,7 @@ class NanoarrowBuildHook(BuildHookInterface):
         # Get paths relative to the Python wrapper directory
         python_dir = Path(__file__).parent
         cargo_manifest = python_dir.parent / "Cargo.toml"
-        target_dir = python_dir / "src" / "snowflake" / "ud_connector" / "_core"
+        target_dir = python_dir / "src" / "snowflake" / "connector" / "_core"
 
         # Ensure target directory exists
         target_dir.mkdir(parents=True, exist_ok=True)
