@@ -2,7 +2,7 @@ from typing import TYPE_CHECKING
 
 
 if TYPE_CHECKING:
-    from snowflake.ud_connector import Connection
+    from snowflake.connector import Connection
 
 
 class SnowflakeRestful:
