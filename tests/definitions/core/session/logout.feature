@@ -8,6 +8,7 @@ Feature: Session Logout - Core HTTP Layer Integration
   #                      HTTP Request Construction
   # ===========================================================================
 
+@core_int
   Scenario: should construct logout request with correct HTTP method URL headers and body
     Given Mock HTTP server is configured to capture requests
     And UD Core client is logged in with session token
@@ -23,6 +24,7 @@ Feature: Session Logout - Core HTTP Layer Integration
     And User-Agent header contains UD version and Rust version
     And Request body is exactly empty JSON object {}
 
+@core_int
   Scenario: should apply retry policy to logout HTTP request
     Given Mock HTTP server returns 503 error on first attempt
     And Mock HTTP server returns 200 on second attempt
@@ -33,6 +35,7 @@ Feature: Session Logout - Core HTTP Layer Integration
     And Second request is made after backoff delay
     And Logout succeeds
 
+@core_int
   Scenario: should handle HTTP connection reset during logout
     Given Mock HTTP server resets connection on first attempt
     And Mock HTTP server succeeds on second attempt
@@ -41,6 +44,7 @@ Feature: Session Logout - Core HTTP Layer Integration
     And Request is retried according to retry policy
     And Logout succeeds on retry
 
+@core_int
   Scenario: should record connection close decision metrics before logout
     Given Telemetry client is configured
     And UD Core client is logged in

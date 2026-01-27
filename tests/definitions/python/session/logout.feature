@@ -8,6 +8,7 @@ Feature: Session Logout - Python-specific behavior
   # when server_session_keep_alive is null. This will change in Phase 3 to
   # always logout by default. ODBC already implements Phase 3 behavior.
 
+@python_e2e
   Scenario: should have Phase 2 defaults that enable auto_detection
     # Phase 2 (doc for: SNOW-2314152) defaults for backward compatibility. Will change in Phase 3.
     # Python Phase 2 defaults: server_session_keep_alive=null, enable_server_session_keep_alive_auto_detection=true
@@ -21,6 +22,7 @@ Feature: Session Logout - Python-specific behavior
   #                   Phase 2 Truth Table - Explicit Tests
   # ===========================================================================
 
+@python_e2e
   Scenario: should skip logout when server_session_keep_alive is none and auto_detection true and async queries found
     # Phase 2 (doc for: SNOW-2314152) truth table: None + True + False (queries running) → No logout, No deprecation
     Given Snowflake Python client is created with server_session_keep_alive set to none
@@ -33,6 +35,7 @@ Feature: Session Logout - Python-specific behavior
     And No deprecation warning is emitted
     And Test cleans up the running query after assertions complete
 
+@python_e2e
   Scenario: should send logout when server_session_keep_alive is none and auto_detection true and no async queries found
     # Phase 2 (doc for: SNOW-2314152) truth table: None + True + True (no queries) → Send logout, No deprecation
     Given Snowflake Python client is created with server_session_keep_alive set to none
@@ -44,6 +47,7 @@ Feature: Session Logout - Python-specific behavior
     And Connection close metrics are recorded in telemetry
     And No deprecation warning is emitted
 
+@python_e2e
   Scenario: should send logout when server_session_keep_alive is none and auto_detection false
     # Phase 2 (doc for: SNOW-2314152) truth table: None + False → Send logout (no detection), No deprecation
     Given Snowflake Python client is created with server_session_keep_alive set to none
@@ -54,6 +58,7 @@ Feature: Session Logout - Python-specific behavior
     And Connection close metrics are recorded in telemetry
     And No deprecation warning is emitted
 
+@python_e2e
   Scenario: should skip logout when server_session_keep_alive is false and auto_detection true and async queries found
     # Phase 2 (doc for: SNOW-2314152) truth table: False + True + False (queries running) → No logout + deprecation
     # Legacy Python behavior: false still allows auto-detection to run
@@ -68,6 +73,7 @@ Feature: Session Logout - Python-specific behavior
     And Warning mentions that false will force logout in Phase 3
     And Test cleans up the running query after assertions complete
 
+@python_e2e
   Scenario: should send logout when server_session_keep_alive is false and auto_detection true and no async queries found
     # Phase 2 (doc for: SNOW-2314152) truth table: False + True + True (no queries) → Send logout + deprecation
     # Legacy Python behavior: false with auto-detection runs check, then sends logout if no queries
@@ -81,6 +87,7 @@ Feature: Session Logout - Python-specific behavior
     And Deprecation warning is emitted
     And Warning mentions that false will force logout in Phase 3
 
+@python_e2e
   Scenario: should send logout when server_session_keep_alive is false and auto_detection false
     # Phase 2 (doc for: SNOW-2314152) truth table: False + False → Send logout + deprecation
     # Legacy Python behavior: false with disabled auto-detection forces logout
@@ -97,6 +104,7 @@ Feature: Session Logout - Python-specific behavior
   #                     Python-Specific Defaults
   # ===========================================================================
 
+@python_e2e
   Scenario: should have enable_server_session_keep_alive_auto_detection default to true
     # Phase 2 (doc for: SNOW-2314152) default for backward compatibility. Phase 3 defaults to false.
     Given Snowflake Python client is created without enable_server_session_keep_alive_auto_detection parameter
@@ -104,6 +112,7 @@ Feature: Session Logout - Python-specific behavior
     Then enable_server_session_keep_alive_auto_detection defaults to true
     And Auto-detection is enabled by default
 
+@python_e2e
   Scenario: should perform auto_detection when server_session_keep_alive is explicitly false
     # Phase 2 (doc for: SNOW-2314152) behavior. In Phase 3, false will mean "force logout" without auto-detection.
     # Python Phase 2: server_session_keep_alive=false still runs auto-detection (legacy behavior)
@@ -117,6 +126,7 @@ Feature: Session Logout - Python-specific behavior
     And Warning mentions that false value behavior will change to force logout in Phase 3
     And Test cleans up the running query after assertions complete
 
+@python_e2e
   Scenario: should use best-effort error handling strategy by default
     Given Snowflake Python client is created with default parameters
     And Server will return 500 Internal Server Error on logout
@@ -132,6 +142,7 @@ Feature: Session Logout - Python-specific behavior
   # Phase 1 (doc for: SNOW-2314152) deprecation: Python still registers atexit handlers.
   # Will be disabled by default in Phase 2, removed in Phase 3.
 
+@python_e2e
   Scenario: should register atexit handler that calls close in legacy mode
     # Phase 1 (doc for: SNOW-2314152) deprecation. Will be disabled by default in Phase 2.
     Given Snowflake Python client is created with auto_cleanup enabled
@@ -141,6 +152,7 @@ Feature: Session Logout - Python-specific behavior
     Then atexit handler invokes close()
     And Session is logged out
 
+@python_e2e
   Scenario: should emit deprecation warning on first auto-cleanup run per process
     # Phase 1 (doc for: SNOW-2314152) deprecation. Prepares users for explicit close() requirement.
     Given Snowflake Python client is created with auto_cleanup enabled
@@ -151,6 +163,7 @@ Feature: Session Logout - Python-specific behavior
     When Another connection is created and process exits
     Then No additional deprecation warning is emitted
 
+@python_e2e
   Scenario: should not register atexit handler when auto-cleanup explicitly disabled
     Given Snowflake Python client is created with auto_cleanup disabled
     When Client connects
@@ -158,6 +171,7 @@ Feature: Session Logout - Python-specific behavior
     When Process exits without explicit close
     Then No automatic close is performed
 
+@python_e2e
   Scenario: should emit telemetry and WARN when connection leaked at process exit
     Given Snowflake Python client is logged in
     And Connection is not explicitly closed

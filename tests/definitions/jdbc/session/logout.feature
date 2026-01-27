@@ -8,6 +8,7 @@ Feature: Session Logout - JDBC-specific behavior
   # when server_session_keep_alive is null. This will migrate to Phase 3
   # behavior where null means "always logout". ODBC shows target behavior.
 
+@jdbc_e2e
   Scenario: should have Phase 2 defaults that enable auto_detection
     # Phase 2 (doc for: SNOW-2314152) defaults for backward compatibility. Will change in Phase 3.
     # JDBC Phase 2 defaults: server_session_keep_alive=null, enable_server_session_keep_alive_auto_detection=true
@@ -21,6 +22,7 @@ Feature: Session Logout - JDBC-specific behavior
   #                   Phase 2 Truth Table - Explicit Tests
   # ===========================================================================
 
+@jdbc_e2e
   Scenario: should skip logout when server_session_keep_alive is null and auto_detection true and async queries found
     # Phase 2 (doc for: SNOW-2314152) truth table: null + true + queries found → No logout + deprecation
     Given Snowflake JDBC connection is created with server_session_keep_alive set to null
@@ -34,6 +36,7 @@ Feature: Session Logout - JDBC-specific behavior
     And Warning mentions migration to Phase 3 compliant behavior
     And Test cleans up the running query after assertions complete
 
+@jdbc_e2e
   Scenario: should send logout when server_session_keep_alive is null and auto_detection true and no async queries found
     # Phase 2 (doc for: SNOW-2314152) truth table: null + true + no queries → Send logout + deprecation
     Given Snowflake JDBC connection is created with server_session_keep_alive set to null
@@ -46,6 +49,7 @@ Feature: Session Logout - JDBC-specific behavior
     And Deprecation warning is logged
     And Warning mentions migration to Phase 3 compliant behavior
 
+@jdbc_e2e
   Scenario: should send logout when server_session_keep_alive is null and auto_detection false
     # Phase 2 (doc for: SNOW-2314152) truth table: null + false → Send logout (no detection), No deprecation
     Given Snowflake JDBC connection is created with server_session_keep_alive set to null
@@ -60,6 +64,7 @@ Feature: Session Logout - JDBC-specific behavior
   #                     JDBC-Specific Defaults
   # ===========================================================================
 
+@jdbc_e2e
   Scenario: should have enable_server_session_keep_alive_auto_detection default to true
     # Phase 2 (doc for: SNOW-2314152) default for backward compatibility. Phase 3 defaults to false.
     Given Snowflake JDBC connection is created without enable_server_session_keep_alive_auto_detection property
@@ -67,6 +72,7 @@ Feature: Session Logout - JDBC-specific behavior
     Then enable_server_session_keep_alive_auto_detection defaults to true
     And Auto-detection is enabled by default
 
+@jdbc_e2e
   Scenario: should use strict error handling strategy by default
     Given Snowflake JDBC connection is created with default parameters
     And Server will return 400 Bad Request error on logout
@@ -80,6 +86,7 @@ Feature: Session Logout - JDBC-specific behavior
   #                         Resource Management
   # ===========================================================================
 
+@jdbc_e2e
   Scenario: should invalidate all active statements on close regardless of logout result
     Given Snowflake JDBC connection is logged in
     And Multiple prepared statements are created
