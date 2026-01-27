@@ -181,6 +181,10 @@ TEST_CASE("should truncate decimal string literals with fractional part when con
       "SELECT '123.999' AS round_down, '-456.001' AS neg_round, '0.9' AS less_than_one, "
       "'1.2345678901241242141241241e9' AS scientific_notation");
 
+  SECTION("TEST") {
+    auto value = get_data<SQL_C_SBIGINT>(stmt, 1);
+    CHECK(value == 123);
+  }
   // Then the string values should be truncated when converted to integer types
   SECTION("SQL_C_BIGINT") {
     CHECK(check_fractional_truncation<SQL_C_SBIGINT>(stmt, 1) == 123);

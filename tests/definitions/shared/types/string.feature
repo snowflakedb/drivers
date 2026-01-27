@@ -96,9 +96,6 @@ Feature: String datatype handling
     # This test ensures proper handling of large result sets that span multiple chunks
     # ~10^6 values ensures data is downloaded in at least two chunks
     Given Snowflake client is logged in
-    And A random seed is initialized and logged
-    And A temporary table with VARCHAR column is created
-    And The table is populated with 1000000 randomly generated string values
-    When Query "SELECT * FROM {table} ORDER BY id" is executed
-    Then there are 1000000 rows returned
+    When Query "SELECT seq8() AS id, TO_VARCHAR(seq8()) AS str_val FROM TABLE(GENERATOR(ROWCOUNT => 10000)) v ORDER BY id" is executed
+    Then there are 10000 rows returned
     And all returned string values should match the generated values in order

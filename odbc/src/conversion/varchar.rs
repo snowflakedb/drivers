@@ -2,13 +2,16 @@ use arrow::array::{Array, GenericByteArray};
 use arrow::datatypes::Utf8Type;
 use chrono::{Datelike, NaiveDate, NaiveDateTime, NaiveTime, Timelike};
 use odbc_sys as sql;
+use snafu::ResultExt;
 
 use crate::cdata_types::CDataType;
 use crate::conversion::error::{
-    InvalidValueSnafu, NumericParsingSnafu, NumericValueOutOfRangeSnafu, ReadArrowError,
-    UnsupportedOdbcTypeSnafu, WriteOdbcError,
+    InvalidValueSnafu, NumericLiteralParsingSnafu, NumericValueOutOfRangeSnafu, ReadArrowError,
+    RustParsingSnafu, UnsupportedOdbcTypeSnafu, WriteOdbcError,
 };
+use crate::conversion::parsers::numeric_literal_parser::{Sign, parse_numeric_literal};
 use crate::conversion::traits::Binding;
+use crate::conversion::warning::{Warning, Warnings};
 use crate::conversion::{ReadArrowType, SnowflakeType, WriteODBCType};
 
 pub(crate) struct SnowflakeVarchar {
@@ -37,54 +40,55 @@ impl ReadArrowType<GenericByteArray<Utf8Type>> for SnowflakeVarchar {
 }
 
 macro_rules! parse_i_number {
-    ($value:expr, $type:ty) => {
-        $value.trim().parse::<$type>().map_err(|e| match e.kind() {
-            std::num::IntErrorKind::NegOverflow | std::num::IntErrorKind::PosOverflow => {
-                NumericValueOutOfRangeSnafu {
-                    reason: format!("Value out of range for type {}", stringify!($type)),
-                }
-                .build()
+    ($value:expr, $type:ty) => {{
+        let value = parse_numeric_literal($value).context(NumericLiteralParsingSnafu {})?;
+        let normalized_value = value.normalize().context(NumericLiteralParsingSnafu {})?;
+        let whole_part = normalized_value.whole_part_with_sign();
+        let value = whole_part.parse::<$type>().map_err(|_| {
+            RustParsingSnafu {
+                reason: format!(
+                    "Failed to parse whole part of numeric literal: {}",
+                    whole_part
+                ),
             }
-            _ => NumericParsingSnafu {
-                reason: e.to_string(),
-            }
-            .build(),
-        })
-    };
+            .build()
+        })?;
+        let warnings: Warnings = if normalized_value.has_fractional_part() {
+            vec![Warning::NumericValueTruncated]
+        } else {
+            vec![]
+        };
+        (value, warnings)
+    }};
 }
 
 macro_rules! parse_u_number {
     ($value:expr, $type:ty) => {{
-        let value = $value.trim();
-        if value.starts_with('-') {
-            NumericValueOutOfRangeSnafu {
-                reason: "Value is negative".to_string(),
+        let value = parse_numeric_literal($value).context(NumericLiteralParsingSnafu {})?;
+        let normalized_value = value.normalize().context(NumericLiteralParsingSnafu {})?;
+        let whole_part = normalized_value.whole_part_with_sign();
+        let value = whole_part.parse::<$type>().map_err(|_| {
+            RustParsingSnafu {
+                reason: format!(
+                    "Failed to parse whole part of numeric literal: {}",
+                    whole_part
+                ),
             }
-            .fail()
+            .build()
+        })?;
+        let warnings: Warnings = if normalized_value.has_fractional_part() {
+            vec![Warning::NumericValueTruncated]
         } else {
-            match value.parse::<$type>() {
-                Ok(value) => Ok(value),
-                Err(e) => match e.kind() {
-                    std::num::IntErrorKind::PosOverflow => NumericValueOutOfRangeSnafu {
-                        reason: format!("Value out of range for type {}", stringify!($type)),
-                    }
-                    .fail(),
-                    _ => NumericParsingSnafu {
-                        reason: e.to_string(),
-                    }
-                    .fail(),
-                },
-            }
-        }
+            vec![]
+        };
+        (value, warnings)
     }};
 }
 
 macro_rules! write_i_number {
     ($value:expr, $type:ty, $binding:expr) => {{
-        let value = parse_i_number!($value, $type)?;
-        unsafe {
-            std::ptr::write($binding.target_value_ptr as *mut $type, value);
-        }
+        let (value, warnings) = parse_i_number!($value, $type);
+        unsafe { std::ptr::write($binding.target_value_ptr as *mut $type, value) };
         if !$binding.str_len_or_ind_ptr.is_null() {
             unsafe {
                 std::ptr::write(
@@ -92,17 +96,15 @@ macro_rules! write_i_number {
                     std::mem::size_of::<$type>() as sql::Len,
                 )
             };
-        }
-        Ok(())
+        };
+        Ok(warnings)
     }};
 }
 
 macro_rules! write_u_number {
     ($value:expr, $type:ty, $binding:expr) => {{
-        let value = parse_u_number!($value, $type)?;
-        unsafe {
-            std::ptr::write($binding.target_value_ptr as *mut $type, value);
-        }
+        let (value, warnings) = parse_u_number!($value, $type);
+        unsafe { std::ptr::write($binding.target_value_ptr as *mut $type, value) };
         if !$binding.str_len_or_ind_ptr.is_null() {
             unsafe {
                 std::ptr::write(
@@ -110,19 +112,43 @@ macro_rules! write_u_number {
                     std::mem::size_of::<$type>() as sql::Len,
                 )
             };
+        };
+        Ok(warnings)
+    }};
+}
+
+macro_rules! parse_float {
+    ($value:expr, $type:ty) => {{
+        if $value.trim().to_lowercase() == "nan" {
+            <$type>::NAN
+        } else if $value.trim().to_lowercase() == "inf" {
+            <$type>::INFINITY
+        } else if $value.trim().to_lowercase() == "-inf" {
+            <$type>::NEG_INFINITY
+        } else {
+            let value = parse_numeric_literal($value).context(NumericLiteralParsingSnafu {})?;
+            let normalized_value = value.normalize().context(NumericLiteralParsingSnafu {})?;
+            let float_value_str = normalized_value.float_with_sign();
+            let float_value = float_value_str.parse::<$type>().map_err(|e| {
+                RustParsingSnafu {
+                    reason: e.to_string(),
+                }
+                .build()
+            })?;
+            if float_value.is_infinite() {
+                return NumericValueOutOfRangeSnafu {
+                    reason: format!("Overflow float value({:?}): nan or inf", float_value_str),
+                }
+                .fail();
+            }
+            float_value
         }
-        Ok(())
     }};
 }
 
 macro_rules! write_float {
     ($value:expr, $type:ty, $binding:expr) => {{
-        let value = $value.trim().parse::<$type>().map_err(|e| {
-            NumericParsingSnafu {
-                reason: e.to_string(),
-            }
-            .build()
-        })?;
+        let value = parse_float!($value, $type);
         unsafe {
             std::ptr::write($binding.target_value_ptr as *mut $type, value);
         };
@@ -134,7 +160,7 @@ macro_rules! write_float {
                 )
             };
         }
-        Ok(())
+        Ok(vec![])
     }};
 }
 
@@ -178,27 +204,66 @@ fn is_valid_time_format(s: &str) -> bool {
         && bytes[7].is_ascii_digit()
 }
 
-/// Writes ASCII characters from `src` to `dst`, replacing non-ASCII characters with a single 0x1a byte.
-/// Multi-byte UTF-8 characters are replaced with a single 0x1a byte.
-/// Returns the number of bytes written.
-fn write_ascii_replacing_non_ascii(src: &str, dst: *mut u8, len: usize) -> usize {
+fn write_wchar_string(src: &str, binding: &Binding) -> Warnings {
+    let max_len = (binding.buffer_length / 2) as usize;
+    let value_ptr = binding.target_value_ptr as *mut u16;
     let mut dst_idx = 0;
-    for c in src.chars() {
-        if dst_idx >= len {
-            break;
+    for c in src.encode_utf16() {
+        if dst_idx == max_len - 1 {
+            unsafe {
+                std::ptr::write(value_ptr.add(max_len - 1), 0);
+                if !binding.str_len_or_ind_ptr.is_null() {
+                    std::ptr::write(binding.str_len_or_ind_ptr, sql::NO_TOTAL);
+                }
+            }
+            return vec![Warning::StringDataTruncated];
         }
-        if c.is_ascii() {
-            unsafe {
-                std::ptr::write(dst.add(dst_idx), c as u8);
-            }
-        } else {
-            unsafe {
-                std::ptr::write(dst.add(dst_idx), 0x1a);
-            }
+        unsafe {
+            std::ptr::write(value_ptr.add(dst_idx), c);
         }
         dst_idx += 1;
     }
-    dst_idx
+    unsafe {
+        std::ptr::write(value_ptr.add(dst_idx), 0);
+        if !binding.str_len_or_ind_ptr.is_null() {
+            // COMPATIBILITY: ODBC 3.80 specification says that the string length should be the number of characters, not the number of bytes.
+            // However, older versions of Snowflake ODBC driver returns the number of bytes.
+            // So we need to convert the number of characters to the number of bytes.
+            let num_characters = dst_idx as sql::Len;
+            let num_bytes = num_characters * 2;
+            std::ptr::write(binding.str_len_or_ind_ptr, num_bytes);
+        }
+    }
+    vec![]
+}
+
+fn write_char_string(src: &str, binding: &Binding) -> Warnings {
+    let max_len = binding.buffer_length as usize;
+    let mut dst_idx = 0;
+    let value_ptr = binding.target_value_ptr as *mut u8;
+    for c in src.chars() {
+        if dst_idx == max_len - 1 {
+            unsafe {
+                std::ptr::write(value_ptr.add(max_len - 1), 0);
+                if !binding.str_len_or_ind_ptr.is_null() {
+                    std::ptr::write(binding.str_len_or_ind_ptr, sql::NO_TOTAL);
+                }
+            }
+            return vec![Warning::StringDataTruncated];
+        }
+        let byte = if c.is_ascii() { c as u8 } else { 0x1a };
+        unsafe {
+            std::ptr::write(value_ptr.add(dst_idx), byte);
+        }
+        dst_idx += 1;
+    }
+    unsafe {
+        std::ptr::write(value_ptr.add(dst_idx), 0);
+        if !binding.str_len_or_ind_ptr.is_null() {
+            std::ptr::write(binding.str_len_or_ind_ptr, dst_idx as sql::Len);
+        }
+    }
+    vec![]
 }
 
 impl WriteODBCType for SnowflakeVarchar {
@@ -206,37 +271,10 @@ impl WriteODBCType for SnowflakeVarchar {
         &self,
         snowflake_value: Self::Representation<'_>,
         binding: &Binding,
-    ) -> Result<(), WriteOdbcError> {
+    ) -> Result<Warnings, WriteOdbcError> {
         match binding.target_type {
-            CDataType::Char => {
-                let written = write_ascii_replacing_non_ascii(
-                    snowflake_value,
-                    binding.target_value_ptr as *mut u8,
-                    binding.buffer_length as usize,
-                );
-                let len = std::cmp::min(written, binding.buffer_length as usize);
-                if !binding.str_len_or_ind_ptr.is_null() {
-                    unsafe { std::ptr::write(binding.str_len_or_ind_ptr, len as sql::Len) };
-                }
-                Ok(())
-            }
-            CDataType::WChar => {
-                let utf16_value = snowflake_value.encode_utf16().collect::<Vec<u16>>();
-                let len = std::cmp::min(binding.buffer_length as usize, utf16_value.len() * 2);
-                if !binding.str_len_or_ind_ptr.is_null() {
-                    unsafe {
-                        std::ptr::write(binding.str_len_or_ind_ptr, len as sql::Len);
-                    };
-                }
-                unsafe {
-                    std::ptr::copy_nonoverlapping(
-                        utf16_value.as_ptr() as *const u8,
-                        binding.target_value_ptr as *mut u8,
-                        len,
-                    );
-                }
-                Ok(())
-            }
+            CDataType::Char => Ok(write_char_string(snowflake_value, binding)),
+            CDataType::WChar => Ok(write_wchar_string(snowflake_value, binding)),
             CDataType::SBigInt => write_i_number!(snowflake_value, i64, binding),
             CDataType::UBigInt => write_u_number!(snowflake_value, u64, binding),
             CDataType::Long | CDataType::SLong => write_i_number!(snowflake_value, i32, binding),
@@ -250,7 +288,7 @@ impl WriteODBCType for SnowflakeVarchar {
             CDataType::Double => write_float!(snowflake_value, f64, binding),
             CDataType::Float => write_float!(snowflake_value, f32, binding),
             CDataType::Bit => {
-                let value = parse_u_number!(snowflake_value, u8)?;
+                let (value, warnings) = parse_u_number!(snowflake_value, u8);
                 match value {
                     0 | 1 => {
                         unsafe { std::ptr::write(binding.target_value_ptr as *mut u8, value) };
@@ -262,10 +300,10 @@ impl WriteODBCType for SnowflakeVarchar {
                                 )
                             };
                         }
-                        Ok(())
+                        Ok(warnings)
                     }
                     _ => NumericValueOutOfRangeSnafu {
-                        reason: "Trying to convert non-binary string to BIT".to_string(),
+                        reason: "Trying to convert non-binary integer to BIT".to_string(),
                     }
                     .fail(),
                 }
@@ -291,7 +329,15 @@ impl WriteODBCType for SnowflakeVarchar {
                     day: Datelike::day(&date) as u16,
                 };
                 unsafe { std::ptr::write(binding.target_value_ptr as *mut sql::Date, date) };
-                Ok(())
+                if !binding.str_len_or_ind_ptr.is_null() {
+                    unsafe {
+                        std::ptr::write(
+                            binding.str_len_or_ind_ptr,
+                            std::mem::size_of::<sql::Date>() as sql::Len,
+                        )
+                    };
+                }
+                Ok(vec![])
             }
             CDataType::Time | CDataType::TypeTime => {
                 // Strict format validation: HH:MM:SS (exactly 8 chars)
@@ -314,7 +360,15 @@ impl WriteODBCType for SnowflakeVarchar {
                     second: Timelike::second(&time) as u16,
                 };
                 unsafe { std::ptr::write(binding.target_value_ptr as *mut sql::Time, time) };
-                Ok(())
+                if !binding.str_len_or_ind_ptr.is_null() {
+                    unsafe {
+                        std::ptr::write(
+                            binding.str_len_or_ind_ptr,
+                            std::mem::size_of::<sql::Time>() as sql::Len,
+                        )
+                    };
+                }
+                Ok(vec![])
             }
             CDataType::TimeStamp | CDataType::TypeTimestamp => {
                 // Try parsing as full timestamp first, then as date-only with midnight default,
@@ -362,59 +416,48 @@ impl WriteODBCType for SnowflakeVarchar {
                     second: Timelike::second(&timestamp) as u16,
                     fraction: 0,
                 };
+                if !binding.str_len_or_ind_ptr.is_null() {
+                    unsafe {
+                        std::ptr::write(
+                            binding.str_len_or_ind_ptr,
+                            std::mem::size_of::<sql::Timestamp>() as sql::Len,
+                        )
+                    };
+                }
                 unsafe {
                     std::ptr::write(binding.target_value_ptr as *mut sql::Timestamp, timestamp)
                 };
-                Ok(())
+                Ok(vec![])
             }
             CDataType::Numeric => {
-                // Parse string as a numeric value and convert to SQL_NUMERIC_STRUCT
-                let value = snowflake_value.trim();
-                let (is_negative, digits_str) = if let Some(stripped) = value.strip_prefix('-') {
-                    (true, stripped)
-                } else if let Some(stripped) = value.strip_prefix('+') {
-                    (false, stripped)
-                } else {
-                    (false, value)
-                };
-
-                // Split into integer and fractional parts
-                let (int_part, frac_part) = if let Some(pos) = digits_str.find('.') {
-                    (&digits_str[..pos], &digits_str[pos + 1..])
-                } else {
-                    (digits_str, "")
-                };
-
-                // Validate that parts contain only digits
-                if !int_part.chars().all(|c| c.is_ascii_digit())
-                    || !frac_part.chars().all(|c| c.is_ascii_digit())
-                {
-                    return InvalidValueSnafu {
-                        reason: "Invalid numeric format".to_string(),
-                    }
-                    .fail();
-                }
-
-                // Combine digits (remove decimal point)
-                let combined = format!("{}{}", int_part, frac_part);
-                let scale = frac_part.len() as i8;
-
-                // Parse as u128 for the val field
-                let val: u128 = combined.parse().map_err(|e: std::num::ParseIntError| {
-                    InvalidValueSnafu {
-                        reason: e.to_string(),
+                let value = parse_numeric_literal(snowflake_value)
+                    .context(NumericLiteralParsingSnafu {})?;
+                let normalized_value = value.normalize().context(NumericLiteralParsingSnafu {})?;
+                let whole_part = normalized_value.whole_part.clone();
+                let value = whole_part.parse::<u128>().map_err(|_| {
+                    RustParsingSnafu {
+                        reason: format!(
+                            "Failed to parse whole part of numeric literal: {}",
+                            whole_part
+                        ),
                     }
                     .build()
                 })?;
-
-                // Convert to little-endian byte array
-                let val_bytes = val.to_le_bytes();
-
+                let warnings: Warnings = if normalized_value.has_fractional_part() {
+                    vec![Warning::NumericValueTruncated]
+                } else {
+                    vec![]
+                };
+                let sign = if normalized_value.sign == Sign::Positive {
+                    1
+                } else {
+                    0
+                };
                 let numeric = sql::Numeric {
-                    precision: (int_part.len() + frac_part.len()) as u8,
-                    scale,
-                    sign: if is_negative { 0 } else { 1 },
-                    val: val_bytes,
+                    precision: 38,
+                    scale: 0,
+                    sign,
+                    val: value.to_le_bytes(),
                 };
                 unsafe { std::ptr::write(binding.target_value_ptr as *mut sql::Numeric, numeric) };
                 if !binding.str_len_or_ind_ptr.is_null() {
@@ -425,7 +468,7 @@ impl WriteODBCType for SnowflakeVarchar {
                         )
                     };
                 }
-                Ok(())
+                Ok(warnings)
             }
             CDataType::Binary => {
                 // Copy the string bytes directly to the buffer
@@ -441,170 +484,12 @@ impl WriteODBCType for SnowflakeVarchar {
                 if !binding.str_len_or_ind_ptr.is_null() {
                     unsafe { std::ptr::write(binding.str_len_or_ind_ptr, bytes.len() as sql::Len) };
                 }
-                Ok(())
+                Ok(vec![])
             }
             _ => UnsupportedOdbcTypeSnafu {
                 target_type: binding.target_type,
             }
             .fail(),
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn test_write_odbc_type_surrogate_pair() {
-        // Test with musical symbol treble clef (𝄞) which requires surrogate pairs in UTF-16
-        let varchar = SnowflakeVarchar { len: 100 };
-        let snowflake_value = "𝄞";
-
-        // Test SQL_C_CHAR conversion - should replace with 0x1a
-        let mut char_buffer = [0u8; 10];
-        let mut char_indicator: sql::Len = 0;
-        let char_binding = Binding {
-            target_type: CDataType::Char,
-            target_value_ptr: char_buffer.as_mut_ptr() as *mut std::ffi::c_void,
-            buffer_length: char_buffer.len() as isize,
-            str_len_or_ind_ptr: &mut char_indicator as *mut sql::Len,
-        };
-
-        varchar
-            .write_odbc_type(snowflake_value, &char_binding)
-            .unwrap();
-        assert_eq!(char_indicator, 1); // 1 character written
-        assert_eq!(char_buffer[0], 0x1a); // SUB character
-
-        // Test SQL_C_WCHAR conversion - should preserve the character as UTF-16 surrogate pair
-        let mut wchar_buffer = [0u16; 10];
-        let mut wchar_indicator: sql::Len = 0;
-        let wchar_binding = Binding {
-            target_type: CDataType::WChar,
-            target_value_ptr: wchar_buffer.as_mut_ptr() as *mut std::ffi::c_void,
-            buffer_length: (wchar_buffer.len() * 2) as isize,
-            str_len_or_ind_ptr: &mut wchar_indicator as *mut sql::Len,
-        };
-
-        varchar
-            .write_odbc_type(snowflake_value, &wchar_binding)
-            .unwrap();
-        assert_eq!(wchar_indicator, 4); // 4 bytes (2 UTF-16 code units)
-
-        // Verify the surrogate pair is correctly written
-        let utf16_chars_string = String::from_utf16(&wchar_buffer[..2]).unwrap();
-        assert_eq!(utf16_chars_string, snowflake_value);
-    }
-
-    use super::*;
-
-    #[test]
-    fn test_ascii_only() {
-        let src = "hello";
-        let mut dst = [0u8; 10];
-        let len = write_ascii_replacing_non_ascii(src, dst.as_mut_ptr(), dst.len());
-        assert_eq!(len, 5);
-        assert_eq!(&dst[..len], b"hello");
-    }
-
-    #[test]
-    fn test_empty_string() {
-        let src = "";
-        let mut dst = [0u8; 10];
-        let len = write_ascii_replacing_non_ascii(src, dst.as_mut_ptr(), dst.len());
-        assert_eq!(len, 0);
-    }
-
-    #[test]
-    fn test_multibyte_utf8_replaced_with_single_byte() {
-        // "café" - 'é' is 2 bytes in UTF-8 (0xC3 0xA9)
-        let src = "café";
-        let mut dst = [0u8; 10];
-        let len = write_ascii_replacing_non_ascii(src, dst.as_mut_ptr(), dst.len());
-        assert_eq!(len, 4); // 4 characters, not 5 bytes
-        assert_eq!(&dst[..len], &[b'c', b'a', b'f', 0x1a]);
-    }
-
-    #[test]
-    fn test_three_byte_utf8_character() {
-        // "a中b" - '中' is 3 bytes in UTF-8
-        let src = "a中b";
-        let mut dst = [0u8; 10];
-        let len = write_ascii_replacing_non_ascii(src, dst.as_mut_ptr(), dst.len());
-        assert_eq!(len, 3); // 3 characters
-        assert_eq!(&dst[..len], &[b'a', 0x1a, b'b']);
-    }
-
-    #[test]
-    fn test_four_byte_utf8_character() {
-        // "a😀b" - '😀' is 4 bytes in UTF-8
-        let src = "a😀b";
-        let mut dst = [0u8; 10];
-        let len = write_ascii_replacing_non_ascii(src, dst.as_mut_ptr(), dst.len());
-        assert_eq!(len, 3); // 3 characters
-        assert_eq!(&dst[..len], &[b'a', 0x1a, b'b']);
-    }
-
-    #[test]
-    fn test_all_non_ascii() {
-        // "日本語" - all 3-byte characters
-        let src = "日本語";
-        let mut dst = [0u8; 10];
-        let len = write_ascii_replacing_non_ascii(src, dst.as_mut_ptr(), dst.len());
-        assert_eq!(len, 3);
-        assert_eq!(&dst[..len], &[0x1a, 0x1a, 0x1a]);
-    }
-
-    #[test]
-    fn test_buffer_smaller_than_input() {
-        let src = "hello world";
-        let mut dst = [0u8; 5];
-        let len = write_ascii_replacing_non_ascii(src, dst.as_mut_ptr(), dst.len());
-        assert_eq!(len, 5);
-        assert_eq!(&dst[..len], b"hello");
-    }
-
-    #[test]
-    fn test_buffer_smaller_than_input_with_multibyte() {
-        // "hëllo" - 'ë' is 2 bytes, but buffer can only fit 3 characters
-        let src = "hëllo";
-        let mut dst = [0u8; 3];
-        let len = write_ascii_replacing_non_ascii(src, dst.as_mut_ptr(), dst.len());
-        assert_eq!(len, 3);
-        assert_eq!(&dst[..len], &[b'h', 0x1a, b'l']);
-    }
-
-    #[test]
-    fn test_empty_buffer() {
-        let src = "hello";
-        let mut dst = [0u8; 0];
-        let len = write_ascii_replacing_non_ascii(src, dst.as_mut_ptr(), dst.len());
-        assert_eq!(len, 0);
-    }
-
-    #[test]
-    fn test_mixed_ascii_and_non_ascii() {
-        // Mix of ASCII, 2-byte, 3-byte, and 4-byte UTF-8
-        let src = "a é 中 😀 z";
-        let mut dst = [0u8; 20];
-        let len = write_ascii_replacing_non_ascii(src, dst.as_mut_ptr(), dst.len());
-        // Characters: 'a', ' ', 'é', ' ', '中', ' ', '😀', ' ', 'z' = 9 chars
-        assert_eq!(len, 9);
-        assert_eq!(
-            &dst[..len],
-            &[b'a', b' ', 0x1a, b' ', 0x1a, b' ', 0x1a, b' ', b'z']
-        );
-    }
-
-    #[test]
-    fn test_combining_characters() {
-        // "y̆es" - 'y' + combining breve '\u{0306}' + 'e' + 's'
-        // This tests handling of combining characters where the base character
-        // is ASCII but the combining mark is non-ASCII
-        let src = "y̆es";
-        let mut dst = [0u8; 10];
-        let len = write_ascii_replacing_non_ascii(src, dst.as_mut_ptr(), dst.len());
-        // Characters: 'y', '\u{0306}' (combining breve), 'e', 's' = 4 chars
-        assert_eq!(len, 4);
-        assert_eq!(&dst[..len], &[b'y', 0x1a, b'e', b's']);
     }
 }

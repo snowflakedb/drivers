@@ -1,7 +1,9 @@
 use arrow::datatypes::DataType;
 use snafu::{Location, Snafu};
 
-use crate::cdata_types::CDataType;
+use crate::{
+    cdata_types::CDataType, conversion::parsers::numeric_literal_parser::NumericParsingError,
+};
 
 #[derive(Snafu, Debug)]
 #[snafu(visibility(pub))]
@@ -21,9 +23,16 @@ pub enum WriteOdbcError {
         #[snafu(implicit)]
         location: Location,
     },
+
     #[snafu(display("Failed to parse value as numeric: {reason}"))]
-    NumericParsing {
+    RustParsing {
         reason: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Failed to parse value as numeric: {source:?}"))]
+    NumericLiteralParsing {
+        source: NumericParsingError,
         #[snafu(implicit)]
         location: Location,
     },

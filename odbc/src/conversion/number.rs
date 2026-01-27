@@ -4,6 +4,7 @@ use odbc_sys::Len;
 use crate::cdata_types::CDataType;
 use crate::conversion::error::{ReadArrowError, UnsupportedOdbcTypeSnafu, WriteOdbcError};
 use crate::conversion::traits::Binding;
+use crate::conversion::warning::Warnings;
 use crate::conversion::{ReadArrowType, SnowflakeType, WriteODBCType};
 
 pub(crate) struct SnowflakeNumber {
@@ -40,49 +41,49 @@ impl WriteODBCType for SnowflakeNumber {
         &self,
         snowflake_value: Self::Representation<'_>,
         binding: &Binding,
-    ) -> Result<(), WriteOdbcError> {
+    ) -> Result<Warnings, WriteOdbcError> {
         match binding.target_type {
             CDataType::Double => {
                 let double_value: f64 = snowflake_value as f64 / 10f64.powi(self.scale as i32);
                 unsafe {
                     std::ptr::write(binding.target_value_ptr as *mut f64, double_value);
                 }
-                Ok(())
+                Ok(vec![])
             }
             CDataType::Float => {
                 let float_value: f32 = snowflake_value as f32 / 10f32.powi(self.scale as i32);
                 unsafe {
                     std::ptr::write(binding.target_value_ptr as *mut f32, float_value);
                 }
-                Ok(())
+                Ok(vec![])
             }
             CDataType::Short | CDataType::SShort | CDataType::UShort => {
                 let short_value = (snowflake_value as i64) / 10i64.pow(self.scale);
                 unsafe {
                     std::ptr::write(binding.target_value_ptr as *mut i16, short_value as i16);
                 }
-                Ok(())
+                Ok(vec![])
             }
             CDataType::TinyInt | CDataType::STinyInt | CDataType::UTinyInt => {
                 let tinyint_value = (snowflake_value as i64) / 10i64.pow(self.scale);
                 unsafe {
                     std::ptr::write(binding.target_value_ptr as *mut i8, tinyint_value as i8);
                 }
-                Ok(())
+                Ok(vec![])
             }
             CDataType::Long | CDataType::SLong | CDataType::ULong => {
                 let long_value = (snowflake_value as i32) / 10i32.pow(self.scale);
                 unsafe {
                     std::ptr::write(binding.target_value_ptr as *mut i32, long_value);
                 }
-                Ok(())
+                Ok(vec![])
             }
             CDataType::SBigInt | CDataType::UBigInt => {
                 let int_value = (snowflake_value as i64) / 10i64.pow(self.scale);
                 unsafe {
                     std::ptr::write(binding.target_value_ptr as *mut i64, int_value);
                 }
-                Ok(())
+                Ok(vec![])
             }
             CDataType::Char => {
                 let num_str = if self.scale > 0 {
@@ -119,7 +120,7 @@ impl WriteODBCType for SnowflakeNumber {
                         std::cmp::min(binding.buffer_length as usize, bytes.len()),
                     );
                 }
-                Ok(())
+                Ok(vec![])
             }
             _ => UnsupportedOdbcTypeSnafu {
                 target_type: binding.target_type,

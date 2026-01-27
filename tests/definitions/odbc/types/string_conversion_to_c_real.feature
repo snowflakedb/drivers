@@ -61,7 +61,7 @@ Feature: ODBC string to floating point type conversions
     Given Snowflake client is logged in
     When Query selecting various non-numeric strings is executed
     Then text should fail for SQL_C_FLOAT
-    And mixed text should fail for SQL_C_DOUBLE
+    And non-numeric text should fail for SQL_C_DOUBLE
 
   # ============================================================================
   # FAILING CONVERSIONS - Malformed numeric strings
@@ -112,6 +112,6 @@ Feature: ODBC string to floating point type conversions
     And whitespace '  999  ' should be stripped
     And explicit plus sign '+42' should be handled
     And leading zeros '00123' should be handled
-    And scientific notation '1.5e3' should convert correctly (1.5e3 = 1500)
+    And scientific notation '1.5432e3' should convert correctly (1.5432e3 = 1543)
     And very large integer '123456789012345678901234567890' should convert correctly to 18EE90FF6C373E0EE4E3F0AD2
     And NULL should return SQL_NULL_DATA indicator

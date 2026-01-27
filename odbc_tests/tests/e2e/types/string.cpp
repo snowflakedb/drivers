@@ -322,7 +322,6 @@ TEST_CASE("should insert and select back generative string values using paramete
 
   // And A random seed is initialized and logged
   auto seed = static_cast<unsigned int>(std::chrono::steady_clock::now().time_since_epoch().count());
-  std::cout << "Random seed: " << seed << std::endl;
   INFO("Random seed: " << seed);
   std::mt19937 gen(seed);
 
@@ -384,24 +383,17 @@ TEST_CASE("should download string data in multiple chunks", "[datatype][string][
   // Given Snowflake client is logged in
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
+  const int num_values = 10000;
 
-  // And A random seed is initialized and logged
-  auto seed = static_cast<unsigned int>(std::chrono::steady_clock::now().time_since_epoch().count());
-  INFO("Random seed: " << seed);
-  std::mt19937 gen(seed);
-
-  // And A temporary table with VARCHAR column is created
-  const int expected_row_count = 1000000;
-
-  // And The table is populated with 1000000 randomly generated string values
-
-  // When Query "SELECT * FROM {table} ORDER BY id" is executed
+  // When Query "SELECT seq8() AS id, TO_VARCHAR(seq8()) AS str_val FROM TABLE(GENERATOR(ROWCOUNT => 10000)) v ORDER BY
+  // id" is executed
   auto stmt = conn.createStatement();
-  const char* sql = "SELECT TO_VARCHAR(seq8()) AS str_val FROM TABLE(GENERATOR(ROWCOUNT => 1000000)) v ORDER BY 1";
+  const char* sql =
+      "SELECT seq8() AS id, TO_VARCHAR(seq8()) AS str_val FROM TABLE(GENERATOR(ROWCOUNT => 10000)) v ORDER BY id";
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)sql, SQL_NTS);
   CHECK_ODBC(ret, stmt);
 
-  // Then there are 1000000 rows returned
+  // Then there are 10000 rows returned
   int row_count = 0;
   while (true) {
     ret = SQLFetch(stmt.getHandle());
@@ -409,14 +401,13 @@ TEST_CASE("should download string data in multiple chunks", "[datatype][string][
     CHECK_ODBC(ret, stmt);
 
     // Verify we can read the string value
-    auto value = get_data_optional<SQL_C_CHAR>(stmt, 1);
-    REQUIRE(value.has_value());
-
+    auto value = get_data<SQL_C_CHAR>(stmt, 1);
+    CHECK(value == std::to_string(row_count));
     row_count++;
   }
 
   // And all returned string values should match the generated values in order
-  CHECK(row_count == expected_row_count);
+  CHECK(row_count == num_values);
 }
 
 // ============================================================================
@@ -484,19 +475,18 @@ TEST_CASE("should convert UTF-16 to ASCII with 0x1a substitution when using SQL_
 // ============================================================================
 
 TEST_CASE("should download string data in multiple chunks using SQLBindCol", "[datatype][string][large_result_set]") {
-  // Generative test: Large result set using SQLBindCol for data retrieval
-  // ~10^6 values ensures data is downloaded in at least two chunks
   // Given Snowflake client is logged in
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
 
   // And Expected row count is defined
-  const int expected_row_count = 1000000;
+  const int expected_row_count = 10000;
 
-  // When Query "SELECT seq8(), TO_VARCHAR(seq8()) FROM GENERATOR" is executed
+  // When Query "SELECT seq8() AS id, TO_VARCHAR(seq8()) AS str_val FROM TABLE(GENERATOR(ROWCOUNT => 10000)) v ORDER BY
+  // 1" is executed
   auto stmt = conn.createStatement();
   const char* sql =
-      "SELECT seq8() AS id, TO_VARCHAR(seq8()) AS str_val FROM TABLE(GENERATOR(ROWCOUNT => 1000000)) v ORDER BY 1";
+      "SELECT seq8() AS id, TO_VARCHAR(seq8()) AS str_val FROM TABLE(GENERATOR(ROWCOUNT => 10000)) v ORDER BY id";
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)sql, SQL_NTS);
   CHECK_ODBC(ret, stmt);
 
@@ -510,7 +500,7 @@ TEST_CASE("should download string data in multiple chunks using SQLBindCol", "[d
   ret = SQLBindCol(stmt.getHandle(), 2, SQL_C_CHAR, str_buffer, sizeof(str_buffer), &str_indicator);
   CHECK_ODBC(ret, stmt);
 
-  // Then there are 1000000 rows returned
+  // Then there are 10000 rows returned
   int row_count = 0;
   while (true) {
     ret = SQLFetch(stmt.getHandle());

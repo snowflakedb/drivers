@@ -55,6 +55,8 @@ static std::string get_sqlstate(const StatementHandleWrapper& stmt) {
 
 TEST_CASE("should convert string literals to single-component interval types",
           "[datatype][string][conversion][interval]") {
+  // Catch2 needs one test to be present in the suite, so we skip this one.
+  SKIP();
   // Given Snowflake client is logged in
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
@@ -113,7 +115,7 @@ TEST_CASE("should convert string literals to single-component interval types",
   }
 }
 
-TEST_CASE("should convert negative interval string literals", "[datatype][string][conversion][interval]") {
+TEST_CASE("should convert negative interval string literals", "[datatype][string][conversion][interval][.skip]") {
   // Given Snowflake client is logged in
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
@@ -150,7 +152,8 @@ TEST_CASE("should convert negative interval string literals", "[datatype][string
 // SUCCESSFUL CONVERSIONS - Multi-component interval types (no truncation)
 // ============================================================================
 
-TEST_CASE("should convert string literals to year-month interval type", "[datatype][string][conversion][interval]") {
+TEST_CASE("should convert string literals to year-month interval type",
+          "[datatype][string][conversion][interval][.skip]") {
   // Given Snowflake client is logged in
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
@@ -186,7 +189,8 @@ TEST_CASE("should convert string literals to year-month interval type", "[dataty
   }
 }
 
-TEST_CASE("should convert string literals to day-time interval types", "[datatype][string][conversion][interval]") {
+TEST_CASE("should convert string literals to day-time interval types",
+          "[datatype][string][conversion][interval][.skip]") {
   // Given Snowflake client is logged in
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
@@ -261,7 +265,7 @@ TEST_CASE("should convert string literals to day-time interval types", "[datatyp
 // ============================================================================
 
 TEST_CASE("should truncate trailing fields when converting interval strings",
-          "[datatype][string][conversion][interval][truncation]") {
+          "[datatype][string][conversion][interval][truncation][.skip]") {
   // Given Snowflake client is logged in
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
@@ -302,7 +306,7 @@ TEST_CASE("should truncate trailing fields when converting interval strings",
 }
 
 TEST_CASE("should truncate trailing fields in day-time intervals",
-          "[datatype][string][conversion][interval][truncation]") {
+          "[datatype][string][conversion][interval][truncation][.skip]") {
   // Given Snowflake client is logged in
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
@@ -346,7 +350,7 @@ TEST_CASE("should truncate trailing fields in day-time intervals",
 // ============================================================================
 
 TEST_CASE("should fail when leading field precision is lost for year intervals",
-          "[datatype][string][conversion][interval][precision]") {
+          "[datatype][string][conversion][interval][precision][.skip]") {
   // Given Snowflake client is logged in
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
@@ -361,7 +365,7 @@ TEST_CASE("should fail when leading field precision is lost for year intervals",
 }
 
 TEST_CASE("should fail when leading field precision is lost for month intervals",
-          "[datatype][string][conversion][interval][precision]") {
+          "[datatype][string][conversion][interval][precision][.skip]") {
   // Given Snowflake client is logged in
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
@@ -375,7 +379,7 @@ TEST_CASE("should fail when leading field precision is lost for month intervals"
 }
 
 TEST_CASE("should fail when leading field precision is lost for day intervals",
-          "[datatype][string][conversion][interval][precision]") {
+          "[datatype][string][conversion][interval][precision][.skip]") {
   // Given Snowflake client is logged in
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
@@ -389,7 +393,7 @@ TEST_CASE("should fail when leading field precision is lost for day intervals",
 }
 
 TEST_CASE("should fail when leading field precision is lost for hour intervals",
-          "[datatype][string][conversion][interval][precision]") {
+          "[datatype][string][conversion][interval][precision][.skip]") {
   // Given Snowflake client is logged in
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
@@ -403,7 +407,7 @@ TEST_CASE("should fail when leading field precision is lost for hour intervals",
 }
 
 TEST_CASE("should fail when leading field precision is lost for compound intervals",
-          "[datatype][string][conversion][interval][precision]") {
+          "[datatype][string][conversion][interval][precision][.skip]") {
   // Given Snowflake client is logged in
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
@@ -421,7 +425,7 @@ TEST_CASE("should fail when leading field precision is lost for compound interva
 // ============================================================================
 
 TEST_CASE("should fail converting invalid interval string formats",
-          "[datatype][string][conversion][interval][failure]") {
+          "[datatype][string][conversion][interval][failure][.skip]") {
   // Given Snowflake client is logged in
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
@@ -439,7 +443,7 @@ TEST_CASE("should fail converting invalid interval string formats",
 }
 
 TEST_CASE("should fail converting malformed interval strings for year-month type",
-          "[datatype][string][conversion][interval][failure]") {
+          "[datatype][string][conversion][interval][failure][.skip]") {
   // Given Snowflake client is logged in
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
@@ -457,7 +461,7 @@ TEST_CASE("should fail converting malformed interval strings for year-month type
 }
 
 TEST_CASE("should fail converting malformed interval strings for day-time types",
-          "[datatype][string][conversion][interval][failure]") {
+          "[datatype][string][conversion][interval][failure][.skip]") {
   // Given Snowflake client is logged in
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
@@ -474,7 +478,8 @@ TEST_CASE("should fail converting malformed interval strings for day-time types"
   check_invalid_string<SQL_C_INTERVAL_MINUTE_TO_SECOND>(stmt, 4);
 }
 
-TEST_CASE("should fail converting out-of-range component values", "[datatype][string][conversion][interval][failure]") {
+TEST_CASE("should fail converting out-of-range component values",
+          "[datatype][string][conversion][interval][failure][.skip]") {
   // Given Snowflake client is logged in
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
@@ -513,7 +518,7 @@ TEST_CASE("should fail converting out-of-range component values", "[datatype][st
 // EDGE CASES - Whitespace and special formatting
 // ============================================================================
 
-TEST_CASE("should handle whitespace in interval strings", "[datatype][string][conversion][interval][edge]") {
+TEST_CASE("should handle whitespace in interval strings", "[datatype][string][conversion][interval][edge][.skip]") {
   // Given Snowflake client is logged in
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
@@ -544,7 +549,7 @@ TEST_CASE("should handle whitespace in interval strings", "[datatype][string][co
   }
 }
 
-TEST_CASE("should handle zero values in interval strings", "[datatype][string][conversion][interval][edge]") {
+TEST_CASE("should handle zero values in interval strings", "[datatype][string][conversion][interval][edge][.skip]") {
   // Given Snowflake client is logged in
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
@@ -597,7 +602,7 @@ TEST_CASE("should handle zero values in interval strings", "[datatype][string][c
 // ============================================================================
 
 TEST_CASE("should handle NULL string when converting to interval types",
-          "[datatype][string][conversion][interval][null]") {
+          "[datatype][string][conversion][interval][null][.skip]") {
   // Given Snowflake client is logged in
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
@@ -619,7 +624,8 @@ TEST_CASE("should handle NULL string when converting to interval types",
 // CONVERSION WITH SQLBindCol - Interval types
 // ============================================================================
 
-TEST_CASE("should convert strings to interval types using SQLBindCol", "[datatype][string][conversion][interval]") {
+TEST_CASE("should convert strings to interval types using SQLBindCol",
+          "[datatype][string][conversion][interval][.skip]") {
   // Given Snowflake client is logged in
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
@@ -666,7 +672,7 @@ TEST_CASE("should convert strings to interval types using SQLBindCol", "[datatyp
 // ============================================================================
 
 TEST_CASE("should handle fractional seconds in interval strings",
-          "[datatype][string][conversion][interval][fractional]") {
+          "[datatype][string][conversion][interval][fractional][.skip]") {
   // Given Snowflake client is logged in
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);

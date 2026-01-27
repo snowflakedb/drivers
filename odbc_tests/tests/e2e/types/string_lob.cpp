@@ -48,7 +48,6 @@ TEST_CASE("should handle LOB string at historical 16 MB limit", "[datatype][stri
 
   // And A random seed is initialized and logged
   auto seed = static_cast<unsigned int>(std::chrono::steady_clock::now().time_since_epoch().count());
-  std::cout << "Random seed: " << seed << std::endl;
   INFO("Random seed: " << seed);
   std::mt19937 gen(seed);
 
@@ -69,7 +68,6 @@ TEST_CASE("should handle LOB string at historical 16 MB limit", "[datatype][stri
     ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_VARCHAR, lob_string.size(), 0,
                            (SQLCHAR*)lob_string.c_str(), lob_string.size(), &value_len);
     CHECK_ODBC(ret, stmt);
-
     ret = SQLExecute(stmt.getHandle());
     CHECK_ODBC(ret, stmt);
   }
@@ -79,24 +77,20 @@ TEST_CASE("should handle LOB string at historical 16 MB limit", "[datatype][stri
   SQLRETURN ret =
       SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT val, LENGTH(val) as len FROM test_string_lob", SQL_NTS);
   CHECK_ODBC(ret, stmt);
-
   // Use SQLBindCol to fetch the large string
   std::vector<char> buffer(string_length + 1);
-  SQLLEN indicator;
+  SQLLEN indicator = 0;
   ret = SQLBindCol(stmt.getHandle(), 1, SQL_C_CHAR, buffer.data(), buffer.size(), &indicator);
   CHECK_ODBC(ret, stmt);
-
-  SQLBIGINT len;
-  SQLLEN len_indicator;
+  SQLBIGINT len = 0;
+  SQLLEN len_indicator = 0;
   ret = SQLBindCol(stmt.getHandle(), 2, SQL_C_SBIGINT, &len, sizeof(len), &len_indicator);
   CHECK_ODBC(ret, stmt);
-
   ret = SQLFetch(stmt.getHandle());
   CHECK_ODBC(ret, stmt);
-
   // Then the result should show length 16777216
   CHECK(len == static_cast<SQLBIGINT>(string_length));
-
+  REQUIRE(indicator == buffer.size() - 1);
   // And the returned string should exactly match the generated string
   std::string retrieved_value(buffer.data(), indicator);
   CHECK(retrieved_value == lob_string);
@@ -144,12 +138,12 @@ TEST_CASE("should handle LOB string at maximum 128 MB limit with increased LOB s
 
   // Use SQLBindCol to fetch the large string
   std::vector<char> buffer(string_length + 1);
-  SQLLEN indicator;
+  SQLLEN indicator = 0;
   ret = SQLBindCol(stmt.getHandle(), 1, SQL_C_CHAR, buffer.data(), buffer.size(), &indicator);
   CHECK_ODBC(ret, stmt);
 
-  SQLBIGINT len;
-  SQLLEN len_indicator;
+  SQLBIGINT len = 0;
+  SQLLEN len_indicator = 0;
   ret = SQLBindCol(stmt.getHandle(), 2, SQL_C_SBIGINT, &len, sizeof(len), &len_indicator);
   CHECK_ODBC(ret, stmt);
 
@@ -158,6 +152,7 @@ TEST_CASE("should handle LOB string at maximum 128 MB limit with increased LOB s
 
   // Then the result should show length 134217728
   CHECK(len == static_cast<SQLBIGINT>(string_length));
+  REQUIRE(indicator == buffer.size() - 1);
 
   // And the returned string should exactly match the generated string
   std::string retrieved_value(buffer.data(), indicator);

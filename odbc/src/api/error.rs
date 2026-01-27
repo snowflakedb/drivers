@@ -278,7 +278,10 @@ impl OdbcError {
             OdbcError::ConversionError { source, .. } => match source.as_ref() {
                 ConversionError::WriteOdbcValue { source, .. } => match source {
                     WriteOdbcError::InvalidValue { .. } => SqlState::InvalidCharacterValueForCast,
-                    WriteOdbcError::NumericParsing { .. } => SqlState::InvalidCharacterValueForCast,
+                    WriteOdbcError::NumericLiteralParsing { .. } => {
+                        SqlState::InvalidCharacterValueForCast
+                    }
+                    WriteOdbcError::RustParsing { .. } => SqlState::NumericValueOutOfRange,
                     WriteOdbcError::NumericValueOutOfRange { .. } => {
                         SqlState::NumericValueOutOfRange
                     }

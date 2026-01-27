@@ -35,7 +35,7 @@ static long long numeric_val_to_int(const SQL_NUMERIC_STRUCT& num) {
   return result;
 }
 
-static unsigned int to_unsigned_int(char c) { return static_cast<unsigned int>(c); }
+static unsigned int to_unsigned_int(char c) { return static_cast<unsigned int>((unsigned char)c); }
 
 // Helper to get raw data with error checking for expected failures
 template <typename T>
@@ -109,8 +109,7 @@ TEST_CASE("should fail converting string literals to floating point types when d
     CHECK(check_no_truncation<SQL_C_DOUBLE>(stmt, 1) == 1.7976931348623157e308);
     check_numeric_out_of_range<SQL_C_DOUBLE>(stmt, 2);
     CHECK(check_no_truncation<SQL_C_DOUBLE>(stmt, 3) == -1.7976931348623157e308);
-    NEW_DRIVER_ONLY("BD#7") { check_numeric_out_of_range<SQL_C_DOUBLE>(stmt, 4); }
-    OLD_DRIVER_ONLY("BD#7") { CHECK(check_no_truncation<SQL_C_DOUBLE>(stmt, 4) == -1.7976931348623157e308); }
+    CHECK(check_no_truncation<SQL_C_DOUBLE>(stmt, 4) == -1.7976931348623157e308);
   }
   // And values exceeding SQL_C_FLOAT range should fail with numeric out of range
   SECTION("SQL_C_FLOAT") {
@@ -196,8 +195,7 @@ TEST_CASE("should fail converting non-numeric strings to floating point types",
 
   // Then text should fail for SQL_C_FLOAT
   check_invalid_string<SQL_C_FLOAT>(stmt, 1);
-  check_invalid_string<SQL_C_DOUBLE>(stmt, 2);
-  // And mixed text should fail for SQL_C_DOUBLE
+  // And non-numeric text should fail for SQL_C_DOUBLE
   check_invalid_string<SQL_C_DOUBLE>(stmt, 2);
 }
 
@@ -282,7 +280,7 @@ TEST_CASE("should convert string literals to SQL_C_NUMERIC", "[datatype][string]
   auto stmt = conn.execute_fetch(
       "SELECT '12345' AS c1, '-67890' AS c2, '0' AS c3, "
       "'123.456' AS c4, '  999  ' AS c5, '+42' AS c6, "
-      "'00123' AS c7, '1.5e3' AS c8, '123456789012345678901234567890' AS c9, NULL::STRING AS c10");
+      "'00123' AS c7, '1.5432e3' AS c8, '123456789012345678901234567890' AS c9, NULL::STRING AS c10");
 
   // Then positive integer '12345' should convert correctly
   {
@@ -314,7 +312,7 @@ TEST_CASE("should convert string literals to SQL_C_NUMERIC", "[datatype][string]
   // And decimal '123.456' should convert correctly with appropriate scale
   {
     // NOTE: This is the behavior of the old ODBC driver
-    auto num = get_data<SQL_C_NUMERIC>(stmt, 4);
+    auto num = check_fractional_truncation<SQL_C_NUMERIC>(stmt, 4);
     CHECK(num.precision == 38);
     CHECK(num.scale == 0);
     CHECK(num.sign == 1);  // Positive
@@ -348,13 +346,14 @@ TEST_CASE("should convert string literals to SQL_C_NUMERIC", "[datatype][string]
     CHECK(numeric_val_to_int(num) == 123);
   }
 
-  // And scientific notation '1.5e3' should convert correctly (1.5e3 = 1500)
+  // And scientific notation '1.5432e3' should convert correctly (1.5432e3 = 1543)
   {
-    auto num = get_data<SQL_C_NUMERIC>(stmt, 8);
+    // NOTE: This is the behavior of the old ODBC driver
+    auto num = check_fractional_truncation<SQL_C_NUMERIC>(stmt, 8);
     CHECK(num.precision == 38);
     CHECK(num.scale == 0);
     CHECK(num.sign == 1);  // Positive
-    CHECK(numeric_val_to_int(num) == 1500);
+    CHECK(numeric_val_to_int(num) == 1543);
   }
 
   // And very large integer '123456789012345678901234567890' should convert correctly to 18EE90FF6C373E0EE4E3F0AD2

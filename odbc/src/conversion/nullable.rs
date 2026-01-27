@@ -3,6 +3,7 @@ use crate::{
     conversion::{
         Binding, ReadArrowType, SnowflakeType, WriteODBCType,
         error::{ReadArrowError, WriteOdbcError},
+        warning::Warnings,
     },
 };
 
@@ -34,14 +35,14 @@ impl<T: WriteODBCType> WriteODBCType for Nullable<T> {
         &self,
         snowflake_value: Self::Representation<'_>,
         binding: &Binding,
-    ) -> Result<(), WriteOdbcError> {
+    ) -> Result<Warnings, WriteOdbcError> {
         match snowflake_value {
             Some(value) => self.value.write_odbc_type(value, binding),
             None => {
                 unsafe {
                     std::ptr::write(binding.str_len_or_ind_ptr, SQL_NULL_DATA);
                 }
-                Ok(())
+                Ok(vec![])
             }
         }
     }

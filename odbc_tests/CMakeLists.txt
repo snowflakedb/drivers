@@ -58,6 +58,7 @@ function(add_odbc_test name)
   target_link_libraries(${name} PRIVATE Catch2::Catch2WithMain ODBC::ODBC common)
   target_include_directories(${name} PRIVATE ${picojson_SOURCE_DIR})
   add_test(NAME ${name} COMMAND ${name} ${CATCH_TAGS})
+  set_property(TEST ${name} PROPERTY SKIP_RETURN_CODE 4)
 endfunction()
 
 add_subdirectory(tests)

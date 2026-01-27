@@ -2,7 +2,9 @@ use odbc_sys as sql;
 
 use crate::cdata_types::CDataType;
 use crate::conversion::error::{ReadArrowError, WriteOdbcError};
+use crate::conversion::warning::Warnings;
 
+#[derive(Debug)]
 pub struct Binding {
     pub target_type: CDataType,
     pub target_value_ptr: sql::Pointer,
@@ -15,7 +17,7 @@ pub trait WriteODBCType: SnowflakeType {
         &self,
         snowflake_value: Self::Representation<'_>,
         binding: &Binding,
-    ) -> Result<(), WriteOdbcError>;
+    ) -> Result<Warnings, WriteOdbcError>;
 }
 
 pub trait SnowflakeType {

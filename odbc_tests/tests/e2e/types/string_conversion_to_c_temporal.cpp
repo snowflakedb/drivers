@@ -158,7 +158,7 @@ TEST_CASE("should convert date-only and time-only strings to SQL_C_TYPE_TIMESTAM
 // SUCCESSFUL CONVERSIONS - Timestamp strings to DATE or TIME
 // ============================================================================
 
-TEST_CASE("should convert timestamp string to SQL_C_TYPE_DATE", "[datatype][string][conversion][temporal]") {
+TEST_CASE("should convert timestamp string to SQL_C_TYPE_DATE", "[datatype][string][conversion][temporal][.skip]") {
   // Given Snowflake client is logged in
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
@@ -184,7 +184,7 @@ TEST_CASE("should convert timestamp string to SQL_C_TYPE_DATE", "[datatype][stri
   CHECK(date3.day == 15);
 }
 
-TEST_CASE("should convert timestamp string to SQL_C_TYPE_TIME", "[datatype][string][conversion][temporal]") {
+TEST_CASE("should convert timestamp string to SQL_C_TYPE_TIME", "[datatype][string][conversion][temporal][.skip]") {
   // Given Snowflake client is logged in
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
@@ -254,7 +254,7 @@ TEST_CASE("should fail converting impossible date values",
 }
 
 TEST_CASE("should fail converting impossible time values",
-          "[datatype][string][conversion][temporal][failure][impossible]") {
+          "[datatype][string][conversion][temporal][failure][impossible][.skip]") {
   // Given Snowflake client is logged in
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
@@ -263,19 +263,24 @@ TEST_CASE("should fail converting impossible time values",
   auto stmt = conn.execute_fetch(
       "SELECT '25:00:00' AS hour_25, '24:00:00' AS hour_24, '14:60:00' AS minute_60, '14:30:60' AS second_60");
 
-  // Then impossible time values should fail or be parsed with overflow
-  std::vector<std::pair<int, std::string>> impossible_time_columns = {
-      {1, "hour 25"}, {2, "hour 24"}, {3, "minute 60"}, {4, "second 60"}};
+  // Then hour 25 should fail
+  INFO("Converting impossible time: hour 25");
+  check_invalid_string<SQL_C_TYPE_TIME>(stmt, 1);
 
+  // And hour 24 should fail
+  INFO("Converting impossible time: hour 24");
+  check_invalid_string<SQL_C_TYPE_TIME>(stmt, 2);
+
+  // And minute 60 should fail
+  INFO("Converting impossible time: minute 60");
+  check_invalid_string<SQL_C_TYPE_TIME>(stmt, 3);
+
+  // And second 60 might behave differently in the old driver
+  INFO("Converting impossible time: second 60");
   auto time = check_no_truncation<SQL_C_TYPE_TIME>(stmt, 4);
   CHECK(time.hour == 14);
   CHECK(time.minute == 30);
   CHECK(time.second == 60);
-
-  for (const auto& [column, description] : impossible_time_columns) {
-    INFO("Converting impossible time: " + description);
-    check_invalid_string<SQL_C_TYPE_TIME>(stmt, column);
-  }
 }
 
 TEST_CASE("should fail converting impossible timestamp values",

@@ -1,6 +1,8 @@
 // mod readers;
 pub mod error;
+mod parsers;
 mod traits;
+pub mod warning;
 
 mod nullable;
 mod number;
@@ -21,10 +23,14 @@ use crate::conversion::error::{
     IncompatibleFieldMetadataSnafu, ReadArrowValueSnafu, UnsupportedArrowDataTypeSnafu,
     WriteOdbcValueSnafu,
 };
+use crate::conversion::warning::Warnings;
 
 pub trait Converter<'a> {
-    fn convert_arrow_value(&self, row_idx: usize, binding: &Binding)
-    -> Result<(), ConversionError>;
+    fn convert_arrow_value(
+        &self,
+        row_idx: usize,
+        binding: &Binding,
+    ) -> Result<Warnings, ConversionError>;
 }
 
 struct GenericConverter<'a, ArrowArrayType, T> {
@@ -39,7 +45,12 @@ impl<'a, ArrowArrayType, T: SnowflakeType + WriteODBCType + ReadArrowType<ArrowA
         &self,
         row_idx: usize,
         binding: &Binding,
-    ) -> Result<(), ConversionError> {
+    ) -> Result<Warnings, ConversionError> {
+        tracing::debug!(
+            "convert_arrow_value: row_idx={}, binding={:?}",
+            row_idx,
+            binding
+        );
         let value = self
             .snowflake_type
             .read_arrow_type(self.arrow_array, row_idx)

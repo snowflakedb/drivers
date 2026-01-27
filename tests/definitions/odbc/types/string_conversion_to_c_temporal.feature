@@ -75,7 +75,10 @@ Feature: ODBC string to temporal type conversions
     # Time strings with correct HH:MM:SS syntax but semantically impossible values
     Given Snowflake client is logged in
     When Query selecting time strings with correct syntax but impossible values is executed
-    Then impossible time values should fail or be parsed with overflow
+    Then hour 25 should fail
+    And hour 24 should fail
+    And minute 60 should fail
+    And second 60 might behave differently in the old driver
 
   @odbc_e2e
   Scenario: should fail converting impossible timestamp values

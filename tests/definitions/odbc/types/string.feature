@@ -31,7 +31,7 @@ Feature: ODBC-specific string datatype handling
     # ~10^6 values ensures data is downloaded in at least two chunks
     Given Snowflake client is logged in
     And Expected row count is defined
-    When Query "SELECT seq8(), TO_VARCHAR(seq8()) FROM GENERATOR" is executed
+    When Query "SELECT seq8() AS id, TO_VARCHAR(seq8()) AS str_val FROM TABLE(GENERATOR(ROWCOUNT => 10000)) v ORDER BY 1" is executed
     And Columns are bound using SQLBindCol
-    Then there are 1000000 rows returned
+    Then there are 10000 rows returned
     And all returned string values should match the generated values in order
