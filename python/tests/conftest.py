@@ -31,8 +31,8 @@ def pytest_addoption(parser):
     parser.addoption(
         "--reference-package",
         action="store",
-        default="old_connector.snowflake.connector",
-        help="Package name for reference connector (default: old_connector.snowflake.connector)",
+        default="snowflake.connector",
+        help="Package name for reference connector (default: snowflake.connector)",
     )
 
 
@@ -46,18 +46,18 @@ def connector_type(request):
 @pytest.fixture(scope="session")
 def connector_adapter(request, connector_type):
     """Create the appropriate connector adapter based on command line option."""
-    reference_package = request.config.getoption("--reference-package")
-
     if connector_type == ConnectorType.REFERENCE:
+        reference_package = request.config.getoption("--reference-package")
         return ConnectorFactory.create_adapter(connector_type, package_name=reference_package)
 
     return ConnectorFactory.create_adapter(connector_type)
 
 
 @pytest.fixture(scope="session")
-def reference_connector(request, connector_type):
+def reference_connector(request):
+    """Create a reference connector adapter (always uses reference connector)."""
     reference_package = request.config.getoption("--reference-package")
-    return ConnectorFactory.create_adapter(connector_type, package_name=reference_package)
+    return ConnectorFactory.create_adapter(ConnectorType.REFERENCE, package_name=reference_package)
 
 
 @pytest.fixture
