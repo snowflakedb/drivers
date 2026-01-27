@@ -9,7 +9,6 @@ Feature: Session Logout - ODBC-specific behavior
   #                      ODBC-Specific Parameter Defaults
   # ===========================================================================
 
-@odbc_e2e
   Scenario: should have server_session_keep_alive default to null
     Given Snowflake ODBC connection is created without SERVER_SESSION_KEEP_ALIVE attribute
     When Connection configuration is checked
@@ -19,7 +18,6 @@ Feature: Session Logout - ODBC-specific behavior
   #                      ODBC-Specific Error Handling
   # ===========================================================================
 
-@odbc_e2e
   Scenario: should use strict error handling strategy by default
     Given Snowflake ODBC connection is created with default parameters
     And Server will return 400 Bad Request error on logout
