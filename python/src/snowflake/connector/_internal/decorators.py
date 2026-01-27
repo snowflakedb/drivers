@@ -6,7 +6,7 @@ from typing import Callable, TypeVar
 F = TypeVar("F", bound=Callable)
 
 
-def internal(func: F) -> F:
+def internal_api(func: F) -> F:
     """
     Mark a method or function as internal.
     This is an identity function that returns the function unchanged.
