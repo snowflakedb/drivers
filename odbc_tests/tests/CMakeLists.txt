@@ -5,4 +5,4 @@ add_subdirectory(integration)
 add_subdirectory(basic_tests)
 add_subdirectory(bindings_tests)
 add_subdirectory(datatype_tests)
-
+add_subdirectory(odbc-api)

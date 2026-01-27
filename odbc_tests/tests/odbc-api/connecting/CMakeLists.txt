@@ -1,0 +1,6 @@
+cmake_minimum_required(VERSION 4.0)
+
+add_odbc_test(odbc_api_alloc_handle_tests alloc_handle_tests.cpp)
+add_odbc_test(odbc_api_connect_tests connect_tests.cpp)
+add_odbc_test(odbc_api_driver_connect_tests driver_connect_tests.cpp)
+add_odbc_test(odbc_api_browse_connect_tests browse_connect_tests.cpp)
