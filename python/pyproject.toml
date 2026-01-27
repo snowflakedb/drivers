@@ -69,6 +69,8 @@ test = [
     "pytest-json-report",
     "pytest-split",
     "pytest-cov",
+    "pytest-randomly",
+    "pytest-xdist",
     "hypothesis",
     "requests",
     "brotli",
@@ -89,6 +91,7 @@ addopts = [
     "--strict-markers",
     "--strict-config",
     "-v",
+    "-n 8",
 ]
 markers = [
     "skip_reference(reason: str=''): skip when --connector=reference",
