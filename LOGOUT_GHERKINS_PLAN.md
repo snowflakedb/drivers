@@ -23,9 +23,9 @@ This document outlines the planned Gherkin scenarios for Logout functionality ac
 
 ```
 tests/definitions/
-├── shared/session/logout.feature          # 38 scenarios - Core mechanics
-├── python/session/logout.feature          # 7 scenarios - Python Phase 2
-├── jdbc/session/logout.feature            # 8 scenarios - JDBC Phase 2
+├── shared/session/logout.feature          # 42 scenarios - Core mechanics
+├── python/session/logout.feature          # 11 scenarios - Python Phase 2 + auto-cleanup
+├── jdbc/session/logout.feature            # 9 scenarios - JDBC Phase 2 + resource mgmt
 ├── go/session/logout.feature              # 5 scenarios - Go Phase 2
 ├── odbc/session/logout.feature            # 8 scenarios - ODBC Phase 3 (reference)
 └── core/session/logout_internal.feature   # 4 scenarios - Core integration (optional)
@@ -106,7 +106,7 @@ tests/definitions/
 19. **should be idempotent when close called multiple times**
     - Validates: Safe to call close() repeatedly
 
-### Error Handling - Strict Strategy (4 scenarios)
+### Error Handling - Strict Strategy (6 scenarios)
 
 20. **should ignore SESSION_GONE error in strict strategy**
     - Validates: 390111 error code ignored
@@ -117,58 +117,70 @@ tests/definitions/
 22. **should fail close on non-retryable error in strict strategy**
     - Validates: Non-retryable errors bubble up
 
-23. **should handle session token expiration during logout in strict strategy**
-    - Validates: Expired token handling
+23. **should attempt token renewal and retry logout when session token expired in strict strategy**
+    - Validates: 390112 error triggers token renewal then retry
 
-### Error Handling - Best-Effort Strategy (3 scenarios)
+24. **should surface reauth error when master token expired in strict strategy**
+    - Validates: 390114 error bubbles up as reauth error
 
-24. **should log all errors as WARN in best-effort strategy**
+25. **should log WARN on final logout failure after all retries exhausted in strict strategy**
+    - Validates: Final failure logged appropriately
+
+### Error Handling - Best-Effort Strategy (5 scenarios)
+
+26. **should log all errors as WARN in best-effort strategy**
     - Validates: Errors logged, not thrown
 
-25. **should never throw exception from close in best-effort strategy**
+27. **should never throw exception from close in best-effort strategy**
     - Validates: close() is infallible
 
-26. **should succeed close even on logout timeout in best-effort strategy**
+28. **should succeed close even on logout timeout in best-effort strategy**
     - Validates: Timeout doesn't fail close()
+
+29. **should log WARN and suppress error when master token expired in best-effort strategy**
+    - Validates: 390114 error logged but doesn't fail close()
+
+30. **should log WARN on final logout failure after all retries exhausted in best-effort strategy**
+    - Validates: Final failure logged but doesn't throw
 
 ### Timeout and Retry Behavior (6 scenarios)
 
-27. **should timeout logout request after configured timeout**
+31. **should timeout logout request after configured timeout**
     - Validates: Timeout mechanism works
 
-28. **should retry logout on retryable HTTP errors**
+32. **should retry logout on retryable HTTP errors**
     - Validates: HTTP retry policy applied
 
-29. **should not retry logout on non-retryable errors**
+33. **should not retry logout on non-retryable errors**
     - Validates: No retry on 4xx errors
 
-30. **should respect max retry attempts from HTTP policy**
+34. **should respect max retry attempts from HTTP policy**
     - Validates: Max attempts honored
 
-31. **should use exponential backoff for logout retries**
+35. **should use exponential backoff for logout retries**
     - Validates: Backoff strategy applied
 
-32. **should not block process exit when timeout expires**
+36. **should not block process exit when timeout expires**
     - Validates: Process can exit after timeout
 
 ### Edge Cases and Concurrency (6 scenarios)
 
-33. **should handle concurrent close calls safely**
+37. **should handle concurrent close calls safely**
     - Validates: Thread-safe close()
 
-34. **should handle close during active query execution**
+38. **should handle close during active query execution**
     - Validates: Cleanup during query
 
-35. **should handle close during session token refresh**
+39. **should handle close during session token refresh**
     - Validates: Cleanup during refresh
 
-36. **should handle network failure during logout**
+40. **should handle network failure during logout**
     - Validates: Network errors handled
 
-37. **should handle close with expired session token**
+41. **should handle close with expired session token**
     - Validates: Expired token edge case
 
-38. **should handle close when server is unreachable**
+42. **should handle close when server is unreachable**
     - Validates: Server unavailable edge case
 
 ---
@@ -204,6 +216,26 @@ tests/definitions/
 7. **should use best-effort error handling strategy**
    - Tag: `@python_e2e`
    - Validates: Python uses best-effort (never throws from close)
+
+### Auto-cleanup Deprecation (3 scenarios)
+
+8. **should register atexit handler that calls close in legacy mode**
+   - Tag: `@python_e2e`
+   - **Comment:** Phase 1 deprecation. Will be disabled by default in Phase 2.
+   - Validates: atexit hook registered and invokes close()
+
+9. **should emit deprecation warning on first auto-cleanup run per process**
+   - Tag: `@python_e2e`
+   - **Comment:** Phase 1 deprecation. Prepares users for explicit close() requirement.
+   - Validates: Warning logged once per process lifetime
+
+10. **should not register atexit handler when auto-cleanup explicitly disabled**
+    - Tag: `@python_e2e`
+    - Validates: Opt-out mechanism works
+
+11. **should emit telemetry and WARN when connection leaked at process exit**
+    - Tag: `@python_e2e`
+    - Validates: Leak detection for debugging
 
 ---
 
@@ -242,6 +274,12 @@ tests/definitions/
 8. **should use strict error handling strategy**
    - Tag: `@jdbc_e2e`
    - Validates: JDBC uses strict (can throw from close)
+
+### Resource Management (1 scenario)
+
+9. **should invalidate all active statements on close regardless of logout result**
+   - Tag: `@jdbc_e2e`
+   - Validates: JDBC statement cleanup contract honored
 
 ---
 
@@ -337,13 +375,13 @@ tests/definitions/
 
 | Feature File | Scenarios | Test Type | Phase |
 |--------------|-----------|-----------|-------|
-| shared/session/logout.feature | 38 | E2E | Both |
-| python/session/logout.feature | 7 | E2E | 2 |
-| jdbc/session/logout.feature | 8 | E2E | 2 |
+| shared/session/logout.feature | 42 | E2E | Both |
+| python/session/logout.feature | 11 | E2E | 2 |
+| jdbc/session/logout.feature | 9 | E2E | 2 |
 | go/session/logout.feature | 5 | E2E | 2 |
 | odbc/session/logout.feature | 8 | E2E | 3 |
 | core/session/logout_internal.feature | 4 | Integration | Both |
-| **Total** | **70** | | |
+| **Total** | **79** | | |
 
 ---
 
@@ -372,6 +410,9 @@ The following are intentionally excluded from this plan:
 3. **Query result retrieval by ID** - Part of async API
 4. **Heartbeat implementation details** - Covered by SNOW-2881763
 5. **Telemetry batch implementation** - Covered by SNOW-2912513
+6. **Low-level HTTP protocol details** - requestId format, request_guid uniqueness → Core integration tests
+7. **Server-side behavior validation** - ABORT_DETACHED_QUERY effects on GS → Not driver concern
+8. **Telemetry instrumentation** - Logout metrics tracking → Core integration tests
 
 ---
 
