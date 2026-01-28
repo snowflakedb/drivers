@@ -88,8 +88,9 @@ python_functions = ["test_*"]
 addopts = [
     "--strict-markers",
     "--strict-config",
-    "-v",
-    "-n 8",
+    "-vv",
+    "-n 16",
+    "--durations=0",
 ]
 markers = [
     "skip_reference(reason: str=''): skip when --connector=reference",
