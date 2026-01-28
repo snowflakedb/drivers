@@ -273,6 +273,17 @@ message ConnectionReleaseRequest {
 message ConnectionReleaseResponse {
 }
 
+message ConnectionCloseRequest {
+  ConnectionHandle conn_handle = 1;
+  optional bool server_session_keep_alive = 2;
+  optional bool enable_auto_detection = 3;
+  optional string error_strategy = 4;  // "Strict" or "BestEffort"
+  optional int64 timeout_seconds = 5;
+}
+
+message ConnectionCloseResponse {
+}
+
 message ConnectionGetInfoRequest {
   ConnectionHandle conn_handle = 1;
   repeated InfoCode info_codes = 2;
@@ -475,6 +486,9 @@ service DatabaseDriver {
   rpc ConnectionSetOptionDouble(ConnectionSetOptionDoubleRequest) returns (ConnectionSetOptionDoubleResponse);
   rpc ConnectionInit(ConnectionInitRequest) returns (ConnectionInitResponse);
   rpc ConnectionRelease(ConnectionReleaseRequest) returns (ConnectionReleaseResponse);
+  rpc ConnectionClose(ConnectionCloseRequest) returns (ConnectionCloseResponse) {
+    option (method_error) = "DriverError";
+  }
   rpc ConnectionGetInfo(ConnectionGetInfoRequest) returns (ConnectionGetInfoResponse);
   rpc ConnectionGetObjects(ConnectionGetObjectsRequest) returns (ConnectionGetObjectsResponse);
   rpc ConnectionGetTableSchema(ConnectionGetTableSchemaRequest) returns (ConnectionGetTableSchemaResponse);
