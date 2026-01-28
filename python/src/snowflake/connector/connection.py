@@ -43,6 +43,7 @@ class Connection:
             private_key: Private key in bytes, str (base64), or RSAPrivateKey format
             **kwargs: Additional connection parameters
         """
+        kwargs = self._check_if_read_from_config(kwargs)
         self.db_api = database_driver_client()
         self.db_handle = self.db_api.database_new(DatabaseNewRequest()).db_handle
         self.db_api.database_init(DatabaseInitRequest(db_handle=self.db_handle))
@@ -233,3 +234,11 @@ class Connection:
     @internal_api
     def _telemetry(self) -> Any:
         pass
+
+    def _check_if_read_from_config(self, kwargs: dict[str, Any]) -> dict[str, Any]:
+        if "connection_name" in kwargs:
+            from snowflake.connector.config_manager import CONFIG_MANAGER
+
+            connection_details = dict(CONFIG_MANAGER["connections"][kwargs["connection_name"]])
+            return connection_details
+        return kwargs
