@@ -6,9 +6,12 @@ This module defines the Connection class as specified in PEP 249.
 
 from __future__ import annotations
 
-from typing import Any
+import atexit
+import warnings
+from typing import Any, Optional
 
 from snowflake.connector._internal.protobuf_gen.database_driver_v1_services import (  # type: ignore[attr-defined]
+    ConnectionCloseRequest,
     ConnectionInitRequest,
     ConnectionNewRequest,
     ConnectionSetOptionDoubleRequest,
@@ -21,6 +24,9 @@ from snowflake.connector._internal.protobuf_gen.database_driver_v1_services impo
 from ._internal.api_client.client_api import database_driver_client
 from .cursor import Cursor
 from .exceptions import InterfaceError, NotSupportedError
+
+# Global flag to track if first auto-cleanup warning has been emitted in this process
+_first_auto_cleanup_in_process = True
 
 
 class Connection:
@@ -36,12 +42,35 @@ class Connection:
             password: Password
             host: Host name
             port: Port number
+            server_session_keep_alive: Optional[bool] - Control server session lifecycle
+                - True: Never send logout (Fire & Forget)
+                - False: [Phase 2] Respects auto-detection if enabled
+                         [Phase 3] Always logout (ignore auto-detection)
+                - None: Delegate to auto-detection setting
+            enable_server_session_keep_alive_auto_detection: Optional[bool]
+                - True: Check async query registry before logout
+                - False/None: Don't check registry
+            ALLOW_BREAKING_CHANGE_SERVER_SESSION_KEEP_ALIVE_AUTO_DETECTION: bool
+                - False (default): Phase 2 behavior (auto-detect enabled by default)
+                - True: Phase 3 behavior (auto-detect disabled by default)
+            auto_cleanup: bool - Enable atexit handler for automatic connection cleanup
             **kwargs: Additional connection parameters
         """
         self.db_api = database_driver_client()
         self.db_handle = self.db_api.database_new(DatabaseNewRequest()).db_handle
         self.db_api.database_init(DatabaseInitRequest(db_handle=self.db_handle))
         self.conn_handle = self.db_api.connection_new(ConnectionNewRequest()).conn_handle
+        
+        # Extract logout configuration parameters before passing to Core
+        self.server_session_keep_alive: Optional[bool] = kwargs.pop('server_session_keep_alive', None)
+        self.enable_server_session_keep_alive_auto_detection: Optional[bool] = kwargs.pop(
+            'enable_server_session_keep_alive_auto_detection', None
+        )
+        self.ALLOW_BREAKING_CHANGE_SERVER_SESSION_KEEP_ALIVE_AUTO_DETECTION: bool = kwargs.pop(
+            'ALLOW_BREAKING_CHANGE_SERVER_SESSION_KEEP_ALIVE_AUTO_DETECTION', False
+        )
+        self.auto_cleanup: bool = kwargs.pop('auto_cleanup', True)
+        
         for key, value in kwargs.items():
             if isinstance(value, int):
                 self.db_api.connection_set_option_int(
@@ -62,10 +91,103 @@ class Connection:
         self.kwargs = kwargs
         self._closed = False
         self._autocommit = False
+        
+        # Register atexit handler if auto_cleanup is enabled
+        if self.auto_cleanup:
+            atexit.register(self._close_at_exit)
 
-    def close(self) -> None:
-        """Close the connection now."""
+    def close(self, retry: bool = True) -> None:
+        """
+        Close the connection now.
+        
+        Sends logout request to server based on configuration, then cleans up resources.
+        
+        Args:
+            retry: Whether to retry failed logout (Note: retry parameter kept for compatibility,
+                   but retry behavior is now controlled by Core's retry policy)
+        
+        Phase 2 vs Phase 3 Behavior:
+        
+        When ALLOW_BREAKING_CHANGE_SERVER_SESSION_KEEP_ALIVE_AUTO_DETECTION = False (Phase 2 default):
+            - Auto-detection enabled by default (legacy Python behavior)
+            - server_session_keep_alive=False still respects auto-detection
+            - Emits deprecation warning when server_session_keep_alive=False
+        
+        When ALLOW_BREAKING_CHANGE_SERVER_SESSION_KEEP_ALIVE_AUTO_DETECTION = True (Phase 3 opt-in):
+            - Auto-detection disabled by default (unified model)
+            - server_session_keep_alive=False forces logout
+            - No deprecation warnings
+        """
+        if self._closed:
+            return  # Already closed, idempotent
+        
+        # Determine effective auto-detection setting based on phase
+        if self.ALLOW_BREAKING_CHANGE_SERVER_SESSION_KEEP_ALIVE_AUTO_DETECTION:
+            # Phase 3: Default to None (auto-detection disabled)
+            effective_enable_auto = self.enable_server_session_keep_alive_auto_detection
+        else:
+            # Phase 2: Default to True (auto-detection enabled for backward compatibility)
+            effective_enable_auto = (
+                self.enable_server_session_keep_alive_auto_detection
+                if self.enable_server_session_keep_alive_auto_detection is not None
+                else True
+            )
+        
+        # Emit deprecation warning for Phase 2 when server_session_keep_alive=False
+        if (
+            self.server_session_keep_alive is False
+            and not self.ALLOW_BREAKING_CHANGE_SERVER_SESSION_KEEP_ALIVE_AUTO_DETECTION
+        ):
+            warnings.warn(
+                "server_session_keep_alive=False currently still respects auto-detection "
+                "(Phase 2 behavior). In Phase 3, False will force logout regardless of async queries. "
+                "To opt into Phase 3 behavior now, set "
+                "ALLOW_BREAKING_CHANGE_SERVER_SESSION_KEEP_ALIVE_AUTO_DETECTION=True",
+                FutureWarning,
+                stacklevel=2
+            )
+        
+        # Call Core connection_close with configuration
+        self.db_api.connection_close(
+            ConnectionCloseRequest(
+                conn_handle=self.conn_handle,
+                server_session_keep_alive=self.server_session_keep_alive,
+                enable_auto_detection=effective_enable_auto,
+                error_strategy="BestEffort",  # Python default
+                timeout_seconds=5,  # 5 second default
+            )
+        )
+        
         self._closed = True
+    
+    def _close_at_exit(self) -> None:
+        """
+        Cleanup handler called by atexit when process exits.
+        
+        Emits deprecation warning on first call per process.
+        """
+        global _first_auto_cleanup_in_process
+        
+        if _first_auto_cleanup_in_process:
+            warnings.warn(
+                "Connection was not explicitly closed before process exit. "
+                "Auto-cleanup at exit will be disabled by default in Phase 3. "
+                "Please explicitly call connection.close() or use context manager.",
+                FutureWarning,
+                stacklevel=2
+            )
+            _first_auto_cleanup_in_process = False
+        
+        # Close without retry on exit
+        if not self._closed:
+            try:
+                # Temporarily disable auto_cleanup flag to avoid atexit recursion
+                saved_auto_cleanup = self.auto_cleanup
+                self.auto_cleanup = False
+                self.close(retry=False)
+                self.auto_cleanup = saved_auto_cleanup
+            except Exception:
+                pass  # Suppress errors during exit cleanup
 
     def commit(self) -> None:
         """
