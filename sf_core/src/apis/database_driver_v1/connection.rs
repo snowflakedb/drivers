@@ -1,15 +1,20 @@
 use snafu::{OptionExt, ResultExt};
 use std::future::Future;
 use std::{collections::HashMap, sync::Arc, sync::Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::RwLock as AsyncRwLock;
 
 use super::Handle;
 use super::Setting;
+use super::async_query_registry::AsyncQueryRegistry;
 use super::error::*;
 use super::global_state::CONN_HANDLE_MANAGER;
+use super::logout_decision::should_send_logout;
+use crate::config::logout::{ErrorStrategy, LogoutConfig};
 use crate::config::rest_parameters::{ClientInfo, LoginParameters};
 use crate::config::retry::RetryPolicy;
 use crate::rest::snowflake::{self, RestError, SessionTokens, SnowflakeResponseError};
+use crate::rest::snowflake::logout::{LogoutError, logout_session};
 use crate::tls::client::create_tls_client_with_config;
 use reqwest;
 
@@ -98,6 +103,10 @@ pub struct Connection {
     pub server_url: Option<String>,
     /// Client info for refresh requests
     pub client_info: Option<ClientInfo>,
+    /// Registry for tracking async queries (for Fire & Forget auto-detection)
+    pub async_query_registry: AsyncQueryRegistry,
+    /// Flag indicating if connection has been closed
+    pub is_closed: Arc<AtomicBool>,
 }
 
 impl Default for Connection {
@@ -115,6 +124,8 @@ impl Connection {
             retry_policy: RetryPolicy::default(),
             server_url: None,
             client_info: None,
+            async_query_registry: AsyncQueryRegistry::new(),
+            is_closed: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -227,5 +238,172 @@ where
             f(new_session_token).await.context(QuerySnafu)
         }
         Err(e) => Err(e).context(QuerySnafu),
+    }
+}
+
+/// Close a connection and optionally send logout request
+///
+/// This function implements the complete connection close logic:
+/// 1. Check idempotency (early return if already closed)
+/// 2. Determine logout decision based on config and async query registry
+/// 3. Record telemetry (stub for now)
+/// 4. Send logout if decision is "send"
+/// 5. Clean up resources (tokens, HTTP client)
+/// 6. Stop background tasks (heartbeat, telemetry - stubs)
+///
+/// # Arguments
+///
+/// * `conn_handle` - Handle to the connection to close
+/// * `config` - Logout configuration (keep-alive, auto-detection, error strategy, timeout)
+///
+/// # Returns
+///
+/// * `Ok(())` - Connection closed successfully
+/// * `Err(ApiError)` - Close failed (only in Strict strategy)
+///
+/// # Error Handling
+///
+/// Behavior depends on `config.error_strategy`:
+/// - `Strict`: Only SESSION_GONE (390111) is ignored, other errors are raised
+/// - `BestEffort`: All errors are logged as WARN, close() always succeeds
+pub fn connection_close(conn_handle: Handle, config: LogoutConfig) -> Result<(), ApiError> {
+    let conn_ptr = CONN_HANDLE_MANAGER
+        .get_obj(conn_handle)
+        .context(InvalidArgumentSnafu {
+            argument: "Connection handle not found".to_string(),
+        })?;
+
+    let mut conn = conn_ptr
+        .lock()
+        .map_err(|_| ConnectionLockingSnafu {}.build())?;
+
+    // 1. Check idempotency - early return if already closed
+    if conn.is_closed.swap(true, Ordering::SeqCst) {
+        tracing::debug!("Connection already closed, skipping duplicate close");
+        return Ok(());
+    }
+
+    tracing::info!("Closing connection");
+
+    // 2. Determine logout decision
+    let (send_logout, skip_reason) = should_send_logout(&config, Some(&conn.async_query_registry));
+
+    // 3. Record telemetry (stub)
+    // TODO: SNOW-2912513 - Implement telemetry
+    tracing::info!(
+        send_logout,
+        skip_reason = ?skip_reason,
+        "Recording logout decision metrics (stub)"
+    );
+
+    // 4. Send logout if decision is "send"
+    let logout_result = if send_logout {
+        // Extract necessary data for logout
+        let tokens_guard = conn.tokens.blocking_read();
+        let session_token = tokens_guard.as_ref().map(|t| t.session_token.clone());
+        drop(tokens_guard);
+
+        if let (Some(token), Some(client), Some(url), Some(info)) = (
+            session_token,
+            conn.http_client.as_ref(),
+            conn.server_url.as_ref(),
+            conn.client_info.as_ref(),
+        ) {
+            // Create runtime for async logout
+            let rt = tokio::runtime::Runtime::new().context(RuntimeCreationSnafu)?;
+            
+            let result = rt.block_on(async {
+                logout_session(
+                    client,
+                    url,
+                    &token,
+                    info,
+                    config.timeout,
+                    &conn.retry_policy,
+                )
+                .await
+            });
+
+            // Handle logout result based on error strategy
+            match result {
+                Ok(()) => {
+                    tracing::info!("Logout completed successfully");
+                    Ok(())
+                }
+                Err(logout_err) => {
+                    // Extract error code if available
+                    let error_code = match &logout_err {
+                        LogoutError::LogoutFailed { code, .. } => Some(*code),
+                        _ => None,
+                    };
+
+                    if config.error_strategy.should_ignore_error(error_code) {
+                        tracing::info!(
+                            ?logout_err,
+                            "Logout error ignored by error strategy"
+                        );
+                        Ok(())
+                    } else {
+                        match config.error_strategy {
+                            ErrorStrategy::Strict => {
+                                tracing::error!(?logout_err, "Logout failed (strict strategy)");
+                                Err(logout_err)
+                            }
+                            ErrorStrategy::BestEffort => {
+                                tracing::warn!(
+                                    ?logout_err,
+                                    "Logout failed but suppressed (best-effort strategy)"
+                                );
+                                Ok(())
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            tracing::debug!("Connection was never fully initialized, skipping logout");
+            Ok(())
+        }
+    } else {
+        tracing::info!(
+            ?skip_reason,
+            "Skipping logout based on configuration"
+        );
+        Ok(())
+    };
+
+    // 5. Essential cleanup: Clear tokens and HTTP client
+    // This happens regardless of logout success/failure
+    {
+        let mut tokens_guard = conn.tokens.blocking_write();
+        *tokens_guard = None;
+        tracing::debug!("Cleared session tokens");
+    }
+    conn.http_client = None;
+    tracing::debug!("Cleared HTTP client");
+
+    // 6. Stubbed cleanup (TODO: implement when infrastructure is ready)
+    // TODO: SNOW-2881763 - Stop heartbeat
+    tracing::debug!("Heartbeat stopped (stub - TODO: SNOW-2881763)");
+    
+    // TODO: SNOW-2912513 - Flush telemetry
+    tracing::debug!("Telemetry flushed (stub - TODO: SNOW-2912513)");
+    
+    // TODO: SNOW-xxxx - Clear QCC
+    tracing::debug!("Query result cache cleared (stub - TODO: SNOW-xxxx)");
+
+    // 7. Handle logout result based on error strategy
+    match logout_result {
+        Ok(()) => {
+            tracing::info!("Connection closed successfully");
+            Ok(())
+        }
+        Err(logout_err) => {
+            // Convert LogoutError to ApiError
+            Err(LogoutFailedSnafu {
+                message: format!("{:?}", logout_err),
+            }
+            .build())
+        }
     }
 }

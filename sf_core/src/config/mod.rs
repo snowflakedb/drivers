@@ -1,3 +1,4 @@
+pub mod logout;
 pub mod rest_parameters;
 pub mod retry;
 pub mod settings;
