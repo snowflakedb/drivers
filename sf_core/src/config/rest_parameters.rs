@@ -46,7 +46,7 @@ impl QueryParameters {
         })
     }
 }
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct ClientInfo {
     pub application: String,
     pub version: String,

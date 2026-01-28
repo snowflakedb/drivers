@@ -108,12 +108,13 @@ pub async fn logout_session(
     );
 
     // Build User-Agent per UD spec: {WrapperUA} UD/{core_ver} Rust/{rust_ver}
+    let rust_version = option_env!("CARGO_PKG_RUST_VERSION").unwrap_or("unknown");
     let user_agent = format!(
         "{}/{} ({}) UD/1.0.0 Rust/{}",
         &client_info.application,
         &client_info.version,
         &client_info.os,
-        env!("CARGO_PKG_RUST_VERSION").unwrap_or("unknown")
+        rust_version
     );
 
     // Build authorization header
