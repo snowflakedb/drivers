@@ -22,7 +22,7 @@ from snowflake.connector._internal.snowflake_restful import SnowflakeRestful
 from ._internal import internal_api
 from ._internal.api_client.client_api import database_driver_client
 from .cursor import Cursor
-from .exceptions import InterfaceError, NotSupportedError
+from .errors import InterfaceError, NotSupportedError
 
 
 class Connection:
