@@ -22,8 +22,17 @@ jobs:
   detect-changes:
     uses: ./.github/workflows/detect-changes.yml
 
-  # Build Python wheel with compiled extensions for each Python version
+  # For backcompat
   build_rust_core:
+    needs: detect-changes
+    if: github.event_name == 'push' || needs.detect-changes.outputs.run_python == 'true'
+    runs-on: "ubuntu-latest"
+    steps:
+      - name: "Dummy step"
+        run: "echo 'Dummy step to pass required check'"
+
+  # Build Python wheel with compiled extensions for each Python version
+  build_wheel:
     needs: detect-changes
     if: github.event_name == 'push' || needs.detect-changes.outputs.run_python == 'true'
     strategy:
@@ -86,7 +95,7 @@ jobs:
 
   # Combined unit + integration tests with universal connector
   python_tests:
-    needs: [detect-changes, build_rust_core, format]
+    needs: [detect-changes, build_wheel, format]
     if: github.event_name == 'push' || needs.detect-changes.outputs.run_python == 'true'
     strategy:
       fail-fast: false
@@ -165,7 +174,7 @@ jobs:
 
   # Integration tests only with reference connector (for comparison)
   python_tests_reference:
-    needs: [detect-changes, build_rust_core, format]
+    needs: [detect-changes, build_wheel, format]
     if: github.event_name == 'push' || needs.detect-changes.outputs.run_python == 'true'
     runs-on: ubuntu-latest
     continue-on-error: true  # Reference tests expected to fail due to behavioral differences
@@ -264,7 +273,7 @@ jobs:
         working-directory: python
 
   python-status:
-    needs: [detect-changes, build_rust_core, python_tests, python_tests_reference, python_compare_results]
+    needs: [detect-changes, build_wheel, python_tests, python_tests_reference, python_compare_results]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -281,11 +290,11 @@ jobs:
           
           # Check if critical jobs failed or were cancelled
           # Note: python_tests_reference has continue-on-error:true, so we don't fail on it
-          if [[ "${{ needs.build_rust_core.result }}" =~ ^(failure|cancelled)$ ]] || \
+          if [[ "${{ needs.build_wheel.result }}" =~ ^(failure|cancelled)$ ]] || \
              [[ "${{ needs.python_tests.result }}" =~ ^(failure|cancelled)$ ]] || \
              [[ "${{ needs.python_compare_results.result }}" =~ ^(failure|cancelled)$ ]]; then
             echo "✗ Python CI FAILED or CANCELLED"
-            echo "  - build_rust_core: ${{ needs.build_rust_core.result }}"
+            echo "  - build_wheel: ${{ needs.build_wheel.result }}"
             echo "  - python_tests: ${{ needs.python_tests.result }}"
             echo "  - python_tests_reference: ${{ needs.python_tests_reference.result }} (continue-on-error)"
             echo "  - python_compare_results: ${{ needs.python_compare_results.result }}"
@@ -294,7 +303,7 @@ jobs:
           
           # Tests ran and passed
           echo "✓ Python CI PASSED"
-          echo "  - build_rust_core: ${{ needs.build_rust_core.result }}"
+          echo "  - build_wheel: ${{ needs.build_wheel.result }}"
           echo "  - python_tests: ${{ needs.python_tests.result }}"
           echo "  - python_tests_reference: ${{ needs.python_tests_reference.result }} (continue-on-error)"
           echo "  - python_compare_results: ${{ needs.python_compare_results.result }}"
