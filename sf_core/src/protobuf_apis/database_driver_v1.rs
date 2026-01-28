@@ -5,7 +5,7 @@ use crate::apis::database_driver_v1::error::ConfigError;
 use crate::apis::database_driver_v1::error::RestError;
 use crate::apis::database_driver_v1::statement_bind;
 use crate::apis::database_driver_v1::{
-    connection_init, connection_new, connection_release, connection_set_option,
+    connection_close, connection_init, connection_new, connection_release, connection_set_option,
 };
 use crate::apis::database_driver_v1::{
     database_init, database_new, database_release, database_set_option,
@@ -426,6 +426,42 @@ impl DatabaseDriver for DatabaseDriverImpl {
 
         connection_release(conn_handle.into()).to_protobuf()?;
         Ok(ConnectionReleaseResponse {})
+    }
+
+    #[instrument(name = "DatabaseDriverV1::connection_close", skip(input))]
+    fn connection_close(
+        input: ConnectionCloseRequest,
+    ) -> Result<ConnectionCloseResponse, DriverException> {
+        use crate::config::logout::{ErrorStrategy, LogoutConfig};
+        use std::time::Duration;
+
+        let conn_handle = required(input.conn_handle, "Connection handle is required")?;
+
+        // Parse error strategy
+        let error_strategy = match input.error_strategy.as_deref() {
+            Some("Strict") => ErrorStrategy::Strict,
+            Some("BestEffort") | None => ErrorStrategy::BestEffort,
+            Some(other) => {
+                return Err(invalid_argument(format!(
+                    "Invalid error_strategy: {}. Must be 'Strict' or 'BestEffort'",
+                    other
+                )));
+            }
+        };
+
+        // Build logout config
+        let config = LogoutConfig {
+            server_session_keep_alive: input.server_session_keep_alive,
+            enable_auto_detection: input.enable_auto_detection,
+            error_strategy,
+            timeout: input
+                .timeout_seconds
+                .map(|s| Duration::from_secs(s as u64))
+                .unwrap_or(Duration::from_secs(5)),
+        };
+
+        connection_close(conn_handle.into(), config).to_protobuf()?;
+        Ok(ConnectionCloseResponse {})
     }
 
     #[instrument(name = "DatabaseDriverV1::connection_get_info", skip(_input))]
