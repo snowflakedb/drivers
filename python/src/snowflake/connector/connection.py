@@ -21,7 +21,7 @@ from snowflake.connector._internal.snowflake_restful import SnowflakeRestful
 
 from ._internal import internal_api
 from ._internal.api_client.client_api import database_driver_client
-from ._internal.decorators import backcompat
+from ._internal.decorators import backward_compatibility
 from .cursor import Cursor
 from .errors import InterfaceError, NotSupportedError
 
@@ -46,6 +46,7 @@ class Connection:
             **kwargs: Additional connection parameters
         """
         kwargs = self._check_if_read_from_config(kwargs)
+        kwargs = self._rewrite_private_key_password(kwargs)
         kwargs = self._rewrite_authenticator(kwargs)
 
         self.db_api = database_driver_client()
@@ -234,9 +235,19 @@ class Connection:
             return connection_details
         return kwargs
 
-    @backcompat
+    @backward_compatibility
+    def _rewrite_private_key_password(self, kwargs: ConnectionParameters) -> ConnectionParameters:
+        if "private_key_file_pwd" in kwargs:
+            kwargs = {**kwargs, "private_key_password": kwargs["private_key_file_pwd"]}
+        return kwargs
+
+    @backward_compatibility
     def _rewrite_authenticator(self, kwargs: ConnectionParameters) -> ConnectionParameters:
         # Old python driver rewrites the authenticator if private key is present
         if "private_key_file" in kwargs:
             kwargs = {**kwargs, "authenticator": "SNOWFLAKE_JWT"}
         return kwargs
+
+
+# Backward compatibility alias
+SnowflakeConnection = Connection
