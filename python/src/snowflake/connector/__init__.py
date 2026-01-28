@@ -83,7 +83,7 @@ __all__ = [
     "DictCursor",
     "SnowflakeCursor",
     "SnowflakeConnection",
-    "Cursor",
+    "DictCursor",
     # Exceptions
     "Warning",
     "Error",
