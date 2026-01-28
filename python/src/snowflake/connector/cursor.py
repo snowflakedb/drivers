@@ -316,3 +316,7 @@ class Cursor:
             bool: True if closed, False otherwise
         """
         return self._closed
+
+
+class DictCursor:
+    pass
