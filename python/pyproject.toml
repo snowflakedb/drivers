@@ -65,7 +65,6 @@ path = "hatch_build.py"
 [project.optional-dependencies]
 test = [
     "pytest>=8",
-    "pytest-xdist",
     "pytest-json-report",
     "pytest-split",
     "pytest-cov",
