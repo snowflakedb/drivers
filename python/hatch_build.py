@@ -178,6 +178,7 @@ class NanoarrowBuildHook(BuildHookInterface):
         """Run the build using setuptools Distribution."""
         c_files_for_c99 = self.C_FILES_FOR_C99
         vendored_c_files = self.VENDORED_C_FILES
+        is_unix = sys.platform in ("linux", "darwin")
 
         class CustomBuildExt(build_ext):
             """Custom build_ext that handles C files with C99 standard."""
@@ -186,12 +187,12 @@ class NanoarrowBuildHook(BuildHookInterface):
                 original_compile = self.compiler._compile
 
                 def new_compile(obj, src: str, ext_arg, cc_args, extra_postargs, pp_opts):
-                    # Handle C files differently from C++ files
-                    if src.endswith(c_files_for_c99):
+                    # Handle C files differently from C++ files (Unix only)
+                    if is_unix and src.endswith(c_files_for_c99):
                         extra_postargs = [s for s in extra_postargs if s not in ("-std=c++17", "-std=c++11")]
                         extra_postargs.append("-std=c99")
-                    # Suppress warnings for vendored/generated C files
-                    if src.endswith(vendored_c_files):
+                    # Suppress warnings for vendored/generated C files (Unix only, GCC/Clang flags)
+                    if is_unix and src.endswith(vendored_c_files):
                         extra_postargs = list(extra_postargs)
                         extra_postargs.extend([
                             "-Wno-unused-variable",
