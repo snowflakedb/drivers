@@ -195,6 +195,9 @@ fn to_driver_error(error: &ApiError) -> DriverError {
                 detail: "Master token expired, full re-authentication required".to_string(),
             })),
         },
+        ApiError::LogoutFailed { .. } => DriverError {
+            error_type: Some(driver_error::ErrorType::GenericError(GenericError {})),
+        },
     }
 }
 
@@ -226,6 +229,7 @@ fn to_driver_exception(error: ApiError) -> DriverException {
         ApiError::Statement { .. } => StatusCode::InternalError,
         ApiError::Query { .. } => StatusCode::InternalError,
         ApiError::MasterTokenExpired { .. } => StatusCode::AuthenticationError,
+        ApiError::LogoutFailed { .. } => StatusCode::GenericError,
     };
 
     let message = error.to_string();
@@ -442,10 +446,12 @@ impl DatabaseDriver for DatabaseDriverImpl {
             Some("Strict") => ErrorStrategy::Strict,
             Some("BestEffort") | None => ErrorStrategy::BestEffort,
             Some(other) => {
-                return Err(invalid_argument(format!(
-                    "Invalid error_strategy: {}. Must be 'Strict' or 'BestEffort'",
-                    other
-                )));
+                return Err(DriverException {
+                    message: format!("Invalid error_strategy: {}. Must be 'Strict' or 'BestEffort'", other),
+                    status_code: StatusCode::InvalidArgument as i32,
+                    error: None,
+                    report: format!("Invalid error_strategy: {}", other),
+                });
             }
         };
 

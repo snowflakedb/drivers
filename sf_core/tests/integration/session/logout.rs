@@ -1,8 +1,7 @@
 //! Integration tests for session logout functionality.
 
-use reqwest::Method;
 use sf_core::config::rest_parameters::ClientInfo;
-use sf_core::config::retry::{BackoffConfig, HttpPolicy, Jitter, RetryPolicy};
+use sf_core::config::retry::RetryPolicy;
 use sf_core::rest::snowflake::logout::logout_session;
 use std::net::SocketAddr;
 use std::sync::{
@@ -29,10 +28,13 @@ fn should_return_true_when_first_running_async_query_is_detected_without_checkin
 async fn should_construct_logout_request_with_correct_http_method_url_headers_and_body() {
     //Given Mock HTTP server is configured to capture requests
     //And UD Core client is logged in with session token
-    let (addr, request_data, server) = spawn_capture_server().await;
+    let (addr, _request_data, server) = spawn_capture_server().await;
     let server_url = format!("http://{}", addr);
     let session_token = "test_session_token_12345";
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .build()
+        .expect("Failed to build HTTP client");
     let client_info = test_client_info();
     
     //When Logout is initiated
@@ -105,19 +107,30 @@ async fn should_apply_retry_policy_to_logout_http_request() {
     let (addr, attempts, server) = spawn_test_server(2, |attempt| async move {
         if attempt == 1 {
             // First attempt fails with 503
-            b"HTTP/1.1 503 Service Unavailable\r\nContent-Type: application/json\r\nContent-Length: 32\r\nRetry-After: 0\r\nConnection: close\r\n\r\n{\"success\":false,\"message\":\"\"}"
-                .to_vec()
+            let body = r#"{"success":false,"message":""}"#;
+            format!(
+                "HTTP/1.1 503 Service Unavailable\r\nContent-Type: application/json\r\nContent-Length: {}\r\nRetry-After: 0\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            ).into_bytes()
         } else {
             // Second attempt succeeds
-            b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 18\r\nConnection: close\r\n\r\n{\"success\":true}"
-                .to_vec()
+            let body = r#"{"success":true}"#;
+            format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            ).into_bytes()
         }
     })
     .await;
     
     let server_url = format!("http://{}", addr);
     let session_token = "test_token";
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .build()
+        .expect("Failed to build HTTP client");
     let client_info = test_client_info();
     
     //When Logout is initiated
@@ -135,7 +148,7 @@ async fn should_apply_retry_policy_to_logout_http_request() {
     //And Retry policy is consulted
     //And Second request is made after backoff delay
     //And Logout succeeds
-    assert!(result.is_ok(), "Logout should succeed after retry");
+    assert!(result.is_ok(), "Logout should succeed after retry: {:?}", result.err());
     assert_eq!(attempts.load(Ordering::SeqCst), 2, "Should have made 2 attempts");
     server.await.unwrap();
 }
@@ -161,8 +174,13 @@ async fn should_handle_http_connection_reset_during_logout() {
                 // Second attempt: read request and respond successfully
                 let mut buf = [0u8; 2048];
                 let _ = stream.read(&mut buf).await;
-                let response = b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 18\r\nConnection: close\r\n\r\n{\"success\":true}";
-                stream.write_all(response).await.unwrap();
+                let body = r#"{"success":true}"#;
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                stream.write_all(response.as_bytes()).await.unwrap();
                 let _ = stream.shutdown().await;
                 break;
             }
@@ -171,7 +189,10 @@ async fn should_handle_http_connection_reset_during_logout() {
     
     let server_url = format!("http://{}", addr);
     let session_token = "test_token";
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .build()
+        .expect("Failed to build HTTP client");
     let client_info = test_client_info();
     
     //When Logout is initiated
@@ -212,13 +233,20 @@ async fn should_record_connection_close_decision_metrics_before_logout() {
     
     // For now, just verify that logout works without telemetry
     let (addr, _, server) = spawn_test_server(1, |_| async move {
-        b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 18\r\nConnection: close\r\n\r\n{\"success\":true}"
-            .to_vec()
+        let body = r#"{"success":true}"#;
+        format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        ).into_bytes()
     })
     .await;
     
     let server_url = format!("http://{}", addr);
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .build()
+        .expect("Failed to build HTTP client");
     let client_info = test_client_info();
     
     let result = logout_session(
@@ -303,8 +331,13 @@ async fn spawn_capture_server() -> (SocketAddr, Arc<AtomicUsize>, tokio::task::J
         buf.truncate(n);
         
         // Send success response
-        let response = b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 18\r\nConnection: close\r\n\r\n{\"success\":true}";
-        stream.write_all(response).await.unwrap();
+        let body = r#"{"success":true}"#;
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        );
+        stream.write_all(response.as_bytes()).await.unwrap();
         let _ = stream.shutdown().await;
         
         buf

@@ -100,6 +100,8 @@ async fn should_only_refresh_once_with_concurrent_401_errors() {
         retry_policy: RetryPolicy::default(),
         server_url: Some(format!("http://{}", addr)),
         client_info: Some(test_client_info()),
+        async_query_registry: sf_core::apis::database_driver_v1::AsyncQueryRegistry::new(),
+        is_closed: Arc::new(std::sync::atomic::AtomicBool::new(false)),
     }));
 
     // When multiple concurrent requests receive 401 errors

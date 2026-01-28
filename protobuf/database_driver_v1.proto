@@ -486,9 +486,7 @@ service DatabaseDriver {
   rpc ConnectionSetOptionDouble(ConnectionSetOptionDoubleRequest) returns (ConnectionSetOptionDoubleResponse);
   rpc ConnectionInit(ConnectionInitRequest) returns (ConnectionInitResponse);
   rpc ConnectionRelease(ConnectionReleaseRequest) returns (ConnectionReleaseResponse);
-  rpc ConnectionClose(ConnectionCloseRequest) returns (ConnectionCloseResponse) {
-    option (method_error) = "DriverError";
-  }
+  rpc ConnectionClose(ConnectionCloseRequest) returns (ConnectionCloseResponse);
   rpc ConnectionGetInfo(ConnectionGetInfoRequest) returns (ConnectionGetInfoResponse);
   rpc ConnectionGetObjects(ConnectionGetObjectsRequest) returns (ConnectionGetObjectsResponse);
   rpc ConnectionGetTableSchema(ConnectionGetTableSchemaRequest) returns (ConnectionGetTableSchemaResponse);
