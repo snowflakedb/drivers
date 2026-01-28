@@ -19,6 +19,6 @@ def internal_api(func: F) -> F:
     return func
 
 
-def backcompat(func: F) -> F:
-    """Mark a method as backwar compatibility utility"""
+def backward_compatibility(func: F) -> F:
+    """Mark a method as backward compatibility utility"""
     return func
