@@ -8,7 +8,7 @@ if TYPE_CHECKING:
 class SnowflakeRestful:
     """Extend as required"""
 
-    def __init__(self, connection: Connection) -> None:
+    def __init__(self, connection: "Connection") -> None:
         self._conn = connection
 
     @property
