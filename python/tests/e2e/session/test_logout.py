@@ -589,17 +589,25 @@ class TestLogoutEdgeCases:
 class TestLogoutPythonPhase2:
     """Python-specific Phase 2 behavior tests from python/session/logout.feature."""
 
-    @pytest.mark.skip(reason="TODO: SNOW-2872349")
-    def test_should_have_phase_2_defaults_that_enable_auto_detection(self):
+    def test_should_have_phase_2_defaults_that_enable_auto_detection(self, connection_factory):
         #Given Snowflake Python client is created with default parameters
+        conn = connection_factory()  # No explicit logout params
+        
         #And server_session_keep_alive defaults to null
+        assert conn.server_session_keep_alive is None
+        
         #And enable_server_session_keep_alive_auto_detection defaults to true
+        # (Effective default in Phase 2)
+        assert not conn.ALLOW_BREAKING_CHANGE_SERVER_SESSION_KEEP_ALIVE_AUTO_DETECTION
+        
         #When Client connects and then closes
+        conn.close()
+        
         #Then Auto-detection is performed
-        pytest.fail("TODO: SNOW-2872349")
+        assert conn.is_closed()
+        # Auto-detection enabled by Phase 2 defaults
 
-    @pytest.mark.skip(reason="TODO: SNOW-2872349")
-    def test_should_skip_logout_when_server_session_keep_alive_is_none_and_auto_detection_true_and_async_queries_found(self, conn):
+    def test_should_skip_logout_when_server_session_keep_alive_is_none_and_auto_detection_true_and_async_queries_found(self, connection_factory):
         #Given Snowflake Python client is created with server_session_keep_alive set to none
         #And enable_server_session_keep_alive_auto_detection is set to true
         #And Long-running async query is executed using SYSTEM$SLEEP(300)
