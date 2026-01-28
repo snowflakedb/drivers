@@ -2,6 +2,7 @@
 pub mod async_exec;
 mod auth;
 pub mod error;
+pub mod logout;
 pub mod query_request;
 pub mod query_response;
 
