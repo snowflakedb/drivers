@@ -68,6 +68,10 @@ class DatabaseDriver(ABC):
         pass
 
     @abstractmethod
+    def connection_close(self, request: ConnectionCloseRequest) -> ConnectionCloseResponse:
+        pass
+
+    @abstractmethod
     def connection_get_info(self, request: ConnectionGetInfoRequest) -> ConnectionGetInfoResponse:
         pass
 
@@ -172,6 +176,7 @@ class DatabaseDriverServer(DatabaseDriver):
                 'connection_set_option_double': (self.connection_set_option_double, ConnectionSetOptionDoubleRequest),
                 'connection_init': (self.connection_init, ConnectionInitRequest),
                 'connection_release': (self.connection_release, ConnectionReleaseRequest),
+                'connection_close': (self.connection_close, ConnectionCloseRequest),
                 'connection_get_info': (self.connection_get_info, ConnectionGetInfoRequest),
                 'connection_get_objects': (self.connection_get_objects, ConnectionGetObjectsRequest),
                 'connection_get_table_schema': (self.connection_get_table_schema, ConnectionGetTableSchemaRequest),
@@ -475,6 +480,25 @@ class DatabaseDriverClient:
             raise ProtoTransportException(f"Unknown error code: %s", code)
 
         response.ParseFromString(self._transport.handle_message('DatabaseDriver', 'connection_release', request.SerializeToString()))
+        return response
+
+    def connection_close(self, request: ConnectionCloseRequest) -> ConnectionCloseResponse:
+        (code, response_bytes) = self._transport.handle_message('DatabaseDriver', 'connection_close', request.SerializeToString())
+        if code == 0:
+            response = ConnectionCloseResponse()
+            response.ParseFromString(response_bytes)
+            return response
+        elif code == 1:
+            error = DriverError()
+            error.ParseFromString(response_bytes)
+            raise ProtoApplicationException(error)
+        elif code == 2:
+            error = str(response_bytes)
+            raise ProtoTransportException(response_bytes)
+        else:
+            raise ProtoTransportException(f"Unknown error code: %s", code)
+
+        response.ParseFromString(self._transport.handle_message('DatabaseDriver', 'connection_close', request.SerializeToString()))
         return response
 
     def connection_get_info(self, request: ConnectionGetInfoRequest) -> ConnectionGetInfoResponse:

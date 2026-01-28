@@ -495,6 +495,40 @@ public class DatabaseDriverServiceClient implements DatabaseDriverService {
     }
     
     /**
+     * Method: connectionClose
+     */
+    public DatabaseDriverV1.ConnectionCloseResponse connectionClose(DatabaseDriverV1.ConnectionCloseRequest request) throws ServiceException, TransportException {
+        TransportResponse response = transport.handleMessage(
+            "DatabaseDriver",
+            "connection_close",
+            request.toByteArray()
+        );
+        
+        int code = response.getCode();
+        byte[] responseBytes = response.getResponseBytes();
+        
+        if (code == CoreTransport.CODE_SUCCESS) {
+            try {
+                return DatabaseDriverV1.ConnectionCloseResponse.parseFrom(responseBytes);
+            } catch (InvalidProtocolBufferException e) {
+                throw new TransportException("Invalid protocol buffer exception: " + e.getMessage());
+            }
+        } else if (code == CoreTransport.CODE_APPLICATION_ERROR) {
+            try {
+                DatabaseDriverV1.DriverError error = DatabaseDriverV1.DriverError.parseFrom(responseBytes);
+                throw new ServiceException(error);
+            } catch (InvalidProtocolBufferException e) {
+                throw new TransportException("Invalid protocol buffer exception: " + e.getMessage());
+            }
+        } else if (code == CoreTransport.CODE_TRANSPORT_ERROR) {
+            String errorMessage = new String(responseBytes);
+            throw new TransportException(errorMessage);
+        } else {
+            throw new TransportException("Unknown error code: " + code);
+        }
+    }
+    
+    /**
      * Method: connectionGetInfo
      */
     public DatabaseDriverV1.ConnectionGetInfoResponse connectionGetInfo(DatabaseDriverV1.ConnectionGetInfoRequest request) throws ServiceException, TransportException {
