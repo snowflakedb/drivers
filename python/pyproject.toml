@@ -89,7 +89,7 @@ addopts = [
     "--strict-markers",
     "--strict-config",
     "-vv",
-    "-n 0",
+    "-n 16",
     "--durations=0",
 ]
 markers = [
