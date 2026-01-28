@@ -489,7 +489,7 @@ class DatabaseDriverClient:
             response.ParseFromString(response_bytes)
             return response
         elif code == 1:
-            error = DriverError()
+            error = DriverException()
             error.ParseFromString(response_bytes)
             raise ProtoApplicationException(error)
         elif code == 2:

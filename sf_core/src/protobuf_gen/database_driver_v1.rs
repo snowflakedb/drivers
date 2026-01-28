@@ -663,7 +663,7 @@ pub trait DatabaseDriver {
 	fn connection_set_option_double(input: ConnectionSetOptionDoubleRequest) -> Result<ConnectionSetOptionDoubleResponse, DriverException>;
 	fn connection_init(input: ConnectionInitRequest) -> Result<ConnectionInitResponse, DriverException>;
 	fn connection_release(input: ConnectionReleaseRequest) -> Result<ConnectionReleaseResponse, DriverException>;
-	fn connection_close(input: ConnectionCloseRequest) -> Result<ConnectionCloseResponse, DriverError>;
+	fn connection_close(input: ConnectionCloseRequest) -> Result<ConnectionCloseResponse, DriverException>;
 	fn connection_get_info(input: ConnectionGetInfoRequest) -> Result<ConnectionGetInfoResponse, DriverException>;
 	fn connection_get_objects(input: ConnectionGetObjectsRequest) -> Result<ConnectionGetObjectsResponse, DriverException>;
 	fn connection_get_table_schema(input: ConnectionGetTableSchemaRequest) -> Result<ConnectionGetTableSchemaResponse, DriverException>;
@@ -1389,7 +1389,7 @@ impl<T: Transport> DatabaseDriverClient<T> {
         }
     }
 
-    pub fn connection_close(input: ConnectionCloseRequest) -> Result<ConnectionCloseResponse, ProtoError<DriverError>> {
+    pub fn connection_close(input: ConnectionCloseRequest) -> Result<ConnectionCloseResponse, ProtoError<DriverException>> {
         let result = T::handle_message("DatabaseDriver", "connection_close", input.encode_to_vec());
         match result {
             Ok(output) => {
@@ -1400,7 +1400,7 @@ impl<T: Transport> DatabaseDriverClient<T> {
                 }
             },
             Err(ProtoError::Application(e)) => {
-                let output = DriverError::decode(&e[..]);
+                let output = DriverException::decode(&e[..]);
                 match output {
                     Ok(output) => Err(ProtoError::Application(output)),
                     Err(e) => Err(ProtoError::Transport(e.to_string())),

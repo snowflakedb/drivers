@@ -515,7 +515,7 @@ public class DatabaseDriverServiceClient implements DatabaseDriverService {
             }
         } else if (code == CoreTransport.CODE_APPLICATION_ERROR) {
             try {
-                DatabaseDriverV1.DriverError error = DatabaseDriverV1.DriverError.parseFrom(responseBytes);
+                DatabaseDriverV1.DriverException error = DatabaseDriverV1.DriverException.parseFrom(responseBytes);
                 throw new ServiceException(error);
             } catch (InvalidProtocolBufferException e) {
                 throw new TransportException("Invalid protocol buffer exception: " + e.getMessage());
