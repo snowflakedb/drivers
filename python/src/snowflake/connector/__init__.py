@@ -8,7 +8,7 @@ as defined in PEP 249.
 from typing import Any
 
 from ._internal.api_client.c_api import register_default_logger_callback
-from .connection import Connection
+from .connection import Connection, SnowflakeConnection
 from .cursor import Cursor, DictCursor, SnowflakeCursor
 from .errors import (
     DatabaseError,
@@ -63,9 +63,6 @@ def connect(**kwargs: Any) -> Connection:
     """
     return Connection(**kwargs)
 
-
-# Backward compatibility
-SnowflakeConnection = Connection
 
 # Export all public symbols
 __all__ = [
