@@ -70,7 +70,6 @@ test = [
     "pytest-split",
     "pytest-cov",
     "pytest-randomly",
-    "pytest-xdist",
     "hypothesis",
     "requests",
     "brotli",
