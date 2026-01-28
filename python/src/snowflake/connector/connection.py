@@ -6,7 +6,7 @@ This module defines the Connection class as specified in PEP 249.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Union
 
 from snowflake.connector._internal.protobuf_gen.database_driver_v1_services import (  # type: ignore[attr-defined]
     ConnectionInitRequest,
@@ -21,14 +21,19 @@ from snowflake.connector._internal.snowflake_restful import SnowflakeRestful
 
 from ._internal import internal_api
 from ._internal.api_client.client_api import database_driver_client
+from ._internal.decorators import backcompat
 from .cursor import Cursor
 from .errors import InterfaceError, NotSupportedError
+
+
+ConnectionParamValue = Union[int, str, float]
+ConnectionParameters = dict[str, ConnectionParamValue]
 
 
 class Connection:
     """Connection objects represent a database connection."""
 
-    def __init__(self, **kwargs: Any) -> None:
+    def __init__(self, **kwargs: ConnectionParamValue) -> None:
         """
         Initialize a new connection object.
 
@@ -41,6 +46,8 @@ class Connection:
             **kwargs: Additional connection parameters
         """
         kwargs = self._check_if_read_from_config(kwargs)
+        kwargs = self._rewrite_authenticator(kwargs)
+
         self.db_api = database_driver_client()
         self.db_handle = self.db_api.database_new(DatabaseNewRequest()).db_handle
         self.db_api.database_init(DatabaseInitRequest(db_handle=self.db_handle))
@@ -219,10 +226,17 @@ class Connection:
     def _telemetry(self) -> Any:
         pass
 
-    def _check_if_read_from_config(self, kwargs: dict[str, Any]) -> dict[str, Any]:
+    def _check_if_read_from_config(self, kwargs: ConnectionParameters) -> ConnectionParameters:
         if "connection_name" in kwargs:
             from snowflake.connector.config_manager import CONFIG_MANAGER
 
             connection_details = dict(CONFIG_MANAGER["connections"][kwargs["connection_name"]])
             return connection_details
+        return kwargs
+
+    @backcompat
+    def _rewrite_authenticator(self, kwargs: ConnectionParameters) -> ConnectionParameters:
+        # Old python driver rewrites the authenticator if private key is present
+        if "private_key_file" in kwargs:
+            kwargs = {**kwargs, "authenticator": "SNOWFLAKE_JWT"}
         return kwargs

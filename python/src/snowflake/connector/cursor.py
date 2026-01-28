@@ -315,3 +315,7 @@ class Cursor:
 
 class DictCursor:
     pass
+
+
+# Backward compatibility alias
+SnowflakeCursor = Cursor

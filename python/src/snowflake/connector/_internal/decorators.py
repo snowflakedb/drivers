@@ -17,3 +17,8 @@ def internal_api(func: F) -> F:
         The unchanged function
     """
     return func
+
+
+def backcompat(func: F) -> F:
+    """Mark a method as backwar compatibility utility"""
+    return func
