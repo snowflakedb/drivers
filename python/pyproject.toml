@@ -30,6 +30,7 @@ dependencies = [
     "pytz",
     # For backcompat reasons
     "platformdirs>=2.6.0,<5.0.0",
+    "tomlkit",
 ]
 
 [project.urls]
