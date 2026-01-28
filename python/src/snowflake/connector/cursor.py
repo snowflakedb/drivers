@@ -104,7 +104,7 @@ class Cursor:
         """Close the cursor now (rather than whenever __del__ is called)."""
         self._closed = True
 
-    def execute(self, operation: str, parameters: Sequence[Any] | dict[str, Any] | None = None) -> None:
+    def execute(self, operation: str, parameters: Sequence[Any] | dict[str, Any] | None = None) -> Cursor:
         """
         Execute a database operation (query or command).
 
@@ -127,6 +127,7 @@ class Cursor:
 
         # Reset streaming state for a new result
         self._iterator = None
+        return self
 
     def executemany(self, operation: str, seq_of_parameters: Sequence[Sequence[Any]]) -> None:
         """
