@@ -29,7 +29,7 @@ static unsigned int to_unsigned_int(char c) { return static_cast<unsigned int>(s
 
 // Byte lenght of data is longer than the buffer length, so the data is truncated.
 TEST_CASE("should truncate string data when byte length is longer than the buffer length",
-          "[datatype][string][conversion][char]") {
+          "[.][datatype][string][conversion][char]") {
   // Given Snowflake client is logged in
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
