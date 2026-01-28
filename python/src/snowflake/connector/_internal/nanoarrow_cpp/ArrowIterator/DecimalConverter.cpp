@@ -22,8 +22,8 @@ py::UniqueRef& DecimalBaseConverter::initPyDecimalConstructor() {
   return pyDecimalConstructor;
 }
 
-DecimalFromIntConverter::DecimalFromIntConverter(ArrowArrayView* array, int precision, int scale)
-    : m_array(array), m_precision(precision), m_scale(scale) {}
+DecimalFromIntConverter::DecimalFromIntConverter(ArrowArrayView* array, int /* precision */, int scale)
+    : m_array(array), m_scale(scale) {}
 
 PyObject* DecimalFromIntConverter::toPyObject(int64_t rowIndex) const {
   if (ArrowArrayViewIsNull(m_array, rowIndex)) {
@@ -34,9 +34,9 @@ PyObject* DecimalFromIntConverter::toPyObject(int64_t rowIndex) const {
   return PyObject_CallMethod(decimal.get(), "scaleb", "i", -m_scale);
 }
 
-NumpyDecimalConverter::NumpyDecimalConverter(ArrowArrayView* array, int precision, int scale,
+NumpyDecimalConverter::NumpyDecimalConverter(ArrowArrayView* array, int /* precision */, int scale,
                                              PyObject* context)
-    : m_array(array), m_precision(precision), m_scale(scale), m_context(context) {}
+    : m_array(array), m_scale(scale), m_context(context) {}
 
 PyObject* NumpyDecimalConverter::toPyObject(int64_t rowIndex) const {
   if (ArrowArrayViewIsNull(m_array, rowIndex)) {

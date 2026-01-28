@@ -762,8 +762,8 @@ void CArrowTableIterator::convertTimestampColumn_nanoarrow(ArrowSchemaView* fiel
   } else {
     int64_t val;
     if (field->type == NANOARROW_TYPE_STRUCT) {
-      ArrowArrayView* epochArray;
-      ArrowArrayView* fractionArray;
+      ArrowArrayView* epochArray = nullptr;
+      ArrowArrayView* fractionArray = nullptr;
       for (int64_t i = 0; i < field->schema->n_children; i++) {
         ArrowSchema* c_schema = field->schema->children[i];
         if (std::strcmp(c_schema->name, internal::FIELD_NAME_EPOCH.c_str()) == 0) {
