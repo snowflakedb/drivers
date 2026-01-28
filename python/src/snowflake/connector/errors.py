@@ -83,7 +83,10 @@ class NotSupportedError(DatabaseError):
     pass
 
 
-# Confi related exceptions or back-compat
+###### BACK-COMPAT  ######
+
+
+# Confi related exceptions
 class ConfigSourceError(Error):
     """Configuration source related errors.
 
