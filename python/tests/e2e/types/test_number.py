@@ -191,7 +191,10 @@ class TestNumberLiteral:
     ):
         # Given Snowflake client is logged in
 
-        # When Query "SELECT seq8()::<type>(38,0), (seq8() + 0.12345)::<type>(20,5)
+        # When Query
+        # "SELECT seq8()::<type>(38,0), (seq8() + 0.12345)::<type>(20,5) FROM TABLE(GENERATOR(ROWCOUNT => 1000000)) v"
+        # is executed
+
         # Note: seq8() doesn't guarantee consecutive values in parallel execution,
         # so we use ROW_NUMBER() to ensure sequential integers.
         sql = (
@@ -418,6 +421,7 @@ class TestNumberTable:
 
         # And Table with columns (<type>(38,0), <type>(20,5)) exists with 1000000 sequential rows,
         # from 0 to 999999 in the first column and from 0.12345 to 999999.12345 in the second column
+
         # Note: seq8() doesn't guarantee consecutive values in parallel execution,
         # so we use ROW_NUMBER() to ensure sequential integers.
         table_name = f"{tmp_schema}.large_table_{num_type.lower()}"

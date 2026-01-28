@@ -156,6 +156,7 @@ class TestFloatLiteral:
         # Given Snowflake client is logged in
 
         # When Query "SELECT seq8()::<type> as id FROM TABLE(GENERATOR(ROWCOUNT => 1000000)) v" is executed
+
         # Note: seq8() doesn't guarantee consecutive values in parallel execution,
         # so we use ROW_NUMBER() to ensure sequential integers.
         sql = (
@@ -272,6 +273,7 @@ class TestFloatTable:
         # Given Snowflake client is logged in
 
         # And Table with <type> column exists with 1000000 sequential values
+
         # Note: seq8() doesn't guarantee consecutive values in parallel execution,
         # so we use ROW_NUMBER() to ensure sequential integers.
         table_name = f"{tmp_schema}.large_float_table_{float_type.replace(' ', '_').lower()}"

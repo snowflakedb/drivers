@@ -136,6 +136,7 @@ class TestDecfloatLiteral:
         # Given Snowflake client is logged in
 
         # When Query "SELECT seq8()::DECFLOAT as id FROM TABLE(GENERATOR(ROWCOUNT => 1000000)) v" is executed
+
         # Note: seq8() doesn't guarantee consecutive values in parallel execution,
         # so we use ROW_NUMBER() to ensure sequential integers.
         sql = (
@@ -244,6 +245,7 @@ class TestDecfloatTable:
         # Given Snowflake client is logged in
 
         # And Table with DECFLOAT column exists with values from 0 to 999999
+
         # Note: seq8() doesn't guarantee consecutive values in parallel execution,
         # so we use ROW_NUMBER() to ensure sequential integers.
         table_name = f"{tmp_schema}.large_table"
