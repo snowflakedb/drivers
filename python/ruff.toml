@@ -3,7 +3,7 @@ extend-exclude = [
     '.hatch/',
     'src/snowflake/connector/_core',
     'src/snowflake/connector/_internal/protobuf_gen',
-    'src/snowflake/connector/_internal/arrow_context.py'
+    'src/snowflake/connector/_internal/arrow_context.py',
 ]
 
 [lint]

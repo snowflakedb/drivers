@@ -27,6 +27,8 @@ requires-python = ">=3.9"
 dependencies = [
     "protobuf>=6.32.1",
     "pytz",
+    # For backcompat reasons
+    "platformdirs>=2.6.0,<5.0.0",
 ]
 
 [project.urls]
