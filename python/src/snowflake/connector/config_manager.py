@@ -155,7 +155,7 @@ class ConfigOption:
         pieces = map(methodcaller("upper"), self._nest_path[1:])
         return f"SNOWFLAKE_{'_'.join(pieces)}"
 
-    def _get_env(self) -> tuple[bool, str | _T | None]:
+    def _get_env(self) -> tuple[bool, Any]:
         """Get value from environment variable if possible.
 
         Returns whether it was able to load the data and the loaded value
@@ -172,7 +172,7 @@ class ConfigOption:
         env_var = os.environ.get(env_name)
         if env_var is None:
             return False, None
-        loaded_var: str | _T = env_var
+        loaded_var: Any = env_var
         if self.parse_str is not None:
             loaded_var = self.parse_str(env_var)
         if isinstance(loaded_var, (Table, tomlkit.TOMLDocument)):
@@ -195,7 +195,7 @@ class ConfigOption:
             )
         for k in self._nest_path[1:]:
             try:
-                e = e[k]
+                e = e[k]  # type: ignore[assignment]
             except tomlkit.exceptions.NonExistentKey as err:
                 raise MissingConfigOptionError(  # TOOO: maybe a child Exception for missing option?
                     f"Configuration option '{self.option_name}' is not defined anywhere, "
@@ -206,7 +206,7 @@ class ConfigOption:
         if isinstance(e, (Table, tomlkit.TOMLDocument)):
             # If we got a TOML table we probably want it in dictionary form
             return e.value
-        return e
+        return e  # type: ignore[unreachable]
 
 
 class ConfigManager:
@@ -319,7 +319,7 @@ class ConfigManager:
             self._slices,
         ):
             if sliceoptions.only_in_slice:
-                del read_config_file[section]
+                del read_config_file[section]  # type: ignore[arg-type]
             try:
                 if not filep.exists():
                     continue
@@ -378,7 +378,7 @@ class ConfigManager:
         self,
         *,
         option_cls: type[ConfigOption] = ConfigOption,
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         """Add a ConfigOption to this ConfigManager.
 
@@ -420,7 +420,7 @@ class ConfigManager:
         self._check_child_conflict(new_child.name)
         self._sub_managers[new_child.name] = new_child
 
-        def _root_setter_helper(node: ConfigManager):
+        def _root_setter_helper(node: ConfigManager) -> None:
             # Deal with ConfigManagers
             node._root_manager = self._root_manager
             node._nest_path = self._nest_path + node._nest_path
@@ -433,7 +433,7 @@ class ConfigManager:
 
         _root_setter_helper(new_child)
 
-    def add_subparser(self, *args, **kwargs) -> None:
+    def add_subparser(self, *args: Any, **kwargs: Any) -> None:
         warnings.warn(
             "add_subparser has been deprecated, use add_submanager instead",
             DeprecationWarning,
@@ -441,7 +441,7 @@ class ConfigManager:
         )
         return self.add_submanager(*args, **kwargs)
 
-    def __getitem__(self, name: str) -> ConfigOption | ConfigManager:
+    def __getitem__(self, name: str) -> Any:
         """Get either sub-manager, or option in this manager with name.
 
         If an option is retrieved, we call get() on it to return its value instead.
