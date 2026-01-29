@@ -8,7 +8,7 @@ cmake-build*
 __pycache__/
 build/reports
 jdbc/.gradle
-jdbc/build
+jdbc/buildin
 odbc_tests/cmake-build
 parameters.json
 **/rsa_key.p8

@@ -10,11 +10,11 @@ use super::async_query_registry::AsyncQueryRegistry;
 use super::error::*;
 use super::global_state::CONN_HANDLE_MANAGER;
 use super::logout_decision::should_send_logout;
-use crate::config::logout::{ErrorStrategy, LogoutConfig};
+use crate::config::logout::LogoutConfig;
 use crate::config::rest_parameters::{ClientInfo, LoginParameters};
 use crate::config::retry::RetryPolicy;
 use crate::rest::snowflake::{self, RestError, SessionTokens, SnowflakeResponseError};
-use crate::rest::snowflake::logout::{LogoutError, logout_session};
+use crate::rest::snowflake::logout::logout_session;
 use crate::tls::client::create_tls_client_with_config;
 use reqwest;
 
@@ -351,39 +351,25 @@ pub fn connection_close(conn_handle: Handle, config: LogoutConfig) -> Result<(),
                 .await
             });
 
-            // Handle logout result based on error strategy
+            // Handle logout result using Strategy pattern
+            let strategy = config.error_strategy.to_handler();
+            
             match result {
                 Ok(()) => {
                     tracing::info!("Logout completed successfully");
                     Ok(())
                 }
                 Err(logout_err) => {
-                    // Extract error code if available
-                    let error_code = match &logout_err {
-                        LogoutError::LogoutFailed { code, .. } => Some(*code),
-                        _ => None,
-                    };
-
-                    if config.error_strategy.should_ignore_error(error_code) {
-                        tracing::info!(
-                            ?logout_err,
-                            "Logout error ignored by error strategy"
-                        );
+                    // Use Strategy pattern for error handling
+                    if strategy.should_ignore_error(&logout_err) {
+                        strategy.log_error(&logout_err, false);
                         Ok(())
+                    } else if strategy.should_raise_error(&logout_err) {
+                        strategy.log_error(&logout_err, true);
+                        Err(logout_err)
                     } else {
-                        match config.error_strategy {
-                            ErrorStrategy::Strict => {
-                                tracing::error!(?logout_err, "Logout failed (strict strategy)");
-                                Err(logout_err)
-                            }
-                            ErrorStrategy::BestEffort => {
-                                tracing::warn!(
-                                    ?logout_err,
-                                    "Logout failed but suppressed (best-effort strategy)"
-                                );
-                                Ok(())
-                            }
-                        }
+                        strategy.log_error(&logout_err, false);
+                        Ok(())
                     }
                 }
             }

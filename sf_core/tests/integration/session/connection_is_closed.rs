@@ -47,6 +47,9 @@ fn test_connection_is_closed_after_close() {
     // Cleanup
     connection_release(conn_handle).unwrap();
     database_release(db_handle).unwrap();
+    
+    let is_closed = connection_is_closed(conn_handle).unwrap();
+    assert!(is_closed, "Connection should be closed after close()");
 }
 
 #[test]
