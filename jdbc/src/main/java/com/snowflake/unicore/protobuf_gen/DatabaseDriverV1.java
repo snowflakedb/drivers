@@ -27269,10 +27269,77 @@ public final class DatabaseDriverV1 extends com.google.protobuf.GeneratedFile {
       com.google.protobuf.MessageOrBuilder {
 
     /**
-     * <code>bytes info_data = 1;</code>
-     * @return The infoData.
+     * <code>optional string host = 1;</code>
+     * @return Whether the host field is set.
      */
-    com.google.protobuf.ByteString getInfoData();
+    boolean hasHost();
+    /**
+     * <code>optional string host = 1;</code>
+     * @return The host.
+     */
+    java.lang.String getHost();
+    /**
+     * <code>optional string host = 1;</code>
+     * @return The bytes for host.
+     */
+    com.google.protobuf.ByteString
+        getHostBytes();
+
+    /**
+     * <code>optional int64 port = 2;</code>
+     * @return Whether the port field is set.
+     */
+    boolean hasPort();
+    /**
+     * <code>optional int64 port = 2;</code>
+     * @return The port.
+     */
+    long getPort();
+
+    /**
+     * <code>optional string server_url = 3;</code>
+     * @return Whether the serverUrl field is set.
+     */
+    boolean hasServerUrl();
+    /**
+     * <code>optional string server_url = 3;</code>
+     * @return The serverUrl.
+     */
+    java.lang.String getServerUrl();
+    /**
+     * <code>optional string server_url = 3;</code>
+     * @return The bytes for serverUrl.
+     */
+    com.google.protobuf.ByteString
+        getServerUrlBytes();
+
+    /**
+     * <code>optional string session_token = 4;</code>
+     * @return Whether the sessionToken field is set.
+     */
+    boolean hasSessionToken();
+    /**
+     * <code>optional string session_token = 4;</code>
+     * @return The sessionToken.
+     */
+    java.lang.String getSessionToken();
+    /**
+     * <code>optional string session_token = 4;</code>
+     * @return The bytes for sessionToken.
+     */
+    com.google.protobuf.ByteString
+        getSessionTokenBytes();
+
+    /**
+     * <code>optional int64 session_id = 5;</code>
+     * @return Whether the sessionId field is set.
+     */
+    boolean hasSessionId();
+    /**
+     * <code>optional int64 session_id = 5;</code>
+     * @return The sessionId.
+     */
+    long getSessionId();
   }
   /**
    * Protobuf type {@code database_driver_v1.ConnectionGetInfoResponse}
@@ -27296,7 +27363,9 @@ public final class DatabaseDriverV1 extends com.google.protobuf.GeneratedFile {
       super(builder);
     }
     private ConnectionGetInfoResponse() {
-      infoData_ = com.google.protobuf.ByteString.EMPTY;
+      host_ = "";
+      serverUrl_ = "";
+      sessionToken_ = "";
     }
 
     public static final com.google.protobuf.Descriptors.Descriptor
@@ -27312,15 +27381,184 @@ public final class DatabaseDriverV1 extends com.google.protobuf.GeneratedFile {
               com.snowflake.unicore.protobuf_gen.DatabaseDriverV1.ConnectionGetInfoResponse.class, com.snowflake.unicore.protobuf_gen.DatabaseDriverV1.ConnectionGetInfoResponse.Builder.class);
     }
 
-    public static final int INFO_DATA_FIELD_NUMBER = 1;
-    private com.google.protobuf.ByteString infoData_ = com.google.protobuf.ByteString.EMPTY;
+    private int bitField0_;
+    public static final int HOST_FIELD_NUMBER = 1;
+    @SuppressWarnings("serial")
+    private volatile java.lang.Object host_ = "";
     /**
-     * <code>bytes info_data = 1;</code>
-     * @return The infoData.
+     * <code>optional string host = 1;</code>
+     * @return Whether the host field is set.
      */
     @java.lang.Override
-    public com.google.protobuf.ByteString getInfoData() {
-      return infoData_;
+    public boolean hasHost() {
+      return ((bitField0_ & 0x00000001) != 0);
+    }
+    /**
+     * <code>optional string host = 1;</code>
+     * @return The host.
+     */
+    @java.lang.Override
+    public java.lang.String getHost() {
+      java.lang.Object ref = host_;
+      if (ref instanceof java.lang.String) {
+        return (java.lang.String) ref;
+      } else {
+        com.google.protobuf.ByteString bs = 
+            (com.google.protobuf.ByteString) ref;
+        java.lang.String s = bs.toStringUtf8();
+        host_ = s;
+        return s;
+      }
+    }
+    /**
+     * <code>optional string host = 1;</code>
+     * @return The bytes for host.
+     */
+    @java.lang.Override
+    public com.google.protobuf.ByteString
+        getHostBytes() {
+      java.lang.Object ref = host_;
+      if (ref instanceof java.lang.String) {
+        com.google.protobuf.ByteString b = 
+            com.google.protobuf.ByteString.copyFromUtf8(
+                (java.lang.String) ref);
+        host_ = b;
+        return b;
+      } else {
+        return (com.google.protobuf.ByteString) ref;
+      }
+    }
+
+    public static final int PORT_FIELD_NUMBER = 2;
+    private long port_ = 0L;
+    /**
+     * <code>optional int64 port = 2;</code>
+     * @return Whether the port field is set.
+     */
+    @java.lang.Override
+    public boolean hasPort() {
+      return ((bitField0_ & 0x00000002) != 0);
+    }
+    /**
+     * <code>optional int64 port = 2;</code>
+     * @return The port.
+     */
+    @java.lang.Override
+    public long getPort() {
+      return port_;
+    }
+
+    public static final int SERVER_URL_FIELD_NUMBER = 3;
+    @SuppressWarnings("serial")
+    private volatile java.lang.Object serverUrl_ = "";
+    /**
+     * <code>optional string server_url = 3;</code>
+     * @return Whether the serverUrl field is set.
+     */
+    @java.lang.Override
+    public boolean hasServerUrl() {
+      return ((bitField0_ & 0x00000004) != 0);
+    }
+    /**
+     * <code>optional string server_url = 3;</code>
+     * @return The serverUrl.
+     */
+    @java.lang.Override
+    public java.lang.String getServerUrl() {
+      java.lang.Object ref = serverUrl_;
+      if (ref instanceof java.lang.String) {
+        return (java.lang.String) ref;
+      } else {
+        com.google.protobuf.ByteString bs = 
+            (com.google.protobuf.ByteString) ref;
+        java.lang.String s = bs.toStringUtf8();
+        serverUrl_ = s;
+        return s;
+      }
+    }
+    /**
+     * <code>optional string server_url = 3;</code>
+     * @return The bytes for serverUrl.
+     */
+    @java.lang.Override
+    public com.google.protobuf.ByteString
+        getServerUrlBytes() {
+      java.lang.Object ref = serverUrl_;
+      if (ref instanceof java.lang.String) {
+        com.google.protobuf.ByteString b = 
+            com.google.protobuf.ByteString.copyFromUtf8(
+                (java.lang.String) ref);
+        serverUrl_ = b;
+        return b;
+      } else {
+        return (com.google.protobuf.ByteString) ref;
+      }
+    }
+
+    public static final int SESSION_TOKEN_FIELD_NUMBER = 4;
+    @SuppressWarnings("serial")
+    private volatile java.lang.Object sessionToken_ = "";
+    /**
+     * <code>optional string session_token = 4;</code>
+     * @return Whether the sessionToken field is set.
+     */
+    @java.lang.Override
+    public boolean hasSessionToken() {
+      return ((bitField0_ & 0x00000008) != 0);
+    }
+    /**
+     * <code>optional string session_token = 4;</code>
+     * @return The sessionToken.
+     */
+    @java.lang.Override
+    public java.lang.String getSessionToken() {
+      java.lang.Object ref = sessionToken_;
+      if (ref instanceof java.lang.String) {
+        return (java.lang.String) ref;
+      } else {
+        com.google.protobuf.ByteString bs = 
+            (com.google.protobuf.ByteString) ref;
+        java.lang.String s = bs.toStringUtf8();
+        sessionToken_ = s;
+        return s;
+      }
+    }
+    /**
+     * <code>optional string session_token = 4;</code>
+     * @return The bytes for sessionToken.
+     */
+    @java.lang.Override
+    public com.google.protobuf.ByteString
+        getSessionTokenBytes() {
+      java.lang.Object ref = sessionToken_;
+      if (ref instanceof java.lang.String) {
+        com.google.protobuf.ByteString b = 
+            com.google.protobuf.ByteString.copyFromUtf8(
+                (java.lang.String) ref);
+        sessionToken_ = b;
+        return b;
+      } else {
+        return (com.google.protobuf.ByteString) ref;
+      }
+    }
+
+    public static final int SESSION_ID_FIELD_NUMBER = 5;
+    private long sessionId_ = 0L;
+    /**
+     * <code>optional int64 session_id = 5;</code>
+     * @return Whether the sessionId field is set.
+     */
+    @java.lang.Override
+    public boolean hasSessionId() {
+      return ((bitField0_ & 0x00000010) != 0);
+    }
+    /**
+     * <code>optional int64 session_id = 5;</code>
+     * @return The sessionId.
+     */
+    @java.lang.Override
+    public long getSessionId() {
+      return sessionId_;
     }
 
     private byte memoizedIsInitialized = -1;
@@ -27337,8 +27575,20 @@ public final class DatabaseDriverV1 extends com.google.protobuf.GeneratedFile {
     @java.lang.Override
     public void writeTo(com.google.protobuf.CodedOutputStream output)
                         throws java.io.IOException {
-      if (!infoData_.isEmpty()) {
-        output.writeBytes(1, infoData_);
+      if (((bitField0_ & 0x00000001) != 0)) {
+        com.google.protobuf.GeneratedMessage.writeString(output, 1, host_);
+      }
+      if (((bitField0_ & 0x00000002) != 0)) {
+        output.writeInt64(2, port_);
+      }
+      if (((bitField0_ & 0x00000004) != 0)) {
+        com.google.protobuf.GeneratedMessage.writeString(output, 3, serverUrl_);
+      }
+      if (((bitField0_ & 0x00000008) != 0)) {
+        com.google.protobuf.GeneratedMessage.writeString(output, 4, sessionToken_);
+      }
+      if (((bitField0_ & 0x00000010) != 0)) {
+        output.writeInt64(5, sessionId_);
       }
       getUnknownFields().writeTo(output);
     }
@@ -27349,9 +27599,22 @@ public final class DatabaseDriverV1 extends com.google.protobuf.GeneratedFile {
       if (size != -1) return size;
 
       size = 0;
-      if (!infoData_.isEmpty()) {
+      if (((bitField0_ & 0x00000001) != 0)) {
+        size += com.google.protobuf.GeneratedMessage.computeStringSize(1, host_);
+      }
+      if (((bitField0_ & 0x00000002) != 0)) {
         size += com.google.protobuf.CodedOutputStream
-          .computeBytesSize(1, infoData_);
+          .computeInt64Size(2, port_);
+      }
+      if (((bitField0_ & 0x00000004) != 0)) {
+        size += com.google.protobuf.GeneratedMessage.computeStringSize(3, serverUrl_);
+      }
+      if (((bitField0_ & 0x00000008) != 0)) {
+        size += com.google.protobuf.GeneratedMessage.computeStringSize(4, sessionToken_);
+      }
+      if (((bitField0_ & 0x00000010) != 0)) {
+        size += com.google.protobuf.CodedOutputStream
+          .computeInt64Size(5, sessionId_);
       }
       size += getUnknownFields().getSerializedSize();
       memoizedSize = size;
@@ -27368,8 +27631,31 @@ public final class DatabaseDriverV1 extends com.google.protobuf.GeneratedFile {
       }
       com.snowflake.unicore.protobuf_gen.DatabaseDriverV1.ConnectionGetInfoResponse other = (com.snowflake.unicore.protobuf_gen.DatabaseDriverV1.ConnectionGetInfoResponse) obj;
 
-      if (!getInfoData()
-          .equals(other.getInfoData())) return false;
+      if (hasHost() != other.hasHost()) return false;
+      if (hasHost()) {
+        if (!getHost()
+            .equals(other.getHost())) return false;
+      }
+      if (hasPort() != other.hasPort()) return false;
+      if (hasPort()) {
+        if (getPort()
+            != other.getPort()) return false;
+      }
+      if (hasServerUrl() != other.hasServerUrl()) return false;
+      if (hasServerUrl()) {
+        if (!getServerUrl()
+            .equals(other.getServerUrl())) return false;
+      }
+      if (hasSessionToken() != other.hasSessionToken()) return false;
+      if (hasSessionToken()) {
+        if (!getSessionToken()
+            .equals(other.getSessionToken())) return false;
+      }
+      if (hasSessionId() != other.hasSessionId()) return false;
+      if (hasSessionId()) {
+        if (getSessionId()
+            != other.getSessionId()) return false;
+      }
       if (!getUnknownFields().equals(other.getUnknownFields())) return false;
       return true;
     }
@@ -27381,8 +27667,28 @@ public final class DatabaseDriverV1 extends com.google.protobuf.GeneratedFile {
       }
       int hash = 41;
       hash = (19 * hash) + getDescriptor().hashCode();
-      hash = (37 * hash) + INFO_DATA_FIELD_NUMBER;
-      hash = (53 * hash) + getInfoData().hashCode();
+      if (hasHost()) {
+        hash = (37 * hash) + HOST_FIELD_NUMBER;
+        hash = (53 * hash) + getHost().hashCode();
+      }
+      if (hasPort()) {
+        hash = (37 * hash) + PORT_FIELD_NUMBER;
+        hash = (53 * hash) + com.google.protobuf.Internal.hashLong(
+            getPort());
+      }
+      if (hasServerUrl()) {
+        hash = (37 * hash) + SERVER_URL_FIELD_NUMBER;
+        hash = (53 * hash) + getServerUrl().hashCode();
+      }
+      if (hasSessionToken()) {
+        hash = (37 * hash) + SESSION_TOKEN_FIELD_NUMBER;
+        hash = (53 * hash) + getSessionToken().hashCode();
+      }
+      if (hasSessionId()) {
+        hash = (37 * hash) + SESSION_ID_FIELD_NUMBER;
+        hash = (53 * hash) + com.google.protobuf.Internal.hashLong(
+            getSessionId());
+      }
       hash = (29 * hash) + getUnknownFields().hashCode();
       memoizedHashCode = hash;
       return hash;
@@ -27514,7 +27820,11 @@ public final class DatabaseDriverV1 extends com.google.protobuf.GeneratedFile {
       public Builder clear() {
         super.clear();
         bitField0_ = 0;
-        infoData_ = com.google.protobuf.ByteString.EMPTY;
+        host_ = "";
+        port_ = 0L;
+        serverUrl_ = "";
+        sessionToken_ = "";
+        sessionId_ = 0L;
         return this;
       }
 
@@ -27548,9 +27858,28 @@ public final class DatabaseDriverV1 extends com.google.protobuf.GeneratedFile {
 
       private void buildPartial0(com.snowflake.unicore.protobuf_gen.DatabaseDriverV1.ConnectionGetInfoResponse result) {
         int from_bitField0_ = bitField0_;
+        int to_bitField0_ = 0;
         if (((from_bitField0_ & 0x00000001) != 0)) {
-          result.infoData_ = infoData_;
+          result.host_ = host_;
+          to_bitField0_ |= 0x00000001;
         }
+        if (((from_bitField0_ & 0x00000002) != 0)) {
+          result.port_ = port_;
+          to_bitField0_ |= 0x00000002;
+        }
+        if (((from_bitField0_ & 0x00000004) != 0)) {
+          result.serverUrl_ = serverUrl_;
+          to_bitField0_ |= 0x00000004;
+        }
+        if (((from_bitField0_ & 0x00000008) != 0)) {
+          result.sessionToken_ = sessionToken_;
+          to_bitField0_ |= 0x00000008;
+        }
+        if (((from_bitField0_ & 0x00000010) != 0)) {
+          result.sessionId_ = sessionId_;
+          to_bitField0_ |= 0x00000010;
+        }
+        result.bitField0_ |= to_bitField0_;
       }
 
       @java.lang.Override
@@ -27565,8 +27894,26 @@ public final class DatabaseDriverV1 extends com.google.protobuf.GeneratedFile {
 
       public Builder mergeFrom(com.snowflake.unicore.protobuf_gen.DatabaseDriverV1.ConnectionGetInfoResponse other) {
         if (other == com.snowflake.unicore.protobuf_gen.DatabaseDriverV1.ConnectionGetInfoResponse.getDefaultInstance()) return this;
-        if (!other.getInfoData().isEmpty()) {
-          setInfoData(other.getInfoData());
+        if (other.hasHost()) {
+          host_ = other.host_;
+          bitField0_ |= 0x00000001;
+          onChanged();
+        }
+        if (other.hasPort()) {
+          setPort(other.getPort());
+        }
+        if (other.hasServerUrl()) {
+          serverUrl_ = other.serverUrl_;
+          bitField0_ |= 0x00000004;
+          onChanged();
+        }
+        if (other.hasSessionToken()) {
+          sessionToken_ = other.sessionToken_;
+          bitField0_ |= 0x00000008;
+          onChanged();
+        }
+        if (other.hasSessionId()) {
+          setSessionId(other.getSessionId());
         }
         this.mergeUnknownFields(other.getUnknownFields());
         onChanged();
@@ -27595,10 +27942,30 @@ public final class DatabaseDriverV1 extends com.google.protobuf.GeneratedFile {
                 done = true;
                 break;
               case 10: {
-                infoData_ = input.readBytes();
+                host_ = input.readStringRequireUtf8();
                 bitField0_ |= 0x00000001;
                 break;
               } // case 10
+              case 16: {
+                port_ = input.readInt64();
+                bitField0_ |= 0x00000002;
+                break;
+              } // case 16
+              case 26: {
+                serverUrl_ = input.readStringRequireUtf8();
+                bitField0_ |= 0x00000004;
+                break;
+              } // case 26
+              case 34: {
+                sessionToken_ = input.readStringRequireUtf8();
+                bitField0_ |= 0x00000008;
+                break;
+              } // case 34
+              case 40: {
+                sessionId_ = input.readInt64();
+                bitField0_ |= 0x00000010;
+                break;
+              } // case 40
               default: {
                 if (!super.parseUnknownField(input, extensionRegistry, tag)) {
                   done = true; // was an endgroup tag
@@ -27616,34 +27983,319 @@ public final class DatabaseDriverV1 extends com.google.protobuf.GeneratedFile {
       }
       private int bitField0_;
 
-      private com.google.protobuf.ByteString infoData_ = com.google.protobuf.ByteString.EMPTY;
+      private java.lang.Object host_ = "";
       /**
-       * <code>bytes info_data = 1;</code>
-       * @return The infoData.
+       * <code>optional string host = 1;</code>
+       * @return Whether the host field is set.
        */
-      @java.lang.Override
-      public com.google.protobuf.ByteString getInfoData() {
-        return infoData_;
+      public boolean hasHost() {
+        return ((bitField0_ & 0x00000001) != 0);
       }
       /**
-       * <code>bytes info_data = 1;</code>
-       * @param value The infoData to set.
+       * <code>optional string host = 1;</code>
+       * @return The host.
+       */
+      public java.lang.String getHost() {
+        java.lang.Object ref = host_;
+        if (!(ref instanceof java.lang.String)) {
+          com.google.protobuf.ByteString bs =
+              (com.google.protobuf.ByteString) ref;
+          java.lang.String s = bs.toStringUtf8();
+          host_ = s;
+          return s;
+        } else {
+          return (java.lang.String) ref;
+        }
+      }
+      /**
+       * <code>optional string host = 1;</code>
+       * @return The bytes for host.
+       */
+      public com.google.protobuf.ByteString
+          getHostBytes() {
+        java.lang.Object ref = host_;
+        if (ref instanceof String) {
+          com.google.protobuf.ByteString b = 
+              com.google.protobuf.ByteString.copyFromUtf8(
+                  (java.lang.String) ref);
+          host_ = b;
+          return b;
+        } else {
+          return (com.google.protobuf.ByteString) ref;
+        }
+      }
+      /**
+       * <code>optional string host = 1;</code>
+       * @param value The host to set.
        * @return This builder for chaining.
        */
-      public Builder setInfoData(com.google.protobuf.ByteString value) {
+      public Builder setHost(
+          java.lang.String value) {
         if (value == null) { throw new NullPointerException(); }
-        infoData_ = value;
+        host_ = value;
         bitField0_ |= 0x00000001;
         onChanged();
         return this;
       }
       /**
-       * <code>bytes info_data = 1;</code>
+       * <code>optional string host = 1;</code>
        * @return This builder for chaining.
        */
-      public Builder clearInfoData() {
+      public Builder clearHost() {
+        host_ = getDefaultInstance().getHost();
         bitField0_ = (bitField0_ & ~0x00000001);
-        infoData_ = getDefaultInstance().getInfoData();
+        onChanged();
+        return this;
+      }
+      /**
+       * <code>optional string host = 1;</code>
+       * @param value The bytes for host to set.
+       * @return This builder for chaining.
+       */
+      public Builder setHostBytes(
+          com.google.protobuf.ByteString value) {
+        if (value == null) { throw new NullPointerException(); }
+        checkByteStringIsUtf8(value);
+        host_ = value;
+        bitField0_ |= 0x00000001;
+        onChanged();
+        return this;
+      }
+
+      private long port_ ;
+      /**
+       * <code>optional int64 port = 2;</code>
+       * @return Whether the port field is set.
+       */
+      @java.lang.Override
+      public boolean hasPort() {
+        return ((bitField0_ & 0x00000002) != 0);
+      }
+      /**
+       * <code>optional int64 port = 2;</code>
+       * @return The port.
+       */
+      @java.lang.Override
+      public long getPort() {
+        return port_;
+      }
+      /**
+       * <code>optional int64 port = 2;</code>
+       * @param value The port to set.
+       * @return This builder for chaining.
+       */
+      public Builder setPort(long value) {
+
+        port_ = value;
+        bitField0_ |= 0x00000002;
+        onChanged();
+        return this;
+      }
+      /**
+       * <code>optional int64 port = 2;</code>
+       * @return This builder for chaining.
+       */
+      public Builder clearPort() {
+        bitField0_ = (bitField0_ & ~0x00000002);
+        port_ = 0L;
+        onChanged();
+        return this;
+      }
+
+      private java.lang.Object serverUrl_ = "";
+      /**
+       * <code>optional string server_url = 3;</code>
+       * @return Whether the serverUrl field is set.
+       */
+      public boolean hasServerUrl() {
+        return ((bitField0_ & 0x00000004) != 0);
+      }
+      /**
+       * <code>optional string server_url = 3;</code>
+       * @return The serverUrl.
+       */
+      public java.lang.String getServerUrl() {
+        java.lang.Object ref = serverUrl_;
+        if (!(ref instanceof java.lang.String)) {
+          com.google.protobuf.ByteString bs =
+              (com.google.protobuf.ByteString) ref;
+          java.lang.String s = bs.toStringUtf8();
+          serverUrl_ = s;
+          return s;
+        } else {
+          return (java.lang.String) ref;
+        }
+      }
+      /**
+       * <code>optional string server_url = 3;</code>
+       * @return The bytes for serverUrl.
+       */
+      public com.google.protobuf.ByteString
+          getServerUrlBytes() {
+        java.lang.Object ref = serverUrl_;
+        if (ref instanceof String) {
+          com.google.protobuf.ByteString b = 
+              com.google.protobuf.ByteString.copyFromUtf8(
+                  (java.lang.String) ref);
+          serverUrl_ = b;
+          return b;
+        } else {
+          return (com.google.protobuf.ByteString) ref;
+        }
+      }
+      /**
+       * <code>optional string server_url = 3;</code>
+       * @param value The serverUrl to set.
+       * @return This builder for chaining.
+       */
+      public Builder setServerUrl(
+          java.lang.String value) {
+        if (value == null) { throw new NullPointerException(); }
+        serverUrl_ = value;
+        bitField0_ |= 0x00000004;
+        onChanged();
+        return this;
+      }
+      /**
+       * <code>optional string server_url = 3;</code>
+       * @return This builder for chaining.
+       */
+      public Builder clearServerUrl() {
+        serverUrl_ = getDefaultInstance().getServerUrl();
+        bitField0_ = (bitField0_ & ~0x00000004);
+        onChanged();
+        return this;
+      }
+      /**
+       * <code>optional string server_url = 3;</code>
+       * @param value The bytes for serverUrl to set.
+       * @return This builder for chaining.
+       */
+      public Builder setServerUrlBytes(
+          com.google.protobuf.ByteString value) {
+        if (value == null) { throw new NullPointerException(); }
+        checkByteStringIsUtf8(value);
+        serverUrl_ = value;
+        bitField0_ |= 0x00000004;
+        onChanged();
+        return this;
+      }
+
+      private java.lang.Object sessionToken_ = "";
+      /**
+       * <code>optional string session_token = 4;</code>
+       * @return Whether the sessionToken field is set.
+       */
+      public boolean hasSessionToken() {
+        return ((bitField0_ & 0x00000008) != 0);
+      }
+      /**
+       * <code>optional string session_token = 4;</code>
+       * @return The sessionToken.
+       */
+      public java.lang.String getSessionToken() {
+        java.lang.Object ref = sessionToken_;
+        if (!(ref instanceof java.lang.String)) {
+          com.google.protobuf.ByteString bs =
+              (com.google.protobuf.ByteString) ref;
+          java.lang.String s = bs.toStringUtf8();
+          sessionToken_ = s;
+          return s;
+        } else {
+          return (java.lang.String) ref;
+        }
+      }
+      /**
+       * <code>optional string session_token = 4;</code>
+       * @return The bytes for sessionToken.
+       */
+      public com.google.protobuf.ByteString
+          getSessionTokenBytes() {
+        java.lang.Object ref = sessionToken_;
+        if (ref instanceof String) {
+          com.google.protobuf.ByteString b = 
+              com.google.protobuf.ByteString.copyFromUtf8(
+                  (java.lang.String) ref);
+          sessionToken_ = b;
+          return b;
+        } else {
+          return (com.google.protobuf.ByteString) ref;
+        }
+      }
+      /**
+       * <code>optional string session_token = 4;</code>
+       * @param value The sessionToken to set.
+       * @return This builder for chaining.
+       */
+      public Builder setSessionToken(
+          java.lang.String value) {
+        if (value == null) { throw new NullPointerException(); }
+        sessionToken_ = value;
+        bitField0_ |= 0x00000008;
+        onChanged();
+        return this;
+      }
+      /**
+       * <code>optional string session_token = 4;</code>
+       * @return This builder for chaining.
+       */
+      public Builder clearSessionToken() {
+        sessionToken_ = getDefaultInstance().getSessionToken();
+        bitField0_ = (bitField0_ & ~0x00000008);
+        onChanged();
+        return this;
+      }
+      /**
+       * <code>optional string session_token = 4;</code>
+       * @param value The bytes for sessionToken to set.
+       * @return This builder for chaining.
+       */
+      public Builder setSessionTokenBytes(
+          com.google.protobuf.ByteString value) {
+        if (value == null) { throw new NullPointerException(); }
+        checkByteStringIsUtf8(value);
+        sessionToken_ = value;
+        bitField0_ |= 0x00000008;
+        onChanged();
+        return this;
+      }
+
+      private long sessionId_ ;
+      /**
+       * <code>optional int64 session_id = 5;</code>
+       * @return Whether the sessionId field is set.
+       */
+      @java.lang.Override
+      public boolean hasSessionId() {
+        return ((bitField0_ & 0x00000010) != 0);
+      }
+      /**
+       * <code>optional int64 session_id = 5;</code>
+       * @return The sessionId.
+       */
+      @java.lang.Override
+      public long getSessionId() {
+        return sessionId_;
+      }
+      /**
+       * <code>optional int64 session_id = 5;</code>
+       * @param value The sessionId to set.
+       * @return This builder for chaining.
+       */
+      public Builder setSessionId(long value) {
+
+        sessionId_ = value;
+        bitField0_ |= 0x00000010;
+        onChanged();
+        return this;
+      }
+      /**
+       * <code>optional int64 session_id = 5;</code>
+       * @return This builder for chaining.
+       */
+      public Builder clearSessionId() {
+        bitField0_ = (bitField0_ & ~0x00000010);
+        sessionId_ = 0L;
         onChanged();
         return this;
       }
@@ -51135,229 +51787,233 @@ public final class DatabaseDriverV1 extends com.google.protobuf.GeneratedFile {
       "onReleaseResponse\"\207\001\n\030ConnectionGetInfoR" +
       "equest\0229\n\013conn_handle\030\001 \001(\0132$.database_d" +
       "river_v1.ConnectionHandle\0220\n\ninfo_codes\030" +
-      "\002 \003(\0162\034.database_driver_v1.InfoCode\".\n\031C" +
-      "onnectionGetInfoResponse\022\021\n\tinfo_data\030\001 " +
-      "\001(\014\"\225\002\n\033ConnectionGetObjectsRequest\0229\n\013c" +
-      "onn_handle\030\001 \001(\0132$.database_driver_v1.Co" +
-      "nnectionHandle\022\r\n\005depth\030\002 \001(\005\022\024\n\007catalog" +
-      "\030\003 \001(\tH\000\210\001\001\022\026\n\tdb_schema\030\004 \001(\tH\001\210\001\001\022\027\n\nt" +
-      "able_name\030\005 \001(\tH\002\210\001\001\022\022\n\ntable_type\030\006 \003(\t" +
-      "\022\030\n\013column_name\030\007 \001(\tH\003\210\001\001B\n\n\010_catalogB\014" +
-      "\n\n_db_schemaB\r\n\013_table_nameB\016\n\014_column_n" +
-      "ame\"4\n\034ConnectionGetObjectsResponse\022\024\n\014o" +
-      "bjects_data\030\001 \001(\014\"\270\001\n\037ConnectionGetTable" +
-      "SchemaRequest\0229\n\013conn_handle\030\001 \001(\0132$.dat" +
-      "abase_driver_v1.ConnectionHandle\022\024\n\007cata" +
-      "log\030\002 \001(\tH\000\210\001\001\022\026\n\tdb_schema\030\003 \001(\tH\001\210\001\001\022\022" +
-      "\n\ntable_name\030\004 \001(\tB\n\n\010_catalogB\014\n\n_db_sc" +
-      "hema\"7\n ConnectionGetTableSchemaResponse" +
-      "\022\023\n\013schema_data\030\001 \001(\014\"[\n\036ConnectionGetTa" +
-      "bleTypesRequest\0229\n\013conn_handle\030\001 \001(\0132$.d" +
-      "atabase_driver_v1.ConnectionHandle\";\n\037Co" +
-      "nnectionGetTableTypesResponse\022\030\n\020table_t" +
-      "ypes_data\030\001 \001(\014\"T\n\027ConnectionCommitReque" +
+      "\002 \003(\0162\034.database_driver_v1.InfoCode\"\321\001\n\031" +
+      "ConnectionGetInfoResponse\022\021\n\004host\030\001 \001(\tH" +
+      "\000\210\001\001\022\021\n\004port\030\002 \001(\003H\001\210\001\001\022\027\n\nserver_url\030\003 " +
+      "\001(\tH\002\210\001\001\022\032\n\rsession_token\030\004 \001(\tH\003\210\001\001\022\027\n\n" +
+      "session_id\030\005 \001(\003H\004\210\001\001B\007\n\005_hostB\007\n\005_portB" +
+      "\r\n\013_server_urlB\020\n\016_session_tokenB\r\n\013_ses" +
+      "sion_id\"\225\002\n\033ConnectionGetObjectsRequest\022" +
+      "9\n\013conn_handle\030\001 \001(\0132$.database_driver_v" +
+      "1.ConnectionHandle\022\r\n\005depth\030\002 \001(\005\022\024\n\007cat" +
+      "alog\030\003 \001(\tH\000\210\001\001\022\026\n\tdb_schema\030\004 \001(\tH\001\210\001\001\022" +
+      "\027\n\ntable_name\030\005 \001(\tH\002\210\001\001\022\022\n\ntable_type\030\006" +
+      " \003(\t\022\030\n\013column_name\030\007 \001(\tH\003\210\001\001B\n\n\010_catal" +
+      "ogB\014\n\n_db_schemaB\r\n\013_table_nameB\016\n\014_colu" +
+      "mn_name\"4\n\034ConnectionGetObjectsResponse\022" +
+      "\024\n\014objects_data\030\001 \001(\014\"\270\001\n\037ConnectionGetT" +
+      "ableSchemaRequest\0229\n\013conn_handle\030\001 \001(\0132$" +
+      ".database_driver_v1.ConnectionHandle\022\024\n\007" +
+      "catalog\030\002 \001(\tH\000\210\001\001\022\026\n\tdb_schema\030\003 \001(\tH\001\210" +
+      "\001\001\022\022\n\ntable_name\030\004 \001(\tB\n\n\010_catalogB\014\n\n_d" +
+      "b_schema\"7\n ConnectionGetTableSchemaResp" +
+      "onse\022\023\n\013schema_data\030\001 \001(\014\"[\n\036ConnectionG" +
+      "etTableTypesRequest\0229\n\013conn_handle\030\001 \001(\013" +
+      "2$.database_driver_v1.ConnectionHandle\";" +
+      "\n\037ConnectionGetTableTypesResponse\022\030\n\020tab" +
+      "le_types_data\030\001 \001(\014\"T\n\027ConnectionCommitR" +
+      "equest\0229\n\013conn_handle\030\001 \001(\0132$.database_d" +
+      "river_v1.ConnectionHandle\"\032\n\030ConnectionC" +
+      "ommitResponse\"V\n\031ConnectionRollbackReque" +
       "st\0229\n\013conn_handle\030\001 \001(\0132$.database_drive" +
-      "r_v1.ConnectionHandle\"\032\n\030ConnectionCommi" +
-      "tResponse\"V\n\031ConnectionRollbackRequest\0229" +
-      "\n\013conn_handle\030\001 \001(\0132$.database_driver_v1" +
-      ".ConnectionHandle\"\034\n\032ConnectionRollbackR" +
-      "esponse\"P\n\023StatementNewRequest\0229\n\013conn_h" +
-      "andle\030\001 \001(\0132$.database_driver_v1.Connect" +
-      "ionHandle\"P\n\024StatementNewResponse\0228\n\013stm" +
+      "r_v1.ConnectionHandle\"\034\n\032ConnectionRollb" +
+      "ackResponse\"P\n\023StatementNewRequest\0229\n\013co" +
+      "nn_handle\030\001 \001(\0132$.database_driver_v1.Con" +
+      "nectionHandle\"P\n\024StatementNewResponse\0228\n" +
+      "\013stmt_handle\030\001 \001(\0132#.database_driver_v1." +
+      "StatementHandle\"S\n\027StatementReleaseReque" +
+      "st\0228\n\013stmt_handle\030\001 \001(\0132#.database_drive" +
+      "r_v1.StatementHandle\"\032\n\030StatementRelease" +
+      "Response\"f\n\033StatementSetSqlQueryRequest\022" +
+      "8\n\013stmt_handle\030\001 \001(\0132#.database_driver_v" +
+      "1.StatementHandle\022\r\n\005query\030\002 \001(\t\"\036\n\034Stat" +
+      "ementSetSqlQueryResponse\"j\n StatementSet" +
+      "SubstraitPlanRequest\0228\n\013stmt_handle\030\001 \001(" +
+      "\0132#.database_driver_v1.StatementHandle\022\014" +
+      "\n\004plan\030\002 \001(\014\"#\n!StatementSetSubstraitPla" +
+      "nResponse\"S\n\027StatementPrepareRequest\0228\n\013" +
+      "stmt_handle\030\001 \001(\0132#.database_driver_v1.S" +
+      "tatementHandle\"\032\n\030StatementPrepareRespon" +
+      "se\"w\n\037StatementSetOptionStringRequest\0228\n" +
+      "\013stmt_handle\030\001 \001(\0132#.database_driver_v1." +
+      "StatementHandle\022\013\n\003key\030\002 \001(\t\022\r\n\005value\030\003 " +
+      "\001(\t\"\"\n StatementSetOptionStringResponse\"" +
+      "v\n\036StatementSetOptionBytesRequest\0228\n\013stm" +
       "t_handle\030\001 \001(\0132#.database_driver_v1.Stat" +
-      "ementHandle\"S\n\027StatementReleaseRequest\0228" +
-      "\n\013stmt_handle\030\001 \001(\0132#.database_driver_v1" +
-      ".StatementHandle\"\032\n\030StatementReleaseResp" +
-      "onse\"f\n\033StatementSetSqlQueryRequest\0228\n\013s" +
-      "tmt_handle\030\001 \001(\0132#.database_driver_v1.St" +
-      "atementHandle\022\r\n\005query\030\002 \001(\t\"\036\n\034Statemen" +
-      "tSetSqlQueryResponse\"j\n StatementSetSubs" +
-      "traitPlanRequest\0228\n\013stmt_handle\030\001 \001(\0132#." +
-      "database_driver_v1.StatementHandle\022\014\n\004pl" +
-      "an\030\002 \001(\014\"#\n!StatementSetSubstraitPlanRes" +
-      "ponse\"S\n\027StatementPrepareRequest\0228\n\013stmt" +
-      "_handle\030\001 \001(\0132#.database_driver_v1.State" +
-      "mentHandle\"\032\n\030StatementPrepareResponse\"w" +
-      "\n\037StatementSetOptionStringRequest\0228\n\013stm" +
-      "t_handle\030\001 \001(\0132#.database_driver_v1.Stat" +
-      "ementHandle\022\013\n\003key\030\002 \001(\t\022\r\n\005value\030\003 \001(\t\"" +
-      "\"\n StatementSetOptionStringResponse\"v\n\036S" +
-      "tatementSetOptionBytesRequest\0228\n\013stmt_ha" +
-      "ndle\030\001 \001(\0132#.database_driver_v1.Statemen" +
-      "tHandle\022\013\n\003key\030\002 \001(\t\022\r\n\005value\030\003 \001(\014\"!\n\037S" +
-      "tatementSetOptionBytesResponse\"t\n\034Statem" +
-      "entSetOptionIntRequest\0228\n\013stmt_handle\030\001 " +
-      "\001(\0132#.database_driver_v1.StatementHandle" +
-      "\022\013\n\003key\030\002 \001(\t\022\r\n\005value\030\003 \001(\003\"\037\n\035Statemen" +
-      "tSetOptionIntResponse\"w\n\037StatementSetOpt" +
-      "ionDoubleRequest\0228\n\013stmt_handle\030\001 \001(\0132#." +
-      "database_driver_v1.StatementHandle\022\013\n\003ke" +
-      "y\030\002 \001(\t\022\r\n\005value\030\003 \001(\001\"\"\n StatementSetOp" +
-      "tionDoubleResponse\"^\n\"StatementGetParame" +
-      "terSchemaRequest\0228\n\013stmt_handle\030\001 \001(\0132#." +
-      "database_driver_v1.StatementHandle\"Y\n#St" +
-      "atementGetParameterSchemaResponse\0222\n\006sch" +
-      "ema\030\001 \001(\0132\".database_driver_v1.ArrowSche" +
-      "maPtr\"\266\001\n\024StatementBindRequest\0228\n\013stmt_h" +
-      "andle\030\001 \001(\0132#.database_driver_v1.Stateme" +
-      "ntHandle\0222\n\006schema\030\002 \001(\0132\".database_driv" +
-      "er_v1.ArrowSchemaPtr\0220\n\005array\030\003 \001(\0132!.da" +
-      "tabase_driver_v1.ArrowArrayPtr\"\027\n\025Statem" +
-      "entBindResponse\"f\n\032StatementBindStreamRe" +
+      "ementHandle\022\013\n\003key\030\002 \001(\t\022\r\n\005value\030\003 \001(\014\"" +
+      "!\n\037StatementSetOptionBytesResponse\"t\n\034St" +
+      "atementSetOptionIntRequest\0228\n\013stmt_handl" +
+      "e\030\001 \001(\0132#.database_driver_v1.StatementHa" +
+      "ndle\022\013\n\003key\030\002 \001(\t\022\r\n\005value\030\003 \001(\003\"\037\n\035Stat" +
+      "ementSetOptionIntResponse\"w\n\037StatementSe" +
+      "tOptionDoubleRequest\0228\n\013stmt_handle\030\001 \001(" +
+      "\0132#.database_driver_v1.StatementHandle\022\013" +
+      "\n\003key\030\002 \001(\t\022\r\n\005value\030\003 \001(\001\"\"\n StatementS" +
+      "etOptionDoubleResponse\"^\n\"StatementGetPa" +
+      "rameterSchemaRequest\0228\n\013stmt_handle\030\001 \001(" +
+      "\0132#.database_driver_v1.StatementHandle\"Y" +
+      "\n#StatementGetParameterSchemaResponse\0222\n" +
+      "\006schema\030\001 \001(\0132\".database_driver_v1.Arrow" +
+      "SchemaPtr\"\266\001\n\024StatementBindRequest\0228\n\013st" +
+      "mt_handle\030\001 \001(\0132#.database_driver_v1.Sta" +
+      "tementHandle\0222\n\006schema\030\002 \001(\0132\".database_" +
+      "driver_v1.ArrowSchemaPtr\0220\n\005array\030\003 \001(\0132" +
+      "!.database_driver_v1.ArrowArrayPtr\"\027\n\025St" +
+      "atementBindResponse\"f\n\032StatementBindStre" +
+      "amRequest\0228\n\013stmt_handle\030\001 \001(\0132#.databas" +
+      "e_driver_v1.StatementHandle\022\016\n\006stream\030\002 " +
+      "\001(\014\"\035\n\033StatementBindStreamResponse\"X\n\034St" +
+      "atementExecuteQueryRequest\0228\n\013stmt_handl" +
+      "e\030\001 \001(\0132#.database_driver_v1.StatementHa" +
+      "ndle\"R\n\035StatementExecuteQueryResponse\0221\n" +
+      "\006result\030\001 \001(\0132!.database_driver_v1.Execu" +
+      "teResult\"]\n!StatementExecutePartitionsRe" +
       "quest\0228\n\013stmt_handle\030\001 \001(\0132#.database_dr" +
-      "iver_v1.StatementHandle\022\016\n\006stream\030\002 \001(\014\"" +
-      "\035\n\033StatementBindStreamResponse\"X\n\034Statem" +
-      "entExecuteQueryRequest\0228\n\013stmt_handle\030\001 " +
-      "\001(\0132#.database_driver_v1.StatementHandle" +
-      "\"R\n\035StatementExecuteQueryResponse\0221\n\006res" +
-      "ult\030\001 \001(\0132!.database_driver_v1.ExecuteRe" +
-      "sult\"]\n!StatementExecutePartitionsReques" +
-      "t\0228\n\013stmt_handle\030\001 \001(\0132#.database_driver" +
-      "_v1.StatementHandle\"[\n\"StatementExecuteP" +
-      "artitionsResponse\0225\n\006result\030\001 \001(\0132%.data" +
-      "base_driver_v1.PartitionedResult\"w\n\035Stat" +
-      "ementReadPartitionRequest\0228\n\013stmt_handle" +
-      "\030\001 \001(\0132#.database_driver_v1.StatementHan" +
-      "dle\022\034\n\024partition_descriptor\030\002 \001(\014\":\n\036Sta" +
-      "tementReadPartitionResponse\022\030\n\020partition" +
-      "_stream\030\001 \001(\003*\264\004\n\nStatusCode\022\033\n\027STATUS_C" +
-      "ODE_UNSPECIFIED\020\000\022\022\n\016STATUS_CODE_OK\020\001\022$\n" +
-      " STATUS_CODE_AUTHENTICATION_ERROR\020\002\022\037\n\033S" +
-      "TATUS_CODE_NOT_IMPLEMENTED\020\003\022\031\n\025STATUS_C" +
-      "ODE_NOT_FOUND\020\004\022\036\n\032STATUS_CODE_ALREADY_E" +
-      "XISTS\020\005\022 \n\034STATUS_CODE_INVALID_ARGUMENT\020" +
-      "\006\022\035\n\031STATUS_CODE_INVALID_STATE\020\007\022\034\n\030STAT" +
-      "US_CODE_INVALID_DATA\020\010\022\022\n\016STATUS_CODE_IO" +
-      "\020\t\022\031\n\025STATUS_CODE_CANCELLED\020\n\022\037\n\033STATUS_" +
-      "CODE_UNAUTHENTICATED\020\013\022\034\n\030STATUS_CODE_UN" +
-      "AUTHORIZED\020\014\022\035\n\031STATUS_CODE_GENERIC_ERRO" +
-      "R\020\r\022\036\n\032STATUS_CODE_INTERNAL_ERROR\020\016\022!\n\035S" +
-      "TATUS_CODE_MISSING_PARAMETER\020\017\022\'\n#STATUS" +
-      "_CODE_INVALID_PARAMETER_VALUE\020\020\022\033\n\027STATU" +
-      "S_CODE_LOGIN_ERROR\020\021*\230\003\n\010InfoCode\022\031\n\025INF" +
-      "O_CODE_UNSPECIFIED\020\000\022\031\n\025INFO_CODE_VENDOR" +
-      "_NAME\020\001\022\034\n\030INFO_CODE_VENDOR_VERSION\020\002\022\"\n" +
-      "\036INFO_CODE_VENDOR_ARROW_VERSION\020\003\022\030\n\024INF" +
-      "O_CODE_VENDOR_SQL\020e\022\036\n\032INFO_CODE_VENDOR_" +
-      "SUBSTRAIT\020f\022*\n&INFO_CODE_VENDOR_SUBSTRAI" +
-      "T_MIN_VERSION\020g\022*\n&INFO_CODE_VENDOR_SUBS" +
-      "TRAIT_MAX_VERSION\020h\022\032\n\025INFO_CODE_DRIVER_" +
-      "NAME\020\311\001\022\035\n\030INFO_CODE_DRIVER_VERSION\020\312\001\022#" +
-      "\n\036INFO_CODE_DRIVER_ARROW_VERSION\020\313\001\022\"\n\035I" +
-      "NFO_CODE_DRIVER_ADBC_VERSION\020\314\0012\357!\n\016Data" +
-      "baseDriver\022^\n\013DatabaseNew\022&.database_dri" +
-      "ver_v1.DatabaseNewRequest\032\'.database_dri" +
-      "ver_v1.DatabaseNewResponse\022\202\001\n\027DatabaseS" +
-      "etOptionString\0222.database_driver_v1.Data" +
-      "baseSetOptionStringRequest\0323.database_dr" +
-      "iver_v1.DatabaseSetOptionStringResponse\022" +
-      "\177\n\026DatabaseSetOptionBytes\0221.database_dri" +
-      "ver_v1.DatabaseSetOptionBytesRequest\0322.d" +
-      "atabase_driver_v1.DatabaseSetOptionBytes" +
-      "Response\022y\n\024DatabaseSetOptionInt\022/.datab" +
-      "ase_driver_v1.DatabaseSetOptionIntReques" +
-      "t\0320.database_driver_v1.DatabaseSetOption" +
-      "IntResponse\022\202\001\n\027DatabaseSetOptionDouble\022" +
-      "2.database_driver_v1.DatabaseSetOptionDo" +
-      "ubleRequest\0323.database_driver_v1.Databas" +
-      "eSetOptionDoubleResponse\022a\n\014DatabaseInit" +
-      "\022\'.database_driver_v1.DatabaseInitReques" +
-      "t\032(.database_driver_v1.DatabaseInitRespo" +
-      "nse\022j\n\017DatabaseRelease\022*.database_driver" +
-      "_v1.DatabaseReleaseRequest\032+.database_dr" +
-      "iver_v1.DatabaseReleaseResponse\022d\n\rConne" +
-      "ctionNew\022(.database_driver_v1.Connection" +
-      "NewRequest\032).database_driver_v1.Connecti" +
-      "onNewResponse\022\210\001\n\031ConnectionSetOptionStr" +
-      "ing\0224.database_driver_v1.ConnectionSetOp" +
-      "tionStringRequest\0325.database_driver_v1.C" +
-      "onnectionSetOptionStringResponse\022\205\001\n\030Con" +
-      "nectionSetOptionBytes\0223.database_driver_" +
-      "v1.ConnectionSetOptionBytesRequest\0324.dat" +
-      "abase_driver_v1.ConnectionSetOptionBytes" +
-      "Response\022\177\n\026ConnectionSetOptionInt\0221.dat" +
-      "abase_driver_v1.ConnectionSetOptionIntRe" +
-      "quest\0322.database_driver_v1.ConnectionSet" +
-      "OptionIntResponse\022\210\001\n\031ConnectionSetOptio" +
-      "nDouble\0224.database_driver_v1.ConnectionS" +
-      "etOptionDoubleRequest\0325.database_driver_" +
-      "v1.ConnectionSetOptionDoubleResponse\022g\n\016" +
-      "ConnectionInit\022).database_driver_v1.Conn" +
-      "ectionInitRequest\032*.database_driver_v1.C" +
-      "onnectionInitResponse\022p\n\021ConnectionRelea" +
-      "se\022,.database_driver_v1.ConnectionReleas" +
-      "eRequest\032-.database_driver_v1.Connection" +
-      "ReleaseResponse\022p\n\021ConnectionGetInfo\022,.d" +
-      "atabase_driver_v1.ConnectionGetInfoReque" +
-      "st\032-.database_driver_v1.ConnectionGetInf" +
-      "oResponse\022y\n\024ConnectionGetObjects\022/.data" +
-      "base_driver_v1.ConnectionGetObjectsReque" +
-      "st\0320.database_driver_v1.ConnectionGetObj" +
-      "ectsResponse\022\205\001\n\030ConnectionGetTableSchem" +
-      "a\0223.database_driver_v1.ConnectionGetTabl" +
-      "eSchemaRequest\0324.database_driver_v1.Conn" +
-      "ectionGetTableSchemaResponse\022\202\001\n\027Connect" +
-      "ionGetTableTypes\0222.database_driver_v1.Co" +
-      "nnectionGetTableTypesRequest\0323.database_" +
-      "driver_v1.ConnectionGetTableTypesRespons" +
-      "e\022m\n\020ConnectionCommit\022+.database_driver_" +
-      "v1.ConnectionCommitRequest\032,.database_dr" +
-      "iver_v1.ConnectionCommitResponse\022s\n\022Conn" +
-      "ectionRollback\022-.database_driver_v1.Conn" +
-      "ectionRollbackRequest\032..database_driver_" +
-      "v1.ConnectionRollbackResponse\022a\n\014Stateme" +
-      "ntNew\022\'.database_driver_v1.StatementNewR" +
-      "equest\032(.database_driver_v1.StatementNew" +
-      "Response\022m\n\020StatementRelease\022+.database_" +
-      "driver_v1.StatementReleaseRequest\032,.data" +
-      "base_driver_v1.StatementReleaseResponse\022" +
-      "y\n\024StatementSetSqlQuery\022/.database_drive" +
-      "r_v1.StatementSetSqlQueryRequest\0320.datab" +
-      "ase_driver_v1.StatementSetSqlQueryRespon" +
-      "se\022\210\001\n\031StatementSetSubstraitPlan\0224.datab" +
-      "ase_driver_v1.StatementSetSubstraitPlanR" +
-      "equest\0325.database_driver_v1.StatementSet" +
-      "SubstraitPlanResponse\022m\n\020StatementPrepar" +
-      "e\022+.database_driver_v1.StatementPrepareR" +
-      "equest\032,.database_driver_v1.StatementPre" +
-      "pareResponse\022\205\001\n\030StatementSetOptionStrin" +
-      "g\0223.database_driver_v1.StatementSetOptio" +
-      "nStringRequest\0324.database_driver_v1.Stat" +
-      "ementSetOptionStringResponse\022\202\001\n\027Stateme" +
-      "ntSetOptionBytes\0222.database_driver_v1.St" +
-      "atementSetOptionBytesRequest\0323.database_" +
-      "driver_v1.StatementSetOptionBytesRespons" +
-      "e\022|\n\025StatementSetOptionInt\0220.database_dr" +
-      "iver_v1.StatementSetOptionIntRequest\0321.d" +
-      "atabase_driver_v1.StatementSetOptionIntR" +
-      "esponse\022\205\001\n\030StatementSetOptionDouble\0223.d" +
-      "atabase_driver_v1.StatementSetOptionDoub" +
-      "leRequest\0324.database_driver_v1.Statement" +
-      "SetOptionDoubleResponse\022\216\001\n\033StatementGet" +
-      "ParameterSchema\0226.database_driver_v1.Sta" +
-      "tementGetParameterSchemaRequest\0327.databa" +
-      "se_driver_v1.StatementGetParameterSchema" +
-      "Response\022d\n\rStatementBind\022(.database_dri" +
-      "ver_v1.StatementBindRequest\032).database_d" +
-      "river_v1.StatementBindResponse\022v\n\023Statem" +
-      "entBindStream\022..database_driver_v1.State" +
-      "mentBindStreamRequest\032/.database_driver_" +
-      "v1.StatementBindStreamResponse\022|\n\025Statem" +
-      "entExecuteQuery\0220.database_driver_v1.Sta" +
-      "tementExecuteQueryRequest\0321.database_dri" +
-      "ver_v1.StatementExecuteQueryResponse\022\213\001\n" +
-      "\032StatementExecutePartitions\0225.database_d" +
-      "river_v1.StatementExecutePartitionsReque" +
-      "st\0326.database_driver_v1.StatementExecute" +
-      "PartitionsResponse\022\177\n\026StatementReadParti" +
-      "tion\0221.database_driver_v1.StatementReadP" +
-      "artitionRequest\0322.database_driver_v1.Sta" +
-      "tementReadPartitionResponse\032\024\302\251\311\001\017Driver" +
-      "Exception:;\n\rservice_error\022\037.google.prot" +
-      "obuf.ServiceOptions\030\230\225\031 \001(\t\210\001\001:9\n\014method" +
-      "_error\022\036.google.protobuf.MethodOptions\030\230" +
-      "\225\031 \001(\t\210\001\001B$\n\"com.snowflake.unicore.proto" +
-      "buf_genb\006proto3"
+      "iver_v1.StatementHandle\"[\n\"StatementExec" +
+      "utePartitionsResponse\0225\n\006result\030\001 \001(\0132%." +
+      "database_driver_v1.PartitionedResult\"w\n\035" +
+      "StatementReadPartitionRequest\0228\n\013stmt_ha" +
+      "ndle\030\001 \001(\0132#.database_driver_v1.Statemen" +
+      "tHandle\022\034\n\024partition_descriptor\030\002 \001(\014\":\n" +
+      "\036StatementReadPartitionResponse\022\030\n\020parti" +
+      "tion_stream\030\001 \001(\003*\264\004\n\nStatusCode\022\033\n\027STAT" +
+      "US_CODE_UNSPECIFIED\020\000\022\022\n\016STATUS_CODE_OK\020" +
+      "\001\022$\n STATUS_CODE_AUTHENTICATION_ERROR\020\002\022" +
+      "\037\n\033STATUS_CODE_NOT_IMPLEMENTED\020\003\022\031\n\025STAT" +
+      "US_CODE_NOT_FOUND\020\004\022\036\n\032STATUS_CODE_ALREA" +
+      "DY_EXISTS\020\005\022 \n\034STATUS_CODE_INVALID_ARGUM" +
+      "ENT\020\006\022\035\n\031STATUS_CODE_INVALID_STATE\020\007\022\034\n\030" +
+      "STATUS_CODE_INVALID_DATA\020\010\022\022\n\016STATUS_COD" +
+      "E_IO\020\t\022\031\n\025STATUS_CODE_CANCELLED\020\n\022\037\n\033STA" +
+      "TUS_CODE_UNAUTHENTICATED\020\013\022\034\n\030STATUS_COD" +
+      "E_UNAUTHORIZED\020\014\022\035\n\031STATUS_CODE_GENERIC_" +
+      "ERROR\020\r\022\036\n\032STATUS_CODE_INTERNAL_ERROR\020\016\022" +
+      "!\n\035STATUS_CODE_MISSING_PARAMETER\020\017\022\'\n#ST" +
+      "ATUS_CODE_INVALID_PARAMETER_VALUE\020\020\022\033\n\027S" +
+      "TATUS_CODE_LOGIN_ERROR\020\021*\230\003\n\010InfoCode\022\031\n" +
+      "\025INFO_CODE_UNSPECIFIED\020\000\022\031\n\025INFO_CODE_VE" +
+      "NDOR_NAME\020\001\022\034\n\030INFO_CODE_VENDOR_VERSION\020" +
+      "\002\022\"\n\036INFO_CODE_VENDOR_ARROW_VERSION\020\003\022\030\n" +
+      "\024INFO_CODE_VENDOR_SQL\020e\022\036\n\032INFO_CODE_VEN" +
+      "DOR_SUBSTRAIT\020f\022*\n&INFO_CODE_VENDOR_SUBS" +
+      "TRAIT_MIN_VERSION\020g\022*\n&INFO_CODE_VENDOR_" +
+      "SUBSTRAIT_MAX_VERSION\020h\022\032\n\025INFO_CODE_DRI" +
+      "VER_NAME\020\311\001\022\035\n\030INFO_CODE_DRIVER_VERSION\020" +
+      "\312\001\022#\n\036INFO_CODE_DRIVER_ARROW_VERSION\020\313\001\022" +
+      "\"\n\035INFO_CODE_DRIVER_ADBC_VERSION\020\314\0012\357!\n\016" +
+      "DatabaseDriver\022^\n\013DatabaseNew\022&.database" +
+      "_driver_v1.DatabaseNewRequest\032\'.database" +
+      "_driver_v1.DatabaseNewResponse\022\202\001\n\027Datab" +
+      "aseSetOptionString\0222.database_driver_v1." +
+      "DatabaseSetOptionStringRequest\0323.databas" +
+      "e_driver_v1.DatabaseSetOptionStringRespo" +
+      "nse\022\177\n\026DatabaseSetOptionBytes\0221.database" +
+      "_driver_v1.DatabaseSetOptionBytesRequest" +
+      "\0322.database_driver_v1.DatabaseSetOptionB" +
+      "ytesResponse\022y\n\024DatabaseSetOptionInt\022/.d" +
+      "atabase_driver_v1.DatabaseSetOptionIntRe" +
+      "quest\0320.database_driver_v1.DatabaseSetOp" +
+      "tionIntResponse\022\202\001\n\027DatabaseSetOptionDou" +
+      "ble\0222.database_driver_v1.DatabaseSetOpti" +
+      "onDoubleRequest\0323.database_driver_v1.Dat" +
+      "abaseSetOptionDoubleResponse\022a\n\014Database" +
+      "Init\022\'.database_driver_v1.DatabaseInitRe" +
+      "quest\032(.database_driver_v1.DatabaseInitR" +
+      "esponse\022j\n\017DatabaseRelease\022*.database_dr" +
+      "iver_v1.DatabaseReleaseRequest\032+.databas" +
+      "e_driver_v1.DatabaseReleaseResponse\022d\n\rC" +
+      "onnectionNew\022(.database_driver_v1.Connec" +
+      "tionNewRequest\032).database_driver_v1.Conn" +
+      "ectionNewResponse\022\210\001\n\031ConnectionSetOptio" +
+      "nString\0224.database_driver_v1.ConnectionS" +
+      "etOptionStringRequest\0325.database_driver_" +
+      "v1.ConnectionSetOptionStringResponse\022\205\001\n" +
+      "\030ConnectionSetOptionBytes\0223.database_dri" +
+      "ver_v1.ConnectionSetOptionBytesRequest\0324" +
+      ".database_driver_v1.ConnectionSetOptionB" +
+      "ytesResponse\022\177\n\026ConnectionSetOptionInt\0221" +
+      ".database_driver_v1.ConnectionSetOptionI" +
+      "ntRequest\0322.database_driver_v1.Connectio" +
+      "nSetOptionIntResponse\022\210\001\n\031ConnectionSetO" +
+      "ptionDouble\0224.database_driver_v1.Connect" +
+      "ionSetOptionDoubleRequest\0325.database_dri" +
+      "ver_v1.ConnectionSetOptionDoubleResponse" +
+      "\022g\n\016ConnectionInit\022).database_driver_v1." +
+      "ConnectionInitRequest\032*.database_driver_" +
+      "v1.ConnectionInitResponse\022p\n\021ConnectionR" +
+      "elease\022,.database_driver_v1.ConnectionRe" +
+      "leaseRequest\032-.database_driver_v1.Connec" +
+      "tionReleaseResponse\022p\n\021ConnectionGetInfo" +
+      "\022,.database_driver_v1.ConnectionGetInfoR" +
+      "equest\032-.database_driver_v1.ConnectionGe" +
+      "tInfoResponse\022y\n\024ConnectionGetObjects\022/." +
+      "database_driver_v1.ConnectionGetObjectsR" +
+      "equest\0320.database_driver_v1.ConnectionGe" +
+      "tObjectsResponse\022\205\001\n\030ConnectionGetTableS" +
+      "chema\0223.database_driver_v1.ConnectionGet" +
+      "TableSchemaRequest\0324.database_driver_v1." +
+      "ConnectionGetTableSchemaResponse\022\202\001\n\027Con" +
+      "nectionGetTableTypes\0222.database_driver_v" +
+      "1.ConnectionGetTableTypesRequest\0323.datab" +
+      "ase_driver_v1.ConnectionGetTableTypesRes" +
+      "ponse\022m\n\020ConnectionCommit\022+.database_dri" +
+      "ver_v1.ConnectionCommitRequest\032,.databas" +
+      "e_driver_v1.ConnectionCommitResponse\022s\n\022" +
+      "ConnectionRollback\022-.database_driver_v1." +
+      "ConnectionRollbackRequest\032..database_dri" +
+      "ver_v1.ConnectionRollbackResponse\022a\n\014Sta" +
+      "tementNew\022\'.database_driver_v1.Statement" +
+      "NewRequest\032(.database_driver_v1.Statemen" +
+      "tNewResponse\022m\n\020StatementRelease\022+.datab" +
+      "ase_driver_v1.StatementReleaseRequest\032,." +
+      "database_driver_v1.StatementReleaseRespo" +
+      "nse\022y\n\024StatementSetSqlQuery\022/.database_d" +
+      "river_v1.StatementSetSqlQueryRequest\0320.d" +
+      "atabase_driver_v1.StatementSetSqlQueryRe" +
+      "sponse\022\210\001\n\031StatementSetSubstraitPlan\0224.d" +
+      "atabase_driver_v1.StatementSetSubstraitP" +
+      "lanRequest\0325.database_driver_v1.Statemen" +
+      "tSetSubstraitPlanResponse\022m\n\020StatementPr" +
+      "epare\022+.database_driver_v1.StatementPrep" +
+      "areRequest\032,.database_driver_v1.Statemen" +
+      "tPrepareResponse\022\205\001\n\030StatementSetOptionS" +
+      "tring\0223.database_driver_v1.StatementSetO" +
+      "ptionStringRequest\0324.database_driver_v1." +
+      "StatementSetOptionStringResponse\022\202\001\n\027Sta" +
+      "tementSetOptionBytes\0222.database_driver_v" +
+      "1.StatementSetOptionBytesRequest\0323.datab" +
+      "ase_driver_v1.StatementSetOptionBytesRes" +
+      "ponse\022|\n\025StatementSetOptionInt\0220.databas" +
+      "e_driver_v1.StatementSetOptionIntRequest" +
+      "\0321.database_driver_v1.StatementSetOption" +
+      "IntResponse\022\205\001\n\030StatementSetOptionDouble" +
+      "\0223.database_driver_v1.StatementSetOption" +
+      "DoubleRequest\0324.database_driver_v1.State" +
+      "mentSetOptionDoubleResponse\022\216\001\n\033Statemen" +
+      "tGetParameterSchema\0226.database_driver_v1" +
+      ".StatementGetParameterSchemaRequest\0327.da" +
+      "tabase_driver_v1.StatementGetParameterSc" +
+      "hemaResponse\022d\n\rStatementBind\022(.database" +
+      "_driver_v1.StatementBindRequest\032).databa" +
+      "se_driver_v1.StatementBindResponse\022v\n\023St" +
+      "atementBindStream\022..database_driver_v1.S" +
+      "tatementBindStreamRequest\032/.database_dri" +
+      "ver_v1.StatementBindStreamResponse\022|\n\025St" +
+      "atementExecuteQuery\0220.database_driver_v1" +
+      ".StatementExecuteQueryRequest\0321.database" +
+      "_driver_v1.StatementExecuteQueryResponse" +
+      "\022\213\001\n\032StatementExecutePartitions\0225.databa" +
+      "se_driver_v1.StatementExecutePartitionsR" +
+      "equest\0326.database_driver_v1.StatementExe" +
+      "cutePartitionsResponse\022\177\n\026StatementReadP" +
+      "artition\0221.database_driver_v1.StatementR" +
+      "eadPartitionRequest\0322.database_driver_v1" +
+      ".StatementReadPartitionResponse\032\024\302\251\311\001\017Dr" +
+      "iverException:;\n\rservice_error\022\037.google." +
+      "protobuf.ServiceOptions\030\230\225\031 \001(\t\210\001\001:9\n\014me" +
+      "thod_error\022\036.google.protobuf.MethodOptio" +
+      "ns\030\230\225\031 \001(\t\210\001\001B$\n\"com.snowflake.unicore.p" +
+      "rotobuf_genb\006proto3"
     };
     descriptor = com.google.protobuf.Descriptors.FileDescriptor
       .internalBuildGeneratedFileFrom(descriptorData,
@@ -51645,7 +52301,7 @@ public final class DatabaseDriverV1 extends com.google.protobuf.GeneratedFile {
     internal_static_database_driver_v1_ConnectionGetInfoResponse_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_database_driver_v1_ConnectionGetInfoResponse_descriptor,
-        new java.lang.String[] { "InfoData", });
+        new java.lang.String[] { "Host", "Port", "ServerUrl", "SessionToken", "SessionId", });
     internal_static_database_driver_v1_ConnectionGetObjectsRequest_descriptor =
       getDescriptor().getMessageTypes().get(47);
     internal_static_database_driver_v1_ConnectionGetObjectsRequest_fieldAccessorTable = new

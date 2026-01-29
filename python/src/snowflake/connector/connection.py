@@ -9,6 +9,8 @@ from __future__ import annotations
 from typing import Any, Union
 
 from snowflake.connector._internal.protobuf_gen.database_driver_v1_services import (  # type: ignore[attr-defined]
+    ConnectionGetInfoRequest,
+    ConnectionGetInfoResponse,
     ConnectionInitRequest,
     ConnectionNewRequest,
     ConnectionSetOptionDoubleRequest,
@@ -70,6 +72,9 @@ class Connection:
                 )
 
         self.db_api.connection_init(ConnectionInitRequest(conn_handle=self.conn_handle, db_handle=self.db_handle))
+        self._connection_info: ConnectionGetInfoResponse = self.db_api.connection_get_info(
+            ConnectionGetInfoRequest(conn_handle=self.conn_handle)
+        )
         self.kwargs = kwargs
         self._closed = False
         self._autocommit = False
@@ -219,13 +224,38 @@ class Connection:
         return self._closed
 
     @property
+    def host(self) -> str | None:
+        """Get the host name of the Snowflake server."""
+        return self._connection_info.host
+
+    @property
+    def port(self) -> int | None:
+        """Get the port number (if explicitly configured)."""
+        return self._connection_info.port
+
+    @property
+    def server_url(self) -> str | None:
+        """Get the full server URL."""
+        return self._connection_info.server_url
+
+    @property
+    def session_token(self) -> str | None:
+        """Get the session token for authentication."""
+        return self._connection_info.session_token
+
+    @property
+    def session_id(self) -> int | None:
+        """Get the server-assigned session ID."""
+        return self._connection_info.session_id
+
+    @property
     @internal_api
     def rest(self) -> SnowflakeRestful:
-        return SnowflakeRestful(connection=self)
+        return SnowflakeRestful(connection_info=self._connection_info)
 
     @internal_api
     def _telemetry(self) -> Any:
-        pass
+        return None
 
     def _check_if_read_from_config(self, kwargs: ConnectionParameters) -> ConnectionParameters:
         if "connection_name" in kwargs:
