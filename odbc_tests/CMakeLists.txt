@@ -17,6 +17,10 @@ FetchContent_Declare(
 
 FetchContent_MakeAvailable(Catch2)
 
+list(APPEND CMAKE_MODULE_PATH ${Catch2_SOURCE_DIR}/extras)
+include(CTest)
+include(Catch)
+
 FetchContent_Declare(
   picojson
   GIT_REPOSITORY https://github.com/kazuho/picojson.git
@@ -57,8 +61,7 @@ function(add_odbc_test name)
   add_executable(${name} ${ARGN})
   target_link_libraries(${name} PRIVATE Catch2::Catch2WithMain ODBC::ODBC common)
   target_include_directories(${name} PRIVATE ${picojson_SOURCE_DIR})
-  add_test(NAME ${name} COMMAND ${name} ${CATCH_TAGS})
-  set_property(TEST ${name} PROPERTY SKIP_RETURN_CODE 4)
+  catch_discover_tests(${name} TEST_PREFIX "${name}: ")
 endfunction()
 
 add_subdirectory(tests)
