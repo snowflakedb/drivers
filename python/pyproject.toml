@@ -210,7 +210,7 @@ python = ["3.9", "3.10", "3.11", "3.12", "3.13"]
 
 [tool.hatch.envs.test.scripts]
 # Install from wheel
-install-wheel = "pip install {env:WHEEL_PATH:dist/*.whl}"
+install-wheel = "uv pip install {env:WHEEL_PATH:dist/*.whl}"
 
 # Reference connector environment installs only reference connector
 [tool.hatch.envs.reference]
@@ -219,8 +219,8 @@ template = "test"
 [tool.hatch.envs.reference.scripts]
 # This environment runs with old driver only. UD driver is not installed.
 test = [
-    "pip uninstall --yes snowflake-connector-python-ud",
-    "pip install snowflake-connector-python=={env:PYTHON_REFERENCE_DRIVER_VERSION:3.17.2}",
+    "uv pip uninstall --yes snowflake-connector-python-ud",
+    "uv pip install snowflake-connector-python=={env:PYTHON_REFERENCE_DRIVER_VERSION:3.17.2}",
     "pytest tests/integ tests/e2e {args}"
 ]
 compare = "python ci/reference_tests/compare_reports.py {args}"
