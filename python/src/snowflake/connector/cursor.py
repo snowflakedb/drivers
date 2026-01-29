@@ -104,7 +104,12 @@ class Cursor:
         """Close the cursor now (rather than whenever __del__ is called)."""
         self._closed = True
 
-    def execute(self, operation: str, parameters: Sequence[Any] | dict[str, Any] | None = None) -> Cursor:
+    def execute(
+            self,
+            operation: str,
+            parameters: Sequence[Any] | dict[str, Any] | None = None,
+            _is_put_get: bool | None = None
+    ) -> Cursor:
         """
         Execute a database operation (query or command).
 
