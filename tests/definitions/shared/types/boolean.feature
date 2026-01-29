@@ -31,8 +31,8 @@ Feature: BOOLEAN type support
   @python_e2e
   Scenario: should download large result set with multiple chunks from GENERATOR
     Given Snowflake client is logged in
-    When Query "SELECT (seq8() % 2 = 0)::BOOLEAN FROM TABLE(GENERATOR(ROWCOUNT => 1000000)) v" is executed
-    Then Result should contain 1000000 alternating TRUE and FALSE values
+    When Query "SELECT (id % 2 = 0)::BOOLEAN, id FROM <generator> ORDER BY id" is executed
+    Then Result should contain 500000 TRUE and 500000 FALSE values
 
   # =========================================================================== #
   #                             Table operations                                #
@@ -52,14 +52,14 @@ Feature: BOOLEAN type support
     And Table with BOOLEAN column exists
     And Rows [NULL, TRUE, FALSE] are inserted
     When Query "SELECT * FROM <table>" is executed
-    Then Result should contain [NULL, TRUE, FALSE]
+    Then Result should contain [NULL, TRUE, FALSE] in any order
 
   @python_e2e
   Scenario: should download large result set with multiple chunks from table
     Given Snowflake client is logged in
-    And Table with BOOLEAN column exists with 1000000 alternating boolean values
-    When Query "SELECT * FROM <table>" is executed
-    Then Result should contain 1000000 alternating boolean values
+    And Table with BOOLEAN and ID columns exists with 1000000 alternating boolean values
+    When Query "SELECT col FROM <table> ORDER BY id" is executed
+    Then Result should contain 500000 TRUE and 500000 FALSE values
 
   # =========================================================================== #
   #                            Parameter binding                                #
@@ -78,4 +78,4 @@ Feature: BOOLEAN type support
     Given Snowflake client is logged in
     And Table with BOOLEAN column exists
     When Boolean values [TRUE, FALSE, NULL] are inserted using binding
-    Then SELECT should return the same exact values
+    Then SELECT should return the same values in any order

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from .utils import assert_type
+from .utils import assert_sequential_values, assert_type
 
 
 # =============================================================================
@@ -55,14 +55,22 @@ class TestBooleanLiteral:
     def test_should_download_large_result_set_with_multiple_chunks_from_generator(self, execute_query):
         # Given Snowflake client is logged in
 
-        # When Query "SELECT (seq8() % 2 = 0)::BOOLEAN FROM TABLE(GENERATOR(ROWCOUNT => 1000000)) v" is executed
-        sql = f"SELECT (seq8() % 2 = 0)::BOOLEAN FROM TABLE(GENERATOR(ROWCOUNT => {LARGE_RESULT_SET_SIZE})) v"
-        rows = execute_query(sql)
-        result = [row[0] for row in rows]
+        # When Query "SELECT (id % 2 = 0)::BOOLEAN, id FROM <generator> ORDER BY id" is executed
 
-        # Then Result should contain 1000000 alternating TRUE and FALSE values
-        assert_type(result, bool)
-        assert result == [True, False] * (LARGE_RESULT_SET_SIZE // 2)
+        # Note: seq8() doesn't guarantee consecutive values in parallel execution,
+        # so we use ROW_NUMBER() to ensure sequential integers.
+        sql = (
+            f"SELECT ((ROW_NUMBER() OVER (ORDER BY seq8()) - 1) % 2 = 0)::BOOLEAN as val, "
+            f"ROW_NUMBER() OVER (ORDER BY seq8()) - 1 as id "
+            f"FROM TABLE(GENERATOR(ROWCOUNT => {LARGE_RESULT_SET_SIZE})) "
+            f"ORDER BY id"
+        )
+        rows = execute_query(sql)
+
+        # Then Result should contain 500000 TRUE and 500000 FALSE values
+        values = [row[0] for row in rows]
+        assert_type(values, bool)
+        assert_sequential_values(values, LARGE_RESULT_SET_SIZE, transform=lambda i: i % 2 == 0)
 
 
 class TestBooleanTable:
@@ -98,29 +106,34 @@ class TestBooleanTable:
         # When Query "SELECT * FROM <table>" is executed
         rows = execute_query(f"SELECT * FROM {table_name}")
 
-        # Then Result should contain [NULL, TRUE, FALSE]
+        # Then Result should contain [NULL, TRUE, FALSE] in any order
         result = [row[0] for row in rows]
-        assert result == [None, True, False]
+        assert set(result) == {None, True, False}
         assert_type(result, bool, can_be_none=True)
 
     def test_should_download_large_result_set_with_multiple_chunks_from_table(self, execute_query, tmp_schema):
         # Given Snowflake client is logged in
 
-        # And Table with BOOLEAN column exists with 1000000 alternating boolean values
+        # And Table with BOOLEAN and ID columns exists with 1000000 alternating boolean values
+
+        # Note: seq8() doesn't guarantee consecutive values in parallel execution,
+        # so we use ROW_NUMBER() to ensure sequential integers.
         table_name = f"{tmp_schema}.large_boolean_table"
-        execute_query(f"CREATE TABLE {table_name} (col BOOLEAN)")
+        execute_query(f"CREATE TABLE {table_name} (col BOOLEAN, id INT)")
         execute_query(
-            f"INSERT INTO {table_name} SELECT (seq8() % 2 = 0)::BOOLEAN "
+            f"INSERT INTO {table_name} "
+            f"SELECT ((ROW_NUMBER() OVER (ORDER BY seq8()) - 1) % 2 = 0)::BOOLEAN, "
+            f"ROW_NUMBER() OVER (ORDER BY seq8()) - 1 "
             f"FROM TABLE(GENERATOR(ROWCOUNT => {LARGE_RESULT_SET_SIZE}))"
         )
 
-        # When Query "SELECT * FROM <table>" is executed
-        rows = execute_query(f"SELECT * FROM {table_name}")
-        result = [row[0] for row in rows]
+        # When Query "SELECT col FROM <table> ORDER BY id" is executed
+        rows = execute_query(f"SELECT col FROM {table_name} ORDER BY id")
 
-        # Then Result should contain 1000000 alternating boolean values
-        assert_type(result, bool)
-        assert result == [True, False] * (LARGE_RESULT_SET_SIZE // 2)
+        # Then Result should contain 500000 TRUE and 500000 FALSE values
+        values = [row[0] for row in rows]
+        assert_type(values, bool)
+        assert_sequential_values(values, LARGE_RESULT_SET_SIZE, transform=lambda i: i % 2 == 0)
 
 
 class TestBooleanBinding:
@@ -157,8 +170,8 @@ class TestBooleanBinding:
         for val in test_values:
             execute_query(f"INSERT INTO {table_name} VALUES (?)", (val,))
 
-        # Then SELECT should return the same exact values
+        # Then SELECT should return the same values in any order
         rows = execute_query(f"SELECT * FROM {table_name}")
         result = [row[0] for row in rows]
-        assert result == test_values
+        assert set(result) == set(test_values)
         assert_type(result, bool, can_be_none=True)
