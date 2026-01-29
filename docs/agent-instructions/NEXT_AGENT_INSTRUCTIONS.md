@@ -358,7 +358,7 @@ Phase complete when:
 ### Core (Rust)
 1. ✅ ALL Core tests reviewed - **DONE** (see analysis in this doc)
 2. ✅ ErrorStrategy refactored to proper Strategy pattern - **DONE**
-3. ⬜ `spawn_capture_server` consolidated to common module - PENDING
+3. ✅ `spawn_capture_server` consolidated to common module - **DONE**
 4. ✅ No security issues (no token logging) - **DONE** (fixed earlier)
 
 ### Python
@@ -414,12 +414,12 @@ cd python && hatch run test:all tests/e2e/session/test_logout.py -v
 - **Study phase:** 2-3 hours
 - ~~**Core test review:** 2-3 hours~~ **DONE**
 - ~~**Core Strategy pattern refactor:** 2-3 hours~~ **DONE**
-- **Core code quality (consolidate helpers):** 1-2 hours
+- ~~**Core code quality (consolidate helpers):** 1-2 hours~~ **DONE**
 - **Python integration tests (wiremock):** 4-5 hours
 - **Python E2E tests (caplog/warns):** 3-4 hours
 - **has_running_queries() server check:** 2-3 hours
 - **Auto-cleanup tests:** 1-2 hours
-- **Total remaining:** ~14-20 hours
+- **Total remaining:** ~12-17 hours
 
 Take your time. Do it right.
 
