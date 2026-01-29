@@ -187,7 +187,12 @@ class SnowflakeCursorBase(abc.ABC):
         """Close the cursor now (rather than whenever __del__ is called)."""
         self._closed = True
 
-    def execute(self, operation: str, parameters: Sequence[Any] | dict[str, Any] | None = None) -> SnowflakeCursorBase:
+    def execute(
+            self,
+            operation: str,
+            parameters: Sequence[Any] | dict[str, Any] | None = None,
+            _is_put_get: bool | None = None
+    ) -> SnowflakeCursorBase:
         """
         Execute a database operation (query or command).
 

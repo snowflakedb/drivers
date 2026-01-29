@@ -6,7 +6,8 @@ This module defines the Connection class as specified in PEP 249.
 
 from __future__ import annotations
 
-from typing import Any, Union
+from io import StringIO
+from typing import Any, Union, Generator, Iterable, Type
 
 from snowflake.connector._internal.protobuf_gen.database_driver_v1_services import (  # type: ignore[attr-defined]
     ConnectionGetInfoRequest,
@@ -26,6 +27,7 @@ from ._internal._private_key_helper import normalize_private_key
 from ._internal import internal_api
 from ._internal.api_client.client_api import database_driver_client
 from ._internal.decorators import backward_compatibility
+from ._internal.text_utils import split_statements
 from .cursor import SnowflakeCursor, SnowflakeCursorBase
 from .errors import InterfaceError, NotSupportedError
 
@@ -240,30 +242,39 @@ class Connection:
         """
         return self._closed
 
-    @property
-    def host(self) -> str | None:
-        """Get the host name of the Snowflake server."""
-        return self._connection_info.host
+    def execute_string(
+        self,
+        sql_text: str,
+        remove_comments: bool = False,
+        return_cursors: bool = True,
+        cursor_class: Cursor = Cursor,
+        **kwargs,
+    ) -> Iterable[Cursor]:
+        """Executes a SQL text including multiple statements. This is a non-standard convenience method."""
+        stream = StringIO(sql_text)
+        stream_generator = self.execute_stream(
+            stream, remove_comments=remove_comments, cursor_class=cursor_class, **kwargs
+        )
+        ret = list(stream_generator)
+        return ret if return_cursors else list()
 
-    @property
-    def port(self) -> int | None:
-        """Get the port number (if explicitly configured)."""
-        return self._connection_info.port
-
-    @property
-    def server_url(self) -> str | None:
-        """Get the full server URL."""
-        return self._connection_info.server_url
-
-    @property
-    def session_token(self) -> str | None:
-        """Get the session token for authentication."""
-        return self._connection_info.session_token
-
-    @property
-    def session_id(self) -> int | None:
-        """Get the server-assigned session ID."""
-        return self._connection_info.session_id
+    def execute_stream(
+        self,
+        stream: StringIO,
+        remove_comments: bool = False,
+        cursor_class: Type[Cursor] = Cursor,
+        **kwargs,
+    ) -> Generator[Cursor]:
+        """Executes a stream of SQL statements. This is a non-standard convenient method."""
+        split_statements_list = split_statements(
+            stream, remove_comments=remove_comments
+        )
+        # Note: split_statements_list is a list of tuples of sql statements and whether they are put/get
+        non_empty_statements = [e for e in split_statements_list if e[0]]
+        for sql, is_put_or_get in non_empty_statements:
+            cur = self.cursor(cursor_class=cursor_class)
+            cur.execute(sql, _is_put_get=is_put_or_get, **kwargs)
+            yield cur
 
     @property
     @internal_api
