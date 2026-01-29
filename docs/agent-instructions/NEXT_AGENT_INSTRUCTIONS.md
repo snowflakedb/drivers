@@ -362,12 +362,13 @@ Phase complete when:
 4. ✅ No security issues (no token logging) - **DONE** (fixed earlier)
 
 ### Python
-5. ✅ ALL tests passing
-6. ✅ Tests verify actual behavior (would fail without implementation)
-7. ✅ Wiremock integration tests verify HTTP requests
-8. ✅ E2E tests verify logs/warnings with caplog/pytest.warns
-9. ✅ has_running_queries() checks server status
-10. ✅ Following old connector patterns
+5. ⬜ ALL tests passing - run with `hatch run test:all`
+6. ✅ Integration tests verify HTTP requests via Wiremock - **DONE**
+   - 7 tests in `python/tests/integ/session/test_logout.py`
+   - Verifies POST /session?delete=true, headers, retry, idempotency
+7. ⬜ E2E tests verify actual behavior with real Snowflake
+8. ⬜ has_running_queries() checks server status (like old connector)
+9. ⬜ Following old connector patterns
 
 ---
 
