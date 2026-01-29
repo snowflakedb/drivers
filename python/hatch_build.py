@@ -30,7 +30,7 @@ except ImportError:
     build_ext = None  # type: ignore[assignment,misc]
 
 
-class NanoarrowBuildHook(BuildHookInterface):
+class BuildHook(BuildHookInterface):
     """Build hook for compiling Cython extensions with nanoarrow C++ code."""
 
     PLUGIN_NAME = "nanoarrow"
@@ -88,7 +88,7 @@ class NanoarrowBuildHook(BuildHookInterface):
     POSITIVE_VALUES = ("y", "yes", "t", "true", "1", "on")
 
     # Vendored C files that should have warnings suppressed
-    VENDORED_C_FILES = ("nanoarrow.c", "nanoarrow_ipc.c", "flatcc.c", "nanoarrow_device.c")
+    VENDORED_C_FILES = ("nanoarrow.c", "nanoarrow_ipc.c", "flatcc.c")
 
     def initialize(self, version: str, build_data: dict[str, Any]) -> None:
         """Initialize the build hook and compile extensions."""
@@ -113,7 +113,6 @@ class NanoarrowBuildHook(BuildHookInterface):
 
     def _build_extensions(self) -> None:
         """Build the Cython extensions."""
-        self._start("Nanoarrow")
         src_root = Path(self.root) / "src"
         arrow_iterator_dir = src_root / self.ARROW_ITERATOR_DIR
         logging_dir = src_root / self.LOGGING_DIR
@@ -147,7 +146,6 @@ class NanoarrowBuildHook(BuildHookInterface):
         # Cythonize and build
         extensions = cythonize([ext])
         self._run_build(extensions, src_root)
-        self._done()
 
     def _apply_compile_flags(self, ext: Extension) -> None:
         """Apply platform-specific compile flags to the extension."""
@@ -219,7 +217,6 @@ class NanoarrowBuildHook(BuildHookInterface):
 
     def _build_core(self) -> None:
         """Build the Rust core library in release mode for distribution."""
-        self._start("Core")
 
         # Get paths relative to the Python wrapper directory
         python_dir = Path(__file__).parent
@@ -264,10 +261,3 @@ class NanoarrowBuildHook(BuildHookInterface):
             for file in release_dir.rglob("*"):
                 if file.is_file() and file.suffix in (".dylib", ".so", ".dll"):
                     shutil.copy2(file, target_dir)
-        self._done()
-
-    def _start(self, module: str) -> None:
-        print(f"Compiling {module}")
-
-    def _done(self) -> None:
-        print("Done!")
