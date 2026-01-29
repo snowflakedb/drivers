@@ -188,10 +188,7 @@ class SnowflakeCursorBase(abc.ABC):
         self._closed = True
 
     def execute(
-            self,
-            operation: str,
-            parameters: Sequence[Any] | dict[str, Any] | None = None,
-            _is_put_get: bool | None = None
+        self, operation: str, parameters: Sequence[Any] | dict[str, Any] | None = None, _is_put_get: bool | None = None
     ) -> SnowflakeCursorBase:
         """
         Execute a database operation (query or command).
