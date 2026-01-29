@@ -52,6 +52,7 @@ dev = [
     "ruff",
     "mypy",
     "hatchling",
+    "types-pytz",
 ]
 
 [tool.hatch.build.targets.sdist]
@@ -169,7 +170,7 @@ fix = [
     'ruff check --fix src/snowflake tests',
     # Run format once again as linting may have changed files.
     'ruff format src/snowflake tests',
-    'mypy --install-types --non-interactive -p snowflake.connector',
+    'mypy -p snowflake.connector',
 ]
 
 # This basic development environment. By default, it installs the driver
@@ -203,6 +204,9 @@ all-cov = "pytest tests/ --cov=src/snowflake --cov-report=xml --cov-report=html 
 template = "dev"
 skip-install = true
 dev-mode = false
+
+[[tool.hatch.envs.test.matrix]]
+python = ["3.9", "3.10", "3.11", "3.12", "3.13"]
 
 [tool.hatch.envs.test.scripts]
 # Install from wheel
