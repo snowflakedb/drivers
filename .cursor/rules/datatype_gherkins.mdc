@@ -10,7 +10,7 @@ Focus on following types of tests
 - Corner cases - “weird and special” values (min, max, NaN) or specific wrapper behaviours.
 
 # Test scenarios
-- Simple selects - Selecting literals, selecting from table should be covered by all test kinds (6 tests in total). Generative tests should execute simple operations multiple times on different values.
+- Simple selects - Selecting literals, selecting from table, both happy and corner cases (4 tests in total).
 - Binding tests - 2 tests:
     - Select literals using binding - SELECT ?::DECFLOAT
     - Insert to a table using binding - INSERT INTO {table_name} VALUES (?) and then performing SELECT *

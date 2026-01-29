@@ -55,7 +55,7 @@ TEST_CASE("should handle LOB string at historical 16 MB limit", "[datatype][stri
   conn.execute("DROP TABLE IF EXISTS test_string_lob");
   conn.execute("CREATE TABLE test_string_lob (val VARCHAR)");
 
-  // When A string of 16777216 random ASCII characters is generated and inserted
+  // When A string of 16777216 ASCII characters is generated and inserted
   const size_t string_length = 16777216;  // 16 MB
   std::string lob_string = generate_random_ascii_string(gen, string_length);
 
@@ -112,7 +112,7 @@ TEST_CASE("should handle LOB string at maximum 128 MB limit with increased LOB s
   conn.execute("DROP TABLE IF EXISTS test_string_lob");
   conn.execute("CREATE TABLE test_string_lob (val VARCHAR(134217728))");
 
-  // When A string of 134217728 random ASCII characters is generated and inserted
+  // When A string of 134217728 ASCII characters is generated and inserted
   const size_t string_length = 134217728;  // 128 MB
   std::string lob_string = generate_random_ascii_string(gen, string_length);
 
