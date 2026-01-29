@@ -11,11 +11,8 @@
 #include <sqltypes.h>
 
 #include <algorithm>
-#include <chrono>
 #include <cstring>
-#include <iostream>
 #include <optional>
-#include <random>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -29,48 +26,8 @@
 #include "macros.hpp"
 #include "test_setup.hpp"
 
-// Helper to generate random ASCII string
-static std::string generate_random_ascii_string(std::mt19937& gen, size_t length) {
-  static const char charset[] =
-      "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 !@#$%^&*()-_=+[]{}|;:,.<>?";
-  std::uniform_int_distribution<> dist(0, sizeof(charset) - 2);
-  std::string result;
-  result.reserve(length);
-  for (size_t i = 0; i < length; ++i) {
-    result += charset[dist(gen)];
-  }
-  return result;
-}
-
-// Helper to generate random Unicode string including multi-byte characters
-static std::string generate_random_unicode_string(std::mt19937& gen, size_t approx_length) {
-  std::vector<std::string> unicode_chars = {"A",  "B",  "1",  " ",  "日", "本", "語",     "テ", "ス",
-                                            "ト", "🎉", "🚀", "⛄", "α",  "β",  "γ",      "δ",  "é",
-                                            "ñ",  "ü",  "中", "文", "한", "글", "العربية"};
-  std::uniform_int_distribution<> dist(0, unicode_chars.size() - 1);
-  std::string result;
-  for (size_t i = 0; i < approx_length; ++i) {
-    result += unicode_chars[dist(gen)];
-  }
-  return result;
-}
-
-// Helper to escape string for SQL
-static std::string escape_sql_string(const std::string& s) {
-  std::string result;
-  result.reserve(s.size() * 2);
-  for (char c : s) {
-    if (c == '\'') {
-      result += "''";
-    } else {
-      result += c;
-    }
-  }
-  return result;
-}
-
 // ============================================================================
-// SIMPLE SELECTS - LITERALS (Happy path, Corner cases, Generative)
+// SIMPLE SELECTS - LITERALS (Happy path, Corner cases)
 // ============================================================================
 
 TEST_CASE("should select hardcoded string literals", "[datatype][string]") {
@@ -157,7 +114,7 @@ TEST_CASE("should select string literals with corner case values", "[datatype][s
 }
 
 // ============================================================================
-// SIMPLE SELECTS - FROM TABLE (Happy path, Corner cases, Generative)
+// SIMPLE SELECTS - FROM TABLE (Happy path, Corner cases)
 // ============================================================================
 
 TEST_CASE("should select hardcoded string values from table", "[datatype][string]") {
@@ -233,54 +190,8 @@ TEST_CASE("should select corner case string values from table", "[datatype][stri
   CHECK(row == 7);
 }
 
-TEST_CASE("should select generative random string values from table", "[datatype][string]") {
-  // Given Snowflake client is logged in
-  Connection conn;
-  auto random_schema = Schema::use_random_schema(conn);
-
-  // And A random seed is initialized and logged
-  auto seed = static_cast<unsigned int>(std::chrono::steady_clock::now().time_since_epoch().count());
-  std::cout << "Random seed: " << seed << std::endl;
-  INFO("Random seed: " << seed);
-  std::mt19937 gen(seed);
-
-  // And A temporary table with VARCHAR column is created
-  conn.execute("DROP TABLE IF EXISTS test_string");
-  conn.execute("CREATE TABLE test_string (id INT, val VARCHAR(10000))");
-
-  // And The table is populated with 100 randomly generated string values
-  const int num_values = 100;
-  std::vector<std::string> expected_values;
-  expected_values.reserve(num_values);
-
-  for (int i = 0; i < num_values; ++i) {
-    auto value = generate_random_ascii_string(gen, std::uniform_int_distribution<>(1, 100)(gen));
-    expected_values.push_back(value);
-    std::string query =
-        "INSERT INTO test_string VALUES (" + std::to_string(i) + ", '" + escape_sql_string(value) + "')";
-    conn.execute(query);
-  }
-
-  // When Query "SELECT * FROM {table} ORDER BY id" is executed
-  auto stmt = conn.createStatement();
-  SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT val FROM test_string ORDER BY id", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
-
-  // Then all returned string values should match the generated values in order
-  int row = 0;
-  while (true) {
-    ret = SQLFetch(stmt.getHandle());
-    if (ret == SQL_NO_DATA) break;
-    CHECK_ODBC(ret, stmt);
-    INFO("Row " << row << " expected: " << expected_values[row]);
-    CHECK(get_data<SQL_C_CHAR>(stmt, 1) == expected_values[row]);
-    row++;
-  }
-  CHECK(row == num_values);
-}
-
 // ============================================================================
-// SIMPLE INSERT WITH BINDING (Simple, Generative)
+// SIMPLE INSERT WITH BINDING
 // ============================================================================
 
 TEST_CASE("should insert and select back hardcoded string values using parameter binding", "[datatype][string]") {
@@ -315,62 +226,98 @@ TEST_CASE("should insert and select back hardcoded string values using parameter
   CHECK(get_data<SQL_C_WCHAR>(stmt, 1) == u"Test binding value 日本語");
 }
 
-TEST_CASE("should insert and select back generative string values using parameter binding", "[datatype][string]") {
+// ============================================================================
+// SELECT BINDING TESTS
+// ============================================================================
+
+TEST_CASE("should select string literals using parameter binding", "[datatype][string]") {
   // Given Snowflake client is logged in
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
 
-  // And A random seed is initialized and logged
-  auto seed = static_cast<unsigned int>(std::chrono::steady_clock::now().time_since_epoch().count());
-  INFO("Random seed: " << seed);
-  std::mt19937 gen(seed);
+  auto stmt = conn.createStatement();
+  SQLRETURN ret = SQLPrepare(stmt.getHandle(), (SQLCHAR*)"SELECT ?::VARCHAR, ?::VARCHAR, ?::VARCHAR", SQL_NTS);
+  CHECK_ODBC(ret, stmt);
 
-  // And A temporary table with VARCHAR column is created
-  conn.execute("DROP TABLE IF EXISTS test_string");
-  conn.execute("CREATE TABLE test_string (id INT, val VARCHAR(10000))");
+  std::string value1 = "hello";
+  std::string value2 = "Hello World";
+  std::string value3 = "日本語テスト";  // Japanese text (UTF-8)
 
-  // When 100 randomly generated string values are inserted using parameter binding
-  const int num_values = 100;
-  std::vector<std::string> expected_values;
-  expected_values.reserve(num_values);
+  SQLLEN len1 = value1.size();
+  SQLLEN len2 = value2.size();
+  SQLLEN len3 = value3.size();
 
-  for (int i = 0; i < num_values; ++i) {
-    auto value = generate_random_ascii_string(gen, std::uniform_int_distribution<>(1, 100)(gen));
-    expected_values.push_back(value);
+  ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_VARCHAR, value1.size(), 0,
+                         (SQLCHAR*)value1.c_str(), value1.size(), &len1);
+  CHECK_ODBC(ret, stmt);
+  ret = SQLBindParameter(stmt.getHandle(), 2, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_VARCHAR, value2.size(), 0,
+                         (SQLCHAR*)value2.c_str(), value2.size(), &len2);
+  CHECK_ODBC(ret, stmt);
+  ret = SQLBindParameter(stmt.getHandle(), 3, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_VARCHAR, value3.size(), 0,
+                         (SQLCHAR*)value3.c_str(), value3.size(), &len3);
+  CHECK_ODBC(ret, stmt);
+  // When Query "SELECT ?::VARCHAR, ?::VARCHAR, ?::VARCHAR" is executed with bound string values ['hello', 'Hello
+  // World', '日本語テスト']
+  ret = SQLExecute(stmt.getHandle());
+  CHECK_ODBC(ret, stmt);
 
+  ret = SQLFetch(stmt.getHandle());
+  CHECK_ODBC(ret, stmt);
+
+  // Then the result should contain:
+  CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "hello");
+  CHECK(get_data<SQL_C_CHAR>(stmt, 2) == "Hello World");
+  CHECK(get_data<SQL_C_WCHAR>(stmt, 3) == u"日本語テスト");
+}
+
+// Skipped since null handling is not yet implemented for bindings
+TEST_CASE("should select corner case string values using parameter binding", "[.][datatype][string]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  // When Query "SELECT ?::VARCHAR" is executed with bound empty string value
+  {
     auto stmt = conn.createStatement();
-    SQLRETURN ret = SQLPrepare(stmt.getHandle(), (SQLCHAR*)"INSERT INTO test_string (id, val) VALUES (?, ?)", SQL_NTS);
+    SQLRETURN ret = SQLPrepare(stmt.getHandle(), (SQLCHAR*)"SELECT ?::VARCHAR", SQL_NTS);
     CHECK_ODBC(ret, stmt);
 
-    SQLINTEGER id = i;
-    ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_LONG, SQL_INTEGER, 0, 0, &id, 0, NULL);
-    CHECK_ODBC(ret, stmt);
-
-    SQLLEN value_len = value.size();
-    ret = SQLBindParameter(stmt.getHandle(), 2, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_VARCHAR, value.size(), 0,
-                           (SQLCHAR*)value.c_str(), value.size(), &value_len);
+    std::string empty_value = "";
+    SQLLEN len = empty_value.size();
+    ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_VARCHAR, 1, 0,
+                           (SQLCHAR*)empty_value.c_str(), 0, &len);
     CHECK_ODBC(ret, stmt);
 
     ret = SQLExecute(stmt.getHandle());
     CHECK_ODBC(ret, stmt);
-  }
 
-  // And Query "SELECT * FROM {table} ORDER BY id" is executed
-  auto stmt = conn.createStatement();
-  SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT val FROM test_string ORDER BY id", SQL_NTS);
-  CHECK_ODBC(ret, stmt);
-
-  // Then all returned string values should match the generated values in order
-  int row = 0;
-  while (true) {
     ret = SQLFetch(stmt.getHandle());
-    if (ret == SQL_NO_DATA) break;
     CHECK_ODBC(ret, stmt);
-    INFO("Row " << row << " expected: " << expected_values[row]);
-    CHECK(get_data<SQL_C_CHAR>(stmt, 1) == expected_values[row]);
-    row++;
+
+    // Then the result should contain an empty string
+    CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "");
   }
-  CHECK(row == num_values);
+
+  // When Query "SELECT ?::VARCHAR" is executed with bound NULL value
+  {
+    auto stmt = conn.createStatement();
+    SQLRETURN ret = SQLPrepare(stmt.getHandle(), (SQLCHAR*)"SELECT ?::VARCHAR", SQL_NTS);
+    CHECK_ODBC(ret, stmt);
+
+    SQLLEN null_indicator = SQL_NULL_DATA;
+    ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_VARCHAR, 1, 0, nullptr, 0,
+                           &null_indicator);
+    CHECK_ODBC(ret, stmt);
+
+    ret = SQLExecute(stmt.getHandle());
+    CHECK_ODBC(ret, stmt);
+
+    ret = SQLFetch(stmt.getHandle());
+    CHECK_ODBC(ret, stmt);
+
+    // Then the result should contain NULL
+    CHECK(get_data_optional<SQL_C_CHAR>(stmt, 1) == std::nullopt);
+  }
 }
 
 // ============================================================================

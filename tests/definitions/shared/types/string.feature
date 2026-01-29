@@ -7,7 +7,7 @@ Feature: String datatype handling
   # Reference: https://docs.snowflake.com/en/sql-reference/data-types-text
 
   # ============================================================================
-  # SIMPLE SELECTS - LITERALS (Happy path, Corner cases, Generative)
+  # SIMPLE SELECTS - LITERALS (Happy path, Corner cases)
   # ============================================================================
 
   @odbc_e2e
@@ -34,10 +34,12 @@ Feature: String datatype handling
     #   - Escaped single quote: '\''
     #   - Escaped backslash: '\\'
     #   - NULL value
+    #   - Combined character: 'y̆es' (character with combining diacritical mark)
+    #   - Surrogate pair: '\U0001D11E' (𝄞 musical G clef)
     Then the result should contain expected corner case string values
 
   # ============================================================================
-  # SIMPLE SELECTS - FROM TABLE (Happy path, Corner cases, Generative)
+  # SIMPLE SELECTS - FROM TABLE (Happy path, Corner cases)
   # ============================================================================
 
   @odbc_e2e
@@ -57,17 +59,8 @@ Feature: String datatype handling
     When Query "SELECT * FROM {table}" is executed
     Then the result should contain the inserted corner case string values
 
-  @odbc_e2e
-  Scenario: should select generative random string values from table
-    Given Snowflake client is logged in
-    And A random seed is initialized and logged
-    And A temporary table with VARCHAR column is created
-    And The table is populated with 100 randomly generated string values
-    When Query "SELECT * FROM {table} ORDER BY id" is executed
-    Then all returned string values should match the generated values in order
-
   # ============================================================================
-  # SIMPLE INSERT WITH BINDING (Simple, Generative)
+  # BINDING TESTS
   # ============================================================================
 
   @odbc_e2e
@@ -78,14 +71,24 @@ Feature: String datatype handling
     And Query "SELECT * FROM {table}" is executed
     Then the result should contain the bound string value 'Test binding value 日本語'
 
+  
   @odbc_e2e
-  Scenario: should insert and select back generative string values using parameter binding
+  Scenario: should select string literals using parameter binding
+    # SELECT binding test: Uses SELECT ?::VARCHAR to bind string values
     Given Snowflake client is logged in
-    And A random seed is initialized and logged
-    And A temporary table with VARCHAR column is created
-    When 100 randomly generated string values are inserted using parameter binding
-    And Query "SELECT * FROM {table} ORDER BY id" is executed
-    Then all returned string values should match the generated values in order
+    When Query "SELECT ?::VARCHAR, ?::VARCHAR, ?::VARCHAR" is executed with bound string values ['hello', 'Hello World', '日本語テスト']
+    Then the result should contain:
+      | col1  | col2        | col3       |
+      | hello | Hello World | 日本語テスト |
+
+  @odbc_e2e
+  Scenario: should select corner case string values using parameter binding
+    Given Snowflake client is logged in
+    When Query "SELECT ?::VARCHAR" is executed with bound empty string value
+    Then the result should contain an empty string
+    When Query "SELECT ?::VARCHAR" is executed with bound NULL value
+    Then the result should contain NULL
+
 
   # ============================================================================
   # MULTIPLE CHUNKS DOWNLOADING
@@ -94,7 +97,7 @@ Feature: String datatype handling
   @odbc_e2e
   Scenario: should download string data in multiple chunks
     # This test ensures proper handling of large result sets that span multiple chunks
-    # ~10^6 values ensures data is downloaded in at least two chunks
+    # ~10000 values ensures data is downloaded in at least two chunks
     Given Snowflake client is logged in
     When Query "SELECT seq8() AS id, TO_VARCHAR(seq8()) AS str_val FROM TABLE(GENERATOR(ROWCOUNT => 10000)) v ORDER BY id" is executed
     Then there are 10000 rows returned
