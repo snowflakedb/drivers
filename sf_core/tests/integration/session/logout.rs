@@ -1,13 +1,11 @@
 //! Integration tests for session logout functionality.
 
+use crate::common::test_server::{json_response, spawn_capture_server, spawn_test_server};
 use sf_core::config::rest_parameters::ClientInfo;
 use sf_core::config::retry::RetryPolicy;
 use sf_core::rest::snowflake::logout::logout_session;
-use std::net::SocketAddr;
-use std::sync::{
-    Arc,
-    atomic::{AtomicUsize, Ordering},
-};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
@@ -234,12 +232,7 @@ async fn should_record_connection_close_decision_metrics_before_logout() {
     
     // For now, just verify that logout works without telemetry
     let (addr, _, server) = spawn_test_server(1, |_| async move {
-        let body = r#"{"success":true}"#;
-        format!(
-            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-            body.len(),
-            body
-        ).into_bytes()
+        json_response(r#"{"success":true}"#)
     })
     .await;
     
@@ -281,70 +274,6 @@ fn test_client_info() -> ClientInfo {
         crl_config: Default::default(),
         tls_config: Default::default(),
     }
-}
-
-async fn spawn_test_server<F, Fut>(
-    max_attempts: usize,
-    responder: F,
-) -> (SocketAddr, Arc<AtomicUsize>, tokio::task::JoinHandle<()>)
-where
-    F: Fn(usize) -> Fut + Send + Sync + 'static,
-    Fut: std::future::Future<Output = Vec<u8>> + Send + 'static,
-{
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    let attempts = Arc::new(AtomicUsize::new(0));
-    let attempts_clone = attempts.clone();
-    let responder = Arc::new(responder);
-    
-    let handle = tokio::spawn(async move {
-        loop {
-            let (mut stream, _) = listener.accept().await.unwrap();
-            let attempt = attempts_clone.fetch_add(1, Ordering::SeqCst) + 1;
-            let responder = responder.clone();
-            let mut buf = [0u8; 2048];
-            let _ = stream.read(&mut buf).await;
-            let response = responder(attempt).await;
-            stream.write_all(&response).await.unwrap();
-            let _ = stream.shutdown().await;
-            if attempt >= max_attempts {
-                break;
-            }
-        }
-    });
-    
-    (addr, attempts, handle)
-}
-
-async fn spawn_capture_server() -> (SocketAddr, Arc<AtomicUsize>, tokio::task::JoinHandle<Vec<u8>>) {
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    let attempts = Arc::new(AtomicUsize::new(0));
-    let attempts_clone = attempts.clone();
-    
-    let handle = tokio::spawn(async move {
-        let (mut stream, _) = listener.accept().await.unwrap();
-        attempts_clone.fetch_add(1, Ordering::SeqCst);
-        
-        // Read the request
-        let mut buf = vec![0u8; 4096];
-        let n = stream.read(&mut buf).await.unwrap();
-        buf.truncate(n);
-        
-        // Send success response
-        let body = r#"{"success":true}"#;
-        let response = format!(
-            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-            body.len(),
-            body
-        );
-        stream.write_all(response.as_bytes()).await.unwrap();
-        let _ = stream.shutdown().await;
-        
-        buf
-    });
-    
-    (addr, attempts, handle)
 }
 
 // TODO: add tests that when logout is raising an error we are not leaking any data (tokens etc)
