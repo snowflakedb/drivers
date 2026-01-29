@@ -205,10 +205,16 @@ pipeline {
                                             set +x
                                             RUSTFLAGS="" hatch build -t wheel
                                         '''
+
+                                        sh label: 'Install the wheel', script: '''
+                                            set +x
+                                            hatch run test.py3.9:install-wheel
+                                        '''
                                         
                                         def testExitCode = sh(label: 'Run Tests with Coverage', returnStatus: true, script: '''
                                             set +x
                                             export PARAMETER_PATH=$(pwd)/../parameters.json
+                                            export PYTHONPATH=$(pwd)/src:$PYTHONPATH
                                             mkdir -p reports
                                             hatch run test.py3.9:all -- \
                                                 --cov=src/snowflake \
