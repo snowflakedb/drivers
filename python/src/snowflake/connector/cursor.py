@@ -9,6 +9,7 @@ from __future__ import annotations
 from collections.abc import Iterator, Sequence
 from typing import TYPE_CHECKING, Any
 
+from . import ProgrammingError
 from ._internal.arrow_context import ArrowConverterContext
 from ._internal.arrow_stream_iterator import ArrowStreamIterator  # type: ignore[import-not-found]
 from ._internal.protobuf_gen.database_driver_v1_pb2 import (  # type: ignore[attr-defined]
@@ -213,7 +214,22 @@ class Cursor:
         Raises:
             NotSupportedError: If not implemented
         """
-        raise NotSupportedError("fetchmany is not implemented")
+        if size is None:
+            size = self.arraysize
+
+        if size < 0:
+            raise ProgrammingError(f"The number of rows is not zero or positive number: {size}")
+
+        ret = []
+        while size > 0:
+            row = self.fetchone()
+            if row is None:
+                break
+            ret.append(row)
+            if size is not None:
+                size -= 1
+
+        return ret
 
     def fetchall(self) -> list[Row]:
         """
