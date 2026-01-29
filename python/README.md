@@ -82,11 +82,11 @@ The `test` environment is designed for **CI systems** to test the end-to-end sof
 hatch build
 
 # Then install and test with the test environment
-WHEEL_PATH=dist/*.whl hatch run test:install-wheel
+hatch run test:install-wheel
 hatch run test:all
 
 # Or with specific Python version
-WHEEL_PATH=dist/*.whl hatch run test.py3.12:install-wheel
+hatch run test.py3.12:install-wheel
 hatch run test.py3.12:all
 ```
 

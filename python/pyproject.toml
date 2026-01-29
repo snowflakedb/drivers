@@ -186,8 +186,6 @@ PARAMETER_PATH = "{env:PARAMETER_PATH:../parameters.json}"
 python = ["3.9", "3.10", "3.11", "3.12", "3.13"]
 
 [tool.hatch.envs.dev.scripts]
-# Install from wheel
-install-wheel = "pip install {env:WHEEL_PATH:dist/*.whl}"
 # Unit tests
 unit = "pytest tests/unit {args}"
 # Integration tests
@@ -205,6 +203,10 @@ all-cov = "pytest tests/ --cov=src/snowflake --cov-report=xml --cov-report=html 
 template = "dev"
 skip-install = true
 dev-mode = false
+
+[tool.hatch.envs.test.scripts]
+# Install from wheel
+install-wheel = "pip install {env:WHEEL_PATH:dist/*.whl}"
 
 # Reference connector environment installs only reference connector
 [tool.hatch.envs.reference]
