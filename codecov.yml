@@ -70,6 +70,7 @@ component_management:
 
 fixes:
   - "com/snowflake/::jdbc/src/java/com/snowflake/"
+  - "src/snowflake/::python/src/snowflake/"
 
 ignore:
   # Test files
