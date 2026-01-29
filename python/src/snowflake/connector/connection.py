@@ -13,6 +13,7 @@ from typing import Any, Optional
 from snowflake.connector._internal.protobuf_gen.database_driver_v1_services import (  # type: ignore[attr-defined]
     ConnectionCloseRequest,
     ConnectionInitRequest,
+    ConnectionIsClosedRequest,
     ConnectionNewRequest,
     ConnectionSetOptionDoubleRequest,
     ConnectionSetOptionIntRequest,
@@ -89,7 +90,6 @@ class Connection:
 
         self.db_api.connection_init(ConnectionInitRequest(conn_handle=self.conn_handle, db_handle=self.db_handle))
         self.kwargs = kwargs
-        self._closed = False
         self._autocommit = False
         
         # Register atexit handler if auto_cleanup is enabled
@@ -118,7 +118,7 @@ class Connection:
             - server_session_keep_alive=False forces logout
             - No deprecation warnings
         """
-        if self._closed:
+        if self.is_closed():
             return  # Already closed, idempotent
         
         # Determine effective auto-detection setting based on phase
@@ -148,6 +148,7 @@ class Connection:
             )
         
         # Call Core connection_close with configuration
+        # Core will set is_closed flag atomically
         self.db_api.connection_close(
             ConnectionCloseRequest(
                 conn_handle=self.conn_handle,
@@ -157,8 +158,6 @@ class Connection:
                 timeout_seconds=5,  # 5 second default
             )
         )
-        
-        self._closed = True
     
     def _close_at_exit(self) -> None:
         """
@@ -179,7 +178,7 @@ class Connection:
             _first_auto_cleanup_in_process = False
         
         # Close without retry on exit
-        if not self._closed:
+        if not self.is_closed():
             try:
                 # Temporarily disable auto_cleanup flag to avoid atexit recursion
                 saved_auto_cleanup = self.auto_cleanup
@@ -214,7 +213,7 @@ class Connection:
         Returns:
             Cursor: A new cursor object
         """
-        if self._closed:
+        if self.is_closed():
             raise InterfaceError("Connection is closed")
         return Cursor(self)
 
@@ -323,8 +322,19 @@ class Connection:
     def is_closed(self) -> bool:
         """
         Check if the connection is closed.
+        
+        Queries the Core's authoritative closed state rather than maintaining
+        a separate Python-side flag.
 
         Returns:
             bool: True if connection is closed, False otherwise
         """
-        return self._closed
+        try:
+            response = self.db_api.connection_is_closed(
+                ConnectionIsClosedRequest(conn_handle=self.conn_handle)
+            )
+            return response.is_closed
+        except InterfaceError:
+            # If handle is invalid or already released, treat as closed
+            # This can happen if connection_release() was called
+            return True

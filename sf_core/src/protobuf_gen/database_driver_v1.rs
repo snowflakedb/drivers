@@ -287,6 +287,16 @@ pub struct ConnectionCloseRequest {
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ConnectionCloseResponse {}
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ConnectionIsClosedRequest {
+    #[prost(message, optional, tag = "1")]
+    pub conn_handle: ::core::option::Option<ConnectionHandle>,
+}
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ConnectionIsClosedResponse {
+    #[prost(bool, tag = "1")]
+    pub is_closed: bool,
+}
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ConnectionGetInfoRequest {
     #[prost(message, optional, tag = "1")]
@@ -664,6 +674,7 @@ pub trait DatabaseDriver {
 	fn connection_init(input: ConnectionInitRequest) -> Result<ConnectionInitResponse, DriverException>;
 	fn connection_release(input: ConnectionReleaseRequest) -> Result<ConnectionReleaseResponse, DriverException>;
 	fn connection_close(input: ConnectionCloseRequest) -> Result<ConnectionCloseResponse, DriverException>;
+	fn connection_is_closed(input: ConnectionIsClosedRequest) -> Result<ConnectionIsClosedResponse, DriverException>;
 	fn connection_get_info(input: ConnectionGetInfoRequest) -> Result<ConnectionGetInfoResponse, DriverException>;
 	fn connection_get_objects(input: ConnectionGetObjectsRequest) -> Result<ConnectionGetObjectsResponse, DriverException>;
 	fn connection_get_table_schema(input: ConnectionGetTableSchemaRequest) -> Result<ConnectionGetTableSchemaResponse, DriverException>;
@@ -850,6 +861,17 @@ pub trait DatabaseDriverServer : DatabaseDriver {
 					Err(e) => return Err(ProtoError::Transport(e.to_string())),
 				};
 				let result = Self::connection_close(input);
+				match result {
+				Ok(output) => Ok(output.encode_to_vec()),
+				Err(e) => Err(ProtoError::Application(e.encode_to_vec())),
+				}
+			}
+			"connection_is_closed" => {
+				let input = match ConnectionIsClosedRequest::decode(&message[..]) {
+					Ok(input) => input,
+					Err(e) => return Err(ProtoError::Transport(e.to_string())),
+				};
+				let result = Self::connection_is_closed(input);
 				match result {
 				Ok(output) => Ok(output.encode_to_vec()),
 				Err(e) => Err(ProtoError::Application(e.encode_to_vec())),
@@ -1394,6 +1416,27 @@ impl<T: Transport> DatabaseDriverClient<T> {
         match result {
             Ok(output) => {
                 let output = ConnectionCloseResponse::decode(&output[..]);
+                match output {
+                    Ok(output) => Ok(output),
+                    Err(e) => Err(ProtoError::Transport(e.to_string())),
+                }
+            },
+            Err(ProtoError::Application(e)) => {
+                let output = DriverException::decode(&e[..]);
+                match output {
+                    Ok(output) => Err(ProtoError::Application(output)),
+                    Err(e) => Err(ProtoError::Transport(e.to_string())),
+                }
+            },
+            Err(ProtoError::Transport(e)) => Err(ProtoError::Transport(e)),
+        }
+    }
+
+    pub fn connection_is_closed(input: ConnectionIsClosedRequest) -> Result<ConnectionIsClosedResponse, ProtoError<DriverException>> {
+        let result = T::handle_message("DatabaseDriver", "connection_is_closed", input.encode_to_vec());
+        match result {
+            Ok(output) => {
+                let output = ConnectionIsClosedResponse::decode(&output[..]);
                 match output {
                     Ok(output) => Ok(output),
                     Err(e) => Err(ProtoError::Transport(e.to_string())),

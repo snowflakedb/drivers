@@ -284,6 +284,14 @@ message ConnectionCloseRequest {
 message ConnectionCloseResponse {
 }
 
+message ConnectionIsClosedRequest {
+  ConnectionHandle conn_handle = 1;
+}
+
+message ConnectionIsClosedResponse {
+  bool is_closed = 1;
+}
+
 message ConnectionGetInfoRequest {
   ConnectionHandle conn_handle = 1;
   repeated InfoCode info_codes = 2;
@@ -487,6 +495,7 @@ service DatabaseDriver {
   rpc ConnectionInit(ConnectionInitRequest) returns (ConnectionInitResponse);
   rpc ConnectionRelease(ConnectionReleaseRequest) returns (ConnectionReleaseResponse);
   rpc ConnectionClose(ConnectionCloseRequest) returns (ConnectionCloseResponse);
+  rpc ConnectionIsClosed(ConnectionIsClosedRequest) returns (ConnectionIsClosedResponse);
   rpc ConnectionGetInfo(ConnectionGetInfoRequest) returns (ConnectionGetInfoResponse);
   rpc ConnectionGetObjects(ConnectionGetObjectsRequest) returns (ConnectionGetObjectsResponse);
   rpc ConnectionGetTableSchema(ConnectionGetTableSchemaRequest) returns (ConnectionGetTableSchemaResponse);

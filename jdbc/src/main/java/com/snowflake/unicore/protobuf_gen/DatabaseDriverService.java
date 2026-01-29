@@ -84,6 +84,11 @@ public interface DatabaseDriverService {
     DatabaseDriverV1.ConnectionCloseResponse connectionClose(DatabaseDriverV1.ConnectionCloseRequest request) throws ServiceException, TransportException;
 
     /**
+     * Method: connectionIsClosed
+     */
+    DatabaseDriverV1.ConnectionIsClosedResponse connectionIsClosed(DatabaseDriverV1.ConnectionIsClosedRequest request) throws ServiceException, TransportException;
+
+    /**
      * Method: connectionGetInfo
      */
     DatabaseDriverV1.ConnectionGetInfoResponse connectionGetInfo(DatabaseDriverV1.ConnectionGetInfoRequest request) throws ServiceException, TransportException;

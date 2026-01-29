@@ -215,6 +215,7 @@ async fn should_handle_http_connection_reset_during_logout() {
 }
 
 #[tokio::test]
+#[ignore = "TODO: Telemetry required"]
 async fn should_record_connection_close_decision_metrics_before_logout() {
     //Given Telemetry client is configured
     //And UD Core client is logged in
@@ -345,3 +346,5 @@ async fn spawn_capture_server() -> (SocketAddr, Arc<AtomicUsize>, tokio::task::J
     
     (addr, attempts, handle)
 }
+
+// TODO: add tests that when logout is raising an error we are not leaking any data (tokens etc)

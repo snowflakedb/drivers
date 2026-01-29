@@ -241,6 +241,33 @@ where
     }
 }
 
+/// Check if a connection has been closed
+///
+/// This function returns the current closed state of the connection.
+/// Returns true if close() has been called, false otherwise.
+///
+/// # Arguments
+///
+/// * `conn_handle` - Handle to the connection to check
+///
+/// # Returns
+///
+/// * `Ok(bool)` - true if connection is closed, false if still open
+/// * `Err(ApiError)` - Invalid connection handle
+pub fn connection_is_closed(conn_handle: Handle) -> Result<bool, ApiError> {
+    let conn_ptr = CONN_HANDLE_MANAGER
+        .get_obj(conn_handle)
+        .context(InvalidArgumentSnafu {
+            argument: "Connection handle not found".to_string(),
+        })?;
+
+    let conn = conn_ptr
+        .lock()
+        .map_err(|_| ConnectionLockingSnafu {}.build())?;
+
+    Ok(conn.is_closed.load(Ordering::SeqCst))
+}
+
 /// Close a connection and optionally send logout request
 ///
 /// This function implements the complete connection close logic:

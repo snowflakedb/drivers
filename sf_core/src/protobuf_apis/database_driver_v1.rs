@@ -5,7 +5,8 @@ use crate::apis::database_driver_v1::error::ConfigError;
 use crate::apis::database_driver_v1::error::RestError;
 use crate::apis::database_driver_v1::statement_bind;
 use crate::apis::database_driver_v1::{
-    connection_close, connection_init, connection_new, connection_release, connection_set_option,
+    connection_close, connection_init, connection_is_closed, connection_new, connection_release,
+    connection_set_option,
 };
 use crate::apis::database_driver_v1::{
     database_init, database_new, database_release, database_set_option,
@@ -468,6 +469,16 @@ impl DatabaseDriver for DatabaseDriverImpl {
 
         connection_close(conn_handle.into(), config).to_protobuf()?;
         Ok(ConnectionCloseResponse {})
+    }
+
+    #[instrument(name = "DatabaseDriverV1::connection_is_closed", skip(input))]
+    fn connection_is_closed(
+        input: ConnectionIsClosedRequest,
+    ) -> Result<ConnectionIsClosedResponse, DriverException> {
+        let conn_handle = required(input.conn_handle, "Connection handle is required")?;
+
+        let is_closed = connection_is_closed(conn_handle.into()).to_protobuf()?;
+        Ok(ConnectionIsClosedResponse { is_closed })
     }
 
     #[instrument(name = "DatabaseDriverV1::connection_get_info", skip(_input))]

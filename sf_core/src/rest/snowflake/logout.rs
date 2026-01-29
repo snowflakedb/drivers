@@ -73,7 +73,7 @@ struct LogoutResponse {
 ///
 /// * SESSION_GONE (390111) - Silently ignored (session already terminated)
 /// * Other errors - Returned to caller for handling per error strategy
-#[tracing::instrument(skip(client, session_token), fields(session_token_prefix))]
+#[tracing::instrument(skip(client, session_token))]
 pub async fn logout_session(
     client: &reqwest::Client,
     server_url: &str,
@@ -82,12 +82,6 @@ pub async fn logout_session(
     timeout: Duration,
     retry_policy: &RetryPolicy,
 ) -> Result<(), LogoutError> {
-    // Log only prefix of session token for security
-    tracing::Span::current().record(
-        "session_token_prefix",
-        &session_token.chars().take(8).collect::<String>(),
-    );
-
     tracing::info!("Initiating session logout");
 
     // Construct logout URL
@@ -95,6 +89,7 @@ pub async fn logout_session(
         .and_then(|base| base.join("/session"))
         .context(UrlConstructionSnafu)?;
 
+    // TODO: should be helper func
     // Generate UUIDs for request tracking
     let request_id = uuid::Uuid::new_v4();
     let request_guid = uuid::Uuid::new_v4();
@@ -107,6 +102,7 @@ pub async fn logout_session(
         "Logout request parameters"
     );
 
+    // TODO: should be static helper cached
     // Build User-Agent per UD spec: {WrapperUA} UD/{core_ver} Rust/{rust_ver}
     let rust_version = option_env!("CARGO_PKG_RUST_VERSION").unwrap_or("unknown");
     let user_agent = format!(

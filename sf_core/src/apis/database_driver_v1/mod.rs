@@ -14,6 +14,7 @@ pub use async_query_registry::AsyncQueryRegistry;
 pub use connection::Connection;
 pub use connection::connection_close;
 pub use connection::connection_init;
+pub use connection::connection_is_closed;
 pub use connection::connection_new;
 pub use connection::connection_release;
 pub use connection::connection_set_option;
