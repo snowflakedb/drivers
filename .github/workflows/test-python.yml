@@ -264,7 +264,7 @@ jobs:
 
       - name: Compare integration test results
         run: |
-          hatch run ci:compare \
+          hatch run reference:compare \
             --py ${{ env.REFERENCE_PYTHON_VERSION }} \
             --os ${{ env.REFERENCE_OS_VERSION }} \
             --universal ${{ github.workspace }}/universal-results/universal-${{ env.REFERENCE_OS_VERSION }}-${{ env.REFERENCE_PYTHON_VERSION }}.json \
