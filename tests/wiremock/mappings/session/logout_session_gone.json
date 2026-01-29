@@ -1,0 +1,23 @@
+{
+  "name": "Logout fails with SESSION_GONE",
+  "request": {
+    "urlPath": "/session",
+    "method": "POST",
+    "queryParameters": {
+      "delete": {
+        "equalTo": "true"
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "jsonBody": {
+      "success": false,
+      "code": "390111",
+      "message": "Session no longer exists"
+    },
+    "headers": {
+      "Content-Type": "application/json"
+    }
+  }
+}
