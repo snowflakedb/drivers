@@ -105,10 +105,7 @@ class Cursor:
         self._closed = True
 
     def execute(
-            self,
-            operation: str,
-            parameters: Sequence[Any] | dict[str, Any] | None = None,
-            _is_put_get: bool | None = None
+        self, operation: str, parameters: Sequence[Any] | dict[str, Any] | None = None, _is_put_get: bool | None = None
     ) -> Cursor:
         """
         Execute a database operation (query or command).
