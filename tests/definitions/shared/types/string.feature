@@ -55,7 +55,19 @@ Feature: String datatype handling
     Given Snowflake client is logged in
     And A temporary table with VARCHAR column is created
     And The table is populated with corner case string values
-    # Corner cases: empty string, max length string, unicode, special characters
+    # Corner cases (same as literal scenario):
+    #   - Empty string: ''
+    #   - Single character: 'X'
+    #   - Whitespace only: '   '
+    #   - Tab character: '\t'
+    #   - Newline: '\n'
+    #   - Unicode snowman: '\u26c4' (⛄)
+    #   - Unicode characters: '日本語テスト' (Japanese)
+    #   - Escaped single quote: '\''
+    #   - Escaped backslash: '\\'
+    #   - NULL value
+    #   - Combined character: 'y̆es' (character with combining diacritical mark)
+    #   - Surrogate pair: '\U0001D11E' (𝄞 musical G clef)
     When Query "SELECT * FROM {table}" is executed
     Then the result should contain the inserted corner case string values
 
@@ -84,10 +96,21 @@ Feature: String datatype handling
   @odbc_e2e
   Scenario: should select corner case string values using parameter binding
     Given Snowflake client is logged in
-    When Query "SELECT ?::VARCHAR" is executed with bound empty string value
-    Then the result should contain an empty string
-    When Query "SELECT ?::VARCHAR" is executed with bound NULL value
-    Then the result should contain NULL
+    When Query "SELECT ?::VARCHAR" is executed with each corner case string value bound
+    # Corner cases (same as literal scenario):
+    #   - Empty string: ''
+    #   - Single character: 'X'
+    #   - Whitespace only: '   '
+    #   - Tab character: '\t'
+    #   - Newline: '\n'
+    #   - Unicode snowman: '\u26c4' (⛄)
+    #   - Unicode characters: '日本語テスト' (Japanese)
+    #   - Escaped single quote: '\''
+    #   - Escaped backslash: '\\'
+    #   - NULL value
+    #   - Combined character: 'y̆es' (character with combining diacritical mark)
+    #   - Surrogate pair: '\U0001D11E' (𝄞 musical G clef)
+    Then the result should match the bound corner case value
 
 
   # ============================================================================

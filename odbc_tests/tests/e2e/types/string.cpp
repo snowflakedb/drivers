@@ -163,10 +163,15 @@ TEST_CASE("should select corner case string values from table", "[datatype][stri
   conn.execute("INSERT INTO test_string VALUES (1, '')");                // empty string
   conn.execute("INSERT INTO test_string VALUES (2, 'X')");               // single char
   conn.execute("INSERT INTO test_string VALUES (3, '   ')");             // whitespace
-  conn.executew(u"INSERT INTO test_string VALUES (4, '⛄')");            // unicode snowman
-  conn.executew(u"INSERT INTO test_string VALUES (5, '日本語テスト')");  // Japanese
-  conn.execute("INSERT INTO test_string VALUES (6, '''')");              // escaped quote
-  conn.execute("INSERT INTO test_string VALUES (7, NULL)");              // NULL
+  conn.execute("INSERT INTO test_string VALUES (4, '\\t')");             // tab character
+  conn.execute("INSERT INTO test_string VALUES (5, '\\n')");             // newline character
+  conn.executew(u"INSERT INTO test_string VALUES (6, '⛄')");            // unicode snowman
+  conn.executew(u"INSERT INTO test_string VALUES (7, '日本語テスト')");  // Japanese
+  conn.execute("INSERT INTO test_string VALUES (8, '''')");              // escaped quote
+  conn.execute("INSERT INTO test_string VALUES (9, '\\\\')");            // escaped backslash
+  conn.execute("INSERT INTO test_string VALUES (10, NULL)");             // NULL
+  conn.executew(u"INSERT INTO test_string VALUES (11, 'y̆es')");  // combined character (y + combining breve + es)
+  conn.executew(u"INSERT INTO test_string VALUES (12, '𝄞')");    // surrogate pair (musical G clef)
 
   // When Query "SELECT * FROM {table}" is executed
   auto stmt = conn.createStatement();
@@ -174,7 +179,20 @@ TEST_CASE("should select corner case string values from table", "[datatype][stri
   CHECK_ODBC(ret, stmt);
 
   // Then the result should contain the inserted corner case string values
-  std::vector<std::optional<std::u16string>> expected = {u"", u"X", u"   ", u"⛄", u"日本語テスト", u"'", std::nullopt};
+  std::vector<std::optional<std::u16string>> expected = {
+      u"",              // empty string
+      u"X",             // single char
+      u"   ",           // whitespace
+      u"\t",            // tab character
+      u"\n",            // newline character
+      u"⛄",            // unicode snowman
+      u"日本語テスト",  // Japanese
+      u"'",             // escaped quote
+      u"\\",            // escaped backslash
+      std::nullopt,     // NULL
+      u"y̆es",           // combined character
+      u"𝄞"              // surrogate pair
+  };
 
   int row = 0;
   while (true) {
@@ -187,7 +205,7 @@ TEST_CASE("should select corner case string values from table", "[datatype][stri
     CHECK(value == expected[row]);
     row++;
   }
-  CHECK(row == 7);
+  CHECK(row == 12);
 }
 
 // ============================================================================
@@ -276,16 +294,17 @@ TEST_CASE("should select corner case string values using parameter binding", "[.
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
 
-  // When Query "SELECT ?::VARCHAR" is executed with bound empty string value
-  {
+  // When Query "SELECT ?::VARCHAR" is executed with each corner case string value bound
+
+  // Helper lambda to test a single bound value
+  auto test_bound_value = [&](const std::string& value, const std::string& expected) {
     auto stmt = conn.createStatement();
     SQLRETURN ret = SQLPrepare(stmt.getHandle(), (SQLCHAR*)"SELECT ?::VARCHAR", SQL_NTS);
     CHECK_ODBC(ret, stmt);
 
-    std::string empty_value = "";
-    SQLLEN len = empty_value.size();
-    ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_VARCHAR, 1, 0,
-                           (SQLCHAR*)empty_value.c_str(), 0, &len);
+    SQLLEN len = value.size();
+    ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_CHAR, SQL_VARCHAR,
+                           value.size() > 0 ? value.size() : 1, 0, (SQLCHAR*)value.c_str(), value.size(), &len);
     CHECK_ODBC(ret, stmt);
 
     ret = SQLExecute(stmt.getHandle());
@@ -294,11 +313,66 @@ TEST_CASE("should select corner case string values using parameter binding", "[.
     ret = SQLFetch(stmt.getHandle());
     CHECK_ODBC(ret, stmt);
 
-    // Then the result should contain an empty string
-    CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "");
-  }
+    INFO("Testing value: '" << value << "'");
+    CHECK(get_data<SQL_C_CHAR>(stmt, 1) == expected);
+  };
 
-  // When Query "SELECT ?::VARCHAR" is executed with bound NULL value
+  // Helper lambda to test a single bound wide value
+  auto test_bound_wvalue = [&](const std::u16string& value, const std::u16string& expected) {
+    auto stmt = conn.createStatement();
+    SQLRETURN ret = SQLPrepare(stmt.getHandle(), (SQLCHAR*)"SELECT ?::VARCHAR", SQL_NTS);
+    CHECK_ODBC(ret, stmt);
+
+    SQLLEN len = value.size() * sizeof(char16_t);
+    ret = SQLBindParameter(stmt.getHandle(), 1, SQL_PARAM_INPUT, SQL_C_WCHAR, SQL_WVARCHAR,
+                           value.size() > 0 ? value.size() : 1, 0, (SQLWCHAR*)value.c_str(), len, &len);
+    CHECK_ODBC(ret, stmt);
+
+    ret = SQLExecute(stmt.getHandle());
+    CHECK_ODBC(ret, stmt);
+
+    ret = SQLFetch(stmt.getHandle());
+    CHECK_ODBC(ret, stmt);
+
+    CHECK(get_data<SQL_C_WCHAR>(stmt, 1) == expected);
+  };
+
+  // Then the result should match the bound corner case value
+
+  // Test empty string
+  test_bound_value("", "");
+
+  // Test single character
+  test_bound_value("X", "X");
+
+  // Test whitespace only
+  test_bound_value("   ", "   ");
+
+  // Test tab character
+  test_bound_value("\t", "\t");
+
+  // Test newline character
+  test_bound_value("\n", "\n");
+
+  // Test escaped single quote (just a quote character)
+  test_bound_value("'", "'");
+
+  // Test escaped backslash
+  test_bound_value("\\", "\\");
+
+  // Test unicode snowman (using wide binding)
+  test_bound_wvalue(u"⛄", u"⛄");
+
+  // Test Japanese characters (using wide binding)
+  test_bound_wvalue(u"日本語テスト", u"日本語テスト");
+
+  // Test combined character (using wide binding)
+  test_bound_wvalue(u"y̆es", u"y̆es");
+
+  // Test surrogate pair (using wide binding)
+  test_bound_wvalue(u"𝄞", u"𝄞");
+
+  // Test NULL value
   {
     auto stmt = conn.createStatement();
     SQLRETURN ret = SQLPrepare(stmt.getHandle(), (SQLCHAR*)"SELECT ?::VARCHAR", SQL_NTS);
@@ -315,7 +389,6 @@ TEST_CASE("should select corner case string values using parameter binding", "[.
     ret = SQLFetch(stmt.getHandle());
     CHECK_ODBC(ret, stmt);
 
-    // Then the result should contain NULL
     CHECK(get_data_optional<SQL_C_CHAR>(stmt, 1) == std::nullopt);
   }
 }
