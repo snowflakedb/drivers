@@ -4,7 +4,9 @@ from enum import Enum
 
 
 class TelemetryData:
-    pass
+    def __init__(self, message: str, timestamp: int) -> None:
+        self.message = message
+        self.timestamp = timestamp
 
 
 class TelemetryField(Enum):

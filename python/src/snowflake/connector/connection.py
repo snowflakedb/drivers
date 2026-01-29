@@ -6,8 +6,9 @@ This module defines the Connection class as specified in PEP 249.
 
 from __future__ import annotations
 
+from collections.abc import Generator, Iterable
 from io import StringIO
-from typing import Any, Union, Generator, Iterable, Type
+from typing import Any, Union
 
 from snowflake.connector._internal.protobuf_gen.database_driver_v1_services import (  # type: ignore[attr-defined]
     ConnectionGetInfoRequest,
@@ -103,7 +104,7 @@ class Connection:
         """
         raise NotSupportedError("rollback is not implemented")
 
-    def cursor(self, cursor_class: Type[Cursor]) -> Cursor:
+    def cursor(self, cursor_class: type[Cursor]) -> Cursor:
         """
         Return a new Cursor object using the connection.
 
@@ -225,15 +226,16 @@ class Connection:
         """
         return self._closed
 
+    @backward_compatibility
     def execute_string(
         self,
         sql_text: str,
         remove_comments: bool = False,
         return_cursors: bool = True,
-        cursor_class: Cursor = Cursor,
-        **kwargs,
+        cursor_class: type[Cursor] = Cursor,
+        **kwargs: dict,
     ) -> Iterable[Cursor]:
-        """Executes a SQL text including multiple statements. This is a non-standard convenience method."""
+        """Execute a SQL text including multiple statements. This is a non-standard convenience method."""
         stream = StringIO(sql_text)
         stream_generator = self.execute_stream(
             stream, remove_comments=remove_comments, cursor_class=cursor_class, **kwargs
@@ -241,17 +243,16 @@ class Connection:
         ret = list(stream_generator)
         return ret if return_cursors else list()
 
+    @backward_compatibility
     def execute_stream(
         self,
         stream: StringIO,
         remove_comments: bool = False,
-        cursor_class: Type[Cursor] = Cursor,
-        **kwargs,
+        cursor_class: type[Cursor] = Cursor,
+        **kwargs: dict,
     ) -> Generator[Cursor]:
-        """Executes a stream of SQL statements. This is a non-standard convenient method."""
-        split_statements_list = split_statements(
-            stream, remove_comments=remove_comments
-        )
+        """Execute a stream of SQL statements. This is a non-standard convenient method."""
+        split_statements_list = split_statements(stream, remove_comments=remove_comments)
         # Note: split_statements_list is a list of tuples of sql statements and whether they are put/get
         non_empty_statements = [e for e in split_statements_list if e[0]]
         for sql, is_put_or_get in non_empty_statements:
@@ -261,13 +262,16 @@ class Connection:
 
     @property
     @internal_api
+    @backward_compatibility
     def rest(self) -> SnowflakeRestful:
         return SnowflakeRestful(connection_info=self._connection_info)
 
     @internal_api
+    @backward_compatibility
     def _telemetry(self) -> Any:
         return None
 
+    @backward_compatibility
     def _check_if_read_from_config(self, kwargs: ConnectionParameters) -> ConnectionParameters:
         if "connection_name" in kwargs:
             from snowflake.connector.config_manager import CONFIG_MANAGER

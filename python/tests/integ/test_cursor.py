@@ -7,6 +7,7 @@ from decimal import Decimal
 import pytest
 
 from snowflake.connector.errors import NotSupportedError
+from tests.e2e.types.utils import assert_sequential_values
 
 
 class TestCursorMethods:
