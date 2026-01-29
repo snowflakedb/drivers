@@ -16,3 +16,6 @@ behavior_differences:
   
   6:
     name: "Unsupported compression type returns error instead of being silently ignored"
+
+  8:
+    name: "Old driver doesn't return result set for some queries (based on query type determined by inspecting query text)"

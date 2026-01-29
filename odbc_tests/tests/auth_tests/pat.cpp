@@ -104,7 +104,8 @@ std::string get_pat_as_token_connection_string(const std::string& pat_secret) {
 }
 
 // PAT Setup doesn't work with old ODBC driver.
-TEST_CASE("PAT Authentication - As Password", "[pat_auth][new_odbc]") {
+TEST_CASE("PAT Authentication - As Password", "[pat_auth]") {
+  SKIP_OLD_DRIVER("BD#8", "Old driver cannot create PATs - cannot retrieve token secret");
   INFO("Testing PAT authentication using token as password");
 
   Pat pat;
@@ -127,7 +128,8 @@ TEST_CASE("PAT Authentication - As Password", "[pat_auth][new_odbc]") {
 }
 
 // PAT Setup doesn't work with old ODBC driver.
-TEST_CASE("PAT Authentication - As Token", "[pat_auth][new_odbc]") {
+TEST_CASE("PAT Authentication - As Token", "[pat_auth]") {
+  SKIP_OLD_DRIVER("BD#8", "Old driver cannot create PATs - cannot retrieve token secret");
   INFO("Testing PAT authentication using PROGRAMMATIC_ACCESS_TOKEN authenticator");
 
   Pat pat;
