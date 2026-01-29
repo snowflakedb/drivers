@@ -4,8 +4,8 @@ pub use crate::logging::callback_layer::CLogCallback;
 pub use crate::logging::callback_layer::CallbackLayer;
 pub use crate::logging::error::LogError;
 use crate::logging::opentelemetry::init_tracer;
-use tracing::level_filters::LevelFilter;
 use tracing_opentelemetry::OpenTelemetryLayer;
+use tracing_subscriber::EnvFilter;
 use tracing_subscriber::Layer;
 use tracing_subscriber::Registry;
 use tracing_subscriber::layer::SubscriberExt;
@@ -13,6 +13,9 @@ use tracing_subscriber::layer::SubscriberExt;
 mod callback_layer;
 mod error;
 mod opentelemetry;
+
+/// Default log filter when RUST_LOG is not set
+const DEFAULT_LOG_FILTER: &str = "warn,sf_core=info";
 
 pub struct LoggingConfig {
     pub log_file: Option<PathBuf>,
@@ -35,8 +38,12 @@ struct EmptyLayer;
 impl Layer<Registry> for EmptyLayer {}
 
 pub fn init(config: LoggingConfig) -> Result<(), LogError> {
-    eprintln!("Initializing logging");
     init_logging::<EmptyLayer>(config, None)
+}
+
+/// Creates an EnvFilter from RUST_LOG environment variable, falling back to default
+fn create_env_filter() -> EnvFilter {
+    EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(DEFAULT_LOG_FILTER))
 }
 
 pub fn init_logging<L>(config: LoggingConfig, extra_layer: Option<L>) -> Result<(), LogError>
@@ -49,7 +56,11 @@ where
     let file_layer = if let Some(log_file) = config.log_file {
         let log_file =
             std::fs::File::create(log_file).map_err(|e| LogError::InitError(e.to_string()))?;
-        Some(tracing_subscriber::fmt::layer().with_writer(log_file))
+        Some(
+            tracing_subscriber::fmt::layer()
+                .with_writer(log_file)
+                .with_filter(create_env_filter()),
+        )
     } else {
         None
     };
@@ -67,7 +78,7 @@ where
         Some(
             tracing_subscriber::fmt::layer()
                 .with_writer(std::io::stderr)
-                .with_filter(LevelFilter::ERROR),
+                .with_filter(create_env_filter()),
         )
     } else {
         None
