@@ -49,8 +49,6 @@ final class ArrowCursorTestUtils {
 
     @Override
     public void close() throws Exception {
-      resources.closeCurrentRootIfOwned();
-      resources.closePrefetchedRoot();
       resources.closeReader();
       resources.closeStream();
       resources.closeAllocator();

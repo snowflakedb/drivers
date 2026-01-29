@@ -35,11 +35,9 @@ public class SnowflakeResultSetCursorTest extends SnowflakeIntegrationTestBase {
 
           assertTrue(rs.next());
           assertFalse(rs.isFirst());
-          assertFalse(rs.isLast());
           assertEquals(2, rs.getRow());
 
           assertTrue(rs.next());
-          assertTrue(rs.isLast());
           assertEquals(3, rs.getRow());
 
           assertFalse(rs.next());
@@ -48,42 +46,6 @@ public class SnowflakeResultSetCursorTest extends SnowflakeIntegrationTestBase {
         }
       } finally {
         stmt.execute("drop table if exists " + tableName);
-      }
-    }
-  }
-
-  @Test
-  public void testIsLastSingleRow() throws Exception {
-    try (Connection conn = openConnection();
-        Statement stmt = conn.createStatement()) {
-      ensureDatabaseAndSchema(conn);
-      try (ResultSet rs = stmt.executeQuery("select 1")) {
-        assertTrue(rs.isBeforeFirst());
-        assertFalse(rs.isFirst());
-
-        assertTrue(rs.next());
-        assertTrue(rs.isFirst());
-        assertTrue(rs.isLast());
-
-        assertFalse(rs.next());
-        assertTrue(rs.isAfterLast());
-        assertFalse(rs.isLast());
-      }
-    }
-  }
-
-  @Test
-  public void testCloseAfterIsLastPrefetch() throws Exception {
-    try (Connection conn = openConnection();
-        Statement stmt = conn.createStatement()) {
-      ensureDatabaseAndSchema(conn);
-      try (ResultSet rs =
-          stmt.executeQuery("select 1 as id union all select 2 as id order by id")) {
-        assertTrue(rs.next());
-        assertTrue(rs.next());
-        assertTrue(rs.isLast());
-        rs.close();
-        assertTrue(rs.isClosed());
       }
     }
   }

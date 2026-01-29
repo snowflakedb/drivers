@@ -4,13 +4,11 @@ public final class CursorState {
   private boolean wasNull = false;
   private int currentRow = -1;
   private boolean afterLast = false;
-  private boolean onLastRow = false;
 
   public void reset() {
     wasNull = false;
     currentRow = -1;
     afterLast = false;
-    onLastRow = false;
   }
 
   public boolean wasNull() {
@@ -35,13 +33,5 @@ public final class CursorState {
 
   public void setAfterLast() {
     this.afterLast = true;
-  }
-
-  public boolean isOnLastRow() {
-    return onLastRow;
-  }
-
-  public void setOnLastRow(boolean onLastRow) {
-    this.onLastRow = onLastRow;
   }
 }

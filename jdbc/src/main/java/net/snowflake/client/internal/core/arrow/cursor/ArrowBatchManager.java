@@ -23,37 +23,13 @@ public final class ArrowBatchManager {
       return false;
     }
     try {
-      if (!batch.hasLoadedBatch()) {
-        return moveToNextBatch();
-      }
-      if (batch.getCurrentRowInBatch() + 1 < batch.getCurrentBatchRowCount()) {
+      if (batch.hasLoadedBatch() && batch.hasNextRowInBatch()) {
         batch.incrementRowInBatch();
         return true;
       }
-      return moveToNextBatch();
+      return advanceToNextBatch();
     } catch (IOException e) {
       throw new SQLException("Unable to advance Arrow results", e);
-    }
-  }
-
-  public void prefetchNextBatchForIsLast() throws SQLException {
-    if (batch.hasPrefetchedBatch() || cursor.isAfterLast()) {
-      return;
-    }
-    VectorSchemaRoot snapshot = resources.copyVectorSchemaRoot(resources.getActiveRoot());
-    resources.setCurrentRoot(snapshot, true);
-    schema.resetConverters();
-    try {
-      VectorSchemaRoot nextRoot = loadNextNonEmptyBatch();
-      if (nextRoot == null) {
-        cursor.setOnLastRow(true);
-        return;
-      }
-      resources.setPrefetchedRoot(nextRoot);
-      batch.setHasPrefetchedBatch(true);
-      cursor.setOnLastRow(false);
-    } catch (IOException e) {
-      throw new SQLException("Unable to prefetch next batch", e);
     }
   }
 
@@ -67,24 +43,15 @@ public final class ArrowBatchManager {
     return null;
   }
 
-  private boolean moveToNextBatch() throws IOException, SQLException {
-    VectorSchemaRoot nextRoot;
-    if (batch.hasPrefetchedBatch()) {
-      nextRoot = resources.takePrefetchedRoot();
-      batch.setHasPrefetchedBatch(false);
-    } else {
-      nextRoot = loadNextNonEmptyBatch();
-    }
+  private boolean advanceToNextBatch() throws IOException, SQLException {
+    VectorSchemaRoot nextRoot = loadNextNonEmptyBatch();
     if (nextRoot == null) {
       cursor.setAfterLast();
       return false;
     }
-    resources.setCurrentRoot(nextRoot, false);
-    batch.setCurrentBatchRowCount(resources.getCurrentRootRowCount());
-    batch.resetCurrentRowInBatch();
-    batch.resetHasLoadedBatch();
-    schema.resetConverters();
-    schema.ensureInitialized(resources.getCurrentRoot());
+    resources.setCurrentRoot(nextRoot);
+    batch.startNewBatch(resources.getCurrentRoot().getRowCount());
+    schema.resetConverterCache();
     return true;
   }
 }

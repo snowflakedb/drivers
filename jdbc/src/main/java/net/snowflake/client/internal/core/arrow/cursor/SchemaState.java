@@ -20,10 +20,7 @@ public final class SchemaState {
   private int[] columnTypes;
   private ArrowVectorConverter[] converterCache;
 
-  void ensureInitialized(VectorSchemaRoot root) throws SQLException {
-    if (columnNames != null && columnTypes != null && converterCache != null) {
-      return;
-    }
+  public SchemaState(VectorSchemaRoot root) throws SQLException {
     List<Field> fields = root.getSchema().getFields();
     columnNames = new String[fields.size()];
     columnTypes = new int[fields.size()];
@@ -36,24 +33,20 @@ public final class SchemaState {
     }
   }
 
-  public String[] getColumnNames(VectorSchemaRoot root) throws SQLException {
-    ensureInitialized(root);
+  public String[] getColumnNames() {
     return columnNames;
   }
 
-  public int[] getColumnTypes(VectorSchemaRoot root) throws SQLException {
-    ensureInitialized(root);
+  public int[] getColumnTypes() {
     return columnTypes;
   }
 
-  public int getColumnCount(VectorSchemaRoot root) throws SQLException {
-    ensureInitialized(root);
+  public int getColumnCount() {
     return columnNames.length;
   }
 
   public ArrowVectorConverter getConverter(int columnIndex, VectorSchemaRoot root)
       throws SQLException {
-    ensureInitialized(root);
     int index = columnIndex - 1;
     if (index < 0 || index >= converterCache.length) {
       throw new SQLException("Invalid column index: " + columnIndex);
@@ -73,14 +66,18 @@ public final class SchemaState {
     }
   }
 
-  void resetConverters() {
+  private void clearConverterCache() {
     if (converterCache != null) {
       Arrays.fill(converterCache, null);
     }
   }
 
+  void resetConverterCache() throws SQLException {
+    clearConverterCache();
+  }
+
   public void reset() {
-    resetConverters();
+    clearConverterCache();
     converterCache = null;
     columnNames = null;
     columnTypes = null;
@@ -90,6 +87,7 @@ public final class SchemaState {
     if (logicalType == null) {
       return Types.OTHER;
     }
+    // TODO: Other types will be handled later
     switch (logicalType) {
       case TEXT:
       case CHAR:

@@ -34,10 +34,10 @@ public class SchemaStateTest {
       vector.setValueCount(1);
       root.setRowCount(1);
 
-      SchemaState schema = new SchemaState();
-      assertArrayEquals(new String[] {"col_one"}, schema.getColumnNames(root));
-      assertArrayEquals(new int[] {Types.VARCHAR}, schema.getColumnTypes(root));
-      assertEquals(1, schema.getColumnCount(root));
+      SchemaState schema = new SchemaState(root);
+      assertArrayEquals(new String[] {"col_one"}, schema.getColumnNames());
+      assertArrayEquals(new int[] {Types.VARCHAR}, schema.getColumnTypes());
+      assertEquals(1, schema.getColumnCount());
       assertNotNull(schema.getConverter(1, root));
 
       SQLException exception = assertThrows(SQLException.class, () -> schema.getConverter(2, root));
