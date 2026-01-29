@@ -123,3 +123,4 @@ def register_default_logger_callback() -> None:
     Call this function explicitly to set up logging.
     """
     sf_core_init_logger(c_logger_callback)
+    logging.getLogger("sf_core").setLevel(level=logging.INFO)
