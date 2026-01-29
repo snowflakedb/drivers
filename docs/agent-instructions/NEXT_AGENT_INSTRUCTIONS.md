@@ -21,27 +21,47 @@ Previous agent completed Core (Rust) implementation but **Python tests have crit
 - **Python FFI:** Bindings exist and compile
 
 ### ❌ Critical Problems
-1. **Python E2E tests don't verify behavior**
+
+#### Core (Rust) Issues
+1. **Core tests need review**
+   - May have same problem as Python - not verifying actual behavior
+   - Review ALL Core tests: Would they fail if implementation was removed?
+   - Verify mock servers check correct request format, headers, etc.
+
+2. **ErrorStrategy not implemented as Strategy pattern**
+   - Current: Simple `match` with if-else in `connection.rs`
+   - Required: Proper Strategy pattern with trait + implementations
+   - Files: `sf_core/src/config/logout.rs`, `sf_core/src/apis/database_driver_v1/connection.rs`
+   - Should have: `trait ErrorHandlingStrategy` with `fn should_raise_error(&self, error: &ApiError) -> bool`
+
+3. **Code quality issues**
+   - `spawn_capture_server` duplicated across files
+   - Not following patterns from old connector
+
+#### Python Issues
+4. **Python E2E tests don't verify behavior**
    - 41 tests "passing" but only check `conn.is_closed()`
    - Would pass even without logout implementation
    - Don't verify logout requests are sent
    - Don't verify warnings, logs, or parameters
 
-2. **has_running_queries() incomplete**
+5. **has_running_queries() incomplete**
    - Only checks local registry
    - Should check server like old connector did
    - Missing HTTP calls to query status endpoint
 
-3. **Code quality issues**
-   - `spawn_capture_server` duplicated across files
-   - Not following patterns from old connector
-   - No wiremock integration tests
+6. **No wiremock integration tests**
+   - Integration tests should use wiremock to verify HTTP requests
 
 ---
 
 ## Your Mission
 
-**Fix Python tests to actually verify logout behavior.**
+**Fix BOTH Core and Python code quality issues.**
+
+### Priority Order:
+1. **Core first:** Review tests, refactor ErrorStrategy to proper Strategy pattern
+2. **Python second:** Fix tests to verify behavior with wiremock/caplog
 
 Follow the fix plan in `@LOGOUT_FIXES_REQUIRED.md` which details:
 - How to study old connector
@@ -118,7 +138,79 @@ code _old_snowflake_python_connector_for_reference/snowflake-connector-python/sr
 
 **Document your findings before proceeding.**
 
-### Step 2: Fix has_running_queries() Implementation
+### Step 2: Review ALL Core Tests
+**Critical:** Before writing new code, review existing Core tests.
+
+**Question for each test:** "Would this test FAIL if I removed the implementation?"
+
+**Files to review:**
+- `sf_core/tests/e2e/session/logout.rs` (38 tests)
+- `sf_core/tests/integration/session/logout.rs`
+
+**Check that tests verify:**
+- Correct HTTP method (POST)
+- Correct endpoint (/session?delete=true)
+- Correct headers (Authorization, Content-Type)
+- Response handling
+
+**Document which tests are real vs which are "false positives".**
+
+### Step 3: Refactor ErrorStrategy to Strategy Pattern
+**Current (wrong):**
+```rust
+// In connection.rs - simple match
+match config.error_strategy {
+    ErrorStrategy::Strict => { /* inline logic */ }
+    ErrorStrategy::BestEffort => { /* inline logic */ }
+}
+```
+
+**Required (Strategy pattern):**
+```rust
+// sf_core/src/config/logout.rs
+pub trait ErrorHandlingStrategy {
+    fn should_raise_error(&self, error: &ApiError) -> bool;
+    fn log_error(&self, error: &ApiError);
+}
+
+pub struct StrictStrategy;
+impl ErrorHandlingStrategy for StrictStrategy {
+    fn should_raise_error(&self, error: &ApiError) -> bool {
+        // Only ignore SESSION_GONE (390111)
+        error.code != Some(390111)
+    }
+    fn log_error(&self, error: &ApiError) {
+        tracing::error!("Logout failed: {:?}", error);
+    }
+}
+
+pub struct BestEffortStrategy;
+impl ErrorHandlingStrategy for BestEffortStrategy {
+    fn should_raise_error(&self, _error: &ApiError) -> bool {
+        false // Never raise
+    }
+    fn log_error(&self, error: &ApiError) {
+        tracing::warn!("Logout failed (ignored): {:?}", error);
+    }
+}
+```
+
+**Update connection.rs to use the trait:**
+```rust
+let strategy: Box<dyn ErrorHandlingStrategy> = match config.error_strategy {
+    ErrorStrategy::Strict => Box::new(StrictStrategy),
+    ErrorStrategy::BestEffort => Box::new(BestEffortStrategy),
+};
+
+if let Err(e) = logout_result {
+    strategy.log_error(&e);
+    if strategy.should_raise_error(&e) {
+        return Err(e);
+    }
+}
+```
+
+### Step 4: Fix has_running_queries() Implementation
 **Current problem:** Only checks local HashSet  
 **Required:** HTTP call to server to check query status like old connector
 
@@ -129,13 +221,13 @@ code _old_snowflake_python_connector_for_reference/snowflake-connector-python/sr
 
 **Test:** Create integration test with mock query status responses
 
-### Step 3: Fix Core Code Quality
+### Step 5: Fix Core Code Quality
 - Consolidate `spawn_capture_server` to `sf_core/tests/common/`
 - Review ALL logging for security issues (no tokens!)
 - Run Core tests: `cargo test --test integration_tests logout`
 - Run Core E2E: `PARAMETER_PATH=.../parameters.json cargo test --test e2e_tests logout`
 
-### Step 4: Create Wiremock Mappings
+### Step 6: Create Wiremock Mappings
 **Create files in `python/tests/wiremock/mappings/session/`:**
 
 `logout_success.json`:
@@ -161,7 +253,7 @@ Similar for:
 - `logout_with_keep_alive.json` (should NOT be called)
 - `logout_503_then_success.json` (retry scenarios)
 
-### Step 5: Rewrite Python Integration Tests with Wiremock
+### Step 7: Rewrite Python Integration Tests with Wiremock
 **File:** `python/tests/integ/session/test_logout.py`
 
 **Pattern:**
@@ -183,7 +275,7 @@ def test_should_send_logout_with_wiremock(int_test_connection_factory):
 
 **Implement ALL integration test scenarios with wiremock.**
 
-### Step 6: Enhance Python E2E Tests  
+### Step 8: Enhance Python E2E Tests  
 **File:** `python/tests/e2e/session/test_logout.py`
 
 **Use caplog to verify logs:**
@@ -211,7 +303,7 @@ def test_deprecation_warning(connection_factory):
     assert conn.is_closed()
 ```
 
-### Step 7: Test Each Fix
+### Step 9: Test Each Fix
 ```bash
 # After EACH fix:
 cd python
@@ -288,20 +380,28 @@ Before marking ANY test as complete:
 10. E2E tests need caplog/pytest.warns, not just method calls
 11. Integration tests need wiremock to verify HTTP requests
 12. Never mark phase complete without passing AND verifying tests
+13. **Core tests also need review** - not just Python
+14. **Strategy pattern means trait + implementations**, not if-else/match
 
 ---
 
 ## Success Criteria
 
 Phase complete when:
-1. ✅ ALL tests passing
-2. ✅ Tests verify actual behavior (would fail without implementation)
-3. ✅ Wiremock integration tests verify HTTP requests
-4. ✅ E2E tests verify logs/warnings with caplog/pytest.warns
-5. ✅ has_running_queries() checks server status
-6. ✅ No code duplication
-7. ✅ No security issues
-8. ✅ Following old connector patterns
+
+### Core (Rust)
+1. ✅ ALL Core tests reviewed - confirm they verify actual behavior
+2. ✅ ErrorStrategy refactored to proper Strategy pattern (trait + implementations)
+3. ✅ `spawn_capture_server` consolidated to common module
+4. ✅ No security issues (no token logging)
+
+### Python
+5. ✅ ALL tests passing
+6. ✅ Tests verify actual behavior (would fail without implementation)
+7. ✅ Wiremock integration tests verify HTTP requests
+8. ✅ E2E tests verify logs/warnings with caplog/pytest.warns
+9. ✅ has_running_queries() checks server status
+10. ✅ Following old connector patterns
 
 ---
 
@@ -346,11 +446,14 @@ cd python && hatch run test:all tests/e2e/session/test_logout.py -v
 ## Expected Timeline
 
 - **Study phase:** 2-3 hours
-- **Core fixes:** 2-3 hours  
+- **Core test review:** 2-3 hours
+- **Core Strategy pattern refactor:** 2-3 hours  
+- **Core code quality (consolidate helpers):** 1-2 hours
 - **Python integration tests (wiremock):** 4-5 hours
 - **Python E2E tests (caplog/warns):** 3-4 hours
+- **has_running_queries() server check:** 2-3 hours
 - **Auto-cleanup tests:** 1-2 hours
-- **Total:** 12-18 hours
+- **Total:** 18-26 hours
 
 Take your time. Do it right.
 
