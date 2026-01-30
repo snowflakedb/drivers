@@ -218,41 +218,90 @@ if strategy.should_ignore_error(&logout_err) {
 **Current problem:** Only checks local HashSet - doesn't ask server if queries are running  
 **Required:** HTTP call to server to check query status like old connector
 
-**Old connector pattern** (from `connection.py:2052-2084`):
+#### Two Operations on AsyncQueryRegistry:
+
+**1. Unregister (when query completes):**
+- Must be CHEAP - O(1) immediate delete
+- Use data structure with O(1) removal (HashSet is correct)
+- Called when async query finishes - just drop the value
+
+**2. Check if running (at close time):**
+- Spawn MULTIPLE workers in parallel
+- Each worker makes HTTP call to check ONE query's status
+- If ANY worker returns "still running" → STOP ALL workers immediately
+- Return early - don't wait for all checks
+- This is the expensive operation, but it's optimized via early termination
+
+#### Old connector pattern (from `connection.py:2052-2084`):
 ```python
 def _all_async_queries_finished(self) -> bool:
-    """Checks whether all async queries started by this Connection have finished executing."""
-    
     if not self._async_sfqids:
         return True  # No queries tracked = all finished
     
     queries = list(reversed(self._async_sfqids.keys()))
+    num_workers = min(self.client_prefetch_threads, len(queries))
+    found_unfinished_query = False
     
-    # Check each query's status via HTTP call to server
     def async_query_check_helper(sfq_id: str) -> bool:
+        nonlocal found_unfinished_query
+        # Early exit if another worker already found running query
         return found_unfinished_query or self.is_still_running(
             self.get_query_status(sfq_id)  # <-- HTTP call to server!
         )
     
-    # Use ThreadPoolExecutor for parallel checking
+    # Spawn multiple workers in parallel
     with ThreadPoolExecutor(max_workers=num_workers) as tpe:
         futures = (tpe.submit(async_query_check_helper, sfqid) for sfqid in queries)
         for f in as_completed(futures):
             if f.result():
                 found_unfinished_query = True
-                break  # Early return on first running query
+                break  # STOP - found one running, no need to check more
+        # Cancel remaining futures
+        for f in futures:
+            f.cancel()
     
     return not found_unfinished_query
 ```
 
-**Key insight:** The old connector calls `get_query_status(sfq_id)` which makes an HTTP request to the server to check if a query is still running. This is the RIGHT way to do it.
+#### Key Design Points:
+1. **Parallel HTTP checks** - Don't check queries sequentially
+2. **Early termination** - Stop all workers when first running query found
+3. **Server-side check** - `get_query_status()` is HTTP call, not local lookup
+4. **Cheap unregister** - Just remove from HashSet when query completes
+
+#### Rust Implementation Approach:
+```rust
+// Use tokio::spawn for parallel async HTTP calls
+// Use tokio::select! or similar for early termination
+// Or use futures::stream::FuturesUnordered with take_while
+
+async fn all_async_queries_finished(&self, http_client: &Client) -> bool {
+    let query_ids: Vec<_> = self.queries.iter().cloned().collect();
+    if query_ids.is_empty() {
+        return true;
+    }
+    
+    // Spawn parallel checks
+    let mut futures = FuturesUnordered::new();
+    for qid in query_ids {
+        futures.push(check_query_status(http_client, qid));
+    }
+    
+    // Return early if any is still running
+    while let Some(is_running) = futures.next().await {
+        if is_running {
+            return false;  // Found running query - stop checking
+        }
+    }
+    
+    true  // All finished
+}
+```
 
 **Files to modify:**
-- `sf_core/src/apis/database_driver_v1/async_query_registry.rs` - Add method to check server status
+- `sf_core/src/apis/database_driver_v1/async_query_registry.rs`
 - Need to implement `get_query_status()` HTTP endpoint call
 - This will be used when async queries are added (execute with asyncExec=true)
-
-**For now (stub):** The async query registry can remain local-only until async query execution is implemented. But document this clearly and ensure the architecture supports server-side checking later.
 
 **Test:** Create integration test with mock query status responses
 
