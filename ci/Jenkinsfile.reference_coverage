@@ -169,7 +169,7 @@ pipeline {
                                             -e BRANCH_NAME="$BRANCH_NAME" \
                                             -w /workspace \
                                             rocky-old-odbc-build \
-                                            bash -c 'pip3 install pyyaml benchstore-client-library --extra-index-url https://nexus.int.snowflakecomputing.com/repository/pypi-internal/simple && python3 ./scripts/shared/coverage_benchstore_upload.py --summary coverage_report/summary.txt --type odbc'
+                                            bash -c 'python3 -m pip install --upgrade pip setuptools && python3 -m pip install pyyaml benchstore-client-library --extra-index-url https://nexus.int.snowflakecomputing.com/repository/pypi-internal/simple && python3 ./scripts/shared/coverage_benchstore_upload.py --summary coverage_report/summary.txt --type odbc'
                                     '''
                                 }
                             }
