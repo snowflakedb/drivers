@@ -39,7 +39,7 @@ pipeline {
                 // ============================================================
                 stage('Old ODBC Coverage') {
                     agent {
-                        label 'small-node-aarch64'
+                        label 'small-node'
                     }
 
                     environment {
@@ -208,7 +208,7 @@ pipeline {
                 // ============================================================
                 stage('Old Python Coverage') {
                     agent {
-                        label 'small-node-aarch64'
+                        label 'small-node'
                     }
 
                     environment {
