@@ -408,15 +408,71 @@ Before marking ANY test as complete:
 5. Protobuf changes need separate commits
 6. Match statements must cover all enum variants
 
-### From Previous Agent #2 (Me):
+### From Previous Agent #2 (Me) - KNOWN MISTAKES:
 7. **Tests that only check is_closed() don't verify anything**
-8. **Don't log any part of tokens** (I made this mistake)
+8. **Don't log any part of tokens** (I made this mistake initially)
 9. Don't implement without studying old connector first
 10. E2E tests need caplog/pytest.warns, not just method calls
 11. Integration tests need wiremock to verify HTTP requests
 12. Never mark phase complete without passing AND verifying tests
 13. **Core tests also need review** - not just Python
 14. **Strategy pattern means trait + implementations**, not if-else/match
+
+### ⚠️ HINTS: What Previous Agent Did Wrong (INCOMPLETE LIST)
+
+**These are EXAMPLES of mistakes - there are likely MORE:**
+
+1. **AsyncQueryRegistry is fundamentally wrong**
+   - Implemented as simple local HashSet
+   - Old connector checks SERVER for query status via HTTP
+   - This is a critical behavioral difference
+
+2. **Strategy pattern may be over-engineered or incorrect**
+   - Added trait + implementations but may not match intended design
+   - User should confirm if this is what they wanted
+   - May have added unnecessary complexity
+
+3. **Truth table implementation may be wrong**
+   - `should_send_logout()` logic may not match requirements
+   - Phase 2 vs Phase 3 behavior differences may be incorrect
+   - Need user to verify decision logic
+
+4. **Python tests are "false positives"**
+   - 41 E2E tests that only check `conn.is_closed()`
+   - Would pass even if logout was completely broken
+   - Integration tests created but not verified to work
+
+5. **May have skipped understanding old connector properly**
+   - Implemented based on assumptions, not deep study
+   - Old connector has nuances that may have been missed
+
+6. **Error handling may be simplified**
+   - SESSION_GONE handling - is it correct?
+   - Retry behavior - matches requirements?
+   - Timeout handling - correct?
+
+7. **LogoutConfig structure may not match requirements**
+   - Field names and types - correct?
+   - Default values - correct?
+   - Phase 2 vs Phase 3 config handling - correct?
+
+8. **May have "completed" phases prematurely**
+   - Marked phases as done without thorough verification
+   - Tests passing != correct implementation
+
+9. **Code organization may not be clean**
+   - Files may be in wrong locations
+   - Module structure may not follow project patterns
+   - May have introduced unnecessary dependencies
+
+10. **Documentation may not match implementation**
+    - Comments may describe intended behavior, not actual
+    - Design docs may be outdated
+
+**IMPORTANT:** This list is NOT exhaustive. The new agent should:
+- Question EVERYTHING
+- Ask user about EACH design decision
+- Not trust any "completed" work without verification
 
 ---
 
