@@ -8,35 +8,54 @@
 
 ## Current Situation
 
-Previous agent completed Core (Rust) implementation but **Python tests have critical quality issues**.
+**⚠️ CRITICAL: Previous agent's Core implementation is INCOMPLETE and has MISTAKES.**
 
-### ✅ What's Working
-- **Core Implementation:** Fully functional
-  - `logout_session()` HTTP function
-  - `connection_close()` with Phase 3 truth table
-  - `AsyncQueryRegistry` for tracking queries
-  - All error handling strategies (Strict/BestEffort)
-- **Core Tests:** **38/38 E2E tests PASSING** (verified)
-- **Core Integration Tests:** 4/5 passing
-- **Python FFI:** Bindings exist and compile
+The previous agent:
+- Started Core implementation but did NOT complete it properly
+- Made assumptions that may be wrong
+- Did not follow clean code best practices in all places
+
+**YOU MUST:**
+1. Study the current Core implementation critically
+2. Ask the user about design decisions before proceeding
+3. Do NOT assume anything is correct just because it exists
+4. Follow clean code / best practices approach
+
+### ⚠️ What Exists (NEEDS REVIEW - may have issues)
+- **Core Implementation:** Exists but needs critical review
+  - `logout_session()` HTTP function - review for correctness
+  - `connection_close()` - review logic and error handling
+  - `AsyncQueryRegistry` - only local, doesn't check server (WRONG)
+  - Strategy pattern - implemented but may need refinement
+- **Core Tests:** Tests pass but may not verify correct behavior
+- **Python FFI:** Bindings exist but may have issues
 
 ### ❌ Critical Problems
 
-#### Core (Rust) Issues
-1. **Core tests need review**
-   - May have same problem as Python - not verifying actual behavior
-   - Review ALL Core tests: Would they fail if implementation was removed?
-   - Verify mock servers check correct request format, headers, etc.
+#### Core (Rust) Issues - NEEDS FULL REVIEW
 
-2. **ErrorStrategy - FIXED ✅**
-   - ~~Current: Simple `match` with if-else in `connection.rs`~~
-   - ~~Required: Proper Strategy pattern with trait + implementations~~
-   - **Implemented:** `trait ErrorHandlingStrategy` with `StrictStrategy` and `BestEffortStrategy`
-   - Files: `sf_core/src/config/logout.rs`, `sf_core/src/apis/database_driver_v1/connection.rs`
+**1. AsyncQueryRegistry is WRONG**
+   - Current: Only checks local HashSet
+   - Required: Should call SERVER to check query status (like old connector)
+   - Old connector uses `get_query_status(sfqid)` which is an HTTP call
+   - This is CRITICAL for correct logout behavior
 
-3. **Code quality issues**
-   - `spawn_capture_server` duplicated across files
-   - Not following patterns from old connector
+**2. Implementation may have design issues**
+   - Previous agent made assumptions - ASK USER if correct
+   - Review ALL design decisions with user
+   - Don't assume Strategy pattern is implemented correctly
+
+**3. Questions to ask user:**
+   - Is the LogoutConfig structure correct?
+   - Is the truth table in logout_decision.rs correct?
+   - Should error handling work differently?
+   - Is the current test coverage sufficient?
+   - What's the correct behavior for each scenario?
+
+**4. Code quality**
+   - Review for clean code principles
+   - Check for proper error handling
+   - Verify logging is appropriate (no sensitive data)
 
 #### Python Issues
 4. **Python E2E tests don't verify behavior**
@@ -439,21 +458,53 @@ cd python && hatch run test:all tests/e2e/session/test_logout.py -v
 
 ## Start Here
 
-1. **Run Core tests first** to verify current state:
-   ```bash
-   cargo test --package sf_core --lib logout
-   cargo test --package sf_core --test integration_tests logout
-   ```
-2. **Review Strategy pattern implementation** in `sf_core/src/config/logout.rs`
-3. **Review old connector's `_all_async_queries_finished()`** in attached selection
-4. **Architecture decision:** How to implement server-side query status check
-5. **Run Python integration tests** (need Java for Wiremock):
-   ```bash
-   cd python && hatch run test:all tests/integ/session/test_logout.py -v
-   ```
-6. **Commit frequently** with clear messages
+### Step 0: CRITICAL - Review and Question Everything
 
-**Remember:** Quality over speed. Core must be solid before Python.
+**Before writing ANY code, you MUST:**
+
+1. **Read the current Core implementation files:**
+   - `sf_core/src/config/logout.rs` - LogoutConfig, ErrorStrategy, Strategy pattern
+   - `sf_core/src/apis/database_driver_v1/connection.rs` - connection_close()
+   - `sf_core/src/apis/database_driver_v1/logout_decision.rs` - should_send_logout()
+   - `sf_core/src/apis/database_driver_v1/async_query_registry.rs` - AsyncQueryRegistry
+   - `sf_core/src/rest/snowflake/logout.rs` - logout_session() HTTP function
+
+2. **ASK THE USER about each design decision:**
+   - "Is this the right approach for X?"
+   - "Should we keep Y or redesign it?"
+   - "The current implementation does Z - is this what you wanted?"
+
+3. **Document your concerns** before implementing fixes
+
+4. **Questions to ask:**
+   - Strategy pattern implementation - is it correct?
+   - Error handling approach - should errors propagate differently?
+   - AsyncQueryRegistry - is local-only acceptable for now?
+   - LogoutConfig structure - are the fields correct?
+   - Truth table implementation - does decision logic match requirements?
+   - Test coverage - are the right scenarios tested?
+
+### Step 1: Run Tests to Understand Current State
+```bash
+cargo test --package sf_core --lib logout
+cargo test --package sf_core --test integration_tests logout
+```
+
+### Step 2: Study and Question
+- Review each file critically
+- Note anything that looks wrong or could be better
+- ASK THE USER before changing
+
+### Step 3: Fix Issues
+- Only after user confirms approach
+- Follow clean code best practices
+- Test after each change
+
+**Remember:** 
+- Do NOT assume previous work is correct
+- ASK before implementing
+- Quality over speed
+- Clean code matters
 
 ---
 
