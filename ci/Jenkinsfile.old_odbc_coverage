@@ -161,14 +161,15 @@ pipeline {
                                 ]) {
                                     sh '''
                                         echo "=== Uploading coverage metrics to Benchstore ==="
-                                        /opt/sfc/python3.11/bin/python3 -m venv venv
-                                        source venv/bin/activate
-                                        pip install --upgrade pip
-                                        pip install pyyaml benchstore-client-library --extra-index-url https://nexus.int.snowflakecomputing.com/repository/pypi-internal/simple
-                                        
-                                        python ./scripts/shared/coverage_benchstore_upload.py \
-                                            --summary coverage_report/summary.txt \
-                                            --type odbc
+                                        docker run --rm \
+                                            -v "$(pwd)":/workspace \
+                                            -v "$SF_PERF_CONFIG":/tmp/sf_perf_config.yml:ro \
+                                            -e SF_PERF_CONFIG=/tmp/sf_perf_config.yml \
+                                            -e BUILD_NUMBER="$BUILD_NUMBER" \
+                                            -e BRANCH_NAME="$BRANCH_NAME" \
+                                            -w /workspace \
+                                            rocky-old-odbc-build \
+                                            bash -c 'pip install pyyaml benchstore-client-library --extra-index-url https://nexus.int.snowflakecomputing.com/repository/pypi-internal/simple && python ./scripts/shared/coverage_benchstore_upload.py --summary coverage_report/summary.txt --type odbc'
                                     '''
                                 }
                             }
@@ -298,17 +299,18 @@ pipeline {
                                 withCredentials([
                                     file(credentialsId: '22401612-0c52-4682-8d00-fb9ee98927ac', variable: 'SF_PERF_CONFIG')
                                 ]) {
-                                    sh '''
+                                    sh """
                                         echo "=== Uploading coverage metrics to Benchstore ==="
-                                        /opt/sfc/python3.11/bin/python3 -m venv venv
-                                        source venv/bin/activate
-                                        pip install --upgrade pip
-                                        pip install pyyaml benchstore-client-library --extra-index-url https://nexus.int.snowflakecomputing.com/repository/pypi-internal/simple
-                                        
-                                        python ./scripts/shared/coverage_benchstore_upload.py \
-                                            --summary python_coverage_report/summary.txt \
-                                            --type python
-                                    '''
+                                        docker run --rm \
+                                            -v "\$(pwd)":/workspace \
+                                            -v "\$SF_PERF_CONFIG":/tmp/sf_perf_config.yml:ro \
+                                            -e SF_PERF_CONFIG=/tmp/sf_perf_config.yml \
+                                            -e BUILD_NUMBER="\$BUILD_NUMBER" \
+                                            -e BRANCH_NAME="\$BRANCH_NAME" \
+                                            -w /workspace \
+                                            ${DOCKER_IMAGE} \
+                                            bash -c 'pip install pyyaml benchstore-client-library --extra-index-url https://nexus.int.snowflakecomputing.com/repository/pypi-internal/simple && python ./scripts/shared/coverage_benchstore_upload.py --summary python_coverage_report/summary.txt --type python'
+                                    """
                                 }
                             }
                         }
