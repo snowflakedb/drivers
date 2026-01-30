@@ -160,7 +160,8 @@ pipeline {
                                     file(credentialsId: '22401612-0c52-4682-8d00-fb9ee98927ac', variable: 'SF_PERF_CONFIG')
                                 ]) {
                                     sh '''
-                                        python3 -m venv venv_odbc
+                                        # Use Python 3.9+ (agent default is 3.6 which doesn't support benchstore-client-library)
+                                        /opt/sfc/python3.9/bin/python3 -m venv venv_odbc
                                         source venv_odbc/bin/activate
                                         pip install --upgrade pip
                                         pip install pyyaml benchstore-client-library --extra-index-url https://nexus.int.snowflakecomputing.com/repository/pypi-internal/simple
@@ -298,7 +299,8 @@ pipeline {
                                     file(credentialsId: '22401612-0c52-4682-8d00-fb9ee98927ac', variable: 'SF_PERF_CONFIG')
                                 ]) {
                                     sh '''
-                                        python3 -m venv venv_python
+                                        # Use Python 3.9+ (agent default is 3.6 which doesn't support benchstore-client-library)
+                                        /opt/sfc/python3.9/bin/python3 -m venv venv_python
                                         source venv_python/bin/activate
                                         pip install --upgrade pip
                                         pip install pyyaml benchstore-client-library --extra-index-url https://nexus.int.snowflakecomputing.com/repository/pypi-internal/simple
