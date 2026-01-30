@@ -81,7 +81,7 @@ pipeline {
                         stage('ODBC: Build Docker Images') {
                             steps {
                                 sh '''
-                                    docker build -f ci/Dockerfile.rocky-old-odbc-build -t rocky-old-odbc-build .
+                                    docker build --no-cache -f ci/Dockerfile.rocky-old-odbc-build -t rocky-old-odbc-build .
                                     docker build -f ci/Dockerfile.rocky-old-odbc-test -t rocky-old-odbc-test .
                                 '''
                             }
