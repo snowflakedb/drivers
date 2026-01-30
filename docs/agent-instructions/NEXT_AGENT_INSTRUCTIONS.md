@@ -57,11 +57,12 @@ Previous agent completed Core (Rust) implementation but **Python tests have crit
 
 ## Your Mission
 
-**Fix BOTH Core and Python code quality issues.**
+**Refine Core, implement server-side async query check, then verify Python.**
 
 ### Priority Order:
-1. **Core first:** Review tests, refactor ErrorStrategy to proper Strategy pattern
-2. **Python second:** Fix tests to verify behavior with wiremock/caplog
+1. **Core refinement:** Clean up, verify tests work, ensure quality
+2. **Implement server-side async query check:** Like old connector's `_all_async_queries_finished()`
+3. **Python verification:** Run and verify wiremock integration tests work
 
 Follow the fix plan in `@LOGOUT_FIXES_REQUIRED.md` which details:
 - How to study old connector
@@ -138,22 +139,40 @@ code _old_snowflake_python_connector_for_reference/snowflake-connector-python/sr
 
 **Document your findings before proceeding.**
 
-### Step 2: Review ALL Core Tests
-**Critical:** Before writing new code, review existing Core tests.
+### Step 2: Core Refinement and Cleanup (START HERE)
+**Goal:** Make sure the Core implementation is solid before moving on.
 
-**Question for each test:** "Would this test FAIL if I removed the implementation?"
+**Run Core tests:**
+```bash
+# Unit tests
+cargo test --package sf_core --lib logout
 
-**Files to review:**
+# Integration tests (need network for mock server)
+cargo test --package sf_core --test integration_tests logout
+
+# E2E tests (need PARAMETER_PATH for real Snowflake)
+PARAMETER_PATH=/path/to/parameters.json cargo test --package sf_core --test e2e_tests logout
+```
+
+**Verify these pass:**
+- 20 unit tests (config::logout, logout_decision, etc.)
+- 3 integration tests (HTTP request verification with mock server)
+- 38 E2E tests (real Snowflake - ask user to run if sandbox blocks)
+
+**Review the code for:**
+- No security issues (no token logging)
+- Clean error handling
+- Good logging messages
+
+### Step 3: Review ALL Core Tests - DONE ✅
+Core test review was completed by previous agent. Key findings:
+
+**Integration tests (GOOD):** These actually verify HTTP behavior with mock servers
+**E2E tests (LIMITED):** Against real Snowflake, can only verify success/failure, not HTTP details
+
+**Files:**
 - `sf_core/tests/e2e/session/logout.rs` (38 tests)
-- `sf_core/tests/integration/session/logout.rs`
-
-**Check that tests verify:**
-- Correct HTTP method (POST)
-- Correct endpoint (/session?delete=true)
-- Correct headers (Authorization, Content-Type)
-- Response handling
-
-**Document which tests are real vs which are "false positives".**
+- `sf_core/tests/integration/session/logout.rs` (3 passing + 2 ignored)
 
 ### Step 3: Refactor ErrorStrategy to Strategy Pattern - DONE ✅
 **This has been implemented.** See `sf_core/src/config/logout.rs` for:
@@ -176,14 +195,45 @@ if strategy.should_ignore_error(&logout_err) {
 }
 ```
 
-### Step 4: Fix has_running_queries() Implementation
-**Current problem:** Only checks local HashSet  
+### Step 4: Implement Server-Side Async Query Check (CRITICAL)
+**Current problem:** Only checks local HashSet - doesn't ask server if queries are running  
 **Required:** HTTP call to server to check query status like old connector
 
+**Old connector pattern** (from `connection.py:2052-2084`):
+```python
+def _all_async_queries_finished(self) -> bool:
+    """Checks whether all async queries started by this Connection have finished executing."""
+    
+    if not self._async_sfqids:
+        return True  # No queries tracked = all finished
+    
+    queries = list(reversed(self._async_sfqids.keys()))
+    
+    # Check each query's status via HTTP call to server
+    def async_query_check_helper(sfq_id: str) -> bool:
+        return found_unfinished_query or self.is_still_running(
+            self.get_query_status(sfq_id)  # <-- HTTP call to server!
+        )
+    
+    # Use ThreadPoolExecutor for parallel checking
+    with ThreadPoolExecutor(max_workers=num_workers) as tpe:
+        futures = (tpe.submit(async_query_check_helper, sfqid) for sfqid in queries)
+        for f in as_completed(futures):
+            if f.result():
+                found_unfinished_query = True
+                break  # Early return on first running query
+    
+    return not found_unfinished_query
+```
+
+**Key insight:** The old connector calls `get_query_status(sfq_id)` which makes an HTTP request to the server to check if a query is still running. This is the RIGHT way to do it.
+
 **Files to modify:**
-- `sf_core/src/apis/database_driver_v1/async_query_registry.rs`
-- Add HTTP endpoint call to check query status
-- Follow old connector's `_all_async_queries_finished()` pattern
+- `sf_core/src/apis/database_driver_v1/async_query_registry.rs` - Add method to check server status
+- Need to implement `get_query_status()` HTTP endpoint call
+- This will be used when async queries are added (execute with asyncExec=true)
+
+**For now (stub):** The async query registry can remain local-only until async query execution is implemented. But document this clearly and ensure the architecture supports server-side checking later.
 
 **Test:** Create integration test with mock query status responses
 
@@ -389,14 +439,21 @@ cd python && hatch run test:all tests/e2e/session/test_logout.py -v
 
 ## Start Here
 
-1. **Read ALL required docs above** (30 min)
-2. **Study old connector** `_old_snowflake_python_connector_for_reference/` (1 hour)
-3. **Document findings** - how old connector does logout, async checks, testing
-4. **Then start fixing** following the plan in LOGOUT_FIXES_REQUIRED.md
-5. **Test after each fix** - don't batch changes
+1. **Run Core tests first** to verify current state:
+   ```bash
+   cargo test --package sf_core --lib logout
+   cargo test --package sf_core --test integration_tests logout
+   ```
+2. **Review Strategy pattern implementation** in `sf_core/src/config/logout.rs`
+3. **Review old connector's `_all_async_queries_finished()`** in attached selection
+4. **Architecture decision:** How to implement server-side query status check
+5. **Run Python integration tests** (need Java for Wiremock):
+   ```bash
+   cd python && hatch run test:all tests/integ/session/test_logout.py -v
+   ```
 6. **Commit frequently** with clear messages
 
-**Remember:** Quality over speed. Better to do 5 tests properly than 50 tests that don't verify anything.
+**Remember:** Quality over speed. Core must be solid before Python.
 
 ---
 
@@ -412,15 +469,15 @@ cd python && hatch run test:all tests/e2e/session/test_logout.py -v
 
 ## Expected Timeline
 
-- **Study phase:** 2-3 hours
+- ~~**Study phase:** 2-3 hours~~ **DONE** - Old connector patterns documented
 - ~~**Core test review:** 2-3 hours~~ **DONE**
 - ~~**Core Strategy pattern refactor:** 2-3 hours~~ **DONE**
 - ~~**Core code quality (consolidate helpers):** 1-2 hours~~ **DONE**
-- **Python integration tests (wiremock):** 4-5 hours
-- **Python E2E tests (caplog/warns):** 3-4 hours
-- **has_running_queries() server check:** 2-3 hours
-- **Auto-cleanup tests:** 1-2 hours
-- **Total remaining:** ~12-17 hours
+- ~~**Python integration tests (wiremock):** 4-5 hours~~ **DONE** - 7 tests created
+- **Core refinement and verification:** 1-2 hours
+- **Server-side async query check architecture:** 2-3 hours
+- **Python test verification (run with hatch):** 1-2 hours
+- **Total remaining:** ~5-8 hours
 
 Take your time. Do it right.
 
