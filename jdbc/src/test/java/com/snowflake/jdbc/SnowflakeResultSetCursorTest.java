@@ -17,35 +17,27 @@ public class SnowflakeResultSetCursorTest extends SnowflakeIntegrationTestBase {
 
   @Test
   public void testCursorPosition() throws Exception {
-    String tableName = "RS_CURSOR_TEST_" + System.currentTimeMillis();
     try (Connection conn = openConnection();
         Statement stmt = conn.createStatement()) {
       ensureDatabaseAndSchema(conn);
-      try {
-        stmt.execute("create or replace temporary table " + tableName + " (id int)");
-        stmt.execute("insert into " + tableName + " values (1), (2), (3)");
+      try (ResultSet rs = stmt.executeQuery("select * from values (1), (2), (3);")) {
+        assertTrue(rs.isBeforeFirst());
+        assertEquals(0, rs.getRow());
 
-        try (ResultSet rs = stmt.executeQuery("select id from " + tableName + " order by id")) {
-          assertTrue(rs.isBeforeFirst());
-          assertEquals(0, rs.getRow());
+        assertTrue(rs.next());
+        assertTrue(rs.isFirst());
+        assertEquals(1, rs.getRow());
 
-          assertTrue(rs.next());
-          assertTrue(rs.isFirst());
-          assertEquals(1, rs.getRow());
+        assertTrue(rs.next());
+        assertFalse(rs.isFirst());
+        assertEquals(2, rs.getRow());
 
-          assertTrue(rs.next());
-          assertFalse(rs.isFirst());
-          assertEquals(2, rs.getRow());
+        assertTrue(rs.next());
+        assertEquals(3, rs.getRow());
 
-          assertTrue(rs.next());
-          assertEquals(3, rs.getRow());
-
-          assertFalse(rs.next());
-          assertTrue(rs.isAfterLast());
-          assertEquals(0, rs.getRow());
-        }
-      } finally {
-        stmt.execute("drop table if exists " + tableName);
+        assertFalse(rs.next());
+        assertTrue(rs.isAfterLast());
+        assertEquals(0, rs.getRow());
       }
     }
   }

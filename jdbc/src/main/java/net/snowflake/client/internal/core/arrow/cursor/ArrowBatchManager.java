@@ -6,14 +6,11 @@ import org.apache.arrow.vector.VectorSchemaRoot;
 
 public final class ArrowBatchManager {
   private final CursorState cursor;
-  private final BatchState batch;
   private final ArrowResources resources;
   private final SchemaState schema;
 
-  public ArrowBatchManager(
-      CursorState cursor, BatchState batch, ArrowResources resources, SchemaState schema) {
+  public ArrowBatchManager(CursorState cursor, ArrowResources resources, SchemaState schema) {
     this.cursor = cursor;
-    this.batch = batch;
     this.resources = resources;
     this.schema = schema;
   }
@@ -23,8 +20,8 @@ public final class ArrowBatchManager {
       return false;
     }
     try {
-      if (batch.hasLoadedBatch() && batch.hasNextRowInBatch()) {
-        batch.incrementRowInBatch();
+      if (cursor.hasLoadedBatch() && cursor.hasNextRowInBatch()) {
+        cursor.incrementRowInBatch();
         return true;
       }
       return advanceToNextBatch();
@@ -50,7 +47,7 @@ public final class ArrowBatchManager {
       return false;
     }
     resources.setCurrentRoot(nextRoot);
-    batch.startNewBatch(resources.getCurrentRoot().getRowCount());
+    cursor.startNewBatch(resources.getCurrentRoot().getRowCount());
     schema.resetConverterCache();
     return true;
   }

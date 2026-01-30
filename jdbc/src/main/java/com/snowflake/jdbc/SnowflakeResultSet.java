@@ -31,7 +31,6 @@ import java.util.Map;
 import net.snowflake.client.internal.core.arrow.converters.ArrowVectorConverter;
 import net.snowflake.client.internal.core.arrow.cursor.ArrowBatchManager;
 import net.snowflake.client.internal.core.arrow.cursor.ArrowResources;
-import net.snowflake.client.internal.core.arrow.cursor.BatchState;
 import net.snowflake.client.internal.core.arrow.cursor.CursorState;
 import net.snowflake.client.internal.core.arrow.cursor.SchemaState;
 import net.snowflake.client.jdbc.SFException;
@@ -49,7 +48,6 @@ public class SnowflakeResultSet implements ResultSet {
 
   private final SnowflakeStatement statement;
   private final CursorState cursor = new CursorState();
-  private final BatchState batch = new BatchState();
   private final SchemaState schema;
   private final ArrowResources resources;
   private final ArrowBatchManager batchManager;
@@ -60,16 +58,17 @@ public class SnowflakeResultSet implements ResultSet {
   public SnowflakeResultSet(SnowflakeStatement statement, ExecuteResult result)
       throws SQLException {
     this.statement = statement;
-    ByteString stream_ptr_bytes = result.getStream().getValue();
-    long ptr =
-        ByteBuffer.wrap(stream_ptr_bytes.toByteArray()).order(ByteOrder.LITTLE_ENDIAN).getLong();
-    ArrowArrayStream stream = ArrowArrayStream.wrap(ptr);
-    RootAllocator allocator = new RootAllocator(Long.MAX_VALUE);
+    ByteString streamPointerBytes = result.getStream().getValue();
+    // TODO Check how will this behave on AIX (Big Endian)
+    long pointer =
+        ByteBuffer.wrap(streamPointerBytes.toByteArray()).order(ByteOrder.LITTLE_ENDIAN).getLong();
+    ArrowArrayStream stream = ArrowArrayStream.wrap(pointer);
+    RootAllocator allocator = new RootAllocator();
     ArrowResources resources =
         new ArrowResources(stream, allocator, Data.importArrayStream(allocator, stream));
     this.resources = resources;
     this.schema = new SchemaState(resources.getActiveRoot());
-    this.batchManager = new ArrowBatchManager(cursor, batch, resources, schema);
+    this.batchManager = new ArrowBatchManager(cursor, resources, schema);
   }
 
   @Override
@@ -91,10 +90,10 @@ public class SnowflakeResultSet implements ResultSet {
     if (closed) {
       return;
     }
-    closed = true;
     try {
       resources.closeAll();
     } finally {
+      closed = true;
       resetStateAfterClose();
     }
   }
@@ -341,6 +340,9 @@ public class SnowflakeResultSet implements ResultSet {
   @Override
   public boolean isBeforeFirst() throws SQLException {
     checkClosed();
+    // After calling next() on an empty result: currentRow stays -1, but afterLast becomes true
+    // Without the !isAfterLast() check, isBeforeFirst() would incorrectly return true for an
+    // exhausted empty result set
     return cursor.getCurrentRow() < 0 && !cursor.isAfterLast();
   }
 
@@ -353,6 +355,7 @@ public class SnowflakeResultSet implements ResultSet {
   @Override
   public boolean isFirst() throws SQLException {
     checkClosed();
+    // Row 0 is the first row; also check afterLast to handle exhausted single-row result sets
     return cursor.getCurrentRow() == 0 && !cursor.isAfterLast();
   }
 
@@ -1123,7 +1126,6 @@ public class SnowflakeResultSet implements ResultSet {
   private void resetStateAfterClose() {
     resources.reset();
     schema.reset();
-    batch.reset();
     cursor.reset();
   }
 
@@ -1131,7 +1133,7 @@ public class SnowflakeResultSet implements ResultSet {
     if (cursor.isAfterLast()) {
       throw new SQLException("After last row");
     }
-    if (batch.getCurrentRowInBatch() < 0) {
+    if (cursor.getCurrentRowInBatch() < 0) {
       throw new SQLException("Before first row");
     }
   }
@@ -1158,7 +1160,7 @@ public class SnowflakeResultSet implements ResultSet {
     validateColumnAccess(columnIndex);
     ArrowVectorConverter converter = getConverter(columnIndex);
     try {
-      int rowIndex = batch.getCurrentRowInBatch();
+      int rowIndex = cursor.getCurrentRowInBatch();
       T value = converterFunction.convert(converter, rowIndex);
       cursor.setWasNull(converter.isNull(rowIndex));
       return value;
