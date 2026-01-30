@@ -10,6 +10,7 @@ mod chunks;
 mod compression;
 mod compression_types;
 pub mod config;
+pub mod connection_state;
 pub mod crl;
 mod file_manager;
 pub mod handle_manager;
