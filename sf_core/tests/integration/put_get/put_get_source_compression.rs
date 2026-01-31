@@ -1,16 +1,18 @@
 use crate::common::file_utils::repo_root;
+use crate::common::mocks;
 use crate::common::snowflake_test_client::SnowflakeTestClient;
-use crate::common::wiremock_client::WiremockClient;
+use wiremock::MockServer;
 
-#[test]
-fn should_return_error_for_unsupported_compression_type() {
+#[tokio::test]
+async fn should_return_error_for_unsupported_compression_type() {
     // Given Snowflake client is logged in
-    let wiremock = WiremockClient::start();
+    let server = MockServer::start().await;
+    let repo_root_str = repo_root().to_str().unwrap().to_string();
 
-    wiremock.add_mapping("auth/login_success_jwt.json", None);
-    wiremock.add_mapping("put_get/put_unsupported_compression_type.json", None);
+    mocks::auth::mount_jwt_login_success(&server).await;
+    mocks::put_get::mount_unsupported_compression(&server, &repo_root_str).await;
 
-    let client = SnowflakeTestClient::connect_integration_test(Some(&wiremock.http_url()));
+    let client = SnowflakeTestClient::connect_integration_test(Some(&server.uri()));
     let stage_name = "TEST_STAGE_UNSUPPORTED";
 
     // And File compressed with unsupported format
