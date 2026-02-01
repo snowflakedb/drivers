@@ -26,7 +26,80 @@ Design an **explicit, type-safe connection state machine** for the universal-dri
 4. Handles **concurrent access** safely during transient states
 5. Serves as a **single source of truth** for all language wrappers
 
-## 2. Problems This Design Addresses
+## 2. Architecture Overview
+
+### Internal vs. External API
+
+The `ConnectionStateMachine` is an **internal implementation detail** of the Rust core. Language wrappers and end users interact with a simple, familiar API:
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  Language Wrapper (Python / Node.js / ODBC / etc.)                          │
+│  ┌───────────────────────────────────────────────────────────────────────┐  │
+│  │  User Code                                                            │  │
+│  │    conn = snowflake.connect(...)                                      │  │
+│  │    cursor = conn.cursor()                                             │  │
+│  │    cursor.execute("SELECT ...")                                       │  │
+│  │    conn.close()                                                       │  │
+│  └───────────────────────────────────────────────────────────────────────┘  │
+│                              │                                              │
+│                              ▼                                              │
+│  ┌───────────────────────────────────────────────────────────────────────┐  │
+│  │  Simple Wrapper API: connect(), execute(), close(), get_state()       │  │
+│  └───────────────────────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────────────────┘
+                               │
+                               │ Protobuf
+                               ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  Rust Core (sf_core)                                                        │
+│  ┌───────────────────────────────────────────────────────────────────────┐  │
+│  │  ConnectionStateMachine (INTERNAL)                                    │  │
+│  │    - Tracks current state                                             │  │
+│  │    - Validates transitions                                            │  │
+│  │    - Manages pending operations queue                                 │  │
+│  │    - Broadcasts state changes                                         │  │
+│  └───────────────────────────────────────────────────────────────────────┘  │
+│                              │                                              │
+│                              │ State determines behavior                    │
+│                              ▼                                              │
+│  ┌───────────────────────────────────────────────────────────────────────┐  │
+│  │  Operation Handlers                                                   │  │
+│  │    - Login flow                                                       │  │
+│  │    - Query execution                                                  │  │
+│  │    - Session token renewal                                            │  │
+│  │    - Connection close                                                 │  │
+│  └───────────────────────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Key Principle: State Determines Behavior
+
+The wrapper API remains simple—users call `connect()`, `execute()`, `close()`. **Internally**, the Rust core uses the state machine to decide **how** to handle each operation:
+
+| Wrapper Call | Internal State | Core Behavior |
+|--------------|----------------|---------------|
+| `execute()` | `Pristine` | Error: "connection not initialized" |
+| `execute()` | `Connecting` | Queue operation, wait until connected (with timeout) |
+| `execute()` | `Connected` | Execute immediately |
+| `execute()` | `Renewing` | Queue operation, wait until renewed (with timeout) |
+| `execute()` | `Disconnected` | Error with disconnect reason |
+| `close()` | Any | Transition to `Disconnected`, drain queues with error |
+| `connect()` | `Pristine` | Start connecting |
+| `connect()` | `Disconnected` | Reconnect if `reason.can_reconnect()` |
+| `connect()` | Other | Error: "already connected/connecting" |
+
+### Optional State Exposure via Protobuf
+
+While the state machine is internal, we expose a **read-only state query** via protobuf. This allows users to:
+
+- Check if a connection is closed before attempting operations
+- Implement connection health monitoring
+- Debug connection lifecycle issues
+
+The exposed API is intentionally limited—users **cannot** directly manipulate state transitions.
+
+## 3. Problems This Design Addresses
 
 ### 2.1 Session Renewal Storm
 
@@ -85,7 +158,7 @@ Current drivers handle this inconsistently—some queue silently, some fail with
 - In-flight operations can check state and abort cleanly
 - Clear distinction between "user initiated close" vs "error disconnection"
 
-## 3. Previous Attempt Analysis: Node.js Driver
+## 4. Previous Attempt Analysis: Node.js Driver
 
 The Node.js Snowflake connector (`snowflake-connector-nodejs/lib/services/sf.js`) implemented an explicit state machine pattern. While architecturally sound in concept, the implementation suffered from several issues that made it difficult to work with.
 
@@ -145,7 +218,7 @@ StateConnected.prototype.request = function (options) {
 4. **State must be observable** for debugging and monitoring
 5. **Type safety catches errors early** — before production
 
-## 4. Proposed Solution: Rust State Machine
+## 5. Proposed Solution: Rust State Machine
 
 ### 4.1 Design Principles
 
@@ -189,7 +262,9 @@ StateConnected.prototype.request = function (options) {
           │
           │ master token expired / error
           ▼
+  ┌──────────────┐ 
     Disconnected { MasterTokenExpired | InternalError }
+  └──────────────┘
 ```
 
 ### 4.3 Valid State Transitions
@@ -267,7 +342,7 @@ struct PendingOperationsQueue {
 }
 ```
 
-## 5. How This Addresses Each Problem
+## 6. How This Addresses Each Problem
 
 ### Session Renewal Storm
 
@@ -326,7 +401,7 @@ self.state_machine.wait_ready(timeout).await?;
 // - Error includes reason, enabling clean abort
 ```
 
-## 6. Comparison: Implicit vs. Explicit State Machine
+## 7. Comparison: Implicit vs. Explicit State Machine
 
 | Aspect | Implicit (Current Drivers) | Explicit (Proposed) |
 |--------|---------------------------|---------------------|
@@ -338,17 +413,37 @@ self.state_machine.wait_ready(timeout).await?;
 | Observability | None | `broadcast::Receiver` |
 | Debugging | "Why did this fail?" | Clear state + transition log |
 
-## 7. Integration with Protobuf API
+## 8. Protobuf API: Read-Only State Exposure
+
+While the state machine is an internal implementation detail, we expose connection state via protobuf as a **read-only query**. This serves specific use cases without exposing internal complexity:
+
+### Use Cases
+
+| Use Case | Example |
+|----------|---------|
+| **Connection Health Check** | Check if connection is still valid before expensive operation |
+| **Pool Management** | Wrapper-level connection pools can check state before returning connections |
+| **Debugging** | Users can inspect why operations fail ("connection was closing") |
+| **Monitoring** | Track connection lifecycle for observability dashboards |
+
+### What Is NOT Exposed
+
+- Direct state transitions (users cannot force state changes)
+- Pending operations queue details
+- Internal broadcast channels
+
+### Protobuf Definition
 
 ```protobuf
-// Expose state to language wrappers
+// Read-only state query - users can check but not modify state
 message ConnectionGetStateRequest {
   ConnectionHandle conn_handle = 1;
 }
 
 message ConnectionGetStateResponse {
   ConnectionState state = 1;
-  optional string disconnect_reason = 2;  // If disconnected
+  optional string disconnect_reason = 2;  // Populated if state == DISCONNECTED
+  bool can_reconnect = 3;                 // Whether reconnect() would succeed
 }
 
 enum ConnectionState {
@@ -361,7 +456,26 @@ enum ConnectionState {
 }
 ```
 
-## 8. Files in This POC
+### Wrapper Usage Example
+
+```python
+# Python wrapper example
+conn = snowflake.connect(...)
+
+# User can check state if needed
+state = conn.get_state()
+if state == ConnectionState.DISCONNECTED:
+    if conn.can_reconnect():
+        conn.connect()  # Reconnect
+    else:
+        raise Error("Connection permanently closed")
+
+# But most users just call operations directly
+# and let the core handle state internally
+cursor.execute("SELECT 1")  # Core handles queuing/errors based on state
+```
+
+## 9. Files in This POC
 
 | File | Purpose |
 |------|---------|
@@ -371,7 +485,7 @@ enum ConnectionState {
 | `sf_core/src/connection_state/pending_ops.rs` | Bounded pending operations queue |
 | `sf_core/src/connection_state/error.rs` | `StateMachineError` with `snafu` |
 
-## 9. Usage Example
+## 10. Usage Example
 
 ```rust
 use sf_core::connection_state::{ConnectionStateMachine, ConnectionState};
@@ -409,7 +523,7 @@ sm.close().await?;
 sm.start_connecting().await?;  // OK - UserInitiated allows reconnect
 ```
 
-## 10. Next Steps
+## 11. Next Steps
 
 1. **Review** - Gather feedback on this design
 2. **Integrate** - Wire `ConnectionStateMachine` into existing `Connection` struct
@@ -417,9 +531,3 @@ sm.start_connecting().await?;  // OK - UserInitiated allows reconnect
 4. **Protobuf API** - Expose state queries to language wrappers
 5. **Integration Tests** - Test concurrent scenarios (renewal storm, close during query)
 6. **Documentation** - Migration guide for existing code
-
-## References
-
-- Node.js driver analysis: `drivers/snowflake-connector-nodejs/lib/services/sf.js`
-- Python driver reconnection: `drivers/snowflake-connector-python/src/snowflake/connector/connection.py`
-- Current Rust connection: `sf_core/src/apis/database_driver_v1/connection.rs`
