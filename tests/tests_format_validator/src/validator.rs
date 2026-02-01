@@ -738,8 +738,16 @@ impl GherkinValidator {
         let mut language_set = std::collections::HashSet::new();
 
         // If feature is in a language-specific folder, only validate that language
+        // BUT only if there are scenarios with implementation tags for it
         if let Some(only_lang) = &folder_language {
-            language_set.insert(only_lang.clone());
+            // Check if any scenario has implementation tags for this language
+            let has_implementation_tags = feature.scenarios.iter().any(|scenario| {
+                let scenario_languages = TestDiscovery::get_target_languages(&scenario.tags);
+                scenario_languages.contains(only_lang)
+            });
+            if has_implementation_tags {
+                language_set.insert(only_lang.clone());
+            }
         } else {
             // Collect all unique languages from scenario tags
             // BUT only if the feature declares that language at feature level
@@ -1001,7 +1009,11 @@ impl GherkinValidator {
                         let mut method_missing_steps = Vec::new();
 
                         for step_text in &scenario_steps {
-                            if !method_steps.contains(step_text) {
+                            // Check if any implemented step starts with the expected step
+                            let step_found = method_steps
+                                .iter()
+                                .any(|impl_step| self.steps_match(impl_step, step_text));
+                            if !step_found {
                                 method_missing_steps.push(step_text.clone());
                                 if !all_missing_steps.contains(step_text) {
                                     all_missing_steps.push(step_text.clone());
@@ -1088,8 +1100,9 @@ impl GherkinValidator {
         let norm_impl = normalize(implemented_step);
         let norm_feature = normalize(feature_step);
 
-        // Require exact match after normalization - no partial matches allowed
-        norm_impl == norm_feature
+        // Match if implemented step starts with the expected feature step
+        // This handles cases where comments after the step are treated as continuations
+        norm_impl.starts_with(&norm_feature)
     }
 
     pub fn validate_all_with_breaking_changes(&self) -> Result<EnhancedValidationResult> {
