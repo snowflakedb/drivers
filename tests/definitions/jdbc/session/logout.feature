@@ -1,4 +1,3 @@
-@jdbc
 Feature: Session Logout - JDBC-specific behavior
 
   # ===========================================================================

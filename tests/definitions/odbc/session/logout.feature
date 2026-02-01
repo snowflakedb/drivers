@@ -1,4 +1,3 @@
-@odbc
 Feature: Session Logout - ODBC-specific behavior
 
   # ODBC implements Phase 3 (doc for: SNOW-2314152) unified behavior from the start.
