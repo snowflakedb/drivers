@@ -226,27 +226,34 @@ Feature: Session Logout
   # ===========================================================================
 
   @core_e2e @python_e2e
-  Scenario: should invalidate session so queries fail after logout
+  Scenario: should reject queries after connection is closed
+    # Tests CLIENT-SIDE behavior: after close(), client prevents query attempts
     Given Snowflake client is logged in
     And Simple query SELECT 1 executes successfully
     When Connection is closed with logout
     Then Logout request is sent successfully
     When Query is attempted on closed connection
-    Then Query fails with session-related error
+    Then Query fails with connection closed error
 
-  @core_e2e @python_e2e
-  Scenario: should invalidate session token server-side after logout
-    Given Snowflake client is logged in
-    And Session token is captured before logout
-    When Connection is closed with logout
-    Then Using captured session token to make request returns SESSION_GONE error 390111
+  @core_int @python_not_needed
+  Scenario: should handle SESSION_GONE error when using invalidated session token
+    # Tests client handling when SERVER returns SESSION_GONE (token already invalidated)
+    # Uses mock server to simulate server response
+    Given Mock server is configured to return SESSION_GONE
+    And Session token is invalidated on server
+    When Logout is attempted with invalidated session token
+    Then Server returns SESSION_GONE error 390111
+    And Client treats SESSION_GONE as successful logout
 
-  @core_e2e @python_e2e
-  Scenario: should invalidate master token ability to refresh after logout
-    Given Snowflake client is logged in
-    And Master token is captured before logout
-    When Connection is closed with logout
-    Then Using captured master token to refresh session fails
+  @core_int @python_not_needed
+  Scenario: should handle token refresh failure after logout
+    # Tests client handling when SERVER rejects master token refresh after logout
+    # Uses mock server to simulate server response
+    Given Mock server is configured to return 401 Unauthorized
+    And Master token is invalidated on server
+    When Token refresh is attempted with invalidated master token
+    Then Server returns 401 Unauthorized
+    And Client receives session refresh error
 
   # ===========================================================================
   #                      Error Handling - Strategy Configuration

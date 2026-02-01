@@ -262,6 +262,113 @@ async fn should_record_connection_close_decision_metrics_before_logout() {
     // - Telemetry was flushed before logout
 }
 
+// ===========================================================================
+//                    Post-Logout Session Token Invalidation
+// ===========================================================================
+
+#[tokio::test]
+async fn should_handle_session_gone_error_when_using_invalidated_session_token() {
+    // Tests that SESSION_GONE (390111) during logout is treated as success
+    // because it indicates the session is already invalidated (desired outcome)
+
+    //Given Mock server is configured to return SESSION_GONE
+    let (addr, _, server) = spawn_test_server(1, |_| async move {
+        let body = r#"{"success":false,"code":"390111","message":"Session no longer exists","data":null}"#;
+        format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        ).into_bytes()
+    })
+    .await;
+
+    //And Session token is invalidated on server
+    let server_url = format!("http://{}", addr);
+    let session_token = "invalidated_session_token";
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .build()
+        .expect("Failed to build HTTP client");
+    let client_info = test_client_info();
+
+    //When Logout is attempted with invalidated session token
+    let result = logout_session(
+        &client,
+        &server_url,
+        session_token,
+        &client_info,
+        Duration::from_secs(5),
+        &RetryPolicy::default(),
+    )
+    .await;
+
+    //Then Server returns SESSION_GONE error 390111
+    //And Client treats SESSION_GONE as successful logout
+    // (SESSION_GONE means session is already gone = logout goal achieved)
+    assert!(
+        result.is_ok(),
+        "SESSION_GONE should be treated as success for logout: {:?}",
+        result
+    );
+
+    server.await.unwrap();
+}
+
+#[tokio::test]
+async fn should_handle_token_refresh_failure_after_logout() {
+    // Tests client handling when SERVER rejects master token refresh after logout
+    // Uses mock server to simulate server response
+
+    //Given Mock server is configured to return 401 Unauthorized
+    let (addr, _, server) = spawn_test_server(1, |_| async move {
+        let body = r#"{"success":false,"message":"Master token invalid or expired"}"#;
+        format!(
+            "HTTP/1.1 401 Unauthorized\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        ).into_bytes()
+    })
+    .await;
+
+    //And Master token is invalidated on server
+    let server_url = format!("http://{}", addr);
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .build()
+        .expect("Failed to build HTTP client");
+    let client_info = test_client_info();
+    let old_tokens = sf_core::rest::snowflake::SessionTokens {
+        session_token: "old_session_token".to_string(),
+        master_token: "invalidated_master_token".to_string(),
+        session_id: 12345,
+        session_expires_at: None,
+        master_expires_at: None,
+    };
+
+    //When Token refresh is attempted with invalidated master token
+    let result = sf_core::rest::snowflake::refresh_session(
+        &client,
+        &server_url,
+        &client_info,
+        &old_tokens,
+    )
+    .await;
+
+    //Then Server returns 401 Unauthorized
+    assert!(result.is_err(), "Token refresh should fail with 401");
+
+    //And Client receives session refresh error
+    let err = result.unwrap_err();
+    let err_str = format!("{:?}", err);
+    assert!(
+        err_str.contains("401") || err_str.contains("refresh") || err_str.contains("SessionRefresh"),
+        "Error should indicate refresh failed: {}",
+        err_str
+    );
+
+    server.await.unwrap();
+}
+
 // Helper functions
 
 fn test_client_info() -> ClientInfo {
