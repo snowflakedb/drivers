@@ -222,6 +222,33 @@ Feature: Session Logout
     And No errors are thrown
 
   # ===========================================================================
+  #                    Post-Logout Session Invalidation
+  # ===========================================================================
+
+  @core_e2e @python_e2e
+  Scenario: should invalidate session so queries fail after logout
+    Given Snowflake client is logged in
+    And Simple query SELECT 1 executes successfully
+    When Connection is closed with logout
+    Then Logout request is sent successfully
+    When Query is attempted on closed connection
+    Then Query fails with session-related error
+
+  @core_e2e @python_e2e
+  Scenario: should invalidate session token server-side after logout
+    Given Snowflake client is logged in
+    And Session token is captured before logout
+    When Connection is closed with logout
+    Then Using captured session token to make request returns SESSION_GONE error 390111
+
+  @core_e2e @python_e2e
+  Scenario: should invalidate master token ability to refresh after logout
+    Given Snowflake client is logged in
+    And Master token is captured before logout
+    When Connection is closed with logout
+    Then Using captured master token to refresh session fails
+
+  # ===========================================================================
   #                      Error Handling - Strategy Configuration
   # ===========================================================================
 
