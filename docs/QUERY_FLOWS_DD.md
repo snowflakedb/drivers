@@ -205,6 +205,71 @@ graph TB
     Chunks --> CSP
 ```
 
+<details>
+<summary>PlantUML Source</summary>
+
+```plantuml
+@startuml architecture
+skinparam componentStyle uml2
+skinparam linetype ortho
+
+package "Language Wrappers" {
+  [ODBC Driver] as ODBC
+  [JDBC Bridge] as JDBC
+  [Python Driver] as Python
+}
+
+package "Protobuf FFI Layer" {
+  [RustTransport\ncall_proto()] as Transport
+  [DatabaseDriverImpl\nhandle_message()] as ProtoAPIs
+}
+
+package "API Layer" {
+  [connection.rs\nconnection_init()\nwith_valid_session()] as ConnAPI
+  [statement.rs\nstatement_execute_query()] as StmtAPI
+}
+
+package "Core Services" {
+  [rest/snowflake/\nsnowflake_login()\nsnowflake_query()\nrefresh_session()] as REST
+  [http/retry.rs\nexecute_with_retry()] as HTTP
+  [connection_state/\nConnectionStateMachine] as State
+  [chunks.rs\nChunkReader] as Chunks
+}
+
+cloud "External" {
+  [Snowflake API] as SF
+  [Cloud Storage\n(S3/Azure/GCS)] as CSP
+}
+
+ODBC --> Transport
+JDBC --> Transport
+Python --> Transport
+Transport --> ProtoAPIs
+ProtoAPIs --> ConnAPI
+ProtoAPIs --> StmtAPI
+ConnAPI --> REST
+StmtAPI --> REST
+ConnAPI --> State
+REST --> HTTP
+REST --> Chunks
+HTTP --> SF
+Chunks --> CSP
+
+note right of Transport
+  Protobuf serialization/deserialization
+  handles cross-language communication
+end note
+
+note right of State
+  Manages connection lifecycle:
+  Pristine → Connecting → Connected → Renewing
+end note
+
+@enduml
+```
+
+</details>
+
 ### 3.3 Existing Function Signatures
 
 The `sf_core` already implements core functionality that can be formalized into service traits:
@@ -622,6 +687,70 @@ for {
 └─────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
+<details>
+<summary>PlantUML Source</summary>
+
+```plantuml
+@startuml class_diagram
+skinparam classAttributeIconSize 0
+
+interface SessionService <<interface>> {
+  + login(params: LoginParameters): Result<SessionTokens>
+  + refresh(tokens: SessionTokens): Result<SessionTokens>
+  + heartbeat(token: String): Result<()>
+  + logout(token: String, config: LogoutConfig): Result<()>
+}
+
+class SnowflakeSessionService {
+  - http_client: Arc<dyn HttpClient>
+  - server_url: String
+  - client_info: ClientInfo
+  - retry_policy: RetryPolicy
+  --
+  + new(http_client, server_url, client_info): Self
+  + login(params): Result<SessionTokens>
+  + refresh(tokens): Result<SessionTokens>
+  + heartbeat(token): Result<()>
+  + logout(token, config): Result<()>
+}
+
+interface QueryService <<interface>> {
+  + execute(token, sql, params, mode): Result<QueryResult>
+  + fetchResult(token, queryId): Result<QueryResult>
+  + getStatus(token, queryId): Result<QueryStatus>
+  + cancel(token, queryId): Result<()>
+}
+
+interface StorageService <<interface>> {
+  + upload(meta, credentials): Result<()>
+  + download(meta, credentials): Result<Vec<u8>>
+  + head(meta, credentials): Result<FileInfo>
+}
+
+interface HttpClient <<interface>> {
+  + request(method, url, headers, body): Result<Response>
+}
+
+class ReqwestHttpClient {
+  - client: reqwest::Client
+  + request(method, url, headers, body): Result<Response>
+}
+
+class MockHttpClient {
+  - responses: Vec<MockResponse>
+  + request(method, url, headers, body): Result<Response>
+}
+
+SessionService <|.. SnowflakeSessionService
+HttpClient <|.. ReqwestHttpClient
+HttpClient <|.. MockHttpClient
+
+SnowflakeSessionService --> HttpClient : uses
+@enduml
+```
+
+</details>
+
 ### 7.3 State Machine + Services Interaction (Sequence Diagram)
 
 #### 7.3.1 Login Flow
@@ -667,6 +796,49 @@ for {
      │<───────────────────┤                       │                     │
      │                    │                       │                     │
 ```
+
+<details>
+<summary>PlantUML Source</summary>
+
+```plantuml
+@startuml login_flow
+skinparam sequenceMessageAlign center
+
+participant "Client" as C
+participant "ConnectionStateMachine" as SM
+participant "SessionService" as SS
+participant "Snowflake API" as SF
+
+C -> SM: connect()
+activate SM
+
+SM -> SM: transition(Connecting)
+note right: State: Pristine → Connecting
+
+SM -> SS: login(params)
+activate SS
+
+SS -> SF: POST /session/v1/login-request
+activate SF
+SF --> SS: SessionTokens
+deactivate SF
+
+SS --> SM: Ok(SessionTokens)
+deactivate SS
+
+SM -> SM: transition(Connected)
+note right: State: Connecting → Connected
+
+SM -> SM: drain_pending_ops()
+note right: Resume any queued operations
+
+SM --> C: Ok(Connection)
+deactivate SM
+
+@enduml
+```
+
+</details>
 
 #### 7.3.2 Query with Auto-Refresh Flow
 
@@ -735,6 +907,73 @@ for {
      │                 │                    │                  │                │
 ```
 
+<details>
+<summary>PlantUML Source</summary>
+
+```plantuml
+@startuml query_auto_refresh
+skinparam sequenceMessageAlign center
+
+participant "Client" as C
+participant "ConnectionStateMachine" as SM
+participant "SessionService" as SS
+participant "QueryService" as QS
+participant "Snowflake API" as SF
+
+C -> SM: execute(sql)
+activate SM
+
+SM -> SM: wait_ready()
+note right: State: Connected ✓
+
+SM -> QS: execute(sql, token)
+activate QS
+
+QS -> SF: POST /queries/v1/query-request
+activate SF
+SF --> QS: Error: code 390112\n(session expired)
+deactivate SF
+
+QS --> SM: Err(SessionExpired)
+deactivate QS
+
+SM -> SM: transition(Renewing)
+note right: State: Connected → Renewing
+
+SM -> SS: refresh(tokens)
+activate SS
+
+SS -> SF: POST /session/token-request
+activate SF
+SF --> SS: new SessionTokens
+deactivate SF
+
+SS --> SM: Ok(new tokens)
+deactivate SS
+
+SM -> SM: update_tokens(new)
+SM -> SM: transition(Connected)
+note right: State: Renewing → Connected
+
+SM -> QS: execute(sql, new_token)
+activate QS
+
+QS -> SF: POST /queries/v1/query-request
+activate SF
+SF --> QS: QueryResult
+deactivate SF
+
+QS --> SM: Ok(QueryResult)
+deactivate QS
+
+SM --> C: QueryResult
+deactivate SM
+
+@enduml
+```
+
+</details>
+
 #### 7.3.3 Concurrent Requests During Renewal (Storm Prevention)
 
 ```
@@ -793,6 +1032,176 @@ for {
 
 KEY: Only ONE refresh request is made, even though both Query A and Query B 
      detected session expiration. Query B waits in pending_ops queue.
+```
+
+<details>
+<summary>PlantUML Source</summary>
+
+```plantuml
+@startuml concurrent_renewal
+skinparam sequenceMessageAlign center
+
+participant "Query A" as A
+participant "Query B" as B
+participant "ConnectionStateMachine" as SM
+participant "SessionService" as SS
+participant "Snowflake API" as SF
+
+== Query A triggers refresh ==
+
+A -> SM: execute(sql)
+activate SM
+
+SM -> SF: POST /queries/v1/query-request
+SF --> SM: Error: 390112 (session expired)
+
+SM -> SM: transition(Renewing)
+note right: State: Connected → Renewing\nOnly first thread triggers this
+
+== Query B arrives during renewal ==
+
+B -> SM: execute(sql)
+activate SM #LightBlue
+
+SM -> SM: wait_ready()
+note right: State is Renewing\nQuery B must wait
+
+SM -> SM: enqueue(Query B)
+note right: Add to pending_ops queue\nDo NOT trigger another refresh
+
+== Single refresh happens ==
+
+SM -> SS: refresh(tokens)
+activate SS
+
+SS -> SF: POST /session/token-request
+note right #LightGreen: Only ONE refresh request!\nNo "token refresh storm"
+activate SF
+SF --> SS: new SessionTokens
+deactivate SF
+
+SS --> SM: Ok(new tokens)
+deactivate SS
+
+SM -> SM: update_tokens(new)
+SM -> SM: transition(Connected)
+note right: State: Renewing → Connected
+
+== Both queries proceed ==
+
+SM -> SM: drain_pending_ops()
+note right: Notify Query B it can proceed
+
+SM --> A: retry with new token
+deactivate SM
+
+SM --> B: proceed with new token
+deactivate SM
+
+note over A, B: Both queries now execute\nwith the same new token
+
+@enduml
+```
+
+</details>
+
+#### 7.3.4 Connection State Machine (State Diagram)
+
+<details>
+<summary>PlantUML Source</summary>
+
+```plantuml
+@startuml state_machine
+skinparam state {
+  BackgroundColor<<ready>> LightGreen
+  BackgroundColor<<transient>> LightYellow
+  BackgroundColor<<terminal>> LightGray
+}
+
+[*] --> Pristine
+
+state Pristine <<ready>> {
+  Pristine: No connection established
+  Pristine: Allowed: connect()
+}
+
+state Connecting <<transient>> {
+  Connecting: Login in progress
+  Connecting: Requests queued in pending_ops
+}
+
+state Connected <<ready>> {
+  Connected: Session active
+  Connected: Allowed: execute(), heartbeat(), close()
+}
+
+state Renewing <<transient>> {
+  Renewing: Token refresh in progress
+  Renewing: Requests queued in pending_ops
+}
+
+state Disconnected <<terminal>> {
+  Disconnected: Session closed or failed
+  Disconnected: No operations allowed
+}
+
+Pristine --> Connecting : connect()
+Connecting --> Connected : login success
+Connecting --> Disconnected : login failure
+
+Connected --> Renewing : 390112 (session expired)
+Connected --> Disconnected : close() / fatal error
+
+Renewing --> Connected : refresh success
+Renewing --> Disconnected : refresh failure\n(master token expired)
+
+note right of Renewing
+  During Renewing:
+  - All new requests wait in pending_ops
+  - Only ONE refresh request is made
+  - After success, pending_ops are drained
+end note
+
+note right of Connected
+  Operations in Connected state:
+  - execute() → QueryService
+  - heartbeat() → SessionService
+  - close() → SessionService.logout()
+end note
+
+@enduml
+```
+
+</details>
+
+```
+    ┌─────────────┐
+    │   Pristine  │ ─── Initial state, no connection
+    └──────┬──────┘
+           │ connect()
+           ▼
+    ┌─────────────┐
+    │ Connecting  │ ─── Login in progress, ops queued
+    └──────┬──────┘
+           │ success / failure
+     ┌─────┴─────┐
+     ▼           ▼
+┌─────────┐  ┌──────────────┐
+│Connected│  │ Disconnected │ ─── Terminal state
+└────┬────┘  └──────────────┘
+     │                ▲
+     │ 390112         │ close() / fatal error
+     ▼                │
+┌─────────┐           │
+│Renewing │───────────┘
+└────┬────┘  failure
+     │
+     │ success
+     └──────────────────┐
+                        ▼
+                  ┌─────────┐
+                  │Connected│
+                  └─────────┘
 ```
 
 ### 7.4 Revised Service Traits
