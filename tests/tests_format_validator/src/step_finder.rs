@@ -414,15 +414,25 @@ impl MethodBoundaryFinder {
                 }
 
                 // Fallback: Check if any end pattern matches (mainly for Python)
+                // Only match if the line is at the same or lower indentation level as the method start
                 if !self.config.method_end_patterns.is_empty() {
-                    for pattern in self.config.method_end_patterns {
-                        if line == *pattern || line.starts_with(pattern) {
-                            method_end_line = Some(i);
+                    // Note: `line` is shadowed to trimmed above, use lines[i] for indent
+                    let original_line = lines[i];
+                    let line_indent = original_line.len() - original_line.trim_start().len();
+                    let start_line_indent =
+                        lines[start_idx].len() - lines[start_idx].trim_start().len();
+
+                    // Only consider end patterns at same or lower indentation (not nested code)
+                    if line_indent <= start_line_indent {
+                        for pattern in self.config.method_end_patterns {
+                            if line == *pattern || line.starts_with(pattern) {
+                                method_end_line = Some(i);
+                                break;
+                            }
+                        }
+                        if method_end_line.is_some() {
                             break;
                         }
-                    }
-                    if method_end_line.is_some() {
-                        break;
                     }
                 }
             }
