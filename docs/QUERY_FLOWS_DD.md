@@ -556,48 +556,262 @@ for {
 
 ## 7. Proposed Service Architecture
 
-### 7.1 Architecture Diagram
+### 7.1 Service Responsibility Matrix
+
+> **Design Question**: Should `login()` be in `SessionService` instead of `AuthService`?
+> 
+> **Analysis**: Looking at the old drivers, login is tightly coupled with session lifecycle:
+> - Login creates a session (returns session token + master token)
+> - Heartbeat maintains the session
+> - Refresh renews the session
+> - Logout destroys the session
+> 
+> **Recommendation**: Merge into a single `SessionService` that manages the full session lifecycle.
 
 ```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                              Connection                                      │
-│  ┌───────────────────────────────────────────────────────────────────────┐  │
-│  │                        ServiceContainer                                │  │
-│  │   ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  │  │
-│  │   │ AuthService │  │SessionService│  │QueryService │  │StorageService│  │
-│  │   └─────────────┘  └─────────────┘  └─────────────┘  └─────────────┘  │  │
-│  └───────────────────────────────────────────────────────────────────────┘  │
-│                                    │                                         │
-│                        ConnectionStateMachine                                │
-└─────────────────────────────────────────────────────────────────────────────┘
-                                       │
-                                       ▼
-                    ┌─────────────────────────────────────┐
-                    │         HttpClient (trait)          │
-                    │  request(method, url, headers, body)│
-                    └─────────────────────────────────────┘
-                                       │
-                    ┌──────────────────┴──────────────────┐
-                    ▼                                     ▼
-         ┌─────────────────────┐              ┌─────────────────────┐
-         │  ReqwestHttpClient  │              │   MockHttpClient    │
-         │    (production)     │              │     (testing)       │
-         └─────────────────────┘              └─────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────────────────┐
+│                              SERVICE RESPONSIBILITY MATRIX                           │
+├─────────────────────┬───────────────────────────────────────────────────────────────┤
+│ SessionService      │ Full session lifecycle management                             │
+│                     │  • login() - Create session (authenticate)                    │
+│                     │  • refresh() - Renew session token                            │
+│                     │  • heartbeat() - Keep session alive                           │
+│                     │  • logout() - Destroy session                                 │
+├─────────────────────┼───────────────────────────────────────────────────────────────┤
+│ QueryService        │ SQL execution and result management                           │
+│                     │  • execute() - Submit query                                   │
+│                     │  • fetchResult() - Get results by queryId                     │
+│                     │  • getStatus() - Check async query status                     │
+│                     │  • cancel() - Cancel running query                            │
+├─────────────────────┼───────────────────────────────────────────────────────────────┤
+│ StorageService      │ Cloud storage operations (PUT/GET)                            │
+│                     │  • upload() - Upload to stage                                 │
+│                     │  • download() - Download from stage                           │
+│                     │  • head() - Check file existence                              │
+└─────────────────────┴───────────────────────────────────────────────────────────────┘
 ```
 
-### 7.2 Service Traits (Aligned with Existing Code)
+### 7.2 Class Diagram (UML-style)
+
+```
+┌─────────────────────────────────────────────────────────────────────────────────────┐
+│                                   «interface»                                        │
+│                                  SessionService                                      │
+├─────────────────────────────────────────────────────────────────────────────────────┤
+│ + login(params: LoginParameters) -> Result<SessionTokens>                           │
+│ + refresh(tokens: SessionTokens) -> Result<SessionTokens>                           │
+│ + heartbeat(token: String) -> Result<()>                                            │
+│ + logout(token: String, config: LogoutConfig) -> Result<()>                         │
+└─────────────────────────────────────────────────────────────────────────────────────┘
+                                         △
+                                         │ implements
+                                         │
+┌─────────────────────────────────────────────────────────────────────────────────────┐
+│                              SnowflakeSessionService                                 │
+├─────────────────────────────────────────────────────────────────────────────────────┤
+│ - http_client: Arc<dyn HttpClient>                                                  │
+│ - server_url: String                                                                │
+│ - client_info: ClientInfo                                                           │
+│ - retry_policy: RetryPolicy                                                         │
+├─────────────────────────────────────────────────────────────────────────────────────┤
+│ + new(http_client, server_url, client_info) -> Self                                 │
+│ + login(params) -> Result<SessionTokens>                                            │
+│ + refresh(tokens) -> Result<SessionTokens>                                          │
+│ + heartbeat(token) -> Result<()>                                                    │
+│ + logout(token, config) -> Result<()>                                               │
+└─────────────────────────────────────────────────────────────────────────────────────┘
+```
+
+### 7.3 State Machine + Services Interaction (Sequence Diagram)
+
+#### 7.3.1 Login Flow
+
+```
+┌──────────┐     ┌──────────────────┐     ┌────────────────┐     ┌─────────────┐
+│  Client  │     │ConnectionState   │     │SessionService  │     │  Snowflake  │
+│          │     │    Machine       │     │                │     │     API     │
+└────┬─────┘     └────────┬─────────┘     └───────┬────────┘     └──────┬──────┘
+     │                    │                       │                     │
+     │ connect()          │                       │                     │
+     ├───────────────────>│                       │                     │
+     │                    │                       │                     │
+     │                    │ transition(Connecting)│                     │
+     │                    ├──────────┐            │                     │
+     │                    │          │            │                     │
+     │                    │<─────────┘            │                     │
+     │                    │                       │                     │
+     │                    │ login(params)         │                     │
+     │                    ├──────────────────────>│                     │
+     │                    │                       │                     │
+     │                    │                       │ POST /session/v1/   │
+     │                    │                       │   login-request     │
+     │                    │                       ├────────────────────>│
+     │                    │                       │                     │
+     │                    │                       │    SessionTokens    │
+     │                    │                       │<────────────────────┤
+     │                    │                       │                     │
+     │                    │   Ok(SessionTokens)   │                     │
+     │                    │<──────────────────────┤                     │
+     │                    │                       │                     │
+     │                    │ transition(Connected) │                     │
+     │                    ├──────────┐            │                     │
+     │                    │          │            │                     │
+     │                    │<─────────┘            │                     │
+     │                    │                       │                     │
+     │                    │ drain_pending_ops()   │                     │
+     │                    ├──────────┐            │                     │
+     │                    │          │            │                     │
+     │                    │<─────────┘            │                     │
+     │                    │                       │                     │
+     │   Ok(Connection)   │                       │                     │
+     │<───────────────────┤                       │                     │
+     │                    │                       │                     │
+```
+
+#### 7.3.2 Query with Auto-Refresh Flow
+
+```
+┌──────────┐  ┌──────────────────┐  ┌────────────────┐  ┌──────────────┐  ┌───────────┐
+│  Client  │  │ConnectionState   │  │SessionService  │  │QueryService  │  │ Snowflake │
+│          │  │    Machine       │  │                │  │              │  │    API    │
+└────┬─────┘  └────────┬─────────┘  └───────┬────────┘  └──────┬───────┘  └─────┬─────┘
+     │                 │                    │                  │                │
+     │ execute(sql)    │                    │                  │                │
+     ├────────────────>│                    │                  │                │
+     │                 │                    │                  │                │
+     │                 │ wait_ready()       │                  │                │
+     │                 ├────────┐           │                  │                │
+     │                 │        │           │                  │                │
+     │                 │<───────┘           │                  │                │
+     │                 │ [state==Connected] │                  │                │
+     │                 │                    │                  │                │
+     │                 │                    │  execute(sql)    │                │
+     │                 │                    │  ────────────────>                │
+     │                 │                    │                  │                │
+     │                 │                    │                  │ POST /queries/ │
+     │                 │                    │                  ├───────────────>│
+     │                 │                    │                  │                │
+     │                 │                    │                  │  code: 390112  │
+     │                 │                    │                  │ (session expired)
+     │                 │                    │                  │<───────────────┤
+     │                 │                    │                  │                │
+     │                 │                    │ Err(SessionExpired)               │
+     │                 │                    │<─────────────────┤                │
+     │                 │                    │                  │                │
+     │                 │ transition(Renewing)                  │                │
+     │                 ├────────┐           │                  │                │
+     │                 │        │           │                  │                │
+     │                 │<───────┘           │                  │                │
+     │                 │                    │                  │                │
+     │                 │ refresh(tokens)    │                  │                │
+     │                 ├───────────────────>│                  │                │
+     │                 │                    │                  │                │
+     │                 │                    │ POST /session/   │                │
+     │                 │                    │   token-request  │                │
+     │                 │                    ├──────────────────────────────────>│
+     │                 │                    │                  │                │
+     │                 │                    │  new SessionTokens                │
+     │                 │                    │<──────────────────────────────────┤
+     │                 │                    │                  │                │
+     │                 │ Ok(new tokens)     │                  │                │
+     │                 │<───────────────────┤                  │                │
+     │                 │                    │                  │                │
+     │                 │ transition(Connected)                 │                │
+     │                 ├────────┐           │                  │                │
+     │                 │        │           │                  │                │
+     │                 │<───────┘           │                  │                │
+     │                 │                    │                  │                │
+     │                 │                    │  execute(sql)    │ (retry)        │
+     │                 │                    │  ────────────────>                │
+     │                 │                    │                  │                │
+     │                 │                    │                  │ POST /queries/ │
+     │                 │                    │                  ├───────────────>│
+     │                 │                    │                  │                │
+     │                 │                    │                  │   QueryResult  │
+     │                 │                    │                  │<───────────────┤
+     │                 │                    │                  │                │
+     │   QueryResult   │                    │                  │                │
+     │<────────────────┴────────────────────┴──────────────────┤                │
+     │                 │                    │                  │                │
+```
+
+#### 7.3.3 Concurrent Requests During Renewal (Storm Prevention)
+
+```
+┌─────────┐ ┌─────────┐  ┌──────────────────┐  ┌────────────────┐  ┌───────────┐
+│ Query A │ │ Query B │  │ConnectionState   │  │SessionService  │  │ Snowflake │
+│         │ │         │  │    Machine       │  │                │  │    API    │
+└────┬────┘ └────┬────┘  └────────┬─────────┘  └───────┬────────┘  └─────┬─────┘
+     │          │                 │                    │                 │
+     │ execute()│                 │                    │                 │
+     ├─────────────────────────────>                   │                 │
+     │          │                 │                    │                 │
+     │          │                 │ gets 390112        │                 │
+     │          │                 │ transition(Renewing)                 │
+     │          │                 ├────────┐           │                 │
+     │          │                 │        │           │                 │
+     │          │                 │<───────┘           │                 │
+     │          │                 │                    │                 │
+     │          │ execute()       │                    │                 │
+     │          ├────────────────>│                    │                 │
+     │          │                 │                    │                 │
+     │          │                 │ wait_ready()       │                 │
+     │          │                 │ [state==Renewing]  │                 │
+     │          │                 │ enqueue(Query B)   │                 │
+     │          │                 ├────────┐           │                 │
+     │          │                 │        │           │                 │
+     │          │                 │<───────┘           │                 │
+     │          │                 │                    │                 │
+     │          │                 │ refresh()          │                 │
+     │          │                 ├───────────────────>│                 │
+     │          │                 │                    │ POST /session/  │
+     │          │                 │                    │   token-request │
+     │          │                 │                    ├────────────────>│
+     │          │                 │                    │                 │
+     │          │                 │                    │ new tokens      │
+     │          │                 │                    │<────────────────┤
+     │          │                 │                    │                 │
+     │          │                 │ Ok(new tokens)     │                 │
+     │          │                 │<───────────────────┤                 │
+     │          │                 │                    │                 │
+     │          │                 │ transition(Connected)                │
+     │          │                 ├────────┐           │                 │
+     │          │                 │        │           │                 │
+     │          │                 │<───────┘           │                 │
+     │          │                 │                    │                 │
+     │          │                 │ drain_pending_ops()│                 │
+     │          │                 │ notify(Query B)    │                 │
+     │          │                 ├────────┐           │                 │
+     │          │                 │        │           │                 │
+     │          │                 │<───────┘           │                 │
+     │          │                 │                    │                 │
+     │  retry   │  proceed        │                    │                 │
+     │<─────────│<────────────────┤                    │                 │
+     │          │                 │                    │                 │
+     │          │ [Both queries now execute with new token]              │
+     │          │                 │                    │                 │
+
+KEY: Only ONE refresh request is made, even though both Query A and Query B 
+     detected session expiration. Query B waits in pending_ops queue.
+```
+
+### 7.4 Revised Service Traits
 
 ```rust
-/// Authentication operations - wraps existing snowflake_login functions
-pub trait AuthService: Send + Sync {
-    async fn login(&self, params: &LoginParameters) -> Result<SessionTokens, AuthError>;
-    async fn refresh(&self, tokens: &SessionTokens) -> Result<SessionTokens, AuthError>;
-}
-
-/// Session management - NEW, needs implementation
+/// Session lifecycle management (login, refresh, heartbeat, logout)
+/// Combines authentication and session operations into single coherent service
 pub trait SessionService: Send + Sync {
-    async fn logout(&self, token: &str, config: &LogoutConfig) -> Result<(), SessionError>;
+    /// Authenticate and create a new session
+    async fn login(&self, params: &LoginParameters) -> Result<SessionTokens, SessionError>;
+    
+    /// Refresh an expired session token using the master token
+    async fn refresh(&self, tokens: &SessionTokens) -> Result<SessionTokens, SessionError>;
+    
+    /// Send heartbeat to keep session alive
     async fn heartbeat(&self, token: &str) -> Result<(), SessionError>;
+    
+    /// Close session and release resources
+    async fn logout(&self, token: &str, config: &LogoutConfig) -> Result<(), SessionError>;
 }
 
 /// Query execution - wraps existing snowflake_query functions
@@ -890,6 +1104,177 @@ Example mappings for common scenarios:
 3. **Retry policy per-service**: Should each service have its own retry policy, or share a connection-level policy?
 
 4. **Telemetry**: Should telemetry be a separate service or handled as a cross-cutting concern?
+
+---
+
+## 13. TODO: Test Framework Investigation
+
+> **Goal**: Design a test framework that allows running the same test logic across multiple execution flows and configuration settings.
+
+### 13.1 Problem Statement
+
+Currently, tests are written for specific scenarios. However, many tests should work across:
+
+**Multiple Execution Flows:**
+1. Normal synchronous query
+2. Async query (execute_async + get_results_from_sfqid)
+3. Large result set (chunk downloading)
+4. Long-running query (ping-pong polling with code 333333/333334)
+5. PUT/GET file transfer
+
+**Multiple Configuration Settings:**
+1. Different authentication types (password, JWT, OAuth, PAT, etc.)
+2. Different proxy configurations
+3. Different timezone settings
+4. Different timeout configurations
+5. Different TLS/SSL settings
+
+### 13.2 Proposed Solution: Parametrized Test Decorators
+
+```python
+# Example: Python test decorator concept
+
+@parametrize_flow([
+    Flow.SYNC,
+    Flow.ASYNC,
+    Flow.LARGE_RESULT,
+    Flow.LONG_RUNNING,
+    Flow.PUT_GET,
+])
+@parametrize_config([
+    Config.DEFAULT,
+    Config.WITH_PROXY,
+    Config.JWT_AUTH,
+    Config.OAUTH_AUTH,
+    Config.CUSTOM_TIMEOUT,
+])
+def test_select_simple_datatypes(flow: Flow, config: Config):
+    """This test should pass regardless of execution flow or config."""
+    conn = create_connection(config)
+    
+    # The flow wrapper handles HOW the query is executed
+    result = execute_with_flow(conn, "SELECT 1, 'hello', 3.14", flow)
+    
+    assert result[0] == (1, 'hello', 3.14)
+```
+
+```rust
+// Example: Rust test macro concept
+
+#[test_all_flows]  // Generates tests for each flow
+#[test_all_configs]  // Generates tests for each config
+fn test_select_simple_datatypes() {
+    let conn = TestConnection::new(TEST_CONFIG);
+    
+    let result = conn.execute_with_flow("SELECT 1, 'hello', 3.14", CURRENT_FLOW);
+    
+    assert_eq!(result.row(0), (1, "hello", 3.14));
+}
+
+// Expands to:
+// - test_select_simple_datatypes_sync_default
+// - test_select_simple_datatypes_sync_with_proxy
+// - test_select_simple_datatypes_async_default
+// - test_select_simple_datatypes_async_with_proxy
+// - ... (combinatorial expansion)
+```
+
+### 13.3 Flow Abstraction Layer
+
+```rust
+pub enum ExecutionFlow {
+    /// Normal synchronous: POST query-request → wait → return
+    Sync,
+    
+    /// Async: POST query-request (async_exec=true) → return queryId → poll status → fetch
+    Async,
+    
+    /// Force large result: Query with enough rows to trigger chunking
+    LargeResult { min_rows: usize },
+    
+    /// Force long-running: Query with SYSTEM$WAIT or large computation
+    LongRunning { min_duration_secs: u32 },
+    
+    /// File transfer: PUT/GET commands
+    FileTransfer { operation: FileOp },
+}
+
+pub trait FlowExecutor {
+    fn execute(&self, conn: &Connection, sql: &str, flow: ExecutionFlow) -> Result<QueryResult>;
+}
+
+impl FlowExecutor for TestFlowExecutor {
+    fn execute(&self, conn: &Connection, sql: &str, flow: ExecutionFlow) -> Result<QueryResult> {
+        match flow {
+            ExecutionFlow::Sync => {
+                conn.execute(sql)
+            }
+            ExecutionFlow::Async => {
+                let qid = conn.execute_async(sql)?;
+                conn.wait_for_query(qid)?;
+                conn.fetch_result(qid)
+            }
+            ExecutionFlow::LargeResult { min_rows } => {
+                // Wrap SQL to ensure large result
+                let wrapped = format!(
+                    "SELECT * FROM TABLE(GENERATOR(ROWCOUNT => {})) CROSS JOIN ({})",
+                    min_rows, sql
+                );
+                conn.execute(&wrapped)
+            }
+            ExecutionFlow::LongRunning { min_duration_secs } => {
+                // Add delay to force ping-pong
+                let wrapped = format!(
+                    "CALL SYSTEM$WAIT({}, 'SECONDS'); {}",
+                    min_duration_secs, sql
+                );
+                conn.execute(&wrapped)
+            }
+            ExecutionFlow::FileTransfer { operation } => {
+                // Handle PUT/GET
+                unimplemented!("File transfer flow")
+            }
+        }
+    }
+}
+```
+
+### 13.4 Config Abstraction Layer
+
+```rust
+pub struct TestConfig {
+    pub auth: AuthConfig,
+    pub proxy: Option<ProxyConfig>,
+    pub timezone: Option<String>,
+    pub timeout: TimeoutConfig,
+    pub tls: TlsConfig,
+}
+
+pub enum AuthConfig {
+    Password { user: String, password: String },
+    Jwt { user: String, private_key_path: String },
+    OAuth { client_id: String, client_secret: String },
+    Pat { token: String },
+    ExternalBrowser,
+}
+
+impl TestConfig {
+    pub const DEFAULT: Self = Self { /* ... */ };
+    pub const WITH_PROXY: Self = Self { /* ... */ };
+    pub const JWT_AUTH: Self = Self { /* ... */ };
+    // ...
+}
+```
+
+### 13.5 Investigation Tasks
+
+- [ ] **Analyze existing test patterns**: Review how tests are currently structured in sf_core and wrapper tests
+- [ ] **Prototype flow executor**: Implement basic FlowExecutor for sync/async
+- [ ] **Prototype config matrix**: Define common test configurations
+- [ ] **Wiremock mappings per flow**: Create Wiremock mappings that simulate each flow pattern
+- [ ] **Measure test explosion**: Calculate test count impact of combinatorial expansion
+- [ ] **Selective execution**: Design mechanism to run subset (e.g., only sync + default config for CI)
+- [ ] **Failure isolation**: Ensure failures clearly indicate which flow/config combination failed
 
 ---
 
