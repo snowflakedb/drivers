@@ -7,6 +7,17 @@ Feature: String datatype handling
   # Reference: https://docs.snowflake.com/en/sql-reference/data-types-text
 
   # ============================================================================
+  # TYPE CASTING
+  # ============================================================================
+
+  @python_e2e
+  Scenario: should cast string values to appropriate type for string and synonyms
+    # Python: Values should be cast to 'str' type
+    Given Snowflake client is logged in
+    When Query "SELECT 'hello'::<type>, 'Hello World'::<type>, '日本語テスト'::<type>" is executed
+    Then All values should be returned as appropriate type (str)
+
+  # ============================================================================
   # SIMPLE SELECTS - LITERALS (Happy path, Corner cases)
   # ============================================================================
 
