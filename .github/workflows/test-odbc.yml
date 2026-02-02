@@ -61,14 +61,17 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
+            name: Linux x64
             driver_lib: libsfodbc.so
             odbc_library: /usr/lib/x86_64-linux-gnu/libodbc.so
             odbc_include: /usr/include
           - os: macos-latest
+            name: macOS ARM64
             driver_lib: libsfodbc.dylib
             odbc_library: /opt/homebrew/lib/libodbc.dylib
             odbc_include: /opt/homebrew/include
     runs-on: ${{ matrix.os }}
+    name: odbc_tests (${{ matrix.name }})
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -86,8 +89,9 @@ jobs:
       - name: Install dependencies (macOS)
         if: runner.os == 'macOS'
         run: |
-          brew install unixodbc cmake
+          brew install unixodbc cmake go
           cmake --version
+          go version
 
       - name: Decode secrets
         run: ./scripts/decode_secrets.sh
