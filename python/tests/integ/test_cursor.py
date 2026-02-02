@@ -104,9 +104,10 @@ class TestCursorFetch:
     """Test cursor fetch operations."""
 
     def test_execute_returns_cursor(self, cursor):
-        """Test fetchone with a single value."""
+        """Test execute returns cursor"""
         r = cursor.execute("SELECT 1")
         assert isinstance(r, Cursor)
+        assert r is cursor
 
     def test_fetchone_single_value(self, cursor):
         """Test fetchone with a single value."""

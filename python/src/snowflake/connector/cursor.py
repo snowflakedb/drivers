@@ -111,9 +111,6 @@ class Cursor:
         Args:
             operation (str): SQL statement to execute
             parameters (sequence or mapping): Parameters for the operation
-
-        Raises:
-            NotSupportedError: If not implemented
         """
         stmt_handle = self.connection.db_api.statement_new(
             StatementNewRequest(conn_handle=self.connection.conn_handle)
@@ -189,9 +186,6 @@ class Cursor:
 
         Returns:
             sequence: Next row, or None when no more data is available
-
-        Raises:
-            NotSupportedError: If not implemented
         """
         self._ensure_iterator()
         assert self._iterator is not None
@@ -225,8 +219,7 @@ class Cursor:
             if row is None:
                 break
             ret.append(row)
-            if size is not None:
-                size -= 1
+            size -= 1
 
         return ret
 
@@ -236,9 +229,6 @@ class Cursor:
 
         Returns:
             sequence: List of all remaining rows
-
-        Raises:
-            NotSupportedError: If not implemented
         """
         self._ensure_iterator()
         assert self._iterator is not None
