@@ -104,7 +104,7 @@ class Connection:
         """
         raise NotSupportedError("rollback is not implemented")
 
-    def cursor(self, cursor_class: type[Cursor]) -> Cursor:
+    def cursor(self, cursor_class: type[Cursor] = Cursor) -> Cursor:
         """
         Return a new Cursor object using the connection.
 
