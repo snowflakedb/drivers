@@ -184,7 +184,7 @@ dev-mode = true
 PARAMETER_PATH = "{env:PARAMETER_PATH:../parameters.json}"
 
 [[tool.hatch.envs.dev.matrix]]
-python = ["3.9", "3.10", "3.11", "3.12", "3.13"]
+python = ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]
 
 [tool.hatch.envs.dev.scripts]
 # Unit tests
