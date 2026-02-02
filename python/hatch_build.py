@@ -218,6 +218,8 @@ class BuildHook(BuildHookInterface):
     def _build_core(self) -> None:
         """Build the Rust core library in release mode for distribution."""
 
+        if os.environ.get("SKIP_CORE_BUILD", "").lower() in ["true", "1"]:
+            return
         # Get paths relative to the Python wrapper directory
         python_dir = Path(__file__).parent
         cargo_manifest = python_dir.parent / "Cargo.toml"
