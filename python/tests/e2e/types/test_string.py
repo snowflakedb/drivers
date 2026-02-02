@@ -13,7 +13,7 @@ Reference: https://docs.snowflake.com/en/sql-reference/data-types-text
 
 import pytest
 
-from .utils import assert_type
+from .utils import assert_sequential_values, assert_type
 
 
 # =============================================================================
@@ -54,7 +54,7 @@ string_type_parametrize = pytest.mark.parametrize("string_type", STRING_TYPE_SYN
 
 
 # SQL representations for corner case strings (for INSERT statements)
-CORNER_CASE_SQL_VALUES = [
+CORNER_CASE_VALUES = [
     ("", "''"),  # Empty string
     ("X", "'X'"),  # Single character
     ("   ", "'   '"),  # Whitespace only
@@ -107,8 +107,8 @@ class TestStringLiteral:
         result = execute_query(sql, single_row=True)
 
         # Then the result should contain:
-        assert result == ("hello", "Hello World", "Snowflake Driver Test")
         assert_type(result, str)
+        assert result == ("hello", "Hello World", "Snowflake Driver Test")
 
     @string_type_parametrize
     def test_should_select_string_literals_with_corner_case_values(self, execute_query, string_type):
@@ -119,7 +119,7 @@ class TestStringLiteral:
         # When Query selecting corner case string literals is executed
 
         # Then the result should contain expected corner case string values
-        for expected_val, sql_val in CORNER_CASE_SQL_VALUES:
+        for expected_val, sql_val in CORNER_CASE_VALUES:
             result = execute_query(f"SELECT {sql_val}::{string_type}(32)", single_row=True)
             assert result == (expected_val,), f"Expected {expected_val!r}, got {result[0]!r}"
 
@@ -145,8 +145,8 @@ class TestStringTable:
 
         # Then the result should contain the inserted hardcoded string values
         result = set(row[0] for row in rows)
-        assert result == set(test_values)
         assert_type(result, str)
+        assert result == set(test_values)
 
     @string_type_parametrize
     def test_should_select_corner_case_string_values_from_table(self, execute_query, tmp_schema, string_type):
@@ -157,7 +157,7 @@ class TestStringTable:
         execute_query(f"CREATE TABLE {table_name} (val {string_type}(32))")
 
         # And The table is populated with corner case string values
-        for _, sql_val in CORNER_CASE_SQL_VALUES:
+        for _, sql_val in CORNER_CASE_VALUES:
             execute_query(f"INSERT INTO {table_name} VALUES ({sql_val})")
 
         # When Query "SELECT * FROM {table}" is executed
@@ -165,10 +165,10 @@ class TestStringTable:
 
         # Then the result should contain the inserted corner case string values
         result = [row[0] for row in rows]
-        expected = [expected_val for expected_val, _ in CORNER_CASE_SQL_VALUES]
+        expected = [expected_val for expected_val, _ in CORNER_CASE_VALUES]
         assert len(result) == len(expected)
-        assert set(result) == set(expected)
         assert_type(result, str, can_be_none=True)
+        assert set(result) == set(expected)
 
 
 class TestStringBinding:
@@ -194,8 +194,8 @@ class TestStringBinding:
 
         # Then the result should contain the bound string value 'Test binding value 日本語'
         result = [row[0] for row in rows]
-        assert result == [test_value]
         assert_type(result, str)
+        assert result == [test_value]
 
     @pytest.mark.skip("SNOW-3006013 - parameter binding is not yet implemented")
     @string_type_parametrize
@@ -213,8 +213,8 @@ class TestStringBinding:
         )
 
         # Then the result should contain:
-        assert result == ("hello", "Hello World", "日本語テスト")
         assert_type(result, str)
+        assert result == ("hello", "Hello World", "日本語テスト")
 
     @pytest.mark.skip("SNOW-3006013 - parameter binding is not yet implemented")
     @string_type_parametrize
@@ -222,7 +222,7 @@ class TestStringBinding:
         # Given Snowflake client is logged in
 
         # When Query "SELECT ?::VARCHAR" is executed with each corner case string value bound
-        for corner_case, _ in CORNER_CASE_SQL_VALUES:
+        for corner_case, _ in CORNER_CASE_VALUES:
             result = execute_query(f"SELECT ?::{string_type}(32)", (corner_case,), single_row=True)
 
             # Then the result should match the bound corner case value
@@ -255,5 +255,4 @@ class TestStringMultipleChunks:
         assert len(rows) == LARGE_RESULT_SET_SIZE
 
         # And all returned string values should match the generated values in order
-        for i, row in enumerate(rows):
-            assert row[1] == str(i), f"String value mismatch at row {i}: expected '{i}', got '{row[1]}'"
+        assert_sequential_values(rows, LARGE_RESULT_SET_SIZE, transform=lambda i: (i, str(i)))
