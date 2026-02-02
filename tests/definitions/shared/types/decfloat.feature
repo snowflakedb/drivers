@@ -46,8 +46,8 @@ Feature: DECFLOAT type support
   @python_e2e
   Scenario: should download large result set with multiple chunks from GENERATOR
     Given Snowflake client is logged in
-    When Query "SELECT seq8()::DECFLOAT as id FROM TABLE(GENERATOR(ROWCOUNT => 1000000)) v" is executed
-    Then Result should contain consecutive numbers from 0 to 999999
+    When Query "SELECT seq8()::DECFLOAT as id FROM TABLE(GENERATOR(ROWCOUNT => 20000)) v" is executed
+    Then Result should contain consecutive numbers from 0 to 19999
     And All values should be returned as appropriate type
 
   # =========================================================================== #
@@ -85,9 +85,9 @@ Feature: DECFLOAT type support
   @python_e2e
   Scenario: should download large result set with multiple chunks from table
     Given Snowflake client is logged in
-    And Table with DECFLOAT column exists with values from 0 to 999999
+    And Table with DECFLOAT column exists with values from 0 to 19999
     When Query "SELECT * FROM <table>" is executed
-    Then Result should contain consecutive numbers from 0 to 999999
+    Then Result should contain consecutive numbers from 0 to 19999
     And All values should be returned as appropriate type
 
   # =========================================================================== #

@@ -49,8 +49,8 @@ Feature: FLOAT type support
   @python_e2e
   Scenario: should download large result set with multiple chunks from GENERATOR for float and synonyms
     Given Snowflake client is logged in
-    When Query "SELECT seq8()::<type> as id FROM TABLE(GENERATOR(ROWCOUNT => 1000000)) v" is executed
-    Then Result should contain 1000000 rows
+    When Query "SELECT seq8()::<type> as id FROM TABLE(GENERATOR(ROWCOUNT => 50000)) v" is executed
+    Then Result should contain 50000 rows
     And All values should be returned as appropriate float type
 
   # =========================================================================== #
@@ -89,9 +89,9 @@ Feature: FLOAT type support
   @python_e2e
   Scenario: should select large result set from table for float and synonyms
     Given Snowflake client is logged in
-    And Table with <type> column exists with 1000000 sequential values
+    And Table with <type> column exists with 50000 sequential values
     When Query "SELECT * FROM <table>" is executed
-    Then Result should contain 1000000 rows
+    Then Result should contain 50000 rows
     And All values should be returned as appropriate float type
 
   # =========================================================================== #

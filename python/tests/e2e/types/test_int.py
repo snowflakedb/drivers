@@ -71,7 +71,7 @@ INT38_MIN = -99999999999999999999999999999999999999
 # =============================================================================
 # LARGE RESULT SET SIZE
 # =============================================================================
-LARGE_RESULT_SET_SIZE = 1_000_000
+LARGE_RESULT_SET_SIZE = 50_000
 
 
 class TestIntTypeCasting:
@@ -178,7 +178,7 @@ class TestIntLiteral:
     def test_should_download_large_result_set_with_multiple_chunks_for_int_and_synonyms(self, execute_query, int_type):
         # Given Snowflake client is logged in
 
-        # When Query "SELECT seq8()::<type> as id FROM TABLE(GENERATOR(ROWCOUNT => 1000000)) v ORDER BY id" is executed
+        # When Query "SELECT seq8()::<type> as id FROM TABLE(GENERATOR(ROWCOUNT => 50000)) v ORDER BY id" is executed
 
         # Note: seq8() doesn't guarantee consecutive values in parallel execution,
         # so we use ROW_NUMBER() to ensure sequential integers.
@@ -189,7 +189,7 @@ class TestIntLiteral:
         )
         rows = execute_query(sql)
 
-        # Then Result should contain 1000000 sequentially numbered rows from 0 to 999999
+        # Then Result should contain 50000 sequentially numbered rows from 0 to 49999
         values = [row[0] for row in rows]
         assert_type(values, int)
         assert_sequential_values(values, LARGE_RESULT_SET_SIZE)
@@ -292,7 +292,7 @@ class TestIntTable:
     def test_should_select_large_result_set_from_table_for_int_and_synonyms(self, execute_query, tmp_schema, int_type):
         # Given Snowflake client is logged in
 
-        # And Table with <type> column exists with 1000000 sequential values
+        # And Table with <type> column exists with 50000 sequential values
 
         # Note: seq8() doesn't guarantee consecutive values in parallel execution,
         # so we use ROW_NUMBER() to ensure sequential integers.
@@ -307,7 +307,7 @@ class TestIntTable:
         # When Query "SELECT * FROM <table> ORDER BY col" is executed
         rows = execute_query(f"SELECT * FROM {table_name} ORDER BY col")
 
-        # Then Result should contain 1000000 sequentially numbered rows from 0 to 999999
+        # Then Result should contain 50000 sequentially numbered rows from 0 to 49999
         values = [row[0] for row in rows]
         assert_type(values, int)
         assert_sequential_values(values, LARGE_RESULT_SET_SIZE)

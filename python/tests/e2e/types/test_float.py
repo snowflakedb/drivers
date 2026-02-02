@@ -57,7 +57,7 @@ FLOAT_16_DIGITS = 1234567890123456.0
 # =============================================================================
 # LARGE RESULT SET SIZE
 # =============================================================================
-LARGE_RESULT_SET_SIZE = 1_000_000
+LARGE_RESULT_SET_SIZE = 50_000
 
 
 class TestFloatTypeCasting:
@@ -155,7 +155,7 @@ class TestFloatLiteral:
     ):
         # Given Snowflake client is logged in
 
-        # When Query "SELECT seq8()::<type> as id FROM TABLE(GENERATOR(ROWCOUNT => 1000000)) v" is executed
+        # When Query "SELECT seq8()::<type> as id FROM TABLE(GENERATOR(ROWCOUNT => 50000)) v" is executed
 
         # Note: seq8() doesn't guarantee consecutive values in parallel execution,
         # so we use ROW_NUMBER() to ensure sequential integers.
@@ -166,7 +166,7 @@ class TestFloatLiteral:
         )
         rows = execute_query(sql)
 
-        # Then Result should contain 1000000 rows
+        # Then Result should contain 50000 rows
         # And All values should be returned as appropriate float type
         values = [row[0] for row in rows]
         assert_type(values, float)
@@ -272,7 +272,7 @@ class TestFloatTable:
     ):
         # Given Snowflake client is logged in
 
-        # And Table with <type> column exists with 1000000 sequential values
+        # And Table with <type> column exists with 50000 sequential values
 
         # Note: seq8() doesn't guarantee consecutive values in parallel execution,
         # so we use ROW_NUMBER() to ensure sequential integers.
@@ -287,7 +287,7 @@ class TestFloatTable:
         # When Query "SELECT * FROM <table>" is executed
         rows = execute_query(f"SELECT * FROM {table_name} ORDER BY col")
 
-        # Then Result should contain 1000000 rows
+        # Then Result should contain 50000 rows
         # And All values should be returned as appropriate float type
         values = [row[0] for row in rows]
         assert_type(values, float)

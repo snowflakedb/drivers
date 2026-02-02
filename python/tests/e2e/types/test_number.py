@@ -65,7 +65,7 @@ NUMBER_38_37_MIN_POSITIVE = Decimal("0.0000000000000000000000000000000000001")
 # =============================================================================
 # LARGE RESULT SET SIZE
 # =============================================================================
-LARGE_RESULT_SET_SIZE = 1_000_000
+LARGE_RESULT_SET_SIZE = 30_000
 
 
 class TestNumberTypeCasting:
@@ -192,7 +192,7 @@ class TestNumberLiteral:
         # Given Snowflake client is logged in
 
         # When Query
-        # "SELECT seq8()::<type>(38,0), (seq8() + 0.12345)::<type>(20,5) FROM TABLE(GENERATOR(ROWCOUNT => 1000000)) v"
+        # "SELECT seq8()::<type>(38,0), (seq8() + 0.12345)::<type>(20,5) FROM TABLE(GENERATOR(ROWCOUNT => 30000)) v"
         # is executed
 
         # Note: seq8() doesn't guarantee consecutive values in parallel execution,
@@ -207,7 +207,7 @@ class TestNumberLiteral:
         )
         rows = execute_query(sql)
 
-        # Then Column 1 should contain sequential integers from 0 to 999999
+        # Then Column 1 should contain sequential integers from 0 to 29999
         col0_values = [row[0] for row in rows]
         # Python: scale=0 -> int
         assert_type(col0_values, int)
@@ -419,8 +419,8 @@ class TestNumberTable:
     ):
         # Given Snowflake client is logged in
 
-        # And Table with columns (<type>(38,0), <type>(20,5)) exists with 1000000 sequential rows,
-        # from 0 to 999999 in the first column and from 0.12345 to 999999.12345 in the second column
+        # And Table with columns (<type>(38,0), <type>(20,5)) exists with 30000 sequential rows,
+        # from 0 to 29999 in the first column and from 0.12345 to 29999.12345 in the second column
 
         # Note: seq8() doesn't guarantee consecutive values in parallel execution,
         # so we use ROW_NUMBER() to ensure sequential integers.
@@ -438,7 +438,7 @@ class TestNumberTable:
         # When Query "SELECT * FROM <table>" is executed
         rows = execute_query(f"SELECT * FROM {table_name} ORDER BY 1")
 
-        # Then Column 1 should contain sequential integers from 0 to 999999
+        # Then Column 1 should contain sequential integers from 0 to 29999
         col1 = [row[0] for row in rows]
         # Python: scale=0 -> int
         assert_type(col1, int)

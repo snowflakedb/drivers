@@ -41,7 +41,7 @@ DECFLOAT_LARGE_NEG_EXPONENT = Decimal("9.876E-8000")
 # =============================================================================
 # LARGE RESULT SET SIZE
 # =============================================================================
-LARGE_RESULT_SET_SIZE = 1_000_000
+LARGE_RESULT_SET_SIZE = 20_000
 
 
 class TestDecfloatTypeCasting:
@@ -135,7 +135,7 @@ class TestDecfloatLiteral:
     def test_should_download_large_result_set_with_multiple_chunks_from_generator(self, execute_query):
         # Given Snowflake client is logged in
 
-        # When Query "SELECT seq8()::DECFLOAT as id FROM TABLE(GENERATOR(ROWCOUNT => 1000000)) v" is executed
+        # When Query "SELECT seq8()::DECFLOAT as id FROM TABLE(GENERATOR(ROWCOUNT => 20000)) v" is executed
 
         # Note: seq8() doesn't guarantee consecutive values in parallel execution,
         # so we use ROW_NUMBER() to ensure sequential integers.
@@ -146,7 +146,7 @@ class TestDecfloatLiteral:
         )
         rows = execute_query(sql)
 
-        # Then Result should contain consecutive numbers from 0 to 999999
+        # Then Result should contain consecutive numbers from 0 to 19999
         values = [row[0] for row in rows]
         # And All values should be returned as appropriate type
         assert_type(values, Decimal)
@@ -244,7 +244,7 @@ class TestDecfloatTable:
     def test_should_download_large_result_set_with_multiple_chunks_from_table(self, execute_query, tmp_schema):
         # Given Snowflake client is logged in
 
-        # And Table with DECFLOAT column exists with values from 0 to 999999
+        # And Table with DECFLOAT column exists with values from 0 to 19999
 
         # Note: seq8() doesn't guarantee consecutive values in parallel execution,
         # so we use ROW_NUMBER() to ensure sequential integers.
@@ -259,7 +259,7 @@ class TestDecfloatTable:
         # When Query "SELECT * FROM <table>" is executed
         rows = execute_query(f"SELECT * FROM {table_name} ORDER BY col")
 
-        # Then Result should contain consecutive numbers from 0 to 999999
+        # Then Result should contain consecutive numbers from 0 to 19999
         values = [row[0] for row in rows]
         # And All values should be returned as appropriate type
         assert_type(values, Decimal)

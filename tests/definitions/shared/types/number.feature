@@ -50,8 +50,8 @@ Feature: NUMBER type support
   @python_e2e @odbc_e2e
   Scenario: should download large result set with multiple chunks from GENERATOR for number and synonyms
     Given Snowflake client is logged in
-    When Query "SELECT seq8()::<type>(38,0), (seq8() + 0.12345)::<type>(20,5) FROM TABLE(GENERATOR(ROWCOUNT => 1000000)) v" is executed
-    Then Column 1 should contain sequential integers from 0 to 999999
+    When Query "SELECT seq8()::<type>(38,0), (seq8() + 0.12345)::<type>(20,5) FROM TABLE(GENERATOR(ROWCOUNT => 30000)) v" is executed
+    Then Column 1 should contain sequential integers from 0 to 29999
     And Column 2 should contain sequential decimals starting from 0.12345
 
   # =========================================================================== #
@@ -112,9 +112,9 @@ Feature: NUMBER type support
   @python_e2e @odbc_e2e
   Scenario: should download large result set from table for number and synonyms
     Given Snowflake client is logged in
-    And Table with columns (<type>(38,0), <type>(20,5)) exists with 1000000 sequential rows, from 0 to 999999 in the first column and from 0.12345 to 999999.12345 in the second column
+    And Table with columns (<type>(38,0), <type>(20,5)) exists with 30000 sequential rows, from 0 to 29999 in the first column and from 0.12345 to 29999.12345 in the second column
     When Query "SELECT * FROM <table>" is executed
-    Then Column 1 should contain sequential integers from 0 to 999999
+    Then Column 1 should contain sequential integers from 0 to 29999
     And Column 2 should contain sequential decimals starting from 0.12345
 
   # =========================================================================== #

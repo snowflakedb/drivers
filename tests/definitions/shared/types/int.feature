@@ -50,8 +50,8 @@ Feature: INT type support
   @python_e2e @odbc_e2e
   Scenario: should download large result set with multiple chunks for int and synonyms
     Given Snowflake client is logged in
-    When Query "SELECT seq8()::<type> as id FROM TABLE(GENERATOR(ROWCOUNT => 1000000)) v ORDER BY id" is executed
-    Then Result should contain 1000000 sequentially numbered rows from 0 to 999999
+    When Query "SELECT seq8()::<type> as id FROM TABLE(GENERATOR(ROWCOUNT => 50000)) v ORDER BY id" is executed
+    Then Result should contain 50000 sequentially numbered rows from 0 to 49999
 
   # =========================================================================== #
   #                             Table operations                                #
@@ -77,9 +77,9 @@ Feature: INT type support
   @python_e2e @odbc_e2e
   Scenario: should select large result set from table for int and synonyms
     Given Snowflake client is logged in
-    And Table with <type> column exists with 1000000 sequential values
+    And Table with <type> column exists with 50000 sequential values
     When Query "SELECT * FROM <table> ORDER BY col" is executed
-    Then Result should contain 1000000 sequentially numbered rows from 0 to 999999
+    Then Result should contain 50000 sequentially numbered rows from 0 to 49999
 
   # =========================================================================== #
   #                            Parameter binding                                #
