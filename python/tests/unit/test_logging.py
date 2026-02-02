@@ -10,6 +10,7 @@ import pytest
 from snowflake.connector._internal.logging import (
     CONNECTOR_LOGGER_NAME,
     SF_CORE_LOGGER_NAME,
+    _needs_handler,
     get_connector_logger,
     get_sf_core_logger,
     setup_logging,
@@ -201,3 +202,69 @@ class TestSetupLogging:
         assert "debug message" not in output
         assert "info message" not in output
         assert "warning message" in output
+
+    def test_setup_logging_does_not_add_duplicate_handlers(self):
+        """Test that calling setup_logging multiple times doesn't add duplicate handlers."""
+        stream = io.StringIO()
+
+        # Call setup_logging multiple times
+        setup_logging(stream=stream)
+        connector_handlers_after_first = len(get_connector_logger().handlers)
+        sf_core_handlers_after_first = len(get_sf_core_logger().handlers)
+
+        setup_logging(stream=stream)
+        connector_handlers_after_second = len(get_connector_logger().handlers)
+        sf_core_handlers_after_second = len(get_sf_core_logger().handlers)
+
+        # Handler count should not increase after the second call
+        assert connector_handlers_after_second == connector_handlers_after_first
+        assert sf_core_handlers_after_second == sf_core_handlers_after_first
+
+    def test_setup_logging_skips_handler_if_non_null_handler_exists(self):
+        """Test that setup_logging skips adding handler if a non-NullHandler already exists."""
+        connector_logger = get_connector_logger()
+
+        # Add a custom handler first
+        custom_handler = logging.StreamHandler(io.StringIO())
+        connector_logger.addHandler(custom_handler)
+
+        initial_handler_count = len(connector_logger.handlers)
+
+        # Call setup_logging - should not add another handler
+        setup_logging()
+
+        assert len(connector_logger.handlers) == initial_handler_count
+
+
+class TestNeedsHandler:
+    """Test the _needs_handler helper function."""
+
+    def test_needs_handler_empty_handlers(self):
+        """Test that _needs_handler returns True for logger with no handlers."""
+        logger = logging.getLogger("test_empty_handlers")
+        logger.handlers = []
+        assert _needs_handler(logger) is True
+
+    def test_needs_handler_only_null_handler(self):
+        """Test that _needs_handler returns True for logger with only NullHandler."""
+        logger = logging.getLogger("test_only_null_handler")
+        logger.handlers = [logging.NullHandler()]
+        assert _needs_handler(logger) is True
+
+    def test_needs_handler_multiple_null_handlers(self):
+        """Test that _needs_handler returns True for logger with multiple NullHandlers."""
+        logger = logging.getLogger("test_multiple_null_handlers")
+        logger.handlers = [logging.NullHandler(), logging.NullHandler()]
+        assert _needs_handler(logger) is True
+
+    def test_needs_handler_with_stream_handler(self):
+        """Test that _needs_handler returns False for logger with StreamHandler."""
+        logger = logging.getLogger("test_with_stream_handler")
+        logger.handlers = [logging.StreamHandler()]
+        assert _needs_handler(logger) is False
+
+    def test_needs_handler_with_mixed_handlers(self):
+        """Test that _needs_handler returns False for logger with mixed handlers."""
+        logger = logging.getLogger("test_mixed_handlers")
+        logger.handlers = [logging.NullHandler(), logging.StreamHandler()]
+        assert _needs_handler(logger) is False

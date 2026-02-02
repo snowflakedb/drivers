@@ -101,7 +101,7 @@ def logger_callback(level: int, message: bytes, filename: bytes, line: int, func
         return 0
 
     record = sf_core_logger.makeRecord(
-        "sf_core",
+        sf_core_logger.name,
         py_level,
         filename.decode("utf-8"),
         line,

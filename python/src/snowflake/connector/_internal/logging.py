@@ -26,6 +26,18 @@ _connector_logger.propagate = False
 _connector_logger.addHandler(logging.NullHandler())
 
 
+def _needs_handler(logger: logging.Logger) -> bool:
+    """
+    Check if a logger needs a handler to be added.
+
+    Returns True if the logger has no handlers or only has NullHandler(s).
+    """
+    if not logger.handlers:
+        return True
+    # Check if all existing handlers are NullHandlers
+    return all(isinstance(h, logging.NullHandler) for h in logger.handlers)
+
+
 def setup_logging(
     level: int = logging.INFO,
     sf_core_level: int = logging.INFO,
@@ -38,6 +50,10 @@ def setup_logging(
     This function sets up logging handlers and formatters for both the
     snowflake.connector logger and the sf_core logger (which receives
     logs from the native Rust library).
+
+    Handlers are only added if the logger has no handlers or only has
+    NullHandler(s). This prevents duplicate handlers if setup_logging
+    is called multiple times.
 
     Args:
         level: Logging level for the snowflake.connector logger.
@@ -65,11 +81,13 @@ def setup_logging(
 
     # Configure snowflake.connector logger
     _connector_logger.setLevel(level)
-    _connector_logger.addHandler(handler)
+    if _needs_handler(_connector_logger):
+        _connector_logger.addHandler(handler)
 
     # Configure sf_core logger with explicit INFO level
     _sf_core_logger.setLevel(sf_core_level)
-    _sf_core_logger.addHandler(handler)
+    if _needs_handler(_sf_core_logger):
+        _sf_core_logger.addHandler(handler)
 
 
 def get_connector_logger() -> logging.Logger:
