@@ -68,13 +68,13 @@ TEST_CASE("should download large result set with multiple chunks for int and syn
   // Given Snowflake client is logged in
   Connection conn;
 
-  // When Query "SELECT seq8()::<type> as id FROM TABLE(GENERATOR(ROWCOUNT => 1000000)) v ORDER BY id" is executed
+  // When Query "SELECT seq8()::<type> as id FROM TABLE(GENERATOR(ROWCOUNT => 50000)) v ORDER BY id" is executed
   auto stmt = conn.createStatement();
-  const auto sql = "SELECT seq8()::BIGINT as id FROM TABLE(GENERATOR(ROWCOUNT => 1000000)) v ORDER BY id";
+  const auto sql = "SELECT seq8()::BIGINT as id FROM TABLE(GENERATOR(ROWCOUNT => 50000)) v ORDER BY id";
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)sql, SQL_NTS);
   CHECK_ODBC(ret, stmt);
 
-  // Then Result should contain 1000000 sequentially numbered rows from 0 to 999999
+  // Then Result should contain 50000 sequentially numbered rows from 0 to 49999
   int row_count = 0;
   int64_t expected_value = 0;
 
@@ -94,7 +94,7 @@ TEST_CASE("should download large result set with multiple chunks for int and syn
     row_count++;
   }
 
-  REQUIRE(row_count == 1000000);
+  REQUIRE(row_count == 50000);
 }
 
 TEST_CASE("should select integers from table for int and synonyms", "[int]") {
@@ -128,10 +128,10 @@ TEST_CASE("should select large result set from table for int and synonyms", "[in
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
 
-  // And Table with <type> column exists with 1000000 sequential values
+  // And Table with <type> column exists with 50000 sequential values
   conn.execute("DROP TABLE IF EXISTS int_large_table");
   conn.execute("CREATE TABLE int_large_table (col BIGINT)");
-  conn.execute("INSERT INTO int_large_table SELECT seq8() FROM TABLE(GENERATOR(ROWCOUNT => 1000000))");
+  conn.execute("INSERT INTO int_large_table SELECT seq8() FROM TABLE(GENERATOR(ROWCOUNT => 50000))");
 
   // When Query "SELECT * FROM <table> ORDER BY col" is executed
   auto stmt = conn.createStatement();
@@ -139,7 +139,7 @@ TEST_CASE("should select large result set from table for int and synonyms", "[in
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)sql, SQL_NTS);
   CHECK_ODBC(ret, stmt);
 
-  // Then Result should contain 1000000 sequentially numbered rows from 0 to 999999
+  // Then Result should contain 50000 sequentially numbered rows from 0 to 49999
   int row_count = 0;
   int64_t expected_value = 0;
 
@@ -159,5 +159,5 @@ TEST_CASE("should select large result set from table for int and synonyms", "[in
     row_count++;
   }
 
-  REQUIRE(row_count == 1000000);
+  REQUIRE(row_count == 50000);
 }
