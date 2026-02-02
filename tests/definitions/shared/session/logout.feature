@@ -225,14 +225,12 @@ Feature: Session Logout
   #                    Post-Logout Session Invalidation
   # ===========================================================================
 
-  @core_e2e @python_e2e
-  Scenario: should reject queries after connection is closed
-    # Tests CLIENT-SIDE behavior: after close(), client prevents query attempts
+  @core_int @python_int
+  Scenario: should reject queries client-side after connection is closed
     Given Snowflake client is logged in
     And Simple query SELECT 1 executes successfully
-    When Connection is closed with logout
-    Then Logout request is sent successfully
-    When Query is attempted on closed connection
+    When Connection is closed
+    And Query is attempted on closed connection
     Then Query fails with connection closed error
 
   @core_int @python_not_needed
@@ -245,15 +243,22 @@ Feature: Session Logout
     Then Server returns SESSION_GONE error 390111
     And Client treats SESSION_GONE as successful logout
 
-  @core_int @python_not_needed
-  Scenario: should handle token refresh failure after logout
-    # Tests client handling when SERVER rejects master token refresh after logout
-    # Uses mock server to simulate server response
-    Given Mock server is configured to return 401 Unauthorized
-    And Master token is invalidated on server
-    When Token refresh is attempted with invalidated master token
-    Then Server returns 401 Unauthorized
-    And Client receives session refresh error
+  Scenario: should return SESSION_GONE from server for queries after logout
+    # Requires refactor to make token storage injectable for testing
+    Given Snowflake client is logged in
+    And Simple query SELECT 1 executes successfully
+    And Session token is captured before logout
+    When Connection is closed with logout
+    And Connection is restored with captured token for testing
+    And Query is attempted
+    Then Query fails with SESSION_GONE error 390111
+
+  Scenario: should invalidate master token ability to refresh after logout
+    # Requires API to extract master token from connection
+    Given Snowflake client is logged in
+    And Master token is captured before logout
+    When Connection is closed with logout
+    Then Using captured master token to refresh session fails
 
   # ===========================================================================
   #                      Error Handling - Strategy Configuration

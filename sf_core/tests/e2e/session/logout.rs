@@ -1186,57 +1186,7 @@ fn should_handle_close_when_server_is_unreachable() {
 //                    Post-Logout Session Invalidation
 // ===========================================================================
 
-#[test]
-fn should_reject_queries_after_connection_is_closed() {
-    // Tests CLIENT-SIDE behavior: after close(), client prevents query attempts
-
-    //Given Snowflake client is logged in
-    let client = SnowflakeTestClient::connect_with_default_auth();
-
-    //And Simple query SELECT 1 executes successfully
-    let result_before = client.execute_query_no_unwrap("SELECT 1");
-    assert!(
-        result_before.is_ok(),
-        "Query should succeed before logout: {:?}",
-        result_before
-    );
-
-    //When Connection is closed with logout
-    let close_result = DatabaseDriverClient::connection_close(ConnectionCloseRequest {
-        conn_handle: Some(client.conn_handle),
-        server_session_keep_alive: Some(false), // Ensure logout is sent
-        enable_auto_detection: None,
-        error_strategy: None,
-        timeout_seconds: None,
-    });
-
-    //Then Logout request is sent successfully
-    assert!(close_result.is_ok(), "Logout should succeed");
-
-    //When Query is attempted on closed connection
-    let result_after = client.execute_query_no_unwrap("SELECT 1");
-
-    //Then Query fails with connection closed error
-    assert!(
-        result_after.is_err(),
-        "Query should fail after connection is closed, but got: {:?}",
-        result_after
-    );
-
-    let error_msg = result_after.unwrap_err();
-    // The error should indicate the connection is closed (client-side rejection)
-    // Note: This tests CLIENT behavior, not server-side token invalidation
-    assert!(
-        error_msg.contains("closed")
-            || error_msg.contains("Closed")
-            || error_msg.contains("CONNECTION_NOT_OPEN")
-            || error_msg.contains("not open")
-            || error_msg.contains("not initialized"),
-        "Error should indicate connection is closed: {}",
-        error_msg
-    );
-}
-
-// Note: Server-side token invalidation tests (SESSION_GONE handling) are in
-// sf_core/tests/integration/session/logout.rs because they require wiremock
-// to simulate server responses.
+// Note: The "should return SESSION_GONE from server when using invalidated session token"
+// test requires the ability to capture tokens and restore connection state after logout.
+// This needs a refactor to make token storage injectable for testing.
+// See Gherkin: tests/definitions/shared/session/logout.feature (untagged scenario)

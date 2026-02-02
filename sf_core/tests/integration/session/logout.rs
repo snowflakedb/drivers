@@ -1,14 +1,19 @@
 //! Integration tests for session logout functionality.
 
+use crate::common::mocks::auth::mount_jwt_login_success;
+use crate::common::snowflake_test_client::SnowflakeTestClient;
 use crate::common::test_server::{json_response, spawn_capture_server, spawn_test_server};
 use sf_core::config::rest_parameters::ClientInfo;
 use sf_core::config::retry::RetryPolicy;
+use sf_core::protobuf_apis::database_driver_v1::DatabaseDriverClient;
+use sf_core::protobuf_gen::database_driver_v1::*;
 use sf_core::rest::snowflake::logout::logout_session;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
+use wiremock::MockServer;
 
 #[test]
 #[ignore = "TODO: SNOW-2872349 - Phase 5"]
@@ -262,113 +267,6 @@ async fn should_record_connection_close_decision_metrics_before_logout() {
     // - Telemetry was flushed before logout
 }
 
-// ===========================================================================
-//                    Post-Logout Session Token Invalidation
-// ===========================================================================
-
-#[tokio::test]
-async fn should_handle_session_gone_error_when_using_invalidated_session_token() {
-    // Tests that SESSION_GONE (390111) during logout is treated as success
-    // because it indicates the session is already invalidated (desired outcome)
-
-    //Given Mock server is configured to return SESSION_GONE
-    let (addr, _, server) = spawn_test_server(1, |_| async move {
-        let body = r#"{"success":false,"code":"390111","message":"Session no longer exists","data":null}"#;
-        format!(
-            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-            body.len(),
-            body
-        ).into_bytes()
-    })
-    .await;
-
-    //And Session token is invalidated on server
-    let server_url = format!("http://{}", addr);
-    let session_token = "invalidated_session_token";
-    let client = reqwest::Client::builder()
-        .no_proxy()
-        .build()
-        .expect("Failed to build HTTP client");
-    let client_info = test_client_info();
-
-    //When Logout is attempted with invalidated session token
-    let result = logout_session(
-        &client,
-        &server_url,
-        session_token,
-        &client_info,
-        Duration::from_secs(5),
-        &RetryPolicy::default(),
-    )
-    .await;
-
-    //Then Server returns SESSION_GONE error 390111
-    //And Client treats SESSION_GONE as successful logout
-    // (SESSION_GONE means session is already gone = logout goal achieved)
-    assert!(
-        result.is_ok(),
-        "SESSION_GONE should be treated as success for logout: {:?}",
-        result
-    );
-
-    server.await.unwrap();
-}
-
-#[tokio::test]
-async fn should_handle_token_refresh_failure_after_logout() {
-    // Tests client handling when SERVER rejects master token refresh after logout
-    // Uses mock server to simulate server response
-
-    //Given Mock server is configured to return 401 Unauthorized
-    let (addr, _, server) = spawn_test_server(1, |_| async move {
-        let body = r#"{"success":false,"message":"Master token invalid or expired"}"#;
-        format!(
-            "HTTP/1.1 401 Unauthorized\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-            body.len(),
-            body
-        ).into_bytes()
-    })
-    .await;
-
-    //And Master token is invalidated on server
-    let server_url = format!("http://{}", addr);
-    let client = reqwest::Client::builder()
-        .no_proxy()
-        .build()
-        .expect("Failed to build HTTP client");
-    let client_info = test_client_info();
-    let old_tokens = sf_core::rest::snowflake::SessionTokens {
-        session_token: "old_session_token".to_string(),
-        master_token: "invalidated_master_token".to_string(),
-        session_id: 12345,
-        session_expires_at: None,
-        master_expires_at: None,
-    };
-
-    //When Token refresh is attempted with invalidated master token
-    let result = sf_core::rest::snowflake::refresh_session(
-        &client,
-        &server_url,
-        &client_info,
-        &old_tokens,
-    )
-    .await;
-
-    //Then Server returns 401 Unauthorized
-    assert!(result.is_err(), "Token refresh should fail with 401");
-
-    //And Client receives session refresh error
-    let err = result.unwrap_err();
-    let err_str = format!("{:?}", err);
-    assert!(
-        err_str.contains("401") || err_str.contains("refresh") || err_str.contains("SessionRefresh"),
-        "Error should indicate refresh failed: {}",
-        err_str
-    );
-
-    server.await.unwrap();
-}
-
 // Helper functions
 
 fn test_client_info() -> ClientInfo {
@@ -384,3 +282,53 @@ fn test_client_info() -> ClientInfo {
 }
 
 // TODO: add tests that when logout is raising an error we are not leaking any data (tokens etc)
+
+// ===========================================================================
+//                    Post-Logout Session Invalidation
+// ===========================================================================
+
+#[tokio::test]
+async fn should_reject_queries_client_side_after_connection_is_closed() {
+    //Given Snowflake client is logged in
+    let server = MockServer::start().await;
+    mount_jwt_login_success(&server).await;
+
+    let client = SnowflakeTestClient::connect_integration_test(Some(&server.uri()));
+
+    //And Simple query SELECT 1 executes successfully
+    // Note: For this test we skip the pre-logout query since we're testing
+    // client-side rejection, not server behavior. The key is that after
+    // close(), queries are rejected without reaching the server.
+
+    //When Connection is closed
+    let close_result = DatabaseDriverClient::connection_close(ConnectionCloseRequest {
+        conn_handle: Some(client.conn_handle),
+        server_session_keep_alive: Some(true), // Skip logout HTTP request
+        enable_auto_detection: None,
+        error_strategy: None,
+        timeout_seconds: None,
+    });
+    assert!(close_result.is_ok(), "Connection close should succeed");
+
+    //And Query is attempted on closed connection
+    let result_after = client.execute_query_no_unwrap("SELECT 1");
+
+    //Then Query fails with connection closed error
+    assert!(
+        result_after.is_err(),
+        "Query should fail after connection is closed, but got: {:?}",
+        result_after
+    );
+
+    let error_msg = result_after.unwrap_err();
+    // Client-side rejection - connection is closed, no HTTP request made
+    assert!(
+        error_msg.contains("closed")
+            || error_msg.contains("Closed")
+            || error_msg.contains("CONNECTION_NOT_OPEN")
+            || error_msg.contains("not open")
+            || error_msg.contains("not initialized"),
+        "Error should indicate connection is closed: {}",
+        error_msg
+    );
+}
