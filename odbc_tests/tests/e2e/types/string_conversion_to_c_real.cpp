@@ -120,12 +120,12 @@ TEST_CASE("should fail converting string literals to floating point types when d
         "more_than_max_float, '-3.4028234e38' AS almost_min_float, '-3.4028235e38' AS min_float, '-3.4028234e39' AS "
         "less_than_min_float");
     CHECK(check_no_truncation<SQL_C_FLOAT>(stmt, 1) == 3.4028235e38f);
-    NEW_DRIVER_ONLY("BD#7") { CHECK(check_no_truncation<SQL_C_FLOAT>(stmt, 2) == 3.4028235e38f); }
-    OLD_DRIVER_ONLY("BD#7") { check_numeric_out_of_range<SQL_C_FLOAT>(stmt, 2); }
+    NEW_DRIVER_ONLY("BD#8") { CHECK(check_no_truncation<SQL_C_FLOAT>(stmt, 2) == 3.4028235e38f); }
+    OLD_DRIVER_ONLY("BD#8") { check_numeric_out_of_range<SQL_C_FLOAT>(stmt, 2); }
     check_numeric_out_of_range<SQL_C_FLOAT>(stmt, 3);
     CHECK(check_no_truncation<SQL_C_FLOAT>(stmt, 4) == -3.4028235e38f);
-    NEW_DRIVER_ONLY("BD#7") { CHECK(check_no_truncation<SQL_C_FLOAT>(stmt, 5) == -3.4028235e38f); }
-    OLD_DRIVER_ONLY("BD#7") { check_numeric_out_of_range<SQL_C_FLOAT>(stmt, 5); }
+    NEW_DRIVER_ONLY("BD#8") { CHECK(check_no_truncation<SQL_C_FLOAT>(stmt, 5) == -3.4028235e38f); }
+    OLD_DRIVER_ONLY("BD#8") { check_numeric_out_of_range<SQL_C_FLOAT>(stmt, 5); }
     check_numeric_out_of_range<SQL_C_FLOAT>(stmt, 6);
   }
 }
