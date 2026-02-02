@@ -6,6 +6,7 @@ from decimal import Decimal
 
 import pytest
 
+from snowflake.connector import Cursor
 from snowflake.connector.errors import NotSupportedError
 from tests.e2e.types.utils import assert_sequential_values
 
@@ -32,20 +33,6 @@ class TestCursorMethods:
         with pytest.raises(NotSupportedError) as excinfo:
             cursor.executemany("INSERT INTO test VALUES (?)", [(1,), (2,)])
         assert "executemany is not implemented" in str(excinfo.value)
-
-    @pytest.mark.skip_reference
-    def test_fetchmany_not_implemented(self, cursor):
-        """Test that fetchmany raises NotSupportedError."""
-        with pytest.raises(NotSupportedError) as excinfo:
-            cursor.fetchmany()
-        assert "fetchmany is not implemented" in str(excinfo.value)
-
-    @pytest.mark.skip_reference
-    def test_fetchmany_with_size_not_implemented(self, cursor):
-        """Test that fetchmany with size raises NotSupportedError."""
-        with pytest.raises(NotSupportedError) as excinfo:
-            cursor.fetchmany(5)
-        assert "fetchmany is not implemented" in str(excinfo.value)
 
     @pytest.mark.skip_reference
     def test_nextset_not_implemented(self, cursor):
@@ -116,7 +103,10 @@ class TestCursorDatabaseQueries:
 class TestCursorFetch:
     """Test cursor fetch operations."""
 
-    # TODO: SNOW-2997748 - test fetchone and fetchall without execute
+    def test_execute_returns_cursor(self, cursor):
+        """Test fetchone with a single value."""
+        r = cursor.execute("SELECT 1")
+        assert isinstance(r, Cursor)
 
     def test_fetchone_single_value(self, cursor):
         """Test fetchone with a single value."""
@@ -169,6 +159,119 @@ class TestCursorFetch:
         cursor.execute("SELECT 1 WHERE FALSE")
         result = cursor.fetchall()
         assert result == []
+
+    def test_fetchmany_default_arraysize(self, cursor):
+        """Test fetchmany with default arraysize."""
+        cursor.execute(
+            """
+            SELECT ROW_NUMBER() OVER (ORDER BY seq4()) - 1 as n
+            FROM TABLE(GENERATOR(ROWCOUNT => 5))
+            ORDER BY 1
+            """
+        )
+        cursor.arraysize = 2
+        result = cursor.fetchmany()
+        assert result == [(0,), (1,)]
+
+    def test_fetchmany_with_explicit_size(self, cursor):
+        """Test fetchmany with explicit size argument."""
+        cursor.execute(
+            """
+            SELECT ROW_NUMBER() OVER (ORDER BY seq4()) - 1 as n
+            FROM TABLE(GENERATOR(ROWCOUNT => 10))
+            ORDER BY 1
+            """
+        )
+        result = cursor.fetchmany(3)
+        assert result == [(0,), (1,), (2,)]
+
+    def test_fetchmany_returns_fewer_when_exhausted(self, cursor):
+        """Test fetchmany returns fewer rows when result set is exhausted."""
+        cursor.execute("SELECT 1 UNION ALL SELECT 2")
+        result = cursor.fetchmany(10)
+        assert len(result) == 2
+
+    def test_fetchmany_returns_empty_after_exhausted(self, cursor):
+        """Test fetchmany returns empty list after all rows consumed."""
+        cursor.execute("SELECT 1")
+        cursor.fetchmany(10)  # Consume all rows
+        result = cursor.fetchmany(10)
+        assert result == []
+
+    def test_fetchmany_with_size_zero(self, cursor):
+        """Test fetchmany(0) returns empty list."""
+        cursor.execute("SELECT 1")
+        result = cursor.fetchmany(0)
+        assert result == []
+
+    @pytest.mark.skip_reference
+    def test_fetchmany_negative_size_raises_error(self, cursor):
+        """Test fetchmany with negative size raises ProgrammingError."""
+        from snowflake.connector.exceptions import ProgrammingError
+
+        cursor.execute("SELECT 1")
+        with pytest.raises(ProgrammingError) as excinfo:
+            cursor.fetchmany(-1)
+        assert "The number of rows is not zero or positive number" in str(excinfo.value)
+
+    def test_fetchmany_sequential_calls(self, cursor):
+        """Test multiple sequential fetchmany calls."""
+        cursor.execute(
+            """
+            SELECT ROW_NUMBER() OVER (ORDER BY seq4()) - 1 as n
+            FROM TABLE(GENERATOR(ROWCOUNT => 10))
+            ORDER BY 1
+            """
+        )
+        first = cursor.fetchmany(3)
+        second = cursor.fetchmany(3)
+        third = cursor.fetchmany(3)
+        fourth = cursor.fetchmany(3)
+
+        assert first == [(0,), (1,), (2,)]
+        assert second == [(3,), (4,), (5,)]
+        assert third == [(6,), (7,), (8,)]
+        assert fourth == [(9,)]
+
+    def test_fetchmany_mixed_with_fetchone(self, cursor):
+        """Test fetchmany mixed with fetchone."""
+        cursor.execute(
+            """
+            SELECT ROW_NUMBER() OVER (ORDER BY seq4()) - 1 as n
+            FROM TABLE(GENERATOR(ROWCOUNT => 5))
+            ORDER BY 1
+            """
+        )
+        first = cursor.fetchone()
+        batch = cursor.fetchmany(2)
+        last = cursor.fetchone()
+
+        assert first == (0,)
+        assert batch == [(1,), (2,)]
+        assert last == (3,)
+
+    def test_fetchmany_mixed_with_fetchall(self, cursor):
+        """Test fetchmany followed by fetchall."""
+        cursor.execute(
+            """
+            SELECT ROW_NUMBER() OVER (ORDER BY seq4()) - 1 as n
+            FROM TABLE(GENERATOR(ROWCOUNT => 5))
+            ORDER BY 1
+            """
+        )
+        batch = cursor.fetchmany(2)
+        remaining = cursor.fetchall()
+
+        assert batch == [(0,), (1,)]
+        assert remaining == [(2,), (3,), (4,)]
+
+    def test_fetchmany_with_multiple_columns(self, cursor):
+        """Test fetchmany with multiple columns."""
+        cursor.execute("SELECT 1, 'hello', 3.14 UNION ALL SELECT 2, 'world', 2.71")
+        result = cursor.fetchmany(2)
+        assert len(result) == 2
+        assert result[0] == (1, "hello", Decimal("3.14"))
+        assert result[1] == (2, "world", Decimal("2.71"))
 
 
 class TestCursorIteration:

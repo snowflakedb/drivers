@@ -16,7 +16,7 @@ from ._internal.protobuf_gen.database_driver_v1_pb2 import (  # type: ignore[att
     StatementNewRequest,
     StatementSetSqlQueryRequest,
 )
-from .errors import NotSupportedError
+from .errors import NotSupportedError, ProgrammingError
 
 
 if TYPE_CHECKING:
@@ -104,7 +104,7 @@ class Cursor:
         """Close the cursor now (rather than whenever __del__ is called)."""
         self._closed = True
 
-    def execute(self, operation: str, parameters: Sequence[Any] | dict[str, Any] | None = None) -> None:
+    def execute(self, operation: str, parameters: Sequence[Any] | dict[str, Any] | None = None) -> Cursor:
         """
         Execute a database operation (query or command).
 
@@ -127,6 +127,7 @@ class Cursor:
 
         # Reset streaming state for a new result
         self._iterator = None
+        return self
 
     def executemany(self, operation: str, seq_of_parameters: Sequence[Sequence[Any]]) -> None:
         """
@@ -210,9 +211,24 @@ class Cursor:
             sequence: List of rows
 
         Raises:
-            NotSupportedError: If not implemented
+            ProgrammingError: If the number of rows is not zero or positive number
         """
-        raise NotSupportedError("fetchmany is not implemented")
+        if size is None:
+            size = self.arraysize
+
+        if size < 0:
+            raise ProgrammingError(f"The number of rows is not zero or positive number: {size}")
+
+        ret = []
+        while size > 0:
+            row = self.fetchone()
+            if row is None:
+                break
+            ret.append(row)
+            if size is not None:
+                size -= 1
+
+        return ret
 
     def fetchall(self) -> list[Row]:
         """
