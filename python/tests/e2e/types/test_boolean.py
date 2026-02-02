@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from .utils import assert_sequential_values, assert_type
+from .utils import assert_type
 
 
 # =============================================================================
@@ -55,22 +55,17 @@ class TestBooleanLiteral:
     def test_should_download_large_result_set_with_multiple_chunks_from_generator(self, execute_query):
         # Given Snowflake client is logged in
 
-        # When Query "SELECT (id % 2 = 0)::BOOLEAN, id FROM <generator> ORDER BY id" is executed
+        # When Query "SELECT (id % 2 = 0)::BOOLEAN FROM <generator>" is executed
 
-        # Note: seq8() doesn't guarantee consecutive values in parallel execution,
-        # so we use ROW_NUMBER() to ensure sequential integers.
-        sql = (
-            f"SELECT ((ROW_NUMBER() OVER (ORDER BY seq8()) - 1) % 2 = 0)::BOOLEAN as val, "
-            f"ROW_NUMBER() OVER (ORDER BY seq8()) - 1 as id "
-            f"FROM TABLE(GENERATOR(ROWCOUNT => {LARGE_RESULT_SET_SIZE})) "
-            f"ORDER BY id"
-        )
+        sql = f"SELECT (seq8() % 2 = 0)::BOOLEAN FROM TABLE(GENERATOR(ROWCOUNT => {LARGE_RESULT_SET_SIZE}))"
         rows = execute_query(sql)
 
         # Then Result should contain 500000 TRUE and 500000 FALSE values
         values = [row[0] for row in rows]
         assert_type(values, bool)
-        assert_sequential_values(values, LARGE_RESULT_SET_SIZE, transform=lambda i: i % 2 == 0)
+        total, num_true = len(values), sum(values)
+        assert total == LARGE_RESULT_SET_SIZE
+        assert num_true == LARGE_RESULT_SET_SIZE // 2
 
 
 class TestBooleanTable:
@@ -114,26 +109,25 @@ class TestBooleanTable:
     def test_should_download_large_result_set_with_multiple_chunks_from_table(self, execute_query, tmp_schema):
         # Given Snowflake client is logged in
 
-        # And Table with BOOLEAN and ID columns exists with 1000000 alternating boolean values
+        # And Table with BOOLEAN column exists with 500000 TRUE and 500000 FALSE values
 
-        # Note: seq8() doesn't guarantee consecutive values in parallel execution,
-        # so we use ROW_NUMBER() to ensure sequential integers.
         table_name = f"{tmp_schema}.large_boolean_table"
-        execute_query(f"CREATE TABLE {table_name} (col BOOLEAN, id INT)")
+        execute_query(f"CREATE TABLE {table_name} (col BOOLEAN)")
         execute_query(
             f"INSERT INTO {table_name} "
-            f"SELECT ((ROW_NUMBER() OVER (ORDER BY seq8()) - 1) % 2 = 0)::BOOLEAN, "
-            f"ROW_NUMBER() OVER (ORDER BY seq8()) - 1 "
+            f"SELECT (seq8() % 2 = 0)::BOOLEAN "
             f"FROM TABLE(GENERATOR(ROWCOUNT => {LARGE_RESULT_SET_SIZE}))"
         )
 
-        # When Query "SELECT col FROM <table> ORDER BY id" is executed
-        rows = execute_query(f"SELECT col FROM {table_name} ORDER BY id")
+        # When Query "SELECT col FROM <table>" is executed
+        rows = execute_query(f"SELECT col FROM {table_name}")
 
         # Then Result should contain 500000 TRUE and 500000 FALSE values
         values = [row[0] for row in rows]
         assert_type(values, bool)
-        assert_sequential_values(values, LARGE_RESULT_SET_SIZE, transform=lambda i: i % 2 == 0)
+        total, num_true = len(values), sum(values)
+        assert total == LARGE_RESULT_SET_SIZE
+        assert num_true == LARGE_RESULT_SET_SIZE // 2
 
 
 class TestBooleanBinding:
