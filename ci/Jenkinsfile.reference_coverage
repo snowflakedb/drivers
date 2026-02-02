@@ -81,7 +81,7 @@ pipeline {
                         stage('ODBC: Build Docker Images') {
                             steps {
                                 sh '''
-                                    docker build --no-cache -f ci/Dockerfile.rocky-old-odbc-build -t rocky-old-odbc-build .
+                                    docker build -f ci/Dockerfile.rocky-old-odbc-build -t rocky-old-odbc-build .
                                     docker build -f ci/Dockerfile.rocky-old-odbc-test -t rocky-old-odbc-test .
                                 '''
                             }
@@ -154,6 +154,20 @@ pipeline {
                             }
                         }
 
+                        stage('ODBC: Install Benchstore Dependencies') {
+                            // Install dependencies BEFORE mounting secrets to reduce supply-chain attack surface
+                            // Uses --target to persist packages in workspace across container runs
+                            steps {
+                                sh '''
+                                    docker run --rm \
+                                        -v "$(pwd)":/workspace \
+                                        -w /workspace \
+                                        rocky-old-odbc-build \
+                                        bash -c 'python3.9 -m pip install --target /workspace/.benchstore_deps pyyaml benchstore-client-library --extra-index-url https://nexus.int.snowflakecomputing.com/repository/pypi-internal/simple'
+                                '''
+                            }
+                        }
+
                         stage('ODBC: Upload to Benchstore') {
                             steps {
                                 withCredentials([
@@ -165,11 +179,12 @@ pipeline {
                                             -v "$(pwd)":/workspace \
                                             -v "$SF_PERF_CONFIG":/tmp/sf_perf_config.yml:ro \
                                             -e SF_PERF_CONFIG=/tmp/sf_perf_config.yml \
+                                            -e PYTHONPATH=/workspace/.benchstore_deps \
                                             -e BUILD_NUMBER="$BUILD_NUMBER" \
                                             -e BRANCH_NAME="$BRANCH_NAME" \
                                             -w /workspace \
                                             rocky-old-odbc-build \
-                                            bash -c 'python3.9 -m pip install --upgrade pip setuptools && python3.9 -m pip install pyyaml benchstore-client-library --extra-index-url https://nexus.int.snowflakecomputing.com/repository/pypi-internal/simple && python3.9 ./scripts/shared/coverage_benchstore_upload.py --summary coverage_report/summary.txt --type odbc'
+                                            python3.9 ./scripts/shared/coverage_benchstore_upload.py --summary coverage_report/summary.txt --type odbc
                                     '''
                                 }
                             }
@@ -239,16 +254,6 @@ pipeline {
                             }
                         }
 
-                        stage('Python: Decrypt Secrets') {
-                            steps {
-                                withCredentials([
-                                    string(credentialsId: 'sfctest0-parameters-secret', variable: 'PARAMETERS_SECRET')
-                                ]) {
-                                    sh './scripts/decode_secrets.sh'
-                                }
-                            }
-                        }
-
                         stage('Python: Setup Docker') {
                             steps {
                                 withCredentials([string(credentialsId: NEXUS_CREDENTIAL_ID, variable: 'NEXUS_PASSWORD')]) {
@@ -259,6 +264,7 @@ pipeline {
                         }
 
                         stage('Python: Build & Install Old Connector') {
+                            // Run pip installs BEFORE decrypting secrets to reduce supply-chain attack surface
                             steps {
                                 sh """
                                     docker run --rm \
@@ -267,6 +273,16 @@ pipeline {
                                         ${DOCKER_IMAGE} \
                                         bash -c 'chmod +x ./scripts/old_python/build.sh && ./scripts/old_python/build.sh'
                                 """
+                            }
+                        }
+
+                        stage('Python: Decrypt Secrets') {
+                            steps {
+                                withCredentials([
+                                    string(credentialsId: 'sfctest0-parameters-secret', variable: 'PARAMETERS_SECRET')
+                                ]) {
+                                    sh './scripts/decode_secrets.sh'
+                                }
                             }
                         }
 
@@ -294,6 +310,20 @@ pipeline {
                             }
                         }
 
+                        stage('Python: Install Benchstore Dependencies') {
+                            // Install dependencies BEFORE mounting secrets to reduce supply-chain attack surface
+                            // Uses --target to persist packages in workspace across container runs
+                            steps {
+                                sh """
+                                    docker run --rm \
+                                        -v "\$(pwd)":/workspace \
+                                        -w /workspace \
+                                        ${DOCKER_IMAGE} \
+                                        pip install --target /workspace/.benchstore_deps pyyaml benchstore-client-library --extra-index-url https://nexus.int.snowflakecomputing.com/repository/pypi-internal/simple
+                                """
+                            }
+                        }
+
                         stage('Python: Upload to Benchstore') {
                             steps {
                                 withCredentials([
@@ -305,11 +335,12 @@ pipeline {
                                             -v "\$(pwd)":/workspace \
                                             -v "\$SF_PERF_CONFIG":/tmp/sf_perf_config.yml:ro \
                                             -e SF_PERF_CONFIG=/tmp/sf_perf_config.yml \
+                                            -e PYTHONPATH=/workspace/.benchstore_deps \
                                             -e BUILD_NUMBER="\$BUILD_NUMBER" \
                                             -e BRANCH_NAME="\$BRANCH_NAME" \
                                             -w /workspace \
                                             ${DOCKER_IMAGE} \
-                                            bash -c 'pip install pyyaml benchstore-client-library --extra-index-url https://nexus.int.snowflakecomputing.com/repository/pypi-internal/simple && python3 ./scripts/shared/coverage_benchstore_upload.py --summary python_coverage_report/summary.txt --type python'
+                                            python3 ./scripts/shared/coverage_benchstore_upload.py --summary python_coverage_report/summary.txt --type python
                                     """
                                 }
                             }

@@ -31,13 +31,7 @@ pip install -e ".[pandas]" || \
 pip install -e "."
 
 # Install test dependencies
-pip install pytest pytest-cov pytest-json-report pytest-timeout
-
-# Install test dependencies from universal-driver's test requirements
-# This ensures we have all necessary fixtures and helpers
-cd /workspace/python
-# Extract and install test dependencies without installing our package
-pip install pytest-json-report mock
+pip install pytest pytest-cov pytest-json-report pytest-timeout mock
 
 echo ""
 echo "=== Old Python connector installed successfully ==="
