@@ -8,6 +8,3 @@ name = "sf_mini_core"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-
-[build-dependencies]
-cbindgen = "0.27"
