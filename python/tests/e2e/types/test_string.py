@@ -86,7 +86,7 @@ class TestStringTypeCasting:
         sql = f"SELECT 'hello'::{string_type}(32), 'Hello World'::{string_type}(32), '日本語テスト'::{string_type}(32)"
         result = execute_query(sql, single_row=True)
 
-        # Then All values should be returned as appropriate type (str)
+        # Then All values should be returned as appropriate type
         assert_type(result, str)
         assert result == ("hello", "Hello World", "日本語テスト")
 

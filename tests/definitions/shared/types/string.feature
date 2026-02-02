@@ -15,7 +15,7 @@ Feature: String datatype handling
     # Python: Values should be cast to 'str' type
     Given Snowflake client is logged in
     When Query "SELECT 'hello'::<type>, 'Hello World'::<type>, '日本語テスト'::<type>" is executed
-    Then All values should be returned as appropriate type (str)
+    Then All values should be returned as appropriate type
 
   # ============================================================================
   # SIMPLE SELECTS - LITERALS (Happy path, Corner cases)
