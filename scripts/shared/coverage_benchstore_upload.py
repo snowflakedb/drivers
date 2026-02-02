@@ -162,7 +162,7 @@ def parse_coverage_summary(summary_path: Path) -> Dict[str, float]:
 
 def upload_coverage_metrics(
     summary_path: Path,
-    coverage_type: str = "odbc",
+    coverage_type: str,
     use_local_auth: bool = False
 ):
     """
@@ -266,7 +266,7 @@ def main():
         "--type",
         type=str,
         choices=COVERAGE_TYPES,
-        default="odbc",
+        required=True,
         help=f"Type of coverage report ({', '.join(COVERAGE_TYPES)})"
     )
     parser.add_argument(
