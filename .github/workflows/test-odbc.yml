@@ -59,19 +59,34 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest]
+        include:
+          - os: ubuntu-latest
+            driver_lib: libsfodbc.so
+            odbc_library: /usr/lib/x86_64-linux-gnu/libodbc.so
+            odbc_include: /usr/include
+          - os: macos-latest
+            driver_lib: libsfodbc.dylib
+            odbc_library: /opt/homebrew/lib/libodbc.dylib
+            odbc_include: /opt/homebrew/include
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install dependencies
+      - name: Install dependencies (Linux)
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y unixodbc-dev build-essential zlib1g-dev lcov
           wget https://github.com/Kitware/CMake/releases/download/v4.0.3/cmake-4.0.3-linux-x86_64.sh
           sudo sh cmake-4.0.3-linux-x86_64.sh --skip-license --prefix=/usr/local
           sudo rm cmake-4.0.3-linux-x86_64.sh
+          cmake --version
+
+      - name: Install dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install unixodbc cmake
           cmake --version
 
       - name: Decode secrets
@@ -88,25 +103,33 @@ jobs:
       - name: Build and run ODBC tests
         run: |
           ls -l target/debug/
-          export DRIVER_PATH=$(pwd)/target/debug/libsfodbc.so
+          export DRIVER_PATH=$(pwd)/target/debug/${{ matrix.driver_lib }}
           export PARAMETER_PATH=$(pwd)/parameters.json
           export LLVM_PROFILE_FILE="odbc-%p-%m.profraw"
+          
+          # Get number of CPUs (cross-platform)
+          if [[ "$RUNNER_OS" == "Linux" ]]; then
+            NPROC=$(nproc)
+          else
+            NPROC=$(sysctl -n hw.ncpu)
+          fi
+          
           cd odbc_tests
           mkdir -p cmake-build
           cmake -B cmake-build \
-              -D ODBC_LIBRARY="/usr/lib/x86_64-linux-gnu/libodbc.so" \
-              -D ODBC_INCLUDE_DIR="/usr/include" \
+              -D ODBC_LIBRARY="${{ matrix.odbc_library }}" \
+              -D ODBC_INCLUDE_DIR="${{ matrix.odbc_include }}" \
               -D DRIVER_TYPE=NEW \
               .
-          cmake --build cmake-build -- -j $(nproc)
-          ctest -j $(nproc) -C Debug --test-dir cmake-build --output-on-failure
+          cmake --build cmake-build -- -j $NPROC
+          ctest -j $NPROC -C Debug --test-dir cmake-build --output-on-failure
           
           # Generate coverage report from C++ test execution
           cd ..
           LLVM_PROFDATA=$(find ~/.rustup -name "llvm-profdata" -type f 2>/dev/null | head -1)
           LLVM_COV=$(find ~/.rustup -name "llvm-cov" -type f 2>/dev/null | head -1)
           find . -name "odbc-*.profraw" -type f | xargs $LLVM_PROFDATA merge -sparse -o coverage.profdata
-          $LLVM_COV export target/debug/libsfodbc.so \
+          $LLVM_COV export target/debug/${{ matrix.driver_lib }} \
               -instr-profile=coverage.profdata \
               -format=lcov \
               -sources=$(pwd)/odbc \
