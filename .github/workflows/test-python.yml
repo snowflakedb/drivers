@@ -156,16 +156,6 @@ jobs:
             --cov-report=html:reports/coverage-${{ matrix.os }}-${{ matrix.py }}-html
         working-directory: python
 
-      - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v5
-        env:
-          CODECOV_TOKEN: ${{ secrets.SNOW_CODECOV_TOKEN }}
-        with:
-          files: ./python/reports/coverage-${{ matrix.os }}-${{ matrix.py }}.xml
-          flags: python
-          name: python-${{ matrix.os }}-py${{ matrix.py }}
-          fail_ci_if_error: false
-
       - name: Upload test results as GitHub artifact
         uses: actions/upload-artifact@v4
         with:

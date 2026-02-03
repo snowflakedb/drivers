@@ -112,16 +112,6 @@ jobs:
               -sources=$(pwd)/odbc \
               -sources=$(pwd)/sf_core > lcov-${{ matrix.os }}-odbc-stable.info
 
-      - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v5
-        env:
-          CODECOV_TOKEN: ${{ secrets.SNOW_CODECOV_TOKEN }}
-        with:
-          files: ./lcov-${{ matrix.os }}-odbc-stable.info
-          flags: odbc
-          name: odbc-${{ runner.os }}
-          fail_ci_if_error: false
-
   odbc-status:
     needs: [detect-changes, odbc_tests_reference, odbc_tests]
     if: always()
