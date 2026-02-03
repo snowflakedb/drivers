@@ -94,16 +94,6 @@ jobs:
           cargo tarpaulin --packages sf_core --all-features --skip-clean --no-fail-fast --out lcov --output-dir .
           mv lcov.info lcov-${{ matrix.os }}-${{ matrix.rust-version }}.info
 
-      - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v5
-        env:
-          CODECOV_TOKEN: ${{ secrets.SNOW_CODECOV_TOKEN }}
-        with:
-          files: ./lcov-${{ matrix.os }}-${{ matrix.rust-version }}.info
-          flags: rust-core
-          name: rust-${{ runner.os }}-${{ matrix.rust-version }}
-          fail_ci_if_error: false
-
   rust-core-status:
     needs: [detect-changes, format, clippy, test]
     if: always()
