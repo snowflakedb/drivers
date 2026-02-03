@@ -51,3 +51,9 @@ repos:
         pass_filenames: false
         files: ^python/(pyproject\.toml|uv\.lock)$
         language: system
+    -   id: python-no-assert-in-production
+        name: No assert statements in production code
+        description: Ensure no assert statements are used in python/src (production code only)
+        entry: '^\s*assert\s'
+        language: pygrep
+        files: ^python/src/.*\.py$

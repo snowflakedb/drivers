@@ -168,17 +168,16 @@ class Cursor:
 
         return stream_ptr
 
-    def _ensure_iterator(self) -> None:
-        if self._iterator is None:
-            stream_ptr = self._get_stream_ptr()
-            arrow_context = ArrowConverterContext()
-            self._iterator = ArrowStreamIterator(
-                stream_ptr,
-                arrow_context,
-                # TODO: SNOW-2997742, SNOW-2997786, temporarily hardcoded
-                use_dict_result=False,
-                use_numpy=False,
-            )
+    def _ensure_iterator(self) -> ArrowStreamIterator:
+        stream_ptr = self._get_stream_ptr()
+        arrow_context = ArrowConverterContext()
+        return ArrowStreamIterator(
+            stream_ptr,
+            arrow_context,
+            # TODO: SNOW-2997742, SNOW-2997786, temporarily hardcoded
+            use_dict_result=False,
+            use_numpy=False,
+        )
 
     def fetchone(self) -> Row | None:
         """
@@ -187,8 +186,8 @@ class Cursor:
         Returns:
             sequence: Next row, or None when no more data is available
         """
-        self._ensure_iterator()
-        assert self._iterator is not None
+        if self._iterator is None:
+            self._iterator = self._ensure_iterator()
         try:
             return next(self._iterator)
         except StopIteration:
@@ -230,8 +229,8 @@ class Cursor:
         Returns:
             sequence: List of all remaining rows
         """
-        self._ensure_iterator()
-        assert self._iterator is not None
+        if self._iterator is None:
+            self._iterator = self._ensure_iterator()
         return list(self._iterator)
 
     def nextset(self) -> None:

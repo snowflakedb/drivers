@@ -14,7 +14,7 @@ from tests.e2e.types.utils import assert_sequential_values
 if IS_UNIVERSAL_DRIVER:
     from snowflake.connector import Cursor
 else:
-    from snowflake.connector import SnowflakeCursor as Cursor
+    from snowflake.connector.cursor import SnowflakeCursor as Cursor
 
 
 class TestCursorMethods:
