@@ -9,23 +9,6 @@ use crate::feature_parser::Feature;
 use crate::step_finder::StepFinder;
 use crate::test_discovery::{Language, TestDiscovery, TestLevel};
 
-/// Valid top-level directory prefixes for feature files.
-///
-/// Feature files must be organized under one of these directories:
-/// - `shared/` - Features that apply to all language implementations
-/// - `core/` - Rust-specific features
-/// - `python/` - Python-specific features
-/// - `odbc/` - ODBC-specific features
-/// - `jdbc/` - JDBC-specific features
-/// - `dotnet/` - .NET/C#-specific features
-/// - `nodejs/` - Node.js/JavaScript-specific features
-///
-/// This constraint ensures explicit scope declaration for all features and prevents
-/// silent misconfiguration (e.g., typos like `shares/` or `rust/` instead of `shared/` or `core/`).
-const VALID_FEATURE_PREFIXES: &[&str] = &[
-    "shared", "core", "python", "odbc", "jdbc", "dotnet", "nodejs",
-];
-
 pub struct GherkinValidator {
     _workspace_root: PathBuf,
     features_dir: PathBuf,
@@ -241,20 +224,31 @@ impl GherkinValidator {
     /// or incorrect paths like `rust/` instead of `core/`). Without this validation,
     /// features in unknown directories would be silently ignored during orphan detection,
     /// leading to false positives.
+    ///
+    /// Uses `TestDiscovery::get_language_from_path()` as the single source of truth for
+    /// valid language-specific folders, plus explicit handling for `shared/`.
     fn validate_feature_prefix(&self, feature_path: &Path, feature_id: &str) -> Result<()> {
         let first_component = feature_id.split('/').next().unwrap_or("");
 
-        if !VALID_FEATURE_PREFIXES.contains(&first_component) {
-            anyhow::bail!(
-                "Feature file '{}' is in an invalid directory '{}'. \
-                 Feature files must be under one of: {:?}. \
-                 Use 'shared/' for cross-language features or a language-specific folder (e.g., 'core/', 'python/').",
-                feature_path.display(),
-                first_component,
-                VALID_FEATURE_PREFIXES
-            );
+        // shared/ is valid for all languages
+        if first_component == "shared" {
+            return Ok(());
         }
-        Ok(())
+
+        // Check if it's a known language folder using existing detection logic
+        // (get_language_from_path returns Some for core/, python/, odbc/, jdbc/, dotnet/, nodejs/)
+        if TestDiscovery::get_language_from_path(feature_path).is_some() {
+            return Ok(());
+        }
+
+        // Unknown folder - error
+        anyhow::bail!(
+            "Feature file '{}' is in an invalid directory '{}'. \
+             Feature files must be under 'shared/' or a language-specific folder \
+             (core/, python/, odbc/, jdbc/, dotnet/, nodejs/).",
+            feature_path.display(),
+            first_component,
+        );
     }
 
     fn collect_all_scenarios_and_languages(
