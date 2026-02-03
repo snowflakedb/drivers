@@ -1139,13 +1139,6 @@ impl GherkinValidator {
     }
 
     fn steps_match(&self, implemented_step: &str, feature_step: &str) -> bool {
-        // Strip trailing comment suffixes from implemented step.
-        // Sometimes step extraction includes trailing inline comments like:
-        //   "Given I have valid credentials - setup for auth"
-        //   "When I login // verify auth flow"
-        // These suffixes should be stripped before comparison.
-        let impl_stripped = Self::strip_trailing_comment_suffix(implemented_step);
-
         // Normalize both steps for comparison - only remove punctuation, keep all words
         let normalize = |s: &str| {
             s.to_lowercase()
@@ -1163,24 +1156,11 @@ impl GherkinValidator {
                 .to_string()
         };
 
-        let norm_impl = normalize(&impl_stripped);
+        let norm_impl = normalize(implemented_step);
         let norm_feature = normalize(feature_step);
 
         // Require exact match after normalization
         norm_impl == norm_feature
-    }
-
-    /// Strip trailing comment/note suffixes from a step string.
-    /// Handles common patterns like " - note", " // comment", " # comment".
-    fn strip_trailing_comment_suffix(s: &str) -> String {
-        // Common comment/note markers that might appear after the step text
-        let markers = [" - ", " -- ", " // ", " # ", " /* "];
-        for marker in markers {
-            if let Some(idx) = s.find(marker) {
-                return s[..idx].to_string();
-            }
-        }
-        s.to_string()
     }
 
     pub fn validate_all_with_breaking_changes(&self) -> Result<EnhancedValidationResult> {
