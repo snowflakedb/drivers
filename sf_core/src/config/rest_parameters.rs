@@ -186,7 +186,7 @@ impl LoginMethod {
                 .map_err(|e| {
                     InvalidParameterValueSnafu {
                         parameter: "private_key",
-                        value: private_key_base64.clone(),
+                        value: "(redacted)".to_string(),
                         explanation: format!("Could not decode base64 private key: {e}"),
                     }
                     .build()
@@ -197,7 +197,7 @@ impl LoginMethod {
                 let private_key = String::from_utf8(private_key_bytes).map_err(|e| {
                     InvalidParameterValueSnafu {
                         parameter: "private_key",
-                        value: private_key_base64,
+                        value: "(redacted)".to_string(),
                         explanation: format!("Private key is not valid UTF-8: {e}"),
                     }
                     .build()

@@ -25,6 +25,12 @@ Feature: Private Key Authentication
     When Trying to Connect
     Then Login is successful and simple query can be executed
 
+  @core_e2e
+  Scenario: should authenticate using private_key as base64 string
+    Given Authentication is set to JWT and private key is provided as base64-encoded string
+    When Trying to Connect
+    Then Login is successful and simple query can be executed
+
   @python_e2e
   Scenario: should authenticate using private_key as str
     Given Authentication is set to JWT and private key is provided as str
@@ -39,7 +45,7 @@ Feature: Private Key Authentication
 
   @core_e2e
   Scenario: should automatically update authenticator to JWT if key pair params present
-    Given private key or private key file is provided and authenticator is not JWT
+    Given private key or private key file is provided and authenticator is not explicitly set
     When Trying to Connect
     Then Connector changes authenticator to JWT and login is successful and simple query can be executed
 
