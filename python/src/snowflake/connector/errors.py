@@ -106,3 +106,7 @@ class ConfigManagerError(Error):
 
     This means that ConfigManager is misused by a developer.
     """
+
+
+class ForbiddenError(Error):
+    """Exception for 403 HTTP error for retry."""
