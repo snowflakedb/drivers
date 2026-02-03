@@ -104,7 +104,9 @@ jobs:
           # GPG is pre-installed on Windows GitHub runners
           gpg --version
           # Set OpenSSL environment variables for Rust build
+          # Chocolatey OpenSSL uses MSVC lib structure
           echo "OPENSSL_DIR=C:\Program Files\OpenSSL" >> $env:GITHUB_ENV
+          echo "OPENSSL_LIB_DIR=C:\Program Files\OpenSSL\lib\VC\x64\MD" >> $env:GITHUB_ENV
 
       - name: Decode secrets
         run: ./scripts/decode_secrets.sh
