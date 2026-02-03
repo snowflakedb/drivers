@@ -81,9 +81,6 @@ jobs:
           sudo sh cmake-4.0.3-linux-x86_64.sh --skip-license --prefix=/usr/local
           sudo rm cmake-4.0.3-linux-x86_64.sh
           cmake --version
-          # Export ODBC paths dynamically
-          echo "ODBC_LIBRARY=$(odbc_config --lib-prefix)/libodbc.so" >> $GITHUB_ENV
-          echo "ODBC_INCLUDE=$(odbc_config --include-prefix)" >> $GITHUB_ENV
 
       - name: Install dependencies (macOS)
         if: runner.os == 'macOS'
@@ -114,8 +111,8 @@ jobs:
           cd odbc_tests
           mkdir -p cmake-build
           cmake -B cmake-build \
-              -D ODBC_LIBRARY="${ODBC_LIBRARY}" \
-              -D ODBC_INCLUDE_DIR="${ODBC_INCLUDE}" \
+              -D ODBC_LIBRARY="/usr/lib/x86_64-linux-gnu/libodbc.so" \
+              -D ODBC_INCLUDE_DIR="/usr/include" \
               -D DRIVER_TYPE=NEW \
               .
           cmake --build cmake-build -- -j $NPROC
