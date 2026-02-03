@@ -44,3 +44,10 @@ repos:
         pass_filenames: true
         files: ^python/.*\.py$
         language: system
+    -   id: uv-lock-update
+        name: Update uv.lock
+        description: Updates uv.lock file
+        entry: bash -c 'cd python && uv lock'
+        pass_filenames: false
+        files: ^python/(pyproject\.toml|uv\.lock)$
+        language: system

@@ -30,7 +30,7 @@ except ImportError:
     build_ext = None  # type: ignore[assignment,misc]
 
 
-class NanoarrowBuildHook(BuildHookInterface):
+class BuildHook(BuildHookInterface):
     """Build hook for compiling Cython extensions with nanoarrow C++ code."""
 
     PLUGIN_NAME = "nanoarrow"
@@ -86,6 +86,9 @@ class NanoarrowBuildHook(BuildHookInterface):
     # Environment variable to disable compilation
     DISABLE_COMPILE_ENV_VAR = "SNOWFLAKE_DISABLE_COMPILE_ARROW_EXTENSIONS"
     POSITIVE_VALUES = ("y", "yes", "t", "true", "1", "on")
+
+    # Vendored C files that should have warnings suppressed
+    VENDORED_C_FILES = ("nanoarrow.c", "nanoarrow_ipc.c", "flatcc.c")
 
     def initialize(self, version: str, build_data: dict[str, Any]) -> None:
         """Initialize the build hook and compile extensions."""
@@ -172,6 +175,8 @@ class NanoarrowBuildHook(BuildHookInterface):
     def _run_build(self, extensions: list, src_root: Path) -> None:
         """Run the build using setuptools Distribution."""
         c_files_for_c99 = self.C_FILES_FOR_C99
+        vendored_c_files = self.VENDORED_C_FILES
+        is_unix = sys.platform in ("linux", "darwin")
 
         class CustomBuildExt(build_ext):
             """Custom build_ext that handles C files with C99 standard."""
@@ -180,10 +185,18 @@ class NanoarrowBuildHook(BuildHookInterface):
                 original_compile = self.compiler._compile
 
                 def new_compile(obj, src: str, ext_arg, cc_args, extra_postargs, pp_opts):
-                    # Handle C files differently from C++ files
-                    if src.endswith(c_files_for_c99):
+                    # Handle C files differently from C++ files (Unix only)
+                    if is_unix and src.endswith(c_files_for_c99):
                         extra_postargs = [s for s in extra_postargs if s not in ("-std=c++17", "-std=c++11")]
                         extra_postargs.append("-std=c99")
+                    # Suppress warnings for vendored/generated C files (Unix only, GCC/Clang flags)
+                    if is_unix and src.endswith(vendored_c_files):
+                        extra_postargs = list(extra_postargs)
+                        extra_postargs.extend([
+                            "-Wno-unused-variable",
+                            "-Wno-unused-const-variable",
+                            "-Wno-unreachable-code",
+                        ])
                     return original_compile(obj, src, ext_arg, cc_args, extra_postargs, pp_opts)
 
                 self.compiler._compile = new_compile
@@ -204,8 +217,6 @@ class NanoarrowBuildHook(BuildHookInterface):
 
     def _build_core(self) -> None:
         """Build the Rust core library in release mode for distribution."""
-        print()
-        print("Building Rust core library...")
 
         # Get paths relative to the Python wrapper directory
         python_dir = Path(__file__).parent
@@ -246,11 +257,7 @@ class NanoarrowBuildHook(BuildHookInterface):
             # Copy built artifacts from release directory to _core directory
             release_dir = Path(temp_dir) / "release"
             if not release_dir.exists():
-                raise Exception("Rust distribution build not present")
-            print("Copying release artifacts")
+                raise Exception("Core binary not present")
             for file in release_dir.rglob("*"):
                 if file.is_file() and file.suffix in (".dylib", ".so", ".dll"):
                     shutil.copy2(file, target_dir)
-
-
-        print("Core library build complete!")

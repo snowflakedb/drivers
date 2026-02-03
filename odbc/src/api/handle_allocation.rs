@@ -50,6 +50,7 @@ pub fn alloc_statement(input_handle: sql::Handle) -> OdbcResult<*mut Statement<'
                 stmt_handle,
                 state: StatementState::Created.into(),
                 parameter_bindings: std::collections::HashMap::new(),
+                column_bindings: std::collections::HashMap::new(),
                 diagnostic_info: DiagnosticInfo::default(),
             });
             Ok(Box::into_raw(stmt))
@@ -107,7 +108,7 @@ pub fn init_logging() {
     lazy_static! {
         // TODO: This is a hack to initialize the logging system.
         // We should find a better way to do this.
-        static ref LOGGING_RESULT: Result<(), sf_core::logging::LogError> = sf_core::logging::init(sf_core::logging::LoggingConfig::new(None, true, false));
+        static ref LOGGING_RESULT: Result<(), sf_core::logging::LogError> = sf_core::logging::init(sf_core::logging::LoggingConfig::new(Some("odbc.log".into()), true, false));
     }
 
     if let Err(e) = LOGGING_RESULT.as_ref() {

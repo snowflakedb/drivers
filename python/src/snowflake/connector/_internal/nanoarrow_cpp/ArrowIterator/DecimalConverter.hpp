@@ -42,9 +42,6 @@ class DecimalFromIntConverter : public DecimalBaseConverter {
 
  private:
   ArrowArrayView* m_array;
-  int m_precision;  // looks like the precision here is not useful, and this
-                    // will be removed soon when it's been confirmed
-
   int m_scale;
 };
 
@@ -57,11 +54,7 @@ class NumpyDecimalConverter : public IColumnConverter {
 
  private:
   ArrowArrayView* m_array;
-
-  int m_precision;
-
   int m_scale;
-
   PyObject* m_context;
 };
 

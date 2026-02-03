@@ -25,7 +25,11 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
 
+use odbc_sys as sql;
+
 pub const C_TYPES_EXTENDED: i16 = 0x04000;
+
+pub const SQL_NULL_DATA: sql::Len = -1;
 
 #[repr(i16)]
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]

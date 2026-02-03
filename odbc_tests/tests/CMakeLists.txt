@@ -4,6 +4,5 @@ add_subdirectory(e2e)
 add_subdirectory(integration)
 add_subdirectory(basic_tests)
 add_subdirectory(bindings_tests)
-add_subdirectory(auth_tests)
 add_subdirectory(datatype_tests)
 

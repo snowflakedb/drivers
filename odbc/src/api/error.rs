@@ -1,8 +1,12 @@
-use std::{collections::HashSet, str::Utf8Error, string::FromUtf8Error};
+use std::{
+    collections::HashSet,
+    str::Utf8Error,
+    string::{FromUtf8Error, FromUtf16Error},
+};
 
 use crate::{
     api::{SqlState, diagnostic::DiagnosticRecord},
-    conversion::ConversionError,
+    conversion::{ConversionError, error::WriteOdbcError},
     write_arrow::ArrowBindingError,
 };
 use arrow::error::ArrowError;
@@ -134,7 +138,7 @@ pub enum OdbcError {
     },
 
     #[snafu(display("Error reading arrow value: {source:?}"))]
-    ArrowRead {
+    ConversionError {
         #[snafu(source(from(ConversionError, Box::new)))]
         source: Box<ConversionError>,
         #[snafu(implicit)]
@@ -165,6 +169,12 @@ pub enum OdbcError {
     #[snafu(display("Text conversion error: {source}"))]
     TextConversionFromUtf8 {
         source: FromUtf8Error,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Text conversion error: {source}"))]
+    TextConversionFromUtf16 {
+        source: FromUtf16Error,
         #[snafu(implicit)]
         location: Location,
     },
@@ -265,11 +275,26 @@ impl OdbcError {
             OdbcError::ExecuteStatement { .. } => SqlState::GeneralError,
             OdbcError::BindParameters { .. } => SqlState::WrongNumberOfParameters,
             OdbcError::ConnectionInit { .. } => SqlState::ClientUnableToEstablishConnection,
-            OdbcError::ArrowRead { .. } => SqlState::GeneralError,
+            OdbcError::ConversionError { source, .. } => match source.as_ref() {
+                ConversionError::WriteOdbcValue { source, .. } => match source {
+                    WriteOdbcError::InvalidValue { .. } => SqlState::InvalidCharacterValueForCast,
+                    WriteOdbcError::NumericLiteralParsing { .. } => {
+                        SqlState::InvalidCharacterValueForCast
+                    }
+                    WriteOdbcError::RustParsing { .. } => SqlState::NumericValueOutOfRange,
+                    WriteOdbcError::NumericValueOutOfRange { .. } => {
+                        SqlState::NumericValueOutOfRange
+                    }
+                    _ => SqlState::GeneralError,
+                },
+                ConversionError::ReadArrowValue { .. } => SqlState::GeneralError,
+                _ => SqlState::GeneralError,
+            },
             OdbcError::ParameterBinding { .. } => SqlState::WrongNumberOfParameters,
             OdbcError::FetchData { .. } => SqlState::GeneralError,
             OdbcError::TextConversionUtf8 { .. } => SqlState::StringDataRightTruncated,
             OdbcError::TextConversionFromUtf8 { .. } => SqlState::StringDataRightTruncated,
+            OdbcError::TextConversionFromUtf16 { .. } => SqlState::StringDataRightTruncated,
             OdbcError::ArrowBinding { .. } => SqlState::GeneralError,
             OdbcError::ProtoDriverException { error, .. } => match *error.clone() {
                 ErrorType::AuthError(_) => SqlState::InvalidAuthorizationSpecification,

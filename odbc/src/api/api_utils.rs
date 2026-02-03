@@ -1,7 +1,9 @@
 use std::cmp::min;
 
 use crate::api::OdbcResult;
-use crate::api::error::{TextConversionFromUtf8Snafu, TextConversionUtf8Snafu};
+use crate::api::error::{
+    TextConversionFromUtf8Snafu, TextConversionFromUtf16Snafu, TextConversionUtf8Snafu,
+};
 use odbc_sys as sql;
 use snafu::ResultExt;
 
@@ -14,6 +16,17 @@ pub fn cstr_to_string(text: *const sql::Char, length: sql::Integer) -> OdbcResul
     } else {
         let text_slice = unsafe { std::slice::from_raw_parts(text, length as usize) };
         String::from_utf8(text_slice.to_vec()).context(TextConversionFromUtf8Snafu {})
+    }
+}
+
+pub fn utf16_to_string(text: *const sql::WChar, length: sql::Integer) -> OdbcResult<String> {
+    if length == sql::NTS as i32 {
+        let result =
+            unsafe { std::ffi::CStr::from_ptr(text as *const std::os::raw::c_char).to_str() };
+        result.context(TextConversionUtf8Snafu {}).map(String::from)
+    } else {
+        let text_slice = unsafe { std::slice::from_raw_parts(text, length as usize) };
+        String::from_utf16(text_slice).context(TextConversionFromUtf16Snafu {})
     }
 }
 

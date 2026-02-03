@@ -6,7 +6,14 @@ from decimal import Decimal
 
 import pytest
 
-from snowflake.connector.exceptions import NotSupportedError
+from tests.compatibility import IS_UNIVERSAL_DRIVER
+from tests.e2e.types.utils import assert_sequential_values
+
+
+if IS_UNIVERSAL_DRIVER:
+    from snowflake.connector.exceptions import NotSupportedError
+else:
+    from snowflake.connector.errors import NotSupportedError
 
 
 class TestCursorMethods:
@@ -145,7 +152,14 @@ class TestCursorFetch:
 
     def test_fetchall_multiple_rows(self, cursor):
         """Test fetchall with multiple rows."""
-        cursor.execute("SELECT seq4() FROM TABLE(GENERATOR(ROWCOUNT => 10))")
+        # Use ROW_NUMBER() for consecutive integers; seq4() may skip values in parallel.
+        cursor.execute(
+            """
+            SELECT ROW_NUMBER() OVER (ORDER BY seq4()) - 1 as n
+            FROM TABLE(GENERATOR(ROWCOUNT => 10))
+            ORDER BY 1
+        """
+        )
         result = cursor.fetchall()
         assert result == [(i,) for i in range(10)]
 
@@ -168,20 +182,41 @@ class TestCursorIteration:
 
     def test_cursor_is_iterable(self, cursor):
         """Test cursor can be iterated."""
-        cursor.execute("SELECT seq4() FROM TABLE(GENERATOR(ROWCOUNT => 5))")
+        # Use ROW_NUMBER() for consecutive integers; seq4() may skip values in parallel.
+        cursor.execute(
+            """
+            SELECT ROW_NUMBER() OVER (ORDER BY seq4()) - 1 as n
+            FROM TABLE(GENERATOR(ROWCOUNT => 5))
+            ORDER BY 1
+        """
+        )
         rows = list(cursor)
         assert rows == [(i,) for i in range(5)]
 
     def test_cursor_iteration_order(self, cursor):
         """Test cursor iteration maintains order."""
-        cursor.execute("SELECT seq4() as n FROM TABLE(GENERATOR(ROWCOUNT => 100)) ORDER BY n DESC")
+        # Use ROW_NUMBER() for consecutive integers; seq4() may skip values in parallel.
+        cursor.execute(
+            """
+            SELECT ROW_NUMBER() OVER (ORDER BY seq4()) - 1 as n
+            FROM TABLE(GENERATOR(ROWCOUNT => 100))
+            ORDER BY n DESC
+        """
+        )
         rows = list(cursor)
         for i, row in enumerate(rows):
             assert row == (99 - i,), f"Expected ({99 - i},), got {row}"
 
     def test_mixed_fetchone_and_iteration(self, cursor):
         """Test mixing fetchone and iteration."""
-        cursor.execute("SELECT seq4() FROM TABLE(GENERATOR(ROWCOUNT => 5)) ORDER BY 1")
+        # Use ROW_NUMBER() for consecutive integers; seq4() may skip values in parallel.
+        cursor.execute(
+            """
+            SELECT ROW_NUMBER() OVER (ORDER BY seq4()) - 1 as n
+            FROM TABLE(GENERATOR(ROWCOUNT => 5))
+            ORDER BY 1
+        """
+        )
         # Fetch first row
         first = cursor.fetchone()
         assert first == (0,)
@@ -197,39 +232,71 @@ class TestCursorLargeResults:
 
     def test_large_result_fetchall(self, cursor):
         """Test fetchall with large results."""
-        cursor.execute(f"SELECT seq4() FROM TABLE(GENERATOR(ROWCOUNT => {self.N_ROWS}))")
-        result = cursor.fetchall()
-        assert result == [(i,) for i in range(self.N_ROWS)]
-
-    def test_large_result_iteration(self, cursor):
-        """Test iteration over large results."""
-        cursor.execute(f"SELECT seq4() FROM TABLE(GENERATOR(ROWCOUNT => {self.N_ROWS}))")
-        rows = list(cursor)
-        assert rows == [(i,) for i in range(self.N_ROWS)]
-
-    def test_large_result_with_multiple_columns(self, cursor):
-        """Test large result with multiple columns."""
+        # Use ROW_NUMBER() for consecutive integers; seq4() may skip values in parallel.
         cursor.execute(
             f"""
-            SELECT
-                seq4() as id,
-                seq4() * 2 as doubled,
-                seq4() % 10 as mod10
+            SELECT ROW_NUMBER() OVER (ORDER BY seq4()) - 1 as n
             FROM TABLE(GENERATOR(ROWCOUNT => {self.N_ROWS}))
+            ORDER BY 1
         """
         )
         result = cursor.fetchall()
-        assert result == [(i, i * 2, i % 10) for i in range(self.N_ROWS)]
+        values = [row[0] for row in result]
+        assert_sequential_values(values, self.N_ROWS)
+
+    def test_large_result_iteration(self, cursor):
+        """Test iteration over large results."""
+        # Use ROW_NUMBER() for consecutive integers; seq4() may skip values in parallel.
+        cursor.execute(
+            f"""
+            SELECT ROW_NUMBER() OVER (ORDER BY seq4()) - 1 as n
+            FROM TABLE(GENERATOR(ROWCOUNT => {self.N_ROWS}))
+            ORDER BY 1
+        """
+        )
+        rows = list(cursor)
+        values = [row[0] for row in rows]
+        assert_sequential_values(values, self.N_ROWS)
+
+    def test_large_result_with_multiple_columns(self, cursor):
+        """Test large result with multiple columns."""
+        # Use ROW_NUMBER() in a CTE to get consecutive integers starting from 0.
+        # seq4() doesn't guarantee consecutive values in parallel execution,
+        # and window functions need to be computed once then reused.
+        cursor.execute(
+            f"""
+            WITH base AS (
+                SELECT ROW_NUMBER() OVER (ORDER BY seq4()) - 1 as id
+                FROM TABLE(GENERATOR(ROWCOUNT => {self.N_ROWS}))
+            )
+            SELECT id, id * 2 as doubled, id % 10 as mod10 FROM base
+            ORDER BY 1
+        """
+        )
+        result = cursor.fetchall()
+        assert_sequential_values(
+            result,
+            self.N_ROWS,
+            transform=lambda i: (i, i * 2, i % 10),
+        )
 
     def test_partial_batch_consumption(self, cursor):
         """Test partial consumption of batches."""
-        cursor.execute(f"SELECT seq4() FROM TABLE(GENERATOR(ROWCOUNT => {self.N_ROWS}))")
+        # Use ROW_NUMBER() for consecutive integers; seq4() may skip values in parallel.
+        cursor.execute(
+            f"""
+            SELECT ROW_NUMBER() OVER (ORDER BY seq4()) - 1 as n
+            FROM TABLE(GENERATOR(ROWCOUNT => {self.N_ROWS}))
+            ORDER BY 1
+        """
+        )
         # Fetch only some rows
         for _ in range(self.N_ROWS // 10):
             cursor.fetchone()
         # Fetch remaining
         remaining = cursor.fetchall()
-        assert remaining == [(i,) for i in range(self.N_ROWS // 10, self.N_ROWS)]
+        values = [row[0] for row in remaining]
+        assert_sequential_values(values, self.N_ROWS - self.N_ROWS // 10, start=self.N_ROWS // 10)
 
 
 class TestCursorMultipleQueries:
@@ -259,7 +326,14 @@ class TestCursorMultipleQueries:
 
     def test_fetchall_after_partial_fetch(self, cursor):
         """Test fetchall after partial fetchone calls."""
-        cursor.execute("SELECT seq4() as n FROM TABLE(GENERATOR(ROWCOUNT => 10)) ORDER BY n")
+        # Use ROW_NUMBER() for consecutive integers; seq4() may skip values in parallel.
+        cursor.execute(
+            """
+            SELECT ROW_NUMBER() OVER (ORDER BY seq4()) - 1 as n
+            FROM TABLE(GENERATOR(ROWCOUNT => 10))
+            ORDER BY n
+        """
+        )
         # Fetch first 3
         r1 = cursor.fetchone()
         r2 = cursor.fetchone()

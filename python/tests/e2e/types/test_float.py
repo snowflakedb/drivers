@@ -12,7 +12,13 @@ from math import inf, nan
 
 import pytest
 
-from .utils import FLOAT_MIN_NORMAL, assert_floats_equal, assert_type
+from .utils import (
+    FLOAT_MIN_NORMAL,
+    assert_floats_equal,
+    assert_sequential_values,
+    assert_type,
+    floats_equal,
+)
 
 
 # =============================================================================
@@ -150,19 +156,21 @@ class TestFloatLiteral:
         # Given Snowflake client is logged in
 
         # When Query "SELECT seq8()::<type> as id FROM TABLE(GENERATOR(ROWCOUNT => 1000000)) v" is executed
+
+        # Note: seq8() doesn't guarantee consecutive values in parallel execution,
+        # so we use ROW_NUMBER() to ensure sequential integers.
         sql = (
-            f"SELECT seq8()::{float_type} as id "
-            f"FROM TABLE(GENERATOR(ROWCOUNT => {LARGE_RESULT_SET_SIZE})) v ORDER BY id"
+            f"SELECT (ROW_NUMBER() OVER (ORDER BY seq8()) - 1)::{float_type} as id "
+            f"FROM TABLE(GENERATOR(ROWCOUNT => {LARGE_RESULT_SET_SIZE})) "
+            f"ORDER BY 1"
         )
         rows = execute_query(sql)
 
         # Then Result should contain 1000000 rows
-        assert len(rows) == LARGE_RESULT_SET_SIZE, f"Expected {LARGE_RESULT_SET_SIZE} rows, got {len(rows)}"
-
         # And All values should be returned as appropriate float type
         values = [row[0] for row in rows]
         assert_type(values, float)
-        assert_floats_equal(values, [float(i) for i in range(LARGE_RESULT_SET_SIZE)])
+        assert_sequential_values(values, LARGE_RESULT_SET_SIZE, transform=float, compare=floats_equal)
 
 
 class TestFloatTable:
@@ -265,10 +273,14 @@ class TestFloatTable:
         # Given Snowflake client is logged in
 
         # And Table with <type> column exists with 1000000 sequential values
+
+        # Note: seq8() doesn't guarantee consecutive values in parallel execution,
+        # so we use ROW_NUMBER() to ensure sequential integers.
         table_name = f"{tmp_schema}.large_float_table_{float_type.replace(' ', '_').lower()}"
         execute_query(f"CREATE TABLE {table_name} (col {float_type})")
         execute_query(
-            f"INSERT INTO {table_name} SELECT seq8()::{float_type} "
+            f"INSERT INTO {table_name} "
+            f"SELECT (ROW_NUMBER() OVER (ORDER BY seq8()) - 1)::{float_type} "
             f"FROM TABLE(GENERATOR(ROWCOUNT => {LARGE_RESULT_SET_SIZE}))"
         )
 
@@ -276,12 +288,10 @@ class TestFloatTable:
         rows = execute_query(f"SELECT * FROM {table_name} ORDER BY col")
 
         # Then Result should contain 1000000 rows
-        assert len(rows) == LARGE_RESULT_SET_SIZE, f"Expected {LARGE_RESULT_SET_SIZE} rows, got {len(rows)}"
-
         # And All values should be returned as appropriate float type
         values = [row[0] for row in rows]
         assert_type(values, float)
-        assert_floats_equal(values, [float(i) for i in range(LARGE_RESULT_SET_SIZE)])
+        assert_sequential_values(values, LARGE_RESULT_SET_SIZE, transform=float, compare=floats_equal)
 
 
 class TestFloatBinding:

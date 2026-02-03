@@ -15,7 +15,7 @@ from decimal import Decimal
 
 import pytest
 
-from .utils import assert_type
+from .utils import assert_sequential_values, assert_type
 
 
 # =============================================================================
@@ -136,15 +136,21 @@ class TestDecfloatLiteral:
         # Given Snowflake client is logged in
 
         # When Query "SELECT seq8()::DECFLOAT as id FROM TABLE(GENERATOR(ROWCOUNT => 1000000)) v" is executed
-        sql = f"SELECT seq8()::DECFLOAT as id FROM TABLE(GENERATOR(ROWCOUNT => {LARGE_RESULT_SET_SIZE})) v"
+
+        # Note: seq8() doesn't guarantee consecutive values in parallel execution,
+        # so we use ROW_NUMBER() to ensure sequential integers.
+        sql = (
+            f"SELECT (ROW_NUMBER() OVER (ORDER BY seq8()) - 1)::DECFLOAT as id "
+            f"FROM TABLE(GENERATOR(ROWCOUNT => {LARGE_RESULT_SET_SIZE})) "
+            f"ORDER BY 1"
+        )
         rows = execute_query(sql)
 
         # Then Result should contain consecutive numbers from 0 to 999999
         values = [row[0] for row in rows]
-        assert values == [Decimal(i) for i in range(LARGE_RESULT_SET_SIZE)]
-
         # And All values should be returned as appropriate type
         assert_type(values, Decimal)
+        assert_sequential_values(values, LARGE_RESULT_SET_SIZE, transform=Decimal)
 
 
 class TestDecfloatTable:
@@ -239,10 +245,14 @@ class TestDecfloatTable:
         # Given Snowflake client is logged in
 
         # And Table with DECFLOAT column exists with values from 0 to 999999
+
+        # Note: seq8() doesn't guarantee consecutive values in parallel execution,
+        # so we use ROW_NUMBER() to ensure sequential integers.
         table_name = f"{tmp_schema}.large_table"
         execute_query(f"CREATE TABLE {table_name} (col DECFLOAT)")
         execute_query(
-            f"INSERT INTO {table_name} SELECT seq8()::DECFLOAT "
+            f"INSERT INTO {table_name} "
+            f"SELECT (ROW_NUMBER() OVER (ORDER BY seq8()) - 1)::DECFLOAT "
             f"FROM TABLE(GENERATOR(ROWCOUNT => {LARGE_RESULT_SET_SIZE}))"
         )
 
@@ -251,10 +261,9 @@ class TestDecfloatTable:
 
         # Then Result should contain consecutive numbers from 0 to 999999
         values = [row[0] for row in rows]
-        assert values == [Decimal(i) for i in range(LARGE_RESULT_SET_SIZE)]
-
         # And All values should be returned as appropriate type
         assert_type(values, Decimal)
+        assert_sequential_values(values, LARGE_RESULT_SET_SIZE, transform=Decimal)
 
 
 class TestDecfloatBinding:
