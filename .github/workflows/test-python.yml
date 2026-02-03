@@ -226,7 +226,7 @@ jobs:
     needs: [detect-changes, build_wheel, format]
     if: github.event_name == 'push' || needs.detect-changes.outputs.run_python == 'true'
     runs-on: ubuntu-latest
-    continue-on-error: true  # Reference tests may fail due to behavioral differences
+    continue-on-error: true  # Reference tests expected to fail due to behavioral differences
     steps:
       - uses: actions/checkout@v4
 
