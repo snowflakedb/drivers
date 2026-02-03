@@ -88,6 +88,210 @@ class TestCursorSfqid:
         assert cursor.sfqid == sfqid_before
 
 
+class TestCursorDescription:
+    """Integration tests for Cursor.description property."""
+
+    def test_description_is_none_before_execute(self, connection):
+        """Test that description returns None before any query is executed."""
+        # Given a new cursor
+        cursor = connection.cursor()
+
+        # When accessing description before execute
+        result = cursor.description
+
+        # Then it should be None
+        assert result is None
+
+    def test_description_has_correct_structure(self, cursor):
+        """Test that description returns a sequence of 7-item tuples."""
+        # Given a cursor that executes a query
+        cursor.execute("SELECT 1 AS col1")
+
+        # When accessing description
+        result = cursor.description
+
+        # Then it should be a list of tuples with 7 elements each
+        assert result is not None
+        assert len(result) == 1
+        assert len(result[0]) == 7
+
+    def test_description_column_name(self, cursor):
+        """Test that description contains correct column names."""
+        # Given a cursor that executes a query with named columns
+        cursor.execute("SELECT 1 AS my_column, 'hello' AS another_column")
+
+        # When accessing description
+        result = cursor.description
+
+        # Then column names should match (Snowflake uppercases column names)
+        assert result is not None
+        assert len(result) == 2
+        assert result[0][0] == "MY_COLUMN"
+        assert result[1][0] == "ANOTHER_COLUMN"
+
+    def test_description_integer_type(self, cursor):
+        """Test description for integer column."""
+        # Given a cursor that executes a query returning an integer
+        cursor.execute("SELECT 42::INTEGER AS int_col")
+
+        # When accessing description
+        result = cursor.description
+
+        # Then type_code should indicate FIXED/NUMBER type (0)
+        assert result is not None
+        assert result[0][0] == "INT_COL"
+        assert result[0][1] == 0  # FIXED type code
+
+    def test_description_string_type(self, cursor):
+        """Test description for string column."""
+        # Given a cursor that executes a query returning a string
+        cursor.execute("SELECT 'hello'::VARCHAR AS str_col")
+
+        # When accessing description
+        result = cursor.description
+
+        # Then type_code should indicate TEXT type (2)
+        assert result is not None
+        assert result[0][0] == "STR_COL"
+        assert result[0][1] == 2  # TEXT type code
+
+    def test_description_float_type(self, cursor):
+        """Test description for float column."""
+        # Given a cursor that executes a query returning a float
+        cursor.execute("SELECT 3.14::FLOAT AS float_col")
+
+        # When accessing description
+        result = cursor.description
+
+        # Then type_code should indicate REAL type (1)
+        assert result is not None
+        assert result[0][0] == "FLOAT_COL"
+        assert result[0][1] == 1  # REAL type code
+
+    def test_description_boolean_type(self, cursor):
+        """Test description for boolean column."""
+        # Given a cursor that executes a query returning a boolean
+        cursor.execute("SELECT TRUE::BOOLEAN AS bool_col")
+
+        # When accessing description
+        result = cursor.description
+
+        # Then type_code should indicate BOOLEAN type (13)
+        assert result is not None
+        assert result[0][0] == "BOOL_COL"
+        assert result[0][1] == 13  # BOOLEAN type code
+
+    def test_description_date_type(self, cursor):
+        """Test description for date column."""
+        # Given a cursor that executes a query returning a date
+        cursor.execute("SELECT '2024-01-15'::DATE AS date_col")
+
+        # When accessing description
+        result = cursor.description
+
+        # Then type_code should indicate DATE type (3)
+        assert result is not None
+        assert result[0][0] == "DATE_COL"
+        assert result[0][1] == 3  # DATE type code
+
+    def test_description_timestamp_ntz_type(self, cursor):
+        """Test description for timestamp_ntz column."""
+        # Given a cursor that executes a query returning a timestamp_ntz
+        cursor.execute("SELECT '2024-01-15 10:30:00'::TIMESTAMP_NTZ AS ts_col")
+
+        # When accessing description
+        result = cursor.description
+
+        # Then type_code should indicate TIMESTAMP_NTZ type (8)
+        assert result is not None
+        assert result[0][0] == "TS_COL"
+        assert result[0][1] == 8  # TIMESTAMP_NTZ type code
+
+    def test_description_multiple_columns(self, cursor):
+        """Test description with multiple columns of different types."""
+        # Given a cursor that executes a query with multiple columns
+        cursor.execute("""
+            SELECT
+                1::INTEGER AS int_col,
+                'hello'::VARCHAR AS str_col,
+                3.14::FLOAT AS float_col,
+                TRUE::BOOLEAN AS bool_col
+        """)
+
+        # When accessing description
+        result = cursor.description
+
+        # Then all columns should be present with correct types
+        assert result is not None
+        assert len(result) == 4
+        assert result[0][0] == "INT_COL"
+        assert result[0][1] == 0  # FIXED
+        assert result[1][0] == "STR_COL"
+        assert result[1][1] == 2  # TEXT
+        assert result[2][0] == "FLOAT_COL"
+        assert result[2][1] == 1  # REAL
+        assert result[3][0] == "BOOL_COL"
+        assert result[3][1] == 13  # BOOLEAN
+
+    def test_description_persists_after_fetchone(self, cursor):
+        """Test that description remains accessible after fetching one result."""
+        # Given a cursor that executes a query
+        cursor.execute("SELECT 1 AS col1, 2 AS col2")
+        description_before = cursor.description
+
+        # When fetching one result
+        cursor.fetchone()
+
+        # Then description should still be the same
+        assert cursor.description == description_before
+
+    def test_description_persists_after_fetchall(self, cursor):
+        """Test that description remains accessible after fetching all results."""
+        # Given a cursor that executes a query
+        cursor.execute("SELECT 1 AS col1, 2 AS col2")
+        description_before = cursor.description
+
+        # When fetching all results
+        cursor.fetchall()
+
+        # Then description should still be the same
+        assert cursor.description == description_before
+
+    def test_description_updates_with_new_query(self, cursor):
+        """Test that description updates when a new query is executed."""
+        # Given a cursor that executes a query
+        cursor.execute("SELECT 1 AS first_col")
+        first_description = cursor.description
+
+        # When executing a different query
+        cursor.execute("SELECT 'a' AS second_col, 'b' AS third_col")
+
+        # Then description should be updated
+        assert cursor.description is not None
+        assert cursor.description != first_description
+        assert len(cursor.description) == 2
+        assert cursor.description[0][0] == "SECOND_COL"
+        assert cursor.description[1][0] == "THIRD_COL"
+
+    def test_description_numeric_precision_and_scale(self, cursor):
+        """Test that description includes precision and scale for numeric types."""
+        # Given a cursor that executes a query with a decimal column
+        cursor.execute("SELECT 123.45::NUMBER(10, 2) AS decimal_col")
+
+        # When accessing description
+        result = cursor.description
+
+        # Then precision (index 4) and scale (index 5) should be populated
+        assert result is not None
+        assert result[0][0] == "DECIMAL_COL"
+        # precision is at index 4, scale is at index 5
+        assert result[0][4] is not None
+        assert result[0][5] is not None
+        # These may be None or have values depending on server response
+        # At minimum, verify the structure is correct
+        assert len(result[0]) == 7
+
+
 class TestCursorMethods:
     """Test Cursor object methods."""
 

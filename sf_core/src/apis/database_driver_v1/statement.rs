@@ -6,6 +6,7 @@ use super::connection::with_valid_session;
 use super::error::*;
 use super::global_state::{CONN_HANDLE_MANAGER, STMT_HANDLE_MANAGER};
 use crate::apis::database_driver_v1::query::process_query_response;
+use crate::protobuf_gen::database_driver_v1::ColumnMetadata;
 use crate::{
     config::{rest_parameters::QueryParameters, settings::Setting},
     rest::snowflake::{self, QueryExecutionMode, snowflake_query_with_client},
@@ -138,6 +139,7 @@ pub struct ExecuteResult {
     pub stream: Box<FFI_ArrowArrayStream>,
     pub rows_affected: i64,
     pub query_id: String,
+    pub columns: Vec<ColumnMetadata>,
 }
 
 pub fn statement_execute_query(stmt_handle: Handle) -> Result<ExecuteResult, ApiError> {
@@ -211,12 +213,30 @@ pub fn statement_execute_query(stmt_handle: Handle) -> Result<ExecuteResult, Api
     // Extract query_id from response
     let query_id = response.data.query_id.unwrap_or_default();
 
+    // Extract column metadata from rowtype
+    let columns = response
+        .data
+        .row_type
+        .unwrap_or_default()
+        .iter()
+        .map(|rt| ColumnMetadata {
+            name: rt.name.clone(),
+            r#type: rt.type_.clone(),
+            precision: rt.precision.map(|v| v as i64),
+            scale: rt.scale.map(|v| v as i64),
+            length: rt.length.map(|v| v as i64),
+            byte_length: rt.byte_length.map(|v| v as i64),
+            nullable: rt.nullable,
+        })
+        .collect();
+
     // Serialize pointer into integer
     stmt.state = StatementState::Executed;
     Ok(ExecuteResult {
         stream: rowset_stream,
         rows_affected: 0,
         query_id,
+        columns,
     })
 }
 

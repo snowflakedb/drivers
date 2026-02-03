@@ -79,6 +79,24 @@ pub struct DriverException {
     #[prost(string, tag = "4")]
     pub report: ::prost::alloc::string::String,
 }
+/// Column metadata for description
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ColumnMetadata {
+    #[prost(string, tag = "1")]
+    pub name: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub r#type: ::prost::alloc::string::String,
+    #[prost(int64, optional, tag = "3")]
+    pub precision: ::core::option::Option<i64>,
+    #[prost(int64, optional, tag = "4")]
+    pub scale: ::core::option::Option<i64>,
+    #[prost(int64, optional, tag = "5")]
+    pub length: ::core::option::Option<i64>,
+    #[prost(int64, optional, tag = "6")]
+    pub byte_length: ::core::option::Option<i64>,
+    #[prost(bool, tag = "7")]
+    pub nullable: bool,
+}
 /// Execute result
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ExecuteResult {
@@ -88,6 +106,8 @@ pub struct ExecuteResult {
     pub rows_affected: i64,
     #[prost(string, tag = "3")]
     pub query_id: ::prost::alloc::string::String,
+    #[prost(message, repeated, tag = "4")]
+    pub columns: ::prost::alloc::vec::Vec<ColumnMetadata>,
 }
 /// Partitioned result
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]

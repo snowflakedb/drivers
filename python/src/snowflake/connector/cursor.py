@@ -14,15 +14,17 @@ from __future__ import annotations
 import abc
 
 from collections.abc import Iterator, Sequence
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Optional
 
 from ._internal.arrow_context import ArrowConverterContext
 from ._internal.arrow_stream_iterator import ArrowStreamIterator  # type: ignore[import-not-found]
 from ._internal.protobuf_gen.database_driver_v1_pb2 import (  # type: ignore[attr-defined]
     StatementExecuteQueryRequest,
+    StatementExecuteQueryResponse,
     StatementNewRequest,
     StatementSetSqlQueryRequest,
 )
+from ._internal.type_codes import get_type_code
 from .errors import NotSupportedError, ProgrammingError
 
 
@@ -31,6 +33,15 @@ if TYPE_CHECKING:
 
 Row = tuple[Any, ...]
 DictRow = dict[str, Any]
+ColumnDescription = tuple[
+    str,
+    int,
+    Optional[int],
+    Optional[int],
+    Optional[int],
+    Optional[int],
+    Optional[bool],
+]
 
 
 class SnowflakeCursorBase(abc.ABC):
@@ -53,7 +64,7 @@ class SnowflakeCursorBase(abc.ABC):
             connection: Connection object that created this cursor
         """
         self.connection = connection
-        self.description = None
+        self._description: list[ColumnDescription] | None = None
         self.rowcount = -1
         self.arraysize = 1  # Instance attribute overrides class attribute
         self._closed = False
@@ -61,7 +72,7 @@ class SnowflakeCursorBase(abc.ABC):
         self._reader = None
         self._current_batch = None
         self._current_row_in_batch = 0
-        self.execute_result: Any = None
+        self.execute_result: StatementExecuteQueryResponse = None
         self._iterator: Iterator[Row] | Iterator[DictRow] | None = None
 
     # ------------------------------------------------------------------
@@ -69,19 +80,22 @@ class SnowflakeCursorBase(abc.ABC):
     # ------------------------------------------------------------------
 
     @property
-    def description(self) -> Any:
+    def description(self) -> list[ColumnDescription] | None:
         """
         Read-only attribute describing the result columns of a query.
 
-        Returns:
-            tuple: Sequence of 7-item tuples describing each result column:
-                   (name, type_code, display_size, internal_size, precision, scale, null_ok)
+        Returns a sequence of 7-item tuples, each containing:
+        - name: Column name (str)
+        - type_code: Integer type code (int)
+        - display_size: Display size in characters (int | None)
+        - internal_size: Internal size in bytes (int | None)
+        - precision: Precision for numeric types (int | None)
+        - scale: Scale for numeric types (int | None)
+        - null_ok: True if column can contain NULLs (bool | None)
+
+        Returns None if no query has been executed or if the query didn't produce a result set.
         """
         return self._description
-
-    @description.setter
-    def description(self, value: Any) -> None:
-        self._description = value
 
     @property
     def rowcount(self) -> int:
@@ -165,6 +179,9 @@ class SnowflakeCursorBase(abc.ABC):
         self._iterator = None
         return self
 
+        # Populate description from column metadata
+        self._populate_description()
+
     def executemany(self, operation: str, seq_of_parameters: Sequence[Sequence[Any]]) -> None:
         """
         Execute a database operation repeatedly for each element in seq_of_parameters.
@@ -210,6 +227,42 @@ class SnowflakeCursorBase(abc.ABC):
             raise RuntimeError("Stream pointer is null")
 
         return stream_ptr
+
+    def _populate_description(self) -> None:
+        """Populate cursor description from execute result column metadata."""
+        if self.execute_result is None:
+            self._description = None
+            return
+
+        columns = self.execute_result.columns
+        if not columns:
+            self._description = None
+            return
+
+        description = []
+        for col in columns:
+            # Extract metadata from protobuf ColumnMetadata
+            name = col.name
+            type_code = get_type_code(col.type)
+
+            # display_size: For TEXT types, use length; otherwise None
+            display_size = (
+                col.length if col.length and col.type.upper() in ("TEXT", "VARCHAR", "CHAR", "STRING") else None
+            )
+
+            # internal_size: Use byte_length if available
+            internal_size = col.byte_length if col.byte_length else None
+
+            # precision and scale for numeric types
+            precision = col.precision if col.precision else None
+            scale = col.scale if col.scale else None
+
+            # nullable flag
+            null_ok = col.nullable
+
+            description.append((name, type_code, display_size, internal_size, precision, scale, null_ok))
+
+        self._description = description
 
     def _get_iterator(self) -> ArrowStreamIterator:
         stream_ptr = self._get_stream_ptr()
