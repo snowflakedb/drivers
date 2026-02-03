@@ -1,11 +1,11 @@
 package net.snowflake.client.internal.core.arrow.converters;
 
 import java.math.BigDecimal;
+import net.snowflake.client.api.exception.ErrorCode;
+import net.snowflake.client.api.exception.SFException;
+import net.snowflake.client.api.resultset.SnowflakeType;
 import net.snowflake.client.internal.core.arrow.ArrowResultUtil;
-import net.snowflake.client.jdbc.ErrorCode;
-import net.snowflake.client.jdbc.SFException;
-import net.snowflake.client.jdbc.SnowflakeType;
-import net.snowflake.client.jdbc.SnowflakeUtil;
+import net.snowflake.client.internal.util.SnowflakeUtil;
 import org.apache.arrow.vector.ValueVector;
 
 public class TinyIntToScaledFixedConverter extends TinyIntToFixedConverter {

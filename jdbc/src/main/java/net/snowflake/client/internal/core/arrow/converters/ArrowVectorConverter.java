@@ -7,7 +7,7 @@ import java.sql.Timestamp;
 import java.time.Duration;
 import java.time.Period;
 import java.util.TimeZone;
-import net.snowflake.client.jdbc.SFException;
+import net.snowflake.client.api.exception.SFException;
 
 public interface ArrowVectorConverter {
 

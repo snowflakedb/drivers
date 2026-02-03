@@ -1,8 +1,8 @@
 package net.snowflake.client.internal.core.arrow.converters;
 
 import java.math.BigDecimal;
-import net.snowflake.client.jdbc.SFException;
-import net.snowflake.client.jdbc.SnowflakeType;
+import net.snowflake.client.api.exception.SFException;
+import net.snowflake.client.api.resultset.SnowflakeType;
 import org.apache.arrow.vector.BitVector;
 import org.apache.arrow.vector.ValueVector;
 

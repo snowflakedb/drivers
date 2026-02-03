@@ -7,9 +7,9 @@ import java.sql.Timestamp;
 import java.time.Duration;
 import java.time.Period;
 import java.util.TimeZone;
-import net.snowflake.client.jdbc.ErrorCode;
-import net.snowflake.client.jdbc.SFException;
-import net.snowflake.client.jdbc.SnowflakeUtil;
+import net.snowflake.client.api.exception.ErrorCode;
+import net.snowflake.client.api.exception.SFException;
+import net.snowflake.client.internal.util.SnowflakeUtil;
 import org.apache.arrow.vector.ValueVector;
 
 abstract class AbstractArrowVectorConverter implements ArrowVectorConverter {

@@ -1,7 +1,7 @@
 package net.snowflake.client.internal.core.arrow.converters;
 
 import java.nio.ByteOrder;
-import net.snowflake.client.jdbc.ErrorCode;
+import net.snowflake.client.api.exception.ErrorCode;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeEach;

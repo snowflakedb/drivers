@@ -4,7 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.util.Random;
-import net.snowflake.client.jdbc.SFException;
+import net.snowflake.client.api.exception.SFException;
 import org.junit.jupiter.api.function.Executable;
 
 public final class TestHelper {

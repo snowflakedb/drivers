@@ -1,8 +1,8 @@
 package net.snowflake.client.internal.core.arrow.converters;
 
 import java.util.Map;
-import net.snowflake.client.jdbc.SnowflakeSQLException;
-import net.snowflake.client.jdbc.SnowflakeType;
+import net.snowflake.client.api.exception.SnowflakeSQLException;
+import net.snowflake.client.api.resultset.SnowflakeType;
 import org.apache.arrow.vector.FieldVector;
 import org.apache.arrow.vector.ValueVector;
 import org.apache.arrow.vector.types.Types;
