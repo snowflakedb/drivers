@@ -245,7 +245,7 @@ impl GherkinValidator {
         anyhow::bail!(
             "Feature file '{}' is in an invalid directory '{}'. \
              Feature files must be under 'shared/' or a language-specific folder \
-             (core/, python/, odbc/, jdbc/, dotnet/, nodejs/).",
+             (core/, python/, odbc/, jdbc/, csharp/, javascript/).",
             feature_path.display(),
             first_component,
         );
