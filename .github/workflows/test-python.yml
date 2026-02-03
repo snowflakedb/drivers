@@ -57,6 +57,38 @@ jobs:
           name: python-wheel
           path: python/dist/*.whl
 
+  # Build Rust core library for Windows ARM64
+  build_rust_core_windows_arm64:
+    needs: detect-changes
+    if: github.event_name == 'push' || needs.detect-changes.outputs.run_python == 'true'
+    runs-on: windows-11-arm
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "0.5.11"
+
+      - name: Install Hatch
+        run: uv tool install hatch
+
+      - name: Build python wheel
+        working-directory: ./python
+        run: hatch build
+
+      - name: Inspect wheel
+        working-directory: ./python
+        shell: pwsh
+        run: python -m zipfile -l (Get-ChildItem dist/*.whl).FullName
+
+      - name: Upload Python wheel (Windows ARM64)
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-wheel-windows-arm64
+          path: python/dist/*.whl
+
   # Format and lint checking
   format:
     runs-on: ubuntu-latest
@@ -153,6 +185,84 @@ jobs:
         with:
           name: results-universal-${{ matrix.os }}-${{ matrix.py }}
           path: python/reports/*-${{ matrix.os }}-${{ matrix.py }}.*
+
+  # Windows ARM64 Python tests
+  python_tests_windows_arm64:
+    needs: [detect-changes, build_rust_core_windows_arm64, format]
+    if: github.event_name == 'push' || needs.detect-changes.outputs.run_python == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        py: ["3.11", "3.12", "3.13"]
+    runs-on: windows-11-arm
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "0.5.11"
+
+      - name: Restore uv cache
+        env:
+          UV_CACHE_DIR: ${{ runner.temp }}\.uv-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}\.uv-cache
+          key: uv-windows-arm64-${{ matrix.py }}-${{ hashFiles('python/uv.lock', 'python/pyproject.toml') }}
+          restore-keys: |
+            uv-windows-arm64-${{ matrix.py }}-
+            uv-windows-arm64-
+
+      - name: Set up Python ${{ matrix.py }}
+        run: uv python install ${{ matrix.py }}
+
+      - name: Download Python wheel (Windows ARM64)
+        uses: actions/download-artifact@v4
+        with:
+          name: python-wheel-windows-arm64
+          path: python/dist
+
+      - name: Decode secrets
+        shell: pwsh
+        run: |
+          $env:PARAMETERS_SECRET = "${{ secrets.PARAMETERS_SECRET }}"
+          $encrypted = ".github/secrets/parameters_aws.json.gpg"
+          $decrypted = "parameters.json"
+          echo "$env:PARAMETERS_SECRET" | gpg --batch --yes --passphrase-fd 0 --decrypt --output $decrypted $encrypted
+
+      - name: Install Hatch
+        run: uv tool install hatch
+
+      - name: Run all tests with coverage
+        shell: pwsh
+        env:
+          PARAMETER_PATH: ${{ github.workspace }}\parameters.json
+          REFERENCE_DRIVER_VERSION: ${{ env.PYTHON_REFERENCE_DRIVER_VERSION }}
+        run: |
+          mkdir -p reports
+          hatch run test.py${{ matrix.py }}:all-cov `
+            --json-report --json-report-file=reports/universal-windows-arm64-${{ matrix.py }}.json `
+            --junitxml=reports/universal-windows-arm64-${{ matrix.py }}.xml `
+            --cov-report=xml:reports/coverage-windows-arm64-${{ matrix.py }}.xml `
+            --cov-report=html:reports/coverage-windows-arm64-${{ matrix.py }}-html
+        working-directory: python
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v5
+        env:
+          CODECOV_TOKEN: ${{ secrets.SNOW_CODECOV_TOKEN }}
+        with:
+          files: ./python/reports/coverage-windows-arm64-${{ matrix.py }}.xml
+          flags: python-windows-arm64
+          name: python-windows-arm64-py${{ matrix.py }}
+          fail_ci_if_error: false
+
+      - name: Upload test results as GitHub artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: results-universal-windows-arm64-${{ matrix.py }}
+          path: python/reports/*-windows-arm64-${{ matrix.py }}.*
 
   # Integration tests only with reference connector (for comparison)
 #  python_tests_reference:
@@ -257,7 +367,7 @@ jobs:
 
   python-status:
 #    needs: [detect-changes, build_rust_core, python_tests, python_tests_reference, python_compare_results]
-    needs: [detect-changes, build_rust_core, python_tests]
+    needs: [detect-changes, build_rust_core, build_rust_core_windows_arm64, python_tests, python_tests_windows_arm64]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -275,10 +385,14 @@ jobs:
           # Check if critical jobs failed or were cancelled
           # Note: python_tests_reference has continue-on-error:true, so we don't fail on it
           if [[ "${{ needs.build_rust_core.result }}" =~ ^(failure|cancelled)$ ]] || \
-             [[ "${{ needs.python_tests.result }}" =~ ^(failure|cancelled)$ ]]; then
+             [[ "${{ needs.build_rust_core_windows_arm64.result }}" =~ ^(failure|cancelled)$ ]] || \
+             [[ "${{ needs.python_tests.result }}" =~ ^(failure|cancelled)$ ]] || \
+             [[ "${{ needs.python_tests_windows_arm64.result }}" =~ ^(failure|cancelled)$ ]]; then
             echo "✗ Python CI FAILED or CANCELLED"
             echo "  - build_rust_core: ${{ needs.build_rust_core.result }}"
+            echo "  - build_rust_core_windows_arm64: ${{ needs.build_rust_core_windows_arm64.result }}"
             echo "  - python_tests: ${{ needs.python_tests.result }}"
+            echo "  - python_tests_windows_arm64: ${{ needs.python_tests_windows_arm64.result }}"
             #echo "  - python_tests_reference: ${{ needs.python_tests_reference.result }} (continue-on-error)"
             #echo "  - python_compare_results: ${{ needs.python_compare_results.result }}"
             exit 1
@@ -287,7 +401,9 @@ jobs:
           # Tests ran and passed
           echo "✓ Python CI PASSED"
           echo "  - build_rust_core: ${{ needs.build_rust_core.result }}"
+          echo "  - build_rust_core_windows_arm64: ${{ needs.build_rust_core_windows_arm64.result }}"
           echo "  - python_tests: ${{ needs.python_tests.result }}"
+          echo "  - python_tests_windows_arm64: ${{ needs.python_tests_windows_arm64.result }}"
           #echo "  - python_tests_reference: ${{ needs.python_tests_reference.result }} (continue-on-error)"
           #echo "  - python_compare_results: ${{ needs.python_compare_results.result }}"
           exit 0

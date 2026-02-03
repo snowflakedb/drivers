@@ -62,8 +62,59 @@ jobs:
           name: jdbc-${{ runner.os }}-java${{ matrix.java-version }}
           fail_ci_if_error: false
 
+  # Windows ARM64 JDBC tests
+  jdbc_tests_windows_arm64:
+    needs: detect-changes
+    if: github.event_name == 'push' || needs.detect-changes.outputs.run_jdbc == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        java-version: ['11', '17', '21']
+    runs-on: windows-11-arm
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java ${{ matrix.java-version }}
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ matrix.java-version }}
+          distribution: 'temurin'
+
+      - name: Decode secrets
+        shell: pwsh
+        run: |
+          $env:PARAMETERS_SECRET = "${{ secrets.PARAMETERS_SECRET }}"
+          $encrypted = ".github/secrets/parameters_aws.json.gpg"
+          $decrypted = "parameters.json"
+          echo "$env:PARAMETERS_SECRET" | gpg --batch --yes --passphrase-fd 0 --decrypt --output $decrypted $encrypted
+
+      - name: Build Rust components
+        run: |
+          cargo build --package sf_core
+          cargo build --package jdbc_bridge
+
+      - name: Run JDBC tests
+        shell: pwsh
+        run: |
+          Get-ChildItem target\debug\
+          $env:PARAMETER_PATH = "${{ github.workspace }}\parameters.json"
+          $env:CORE_PATH = "${{ github.workspace }}\target\debug\jdbc_bridge.dll"
+          cd jdbc
+          .\gradlew.bat test jacocoTestReport --stacktrace
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v5
+        env:
+          CODECOV_TOKEN: ${{ secrets.SNOW_CODECOV_TOKEN }}
+        with:
+          files: ./jdbc/build/reports/jacoco/test/jacocoTestReport.xml
+          flags: jdbc-windows-arm64
+          name: jdbc-windows-arm64-java${{ matrix.java-version }}
+          fail_ci_if_error: false
+
   jdbc-status:
-    needs: [detect-changes, jdbc_tests]
+    needs: [detect-changes, jdbc_tests, jdbc_tests_windows_arm64]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -79,11 +130,16 @@ jobs:
           fi
           
           # Check if tests failed or were cancelled
-          if [[ "${{ needs.jdbc_tests.result }}" =~ ^(failure|cancelled)$ ]]; then
+          if [[ "${{ needs.jdbc_tests.result }}" =~ ^(failure|cancelled)$ ]] || \
+             [[ "${{ needs.jdbc_tests_windows_arm64.result }}" =~ ^(failure|cancelled)$ ]]; then
             echo "✗ JDBC tests were RUN and FAILED or CANCELLED"
+            echo "  - jdbc_tests: ${{ needs.jdbc_tests.result }}"
+            echo "  - jdbc_tests_windows_arm64: ${{ needs.jdbc_tests_windows_arm64.result }}"
             exit 1
           fi
           
           # Tests ran and passed
           echo "✓ JDBC tests were RUN and PASSED"
+          echo "  - jdbc_tests: ${{ needs.jdbc_tests.result }}"
+          echo "  - jdbc_tests_windows_arm64: ${{ needs.jdbc_tests_windows_arm64.result }}"
           exit 0
