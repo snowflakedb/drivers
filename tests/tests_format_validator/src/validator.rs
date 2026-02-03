@@ -204,7 +204,7 @@ impl GherkinValidator {
     /// features with the same name in different directories (e.g., shared/session/logout vs core/session/logout)
     fn get_feature_id(&self, feature_path: &Path) -> String {
         // Get path relative to features_dir
-        if let Ok(relative) = feature_path.strip_prefix(&self.features_dir) {
+        let raw_id = if let Ok(relative) = feature_path.strip_prefix(&self.features_dir) {
             // Remove .feature extension and convert to string
             relative
                 .with_extension("")
@@ -218,7 +218,12 @@ impl GherkinValidator {
                 .to_str()
                 .unwrap()
                 .to_string()
-        }
+        };
+
+        // Normalize path separators to forward slashes for cross-platform consistency.
+        // On Windows, PathBuf::to_str() returns backslashes, but our prefix checks
+        // (e.g., starts_with("shared/")) expect forward slashes.
+        raw_id.replace('\\', "/")
     }
 
     /// Extract just the feature name (file stem) from a feature ID
