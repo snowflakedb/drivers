@@ -180,6 +180,7 @@ class Cursor:
                 # TODO: SNOW-2997742, SNOW-2997786, temporarily hardcoded
                 use_dict_result=False,
                 use_numpy=False,
+                force_microsecond_precision=False,
             )
 
     def fetchone(self) -> Row | None:

@@ -21,7 +21,8 @@ cdef extern from "CArrowStreamIterator.hpp" namespace "sf":
             int64_t stream_ptr,
             PyObject* context,
             bint use_numpy,
-            bint use_dict_result
+            bint use_dict_result,
+            bint force_microsecond_precision
         )
         ReturnVal next()
 
@@ -42,7 +43,8 @@ cdef class ArrowStreamIterator:
         int64_t stream_ptr,
         object arrow_context,
         object use_dict_result=False,
-        object use_numpy=False
+        object use_numpy=False,
+        object force_microsecond_precision=False
     ):
         """
         Initialize the stream iterator.
@@ -57,6 +59,9 @@ cdef class ArrowStreamIterator:
             If True, return dicts instead of tuples
         use_numpy : bool
             If True, use numpy types for numeric data
+        force_microsecond_precision : bool
+            If True, force microsecond precision for timestamps to ensure
+            consistent schema across batches
         """
         self.arrow_context = arrow_context
         
@@ -65,7 +70,8 @@ cdef class ArrowStreamIterator:
             stream_ptr,
             <PyObject*>arrow_context,
             use_numpy,
-            use_dict_result
+            use_dict_result,
+            force_microsecond_precision
         )
         
         # Check if creation failed (nullptr returned)

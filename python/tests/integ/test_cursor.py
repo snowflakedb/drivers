@@ -396,3 +396,47 @@ class TestCursorDictResult:
         assert len(result) == 5000
         assert all(isinstance(row, dict) for row in result)
         assert all(len(row) == 2 for row in result)
+
+
+class TestCursorForceMicrosecondPrecision:
+    """Test force_microsecond_precision parameter.
+
+    This parameter ensures consistent timestamp schema across batches by forcing
+    microsecond precision for timestamps with scale > 6 (nanosecond precision).
+
+    TODO SNOW-3046234: Python's datetime only supports microsecond precision, so the effect
+    of this parameter is primarily visible when using Arrow table fetching
+    (fetch_arrow_all).
+    """
+
+    @pytest.mark.skip_reference
+    @pytest.mark.parametrize("force_microsecond_precision", [False, True])
+    def test_force_microsecond_precision(self, cursor, force_microsecond_precision):
+        from datetime import datetime
+
+        from snowflake.connector._internal.arrow_context import ArrowConverterContext
+        from snowflake.connector._internal.arrow_stream_iterator import (
+            ArrowStreamIterator,
+        )
+
+        # Timestamp with nanosecond precision (123456789 nanoseconds = 123456.789 microseconds)
+        cursor.execute("SELECT '2024-06-15 12:30:45.123456789'::TIMESTAMP_NTZ(9) AS ts")
+        stream_ptr = cursor._get_stream_ptr()
+        arrow_context = ArrowConverterContext()
+        iterator = ArrowStreamIterator(
+            stream_ptr,
+            arrow_context,
+            force_microsecond_precision=force_microsecond_precision,
+        )
+
+        result = next(iterator)
+        ts = result[0]
+        assert isinstance(ts, datetime)
+        # Python datetime truncates to microseconds (123456 microseconds)
+        assert ts.year == 2024
+        assert ts.month == 6
+        assert ts.day == 15
+        assert ts.hour == 12
+        assert ts.minute == 30
+        assert ts.second == 45
+        assert ts.microsecond == 123456  # nanoseconds truncated to microseconds

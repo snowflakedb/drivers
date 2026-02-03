@@ -13,7 +13,8 @@ Logger* CArrowStreamIterator::logger = new Logger("snowflake.connector.CArrowStr
 std::unique_ptr<CArrowStreamIterator> CArrowStreamIterator::from_stream(int64_t stream_ptr,
                                                                         PyObject* context,
                                                                         bool use_numpy,
-                                                                        bool use_dict_result) {
+                                                                        bool use_dict_result,
+                                                                        bool force_microsecond_precision) {
   auto* stream = reinterpret_cast<ArrowArrayStream*>(stream_ptr);
 
   // Validate stream pointer
@@ -42,7 +43,8 @@ std::unique_ptr<CArrowStreamIterator> CArrowStreamIterator::from_stream(int64_t 
 
   // Create the iterator with all data
   return std::unique_ptr<CArrowStreamIterator>(
-      new CArrowStreamIterator(stream, &schema, context, use_numpy, use_dict_result));
+      new CArrowStreamIterator(stream, &schema, context, use_numpy, use_dict_result,
+                               force_microsecond_precision));
 }
 
 namespace {
@@ -54,7 +56,8 @@ namespace {
 }  // namespace
 
 CArrowStreamIterator::CArrowStreamIterator(ArrowArrayStream* stream, ArrowSchema* schema,
-                                           PyObject* context, bool use_numpy, bool use_dict_result)
+                                           PyObject* context, bool use_numpy, bool use_dict_result,
+                                           bool force_microsecond_precision)
     : m_stream(stream, releaseArrowArrayStream),
       m_currentRowIndex(0),
       m_rowCount(0),
@@ -62,6 +65,7 @@ CArrowStreamIterator::CArrowStreamIterator(ArrowArrayStream* stream, ArrowSchema
       m_context(context),
       m_useNumpy(use_numpy),
       m_useDictResult(use_dict_result),
+      m_forceMicrosecondPrecision(force_microsecond_precision),
       m_streamExhausted(false),
       m_totalRowsReturned(0) {
   // Move schema data into our UniqueSchema (transfers ownership)
