@@ -63,8 +63,6 @@ jobs:
           - os: ubuntu-latest
             name: Linux x64
             driver_lib: libsfodbc.so
-            odbc_library: /usr/lib/x86_64-linux-gnu/libodbc.so
-            odbc_include: /usr/include
           - os: macos-latest
             name: macOS ARM64
             driver_lib: libsfodbc.dylib
@@ -83,6 +81,9 @@ jobs:
           sudo sh cmake-4.0.3-linux-x86_64.sh --skip-license --prefix=/usr/local
           sudo rm cmake-4.0.3-linux-x86_64.sh
           cmake --version
+          # Export ODBC paths dynamically
+          echo "ODBC_LIBRARY=$(odbc_config --lib-prefix)/libodbc.so" >> $GITHUB_ENV
+          echo "ODBC_INCLUDE=$(odbc_config --include-prefix)" >> $GITHUB_ENV
 
       - name: Install dependencies (macOS)
         if: runner.os == 'macOS'
@@ -113,8 +114,8 @@ jobs:
           cd odbc_tests
           mkdir -p cmake-build
           cmake -B cmake-build \
-              -D ODBC_LIBRARY="${{ matrix.odbc_library }}" \
-              -D ODBC_INCLUDE_DIR="${{ matrix.odbc_include }}" \
+              -D ODBC_LIBRARY="${ODBC_LIBRARY}" \
+              -D ODBC_INCLUDE_DIR="${ODBC_INCLUDE}" \
               -D DRIVER_TYPE=NEW \
               .
           cmake --build cmake-build -- -j $NPROC
