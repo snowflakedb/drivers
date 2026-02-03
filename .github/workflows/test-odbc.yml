@@ -59,38 +59,55 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest]
+        include:
+          - os: ubuntu-latest
+            name: Linux x64
+            driver_lib: libsfodbc.so
+          - os: macos-latest
+            name: macOS ARM64
+            driver_lib: libsfodbc.dylib
     runs-on: ${{ matrix.os }}
+    name: odbc_tests (${{ matrix.name }})
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install dependencies
+      - name: Install dependencies (Linux)
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y unixodbc-dev build-essential zlib1g-dev lcov
+          sudo apt-get install -y unixodbc-dev build-essential zlib1g-dev
           wget https://github.com/Kitware/CMake/releases/download/v4.0.3/cmake-4.0.3-linux-x86_64.sh
           sudo sh cmake-4.0.3-linux-x86_64.sh --skip-license --prefix=/usr/local
           sudo rm cmake-4.0.3-linux-x86_64.sh
           cmake --version
+
+      - name: Install dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          # Go is required for building aws-lc-fips-sys (FIPS crypto)
+          brew install unixodbc cmake go
+          cmake --version
+          go version
+          # Export ODBC paths dynamically (works for both ARM64 and Intel Macs)
+          echo "ODBC_PREFIX=$(brew --prefix unixodbc)" >> $GITHUB_ENV
 
       - name: Decode secrets
         run: ./scripts/decode_secrets.sh
         env:
           PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
 
-      - name: Install LLVM tools for coverage
-        run: rustup component add llvm-tools-preview
-
       - name: Build Rust ODBC driver
-        run: RUSTFLAGS="-C instrument-coverage" cargo build
+        run: cargo build
 
-      - name: Build and run ODBC tests
+      - name: Build and run ODBC tests (Linux)
+        if: runner.os == 'Linux'
         run: |
           ls -l target/debug/
-          export DRIVER_PATH=$(pwd)/target/debug/libsfodbc.so
+          export DRIVER_PATH=$(pwd)/target/debug/${{ matrix.driver_lib }}
           export PARAMETER_PATH=$(pwd)/parameters.json
-          export LLVM_PROFILE_FILE="odbc-%p-%m.profraw"
+          NPROC=$(nproc)
+          
           cd odbc_tests
           mkdir -p cmake-build
           cmake -B cmake-build \
@@ -98,19 +115,26 @@ jobs:
               -D ODBC_INCLUDE_DIR="/usr/include" \
               -D DRIVER_TYPE=NEW \
               .
-          cmake --build cmake-build -- -j $(nproc)
-          ctest -j $(nproc) -C Debug --test-dir cmake-build --output-on-failure
+          cmake --build cmake-build -- -j $NPROC
+          ctest -j $NPROC -C Debug --test-dir cmake-build --output-on-failure
+
+      - name: Build and run ODBC tests (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          ls -l target/debug/
+          export DRIVER_PATH=$(pwd)/target/debug/${{ matrix.driver_lib }}
+          export PARAMETER_PATH=$(pwd)/parameters.json
+          NPROC=$(sysctl -n hw.ncpu)
           
-          # Generate coverage report from C++ test execution
-          cd ..
-          LLVM_PROFDATA=$(find ~/.rustup -name "llvm-profdata" -type f 2>/dev/null | head -1)
-          LLVM_COV=$(find ~/.rustup -name "llvm-cov" -type f 2>/dev/null | head -1)
-          find . -name "odbc-*.profraw" -type f | xargs $LLVM_PROFDATA merge -sparse -o coverage.profdata
-          $LLVM_COV export target/debug/libsfodbc.so \
-              -instr-profile=coverage.profdata \
-              -format=lcov \
-              -sources=$(pwd)/odbc \
-              -sources=$(pwd)/sf_core > lcov-${{ matrix.os }}-odbc-stable.info
+          cd odbc_tests
+          mkdir -p cmake-build
+          cmake -B cmake-build \
+              -D ODBC_LIBRARY="${ODBC_PREFIX}/lib/libodbc.dylib" \
+              -D ODBC_INCLUDE_DIR="${ODBC_PREFIX}/include" \
+              -D DRIVER_TYPE=NEW \
+              .
+          cmake --build cmake-build -- -j $NPROC
+          ctest -j $NPROC -C Debug --test-dir cmake-build --output-on-failure
 
   odbc-status:
     needs: [detect-changes, odbc_tests_reference, odbc_tests]
