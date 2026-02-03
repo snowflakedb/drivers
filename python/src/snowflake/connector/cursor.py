@@ -16,7 +16,7 @@ from ._internal.protobuf_gen.database_driver_v1_pb2 import (  # type: ignore[att
     StatementNewRequest,
     StatementSetSqlQueryRequest,
 )
-from .exceptions import NotSupportedError
+from .errors import NotSupportedError
 
 
 if TYPE_CHECKING:

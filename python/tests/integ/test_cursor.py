@@ -6,14 +6,8 @@ from decimal import Decimal
 
 import pytest
 
-from tests.compatibility import IS_UNIVERSAL_DRIVER
+from snowflake.connector.errors import NotSupportedError
 from tests.e2e.types.utils import assert_sequential_values
-
-
-if IS_UNIVERSAL_DRIVER:
-    from snowflake.connector.exceptions import NotSupportedError
-else:
-    from snowflake.connector.errors import NotSupportedError
 
 
 class TestCursorMethods:
