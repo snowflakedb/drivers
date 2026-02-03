@@ -62,9 +62,8 @@ class TestFetchone:
         assert third == (3,)
         assert fourth is None
 
-    def test_fetchone_calls_ensure_iterator(self, cursor):
+    def test_fetchone_calls_ensure_iterator_if_iterator_is_none(self, cursor):
         """Test fetchone calls _ensure_iterator."""
-        cursor._iterator = iter([(1,)])
         mock_ensure = MagicMock()
 
         with patch.object(cursor, "_ensure_iterator", mock_ensure):
@@ -153,9 +152,8 @@ class TestFetchall:
 
         assert result == []
 
-    def test_fetchall_calls_ensure_iterator(self, cursor):
+    def test_fetchall_calls_ensure_iterator_if_iterator_is_none(self, cursor):
         """Test fetchall calls _ensure_iterator."""
-        cursor._iterator = iter([])
         mock_ensure = MagicMock()
 
         with patch.object(cursor, "_ensure_iterator", mock_ensure):
