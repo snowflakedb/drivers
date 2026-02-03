@@ -395,7 +395,7 @@ impl GherkinValidator {
 
                 // Find ALL features that match this test file name AND are relevant for this language
                 // (features in shared/ or in the language-specific folder)
-                let matching_feature_ids: Vec<&String> = all_scenarios
+                let mut matching_feature_ids: Vec<&String> = all_scenarios
                     .iter()
                     .filter(|(feature_id, _)| {
                         let feature_name = Self::get_feature_name_from_id(feature_id);
@@ -406,6 +406,18 @@ impl GherkinValidator {
                     .collect::<std::collections::HashSet<_>>()
                     .into_iter()
                     .collect();
+
+                // Sort for deterministic ordering: prefer language-specific folders over shared/
+                // (non-shared sorts before shared alphabetically, then by full path)
+                matching_feature_ids.sort_by(|a, b| {
+                    let a_shared = a.starts_with("shared/");
+                    let b_shared = b.starts_with("shared/");
+                    match (a_shared, b_shared) {
+                        (false, true) => std::cmp::Ordering::Less,
+                        (true, false) => std::cmp::Ordering::Greater,
+                        _ => a.cmp(b),
+                    }
+                });
 
                 if !matching_feature_ids.is_empty() {
                     // Check if ANY of the matching features require this language
@@ -418,7 +430,7 @@ impl GherkinValidator {
 
                     if !any_feature_requires_language {
                         // No matching feature requires this language - determine why
-                        // Use the first matching feature for the reason
+                        // Use the first matching feature (language-specific preferred over shared)
                         let reason =
                             self.determine_orphan_reason(matching_feature_ids[0], language)?;
 
