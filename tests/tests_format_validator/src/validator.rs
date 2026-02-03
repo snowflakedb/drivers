@@ -332,21 +332,6 @@ impl GherkinValidator {
         ))
     }
 
-    /// Check if a feature (identified by its path-based ID) is relevant for a given language.
-    /// A feature is relevant if it's in the shared/ folder OR in the language-specific folder.
-    fn is_feature_relevant_for_language(&self, feature_id: &str, language: &Language) -> bool {
-        let lang_folder = match language {
-            Language::Rust => "core",
-            Language::Python => "python",
-            Language::Jdbc => "jdbc",
-            Language::Odbc => "odbc",
-            _ => return false,
-        };
-
-        // Feature is relevant if it's in shared/ folder OR in the language-specific folder
-        feature_id.starts_with("shared/") || feature_id.starts_with(&format!("{}/", lang_folder))
-    }
-
     fn find_orphaned_files_for_language(
         &self,
         language: &Language,
@@ -386,14 +371,13 @@ impl GherkinValidator {
                     .unwrap()
                     .to_string();
 
-                // Find ALL features that match this test file name AND are relevant for this language
-                // (features in shared/ or in the language-specific folder)
+                // Find ALL features that match this test file name
+                // (language relevance is determined by tags in feature_language_requirements)
                 let mut matching_feature_ids: Vec<&String> = all_scenarios
                     .iter()
                     .filter(|(feature_id, _)| {
                         let feature_name = Self::get_feature_name_from_id(feature_id);
                         self.file_name_matches_feature(&file_name, &feature_name)
-                            && self.is_feature_relevant_for_language(feature_id, language)
                     })
                     .map(|(feature_id, _)| feature_id)
                     .collect::<std::collections::HashSet<_>>()
@@ -541,13 +525,13 @@ impl GherkinValidator {
         // Determine which feature this test file corresponds to
         let file_name = file_path.file_stem().unwrap().to_str().unwrap().to_string();
 
-        // Find ALL matching features that are relevant for this language
+        // Find ALL matching features by name
+        // (language relevance is determined by tags in scenario_language_requirements)
         let matching_feature_ids: Vec<&String> = all_scenarios
             .iter()
             .filter(|(feature_id, _)| {
                 let feature_name = Self::get_feature_name_from_id(feature_id);
                 self.file_name_matches_feature(&file_name, &feature_name)
-                    && self.is_feature_relevant_for_language(feature_id, language)
             })
             .map(|(feature_id, _)| feature_id)
             .collect::<std::collections::HashSet<_>>()
