@@ -27,18 +27,10 @@ class CArrowStreamIterator {
    * @param context Python context object for conversions
    * @param use_numpy Whether to use numpy types
    * @param use_dict_result Whether to return dicts instead of tuples
-   * @param force_microsecond_precision When true, all timestamp columns are converted
-   *        to microsecond precision, ensuring consistent schema across all batches.
-   *        This is useful when your data contains timestamps outside the nanosecond
-   *        range (1677-2262), such as '9999-12-31' or '0001-01-01'. When false
-   *        (default), precision is determined per-batch based on the data, which
-   *        may cause pyarrow schema mismatch errors when combining batches.
-   *        Note: enabling this truncates sub-microsecond precision (scale 7-9).
    * @return Unique pointer to the iterator, or nullptr on error (with Python exception set)
    */
   static std::unique_ptr<CArrowStreamIterator> from_stream(int64_t stream_ptr, PyObject* context,
-                                                           bool use_numpy, bool use_dict_result,
-                                                           bool force_microsecond_precision = false);
+                                                           bool use_numpy, bool use_dict_result);
 
   /**
    * Get the next row as a Python tuple or dict
@@ -52,7 +44,7 @@ class CArrowStreamIterator {
    * Takes ownership of stream and schema.
    */
   CArrowStreamIterator(ArrowArrayStream* stream, ArrowSchema* schema, PyObject* context,
-                       bool use_numpy, bool use_dict_result, bool force_microsecond_precision);
+                       bool use_numpy, bool use_dict_result);
 
  protected:
   /**
@@ -111,9 +103,6 @@ class CArrowStreamIterator {
 
   /** Whether to return dicts instead of tuples */
   bool m_useDictResult;
-
-  /** Force microsecond precision for timestamps to ensure consistent schema */
-  bool m_forceMicrosecondPrecision;
 
   /** Logger instance */
   static Logger* logger;

@@ -177,10 +177,9 @@ class Cursor:
             self._iterator = ArrowStreamIterator(
                 stream_ptr,
                 arrow_context,
-                # TODO: SNOW-2997742, SNOW-2997786, temporarily hardcoded
+                # TODO: SNOW-2997742, SNOW-2997786: temporarily hardcoded
                 use_dict_result=False,
                 use_numpy=False,
-                force_microsecond_precision=False,
             )
 
     def fetchone(self) -> Row | None:

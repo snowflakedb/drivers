@@ -53,7 +53,6 @@ class BuildHook(BuildHookInterface):
         "BooleanConverter.cpp",
         "CArrowIterator.cpp",
         "CArrowStreamIterator.cpp",
-        "CArrowTableIterator.cpp",
         "ConverterUtil.cpp",
         "DateConverter.cpp",
         "DecFloatConverter.cpp",
