@@ -99,22 +99,15 @@ jobs:
         if: runner.os == 'Windows'
         run: |
           choco install cmake --installargs 'ADD_CMAKE_TO_PATH=System' -y
+          choco install gnupg -y
           cmake --version
+          gpg --version
 
-      - name: Decode secrets (Unix)
-        if: runner.os != 'Windows'
+      - name: Decode secrets
         run: ./scripts/decode_secrets.sh
         env:
           PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
-
-      - name: Decode secrets (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $secret = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($env:PARAMETERS_SECRET))
-          $secret | Out-File -FilePath parameters.json -Encoding UTF8
-        env:
-          PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
+        shell: bash
 
       - name: Build Rust ODBC driver
         run: cargo build
