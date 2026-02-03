@@ -292,6 +292,114 @@ class TestCursorDescription:
         assert len(result[0]) == 7
 
 
+class TestCursorRowcount:
+    """Integration tests for Cursor.rowcount property."""
+
+    def test_rowcount_is_none_before_execute(self, connection):
+        """Test that rowcount returns None before any query is executed."""
+        # Given a new cursor
+        cursor = connection.cursor()
+
+        # When accessing rowcount before execute
+        result = cursor.rowcount
+
+        # Then it should be None (per PEP 249)
+        assert result is None
+
+    def test_rowcount_after_select_single_row(self, cursor):
+        """Test rowcount after a SELECT query returning single row."""
+        # Given a cursor that executes a SELECT query
+        cursor.execute("SELECT 1")
+
+        # When accessing rowcount
+        result = cursor.rowcount
+
+        # Then rowcount should be 1
+        assert isinstance(result, int)
+        assert result == 1
+
+    def test_rowcount_after_select_multiple_rows(self, cursor):
+        """Test rowcount after a SELECT query returning multiple rows."""
+        # Given a cursor that executes a SELECT query returning 5 rows
+        cursor.execute("SELECT seq4() FROM TABLE(GENERATOR(ROWCOUNT => 5))")
+
+        # When accessing rowcount
+        result = cursor.rowcount
+
+        # Then rowcount should reflect the number of rows
+        assert isinstance(result, int)
+        assert result == 5
+
+    def test_rowcount_after_insert(self, cursor, tmp_schema):
+        """Test rowcount after INSERT statement."""
+        # Given a table to insert into
+        cursor.execute(f"CREATE TABLE {tmp_schema}.test_rowcount (id INTEGER, name VARCHAR)")
+
+        # When inserting a single row
+        cursor.execute(f"INSERT INTO {tmp_schema}.test_rowcount VALUES (1, 'test')")
+
+        # Then rowcount should be 1
+        assert cursor.rowcount == 1
+
+    def test_rowcount_after_multi_row_select(self, cursor, tmp_schema):
+        """Test rowcount after selecting multiple rows."""
+        # When selecting multiple rows
+        cursor.execute("""SELECT seq4() FROM TABLE(GENERATOR(ROWCOUNT => 5))""")
+
+        # Then rowcount should be 5
+        assert cursor.rowcount == 5
+
+    def test_rowcount_after_update(self, cursor, tmp_schema):
+        """Test rowcount after UPDATE statement."""
+        # Given a table with data
+        cursor.execute(f"CREATE TABLE {tmp_schema}.test_update (id INTEGER, value INTEGER)")
+        cursor.execute(f"INSERT INTO {tmp_schema}.test_update VALUES (1, 10), (2, 20), (3, 30)")
+
+        # When updating some rows
+        cursor.execute(f"UPDATE {tmp_schema}.test_update SET value = 100 WHERE id <= 2")
+
+        # Then rowcount should return 2
+        assert cursor.rowcount == 2
+
+    def test_rowcount_after_delete(self, cursor, tmp_schema):
+        """Test rowcount after DELETE statement."""
+        # Given a table with data
+        cursor.execute(f"CREATE TABLE {tmp_schema}.test_delete (id INTEGER)")
+        cursor.execute(f"INSERT INTO {tmp_schema}.test_delete VALUES (1), (2), (3), (4), (5)")
+
+        # When deleting some rows
+        cursor.execute(f"DELETE FROM {tmp_schema}.test_delete WHERE id > 2")
+
+        # Then rowcount should reflect only affected rows
+        assert cursor.rowcount == 3
+
+    def test_rowcount_persists_after_fetch(self, cursor):
+        """Test that rowcount persists after fetching results."""
+        # Given a cursor that executes a SELECT query
+        cursor.execute("SELECT 1, 2, 3")
+        rowcount_before_fetch = cursor.rowcount
+
+        # When fetching results
+        cursor.fetchall()
+
+        # Then rowcount should persist after fetch
+        assert cursor.rowcount == rowcount_before_fetch
+
+    def test_rowcount_updates_with_new_query(self, cursor):
+        """Test that rowcount updates when a new query is executed."""
+        # Given a cursor that executes a SELECT returning 1 row
+        cursor.execute("SELECT 1")
+        first_rowcount = cursor.rowcount
+        assert first_rowcount == 1
+
+        # When executing a SELECT returning multiple rows
+        cursor.execute("SELECT * FROM (SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3)")
+
+        # Then rowcount should be updated to 3
+        assert cursor.rowcount == 3
+        assert cursor.rowcount != first_rowcount
+
+
 class TestCursorMethods:
     """Test Cursor object methods."""
 

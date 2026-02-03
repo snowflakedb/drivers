@@ -98,7 +98,7 @@ pub struct ColumnMetadata {
     pub nullable: bool,
 }
 /// Execute result
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+#[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ExecuteResult {
     #[prost(message, optional, tag = "1")]
     pub stream: ::core::option::Option<ArrowArrayStreamPtr>,
@@ -488,7 +488,7 @@ pub struct StatementExecuteQueryRequest {
     #[prost(message, optional, tag = "1")]
     pub stmt_handle: ::core::option::Option<StatementHandle>,
 }
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+#[derive(Clone, PartialEq, ::prost::Message)]
 pub struct StatementExecuteQueryResponse {
     #[prost(message, optional, tag = "1")]
     pub result: ::core::option::Option<ExecuteResult>,

@@ -65,7 +65,7 @@ class SnowflakeCursorBase(abc.ABC):
         """
         self.connection = connection
         self._description: list[ColumnDescription] | None = None
-        self.rowcount = -1
+        self._rowcount = None
         self.arraysize = 1  # Instance attribute overrides class attribute
         self._closed = False
         # Streaming state for Arrow results
@@ -98,19 +98,15 @@ class SnowflakeCursorBase(abc.ABC):
         return self._description
 
     @property
-    def rowcount(self) -> int:
+    def rowcount(self) -> int | None:
         """
         Read-only attribute specifying the number of rows that the last
         .execute*() produced or affected.
 
         Returns:
-            int: Number of rows affected, or -1 if not determined
+            int: Number of rows affected, or None if not determined
         """
         return self._rowcount
-
-    @rowcount.setter
-    def rowcount(self, value: int) -> None:
-        self._rowcount = value
 
     # ------------------------------------------------------------------
     # Result format control
@@ -179,8 +175,17 @@ class SnowflakeCursorBase(abc.ABC):
         self._iterator = None
         return self
 
-        # Populate description from column metadata
+        # Populate description and rowcount
         self._populate_description()
+        self._populate_rowcount()
+
+    def _populate_rowcount(self) -> None:
+        if self.execute_result:
+            rows_affected = self.execute_result.rows_affected
+            # Negative value indicates count cannot be determined, convert to None
+            self._rowcount = rows_affected if rows_affected >= 0 else None
+        else:
+            self._rowcount = None
 
     def executemany(self, operation: str, seq_of_parameters: Sequence[Sequence[Any]]) -> None:
         """

@@ -213,6 +213,25 @@ pub fn statement_execute_query(stmt_handle: Handle) -> Result<ExecuteResult, Api
     // Extract query_id from response
     let query_id = response.data.query_id.unwrap_or_default();
 
+    // Extract rows_affected from response
+    // For DML operations (INSERT, UPDATE, DELETE), use stats fields
+    // For SELECT queries, use total/returned fields
+    // -1 indicates the count cannot be determined
+    let rows_affected = {
+        let stats = response.data.stats.as_ref();
+        // Check DML stats first (INSERT, UPDATE, DELETE)
+        let dml_rows = stats.and_then(|s| {
+            s.num_rows_inserted
+                .or(s.num_rows_updated)
+                .or(s.num_rows_deleted)
+        });
+        // Fall back to total/returned for SELECT queries
+        dml_rows
+            .or(response.data.total)
+            .or(response.data.returned)
+            .unwrap_or(-1)
+    };
+
     // Extract column metadata from rowtype
     let columns = response
         .data
@@ -234,7 +253,7 @@ pub fn statement_execute_query(stmt_handle: Handle) -> Result<ExecuteResult, Api
     stmt.state = StatementState::Executed;
     Ok(ExecuteResult {
         stream: rowset_stream,
-        rows_affected: 0,
+        rows_affected,
         query_id,
         columns,
     })
