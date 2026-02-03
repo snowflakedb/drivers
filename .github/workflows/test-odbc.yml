@@ -80,7 +80,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y unixodbc-dev build-essential zlib1g-dev lcov
+          sudo apt-get install -y unixodbc-dev build-essential zlib1g-dev
           wget https://github.com/Kitware/CMake/releases/download/v4.0.3/cmake-4.0.3-linux-x86_64.sh
           sudo sh cmake-4.0.3-linux-x86_64.sh --skip-license --prefix=/usr/local
           sudo rm cmake-4.0.3-linux-x86_64.sh
