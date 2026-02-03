@@ -70,6 +70,9 @@ jobs:
             driver_lib: libsfodbc.dylib
             odbc_library: /opt/homebrew/lib/libodbc.dylib
             odbc_include: /opt/homebrew/include
+          - os: windows-latest
+            name: Windows x64
+            driver_lib: sfodbc.dll
     runs-on: ${{ matrix.os }}
     name: odbc_tests (${{ matrix.name }})
     steps:
@@ -93,30 +96,48 @@ jobs:
           cmake --version
           go version
 
-      - name: Decode secrets
+      - name: Install dependencies (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          choco install cmake --installargs 'ADD_CMAKE_TO_PATH=System' -y
+          cmake --version
+
+      - name: Decode secrets (Unix)
+        if: runner.os != 'Windows'
         run: ./scripts/decode_secrets.sh
+        env:
+          PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
+
+      - name: Decode secrets (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $secret = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($env:PARAMETERS_SECRET))
+          $secret | Out-File -FilePath parameters.json -Encoding UTF8
         env:
           PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
 
       - name: Install LLVM tools for coverage
         run: rustup component add llvm-tools-preview
 
-      - name: Build Rust ODBC driver
+      - name: Build Rust ODBC driver (Unix)
+        if: runner.os != 'Windows'
         run: RUSTFLAGS="-C instrument-coverage" cargo build
 
-      - name: Build and run ODBC tests
+      - name: Build Rust ODBC driver (Windows)
+        if: runner.os == 'Windows'
+        run: cargo build
+        env:
+          RUSTFLAGS: "-C instrument-coverage"
+
+      - name: Build and run ODBC tests (Linux)
+        if: runner.os == 'Linux'
         run: |
           ls -l target/debug/
           export DRIVER_PATH=$(pwd)/target/debug/${{ matrix.driver_lib }}
           export PARAMETER_PATH=$(pwd)/parameters.json
           export LLVM_PROFILE_FILE="odbc-%p-%m.profraw"
-          
-          # Get number of CPUs (cross-platform)
-          if [[ "$RUNNER_OS" == "Linux" ]]; then
-            NPROC=$(nproc)
-          else
-            NPROC=$(sysctl -n hw.ncpu)
-          fi
+          NPROC=$(nproc)
           
           cd odbc_tests
           mkdir -p cmake-build
@@ -138,6 +159,52 @@ jobs:
               -format=lcov \
               -sources=$(pwd)/odbc \
               -sources=$(pwd)/sf_core > lcov-${{ matrix.os }}-odbc-stable.info
+
+      - name: Build and run ODBC tests (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          ls -l target/debug/
+          export DRIVER_PATH=$(pwd)/target/debug/${{ matrix.driver_lib }}
+          export PARAMETER_PATH=$(pwd)/parameters.json
+          export LLVM_PROFILE_FILE="odbc-%p-%m.profraw"
+          NPROC=$(sysctl -n hw.ncpu)
+          
+          cd odbc_tests
+          mkdir -p cmake-build
+          cmake -B cmake-build \
+              -D ODBC_LIBRARY="${{ matrix.odbc_library }}" \
+              -D ODBC_INCLUDE_DIR="${{ matrix.odbc_include }}" \
+              -D DRIVER_TYPE=NEW \
+              .
+          cmake --build cmake-build -- -j $NPROC
+          ctest -j $NPROC -C Debug --test-dir cmake-build --output-on-failure
+          
+          # Generate coverage report from C++ test execution
+          cd ..
+          LLVM_PROFDATA=$(find ~/.rustup -name "llvm-profdata" -type f 2>/dev/null | head -1)
+          LLVM_COV=$(find ~/.rustup -name "llvm-cov" -type f 2>/dev/null | head -1)
+          find . -name "odbc-*.profraw" -type f | xargs $LLVM_PROFDATA merge -sparse -o coverage.profdata
+          $LLVM_COV export target/debug/${{ matrix.driver_lib }} \
+              -instr-profile=coverage.profdata \
+              -format=lcov \
+              -sources=$(pwd)/odbc \
+              -sources=$(pwd)/sf_core > lcov-${{ matrix.os }}-odbc-stable.info
+
+      - name: Build and run ODBC tests (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          dir target\debug\
+          $env:DRIVER_PATH = "$PWD\target\debug\${{ matrix.driver_lib }}"
+          $env:PARAMETER_PATH = "$PWD\parameters.json"
+          $env:LLVM_PROFILE_FILE = "odbc-%p-%m.profraw"
+          $NPROC = (Get-CimInstance Win32_ComputerSystem).NumberOfLogicalProcessors
+          
+          cd odbc_tests
+          New-Item -ItemType Directory -Force -Path cmake-build | Out-Null
+          cmake -B cmake-build -D DRIVER_TYPE=NEW .
+          cmake --build cmake-build --config Debug --parallel $NPROC
+          ctest -j $NPROC -C Debug --test-dir cmake-build --output-on-failure
 
   odbc-status:
     needs: [detect-changes, odbc_tests_reference, odbc_tests]
