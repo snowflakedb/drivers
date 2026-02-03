@@ -1045,7 +1045,7 @@ impl GherkinValidator {
                         let mut method_missing_steps = Vec::new();
 
                         for step_text in &scenario_steps {
-                            // Check if any implemented step starts with the expected step
+                            // Check if any implemented step matches (using normalized comparison)
                             let step_found = method_steps
                                 .iter()
                                 .any(|impl_step| self.steps_match(impl_step, step_text));
@@ -1116,28 +1116,12 @@ impl GherkinValidator {
     }
 
     fn steps_match(&self, implemented_step: &str, feature_step: &str) -> bool {
-        // Normalize both steps for comparison - only remove punctuation, keep all words
-        let normalize = |s: &str| {
-            s.to_lowercase()
-                .replace("\"", "")
-                .replace("'", "")
-                .replace(",", "")
-                .replace(".", "")
-                .replace(":", "")
-                .replace(";", "")
-                .replace("!", "")
-                .replace("?", "")
-                .replace("(", "")
-                .replace(")", "")
-                .trim()
-                .to_string()
-        };
+        // Minimal normalization: case-insensitive, whitespace-trimmed comparison.
+        // Keep quotes and other punctuation as-is since they're semantically meaningful.
+        // Steps should match exactly as copied from feature files.
+        let normalize = |s: &str| s.to_lowercase().trim().to_string();
 
-        let norm_impl = normalize(implemented_step);
-        let norm_feature = normalize(feature_step);
-
-        // Require exact match after normalization
-        norm_impl == norm_feature
+        normalize(implemented_step) == normalize(feature_step)
     }
 
     pub fn validate_all_with_breaking_changes(&self) -> Result<EnhancedValidationResult> {
