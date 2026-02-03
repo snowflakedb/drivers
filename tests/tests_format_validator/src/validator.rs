@@ -259,7 +259,6 @@ impl GherkinValidator {
         std::collections::HashMap<(String, String), Vec<Language>>,
     )> {
         let mut scenarios = Vec::new();
-        // Use feature_id (relative path) as key to distinguish features with same name
         let mut feature_language_requirements: std::collections::HashMap<String, Vec<Language>> =
             std::collections::HashMap::new();
         let mut scenario_language_requirements: std::collections::HashMap<
