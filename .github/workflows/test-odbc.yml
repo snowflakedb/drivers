@@ -114,8 +114,14 @@ jobs:
           PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
         shell: bash
 
-      - name: Build Rust ODBC driver
+      - name: Build Rust ODBC driver (Unix)
+        if: runner.os != 'Windows'
         run: cargo build
+
+      - name: Build Rust ODBC driver (Windows)
+        if: runner.os == 'Windows'
+        # Use release mode on Windows to avoid LNK1189 (65535 object limit)
+        run: cargo build --release
 
       - name: Build and run ODBC tests (Linux)
         if: runner.os == 'Linux'
@@ -157,16 +163,16 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          dir target\debug\
-          $env:DRIVER_PATH = "$PWD\target\debug\${{ matrix.driver_lib }}"
+          dir target\release\
+          $env:DRIVER_PATH = "$PWD\target\release\${{ matrix.driver_lib }}"
           $env:PARAMETER_PATH = "$PWD\parameters.json"
           $NPROC = (Get-CimInstance Win32_ComputerSystem).NumberOfLogicalProcessors
           
           cd odbc_tests
           New-Item -ItemType Directory -Force -Path cmake-build | Out-Null
           cmake -B cmake-build -D DRIVER_TYPE=NEW .
-          cmake --build cmake-build --config Debug --parallel $NPROC
-          ctest -j $NPROC -C Debug --test-dir cmake-build --output-on-failure
+          cmake --build cmake-build --config Release --parallel $NPROC
+          ctest -j $NPROC -C Release --test-dir cmake-build --output-on-failure
 
   odbc-status:
     needs: [detect-changes, odbc_tests_reference, odbc_tests]
