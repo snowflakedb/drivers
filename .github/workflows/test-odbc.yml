@@ -73,6 +73,9 @@ jobs:
           - os: windows-latest
             name: Windows x64
             driver_lib: sfodbc.dll
+          - os: windows-11-arm
+            name: Windows ARM64
+            driver_lib: sfodbc.dll
     runs-on: ${{ matrix.os }}
     name: odbc_tests (${{ matrix.name }})
     steps:
@@ -102,8 +105,14 @@ jobs:
           choco install cmake --installargs 'ADD_CMAKE_TO_PATH=System' -y
           cmake --version
 
-      - name: Decode secrets (Unix)
-        if: runner.os != 'Windows'
+      - name: Decode secrets (Linux)
+        if: runner.os == 'Linux'
+        run: ./scripts/decode_secrets.sh
+        env:
+          PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
+
+      - name: Decode secrets (macOS)
+        if: runner.os == 'macOS'
         run: ./scripts/decode_secrets.sh
         env:
           PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
@@ -120,8 +129,12 @@ jobs:
       - name: Install LLVM tools for coverage
         run: rustup component add llvm-tools-preview
 
-      - name: Build Rust ODBC driver (Unix)
-        if: runner.os != 'Windows'
+      - name: Build Rust ODBC driver (Linux)
+        if: runner.os == 'Linux'
+        run: RUSTFLAGS="-C instrument-coverage" cargo build
+
+      - name: Build Rust ODBC driver (macOS)
+        if: runner.os == 'macOS'
         run: RUSTFLAGS="-C instrument-coverage" cargo build
 
       - name: Build Rust ODBC driver (Windows)

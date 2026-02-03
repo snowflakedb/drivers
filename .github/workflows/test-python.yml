@@ -31,21 +31,48 @@ jobs:
       - name: "Dummy step"
         run: "echo 'Dummy step to pass required check'"
 
-  # Build Python wheel with compiled extensions for each Python version
+  # Build Python wheel with compiled extensions for each OS/Python version
   build_wheel:
     needs: detect-changes
     if: github.event_name == 'push' || needs.detect-changes.outputs.run_python == 'true'
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest]
-        py: ["3.9", "3.10", "3.11", "3.12", "3.13"]
+        include:
+          # Linux x64 - all Python versions
+          - os: ubuntu-latest
+            name: Linux x64
+            py: "3.9"
+          - os: ubuntu-latest
+            name: Linux x64
+            py: "3.10"
+          - os: ubuntu-latest
+            name: Linux x64
+            py: "3.11"
+          - os: ubuntu-latest
+            name: Linux x64
+            py: "3.12"
+          - os: ubuntu-latest
+            name: Linux x64
+            py: "3.13"
+          # Windows ARM64 - Python 3.11+ (older versions lack ARM64 support)
+          - os: windows-11-arm
+            name: Windows ARM64
+            py: "3.11"
+          - os: windows-11-arm
+            name: Windows ARM64
+            py: "3.12"
+          - os: windows-11-arm
+            name: Windows ARM64
+            py: "3.13"
     runs-on: ${{ matrix.os }}
+    name: build_wheel (${{ matrix.name }} py${{ matrix.py }})
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install system dependencies
+      - name: Install system dependencies (Linux)
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
 
@@ -61,9 +88,16 @@ jobs:
         working-directory: ./python
         run: uv run --python ${{ matrix.py }} --with hatch --with cython --with setuptools hatch build
 
-      - name: Inspect wheel
+      - name: Inspect wheel (Linux)
+        if: runner.os == 'Linux'
         working-directory: ./python
         run: uv run --python ${{ matrix.py }} python -m zipfile -l dist/*.whl
+
+      - name: Inspect wheel (Windows)
+        if: runner.os == 'Windows'
+        working-directory: ./python
+        shell: pwsh
+        run: uv run --python ${{ matrix.py }} python -m zipfile -l (Get-ChildItem dist/*.whl).FullName
 
       - name: Upload Python wheel
         uses: actions/upload-artifact@v4
@@ -100,9 +134,35 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest]
-        py: ["3.9", "3.10", "3.11", "3.12", "3.13"]
+        include:
+          # Linux x64 - all Python versions
+          - os: ubuntu-latest
+            name: Linux x64
+            py: "3.9"
+          - os: ubuntu-latest
+            name: Linux x64
+            py: "3.10"
+          - os: ubuntu-latest
+            name: Linux x64
+            py: "3.11"
+          - os: ubuntu-latest
+            name: Linux x64
+            py: "3.12"
+          - os: ubuntu-latest
+            name: Linux x64
+            py: "3.13"
+          # Windows ARM64 - Python 3.11+ (older versions lack ARM64 support)
+          - os: windows-11-arm
+            name: Windows ARM64
+            py: "3.11"
+          - os: windows-11-arm
+            name: Windows ARM64
+            py: "3.12"
+          - os: windows-11-arm
+            name: Windows ARM64
+            py: "3.13"
     runs-on: ${{ matrix.os }}
+    name: python_tests (${{ matrix.name }} py${{ matrix.py }})
     steps:
       - uses: actions/checkout@v4
 
@@ -111,16 +171,29 @@ jobs:
         with:
           version: "0.5.11"
 
-      - name: Restore uv cache
+      - name: Restore uv cache (Linux)
+        if: runner.os == 'Linux'
         env:
           UV_CACHE_DIR: /tmp/.uv-cache
         uses: actions/cache@v4
         with:
           path: /tmp/.uv-cache
-          key: uv-${{ runner.os }}-${{ matrix.py }}-${{ hashFiles('python/uv.lock', 'python/pyproject.toml') }}
+          key: uv-${{ matrix.os }}-${{ matrix.py }}-${{ hashFiles('python/uv.lock', 'python/pyproject.toml') }}
           restore-keys: |
-            uv-${{ runner.os }}-${{ matrix.py }}-
-            uv-${{ runner.os }}-
+            uv-${{ matrix.os }}-${{ matrix.py }}-
+            uv-${{ matrix.os }}-
+
+      - name: Restore uv cache (Windows)
+        if: runner.os == 'Windows'
+        env:
+          UV_CACHE_DIR: ${{ runner.temp }}\.uv-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}\.uv-cache
+          key: uv-${{ matrix.os }}-${{ matrix.py }}-${{ hashFiles('python/uv.lock', 'python/pyproject.toml') }}
+          restore-keys: |
+            uv-${{ matrix.os }}-${{ matrix.py }}-
+            uv-${{ matrix.os }}-
 
       - name: Set up Python ${{ matrix.py }}
         run: uv python install ${{ matrix.py }}
@@ -131,10 +204,19 @@ jobs:
           name: python-wheel-${{ matrix.os }}-${{ matrix.py }}
           path: python/dist
 
-      - name: Decode secrets
+      - name: Decode secrets (Linux)
+        if: runner.os == 'Linux'
         run: ./scripts/decode_secrets.sh
         env:
           PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
+
+      - name: Decode secrets (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $encrypted = ".github/secrets/parameters_aws.json.gpg"
+          $decrypted = "parameters.json"
+          echo "${{ secrets.PARAMETERS_SECRET }}" | gpg --batch --yes --passphrase-fd 0 --decrypt --output $decrypted $encrypted
 
       - name: Install Hatch
         run: uv tool install hatch
@@ -143,7 +225,8 @@ jobs:
         working-directory: python
         run: hatch run test.py${{ matrix.py }}:install-wheel
 
-      - name: Run all tests with coverage
+      - name: Run all tests with coverage (Linux)
+        if: runner.os == 'Linux'
         env:
           PARAMETER_PATH: ${{ github.workspace }}/parameters.json
           REFERENCE_DRIVER_VERSION: ${{ env.PYTHON_REFERENCE_DRIVER_VERSION }}
@@ -153,6 +236,21 @@ jobs:
             --json-report --json-report-file=reports/universal-${{ matrix.os }}-${{ matrix.py }}.json \
             --junitxml=reports/universal-${{ matrix.os }}-${{ matrix.py }}.xml \
             --cov-report=xml:reports/coverage-${{ matrix.os }}-${{ matrix.py }}.xml \
+            --cov-report=html:reports/coverage-${{ matrix.os }}-${{ matrix.py }}-html
+        working-directory: python
+
+      - name: Run all tests with coverage (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          PARAMETER_PATH: ${{ github.workspace }}\parameters.json
+          REFERENCE_DRIVER_VERSION: ${{ env.PYTHON_REFERENCE_DRIVER_VERSION }}
+        run: |
+          New-Item -ItemType Directory -Force -Path reports
+          hatch run test.py${{ matrix.py }}:all-cov `
+            --json-report --json-report-file=reports/universal-${{ matrix.os }}-${{ matrix.py }}.json `
+            --junitxml=reports/universal-${{ matrix.os }}-${{ matrix.py }}.xml `
+            --cov-report=xml:reports/coverage-${{ matrix.os }}-${{ matrix.py }}.xml `
             --cov-report=html:reports/coverage-${{ matrix.os }}-${{ matrix.py }}-html
         working-directory: python
 
