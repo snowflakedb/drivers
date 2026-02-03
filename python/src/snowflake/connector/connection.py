@@ -298,6 +298,18 @@ class Connection:
             kwargs = {**kwargs, "private_key_password": kwargs["private_key_file_pwd"]}
         return kwargs
 
+    @property
+    def role(self) -> str | None:
+        return self.kwargs.get("role")  # type: ignore[return-value]
+
+    @property
+    def database(self) -> str | None:
+        return self.kwargs.get("database")  # type: ignore[return-value]
+
+    @property
+    def schema(self) -> str | None:
+        return self.kwargs.get("schema")  # type: ignore[return-value]
+
 
 # Backward compatibility alias
 SnowflakeConnection = Connection

@@ -331,7 +331,7 @@ class Cursor:
         return self._closed
 
 
-class DictCursor:
+class DictCursor(Cursor):
     pass
 
 
