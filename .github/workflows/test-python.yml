@@ -39,7 +39,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest]
-        py: ["3.9", "3.10", "3.11", "3.12", "3.13"]
+        py: ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout repository
@@ -50,9 +50,9 @@ jobs:
           sudo apt-get update
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v4
+        uses: astral-sh/setup-uv@v7.2.1
         with:
-          version: "0.5.11"
+          version: "0.9.28"
 
       - name: Set up Python ${{ matrix.py }}
         run: uv python install ${{ matrix.py }}
@@ -79,9 +79,9 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v4
+        uses: astral-sh/setup-uv@v7.2.1
         with:
-          version: "0.5.11"
+          version: "0.9.28"
 
       - name: Set up Python
         run: uv python install 3.13
@@ -101,15 +101,15 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest]
-        py: ["3.9", "3.10", "3.11", "3.12", "3.13"]
+        py: ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v4
+        uses: astral-sh/setup-uv@v7.2.1
         with:
-          version: "0.5.11"
+          version: "0.9.28"
 
       - name: Restore uv cache
         env:
@@ -172,9 +172,9 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v4
+        uses: astral-sh/setup-uv@v7.2.1
         with:
-          version: "0.5.11"
+          version: "0.9.28"
 
       - name: Restore uv cache
         env:
@@ -233,9 +233,9 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v4
+        uses: astral-sh/setup-uv@v7.2.1
         with:
-          version: "0.5.11"
+          version: "0.9.28"
 
       - name: Download universal test results
         uses: actions/download-artifact@v4

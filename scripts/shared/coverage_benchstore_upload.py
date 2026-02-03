@@ -1,9 +1,11 @@
 #!/usr/bin/env python
 """
-Upload old ODBC coverage statistics to Benchstore.
+Upload old driver coverage statistics to Benchstore.
 
-This script parses lcov summary.txt file and uploads the coverage metrics
+This script parses lcov/cobertura summary.txt file and uploads the coverage metrics
 (line, function, branch coverage percentages) to Benchstore for tracking.
+
+Supports both ODBC and Python reference driver coverage.
 """
 
 import argparse
@@ -25,6 +27,9 @@ logger = logging.getLogger(__name__)
 
 PROJECT_NAME = "SnowDrivers"
 BENCHMARK_NAME = "OLD_Coverage"
+
+# Valid coverage types
+COVERAGE_TYPES = ["odbc", "python"]
 
 
 def get_snowhouse_config() -> dict:
@@ -157,19 +162,27 @@ def parse_coverage_summary(summary_path: Path) -> Dict[str, float]:
 
 def upload_coverage_metrics(
     summary_path: Path,
+    coverage_type: str,
     use_local_auth: bool = False
 ):
     """
     Upload coverage metrics to Benchstore.
     
     Args:
-        summary_path: Path to lcov summary.txt file
+        summary_path: Path to lcov/cobertura summary.txt file
+        coverage_type: Type of coverage ("odbc" or "python")
         use_local_auth: If True, use local browser authentication
     """
-    logger.info(f"Parsing coverage data from: {summary_path}")
+    if coverage_type not in COVERAGE_TYPES:
+        raise ValueError(f"Invalid coverage type: {coverage_type}. Must be one of: {COVERAGE_TYPES}")
+    
+    logger.info(f"Parsing {coverage_type.upper()} coverage data from: {summary_path}")
     metrics = parse_coverage_summary(summary_path)
     
-    logger.info("Coverage Statistics:")
+    # Prefix metrics with coverage type for clear identification in Benchstore
+    prefixed_metrics = {f"{coverage_type}_{k}": v for k, v in metrics.items()}
+    
+    logger.info(f"{coverage_type.upper()} Coverage Statistics:")
     logger.info(f"  Line coverage:     {metrics['line_coverage_pct']:.2f}% ({int(metrics['lines_hit'])}/{int(metrics['lines_found'])})")
     logger.info(f"  Function coverage: {metrics['function_coverage_pct']:.2f}% ({int(metrics['functions_hit'])}/{int(metrics['functions_found'])})")
     logger.info(f"  Branch coverage:   {metrics['branch_coverage_pct']:.2f}% ({int(metrics['branches_hit'])}/{int(metrics['branches_found'])})")
@@ -200,11 +213,12 @@ def upload_coverage_metrics(
         logger.error(f"Failed to find/create benchmark: {e}")
         raise
     
-    # Build tags
+    # Build tags - include coverage type for filtering
     tags = [
         f"BUILD_NUMBER={build_number}",
         f"BRANCH_NAME={branch_name}",
-        f"TYPE=old_odbc_coverage",
+        f"TYPE=old_{coverage_type}_coverage",
+        f"DRIVER={coverage_type}",
     ]
     
     # Create Quickstore input
@@ -226,14 +240,14 @@ def upload_coverage_metrics(
             quickstore.add_sample_point_from_input(
                 benchstore_pb2.AddSamplePointInput(
                     timestamp=timestamp,
-                    metrics=metrics,
+                    metrics=prefixed_metrics,
                 )
             )
         
-        logger.info("✓ Coverage metrics uploaded to Benchstore successfully")
+        logger.info(f"✓ {coverage_type.upper()} coverage metrics uploaded to Benchstore successfully")
         
     except Exception as e:
-        logger.error(f"Failed to upload coverage metrics: {e}")
+        logger.error(f"Failed to upload {coverage_type} coverage metrics: {e}")
         raise
 
 
@@ -241,12 +255,19 @@ def main():
     """
     Main entry point for standalone script execution.
     """
-    parser = argparse.ArgumentParser(description="Upload old ODBC coverage statistics to Benchstore")
+    parser = argparse.ArgumentParser(description="Upload old driver coverage statistics to Benchstore")
     parser.add_argument(
         "--summary",
         type=Path,
         required=True,
-        help="Path to lcov summary.txt file"
+        help="Path to coverage summary.txt file"
+    )
+    parser.add_argument(
+        "--type",
+        type=str,
+        choices=COVERAGE_TYPES,
+        required=True,
+        help=f"Type of coverage report ({', '.join(COVERAGE_TYPES)})"
     )
     parser.add_argument(
         "--local-benchstore-upload",
@@ -265,6 +286,7 @@ def main():
     try:
         upload_coverage_metrics(
             summary_path=args.summary,
+            coverage_type=args.type,
             use_local_auth=args.local_benchstore_upload
         )
     except Exception as e:
