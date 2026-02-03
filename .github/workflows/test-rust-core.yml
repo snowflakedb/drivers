@@ -79,7 +79,12 @@ jobs:
         env:
           PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
 
-      - name: Build and test with coverage
+      - name: Build sf_core with tarpaulin
+        run: |
+          export PARAMETER_PATH=$(pwd)/parameters.json
+          cargo tarpaulin --packages sf_core --all-features --skip-clean --no-fail-fast --no-run --out lcov --output-dir .
+
+      - name: Run tests with coverage
         run: |
           export PARAMETER_PATH=$(pwd)/parameters.json
           cargo tarpaulin --packages sf_core --all-features --skip-clean --no-fail-fast --out lcov --output-dir .

@@ -330,11 +330,15 @@ jobs:
         run: |
           echo "=== Python CI Status ==="
           
+          # Check if tests were skipped
           if [[ "${{ needs.python_tests.result }}" == "skipped" ]]; then
             echo "✓ Python tests were SKIPPED (no relevant changes detected)"
+            echo "  - run_python: ${{ needs.detect-changes.outputs.run_python }}"
             exit 0
           fi
           
+          # Check if critical jobs failed or were cancelled
+          # Note: python_tests_reference has continue-on-error:true, so we don't fail on it
           if [[ "${{ needs.build_wheel.result }}" =~ ^(failure|cancelled)$ ]] || \
              [[ "${{ needs.python_tests.result }}" =~ ^(failure|cancelled)$ ]] || \
              [[ "${{ needs.python_compare_results.result }}" =~ ^(failure|cancelled)$ ]]; then
@@ -346,5 +350,10 @@ jobs:
             exit 1
           fi
           
+          # Tests ran and passed
           echo "✓ Python CI PASSED"
+          echo "  - build_wheel: ${{ needs.build_wheel.result }}"
+          echo "  - python_tests: ${{ needs.python_tests.result }}"
+          echo "  - python_tests_reference: ${{ needs.python_tests_reference.result }} (continue-on-error)"
+          echo "  - python_compare_results: ${{ needs.python_compare_results.result }}"
           exit 0
