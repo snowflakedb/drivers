@@ -121,8 +121,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $secret = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($env:PARAMETERS_SECRET))
-          $secret | Out-File -FilePath parameters.json -Encoding UTF8
+          gpg --batch --yes --passphrase $env:PARAMETERS_SECRET --decrypt --output parameters.json .github/secrets/parameters_aws.json.gpg
         env:
           PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
 

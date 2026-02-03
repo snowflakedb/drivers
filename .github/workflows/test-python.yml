@@ -175,9 +175,9 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $encrypted = ".github/secrets/parameters_aws.json.gpg"
-          $decrypted = "parameters.json"
-          echo "${{ secrets.PARAMETERS_SECRET }}" | gpg --batch --yes --passphrase-fd 0 --decrypt --output $decrypted $encrypted
+          gpg --batch --yes --passphrase $env:PARAMETERS_SECRET --decrypt --output parameters.json .github/secrets/parameters_aws.json.gpg
+        env:
+          PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
 
       - name: Install Hatch
         run: uv tool install hatch

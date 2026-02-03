@@ -21,9 +21,13 @@ jobs:
         os: [ubuntu-latest, windows-11-arm]
         java-version: ['8', '11', '17', '21']
         exclude:
-          # Temurin doesn't provide Java 8 builds for Windows ARM64
+          # Temurin only provides Java 21+ for Windows ARM64
           - os: windows-11-arm
             java-version: '8'
+          - os: windows-11-arm
+            java-version: '11'
+          - os: windows-11-arm
+            java-version: '17'
     runs-on: ${{ matrix.os }}
     name: jdbc_tests (${{ matrix.os }}, Java ${{ matrix.java-version }})
     steps:
@@ -46,9 +50,9 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $encrypted = ".github/secrets/parameters_aws.json.gpg"
-          $decrypted = "parameters.json"
-          echo "${{ secrets.PARAMETERS_SECRET }}" | gpg --batch --yes --passphrase-fd 0 --decrypt --output $decrypted $encrypted
+          gpg --batch --yes --passphrase $env:PARAMETERS_SECRET --decrypt --output parameters.json .github/secrets/parameters_aws.json.gpg
+        env:
+          PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
 
       - name: Build Rust components
         run: |
