@@ -112,6 +112,7 @@ message DriverException {
 message ExecuteResult {
   ArrowArrayStreamPtr stream = 1;
   int64 rows_affected = 2;
+  string query_id = 3;
 }
 
 // Partitioned result

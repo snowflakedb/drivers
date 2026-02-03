@@ -18,6 +18,76 @@ else:
     from snowflake.connector.cursor import SnowflakeCursor, SnowflakeCursorBase
 
 
+class TestCursorSfqid:
+    """Integration tests for Cursor.sfqid property."""
+
+    def test_sfqid_is_none_before_execute(self, connection):
+        """Test that sfqid returns None before any query is executed."""
+        # Given a new cursor
+        cursor = connection.cursor()
+
+        # When accessing sfqid before execute
+        result = cursor.sfqid
+
+        # Then it should be None
+        assert result is None
+
+    def test_sfqid_returns_valid_uuid_after_execute(self, cursor):
+        """Test that sfqid returns a valid query ID after execute."""
+        # Given a cursor that executes a query
+        cursor.execute("SELECT 1")
+
+        # When accessing sfqid
+        result = cursor.sfqid
+
+        # Then it should return a valid UUID-like query ID
+        assert result is not None
+
+    def test_sfqid_changes_with_each_query(self, cursor):
+        """Test that sfqid changes with each executed query."""
+        # Given a cursor that executes multiple queries
+        cursor.execute("SELECT 1")
+        first_sfqid = cursor.sfqid
+
+        cursor.execute("SELECT 2")
+        second_sfqid = cursor.sfqid
+
+        cursor.execute("SELECT 3")
+        third_sfqid = cursor.sfqid
+
+        # Then each query should have a different sfqid
+        assert first_sfqid is not None
+        assert second_sfqid is not None
+        assert third_sfqid is not None
+        assert first_sfqid != second_sfqid
+        assert second_sfqid != third_sfqid
+        assert first_sfqid != third_sfqid
+
+    def test_sfqid_persists_after_fetchall(self, cursor):
+        """Test that sfqid remains accessible after fetching all results."""
+        # Given a cursor that executes a query
+        cursor.execute("SELECT 1, 2, 3")
+        sfqid_before = cursor.sfqid
+
+        # When fetching all results
+        cursor.fetchall()
+
+        # Then sfqid should still be the same
+        assert cursor.sfqid == sfqid_before
+
+    def test_sfqid_persists_after_fetchone(self, cursor):
+        """Test that sfqid remains accessible after fetching one result."""
+        # Given a cursor that executes a query
+        cursor.execute("SELECT 1")
+        sfqid_before = cursor.sfqid
+
+        # When fetching one result
+        cursor.fetchone()
+
+        # Then sfqid should still be the same
+        assert cursor.sfqid == sfqid_before
+
+
 class TestCursorMethods:
     """Test Cursor object methods."""
 

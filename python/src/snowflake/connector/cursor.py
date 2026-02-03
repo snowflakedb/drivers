@@ -111,6 +111,18 @@ class SnowflakeCursorBase(abc.ABC):
     # Execution
     # ------------------------------------------------------------------
 
+    @property
+    def sfqid(self) -> str | None:
+        """
+        Read-only attribute containing the Snowflake Query ID for the last executed query.
+
+        Returns:
+            str | None: Snowflake Query ID (UUID format), or None if no query has been executed
+        """
+        if self.execute_result is None:
+            return None
+        return self.execute_result.query_id if self.execute_result.query_id else None
+
     def callproc(self, procname: str, parameters: Sequence[Any] | None = None) -> Sequence[Any]:
         """
         Call a stored database procedure with the given name.

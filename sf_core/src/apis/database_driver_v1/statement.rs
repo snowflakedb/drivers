@@ -137,6 +137,7 @@ pub unsafe fn statement_bind(
 pub struct ExecuteResult {
     pub stream: Box<FFI_ArrowArrayStream>,
     pub rows_affected: i64,
+    pub query_id: String,
 }
 
 pub fn statement_execute_query(stmt_handle: Handle) -> Result<ExecuteResult, ApiError> {
@@ -207,11 +208,15 @@ pub fn statement_execute_query(stmt_handle: Handle) -> Result<ExecuteResult, Api
 
     let rowset_stream = Box::new(FFI_ArrowArrayStream::new(response_reader));
 
+    // Extract query_id from response
+    let query_id = response.data.query_id.unwrap_or_default();
+
     // Serialize pointer into integer
     stmt.state = StatementState::Executed;
     Ok(ExecuteResult {
         stream: rowset_stream,
         rows_affected: 0,
+        query_id,
     })
 }
 

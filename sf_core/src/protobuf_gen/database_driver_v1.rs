@@ -86,6 +86,8 @@ pub struct ExecuteResult {
     pub stream: ::core::option::Option<ArrowArrayStreamPtr>,
     #[prost(int64, tag = "2")]
     pub rows_affected: i64,
+    #[prost(string, tag = "3")]
+    pub query_id: ::prost::alloc::string::String,
 }
 /// Partitioned result
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
