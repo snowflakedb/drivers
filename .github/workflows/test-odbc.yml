@@ -99,8 +99,8 @@ jobs:
         if: runner.os == 'Windows'
         run: |
           choco install cmake --installargs 'ADD_CMAKE_TO_PATH=System' -y
-          choco install gnupg -y
           cmake --version
+          # GPG is pre-installed on Windows GitHub runners
           gpg --version
 
       - name: Decode secrets
