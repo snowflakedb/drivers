@@ -122,8 +122,8 @@ impl TestDiscovery {
                     "python" => Some(Language::Python),
                     "odbc" => Some(Language::Odbc),
                     "jdbc" => Some(Language::Jdbc),
-                    "csharp" => Some(Language::CSharp),
-                    "javascript" => Some(Language::JavaScript),
+                    "dotnet" => Some(Language::CSharp),
+                    "nodejs" => Some(Language::JavaScript),
                     "shared" => None,
                     _ => None,
                 };
@@ -189,8 +189,8 @@ impl TestDiscovery {
             Language::Odbc => "odbc",
             Language::Jdbc => "jdbc",
             Language::Python => "python",
-            Language::CSharp => "csharp",
-            Language::JavaScript => "javascript",
+            Language::CSharp => "dotnet",
+            Language::JavaScript => "nodejs",
         };
 
         // First, check for language-specific level tags
@@ -271,7 +271,7 @@ impl TestDiscovery {
                 // Skip organizational directories
                 if matches!(
                     subdir,
-                    "shared" | "core" | "python" | "odbc" | "jdbc" | "csharp" | "javascript"
+                    "shared" | "core" | "python" | "odbc" | "jdbc" | "dotnet" | "nodejs"
                 ) {
                     // If there's another level after the organizational directory, use that
                     if i + 2 < path_components.len() {

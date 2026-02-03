@@ -908,7 +908,9 @@ impl TestWorkspace {
     }
 
     fn create_feature_file(&self, subdir: &str, name: &str, content: &str) -> Result<()> {
-        let feature_dir = self.features_dir.join(subdir);
+        // Features must be under a valid prefix (shared/, core/, python/, etc.)
+        // Use "shared/" for cross-language test features
+        let feature_dir = self.features_dir.join("shared").join(subdir);
         fs::create_dir_all(&feature_dir)?;
         let feature_path = feature_dir.join(format!("{}.feature", name));
         fs::write(feature_path, content)?;
