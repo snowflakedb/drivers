@@ -99,9 +99,12 @@ jobs:
         if: runner.os == 'Windows'
         run: |
           choco install cmake --installargs 'ADD_CMAKE_TO_PATH=System' -y
+          choco install openssl -y
           cmake --version
           # GPG is pre-installed on Windows GitHub runners
           gpg --version
+          # Set OpenSSL environment variables for Rust build
+          echo "OPENSSL_DIR=C:\Program Files\OpenSSL" >> $env:GITHUB_ENV
 
       - name: Decode secrets
         run: ./scripts/decode_secrets.sh
