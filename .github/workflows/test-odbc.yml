@@ -121,10 +121,11 @@ jobs:
       - name: Build Rust ODBC driver (Windows)
         if: runner.os == 'Windows'
         # LLD linker: no 65535 object limit (MSVC link.exe limitation)
-        # Release mode: reduces exported symbols below 65535 DLL export limit (PE/COFF format)
+        # Release + LTO: reduces exported symbols below 65535 DLL export limit (PE/COFF format)
         run: cargo build --release
         env:
           RUSTFLAGS: "-C linker=lld-link"
+          CARGO_PROFILE_RELEASE_LTO: "thin"
 
       - name: Build and run ODBC tests (Linux)
         if: runner.os == 'Linux'
