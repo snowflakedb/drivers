@@ -30,6 +30,7 @@ openssl = "0.10.73"
 jwt = { version = "0.16.0", features = ["openssl"] }
 infer = "0.19.0"
 lazy_static = "1.5.0"
+regex = "1.11"
 
 # Proto
 prost = "0.14.1"

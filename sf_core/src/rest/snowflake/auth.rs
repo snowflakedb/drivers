@@ -2,6 +2,8 @@ use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::HashMap;
 use std::time::Duration;
 
+use crate::secrets::SecretString;
+
 /// Deserialize seconds as Duration
 pub fn deserialize_seconds_as_duration<'de, D>(
     deserializer: D,
@@ -16,7 +18,7 @@ where
 // TODO: Delete all unused fields when we are sure they are not needed
 
 // TODO: Currently this is only compatible with Python, should be generalized later
-#[derive(Debug, Serialize, Default)]
+#[derive(Debug, Serialize, Default, Clone)]
 pub struct AuthRequestClientEnvironment {
     #[serde(rename = "APPLICATION")]
     pub application: String,
@@ -81,6 +83,70 @@ pub struct AuthRequestData {
 #[derive(Debug, Serialize)]
 pub struct AuthRequest {
     pub data: AuthRequestData,
+}
+
+/// Safe version of AuthRequestData for logging with sensitive fields redacted
+#[derive(Debug, Serialize)]
+pub struct SafeAuthRequestData {
+    #[serde(rename = "CLIENT_APP_ID")]
+    pub client_app_id: String,
+    #[serde(rename = "CLIENT_APP_VERSION")]
+    pub client_app_version: String,
+    #[serde(rename = "ACCOUNT_NAME")]
+    pub account_name: String,
+    #[serde(rename = "LOGIN_NAME", skip_serializing_if = "Option::is_none")]
+    pub login_name: Option<String>,
+    #[serde(rename = "PASSWORD", skip_serializing_if = "Option::is_none")]
+    pub password: Option<SecretString>,
+    #[serde(rename = "RAW_SAML_RESPONSE", skip_serializing_if = "Option::is_none")]
+    pub raw_saml_response: Option<SecretString>,
+    #[serde(rename = "PASSCODE", skip_serializing_if = "Option::is_none")]
+    pub passcode: Option<SecretString>,
+    #[serde(rename = "AUTHENTICATOR", skip_serializing_if = "Option::is_none")]
+    pub authenticator: Option<String>,
+    #[serde(rename = "PROOF_KEY", skip_serializing_if = "Option::is_none")]
+    pub proof_key: Option<SecretString>,
+    #[serde(rename = "TOKEN", skip_serializing_if = "Option::is_none")]
+    pub token: Option<SecretString>,
+    #[serde(rename = "CLIENT_ENVIRONMENT")]
+    pub client_environment: AuthRequestClientEnvironment,
+}
+
+impl AuthRequestData {
+    /// Convert to a safe version suitable for logging (sensitive fields redacted)
+    pub fn to_safe(&self) -> SafeAuthRequestData {
+        SafeAuthRequestData {
+            client_app_id: self.client_app_id.clone(),
+            client_app_version: self.client_app_version.clone(),
+            account_name: self.account_name.clone(),
+            login_name: self.login_name.clone(),
+            password: self.password.as_ref().map(|_| SecretString::from_str("****")),
+            raw_saml_response: self
+                .raw_saml_response
+                .as_ref()
+                .map(|_| SecretString::from_str("****")),
+            passcode: self.passcode.as_ref().map(|_| SecretString::from_str("****")),
+            authenticator: self.authenticator.clone(),
+            proof_key: self.proof_key.as_ref().map(|_| SecretString::from_str("****")),
+            token: self.token.as_ref().map(|_| SecretString::from_str("****")),
+            client_environment: self.client_environment.clone(),
+        }
+    }
+}
+
+/// Safe version of AuthRequest for logging
+#[derive(Debug, Serialize)]
+pub struct SafeAuthRequest {
+    pub data: SafeAuthRequestData,
+}
+
+impl AuthRequest {
+    /// Convert to a safe version suitable for logging (sensitive fields redacted)
+    pub fn to_safe(&self) -> SafeAuthRequest {
+        SafeAuthRequest {
+            data: self.data.to_safe(),
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]

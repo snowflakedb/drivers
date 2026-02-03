@@ -13,6 +13,7 @@ use crate::rest::snowflake::auth::{
     AuthRequest, AuthRequestClientEnvironment, AuthRequestData, AuthResponse,
 };
 use crate::rest::snowflake::error::SfError;
+use crate::secrets::redact_query;
 use crate::tls::client::create_tls_client_with_config;
 use crate::tls::error::TlsError;
 use reqwest::{self, header};
@@ -182,9 +183,10 @@ pub async fn snowflake_login_with_client(
         data: auth_request_data,
     };
 
+    // Log sanitized version with sensitive fields redacted
     tracing::debug!(
-        "Login request: {}",
-        serde_json::to_string_pretty(&login_request).unwrap()
+        "Login request (sensitive fields redacted): {}",
+        serde_json::to_string_pretty(&login_request.to_safe()).unwrap()
     );
 
     let login_url = format!("{}/session/v1/login-request", login_parameters.server_url);
@@ -487,7 +489,7 @@ async fn execute_async_with_fallback(
             },
         ) => {
             tracing::error!(
-                sql_prefix = sql.chars().take(50).collect::<String>(),
+                sql_prefix = redact_query(&sql.chars().take(50).collect::<String>()),
                 "Error 612 after prior successful polls; not retrying"
             );
             return Err(e);
