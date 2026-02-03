@@ -63,13 +63,9 @@ jobs:
           - os: ubuntu-latest
             name: Linux x64
             driver_lib: libsfodbc.so
-            odbc_library: /usr/lib/x86_64-linux-gnu/libodbc.so
-            odbc_include: /usr/include
           - os: macos-latest
             name: macOS ARM64
             driver_lib: libsfodbc.dylib
-            odbc_library: /opt/homebrew/lib/libodbc.dylib
-            odbc_include: /opt/homebrew/include
           - os: windows-latest
             name: Windows x64
             driver_lib: sfodbc.dll
@@ -83,7 +79,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y unixodbc-dev build-essential zlib1g-dev lcov
+          sudo apt-get install -y unixodbc-dev build-essential zlib1g-dev
           wget https://github.com/Kitware/CMake/releases/download/v4.0.3/cmake-4.0.3-linux-x86_64.sh
           sudo sh cmake-4.0.3-linux-x86_64.sh --skip-license --prefix=/usr/local
           sudo rm cmake-4.0.3-linux-x86_64.sh
@@ -92,9 +88,12 @@ jobs:
       - name: Install dependencies (macOS)
         if: runner.os == 'macOS'
         run: |
+          # Go is required for building aws-lc-fips-sys (FIPS crypto)
           brew install unixodbc cmake go
           cmake --version
           go version
+          # Export ODBC paths dynamically (works for both ARM64 and Intel Macs)
+          echo "ODBC_PREFIX=$(brew --prefix unixodbc)" >> $GITHUB_ENV
 
       - name: Install dependencies (Windows)
         if: runner.os == 'Windows'
@@ -117,18 +116,8 @@ jobs:
         env:
           PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
 
-      - name: Install LLVM tools for coverage
-        run: rustup component add llvm-tools-preview
-
-      - name: Build Rust ODBC driver (Unix)
-        if: runner.os != 'Windows'
-        run: RUSTFLAGS="-C instrument-coverage" cargo build
-
-      - name: Build Rust ODBC driver (Windows)
-        if: runner.os == 'Windows'
+      - name: Build Rust ODBC driver
         run: cargo build
-        env:
-          RUSTFLAGS: "-C instrument-coverage"
 
       - name: Build and run ODBC tests (Linux)
         if: runner.os == 'Linux'
@@ -136,29 +125,17 @@ jobs:
           ls -l target/debug/
           export DRIVER_PATH=$(pwd)/target/debug/${{ matrix.driver_lib }}
           export PARAMETER_PATH=$(pwd)/parameters.json
-          export LLVM_PROFILE_FILE="odbc-%p-%m.profraw"
           NPROC=$(nproc)
           
           cd odbc_tests
           mkdir -p cmake-build
           cmake -B cmake-build \
-              -D ODBC_LIBRARY="${{ matrix.odbc_library }}" \
-              -D ODBC_INCLUDE_DIR="${{ matrix.odbc_include }}" \
+              -D ODBC_LIBRARY="/usr/lib/x86_64-linux-gnu/libodbc.so" \
+              -D ODBC_INCLUDE_DIR="/usr/include" \
               -D DRIVER_TYPE=NEW \
               .
           cmake --build cmake-build -- -j $NPROC
           ctest -j $NPROC -C Debug --test-dir cmake-build --output-on-failure
-          
-          # Generate coverage report from C++ test execution
-          cd ..
-          LLVM_PROFDATA=$(find ~/.rustup -name "llvm-profdata" -type f 2>/dev/null | head -1)
-          LLVM_COV=$(find ~/.rustup -name "llvm-cov" -type f 2>/dev/null | head -1)
-          find . -name "odbc-*.profraw" -type f | xargs $LLVM_PROFDATA merge -sparse -o coverage.profdata
-          $LLVM_COV export target/debug/${{ matrix.driver_lib }} \
-              -instr-profile=coverage.profdata \
-              -format=lcov \
-              -sources=$(pwd)/odbc \
-              -sources=$(pwd)/sf_core > lcov-${{ matrix.os }}-odbc-stable.info
 
       - name: Build and run ODBC tests (macOS)
         if: runner.os == 'macOS'
@@ -166,29 +143,17 @@ jobs:
           ls -l target/debug/
           export DRIVER_PATH=$(pwd)/target/debug/${{ matrix.driver_lib }}
           export PARAMETER_PATH=$(pwd)/parameters.json
-          export LLVM_PROFILE_FILE="odbc-%p-%m.profraw"
           NPROC=$(sysctl -n hw.ncpu)
           
           cd odbc_tests
           mkdir -p cmake-build
           cmake -B cmake-build \
-              -D ODBC_LIBRARY="${{ matrix.odbc_library }}" \
-              -D ODBC_INCLUDE_DIR="${{ matrix.odbc_include }}" \
+              -D ODBC_LIBRARY="${ODBC_PREFIX}/lib/libodbc.dylib" \
+              -D ODBC_INCLUDE_DIR="${ODBC_PREFIX}/include" \
               -D DRIVER_TYPE=NEW \
               .
           cmake --build cmake-build -- -j $NPROC
           ctest -j $NPROC -C Debug --test-dir cmake-build --output-on-failure
-          
-          # Generate coverage report from C++ test execution
-          cd ..
-          LLVM_PROFDATA=$(find ~/.rustup -name "llvm-profdata" -type f 2>/dev/null | head -1)
-          LLVM_COV=$(find ~/.rustup -name "llvm-cov" -type f 2>/dev/null | head -1)
-          find . -name "odbc-*.profraw" -type f | xargs $LLVM_PROFDATA merge -sparse -o coverage.profdata
-          $LLVM_COV export target/debug/${{ matrix.driver_lib }} \
-              -instr-profile=coverage.profdata \
-              -format=lcov \
-              -sources=$(pwd)/odbc \
-              -sources=$(pwd)/sf_core > lcov-${{ matrix.os }}-odbc-stable.info
 
       - name: Build and run ODBC tests (Windows)
         if: runner.os == 'Windows'
@@ -197,7 +162,6 @@ jobs:
           dir target\debug\
           $env:DRIVER_PATH = "$PWD\target\debug\${{ matrix.driver_lib }}"
           $env:PARAMETER_PATH = "$PWD\parameters.json"
-          $env:LLVM_PROFILE_FILE = "odbc-%p-%m.profraw"
           $NPROC = (Get-CimInstance Win32_ComputerSystem).NumberOfLogicalProcessors
           
           cd odbc_tests
