@@ -1,0 +1,27 @@
+[submodule "snowflake-jdbc"]
+	path = .old-drivers/snowflake-jdbc
+	url = https://github.com/snowflakedb/snowflake-jdbc.git
+[submodule ".old-drivers/snowflake-connector-python"]
+	path = .old-drivers/snowflake-connector-python
+	url = https://github.com/snowflakedb/snowflake-connector-python.git
+[submodule ".old-drivers/snowflake-odbc"]
+	path = .old-drivers/snowflake-odbc
+	url = git@github.com:snowflakedb/snowflake-odbc.git
+[submodule "libsnowflakeclient"]
+	path = .old-drivers/libsnowflakeclient
+	url = git@github.com:snowflakedb/libsnowflakeclient.git
+[submodule ".old-drivers/pdo_snowflake"]
+	path = .old-drivers/pdo_snowflake
+	url = https://github.com/snowflakedb/pdo_snowflake.git
+[submodule ".old-drivers/snowflake-connector-net"]
+	path = .old-drivers/snowflake-connector-net
+	url = https://github.com/snowflakedb/snowflake-connector-net.git
+[submodule ".old-drivers/gosnowflake"]
+	path = .old-drivers/gosnowflake
+	url = https://github.com/snowflakedb/gosnowflake.git
+[submodule ".old-drivers/snowflake-connector-nodejs"]
+	path = .old-drivers/snowflake-connector-nodejs
+	url = https://github.com/snowflakedb/snowflake-connector-nodejs.git
+[submodule "in-progress/universal-driver"]
+	path = in-progress/universal-driver
+	url = https://github.com/snowflakedb/universal-driver

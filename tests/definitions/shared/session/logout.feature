@@ -5,13 +5,15 @@ Feature: Session Logout
   #                           Basic Logout Request
   # ===========================================================================
 
-  @core_e2e @python_e2e
+#  TODO: move to core (core_integ i think - to be validated in final summary)
+  @core_e2e
   Scenario: should send logout with default settings
     Given Snowflake client is logged in with default parameters
     When Connection is closed
     Then Logout request is sent successfully
     And Connection is closed cleanly
 
+#  TODO: move to core_integ or even unit tests of wehre request is being constructed
   @core_e2e @python_e2e
   Scenario: should send logout request with correct endpoint method headers and payload
     Given Snowflake client is logged in
@@ -23,18 +25,21 @@ Feature: Session Logout
     And User-Agent header contains wrapper and UD version hierarchy
     And Request body is empty JSON object
 
+#  TODO: move to python integ - python specific timeout as for BCR + add same gherkin for JDBC + ODBC (provide they obey their old timeouts) - or rather that core is called with their old timeouts
   @core_e2e @python_e2e
   Scenario: should send logout request with default 5 second timeout
     Given Snowflake client is logged in
     When Connection is closed
     Then Logout request completes within 5 seconds
 
+#  TODO: move to core integ + make it with wiremock to avoid unneccessary traffic + parametrize to at least cover all values comming from drivers (+ add another gherkin that simuates request that takes longer than timeout - enforced wait on wiremock - and make sure it is brokken after timeout passes + another gherkin to make sure total timeout is honored even during retries - meaning we take min of the total timeout left for flow and the timeout for socket etc)
   @core_e2e @python_e2e
   Scenario: should send logout request with custom timeout when configured
     Given Snowflake client is logged in with custom logout timeout of 10 seconds
     When Connection is closed
     Then Logout request completes within 10 seconds
 
+#    TODO; move to core integ
   @core_e2e @python_e2e
   Scenario: should not send logout when connection was never established
     Given Connection attempt failed
@@ -45,6 +50,7 @@ Feature: Session Logout
   #                   Server Session Keep Alive - Explicit Control
   # ===========================================================================
 
+#    TODO; move to core integ with wiremock
   @core_e2e @python_e2e
   Scenario: should not send logout when server_session_keep_alive is explicitly true
     Given Snowflake client is logged in
@@ -53,6 +59,7 @@ Feature: Session Logout
     Then No logout request is sent
     And All client-side resources are cleaned up
 
+#    TODO; move to core integ with wiremock
   @core_e2e @python_not_needed
   Scenario: should send logout when server_session_keep_alive is explicitly false
     Given Snowflake client is logged in
@@ -61,110 +68,111 @@ Feature: Session Logout
     Then Logout request is sent
     And Auto-detection is not performed
 
-  @core_e2e @python_e2e
-  Scenario: should not start async queries detection when server_session_keep_alive is explicitly set
-    Given Snowflake client is logged in
-    And Async query is running
-    And server_session_keep_alive parameter is set to true
-    When Connection is closed
-    Then Async query detection is not performed
-    And No logout request is sent
-
-  # ===========================================================================
-  #                          Auto-Detection Mechanics
-  # ===========================================================================
-
-  @core_e2e @python_e2e
-  Scenario: should skip logout when auto_detection enabled and running async query detected
-    Given Snowflake client is logged in
-    And enable_server_session_keep_alive_auto_detection is true
-    And Async query is running
-    When Connection is closed
-    Then Async query detection finds running query
-    And No logout request is sent
-
-  @core_e2e @python_e2e
-  Scenario: should send logout when auto_detection enabled and no async queries detected
-    Given Snowflake client is logged in
-    And enable_server_session_keep_alive_auto_detection is true
-    And No async queries are running
-    When Connection is closed
-    Then Async query detection finds no running queries
-    And Logout request is sent
-
-  @core_e2e @python_e2e
-  Scenario: should send logout when auto_detection explicitly disabled
-    Given Snowflake client is logged in
-    And server_session_keep_alive is null
-    And enable_server_session_keep_alive_auto_detection is explicitly set to false
-    When Connection is closed
-    Then Auto-detection is not performed
-    And Logout request is sent
-
-  @core_e2e @python_not_needed @jdbc_not_needed
-  Scenario: should have enable_server_session_keep_alive_auto_detection default to false
-    # Phase 3 (doc for: SNOW-2314152) default. Phase 2 drivers (Python/JDBC) default this to true for backward compatibility.
-    # Parameter names follow driver convention: enable_server_session_keep_alive_auto_detection (Python/Core) or ENABLE_SERVER_SESSION_KEEP_ALIVE_AUTO_DETECTION (ODBC)
-    Given Snowflake client is created without enable_server_session_keep_alive_auto_detection parameter
-    When Connection configuration is checked
-    Then enable_server_session_keep_alive_auto_detection defaults to false
-    And Auto-detection is disabled by default
-
-  @core_e2e @python_not_needed @jdbc_not_needed
-  Scenario: should always send logout with Phase 3 default configuration
-    # Phase 3 (doc for: SNOW-2314152) unified behavior. Target model for Python and JDBC migration.
-    # Phase 3 defaults: server_session_keep_alive=null, enable_server_session_keep_alive_auto_detection=false
-    Given Snowflake client is logged in with default parameters
-    And server_session_keep_alive defaults to null
-    And enable_server_session_keep_alive_auto_detection defaults to false
-    When Connection is closed
-    Then Auto-detection is not performed
-    And Logout request is sent
-    And Behavior is predictable and explicit
-
-  @core_e2e @python_not_needed @jdbc_not_needed
-  Scenario: should skip logout when auto_detection explicitly enabled with running queries in Phase 3 model
-    # Phase 3 (doc for: SNOW-2314152) safety-net behavior. Auto-detection requires explicit opt-in.
-    Given Snowflake client is logged in
-    And server_session_keep_alive is null
-    And enable_server_session_keep_alive_auto_detection is explicitly set to true
-    And Long-running async query is executed using SYSTEM$SLEEP(300)
-    When Connection is closed
-    Then Auto-detection is performed
-    And Running query is detected
-    And No logout request is sent
-    And Test cleans up the running query after assertions complete
-
-  @core_int @python_int
-  Scenario: should return true when first running async query is detected without checking remaining queries
-    Given Async query registry contains multiple queries
-    And First query in registry is running
-    When Auto-detection checks for running queries
-    Then Detection returns true immediately
-    And Remaining queries are not checked
-
-  # ===========================================================================
-  #                           Async Query Registry
-  # ===========================================================================
-
-  @core_e2e @python_e2e
-  Scenario: should register async query when asyncExec is true
-    Given Snowflake client is logged in
-    When Query is executed with asyncExec set to true
-    Then Query ID is added to async query registry
-
-  @core_e2e @python_e2e
-  Scenario: should unregister async query when query completes
-    Given Snowflake client is logged in
-    And Async query was executed and registered
-    When Query completes successfully
-    Then Query ID is removed from async query registry
+##    TODO; move to async fire and forget ticket
+#  @core_e2e @python_e2e
+#  Scenario: should not start async queries detection when server_session_keep_alive is explicitly set
+#    Given Snowflake client is logged in
+#    And Async query is running
+#    And server_session_keep_alive parameter is set to true
+#    When Connection is closed
+#    Then Async query detection is not performed
+#    And No logout request is sent
+#
+#  # ===========================================================================
+#  #                          Auto-Detection Mechanics
+#  # ===========================================================================
+#
+#  @core_e2e @python_e2e
+#  Scenario: should skip logout when auto_detection enabled and running async query detected
+#    Given Snowflake client is logged in
+#    And enable_server_session_keep_alive_auto_detection is true
+#    And Async query is running
+#    When Connection is closed
+#    Then Async query detection finds running query
+#    And No logout request is sent
+#
+#  @core_e2e @python_e2e
+#  Scenario: should send logout when auto_detection enabled and no async queries detected
+#    Given Snowflake client is logged in
+#    And enable_server_session_keep_alive_auto_detection is true
+#    And No async queries are running
+#    When Connection is closed
+#    Then Async query detection finds no running queries
+#    And Logout request is sent
+#
+#  @core_e2e @python_e2e
+#  Scenario: should send logout when auto_detection explicitly disabled
+#    Given Snowflake client is logged in
+#    And server_session_keep_alive is null
+#    And enable_server_session_keep_alive_auto_detection is explicitly set to false
+#    When Connection is closed
+#    Then Auto-detection is not performed
+#    And Logout request is sent
+#
+#  @core_e2e @python_not_needed @jdbc_not_needed
+#  Scenario: should have enable_server_session_keep_alive_auto_detection default to false
+#    # Phase 3 (doc for: SNOW-2314152) default. Phase 2 drivers (Python/JDBC) default this to true for backward compatibility.
+#    # Parameter names follow driver convention: enable_server_session_keep_alive_auto_detection (Python/Core) or ENABLE_SERVER_SESSION_KEEP_ALIVE_AUTO_DETECTION (ODBC)
+#    Given Snowflake client is created without enable_server_session_keep_alive_auto_detection parameter
+#    When Connection configuration is checked
+#    Then enable_server_session_keep_alive_auto_detection defaults to false
+#    And Auto-detection is disabled by default
+#
+#  @core_e2e @python_not_needed @jdbc_not_needed
+#  Scenario: should always send logout with Phase 3 default configuration
+#    # Phase 3 (doc for: SNOW-2314152) unified behavior. Target model for Python and JDBC migration.
+#    # Phase 3 defaults: server_session_keep_alive=null, enable_server_session_keep_alive_auto_detection=false
+#    Given Snowflake client is logged in with default parameters
+#    And server_session_keep_alive defaults to null
+#    And enable_server_session_keep_alive_auto_detection defaults to false
+#    When Connection is closed
+#    Then Auto-detection is not performed
+#    And Logout request is sent
+#    And Behavior is predictable and explicit
+#
+#  @core_e2e @python_not_needed @jdbc_not_needed
+#  Scenario: should skip logout when auto_detection explicitly enabled with running queries in Phase 3 model
+#    # Phase 3 (doc for: SNOW-2314152) safety-net behavior. Auto-detection requires explicit opt-in.
+#    Given Snowflake client is logged in
+#    And server_session_keep_alive is null
+#    And enable_server_session_keep_alive_auto_detection is explicitly set to true
+#    And Long-running async query is executed using SYSTEM$SLEEP(300)
+#    When Connection is closed
+#    Then Auto-detection is performed
+#    And Running query is detected
+#    And No logout request is sent
+#    And Test cleans up the running query after assertions complete
+#
+#  @core_int @python_int
+#  Scenario: should return true when first running async query is detected without checking remaining queries
+#    Given Async query registry contains multiple queries
+#    And First query in registry is running
+#    When Auto-detection checks for running queries
+#    Then Detection returns true immediately
+#    And Remaining queries are not checked
+#
+#  # ===========================================================================
+#  #                           Async Query Registry
+#  # ===========================================================================
+#
+#  @core_e2e @python_e2e
+#  Scenario: should register async query when asyncExec is true
+#    Given Snowflake client is logged in
+#    When Query is executed with asyncExec set to true
+#    Then Query ID is added to async query registry
+#
+#  @core_e2e @python_e2e
+#  Scenario: should unregister async query when query completes
+#    Given Snowflake client is logged in
+#    And Async query was executed and registered
+#    When Query completes successfully
+#    Then Query ID is removed from async query registry
 
   # ===========================================================================
   #                          Resource Cleanup Contract
   # ===========================================================================
 
-  @core_e2e @python_e2e
+# TODO: leave to do in hearbeat ticket and telemetry
   Scenario: should allow process to exit cleanly when connection closed regardless of parameters
     Given Snowflake client is logged in with heartbeat enabled
     And Telemetry is active
@@ -172,14 +180,14 @@ Feature: Session Logout
     Then All background threads are stopped
     And Process can exit immediately
 
-  @core_e2e @python_e2e
+# TODO: leave to do in hearbeat ticket
   Scenario: should stop heartbeat on close regardless of logout result
     Given Snowflake client is logged in with heartbeat enabled
     And Logout will fail due to network error
     When Connection is closed
     Then Heartbeat is stopped
 
-  @core_e2e @python_e2e
+# TODO: leave to do in telemetry ticket
   Scenario: should flush telemetry on close regardless of logout result
     Given Snowflake client is logged in
     And Telemetry has pending events
@@ -187,7 +195,7 @@ Feature: Session Logout
     When Connection is closed
     Then Telemetry is flushed
 
-  @core_e2e @python_e2e
+# TODO: leave to do in qcc ticket
   Scenario: should clear query result cache on close regardless of logout result
     Given Snowflake client is logged in
     And Query result cache has entries
@@ -198,19 +206,12 @@ Feature: Session Logout
   @core_e2e @python_e2e
   Scenario: should cleanup all tokens on close regardless of whether logout was sent
     Given Snowflake client is logged in
-    And server_session_keep_alive is set to true
+    And server_session_keep_alive is set to any of (true, false, None)
     When Connection is closed
     Then Session token is cleared
     And Master token is cleared
     And No logout request is sent
 
-  @core_e2e @python_e2e
-  Scenario: should not allow token renewal after connection is closed
-    Given Snowflake client is logged in
-    And Query execution has started
-    When Connection is closed
-    Then Token renewal is blocked
-    And Any token renewal attempts fail
 
   @core_e2e @python_e2e
   Scenario: should be idempotent when close called multiple times
@@ -233,6 +234,7 @@ Feature: Session Logout
     And Query is attempted on closed connection
     Then Query fails with connection closed error
 
+    #    TODO: check if does not duplicate other test
   @core_int @python_not_needed
   Scenario: should handle SESSION_GONE error when using invalidated session token
     # Tests client handling when SERVER returns SESSION_GONE (token already invalidated)
@@ -243,6 +245,7 @@ Feature: Session Logout
     Then Server returns SESSION_GONE error 390111
     And Client treats SESSION_GONE as successful logout
 
+    #    TODO: this has too many implementation details; also we do not want to generally test the backend - so this test should be focused on testsing the the first logout closed session - and the way we check that is by expecting the tokens to be not usable after session logout (both session and master tokens) and server to respnond with SESSION_GONE whenever we try to reuse it after logout
   Scenario: should return SESSION_GONE from server for queries after logout
     # Requires refactor to make token storage injectable for testing
     Given Snowflake client is logged in
@@ -253,6 +256,7 @@ Feature: Session Logout
     And Query is attempted
     Then Query fails with SESSION_GONE error 390111
 
+#    TODO: add todo - cause we would need to expose sending request to token refresh
   Scenario: should invalidate master token ability to refresh after logout
     # Requires API to extract master token from connection
     Given Snowflake client is logged in
@@ -264,6 +268,7 @@ Feature: Session Logout
   #                      Error Handling - Strategy Configuration
   # ===========================================================================
 
+#  TODO: this should be integ - only in core - and parametrized by many different error codes
   @core_e2e @python_e2e
   Scenario: should support switching between error handling strategies
     Given Snowflake client is configured with strict error handling strategy
@@ -277,6 +282,7 @@ Feature: Session Logout
   #                      Error Handling - Strict Strategy
   # ===========================================================================
 
+#  TODO: whole strategies section requires quite a redo - we need 3 group of tests - ask me if you are unsure of how they should look like. First group is tests of backend behaviours that should cause code to behave the same way for both, other group for strict (e.g.  and other for best-effort); So we basically wanna make sure we have retries regardless of strategy of retryable errors; and for not-retryable errors we want to have reraised errors for strict strategy, and silent + Warn exit for best-effort
   @core_e2e @python_not_needed
   Scenario: should ignore SESSION_GONE error in strict strategy
     Given Snowflake client is logged in with strict error handling
@@ -430,6 +436,7 @@ Feature: Session Logout
   #                        Edge Cases and Concurrency
   # ===========================================================================
 
+
   @core_e2e @python_e2e
   Scenario: should handle concurrent close calls safely
     Given Snowflake client is logged in
@@ -438,6 +445,8 @@ Feature: Session Logout
     And All close calls return successfully
     And No race conditions occur
 
+#    TODO: should be integ probably
+#    TODO: it should actually 1. not allow new retries or 2. new executions being started - by checking if its closed probably (the method checkin if its closed should probably be with TODO that we may want to check it in the future using state machine)
   @core_e2e @python_e2e
   Scenario: should handle close during active query execution
     Given Snowflake client is logged in
@@ -446,6 +455,7 @@ Feature: Session Logout
     Then Resources are cleaned up safely
     And Query execution is interrupted
 
+#    TODO: should be only core integ
   @core_e2e @python_e2e
   Scenario: should handle close during session token refresh
     Given Snowflake client is logged in
@@ -454,6 +464,7 @@ Feature: Session Logout
     Then Refresh operation is cancelled
     And Logout proceeds with available token
 
+#    TODO: might be duplicate - in error handling strategies we should already cover the network error as well; also resource clean up is already tested in other place - no need to duplicate it;
   @core_e2e @python_e2e
   Scenario: should handle network failure during logout
     Given Snowflake client is logged in
@@ -462,6 +473,7 @@ Feature: Session Logout
     Then Network error is handled according to error strategy
     And Client-side resources are cleaned up
 
+#    TODO: might be duplicate - in error handling strategies we should already cover the retries as well; also resource clean up is already tested in other place - no need to duplicate it;
   @core_e2e @python_e2e
   Scenario: should handle close with expired session token
     Given Snowflake client is logged in
@@ -470,6 +482,7 @@ Feature: Session Logout
     Then Token renewal is attempted
     And Logout proceeds with renewed token or fails gracefully
 
+#    TODO: might be duplicate - in error handling strategies we should already cover the server unreachable as well; also resource clean up is already tested in other place - no need to duplicate it;
   @core_e2e @python_e2e
   Scenario: should handle close when server is unreachable
     Given Snowflake client is logged in
