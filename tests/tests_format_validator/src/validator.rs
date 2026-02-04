@@ -188,19 +188,14 @@ impl GherkinValidator {
     fn get_feature_id(&self, feature_path: &Path) -> String {
         // Get path relative to features_dir
         let raw_id = if let Ok(relative) = feature_path.strip_prefix(&self.features_dir) {
-            // Remove .feature extension and convert to string
-            relative
-                .with_extension("")
-                .to_str()
-                .unwrap_or_else(|| feature_path.file_stem().unwrap().to_str().unwrap())
-                .to_string()
+            // Remove .feature extension and convert to string (lossy to avoid panics on non-UTF8 paths)
+            relative.with_extension("").to_string_lossy().into_owned()
+        } else if let Some(stem) = feature_path.file_stem() {
+            // Fall back to the file stem if we cannot get a relative path
+            stem.to_string_lossy().into_owned()
         } else {
-            feature_path
-                .file_stem()
-                .unwrap()
-                .to_str()
-                .unwrap()
-                .to_string()
+            // As a last resort, use the full path as a string (lossy) to avoid panicking
+            feature_path.to_string_lossy().into_owned()
         };
 
         // Normalize path separators to forward slashes for cross-platform consistency.
