@@ -917,9 +917,11 @@ Feature: Core Logout
     assert_eq!(results.len(), 2, "Should find 2 separate features");
 
     // Verify both features have distinct paths
+    // Normalize path separators for cross-platform compatibility (Windows uses backslashes)
+    let normalize_path = |p: &std::path::Path| p.to_string_lossy().replace('\\', "/");
     let feature_paths: Vec<_> = results
         .iter()
-        .map(|r| r.feature_file.to_string_lossy().to_string())
+        .map(|r| normalize_path(&r.feature_file))
         .collect();
 
     assert!(
@@ -934,7 +936,7 @@ Feature: Core Logout
     // Verify the shared feature requires BOTH Rust and ODBC
     let shared_result = results
         .iter()
-        .find(|r| r.feature_file.to_string_lossy().contains("shared/session"))
+        .find(|r| normalize_path(&r.feature_file).contains("shared/session"))
         .expect("Should find shared feature");
     let shared_languages: Vec<_> = shared_result
         .validations
@@ -953,7 +955,7 @@ Feature: Core Logout
     // Verify the core feature requires ONLY Rust (not ODBC)
     let core_result = results
         .iter()
-        .find(|r| r.feature_file.to_string_lossy().contains("core/session"))
+        .find(|r| normalize_path(&r.feature_file).contains("core/session"))
         .expect("Should find core feature");
     let core_languages: Vec<_> = core_result
         .validations
