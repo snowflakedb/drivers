@@ -448,6 +448,57 @@ class TestCursorMultipleQueries:
         remaining = cursor.fetchall()
         assert remaining == [(i,) for i in range(3, 10)]
 
+    def test_fetchone_fetchmany_fetchall_sequence(self, cursor):
+        """Test fetchone, fetchmany, and fetchall in sequence on same result set."""
+        cursor.execute(
+            """
+            SELECT ROW_NUMBER() OVER (ORDER BY seq4()) - 1 as n
+            FROM TABLE(GENERATOR(ROWCOUNT => 20))
+            ORDER BY n
+            """
+        )
+        # First fetchone
+        row1 = cursor.fetchone()
+        assert row1 == (0,)
+
+        # Then fetchmany
+        batch = cursor.fetchmany(5)
+        assert batch == [(i,) for i in range(1, 6)]
+
+        # Finally fetchall gets the remainder
+        remainder = cursor.fetchall()
+        assert remainder == [(i,) for i in range(6, 20)]
+
+    def test_fetchmany_then_execute_resets_and_fetchmany_again(self, cursor):
+        """Test that second execute resets state and fetchmany starts anew."""
+        # First query
+        cursor.execute(
+            """
+            SELECT ROW_NUMBER() OVER (ORDER BY seq4()) - 1 as n
+            FROM TABLE(GENERATOR(ROWCOUNT => 15))
+            ORDER BY n
+            """
+        )
+        # Fetch some rows
+        batch1 = cursor.fetchmany(5)
+        assert batch1 == [(i,) for i in range(5)]
+
+        # Second execute should reset state
+        cursor.execute(
+            """
+            SELECT ROW_NUMBER() OVER (ORDER BY seq4()) + 100 as n
+            FROM TABLE(GENERATOR(ROWCOUNT => 10))
+            ORDER BY n
+            """
+        )
+        # fetchmany should start anew from the new result set
+        batch2 = cursor.fetchmany(4)
+        assert batch2 == [(101,), (102,), (103,), (104,)]
+
+        # Continue fetching from new result set
+        batch3 = cursor.fetchmany(3)
+        assert batch3 == [(105,), (106,), (107,)]
+
 
 class TestCursorDictResult:
     """Test dict result mode.
