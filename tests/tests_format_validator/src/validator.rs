@@ -231,7 +231,7 @@ impl GherkinValidator {
         }
 
         // Check if it's a known language folder using existing detection logic
-        // (get_language_from_path returns Some for core/, python/, odbc/, jdbc/, dotnet/, nodejs/)
+        // (get_language_from_path returns Some for core/, python/, odbc/, jdbc/, csharp/, javascript/)
         if TestDiscovery::get_language_from_path(feature_path).is_some() {
             return Ok(());
         }
