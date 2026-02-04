@@ -1040,7 +1040,10 @@ impl GherkinValidator {
                         let mut method_missing_steps = Vec::new();
 
                         for step_text in &scenario_steps {
-                            if !method_steps.contains(step_text) {
+                            let step_found = method_steps
+                                .iter()
+                                .any(|impl_step| self.steps_match(impl_step, step_text));
+                            if !step_found {
                                 method_missing_steps.push(step_text.clone());
                                 if !all_missing_steps.contains(step_text) {
                                     all_missing_steps.push(step_text.clone());
@@ -1097,9 +1100,38 @@ impl GherkinValidator {
     ) -> Vec<String> {
         feature_steps
             .iter()
-            .filter(|feature_step| !implemented_steps.contains(feature_step))
+            .filter(|feature_step| {
+                !implemented_steps
+                    .iter()
+                    .any(|impl_step| self.steps_match(impl_step, feature_step))
+            })
             .cloned()
             .collect()
+    }
+
+    fn steps_match(&self, implemented_step: &str, feature_step: &str) -> bool {
+        // Normalize both steps for comparison - only remove punctuation, keep all words
+        let normalize = |s: &str| {
+            s.to_lowercase()
+                .replace("\"", "")
+                .replace("'", "")
+                .replace(",", "")
+                .replace(".", "")
+                .replace(":", "")
+                .replace(";", "")
+                .replace("!", "")
+                .replace("?", "")
+                .replace("(", "")
+                .replace(")", "")
+                .trim()
+                .to_string()
+        };
+
+        let norm_impl = normalize(implemented_step);
+        let norm_feature = normalize(feature_step);
+
+        // Require exact match after normalization - no partial matches allowed
+        norm_impl == norm_feature
     }
 
     pub fn validate_all_with_breaking_changes(&self) -> Result<EnhancedValidationResult> {
