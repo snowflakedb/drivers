@@ -1,4 +1,4 @@
-package net.snowflake.client.internal.core.arrow;
+package net.snowflake.client.internal.core.arrow.converters;
 
 import net.snowflake.client.jdbc.ErrorCode;
 import net.snowflake.client.jdbc.SFException;

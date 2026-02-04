@@ -6,13 +6,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from tests.compatibility import IS_UNIVERSAL_DRIVER
-
-
-if IS_UNIVERSAL_DRIVER:
-    from snowflake.connector.exceptions import NotSupportedError
-else:
-    from snowflake.connector.errors import NotSupportedError
+from snowflake.connector.errors import NotSupportedError
 
 
 class TestConnectionMethods:

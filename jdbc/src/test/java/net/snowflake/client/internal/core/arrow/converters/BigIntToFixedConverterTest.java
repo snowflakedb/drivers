@@ -1,4 +1,4 @@
-package net.snowflake.client.internal.core.arrow;
+package net.snowflake.client.internal.core.arrow.converters;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -16,14 +16,15 @@ import java.util.Map;
 import java.util.Random;
 import java.util.Set;
 import java.util.TimeZone;
+import net.snowflake.client.internal.core.arrow.TestHelper;
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
-import org.apache.arrow.vector.SmallIntVector;
+import org.apache.arrow.vector.BigIntVector;
 import org.apache.arrow.vector.types.Types;
 import org.apache.arrow.vector.types.pojo.FieldType;
 import org.junit.jupiter.api.Test;
 
-public class SmallIntToFixedConverterTest extends BaseConverterTest {
+public class BigIntToFixedConverterTest extends BaseConverterTest {
   /** allocator for arrow */
   private final BufferAllocator allocator = new RootAllocator(Long.MAX_VALUE);
 
@@ -33,10 +34,10 @@ public class SmallIntToFixedConverterTest extends BaseConverterTest {
   @Test
   public void testFixedNoScale() {
     final int rowCount = 1000;
-    List<Short> expectedValues = new ArrayList<>();
+    List<Long> expectedValues = new ArrayList<>();
     Set<Integer> nullValIndex = new HashSet<>();
     for (int i = 0; i < rowCount; i++) {
-      expectedValues.add((short) random.nextInt(1 << 16));
+      expectedValues.add(random.nextLong());
     }
 
     Map<String, String> customFieldMeta = new HashMap<>();
@@ -45,9 +46,9 @@ public class SmallIntToFixedConverterTest extends BaseConverterTest {
     customFieldMeta.put("scale", "0");
 
     FieldType fieldType =
-        new FieldType(true, Types.MinorType.SMALLINT.getType(), null, customFieldMeta);
+        new FieldType(true, Types.MinorType.BIGINT.getType(), null, customFieldMeta);
 
-    SmallIntVector vector = new SmallIntVector("col_one", fieldType, allocator);
+    BigIntVector vector = new BigIntVector("col_one", fieldType, allocator);
     for (int i = 0; i < rowCount; i++) {
       boolean isNull = random.nextBoolean();
       if (isNull) {
@@ -58,29 +59,30 @@ public class SmallIntToFixedConverterTest extends BaseConverterTest {
       }
     }
 
-    ArrowVectorConverter converter = new SmallIntToFixedConverter(vector, 0, this);
+    ArrowVectorConverter converter = new BigIntToFixedConverter(vector, 0, this);
 
     for (int i = 0; i < rowCount; i++) {
-      short shortVal = converter.toShort(i);
-      Object longObject = converter.toObject(i); // the logical type is long
-      String shortString = converter.toString(i);
-      if (shortString != null) {
+      long longVal = converter.toLong(i);
+      Object longObject = converter.toObject(i);
+      String longString = converter.toString(i);
+
+      if (longString != null) {
         assertFalse(converter.isNull(i));
       } else {
         assertTrue(converter.isNull(i));
       }
 
       if (nullValIndex.contains(i)) {
-        assertEquals((short) 0, shortVal);
+        assertEquals(0L, longVal);
         assertNull(longObject);
-        assertNull(shortString);
+        assertNull(longString);
         assertNull(converter.toBytes(i));
       } else {
-        assertEquals(expectedValues.get(i), shortVal);
-        assertEquals((long) expectedValues.get(i), longObject);
-        assertEquals(expectedValues.get(i).toString(), shortString);
+        assertEquals(expectedValues.get(i), longVal);
+        assertEquals(expectedValues.get(i), longObject);
+        assertEquals(expectedValues.get(i).toString(), longString);
         ByteBuffer bb = ByteBuffer.wrap(converter.toBytes(i));
-        assertEquals(shortVal, bb.getShort());
+        assertEquals(longVal, bb.getLong());
       }
     }
     vector.clear();
@@ -89,10 +91,10 @@ public class SmallIntToFixedConverterTest extends BaseConverterTest {
   @Test
   public void testFixedWithScale() {
     final int rowCount = 1000;
-    List<Short> expectedValues = new ArrayList<>();
+    List<Long> expectedValues = new ArrayList<>();
     Set<Integer> nullValIndex = new HashSet<>();
     for (int i = 0; i < rowCount; i++) {
-      expectedValues.add((short) random.nextInt(1 << 16));
+      expectedValues.add(random.nextLong());
     }
 
     Map<String, String> customFieldMeta = new HashMap<>();
@@ -101,9 +103,9 @@ public class SmallIntToFixedConverterTest extends BaseConverterTest {
     customFieldMeta.put("scale", "3");
 
     FieldType fieldType =
-        new FieldType(true, Types.MinorType.SMALLINT.getType(), null, customFieldMeta);
+        new FieldType(true, Types.MinorType.BIGINT.getType(), null, customFieldMeta);
 
-    SmallIntVector vector = new SmallIntVector("col_one", fieldType, allocator);
+    BigIntVector vector = new BigIntVector("col_one", fieldType, allocator);
     for (int i = 0; i < rowCount; i++) {
       boolean isNull = random.nextBoolean();
       if (isNull) {
@@ -114,8 +116,7 @@ public class SmallIntToFixedConverterTest extends BaseConverterTest {
       }
     }
 
-    ArrowVectorConverter converter = new SmallIntToScaledFixedConverter(vector, 0, this, 3);
-    String format = ArrowResultUtil.getStringFormat(3);
+    ArrowVectorConverter converter = new BigIntToScaledFixedConverter(vector, 0, this, 3);
 
     for (int i = 0; i < rowCount; i++) {
       BigDecimal bigDecimalVal = converter.toBigDecimal(i);
@@ -131,9 +132,7 @@ public class SmallIntToFixedConverterTest extends BaseConverterTest {
         BigDecimal expectedVal = BigDecimal.valueOf(expectedValues.get(i), 3);
         assertEquals(expectedVal, bigDecimalVal);
         assertEquals(expectedVal, objectVal);
-        String expectedString =
-            String.format(format, (float) expectedValues.get(i) / ArrowResultUtil.powerOfTen(3));
-        assertEquals(expectedString, stringVal);
+        assertEquals(expectedVal.toPlainString(), stringVal);
         assertNotNull(converter.toBytes(i));
       }
     }
@@ -149,12 +148,12 @@ public class SmallIntToFixedConverterTest extends BaseConverterTest {
     customFieldMeta.put("scale", "3");
 
     FieldType fieldType =
-        new FieldType(true, Types.MinorType.SMALLINT.getType(), null, customFieldMeta);
+        new FieldType(true, Types.MinorType.BIGINT.getType(), null, customFieldMeta);
 
-    SmallIntVector vector = new SmallIntVector("col_one", fieldType, allocator);
-    vector.setSafe(0, 200);
+    BigIntVector vector = new BigIntVector("col_one", fieldType, allocator);
+    vector.setSafe(0, 123456789L);
 
-    final ArrowVectorConverter converter = new SmallIntToScaledFixedConverter(vector, 0, this, 3);
+    final ArrowVectorConverter converter = new BigIntToScaledFixedConverter(vector, 0, this, 3);
 
     TestHelper.assertSFException(invalidConversionErrorCode, () -> converter.toBoolean(0));
     TestHelper.assertSFException(invalidConversionErrorCode, () -> converter.toLong(0));
@@ -177,32 +176,36 @@ public class SmallIntToFixedConverterTest extends BaseConverterTest {
     customFieldMeta.put("scale", "0");
 
     FieldType fieldType =
-        new FieldType(true, Types.MinorType.SMALLINT.getType(), null, customFieldMeta);
+        new FieldType(true, Types.MinorType.BIGINT.getType(), null, customFieldMeta);
 
-    // test value which is out of range of byte
-    SmallIntVector vectorFoo = new SmallIntVector("col_one", fieldType, allocator);
-    vectorFoo.setSafe(0, 200);
-    vectorFoo.setSafe(1, -200);
+    // test value which is out of range of int/short/byte
+    BigIntVector vectorFoo = new BigIntVector("col_one", fieldType, allocator);
+    vectorFoo.setSafe(0, 2147483650L);
+    vectorFoo.setSafe(1, -2147483650L);
 
-    final ArrowVectorConverter converterFoo = new SmallIntToFixedConverter(vectorFoo, 0, this);
+    final ArrowVectorConverter converterFoo = new BigIntToFixedConverter(vectorFoo, 0, this);
 
+    TestHelper.assertSFException(invalidConversionErrorCode, () -> converterFoo.toInt(0));
+    TestHelper.assertSFException(invalidConversionErrorCode, () -> converterFoo.toShort(0));
     TestHelper.assertSFException(invalidConversionErrorCode, () -> converterFoo.toByte(0));
+    TestHelper.assertSFException(invalidConversionErrorCode, () -> converterFoo.toInt(1));
+    TestHelper.assertSFException(invalidConversionErrorCode, () -> converterFoo.toShort(1));
     TestHelper.assertSFException(invalidConversionErrorCode, () -> converterFoo.toByte(1));
     vectorFoo.clear();
 
     // test value which is in range of byte, all get method should return
-    SmallIntVector vectorBar = new SmallIntVector("col_one", fieldType, allocator);
-    vectorBar.setSafe(0, 10);
-    vectorBar.setSafe(1, -10);
+    BigIntVector vectorBar = new BigIntVector("col_one", fieldType, allocator);
+    vectorBar.setSafe(0, 10L);
+    vectorBar.setSafe(1, -10L);
 
-    final ArrowVectorConverter converterBar = new SmallIntToFixedConverter(vectorBar, 0, this);
+    final ArrowVectorConverter converterBar = new BigIntToFixedConverter(vectorBar, 0, this);
 
     assertEquals((byte) 10, converterBar.toByte(0));
     assertEquals((byte) -10, converterBar.toByte(1));
+    assertEquals((short) 10, converterBar.toShort(0));
+    assertEquals((short) -10, converterBar.toShort(1));
     assertEquals(10, converterBar.toInt(0));
     assertEquals(-10, converterBar.toInt(1));
-    assertEquals(10L, converterBar.toLong(0));
-    assertEquals(-10L, converterBar.toLong(1));
     vectorBar.clear();
   }
 
@@ -214,23 +217,19 @@ public class SmallIntToFixedConverterTest extends BaseConverterTest {
     customFieldMeta.put("scale", "0");
 
     FieldType fieldType =
-        new FieldType(true, Types.MinorType.SMALLINT.getType(), null, customFieldMeta);
+        new FieldType(true, Types.MinorType.BIGINT.getType(), null, customFieldMeta);
 
-    SmallIntVector vector = new SmallIntVector("col_one", fieldType, allocator);
+    BigIntVector vector = new BigIntVector("col_one", fieldType, allocator);
     vector.setSafe(0, 0);
     vector.setSafe(1, 1);
     vector.setNull(2);
     vector.setSafe(3, 5);
 
-    ArrowVectorConverter converter = new SmallIntToFixedConverter(vector, 0, this);
+    ArrowVectorConverter converter = new BigIntToFixedConverter(vector, 0, this);
 
     assertFalse(converter.toBoolean(0));
     assertTrue(converter.toBoolean(1));
     assertFalse(converter.toBoolean(2));
-    assertFalse(converter.isNull(0));
-    assertFalse(converter.isNull(1));
-    assertTrue(converter.isNull(2));
-    assertFalse(converter.isNull(3));
     TestHelper.assertSFException(invalidConversionErrorCode, () -> converter.toBoolean(3));
 
     vector.close();
@@ -244,15 +243,15 @@ public class SmallIntToFixedConverterTest extends BaseConverterTest {
     customFieldMeta.put("scale", "3");
 
     FieldType fieldType =
-        new FieldType(true, Types.MinorType.SMALLINT.getType(), null, customFieldMeta);
+        new FieldType(true, Types.MinorType.BIGINT.getType(), null, customFieldMeta);
 
-    SmallIntVector vector = new SmallIntVector("col_one", fieldType, allocator);
+    BigIntVector vector = new BigIntVector("col_one", fieldType, allocator);
     vector.setSafe(0, 0);
     vector.setSafe(1, 1);
     vector.setNull(2);
     vector.setSafe(3, 5);
 
-    final ArrowVectorConverter converter = new SmallIntToScaledFixedConverter(vector, 0, this, 3);
+    final ArrowVectorConverter converter = new BigIntToScaledFixedConverter(vector, 0, this, 3);
 
     assertFalse(converter.toBoolean(0));
     TestHelper.assertSFException(invalidConversionErrorCode, () -> converter.toBoolean(3));

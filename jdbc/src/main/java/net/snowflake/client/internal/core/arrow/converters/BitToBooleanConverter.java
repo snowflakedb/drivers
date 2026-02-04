@@ -1,4 +1,4 @@
-package net.snowflake.client.internal.core.arrow;
+package net.snowflake.client.internal.core.arrow.converters;
 
 import java.math.BigDecimal;
 import net.snowflake.client.jdbc.SFException;
