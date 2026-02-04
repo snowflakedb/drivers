@@ -30,7 +30,7 @@ class TestFetchone:
         mock_iterator = iter(mock_rows)
         cursor._iterator = mock_iterator
 
-        with patch.object(cursor, "_ensure_iterator"):
+        with patch.object(cursor, "_get_iterator"):
             result = cursor.fetchone()
 
         assert result == (1,)
@@ -40,7 +40,7 @@ class TestFetchone:
         mock_iterator = iter([])
         cursor._iterator = mock_iterator
 
-        with patch.object(cursor, "_ensure_iterator"):
+        with patch.object(cursor, "_get_iterator"):
             result = cursor.fetchone()
 
         assert result is None
@@ -51,7 +51,7 @@ class TestFetchone:
         mock_iterator = iter(mock_rows)
         cursor._iterator = mock_iterator
 
-        with patch.object(cursor, "_ensure_iterator"):
+        with patch.object(cursor, "_get_iterator"):
             first = cursor.fetchone()
             second = cursor.fetchone()
             third = cursor.fetchone()
@@ -62,11 +62,11 @@ class TestFetchone:
         assert third == (3,)
         assert fourth is None
 
-    def test_fetchone_calls_ensure_iterator_if_iterator_is_none(self, cursor):
-        """Test fetchone calls _ensure_iterator."""
+    def test_fetchone_calls_get_iterator_if_iterator_is_none(self, cursor):
+        """Test fetchone calls _get_iterator."""
         mock_ensure = MagicMock()
 
-        with patch.object(cursor, "_ensure_iterator", mock_ensure):
+        with patch.object(cursor, "_get_iterator", mock_ensure):
             cursor.fetchone()
 
         mock_ensure.assert_called_once()
@@ -76,7 +76,7 @@ class TestFetchone:
         mock_rows = [(1, "hello", 3.14)]
         cursor._iterator = iter(mock_rows)
 
-        with patch.object(cursor, "_ensure_iterator"):
+        with patch.object(cursor, "_get_iterator"):
             result = cursor.fetchone()
 
         assert result == (1, "hello", 3.14)
@@ -86,7 +86,7 @@ class TestFetchone:
         mock_rows = [(1, "text", Decimal("3.14"), None, True)]
         cursor._iterator = iter(mock_rows)
 
-        with patch.object(cursor, "_ensure_iterator"):
+        with patch.object(cursor, "_get_iterator"):
             result = cursor.fetchone()
 
         assert result[0] == 1
@@ -101,7 +101,7 @@ class TestFetchone:
         mock_rows = [()]
         cursor._iterator = iter(mock_rows)
 
-        with patch.object(cursor, "_ensure_iterator"):
+        with patch.object(cursor, "_get_iterator"):
             result = cursor.fetchone()
 
         assert result == ()
@@ -111,7 +111,7 @@ class TestFetchone:
         mock_rows = [(1,)]
         cursor._iterator = iter(mock_rows)
 
-        with patch.object(cursor, "_ensure_iterator"):
+        with patch.object(cursor, "_get_iterator"):
             cursor.fetchone()  # Consume the row
             result1 = cursor.fetchone()
             result2 = cursor.fetchone()
@@ -138,7 +138,7 @@ class TestFetchall:
         mock_rows = [(1,), (2,), (3,)]
         cursor._iterator = iter(mock_rows)
 
-        with patch.object(cursor, "_ensure_iterator"):
+        with patch.object(cursor, "_get_iterator"):
             result = cursor.fetchall()
 
         assert result == [(1,), (2,), (3,)]
@@ -147,16 +147,16 @@ class TestFetchall:
         """Test fetchall returns empty list when no rows."""
         cursor._iterator = iter([])
 
-        with patch.object(cursor, "_ensure_iterator"):
+        with patch.object(cursor, "_get_iterator"):
             result = cursor.fetchall()
 
         assert result == []
 
-    def test_fetchall_calls_ensure_iterator_if_iterator_is_none(self, cursor):
-        """Test fetchall calls _ensure_iterator."""
+    def test_fetchall_calls_get_iterator_if_iterator_is_none(self, cursor):
+        """Test fetchall calls _get_iterator."""
         mock_ensure = MagicMock()
 
-        with patch.object(cursor, "_ensure_iterator", mock_ensure):
+        with patch.object(cursor, "_get_iterator", mock_ensure):
             cursor.fetchall()
 
         mock_ensure.assert_called_once()
@@ -166,7 +166,7 @@ class TestFetchall:
         mock_rows = [(42,)]
         cursor._iterator = iter(mock_rows)
 
-        with patch.object(cursor, "_ensure_iterator"):
+        with patch.object(cursor, "_get_iterator"):
             result = cursor.fetchall()
 
         assert result == [(42,)]
@@ -181,7 +181,7 @@ class TestFetchall:
         ]
         cursor._iterator = iter(mock_rows)
 
-        with patch.object(cursor, "_ensure_iterator"):
+        with patch.object(cursor, "_get_iterator"):
             result = cursor.fetchall()
 
         assert result == [(1, "a", 1.0), (2, "b", 2.0), (3, "c", 3.0)]
@@ -194,7 +194,7 @@ class TestFetchall:
         ]
         cursor._iterator = iter(mock_rows)
 
-        with patch.object(cursor, "_ensure_iterator"):
+        with patch.object(cursor, "_get_iterator"):
             result = cursor.fetchall()
 
         assert result[0] == (1, "text", Decimal("3.14"), None)
@@ -208,7 +208,7 @@ class TestFetchall:
         mock_iterator = iter(mock_rows)
         cursor._iterator = mock_iterator
 
-        with patch.object(cursor, "_ensure_iterator"):
+        with patch.object(cursor, "_get_iterator"):
             # Fetch first two rows
             cursor.fetchone()
             cursor.fetchone()
@@ -223,7 +223,7 @@ class TestFetchall:
         mock_iterator = iter(mock_rows)
         cursor._iterator = mock_iterator
 
-        with patch.object(cursor, "_ensure_iterator"):
+        with patch.object(cursor, "_get_iterator"):
             cursor.fetchall()  # Consume all rows
             result = cursor.fetchall()
 
@@ -234,7 +234,7 @@ class TestFetchall:
         mock_rows = [(i,) for i in range(1000)]
         cursor._iterator = iter(mock_rows)
 
-        with patch.object(cursor, "_ensure_iterator"):
+        with patch.object(cursor, "_get_iterator"):
             result = cursor.fetchall()
 
         assert len(result) == 1000
@@ -246,7 +246,7 @@ class TestFetchall:
         mock_rows = [(1,), (2,), (3,)]
         cursor._iterator = iter(mock_rows)
 
-        with patch.object(cursor, "_ensure_iterator"):
+        with patch.object(cursor, "_get_iterator"):
             result = cursor.fetchall()
 
         assert isinstance(result, list)
