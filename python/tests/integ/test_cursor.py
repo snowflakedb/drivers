@@ -399,6 +399,30 @@ class TestCursorRowcount:
         assert cursor.rowcount == 3
         assert cursor.rowcount != first_rowcount
 
+    def test_rowcount_after_delete_zero_rows(self, cursor, tmp_schema):
+        """Test rowcount after DELETE statement that affects 0 rows."""
+        # Given a table with data
+        cursor.execute(f"CREATE TABLE {tmp_schema}.test_delete_zero (id INTEGER)")
+        cursor.execute(f"INSERT INTO {tmp_schema}.test_delete_zero VALUES (1), (2), (3)")
+
+        # When deleting with a condition that matches no rows
+        cursor.execute(f"DELETE FROM {tmp_schema}.test_delete_zero WHERE id > 100")
+
+        # Then rowcount should be 0
+        assert cursor.rowcount == 0
+
+    def test_rowcount_after_update_zero_rows(self, cursor, tmp_schema):
+        """Test rowcount after UPDATE statement that affects 0 rows."""
+        # Given a table with data
+        cursor.execute(f"CREATE TABLE {tmp_schema}.test_update_zero (id INTEGER, value INTEGER)")
+        cursor.execute(f"INSERT INTO {tmp_schema}.test_update_zero VALUES (1, 10), (2, 20), (3, 30)")
+
+        # When updating with a condition that matches no rows
+        cursor.execute(f"UPDATE {tmp_schema}.test_update_zero SET value = 999 WHERE id > 100")
+
+        # Then rowcount should be 0
+        assert cursor.rowcount == 0
+
 
 class TestCursorMethods:
     """Test Cursor object methods."""
