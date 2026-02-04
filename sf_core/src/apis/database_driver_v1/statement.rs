@@ -220,10 +220,13 @@ pub fn statement_execute_query(stmt_handle: Handle) -> Result<ExecuteResult, Api
     let rows_affected = {
         let stats = response.data.stats.as_ref();
         // Check DML stats first (INSERT, UPDATE, DELETE)
+        // Use filter to ignore zero values since multiple stats may be present
+        // e.g., UPDATE might have num_rows_inserted=0 and num_rows_updated=5
         let dml_rows = stats.and_then(|s| {
             s.num_rows_inserted
-                .or(s.num_rows_updated)
-                .or(s.num_rows_deleted)
+                .filter(|&n| n > 0)
+                .or(s.num_rows_updated.filter(|&n| n > 0))
+                .or(s.num_rows_deleted.filter(|&n| n > 0))
         });
         // Fall back to total/returned for SELECT queries
         dml_rows
