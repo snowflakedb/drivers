@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from snowflake.connector.cursor import Cursor
-from snowflake.connector.exceptions import ProgrammingError
+from snowflake.connector.errors import ProgrammingError
 
 
 class TestFetchone:

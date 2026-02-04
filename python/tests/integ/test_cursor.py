@@ -6,7 +6,7 @@ from decimal import Decimal
 
 import pytest
 
-from snowflake.connector.errors import NotSupportedError
+from snowflake.connector.errors import NotSupportedError, ProgrammingError
 from tests.compatibility import IS_UNIVERSAL_DRIVER
 from tests.e2e.types.utils import assert_sequential_values
 
@@ -214,8 +214,6 @@ class TestCursorFetch:
     @pytest.mark.skip_reference
     def test_fetchmany_negative_size_raises_error(self, cursor):
         """Test fetchmany with negative size raises ProgrammingError."""
-        from snowflake.connector.exceptions import ProgrammingError
-
         cursor.execute("SELECT 1")
         with pytest.raises(ProgrammingError) as excinfo:
             cursor.fetchmany(-1)
