@@ -1,7 +1,9 @@
 include!(concat!(env!("CARGO_MANIFEST_DIR"), "/../build_common.rs"));
 
 fn main() {
-    emit_loader_rpaths();
+    if !cfg!(target_os = "windows") {
+        emit_loader_rpaths();
+    }
 
     // On Windows, use a .def file to limit DLL exports to only C API functions.
     // This avoids the PE/COFF 65535 export symbol limit.
