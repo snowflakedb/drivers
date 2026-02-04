@@ -7,6 +7,7 @@ use super::error::*;
 use super::global_state::{CONN_HANDLE_MANAGER, STMT_HANDLE_MANAGER};
 use crate::apis::database_driver_v1::query::process_query_response;
 use crate::protobuf_gen::database_driver_v1::ColumnMetadata;
+use crate::rest::snowflake::query_response::Data;
 use crate::{
     config::{rest_parameters::QueryParameters, settings::Setting},
     rest::snowflake::{self, QueryExecutionMode, snowflake_query_with_client},
@@ -24,6 +25,72 @@ use std::{collections::HashMap, sync::Arc};
 
 use super::connection::Connection;
 use crate::rest::snowflake::query_request;
+
+// Statement type ID constants for DML detection
+const STATEMENT_TYPE_ID_DML: i64 = 0x3000;
+const STATEMENT_TYPE_ID_INSERT: i64 = 0x3100;
+const STATEMENT_TYPE_ID_UPDATE: i64 = 0x3200;
+const STATEMENT_TYPE_ID_DELETE: i64 = 0x3300;
+const STATEMENT_TYPE_ID_MERGE: i64 = 0x3400;
+const STATEMENT_TYPE_ID_MULTI_TABLE_INSERT: i64 = 0x3500;
+
+/// Check if a statement type ID represents a DML operation
+fn is_dml_statement(statement_type_id: Option<i64>) -> bool {
+    if let Some(type_id) = statement_type_id {
+        matches!(
+            type_id,
+            STATEMENT_TYPE_ID_DML
+                | STATEMENT_TYPE_ID_INSERT
+                | STATEMENT_TYPE_ID_UPDATE
+                | STATEMENT_TYPE_ID_DELETE
+                | STATEMENT_TYPE_ID_MERGE
+                | STATEMENT_TYPE_ID_MULTI_TABLE_INSERT
+        )
+    } else {
+        false
+    }
+}
+
+/// Calculate rows affected based on statement type
+/// - For DML: Parse rowset columns to sum affected rows
+/// - For SELECT and DDL: Use total field
+/// - For unknown: Return -1
+fn calculate_rows_affected(data: &Data) -> i64 {
+    // Check if this is a DML statement
+    if is_dml_statement(data.statement_type_id) {
+        // For DML, parse the rowset to get affected rows
+        if let (Some(rowset), Some(row_types)) = (&data.rowset, &data.row_type) {
+            if !rowset.is_empty() && !rowset[0].is_empty() {
+                let mut affected_rows = 0i64;
+
+                // Look for specific column names that indicate affected rows
+                for (idx, col) in row_types.iter().enumerate() {
+                    let col_name = col.name.to_lowercase();
+
+                    if col_name == "number of rows updated"
+                        || col_name == "number of multi-joined rows updated"
+                        || col_name == "number of rows deleted"
+                        || col_name.starts_with("number of rows inserted")
+                    {
+                        if let Some(value) = rowset[0].get(idx) {
+                            if let Ok(count) = value.parse::<i64>() {
+                                affected_rows += count;
+                            }
+                        }
+                    }
+                }
+
+                return affected_rows;
+            }
+        }
+        // DML with no affected rows
+        return 0;
+    }
+
+    // For SELECT and other queries, use total
+    // Return -1 if total is not available
+    data.total.unwrap_or(-1)
+}
 
 pub fn statement_new(conn_handle: Handle) -> Result<Handle, ApiError> {
     let handle = conn_handle;
@@ -213,27 +280,11 @@ pub fn statement_execute_query(stmt_handle: Handle) -> Result<ExecuteResult, Api
     // Extract query_id from response
     let query_id = response.data.query_id.unwrap_or_default();
 
-    // Extract rows_affected from response
-    // For DML operations (INSERT, UPDATE, DELETE), use stats fields
-    // For SELECT queries, use total/returned fields
-    // -1 indicates the count cannot be determined
-    let rows_affected = {
-        let stats = response.data.stats.as_ref();
-        // Check DML stats first (INSERT, UPDATE, DELETE)
-        // Use filter to ignore zero values since multiple stats may be present
-        // e.g., UPDATE might have num_rows_inserted=0 and num_rows_updated=5
-        let dml_rows = stats.and_then(|s| {
-            s.num_rows_inserted
-                .filter(|&n| n > 0)
-                .or(s.num_rows_updated.filter(|&n| n > 0))
-                .or(s.num_rows_deleted.filter(|&n| n > 0))
-        });
-        // Fall back to total/returned for SELECT queries
-        dml_rows
-            .or(response.data.total)
-            .or(response.data.returned)
-            .unwrap_or(-1)
-    };
+    // Calculate rows_affected based on statement type
+    // For DML: Sum of affected rows from rowset columns
+    // For SELECT: Total rows in result set
+    // For DDL/Unknown: -1
+    let rows_affected = calculate_rows_affected(&response.data);
 
     // Extract column metadata from rowtype
     let columns = response

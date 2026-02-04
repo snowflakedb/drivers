@@ -76,7 +76,7 @@ pub struct Data {
     #[serde(rename = "numberOfBinds")]
     _number_of_binds: Option<i32>,
     #[serde(rename = "statementTypeId")]
-    _statement_type_id: Option<i64>,
+    pub statement_type_id: Option<i64>,
     #[serde(rename = "version")]
     _version: Option<i64>,
     #[serde(rename = "getResultUrl")]
