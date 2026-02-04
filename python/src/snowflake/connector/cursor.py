@@ -168,7 +168,7 @@ class Cursor:
 
         return stream_ptr
 
-    def _ensure_iterator(self) -> ArrowStreamIterator:
+    def _get_iterator(self) -> ArrowStreamIterator:
         stream_ptr = self._get_stream_ptr()
         arrow_context = ArrowConverterContext()
         return ArrowStreamIterator(
@@ -187,7 +187,7 @@ class Cursor:
             sequence: Next row, or None when no more data is available
         """
         if self._iterator is None:
-            self._iterator = self._ensure_iterator()
+            self._iterator = self._get_iterator()
         try:
             return next(self._iterator)
         except StopIteration:
@@ -230,7 +230,7 @@ class Cursor:
             sequence: List of all remaining rows
         """
         if self._iterator is None:
-            self._iterator = self._ensure_iterator()
+            self._iterator = self._get_iterator()
         return list(self._iterator)
 
     def nextset(self) -> None:
