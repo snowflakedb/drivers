@@ -81,3 +81,24 @@ class NotSupportedError(DatabaseError):
     """
 
     pass
+
+
+# Configuration-related errors (for ConfigManager)
+
+
+class ConfigManagerError(Error):
+    """Exception raised for configuration manager errors."""
+
+    pass
+
+
+class ConfigSourceError(ConfigManagerError):
+    """Exception raised when a configuration source has invalid values."""
+
+    pass
+
+
+class MissingConfigOptionError(ConfigManagerError):
+    """Exception raised when a required configuration option is missing."""
+
+    pass

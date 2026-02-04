@@ -6,6 +6,10 @@ edition = "2024"
 name = "sf_core"
 crate-type = ["dylib", "rlib"]
 
+[features]
+default = []
+fips = ["rustls/fips"]
+
 [dependencies]
 tracing-opentelemetry = "0.31.0"
 opentelemetry = { version = "0.30.0", default-features = false, features = ["trace"] }
@@ -21,6 +25,7 @@ serde_json = { version = "1.0.143", features = ["raw_value"] }
 tokio = { version = "1.47.1", features = ["full"] }
 tokio-util = { version = "0.7", features = ["time"] }
 tokio-stream = "0.1"
+toml = "0.8"
 uuid = { version = "1.18", features = ["v4"] }
 base64 = "0.22.1"
 arrow = { version = "56.0.0", features = ["ffi"] }
@@ -42,7 +47,7 @@ snafu = "0.8.7"
 glob = "0.3.3"
 
 # CRL and TLS dependencies
-rustls = { version = "0.23.20", features = ["aws_lc_rs", "fips"] }
+rustls = { version = "0.23.20", features = ["aws_lc_rs"] }
 rustls-pemfile = "2.2.0"
 rustls-webpki = "0.102"
 rustls-native-certs = "0.8"

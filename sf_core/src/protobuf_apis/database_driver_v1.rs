@@ -237,6 +237,30 @@ fn to_driver_error(error: &ApiError) -> DriverError {
         ApiError::InvalidRefreshState { .. } => DriverError {
             error_type: Some(driver_error::ErrorType::InternalError(InternalError {})),
         },
+        ApiError::Configuration {
+            source: ConfigError::ConfigFileRead { .. },
+            ..
+        }
+        | ApiError::Configuration {
+            source: ConfigError::TomlParse { .. },
+            ..
+        }
+        | ApiError::Configuration {
+            source: ConfigError::InsecurePermissions { .. },
+            ..
+        } => DriverError {
+            error_type: Some(driver_error::ErrorType::InternalError(InternalError {})),
+        },
+        ApiError::Configuration {
+            source: ConfigError::ConnectionNotFound { name, .. },
+            ..
+        } => DriverError {
+            error_type: Some(driver_error::ErrorType::MissingParameter(
+                MissingParameter {
+                    parameter: format!("connection: {}", name),
+                },
+            )),
+        },
     }
 }
 
@@ -256,6 +280,22 @@ fn to_driver_exception(error: ApiError) -> DriverException {
             source: ConfigError::ConflictingParameters { .. },
             ..
         } => StatusCode::InvalidParameterValue,
+        ApiError::Configuration {
+            source: ConfigError::ConfigFileRead { .. },
+            ..
+        } => StatusCode::InternalError,
+        ApiError::Configuration {
+            source: ConfigError::TomlParse { .. },
+            ..
+        } => StatusCode::InternalError,
+        ApiError::Configuration {
+            source: ConfigError::InsecurePermissions { .. },
+            ..
+        } => StatusCode::InternalError,
+        ApiError::Configuration {
+            source: ConfigError::ConnectionNotFound { .. },
+            ..
+        } => StatusCode::MissingParameter,
         ApiError::InvalidArgument { .. } => StatusCode::InvalidArgument,
         ApiError::Login {
             source: RestError::LoginError { .. },

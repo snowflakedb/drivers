@@ -7,24 +7,56 @@ use super::Handle;
 use super::Setting;
 use super::error::*;
 use super::global_state::CONN_HANDLE_MANAGER;
+use crate::config::config_manager;
 use crate::config::rest_parameters::{ClientInfo, LoginParameters};
 use crate::config::retry::RetryPolicy;
 use crate::rest::snowflake::{self, RestError, SessionTokens, SnowflakeResponseError};
 use crate::tls::client::create_tls_client_with_config;
 use reqwest;
 
+/// Load configuration from TOML files for a named connection.
+///
+/// Takes a mutable reference to the connection to avoid double-locking.
+/// Only sets config values for keys not already present (explicit settings win).
+pub fn connection_load_from_config(
+    conn: &mut Connection,
+    connection_name: &str,
+) -> Result<(), ApiError> {
+    let config_settings =
+        config_manager::load_connection_config(connection_name).context(ConfigurationSnafu)?;
+
+    for (key, value) in config_settings {
+        conn.settings.entry(key).or_insert(value);
+    }
+    Ok(())
+}
+
 pub fn connection_init(conn_handle: Handle, _db_handle: Handle) -> Result<(), ApiError> {
     match CONN_HANDLE_MANAGER.get_obj(conn_handle) {
         Some(conn_ptr) => {
-            let rt = crate::async_bridge::runtime().context(RuntimeCreationSnafu)?;
-
-            let settings_guard = conn_ptr
+            let mut conn = conn_ptr
                 .lock()
                 .map_err(|_| ConnectionLockingSnafu {}.build())?;
-            let login_parameters = LoginParameters::from_settings(&settings_guard.settings)
-                .context(ConfigurationSnafu)?;
+
+            // Check if connection_name is set and load from config if present
+            let connection_name = conn.settings.get("connection_name").and_then(|s| {
+                if let Setting::String(name) = s {
+                    Some(name.clone())
+                } else {
+                    None
+                }
+            });
+
+            if let Some(name) = connection_name {
+                connection_load_from_config(&mut conn, &name)?;
+            }
+
+            let rt = crate::async_bridge::runtime().context(RuntimeCreationSnafu)?;
+
+            let login_parameters =
+                LoginParameters::from_settings(&conn.settings).context(ConfigurationSnafu)?;
             let init_params = settings_guard.init_session_parameters.clone();
-            drop(settings_guard);
+            drop(conn);
 
             let http_client =
                 create_tls_client_with_config(login_parameters.client_info.tls_config.clone())
