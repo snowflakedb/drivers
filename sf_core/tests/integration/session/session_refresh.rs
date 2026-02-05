@@ -5,6 +5,7 @@ use sf_core::config::rest_parameters::ClientInfo;
 use sf_core::config::retry::RetryPolicy;
 use sf_core::crl::config::CrlConfig;
 use sf_core::rest::snowflake::SessionTokens;
+use sf_core::sensitive::SensitiveToken;
 use sf_core::tls::config::TlsConfig;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -86,8 +87,8 @@ async fn should_only_refresh_once_with_concurrent_401_errors() {
 
     // Create a connection with initial tokens
     let tokens = SessionTokens {
-        session_token: "old-session-token".to_string(),
-        master_token: "valid-master-token".to_string(),
+        session_token: SensitiveToken::new("old-session-token"),
+        master_token: SensitiveToken::new("valid-master-token"),
         session_id: 12345,
         session_expires_at: None,
         master_expires_at: None,
@@ -165,7 +166,8 @@ async fn should_only_refresh_once_with_concurrent_401_errors() {
         .as_ref()
         .unwrap()
         .session_token
-        .clone();
+        .expose()
+        .to_string();
     assert_eq!(final_token, "new-session-token");
 
     server.abort();

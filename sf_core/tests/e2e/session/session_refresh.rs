@@ -94,7 +94,10 @@ fn should_refresh_session_proactively() {
             login_method: LoginMethod::PrivateKey {
                 username: parameters.user.clone().expect("user required"),
                 private_key,
-                passphrase: parameters.private_key_password.clone().map(SensitivePassword::new),
+                passphrase: parameters
+                    .private_key_password
+                    .clone()
+                    .map(SensitivePassword::new),
             },
             database: parameters.database.clone(),
             schema: parameters.schema.clone(),
@@ -119,8 +122,10 @@ fn should_refresh_session_proactively() {
                 .expect("Proactive refresh should succeed");
 
         // Then we should get new tokens that differ from the original
-        assert_ne!(
-            refreshed_tokens.session_token, original_session_token,
+        assert!(
+            !refreshed_tokens
+                .session_token
+                .same_as(&original_session_token),
             "Refreshed session token should be different from original"
         );
         assert!(

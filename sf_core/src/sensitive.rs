@@ -66,6 +66,11 @@ impl SensitiveToken {
     pub fn same_as(&self, other: &SensitiveToken) -> bool {
         self.0.expose_secret() == other.0.expose_secret()
     }
+
+    /// Check if the underlying token is empty.
+    pub fn is_empty(&self) -> bool {
+        self.0.expose_secret().is_empty()
+    }
 }
 
 impl std::fmt::Debug for SensitiveToken {
@@ -170,15 +175,15 @@ mod tests {
 
     #[test]
     fn test_token_debug_does_not_expose_value() {
-        let token = SensitiveToken::new("eyJhbGciOiJIUzI1NiJ9.token");
+        let token = SensitiveToken::new("test_session_token_12345");
         let debug_output = format!("{:?}", token);
-        assert!(!debug_output.contains("eyJhbGc"));
+        assert!(!debug_output.contains("test_session"));
         assert!(debug_output.contains("***"));
     }
 
     #[test]
     fn test_token_expose_returns_value() {
-        let token = SensitiveToken::new("eyJhbGciOiJIUzI1NiJ9.token");
-        assert_eq!(token.expose(), "eyJhbGciOiJIUzI1NiJ9.token");
+        let token = SensitiveToken::new("test_session_token_12345");
+        assert_eq!(token.expose(), "test_session_token_12345");
     }
 }
