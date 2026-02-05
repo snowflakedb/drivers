@@ -59,29 +59,28 @@ fn calculate_rows_affected(data: &Data) -> i64 {
     // Check if this is a DML statement
     if is_dml_statement(data.statement_type_id) {
         // For DML, parse the rowset to get affected rows
-        if let (Some(rowset), Some(row_types)) = (&data.rowset, &data.row_type) {
-            if !rowset.is_empty() && !rowset[0].is_empty() {
-                let mut affected_rows = 0i64;
+        if let (Some(rowset), Some(row_types)) = (&data.rowset, &data.row_type)
+            && !rowset.is_empty()
+            && !rowset[0].is_empty()
+        {
+            let mut affected_rows = 0i64;
 
-                // Look for specific column names that indicate affected rows
-                for (idx, col) in row_types.iter().enumerate() {
-                    let col_name = col.name.to_lowercase();
+            // Look for specific column names that indicate affected rows
+            for (idx, col) in row_types.iter().enumerate() {
+                let col_name = col.name.to_lowercase();
 
-                    if col_name == "number of rows updated"
-                        || col_name == "number of multi-joined rows updated"
-                        || col_name == "number of rows deleted"
-                        || col_name.starts_with("number of rows inserted")
-                    {
-                        if let Some(value) = rowset[0].get(idx) {
-                            if let Ok(count) = value.parse::<i64>() {
-                                affected_rows += count;
-                            }
-                        }
-                    }
+                if (col_name == "number of rows updated"
+                    || col_name == "number of multi-joined rows updated"
+                    || col_name == "number of rows deleted"
+                    || col_name.starts_with("number of rows inserted"))
+                    && let Some(value) = rowset[0].get(idx)
+                    && let Ok(count) = value.parse::<i64>()
+                {
+                    affected_rows += count;
                 }
-
-                return affected_rows;
             }
+
+            return affected_rows;
         }
         // DML with no affected rows
         return 0;
@@ -278,7 +277,7 @@ pub fn statement_execute_query(stmt_handle: Handle) -> Result<ExecuteResult, Api
     let rowset_stream = Box::new(FFI_ArrowArrayStream::new(response_reader));
 
     // Extract query_id from response
-    let query_id = response.data.query_id.unwrap_or_default();
+    let query_id = response.data.query_id.clone().unwrap_or_default();
 
     // Calculate rows_affected based on statement type
     // For DML: Sum of affected rows from rowset columns
