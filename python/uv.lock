@@ -684,7 +684,6 @@ wheels = [
 
 [[package]]
 name = "snowflake-connector-python-ud"
-version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "protobuf" },
@@ -733,7 +732,7 @@ requires-dist = [
     { name = "types-pytz", marker = "extra == 'dev'" },
     { name = "zstandard", marker = "extra == 'test'" },
 ]
-provides-extras = ["test", "dev"]
+provides-extras = ["dev", "test"]
 
 [[package]]
 name = "sortedcontainers"

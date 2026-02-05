@@ -165,6 +165,7 @@ class TestSdistPackaging:
         # Step 4: Verify installation
         self._verify_installation(python_exe)
 
+    @pytest.mark.slow
     def test_sdist_contains_rust_sources(self, temp_env: Path) -> None:
         """Test that the sdist contains all necessary Rust sources."""
         import tarfile

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "snowflake-connector-python-ud"  # TODO: change this once ready, needs switching tests to UD
-version = "0.1.0"
+dynamic = ["version"]
 description = "A PEP 249 Database API 2.0 implementation for Snowflake"
 readme = "README.md"
 license = {text = "Apache-2.0"}
@@ -55,6 +55,9 @@ dev = [
     "hatchling",
     "types-pytz",
 ]
+
+[tool.hatch.version]
+path = "src/snowflake/connector/version.py"
 
 [tool.hatch.build.targets.sdist]
 include = [
@@ -212,9 +215,9 @@ integ = "pytest tests/integ {args}"
 # End-to-end tests
 e2e = "pytest tests/e2e {args}"
 # All tests
-all = "pytest tests/ {args}"
+all = "pytest tests/ --ignore=tests/packaging {args}"
 # All tests with coverage
-all-cov = "pytest tests/ --cov=src/snowflake --cov-report=xml --cov-report=html {args}"
+all-cov = "pytest tests/ --ignore=tests/packaging --cov=src/snowflake --cov-report=xml --cov-report=html {args}"
 
 # This environment skips installing the ud version from sources,
 # installs from wheel via install-wheel

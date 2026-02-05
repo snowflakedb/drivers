@@ -36,6 +36,7 @@ from .types import (
     Timestamp,
     TimestampFromTicks,
 )
+from .version import __version__
 
 
 # Module Interface Constants
@@ -66,6 +67,8 @@ def connect(**kwargs: Any) -> Connection:
 
 # Export all public symbols
 __all__ = [
+    # Version
+    "__version__",
     # Module constants
     "apilevel",
     "threadsafety",
