@@ -5,6 +5,7 @@ use crate::config::settings::Setting;
 use crate::config::settings::Settings;
 use crate::config::{ConfigError, MissingParameterSnafu};
 use crate::crl::config::CrlConfig;
+use crate::sensitive::{SensitivePassword, SensitivePrivateKey, SensitiveToken};
 use crate::tls::config::TlsConfig;
 use snafu::OptionExt;
 
@@ -113,21 +114,21 @@ impl LoginParameters {
 pub enum LoginMethod {
     Password {
         username: String,
-        password: String,
+        password: SensitivePassword,
     },
     PrivateKey {
         username: String,
-        private_key: String,
-        passphrase: Option<String>,
+        private_key: SensitivePrivateKey,
+        passphrase: Option<SensitivePassword>,
     },
     Pat {
         username: String,
-        token: String,
+        token: SensitiveToken,
     },
 }
 
 impl LoginMethod {
-    fn read_private_key(settings: &dyn Settings) -> Result<String, ConfigError> {
+    fn read_private_key(settings: &dyn Settings) -> Result<SensitivePrivateKey, ConfigError> {
         if let Some(private_key_file) = settings.get_string("private_key_file") {
             let private_key = fs::read_to_string(private_key_file.clone()).map_err(|e| {
                 InvalidParameterValueSnafu {
@@ -137,7 +138,7 @@ impl LoginMethod {
                 }
                 .build()
             })?;
-            Ok(private_key)
+            Ok(SensitivePrivateKey::new(private_key))
         } else {
             MissingParameterSnafu {
                 parameter: "private_key_file",
@@ -155,25 +156,31 @@ impl LoginMethod {
                     .get_string("user")
                     .context(MissingParameterSnafu { parameter: "user" })?,
                 private_key: Self::read_private_key(settings)?,
-                passphrase: settings.get_string("private_key_password"),
+                passphrase: settings
+                    .get_string("private_key_password")
+                    .map(SensitivePassword::new),
             }),
             "SNOWFLAKE_PASSWORD" | "" => Ok(Self::Password {
                 username: settings
                     .get_string("user")
                     .context(MissingParameterSnafu { parameter: "user" })?,
-                password: settings
-                    .get_string("password")
-                    .context(MissingParameterSnafu {
-                        parameter: "password",
-                    })?,
+                password: SensitivePassword::new(
+                    settings
+                        .get_string("password")
+                        .context(MissingParameterSnafu {
+                            parameter: "password",
+                        })?,
+                ),
             }),
             "PROGRAMMATIC_ACCESS_TOKEN" => Ok(Self::Pat {
                 username: settings
                     .get_string("user")
                     .context(MissingParameterSnafu { parameter: "user" })?,
-                token: settings
-                    .get_string("token")
-                    .context(MissingParameterSnafu { parameter: "token" })?,
+                token: SensitiveToken::new(
+                    settings
+                        .get_string("token")
+                        .context(MissingParameterSnafu { parameter: "token" })?,
+                ),
             }),
             _ => InvalidParameterValueSnafu {
                 parameter: "authenticator",

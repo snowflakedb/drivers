@@ -1,5 +1,6 @@
 use crate::chunks::ChunkDownloadData;
 use crate::file_manager::SourceCompressionParam;
+use crate::sensitive::SensitiveToken;
 use crate::{file_manager, query_types};
 use serde::Deserialize;
 use snafu::{OptionExt, Snafu};
@@ -557,8 +558,8 @@ impl TryFrom<&Credentials> for file_manager::Credentials {
 
         Ok(file_manager::Credentials {
             aws_key_id,
-            aws_secret_key,
-            aws_token,
+            aws_secret_key: SensitiveToken::new(aws_secret_key),
+            aws_token: SensitiveToken::new(aws_token),
         })
     }
 }
@@ -566,7 +567,7 @@ impl TryFrom<&Credentials> for file_manager::Credentials {
 impl From<&EncryptionMaterial> for file_manager::EncryptionMaterial {
     fn from(value: &EncryptionMaterial) -> Self {
         Self {
-            query_stage_master_key: value.query_stage_master_key.clone(),
+            query_stage_master_key: SensitiveToken::new(value.query_stage_master_key.clone()),
             query_id: value.query_id.clone(),
             // Snowflake sends smk_id as i64, but later expects it as a string
             smk_id: value.smk_id.to_string(),

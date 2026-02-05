@@ -19,4 +19,5 @@ pub mod protobuf_apis;
 pub mod protobuf_gen;
 pub mod query_types;
 pub mod rest;
+pub mod sensitive;
 pub mod tls;

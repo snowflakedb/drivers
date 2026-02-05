@@ -178,7 +178,7 @@ where
 
     // First attempt - save the token we used so we can detect if it changed
     let failed_token = session_token.clone();
-    match f(session_token).await {
+    match f(session_token.expose().to_string()).await {
         Ok(result) => Ok(result),
         Err(RestError::InvalidSnowflakeResponse {
             source: SnowflakeResponseError::SessionExpired { .. },
@@ -196,9 +196,9 @@ where
 
             // If another request already refreshed while we waited, use the new token.
             // Compare actual token strings - more reliable than expiration times.
-            if tokens.session_token != failed_token {
+            if !tokens.session_token.same_as(&failed_token) {
                 tracing::debug!("Session already refreshed by another request");
-                let token = tokens.session_token.clone();
+                let token = tokens.session_token.expose().to_string();
                 drop(tokens_guard); // Release write lock before async call
                 return f(token).await.context(QuerySnafu);
             }
@@ -215,7 +215,7 @@ where
                     .await
                     .context(SessionRefreshSnafu)?;
 
-            let new_session_token = new_tokens.session_token.clone();
+            let new_session_token = new_tokens.session_token.expose().to_string();
 
             // Update tokens
             *tokens_guard = Some(new_tokens);

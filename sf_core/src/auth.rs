@@ -109,7 +109,7 @@ pub fn create_credentials(login_parameters: &LoginParameters) -> Result<Credenti
     match &login_parameters.login_method {
         LoginMethod::Password { username, password } => Ok(Credentials::Password {
             username: username.clone(),
-            password: password.clone(),
+            password: password.expose().to_string(),
         }),
         LoginMethod::PrivateKey {
             username,
@@ -119,8 +119,8 @@ pub fn create_credentials(login_parameters: &LoginParameters) -> Result<Credenti
             let token = generate_jwt_token(
                 &login_parameters.account_name,
                 username,
-                private_key,
-                passphrase.as_deref(),
+                private_key.expose(),
+                passphrase.as_ref().map(|p| p.expose()),
             )?;
             Ok(Credentials::Jwt {
                 username: username.clone(),
@@ -129,7 +129,7 @@ pub fn create_credentials(login_parameters: &LoginParameters) -> Result<Credenti
         }
         LoginMethod::Pat { username, token } => Ok(Credentials::Pat {
             username: username.clone(),
-            token: token.clone(),
+            token: token.expose().to_string(),
         }),
     }
 }

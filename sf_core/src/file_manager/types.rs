@@ -1,4 +1,5 @@
 use crate::compression_types::CompressionType;
+use crate::sensitive::SensitiveToken;
 use serde::{Deserialize, Serialize};
 
 // Dedicated file transfer types
@@ -89,18 +90,44 @@ pub struct StageInfo {
     pub creds: Credentials,
 }
 
-#[derive(Debug, Clone)]
+/// AWS credentials for S3 stage access.
+///
+/// Sensitive fields (aws_secret_key, aws_token) are wrapped to prevent accidental logging.
+#[derive(Clone)]
 pub struct Credentials {
     pub aws_key_id: String,
-    pub aws_secret_key: String,
-    pub aws_token: String,
+    pub aws_secret_key: SensitiveToken,
+    pub aws_token: SensitiveToken,
 }
 
-#[derive(Debug, Clone)]
+impl std::fmt::Debug for Credentials {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Credentials")
+            .field("aws_key_id", &self.aws_key_id)
+            .field("aws_secret_key", &"***")
+            .field("aws_token", &"***")
+            .finish()
+    }
+}
+
+/// Encryption material for file transfer.
+///
+/// The master key is sensitive and wrapped to prevent accidental logging.
+#[derive(Clone)]
 pub struct EncryptionMaterial {
-    pub query_stage_master_key: String,
+    pub query_stage_master_key: SensitiveToken,
     pub query_id: String,
     pub smk_id: String,
+}
+
+impl std::fmt::Debug for EncryptionMaterial {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EncryptionMaterial")
+            .field("query_stage_master_key", &"***")
+            .field("query_id", &self.query_id)
+            .field("smk_id", &self.smk_id)
+            .finish()
+    }
 }
 
 // Result of encryption containing encrypted data and metadata
