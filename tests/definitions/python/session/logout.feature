@@ -2,11 +2,24 @@
 Feature: Session Logout - Python-specific behavior
 
   # ===========================================================================
+  #                   Python Default Configuration
+  # ===========================================================================
+
+@python_e2e
+  Scenario: should use Python default 5 second timeout
+    # Python historically uses 5s timeout for logout
+    Given Python connection is created with default timeout configuration
+    When Connection is closed
+    Then Logout timeout of 5 seconds is passed to Core
+    And Logout request completes within 5 seconds
+
+  # ===========================================================================
   #                   Phase 2 Backward Compatibility Logic
   # ===========================================================================
   # Phase 2 (doc for: SNOW-2314152) behavior: Python defaults to auto-detection enabled
   # when server_session_keep_alive is null. This will change in Phase 3 to
   # always logout by default. ODBC already implements Phase 3 behavior.
+  # Auto-detection logic scenarios moved to fire-and-forget ticket (SNOW-2923705)
 
 @python_e2e
   Scenario: should have Phase 2 defaults that enable auto_detection

@@ -1,4 +1,17 @@
+@jdbc
 Feature: Session Logout - JDBC-specific behavior
+
+  # ===========================================================================
+  #                   JDBC Default Configuration
+  # ===========================================================================
+
+@jdbc_e2e
+  Scenario: should use JDBC default 300 second timeout
+    # JDBC historically uses 300s (loginTimeout) for logout
+    Given JDBC connection is created with default timeout configuration
+    When Connection is closed
+    Then Logout timeout of 300 seconds is passed to Core
+    And Logout request uses 300 second timeout
 
   # ===========================================================================
   #                   Phase 2 Backward Compatibility Logic
