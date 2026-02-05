@@ -87,20 +87,20 @@ class TestBinaryLiteral:
     def test_should_select_binary_literals(self, execute_query, binary_type):
         # Given Snowflake client is logged in
 
-        # When Query "SELECT X'48656C6C6F' AS bin1, TO_BINARY('576F726C64', 'HEX')::{type} as bin2,
-        # TO_BINARY('V29ybGQ=', 'BASE64')::{type} as bin3" is executed
+        # When Query "SELECT X'48656C6C6F' AS bin1, TO_BINARY('48656C6C6F', 'HEX')::{type} as bin2,
+        # TO_BINARY('ASNFZ4mrze8=', 'BASE64')::{type} as bin3" is executed
         sql = (
             f"SELECT X'48656C6C6F' AS bin1, "
-            f"TO_BINARY('576F726C64', 'HEX')::{binary_type} as bin2, "
-            f"TO_BINARY('V29ybGQ=', 'BASE64')::{binary_type} as bin3"
+            f"TO_BINARY('48656C6C6F', 'HEX')::{binary_type} as bin2, "
+            f"TO_BINARY('ASNFZ4mrze8=', 'BASE64')::{binary_type} as bin3"
         )
         result = execute_query(sql, single_row=True)
 
         # Then the result should contain binary values:
         #   | bin1         | bin2         | bin3               |
-        #   | 0x48656C6C6F | 0x576F726C64 | 0x576F726C64 |
+        #   | 0x48656C6C6F | 0x48656C6C6F | 0x0123456789ABCDEF |
         assert_type(result, bytearray)
-        assert result == (bytearray(b"Hello"), bytearray(b"World"), bytearray(b"World"))
+        assert result == (bytearray(b"Hello"), bytearray(b"Hello"), bytearray(b"\x01\x23\x45\x67\x89\xab\xcd\xef"))
 
     @binary_type_parametrize
     def test_should_handle_binary_corner_case_values_from_literals(self, execute_query, binary_type):

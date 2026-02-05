@@ -26,10 +26,10 @@ Feature: BINARY type support
   @python_e2e
   Scenario: should select binary literals
     Given Snowflake client is logged in
-    When Query "SELECT X'48656C6C6F' AS bin1, TO_BINARY('48656C6C6F', 'HEX')::{type} as bin2, TO_BINARY('V29ybGQ=', 'BASE64')::{type}" is executed
+    When Query "SELECT X'48656C6C6F' AS bin1, TO_BINARY('48656C6C6F', 'HEX')::{type} as bin2, TO_BINARY('ASNFZ4mrze8=', 'BASE64')::{type} as bin3" is executed
     Then the result should contain binary values:
-      | bin1         | bin2         | bin3         |
-      | 0x48656C6C6F | 0x576F726C64 | 0x576F726C64 |
+      | bin1         | bin2         | bin3               |
+      | 0x48656C6C6F | 0x48656C6C6F | 0x0123456789ABCDEF |
 
 
   @python_e2e
@@ -61,7 +61,11 @@ Feature: BINARY type support
     And A temporary table with BINARY column is created
     And The table is populated with binary values [X'48656C6C6F', X'576F726C64', X'0123456789ABCDEF']
     When Query "SELECT * FROM {table} ORDER BY col" is executed
-    Then the result should contain:
+    Then the result should contain binary values in order:
+      | col                |
+      | 0x0123456789ABCDEF |
+      | 0x48656C6C6F       |
+      | 0x576F726C64       |
 
   @python_e2e
   Scenario: should select corner case binary values from table
@@ -83,7 +87,9 @@ Feature: BINARY type support
     And A temporary table with BINARY column is created
     And The table is populated with NULL and non-NULL binary values [NULL, X'ABCD', NULL]
     When Query "SELECT * FROM {table}" is executed
-    Then the result should contain expected values
+    Then there are 3 rows returned
+    And 2 rows should contain NULL values
+    And 1 row should contain 0xABCD
 
   @python_e2e
   Scenario: should select binary with specified length from table
