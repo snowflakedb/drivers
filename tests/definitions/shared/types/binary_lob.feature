@@ -1,6 +1,6 @@
 @python
 Feature: Binary LOB (Large Object) handling
-  # Snowflake LOB feature supportes these large BINARY values:
+  # Snowflake LOB feature supports these large BINARY values:
   #   - Default (pre-2025_03 bundle): Maximum 8 MB (8,388,608 bytes)
   #   - With 2025_03 bundle enabled: Maximum 64 MB (67,108,864 bytes)
   # Reference: https://docs.snowflake.com/en/release-notes/bcr-bundles/2025_03/bcr-1942
