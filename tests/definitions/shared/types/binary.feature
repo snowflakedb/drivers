@@ -26,8 +26,11 @@ Feature: BINARY type support
   @python_e2e
   Scenario: should select binary literals
     Given Snowflake client is logged in
-    When Query "SELECT X'48656C6C6F' AS bin1, TO_BINARY('48656C6C6F', 'HEX')::{type} as bin2, TO_BINARY('ASNFZ4mrze8=', 'BASE64')::{type} as bin3" is executed
-    Then the result should contain binary values:
+    When Queries selecting binary literals are executed:
+    # SELECT X'48656C6C6F'::{type}
+    # SELECT TO_BINARY('48656C6C6F', 'HEX')::{type}
+    # SELECT TO_BINARY('ASNFZ4mrze8=', 'BASE64')::{type}
+    Then the results should contain expected binary values
       | bin1         | bin2         | bin3               |
       | 0x48656C6C6F | 0x48656C6C6F | 0x0123456789ABCDEF |
 
@@ -139,16 +142,16 @@ Feature: BINARY type support
 
   @python_e2e
   Scenario: should download binary data in multiple chunks using GENERATOR
-    # ~10000 values ensures data is downloaded in at least two chunks
+    # ~30000 values ensures data is downloaded in at least two chunks
     Given Snowflake client is logged in
-    When Query "SELECT seq8() AS id, TO_BINARY(LPAD(TO_VARCHAR(seq8()), 10, '0'), 'UTF-8') AS bin_val FROM TABLE(GENERATOR(ROWCOUNT => 10000)) v ORDER BY id" is executed
-    Then there are 10000 rows returned
+    When Query "SELECT seq8() AS id, TO_BINARY(LPAD(TO_VARCHAR(seq8()), 10, '0'), 'UTF-8') AS bin_val FROM TABLE(GENERATOR(ROWCOUNT => 30000)) v ORDER BY id" is executed
+    Then there are 30000 rows returned
     And all returned binary values should match the generated values in order
 
   @python_e2e
   Scenario: should download binary data in multiple chunks from table
     Given Snowflake client is logged in
-    And Table with (bin_data BINARY) exists with 10000 sequential binary values
+    And Table with (bin_data BINARY) exists with 30000 sequential binary values
     When Query "SELECT * FROM {table} ORDER BY bin_data" is executed
-    Then there are 10000 rows returned
+    Then there are 30000 rows returned
     And all returned binary values should match the inserted values in order

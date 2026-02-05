@@ -58,7 +58,7 @@ HAPPY_PATH_VALUES = [
 # =============================================================================
 # LARGE RESULT SET SIZE
 # =============================================================================
-LARGE_RESULT_SET_SIZE = 10_000
+LARGE_RESULT_SET_SIZE = 30_000
 
 
 class TestBinaryTypeCasting:
@@ -87,8 +87,7 @@ class TestBinaryLiteral:
     def test_should_select_binary_literals(self, execute_query, binary_type):
         # Given Snowflake client is logged in
 
-        # When Query "SELECT X'48656C6C6F' AS bin1, TO_BINARY('48656C6C6F', 'HEX')::{type} as bin2,
-        # TO_BINARY('ASNFZ4mrze8=', 'BASE64')::{type} as bin3" is executed
+        # When Queries selecting binary literals are executed:
         sql = (
             f"SELECT X'48656C6C6F' AS bin1, "
             f"TO_BINARY('48656C6C6F', 'HEX')::{binary_type} as bin2, "
@@ -96,9 +95,7 @@ class TestBinaryLiteral:
         )
         result = execute_query(sql, single_row=True)
 
-        # Then the result should contain binary values:
-        #   | bin1         | bin2         | bin3               |
-        #   | 0x48656C6C6F | 0x48656C6C6F | 0x0123456789ABCDEF |
+        # Then the results should contain expected binary values:
         assert_type(result, bytearray)
         assert result == (bytearray(b"Hello"), bytearray(b"Hello"), bytearray(b"\x01\x23\x45\x67\x89\xab\xcd\xef"))
 
@@ -143,7 +140,7 @@ class TestBinaryTable:
         # When Query "SELECT * FROM {table} ORDER BY col" is executed
         rows = execute_query(f"SELECT * FROM {table_name} ORDER BY col")
 
-        # Then the result should contain the inserted binary values
+        # Then the result should contain binary values in order:
         result = [row[0] for row in rows]
         expected = sorted([val for val, _ in HAPPY_PATH_VALUES])
         assert_type(result, bytearray)
@@ -161,7 +158,7 @@ class TestBinaryTable:
         for _, sql_val in CORNER_CASE_VALUES:
             execute_query(f"INSERT INTO {table_name} VALUES ({sql_val})")
 
-        # When Query "SELECT * FROM {table} ORDER BY col" is executed
+        # When Query "SELECT * FROM {table} ORDER BY 1" is executed
         rows = execute_query(f"SELECT * FROM {table_name} ORDER BY 1")
 
         # Then the result should contain the inserted corner case binary values
@@ -179,7 +176,7 @@ class TestBinaryTable:
         table_name = f"{tmp_schema}.binary_null_table_test"
         execute_query(f"CREATE TABLE {table_name} (col {binary_type})")
 
-        # And The table is populated with NULL and non-NULL binary values
+        # And The table is populated with NULL and non-NULL binary values [NULL, X'ABCD', NULL]
         execute_query(f"INSERT INTO {table_name} VALUES (NULL)")
         execute_query(f"INSERT INTO {table_name} VALUES (X'ABCD')")
         execute_query(f"INSERT INTO {table_name} VALUES (NULL)")
@@ -187,11 +184,13 @@ class TestBinaryTable:
         # When Query "SELECT * FROM {table}" is executed
         rows = execute_query(f"SELECT * FROM {table_name}")
 
-        # Then the result should contain expected values
+        # Then there are 3 rows returned
         result = [row[0] for row in rows]
         assert len(result) == 3
         assert_type(result, bytearray, can_be_none=True)
+        # And 2 rows should contain NULL values
         assert result.count(None) == 2
+        # And 1 row should contain 0xABCD
         assert b"\xab\xcd" in result
 
     @binary_type_parametrize
@@ -239,8 +238,6 @@ class TestBinaryBinding:
         )
 
         # Then the result should contain:
-        #   | col1           | col2           | col3               |
-        #   | 0x48656C6C6F   | 0x576F726C64   | 0x0123456789ABCDEF |
         assert_type(result, bytearray)
         assert result == (b"Hello", b"World", b"\x01\x23\x45\x67\x89\xab\xcd\xef")
 
@@ -272,14 +269,8 @@ class TestBinaryBinding:
     def test_should_bind_corner_case_binary_values(self, execute_query, binary_type):
         # Given Snowflake client is logged in
 
-        # When Query "SELECT ?::BINARY" is executed with each corner case binary value bound
-        # Corner cases:
-        #   - Empty binary: b'' (0 bytes)
-        #   - Single null byte: b'\x00'
-        #   - Single max byte: b'\xff'
-        #   - Embedded nulls: b'\x48\x00\x65\x00'
-        #   - NULL value
         for corner_case, _ in CORNER_CASE_VALUES:
+            # When Query "SELECT ?::BINARY" is executed with each corner case binary value bound
             result = execute_query(f"SELECT ?::{binary_type}", (corner_case,), single_row=True)
 
             # Then the result should match the bound corner case value
@@ -290,12 +281,13 @@ class TestBinaryMultipleChunks:
     """Tests for BINARY type with multiple chunks downloading."""
 
     def test_should_download_binary_data_in_multiple_chunks_using_generator(self, execute_query):
-        # ~10000 values ensures data is downloaded in at least two chunks
+        # ~30000 values ensures data is downloaded in at least two chunks
 
         # Given Snowflake client is logged in
 
         # When Query "SELECT seq8() AS id, TO_BINARY(LPAD(TO_VARCHAR(seq8()), 10, '0'), 'UTF-8')
-        # AS bin_val FROM TABLE(GENERATOR(ROWCOUNT => 10000)) v ORDER BY id" is executed
+        # AS bin_val FROM TABLE(GENERATOR(ROWCOUNT => 30000)) v ORDER BY id" is executed
+
         # Note: We use ROW_NUMBER() instead of seq8() directly to ensure sequential values
         sql = (
             f"SELECT (ROW_NUMBER() OVER (ORDER BY seq8()) - 1) AS id, "
@@ -305,18 +297,19 @@ class TestBinaryMultipleChunks:
         )
         rows = execute_query(sql)
 
-        # Then there are 10000 rows returned
+        # Then there are 30000 rows returned
+
         # And all returned binary values should match the generated values in order
         assert_sequential_values(rows, LARGE_RESULT_SET_SIZE, transform=lambda i: (i, str(i).zfill(10).encode("utf-8")))
 
     def test_should_download_binary_data_in_multiple_chunks_from_table(self, execute_query, tmp_schema):
         # Given Snowflake client is logged in
 
-        # And Table with (bin_data BINARY) exists with 10000 sequential binary values
+        # And Table with (bin_data BINARY) exists with 30000 sequential binary values
         table_name = f"{tmp_schema}.binary_chunks_table"
         execute_query(f"CREATE TABLE {table_name} (bin_data BINARY)")
 
-        # Insert 10000 sequential binary values using GENERATOR
+        # Insert 30000 sequential binary values using GENERATOR
         execute_query(
             f"INSERT INTO {table_name} "
             f"SELECT TO_BINARY(LPAD(TO_VARCHAR(seq8()), 10, '0'), 'UTF-8') "
@@ -326,6 +319,6 @@ class TestBinaryMultipleChunks:
         # When Query "SELECT * FROM {table} ORDER BY bin_data" is executed
         rows = execute_query(f"SELECT * FROM {table_name} ORDER BY bin_data")
 
-        # Then there are 10000 rows returned
+        # Then there are 30000 rows returned
         # And all returned binary values should match the inserted values in order
         assert_sequential_values(rows, LARGE_RESULT_SET_SIZE, transform=lambda i: (str(i).zfill(10).encode("utf-8"),))

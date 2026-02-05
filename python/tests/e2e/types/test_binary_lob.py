@@ -51,23 +51,24 @@ class TestBinaryLob:
 
         # Given Snowflake client is logged in
 
-        # And A temporary table with BINARY column is created
+        # And Table with BINARY column exists
         table_name = f"{tmp_schema}.lob_8mb_table"
         execute_query(f"CREATE TABLE {table_name} (val BINARY)")
 
-        # When A binary value of 8388608 bytes is generated and inserted
+        # When Binary value of 8MB size (8,388,608 bytes) is inserted
+
         # (Note: REPEAT() cannot be used in VALUES clause, must use INSERT ... SELECT)
         N = LOB_8MB_SIZE // 32
         generated_binary = bytes.fromhex(HEX32) * N
         execute_query(f"INSERT INTO {table_name} SELECT TO_BINARY(REPEAT('{HEX32}', {N}), 'HEX')")
 
-        # And Query "SELECT val, LENGTH(val) as len FROM {table}" is executed
+        # And Query "SELECT * FROM {table}" is executed
         result_bin, result_len = execute_query(f"SELECT val, LENGTH(val) as len FROM {table_name}", single_row=True)
 
-        # Then the result should show length 8388608
+        # Then the retrieved value size should be 8MB (8,388,608 bytes)
         assert result_len == LOB_8MB_SIZE, f"Expected length {LOB_8MB_SIZE}, got {result_len}"
 
-        # And the returned binary should exactly match the generated binary
+        # And data integrity should be maintained
         assert isinstance(result_bin, bytearray), f"Expected bytearray, got {type(result_bin).__name__}"
         assert_binary_equal(result_bin, generated_binary)
 
@@ -77,22 +78,23 @@ class TestBinaryLob:
 
         # Given Snowflake client is logged in
 
-        # And A temporary table with BINARY(67108864) column is created
+        # And Table with BINARY(67108864) column exists
         table_name = f"{tmp_schema}.lob_64mb_table"
         execute_query(f"CREATE TABLE {table_name} (val BINARY(67108864))")
 
-        # When A binary value of 67108864 bytes is generated and inserted
+        # When Binary value of 64MB size (67,108,864 bytes) is inserted
+
         # (Note: REPEAT() cannot be used in VALUES clause, must use INSERT ... SELECT)
         N = LOB_64MB_SIZE // 32
         generated_binary = bytes.fromhex(HEX32) * N
         execute_query(f"INSERT INTO {table_name} SELECT TO_BINARY(REPEAT('{HEX32}', {N}), 'HEX')")
 
-        # And Query "SELECT val, LENGTH(val) as len FROM {table}" is executed
+        # And Query "SELECT * FROM {table}" is executed
         result_bin, result_len = execute_query(f"SELECT val, LENGTH(val) as len FROM {table_name}", single_row=True)
 
-        # Then the result should show length 67108864
+        # Then the retrieved value size should be 64MB (67,108,864 bytes)
         assert result_len == LOB_64MB_SIZE, f"Expected length {LOB_64MB_SIZE}, got {result_len}"
 
-        # And the returned binary should exactly match the generated binary
+        # And data integrity should be maintained
         assert isinstance(result_bin, bytearray), f"Expected bytearray, got {type(result_bin).__name__}"
         assert_binary_equal(result_bin, generated_binary)
