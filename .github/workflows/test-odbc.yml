@@ -126,41 +126,14 @@ jobs:
         env:
           RUSTFLAGS: "-C linker=rust-lld"
 
-      - name: Build and run ODBC tests (Linux)
-        if: runner.os == 'Linux'
+      - name: Build and run ODBC tests (Unix)
+        if: runner.os != 'Windows'
         run: |
           ls -l target/debug/
           export DRIVER_PATH=$(pwd)/target/debug/${{ matrix.driver_lib }}
           export PARAMETER_PATH=$(pwd)/parameters.json
-          NPROC=$(nproc)
-          
-          cd odbc_tests
-          mkdir -p cmake-build
-          cmake -B cmake-build \
-              -D ODBC_LIBRARY="/usr/lib/x86_64-linux-gnu/libodbc.so" \
-              -D ODBC_INCLUDE_DIR="/usr/include" \
-              -D DRIVER_TYPE=NEW \
-              .
-          cmake --build cmake-build -- -j $NPROC
-          ctest -j $NPROC -C Debug --test-dir cmake-build --output-on-failure
-
-      - name: Build and run ODBC tests (macOS)
-        if: runner.os == 'macOS'
-        run: |
-          ls -l target/debug/
-          export DRIVER_PATH=$(pwd)/target/debug/${{ matrix.driver_lib }}
-          export PARAMETER_PATH=$(pwd)/parameters.json
-          NPROC=$(sysctl -n hw.ncpu)
-          
-          cd odbc_tests
-          mkdir -p cmake-build
-          cmake -B cmake-build \
-              -D ODBC_LIBRARY="${ODBC_PREFIX}/lib/libodbc.dylib" \
-              -D ODBC_INCLUDE_DIR="${ODBC_PREFIX}/include" \
-              -D DRIVER_TYPE=NEW \
-              .
-          cmake --build cmake-build -- -j $NPROC
-          ctest -j $NPROC -C Debug --test-dir cmake-build --output-on-failure
+          export DRIVER_TYPE=NEW
+          ./scripts/odbc/run_tests_unix.sh
 
       - name: Build and run ODBC tests (Windows)
         if: runner.os == 'Windows'
@@ -169,13 +142,8 @@ jobs:
           dir target\debug\
           $env:DRIVER_PATH = "$PWD\target\debug\${{ matrix.driver_lib }}"
           $env:PARAMETER_PATH = "$PWD\parameters.json"
-          $NPROC = (Get-CimInstance Win32_ComputerSystem).NumberOfLogicalProcessors
-          
-          cd odbc_tests
-          New-Item -ItemType Directory -Force -Path cmake-build | Out-Null
-          cmake -B cmake-build -D DRIVER_TYPE=NEW .
-          cmake --build cmake-build --config Debug --parallel $NPROC
-          ctest -j $NPROC -C Debug --test-dir cmake-build --output-on-failure
+          $env:DRIVER_TYPE = "NEW"
+          .\scripts\odbc\run_tests_windows.ps1
 
   odbc-status:
     needs: [detect-changes, odbc_tests_reference, odbc_tests]
