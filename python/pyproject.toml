@@ -62,11 +62,27 @@ include = [
     "hatch_build.py",
     "LICENSE",
     "README.md",
+    # Rust sources (directory symlinks dereferenced during sdist build)
+    "sf_core/",
+    "proto_utils/",
 ]
 exclude = [
     "__pycache__",
     "src/snowflake/connector/_internal/nanoarrow_cpp/scripts",
+    # Exclude Rust build artifacts
+    "sf_core/target/",
+    "proto_utils/target/",
+    # Exclude sf_core tests (except arrow_deserialize_macro which is a dev-dependency)
+    "sf_core/tests/e2e/",
+    "sf_core/tests/integration/",
+    "sf_core/tests/*.rs",
 ]
+
+# Individual files need force-include (file symlinks are not dereferenced)
+[tool.hatch.build.targets.sdist.force-include]
+"Cargo.toml.sdist" = "Cargo.toml"
+"../Cargo.lock" = "Cargo.lock"
+"../build_common.rs" = "build_common.rs"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/snowflake"]
@@ -100,6 +116,7 @@ timeout = 120
 markers = [
     "skip_reference(reason: str=''): skip when --connector=reference",
     "skip_universal(reason: str=''): skip when --connector=universal",
+    "slow: marks tests as slow (e.g., full sdist install with Rust compilation)",
 ]
 log_cli = true
 log_cli_level = "INFO"
@@ -212,6 +229,18 @@ python = ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]
 [tool.hatch.envs.test.scripts]
 # Install from wheel
 install-wheel = "uv pip install {env:WHEEL_PATH:dist/*.whl}"
+
+# Packaging tests environment - tests sdist build and installation
+[tool.hatch.envs.packaging]
+features = ["test"]
+installer = "uv"
+extra-dependencies = ["build"]
+
+[[tool.hatch.envs.packaging.matrix]]
+python = ["3.13"]
+
+[tool.hatch.envs.packaging.scripts]
+test = "pytest tests/packaging {args}"
 
 # Reference connector environment installs only reference connector
 [tool.hatch.envs.reference]

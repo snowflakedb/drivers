@@ -1,0 +1,16 @@
+# Minimal workspace for sdist builds (only includes sf_core and its dependencies)
+[workspace]
+members = [
+    "sf_core",
+    "proto_utils",
+    # Required because sf_core/Cargo.toml has a dev-dependency with path reference:
+    # arrow_deserialize_macro = { path = "tests/common/arrow_deserialize_macro" }
+    # Cargo validates all path dependencies even for release builds.
+    "sf_core/tests/common/arrow_deserialize_macro",
+]
+resolver = "1"
+
+[profile.release]
+strip = true
+opt-level = "z"
+lto = false
