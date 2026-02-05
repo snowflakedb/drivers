@@ -1,4 +1,4 @@
-@python  @core_not_needed
+@python @core_not_needed
 Feature: BINARY type support
   # Snowflake Binary types: BINARY, VARBINARY
   # Stores binary data (byte sequences) in hexadecimal format
@@ -11,7 +11,7 @@ Feature: BINARY type support
 
   @python_e2e
   Scenario: should cast binary values to appropriate type
-    # Python: Values should be cast to 'bytes' type
+    # Python: Values should be cast to 'bytearray' type
     Given Snowflake client is logged in
     When Query "SELECT TO_BINARY('48656C6C6F', 'HEX')::BINARY, TO_BINARY('V29ybGQ=', 'BASE64')::BINARY" is executed
     Then All values should be returned as appropriate binary type
@@ -28,8 +28,8 @@ Feature: BINARY type support
     Given Snowflake client is logged in
     When Query "SELECT X'48656C6C6F' AS bin1, TO_BINARY('48656C6C6F', 'HEX')::{type} as bin2, TO_BINARY('V29ybGQ=', 'BASE64')::{type}" is executed
     Then the result should contain binary values:
-      | bin1         | bin2         | bin3               |
-      | 0x48656C6C6F | 0x576F726C64 | 0x0123456789ABCDEF |
+      | bin1         | bin2         | bin3         |
+      | 0x48656C6C6F | 0x576F726C64 | 0x576F726C64 |
 
 
   @python_e2e
@@ -74,9 +74,16 @@ Feature: BINARY type support
     #   - Single max byte: X'FF'
     #   - Multiple null bytes: X'000000'
     #   - Embedded nulls: X'48006500'
-    #   - NULL value
-    When Query "SELECT * FROM {table}" is executed
+    When Query "SELECT * FROM {table} ORDER BY 1" is executed
     Then the result should contain the inserted corner case binary values
+
+  @python_e2e
+  Scenario: should select NULL binary values from table
+    Given Snowflake client is logged in
+    And A temporary table with BINARY column is created
+    And The table is populated with NULL and non-NULL binary values [NULL, X'ABCD', NULL]
+    When Query "SELECT * FROM {table}" is executed
+    Then the result should contain expected values
 
   @python_e2e
   Scenario: should select binary with specified length from table
