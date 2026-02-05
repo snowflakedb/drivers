@@ -76,6 +76,6 @@ def get_type_code(snowflake_type: str) -> int:
     Returns:
         int: Type code for PEP 249 compliance
     """
-    # Normalize type name (uppercase, remove spaces)
+    # Normalize type name: uppercase and strip leading/trailing whitespace (preserve internal spaces)
     normalized_type = snowflake_type.upper().strip()
     return SNOWFLAKE_TYPE_TO_CODE.get(normalized_type, TEXT)  # Default to TEXT if unknown

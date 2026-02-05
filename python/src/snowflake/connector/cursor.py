@@ -19,8 +19,8 @@ from typing import TYPE_CHECKING, Any, Optional
 from ._internal.arrow_context import ArrowConverterContext
 from ._internal.arrow_stream_iterator import ArrowStreamIterator  # type: ignore[import-not-found]
 from ._internal.protobuf_gen.database_driver_v1_pb2 import (  # type: ignore[attr-defined]
+    ExecuteResult,
     StatementExecuteQueryRequest,
-    StatementExecuteQueryResponse,
     StatementNewRequest,
     StatementSetSqlQueryRequest,
 )
@@ -72,7 +72,7 @@ class SnowflakeCursorBase(abc.ABC):
         self._reader = None
         self._current_batch = None
         self._current_row_in_batch = 0
-        self.execute_result: StatementExecuteQueryResponse = None
+        self.execute_result: ExecuteResult = None
         self._iterator: Iterator[Row] | Iterator[DictRow] | None = None
 
     # ------------------------------------------------------------------
@@ -173,11 +173,11 @@ class SnowflakeCursorBase(abc.ABC):
 
         # Reset streaming state for a new result
         self._iterator = None
-        return self
 
         # Populate description and rowcount
         self._populate_description()
         self._populate_rowcount()
+        return self
 
     def _populate_rowcount(self) -> None:
         if self.execute_result:
@@ -252,15 +252,17 @@ class SnowflakeCursorBase(abc.ABC):
 
             # display_size: For TEXT types, use length; otherwise None
             display_size = (
-                col.length if col.length and col.type.upper() in ("TEXT", "VARCHAR", "CHAR", "STRING") else None
+                col.length
+                if col.HasField("length") and col.type.upper() in ("TEXT", "VARCHAR", "CHAR", "STRING")
+                else None
             )
 
             # internal_size: Use byte_length if available
-            internal_size = col.byte_length if col.byte_length else None
+            internal_size = col.byte_length if col.HasField("byte_length") else None
 
             # precision and scale for numeric types
-            precision = col.precision if col.precision else None
-            scale = col.scale if col.scale else None
+            precision = col.precision if col.HasField("precision") else None
+            scale = col.scale if col.HasField("scale") else None
 
             # nullable flag
             null_ok = col.nullable
