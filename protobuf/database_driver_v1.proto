@@ -342,6 +342,41 @@ message ConnectionRollbackRequest {
 message ConnectionRollbackResponse {
 }
 
+// Query status enum matching Snowflake query status values
+enum QueryStatus {
+  QUERY_STATUS_RUNNING = 0;
+  QUERY_STATUS_ABORTING = 1;
+  QUERY_STATUS_SUCCESS = 2;
+  QUERY_STATUS_FAILED_WITH_ERROR = 3;
+  QUERY_STATUS_ABORTED = 4;
+  QUERY_STATUS_QUEUED = 5;
+  QUERY_STATUS_FAILED_WITH_INCIDENT = 6;
+  QUERY_STATUS_DISCONNECTED = 7;
+  QUERY_STATUS_RESUMING_WAREHOUSE = 8;
+  QUERY_STATUS_QUEUED_REPARING_WAREHOUSE = 9;
+  QUERY_STATUS_RESTARTED = 10;
+  QUERY_STATUS_BLOCKED = 11;
+  QUERY_STATUS_NO_DATA = 12;
+}
+
+message ConnectionGetQueryStatusRequest {
+  ConnectionHandle conn_handle = 1;
+  string query_id = 2;
+}
+
+message ConnectionGetQueryStatusResponse {
+  QueryStatus status = 1;
+}
+
+message ConnectionGetResultsFromQueryIdRequest {
+  ConnectionHandle conn_handle = 1;
+  string query_id = 2;
+}
+
+message ConnectionGetResultsFromQueryIdResponse {
+  ExecuteResult result = 1;
+}
+
 // Statement service requests and responses
 
 message StatementNewRequest {
@@ -445,6 +480,7 @@ message StatementBindStreamResponse {
 
 message StatementExecuteQueryRequest {
   StatementHandle stmt_handle = 1;
+  optional bool async_exec = 2;
 }
 
 message StatementExecuteQueryResponse {
@@ -494,6 +530,8 @@ service DatabaseDriver {
   rpc ConnectionGetTableTypes(ConnectionGetTableTypesRequest) returns (ConnectionGetTableTypesResponse);
   rpc ConnectionCommit(ConnectionCommitRequest) returns (ConnectionCommitResponse);
   rpc ConnectionRollback(ConnectionRollbackRequest) returns (ConnectionRollbackResponse);
+  rpc ConnectionGetQueryStatus(ConnectionGetQueryStatusRequest) returns (ConnectionGetQueryStatusResponse);
+  rpc ConnectionGetResultsFromQueryId(ConnectionGetResultsFromQueryIdRequest) returns (ConnectionGetResultsFromQueryIdResponse);
 
   // Statement operations
   rpc StatementNew(StatementNewRequest) returns (StatementNewResponse);

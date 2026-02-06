@@ -19,13 +19,15 @@ from typing import TYPE_CHECKING, Any, NamedTuple
 from ._internal.arrow_context import ArrowConverterContext
 from ._internal.arrow_stream_iterator import ArrowStreamIterator  # type: ignore[import-not-found]
 from ._internal.protobuf_gen.database_driver_v1_pb2 import (  # type: ignore[attr-defined]
+    ConnectionGetResultsFromQueryIdRequest,
     ExecuteResult,
     StatementExecuteQueryRequest,
     StatementNewRequest,
     StatementSetSqlQueryRequest,
 )
 from ._internal.type_codes import get_type_code
-from .errors import NotSupportedError, ProgrammingError
+from .constants import QueryStatus
+from .errors import DatabaseError, NotSupportedError, ProgrammingError
 
 
 if TYPE_CHECKING:
@@ -187,14 +189,21 @@ class SnowflakeCursorBase(abc.ABC):
         """Close the cursor now (rather than whenever __del__ is called)."""
         self._closed = True
 
-    def execute(self, operation: str, parameters: Sequence[Any] | dict[str, Any] | None = None) -> SnowflakeCursorBase:
+    def execute(
+        self, operation: str, parameters: Sequence[Any] | dict[str, Any] | None = None, _exec_async: bool = False
+    ) -> SnowflakeCursorBase:
         """
         Execute a database operation (query or command).
 
         Args:
             operation (str): SQL statement to execute
             parameters (sequence or mapping): Parameters for the operation
+            _exec_async (bool): Internal parameter to execute asynchronously
         """
+        # Check if this is a PUT/GET command
+        if _exec_async and operation.strip().upper().startswith(("PUT ", "GET ")):
+            raise NotSupportedError("PUT and GET statements are not supported with execute_async()")
+
         stmt_handle = self.connection.db_api.statement_new(
             StatementNewRequest(conn_handle=self.connection.conn_handle)
         ).stmt_handle
@@ -202,7 +211,7 @@ class SnowflakeCursorBase(abc.ABC):
             StatementSetSqlQueryRequest(stmt_handle=stmt_handle, query=operation)
         )
         self.execute_result = self.connection.db_api.statement_execute_query(
-            StatementExecuteQueryRequest(stmt_handle=stmt_handle)
+            StatementExecuteQueryRequest(stmt_handle=stmt_handle, async_exec=_exec_async)
         ).result
 
         # Reset streaming state for a new result
@@ -212,6 +221,30 @@ class SnowflakeCursorBase(abc.ABC):
         self._populate_description()
         self._populate_rowcount()
         return self
+
+    def execute_async(
+        self, operation: str, parameters: Sequence[Any] | dict[str, Any] | None = None, **kwargs: Any
+    ) -> dict[str, Any]:
+        """
+        Execute a query without waiting for results (asynchronously).
+
+        This function takes the same arguments as execute. Please note that PUT and GET
+        statements are not supported by this method.
+
+        Args:
+            operation (str): SQL statement to execute
+            parameters (sequence or mapping): Parameters for the operation
+            **kwargs: Additional arguments passed to execute
+
+        Returns:
+            dict: Dictionary containing the query ID under the "queryId" key
+
+        Raises:
+            NotSupportedError: If PUT/GET commands are attempted
+        """
+        kwargs["_exec_async"] = True
+        self.execute(operation, parameters, **kwargs)
+        return {"queryId": self.sfqid}
 
     def _populate_rowcount(self) -> None:
         if self.execute_result:
@@ -406,6 +439,71 @@ class SnowflakeCursorBase(abc.ABC):
     def next(self) -> Row | DictRow:
         """Python 2 compatibility method."""
         return self.__next__()
+
+    def get_results_from_sfqid(self, sfqid: str) -> None:
+        """
+        Get the results from a previously executed async query.
+
+        This method polls the query status until it is no longer running,
+        and then retrieves the results using RESULT_SCAN.
+
+        Args:
+            sfqid (str): Snowflake Query ID (UUID format)
+
+        Raises:
+            DatabaseError: If query fails or cannot retrieve results
+        """
+        import time
+        import uuid
+
+        # Validate UUID format
+        try:
+            uuid.UUID(sfqid)
+        except ValueError as e:
+            raise DatabaseError(f"Invalid query ID format: {sfqid}") from e
+
+        # Poll for completion with exponential backoff
+        retry_pattern = [1, 1, 2, 3, 4, 8, 10]  # seconds
+        retry_pattern_pos = 0
+        no_data_counter = 0
+        max_no_data_retries = 24
+
+        while True:
+            status = self.connection.get_query_status(sfqid)
+
+            if not self.connection.is_still_running(status):
+                # Query completed or failed
+                if self.connection.is_an_error(status):
+                    raise DatabaseError(f"Query {sfqid} failed with status: {status.name}")
+                break
+
+            # Check for NO_DATA status
+            if status == QueryStatus.NO_DATA:
+                no_data_counter += 1
+                if no_data_counter > max_no_data_retries:
+                    raise DatabaseError(f"Cannot retrieve data on query {sfqid} after {max_no_data_retries} retries")
+
+            # Sleep with exponential backoff
+            sleep_time = 0.5 * retry_pattern[retry_pattern_pos]
+            time.sleep(sleep_time)
+
+            # Advance retry pattern position
+            if retry_pattern_pos < len(retry_pattern) - 1:
+                retry_pattern_pos += 1
+
+        # Get results using RESULT_SCAN
+        response = self.connection.db_api.connection_get_results_from_query_id(
+            ConnectionGetResultsFromQueryIdRequest(conn_handle=self.connection.conn_handle, query_id=sfqid)
+        )
+
+        self.execute_result = response.result
+
+        # Reset streaming state
+        self._iterator = None
+
+        # Populate description and rowcount
+        self._populate_description()
+        self._populate_rowcount()
 
     # ------------------------------------------------------------------
     # Context manager

@@ -910,4 +910,16 @@ pub enum SnowflakeResponseError {
         #[snafu(implicit)]
         location: Location,
     },
+    #[snafu(display("Query not found: {query_id}"))]
+    QueryNotFound {
+        query_id: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Unexpected response: {message}"))]
+    UnexpectedResponse {
+        message: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
 }

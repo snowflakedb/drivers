@@ -109,6 +109,16 @@ public interface DatabaseDriverService {
     DatabaseDriverV1.ConnectionRollbackResponse connectionRollback(DatabaseDriverV1.ConnectionRollbackRequest request) throws ServiceException, TransportException;
 
     /**
+     * Method: connectionGetQueryStatus
+     */
+    DatabaseDriverV1.ConnectionGetQueryStatusResponse connectionGetQueryStatus(DatabaseDriverV1.ConnectionGetQueryStatusRequest request) throws ServiceException, TransportException;
+
+    /**
+     * Method: connectionGetResultsFromQueryId
+     */
+    DatabaseDriverV1.ConnectionGetResultsFromQueryIdResponse connectionGetResultsFromQueryId(DatabaseDriverV1.ConnectionGetResultsFromQueryIdRequest request) throws ServiceException, TransportException;
+
+    /**
      * Method: statementNew
      */
     DatabaseDriverV1.StatementNewResponse statementNew(DatabaseDriverV1.StatementNewRequest request) throws ServiceException, TransportException;

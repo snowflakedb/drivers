@@ -88,6 +88,265 @@ pub fn connection_release(conn_handle: Handle) -> Result<(), ApiError> {
     }
 }
 
+#[repr(i32)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QueryStatus {
+    Running = 0,
+    Aborting = 1,
+    Success = 2,
+    FailedWithError = 3,
+    Aborted = 4,
+    Queued = 5,
+    FailedWithIncident = 6,
+    Disconnected = 7,
+    ResumingWarehouse = 8,
+    QueuedReparingWarehouse = 9,
+    Restarted = 10,
+    Blocked = 11,
+    NoData = 12,
+}
+
+impl QueryStatus {
+    pub fn from_string(status: &str) -> Option<Self> {
+        match status {
+            "RUNNING" => Some(QueryStatus::Running),
+            "ABORTING" => Some(QueryStatus::Aborting),
+            "SUCCESS" => Some(QueryStatus::Success),
+            "FAILED_WITH_ERROR" => Some(QueryStatus::FailedWithError),
+            "ABORTED" => Some(QueryStatus::Aborted),
+            "QUEUED" => Some(QueryStatus::Queued),
+            "FAILED_WITH_INCIDENT" => Some(QueryStatus::FailedWithIncident),
+            "DISCONNECTED" => Some(QueryStatus::Disconnected),
+            "RESUMING_WAREHOUSE" => Some(QueryStatus::ResumingWarehouse),
+            "QUEUED_REPARING_WAREHOUSE" => Some(QueryStatus::QueuedReparingWarehouse),
+            "RESTARTED" => Some(QueryStatus::Restarted),
+            "BLOCKED" => Some(QueryStatus::Blocked),
+            "NO_DATA" => Some(QueryStatus::NoData),
+            _ => None,
+        }
+    }
+}
+
+pub fn connection_get_query_status(
+    conn_handle: Handle,
+    query_id: String,
+) -> Result<QueryStatus, ApiError> {
+    let conn_ptr = CONN_HANDLE_MANAGER.get_obj(conn_handle).ok_or_else(|| {
+        InvalidArgumentSnafu {
+            argument: "Connection handle not found".to_string(),
+        }
+        .build()
+    })?;
+
+    // Create a blocking runtime for the REST API call
+    let rt = tokio::runtime::Runtime::new().context(RuntimeCreationSnafu)?;
+
+    let (http_client, server_url, retry_policy) = {
+        let conn = conn_ptr
+            .lock()
+            .map_err(|_| ConnectionLockingSnafu {}.build())?;
+        (
+            conn.http_client
+                .clone()
+                .context(ConnectionNotInitializedSnafu)?,
+            conn.server_url
+                .clone()
+                .context(ConnectionNotInitializedSnafu)?,
+            conn.retry_policy.clone(),
+        )
+    };
+
+    // Call monitoring API with automatic session refresh
+    let conn = conn_ptr.clone();
+    let status_response = rt.block_on(with_valid_session(&conn, |session_token| {
+        let http_client = http_client.clone();
+        let server_url = server_url.clone();
+        let query_id = query_id.clone();
+        let retry_policy = retry_policy.clone();
+        async move {
+            get_query_status_from_monitoring_api(
+                &http_client,
+                &server_url,
+                &session_token,
+                &query_id,
+                &retry_policy,
+            )
+            .await
+        }
+    }))?;
+
+    Ok(status_response)
+}
+
+pub fn connection_get_results_from_query_id(
+    conn_handle: Handle,
+    query_id: String,
+) -> Result<super::statement::ExecuteResult, ApiError> {
+    use super::error::StatementLockingSnafu;
+    use super::global_state::STMT_HANDLE_MANAGER;
+    use super::statement::{Statement, statement_execute_query};
+
+    // Create a temporary statement to execute the RESULT_SCAN query
+    let stmt_handle = {
+        let conn_ptr = CONN_HANDLE_MANAGER.get_obj(conn_handle).ok_or_else(|| {
+            InvalidArgumentSnafu {
+                argument: "Connection handle not found".to_string(),
+            }
+            .build()
+        })?;
+
+        STMT_HANDLE_MANAGER.add_handle(std::sync::Mutex::new(Statement::new(conn_ptr.clone())))
+    };
+
+    // Set the RESULT_SCAN query
+    let stmt_ptr = STMT_HANDLE_MANAGER.get_obj(stmt_handle).ok_or_else(|| {
+        InvalidArgumentSnafu {
+            argument: "Statement handle not found".to_string(),
+        }
+        .build()
+    })?;
+
+    {
+        let mut stmt = stmt_ptr.lock().map_err(|_| StatementLockingSnafu.build())?;
+        stmt.query = Some(format!("SELECT * FROM TABLE(RESULT_SCAN('{}'))", query_id));
+    }
+
+    // Execute the query
+    let result = statement_execute_query(stmt_handle)?;
+
+    // Clean up the temporary statement
+    let _ = STMT_HANDLE_MANAGER.delete_handle(stmt_handle);
+
+    Ok(result)
+}
+
+async fn get_query_status_from_monitoring_api(
+    client: &reqwest::Client,
+    server_url: &str,
+    session_token: &str,
+    query_id: &str,
+    retry_policy: &RetryPolicy,
+) -> Result<QueryStatus, RestError> {
+    use reqwest::Method;
+    use serde::Deserialize;
+    use snafu::location;
+    use url::Url;
+
+    #[derive(Debug, Deserialize)]
+    struct MonitoringResponse {
+        data: MonitoringData,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct MonitoringData {
+        queries: Vec<QueryInfo>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct QueryInfo {
+        status: String,
+    }
+
+    // Construct the monitoring URL
+    let url = Url::parse(server_url)
+        .and_then(|base| base.join(&format!("/monitoring/queries/{}", query_id)))
+        .map_err(|source| RestError::UrlJoin {
+            path: "/monitoring/queries",
+            source,
+            location: location!(),
+        })?;
+
+    // Make the request with retry
+    use crate::http::retry::{HttpContext, execute_with_retry};
+
+    let url_string = url.to_string();
+    let request_fn = || {
+        client
+            .get(url_string.clone())
+            .header(
+                "Authorization",
+                format!("Snowflake Token=\"{}\"", session_token),
+            )
+            .header("Accept", "application/json")
+    };
+
+    let ctx = HttpContext::new(Method::GET, url_string.clone());
+    let response = execute_with_retry(request_fn, &ctx, retry_policy, |r| async move { Ok(r) })
+        .await
+        .map_err(|err| {
+            // Convert HttpError to RestError
+            match err {
+                crate::http::retry::HttpError::Transport { source, .. } => {
+                    RestError::Communication {
+                        context: "get query status".to_string(),
+                        source,
+                        location: location!(),
+                    }
+                }
+                _ => RestError::QueryFailed {
+                    message: format!("HTTP request failed: {}", err),
+                    location: location!(),
+                },
+            }
+        })?;
+
+    if !response.status().is_success() {
+        return Err(RestError::InvalidSnowflakeResponse {
+            source: SnowflakeResponseError::QueryNotFound {
+                query_id: query_id.to_string(),
+                location: location!(),
+            },
+            location: location!(),
+        });
+    }
+
+    let body_bytes =
+        response
+            .bytes()
+            .await
+            .map_err(|source| RestError::InvalidSnowflakeResponse {
+                source: SnowflakeResponseError::ResponseText {
+                    source,
+                    location: location!(),
+                },
+                location: location!(),
+            })?;
+
+    let monitoring_response: MonitoringResponse =
+        serde_json::from_slice(&body_bytes).map_err(|source| {
+            RestError::InvalidSnowflakeResponse {
+                source: SnowflakeResponseError::ResponseFormat {
+                    source,
+                    location: location!(),
+                },
+                location: location!(),
+            }
+        })?;
+
+    if monitoring_response.data.queries.is_empty() {
+        return Err(RestError::InvalidSnowflakeResponse {
+            source: SnowflakeResponseError::QueryNotFound {
+                query_id: query_id.to_string(),
+                location: location!(),
+            },
+            location: location!(),
+        });
+    }
+
+    QueryStatus::from_string(&monitoring_response.data.queries[0].status).ok_or_else(|| {
+        RestError::InvalidSnowflakeResponse {
+            source: SnowflakeResponseError::UnexpectedResponse {
+                message: format!(
+                    "Unknown query status: {}",
+                    monitoring_response.data.queries[0].status
+                ),
+                location: location!(),
+            },
+            location: location!(),
+        }
+    })
+}
+
 pub struct Connection {
     pub settings: HashMap<String, Setting>,
     /// Session tokens - RwLock allows concurrent reads, exclusive writes for refresh

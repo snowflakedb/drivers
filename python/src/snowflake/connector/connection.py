@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import Any
 
 from snowflake.connector._internal.protobuf_gen.database_driver_v1_services import (  # type: ignore[attr-defined]
+    ConnectionGetQueryStatusRequest,
     ConnectionInitRequest,
     ConnectionNewRequest,
     ConnectionSetOptionBytesRequest,
@@ -21,8 +22,9 @@ from snowflake.connector._internal.protobuf_gen.database_driver_v1_services impo
 
 from ._internal._private_key_helper import normalize_private_key
 from ._internal.api_client.client_api import database_driver_client
+from .constants import QueryStatus
 from .cursor import SnowflakeCursor, SnowflakeCursorBase
-from .errors import InterfaceError, NotSupportedError
+from .errors import DatabaseError, InterfaceError, NotSupportedError
 
 
 class Connection:
@@ -222,3 +224,76 @@ class Connection:
             bool: True if connection is closed, False otherwise
         """
         return self._closed
+
+    def get_query_status(self, sfqid: str) -> QueryStatus:
+        """
+        Check the status of a query by its Snowflake Query ID.
+
+        Args:
+            sfqid (str): Snowflake Query ID (UUID format)
+
+        Returns:
+            QueryStatus: Current status of the query
+
+        Raises:
+            DatabaseError: If query status check fails
+        """
+        response = self.db_api.connection_get_query_status(
+            ConnectionGetQueryStatusRequest(conn_handle=self.conn_handle, query_id=sfqid)
+        )
+        return QueryStatus(response.status)
+
+    def get_query_status_throw_if_error(self, sfqid: str) -> QueryStatus:
+        """
+        Check the status of a query and throw an exception if it failed.
+
+        Args:
+            sfqid (str): Snowflake Query ID (UUID format)
+
+        Returns:
+            QueryStatus: Current status of the query
+
+        Raises:
+            DatabaseError: If query failed or status check fails
+        """
+        status = self.get_query_status(sfqid)
+        if self.is_an_error(status):
+            raise DatabaseError(f"Query {sfqid} failed with status: {status.name}")
+        return status
+
+    def is_still_running(self, status: QueryStatus) -> bool:
+        """
+        Check if a query is still running based on its status.
+
+        Args:
+            status (QueryStatus): Query status to check
+
+        Returns:
+            bool: True if query is still running, False otherwise
+        """
+        return status in (
+            QueryStatus.RUNNING,
+            QueryStatus.QUEUED,
+            QueryStatus.RESUMING_WAREHOUSE,
+            QueryStatus.QUEUED_REPARING_WAREHOUSE,
+            QueryStatus.NO_DATA,
+        )
+
+    def is_an_error(self, status: QueryStatus) -> bool:
+        """
+        Check if a query status indicates an error.
+
+        Args:
+            status (QueryStatus): Query status to check
+
+        Returns:
+            bool: True if status indicates an error, False otherwise
+        """
+        return status in (
+            QueryStatus.FAILED_WITH_ERROR,
+            QueryStatus.ABORTED,
+            QueryStatus.FAILED_WITH_INCIDENT,
+            QueryStatus.DISCONNECTED,
+            QueryStatus.BLOCKED,
+            QueryStatus.ABORTING,
+        )

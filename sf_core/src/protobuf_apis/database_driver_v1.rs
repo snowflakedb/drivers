@@ -5,7 +5,8 @@ use crate::apis::database_driver_v1::error::ConfigError;
 use crate::apis::database_driver_v1::error::RestError;
 use crate::apis::database_driver_v1::statement_bind;
 use crate::apis::database_driver_v1::{
-    connection_init, connection_new, connection_release, connection_set_option,
+    connection_get_query_status, connection_get_results_from_query_id, connection_init,
+    connection_new, connection_release, connection_set_option,
 };
 use crate::apis::database_driver_v1::{
     database_init, database_new, database_release, database_set_option,
@@ -497,6 +498,77 @@ impl DatabaseDriver for DatabaseDriverImpl {
         ))
     }
 
+    #[instrument(name = "DatabaseDriverV1::connection_get_query_status", skip(input))]
+    fn connection_get_query_status(
+        input: ConnectionGetQueryStatusRequest,
+    ) -> Result<ConnectionGetQueryStatusResponse, DriverException> {
+        let conn_handle = required(input.conn_handle, "Connection handle is required")?;
+
+        let status =
+            connection_get_query_status(conn_handle.into(), input.query_id).to_protobuf()?;
+
+        use crate::apis::database_driver_v1::QueryStatus as ApiQueryStatus;
+
+        let status_enum = match status {
+            ApiQueryStatus::Running => QueryStatus::Running,
+            ApiQueryStatus::Aborting => QueryStatus::Aborting,
+            ApiQueryStatus::Success => QueryStatus::Success,
+            ApiQueryStatus::FailedWithError => QueryStatus::FailedWithError,
+            ApiQueryStatus::Aborted => QueryStatus::Aborted,
+            ApiQueryStatus::Queued => QueryStatus::Queued,
+            ApiQueryStatus::FailedWithIncident => QueryStatus::FailedWithIncident,
+            ApiQueryStatus::Disconnected => QueryStatus::Disconnected,
+            ApiQueryStatus::ResumingWarehouse => QueryStatus::ResumingWarehouse,
+            ApiQueryStatus::QueuedReparingWarehouse => QueryStatus::QueuedReparingWarehouse,
+            ApiQueryStatus::Restarted => QueryStatus::Restarted,
+            ApiQueryStatus::Blocked => QueryStatus::Blocked,
+            ApiQueryStatus::NoData => QueryStatus::NoData,
+        };
+
+        Ok(ConnectionGetQueryStatusResponse {
+            status: status_enum as i32,
+        })
+    }
+
+    #[instrument(
+        name = "DatabaseDriverV1::connection_get_results_from_query_id",
+        skip(input)
+    )]
+    fn connection_get_results_from_query_id(
+        input: ConnectionGetResultsFromQueryIdRequest,
+    ) -> Result<ConnectionGetResultsFromQueryIdResponse, DriverException> {
+        let conn_handle = required(input.conn_handle, "Connection handle is required")?;
+
+        let execute_result =
+            connection_get_results_from_query_id(conn_handle.into(), input.query_id)
+                .to_protobuf()?;
+
+        let stream = ArrowArrayStreamPtr::from(Box::into_raw(execute_result.stream));
+
+        let columns = execute_result
+            .columns
+            .iter()
+            .map(|col| ColumnMetadata {
+                name: col.name.clone(),
+                r#type: col.r#type.clone(),
+                precision: col.precision,
+                scale: col.scale,
+                length: col.length,
+                byte_length: col.byte_length,
+                nullable: col.nullable,
+            })
+            .collect();
+
+        Ok(ConnectionGetResultsFromQueryIdResponse {
+            result: Some(ExecuteResult {
+                stream: Some(stream),
+                rows_affected: execute_result.rows_affected,
+                query_id: execute_result.query_id,
+                columns,
+            }),
+        })
+    }
+
     #[instrument(name = "DatabaseDriverV1::statement_new", skip(input))]
     fn statement_new(input: StatementNewRequest) -> Result<StatementNewResponse, DriverException> {
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
@@ -633,6 +705,16 @@ impl DatabaseDriver for DatabaseDriverImpl {
         input: StatementExecuteQueryRequest,
     ) -> Result<StatementExecuteQueryResponse, DriverException> {
         let stmt_handle = required(input.stmt_handle, "Statement handle is required")?;
+
+        // If async_exec is set, configure the statement for async execution
+        if let Some(true) = input.async_exec {
+            statement_set_option(
+                stmt_handle.into(),
+                "async_execution".to_string(),
+                Setting::String("true".to_string()),
+            )
+            .to_protobuf()?;
+        }
 
         let result = statement_execute_query(stmt_handle.into()).to_protobuf()?;
         let stream_ptr: ArrowArrayStreamPtr = Box::into_raw(result.stream).into();

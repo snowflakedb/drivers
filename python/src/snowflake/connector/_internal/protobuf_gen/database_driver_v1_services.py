@@ -92,6 +92,14 @@ class DatabaseDriver(ABC):
         pass
 
     @abstractmethod
+    def connection_get_query_status(self, request: ConnectionGetQueryStatusRequest) -> ConnectionGetQueryStatusResponse:
+        pass
+
+    @abstractmethod
+    def connection_get_results_from_query_id(self, request: ConnectionGetResultsFromQueryIdRequest) -> ConnectionGetResultsFromQueryIdResponse:
+        pass
+
+    @abstractmethod
     def statement_new(self, request: StatementNewRequest) -> StatementNewResponse:
         pass
 
@@ -178,6 +186,8 @@ class DatabaseDriverServer(DatabaseDriver):
                 'connection_get_table_types': (self.connection_get_table_types, ConnectionGetTableTypesRequest),
                 'connection_commit': (self.connection_commit, ConnectionCommitRequest),
                 'connection_rollback': (self.connection_rollback, ConnectionRollbackRequest),
+                'connection_get_query_status': (self.connection_get_query_status, ConnectionGetQueryStatusRequest),
+                'connection_get_results_from_query_id': (self.connection_get_results_from_query_id, ConnectionGetResultsFromQueryIdRequest),
                 'statement_new': (self.statement_new, StatementNewRequest),
                 'statement_release': (self.statement_release, StatementReleaseRequest),
                 'statement_set_sql_query': (self.statement_set_sql_query, StatementSetSqlQueryRequest),
@@ -589,6 +599,44 @@ class DatabaseDriverClient:
             raise ProtoTransportException(f"Unknown error code: %s", code)
 
         response.ParseFromString(self._transport.handle_message('DatabaseDriver', 'connection_rollback', request.SerializeToString()))
+        return response
+
+    def connection_get_query_status(self, request: ConnectionGetQueryStatusRequest) -> ConnectionGetQueryStatusResponse:
+        (code, response_bytes) = self._transport.handle_message('DatabaseDriver', 'connection_get_query_status', request.SerializeToString())
+        if code == 0:
+            response = ConnectionGetQueryStatusResponse()
+            response.ParseFromString(response_bytes)
+            return response
+        elif code == 1:
+            error = DriverException()
+            error.ParseFromString(response_bytes)
+            raise ProtoApplicationException(error)
+        elif code == 2:
+            error = str(response_bytes)
+            raise ProtoTransportException(response_bytes)
+        else:
+            raise ProtoTransportException(f"Unknown error code: %s", code)
+
+        response.ParseFromString(self._transport.handle_message('DatabaseDriver', 'connection_get_query_status', request.SerializeToString()))
+        return response
+
+    def connection_get_results_from_query_id(self, request: ConnectionGetResultsFromQueryIdRequest) -> ConnectionGetResultsFromQueryIdResponse:
+        (code, response_bytes) = self._transport.handle_message('DatabaseDriver', 'connection_get_results_from_query_id', request.SerializeToString())
+        if code == 0:
+            response = ConnectionGetResultsFromQueryIdResponse()
+            response.ParseFromString(response_bytes)
+            return response
+        elif code == 1:
+            error = DriverException()
+            error.ParseFromString(response_bytes)
+            raise ProtoApplicationException(error)
+        elif code == 2:
+            error = str(response_bytes)
+            raise ProtoTransportException(response_bytes)
+        else:
+            raise ProtoTransportException(f"Unknown error code: %s", code)
+
+        response.ParseFromString(self._transport.handle_message('DatabaseDriver', 'connection_get_results_from_query_id', request.SerializeToString()))
         return response
 
     def statement_new(self, request: StatementNewRequest) -> StatementNewResponse:

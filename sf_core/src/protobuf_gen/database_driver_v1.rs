@@ -367,6 +367,30 @@ pub struct ConnectionRollbackRequest {
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ConnectionRollbackResponse {}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ConnectionGetQueryStatusRequest {
+    #[prost(message, optional, tag = "1")]
+    pub conn_handle: ::core::option::Option<ConnectionHandle>,
+    #[prost(string, tag = "2")]
+    pub query_id: ::prost::alloc::string::String,
+}
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ConnectionGetQueryStatusResponse {
+    #[prost(enumeration = "QueryStatus", tag = "1")]
+    pub status: i32,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ConnectionGetResultsFromQueryIdRequest {
+    #[prost(message, optional, tag = "1")]
+    pub conn_handle: ::core::option::Option<ConnectionHandle>,
+    #[prost(string, tag = "2")]
+    pub query_id: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ConnectionGetResultsFromQueryIdResponse {
+    #[prost(message, optional, tag = "1")]
+    pub result: ::core::option::Option<ExecuteResult>,
+}
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct StatementNewRequest {
     #[prost(message, optional, tag = "1")]
@@ -487,6 +511,8 @@ pub struct StatementBindStreamResponse {}
 pub struct StatementExecuteQueryRequest {
     #[prost(message, optional, tag = "1")]
     pub stmt_handle: ::core::option::Option<StatementHandle>,
+    #[prost(bool, optional, tag = "2")]
+    pub async_exec: ::core::option::Option<bool>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct StatementExecuteQueryResponse {
@@ -647,6 +673,66 @@ impl InfoCode {
         }
     }
 }
+/// Query status enum matching Snowflake query status values
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum QueryStatus {
+    Running = 0,
+    Aborting = 1,
+    Success = 2,
+    FailedWithError = 3,
+    Aborted = 4,
+    Queued = 5,
+    FailedWithIncident = 6,
+    Disconnected = 7,
+    ResumingWarehouse = 8,
+    QueuedReparingWarehouse = 9,
+    Restarted = 10,
+    Blocked = 11,
+    NoData = 12,
+}
+impl QueryStatus {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Running => "QUERY_STATUS_RUNNING",
+            Self::Aborting => "QUERY_STATUS_ABORTING",
+            Self::Success => "QUERY_STATUS_SUCCESS",
+            Self::FailedWithError => "QUERY_STATUS_FAILED_WITH_ERROR",
+            Self::Aborted => "QUERY_STATUS_ABORTED",
+            Self::Queued => "QUERY_STATUS_QUEUED",
+            Self::FailedWithIncident => "QUERY_STATUS_FAILED_WITH_INCIDENT",
+            Self::Disconnected => "QUERY_STATUS_DISCONNECTED",
+            Self::ResumingWarehouse => "QUERY_STATUS_RESUMING_WAREHOUSE",
+            Self::QueuedReparingWarehouse => "QUERY_STATUS_QUEUED_REPARING_WAREHOUSE",
+            Self::Restarted => "QUERY_STATUS_RESTARTED",
+            Self::Blocked => "QUERY_STATUS_BLOCKED",
+            Self::NoData => "QUERY_STATUS_NO_DATA",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "QUERY_STATUS_RUNNING" => Some(Self::Running),
+            "QUERY_STATUS_ABORTING" => Some(Self::Aborting),
+            "QUERY_STATUS_SUCCESS" => Some(Self::Success),
+            "QUERY_STATUS_FAILED_WITH_ERROR" => Some(Self::FailedWithError),
+            "QUERY_STATUS_ABORTED" => Some(Self::Aborted),
+            "QUERY_STATUS_QUEUED" => Some(Self::Queued),
+            "QUERY_STATUS_FAILED_WITH_INCIDENT" => Some(Self::FailedWithIncident),
+            "QUERY_STATUS_DISCONNECTED" => Some(Self::Disconnected),
+            "QUERY_STATUS_RESUMING_WAREHOUSE" => Some(Self::ResumingWarehouse),
+            "QUERY_STATUS_QUEUED_REPARING_WAREHOUSE" => Some(Self::QueuedReparingWarehouse),
+            "QUERY_STATUS_RESTARTED" => Some(Self::Restarted),
+            "QUERY_STATUS_BLOCKED" => Some(Self::Blocked),
+            "QUERY_STATUS_NO_DATA" => Some(Self::NoData),
+            _ => None,
+        }
+    }
+}
 
 use prost::Message;
 use proto_utils::*;
@@ -707,6 +793,12 @@ pub trait DatabaseDriver {
     fn connection_rollback(
         input: ConnectionRollbackRequest,
     ) -> Result<ConnectionRollbackResponse, DriverException>;
+    fn connection_get_query_status(
+        input: ConnectionGetQueryStatusRequest,
+    ) -> Result<ConnectionGetQueryStatusResponse, DriverException>;
+    fn connection_get_results_from_query_id(
+        input: ConnectionGetResultsFromQueryIdRequest,
+    ) -> Result<ConnectionGetResultsFromQueryIdResponse, DriverException>;
     fn statement_new(input: StatementNewRequest) -> Result<StatementNewResponse, DriverException>;
     fn statement_release(
         input: StatementReleaseRequest,
@@ -970,6 +1062,28 @@ pub trait DatabaseDriverServer: DatabaseDriver {
                     Err(e) => return Err(ProtoError::Transport(e.to_string())),
                 };
                 let result = Self::connection_rollback(input);
+                match result {
+                    Ok(output) => Ok(output.encode_to_vec()),
+                    Err(e) => Err(ProtoError::Application(e.encode_to_vec())),
+                }
+            }
+            "connection_get_query_status" => {
+                let input = match ConnectionGetQueryStatusRequest::decode(&message[..]) {
+                    Ok(input) => input,
+                    Err(e) => return Err(ProtoError::Transport(e.to_string())),
+                };
+                let result = Self::connection_get_query_status(input);
+                match result {
+                    Ok(output) => Ok(output.encode_to_vec()),
+                    Err(e) => Err(ProtoError::Application(e.encode_to_vec())),
+                }
+            }
+            "connection_get_results_from_query_id" => {
+                let input = match ConnectionGetResultsFromQueryIdRequest::decode(&message[..]) {
+                    Ok(input) => input,
+                    Err(e) => return Err(ProtoError::Transport(e.to_string())),
+                };
+                let result = Self::connection_get_results_from_query_id(input);
                 match result {
                     Ok(output) => Ok(output.encode_to_vec()),
                     Err(e) => Err(ProtoError::Application(e.encode_to_vec())),
@@ -1649,6 +1763,60 @@ impl<T: Transport> DatabaseDriverClient<T> {
         match result {
             Ok(output) => {
                 let output = ConnectionRollbackResponse::decode(&output[..]);
+                match output {
+                    Ok(output) => Ok(output),
+                    Err(e) => Err(ProtoError::Transport(e.to_string())),
+                }
+            }
+            Err(ProtoError::Application(e)) => {
+                let output = DriverException::decode(&e[..]);
+                match output {
+                    Ok(output) => Err(ProtoError::Application(output)),
+                    Err(e) => Err(ProtoError::Transport(e.to_string())),
+                }
+            }
+            Err(ProtoError::Transport(e)) => Err(ProtoError::Transport(e)),
+        }
+    }
+
+    pub fn connection_get_query_status(
+        input: ConnectionGetQueryStatusRequest,
+    ) -> Result<ConnectionGetQueryStatusResponse, ProtoError<DriverException>> {
+        let result = T::handle_message(
+            "DatabaseDriver",
+            "connection_get_query_status",
+            input.encode_to_vec(),
+        );
+        match result {
+            Ok(output) => {
+                let output = ConnectionGetQueryStatusResponse::decode(&output[..]);
+                match output {
+                    Ok(output) => Ok(output),
+                    Err(e) => Err(ProtoError::Transport(e.to_string())),
+                }
+            }
+            Err(ProtoError::Application(e)) => {
+                let output = DriverException::decode(&e[..]);
+                match output {
+                    Ok(output) => Err(ProtoError::Application(output)),
+                    Err(e) => Err(ProtoError::Transport(e.to_string())),
+                }
+            }
+            Err(ProtoError::Transport(e)) => Err(ProtoError::Transport(e)),
+        }
+    }
+
+    pub fn connection_get_results_from_query_id(
+        input: ConnectionGetResultsFromQueryIdRequest,
+    ) -> Result<ConnectionGetResultsFromQueryIdResponse, ProtoError<DriverException>> {
+        let result = T::handle_message(
+            "DatabaseDriver",
+            "connection_get_results_from_query_id",
+            input.encode_to_vec(),
+        );
+        match result {
+            Ok(output) => {
+                let output = ConnectionGetResultsFromQueryIdResponse::decode(&output[..]);
                 match output {
                     Ok(output) => Ok(output),
                     Err(e) => Err(ProtoError::Transport(e.to_string())),
