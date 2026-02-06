@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from snowflake.connector.cursor import Cursor
+from snowflake.connector.cursor import SnowflakeCursor, SnowflakeCursorBase
 from snowflake.connector.errors import ProgrammingError
 
 
@@ -22,7 +22,7 @@ class TestFetchone:
     @pytest.fixture
     def cursor(self, mock_connection):
         """Create a cursor with a mock connection."""
-        return Cursor(mock_connection)
+        return SnowflakeCursor(mock_connection)
 
     def test_fetchone_returns_single_row(self, cursor):
         """Test fetchone returns a single row tuple."""
@@ -64,7 +64,7 @@ class TestFetchone:
 
     def test_fetchone_calls_get_iterator_if_iterator_is_none(self, cursor):
         """Test fetchone calls _get_iterator."""
-        mock_ensure = MagicMock()
+        mock_ensure = MagicMock(return_value=iter([(1,)]))
 
         with patch.object(cursor, "_get_iterator", mock_ensure):
             cursor.fetchone()
@@ -131,7 +131,7 @@ class TestFetchall:
     @pytest.fixture
     def cursor(self, mock_connection):
         """Create a cursor with a mock connection."""
-        return Cursor(mock_connection)
+        return SnowflakeCursor(mock_connection)
 
     def test_fetchall_returns_all_rows(self, cursor):
         """Test fetchall returns all rows as a list."""
@@ -263,7 +263,7 @@ class TestFetchmany:
     @pytest.fixture
     def cursor(self, mock_connection):
         """Create a cursor with a mock connection."""
-        return Cursor(mock_connection)
+        return SnowflakeCursor(mock_connection)
 
     def test_fetchmany_default_uses_arraysize(self, cursor):
         """Test that fetchmany() without size argument uses arraysize."""
@@ -442,11 +442,11 @@ class TestFetchmanyArraysizeAttribute:
     @pytest.fixture
     def cursor(self, mock_connection):
         """Create a cursor with a mock connection."""
-        return Cursor(mock_connection)
+        return SnowflakeCursor(mock_connection)
 
     def test_arraysize_class_attribute_default(self):
         """Test that Cursor class has default arraysize of 1."""
-        assert Cursor.arraysize == 1
+        assert SnowflakeCursorBase.arraysize == 1
 
     def test_arraysize_instance_attribute_overrides_class(self, cursor):
         """Test instance arraysize overrides class attribute."""
@@ -454,7 +454,7 @@ class TestFetchmanyArraysizeAttribute:
         cursor.arraysize = 10
         assert cursor.arraysize == 10
         # Class attribute unchanged
-        assert Cursor.arraysize == 1
+        assert SnowflakeCursorBase.arraysize == 1
 
     def test_fetchmany_uses_instance_arraysize(self, cursor):
         """Test fetchmany uses instance arraysize, not class attribute."""

@@ -19,7 +19,7 @@ from snowflake.connector._internal.protobuf_gen.database_driver_v1_services impo
 )
 
 from ._internal.api_client.client_api import database_driver_client
-from .cursor import Cursor
+from .cursor import SnowflakeCursor, SnowflakeCursorBase
 from .errors import InterfaceError, NotSupportedError
 
 
@@ -85,16 +85,20 @@ class Connection:
         """
         raise NotSupportedError("rollback is not implemented")
 
-    def cursor(self) -> Cursor:
+    def cursor(self, cursor_class: type[SnowflakeCursorBase] = SnowflakeCursor) -> SnowflakeCursorBase:
         """
         Return a new Cursor object using the connection.
 
+        Args:
+            cursor_class: The class to use for the cursor (default: SnowflakeCursor).
+                          Pass DictCursor to get results as dictionaries.
+
         Returns:
-            Cursor: A new cursor object
+            SnowflakeCursorBase: A new cursor object
         """
         if self._closed:
             raise InterfaceError("Connection is closed")
-        return Cursor(self)
+        return cursor_class(self)
 
     # Context manager support
     def __enter__(self) -> Connection:

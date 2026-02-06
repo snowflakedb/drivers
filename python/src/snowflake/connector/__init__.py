@@ -9,7 +9,7 @@ from typing import Any
 
 from ._internal.api_client.c_api import register_default_logger_callback
 from .connection import Connection
-from .cursor import Cursor
+from .cursor import DictCursor, SnowflakeCursor
 from .errors import (
     DatabaseError,
     DataError,
@@ -74,7 +74,8 @@ __all__ = [
     "connect",
     # Classes
     "Connection",
-    "Cursor",
+    "DictCursor",
+    "SnowflakeCursor",
     # Exceptions
     "Warning",
     "Error",

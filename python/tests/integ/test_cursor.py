@@ -12,9 +12,10 @@ from tests.e2e.types.utils import assert_sequential_values
 
 
 if IS_UNIVERSAL_DRIVER:
-    from snowflake.connector import Cursor
+    from snowflake.connector import SnowflakeCursor
+    from snowflake.connector.cursor import SnowflakeCursorBase
 else:
-    from snowflake.connector.cursor import SnowflakeCursor as Cursor
+    from snowflake.connector.cursor import SnowflakeCursor, SnowflakeCursorBase
 
 
 class TestCursorMethods:
@@ -112,7 +113,7 @@ class TestCursorFetch:
     def test_execute_returns_cursor(self, cursor):
         """Test execute returns cursor"""
         r = cursor.execute("SELECT 1")
-        assert isinstance(r, Cursor)
+        assert isinstance(r, SnowflakeCursor)
         assert r is cursor
 
     def test_fetchone_single_value(self, cursor):
@@ -500,52 +501,297 @@ class TestCursorMultipleQueries:
         assert batch3 == [(105,), (106,), (107,)]
 
 
-class TestCursorDictResult:
-    """Test dict result mode.
+class TestDictCursorCreation:
+    """Test DictCursor creation via connection.cursor()."""
 
-    Note: DictCursor is not yet implemented. These tests use ArrowStreamIterator
-    directly to verify dict result functionality works correctly.
-    """
+    def test_create_dict_cursor(self, connection):
+        """Test that DictCursor can be created via connection.cursor()."""
+        if IS_UNIVERSAL_DRIVER:
+            from snowflake.connector import DictCursor
+        else:
+            from snowflake.connector.cursor import DictCursor
 
-    @pytest.mark.skip_reference
-    def test_next_returns_dict(self, cursor):
-        """Test next() returns dict with column names as keys."""
-        # TODO: Replace with DictCursor when implemented
-        from snowflake.connector._internal.arrow_context import ArrowConverterContext
-        from snowflake.connector._internal.arrow_stream_iterator import (
-            ArrowStreamIterator,
-        )
+        with connection.cursor(DictCursor) as cur:
+            assert isinstance(cur, DictCursor)
 
-        cursor.execute("SELECT 1 AS id, 'hello' AS name")
-        stream_ptr = cursor._get_stream_ptr()
-        arrow_context = ArrowConverterContext()
-        iterator = ArrowStreamIterator(stream_ptr, arrow_context, use_dict_result=True)
+    def test_dict_cursor_is_base_cursor_subclass(self):
+        """Test that DictCursor is a subclass of BaseCursor."""
+        if IS_UNIVERSAL_DRIVER:
+            from snowflake.connector import DictCursor
+        else:
+            from snowflake.connector.cursor import DictCursor
 
-        result = next(iterator)
+        assert issubclass(DictCursor, SnowflakeCursorBase)
+
+
+class TestDictCursorFetchOne:
+    """Test DictCursor fetchone operations."""
+
+    def test_fetchone_returns_dict(self, dict_cursor):
+        """Test fetchone returns a dictionary with column names as keys."""
+        dict_cursor.execute("SELECT 1 AS id, 'hello' AS name")
+        result = dict_cursor.fetchone()
+        assert isinstance(result, dict)
         assert result == {"ID": 1, "NAME": "hello"}
 
-    @pytest.mark.skip_reference
-    def test_dict_result_large_result(self, cursor):
-        """Test dict result with large result set spanning multiple batches."""
-        # TODO: Replace with DictCursor when implemented
-        from snowflake.connector._internal.arrow_context import ArrowConverterContext
-        from snowflake.connector._internal.arrow_stream_iterator import (
-            ArrowStreamIterator,
-        )
+    def test_fetchone_multiple_columns(self, dict_cursor):
+        """Test fetchone with multiple columns."""
+        dict_cursor.execute("SELECT 1 AS a, 'hello' AS b, 3.14 AS c")
+        result = dict_cursor.fetchone()
+        assert isinstance(result, dict)
+        assert result["A"] == 1
+        assert result["B"] == "hello"
+        assert result["C"] == Decimal("3.14")
 
-        cursor.execute(
+    def test_fetchone_returns_none_when_exhausted(self, dict_cursor):
+        """Test fetchone returns None when no more rows."""
+        dict_cursor.execute("SELECT 1 AS id")
+        dict_cursor.fetchone()
+        result = dict_cursor.fetchone()
+        assert result is None
+
+    def test_fetchone_sequential_rows(self, dict_cursor):
+        """Test fetchone returns rows sequentially as dicts."""
+        dict_cursor.execute(
             """
-            SELECT
-                seq4() AS id,
-                seq4() * 2 AS doubled
-            FROM TABLE(GENERATOR(ROWCOUNT => 5000))
-        """
+            SELECT ROW_NUMBER() OVER (ORDER BY seq4()) - 1 AS n
+            FROM TABLE(GENERATOR(ROWCOUNT => 3))
+            ORDER BY 1
+            """
         )
-        stream_ptr = cursor._get_stream_ptr()
-        arrow_context = ArrowConverterContext()
-        iterator = ArrowStreamIterator(stream_ptr, arrow_context, use_dict_result=True)
+        r1 = dict_cursor.fetchone()
+        r2 = dict_cursor.fetchone()
+        r3 = dict_cursor.fetchone()
+        assert r1 == {"N": 0}
+        assert r2 == {"N": 1}
+        assert r3 == {"N": 2}
 
-        result = list(iterator)
-        assert len(result) == 5000
+
+class TestDictCursorFetchMany:
+    """Test DictCursor fetchmany operations."""
+
+    def test_fetchmany_returns_list_of_dicts(self, dict_cursor):
+        """Test fetchmany returns a list of dictionaries."""
+        dict_cursor.execute(
+            """
+            SELECT ROW_NUMBER() OVER (ORDER BY seq4()) - 1 AS n
+            FROM TABLE(GENERATOR(ROWCOUNT => 5))
+            ORDER BY 1
+            """
+        )
+        result = dict_cursor.fetchmany(3)
+        assert len(result) == 3
         assert all(isinstance(row, dict) for row in result)
-        assert all(len(row) == 2 for row in result)
+        assert result == [{"N": 0}, {"N": 1}, {"N": 2}]
+
+    def test_fetchmany_default_arraysize(self, dict_cursor):
+        """Test fetchmany with default arraysize."""
+        dict_cursor.execute(
+            """
+            SELECT ROW_NUMBER() OVER (ORDER BY seq4()) - 1 AS n
+            FROM TABLE(GENERATOR(ROWCOUNT => 5))
+            ORDER BY 1
+            """
+        )
+        dict_cursor.arraysize = 2
+        result = dict_cursor.fetchmany()
+        assert result == [{"N": 0}, {"N": 1}]
+
+    def test_fetchmany_returns_empty_after_exhausted(self, dict_cursor):
+        """Test fetchmany returns empty list after all rows consumed."""
+        dict_cursor.execute("SELECT 1 AS id")
+        dict_cursor.fetchmany(10)
+        result = dict_cursor.fetchmany(10)
+        assert result == []
+
+
+class TestDictCursorFetchAll:
+    """Test DictCursor fetchall operations."""
+
+    def test_fetchall_returns_list_of_dicts(self, dict_cursor):
+        """Test fetchall returns a list of dictionaries."""
+        dict_cursor.execute(
+            """
+            SELECT ROW_NUMBER() OVER (ORDER BY seq4()) - 1 AS n
+            FROM TABLE(GENERATOR(ROWCOUNT => 5))
+            ORDER BY 1
+            """
+        )
+        result = dict_cursor.fetchall()
+        assert len(result) == 5
+        assert all(isinstance(row, dict) for row in result)
+        assert result == [{"N": i} for i in range(5)]
+
+    def test_fetchall_multiple_columns(self, dict_cursor):
+        """Test fetchall with multiple columns returns dicts."""
+        dict_cursor.execute("SELECT 1 AS a, 'hello' AS b UNION ALL SELECT 2, 'world'")
+        result = dict_cursor.fetchall()
+        assert len(result) == 2
+        assert all(isinstance(row, dict) for row in result)
+        assert result[0]["A"] == 1
+        assert result[0]["B"] == "hello"
+        assert result[1]["A"] == 2
+        assert result[1]["B"] == "world"
+
+    def test_fetchall_after_partial_fetchone(self, dict_cursor):
+        """Test fetchall after partial fetchone calls."""
+        dict_cursor.execute(
+            """
+            SELECT ROW_NUMBER() OVER (ORDER BY seq4()) - 1 AS n
+            FROM TABLE(GENERATOR(ROWCOUNT => 5))
+            ORDER BY 1
+            """
+        )
+        first = dict_cursor.fetchone()
+        assert first == {"N": 0}
+        remaining = dict_cursor.fetchall()
+        assert remaining == [{"N": i} for i in range(1, 5)]
+
+
+class TestDictCursorIteration:
+    """Test DictCursor iteration."""
+
+    def test_dict_cursor_is_iterable(self, dict_cursor):
+        """Test DictCursor can be iterated to get dicts."""
+        dict_cursor.execute(
+            """
+            SELECT ROW_NUMBER() OVER (ORDER BY seq4()) - 1 AS n
+            FROM TABLE(GENERATOR(ROWCOUNT => 5))
+            ORDER BY 1
+            """
+        )
+        rows = list(dict_cursor)
+        assert len(rows) == 5
+        assert all(isinstance(row, dict) for row in rows)
+        assert rows == [{"N": i} for i in range(5)]
+
+    def test_mixed_fetchone_and_iteration(self, dict_cursor):
+        """Test mixing fetchone and iteration with DictCursor."""
+        dict_cursor.execute(
+            """
+            SELECT ROW_NUMBER() OVER (ORDER BY seq4()) - 1 AS n
+            FROM TABLE(GENERATOR(ROWCOUNT => 5))
+            ORDER BY 1
+            """
+        )
+        first = dict_cursor.fetchone()
+        assert first == {"N": 0}
+        remaining = list(dict_cursor)
+        assert remaining == [{"N": i} for i in range(1, 5)]
+
+
+class TestDictCursorLargeResults:
+    """Test DictCursor with large result sets spanning multiple batches."""
+
+    N_ROWS = 20_000
+
+    def test_large_result_fetchall(self, dict_cursor):
+        """Test fetchall with large results returns dicts."""
+        dict_cursor.execute(
+            f"""
+            SELECT ROW_NUMBER() OVER (ORDER BY seq4()) - 1 AS n
+            FROM TABLE(GENERATOR(ROWCOUNT => {self.N_ROWS}))
+            ORDER BY 1
+            """
+        )
+        result = dict_cursor.fetchall()
+        assert len(result) == self.N_ROWS
+        assert all(isinstance(row, dict) for row in result)
+        assert all(row["N"] == i for i, row in enumerate(result))
+
+    def test_large_result_iteration(self, dict_cursor):
+        """Test iteration over large results returns dicts."""
+        dict_cursor.execute(
+            f"""
+            SELECT ROW_NUMBER() OVER (ORDER BY seq4()) - 1 AS n
+            FROM TABLE(GENERATOR(ROWCOUNT => {self.N_ROWS}))
+            ORDER BY 1
+            """
+        )
+        rows = list(dict_cursor)
+        assert len(rows) == self.N_ROWS
+        assert all(isinstance(row, dict) for row in rows)
+        assert all(row["N"] == i for i, row in enumerate(rows))
+
+    def test_large_result_multiple_columns(self, dict_cursor):
+        """Test large result with multiple columns as dicts."""
+        dict_cursor.execute(
+            f"""
+            WITH base AS (
+                SELECT ROW_NUMBER() OVER (ORDER BY seq4()) - 1 AS id
+                FROM TABLE(GENERATOR(ROWCOUNT => {self.N_ROWS}))
+            )
+            SELECT id, id * 2 AS doubled, id % 10 AS mod10 FROM base
+            ORDER BY 1
+            """
+        )
+        result = dict_cursor.fetchall()
+        assert len(result) == self.N_ROWS
+        assert all(isinstance(row, dict) for row in result)
+        for i, row in enumerate(result):
+            assert row["ID"] == i
+            assert row["DOUBLED"] == i * 2
+            assert row["MOD10"] == i % 10
+
+    def test_partial_batch_consumption(self, dict_cursor):
+        """Test partial consumption of batches with DictCursor."""
+        dict_cursor.execute(
+            f"""
+            SELECT ROW_NUMBER() OVER (ORDER BY seq4()) - 1 AS n
+            FROM TABLE(GENERATOR(ROWCOUNT => {self.N_ROWS}))
+            ORDER BY 1
+            """
+        )
+        consumed = self.N_ROWS // 10
+        for i in range(consumed):
+            row = dict_cursor.fetchone()
+            assert row == {"N": i}
+        remaining = dict_cursor.fetchall()
+        assert len(remaining) == self.N_ROWS - consumed
+        assert all(isinstance(row, dict) for row in remaining)
+
+
+class TestDictCursorMultipleQueries:
+    """Test DictCursor with multiple sequential queries."""
+
+    def test_sequential_queries(self, dict_cursor):
+        """Test sequential queries on same DictCursor."""
+        dict_cursor.execute("SELECT 1 AS val")
+        result1 = dict_cursor.fetchone()
+        assert result1 == {"VAL": 1}
+
+        dict_cursor.execute("SELECT 2 AS a, 3 AS b")
+        result2 = dict_cursor.fetchone()
+        assert result2 == {"A": 2, "B": 3}
+
+    def test_new_query_resets_iterator(self, dict_cursor):
+        """Test new query resets the iterator state for DictCursor."""
+        dict_cursor.execute(
+            """
+            SELECT seq4() AS val FROM TABLE(GENERATOR(ROWCOUNT => 100))
+            """
+        )
+        for _ in range(10):
+            dict_cursor.fetchone()
+
+        dict_cursor.execute("SELECT 42 AS answer")
+        result = dict_cursor.fetchone()
+        assert result == {"ANSWER": 42}
+
+    def test_fetchone_fetchmany_fetchall_sequence(self, dict_cursor):
+        """Test fetchone, fetchmany, and fetchall in sequence with DictCursor."""
+        dict_cursor.execute(
+            """
+            SELECT ROW_NUMBER() OVER (ORDER BY seq4()) - 1 AS n
+            FROM TABLE(GENERATOR(ROWCOUNT => 20))
+            ORDER BY n
+            """
+        )
+        row1 = dict_cursor.fetchone()
+        assert row1 == {"N": 0}
+
+        batch = dict_cursor.fetchmany(5)
+        assert batch == [{"N": i} for i in range(1, 6)]
+
+        remainder = dict_cursor.fetchall()
+        assert remainder == [{"N": i} for i in range(6, 20)]
