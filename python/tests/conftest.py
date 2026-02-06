@@ -65,7 +65,7 @@ def cursor(connection):
 @pytest.fixture
 def dict_cursor(connection):
     """Create a DictCursor from a connection."""
-    with connection.cursor(cursor_clas=DictCursor) as cursor:
+    with connection.cursor(cursor_class=DictCursor) as cursor:
         yield cursor
 
 
