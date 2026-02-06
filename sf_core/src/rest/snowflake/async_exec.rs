@@ -8,7 +8,6 @@ use crate::rest::snowflake::{
 };
 use reqwest::{Method, StatusCode};
 use snafu::Location;
-use std::collections::HashMap;
 use std::panic::Location as StdLocation;
 use std::time::{Duration, Instant};
 use tracing::debug;

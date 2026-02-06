@@ -127,29 +127,29 @@ class Cursor:
             json_str, length = BindingSerializer.serialize_parameters(parameters)
             if json_str is not None:
                 # Convert string to bytes
-                json_bytes = json_str.encode('utf-8')
+                json_bytes = json_str.encode("utf-8")
 
                 # Keep reference to prevent garbage collection while Rust uses it
                 self._binding_data = json_bytes
 
                 # Get memory address of the bytes buffer (no-copy scheme)
                 import ctypes
+
                 ptr_value = ctypes.cast(ctypes.c_char_p(json_bytes), ctypes.c_void_p).value
+                if ptr_value is None:
+                    raise RuntimeError("Failed to obtain memory pointer for binding data")
 
                 # Convert pointer to 8-byte little-endian representation
-                ptr_bytes = ptr_value.to_bytes(8, byteorder='little', signed=False)
+                ptr_bytes = ptr_value.to_bytes(8, byteorder="little", signed=False)
 
                 # Create StringPtr with actual memory pointer (not data copy)
                 string_ptr = StringPtr(
                     value=ptr_bytes,  # 8-byte pointer value
-                    length=length
+                    length=length,
                 )
 
                 # Create request with bindings (no CopyFrom - direct assignment)
-                request = StatementExecuteQueryRequest(
-                    stmt_handle=stmt_handle,
-                    bindings=QueryBindings(json=string_ptr)
-                )
+                request = StatementExecuteQueryRequest(stmt_handle=stmt_handle, bindings=QueryBindings(json=string_ptr))
             else:
                 request = StatementExecuteQueryRequest(stmt_handle=stmt_handle)
         else:

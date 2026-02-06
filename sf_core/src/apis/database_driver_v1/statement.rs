@@ -465,14 +465,12 @@ fn parse_json_bindings(
     }
 
     // Convert 8-byte array to usize pointer
-    let ptr_bytes: [u8; 8] = string_ptr
-        .value
-        .as_slice()
-        .try_into()
-        .map_err(|_| UnsupportedBindParameterTypeSnafu {
+    let ptr_bytes: [u8; 8] = string_ptr.value.as_slice().try_into().map_err(|_| {
+        UnsupportedBindParameterTypeSnafu {
             type_: "Failed to convert pointer bytes".to_string(),
         }
-        .build())?;
+        .build()
+    })?;
     let ptr_value = usize::from_le_bytes(ptr_bytes);
 
     // Validate pointer is not null
@@ -492,18 +490,20 @@ fn parse_json_bindings(
     };
 
     // Convert to UTF-8 string
-    let json_str = std::str::from_utf8(json_bytes)
-        .map_err(|_| UnsupportedBindParameterTypeSnafu {
+    let json_str = std::str::from_utf8(json_bytes).map_err(|_| {
+        UnsupportedBindParameterTypeSnafu {
             type_: "Invalid UTF-8 in bindings".to_string(),
         }
-        .build())?;
+        .build()
+    })?;
 
     // Parse as raw JSON Value - server validates structure
-    let bindings: serde_json::Value = serde_json::from_str(json_str)
-        .map_err(|_| UnsupportedBindParameterTypeSnafu {
+    let bindings: serde_json::Value = serde_json::from_str(json_str).map_err(|_| {
+        UnsupportedBindParameterTypeSnafu {
             type_: "Failed to parse bindings JSON".to_string(),
         }
-        .build())?;
+        .build()
+    })?;
 
     Ok(Some(bindings))
 }

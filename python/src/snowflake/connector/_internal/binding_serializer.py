@@ -8,10 +8,9 @@ for transmission to the Rust core, following the design specified in bindingsdes
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING, Any, Sequence
 
-if TYPE_CHECKING:
-    from ..types import SnowflakeType
+from collections.abc import Sequence
+from typing import Any
 
 
 class BindingSerializer:
@@ -19,23 +18,20 @@ class BindingSerializer:
 
     # Python type to Snowflake type mapping
     TYPE_MAP = {
-        'int': 'FIXED',
-        'float': 'REAL',
-        'str': 'TEXT',
-        'bool': 'BOOLEAN',
-        'bytes': 'BINARY',
-        'datetime': 'TIMESTAMP_NTZ',
-        'date': 'DATE',
-        'time': 'TIME',
-        'decimal': 'FIXED',
-        'nonetype': 'TEXT',  # NULL values
+        "int": "FIXED",
+        "float": "REAL",
+        "str": "TEXT",
+        "bool": "BOOLEAN",
+        "bytes": "BINARY",
+        "datetime": "TIMESTAMP_NTZ",
+        "date": "DATE",
+        "time": "TIME",
+        "decimal": "FIXED",
+        "nonetype": "TEXT",  # NULL values
     }
 
     @classmethod
-    def serialize_parameters(
-        cls,
-        params: Sequence[Any] | dict[str, Any] | None
-    ) -> tuple[str | None, int]:
+    def serialize_parameters(cls, params: Sequence[Any] | dict[str, Any] | None) -> tuple[str | None, int]:
         """
         Serialize parameters to JSON format for binding.
 
@@ -53,13 +49,10 @@ class BindingSerializer:
             return None, 0
 
         json_str = json.dumps(bindings)
-        return json_str, len(json_str.encode('utf-8'))
+        return json_str, len(json_str.encode("utf-8"))
 
     @classmethod
-    def _process_params(
-        cls,
-        params: Sequence[Any] | dict[str, Any]
-    ) -> dict[str, dict[str, Any]]:
+    def _process_params(cls, params: Sequence[Any] | dict[str, Any]) -> dict[str, dict[str, Any]]:
         """
         Process parameters into Snowflake binding format.
 
@@ -81,26 +74,17 @@ class BindingSerializer:
             # Named parameters (e.g., :name style)
             for key, value in params.items():
                 snowflake_type, snowflake_value = cls._convert_value(value)
-                bindings[str(key)] = {
-                    "type": snowflake_type,
-                    "value": snowflake_value
-                }
+                bindings[str(key)] = {"type": snowflake_type, "value": snowflake_value}
         else:
             # Positional parameters (e.g., ? or :1 style)
             for idx, value in enumerate(params):
                 if isinstance(value, list):
                     # Array binding for bulk operations
                     snowflake_type, values = cls._convert_array(value)
-                    bindings[str(idx + 1)] = {
-                        "type": snowflake_type,
-                        "value": values
-                    }
+                    bindings[str(idx + 1)] = {"type": snowflake_type, "value": values}
                 else:
                     snowflake_type, snowflake_value = cls._convert_value(value)
-                    bindings[str(idx + 1)] = {
-                        "type": snowflake_type,
-                        "value": snowflake_value
-                    }
+                    bindings[str(idx + 1)] = {"type": snowflake_type, "value": snowflake_value}
 
         return bindings
 
@@ -130,7 +114,8 @@ class BindingSerializer:
         elif isinstance(value, bytes):
             # Binary data - base64 encode
             import base64
-            converted = base64.b64encode(value).decode('ascii')
+
+            converted = base64.b64encode(value).decode("ascii")
         else:
             # For other types (datetime, date, time, decimal, etc.)
             # use string representation

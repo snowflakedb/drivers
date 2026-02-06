@@ -18,7 +18,6 @@ use crate::tls::error::TlsError;
 use reqwest::{self, header};
 use serde_json;
 use snafu::{IntoError, Location, OptionExt, ResultExt, Snafu};
-use std::collections::HashMap;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tracing;
 use url::Url;
