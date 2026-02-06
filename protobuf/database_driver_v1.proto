@@ -154,6 +154,37 @@ message ArrowArrayPtr {
   bytes value = 1;
 }
 
+// =============================================================================
+// POINTER TYPES - For passing data references to core
+// =============================================================================
+
+// Pointer to an UTF-8 string in memory
+message StringPtr {
+  bytes value = 1;  // 8-byte pointer
+  int64 length = 2;  // Length of data in bytes
+}
+
+// Pointer to binary data with explicit length
+message BinaryDataPtr {
+  bytes value = 1;   // 8-byte pointer
+  int64 length = 2;  // Length of data in bytes
+}
+
+// Arrow bindings for ODBC (mirrors current StatementBind)
+message ArrowBindings {
+  ArrowSchemaPtr schema = 1;
+  ArrowArrayPtr array = 2;
+}
+
+// Union of all binding types
+message QueryBindings {
+  oneof binding_type {
+    StringPtr json = 1;
+    BinaryDataPtr csv = 2;
+    ArrowBindings arrow = 3;
+  }
+}
+
 // Database service requests and responses
 
 message DatabaseNewRequest {
@@ -430,8 +461,10 @@ message StatementBindStreamRequest {
 message StatementBindStreamResponse {
 }
 
+// Extend current StatementExecute
 message StatementExecuteQueryRequest {
   StatementHandle stmt_handle = 1;
+  optional QueryBindings bindings = 2;  // None = no bindings
 }
 
 message StatementExecuteQueryResponse {

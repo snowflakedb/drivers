@@ -11,10 +11,13 @@ from typing import TYPE_CHECKING, Any
 
 from ._internal.arrow_context import ArrowConverterContext
 from ._internal.arrow_stream_iterator import ArrowStreamIterator  # type: ignore[import-not-found]
+from ._internal.binding_serializer import BindingSerializer
 from ._internal.protobuf_gen.database_driver_v1_pb2 import (  # type: ignore[attr-defined]
+    QueryBindings,
     StatementExecuteQueryRequest,
     StatementNewRequest,
     StatementSetSqlQueryRequest,
+    StringPtr,
 )
 from .errors import NotSupportedError, ProgrammingError
 
@@ -118,9 +121,32 @@ class Cursor:
         self.connection.db_api.statement_set_sql_query(
             StatementSetSqlQueryRequest(stmt_handle=stmt_handle, query=operation)
         )
-        self.execute_result = self.connection.db_api.statement_execute_query(
-            StatementExecuteQueryRequest(stmt_handle=stmt_handle)
-        ).result
+
+        # Serialize parameters if provided
+        bindings = None
+        if parameters is not None:
+            json_str, length = BindingSerializer.serialize_parameters(parameters)
+            if json_str is not None:
+                # Create StringPtr with JSON data
+                # Convert string to bytes for transmission
+                json_bytes = json_str.encode('utf-8')
+
+                # Create pointer to the bytes data
+                # Note: Python manages memory, so we pass the bytes directly
+                string_ptr = StringPtr(
+                    value=json_bytes,
+                    length=length
+                )
+
+                # Create QueryBindings with JSON binding
+                bindings = QueryBindings(json=string_ptr)
+
+        # Execute query with optional bindings
+        request = StatementExecuteQueryRequest(stmt_handle=stmt_handle)
+        if bindings is not None:
+            request.bindings.CopyFrom(bindings)
+
+        self.execute_result = self.connection.db_api.statement_execute_query(request).result
 
         # Reset streaming state for a new result
         self._iterator = None

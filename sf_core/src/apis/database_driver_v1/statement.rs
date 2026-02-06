@@ -139,7 +139,10 @@ pub struct ExecuteResult {
     pub rows_affected: i64,
 }
 
-pub fn statement_execute_query(stmt_handle: Handle) -> Result<ExecuteResult, ApiError> {
+pub fn statement_execute_query(
+    stmt_handle: Handle,
+    proto_bindings: Option<crate::protobuf_gen::database_driver_v1::query_bindings::BindingType>,
+) -> Result<ExecuteResult, ApiError> {
     let handle = stmt_handle;
     let stmt_ptr = STMT_HANDLE_MANAGER.get_obj(handle).ok_or_else(|| {
         InvalidArgumentSnafu {
@@ -175,9 +178,39 @@ pub fn statement_execute_query(stmt_handle: Handle) -> Result<ExecuteResult, Api
 
     let execution_mode = stmt.execution_mode(Some(query_str));
     let query = stmt.query.take().expect("query must be present");
-    let bindings = stmt
-        .get_query_parameter_bindings()
-        .context(StatementSnafu)?;
+
+    // Get bindings from protobuf request or from statement's Arrow bindings
+    let bindings = if let Some(proto_binding_type) = proto_bindings {
+        // Handle bindings from protobuf request
+        match proto_binding_type {
+            crate::protobuf_gen::database_driver_v1::query_bindings::BindingType::Json(
+                string_ptr,
+            ) => {
+                // Parse JSON bindings
+                parse_json_bindings(&string_ptr).context(StatementSnafu)?
+            }
+            crate::protobuf_gen::database_driver_v1::query_bindings::BindingType::Csv(_csv_ptr) => {
+                // TODO: Implement CSV binding handling (stage upload)
+                return Err(InvalidArgumentSnafu {
+                    argument: "CSV bindings are not yet implemented".to_string(),
+                }
+                .build());
+            }
+            crate::protobuf_gen::database_driver_v1::query_bindings::BindingType::Arrow(
+                _arrow_bindings,
+            ) => {
+                // TODO: Implement Arrow bindings from protobuf
+                return Err(InvalidArgumentSnafu {
+                    argument: "Arrow bindings from protobuf are not yet implemented".to_string(),
+                }
+                .build());
+            }
+        }
+    } else {
+        // Fall back to statement's existing Arrow bindings (backwards compatibility)
+        stmt.get_query_parameter_bindings()
+            .context(StatementSnafu)?
+    };
 
     // Execute query with automatic session refresh on 401
     let conn = stmt.conn.clone();
@@ -413,6 +446,75 @@ pub enum StatementError {
     },
 }
 
+/// Parse JSON bindings from StringPtr protobuf message
+fn parse_json_bindings(
+    string_ptr: &crate::protobuf_gen::database_driver_v1::StringPtr,
+) -> Result<Option<HashMap<String, query_request::BindParameter>>, StatementError> {
+    // Extract the JSON string from the pointer
+    // In the protobuf message, value contains the actual bytes
+    let json_bytes = &string_ptr.value;
+
+    // Convert bytes to string
+    let json_str = std::str::from_utf8(json_bytes).map_err(|e| {
+        StatementError::UnsupportedBindParameterType {
+            type_: format!("Invalid UTF-8 in JSON bindings: {}", e),
+        }
+    })?;
+
+    // Parse the JSON
+    let json_value: serde_json::Value = serde_json::from_str(json_str).map_err(|e| {
+        StatementError::UnsupportedBindParameterType {
+            type_: format!("Invalid JSON in bindings: {}", e),
+        }
+    })?;
+
+    // Convert JSON object to HashMap of BindParameters
+    let obj =
+        json_value
+            .as_object()
+            .ok_or_else(|| StatementError::UnsupportedBindParameterType {
+                type_: "Bindings JSON must be an object".to_string(),
+            })?;
+
+    let mut parameters = HashMap::new();
+
+    for (key, value) in obj {
+        // Each value should be an object with "type" and "value" fields
+        let param_obj =
+            value
+                .as_object()
+                .ok_or_else(|| StatementError::UnsupportedBindParameterType {
+                    type_: format!("Parameter '{}' must be an object", key),
+                })?;
+
+        let type_str = param_obj
+            .get("type")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| StatementError::UnsupportedBindParameterType {
+                type_: format!("Parameter '{}' missing 'type' field", key),
+            })?;
+
+        let value_json =
+            param_obj
+                .get("value")
+                .ok_or_else(|| StatementError::UnsupportedBindParameterType {
+                    type_: format!("Parameter '{}' missing 'value' field", key),
+                })?;
+
+        parameters.insert(
+            key.clone(),
+            query_request::BindParameter {
+                type_: type_str.to_string(),
+                value: value_json.clone(),
+                format: None,
+                schema: None,
+            },
+        );
+    }
+
+    Ok(Some(parameters))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -527,5 +629,50 @@ mod tests {
         assert!(!is_file_transfer("PU"));
         assert!(!is_file_transfer("GE"));
         assert!(!is_file_transfer("P"));
+    }
+
+    #[test]
+    fn test_parse_json_bindings() {
+        use crate::protobuf_gen::database_driver_v1::StringPtr;
+
+        // Test simple bindings
+        let json =
+            r#"{"1": {"type": "FIXED", "value": "123"}, "2": {"type": "TEXT", "value": "hello"}}"#;
+        let string_ptr = StringPtr {
+            value: json.as_bytes().to_vec(),
+            length: json.len() as i64,
+        };
+
+        let result = parse_json_bindings(&string_ptr).unwrap();
+        assert!(result.is_some());
+
+        let params = result.unwrap();
+        assert_eq!(params.len(), 2);
+        assert_eq!(params.get("1").unwrap().type_, "FIXED");
+        assert_eq!(params.get("1").unwrap().value.as_str().unwrap(), "123");
+        assert_eq!(params.get("2").unwrap().type_, "TEXT");
+        assert_eq!(params.get("2").unwrap().value.as_str().unwrap(), "hello");
+    }
+
+    #[test]
+    fn test_parse_json_bindings_with_array() {
+        use crate::protobuf_gen::database_driver_v1::StringPtr;
+
+        // Test array bindings (multi-row)
+        let json = r#"{"1": {"type": "FIXED", "value": ["1", "2", "3"]}, "2": {"type": "TEXT", "value": ["a", "b", "c"]}}"#;
+        let string_ptr = StringPtr {
+            value: json.as_bytes().to_vec(),
+            length: json.len() as i64,
+        };
+
+        let result = parse_json_bindings(&string_ptr).unwrap();
+        assert!(result.is_some());
+
+        let params = result.unwrap();
+        assert_eq!(params.len(), 2);
+        assert_eq!(params.get("1").unwrap().type_, "FIXED");
+        assert!(params.get("1").unwrap().value.is_array());
+        assert_eq!(params.get("2").unwrap().type_, "TEXT");
+        assert!(params.get("2").unwrap().value.is_array());
     }
 }
