@@ -34,6 +34,7 @@ if TYPE_CHECKING:
 Row = tuple[Any, ...]
 DictRow = dict[str, Any]
 
+
 class ResultMetadata(NamedTuple):
     """PEP 249 column description entry.
 
