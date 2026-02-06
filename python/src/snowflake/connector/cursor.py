@@ -1,10 +1,10 @@
 """
 PEP 249 Database API 2.0 Cursor Objects
 
-This module defines the Cursor class as specified in PEP 249.
+This module defines the cursor classes as specified in PEP 249.
 
-Hierarchy (mirrors the old snowflake-connector-python):
-    Cursor (base, like SnowflakeCursorBase)
+Hierarchy:
+    SnowflakeCursorBase
     ├── SnowflakeCursor  — returns tuple rows
     └── DictCursor       — returns dict rows
 """
@@ -14,7 +14,7 @@ from __future__ import annotations
 import abc
 
 from collections.abc import Iterator, Sequence
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any
 
 from ._internal.arrow_context import ArrowConverterContext
 from ._internal.arrow_stream_iterator import ArrowStreamIterator  # type: ignore[import-not-found]
@@ -31,7 +31,6 @@ if TYPE_CHECKING:
 
 Row = tuple[Any, ...]
 DictRow = dict[str, Any]
-FetchRow = TypeVar("FetchRow", Row, DictRow)
 
 
 class SnowflakeCursorBase(abc.ABC):
@@ -64,7 +63,6 @@ class SnowflakeCursorBase(abc.ABC):
         self._current_row_in_batch = 0
         self.execute_result: Any = None
         self._iterator: Iterator[Row] | Iterator[DictRow] | None = None
-        self.execute_result = None
 
     # ------------------------------------------------------------------
     # PEP 249 attributes
@@ -133,9 +131,7 @@ class SnowflakeCursorBase(abc.ABC):
         """Close the cursor now (rather than whenever __del__ is called)."""
         self._closed = True
 
-    def execute(
-        self, operation: str, parameters: Sequence[Any] | dict[str, Any] | None = None, _is_put_get: bool | None = None
-    ) -> SnowflakeCursorBase:
+    def execute(self, operation: str, parameters: Sequence[Any] | dict[str, Any] | None = None) -> SnowflakeCursorBase:
         """
         Execute a database operation (query or command).
 

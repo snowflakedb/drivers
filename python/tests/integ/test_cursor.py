@@ -329,23 +329,24 @@ class TestCursorIteration:
 
 
 class TestCursorLargeResults:
-    """Test cursor with large result sets."""
+    """Test cursor with large result sets spanning multiple batches."""
 
-    N_ROWS = 20_000
+    N_ROWS = 5_000
 
-    def test_large_result_fetchall(self, cursor):
+    @pytest.mark.parametrize("data_size", [N_ROWS, 20_000])
+    def test_large_result_fetchall(self, cursor, data_size):
         """Test fetchall with large results."""
         # Use ROW_NUMBER() for consecutive integers; seq4() may skip values in parallel.
         cursor.execute(
             f"""
             SELECT ROW_NUMBER() OVER (ORDER BY seq4()) - 1 as n
-            FROM TABLE(GENERATOR(ROWCOUNT => {self.N_ROWS}))
+            FROM TABLE(GENERATOR(ROWCOUNT => {data_size}))
             ORDER BY 1
         """
         )
         result = cursor.fetchall()
         values = [row[0] for row in result]
-        assert_sequential_values(values, self.N_ROWS)
+        assert_sequential_values(values, data_size)
 
     def test_large_result_iteration(self, cursor):
         """Test iteration over large results."""
@@ -683,19 +684,20 @@ class TestDictCursorIteration:
 class TestDictCursorLargeResults:
     """Test DictCursor with large result sets spanning multiple batches."""
 
-    N_ROWS = 20_000
+    N_ROWS = 5_000
 
-    def test_large_result_fetchall(self, dict_cursor):
+    @pytest.mark.parametrize("data_size", [N_ROWS, 20_000])
+    def test_large_result_fetchall(self, dict_cursor, data_size):
         """Test fetchall with large results returns dicts."""
         dict_cursor.execute(
             f"""
             SELECT ROW_NUMBER() OVER (ORDER BY seq4()) - 1 AS n
-            FROM TABLE(GENERATOR(ROWCOUNT => {self.N_ROWS}))
+            FROM TABLE(GENERATOR(ROWCOUNT => {data_size}))
             ORDER BY 1
             """
         )
         result = dict_cursor.fetchall()
-        assert len(result) == self.N_ROWS
+        assert len(result) == data_size
         assert all(isinstance(row, dict) for row in result)
         assert all(row["N"] == i for i, row in enumerate(result))
 
