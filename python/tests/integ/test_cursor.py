@@ -423,6 +423,14 @@ class TestCursorRowcount:
         # Then rowcount should be 0
         assert cursor.rowcount == 0
 
+    def test_rowcount_after_ddl(self, cursor, tmp_schema):
+        """Test rowcount after DDL statement."""
+        # When executing a DDL statement
+        cursor.execute(f"CREATE TABLE {tmp_schema}.test_ddl_rowcount (id INTEGER)")
+
+        # Then rowcount should be 1
+        assert cursor.rowcount == 1
+
 
 class TestCursorMethods:
     """Test Cursor object methods."""

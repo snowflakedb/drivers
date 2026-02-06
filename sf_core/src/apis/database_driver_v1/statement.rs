@@ -26,6 +26,19 @@ use std::{collections::HashMap, sync::Arc};
 use super::connection::Connection;
 use crate::rest::snowflake::query_request;
 
+/// Sentinel returned when the server does not report a row count.
+const ROWCOUNT_UNKNOWN: i64 = -1;
+
+/// Column names whose values are summed to compute DML rows-affected (exact match).
+const DML_AFFECTED_ROWS_COLUMNS: &[&str] = &[
+    "number of rows updated",
+    "number of multi-joined rows updated",
+    "number of rows deleted",
+];
+
+/// Column name prefixes whose values are summed to compute DML rows-affected.
+const DML_AFFECTED_ROWS_COLUMN_PREFIXES: &[&str] = &["number of rows inserted"];
+
 // Statement type ID constants for DML detection
 const STATEMENT_TYPE_ID_DML: i64 = 0x3000;
 const STATEMENT_TYPE_ID_INSERT: i64 = 0x3100;
@@ -54,7 +67,7 @@ fn is_dml_statement(statement_type_id: Option<i64>) -> bool {
 /// Calculate rows affected based on statement type
 /// - For DML: Parse rowset columns to sum affected rows
 /// - For SELECT and DDL: Use total field
-/// - For unknown: Return -1
+/// - For unknown: Return ROWCOUNT_UNKNOWN (-1)
 fn calculate_rows_affected(data: &Data) -> i64 {
     // Check if this is a DML statement
     if is_dml_statement(data.statement_type_id) {
@@ -69,10 +82,10 @@ fn calculate_rows_affected(data: &Data) -> i64 {
             for (idx, col) in row_types.iter().enumerate() {
                 let col_name = col.name.to_lowercase();
 
-                if (col_name == "number of rows updated"
-                    || col_name == "number of multi-joined rows updated"
-                    || col_name == "number of rows deleted"
-                    || col_name.starts_with("number of rows inserted"))
+                if (DML_AFFECTED_ROWS_COLUMNS.contains(&col_name.as_str())
+                    || DML_AFFECTED_ROWS_COLUMN_PREFIXES
+                        .iter()
+                        .any(|p| col_name.starts_with(p)))
                     && let Some(value) = rowset[0].get(idx)
                     && let Ok(count) = value.parse::<i64>()
                 {
@@ -87,8 +100,8 @@ fn calculate_rows_affected(data: &Data) -> i64 {
     }
 
     // For SELECT and other queries, use total
-    // Return -1 if total is not available
-    data.total.unwrap_or(-1)
+    // Return ROWCOUNT_UNKNOWN if total is not available
+    data.total.unwrap_or(ROWCOUNT_UNKNOWN)
 }
 
 pub fn statement_new(conn_handle: Handle) -> Result<Handle, ApiError> {

@@ -14,7 +14,7 @@ from __future__ import annotations
 import abc
 
 from collections.abc import Iterator, Sequence
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 from ._internal.arrow_context import ArrowConverterContext
 from ._internal.arrow_stream_iterator import ArrowStreamIterator  # type: ignore[import-not-found]
@@ -33,15 +33,48 @@ if TYPE_CHECKING:
 
 Row = tuple[Any, ...]
 DictRow = dict[str, Any]
-ColumnDescription = tuple[
-    str,
-    int,
-    Optional[int],
-    Optional[int],
-    Optional[int],
-    Optional[int],
-    Optional[bool],
-]
+
+class ResultMetadata(NamedTuple):
+    """PEP 249 column description entry.
+
+    Each item in ``Cursor.description`` is a ``ResultMetadata`` instance.
+    Being a :class:`~typing.NamedTuple` it is fully tuple-compatible as
+    required by the spec, while also providing named attribute access.
+    """
+
+    name: str
+    type_code: int
+    display_size: int | None
+    internal_size: int | None
+    precision: int | None
+    scale: int | None
+    is_nullable: bool | None
+
+    @classmethod
+    def from_column(cls, col: Any) -> ResultMetadata:
+        """Create a ``ResultMetadata`` from a protobuf ``ColumnMetadata``."""
+        type_code = get_type_code(col.type)
+
+        display_size = (
+            col.length if col.HasField("length") and col.type.upper() in ("TEXT", "VARCHAR", "CHAR", "STRING") else None
+        )
+        internal_size = col.byte_length if col.HasField("byte_length") else None
+        precision = col.precision if col.HasField("precision") else None
+        scale = col.scale if col.HasField("scale") else None
+
+        return cls(
+            name=col.name,
+            type_code=type_code,
+            display_size=display_size,
+            internal_size=internal_size,
+            precision=precision,
+            scale=scale,
+            is_nullable=col.nullable,
+        )
+
+
+# Backward compatibility alias
+ResultMetadataV2 = ResultMetadata
 
 
 class SnowflakeCursorBase(abc.ABC):
@@ -64,7 +97,7 @@ class SnowflakeCursorBase(abc.ABC):
             connection: Connection object that created this cursor
         """
         self.connection = connection
-        self._description: list[ColumnDescription] | None = None
+        self._description: list[ResultMetadata] | None = None
         self._rowcount = None
         self.arraysize = 1  # Instance attribute overrides class attribute
         self._closed = False
@@ -80,7 +113,7 @@ class SnowflakeCursorBase(abc.ABC):
     # ------------------------------------------------------------------
 
     @property
-    def description(self) -> list[ColumnDescription] | None:
+    def description(self) -> list[ResultMetadata] | None:
         """
         Read-only attribute describing the result columns of a query.
 
@@ -181,9 +214,7 @@ class SnowflakeCursorBase(abc.ABC):
 
     def _populate_rowcount(self) -> None:
         if self.execute_result:
-            rows_affected = self.execute_result.rows_affected
-            # Negative value indicates count cannot be determined, convert to None
-            self._rowcount = rows_affected if rows_affected >= 0 else None
+            self._rowcount = self.execute_result.rows_affected
         else:
             self._rowcount = None
 
@@ -244,32 +275,7 @@ class SnowflakeCursorBase(abc.ABC):
             self._description = None
             return
 
-        description = []
-        for col in columns:
-            # Extract metadata from protobuf ColumnMetadata
-            name = col.name
-            type_code = get_type_code(col.type)
-
-            # display_size: For TEXT types, use length; otherwise None
-            display_size = (
-                col.length
-                if col.HasField("length") and col.type.upper() in ("TEXT", "VARCHAR", "CHAR", "STRING")
-                else None
-            )
-
-            # internal_size: Use byte_length if available
-            internal_size = col.byte_length if col.HasField("byte_length") else None
-
-            # precision and scale for numeric types
-            precision = col.precision if col.HasField("precision") else None
-            scale = col.scale if col.HasField("scale") else None
-
-            # nullable flag
-            null_ok = col.nullable
-
-            description.append((name, type_code, display_size, internal_size, precision, scale, null_ok))
-
-        self._description = description
+        self._description = [ResultMetadata.from_column(col) for col in columns]
 
     def _get_iterator(self) -> ArrowStreamIterator:
         stream_ptr = self._get_stream_ptr()
