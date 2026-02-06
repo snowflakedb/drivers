@@ -219,64 +219,6 @@ class TestBinaryTable:
         assert bin_default == b"Hello"
 
 
-class TestBinaryBinding:
-    """Tests for BINARY type using parameter binding."""
-
-    @pytest.mark.skip("SNOW-3006013 - parameter binding is not yet implemented")
-    @binary_type_parametrize
-    def test_should_select_binary_literals_using_parameter_binding(self, execute_query, binary_type):
-        # SELECT binding test: Uses SELECT ?::BINARY to bind binary values
-
-        # Given Snowflake client is logged in
-
-        # When Query "SELECT ?::BINARY, ?::BINARY, ?::BINARY" is executed with bound binary values
-        # [0x48656C6C6F, 0x576F726C64, 0x0123456789ABCDEF]
-        result = execute_query(
-            f"SELECT ?::{binary_type}, ?::{binary_type}, ?::{binary_type}",
-            (b"Hello", b"World", b"\x01\x23\x45\x67\x89\xab\xcd\xef"),
-            single_row=True,
-        )
-
-        # Then the result should contain:
-        assert_type(result, bytearray)
-        assert result == (b"Hello", b"World", b"\x01\x23\x45\x67\x89\xab\xcd\xef")
-
-    @pytest.mark.skip("SNOW-3006013 - parameter binding is not yet implemented")
-    @binary_type_parametrize
-    def test_should_insert_binary_using_parameter_binding(self, execute_query, tmp_schema, binary_type):
-        # Given Snowflake client is logged in
-
-        # And Table with BINARY column exists
-        table_name = f"{tmp_schema}.binary_bind_insert_test"
-        execute_query(f"CREATE TABLE {table_name} (col {binary_type})")
-
-        # When Binary values [0x48656C6C6F, 0x576F726C64, 0x00, 0xFF, 0x] are inserted using binding
-        test_values = [b"Hello", b"World", b"\x00", b"\xff", b""]
-        for val in test_values:
-            execute_query(f"INSERT INTO {table_name} VALUES (?)", (val,))
-
-        # And Query "SELECT * FROM {table}" is executed
-        rows = execute_query(f"SELECT * FROM {table_name}")
-
-        # Then Result should contain binary values [0x48656C6C6F, 0x576F726C64, 0x00, 0xFF, 0x]
-        result = [row[0] for row in rows]
-        assert len(result) == len(test_values)
-        assert_type(result, bytearray)
-        assert set(result) == set(test_values)
-
-    @pytest.mark.skip("SNOW-3006013 - parameter binding is not yet implemented")
-    @binary_type_parametrize
-    def test_should_bind_corner_case_binary_values(self, execute_query, binary_type):
-        # Given Snowflake client is logged in
-
-        for corner_case, _ in CORNER_CASE_VALUES:
-            # When Query "SELECT ?::BINARY" is executed with each corner case binary value bound
-            result = execute_query(f"SELECT ?::{binary_type}", (corner_case,), single_row=True)
-
-            # Then the result should match the bound corner case value
-            assert result == (corner_case,), f"Expected {corner_case!r}, got {result[0]!r}"
-
-
 class TestBinaryMultipleChunks:
     """Tests for BINARY type with multiple chunks downloading."""
 
