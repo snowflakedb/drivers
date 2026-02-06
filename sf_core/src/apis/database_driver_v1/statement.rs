@@ -199,11 +199,9 @@ pub fn statement_execute_query(
             crate::protobuf_gen::database_driver_v1::query_bindings::BindingType::Arrow(
                 _arrow_bindings,
             ) => {
-                // TODO: Implement Arrow bindings from protobuf
-                return Err(InvalidArgumentSnafu {
-                    argument: "Arrow bindings from protobuf are not yet implemented".to_string(),
-                }
-                .build());
+                // Arrow bindings removed from protobuf - this case will be gone after regeneration
+                // Using backwards compatible fallback to StatementBind instead
+                unreachable!("Arrow bindings should not be passed via protobuf")
             }
         }
     } else {
@@ -250,7 +248,7 @@ pub fn statement_execute_query(
 
 fn parameters_from_record_batch(
     record_batch: &RecordBatch,
-) -> Result<HashMap<String, query_request::BindParameter>, StatementError> {
+) -> Result<serde_json::Value, StatementError> {
     let mut parameters = HashMap::new();
     for i in 0..record_batch.num_columns() {
         let column = record_batch.column(i);
@@ -297,7 +295,13 @@ fn parameters_from_record_batch(
             }
         }
     }
-    Ok(parameters)
+    // Convert HashMap to JSON Value for backwards compatibility
+    serde_json::to_value(parameters).map_err(|_| {
+        UnsupportedBindParameterTypeSnafu {
+            type_: "Failed to serialize parameters".to_string(),
+        }
+        .build()
+    })
 }
 
 pub struct Statement {
@@ -342,7 +346,7 @@ impl Statement {
 
     pub fn get_query_parameter_bindings(
         &self,
-    ) -> Result<Option<HashMap<String, query_request::BindParameter>>, StatementError> {
+    ) -> Result<Option<serde_json::Value>, StatementError> {
         match self.parameter_bindings.as_ref() {
             Some(parameters) => Ok(Some(parameters_from_record_batch(parameters)?)),
             None => Ok(None),
@@ -446,73 +450,62 @@ pub enum StatementError {
     },
 }
 
-/// Parse JSON bindings from StringPtr protobuf message
+/// Extract JSON bindings from StringPtr protobuf message
+/// Simply dereferences the pointer and parses as JSON Value - no validation.
+/// The Snowflake server is responsible for validating the binding format.
 fn parse_json_bindings(
     string_ptr: &crate::protobuf_gen::database_driver_v1::StringPtr,
-) -> Result<Option<HashMap<String, query_request::BindParameter>>, StatementError> {
-    // Extract the JSON string from the pointer
-    // In the protobuf message, value contains the actual bytes
-    let json_bytes = &string_ptr.value;
-
-    // Convert bytes to string
-    let json_str = std::str::from_utf8(json_bytes).map_err(|e| {
-        StatementError::UnsupportedBindParameterType {
-            type_: format!("Invalid UTF-8 in JSON bindings: {}", e),
+) -> Result<Option<serde_json::Value>, StatementError> {
+    // Validate pointer structure (must be 8 bytes)
+    if string_ptr.value.len() != 8 {
+        return UnsupportedBindParameterTypeSnafu {
+            type_: format!("StringPtr must be 8 bytes, got {}", string_ptr.value.len()),
         }
-    })?;
-
-    // Parse the JSON
-    let json_value: serde_json::Value = serde_json::from_str(json_str).map_err(|e| {
-        StatementError::UnsupportedBindParameterType {
-            type_: format!("Invalid JSON in bindings: {}", e),
-        }
-    })?;
-
-    // Convert JSON object to HashMap of BindParameters
-    let obj =
-        json_value
-            .as_object()
-            .ok_or_else(|| StatementError::UnsupportedBindParameterType {
-                type_: "Bindings JSON must be an object".to_string(),
-            })?;
-
-    let mut parameters = HashMap::new();
-
-    for (key, value) in obj {
-        // Each value should be an object with "type" and "value" fields
-        let param_obj =
-            value
-                .as_object()
-                .ok_or_else(|| StatementError::UnsupportedBindParameterType {
-                    type_: format!("Parameter '{}' must be an object", key),
-                })?;
-
-        let type_str = param_obj
-            .get("type")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| StatementError::UnsupportedBindParameterType {
-                type_: format!("Parameter '{}' missing 'type' field", key),
-            })?;
-
-        let value_json =
-            param_obj
-                .get("value")
-                .ok_or_else(|| StatementError::UnsupportedBindParameterType {
-                    type_: format!("Parameter '{}' missing 'value' field", key),
-                })?;
-
-        parameters.insert(
-            key.clone(),
-            query_request::BindParameter {
-                type_: type_str.to_string(),
-                value: value_json.clone(),
-                format: None,
-                schema: None,
-            },
-        );
+        .fail();
     }
 
-    Ok(Some(parameters))
+    // Convert 8-byte array to usize pointer
+    let ptr_bytes: [u8; 8] = string_ptr
+        .value
+        .as_slice()
+        .try_into()
+        .map_err(|_| UnsupportedBindParameterTypeSnafu {
+            type_: "Failed to convert pointer bytes".to_string(),
+        }
+        .build())?;
+    let ptr_value = usize::from_le_bytes(ptr_bytes);
+
+    // Validate pointer is not null
+    if ptr_value == 0 {
+        return UnsupportedBindParameterTypeSnafu {
+            type_: "Null pointer in bindings".to_string(),
+        }
+        .fail();
+    }
+
+    // Dereference pointer to get JSON bytes (unsafe)
+    // Safety: Python wrapper guarantees the pointer is valid for this call
+    let json_bytes = unsafe {
+        let ptr = ptr_value as *const u8;
+        let length = string_ptr.length as usize;
+        std::slice::from_raw_parts(ptr, length)
+    };
+
+    // Convert to UTF-8 string
+    let json_str = std::str::from_utf8(json_bytes)
+        .map_err(|_| UnsupportedBindParameterTypeSnafu {
+            type_: "Invalid UTF-8 in bindings".to_string(),
+        }
+        .build())?;
+
+    // Parse as raw JSON Value - server validates structure
+    let bindings: serde_json::Value = serde_json::from_str(json_str)
+        .map_err(|_| UnsupportedBindParameterTypeSnafu {
+            type_: "Failed to parse bindings JSON".to_string(),
+        }
+        .build())?;
+
+    Ok(Some(bindings))
 }
 
 #[cfg(test)]
@@ -638,8 +631,14 @@ mod tests {
         // Test simple bindings
         let json =
             r#"{"1": {"type": "FIXED", "value": "123"}, "2": {"type": "TEXT", "value": "hello"}}"#;
+
+        // Create a pointer to the JSON bytes (simulating Python's no-copy scheme)
+        let json_bytes = json.as_bytes();
+        let ptr_value = json_bytes.as_ptr() as usize;
+        let ptr_bytes = ptr_value.to_le_bytes();
+
         let string_ptr = StringPtr {
-            value: json.as_bytes().to_vec(),
+            value: ptr_bytes.to_vec(),
             length: json.len() as i64,
         };
 
@@ -647,11 +646,20 @@ mod tests {
         assert!(result.is_some());
 
         let params = result.unwrap();
-        assert_eq!(params.len(), 2);
-        assert_eq!(params.get("1").unwrap().type_, "FIXED");
-        assert_eq!(params.get("1").unwrap().value.as_str().unwrap(), "123");
-        assert_eq!(params.get("2").unwrap().type_, "TEXT");
-        assert_eq!(params.get("2").unwrap().value.as_str().unwrap(), "hello");
+        // Verify it's a JSON object with 2 keys
+        assert!(params.is_object());
+        let obj = params.as_object().unwrap();
+        assert_eq!(obj.len(), 2);
+
+        // Verify parameter 1
+        let param1 = obj.get("1").unwrap();
+        assert_eq!(param1["type"], "FIXED");
+        assert_eq!(param1["value"], "123");
+
+        // Verify parameter 2
+        let param2 = obj.get("2").unwrap();
+        assert_eq!(param2["type"], "TEXT");
+        assert_eq!(param2["value"], "hello");
     }
 
     #[test]
@@ -660,8 +668,14 @@ mod tests {
 
         // Test array bindings (multi-row)
         let json = r#"{"1": {"type": "FIXED", "value": ["1", "2", "3"]}, "2": {"type": "TEXT", "value": ["a", "b", "c"]}}"#;
+
+        // Create a pointer to the JSON bytes (simulating Python's no-copy scheme)
+        let json_bytes = json.as_bytes();
+        let ptr_value = json_bytes.as_ptr() as usize;
+        let ptr_bytes = ptr_value.to_le_bytes();
+
         let string_ptr = StringPtr {
-            value: json.as_bytes().to_vec(),
+            value: ptr_bytes.to_vec(),
             length: json.len() as i64,
         };
 
@@ -669,10 +683,19 @@ mod tests {
         assert!(result.is_some());
 
         let params = result.unwrap();
-        assert_eq!(params.len(), 2);
-        assert_eq!(params.get("1").unwrap().type_, "FIXED");
-        assert!(params.get("1").unwrap().value.is_array());
-        assert_eq!(params.get("2").unwrap().type_, "TEXT");
-        assert!(params.get("2").unwrap().value.is_array());
+        // Verify it's a JSON object with 2 keys
+        assert!(params.is_object());
+        let obj = params.as_object().unwrap();
+        assert_eq!(obj.len(), 2);
+
+        // Verify parameter 1
+        let param1 = obj.get("1").unwrap();
+        assert_eq!(param1["type"], "FIXED");
+        assert!(param1["value"].is_array());
+
+        // Verify parameter 2
+        let param2 = obj.get("2").unwrap();
+        assert_eq!(param2["type"], "TEXT");
+        assert!(param2["value"].is_array());
     }
 }

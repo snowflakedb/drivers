@@ -1,4 +1,4 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 #[derive(Serialize)]
@@ -18,14 +18,14 @@ pub struct Request {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub parameters: Option<HashMap<String, serde_json::Value>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub bindings: Option<HashMap<String, BindParameter>>,
+    pub bindings: Option<serde_json::Value>,
     #[serde(rename = "bindStage", skip_serializing_if = "Option::is_none")]
     pub bind_stage: Option<String>,
     #[serde(rename = "queryContextDTO")]
     pub query_context: QueryContext,
 }
 
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct BindParameter {
     #[serde(rename = "type")]
     pub type_: String,
@@ -36,7 +36,7 @@ pub struct BindParameter {
     pub schema: Option<BindingSchema>,
 }
 
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct BindingSchema {}
 
 #[derive(Serialize)]

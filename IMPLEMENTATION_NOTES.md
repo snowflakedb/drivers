@@ -13,20 +13,14 @@ Added new message types for passing data pointers from wrappers to Rust core:
 ```protobuf
 // Pointer to an UTF-8 string in memory
 message StringPtr {
-  bytes value = 1;  // 8-byte pointer
+  bytes value = 1;  // 8-byte pointer (memory address in little-endian)
   int64 length = 2;  // Length of data in bytes
 }
 
 // Pointer to binary data with explicit length
 message BinaryDataPtr {
-  bytes value = 1;   // 8-byte pointer
+  bytes value = 1;   // 8-byte pointer (memory address in little-endian)
   int64 length = 2;  // Length of data in bytes
-}
-
-// Arrow bindings for ODBC (mirrors current StatementBind)
-message ArrowBindings {
-  ArrowSchemaPtr schema = 1;
-  ArrowArrayPtr array = 2;
 }
 
 // Union of all binding types
@@ -34,7 +28,7 @@ message QueryBindings {
   oneof binding_type {
     StringPtr json = 1;
     BinaryDataPtr csv = 2;
-    ArrowBindings arrow = 3;
+    // Note: Arrow bindings removed - backwards compatibility via StatementBind fallback
   }
 }
 
@@ -45,6 +39,10 @@ message StatementExecuteQueryRequest {
 }
 ```
 
+**Key Design Decision**: Removed `ArrowBindings` from protobuf. Backwards compatibility
+is achieved by falling back to the existing `StatementBind` mechanism when no bindings
+are provided via protobuf. This is cleaner than passing Arrow pointers through protobuf.
+
 ### 2. Python Wrapper Implementation
 
 #### New Module: `binding_serializer.py`
@@ -54,7 +52,8 @@ Created `python/src/snowflake/connector/_internal/binding_serializer.py` with th
 - Converts Python parameters (sequence or dict) to Snowflake JSON binding format
 - Handles both single-row and multi-row (array) bindings
 - Maps Python types to Snowflake types (int → FIXED, str → TEXT, etc.)
-- Provides a method to determine if stage binding should be used based on threshold
+- **Stage binding decision logic deferred to follow-up** (see TODO comment in file)
+- **Removed `should_use_stage_binding` method** - will be implemented when CSV stage binding is added
 
 **JSON Format:**
 ```json
@@ -80,22 +79,36 @@ Modified the `execute()` method to:
 3. Wrap in `QueryBindings` message
 4. Pass to `StatementExecuteQueryRequest`
 
-**Code:**
+**Code (No-Copy Scheme):**
 ```python
 # Serialize parameters if provided
-bindings = None
 if parameters is not None:
     json_str, length = BindingSerializer.serialize_parameters(parameters)
     if json_str is not None:
+        # Convert to bytes and keep reference (prevent GC)
         json_bytes = json_str.encode('utf-8')
-        string_ptr = StringPtr(value=json_bytes, length=length)
-        bindings = QueryBindings(json=string_ptr)
+        self._binding_data = json_bytes  # Keep alive during RPC
 
-# Execute query with optional bindings
-request = StatementExecuteQueryRequest(stmt_handle=stmt_handle)
-if bindings is not None:
-    request.bindings.CopyFrom(bindings)
+        # Get memory pointer (no-copy scheme)
+        import ctypes
+        ptr_value = ctypes.cast(ctypes.c_char_p(json_bytes), ctypes.c_void_p).value
+        ptr_bytes = ptr_value.to_bytes(8, byteorder='little', signed=False)
+
+        # Pass pointer, not data
+        string_ptr = StringPtr(value=ptr_bytes, length=length)
+        request = StatementExecuteQueryRequest(
+            stmt_handle=stmt_handle,
+            bindings=QueryBindings(json=string_ptr)
+        )
+    else:
+        request = StatementExecuteQueryRequest(stmt_handle=stmt_handle)
+else:
+    request = StatementExecuteQueryRequest(stmt_handle=stmt_handle)
 ```
+
+**No-Copy Guarantee**: Data exists once in Python memory. Only the 8-byte pointer
+value is passed through protobuf, not the actual JSON bytes. Rust dereferences the
+pointer to access the data.
 
 ### 3. Rust Core Implementation
 
@@ -121,26 +134,42 @@ pub fn statement_execute_query(
 ```
 
 2. **Added binding type handling:**
-- JSON bindings: Parse JSON and convert to `HashMap<String, BindParameter>`
+- JSON bindings: Dereference pointer and parse as raw `serde_json::Value` - passed directly to HTTP layer
 - CSV bindings: Placeholder for future stage upload implementation
-- Arrow bindings: Placeholder for future Arrow binding support
 - Falls back to existing Arrow bindings from `StatementBind` for backwards compatibility
 
 3. **New function `parse_json_bindings()`:**
-- Parses JSON from `StringPtr`
-- Converts to `HashMap<String, query_request::BindParameter>`
-- Validates JSON structure
-- Handles both scalar and array values
+- Dereferences pointer from `StringPtr` (8-byte memory address)
+- Parses JSON as raw `serde_json::Value` - **no intermediate deserialization**
+- **Zero validation** - server is responsible for validating binding format
+- **Single parse** - no conversion to HashMap, passed directly to HTTP serialization
 
 ```rust
 fn parse_json_bindings(
     string_ptr: &crate::protobuf_gen::database_driver_v1::StringPtr,
-) -> Result<Option<HashMap<String, query_request::BindParameter>>, StatementError>
+) -> Result<Option<serde_json::Value>, StatementError>
 ```
 
-4. **Added tests:**
+**Safety**: Uses `unsafe` to dereference the raw pointer. Python wrapper guarantees
+the pointer is valid and the data won't be deallocated during the RPC call.
+
+**Performance**: Optimal path - Python serializes → Rust dereferences → HTTP serializes.
+No intermediate conversions or re-serialization.
+
+4. **Updated HTTP layer** (`sf_core/src/rest/snowflake/query_request.rs`):
+- Changed `bindings` field from `HashMap<String, BindParameter>` to `serde_json::Value`
+- Allows passing raw JSON through without intermediate deserialization
+- Server receives exactly what Python sent
+
+5. **Updated backwards compatibility** (`parameters_from_record_batch`):
+- Converts Arrow RecordBatch to HashMap<String, BindParameter>
+- Serializes HashMap to `serde_json::Value` using `serde_json::to_value()`
+- All existing validation logic preserved in backwards compatibility path
+
+6. **Added tests:**
 - `test_parse_json_bindings()`: Tests simple parameter binding
 - `test_parse_json_bindings_with_array()`: Tests array (multi-row) binding
+- Tests verify JSON structure without deserializing to HashMap
 
 ## Backwards Compatibility
 
@@ -157,6 +186,18 @@ fn parse_json_bindings(
 3. **Compatible with old Python connector:**
    - The JSON format exactly matches the format used by the old `snowflake-connector-python`
    - See comparison in next section
+
+## Performance Characteristics
+
+### Data Flow (Optimized):
+1. **Python**: Serialize params → JSON string (once)
+2. **Python**: Get pointer to JSON bytes (zero-copy)
+3. **Protobuf**: Pass 8-byte pointer (not data)
+4. **Rust**: Dereference pointer → Parse as `serde_json::Value` (once)
+5. **HTTP**: Serialize `serde_json::Value` to request body (once)
+
+**Total**: 1 serialize in Python + 1 parse in Rust + 1 serialize to HTTP = 3 operations
+**No intermediate HashMap conversions or re-serialization**
 
 ### Comparison with Old Python Connector
 
@@ -180,11 +221,13 @@ bindings[str(idx + 1)] = {
 
 Both produce identical JSON structure sent to Snowflake server.
 
-## Memory Management
+## Memory Management (No-Copy Scheme)
 
-As specified in the design document:
+Implemented as specified in the design document:
 - **Wrapper responsibility:** Python manages the memory for the JSON bytes
-- **No deallocation needed:** The bytes are passed by value in the protobuf message, not by raw pointer
+- **Pointer passing:** Only the 8-byte pointer value is passed through protobuf, not the data
+- **Lifetime guarantee:** Python keeps a reference (`self._binding_data`) to prevent GC
+- **Rust side:** Dereferences the pointer using `unsafe` to access data
 - **Safe:** Python's garbage collector handles cleanup after the RPC completes
 
 ## Next Steps
@@ -296,20 +339,27 @@ pub fn statement_execute_query(
    - Most queries use small parameter sets
    - CSV stage upload can be added later for large datasets
 
-2. **Why not Arrow for all wrappers:**
-   - Type conversion complexity
-   - Risk of backwards compatibility breaks
-   - Existing drivers use string-based serialization
+2. **Why raw `serde_json::Value` instead of HashMap:**
+   - Eliminates intermediate deserialization/re-serialization
+   - Rust core just passes JSON through to HTTP layer
+   - Server is responsible for validation (single source of truth)
+   - Significantly simpler code with better performance
 
-3. **Why optional in protobuf:**
+3. **Why removed Arrow from protobuf:**
+   - Better backwards compatibility via StatementBind fallback
+   - Cleaner separation: protobuf for new wrappers, StatementBind for ODBC
+   - No need to pass Arrow pointers through protobuf
+
+4. **Why optional in protobuf:**
    - Backwards compatibility with existing `StatementBind` mechanism
    - Allows gradual migration
    - ODBC can continue using Arrow format
 
-4. **Memory safety:**
-   - Protobuf bytes fields handle memory correctly
-   - No raw pointers across FFI boundary
-   - Python GC manages lifecycle
+5. **Memory safety:**
+   - Python keeps reference to prevent GC (`self._binding_data`)
+   - Only pointer value (8 bytes) passed through protobuf
+   - Rust uses `unsafe` with documented safety guarantees
+   - Data lifetime managed by Python GC after RPC completes
 
 ## File Changes Summary
 

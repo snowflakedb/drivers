@@ -109,7 +109,7 @@ pub struct SubmitOk {
 
 fn build_async_query_request(
     sql: String,
-    parameter_bindings: Option<&HashMap<String, query_request::BindParameter>>,
+    parameter_bindings: Option<&serde_json::Value>,
 ) -> query_request::Request {
     query_request::Request {
         sql_text: sql,
@@ -194,7 +194,7 @@ pub async fn submit_statement_async(
     params: &QueryParameters,
     session_token: &str,
     sql: String,
-    parameter_bindings: Option<&HashMap<String, query_request::BindParameter>>,
+    parameter_bindings: Option<&serde_json::Value>,
     request_id: uuid::Uuid,
     policy: &RetryPolicy,
 ) -> Result<SubmitOk, SfError> {
@@ -267,7 +267,7 @@ pub async fn execute_blocking_with_async(
     params: &QueryParameters,
     session_token: &str,
     sql: String,
-    parameter_bindings: Option<HashMap<String, query_request::BindParameter>>,
+    parameter_bindings: Option<serde_json::Value>,
     request_id: uuid::Uuid,
     policy: &RetryPolicy,
 ) -> Result<query_response::Response, SfError> {

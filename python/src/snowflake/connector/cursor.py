@@ -123,28 +123,37 @@ class Cursor:
         )
 
         # Serialize parameters if provided
-        bindings = None
         if parameters is not None:
             json_str, length = BindingSerializer.serialize_parameters(parameters)
             if json_str is not None:
-                # Create StringPtr with JSON data
-                # Convert string to bytes for transmission
+                # Convert string to bytes
                 json_bytes = json_str.encode('utf-8')
 
-                # Create pointer to the bytes data
-                # Note: Python manages memory, so we pass the bytes directly
+                # Keep reference to prevent garbage collection while Rust uses it
+                self._binding_data = json_bytes
+
+                # Get memory address of the bytes buffer (no-copy scheme)
+                import ctypes
+                ptr_value = ctypes.cast(ctypes.c_char_p(json_bytes), ctypes.c_void_p).value
+
+                # Convert pointer to 8-byte little-endian representation
+                ptr_bytes = ptr_value.to_bytes(8, byteorder='little', signed=False)
+
+                # Create StringPtr with actual memory pointer (not data copy)
                 string_ptr = StringPtr(
-                    value=json_bytes,
+                    value=ptr_bytes,  # 8-byte pointer value
                     length=length
                 )
 
-                # Create QueryBindings with JSON binding
-                bindings = QueryBindings(json=string_ptr)
-
-        # Execute query with optional bindings
-        request = StatementExecuteQueryRequest(stmt_handle=stmt_handle)
-        if bindings is not None:
-            request.bindings.CopyFrom(bindings)
+                # Create request with bindings (no CopyFrom - direct assignment)
+                request = StatementExecuteQueryRequest(
+                    stmt_handle=stmt_handle,
+                    bindings=QueryBindings(json=string_ptr)
+                )
+            else:
+                request = StatementExecuteQueryRequest(stmt_handle=stmt_handle)
+        else:
+            request = StatementExecuteQueryRequest(stmt_handle=stmt_handle)
 
         self.execute_result = self.connection.db_api.statement_execute_query(request).result
 

@@ -170,18 +170,11 @@ message BinaryDataPtr {
   int64 length = 2;  // Length of data in bytes
 }
 
-// Arrow bindings for ODBC (mirrors current StatementBind)
-message ArrowBindings {
-  ArrowSchemaPtr schema = 1;
-  ArrowArrayPtr array = 2;
-}
-
 // Union of all binding types
 message QueryBindings {
   oneof binding_type {
     StringPtr json = 1;
     BinaryDataPtr csv = 2;
-    ArrowBindings arrow = 3;
   }
 }
 

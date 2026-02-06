@@ -146,6 +146,7 @@ impl SnowflakeTestClient {
     pub fn execute_statement_query(&self, stmt: &StatementHandle) -> ExecuteResult {
         DatabaseDriverClient::statement_execute_query(StatementExecuteQueryRequest {
             stmt_handle: Some(*stmt),
+            bindings: None,
         })
         .unwrap()
         .result

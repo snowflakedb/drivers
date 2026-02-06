@@ -171,49 +171,6 @@ class BindingSerializer:
 
         return snowflake_type, converted_values
 
-    @classmethod
-    def should_use_stage_binding(
-        cls,
-        params: Sequence[Any] | dict[str, Any] | None,
-        threshold: int = 65280
-    ) -> bool:
-        """
-        Determine if parameters should be uploaded to stage instead of using JSON.
-
-        Args:
-            params: Parameters to check
-            threshold: CLIENT_STAGE_ARRAY_BINDING_THRESHOLD value
-
-        Returns:
-            True if should use stage binding (CSV upload), False for JSON binding
-        """
-        if params is None or threshold <= 0:
-            return False
-
-        # Count total number of data points
-        total_size = 0
-
-        if isinstance(params, dict):
-            for value in params.values():
-                if isinstance(value, list):
-                    total_size += len(value)
-                else:
-                    total_size += 1
-        else:
-            for value in params:
-                if isinstance(value, list):
-                    total_size += len(value)
-                else:
-                    total_size += 1
-
-        # Calculate approximate size (rows * columns)
-        # This is a simplified calculation
-        if isinstance(params, dict):
-            row_size = len(params)
-        else:
-            row_size = len([p for p in params if not isinstance(p, list)])
-            if row_size == 0:
-                row_size = len(params)
-
-        bind_size = total_size
-        return bind_size >= threshold
+    # TODO: Implement stage binding decision logic in follow-up
+    # When data size exceeds CLIENT_STAGE_ARRAY_BINDING_THRESHOLD (default 65280),
+    # should serialize to CSV and upload to stage instead of using JSON binding.
