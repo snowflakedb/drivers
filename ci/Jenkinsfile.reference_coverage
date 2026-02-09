@@ -17,7 +17,6 @@
 
 @Library('pipeline-utils')
 import com.snowflake.DevEnvUtils
-import groovy.json.JsonOutput
 import groovy.transform.Field
 
 @Field String DOCKER_IMAGE = 'artifactory.ci1.us-west-2.aws-dev.app.snowflake.com/internal-production-docker-snowflake-virtual/docker/rhel8-universal-driver-coverage:3'
