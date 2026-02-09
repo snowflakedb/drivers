@@ -9,7 +9,11 @@ try {
     $NPROC = (Get-CimInstance Win32_ComputerSystem).NumberOfLogicalProcessors
     
     New-Item -ItemType Directory -Force -Path cmake-build | Out-Null
-    cmake -B cmake-build -D DRIVER_TYPE=$env:DRIVER_TYPE .
+    $cmakeArgs = @("-B", "cmake-build", "-D", "DRIVER_TYPE=$env:DRIVER_TYPE")
+    if ($env:VCPKG_INSTALLATION_ROOT) {
+        $cmakeArgs += "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
+    }
+    cmake @cmakeArgs .
     cmake --build cmake-build --config Debug --parallel $NPROC
     ctest -j $NPROC -C Debug --test-dir cmake-build --output-on-failure
 }

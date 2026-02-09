@@ -63,6 +63,7 @@ jobs:
         run: |
           choco install cmake --installargs 'ADD_CMAKE_TO_PATH=System' -y
           choco install openssl -y
+          vcpkg install zlib:x64-windows
           cmake --version
           # GPG is pre-installed on Windows GitHub runners
           gpg --version
@@ -113,7 +114,7 @@ jobs:
         if: matrix.os == 'windows-latest'
         shell: pwsh
         run: |
-          $env:DRIVER_PATH = "C:\Program Files\Snowflake\ODBC\lib\sfodbc.dll"
+          $env:DRIVER_PATH = "C:\Program Files\Snowflake ODBC Driver\snowflake_odbc.dll"
           $env:PARAMETER_PATH = "$(pwd)\parameters.json"
           $env:DRIVER_TYPE = "OLD"
           .\scripts\odbc\run_tests_windows.ps1
@@ -165,6 +166,7 @@ jobs:
         run: |
           choco install cmake --installargs 'ADD_CMAKE_TO_PATH=System' -y
           choco install openssl -y
+          vcpkg install zlib:x64-windows
           cmake --version
           # GPG is pre-installed on Windows GitHub runners
           gpg --version
