@@ -3,7 +3,6 @@
 #include <sqltypes.h>
 
 #include <catch2/catch_test_macros.hpp>
-#include <catch2/matchers/catch_matchers_all.hpp>
 
 #include <atomic>
 #include <thread>
@@ -17,8 +16,6 @@
 #include "macros.hpp"
 #include "test_macros.hpp"
 #include "test_setup.hpp"
-
-using namespace Catch::Matchers;
 
 // ============================================================================
 // SQLConnect - Success Cases
