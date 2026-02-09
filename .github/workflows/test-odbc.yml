@@ -83,7 +83,7 @@ jobs:
         if: matrix.os == 'windows-latest'
         shell: pwsh
         run: |
-          $env:DRIVER_PATH = "C:\Program Files\Snowflake ODBC Driver\snowflake_odbc.dll"
+          $env:DRIVER_PATH = "C:\Program Files\Snowflake ODBC Driver\Bin\SnowflakeDSII.dll"
           $env:PARAMETER_PATH = "$(pwd)\parameters.json"
           $env:DRIVER_TYPE = "OLD"
           .\scripts\odbc\run_tests_windows.ps1
