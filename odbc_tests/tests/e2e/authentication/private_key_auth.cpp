@@ -104,9 +104,10 @@ void assert_login_error(ConnectionHandleWrapper& dbc) {
 TEST_CASE("should authenticate using private file with password", "[private_key_auth]") {
   // Given Authentication is set to JWT and private file with password is provided
   TempTestDir tmp("e2e_auth_pwd_");
+  /* TODO: Explicit config installation */
+  std::string connection_string = get_jwt_connection_string_with_private_key(tmp);
   auto env = setup_environment();
   auto dbc = get_connection_handle(env);
-  std::string connection_string = get_jwt_connection_string_with_private_key(tmp);
 
   // When Trying to Connect
   attempt_connection(dbc, connection_string);
@@ -119,9 +120,10 @@ TEST_CASE("should authenticate using private file with password", "[private_key_
 
 TEST_CASE("should fail JWT authentication when invalid private key provided", "[private_key_auth]") {
   // Given Authentication is set to JWT and invalid private key file is provided
+  /* TODO: Explicit config installation */
+  std::string connection_string = get_jwt_connection_string_with_invalid_private_key();
   auto env = setup_environment();
   auto dbc = get_connection_handle(env);
-  std::string connection_string = get_jwt_connection_string_with_invalid_private_key();
 
   // When Trying to Connect
   attempt_connection_expect_error(dbc, connection_string);

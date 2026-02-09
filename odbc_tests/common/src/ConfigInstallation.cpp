@@ -12,13 +12,19 @@
 // ============================================================================
 
 ConfigInstallation ConfigInstallation::install(const std::vector<DataSourceConfig>& data_sources) {
-  return ConfigInstallation(data_sources);
+  return ConfigInstallation(data_sources, {});
 }
 
-ConfigInstallation::ConfigInstallation(const std::vector<DataSourceConfig>& data_sources)
-    : data_sources_(data_sources) {
+ConfigInstallation ConfigInstallation::install_driver(const std::shared_ptr<DriverConfig>& driver_config) {
+  return ConfigInstallation({}, {driver_config});
+}
+
+ConfigInstallation::ConfigInstallation(const std::vector<DataSourceConfig>& data_sources,
+                                       const std::set<std::shared_ptr<DriverConfig>>& driver_configs)
+    : data_sources_(data_sources), driver_configs_(driver_configs) {
   // TODO: Windows - Use registry
   config_dir_ = create_temp_dir();
+  collect_driver_configs();
   write_odbcinst_ini();
   write_odbc_ini();
   env_overrides_.emplace_back("ODBCSYSINI", config_dir_);
@@ -89,6 +95,24 @@ std::string ConfigInstallation::create_temp_dir() {
   return full_path.string();
 }
 
+void ConfigInstallation::collect_driver_configs() {
+  for (const auto& ds : data_sources_) {
+    if (auto dc = ds.driver_config()) {
+      driver_configs_.insert(dc.value());
+    }
+  }
+
+  // Check for name conflicts
+  for (const auto& dc : driver_configs_) {
+    auto same_name =
+        std::count_if(driver_configs_.begin(), driver_configs_.end(),
+                      [&dc](const std::shared_ptr<DriverConfig>& other) { return other->name() == dc->name(); });
+    if (same_name > 1) {
+      throw std::runtime_error("Driver config name '" + dc->name() + "' is not unique");
+    }
+  }
+}
+
 void ConfigInstallation::write_odbcinst_ini() const {
   const std::string file_path = (std::filesystem::path(config_dir_) / "odbcinst.ini").string();
   std::ofstream file(file_path);
@@ -106,18 +130,11 @@ void ConfigInstallation::write_odbcinst_ini() const {
     throw std::runtime_error("Failed to write ODBC section to odbcinst.ini");
   }
 
-  // Collect all unique driver configs
-  std::map<std::string, std::shared_ptr<DriverConfig>> drivers;
-  for (const auto& ds : data_sources_) {
-    if (auto dc = ds.driver_config()) {
-      drivers[dc.value()->name()] = dc.value();
-    }
-  }
-
   // Write each driver config
-  for (const auto& [name, config] : drivers) {
+  for (const auto& dc : driver_configs_) {
+    const std::string name = dc->name();
     file << "[" << name << "]\n";
-    for (const auto& [key, value] : config->parameters()) {
+    for (const auto& [key, value] : dc->parameters()) {
       file << key << "=" << value << "\n";
     }
     file << "\n";
@@ -134,6 +151,11 @@ void ConfigInstallation::write_odbc_ini() const {
 
   if (!file.is_open()) {
     throw std::runtime_error("Failed to open odbc.ini for writing: " + file_path);
+  }
+
+  if (data_sources_.empty()) {
+    file << "";
+    return;
   }
 
   // Write data sources section

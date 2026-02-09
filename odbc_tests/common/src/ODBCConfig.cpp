@@ -35,5 +35,5 @@ std::string DriverConfig::get_driver_path() {
       driver_path_env != nullptr && driver_path_env[0] != '\0') {
     return driver_path_env;
   }
-  return "/usr/lib/snowflake/odbc/lib/libSnowflake.so";
+  throw std::runtime_error("DRIVER_PATH environment variable not set");
 }
