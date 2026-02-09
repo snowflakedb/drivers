@@ -118,6 +118,17 @@ Feature: Session Logout - Python-specific behavior
   # ===========================================================================
 
 @python_e2e
+  Scenario: should skip logout when server_session_keep_alive is true regardless of auto_detection
+    # Phase 2 truth table: True + any + any → No logout, No deprecation
+    # Verifies Python correctly passes true to Core
+    Given Python client with server_session_keep_alive set to true
+    And enable_auto_detection set to any value
+    When Connection closes
+    Then No logout request is sent
+    And server_session_keep_alive true is passed to Core
+    And No deprecation warning emitted
+
+@python_e2e
   Scenario: should have enable_server_session_keep_alive_auto_detection default to true
     # Phase 2 (doc for: SNOW-2314152) default for backward compatibility. Phase 3 defaults to false.
     Given Snowflake Python client is created without enable_server_session_keep_alive_auto_detection parameter

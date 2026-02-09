@@ -48,110 +48,26 @@ Feature: Session Logout
     And Close operation succeeds
 
   # ===========================================================================
-  #                      Error Handling - Backend Behaviors
+  #                        Process Exit and Thread Management
   # ===========================================================================
-  # These behaviors apply regardless of error strategy (strict or best-effort)
 
   @core_e2e @python_e2e
-  Scenario: should ignore SESSION_GONE error 390111 regardless of strategy
-    Given Snowflake client is logged in
-    And Server will return SESSION_GONE error 390111
+  Scenario: should allow process to exit cleanly when session kept alive
+    # Requires: SNOW-2881763 (Heartbeat), SNOW-2912513 (Telemetry)
+    Given Connection with heartbeat enabled
+    And Telemetry is active
+    And server_session_keep_alive is set to true
     When Connection is closed
-    Then Close operation succeeds without error
-    And Error 390111 is treated as success
-    And Behavior is same for both strict and best-effort strategies
-
-  @core_e2e @python_e2e
-  Scenario: should retry on transient errors regardless of strategy
-    Given Snowflake client is logged in
-    And Server will return 503 error on first attempt
-    And Server will succeed on second attempt
-    When Connection is closed
-    Then Logout is retried
-    And Close operation succeeds
-    And Behavior is same for both strict and best-effort strategies
-
-  @core_e2e @python_not_needed
-  Scenario: should attempt token renewal on 390112 regardless of strategy
-    Given Snowflake client is logged in
-    And Server will return SESSION_TOKEN_EXPIRED 390112
-    And Token renewal is available
-    When Connection is closed
-    Then Session token renewal is attempted
-    And Logout is retried with new token
-    And Close operation succeeds
-    And Behavior is same for both strict and best-effort strategies
-
-  # ===========================================================================
-  #                      Error Handling - Strict Strategy
-  # ===========================================================================
-
-  @core_e2e @python_not_needed
-  Scenario: should fail close on non-retryable error in strict strategy
-    Given Snowflake client is logged in with strict error handling
-    And Server will return 400 Bad Request error
-    When Connection is closed
-    Then Close operation throws error
-    And Error is surfaced to caller
-
-  @core_e2e @python_not_needed
-  Scenario: should surface reauth error when master token expired in strict strategy
-    Given Snowflake client is logged in with strict error handling
-    And Master token has expired error 390114
-    When Connection is closed
-    Then Master token expiry error 390114 is surfaced
-    And Close operation throws reauth error
-
-  @core_e2e @python_not_needed
-  Scenario: should log WARN and throw error on final failure in strict strategy
-    Given Snowflake client is logged in with strict error handling
-    And Server will return 503 error on all attempts
-    When Connection is closed
-    Then All retry attempts are exhausted
-    And WARN log is emitted with failure details
-    And Close operation throws error
-
-  # ===========================================================================
-  #                    Error Handling - Best-Effort Strategy
-  # ===========================================================================
-
-  @core_e2e @python_e2e @jdbc_not_needed
-  Scenario: should log WARN and suppress non-retryable error in best-effort strategy
-    Given Snowflake client is logged in with best-effort error handling
-    And Server will return 400 Bad Request error
-    When Connection is closed
-    Then Error is logged as WARN
-    And Close operation succeeds
-    And No exception is thrown
-
-  @core_e2e @python_e2e @jdbc_not_needed
-  Scenario: should log WARN and suppress master token error in best-effort strategy
-    Given Snowflake client is logged in with best-effort error handling
-    And Master token has expired error 390114
-    When Connection is closed
-    Then Master token expiry error 390114 is logged as WARN
-    And Close operation succeeds
-
-  @core_e2e @python_e2e @jdbc_not_needed
-  Scenario: should log WARN and succeed on final failure in best-effort strategy
-    Given Snowflake client is logged in with best-effort error handling
-    And Server will return 503 error on all attempts
-    When Connection is closed
-    Then All retry attempts are exhausted
-    And WARN log is emitted with failure details
-    And Close operation succeeds
-
-  @core_e2e @python_e2e @jdbc_not_needed
-  Scenario: should succeed close even on logout timeout in best-effort strategy
-    Given Snowflake client is logged in with best-effort error handling
-    And Logout will timeout after 5 seconds
-    When Connection is closed
-    Then Timeout is logged as WARN
-    And Close operation succeeds
+    Then All background threads are stopped
+    And Heartbeat thread is terminated
+    And Telemetry thread is terminated
+    And Process can exit immediately without hanging
 
   # ===========================================================================
   #                        Timeout and Retry Behavior
   # ===========================================================================
+  # Error handling scenarios moved to core/session/logout.feature
+  # Core tests strategies with injection, wrappers test default strategy choice
 
   @core_e2e @python_e2e
   Scenario: should respect max retry attempts from HTTP policy

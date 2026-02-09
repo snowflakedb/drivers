@@ -127,6 +127,85 @@ Feature: Session Logout - Core HTTP Layer Integration
     And Resources are cleaned up
 
   # ===========================================================================
+  #                  Error Strategy Behavior (Injected Strategy Testing)
+  # ===========================================================================
+  # Tests Core logout behavior with different error strategies injected
+  # Both strategies are tested to ensure Core implements strategy pattern correctly
+
+  Scenario: should ignore SESSION_GONE 390111 with strict strategy injected
+    Given Core logout function called with strict strategy
+    And Mock server returns SESSION_GONE 390111
+    When Logout is executed
+    Then Close succeeds
+    And Error is ignored
+
+  Scenario: should ignore SESSION_GONE 390111 with best-effort strategy injected
+    Given Core logout function called with best-effort strategy
+    And Mock server returns SESSION_GONE 390111
+    When Logout is executed
+    Then Close succeeds
+    And Error is ignored
+
+  Scenario: should retry transient errors with strict strategy injected
+    Given Core logout function called with strict strategy
+    And Mock server returns 503 on attempt 1
+    And Mock server returns 200 on attempt 2
+    When Logout is executed
+    Then Logout is retried
+    And Close succeeds
+
+  Scenario: should retry transient errors with best-effort strategy injected
+    Given Core logout function called with best-effort strategy
+    And Mock server returns 503 on attempt 1
+    And Mock server returns 200 on attempt 2
+    When Logout is executed
+    Then Logout is retried
+    And Close succeeds
+
+  Scenario: should throw on non-retryable error with strict strategy injected
+    Given Core logout function called with strict strategy
+    And Mock server returns 400 Bad Request
+    When Logout is executed
+    Then Close throws error
+    And Error is surfaced to caller
+
+  Scenario: should log and succeed on non-retryable error with best-effort strategy injected
+    Given Core logout function called with best-effort strategy
+    And Mock server returns 400 Bad Request
+    When Logout is executed
+    Then Error is logged as WARN
+    And Close succeeds without throwing
+
+  Scenario: should handle master token expired 390114 with strict strategy injected
+    Given Core logout function called with strict strategy
+    And Mock server returns MASTER_TOKEN_EXPIRED 390114
+    When Logout is executed
+    Then Close throws reauth error
+
+  Scenario: should handle master token expired 390114 with best-effort strategy injected
+    Given Core logout function called with best-effort strategy
+    And Mock server returns MASTER_TOKEN_EXPIRED 390114
+    When Logout is executed
+    Then Error is logged as WARN
+    And Close succeeds
+
+  Scenario: should handle final retry failure with strict strategy injected
+    Given Core logout function called with strict strategy
+    And Mock server returns 503 on all attempts
+    When Logout is executed with max 3 attempts
+    Then All retries exhausted
+    And WARN log emitted
+    And Close throws error
+
+  Scenario: should handle final retry failure with best-effort strategy injected
+    Given Core logout function called with best-effort strategy
+    And Mock server returns 503 on all attempts
+    When Logout is executed with max 3 attempts
+    Then All retries exhausted
+    And WARN log emitted
+    And Close succeeds
+
+  # ===========================================================================
   #                      Telemetry Integration
   # ===========================================================================
 
