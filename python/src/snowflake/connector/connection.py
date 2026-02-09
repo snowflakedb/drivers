@@ -24,8 +24,8 @@ from snowflake.connector._internal.protobuf_gen.database_driver_v1_services impo
 )
 from snowflake.connector._internal.snowflake_restful import SnowflakeRestful
 
-from ._internal._private_key_helper import normalize_private_key
 from ._internal import internal_api
+from ._internal._private_key_helper import normalize_private_key
 from ._internal.api_client.client_api import database_driver_client
 from ._internal.decorators import backward_compatibility
 from ._internal.text_utils import split_statements
@@ -33,7 +33,7 @@ from .cursor import SnowflakeCursor, SnowflakeCursorBase
 from .errors import InterfaceError, NotSupportedError
 
 
-ConnectionParamValue = Union[int, str, float]
+ConnectionParamValue = Union[int, str, float, bytes]
 ConnectionParameters = dict[str, ConnectionParamValue]
 
 
@@ -249,9 +249,9 @@ class Connection:
         sql_text: str,
         remove_comments: bool = False,
         return_cursors: bool = True,
-        cursor_class: type[Cursor] = Cursor,
+        cursor_class: type[SnowflakeCursorBase] = SnowflakeCursor,
         **kwargs: dict,
-    ) -> Iterable[Cursor]:
+    ) -> Iterable[SnowflakeCursorBase]:
         """Execute a SQL text including multiple statements. This is a non-standard convenience method."""
         stream = StringIO(sql_text)
         stream_generator = self.execute_stream(
@@ -265,9 +265,9 @@ class Connection:
         self,
         stream: StringIO,
         remove_comments: bool = False,
-        cursor_class: type[Cursor] = Cursor,
+        cursor_class: type[SnowflakeCursorBase] = SnowflakeCursor,
         **kwargs: dict,
-    ) -> Generator[Cursor]:
+    ) -> Generator[SnowflakeCursor]:
         """Execute a stream of SQL statements. This is a non-standard convenient method."""
         split_statements_list = split_statements(stream, remove_comments=remove_comments)
         # Note: split_statements_list is a list of tuples of sql statements and whether they are put/get
@@ -275,7 +275,7 @@ class Connection:
         for sql, is_put_or_get in non_empty_statements:
             cur = self.cursor(cursor_class=cursor_class)
             cur.execute(sql, _is_put_get=is_put_or_get, **kwargs)
-            yield cur
+            yield cur  # type: ignore[misc]
 
     @property
     @internal_api

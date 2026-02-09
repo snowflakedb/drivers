@@ -536,7 +536,3 @@ class DictCursor(SnowflakeCursorBase):
 
 
 __all__ = ["SnowflakeCursor", "DictCursor"]
-
-
-# Backward compatibility alias
-SnowflakeCursor = Cursor
