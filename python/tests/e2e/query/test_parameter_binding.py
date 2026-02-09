@@ -10,21 +10,18 @@ This module tests JSON parameter binding functionality including:
 
 from __future__ import annotations
 
-import base64
-from datetime import datetime, timezone
+from datetime import datetime
 from decimal import Decimal
 
 import pytest
 
-from tests.e2e.types.utils import assert_type
+from snowflake.connector import ProgrammingError
 
 
 class TestBasicTypeBinding:
     """Tests for binding basic Python types to Snowflake."""
 
-    def test_should_bind_basic_types_with_positional_parameters_using_question_mark_placeholder(
-        self, cursor
-    ):
+    def test_should_bind_basic_types_with_positional_parameters_using_question_mark_placeholder(self, cursor):
         # Given Snowflake client is logged in
 
         # When Query "SELECT ?, ?, ?, ?, ?" is executed with positional parameters [42, 3.14, "hello", True, None]
@@ -221,9 +218,7 @@ class TestTableOperations:
         # Given Snowflake client is logged in
         # And A temporary table with columns (id NUMBER, name VARCHAR, active BOOLEAN) exists
         table_name = f"{tmp_schema}.test_binding_insert"
-        cursor.execute(
-            f"CREATE TABLE {table_name} (id NUMBER, name VARCHAR, active BOOLEAN)"
-        )
+        cursor.execute(f"CREATE TABLE {table_name} (id NUMBER, name VARCHAR, active BOOLEAN)")
 
         # When Row with values [1, "Alice", True] is inserted using parameter binding
         cursor.execute(f"INSERT INTO {table_name} VALUES (?, ?, ?)", (1, "Alice", True))
@@ -261,9 +256,7 @@ class TestTableOperations:
         cursor.execute(f"INSERT INTO {table_name} VALUES (?, ?)", (1, "Alice"))
 
         # When: Update using parameter binding
-        cursor.execute(
-            f"UPDATE {table_name} SET name = ? WHERE id = ?", ("Alice Updated", 1)
-        )
+        cursor.execute(f"UPDATE {table_name} SET name = ? WHERE id = ?", ("Alice Updated", 1))
 
         # Then: Verify update
         cursor.execute(f"SELECT * FROM {table_name}")
@@ -423,10 +416,7 @@ class TestArrayBinding:
     def test_executemany_validates_parameter_length(self, cursor):
         """Test executemany raises error for inconsistent lengths."""
         with pytest.raises(ProgrammingError) as excinfo:
-            cursor.executemany(
-                "INSERT INTO table VALUES (?, ?)",
-                [(1, "a"), (2, "b", "extra")]
-            )
+            cursor.executemany("INSERT INTO table VALUES (?, ?)", [(1, "a"), (2, "b", "extra")])
         assert "Parameter sequence" in str(excinfo.value)
 
     def test_executemany_with_null_values(self, cursor, tmp_schema):
@@ -434,10 +424,7 @@ class TestArrayBinding:
         table_name = f"{tmp_schema}.test_nulls"
         cursor.execute(f"CREATE TABLE {table_name} (id NUMBER, value VARCHAR)")
 
-        cursor.executemany(
-            f"INSERT INTO {table_name} VALUES (?, ?)",
-            [(1, None), (2, "value"), (3, None)]
-        )
+        cursor.executemany(f"INSERT INTO {table_name} VALUES (?, ?)", [(1, None), (2, "value"), (3, None)])
 
         cursor.execute(f"SELECT * FROM {table_name} ORDER BY id")
         result = cursor.fetchall()
@@ -509,9 +496,7 @@ class TestComplexScenarios:
     def test_should_bind_parameters_in_complex_query(self, cursor, tmp_schema):
         # Test parameter binding in a complex query with joins, aggregations, etc.
         table_name = f"{tmp_schema}.test_complex_query"
-        cursor.execute(
-            f"CREATE TABLE {table_name} (id NUMBER, category VARCHAR, value NUMBER)"
-        )
+        cursor.execute(f"CREATE TABLE {table_name} (id NUMBER, category VARCHAR, value NUMBER)")
 
         # Insert test data
         cursor.execute(f"INSERT INTO {table_name} VALUES (?, ?, ?)", (1, "A", 100))

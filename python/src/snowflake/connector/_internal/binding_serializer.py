@@ -7,9 +7,12 @@ for transmission to the Rust core, following the design specified in bindingsdes
 
 from __future__ import annotations
 
+import binascii
 import json
 
 from collections.abc import Sequence
+from datetime import date, datetime, time
+from decimal import Decimal
 from typing import Any
 
 
@@ -29,6 +32,30 @@ class BindingSerializer:
         "decimal": "FIXED",
         "nonetype": "TEXT",  # NULL values
     }
+
+    @staticmethod
+    def _datetime_to_epoch_nanoseconds(dt: datetime) -> str:
+        """Convert datetime to epoch nanoseconds string (Snowflake format)."""
+        # Convert to timestamp in seconds, then to nanoseconds
+        epoch_seconds = dt.timestamp()
+        epoch_nanoseconds = int(epoch_seconds * 1_000_000_000)
+        return str(epoch_nanoseconds)
+
+    @staticmethod
+    def _date_to_epoch_milliseconds(d: date) -> str:
+        """Convert date to epoch milliseconds string (Snowflake format)."""
+        # Create datetime at midnight UTC
+        dt = datetime.combine(d, datetime.min.time())
+        epoch_seconds = dt.timestamp()
+        epoch_milliseconds = int(epoch_seconds * 1000)
+        return str(epoch_milliseconds)
+
+    @staticmethod
+    def _time_to_nanoseconds(t: time) -> str:
+        """Convert time to nanoseconds since midnight string (Snowflake format)."""
+        total_seconds = t.hour * 3600 + t.minute * 60 + t.second
+        total_nanoseconds = total_seconds * 1_000_000_000 + t.microsecond * 1000
+        return str(total_nanoseconds)
 
     @classmethod
     def serialize_parameters(cls, params: Sequence[Any] | None) -> tuple[str | None, int]:
@@ -101,18 +128,26 @@ class BindingSerializer:
         if isinstance(value, bool):
             # Boolean must be before int check since bool is subclass of int
             converted = str(value).lower()
+        elif isinstance(value, datetime):
+            # Datetime to epoch nanoseconds (must be before date check)
+            converted = cls._datetime_to_epoch_nanoseconds(value)
+        elif isinstance(value, date):
+            # Date to epoch milliseconds
+            converted = cls._date_to_epoch_milliseconds(value)
+        elif isinstance(value, time):
+            # Time to nanoseconds since midnight
+            converted = cls._time_to_nanoseconds(value)
         elif isinstance(value, (int, float)):
+            converted = str(value)
+        elif isinstance(value, Decimal):
             converted = str(value)
         elif isinstance(value, str):
             converted = value
         elif isinstance(value, bytes):
-            # Binary data - base64 encode
-            import base64
-
-            converted = base64.b64encode(value).decode("ascii")
+            # Binary data - hex encode (not base64)
+            converted = binascii.hexlify(value).decode("utf-8")
         else:
-            # For other types (datetime, date, time, decimal, etc.)
-            # use string representation
+            # For other types use string representation
             converted = str(value)
 
         return snowflake_type, converted

@@ -182,18 +182,14 @@ class Cursor:
         for i, params in enumerate(seq_of_parameters):
             if len(params) != first_len:
                 raise ProgrammingError(
-                    f"Parameter sequence at index {i} has {len(params)} elements, "
-                    f"expected {first_len}"
+                    f"Parameter sequence at index {i} has {len(params)} elements, expected {first_len}"
                 )
 
         # Transpose from row-major to column-major format
         # Input:  [(row1_col1, row1_col2), (row2_col1, row2_col2), ...]
         # Output: [[row1_col1, row2_col1, ...], [row1_col2, row2_col2, ...]]
         num_columns = first_len
-        transposed = [
-            [row[col_idx] for row in seq_of_parameters]
-            for col_idx in range(num_columns)
-        ]
+        transposed = [[row[col_idx] for row in seq_of_parameters] for col_idx in range(num_columns)]
 
         # Execute using array binding (existing path handles list values)
         self.execute(operation, transposed)
