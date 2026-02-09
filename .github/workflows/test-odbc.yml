@@ -64,6 +64,7 @@ jobs:
         shell: bash
 
       - name: Run Old ODBC tests (Linux)
+        if: matrix.os == 'ubuntu-latest'
         run: |
           export DRIVER_PATH=/usr/lib/snowflake/odbc/lib/libSnowflake.so
           export PARAMETER_PATH=$(pwd)/parameters.json
@@ -79,6 +80,7 @@ jobs:
 
       - name: Run Old ODBC tests (Windows)
         if: matrix.os == 'windows-latest'
+        shell: pwsh
         run: |
           $env:DRIVER_PATH = "C:\Program Files\Snowflake\ODBC\lib\sfodbc.dll"
           $env:PARAMETER_PATH = "$(pwd)\parameters.json"
