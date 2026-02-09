@@ -6,6 +6,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -70,7 +71,7 @@ class DataSourceConfig {
   // Helper methods
   static picojson::object load_parameters(const std::string& connection_name);
   static std::string get_string(const picojson::object& obj, const std::string& key,
-                                 const std::string& default_value = "");
+                                const std::string& default_value = "");
 };
 
 // ============================================================================
@@ -81,6 +82,7 @@ class ConfigInstallation {
  public:
   // Factory method
   static ConfigInstallation install(const std::vector<DataSourceConfig>& data_sources);
+  static ConfigInstallation install_driver(const std::shared_ptr<DriverConfig>& driver_config);
 
   // Destructor
   ~ConfigInstallation();
@@ -99,16 +101,19 @@ class ConfigInstallation {
 
  private:
   // Private constructor (use factory method)
-  explicit ConfigInstallation(const std::vector<DataSourceConfig>& data_sources);
+  explicit ConfigInstallation(const std::vector<DataSourceConfig>& data_sources,
+                              const std::set<std::shared_ptr<DriverConfig>>& driver_configs);
 
   // Helper methods
   static std::string create_temp_dir();
+  void collect_driver_configs();
   void write_odbcinst_ini() const;
   void write_odbc_ini() const;
 
   // Members
   std::string config_dir_;
   std::vector<DataSourceConfig> data_sources_;
+  std::set<std::shared_ptr<DriverConfig>> driver_configs_;
   std::vector<EnvOverride> env_overrides_;
 };
 

@@ -1,24 +1,30 @@
-#include "ODBCConfig.hpp"
-#include "compatibility.hpp"
-
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <random>
 #include <stdexcept>
 
+#include "ODBCConfig.hpp"
+#include "compatibility.hpp"
+
 // ============================================================================
 // ConfigInstallation
 // ============================================================================
 
 ConfigInstallation ConfigInstallation::install(const std::vector<DataSourceConfig>& data_sources) {
-  return ConfigInstallation(data_sources);
+  return ConfigInstallation(data_sources, {});
 }
 
-ConfigInstallation::ConfigInstallation(const std::vector<DataSourceConfig>& data_sources)
-    : data_sources_(data_sources) {
+ConfigInstallation ConfigInstallation::install_driver(const std::shared_ptr<DriverConfig>& driver_config) {
+  return ConfigInstallation({}, {driver_config});
+}
+
+ConfigInstallation::ConfigInstallation(const std::vector<DataSourceConfig>& data_sources,
+                                       const std::set<std::shared_ptr<DriverConfig>>& driver_configs)
+    : data_sources_(data_sources), driver_configs_(driver_configs) {
   // TODO: Windows - Use registry
   config_dir_ = create_temp_dir();
+  collect_driver_configs();
   write_odbcinst_ini();
   write_odbc_ini();
   env_overrides_.emplace_back("ODBCSYSINI", config_dir_);
@@ -31,8 +37,8 @@ ConfigInstallation::~ConfigInstallation() {
     std::error_code ec;
     std::filesystem::remove_all(config_dir_, ec);
     if (ec) {
-      std::cerr << "Warning: Failed to remove temporary config directory '"
-                << config_dir_ << "': " << ec.message() << std::endl;
+      std::cerr << "Warning: Failed to remove temporary config directory '" << config_dir_ << "': " << ec.message()
+                << std::endl;
     }
   }
 }
@@ -50,8 +56,8 @@ ConfigInstallation& ConfigInstallation::operator=(ConfigInstallation&& other) no
       std::error_code ec;
       std::filesystem::remove_all(config_dir_, ec);
       if (ec) {
-        std::cerr << "Warning: Failed to remove temporary config directory '"
-                  << config_dir_ << "': " << ec.message() << std::endl;
+        std::cerr << "Warning: Failed to remove temporary config directory '" << config_dir_ << "': " << ec.message()
+                  << std::endl;
       }
     }
     config_dir_ = std::move(other.config_dir_);
@@ -62,9 +68,7 @@ ConfigInstallation& ConfigInstallation::operator=(ConfigInstallation&& other) no
   return *this;
 }
 
-const std::string& ConfigInstallation::config_dir() const {
-  return config_dir_;
-}
+const std::string& ConfigInstallation::config_dir() const { return config_dir_; }
 
 std::string ConfigInstallation::dsn_name(size_t index) const {
   if (index >= data_sources_.size()) {
@@ -85,16 +89,34 @@ std::string ConfigInstallation::create_temp_dir() {
 
   std::error_code ec;
   if (!std::filesystem::create_directories(full_path, ec) && ec) {
-    throw std::runtime_error("Failed to create temporary config directory '" + 
-                            full_path.string() + "': " + ec.message());
+    throw std::runtime_error("Failed to create temporary config directory '" + full_path.string() +
+                             "': " + ec.message());
   }
   return full_path.string();
+}
+
+void ConfigInstallation::collect_driver_configs() {
+  for (const auto& ds : data_sources_) {
+    if (auto dc = ds.driver_config()) {
+      driver_configs_.insert(dc.value());
+    }
+  }
+
+  // Check for name conflicts
+  for (const auto& dc : driver_configs_) {
+    auto same_name =
+        std::count_if(driver_configs_.begin(), driver_configs_.end(),
+                      [&dc](const std::shared_ptr<DriverConfig>& other) { return other->name() == dc->name(); });
+    if (same_name > 1) {
+      throw std::runtime_error("Driver config name '" + dc->name() + "' is not unique");
+    }
+  }
 }
 
 void ConfigInstallation::write_odbcinst_ini() const {
   const std::string file_path = (std::filesystem::path(config_dir_) / "odbcinst.ini").string();
   std::ofstream file(file_path);
-  
+
   if (!file.is_open()) {
     throw std::runtime_error("Failed to open odbcinst.ini for writing: " + file_path);
   }
@@ -108,18 +130,11 @@ void ConfigInstallation::write_odbcinst_ini() const {
     throw std::runtime_error("Failed to write ODBC section to odbcinst.ini");
   }
 
-  // Collect all unique driver configs
-  std::map<std::string, std::shared_ptr<DriverConfig>> drivers;
-  for (const auto& ds : data_sources_) {
-    if (auto dc = ds.driver_config()) {
-      drivers[dc.value()->name()] = dc.value();
-    }
-  }
-
   // Write each driver config
-  for (const auto& [name, config] : drivers) {
+  for (const auto& dc : driver_configs_) {
+    const std::string name = dc->name();
     file << "[" << name << "]\n";
-    for (const auto& [key, value] : config->parameters()) {
+    for (const auto& [key, value] : dc->parameters()) {
       file << key << "=" << value << "\n";
     }
     file << "\n";
@@ -136,6 +151,11 @@ void ConfigInstallation::write_odbc_ini() const {
 
   if (!file.is_open()) {
     throw std::runtime_error("Failed to open odbc.ini for writing: " + file_path);
+  }
+
+  if (data_sources_.empty()) {
+    file << "";
+    return;
   }
 
   // Write data sources section

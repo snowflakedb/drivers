@@ -14,6 +14,7 @@
 #include "test_setup.hpp"
 
 TEST_CASE("Test SELECT 1", "[odbc]") {
+  std::string connection_string = get_connection_string();
   EnvironmentHandleWrapper env;
 
   SQLRETURN ret = SQLSetEnvAttr(env.getHandle(), SQL_ATTR_ODBC_VERSION, (SQLPOINTER)SQL_OV_ODBC3, 0);
@@ -21,7 +22,6 @@ TEST_CASE("Test SELECT 1", "[odbc]") {
 
   // Get driver path from environment variable
   ConnectionHandleWrapper dbc = env.createConnectionHandle();
-  std::string connection_string = get_connection_string();
   ret = SQLDriverConnect(dbc.getHandle(), NULL, (SQLCHAR*)connection_string.c_str(), SQL_NTS, NULL, 0, NULL,
                          SQL_DRIVER_NOPROMPT);
   CHECK_ODBC(ret, dbc);

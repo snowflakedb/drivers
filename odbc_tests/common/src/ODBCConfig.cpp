@@ -26,18 +26,14 @@ DriverConfig& DriverConfig::remove(const std::string& key) {
   return *this;
 }
 
-const std::map<std::string, std::string>& DriverConfig::parameters() const {
-  return parameters_;
-}
+const std::map<std::string, std::string>& DriverConfig::parameters() const { return parameters_; }
 
-std::string DriverConfig::name() {
-  return "SnowflakeDriver";
-}
+std::string DriverConfig::name() { return "SnowflakeDriver"; }
 
 std::string DriverConfig::get_driver_path() {
   if (const char* driver_path_env = std::getenv("DRIVER_PATH");
       driver_path_env != nullptr && driver_path_env[0] != '\0') {
     return driver_path_env;
   }
-  return "/usr/lib/snowflake/odbc/lib/libSnowflake.so";
+  throw std::runtime_error("DRIVER_PATH environment variable not set");
 }

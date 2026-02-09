@@ -19,7 +19,7 @@
 
 std::string get_jwt_connection_string_without_private_key() {
   std::stringstream ss;
-  ss << "DRIVER=" << get_driver_path() << ";";
+  ss << "DRIVER=" << get_driver_name() << ";";
   ss << "SERVER=localhost;";
   ss << "ACCOUNT=test_account;";
   ss << "UID=test_user;";
@@ -68,17 +68,18 @@ void verify_connection_fails_with_missing_private_key_error(ConnectionHandleWrap
   NEW_DRIVER_ONLY("BD#1") {
     CHECK(records[0].sqlState == "01S00");
     CHECK(records[0].nativeError == 0);
-    CHECK_THAT(records[0].messageText, ContainsSubstring("Missing required parameter: private_key or private_key_file"));
+    CHECK_THAT(records[0].messageText,
+               ContainsSubstring("Missing required parameter: private_key or private_key_file"));
   }
 }
 
 TEST_CASE("should fail JWT authentication when no private file provided", "[private_key_auth]") {
   // Given Authentication is set to JWT
+  // When Trying to Connect with no private file provided
+  /* TODO: Explicit config installation */
+  std::string connection_string = get_jwt_connection_string_without_private_key();
   auto env = setup_environment_integration();
   auto dbc = get_connection_handle_integration(env);
-
-  // When Trying to Connect with no private file provided
-  std::string connection_string = get_jwt_connection_string_without_private_key();
 
   // Then There is error returned
   verify_connection_fails_with_missing_private_key_error(dbc, connection_string);
