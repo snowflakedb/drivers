@@ -342,6 +342,23 @@ message ConnectionRollbackRequest {
 message ConnectionRollbackResponse {
 }
 
+message ConnectionSetSessionParametersRequest {
+  ConnectionHandle conn_handle = 1;
+  map<string, string> parameters = 2;
+}
+
+message ConnectionSetSessionParametersResponse {
+}
+
+message ConnectionGetParameterRequest {
+  ConnectionHandle conn_handle = 1;
+  string key = 2;
+}
+
+message ConnectionGetParameterResponse {
+  optional string value = 1;
+}
+
 // Statement service requests and responses
 
 message StatementNewRequest {
@@ -494,6 +511,8 @@ service DatabaseDriver {
   rpc ConnectionGetTableTypes(ConnectionGetTableTypesRequest) returns (ConnectionGetTableTypesResponse);
   rpc ConnectionCommit(ConnectionCommitRequest) returns (ConnectionCommitResponse);
   rpc ConnectionRollback(ConnectionRollbackRequest) returns (ConnectionRollbackResponse);
+  rpc ConnectionSetSessionParameters(ConnectionSetSessionParametersRequest) returns (ConnectionSetSessionParametersResponse);
+  rpc ConnectionGetParameter(ConnectionGetParameterRequest) returns (ConnectionGetParameterResponse);
 
   // Statement operations
   rpc StatementNew(StatementNewRequest) returns (StatementNewResponse);

@@ -127,6 +127,15 @@ pub fn auth_request_data(login_parameters: &LoginParameters) -> Result<AuthReque
         ..Default::default()
     };
 
+    // Convert session_parameters to JSON values for the auth request
+    if let Some(params) = &login_parameters.session_parameters {
+        let json_params = params
+            .iter()
+            .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
+            .collect();
+        data.session_parameters = Some(json_params);
+    }
+
     match create_credentials(login_parameters).context(AuthenticationSnafu)? {
         Credentials::Password { username, password } => {
             data.login_name = Some(username);
@@ -160,6 +169,15 @@ pub async fn snowflake_login_with_client(
     client: &reqwest::Client,
     login_parameters: &LoginParameters,
 ) -> Result<SessionTokens, RestError> {
+    let (tokens, _) = snowflake_login_with_client_and_params(client, login_parameters).await?;
+    Ok(tokens)
+}
+
+#[tracing::instrument(skip(client, login_parameters), fields(account_name, login_name))]
+pub async fn snowflake_login_with_client_and_params(
+    client: &reqwest::Client,
+    login_parameters: &LoginParameters,
+) -> Result<(SessionTokens, Option<HashMap<String, String>>), RestError> {
     tracing::info!("Starting Snowflake login process");
 
     // Record key fields in the span
@@ -272,19 +290,42 @@ pub async fn snowflake_login_with_client(
     let session_expires_at = auth_response.data.validity.map(|d| now + d);
     let master_expires_at = auth_response.data.master_validity.map(|d| now + d);
 
+    // Extract session parameters from auth response
+    let session_params = auth_response.data._parameters.map(|params| {
+        params
+            .iter()
+            .filter_map(|param| {
+                // Convert JSON value to string
+                let value_str = match &param._value {
+                    serde_json::Value::String(s) => Some(s.clone()),
+                    serde_json::Value::Number(n) => Some(n.to_string()),
+                    serde_json::Value::Bool(b) => Some(b.to_string()),
+                    serde_json::Value::Null => None,
+                    _ => Some(param._value.to_string()),
+                };
+
+                value_str.map(|v| (param._name.to_uppercase(), v))
+            })
+            .collect::<HashMap<String, String>>()
+    });
+
     tracing::info!(
         session_id,
         session_validity_secs = auth_response.data.validity.map(|d| d.as_secs()),
         master_validity_secs = auth_response.data.master_validity.map(|d| d.as_secs()),
+        session_params_count = session_params.as_ref().map(|p| p.len()),
         "Snowflake login completed successfully"
     );
-    Ok(SessionTokens {
-        session_token,
-        master_token,
-        session_id,
-        session_expires_at,
-        master_expires_at,
-    })
+    Ok((
+        SessionTokens {
+            session_token,
+            master_token,
+            session_id,
+            session_expires_at,
+            master_expires_at,
+        },
+        session_params,
+    ))
 }
 
 /// Refresh an expired session token using the master token.

@@ -1,6 +1,6 @@
 use snafu::{OptionExt, ResultExt};
 use std::future::Future;
-use std::{collections::HashMap, sync::Arc, sync::Mutex};
+use std::{collections::HashMap, sync::Arc, sync::Mutex, sync::RwLock};
 use tokio::sync::RwLock as AsyncRwLock;
 
 use super::Handle;
@@ -21,17 +21,24 @@ pub fn connection_init(conn_handle: Handle, _db_handle: Handle) -> Result<(), Ap
             let settings_guard = conn_ptr
                 .lock()
                 .map_err(|_| ConnectionLockingSnafu {}.build())?;
-            let login_parameters = LoginParameters::from_settings(&settings_guard.settings)
+            let mut login_parameters = LoginParameters::from_settings(&settings_guard.settings)
                 .context(ConfigurationSnafu)?;
+            // Use init_session_parameters if set
+            let init_params = settings_guard.init_session_parameters.clone();
             drop(settings_guard);
+
+            // Set session parameters for login if provided
+            if let Some(params) = init_params {
+                login_parameters.session_parameters = Some(params);
+            }
 
             let http_client =
                 create_tls_client_with_config(login_parameters.client_info.tls_config.clone())
                     .context(TlsClientCreationSnafu)?;
 
-            let tokens = rt
+            let (tokens, session_params) = rt
                 .block_on(async {
-                    crate::rest::snowflake::snowflake_login_with_client(
+                    crate::rest::snowflake::snowflake_login_with_client_and_params(
                         &http_client,
                         &login_parameters,
                     )
@@ -47,6 +54,7 @@ pub fn connection_init(conn_handle: Handle, _db_handle: Handle) -> Result<(), Ap
                     http_client,
                     login_parameters.server_url.clone(),
                     login_parameters.client_info.clone(),
+                    session_params,
                 );
             Ok(())
         }
@@ -64,6 +72,25 @@ pub fn connection_set_option(handle: Handle, key: String, value: Setting) -> Res
                 .lock()
                 .map_err(|_| ConnectionLockingSnafu {}.build())?;
             conn.settings.insert(key, value);
+            Ok(())
+        }
+        None => InvalidArgumentSnafu {
+            argument: "Connection handle not found".to_string(),
+        }
+        .fail(),
+    }
+}
+
+pub fn connection_set_session_parameters(
+    handle: Handle,
+    parameters: HashMap<String, String>,
+) -> Result<(), ApiError> {
+    match CONN_HANDLE_MANAGER.get_obj(handle) {
+        Some(conn_ptr) => {
+            let mut conn = conn_ptr
+                .lock()
+                .map_err(|_| ConnectionLockingSnafu {}.build())?;
+            conn.init_session_parameters = Some(parameters);
             Ok(())
         }
         None => InvalidArgumentSnafu {
@@ -97,6 +124,10 @@ pub struct Connection {
     pub server_url: Option<String>,
     /// Client info for refresh requests
     pub client_info: Option<ClientInfo>,
+    /// Session parameters cache (populated after login)
+    pub session_parameters: Arc<RwLock<HashMap<String, String>>>,
+    /// Session parameters to send during initialization (set before connection_init)
+    pub init_session_parameters: Option<HashMap<String, String>>,
 }
 
 impl Default for Connection {
@@ -114,6 +145,8 @@ impl Connection {
             retry_policy: RetryPolicy::default(),
             server_url: None,
             client_info: None,
+            session_parameters: Arc::new(RwLock::new(HashMap::new())),
+            init_session_parameters: None,
         }
     }
 
@@ -123,12 +156,20 @@ impl Connection {
         http_client: reqwest::Client,
         server_url: String,
         client_info: ClientInfo,
+        session_params: Option<HashMap<String, String>>,
     ) {
         // Use blocking_write since we're in a sync context during connection_init
         *self.tokens.blocking_write() = Some(tokens);
         self.http_client = Some(http_client);
         self.server_url = Some(server_url);
         self.client_info = Some(client_info);
+
+        // Populate session parameters cache if provided
+        if let Some(params) = session_params {
+            if let Ok(mut cache) = self.session_parameters.write() {
+                *cache = params;
+            }
+        }
     }
 }
 

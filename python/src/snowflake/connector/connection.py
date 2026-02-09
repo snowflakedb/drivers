@@ -8,13 +8,15 @@ from __future__ import annotations
 
 from typing import Any
 
-from snowflake.connector._internal.protobuf_gen.database_driver_v1_services import (
+from snowflake.connector._internal.protobuf_gen.database_driver_v1_services import (  # type: ignore[attr-defined]
+    ConnectionGetParameterRequest,
     ConnectionInitRequest,
     ConnectionNewRequest,
     ConnectionSetOptionBytesRequest,
     ConnectionSetOptionDoubleRequest,
     ConnectionSetOptionIntRequest,
     ConnectionSetOptionStringRequest,
+    ConnectionSetSessionParametersRequest,
     DatabaseInitRequest,
     DatabaseNewRequest,
 )
@@ -39,12 +41,16 @@ class Connection:
             host: Host name
             port: Port number
             private_key: Private key in bytes, str (base64), or RSAPrivateKey format
+            session_parameters: Optional dict of session parameters to set at connection time
             **kwargs: Additional connection parameters
         """
         self.db_api = database_driver_client()
         self.db_handle = self.db_api.database_new(DatabaseNewRequest()).db_handle
         self.db_api.database_init(DatabaseInitRequest(db_handle=self.db_handle))
         self.conn_handle = self.db_api.connection_new(ConnectionNewRequest()).conn_handle
+
+        # Extract session_parameters before processing other kwargs
+        session_params = kwargs.pop('session_parameters', None)
 
         # Pre-process private_key if present - normalize for Rust core
         if "private_key" in kwargs:
@@ -70,6 +76,15 @@ class Connection:
                 self.db_api.connection_set_option_bytes(
                     ConnectionSetOptionBytesRequest(conn_handle=self.conn_handle, key=key, value=value)
                 )
+
+        # Set session parameters if provided (before connection_init)
+        if session_params:
+            self.db_api.connection_set_session_parameters(
+                ConnectionSetSessionParametersRequest(
+                    conn_handle=self.conn_handle,
+                    parameters=session_params
+                )
+            )
 
         self.db_api.connection_init(ConnectionInitRequest(conn_handle=self.conn_handle, db_handle=self.db_handle))
         self._closed = False
@@ -222,3 +237,20 @@ class Connection:
             bool: True if connection is closed, False otherwise
         """
         return self._closed
+
+    def _get_session_parameter(self, name: str) -> str | None:
+        """
+        Get a session parameter value (internal method).
+
+        Args:
+            name: The parameter name (case-insensitive)
+
+        Returns:
+            str | None: The parameter value, or None if not found
+        """
+        request = ConnectionGetParameterRequest(
+            conn_handle=self.conn_handle,
+            key=name
+        )
+        response = self.db_api.connection_get_parameter(request)
+        return response.value if response.value else None
