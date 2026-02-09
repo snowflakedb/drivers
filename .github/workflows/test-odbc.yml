@@ -25,7 +25,7 @@ jobs:
             name: Windows x64
             driver_lib: sfodbc.dll
     runs-on: ${{ matrix.os }}
-    name: odbc_tests (${{ matrix.name }})
+    name: odbc_reference_tests (${{ matrix.name }})
     needs: detect-changes
     if: github.event_name == 'push' || needs.detect-changes.outputs.run_odbc == 'true'
     steps:
@@ -35,14 +35,13 @@ jobs:
       - name: Install dependencies (Windows)
         if: matrix.os == 'windows-latest'
         run: |
-          set -x
           choco install cmake --installargs 'ADD_CMAKE_TO_PATH=System' -y
           choco install openssl -y
           cmake --version
           # GPG is pre-installed on Windows GitHub runners
           gpg --version
           curl -O https://sfc-repo.snowflakecomputing.com/odbc/windows/3.9.0/snowflake-odbc-3.9.0.x86_64.msi
-          sudo msiexec /i snowflake-odbc-3.9.0.x86_64.msi /quiet
+          Start-Process -FilePath "msiexec" -ArgumentList "/i snowflake-odbc-3.9.0.x86_64.msi /quiet" -Wait
 
       - name: Install dependencies (Linux)
         if: matrix.os == 'ubuntu-latest'
