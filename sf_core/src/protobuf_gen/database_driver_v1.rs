@@ -108,6 +108,8 @@ pub struct ExecuteResult {
     pub query_id: ::prost::alloc::string::String,
     #[prost(message, repeated, tag = "4")]
     pub columns: ::prost::alloc::vec::Vec<ColumnMetadata>,
+    #[prost(string, tag = "5")]
+    pub query: ::prost::alloc::string::String,
 }
 /// Partitioned result
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
@@ -336,8 +338,16 @@ pub struct ConnectionGetInfoRequest {
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ConnectionGetInfoResponse {
-    #[prost(bytes = "vec", tag = "1")]
-    pub info_data: ::prost::alloc::vec::Vec<u8>,
+    #[prost(string, optional, tag = "1")]
+    pub host: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(int64, optional, tag = "2")]
+    pub port: ::core::option::Option<i64>,
+    #[prost(string, optional, tag = "3")]
+    pub server_url: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "4")]
+    pub session_token: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(int64, optional, tag = "5")]
+    pub session_id: ::core::option::Option<i64>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ConnectionGetObjectsRequest {

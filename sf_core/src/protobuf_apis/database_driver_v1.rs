@@ -6,8 +6,8 @@ use crate::apis::database_driver_v1::error::RestError;
 use crate::apis::database_driver_v1::statement_bind;
 use crate::apis::database_driver_v1::{BindingType, DataPtr};
 use crate::apis::database_driver_v1::{
-    connection_get_parameter, connection_init, connection_new, connection_release,
-    connection_set_option, connection_set_session_parameters,
+    connection_get_info, connection_get_parameter, connection_init, connection_new,
+    connection_release, connection_set_option, connection_set_session_parameters,
 };
 use crate::apis::database_driver_v1::{
     database_init, database_new, database_release, database_set_option,
@@ -524,14 +524,21 @@ impl DatabaseDriver for DatabaseDriverImpl {
         Ok(ConnectionReleaseResponse {})
     }
 
-    #[instrument(name = "DatabaseDriverV1::connection_get_info", skip(_input))]
+    #[instrument(name = "DatabaseDriverV1::connection_get_info", skip(input))]
     fn connection_get_info(
-        _input: ConnectionGetInfoRequest,
+        input: ConnectionGetInfoRequest,
     ) -> Result<ConnectionGetInfoResponse, DriverException> {
-        // TODO: Implement when corresponding API method is available
-        Err(not_implemented(
-            "connection_get_info is not yet implemented",
-        ))
+        let conn_handle = required(input.conn_handle, "Connection handle is required")?;
+
+        let info = connection_get_info(conn_handle.into()).to_protobuf()?;
+
+        Ok(ConnectionGetInfoResponse {
+            host: info.host,
+            port: info.port,
+            server_url: info.server_url,
+            session_token: info.session_token,
+            session_id: info.session_id,
+        })
     }
 
     #[instrument(name = "DatabaseDriverV1::connection_get_objects", skip(_input))]
@@ -753,6 +760,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
                 rows_affected: result.rows_affected,
                 query_id: result.query_id,
                 columns: result.columns,
+                query: result.query,
             }),
         })
     }

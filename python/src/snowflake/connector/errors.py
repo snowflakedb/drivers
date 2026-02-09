@@ -102,3 +102,10 @@ class MissingConfigOptionError(ConfigManagerError):
     """Exception raised when a required configuration option is missing."""
 
     pass
+
+
+###### BACK-COMPAT  ######
+
+
+class ForbiddenError(Error):
+    """Exception for 403 HTTP error for retry."""
