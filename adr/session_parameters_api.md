@@ -67,7 +67,7 @@ conn = snowflake.connector.connect(
 - Dedicated RPC method is cleaner than special-key workarounds
 - Clean separation from regular connection options (account, user, etc.)
 
-### 3. Session Parameters Cache in Rust Core
+### 3. Session Parameters Cache with SQL Fallback
 
 The Rust `Connection` struct maintains a session parameters cache:
 
@@ -81,10 +81,20 @@ pub struct Connection {
 **Cache population:**
 - Initialized from auth response `_parameters` field after login
 - Parameter names normalized to uppercase for case-insensitive access
-- Updated automatically when query responses include parameter changes (future enhancement)
+- Updated when parameters are retrieved via SQL fallback
+
+**SQL Fallback:**
+When a parameter is not found in cache, `connection_get_parameter`:
+1. Checks cache first (fast path)
+2. If not found, executes `SHOW PARAMETERS LIKE 'param_name' IN SESSION`
+3. Parses the result to extract the value
+4. Updates cache with retrieved value
+5. Returns the value or `None` if parameter doesn't exist
 
 **Rationale:**
-- Avoids roundtrip to server for parameter reads
+- Fast path avoids server roundtrips for frequently accessed parameters
+- SQL fallback ensures accuracy for parameters not in initial auth response
+- Automatic cache update prevents repeated queries for same parameter
 - `Arc<RwLock<>>` allows concurrent reads with exclusive writes
 - Uppercase normalization provides case-insensitive behavior matching Snowflake semantics
 
@@ -187,7 +197,11 @@ pub fn connection_get_parameter(
 ```
 
 **Module:** `sf_core/src/apis/database_driver_v1/session_parameters.rs`
-- Implements `connection_get_parameter` for cache lookup
+- Implements `connection_get_parameter` with two-tier lookup:
+  1. Cache lookup (fast path)
+  2. SQL fallback via `SHOW PARAMETERS LIKE 'param' IN SESSION`
+- Executes query using `with_valid_session` for automatic token refresh
+- Parses result and updates cache
 
 **Handlers:** `sf_core/src/protobuf_apis/database_driver_v1.rs`
 - `connection_set_session_parameters`: Stores parameters for init
@@ -229,13 +243,14 @@ def _get_session_parameter(self, name: str) -> str | None:
 ### Negative
 
 - **No public API:** Users cannot programmatically inspect session parameters
-- **Cache staleness:** Cache may lag server state until queries execute
+- **SQL fallback overhead:** First access to uncached parameters requires query execution
 - **Internal implementation only:** `_get_session_parameter` is private, subject to change
 
 ### Future Enhancements
 
-1. **Automatic cache sync:** Update cache from query response metadata
+1. **Automatic cache sync:** Update cache from query response metadata (currently only updated on explicit get or during login)
 2. **Parameter validation:** Validate parameter names/values at connection time
+3. **Cache preloading:** Option to preload commonly used parameters during connection initialization
 
 Note: No public API for reading session parameters is planned. Users should manage session parameters via SQL statements.
 
