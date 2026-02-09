@@ -31,12 +31,12 @@ class BindingSerializer:
     }
 
     @classmethod
-    def serialize_parameters(cls, params: Sequence[Any] | dict[str, Any] | None) -> tuple[str | None, int]:
+    def serialize_parameters(cls, params: Sequence[Any] | None) -> tuple[str | None, int]:
         """
         Serialize parameters to JSON format for binding.
 
         Args:
-            params: Parameters to serialize (sequence for positional, dict for named)
+            params: Parameters to serialize (sequence for positional)
 
         Returns:
             Tuple of (JSON string or None, length in bytes)
@@ -52,7 +52,7 @@ class BindingSerializer:
         return json_str, len(json_str.encode("utf-8"))
 
     @classmethod
-    def _process_params(cls, params: Sequence[Any] | dict[str, Any]) -> dict[str, dict[str, Any]]:
+    def _process_params(cls, params: Sequence[Any]) -> dict[str, dict[str, Any]]:
         """
         Process parameters into Snowflake binding format.
 
@@ -70,21 +70,15 @@ class BindingSerializer:
         """
         bindings = {}
 
-        if isinstance(params, dict):
-            # Named parameters (e.g., :name style)
-            for key, value in params.items():
+        # Positional parameters (e.g., ? or :1 style)
+        for idx, value in enumerate(params):
+            if isinstance(value, list):
+                # Array binding for bulk operations
+                snowflake_type, values = cls._convert_array(value)
+                bindings[str(idx + 1)] = {"type": snowflake_type, "value": values}
+            else:
                 snowflake_type, snowflake_value = cls._convert_value(value)
-                bindings[str(key)] = {"type": snowflake_type, "value": snowflake_value}
-        else:
-            # Positional parameters (e.g., ? or :1 style)
-            for idx, value in enumerate(params):
-                if isinstance(value, list):
-                    # Array binding for bulk operations
-                    snowflake_type, values = cls._convert_array(value)
-                    bindings[str(idx + 1)] = {"type": snowflake_type, "value": values}
-                else:
-                    snowflake_type, snowflake_value = cls._convert_value(value)
-                    bindings[str(idx + 1)] = {"type": snowflake_type, "value": snowflake_value}
+                bindings[str(idx + 1)] = {"type": snowflake_type, "value": snowflake_value}
 
         return bindings
 

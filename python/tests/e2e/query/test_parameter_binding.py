@@ -3,7 +3,6 @@
 This module tests JSON parameter binding functionality including:
 - Basic type support (int, float, str, bool, None, bytes, datetime, Decimal)
 - Positional parameters (? and :1 style)
-- Named parameters (:name style)
 - Array binding (multi-row inserts)
 - Edge cases (NULL values, empty parameters, special characters)
 - Backwards compatibility with old connector format
@@ -38,29 +37,6 @@ class TestBasicTypeBinding:
         assert result is not None
         assert result[0] == 42
         assert abs(result[1] - 3.14) < 0.01  # Float comparison with tolerance
-        assert result[2] == "hello"
-        assert result[3] is True
-        assert result[4] is None
-
-    def test_should_bind_basic_types_with_named_parameters_using_name_placeholder(self, cursor):
-        # Given Snowflake client is logged in
-
-        # When Query "SELECT :int_val, :float_val, :str_val, :bool_val, :null_val" is executed with named parameters
-        sql = "SELECT :int_val, :float_val, :str_val, :bool_val, :null_val"
-        params = {
-            "int_val": 42,
-            "float_val": 3.14,
-            "str_val": "hello",
-            "bool_val": True,
-            "null_val": None,
-        }
-        cursor.execute(sql, params)
-        result = cursor.fetchone()
-
-        # Then Result should contain values matching the bound named parameters
-        assert result is not None
-        assert result[0] == 42
-        assert abs(result[1] - 3.14) < 0.01
         assert result[2] == "hello"
         assert result[3] is True
         assert result[4] is None
@@ -427,23 +403,56 @@ class TestEdgeCases:
 class TestArrayBinding:
     """Tests for array binding (executemany functionality)."""
 
-    @pytest.mark.skip("SNOW-XXXXX - executemany not yet implemented")
-    def test_should_insert_multiple_rows_using_executemany(self, cursor, tmp_schema):
-        # Given Snowflake client is logged in
-        # And A temporary table with columns (id NUMBER, name VARCHAR) exists
+    def test_executemany_basic_insert(self, cursor, tmp_schema):
+        """Test executemany with basic INSERT."""
         table_name = f"{tmp_schema}.test_executemany"
         cursor.execute(f"CREATE TABLE {table_name} (id NUMBER, name VARCHAR)")
 
-        # When Multiple rows are inserted using executemany with parameters [[1, "Alice"], [2, "Bob"], [3, "Charlie"]]
         rows = [(1, "Alice"), (2, "Bob"), (3, "Charlie")]
         cursor.executemany(f"INSERT INTO {table_name} VALUES (?, ?)", rows)
 
-        # Then Query "SELECT * FROM table ORDER BY id" should return 3 rows with correct values
         cursor.execute(f"SELECT * FROM {table_name} ORDER BY id")
         result = cursor.fetchall()
-
-        assert len(result) == 3
         assert result == rows
+
+    def test_executemany_empty_sequence(self, cursor):
+        """Test executemany with empty sequence is no-op."""
+        cursor.executemany("INSERT INTO table VALUES (?)", [])
+        # Should not raise error
+
+    def test_executemany_validates_parameter_length(self, cursor):
+        """Test executemany raises error for inconsistent lengths."""
+        with pytest.raises(ProgrammingError) as excinfo:
+            cursor.executemany(
+                "INSERT INTO table VALUES (?, ?)",
+                [(1, "a"), (2, "b", "extra")]
+            )
+        assert "Parameter sequence" in str(excinfo.value)
+
+    def test_executemany_with_null_values(self, cursor, tmp_schema):
+        """Test executemany handles NULL values."""
+        table_name = f"{tmp_schema}.test_nulls"
+        cursor.execute(f"CREATE TABLE {table_name} (id NUMBER, value VARCHAR)")
+
+        cursor.executemany(
+            f"INSERT INTO {table_name} VALUES (?, ?)",
+            [(1, None), (2, "value"), (3, None)]
+        )
+
+        cursor.execute(f"SELECT * FROM {table_name} ORDER BY id")
+        result = cursor.fetchall()
+        assert result == [(1, None), (2, "value"), (3, None)]
+
+    def test_executemany_large_batch(self, cursor, tmp_schema):
+        """Test executemany with 1000 rows."""
+        table_name = f"{tmp_schema}.test_large"
+        cursor.execute(f"CREATE TABLE {table_name} (id NUMBER)")
+
+        rows = [(i,) for i in range(1000)]
+        cursor.executemany(f"INSERT INTO {table_name} VALUES (?)", rows)
+
+        cursor.execute(f"SELECT COUNT(*) FROM {table_name}")
+        assert cursor.fetchone() == (1000,)
 
 
 class TestBackwardCompatibility:

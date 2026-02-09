@@ -107,13 +107,13 @@ class Cursor:
         """Close the cursor now (rather than whenever __del__ is called)."""
         self._closed = True
 
-    def execute(self, operation: str, parameters: Sequence[Any] | dict[str, Any] | None = None) -> Cursor:
+    def execute(self, operation: str, parameters: Sequence[Any] | None = None) -> Cursor:
         """
         Execute a database operation (query or command).
 
         Args:
             operation (str): SQL statement to execute
-            parameters (sequence or mapping): Parameters for the operation
+            parameters (sequence): Parameters for the operation
         """
         stmt_handle = self.connection.db_api.statement_new(
             StatementNewRequest(conn_handle=self.connection.conn_handle)
@@ -165,14 +165,38 @@ class Cursor:
         """
         Execute a database operation repeatedly for each element in seq_of_parameters.
 
+        Uses array binding to execute all parameter sets in a single request.
+
         Args:
-            operation (str): SQL statement to execute
+            operation (str): SQL statement (typically INSERT, UPDATE, or DELETE)
             seq_of_parameters (sequence): Sequence of parameter sequences
 
         Raises:
-            NotSupportedError: If not implemented
+            ProgrammingError: If parameter sequences have inconsistent lengths
         """
-        raise NotSupportedError("executemany is not implemented")
+        if not seq_of_parameters:
+            return  # Empty sequence - no-op per PEP 249
+
+        # Validate all parameter sequences have same length
+        first_len = len(seq_of_parameters[0])
+        for i, params in enumerate(seq_of_parameters):
+            if len(params) != first_len:
+                raise ProgrammingError(
+                    f"Parameter sequence at index {i} has {len(params)} elements, "
+                    f"expected {first_len}"
+                )
+
+        # Transpose from row-major to column-major format
+        # Input:  [(row1_col1, row1_col2), (row2_col1, row2_col2), ...]
+        # Output: [[row1_col1, row2_col1, ...], [row1_col2, row2_col2, ...]]
+        num_columns = first_len
+        transposed = [
+            [row[col_idx] for row in seq_of_parameters]
+            for col_idx in range(num_columns)
+        ]
+
+        # Execute using array binding (existing path handles list values)
+        self.execute(operation, transposed)
 
     def _get_stream_ptr(self) -> int:
         """Get the ArrowArrayStream pointer from execute result.
