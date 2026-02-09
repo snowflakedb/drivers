@@ -67,7 +67,7 @@ conn = snowflake.connector.connect(
 - Dedicated RPC method is cleaner than special-key workarounds
 - Clean separation from regular connection options (account, user, etc.)
 
-### 3. Session Parameters Cache with SQL Fallback
+### 3. Session Parameters Cache with SQL Fallback and Invalidation
 
 The Rust `Connection` struct maintains a session parameters cache:
 
@@ -83,6 +83,13 @@ pub struct Connection {
 - Parameter names normalized to uppercase for case-insensitive access
 - Updated when parameters are retrieved via SQL fallback
 
+**Cache update from query responses:**
+- Cache is **updated** after every successful query execution
+- Snowflake's query responses include a `parameters` field with current session parameter values
+- All parameters in the response are written to the cache, keeping it synchronized with server state
+- This approach matches the old Python connector's behavior
+- Implemented in `statement_execute_query` after successful query execution
+
 **SQL Fallback:**
 When a parameter is not found in cache, `connection_get_parameter`:
 1. Checks cache first (fast path)
@@ -94,7 +101,10 @@ When a parameter is not found in cache, `connection_get_parameter`:
 **Rationale:**
 - Fast path avoids server roundtrips for frequently accessed parameters
 - SQL fallback ensures accuracy for parameters not in initial auth response
-- Automatic cache update prevents repeated queries for same parameter
+- Automatic cache update from query responses keeps cache synchronized with server state
+- Matches the old Python connector's behavior (updates cache from every query response)
+- More efficient than clearing cache and re-fetching: preserves valid cached values
+- Automatic cache update on SQL fallback prevents repeated queries
 - `Arc<RwLock<>>` allows concurrent reads with exclusive writes
 - Uppercase normalization provides case-insensitive behavior matching Snowflake semantics
 
@@ -248,9 +258,8 @@ def _get_session_parameter(self, name: str) -> str | None:
 
 ### Future Enhancements
 
-1. **Automatic cache sync:** Update cache from query response metadata (currently only updated on explicit get or during login)
-2. **Parameter validation:** Validate parameter names/values at connection time
-3. **Cache preloading:** Option to preload commonly used parameters during connection initialization
+1. **Parameter validation:** Validate parameter names/values at connection time
+2. **Cache preloading:** Option to preload commonly used parameters during connection initialization
 
 Note: No public API for reading session parameters is planned. Users should manage session parameters via SQL statements.
 

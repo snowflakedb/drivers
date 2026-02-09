@@ -282,6 +282,25 @@ pub fn statement_execute_query(stmt_handle: Handle) -> Result<ExecuteResult, Api
         }
     }))?;
 
+    // Update session parameters cache from query response
+    // Snowflake includes updated session parameters in every query response
+    if let Some(parameters) = &response.data.parameters {
+        let conn = stmt.conn.lock().map_err(|_| ConnectionLockingSnafu.build())?;
+        if let Ok(mut cache) = conn.session_parameters.write() {
+            for param in parameters {
+                // Convert JSON value to string for storage
+                let value_str = match &param.value {
+                    serde_json::Value::String(s) => s.clone(),
+                    serde_json::Value::Number(n) => n.to_string(),
+                    serde_json::Value::Bool(b) => b.to_string(),
+                    other => other.to_string(),
+                };
+                // Normalize parameter name to uppercase for case-insensitive access
+                cache.insert(param.name.to_uppercase(), value_str);
+            }
+        }
+    }
+
     let response_reader = rt
         .block_on(process_query_response(&response.data, &http_client))
         .context(QueryResponseProcessingSnafu)?;
