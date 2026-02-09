@@ -15,7 +15,7 @@ import abc
 import ctypes
 
 from collections.abc import Iterator, Sequence
-from typing import TYPE_CHECKING, Any, NamedTuple
+from typing import TYPE_CHECKING, Any, NamedTuple, Union
 
 from ._internal.arrow_context import ArrowConverterContext
 from ._internal.arrow_stream_iterator import ArrowStreamIterator
@@ -230,7 +230,9 @@ class SnowflakeCursorBase(abc.ABC):
         )
         return QueryBindings(json=binary_data_ptr)
 
-    def execute(self, operation: str, parameters: Sequence[Any] | dict[str, Any] | None = None) -> SnowflakeCursorBase:
+    def execute(
+        self, operation: str, parameters: Sequence[Any] | dict[str, Any] | None = None, _is_put_get: bool | None = None
+    ) -> SnowflakeCursorBase:
         """
         Execute a database operation (query or command).
 
@@ -600,6 +602,10 @@ class DictCursor(SnowflakeCursorBase):
             list[dict]: List of all remaining rows as dictionaries
         """
         return super().fetchall()
+
+
+CursorType = Union[type[SnowflakeCursor], type[DictCursor]]
+CursorInstance = Union[SnowflakeCursor, DictCursor]
 
 
 __all__ = ["SnowflakeCursor", "DictCursor"]

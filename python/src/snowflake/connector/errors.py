@@ -81,3 +81,32 @@ class NotSupportedError(DatabaseError):
     """
 
     pass
+
+
+###### BACK-COMPAT  ######
+
+
+# Confi related exceptions
+class ConfigSourceError(Error):
+    """Configuration source related errors.
+
+    Examples are environmental variable and configuration file.
+    """
+
+
+class MissingConfigOptionError(ConfigSourceError):
+    """When a configuration option is missing from the final, resolved configurations.
+
+    This is a special-case of ConfigSourceError.
+    """
+
+
+class ConfigManagerError(Error):
+    """Configuration manager related errors.
+
+    This means that ConfigManager is misused by a developer.
+    """
+
+
+class ForbiddenError(Error):
+    """Exception for 403 HTTP error for retry."""
