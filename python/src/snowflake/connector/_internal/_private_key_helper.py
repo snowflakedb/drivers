@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..exceptions import ProgrammingError
+from ..errors import ProgrammingError
 
 
 def normalize_private_key(private_key: Any) -> bytes | str:
