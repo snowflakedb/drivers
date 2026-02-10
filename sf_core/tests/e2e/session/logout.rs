@@ -957,6 +957,7 @@ fn should_respect_max_retry_attempts_from_http_policy() {
     let client = SnowflakeTestClient::connect_with_default_auth();
 
     //And Server will always return 503 error
+
     // Note: Can't force persistent 503 in E2E
 
     //When Connection is closed
@@ -981,6 +982,7 @@ fn should_use_exponential_backoff_for_logout_retries() {
     let client = SnowflakeTestClient::connect_with_default_auth();
 
     //And Server will return 503 error twice then succeed
+
     // Note: Tested in integration tests with mock server
 
     //When Connection is closed

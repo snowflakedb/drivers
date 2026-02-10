@@ -451,6 +451,7 @@ class TestLogoutTimeoutRetry:
         conn = connection_factory()
         
         #And Server will always return 503 error
+
         # (Tested in Core)
         
         #When Connection is closed
@@ -465,6 +466,7 @@ class TestLogoutTimeoutRetry:
         conn = connection_factory()
         
         #And Server will return 503 error twice then succeed
+
         # (Tested in Core)
         
         #When Connection is closed
@@ -598,6 +600,7 @@ class TestLogoutPythonPhase2:
         assert conn.server_session_keep_alive is None, "server_session_keep_alive should default to None"
         
         #And enable_server_session_keep_alive_auto_detection defaults to true
+
         # (Effective default in Phase 2)
         assert conn.enable_server_session_keep_alive_auto_detection is None, "enable_auto_detection should default to None"
         assert not conn.ALLOW_BREAKING_CHANGE_SERVER_SESSION_KEEP_ALIVE_AUTO_DETECTION, "Phase 2 flag should be False by default"
@@ -618,6 +621,7 @@ class TestLogoutPythonPhase2:
         )
         
         #And Long-running async query is executed using SYSTEM$SLEEP(300)
+
         # TODO: SNOW-2314152 - Execute async query when API available
         
         #When Client closes connection
@@ -630,6 +634,7 @@ class TestLogoutPythonPhase2:
         assert conn.is_closed()
         
         #And Test cleans up the running query after assertions complete
+
         # TODO: SNOW-2314152 - Cancel SYSTEM$SLEEP query
 
     def test_should_send_logout_when_server_session_keep_alive_is_none_and_auto_detection_true_and_no_async_queries_found(self, connection_factory):
