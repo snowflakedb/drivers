@@ -148,8 +148,7 @@ Feature: Session Logout - Core HTTP Layer Integration
       | strict      |
       | best-effort |
 
-  @core_e2e
-  Scenario Outline: should retry on <error_type> with <strategy> strategy
+  Scenario: should retry on <error_type> with <strategy> strategy
     Given Core logout function called with <strategy> strategy
     And Mock server returns <error_type> on attempt 1
     And Mock server returns 200 on attempt 2
