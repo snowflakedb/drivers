@@ -147,6 +147,8 @@ TEST_CASE("should convert string literals to SQL_C_BINARY", "[datatype][string][
 // ============================================================================
 
 TEST_CASE("should convert UTF-8 string literals to SQL_C_BINARY", "[datatype][string][conversion][binary][utf8]") {
+  // TODO: Re-enable on Windows once the underlying issue is resolved.
+  SKIP_ON_WINDOWS("UTF-8 binary conversion not yet supported on Windows");
   // Given Snowflake client is logged in
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);

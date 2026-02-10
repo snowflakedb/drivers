@@ -25,6 +25,7 @@ UnixConfigInstallation::UnixConfigInstallation(const std::vector<DataSourceConfi
                                                const std::set<std::shared_ptr<DriverConfig>>& driver_configs)
     : data_sources_(data_sources), driver_configs_(driver_configs) {
   config_dir_ = create_temp_dir();
+  INFO("Installing config in directory: " << config_dir_);
   collect_driver_configs();
   write_odbcinst_ini();
   write_odbc_ini();
@@ -33,14 +34,14 @@ UnixConfigInstallation::UnixConfigInstallation(const std::vector<DataSourceConfi
 }
 
 UnixConfigInstallation::~UnixConfigInstallation() {
-  if (!config_dir_.empty()) {
-    std::error_code ec;
-    std::filesystem::remove_all(config_dir_, ec);
-    if (ec) {
-      std::cerr << "Warning: Failed to remove temporary config directory '" << config_dir_ << "': " << ec.message()
-                << std::endl;
-    }
-  }
+  // if (!config_dir_.empty()) {
+  //   std::error_code ec;
+  //   std::filesystem::remove_all(config_dir_, ec);
+  //   if (ec) {
+  //     std::cerr << "Warning: Failed to remove temporary config directory '" << config_dir_ << "': " << ec.message()
+  //               << std::endl;
+  //   }
+  // }
 }
 
 UnixConfigInstallation::UnixConfigInstallation(UnixConfigInstallation&& other) noexcept

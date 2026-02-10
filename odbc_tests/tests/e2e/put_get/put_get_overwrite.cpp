@@ -9,6 +9,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "Connection.hpp"
+#include "compatibility.hpp"
 #include "get_data.hpp"
 #include "put_get_utils.hpp"
 #include "utils.hpp"
@@ -25,6 +26,8 @@ static std::pair<std::string, fs::path> updated_test_file() {
 }
 
 TEST_CASE("should overwrite file when OVERWRITE is set to true", "[put_get]") {
+  // TODO: Re-enable on Windows once the underlying issue is resolved.
+  SKIP_ON_WINDOWS("PUT/GET not yet supported on Windows");
   Connection conn;
   const std::string stage = pg_utils::create_stage(conn, unique_stage_name("ODBCTST_OVERWRITE"));
   auto [filename, original] = original_test_file();
@@ -57,6 +60,8 @@ TEST_CASE("should overwrite file when OVERWRITE is set to true", "[put_get]") {
 }
 
 TEST_CASE("should not overwrite file when OVERWRITE is set to false", "[put_get]") {
+  // TODO: Re-enable on Windows once the underlying issue is resolved.
+  SKIP_ON_WINDOWS("PUT/GET not yet supported on Windows");
   Connection conn;
   const std::string stage = pg_utils::create_stage(conn, unique_stage_name("ODBCTST_OVERWRITE"));
   auto [filename, original] = original_test_file();

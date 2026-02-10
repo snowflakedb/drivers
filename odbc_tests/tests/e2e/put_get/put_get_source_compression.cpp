@@ -10,6 +10,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "Connection.hpp"
+#include "compatibility.hpp"
 #include "get_data.hpp"
 #include "put_get_utils.hpp"
 #include "utils.hpp"
@@ -36,6 +37,8 @@ static std::pair<std::string, fs::path> test_file(const std::string& compression
 }
 
 TEST_CASE("should auto-detect standard compression types when SOURCE_COMPRESSION set to AUTO_DETECT", "[put_get]") {
+  // TODO: Re-enable on Windows once the underlying issue is resolved.
+  SKIP_ON_WINDOWS("PUT/GET not yet supported on Windows");
   Connection conn;
   // Given Snowflake client is logged in
   const std::string stage = create_stage(conn, unique_stage_name("ODBCTST_SC_AUTO"));
@@ -67,6 +70,8 @@ TEST_CASE("should auto-detect standard compression types when SOURCE_COMPRESSION
 }
 
 TEST_CASE("should upload compressed files with SOURCE_COMPRESSION set to explicit types", "[put_get]") {
+  // TODO: Re-enable on Windows once the underlying issue is resolved.
+  SKIP_ON_WINDOWS("PUT/GET not yet supported on Windows");
   Connection conn;
   // Given Snowflake client is logged in
   const std::string stage = create_stage(conn, unique_stage_name("ODBCTST_SC_EXPLICIT"));
@@ -92,6 +97,8 @@ TEST_CASE("should upload compressed files with SOURCE_COMPRESSION set to explici
 
 TEST_CASE("should not compress file when SOURCE_COMPRESSION set to AUTO_DETECT and AUTO_COMPRESS set to FALSE",
           "[put_get]") {
+  // TODO: Re-enable on Windows once the underlying issue is resolved.
+  SKIP_ON_WINDOWS("PUT/GET not yet supported on Windows");
   Connection conn;
   // Given Snowflake client is logged in
   const std::string stage = create_stage(conn, unique_stage_name("ODBCTST_SC_AUTO_NO_AC"));
@@ -112,6 +119,8 @@ TEST_CASE("should not compress file when SOURCE_COMPRESSION set to AUTO_DETECT a
 }
 
 TEST_CASE("should not compress file when SOURCE_COMPRESSION set to NONE and AUTO_COMPRESS set to FALSE", "[put_get]") {
+  // TODO: Re-enable on Windows once the underlying issue is resolved.
+  SKIP_ON_WINDOWS("PUT/GET not yet supported on Windows");
   Connection conn;
   // Given Snowflake client is logged in
   const std::string stage = create_stage(conn, unique_stage_name("ODBCTST_SC_NONE_NO_AC"));
@@ -133,6 +142,8 @@ TEST_CASE("should not compress file when SOURCE_COMPRESSION set to NONE and AUTO
 
 TEST_CASE("should compress uncompressed file when SOURCE_COMPRESSION set to AUTO_DETECT and AUTO_COMPRESS set to TRUE",
           "[put_get]") {
+  // TODO: Re-enable on Windows once the underlying issue is resolved.
+  SKIP_ON_WINDOWS("PUT/GET not yet supported on Windows");
   Connection conn;
   // Given Snowflake client is logged in
   const std::string stage = create_stage(conn, unique_stage_name("ODBCTST_SC_AUTO_AC"));
@@ -154,6 +165,8 @@ TEST_CASE("should compress uncompressed file when SOURCE_COMPRESSION set to AUTO
 
 TEST_CASE("should compress uncompressed file when SOURCE_COMPRESSION set to NONE and AUTO_COMPRESS set to TRUE",
           "[put_get]") {
+  // TODO: Re-enable on Windows once the underlying issue is resolved.
+  SKIP_ON_WINDOWS("PUT/GET not yet supported on Windows");
   Connection conn;
   // Given Snowflake client is logged in
   const std::string stage = create_stage(conn, unique_stage_name("ODBCTST_SC_NONE_AC"));

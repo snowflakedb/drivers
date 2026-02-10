@@ -39,11 +39,12 @@ class DriverConfig {
 
   // Accessors
   [[nodiscard]] const std::map<std::string, std::string>& parameters() const;
-  [[nodiscard]] static std::string name();
+  [[nodiscard]] std::string name() const;
   static std::string get_driver_path();
 
  private:
   std::map<std::string, std::string> parameters_;
+  std::string name_;
 };
 
 // ============================================================================

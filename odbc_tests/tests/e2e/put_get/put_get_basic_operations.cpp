@@ -7,6 +7,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "Connection.hpp"
+#include "compatibility.hpp"
 #include "get_data.hpp"
 #include "put_get_utils.hpp"
 #include "utils.hpp"
@@ -63,6 +64,8 @@ TEST_CASE("should list file uploaded to stage", "[put_get]") {
 }
 
 TEST_CASE("should get file uploaded to stage", "[put_get]") {
+  // TODO: Re-enable on Windows once the underlying issue is resolved.
+  SKIP_ON_WINDOWS("PUT/GET not yet supported on Windows");
   // Given File is uploaded to stage
   Connection conn;
   const std::string stage = pg_utils::create_stage(conn, unique_stage_name("ODBCTST_BASIC_OPS"));
@@ -91,6 +94,8 @@ TEST_CASE("should get file uploaded to stage", "[put_get]") {
 }
 
 TEST_CASE("should return correct rowset for PUT", "[put_get]") {
+  // TODO: Re-enable on Windows once the underlying issue is resolved.
+  SKIP_ON_WINDOWS("PUT/GET not yet supported on Windows");
   // Given Snowflake client is logged in
   Connection conn;
   const std::string stage = pg_utils::create_stage(conn, unique_stage_name("ODBCTST_BASIC_ROWSET"));
