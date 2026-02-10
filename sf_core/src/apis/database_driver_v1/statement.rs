@@ -257,6 +257,7 @@ pub struct ExecuteResult {
     pub rows_affected: i64,
     pub query_id: String,
     pub columns: Vec<ColumnMetadata>,
+    pub query: String,
 }
 
 pub fn statement_execute_query<'a>(
@@ -391,6 +392,7 @@ pub fn statement_execute_query<'a>(
         rows_affected,
         query_id,
         columns,
+        query,
     })
 }
 

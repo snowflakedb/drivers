@@ -125,6 +125,7 @@ message ExecuteResult {
   int64 rows_affected = 2;
   string query_id = 3;
   repeated ColumnMetadata columns = 4;
+  string query = 5;
 }
 
 // Partitioned result
