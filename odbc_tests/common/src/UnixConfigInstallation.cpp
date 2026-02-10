@@ -1,3 +1,5 @@
+#ifndef _WIN32
+
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -8,21 +10,20 @@
 #include "compatibility.hpp"
 
 // ============================================================================
-// ConfigInstallation
+// UnixConfigInstallation
 // ============================================================================
 
-ConfigInstallation ConfigInstallation::install(const std::vector<DataSourceConfig>& data_sources) {
-  return ConfigInstallation(data_sources, {});
+UnixConfigInstallation UnixConfigInstallation::install(const std::vector<DataSourceConfig>& data_sources) {
+  return UnixConfigInstallation(data_sources, {});
 }
 
-ConfigInstallation ConfigInstallation::install_driver(const std::shared_ptr<DriverConfig>& driver_config) {
-  return ConfigInstallation({}, {driver_config});
+UnixConfigInstallation UnixConfigInstallation::install_driver(const std::shared_ptr<DriverConfig>& driver_config) {
+  return UnixConfigInstallation({}, {driver_config});
 }
 
-ConfigInstallation::ConfigInstallation(const std::vector<DataSourceConfig>& data_sources,
-                                       const std::set<std::shared_ptr<DriverConfig>>& driver_configs)
+UnixConfigInstallation::UnixConfigInstallation(const std::vector<DataSourceConfig>& data_sources,
+                                               const std::set<std::shared_ptr<DriverConfig>>& driver_configs)
     : data_sources_(data_sources), driver_configs_(driver_configs) {
-  // TODO: Windows - Use registry
   config_dir_ = create_temp_dir();
   collect_driver_configs();
   write_odbcinst_ini();
@@ -31,8 +32,7 @@ ConfigInstallation::ConfigInstallation(const std::vector<DataSourceConfig>& data
   env_overrides_.emplace_back("ODBCINI", (std::filesystem::path(config_dir_) / "odbc.ini").string());
 }
 
-ConfigInstallation::~ConfigInstallation() {
-  // TODO: Windows - Delete/restore registry keys
+UnixConfigInstallation::~UnixConfigInstallation() {
   if (!config_dir_.empty()) {
     std::error_code ec;
     std::filesystem::remove_all(config_dir_, ec);
@@ -43,14 +43,15 @@ ConfigInstallation::~ConfigInstallation() {
   }
 }
 
-ConfigInstallation::ConfigInstallation(ConfigInstallation&& other) noexcept
+UnixConfigInstallation::UnixConfigInstallation(UnixConfigInstallation&& other) noexcept
     : config_dir_(std::move(other.config_dir_)),
       data_sources_(std::move(other.data_sources_)),
+      driver_configs_(std::move(other.driver_configs_)),
       env_overrides_(std::move(other.env_overrides_)) {
   other.config_dir_.clear();
 }
 
-ConfigInstallation& ConfigInstallation::operator=(ConfigInstallation&& other) noexcept {
+UnixConfigInstallation& UnixConfigInstallation::operator=(UnixConfigInstallation&& other) noexcept {
   if (this != &other) {
     if (!config_dir_.empty()) {
       std::error_code ec;
@@ -62,22 +63,23 @@ ConfigInstallation& ConfigInstallation::operator=(ConfigInstallation&& other) no
     }
     config_dir_ = std::move(other.config_dir_);
     data_sources_ = std::move(other.data_sources_);
+    driver_configs_ = std::move(other.driver_configs_);
     env_overrides_ = std::move(other.env_overrides_);
     other.config_dir_.clear();
   }
   return *this;
 }
 
-const std::string& ConfigInstallation::config_dir() const { return config_dir_; }
+const std::string& UnixConfigInstallation::config_dir() const { return config_dir_; }
 
-std::string ConfigInstallation::dsn_name(size_t index) const {
+std::string UnixConfigInstallation::dsn_name(size_t index) const {
   if (index >= data_sources_.size()) {
     throw std::out_of_range("Data source index out of range");
   }
   return data_sources_[index].name();
 }
 
-std::string ConfigInstallation::create_temp_dir() {
+std::string UnixConfigInstallation::create_temp_dir() {
   std::random_device rd;
   std::mt19937 gen(rd());
   std::uniform_int_distribution<> dis(0, 999999);
@@ -95,7 +97,7 @@ std::string ConfigInstallation::create_temp_dir() {
   return full_path.string();
 }
 
-void ConfigInstallation::collect_driver_configs() {
+void UnixConfigInstallation::collect_driver_configs() {
   for (const auto& ds : data_sources_) {
     if (auto dc = ds.driver_config()) {
       driver_configs_.insert(dc.value());
@@ -113,7 +115,7 @@ void ConfigInstallation::collect_driver_configs() {
   }
 }
 
-void ConfigInstallation::write_odbcinst_ini() const {
+void UnixConfigInstallation::write_odbcinst_ini() const {
   const std::string file_path = (std::filesystem::path(config_dir_) / "odbcinst.ini").string();
   std::ofstream file(file_path);
 
@@ -145,7 +147,7 @@ void ConfigInstallation::write_odbcinst_ini() const {
   }
 }
 
-void ConfigInstallation::write_odbc_ini() const {
+void UnixConfigInstallation::write_odbc_ini() const {
   const std::string file_path = (std::filesystem::path(config_dir_) / "odbc.ini").string();
   std::ofstream file(file_path);
 
@@ -186,3 +188,5 @@ void ConfigInstallation::write_odbc_ini() const {
     }
   }
 }
+
+#endif  // !_WIN32

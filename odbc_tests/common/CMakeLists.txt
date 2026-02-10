@@ -2,13 +2,19 @@ cmake_minimum_required(VERSION 4.0)
 
 find_package(ZLIB REQUIRED)
 
+if (WIN32)
+    set(CONFIG_INSTALLATION_SRC src/WindowsConfigInstallation.cpp)
+else()
+    set(CONFIG_INSTALLATION_SRC src/UnixConfigInstallation.cpp)
+endif()
+
 add_library(common STATIC
     src/test_setup.cpp
     src/compatibility.cpp
     src/get_diag_rec.cpp
     src/ODBCConfig.cpp
     src/DataSourceConfig.cpp
-    src/ConfigInstallation.cpp
+    ${CONFIG_INSTALLATION_SRC}
     include/test_setup.hpp
     include/macros.hpp
     include/Connection.hpp
