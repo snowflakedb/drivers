@@ -27,8 +27,25 @@ cd jdbc/
 # Run specific test method
 ./gradlew test --tests SnowflakeQueryTest.testSimpleQuery
 
+# Generate OLD runtime compatibility coverage (JaCoCo XML + HTML)
+./gradlew compatibilityTest
+
 # Clean and rebuild
 ./gradlew clean build test
+```
+
+### Coverage Streams In CI
+
+- CI runs old-driver compatibility coverage from `build/reports/jacoco/compatibilityTest/coverage.xml`.
+- CI prints overall line coverage in logs and `GITHUB_STEP_SUMMARY` via `jdbc/ci/reference_tests/extract_coverage.py`.
+- JaCoCo artifacts are uploaded as workflow artifacts for inspection.
+
+### Local Coverage Extraction
+
+```bash
+python3 ci/reference_tests/extract_coverage.py \
+  --report build/reports/jacoco/compatibilityTest/coverage.xml \
+  --label "OLD JDBC compatibility"
 ```
 
 ### Requirements
