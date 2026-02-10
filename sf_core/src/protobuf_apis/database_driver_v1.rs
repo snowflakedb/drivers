@@ -448,7 +448,10 @@ impl DatabaseDriver for DatabaseDriverImpl {
             Some("BestEffort") | None => ErrorStrategy::BestEffort,
             Some(other) => {
                 return Err(DriverException {
-                    message: format!("Invalid error_strategy: {}. Must be 'Strict' or 'BestEffort'", other),
+                    message: format!(
+                        "Invalid error_strategy: {}. Must be 'Strict' or 'BestEffort'",
+                        other
+                    ),
                     status_code: StatusCode::InvalidArgument as i32,
                     error: None,
                     report: format!("Invalid error_strategy: {}", other),

@@ -6,7 +6,7 @@ use crate::config::rest_parameters::ClientInfo;
 use crate::config::retry::RetryPolicy;
 use crate::http::retry::{HttpContext, HttpError, execute_with_retry};
 use reqwest::{Method, header};
-use snafu::{ResultExt, Snafu, Location};
+use snafu::{Location, ResultExt, Snafu};
 use std::time::Duration;
 use url::Url;
 
@@ -107,10 +107,7 @@ pub async fn logout_session(
     let rust_version = option_env!("CARGO_PKG_RUST_VERSION").unwrap_or("unknown");
     let user_agent = format!(
         "{}/{} ({}) UD/1.0.0 Rust/{}",
-        &client_info.application,
-        &client_info.version,
-        &client_info.os,
-        rust_version
+        &client_info.application, &client_info.version, &client_info.os, rust_version
     );
 
     // Build authorization header
@@ -126,7 +123,7 @@ pub async fn logout_session(
     let build_request = || {
         // Note: request_guid is regenerated on each retry, requestId stays the same
         let retry_request_guid = uuid::Uuid::new_v4();
-        
+
         client
             .post(logout_url.clone())
             .query(&[
@@ -150,10 +147,7 @@ pub async fn logout_session(
 
     // Parse response
     let status = response.status();
-    let logout_response: LogoutResponse = response
-        .json()
-        .await
-        .context(ResponseParseSnafu)?;
+    let logout_response: LogoutResponse = response.json().await.context(ResponseParseSnafu)?;
 
     tracing::debug!(
         success = logout_response.success,

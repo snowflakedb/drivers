@@ -60,7 +60,7 @@ impl AsyncQueryRegistry {
     pub fn has_running_queries(&self) -> bool {
         let queries = self.queries.lock().unwrap();
         let has_queries = !queries.is_empty();
-        
+
         if has_queries {
             tracing::debug!(
                 count = queries.len(),
@@ -69,7 +69,7 @@ impl AsyncQueryRegistry {
         } else {
             tracing::debug!("Auto-detection found no running async queries");
         }
-        
+
         has_queries
     }
 
@@ -97,7 +97,10 @@ mod tests {
         assert!(!registry.has_running_queries(), "Should start empty");
 
         registry.register("query1".to_string());
-        assert!(registry.has_running_queries(), "Should have running queries after register");
+        assert!(
+            registry.has_running_queries(),
+            "Should have running queries after register"
+        );
         assert_eq!(registry.count(), 1);
     }
 
@@ -141,7 +144,7 @@ mod tests {
         let registry = AsyncQueryRegistry::new();
         registry.register("query1".to_string());
         registry.register("query1".to_string()); // Duplicate
-        
+
         // HashSet deduplicates
         assert_eq!(registry.count(), 1);
     }

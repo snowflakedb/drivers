@@ -4,8 +4,8 @@
 //! HTTP retry behavior, request verification, and response simulation.
 
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
@@ -92,8 +92,11 @@ where
 /// let captured_request = server.await.unwrap();
 /// assert!(captured_request.starts_with(b"POST /session"));
 /// ```
-pub async fn spawn_capture_server() -> (SocketAddr, Arc<AtomicUsize>, tokio::task::JoinHandle<Vec<u8>>)
-{
+pub async fn spawn_capture_server() -> (
+    SocketAddr,
+    Arc<AtomicUsize>,
+    tokio::task::JoinHandle<Vec<u8>>,
+) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let attempts = Arc::new(AtomicUsize::new(0));

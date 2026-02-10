@@ -387,7 +387,10 @@ mod tests {
             !strategy.should_ignore_error(Some(390112)),
             "Should not ignore SESSION_TOKEN_EXPIRED"
         );
-        assert!(!strategy.should_ignore_error(Some(400)), "Should not ignore 400");
+        assert!(
+            !strategy.should_ignore_error(Some(400)),
+            "Should not ignore 400"
+        );
         assert!(
             !strategy.should_ignore_error(None),
             "Should not ignore unknown errors"

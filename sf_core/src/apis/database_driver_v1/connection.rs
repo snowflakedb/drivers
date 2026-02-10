@@ -1,7 +1,7 @@
 use snafu::{OptionExt, ResultExt};
 use std::future::Future;
-use std::{collections::HashMap, sync::Arc, sync::Mutex};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::{collections::HashMap, sync::Arc, sync::Mutex};
 use tokio::sync::RwLock as AsyncRwLock;
 
 use super::Handle;
@@ -13,8 +13,8 @@ use super::logout_decision::should_send_logout;
 use crate::config::logout::LogoutConfig;
 use crate::config::rest_parameters::{ClientInfo, LoginParameters};
 use crate::config::retry::RetryPolicy;
-use crate::rest::snowflake::{self, RestError, SessionTokens, SnowflakeResponseError};
 use crate::rest::snowflake::logout::logout_session;
+use crate::rest::snowflake::{self, RestError, SessionTokens, SnowflakeResponseError};
 use crate::tls::client::create_tls_client_with_config;
 use reqwest;
 
@@ -338,7 +338,7 @@ pub fn connection_close(conn_handle: Handle, config: LogoutConfig) -> Result<(),
         ) {
             // Create runtime for async logout
             let rt = tokio::runtime::Runtime::new().context(RuntimeCreationSnafu)?;
-            
+
             let result = rt.block_on(async {
                 logout_session(
                     client,
@@ -353,7 +353,7 @@ pub fn connection_close(conn_handle: Handle, config: LogoutConfig) -> Result<(),
 
             // Handle logout result using Strategy pattern
             let strategy = config.error_strategy.to_handler();
-            
+
             match result {
                 Ok(()) => {
                     tracing::info!("Logout completed successfully");
@@ -378,10 +378,7 @@ pub fn connection_close(conn_handle: Handle, config: LogoutConfig) -> Result<(),
             Ok(())
         }
     } else {
-        tracing::info!(
-            ?skip_reason,
-            "Skipping logout based on configuration"
-        );
+        tracing::info!(?skip_reason, "Skipping logout based on configuration");
         Ok(())
     };
 
@@ -398,10 +395,10 @@ pub fn connection_close(conn_handle: Handle, config: LogoutConfig) -> Result<(),
     // 6. Stubbed cleanup (TODO: implement when infrastructure is ready)
     // TODO: SNOW-2881763 - Stop heartbeat
     tracing::debug!("Heartbeat stopped (stub - TODO: SNOW-2881763)");
-    
+
     // TODO: SNOW-2912513 - Flush telemetry
     tracing::debug!("Telemetry flushed (stub - TODO: SNOW-2912513)");
-    
+
     // TODO: SNOW-xxxx - Clear QCC
     tracing::debug!("Query result cache cleared (stub - TODO: SNOW-xxxx)");
 
