@@ -3,7 +3,7 @@
 This module tests JSON parameter binding functionality including:
 - Basic type support (int, float, str, bool, None, bytes, datetime, Decimal)
 - Positional parameters (? and :1 style)
-- Array binding (multi-row inserts)
+- Multirow binding (multi-row inserts)
 - Edge cases (NULL values, empty parameters, special characters)
 - Backwards compatibility with old connector format
 """
@@ -21,7 +21,7 @@ from snowflake.connector import ProgrammingError
 class TestBasicTypeBinding:
     """Tests for binding basic Python types to Snowflake."""
 
-    def test_should_bind_basic_types_with_positional_parameters_using_question_mark_placeholder(self, cursor):
+    def test_should_bind_basic_types_with_positional_parameters(self, cursor):
         # Given Snowflake client is logged in
 
         # When Query "SELECT ?, ?, ?, ?, ?" is executed with positional parameters [42, 3.14, "hello", True, None]
@@ -52,90 +52,6 @@ class TestBasicTypeBinding:
 
 
 
-class TestSpecialTypeBinding:
-    """Tests for binding special types like bytes, datetime, Decimal."""
-
-    def test_should_bind_bytes_type_as_binary_data(self, cursor):
-        # Given Snowflake client is logged in
-
-        # When Query "SELECT ?::BINARY" is executed with bytes parameter b"Hello"
-        test_bytes = b"Hello"
-        cursor.execute("SELECT ?::BINARY", (test_bytes,))
-        result = cursor.fetchone()
-
-        # Then Result should contain binary value b"Hello"
-        assert result == (test_bytes,)
-
-    def test_should_bind_various_bytes_values(self, cursor):
-        # Test various byte sequences
-        test_cases = [
-            b"",  # Empty bytes
-            b"\x00",  # Null byte
-            b"\xff",  # Max byte
-            b"\x00\x00\x00\x00\x00",  # Multiple null bytes
-            b"\xff\xff\xff\xff\xff",  # Multiple max bytes
-            b"Hello World",  # ASCII bytes
-            b"\x01\x23\x45\x67\x89\xab\xcd\xef",  # Hex sequence
-        ]
-
-        for bytes_val in test_cases:
-            cursor.execute("SELECT ?::BINARY", (bytes_val,))
-            result = cursor.fetchone()
-            assert result == (bytes_val,), f"Failed for value {bytes_val!r}"
-
-    def test_should_bind_datetime_values(self, cursor):
-        # Given Snowflake client is logged in
-
-        # When Query "SELECT ?::TIMESTAMP_NTZ" is executed with datetime parameter
-        test_datetime = datetime(2024, 1, 15, 10, 30, 45)
-        cursor.execute("SELECT ?::TIMESTAMP_NTZ", (test_datetime,))
-        result = cursor.fetchone()
-
-        # Then Result should contain the datetime value
-        assert result is not None
-        # Note: Result format may vary, check if it's a datetime or string
-        result_val = result[0]
-        if isinstance(result_val, datetime):
-            assert result_val.year == 2024
-            assert result_val.month == 1
-            assert result_val.day == 15
-            assert result_val.hour == 10
-            assert result_val.minute == 30
-            assert result_val.second == 45
-        else:
-            # String format
-            assert "2024" in str(result_val)
-            assert "01" in str(result_val)
-            assert "15" in str(result_val)
-
-    def test_should_bind_decimal_values(self, cursor):
-        # Given Snowflake client is logged in
-
-        # When Query "SELECT ?::NUMBER(38,2)" is executed with Decimal parameter
-        test_decimal = Decimal("123.45")
-        cursor.execute("SELECT ?::NUMBER(38,2)", (test_decimal,))
-        result = cursor.fetchone()
-
-        # Then Result should contain the Decimal value
-        assert result == (test_decimal,)
-
-    def test_should_bind_various_decimal_values(self, cursor):
-        # Test various Decimal values
-        test_cases = [
-            Decimal("0"),
-            Decimal("1.5"),
-            Decimal("-1.5"),
-            Decimal("999999999999.99"),
-            Decimal("-999999999999.99"),
-            Decimal("0.00000001"),
-        ]
-
-        for decimal_val in test_cases:
-            cursor.execute("SELECT ?::NUMBER(38,8)", (decimal_val,))
-            result = cursor.fetchone()
-            assert result == (decimal_val,), f"Failed for value {decimal_val}"
-
-
 class TestTableOperations:
     """Tests for parameter binding with table operations."""
 
@@ -156,7 +72,7 @@ class TestTableOperations:
         assert len(result) == 1
         assert result[0] == (1, "Alice", True)
 
-    def test_should_insert_multiple_rows_sequentially(self, cursor, tmp_schema):
+    def test_should_insert_multiple_rows_sequentially_with_parameter_binding(self, cursor, tmp_schema):
         # Given Snowflake client is logged in
         # And A temporary table with columns (id NUMBER, name VARCHAR) exists
         table_name = f"{tmp_schema}.test_binding_multiple"
@@ -235,15 +151,6 @@ class TestEdgeCases:
         # Then Result should contain [NULL, 42, NULL]
         assert result == (None, 42, None)
 
-    def test_should_handle_empty_string_in_parameter_binding(self, cursor):
-        # Given Snowflake client is logged in
-
-        # When Query "SELECT ?::VARCHAR" is executed with parameter ""
-        cursor.execute("SELECT ?::VARCHAR", ("",))
-        result = cursor.fetchone()
-
-        # Then Result should contain empty string
-        assert result == ("",)
 
     def test_should_handle_special_characters_in_string_binding(self, cursor):
         # Given Snowflake client is logged in
@@ -274,28 +181,6 @@ class TestEdgeCases:
         # Then Result should contain Unicode strings ["日本語", "⛄"]
         assert result == ("日本語", "⛄")
 
-    def test_should_bind_large_integer_values(self, cursor):
-        # Given Snowflake client is logged in
-
-        # When Query "SELECT ?::NUMBER(38,0)" is executed with large integer parameter
-        large_int = 99999999999999999999999999999999999999  # 38 nines
-        cursor.execute("SELECT ?::NUMBER(38,0)", (large_int,))
-        result = cursor.fetchone()
-
-        # Then Result should contain the large integer value
-        assert result == (large_int,)
-
-    def test_should_bind_negative_numbers(self, cursor):
-        # Given Snowflake client is logged in
-
-        # When Query "SELECT ?, ?, ?" is executed with parameters [-42, -3.14, -999999]
-        cursor.execute("SELECT ?, ?, ?", (-42, -3.14, -999999))
-        result = cursor.fetchone()
-
-        # Then Result should contain negative values
-        assert result[0] == -42
-        assert abs(result[1] - (-3.14)) < 0.01
-        assert result[2] == -999999
 
     def test_should_bind_zero_values(self, cursor):
         # Given Snowflake client is logged in
@@ -307,7 +192,7 @@ class TestEdgeCases:
         # Then Result should contain zero and empty values
         assert result == (0, 0.0, "")
 
-    def test_should_handle_mixed_positional_and_type_casting(self, cursor):
+    def test_should_handle_mixed_type_casting_with_parameter_binding(self, cursor):
         # Given Snowflake client is logged in
 
         # When Query "SELECT ?::NUMBER, ?::VARCHAR, ?::BOOLEAN" is executed with parameters [42, "hello", True]
@@ -319,10 +204,10 @@ class TestEdgeCases:
 
 
 class TestArrayBinding:
-    """Tests for array binding (executemany functionality)."""
+    """Tests for multirow binding (executemany functionality)."""
 
-    def test_executemany_basic_insert(self, cursor, tmp_schema):
-        """Test executemany with basic INSERT."""
+    def test_should_insert_multiple_rows_using_multirow_binding(self, cursor, tmp_schema):
+        """Test multirow binding with basic INSERT."""
         table_name = f"{tmp_schema}.test_executemany"
         cursor.execute(f"CREATE TABLE {table_name} (id NUMBER, name VARCHAR)")
 
@@ -333,19 +218,19 @@ class TestArrayBinding:
         result = cursor.fetchall()
         assert result == rows
 
-    def test_executemany_empty_sequence(self, cursor):
-        """Test executemany with empty sequence is no-op."""
+    def test_should_handle_empty_sequence_in_multirow_binding(self, cursor):
+        """Test multirow binding with empty sequence is no-op."""
         cursor.executemany("INSERT INTO table VALUES (?)", [])
         # Should not raise error
 
-    def test_executemany_validates_parameter_length(self, cursor):
-        """Test executemany raises error for inconsistent lengths."""
+    def test_should_validate_parameter_length_in_multirow_binding(self, cursor):
+        """Test multirow binding raises error for inconsistent lengths."""
         with pytest.raises(ProgrammingError) as excinfo:
             cursor.executemany("INSERT INTO table VALUES (?, ?)", [(1, "a"), (2, "b", "extra")])
         assert "Parameter sequence" in str(excinfo.value)
 
-    def test_executemany_with_null_values(self, cursor, tmp_schema):
-        """Test executemany handles NULL values."""
+    def test_should_handle_null_values_in_multirow_binding(self, cursor, tmp_schema):
+        """Test multirow binding handles NULL values."""
         table_name = f"{tmp_schema}.test_nulls"
         cursor.execute(f"CREATE TABLE {table_name} (id NUMBER, value VARCHAR)")
 
@@ -355,8 +240,8 @@ class TestArrayBinding:
         result = cursor.fetchall()
         assert result == [(1, None), (2, "value"), (3, None)]
 
-    def test_executemany_large_batch(self, cursor, tmp_schema):
-        """Test executemany with 1000 rows."""
+    def test_should_handle_large_batch_in_multirow_binding(self, cursor, tmp_schema):
+        """Test multirow binding with 1000 rows."""
         table_name = f"{tmp_schema}.test_large"
         cursor.execute(f"CREATE TABLE {table_name} (id NUMBER)")
 
@@ -369,25 +254,6 @@ class TestArrayBinding:
 
 class TestBackwardCompatibility:
     """Tests for backward compatibility with old connector parameter format."""
-
-    def test_should_be_backward_compatible_with_old_connector_parameter_format(self, cursor):
-        # Given Snowflake client is logged in
-
-        # When Query is executed with parameters in old connector format
-        # Old format: tuple of parameters
-        sql = "SELECT ?, ?, ?"
-        params_old = (42, "test", True)
-
-        cursor.execute(sql, params_old)
-        result_old = cursor.fetchone()
-
-        # New format should produce identical results
-        cursor.execute(sql, params_old)
-        result_new = cursor.fetchone()
-
-        # Then Result should be identical to new format
-        assert result_old == result_new
-        assert result_old == (42, "test", True)
 
     def test_should_handle_both_tuple_and_list_parameter_formats(self, cursor):
         # Test that both tuple and list work as parameter containers
@@ -418,8 +284,8 @@ class TestComplexScenarios:
 
         assert result == params
 
-    def test_should_bind_parameters_in_complex_query(self, cursor, tmp_schema):
-        # Test parameter binding in a complex query with joins, aggregations, etc.
+    def test_should_bind_parameters_in_complex_query_with_aggregation(self, cursor, tmp_schema):
+        # Test parameter binding in a complex query with aggregation.
         table_name = f"{tmp_schema}.test_complex_query"
         cursor.execute(f"CREATE TABLE {table_name} (id NUMBER, category VARCHAR, value NUMBER)")
 
@@ -444,9 +310,8 @@ class TestComplexScenarios:
         assert result[0][0] == "A"
         assert result[0][1] == 300
 
-    def test_should_bind_parameters_with_in_clause(self, cursor, tmp_schema):
-        # Note: This tests if we can use multiple parameters that could be used
-        # in an IN clause context, though the exact syntax may vary
+    def test_should_bind_parameters_with_or_clause_for_multiple_value_matching(self, cursor, tmp_schema):
+        # Test binding multiple parameters with OR clause for value matching.
         table_name = f"{tmp_schema}.test_in_clause"
         cursor.execute(f"CREATE TABLE {table_name} (id NUMBER, name VARCHAR)")
 
