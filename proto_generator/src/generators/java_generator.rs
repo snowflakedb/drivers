@@ -142,7 +142,7 @@ impl JavaGenerator {
         // Interface
         content += &format!(
             r#"
-import com.snowflake.unicore.TransportException;
+import net.snowflake.client.internal.unicore.TransportException;
 
 /**
  * Service interface for {}
@@ -222,9 +222,9 @@ public interface {}Service {{
         // Import only Message, protobuf classes are now in the same package
         content += &format!(
             r#"import com.google.protobuf.Message;
-import com.snowflake.unicore.CoreTransport;
-import com.snowflake.unicore.CoreTransport.TransportResponse;
-import com.snowflake.unicore.TransportException;
+import net.snowflake.client.internal.unicore.CoreTransport;
+import net.snowflake.client.internal.unicore.CoreTransport.TransportResponse;
+import net.snowflake.client.internal.unicore.TransportException;
 import com.google.protobuf.InvalidProtocolBufferException;
 import {java_package}.{service_name}Service;
 

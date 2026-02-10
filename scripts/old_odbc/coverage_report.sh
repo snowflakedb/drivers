@@ -27,6 +27,30 @@ genhtml "$COVERAGE_DIR/coverage.info" \
     --output-directory "$COVERAGE_DIR/html" \
     --ignore-errors source
 
-echo "Coverage report generated at: $COVERAGE_DIR/html/index.html"
+# Print nice formatted summary
+echo ""
+echo "Old ODBC Driver Coverage Summary"
+echo "========================================"
+
+# Parse and display line coverage
+LINE_INFO=$(grep "lines" "$COVERAGE_DIR/summary.txt" | head -1)
+if [ -n "$LINE_INFO" ]; then
+    LINE_PCT=$(echo "$LINE_INFO" | sed -E 's/.*: ([0-9.]+)%.*/\1/')
+    LINE_HIT=$(echo "$LINE_INFO" | sed -E 's/.*\(([0-9]+) of.*/\1/')
+    LINE_TOTAL=$(echo "$LINE_INFO" | sed -E 's/.*of ([0-9]+).*/\1/')
+    echo "  Line coverage:     ${LINE_PCT}% (${LINE_HIT}/${LINE_TOTAL} lines)"
+fi
+
+# Parse and display function coverage
+FUNC_INFO=$(grep "functions" "$COVERAGE_DIR/summary.txt" | head -1)
+if [ -n "$FUNC_INFO" ] && [[ "$FUNC_INFO" != *"no data"* ]]; then
+    FUNC_PCT=$(echo "$FUNC_INFO" | sed -E 's/.*: ([0-9.]+)%.*/\1/')
+    FUNC_HIT=$(echo "$FUNC_INFO" | sed -E 's/.*\(([0-9]+) of.*/\1/')
+    FUNC_TOTAL=$(echo "$FUNC_INFO" | sed -E 's/.*of ([0-9]+).*/\1/')
+    echo "  Function coverage: ${FUNC_PCT}% (${FUNC_HIT}/${FUNC_TOTAL} functions)"
+fi
+
+echo ""
+echo "HTML report: $COVERAGE_DIR/html/index.html"
 
 

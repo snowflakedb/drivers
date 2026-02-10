@@ -24,7 +24,7 @@ from snowflake.connector._internal.protobuf_gen.database_driver_v1_services impo
 
 from ._internal.api_client.client_api import database_driver_client
 from .cursor import Cursor
-from .exceptions import InterfaceError, NotSupportedError
+from .errors import InterfaceError, NotSupportedError
 
 # Global flag to track if first auto-cleanup warning has been emitted in this process
 _first_auto_cleanup_in_process = True

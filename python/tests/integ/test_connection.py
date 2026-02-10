@@ -6,7 +6,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from snowflake.connector.exceptions import NotSupportedError
+from snowflake.connector.errors import NotSupportedError
 
 
 class TestConnectionMethods:

@@ -9,9 +9,8 @@ from urllib.parse import urlparse
 
 import pytest
 
-from .compatibility import set_current_connector
+from .compatibility import IS_UNIVERSAL_DRIVER
 from .connector_factory import ConnectorFactory, create_connection_with_adapter
-from .connector_types import ConnectorType
 from .private_key_helper import get_test_private_key_path
 
 
@@ -19,45 +18,14 @@ from .private_key_helper import get_test_private_key_path
 Row = tuple[Any, ...]
 
 
-def pytest_addoption(parser):
-    """Add custom command line options to pytest."""
-    parser.addoption(
-        "--connector",
-        action="store",
-        default="universal",
-        choices=["universal", "reference"],
-        help="Which connector implementation to test against (default: universal)",
-    )
-    parser.addoption(
-        "--reference-package",
-        action="store",
-        default="snowflake.connector",
-        help="Package name for reference connector (default: snowflake.connector)",
-    )
+@pytest.mark.optionalhook
+def pytest_metadata(metadata):
+    metadata["Version of snowflake.connector"] = "Universal" if IS_UNIVERSAL_DRIVER else "Old"
 
 
 @pytest.fixture(scope="session")
-def connector_type(request):
-    """Get the connector type from command line option."""
-    connector_str = request.config.getoption("--connector")
-    return ConnectorType.from_string(connector_str)
-
-
-@pytest.fixture(scope="session")
-def connector_adapter(request, connector_type):
-    """Create the appropriate connector adapter based on command line option."""
-    if connector_type == ConnectorType.REFERENCE:
-        reference_package = request.config.getoption("--reference-package")
-        return ConnectorFactory.create_adapter(connector_type, package_name=reference_package)
-
-    return ConnectorFactory.create_adapter(connector_type)
-
-
-@pytest.fixture(scope="session")
-def reference_connector(request):
-    """Create a reference connector adapter (always uses reference connector)."""
-    reference_package = request.config.getoption("--reference-package")
-    return ConnectorFactory.create_adapter(ConnectorType.REFERENCE, package_name=reference_package)
+def connector_adapter(request):
+    return ConnectorFactory.create_adapter()
 
 
 @pytest.fixture
@@ -153,11 +121,7 @@ def int_test_connection_factory(connector_adapter):
 
 def pytest_runtest_setup(item):
     """Skip tests based on connector type and markers."""
-    connector_type = item.config.getoption("--connector")
-    # Set the current connector for driver-gated helpers
-    set_current_connector(connector_type)
-
-    if connector_type == "universal" and item.get_closest_marker("skip_universal"):
+    if IS_UNIVERSAL_DRIVER and item.get_closest_marker("skip_universal"):
         pytest.skip("Skipping test for universal driver")
-    elif connector_type == "reference" and item.get_closest_marker("skip_reference"):
+    elif not IS_UNIVERSAL_DRIVER and item.get_closest_marker("skip_reference"):
         pytest.skip("Skipping test for reference driver")

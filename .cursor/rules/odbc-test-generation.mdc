@@ -1,0 +1,194 @@
+---
+description: ODBC specific test generation 
+alwaysApply: false
+---
+
+# ODBC Test Generation Rules
+
+## Validation Workflow (MANDATORY)
+
+1. **Validate against OLD driver first** using `odbc_tests/run_reference.sh -R <test_suite_name>`
+2. **Run format validator** with `tests/tests_format_validator/run_validator.sh`
+3. **Run precommit** to ensure linter compliance
+
+## C++ Test Structure
+
+### Framework & Includes
+- Use **Catch2** testing framework
+- Standard includes:
+  ```cpp
+  #include <catch2/catch_test_macros.hpp>
+  #include "Connection.hpp"
+  #include "HandleWrapper.hpp"
+  #include "macros.hpp"
+  #include "test_setup.hpp"
+  ```
+
+### Test Case Naming
+- Use descriptive names starting with "should": `TEST_CASE("should select hardcoded string literals", "[tag1][tag2]")`
+- Tags should match category: `[datatype][string]`, `[put_get]`, `[auth]`, `[query]`
+
+### Given-When-Then Comments
+Always structure tests with Gherkin comments:
+```cpp
+TEST_CASE("should select data from file uploaded to stage", "[put_get]") {
+  // Given File is uploaded to stage
+  Connection conn;
+  // setup code...
+
+  // When File data is queried using Select command
+  auto stmt = conn.execute_fetch(select_sql);
+
+  // Then File data should be correctly returned
+  CHECK(result == expected);
+}
+```
+
+## Core Patterns
+
+### Connection Management
+```cpp
+Connection conn;  // Uses default connection string
+// OR
+Connection conn(custom_connection_string);
+
+auto stmt = conn.createStatement();
+auto stmt = conn.execute("SQL QUERY");
+auto stmt = conn.execute_fetch("SQL QUERY");  // execute + fetch first row
+```
+
+### ODBC Error Handling
+- Use `CHECK_ODBC(ret, handle)` macro after every ODBC call:
+```cpp
+SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT...", SQL_NTS);
+CHECK_ODBC(ret, stmt);
+```
+
+### Schema & Table Management
+```cpp
+auto random_schema = Schema::use_random_schema(conn);
+conn.execute("DROP TABLE IF EXISTS test_table");
+conn.execute("CREATE TABLE test_table (col VARCHAR(1000))");
+```
+
+### Data Retrieval
+```cpp
+#include "get_data.hpp"
+auto value = get_data<SQL_C_CHAR>(stmt, column_index);
+auto num = get_data<SQL_C_LONG>(stmt, column_index);
+```
+
+### Assertions
+- Use `CHECK()` for non-fatal assertions
+- Use `REQUIRE()` for fatal assertions (test stops on failure)
+```cpp
+CHECK(actual == expected);
+REQUIRE(indicator > 0);
+```
+
+## Behavior Differences (BD)
+
+When behavior differs between OLD and NEW drivers:
+
+### 1. Document in `odbc_tests/BehaviorDifferences.yaml`:
+```yaml
+behavior_differences:
+  1:
+    name: "Description of the behavior difference"
+    type: "Bug Fix"  # or "Breaking Change" or "New Feature"
+```
+
+### 2. Use in test code:
+```cpp
+#include "compatibility.hpp"
+
+OLD_DRIVER_ONLY("BD#1") {
+    CHECK(result == old_expected);
+}
+
+NEW_DRIVER_ONLY("BD#1") {
+    CHECK(result == new_expected);
+}
+```
+
+## Test File Organization
+
+### Directory Structure
+```
+odbc_tests/tests/
+├── datatype_tests/     # Data type specific tests
+├── e2e/                # End-to-end tests matching Gherkin features
+│   ├── authentication/
+│   ├── put_get/
+│   ├── query/
+│   └── tls/
+├── integration/        # Integration tests
+└── basic_tests/        # Basic functionality tests
+```
+
+### File Naming
+- Match Gherkin feature names: `put_get_basic_operations.feature` → `put_get_basic_operations.cpp`
+- For datatypes: `string.feature` → `string_tests.cpp`
+
+## Common Utilities
+
+### Available Headers (in `odbc_tests/common/include/`)
+- `Connection.hpp` - Connection management wrapper
+- `HandleWrapper.hpp` - ODBC handle wrappers (Env, Conn, Stmt)
+- `macros.hpp` - `CHECK_ODBC` and error handling macros
+- `test_setup.hpp` - Test parameters and connection strings
+- `utils.hpp` - File paths, repo root utilities
+- `get_data.hpp` - Typed data retrieval helpers
+- `Schema.hpp` - Schema management
+- `put_get_utils.hpp` - PUT/GET operation utilities
+- `compatibility.hpp` - `OLD_DRIVER_ONLY`, `NEW_DRIVER_ONLY` macros
+
+### Creating Helper Functions
+- Put reusable helpers in common headers
+- Put file-specific helpers as `static` functions at top of test file:
+```cpp
+static std::string to_lower_copy(const std::string& s) {
+  std::string out = s;
+  std::transform(out.begin(), out.end(), out.begin(), ::tolower);
+  return out;
+}
+```
+
+## Skipping Tests
+
+When a test cannot be run (missing feature, known issue):
+```cpp
+TEST_CASE("should return correct column metadata", "[put_get]") {
+  SKIP("SNOW-1234567: Reason for skipping");
+  // Given...
+  // When...
+  // Then...
+}
+```
+
+## Running Tests
+
+### New Driver
+```bash
+./odbc_tests/run.sh                    # All tests
+./odbc_tests/run.sh -R "test_name"     # Specific test
+```
+
+### Reference/Old Driver
+```bash
+./odbc_tests/run_reference.sh          # All tests
+./odbc_tests/run_reference.sh -R "test_name"  # Specific test
+```
+
+### Environment Variables
+- `DRIVER_PATH` - Path to driver library
+- `PARAMETER_PATH` - Path to parameters.json
+- `GIT_ROOT` - Repository root path
+
+## Checklist Before Completion
+
+- [ ] Tests pass against OLD driver (`run_reference.sh`)
+- [ ] Format validator passes (`tests/tests_format_validator/run_validator.sh`)
+- [ ] Precommit hooks pass
+- [ ] Test follows Given-When-Then comment structure
+- [ ] Appropriate tags added to TEST_CASE

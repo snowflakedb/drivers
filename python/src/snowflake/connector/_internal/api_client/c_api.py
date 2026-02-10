@@ -6,6 +6,8 @@ from enum import Enum
 from importlib import resources
 from typing import Any
 
+from ..logging import get_sf_core_logger
+
 
 _CORE_LIB_NAME = "libsf_core"
 
@@ -89,12 +91,18 @@ level_map = {
 
 
 def logger_callback(level: int, message: bytes, filename: bytes, line: int, function: bytes) -> int:
-    if level not in level_map:
+    py_level = level_map.get(level)
+    if py_level is None:
         return 0
-    logger = logging.getLogger("sf_core")
-    record = logger.makeRecord(
-        "sf_core",
-        level_map[level],
+
+    sf_core_logger = get_sf_core_logger()
+    # Respect the logger's configured level - skip if not enabled
+    if not sf_core_logger.isEnabledFor(py_level):
+        return 0
+
+    record = sf_core_logger.makeRecord(
+        sf_core_logger.name,
+        py_level,
         filename.decode("utf-8"),
         line,
         message.decode("utf-8"),
@@ -102,7 +110,7 @@ def logger_callback(level: int, message: bytes, filename: bytes, line: int, func
         None,
         func=function.decode("utf-8"),
     )
-    logger.handle(record)
+    sf_core_logger.handle(record)
     return 0
 
 

@@ -5,7 +5,7 @@ edition = "2024"
 
 [lib]
 name = "sfodbc"
-crate-type = ["dylib", "rlib"]
+crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 sf_core = { path = "../sf_core" }
@@ -15,6 +15,7 @@ snafu = "0.8.7"
 odbc-sys = "0.25.1"
 lazy_static = "1.5.0"
 arrow = { version = "56.0.0", features = ["ffi"] }
+chrono = "0.4.43"
 
 proto_utils = { path = "../proto_utils" }
 

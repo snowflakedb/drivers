@@ -7,21 +7,21 @@ name = "snowflake-connector-python-ud"  # TODO: change this once ready, needs sw
 version = "0.1.0"
 description = "A PEP 249 Database API 2.0 implementation for Snowflake"
 readme = "README.md"
-license = {text = "MIT"}
-
+license = {text = "Apache-2.0"}
 keywords = ["database", "api", "pep249", "dbapi", "python", "snowflake"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
     "Topic :: Database",
     "Topic :: Software Development :: Libraries :: Python Modules",
-    "License :: OSI Approved :: MIT License",
+    "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
 ]
 requires-python = ">=3.9"
 dependencies = [
@@ -34,6 +34,27 @@ dependencies = [
 "Bug Reports" = "https://github.com/snowflakedb/universal-driver/issues"
 "Source" = "https://github.com/snowflakedb/universal-driver"
 "Documentation" = "https://github.com/snowflakedb/universal-driver/blob/main/README.md"
+
+[project.optional-dependencies]
+test = [
+    "pytest>=8",
+    "pytest-json-report",
+    "pytest-split",
+    "pytest-cov",
+    "pytest-xdist",
+    "pytest-randomly",
+    "pytest-timeout",
+    "hypothesis",
+    "requests",
+    "brotli",
+    "zstandard",
+]
+dev = [
+    "ruff",
+    "mypy",
+    "hatchling",
+    "types-pytz",
+]
 
 [tool.hatch.build.targets.sdist]
 include = [
@@ -62,24 +83,6 @@ path = "hatch_build.py"
 
 [tool.hatch.build.hooks.custom]
 
-[project.optional-dependencies]
-test = [
-    "pytest>=8",
-    "pytest-xdist",
-    "pytest-json-report",
-    "pytest-split",
-    "pytest-cov",
-    "hypothesis",
-    "requests",
-    "brotli",
-    "zstandard",
-]
-dev = [
-    "ruff",
-    "mypy",
-    "hatchling",
-]
-
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
@@ -88,8 +91,12 @@ python_functions = ["test_*"]
 addopts = [
     "--strict-markers",
     "--strict-config",
-    "-v",
+    "-vv",
+    "-n 16",
+    "--durations=0",
 ]
+# Default timeout for tests (2 minutes) - prevents hanging tests on CI
+timeout = 120
 markers = [
     "skip_reference(reason: str=''): skip when --connector=reference",
     "skip_universal(reason: str=''): skip when --connector=universal",
@@ -150,6 +157,7 @@ disallow_incomplete_defs = false
 
 [tool.hatch.envs.default]
 features = ["test", "dev"]
+installer = "uv"
 
 # Precommit environment
 [tool.hatch.envs.precommit.scripts]
@@ -163,60 +171,57 @@ fix = [
     'ruff check --fix src/snowflake tests',
     # Run format once again as linting may have changed files.
     'ruff format src/snowflake tests',
-    'mypy --install-types --non-interactive -p snowflake.connector',
+    'mypy -p snowflake.connector',
 ]
 
-# Type checking environment
-[tool.hatch.envs.type]
-features = ["dev"]
-scripts.run = "mypy src/snowflake"
+# This basic development environment. By default, it installs the driver
+# from sources in editable mode
+[tool.hatch.envs.dev]
+skip-install = false
+dev-mode = true
 
-# Test environment matrix
-[tool.hatch.envs.test]
-features = ["test"]
-dev-mode = false
-
-pre-install-commands = [
-    "pip install {env:WHEEL_PATH:dist/*.whl}",
-]
-
-[tool.hatch.envs.test.env-vars]
+[tool.hatch.envs.dev.env-vars]
 # IMPORTANT: PARAMETER_PATH must be explicitly set
 PARAMETER_PATH = "{env:PARAMETER_PATH:../parameters.json}"
 
-[[tool.hatch.envs.test.matrix]]
-python = ["3.9", "3.10", "3.11", "3.12", "3.13"]
+[[tool.hatch.envs.dev.matrix]]
+python = ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]
 
-[tool.hatch.envs.test.scripts]
-# Install from source
-install-wheel = "pip install dist/*.whl"
+[tool.hatch.envs.dev.scripts]
 # Unit tests
 unit = "pytest tests/unit {args}"
 # Integration tests
-integ = "pytest tests/integ --connector=universal {args}"
+integ = "pytest tests/integ {args}"
 # End-to-end tests
-e2e = "pytest tests/e2e --connector=universal {args}"
+e2e = "pytest tests/e2e {args}"
 # All tests
-all = "pytest tests/ --connector=universal {args}"
+all = "pytest tests/ {args}"
 # All tests with coverage
-all-cov = "pytest tests/ --connector=universal --cov=src/snowflake --cov-report=xml --cov-report=html {args}"
+all-cov = "pytest tests/ --cov=src/snowflake --cov-report=xml --cov-report=html {args}"
 
-# Reference connector environment (installs local package + reference connector)
+# This environment skips installing the ud version from sources,
+# installs from wheel via install-wheel
+[tool.hatch.envs.test]
+template = "dev"
+skip-install = true
+dev-mode = false
+
+[[tool.hatch.envs.test.matrix]]
+python = ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]
+
+[tool.hatch.envs.test.scripts]
+# Install from wheel
+install-wheel = "uv pip install {env:WHEEL_PATH:dist/*.whl}"
+
+# Reference connector environment installs only reference connector
 [tool.hatch.envs.reference]
-features = ["test"]
-pre-install-commands = [
-    "pip install snowflake-connector-python -t old_driver_src"
-]
+template = "test"
 
 [tool.hatch.envs.reference.scripts]
-run = "pytest tests/integ tests/e2e --connector=reference {args}"
-
-# CI environment for special CI tasks
-[tool.hatch.envs.ci]
-skip-install = false
-dependencies = [
-    "requests",
+# This environment runs with old driver only. UD driver is not installed.
+test = [
+    "uv pip uninstall snowflake-connector-python-ud",
+    "uv pip install snowflake-connector-python=={env:PYTHON_REFERENCE_DRIVER_VERSION:3.17.2}",
+    "pytest tests/integ tests/e2e {args}"
 ]
-
-[tool.hatch.envs.ci.scripts]
 compare = "python ci/reference_tests/compare_reports.py {args}"

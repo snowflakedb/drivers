@@ -5,13 +5,12 @@ This module provides a unified interface to test different Snowflake connector
 implementations with the same test suite.
 """
 
-import importlib.util
-
 from abc import ABC, abstractmethod
-from pathlib import Path
 from typing import Any
 
-from .compatibility import is_new_driver, is_old_driver
+from snowflake import connector
+
+from .compatibility import IS_UNIVERSAL_DRIVER, is_new_driver, is_old_driver
 from .config import get_test_parameters
 from .connector_types import ConnectorType
 from .private_key_helper import get_private_key_from_parameters, get_private_key_password
@@ -20,21 +19,13 @@ from .private_key_helper import get_private_key_from_parameters, get_private_key
 class ConnectorAdapter(ABC):
     """Abstract base class for connector adapters."""
 
+    def __init__(self):
+        # All adapters import same connector. Connector version depends on what is installed in environment
+        self.connector = connector
+
     @abstractmethod
     def connect(self, **kwargs) -> Any:
         """Create a connection using this connector implementation."""
-        pass
-
-    @property
-    @abstractmethod
-    def name(self) -> str:
-        """Return the name of this connector implementation."""
-        pass
-
-    @property
-    @abstractmethod
-    def version(self) -> str:
-        """Return the version of this connector implementation."""
         pass
 
     @property
@@ -47,26 +38,9 @@ class ConnectorAdapter(ABC):
 class UniversalConnectorAdapter(ConnectorAdapter):
     """Adapter for the universal driver implementation."""
 
-    def __init__(self):
-        # Import the universal connector
-        from snowflake import connector
-
-        self.connector = connector
-
     def connect(self, **kwargs) -> Any:
         """Create a connection using the universal connector."""
         return self.connector.connect(**kwargs)
-
-    @property
-    def name(self) -> str:
-        return "pep249_dbapi"
-
-    @property
-    def version(self) -> str:
-        try:
-            return self.connector.__version__
-        except AttributeError:
-            return "0.1.0"
 
     @property
     def connector_type(self) -> ConnectorType:
@@ -76,37 +50,9 @@ class UniversalConnectorAdapter(ConnectorAdapter):
 class ReferenceConnectorAdapter(ConnectorAdapter):
     """Adapter for the reference Snowflake connector implementation."""
 
-    def __init__(self, package_name: str = "snowflake.connector"):
-        self.package_name = package_name
-        try:
-            self.connector = self._load_from_sources(package_name)
-        except ImportError as e:
-            raise ImportError(f"Could not import reference connector '{package_name}': {e}") from e
-
-    def _load_from_sources(self, package_name: str):
-        legacy_path = Path(__file__).parent.parent / "old_driver_src"
-
-        spec = importlib.util.find_spec(package_name, [legacy_path])
-        if spec is None:
-            raise ImportError(f"Could not find '{package_name}' in {legacy_path}")
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        return module
-
     def connect(self, **kwargs) -> Any:
         """Create a connection using the reference connector."""
         return self.connector.connect(**kwargs)
-
-    @property
-    def name(self) -> str:
-        return self.package_name
-
-    @property
-    def version(self) -> str:
-        try:
-            return self.connector.__version__
-        except AttributeError:
-            return "unknown"
 
     @property
     def connector_type(self) -> ConnectorType:
@@ -116,27 +62,12 @@ class ReferenceConnectorAdapter(ConnectorAdapter):
 class ConnectorFactory:
     """Factory for creating connector adapters."""
 
-    _adapters = {
-        ConnectorType.UNIVERSAL: UniversalConnectorAdapter,
-        ConnectorType.REFERENCE: ReferenceConnectorAdapter,
-    }
-
     @classmethod
-    def create_adapter(cls, connector_type: ConnectorType, **kwargs) -> ConnectorAdapter:
-        """Create a connector adapter of the specified type."""
-        if connector_type not in cls._adapters:
-            raise ValueError(f"Unknown connector type: {connector_type}. Available types: {list(cls._adapters.keys())}")
-
-        adapter_class = cls._adapters[connector_type]
-        return adapter_class(**kwargs)
-
-    @classmethod
-    def get_available_connectors(cls) -> dict[ConnectorType, str]:
-        """Get a list of available connector types and their descriptions."""
-        return {
-            ConnectorType.UNIVERSAL: "Universal driver implementation",
-            ConnectorType.REFERENCE: "Old Snowflake connector implementation",
-        }
+    def create_adapter(cls) -> ConnectorAdapter:
+        """Create a connector adapter. It will use connector installed in environment"""
+        if IS_UNIVERSAL_DRIVER:
+            return UniversalConnectorAdapter()
+        return ReferenceConnectorAdapter()
 
 
 def create_connection_with_adapter(adapter: ConnectorAdapter, **override_params):

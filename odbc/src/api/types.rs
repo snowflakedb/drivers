@@ -1,5 +1,7 @@
 use crate::api::{OdbcError, diagnostic::DiagnosticInfo};
 use crate::cdata_types::CDataType;
+use crate::conversion::Binding;
+use crate::conversion::warning::Warnings;
 use arrow::{array::RecordBatch, ffi_stream::ArrowArrayStreamReader};
 use odbc_sys as sql;
 use sf_core::protobuf_gen::database_driver_v1::{
@@ -11,21 +13,32 @@ use std::collections::HashMap;
 pub type OdbcResult<T> = Result<T, OdbcError>;
 
 pub trait ToSqlReturn {
-    fn to_sql_return(self) -> sql::SqlReturn;
+    fn to_sql_return(self, warnings: &Warnings) -> sql::SqlReturn;
     fn to_sql_code(self) -> i16;
+    fn to_sql_code_with_warnings(self, warnings: &Warnings) -> i16;
 }
 
 impl ToSqlReturn for OdbcResult<()> {
-    fn to_sql_return(self) -> sql::SqlReturn {
+    fn to_sql_return(self, warnings: &Warnings) -> sql::SqlReturn {
         match self {
-            Ok(_) => sql::SqlReturn::SUCCESS,
+            Ok(_) => {
+                if warnings.is_empty() {
+                    sql::SqlReturn::SUCCESS
+                } else {
+                    sql::SqlReturn::SUCCESS_WITH_INFO
+                }
+            }
             Err(OdbcError::NoMoreData { .. }) => sql::SqlReturn::NO_DATA,
             Err(OdbcError::InvalidHandle { .. }) => sql::SqlReturn::INVALID_HANDLE,
             Err(_) => sql::SqlReturn::ERROR,
         }
     }
     fn to_sql_code(self) -> sql::RetCode {
-        self.to_sql_return().0
+        self.to_sql_return(&vec![]).0
+    }
+
+    fn to_sql_code_with_warnings(self, warnings: &Warnings) -> sql::RetCode {
+        self.to_sql_return(warnings).0
     }
 }
 
@@ -138,6 +151,7 @@ pub struct Statement<'a> {
     pub stmt_handle: StatementHandle,
     pub state: State<StatementState>,
     pub parameter_bindings: HashMap<u16, ParameterBinding>,
+    pub column_bindings: HashMap<u16, Binding>,
     pub diagnostic_info: DiagnosticInfo,
 }
 

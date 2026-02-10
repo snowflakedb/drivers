@@ -1,0 +1,333 @@
+// String to ODBC character/binary type conversions tests
+// Tests converting Snowflake VARCHAR/STRING type to character/binary ODBC C types:
+// SQL_C_BINARY, SQL_C_CHAR, SQL_C_WCHAR
+
+#include <sql.h>
+#include <sqlext.h>
+#include <sqltypes.h>
+
+#include <cstring>
+#include <string>
+#include <vector>
+
+#include <catch2/catch_test_macros.hpp>
+
+#include "Connection.hpp"
+#include "HandleWrapper.hpp"
+#include "Schema.hpp"
+#include "compatibility.hpp"
+#include "get_data.hpp"
+#include "get_diag_rec.hpp"
+#include "macros.hpp"
+#include "test_setup.hpp"
+
+static unsigned int to_unsigned_int(char c) { return static_cast<unsigned int>(static_cast<unsigned char>(c)); }
+
+// ============================================================================
+// STRING TRUNCATION
+// ============================================================================
+
+// Byte lenght of data is longer than the buffer length, so the data is truncated.
+TEST_CASE("should truncate string data when byte length is longer than the buffer length",
+          "[.][datatype][string][conversion][char]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  // When Query selecting a long string is executed
+  auto stmt = conn.execute_fetch("SELECT 'This is a very long string that will be truncated' AS long_str");
+
+  // And Attempt to get data with a buffer that is too short
+  char buffer[20];  // Buffer smaller than the string
+  SQLLEN indicator;
+  SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_CHAR, buffer, sizeof(buffer), &indicator);
+
+  // Then the function should return SQL_SUCCESS_WITH_INFO (truncation occurred)
+  CHECK(ret == SQL_SUCCESS_WITH_INFO);
+
+  // And the buffer should contain the truncated string with null terminator
+  CHECK(strlen(buffer) == sizeof(buffer) - 1);  // 19 characters + null terminator
+  CHECK(std::string(buffer) == "This is a very long");
+  CHECK(buffer[sizeof(buffer) - 1] == 0);
+
+  // And the indicator should show the actual length of the original string
+  CHECK(indicator == SQL_NO_TOTAL);  // Length of original string
+}
+
+TEST_CASE("should truncate wide string data when byte length is longer than the buffer length",
+          "[datatype][string][conversion][wchar]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  // When Query selecting a long string is executed
+  auto stmt = conn.execute_fetch("SELECT 'This is a very long string that will be truncated' AS long_str");
+
+  // And Attempt to get data with a buffer that is too short
+  SQLWCHAR buffer[20];  // Buffer smaller than the string (20 wide chars = 40 bytes)
+  SQLLEN indicator;
+  SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_WCHAR, buffer, sizeof(buffer), &indicator);
+
+  // Then the function should return SQL_SUCCESS_WITH_INFO (truncation occurred)
+  CHECK(ret == SQL_SUCCESS_WITH_INFO);
+
+  std::u16string expected_truncated = u"This is a very long";
+  CHECK(std::u16string((char16_t*)buffer, sizeof(buffer) / sizeof(char16_t) - 1) == expected_truncated);
+  CHECK(buffer[sizeof(buffer) / sizeof(char16_t) - 1] == 0);
+
+  // And the indicator should show the actual byte length of the original string in wide char format
+  CHECK(indicator == SQL_NO_TOTAL);  // Length of original string in bytes (52 chars * 2 bytes per wide char)
+}
+
+// ============================================================================
+// SUCCESSFUL CONVERSIONS - String to SQL_C_BINARY
+// ============================================================================
+
+TEST_CASE("should convert string literals to SQL_C_BINARY", "[datatype][string][conversion][binary]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  // When Query selecting various string literals is executed
+  auto stmt = conn.execute_fetch("SELECT 'hello' AS c1, '' AS c2, 'ABC123!@#' AS c3, NULL::STRING AS c4");
+
+  // Then ASCII string 'hello' should convert to raw bytes
+  {
+    SQLCHAR buffer[100];
+    SQLLEN indicator;
+    SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_BINARY, buffer, sizeof(buffer), &indicator);
+    CHECK_ODBC(ret, stmt);
+    CHECK(indicator == 5);
+    CHECK(buffer[0] == 'h');
+    CHECK(buffer[1] == 'e');
+    CHECK(buffer[2] == 'l');
+    CHECK(buffer[3] == 'l');
+    CHECK(buffer[4] == 'o');
+  }
+
+  // And empty string should return 0 bytes
+  {
+    SQLCHAR buffer[100];
+    SQLLEN indicator;
+    SQLRETURN ret = SQLGetData(stmt.getHandle(), 2, SQL_C_BINARY, buffer, sizeof(buffer), &indicator);
+    CHECK_ODBC(ret, stmt);
+    CHECK(indicator == 0);
+  }
+
+  // And mixed ASCII with special characters should convert correctly
+  {
+    SQLCHAR buffer[100];
+    SQLLEN indicator;
+    SQLRETURN ret = SQLGetData(stmt.getHandle(), 3, SQL_C_BINARY, buffer, sizeof(buffer), &indicator);
+    CHECK_ODBC(ret, stmt);
+    CHECK(indicator == 9);
+    CHECK(buffer[0] == 'A');
+    CHECK(buffer[1] == 'B');
+    CHECK(buffer[2] == 'C');
+    CHECK(buffer[3] == '1');
+    CHECK(buffer[4] == '2');
+    CHECK(buffer[5] == '3');
+    CHECK(buffer[6] == '!');
+    CHECK(buffer[7] == '@');
+    CHECK(buffer[8] == '#');
+  }
+
+  // And NULL should return SQL_NULL_DATA
+  {
+    SQLCHAR buffer[100];
+    SQLLEN indicator;
+    SQLRETURN ret = SQLGetData(stmt.getHandle(), 4, SQL_C_BINARY, buffer, sizeof(buffer), &indicator);
+    CHECK_ODBC(ret, stmt);
+    CHECK(indicator == SQL_NULL_DATA);
+  }
+}
+
+// ============================================================================
+// SUCCESSFUL CONVERSIONS - UTF-8 String to SQL_C_BINARY
+// ============================================================================
+
+TEST_CASE("should convert UTF-8 string literals to SQL_C_BINARY", "[datatype][string][conversion][binary][utf8]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  // When Query selecting UTF-8 string literals is executed
+  auto stmt = conn.executew_fetch(
+      u"SELECT '日本語' AS japanese, 'Привет' AS russian, '你好' AS chinese, "
+      u"'émoji: 😀' AS emoji, 'café' AS french, 'Ñoño' AS spanish, '𝄞' AS clef");
+
+  // Then Japanese '日本語' should convert to UTF-8 bytes (3 chars × 3 bytes each = 9 bytes)
+  {
+    SQLCHAR buffer[100];
+    SQLLEN indicator;
+    SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_BINARY, buffer, sizeof(buffer), &indicator);
+    CHECK_ODBC(ret, stmt);
+    CHECK(indicator == 9);  // 3 Japanese characters × 3 bytes each
+    // '日' = E6 97 A5
+    CHECK(buffer[0] == 0xE6);
+    CHECK(buffer[1] == 0x97);
+    CHECK(buffer[2] == 0xA5);
+    // '本' = E6 9C AC
+    CHECK(buffer[3] == 0xE6);
+    CHECK(buffer[4] == 0x9C);
+    CHECK(buffer[5] == 0xAC);
+    // '語' = E8 AA 9E
+    CHECK(buffer[6] == 0xE8);
+    CHECK(buffer[7] == 0xAA);
+    CHECK(buffer[8] == 0x9E);
+  }
+
+  // And Russian 'Привет' should convert to UTF-8 bytes (6 chars × 2 bytes each = 12 bytes)
+  {
+    SQLCHAR buffer[100];
+    SQLLEN indicator;
+    SQLRETURN ret = SQLGetData(stmt.getHandle(), 2, SQL_C_BINARY, buffer, sizeof(buffer), &indicator);
+    CHECK_ODBC(ret, stmt);
+    CHECK(indicator == 12);  // 6 Cyrillic characters × 2 bytes each
+    // 'П' = D0 9F
+    CHECK(buffer[0] == 0xD0);
+    CHECK(buffer[1] == 0x9F);
+  }
+
+  // And Chinese '你好' should convert to UTF-8 bytes (2 chars × 3 bytes each = 6 bytes)
+  {
+    SQLCHAR buffer[100];
+    SQLLEN indicator;
+    SQLRETURN ret = SQLGetData(stmt.getHandle(), 3, SQL_C_BINARY, buffer, sizeof(buffer), &indicator);
+    CHECK_ODBC(ret, stmt);
+    CHECK(indicator == 6);  // 2 Chinese characters × 3 bytes each
+    // '你' = E4 BD A0
+    CHECK(buffer[0] == 0xE4);
+    CHECK(buffer[1] == 0xBD);
+    CHECK(buffer[2] == 0xA0);
+    // '好' = E5 A5 BD
+    CHECK(buffer[3] == 0xE5);
+    CHECK(buffer[4] == 0xA5);
+    CHECK(buffer[5] == 0xBD);
+  }
+
+  // And emoji string 'émoji: 😀' should include 4-byte emoji
+  {
+    SQLCHAR buffer[100];
+    SQLLEN indicator;
+    SQLRETURN ret = SQLGetData(stmt.getHandle(), 4, SQL_C_BINARY, buffer, sizeof(buffer), &indicator);
+    CHECK_ODBC(ret, stmt);
+    // 'é' (2 bytes) + 'm' + 'o' + 'j' + 'i' + ':' + ' ' (6 bytes) + '😀' (4 bytes) = 12 bytes
+    CHECK(indicator == 12);
+    // 'é' = C3 A9
+    CHECK(buffer[0] == 0xC3);
+    CHECK(buffer[1] == 0xA9);
+    // '😀' = F0 9F 98 80 (at end)
+    CHECK(buffer[8] == 0xF0);
+    CHECK(buffer[9] == 0x9F);
+    CHECK(buffer[10] == 0x98);
+    CHECK(buffer[11] == 0x80);
+  }
+
+  // And French 'café' should convert correctly (4 chars, 5 bytes due to 'é')
+  {
+    SQLCHAR buffer[100];
+    SQLLEN indicator;
+    SQLRETURN ret = SQLGetData(stmt.getHandle(), 5, SQL_C_BINARY, buffer, sizeof(buffer), &indicator);
+    CHECK_ODBC(ret, stmt);
+    CHECK(indicator == 5);  // 'c' + 'a' + 'f' + 'é' (2 bytes)
+    CHECK(buffer[0] == 'c');
+    CHECK(buffer[1] == 'a');
+    CHECK(buffer[2] == 'f');
+    // 'é' = C3 A9
+    CHECK(buffer[3] == 0xC3);
+    CHECK(buffer[4] == 0xA9);
+  }
+
+  // And Spanish 'Ñoño' should convert correctly
+  {
+    SQLCHAR buffer[100];
+    SQLLEN indicator;
+    SQLRETURN ret = SQLGetData(stmt.getHandle(), 6, SQL_C_BINARY, buffer, sizeof(buffer), &indicator);
+    CHECK_ODBC(ret, stmt);
+    CHECK(indicator == 6);  // 'Ñ' (2 bytes) + 'o' + 'ñ' (2 bytes) + 'o'
+    // 'Ñ' = C3 91
+    CHECK(buffer[0] == 0xC3);
+    CHECK(buffer[1] == 0x91);
+    CHECK(buffer[2] == 'o');
+    // 'ñ' = C3 B1
+    CHECK(buffer[3] == 0xC3);
+    CHECK(buffer[4] == 0xB1);
+    CHECK(buffer[5] == 'o');
+  }
+
+  // And musical symbol '𝄞' should convert correctly
+  {
+    SQLCHAR buffer[100];
+    SQLLEN indicator;
+    SQLRETURN ret = SQLGetData(stmt.getHandle(), 7, SQL_C_BINARY, buffer, sizeof(buffer), &indicator);
+    CHECK_ODBC(ret, stmt);
+    CHECK(indicator == 4);
+    // UTF-8 encoding of '𝄞' is F0 9D 84 9E
+    CHECK(to_unsigned_int(buffer[0]) == 0xF0);
+    CHECK(to_unsigned_int(buffer[1]) == 0x9D);
+    CHECK(to_unsigned_int(buffer[2]) == 0x84);
+    CHECK(to_unsigned_int(buffer[3]) == 0x9E);
+  }
+}
+
+// ============================================================================
+// UTF-16 TO ASCII CONVERSION
+// ============================================================================
+
+// Skipped since we need support encodings based on C locale
+TEST_CASE("should convert UTF-16 to ASCII with 0x1a substitution when using SQL_C_CHAR",
+          "[.][datatype][string][conversion]") {
+  // ODBC-specific: When reading UTF-16 data using SQL_C_CHAR target type,
+  // non-ASCII characters (> 0x7F) should be replaced with 0x1a (SUB character)
+  // Given Snowflake client is logged in
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  // When Query selecting strings with non-ASCII Unicode characters is executed
+  auto stmt = conn.executew_fetch(
+      u"SELECT "
+      u"'日本語' AS japanese, "
+      u"'Hello日World' AS mixed, "
+      u"'⛄🚀🎉' AS emojis, "
+      u"'αβγδ' AS greek, "
+      u"'Hello' AS ascii_only, "
+      u"'y̆es' AS combined, "
+      u"'𝄞' AS surrogate_pair");
+
+  // Then Japanese characters should be replaced with 0x1a (SUB) when reading as SQL_C_CHAR
+  auto japanese = get_data<SQL_C_CHAR>(stmt, 1);
+  CHECK(japanese == "\x1a\x1a\x1a");
+
+  // And Mixed string should have ASCII preserved and non-ASCII replaced with 0x1a
+  auto mixed = get_data<SQL_C_CHAR>(stmt, 2);
+  CHECK(mixed.substr(0, 5) == "Hello");
+  CHECK(mixed[5] == '\x1a');
+  CHECK(mixed.substr(mixed.size() - 5) == "World");
+
+  // And Emojis should all be replaced with 0x1a
+  auto emojis = get_data<SQL_C_CHAR>(stmt, 3);
+  for (char c : emojis) {
+    CHECK(c == '\x1a');
+  }
+
+  // And Greek letters should be replaced with 0x1a
+  auto greek = get_data<SQL_C_CHAR>(stmt, 4);
+  for (char c : greek) {
+    CHECK(c == '\x1a');
+  }
+
+  // And Pure ASCII string should remain unchanged
+  auto ascii_only = get_data<SQL_C_CHAR>(stmt, 5);
+  CHECK(ascii_only == "Hello");
+
+  // And Combined string should have ASCII preserved and non-ASCII replaced with 0x1a
+  auto combined = get_data<SQL_C_CHAR>(stmt, 6);
+  CHECK(combined.substr(0, 1) == "y");
+  CHECK(combined[1] == '\x1a');
+  CHECK(combined[2] == 'e');
+  CHECK(combined[3] == 's');
+
+  auto surrogate_pair = get_data<SQL_C_CHAR>(stmt, 7);
+  CHECK(surrogate_pair == "\x1a");
+}

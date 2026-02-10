@@ -1,0 +1,7 @@
+; sf_core Export Definition File
+; Only export the C API functions needed by Python and other language bindings
+; This avoids the Windows PE/COFF 65535 export symbol limit
+LIBRARY sf_core
+EXPORTS
+    sf_core_init_logger
+    sf_core_api_call_proto

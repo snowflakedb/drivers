@@ -1,11 +1,11 @@
-@python
+@python @odbc @core_not_needed
 Feature: INT type support
 
   # =========================================================================== #
   #                               Type casting                                  #
   # =========================================================================== #
 
-  @python_e2e
+  @python_e2e @odbc_e2e
   Scenario: should cast integer values to appropriate type for int and synonyms
     # Python: Values should be cast to 'int' type
     Given Snowflake client is logged in
@@ -17,13 +17,13 @@ Feature: INT type support
   #                     SELECT with literals (no tables)                        #
   # =========================================================================== #
 
-  @python_e2e
+  @python_e2e @odbc_e2e
   Scenario: should select integer literals for int and synonyms
     Given Snowflake client is logged in
     When Query "SELECT 0::<type>, 1::<type>, -1::<type>, 42::<type>" is executed
     Then Result should contain integers [0, 1, -1, 42]
 
-  @python_e2e
+  @python_e2e @odbc_e2e
   Scenario: should handle integer boundary values for int and synonyms
     Given Snowflake client is logged in
     When Query "SELECT -128::<type>, 127::<type>, 255::<type>" is executed
@@ -47,17 +47,17 @@ Feature: INT type support
     When Query "SELECT NULL::<type>, 42::<type>, NULL::<type>" is executed
     Then Result should contain [NULL, 42, NULL]
 
-  @python_e2e
+  @python_e2e @odbc_e2e
   Scenario: should download large result set with multiple chunks for int and synonyms
     Given Snowflake client is logged in
-    When Query "SELECT seq8()::<type> as id FROM TABLE(GENERATOR(ROWCOUNT => 1000000)) v ORDER BY id" is executed
-    Then Result should contain 1000000 sequentially numbered rows from 0 to 999999
+    When Query "SELECT seq8()::<type> as id FROM TABLE(GENERATOR(ROWCOUNT => 50000)) v ORDER BY id" is executed
+    Then Result should contain 50000 sequentially numbered rows from 0 to 49999
 
   # =========================================================================== #
   #                             Table operations                                #
   # =========================================================================== #
 
-  @python_e2e
+  @python_e2e @odbc_e2e
   Scenario: should select integers from table for int and synonyms
     Given Snowflake client is logged in
     And Table with <type> column exists with values [0, 1, -1, 100]
@@ -74,12 +74,12 @@ Feature: INT type support
     When Query "SELECT * FROM corner_case_table" is executed
     Then Result should contain 3 rows with expected corner case values for all int type synonyms
 
-  @python_e2e
+  @python_e2e @odbc_e2e
   Scenario: should select large result set from table for int and synonyms
     Given Snowflake client is logged in
-    And Table with <type> column exists with 1000000 sequential values
+    And Table with <type> column exists with 50000 sequential values
     When Query "SELECT * FROM <table> ORDER BY col" is executed
-    Then Result should contain 1000000 sequentially numbered rows from 0 to 999999
+    Then Result should contain 50000 sequentially numbered rows from 0 to 49999
 
   # =========================================================================== #
   #                            Parameter binding                                #

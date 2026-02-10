@@ -44,3 +44,16 @@ repos:
         pass_filenames: true
         files: ^python/.*\.py$
         language: system
+    -   id: uv-lock-update
+        name: Update uv.lock
+        description: Updates uv.lock file
+        entry: bash -c 'cd python && uv lock'
+        pass_filenames: false
+        files: ^python/(pyproject\.toml|uv\.lock)$
+        language: system
+    -   id: python-no-assert-in-production
+        name: No assert statements in production code
+        description: Ensure no assert statements are used in python/src (production code only)
+        entry: '^\s*assert\s'
+        language: pygrep
+        files: ^python/src/.*\.py$

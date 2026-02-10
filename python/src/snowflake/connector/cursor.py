@@ -16,7 +16,7 @@ from ._internal.protobuf_gen.database_driver_v1_pb2 import (  # type: ignore[att
     StatementNewRequest,
     StatementSetSqlQueryRequest,
 )
-from .exceptions import NotSupportedError
+from .errors import NotSupportedError, ProgrammingError
 
 
 if TYPE_CHECKING:
@@ -104,16 +104,13 @@ class Cursor:
         """Close the cursor now (rather than whenever __del__ is called)."""
         self._closed = True
 
-    def execute(self, operation: str, parameters: Sequence[Any] | dict[str, Any] | None = None) -> None:
+    def execute(self, operation: str, parameters: Sequence[Any] | dict[str, Any] | None = None) -> Cursor:
         """
         Execute a database operation (query or command).
 
         Args:
             operation (str): SQL statement to execute
             parameters (sequence or mapping): Parameters for the operation
-
-        Raises:
-            NotSupportedError: If not implemented
         """
         stmt_handle = self.connection.db_api.statement_new(
             StatementNewRequest(conn_handle=self.connection.conn_handle)
@@ -127,6 +124,7 @@ class Cursor:
 
         # Reset streaming state for a new result
         self._iterator = None
+        return self
 
     def executemany(self, operation: str, seq_of_parameters: Sequence[Sequence[Any]]) -> None:
         """
@@ -170,17 +168,16 @@ class Cursor:
 
         return stream_ptr
 
-    def _ensure_iterator(self) -> None:
-        if self._iterator is None:
-            stream_ptr = self._get_stream_ptr()
-            arrow_context = ArrowConverterContext()
-            self._iterator = ArrowStreamIterator(
-                stream_ptr,
-                arrow_context,
-                # TODO: SNOW-2997742, SNOW-2997786, temporarily hardcoded
-                use_dict_result=False,
-                use_numpy=False,
-            )
+    def _get_iterator(self) -> ArrowStreamIterator:
+        stream_ptr = self._get_stream_ptr()
+        arrow_context = ArrowConverterContext()
+        return ArrowStreamIterator(
+            stream_ptr,
+            arrow_context,
+            # TODO: SNOW-2997742, SNOW-2997786, temporarily hardcoded
+            use_dict_result=False,
+            use_numpy=False,
+        )
 
     def fetchone(self) -> Row | None:
         """
@@ -188,12 +185,9 @@ class Cursor:
 
         Returns:
             sequence: Next row, or None when no more data is available
-
-        Raises:
-            NotSupportedError: If not implemented
         """
-        self._ensure_iterator()
-        assert self._iterator is not None
+        if self._iterator is None:
+            self._iterator = self._get_iterator()
         try:
             return next(self._iterator)
         except StopIteration:
@@ -210,9 +204,23 @@ class Cursor:
             sequence: List of rows
 
         Raises:
-            NotSupportedError: If not implemented
+            ProgrammingError: If the number of rows is not zero or positive number
         """
-        raise NotSupportedError("fetchmany is not implemented")
+        if size is None:
+            size = self.arraysize
+
+        if size < 0:
+            raise ProgrammingError(f"The number of rows is not zero or positive number: {size}")
+
+        ret = []
+        while size > 0:
+            row = self.fetchone()
+            if row is None:
+                break
+            ret.append(row)
+            size -= 1
+
+        return ret
 
     def fetchall(self) -> list[Row]:
         """
@@ -220,12 +228,9 @@ class Cursor:
 
         Returns:
             sequence: List of all remaining rows
-
-        Raises:
-            NotSupportedError: If not implemented
         """
-        self._ensure_iterator()
-        assert self._iterator is not None
+        if self._iterator is None:
+            self._iterator = self._get_iterator()
         return list(self._iterator)
 
     def nextset(self) -> None:

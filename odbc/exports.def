@@ -1,0 +1,25 @@
+; ODBC Driver Export Definition File
+; Only export the ODBC API functions, not internal symbols
+LIBRARY sfodbc
+EXPORTS
+    SQLAllocEnv
+    SQLAllocConnect
+    SQLAllocHandle
+    SQLExecDirect
+    SQLExecDirectW
+    SQLFreeHandle
+    SQLConnect
+    SQLSetEnvAttr
+    SQLGetEnvAttr
+    SQLDriverConnect
+    SQLDisconnect
+    SQLFetch
+    SQLGetData
+    SQLNumResultCols
+    SQLRowCount
+    SQLBindParameter
+    SQLPrepare
+    SQLExecute
+    SQLGetDiagRec
+    SQLGetDiagField
+    SQLBindCol

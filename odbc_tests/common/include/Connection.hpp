@@ -47,6 +47,20 @@ class Connection {
     return stmt;
   }
 
+  StatementHandleWrapper executew(const std::u16string& query) {
+    auto stmt = createStatement();
+    SQLRETURN ret = SQLExecDirectW(stmt.getHandle(), (SQLWCHAR*)query.data(), query.size());
+    CHECK_ODBC(ret, stmt);
+    return stmt;
+  }
+
+  StatementHandleWrapper executew_fetch(const std::u16string& query) {
+    auto stmt = executew(query);
+    SQLRETURN ret = SQLFetch(stmt.getHandle());
+    CHECK_ODBC(ret, stmt);
+    return stmt;
+  }
+
   StatementHandleWrapper execute_fetch(const std::string& query) {
     auto stmt = execute(query);
     SQLRETURN ret = SQLFetch(stmt.getHandle());

@@ -1,0 +1,386 @@
+#!/usr/bin/env groovy
+
+/*
+ * Jenkinsfile for generating coverage reports for old/reference drivers using new tests.
+ * This helps estimate how good our new tests are and by extension how good our new drivers are.
+ *
+ * Covers:
+ * - Old ODBC driver (snowflake-odbc) with new ODBC tests
+ * - Old Python connector (snowflake-connector-python) with new Python tests (integ + e2e)
+ *
+ * Pipeline steps:
+ * 1. Build old drivers with coverage instrumentation
+ * 2. Build and run comparable tests against the instrumented drivers
+ * 3. Generate coverage reports
+ * 4. Upload metrics to Benchstore
+ */
+
+import groovy.transform.Field
+
+@Field String DOCKER_IMAGE = 'nexus.int.snowflakecomputing.com:8086/docker/rhel8-universal-driver-coverage:3'
+@Field String NEXUS_CREDENTIAL_ID = 'a791118f-a1ea-46cd-b876-56da1b9bc71c'
+
+pipeline {
+    agent none
+
+    options {
+        timestamps()
+        disableResume()
+        buildDiscarder(logRotator(daysToKeepStr: '14', numToKeepStr: '50'))
+        timeout(time: 3, unit: 'HOURS')
+    }
+
+    stages {
+        stage('Reference Driver Coverage') {
+            failFast false
+            parallel {
+                // ============================================================
+                // OLD ODBC COVERAGE
+                // ============================================================
+                stage('Old ODBC Coverage') {
+                    agent {
+                        label 'regular-memory-node-snowos'
+                    }
+
+                    environment {
+                        BUILD_NUMBER = "${env.BUILD_NUMBER}"
+                        BRANCH_NAME = "${env.BRANCH_NAME ?: 'main'}"
+                    }
+
+                    stages {
+                        stage('ODBC: Checkout') {
+                            steps {
+                                checkout scm
+
+                                dir('old_odbc') {
+                                    checkout([
+                                        $class: 'GitSCM',
+                                        branches: [[name: '*/master']],
+                                        userRemoteConfigs: [[
+                                            url: 'https://github.com/snowflakedb/snowflake-odbc.git',
+                                            credentialsId: 'jenkins-snowflake-github-app-3'
+                                        ]],
+                                        extensions: [
+                                            [$class: 'CloneOption', depth: 1, noTags: true, shallow: true]
+                                        ]
+                                    ])
+                                }
+                            }
+                        }
+
+                        stage('ODBC: Decrypt Secrets') {
+                            steps {
+                                withCredentials([
+                                    string(credentialsId: 'sfctest0-parameters-secret', variable: 'PARAMETERS_SECRET')
+                                ]) {
+                                    sh './scripts/decode_secrets.sh'
+                                }
+                            }
+                        }
+
+                        stage('ODBC: Build Docker Images') {
+                            steps {
+                                sh '''
+                                    docker build -f ci/Dockerfile.rocky-old-odbc-build -t rocky-old-odbc-build .
+                                    docker build -f ci/Dockerfile.rocky-old-odbc-test -t rocky-old-odbc-test .
+                                '''
+                            }
+                        }
+
+                        stage('ODBC: Build Driver') {
+                            steps {
+                                withCredentials([
+                                    usernamePassword(
+                                        usernameVariable: 'AWS_ACCESS_KEY_ID',
+                                        passwordVariable: 'AWS_SECRET_ACCESS_KEY',
+                                        credentialsId: '063fc85b-62a6-4181-9d72-873b43488411'
+                                    )
+                                ]) {
+                                    sh '''
+                                        docker run --rm \
+                                            -v "$(pwd)":/workspace \
+                                            -e AWS_ACCESS_KEY_ID="$AWS_ACCESS_KEY_ID" \
+                                            -e AWS_SECRET_ACCESS_KEY="$AWS_SECRET_ACCESS_KEY" \
+                                            -w /workspace \
+                                            rocky-old-odbc-build \
+                                            ./scripts/old_odbc/build.sh
+                                    '''
+                                }
+                            }
+                        }
+
+                        stage('ODBC: Run Tests') {
+                            steps {
+                                withCredentials([
+                                    usernamePassword(
+                                        usernameVariable: 'AWS_ACCESS_KEY_ID',
+                                        passwordVariable: 'AWS_SECRET_ACCESS_KEY',
+                                        credentialsId: '063fc85b-62a6-4181-9d72-873b43488411'
+                                    )
+                                ]) {
+                                    sh '''
+                                        docker run --rm \
+                                            -v "$(pwd)":/workspace \
+                                            -e AWS_ACCESS_KEY_ID="$AWS_ACCESS_KEY_ID" \
+                                            -e AWS_SECRET_ACCESS_KEY="$AWS_SECRET_ACCESS_KEY" \
+                                            -w /workspace \
+                                            rocky-old-odbc-test \
+                                            ./scripts/old_odbc/test.sh
+                                    '''
+                                }
+                            }
+                        }
+
+                        stage('ODBC: Generate Report') {
+                            steps {
+                                withCredentials([
+                                    usernamePassword(
+                                        usernameVariable: 'AWS_ACCESS_KEY_ID',
+                                        passwordVariable: 'AWS_SECRET_ACCESS_KEY',
+                                        credentialsId: '063fc85b-62a6-4181-9d72-873b43488411'
+                                    )
+                                ]) {
+                                    sh '''
+                                        git config --global --add safe.directory /workspace
+                                        docker run --rm \
+                                            -v "$(pwd)":/workspace \
+                                            -e AWS_ACCESS_KEY_ID="$AWS_ACCESS_KEY_ID" \
+                                            -e AWS_SECRET_ACCESS_KEY="$AWS_SECRET_ACCESS_KEY" \
+                                            -w /workspace \
+                                            rocky-old-odbc-build \
+                                            ./scripts/old_odbc/coverage_report.sh
+                                    '''
+                                }
+                            }
+                        }
+
+                        stage('ODBC: Install Benchstore Dependencies') {
+                            // Install dependencies BEFORE mounting secrets to reduce supply-chain attack surface
+                            // Uses --target to persist packages in workspace across container runs
+                            steps {
+                                sh '''
+                                    docker run --rm \
+                                        -v "$(pwd)":/workspace \
+                                        -w /workspace \
+                                        rocky-old-odbc-build \
+                                        bash -c 'python3.9 -m pip install --target /workspace/.benchstore_deps pyyaml benchstore-client-library --extra-index-url https://nexus.int.snowflakecomputing.com/repository/pypi-internal/simple'
+                                '''
+                            }
+                        }
+
+                        stage('ODBC: Upload to Benchstore') {
+                            steps {
+                                withCredentials([
+                                    file(credentialsId: '22401612-0c52-4682-8d00-fb9ee98927ac', variable: 'SF_PERF_CONFIG')
+                                ]) {
+                                    sh '''
+                                        echo "=== Uploading coverage metrics to Benchstore ==="
+                                        docker run --rm \
+                                            -v "$(pwd)":/workspace \
+                                            -v "$SF_PERF_CONFIG":/tmp/sf_perf_config.yml:ro \
+                                            -e SF_PERF_CONFIG=/tmp/sf_perf_config.yml \
+                                            -e PYTHONPATH=/workspace/.benchstore_deps \
+                                            -e BUILD_NUMBER="$BUILD_NUMBER" \
+                                            -e BRANCH_NAME="$BRANCH_NAME" \
+                                            -w /workspace \
+                                            rocky-old-odbc-build \
+                                            python3.9 ./scripts/shared/coverage_benchstore_upload.py --summary coverage_report/summary.txt --type odbc
+                                    '''
+                                }
+                            }
+                        }
+
+                        stage('ODBC: Archive') {
+                            steps {
+                                archiveArtifacts artifacts: 'coverage_report/**/*', fingerprint: true
+
+                                publishHTML(target: [
+                                    allowMissing: false,
+                                    alwaysLinkToLastBuild: true,
+                                    keepAll: true,
+                                    reportDir: 'coverage_report/html',
+                                    reportFiles: 'index.html',
+                                    reportName: 'Old ODBC Coverage Report'
+                                ])
+                            }
+                        }
+                    }
+
+                    post {
+                        success {
+                            echo '✓ Old ODBC coverage report generated successfully'
+                        }
+                        failure {
+                            echo '✗ Old ODBC coverage generation failed'
+                        }
+                        always {
+                            sh 'docker rmi rocky-old-odbc-build rocky-old-odbc-test || true'
+                        }
+                    }
+                }
+
+                // ============================================================
+                // OLD PYTHON COVERAGE
+                // ============================================================
+                stage('Old Python Coverage') {
+                    agent {
+                        label 'regular-memory-node-snowos'
+                    }
+
+                    environment {
+                        BUILD_NUMBER = "${env.BUILD_NUMBER}"
+                        BRANCH_NAME = "${env.BRANCH_NAME ?: 'main'}"
+                    }
+
+                    stages {
+                        stage('Python: Checkout') {
+                            steps {
+                                checkout scm
+
+                                // Checkout old Python connector
+                                dir('old_python_connector') {
+                                    checkout([
+                                        $class: 'GitSCM',
+                                        branches: [[name: '*/main']],
+                                        userRemoteConfigs: [[
+                                            url: 'https://github.com/snowflakedb/snowflake-connector-python.git',
+                                            credentialsId: 'jenkins-snowflake-github-app-3'
+                                        ]],
+                                        extensions: [
+                                            [$class: 'CloneOption', depth: 1, noTags: true, shallow: true]
+                                        ]
+                                    ])
+                                }
+                            }
+                        }
+
+                        stage('Python: Setup Docker') {
+                            steps {
+                                withCredentials([string(credentialsId: NEXUS_CREDENTIAL_ID, variable: 'NEXUS_PASSWORD')]) {
+                                    sh 'export USERNAME=jenkins && source ./scripts/login_internal_docker.sh'
+                                }
+                                sh "docker pull ${DOCKER_IMAGE}"
+                            }
+                        }
+
+                        stage('Python: Build & Install Old Connector') {
+                            // Run pip installs BEFORE decrypting secrets to reduce supply-chain attack surface
+                            steps {
+                                sh """
+                                    docker run --rm \
+                                        -v "\$(pwd)":/workspace \
+                                        -w /workspace \
+                                        ${DOCKER_IMAGE} \
+                                        bash -c 'chmod +x ./scripts/old_python/build.sh && ./scripts/old_python/build.sh'
+                                """
+                            }
+                        }
+
+                        stage('Python: Decrypt Secrets') {
+                            steps {
+                                withCredentials([
+                                    string(credentialsId: 'sfctest0-parameters-secret', variable: 'PARAMETERS_SECRET')
+                                ]) {
+                                    sh './scripts/decode_secrets.sh'
+                                }
+                            }
+                        }
+
+                        stage('Python: Run Comparable Tests') {
+                            steps {
+                                sh """
+                                    docker run --rm \
+                                        -v "\$(pwd)":/workspace \
+                                        -w /workspace \
+                                        ${DOCKER_IMAGE} \
+                                        bash -c 'chmod +x ./scripts/old_python/test.sh && ./scripts/old_python/test.sh'
+                                """
+                            }
+                        }
+
+                        stage('Python: Generate Report') {
+                            steps {
+                                sh """
+                                    docker run --rm \
+                                        -v "\$(pwd)":/workspace \
+                                        -w /workspace \
+                                        ${DOCKER_IMAGE} \
+                                        bash -c 'chmod +x ./scripts/old_python/coverage_report.sh && ./scripts/old_python/coverage_report.sh'
+                                """
+                            }
+                        }
+
+                        stage('Python: Install Benchstore Dependencies') {
+                            // Install dependencies BEFORE mounting secrets to reduce supply-chain attack surface
+                            // Uses --target to persist packages in workspace across container runs
+                            steps {
+                                sh """
+                                    docker run --rm \
+                                        -v "\$(pwd)":/workspace \
+                                        -w /workspace \
+                                        ${DOCKER_IMAGE} \
+                                        pip install --target /workspace/.benchstore_deps pyyaml benchstore-client-library --extra-index-url https://nexus.int.snowflakecomputing.com/repository/pypi-internal/simple
+                                """
+                            }
+                        }
+
+                        stage('Python: Upload to Benchstore') {
+                            steps {
+                                withCredentials([
+                                    file(credentialsId: '22401612-0c52-4682-8d00-fb9ee98927ac', variable: 'SF_PERF_CONFIG')
+                                ]) {
+                                    sh """
+                                        echo "=== Uploading coverage metrics to Benchstore ==="
+                                        docker run --rm \
+                                            -v "\$(pwd)":/workspace \
+                                            -v "\$SF_PERF_CONFIG":/tmp/sf_perf_config.yml:ro \
+                                            -e SF_PERF_CONFIG=/tmp/sf_perf_config.yml \
+                                            -e PYTHONPATH=/workspace/.benchstore_deps \
+                                            -e BUILD_NUMBER="\$BUILD_NUMBER" \
+                                            -e BRANCH_NAME="\$BRANCH_NAME" \
+                                            -w /workspace \
+                                            ${DOCKER_IMAGE} \
+                                            python3 ./scripts/shared/coverage_benchstore_upload.py --summary python_coverage_report/summary.txt --type python
+                                    """
+                                }
+                            }
+                        }
+
+                        stage('Python: Archive') {
+                            steps {
+                                archiveArtifacts artifacts: 'python_coverage_report/**/*', fingerprint: true
+
+                                publishHTML(target: [
+                                    allowMissing: false,
+                                    alwaysLinkToLastBuild: true,
+                                    keepAll: true,
+                                    reportDir: 'python_coverage_report/html',
+                                    reportFiles: 'index.html',
+                                    reportName: 'Old Python Coverage Report'
+                                ])
+                            }
+                        }
+                    }
+
+                    post {
+                        success {
+                            echo '✓ Old Python coverage report generated successfully'
+                        }
+                        failure {
+                            echo '✗ Old Python coverage generation failed'
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            echo '✓ Reference driver coverage reports generated successfully'
+        }
+        failure {
+            echo '✗ Reference driver coverage generation failed'
+        }
+    }
+}

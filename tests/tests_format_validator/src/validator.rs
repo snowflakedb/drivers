@@ -187,21 +187,21 @@ impl GherkinValidator {
     /// features with the same name in different directories (e.g., shared/session/logout vs core/session/logout)
     fn get_feature_id(&self, feature_path: &Path) -> String {
         // Get path relative to features_dir
-        if let Ok(relative) = feature_path.strip_prefix(&self.features_dir) {
-            // Remove .feature extension and convert to string
-            relative
-                .with_extension("")
-                .to_str()
-                .unwrap_or_else(|| feature_path.file_stem().unwrap().to_str().unwrap())
-                .to_string()
+        let raw_id = if let Ok(relative) = feature_path.strip_prefix(&self.features_dir) {
+            // Remove .feature extension and convert to string (lossy to avoid panics on non-UTF8 paths)
+            relative.with_extension("").to_string_lossy().into_owned()
+        } else if let Some(stem) = feature_path.file_stem() {
+            // Fall back to the file stem if we cannot get a relative path
+            stem.to_string_lossy().into_owned()
         } else {
-            feature_path
-                .file_stem()
-                .unwrap()
-                .to_str()
-                .unwrap()
-                .to_string()
-        }
+            // As a last resort, use the full path as a string (lossy) to avoid panicking
+            feature_path.to_string_lossy().into_owned()
+        };
+
+        // Normalize path separators to forward slashes for cross-platform consistency.
+        // On Windows, PathBuf::to_str() returns backslashes, but our prefix checks
+        // (e.g., starts_with("shared/")) expect forward slashes.
+        raw_id.replace('\\', "/")
     }
 
     /// Extract just the feature name (file stem) from a feature ID
@@ -213,6 +213,39 @@ impl GherkinValidator {
             .to_string()
     }
 
+    /// Validate that a feature file is in a valid top-level directory.
+    ///
+    /// This catches misconfigurations early (e.g., typos like `shares/` instead of `shared/`,
+    /// or incorrect paths like `rust/` instead of `core/`). Without this validation,
+    /// features in unknown directories would be silently ignored during orphan detection,
+    /// leading to false positives.
+    ///
+    /// Uses `TestDiscovery::get_language_from_path()` as the single source of truth for
+    /// valid language-specific folders, plus explicit handling for `shared/`.
+    fn validate_feature_prefix(&self, feature_path: &Path, feature_id: &str) -> Result<()> {
+        let first_component = feature_id.split('/').next().unwrap_or("");
+
+        // shared/ is valid for all languages
+        if first_component == "shared" {
+            return Ok(());
+        }
+
+        // Check if it's a known language folder using existing detection logic
+        // (get_language_from_path returns Some for core/, python/, odbc/, jdbc/, csharp/, javascript/)
+        if TestDiscovery::get_language_from_path(feature_path).is_some() {
+            return Ok(());
+        }
+
+        // Unknown folder - error
+        anyhow::bail!(
+            "Feature file '{}' is in an invalid directory '{}'. \
+             Feature files must be under 'shared/' or a language-specific folder \
+             (core/, python/, odbc/, jdbc/, csharp/, javascript/).",
+            feature_path.display(),
+            first_component,
+        );
+    }
+
     fn collect_all_scenarios_and_languages(
         &self,
     ) -> Result<(
@@ -221,7 +254,6 @@ impl GherkinValidator {
         std::collections::HashMap<(String, String), Vec<Language>>,
     )> {
         let mut scenarios = Vec::new();
-        // Use feature_id (relative path) as key to distinguish features with same name
         let mut feature_language_requirements: std::collections::HashMap<String, Vec<Language>> =
             std::collections::HashMap::new();
         let mut scenario_language_requirements: std::collections::HashMap<
@@ -239,6 +271,9 @@ impl GherkinValidator {
             let feature = Feature::parse_from_file(feature_path)?;
             // Use unique feature ID (relative path) instead of just file stem
             let feature_id = self.get_feature_id(feature_path);
+
+            // Validate feature is in a known directory structure
+            self.validate_feature_prefix(feature_path, &feature_id)?;
 
             // Get generic languages declared at feature level
             let mut feature_declared_languages =
@@ -292,21 +327,6 @@ impl GherkinValidator {
         ))
     }
 
-    /// Check if a feature (identified by its path-based ID) is relevant for a given language.
-    /// A feature is relevant if it's in the shared/ folder OR in the language-specific folder.
-    fn is_feature_relevant_for_language(&self, feature_id: &str, language: &Language) -> bool {
-        let lang_folder = match language {
-            Language::Rust => "core",
-            Language::Python => "python",
-            Language::Jdbc => "jdbc",
-            Language::Odbc => "odbc",
-            _ => return false,
-        };
-
-        // Feature is relevant if it's in shared/ folder OR in the language-specific folder
-        feature_id.starts_with("shared/") || feature_id.starts_with(&format!("{}/", lang_folder))
-    }
-
     fn find_orphaned_files_for_language(
         &self,
         language: &Language,
@@ -346,19 +366,30 @@ impl GherkinValidator {
                     .unwrap()
                     .to_string();
 
-                // Find ALL features that match this test file name AND are relevant for this language
-                // (features in shared/ or in the language-specific folder)
-                let matching_feature_ids: Vec<&String> = all_scenarios
+                // Find ALL features that match this test file name
+                // (language relevance is determined by tags in feature_language_requirements)
+                let mut matching_feature_ids: Vec<&String> = all_scenarios
                     .iter()
                     .filter(|(feature_id, _)| {
                         let feature_name = Self::get_feature_name_from_id(feature_id);
                         self.file_name_matches_feature(&file_name, &feature_name)
-                            && self.is_feature_relevant_for_language(feature_id, language)
                     })
                     .map(|(feature_id, _)| feature_id)
                     .collect::<std::collections::HashSet<_>>()
                     .into_iter()
                     .collect();
+
+                // Sort for deterministic ordering: prefer language-specific folders over shared/
+                // (non-shared sorts before shared alphabetically, then by full path)
+                matching_feature_ids.sort_by(|a, b| {
+                    let a_shared = a.starts_with("shared/");
+                    let b_shared = b.starts_with("shared/");
+                    match (a_shared, b_shared) {
+                        (false, true) => std::cmp::Ordering::Less,
+                        (true, false) => std::cmp::Ordering::Greater,
+                        _ => a.cmp(b),
+                    }
+                });
 
                 if !matching_feature_ids.is_empty() {
                     // Check if ANY of the matching features require this language
@@ -371,7 +402,7 @@ impl GherkinValidator {
 
                     if !any_feature_requires_language {
                         // No matching feature requires this language - determine why
-                        // Use the first matching feature for the reason
+                        // Use the first matching feature (language-specific preferred over shared)
                         let reason =
                             self.determine_orphan_reason(matching_feature_ids[0], language)?;
 
@@ -489,13 +520,13 @@ impl GherkinValidator {
         // Determine which feature this test file corresponds to
         let file_name = file_path.file_stem().unwrap().to_str().unwrap().to_string();
 
-        // Find ALL matching features that are relevant for this language
+        // Find ALL matching features by name
+        // (language relevance is determined by tags in scenario_language_requirements)
         let matching_feature_ids: Vec<&String> = all_scenarios
             .iter()
             .filter(|(feature_id, _)| {
                 let feature_name = Self::get_feature_name_from_id(feature_id);
                 self.file_name_matches_feature(&file_name, &feature_name)
-                    && self.is_feature_relevant_for_language(feature_id, language)
             })
             .map(|(feature_id, _)| feature_id)
             .collect::<std::collections::HashSet<_>>()
@@ -1009,7 +1040,6 @@ impl GherkinValidator {
                         let mut method_missing_steps = Vec::new();
 
                         for step_text in &scenario_steps {
-                            // Check if any implemented step starts with the expected step
                             let step_found = method_steps
                                 .iter()
                                 .any(|impl_step| self.steps_match(impl_step, step_text));
@@ -1100,9 +1130,8 @@ impl GherkinValidator {
         let norm_impl = normalize(implemented_step);
         let norm_feature = normalize(feature_step);
 
-        // Match if implemented step starts with the expected feature step
-        // This handles cases where comments after the step are treated as continuations
-        norm_impl.starts_with(&norm_feature)
+        // Require exact match after normalization - no partial matches allowed
+        norm_impl == norm_feature
     }
 
     pub fn validate_all_with_breaking_changes(&self) -> Result<EnhancedValidationResult> {
