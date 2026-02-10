@@ -160,7 +160,7 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLBrowseConnect: 08002 - Connection alr
                  "[odbc-api][browse_connect][connecting][error]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   /* TODO: Reenable when we can mix DSN with connection string */
-  SKIP("Mixing DSN with connection string is not supported yet");
+  SKIP("Mixing DSN with connection string is not supported yet in the test framework");
 
   // First connect using SQLDriverConnect
   const std::string connStr1 = get_connection_string();

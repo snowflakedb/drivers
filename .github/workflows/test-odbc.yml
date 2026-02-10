@@ -167,7 +167,24 @@ jobs:
         if: runner.os == 'Windows'
         # Use Rust's bundled LLD linker (rust-lld) to avoid MSVC 65535 object limit
         # exports.def limits DLL exports to ODBC API functions only (avoids 65535 export limit)
-        run: cargo build
+        run: |
+          cargo build
+          # Find the built DLL in the target directory
+          Write-Host "Searching for sfodbc.dll in target directory..."
+          Get-ChildItem -Path "target" -Recurse -Name "sfodbc.dll" | ForEach-Object {
+            Write-Host "Found: $_"
+          }
+          
+          # Also check what files are actually in target/debug
+          Write-Host "`nContents of target/debug:"
+          if (Test-Path "target/debug") {
+            Get-ChildItem -Path "target/debug" -Name "*.dll" | ForEach-Object {
+              Write-Host "  $_"
+            }
+          } else {
+            Write-Host "  target/debug directory not found"
+          }
+
         env:
           RUSTFLAGS: "-C linker=rust-lld"
 
