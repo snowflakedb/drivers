@@ -2,8 +2,8 @@
 //!
 //! Implements Phase 3 truth table for determining whether to send logout request.
 
-use crate::config::logout::LogoutConfig;
 use super::async_query_registry::AsyncQueryRegistry;
+use crate::config::logout::LogoutConfig;
 
 /// Determine whether to send logout request based on configuration and async query state
 ///
@@ -52,22 +52,21 @@ pub fn should_send_logout(
             // Auto-detection enabled - check registry
             if let Some(reg) = registry {
                 if reg.has_running_queries() {
-                    tracing::info!(
-                        "Skipping logout: auto-detection found running async queries"
-                    );
-                    return (false, Some("auto_detection_found_running_queries".to_string()));
+                    tracing::info!("Skipping logout: auto-detection found running async queries");
+                    (
+                        false,
+                        Some("auto_detection_found_running_queries".to_string()),
+                    )
                 } else {
-                    tracing::info!(
-                        "Sending logout: auto-detection found no running async queries"
-                    );
-                    return (true, None);
+                    tracing::info!("Sending logout: auto-detection found no running async queries");
+                    (true, None)
                 }
             } else {
                 // Registry not available - default to logout
                 tracing::warn!(
                     "Auto-detection enabled but registry not available, defaulting to logout"
                 );
-                return (true, None);
+                (true, None)
             }
         }
         Some(false) | None => {
@@ -76,7 +75,7 @@ pub fn should_send_logout(
                 "Sending logout: auto-detection disabled (enable_auto_detection={:?})",
                 config.enable_auto_detection
             );
-            return (true, None);
+            (true, None)
         }
     }
 }
