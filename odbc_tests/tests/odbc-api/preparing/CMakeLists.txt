@@ -1,0 +1,6 @@
+cmake_minimum_required(VERSION 4.0)
+
+add_odbc_test(odbc_api_prepare_tests prepare_tests.cpp)
+add_odbc_test(odbc_api_bind_parameter_tests bind_parameter_tests.cpp)
+add_odbc_test(odbc_api_get_cursor_name_tests get_cursor_name_tests.cpp)
+add_odbc_test(odbc_api_set_cursor_name_tests set_cursor_name_tests.cpp)
