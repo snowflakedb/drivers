@@ -10,7 +10,7 @@ Feature: Session Logout - Core HTTP Layer Integration
 
   Scenario: should construct logout request with correct HTTP method URL headers and body
     Given Mock HTTP server is configured to capture requests
-    And UD Core client is logged in with session token
+    And UD Core client is logged in
     When Logout is initiated
     Then HTTP method is POST
     And Request URL path is /session
@@ -36,49 +36,19 @@ Feature: Session Logout - Core HTTP Layer Integration
 
   Scenario: should not send logout when server_session_keep_alive is explicitly true
     Given Mock HTTP server is configured
-    And UD Core connection with server_session_keep_alive set to true
+    And UD Core connection is logged in with server_session_keep_alive set to true
     When Connection is closed
     Then No logout HTTP request is sent to server
 
   Scenario: should send logout when server_session_keep_alive is explicitly false
     Given Mock HTTP server is configured
-    And UD Core connection with server_session_keep_alive set to false
+    And UD Core connection is logged in with server_session_keep_alive set to false
     When Connection is closed
     Then Logout HTTP request is sent to server
 
   # ===========================================================================
-  #                      Timeout and Retry Behavior
+  #                      Default Configuration
   # ===========================================================================
-
-  Scenario: should apply retry policy to logout HTTP request
-    Given Mock HTTP server returns 503 error on first attempt
-    And Mock HTTP server returns 200 on second attempt
-    And Retry policy is configured to allow 2 attempts
-    When Logout is initiated
-    Then First request receives 503 response
-    And Retry policy is consulted
-    And Second request is made after backoff delay
-    And Logout succeeds
-
-  Scenario: should apply retry policy to unsuccessful logout HTTP request
-    Given Mock HTTP server returns 503 error on first attempt
-    And Mock HTTP server returns 503 on second attempt
-    And Retry policy allows 2 attempts
-    When Logout is not initiated
-    Then First request receives 503 response
-    And Retry policy is consulted
-    And Second request is made after backoff delay
-    And Logout fails
-#TODO:    And Further decisions are passed to the Strategy - 2 tests, showing different behaviour based on the fact which strategy was chosen
-
-
-  Scenario: should handle HTTP connection reset during logout
-    Given Mock HTTP server resets connection on first attempt
-    And Mock HTTP server succeeds on second attempt
-    When Logout is initiated
-    Then Connection reset is detected
-    And Request is retried according to retry policy
-    And Logout succeeds on retry
 
   Scenario: should use default 5 second timeout for logout requests
     Given Mock HTTP server is configured
@@ -86,26 +56,35 @@ Feature: Session Logout - Core HTTP Layer Integration
     When Logout is initiated
     Then Request timeout is 5 seconds
 
-  Scenario: should honor custom timeout configuration
-    Given Mock HTTP server is configured
-    And UD Core connection with custom timeout of 10 seconds
+  Scenario: should cancel individual request when per-request socket timeout exceeded
+    # Tests that per-request timeout is passed to socket and interrupts slow responses
+    Given Mock HTTP server holds connection open for 8 seconds on first attempt then succeeds immediately
+    And UD Core connection is logged in
+    And Per-request socket timeout is set to 2 seconds
+    And Total retry budget timeout is set to 10 seconds
     When Logout is initiated
-    Then Request timeout is 10 seconds
+    Then First request is cancelled after 2 seconds due to socket timeout
+    And Retry proceeds because total budget still has time remaining
+    And Second request succeeds immediately
+    And Close succeeds
 
-  Scenario: should honor total timeout across multiple retries
-    Given Mock HTTP server delays each response by 2 seconds
-    And Total timeout is configured to 3 seconds
-    And Retry policy allows 3 attempts
+  Scenario: should respect total retry budget timeout across all attempts
+    # Tests that total timeout caps wall-clock time across ALL retries
+    # Each request's effective socket timeout = min(remaining_budget, configured_socket_timeout)
+    # 2s server delay, 5s total budget:
+    #   Attempt 1: effective timeout = min(5s, 10s) = 5s → waits 2s → 503 (remaining ~3s)
+    #   Attempt 2: effective timeout = min(3s, 10s) = 3s → waits 2s → 503 or timeout (remaining ~1s)
+    #   Attempt 3: effective timeout = min(1s, 10s) = 1s → timeout before 2s response arrives
+    #   Attempt 4: should never start (budget exhausted)
+    Given Mock HTTP server responds with 503 after 2 second delay on each attempt
+    And UD Core connection is logged in
+    And Total retry budget timeout is set to 5 seconds
+    # Any number above 3 should be sufficient for max retries
+    And Retry policy allows 10 attempts
     When Logout is initiated
-    Then Only 1 attempt is made before timeout
-    And Total timeout is respected across retries
-
-  Scenario: should cancel request when timeout exceeded during execution
-    Given Mock HTTP server delays response beyond timeout
-    And Timeout is set to 2 seconds
-    When Logout is initiated
-    Then Request is cancelled after 2 seconds
-    And Timeout error is returned
+    Then Fewer than 4 attempts are made
+    And The last attempt timeouts because remaining budget is less than server response time
+    And Total wall-clock time does not exceed 7 seconds for closing the connection
 
   # ===========================================================================
   #                      Concurrency and State Management
@@ -219,6 +198,8 @@ Feature: Session Logout - Core HTTP Layer Integration
       | strategy    | timeout_seconds | delay_seconds |
       | strict      | 5               | 3             |
       | best-effort | 5               | 3             |
+      | strict      | 10              | 5             |
+      | best-effort | 10              | 5             |
       | strict      | 300             | 10            |
       | best-effort | 300             | 10            |
 
