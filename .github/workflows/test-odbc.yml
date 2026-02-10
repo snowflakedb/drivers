@@ -36,9 +36,9 @@ jobs:
         if: matrix.os == 'windows-latest'
         run: |
           curl -O https://sfc-repo.snowflakecomputing.com/odbc/win64/3.9.0/snowflake64_odbc-3.9.0.msi
-          msiexec /i snowflake64_odbc-3.9.0.msi /quiet
-          if ($LASTEXITCODE -ne 0) {
-            throw "Failed to install Snowflake ODBC driver"
+          $proc = Start-Process msiexec.exe -ArgumentList '/i', "$PWD\snowflake64_odbc-3.9.0.msi", '/quiet', '/norestart' -Wait -PassThru -NoNewWindow
+          if ($proc.ExitCode -ne 0) {
+            throw "Failed to install Snowflake ODBC driver (exit code $($proc.ExitCode))"
           }
           # Check if the driver is installed
           if (Test-Path "C:\Program Files\Snowflake ODBC Driver\Bin\SnowflakeDSII.dll") {
