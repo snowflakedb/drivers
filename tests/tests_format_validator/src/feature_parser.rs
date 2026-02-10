@@ -81,7 +81,10 @@ impl Feature {
         while i < lines.len() {
             let line = lines[i].trim();
 
-            if line.starts_with("Scenario:") {
+            if line.starts_with("Scenario:")
+                || line.starts_with("Scenario Outline:")
+                || line.starts_with("Scenario Template:")
+            {
                 let scenario = Self::parse_scenario(&lines, &mut i)?;
                 feature.scenarios.push(scenario);
             } else {
@@ -118,7 +121,9 @@ impl Feature {
         // Parse scenario name
         let scenario_line = lines[*i].trim();
         let scenario_name = scenario_line
-            .strip_prefix("Scenario:")
+            .strip_prefix("Scenario Outline:")
+            .or_else(|| scenario_line.strip_prefix("Scenario Template:"))
+            .or_else(|| scenario_line.strip_prefix("Scenario:"))
             .unwrap_or(scenario_line)
             .trim()
             .to_string();
@@ -135,9 +140,19 @@ impl Feature {
                 continue;
             }
 
-            if line.starts_with("Scenario:") || line.starts_with("Feature:") {
+            if line.starts_with("Scenario:")
+                || line.starts_with("Scenario Outline:")
+                || line.starts_with("Scenario Template:")
+                || line.starts_with("Feature:")
+            {
                 // Next scenario or feature, stop parsing this scenario
                 break;
+            }
+
+            // Skip Examples table sections (Scenario Outline)
+            if line.starts_with("Examples:") || line.starts_with("|") {
+                *i += 1;
+                continue;
             }
 
             if let Some(step) = Self::parse_step(line) {
