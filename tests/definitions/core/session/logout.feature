@@ -115,20 +115,20 @@ Feature: Session Logout - Core HTTP Layer Integration
   #  Backend Behaviors (Same for Both Strategies)
   # ---------------------------------------------------------------------------
 
-  Scenario Outline: should ignore SESSION_GONE 390111 with <strategy> strategy
-    Given Core logout function called with <strategy> strategy
+  Scenario Outline: should ignore SESSION_GONE 390111 for each <strategy_type>
+    Given Core logout function called with <strategy_type> strategy
     And Mock server returns SESSION_GONE 390111
     When Logout is executed
     Then Close succeeds
     And Error is ignored
 
     Examples:
-      | strategy    |
-      | strict      |
-      | best-effort |
+      | strategy_type |
+      | strict        |
+      | best-effort   |
 
-  Scenario Outline: should retry on <error_type> with <strategy> strategy
-    Given Core logout function called with <strategy> strategy
+  Scenario Outline: should retry logout on retryable <error_type> for each <strategy_type>
+    Given Core logout function called with <strategy_type> strategy
     And Mock server returns <error_type> on attempt 1
     And Mock server returns 200 on attempt 2
     When Logout is executed
@@ -136,13 +136,13 @@ Feature: Session Logout - Core HTTP Layer Integration
     And Close succeeds
 
     Examples:
-      | strategy    | error_type              |
-      | strict      | 503 Service Unavailable |
-      | best-effort | 503 Service Unavailable |
-      | strict      | 429 Too Many Requests   |
-      | best-effort | 429 Too Many Requests   |
-      | strict      | connection reset        |
-      | best-effort | connection reset        |
+      | strategy_type | error_type              |
+      | strict        | 503 Service Unavailable |
+      | best-effort   | 503 Service Unavailable |
+      | strict        | 429 Too Many Requests   |
+      | best-effort   | 429 Too Many Requests   |
+      | strict        | connection reset        |
+      | best-effort   | connection reset        |
 
   Scenario: should not attempt token refresh when retry count is 0 with strict strategy
     # Token refresh implies a subsequent retry of logout with new token.
@@ -164,10 +164,10 @@ Feature: Session Logout - Core HTTP Layer Integration
     And SESSION_TOKEN_EXPIRED is logged as WARN
     And Close succeeds
 
-  Scenario Outline: should attempt token refresh when retry count is 1 with <strategy> strategy
+  Scenario Outline: should attempt token refresh on 390112 when retries allowed for each <strategy_type>
     # With 1 retry allowed, token refresh + retry logout is possible
     # Both strategies must attempt refresh - 390112 is NOT treated as a final error
-    Given Core logout function called with <strategy> strategy
+    Given Core logout function called with <strategy_type> strategy
     And Mock server returns SESSION_TOKEN_EXPIRED 390112 on first attempt
     And Mock server returns 200 after token refresh
     And Retry policy allows 1 retry
@@ -178,9 +178,9 @@ Feature: Session Logout - Core HTTP Layer Integration
     # TODO: Decide whether the token refresh request itself counts as a retry attempt
 
     Examples:
-      | strategy    |
-      | strict      |
-      | best-effort |
+      | strategy_type |
+      | strict        |
+      | best-effort   |
 
   Scenario: should include token refresh time in total logout timeout budget
     # Token refresh is a network call that must be accounted for in total timeout
@@ -204,8 +204,8 @@ Feature: Session Logout - Core HTTP Layer Integration
 
   # -- Success path: retry then succeed (same outcome for both strategies) --
 
-  Scenario Outline: should honor provided retry config and succeed with <strategy> strategy
-    Given Core logout function called with <strategy> strategy
+  Scenario Outline: should honor provided retry config and succeed for each <strategy_type>
+    Given Core logout function called with <strategy_type> strategy
     And Retry policy configured with <max_attempts> max attempts
     And Mock server fails <failures> times then returns 200
     When Logout is executed
@@ -213,17 +213,17 @@ Feature: Session Logout - Core HTTP Layer Integration
     And Close succeeds
 
     Examples:
-      | strategy    | max_attempts | failures | expected_attempts |
-      | strict      | 1            | 0        | 1                 |
-      | best-effort | 1            | 0        | 1                 |
-      | strict      | 3            | 1        | 2                 |
-      | best-effort | 3            | 1        | 2                 |
-      | strict      | 5            | 4        | 5                 |
-      | best-effort | 5            | 4        | 5                 |
+      | strategy_type | max_attempts | failures | expected_attempts |
+      | strict        | 1            | 0        | 1                 |
+      | best-effort   | 1            | 0        | 1                 |
+      | strict        | 3            | 1        | 2                 |
+      | best-effort   | 3            | 1        | 2                 |
+      | strict        | 5            | 4        | 5                 |
+      | best-effort   | 5            | 4        | 5                 |
 
-  Scenario Outline: should honor provided timeout config and succeed with <strategy> strategy
+  Scenario Outline: should honor provided timeout config and succeed for each <strategy_type>
     # Wrappers pass their historical defaults (Python: 5s, JDBC/ODBC: 300s)
-    Given Core logout function called with <strategy> strategy
+    Given Core logout function called with <strategy_type> strategy
     And Timeout configured to <timeout_seconds> seconds
     And Mock server delays response by <delay_seconds> seconds then returns 200
     When Logout is executed
@@ -231,13 +231,13 @@ Feature: Session Logout - Core HTTP Layer Integration
     And Close succeeds
 
     Examples:
-      | strategy    | timeout_seconds | delay_seconds |
-      | strict      | 5               | 3             |
-      | best-effort | 5               | 3             |
-      | strict      | 10              | 5             |
-      | best-effort | 10              | 5             |
-      | strict      | 300             | 10            |
-      | best-effort | 300             | 10            |
+      | strategy_type | timeout_seconds | delay_seconds |
+      | strict        | 5               | 3             |
+      | best-effort   | 5               | 3             |
+      | strict        | 10              | 5             |
+      | best-effort   | 10              | 5             |
+      | strict        | 300             | 10            |
+      | best-effort   | 300             | 10            |
 
   # -- Failure path: exhausted retries (outcome differs per strategy) --
 
@@ -302,7 +302,7 @@ Feature: Session Logout - Core HTTP Layer Integration
 
   # -- Non-retryable errors: outcome differs per strategy --
 
-  Scenario Outline: should throw on non-retryable <error_code> error in strict strategy
+  Scenario Outline: should throw on non-retryable <error_code> in strict strategy
     Given Core logout function called with strict strategy
     And Mock server returns <error_code> error
     When Logout is executed
@@ -317,7 +317,7 @@ Feature: Session Logout - Core HTTP Layer Integration
       | 404 Not Found               |
       | MASTER_TOKEN_EXPIRED 390114 |
 
-  Scenario Outline: should log and suppress non-retryable <error_code> error in best-effort strategy
+  Scenario Outline: should log and suppress non-retryable <error_code> in best-effort strategy
     Given Core logout function called with best-effort strategy
     And Mock server returns <error_code> error
     When Logout is executed
