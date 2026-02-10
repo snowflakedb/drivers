@@ -469,6 +469,226 @@ fn should_ignore_braces_in_strings() -> Result<()> {
     Ok(())
 }
 
+// ===== Scenario Outline / Scenario Template Tests =====
+
+#[test]
+fn should_parse_scenario_outline_and_ignore_examples_table() -> Result<()> {
+    let workspace = TestWorkspace::new()?;
+
+    // Create a feature file with Scenario Outline and Examples table
+    workspace.create_feature_file(
+        "auth",
+        "outline_test",
+        r#"@core @odbc
+Feature: Scenario Outline Test
+
+  @core_e2e @odbc_e2e
+  Scenario Outline: should retry logout on retryable <error_type> for each <strategy_type>
+    Given Snowflake client is logged in
+    And Error strategy is set to <strategy_type>
+    When Server returns <error_type> error
+    Then Logout is retried according to strategy
+
+    Examples:
+      | error_type | strategy_type |
+      | 503        | BestEffort    |
+      | 503        | Strict        |
+      | 429        | BestEffort    |
+"#,
+    )?;
+
+    // Create matching Rust test
+    workspace.create_rust_test(
+        "auth",
+        "outline_test",
+        r#"
+#[test]
+fn should_retry_logout_on_retryable_error_type_for_each_strategy_type() {
+    // Given Snowflake client is logged in
+    let client = setup();
+
+    // And Error strategy is set to <strategy_type>
+    // When Server returns <error_type> error
+    // Then Logout is retried according to strategy
+    assert!(true);
+}
+"#,
+    )?;
+
+    // Create matching C++ test
+    workspace.create_cpp_test(
+        "auth",
+        "outline_test",
+        r#"
+#include <catch2/catch.hpp>
+
+TEST_CASE("should retry logout on retryable error_type for each strategy_type") {
+    // Given Snowflake client is logged in
+    auto client = setup();
+
+    // And Error strategy is set to <strategy_type>
+    // When Server returns <error_type> error
+    // Then Logout is retried according to strategy
+    REQUIRE(true);
+}
+"#,
+    )?;
+
+    let validator = workspace.get_validator()?;
+    let results = validator.validate_all_features()?;
+
+    assert_eq!(results.len(), 1);
+    let result = &results[0];
+    assert_eq!(
+        result.feature_file.file_stem().unwrap().to_str().unwrap(),
+        "outline_test"
+    );
+
+    // Should have validations for both Rust and ODBC
+    assert_eq!(result.validations.len(), 2, "Should validate Rust and ODBC");
+
+    for validation in &result.validations {
+        assert!(
+            validation.test_file_found,
+            "Language {:?} should find test file",
+            validation.language
+        );
+        assert!(
+            validation.missing_steps.is_empty(),
+            "Language {:?} should have no missing steps, but missing: {:?}",
+            validation.language,
+            validation.missing_steps
+        );
+        // Should find 4 steps: Given, And, When, Then
+        assert_eq!(
+            validation.implemented_steps.len(),
+            4,
+            "Language {:?} should find all 4 steps, found: {:?}",
+            validation.language,
+            validation.implemented_steps
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
+fn should_parse_scenario_template_same_as_outline() -> Result<()> {
+    let workspace = TestWorkspace::new()?;
+
+    // Create a feature file with Scenario Template (synonym for Outline)
+    workspace.create_feature_file(
+        "auth",
+        "template_test",
+        r#"@core
+Feature: Scenario Template Test
+
+  @core_e2e
+  Scenario Template: should handle multiple authentication methods
+    Given I have <auth_method> credentials
+    When I authenticate
+    Then Authentication succeeds
+
+    Examples:
+      | auth_method |
+      | password    |
+      | key         |
+"#,
+    )?;
+
+    workspace.create_rust_test(
+        "auth",
+        "template_test",
+        r#"
+#[test]
+fn should_handle_multiple_authentication_methods() {
+    // Given I have <auth_method> credentials
+    let creds = setup();
+
+    // When I authenticate
+    let result = authenticate(&creds);
+
+    // Then Authentication succeeds
+    assert!(result.is_ok());
+}
+"#,
+    )?;
+
+    let validator = workspace.get_validator()?;
+    let results = validator.validate_all_features()?;
+
+    assert_eq!(results.len(), 1);
+    let result = &results[0];
+
+    // Should find the scenario from Scenario Template
+    assert_eq!(result.validations.len(), 1);
+    let validation = &result.validations[0];
+    assert!(validation.test_file_found);
+    assert!(
+        validation.missing_steps.is_empty(),
+        "Should have no missing steps, but missing: {:?}",
+        validation.missing_steps
+    );
+    assert_eq!(validation.implemented_steps.len(), 3);
+
+    Ok(())
+}
+
+#[test]
+fn should_not_treat_examples_rows_as_steps() -> Result<()> {
+    use tests_format_validator::Feature;
+
+    let temp_dir = TempDir::new()?;
+    let feature_path = temp_dir.path().join("outline.feature");
+    fs::write(
+        &feature_path,
+        r#"@core
+Feature: Examples Table Test
+
+  @core_e2e
+  Scenario Outline: should process <input> correctly
+    Given I have <input>
+    When I process it
+    Then Result is <output>
+
+    Examples:
+      | input | output |
+      | foo   | bar    |
+      | baz   | qux    |
+
+  Scenario: should also work normally
+    Given Normal setup
+    When Normal action
+    Then Normal result
+"#,
+    )?;
+
+    let feature = Feature::parse_from_file(&feature_path)?;
+
+    // Should find 2 scenarios
+    assert_eq!(feature.scenarios.len(), 2, "Should find both scenarios");
+
+    // First scenario (Outline) should have 3 steps, NOT include Examples rows
+    let outline = &feature.scenarios[0];
+    assert_eq!(
+        outline.name, "should process <input> correctly",
+        "Should parse Scenario Outline name"
+    );
+    assert_eq!(
+        outline.steps.len(),
+        3,
+        "Scenario Outline should have 3 steps (not Examples rows), got: {:?}",
+        outline.steps.iter().map(|s| &s.text).collect::<Vec<_>>()
+    );
+
+    // Second scenario should also parse correctly
+    let normal = &feature.scenarios[1];
+    assert_eq!(normal.name, "should also work normally");
+    assert_eq!(normal.steps.len(), 3);
+
+    Ok(())
+}
+
 // ===== Breaking Change Detection Tests =====
 
 #[test]
