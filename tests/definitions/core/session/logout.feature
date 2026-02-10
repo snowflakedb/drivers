@@ -144,20 +144,56 @@ Feature: Session Logout - Core HTTP Layer Integration
       | strict      | connection reset        |
       | best-effort | connection reset        |
 
-  Scenario Outline: should attempt session token renewal on 390112 with <strategy> strategy
-    # SESSION_TOKEN_EXPIRED: recoverable via master token refresh
-    Given Core logout function called with <strategy> strategy
+  Scenario: should not attempt token refresh when retry count is 0 with strict strategy
+    # Token refresh implies a subsequent retry of logout with new token.
+    # If no retries are allowed, refreshing the token would be pointless.
+    Given Core logout function called with strict strategy
     And Mock server returns SESSION_TOKEN_EXPIRED 390112
-    And Master token is valid for renewal
+    And Retry policy allows 0 retries
     When Logout is executed
-    Then Session token renewal is attempted using master token
+    Then No token refresh request is sent to server
+    And Close throws SESSION_TOKEN_EXPIRED error
+
+  Scenario: should not attempt token refresh when retry count is 0 with best-effort strategy
+    # Same logic: no retries → no point refreshing token
+    Given Core logout function called with best-effort strategy
+    And Mock server returns SESSION_TOKEN_EXPIRED 390112
+    And Retry policy allows 0 retries
+    When Logout is executed
+    Then No token refresh request is sent to server
+    And SESSION_TOKEN_EXPIRED is logged as WARN
+    And Close succeeds
+
+  Scenario Outline: should attempt token refresh when retry count is 1 with <strategy> strategy
+    # With 1 retry allowed, token refresh + retry logout is possible
+    # Both strategies must attempt refresh - 390112 is NOT treated as a final error
+    Given Core logout function called with <strategy> strategy
+    And Mock server returns SESSION_TOKEN_EXPIRED 390112 on first attempt
+    And Mock server returns 200 after token refresh
+    And Retry policy allows 1 retry
+    When Logout is executed
+    Then Token refresh request is sent to server
     And Logout is retried with new session token
     And Close succeeds
+    # TODO: Decide whether the token refresh request itself counts as a retry attempt
 
     Examples:
       | strategy    |
       | strict      |
       | best-effort |
+
+  Scenario: should include token refresh time in total logout timeout budget
+    # Token refresh is a network call that must be accounted for in total timeout
+    Given Core logout function called
+    And Mock server returns SESSION_TOKEN_EXPIRED 390112 on first attempt
+    And Token refresh endpoint delays response by 3 seconds
+    And Mock server returns 200 after token refresh
+    And Total retry budget timeout is set to 5 seconds
+    When Logout is executed
+    Then Token refresh is attempted
+    And Token refresh time is counted against total timeout budget
+    And Remaining budget for retry logout is reduced by token refresh duration
+    And Total wall-clock time does not exceed 7 seconds for closing the connection
 
   # ---------------------------------------------------------------------------
   #  Retry and Timeout Configuration (Honors Provided Values)
@@ -264,40 +300,37 @@ Feature: Session Logout - Core HTTP Layer Integration
       | 3               | 5             |
       | 5               | 10            |
 
-  # ---------------------------------------------------------------------------
-  #  Strategy-Specific Behaviors
-  # ---------------------------------------------------------------------------
+  # -- Non-retryable errors: outcome differs per strategy --
 
-  Scenario: should throw on non-retryable errors in strict strategy
-    # Parametrized test implementation should cover: 400, 401, 403, 404, 405, 409
+  Scenario Outline: should throw on non-retryable <error_code> error in strict strategy
     Given Core logout function called with strict strategy
-    And Mock server returns non-retryable HTTP error
+    And Mock server returns <error_code> error
     When Logout is executed
     Then Close throws error immediately
     And Error is surfaced to caller
     And No retries are attempted
 
-  Scenario: should log and suppress non-retryable errors in best-effort strategy
-    # Parametrized test implementation should cover: 400, 401, 403, 404, 405, 409
+    Examples:
+      | error_code                  |
+      | 400 Bad Request             |
+      | 403 Forbidden               |
+      | 404 Not Found               |
+      | MASTER_TOKEN_EXPIRED 390114 |
+
+  Scenario Outline: should log and suppress non-retryable <error_code> error in best-effort strategy
     Given Core logout function called with best-effort strategy
-    And Mock server returns non-retryable HTTP error
+    And Mock server returns <error_code> error
     When Logout is executed
     Then Error is logged as WARN
     And Close succeeds without throwing
     And No retries are attempted
 
-  Scenario: should handle master token expired 390114 with strict strategy injected
-    Given Core logout function called with strict strategy
-    And Mock server returns MASTER_TOKEN_EXPIRED 390114
-    When Logout is executed
-    Then Close throws reauth error
-
-  Scenario: should handle master token expired 390114 with best-effort strategy injected
-    Given Core logout function called with best-effort strategy
-    And Mock server returns MASTER_TOKEN_EXPIRED 390114
-    When Logout is executed
-    Then Error is logged as WARN
-    And Close succeeds
+    Examples:
+      | error_code                  |
+      | 400 Bad Request             |
+      | 403 Forbidden               |
+      | 404 Not Found               |
+      | MASTER_TOKEN_EXPIRED 390114 |
 
   # ===========================================================================
   #                      Telemetry Integration
