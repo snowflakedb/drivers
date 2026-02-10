@@ -8,7 +8,8 @@ from __future__ import annotations
 
 import atexit
 import warnings
-from typing import Any, Optional
+
+from typing import Any
 
 from snowflake.connector._internal.protobuf_gen.database_driver_v1_services import (  # type: ignore[attr-defined]
     ConnectionCloseRequest,
@@ -25,6 +26,7 @@ from snowflake.connector._internal.protobuf_gen.database_driver_v1_services impo
 from ._internal.api_client.client_api import database_driver_client
 from .cursor import Cursor
 from .errors import InterfaceError, NotSupportedError
+
 
 # Global flag to track if first auto-cleanup warning has been emitted in this process
 _first_auto_cleanup_in_process = True
@@ -61,17 +63,17 @@ class Connection:
         self.db_handle = self.db_api.database_new(DatabaseNewRequest()).db_handle
         self.db_api.database_init(DatabaseInitRequest(db_handle=self.db_handle))
         self.conn_handle = self.db_api.connection_new(ConnectionNewRequest()).conn_handle
-        
+
         # Extract logout configuration parameters before passing to Core
-        self.server_session_keep_alive: Optional[bool] = kwargs.pop('server_session_keep_alive', None)
-        self.enable_server_session_keep_alive_auto_detection: Optional[bool] = kwargs.pop(
-            'enable_server_session_keep_alive_auto_detection', None
+        self.server_session_keep_alive: bool | None = kwargs.pop("server_session_keep_alive", None)
+        self.enable_server_session_keep_alive_auto_detection: bool | None = kwargs.pop(
+            "enable_server_session_keep_alive_auto_detection", None
         )
         self.ALLOW_BREAKING_CHANGE_SERVER_SESSION_KEEP_ALIVE_AUTO_DETECTION: bool = kwargs.pop(
-            'ALLOW_BREAKING_CHANGE_SERVER_SESSION_KEEP_ALIVE_AUTO_DETECTION', False
+            "ALLOW_BREAKING_CHANGE_SERVER_SESSION_KEEP_ALIVE_AUTO_DETECTION", False
         )
-        self.auto_cleanup: bool = kwargs.pop('auto_cleanup', True)
-        
+        self.auto_cleanup: bool = kwargs.pop("auto_cleanup", True)
+
         for key, value in kwargs.items():
             if isinstance(value, int):
                 self.db_api.connection_set_option_int(
@@ -91,7 +93,7 @@ class Connection:
         self.db_api.connection_init(ConnectionInitRequest(conn_handle=self.conn_handle, db_handle=self.db_handle))
         self.kwargs = kwargs
         self._autocommit = False
-        
+
         # Register atexit handler if auto_cleanup is enabled
         if self.auto_cleanup:
             atexit.register(self._close_at_exit)
@@ -99,20 +101,20 @@ class Connection:
     def close(self, retry: bool = True) -> None:
         """
         Close the connection now.
-        
+
         Sends logout request to server based on configuration, then cleans up resources.
-        
+
         Args:
             retry: Whether to retry failed logout (Note: retry parameter kept for compatibility,
                    but retry behavior is now controlled by Core's retry policy)
-        
+
         Phase 2 vs Phase 3 Behavior:
-        
+
         When ALLOW_BREAKING_CHANGE_SERVER_SESSION_KEEP_ALIVE_AUTO_DETECTION = False (Phase 2 default):
             - Auto-detection enabled by default (legacy Python behavior)
             - server_session_keep_alive=False still respects auto-detection
             - Emits deprecation warning when server_session_keep_alive=False
-        
+
         When ALLOW_BREAKING_CHANGE_SERVER_SESSION_KEEP_ALIVE_AUTO_DETECTION = True (Phase 3 opt-in):
             - Auto-detection disabled by default (unified model)
             - server_session_keep_alive=False forces logout
@@ -120,7 +122,7 @@ class Connection:
         """
         if self.is_closed():
             return  # Already closed, idempotent
-        
+
         # Determine effective auto-detection setting based on phase
         if self.ALLOW_BREAKING_CHANGE_SERVER_SESSION_KEEP_ALIVE_AUTO_DETECTION:
             # Phase 3: Default to None (auto-detection disabled)
@@ -132,7 +134,7 @@ class Connection:
                 if self.enable_server_session_keep_alive_auto_detection is not None
                 else True
             )
-        
+
         # Emit deprecation warning for Phase 2 when server_session_keep_alive=False
         if (
             self.server_session_keep_alive is False
@@ -144,9 +146,9 @@ class Connection:
                 "To opt into Phase 3 behavior now, set "
                 "ALLOW_BREAKING_CHANGE_SERVER_SESSION_KEEP_ALIVE_AUTO_DETECTION=True",
                 FutureWarning,
-                stacklevel=2
+                stacklevel=2,
             )
-        
+
         # Call Core connection_close with configuration
         # Core will set is_closed flag atomically
         self.db_api.connection_close(
@@ -158,25 +160,25 @@ class Connection:
                 timeout_seconds=5,  # 5 second default
             )
         )
-    
+
     def _close_at_exit(self) -> None:
         """
         Cleanup handler called by atexit when process exits.
-        
+
         Emits deprecation warning on first call per process.
         """
         global _first_auto_cleanup_in_process
-        
+
         if _first_auto_cleanup_in_process:
             warnings.warn(
                 "Connection was not explicitly closed before process exit. "
                 "Auto-cleanup at exit will be disabled by default in Phase 3. "
                 "Please explicitly call connection.close() or use context manager.",
                 FutureWarning,
-                stacklevel=2
+                stacklevel=2,
             )
             _first_auto_cleanup_in_process = False
-        
+
         # Close without retry on exit
         if not self.is_closed():
             try:
@@ -322,7 +324,7 @@ class Connection:
     def is_closed(self) -> bool:
         """
         Check if the connection is closed.
-        
+
         Queries the Core's authoritative closed state rather than maintaining
         a separate Python-side flag.
 
@@ -330,10 +332,8 @@ class Connection:
             bool: True if connection is closed, False otherwise
         """
         try:
-            response = self.db_api.connection_is_closed(
-                ConnectionIsClosedRequest(conn_handle=self.conn_handle)
-            )
-            return response.is_closed
+            response = self.db_api.connection_is_closed(ConnectionIsClosedRequest(conn_handle=self.conn_handle))
+            return bool(response.is_closed)
         except InterfaceError:
             # If handle is invalid or already released, treat as closed
             # This can happen if connection_release() was called
