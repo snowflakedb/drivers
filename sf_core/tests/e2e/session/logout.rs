@@ -482,25 +482,28 @@ fn should_clear_query_result_cache_on_close_regardless_of_logout_result() {
 #[test]
 fn should_cleanup_all_tokens_on_close_regardless_of_whether_logout_was_sent() {
     //Given Snowflake client is logged in
-    let client = SnowflakeTestClient::connect_with_default_auth();
+    //And server_session_keep_alive is set to any of (true, false, None)
 
-    //And server_session_keep_alive is set to true
-    //When Connection is closed
-    let result = DatabaseDriverClient::connection_close(ConnectionCloseRequest {
-        conn_handle: Some(client.conn_handle),
-        server_session_keep_alive: Some(true), // Skip logout
-        enable_auto_detection: None,
-        error_strategy: None,
-        timeout_seconds: None,
-    });
+    for keep_alive in [Some(true), Some(false), None] {
+        let client = SnowflakeTestClient::connect_with_default_auth();
 
-    //Then Session token is cleared
-    //And Master token is cleared
-    assert!(result.is_ok(), "Close should succeed");
+        //When Connection is closed
+        let result = DatabaseDriverClient::connection_close(ConnectionCloseRequest {
+            conn_handle: Some(client.conn_handle),
+            server_session_keep_alive: keep_alive,
+            enable_auto_detection: None,
+            error_strategy: None,
+            timeout_seconds: None,
+        });
 
-    //And No logout request is sent
-    // Note: Token cleanup is verified in connection_close implementation
-    // Tokens are cleared regardless of whether logout was sent
+        //Then Session token is cleared
+        //And Master token is cleared
+        assert!(
+            result.is_ok(),
+            "Close should succeed with server_session_keep_alive={:?}",
+            keep_alive
+        );
+    }
 }
 
 #[test]

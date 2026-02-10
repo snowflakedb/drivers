@@ -254,19 +254,18 @@ class TestLogoutResourceCleanup:
         #Then Query result cache is cleared
         assert conn.is_closed()
 
-    def test_should_cleanup_all_tokens_on_close_regardless_of_whether_logout_was_sent(self, connection_factory):
+    @pytest.mark.parametrize("keep_alive", [True, False, None])
+    def test_should_cleanup_all_tokens_on_close_regardless_of_whether_logout_was_sent(self, connection_factory, keep_alive):
         #Given Snowflake client is logged in
-        #And server_session_keep_alive is set to true
-        conn = connection_factory(server_session_keep_alive=True)
+        #And server_session_keep_alive is set to any of (true, false, None)
+        conn = connection_factory(server_session_keep_alive=keep_alive)
         
         #When Connection is closed
         conn.close()
         
         #Then Session token is cleared
         #And Master token is cleared
-        #And No logout request is sent
-        assert conn.is_closed()
-        # Token cleanup verified in Core implementation
+        assert conn.is_closed(), f"Close should succeed with server_session_keep_alive={keep_alive}"
 
     def test_should_not_allow_token_renewal_after_connection_is_closed(self, connection_factory):
         #Given Snowflake client is logged in
