@@ -3,59 +3,94 @@ Parameter binding serialization for Snowflake universal driver.
 
 This module handles serialization of Python parameter bindings to JSON format
 for transmission to the Rust core, following the design specified in bindingsdesign.md.
+
+Conversion logic mirrors the reference snowflake-connector-python's
+SnowflakeConverter.to_snowflake_bindings and Connection._process_params_qmarks.
 """
 
 from __future__ import annotations
 
 import binascii
 import json
+import time as time_module
 
 from collections.abc import Sequence
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 from typing import Any
+
+
+# Epoch constants (timezone-independent)
+_ZERO_EPOCH_DATE = date(1970, 1, 1)
+_ZERO_EPOCH = datetime.fromtimestamp(0, timezone.utc).replace(tzinfo=None)
 
 
 class BindingSerializer:
     """Serializes Python parameters to Snowflake binding JSON format."""
 
     # Python type to Snowflake type mapping
+    # Mirrors PYTHON_TO_SNOWFLAKE_TYPE from the reference connector's converter.py
     TYPE_MAP = {
         "int": "FIXED",
+        "long": "FIXED",
         "float": "REAL",
         "str": "TEXT",
+        "unicode": "TEXT",
         "bool": "BOOLEAN",
         "bytes": "BINARY",
+        "bytearray": "BINARY",
         "datetime": "TIMESTAMP_NTZ",
         "date": "DATE",
         "time": "TIME",
         "decimal": "FIXED",
-        "nonetype": "TEXT",  # NULL values
+        "struct_time": "TIMESTAMP_NTZ",
+        "timedelta": "TIME",
+        "nonetype": "ANY",
     }
 
     @staticmethod
-    def _datetime_to_epoch_nanoseconds(dt: datetime) -> str:
-        """Convert datetime to epoch nanoseconds string (Snowflake format)."""
-        # Convert to timestamp in seconds, then to nanoseconds
-        epoch_seconds = dt.timestamp()
-        epoch_nanoseconds = int(epoch_seconds * 1_000_000_000)
-        return str(epoch_nanoseconds)
+    def _convert_datetime_to_epoch_nanoseconds(dt: datetime) -> str:
+        """Convert datetime to epoch nanoseconds string.
+
+        Uses timedelta arithmetic from a fixed epoch (timezone-independent),
+        matching the reference connector's convert_datetime_to_epoch approach.
+        """
+        if dt.tzinfo is not None:
+            # Convert tz-aware datetime to UTC, then strip tzinfo
+            dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+        epoch_seconds = (dt - _ZERO_EPOCH).total_seconds()
+        # Format with full precision, remove dot, append "000" for nanoseconds
+        return f"{epoch_seconds:f}".replace(".", "") + "000"
 
     @staticmethod
-    def _date_to_epoch_milliseconds(d: date) -> str:
-        """Convert date to epoch milliseconds string (Snowflake format)."""
-        # Create datetime at midnight UTC
-        dt = datetime.combine(d, datetime.min.time())
-        epoch_seconds = dt.timestamp()
-        epoch_milliseconds = int(epoch_seconds * 1000)
-        return str(epoch_milliseconds)
+    def _convert_date_to_epoch_milliseconds(d: date) -> str:
+        """Convert date to epoch milliseconds string.
+
+        Uses timezone-independent timedelta arithmetic from epoch date,
+        matching the reference connector's _convert_date_to_epoch_milliseconds.
+        """
+        return f"{(d - _ZERO_EPOCH_DATE).total_seconds():.3f}".replace(".", "")
 
     @staticmethod
-    def _time_to_nanoseconds(t: time) -> str:
-        """Convert time to nanoseconds since midnight string (Snowflake format)."""
+    def _convert_time_to_nanoseconds(t: time) -> str:
+        """Convert time to nanoseconds since midnight string.
+
+        Uses string concatenation approach matching the reference connector's
+        _convert_time_to_epoch_nanoseconds.
+        """
         total_seconds = t.hour * 3600 + t.minute * 60 + t.second
-        total_nanoseconds = total_seconds * 1_000_000_000 + t.microsecond * 1000
-        return str(total_nanoseconds)
+        return str(total_seconds) + f"{t.microsecond:06d}" + "000"
+
+    @staticmethod
+    def _convert_timedelta_to_nanoseconds(td: timedelta) -> str:
+        """Convert timedelta to nanoseconds string for TIME binding.
+
+        Matches the reference connector's _timedelta_to_snowflake_bindings.
+        """
+        hours, remainder = divmod(td.seconds, 3600)
+        mins, secs = divmod(remainder, 60)
+        hours += td.days * 24
+        return str(hours * 3600 + mins * 60 + secs) + f"{td.microseconds:06d}" + "000"
 
     @classmethod
     def serialize_parameters(cls, params: Sequence[Any] | None) -> tuple[str | None, int]:
@@ -118,33 +153,40 @@ class BindingSerializer:
             Tuple of (Snowflake type string, converted value)
         """
         if value is None:
-            return "TEXT", None
+            return "ANY", None
 
         type_name = value.__class__.__name__.lower()
         snowflake_type = cls.TYPE_MAP.get(type_name, "TEXT")
 
         # Convert value to string representation for JSON
-        # Special handling for different types
+        # Order matters: bool before int (bool is subclass of int),
+        # datetime before date (datetime is subclass of date)
         if isinstance(value, bool):
-            # Boolean must be before int check since bool is subclass of int
             converted = str(value).lower()
         elif isinstance(value, datetime):
             # Datetime to epoch nanoseconds (must be before date check)
-            converted = cls._datetime_to_epoch_nanoseconds(value)
+            converted = cls._convert_datetime_to_epoch_nanoseconds(value)
         elif isinstance(value, date):
             # Date to epoch milliseconds
-            converted = cls._date_to_epoch_milliseconds(value)
+            converted = cls._convert_date_to_epoch_milliseconds(value)
         elif isinstance(value, time):
             # Time to nanoseconds since midnight
-            converted = cls._time_to_nanoseconds(value)
+            converted = cls._convert_time_to_nanoseconds(value)
+        elif isinstance(value, timedelta):
+            # Timedelta to nanoseconds (for TIME type)
+            converted = cls._convert_timedelta_to_nanoseconds(value)
+        elif isinstance(value, time_module.struct_time):
+            # struct_time -> convert to datetime, then to epoch nanoseconds
+            dt = datetime.fromtimestamp(time_module.mktime(value))
+            converted = cls._convert_datetime_to_epoch_nanoseconds(dt)
         elif isinstance(value, (int, float)):
             converted = str(value)
         elif isinstance(value, Decimal):
             converted = str(value)
         elif isinstance(value, str):
             converted = value
-        elif isinstance(value, bytes):
-            # Binary data - hex encode (not base64)
+        elif isinstance(value, (bytes, bytearray)):
+            # Binary data - hex encode
             converted = binascii.hexlify(value).decode("utf-8")
         else:
             # For other types use string representation
