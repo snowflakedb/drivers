@@ -9,7 +9,7 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 
 from snowflake.connector._internal._private_key_helper import normalize_private_key
-from snowflake.connector.exceptions import ProgrammingError
+from snowflake.connector.errors import ProgrammingError
 
 
 class TestPrivateKeyConversion:
