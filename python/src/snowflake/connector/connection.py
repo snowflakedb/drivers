@@ -16,6 +16,7 @@ from snowflake.connector._internal.protobuf_gen.database_driver_v1_services impo
     ConnectionInitRequest,
     ConnectionIsClosedRequest,
     ConnectionNewRequest,
+    ConnectionSetOptionBytesRequest,
     ConnectionSetOptionDoubleRequest,
     ConnectionSetOptionIntRequest,
     ConnectionSetOptionStringRequest,
@@ -23,8 +24,9 @@ from snowflake.connector._internal.protobuf_gen.database_driver_v1_services impo
     DatabaseNewRequest,
 )
 
+from ._internal._private_key_helper import normalize_private_key
 from ._internal.api_client.client_api import database_driver_client
-from .cursor import Cursor
+from .cursor import SnowflakeCursor, SnowflakeCursorBase
 from .errors import InterfaceError, NotSupportedError
 
 
@@ -45,6 +47,7 @@ class Connection:
             password: Password
             host: Host name
             port: Port number
+            private_key: Private key in bytes, str (base64), or RSAPrivateKey format
             server_session_keep_alive: Optional[bool] - Control server session lifecycle
                 - True: Never send logout (Fire & Forget)
                 - False: [Phase 2] Respects auto-detection if enabled
@@ -64,6 +67,10 @@ class Connection:
         self.db_api.database_init(DatabaseInitRequest(db_handle=self.db_handle))
         self.conn_handle = self.db_api.connection_new(ConnectionNewRequest()).conn_handle
 
+        # Pre-process private_key if present - normalize for Rust core
+        if "private_key" in kwargs:
+            kwargs["private_key"] = normalize_private_key(kwargs["private_key"])
+
         # Extract logout configuration parameters before passing to Core
         self.server_session_keep_alive: bool | None = kwargs.pop("server_session_keep_alive", None)
         self.enable_server_session_keep_alive_auto_detection: bool | None = kwargs.pop(
@@ -80,18 +87,24 @@ class Connection:
                     ConnectionSetOptionIntRequest(conn_handle=self.conn_handle, key=key, value=value)
                 )
 
-            if isinstance(value, str):
+            elif isinstance(value, str):
                 self.db_api.connection_set_option_string(
                     ConnectionSetOptionStringRequest(conn_handle=self.conn_handle, key=key, value=value)
                 )
 
-            if isinstance(value, float):
+            elif isinstance(value, float):
                 self.db_api.connection_set_option_double(
                     ConnectionSetOptionDoubleRequest(conn_handle=self.conn_handle, key=key, value=value)
                 )
 
+            elif isinstance(value, bytes):
+                self.db_api.connection_set_option_bytes(
+                    ConnectionSetOptionBytesRequest(conn_handle=self.conn_handle, key=key, value=value)
+                )
+
         self.db_api.connection_init(ConnectionInitRequest(conn_handle=self.conn_handle, db_handle=self.db_handle))
         self.kwargs = kwargs
+        self._closed = False
         self._autocommit = False
 
         # Register atexit handler if auto_cleanup is enabled
@@ -208,16 +221,20 @@ class Connection:
         """
         raise NotSupportedError("rollback is not implemented")
 
-    def cursor(self) -> Cursor:
+    def cursor(self, cursor_class: type[SnowflakeCursorBase] = SnowflakeCursor) -> SnowflakeCursorBase:
         """
         Return a new Cursor object using the connection.
 
+        Args:
+            cursor_class: The class to use for the cursor (default: SnowflakeCursor).
+                          Pass DictCursor to get results as dictionaries.
+
         Returns:
-            Cursor: A new cursor object
+            SnowflakeCursorBase: A new cursor object
         """
         if self.is_closed():
             raise InterfaceError("Connection is closed")
-        return Cursor(self)
+        return cursor_class(self)
 
     # Context manager support
     def __enter__(self) -> Connection:

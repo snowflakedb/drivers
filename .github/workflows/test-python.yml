@@ -93,6 +93,30 @@ jobs:
         working-directory: ./python
         run: hatch run precommit:check
 
+  # Packaging tests - verify sdist can be built and installed from source
+  packaging_tests:
+    needs: [detect-changes, format]
+    if: github.event_name == 'push' || needs.detect-changes.outputs.run_python == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7.2.1
+        with:
+          version: "0.9.28"
+
+      - name: Set up Python 3.13
+        run: uv python install 3.13
+
+      - name: Install Hatch
+        run: uv tool install hatch
+
+      - name: Run packaging tests
+        working-directory: ./python
+        run: hatch run packaging.py3.13:test -v --timeout=900
+
   # Combined unit + integration tests with universal connector
   python_tests:
     needs: [detect-changes, build_wheel, format]
@@ -263,7 +287,7 @@ jobs:
         working-directory: python
 
   python-status:
-    needs: [detect-changes, build_wheel, python_tests, python_tests_reference, python_compare_results]
+    needs: [detect-changes, build_wheel, packaging_tests, python_tests, python_tests_reference, python_compare_results]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -281,10 +305,12 @@ jobs:
           # Check if critical jobs failed or were cancelled
           # Note: python_tests_reference has continue-on-error:true, so we don't fail on it
           if [[ "${{ needs.build_wheel.result }}" =~ ^(failure|cancelled)$ ]] || \
+             [[ "${{ needs.packaging_tests.result }}" =~ ^(failure|cancelled)$ ]] || \
              [[ "${{ needs.python_tests.result }}" =~ ^(failure|cancelled)$ ]] || \
              [[ "${{ needs.python_compare_results.result }}" =~ ^(failure|cancelled)$ ]]; then
             echo "✗ Python CI FAILED or CANCELLED"
             echo "  - build_wheel: ${{ needs.build_wheel.result }}"
+            echo "  - packaging_tests: ${{ needs.packaging_tests.result }}"
             echo "  - python_tests: ${{ needs.python_tests.result }}"
             echo "  - python_tests_reference: ${{ needs.python_tests_reference.result }} (continue-on-error)"
             echo "  - python_compare_results: ${{ needs.python_compare_results.result }}"
@@ -294,6 +320,7 @@ jobs:
           # Tests ran and passed
           echo "✓ Python CI PASSED"
           echo "  - build_wheel: ${{ needs.build_wheel.result }}"
+          echo "  - packaging_tests: ${{ needs.packaging_tests.result }}"
           echo "  - python_tests: ${{ needs.python_tests.result }}"
           echo "  - python_tests_reference: ${{ needs.python_tests_reference.result }} (continue-on-error)"
           echo "  - python_compare_results: ${{ needs.python_compare_results.result }}"

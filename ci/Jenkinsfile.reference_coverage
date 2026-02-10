@@ -15,10 +15,11 @@
  * 4. Upload metrics to Benchstore
  */
 
+@Library('pipeline-utils')
+import com.snowflake.DevEnvUtils
 import groovy.transform.Field
 
-@Field String DOCKER_IMAGE = 'nexus.int.snowflakecomputing.com:8086/docker/rhel8-universal-driver-coverage:3'
-@Field String NEXUS_CREDENTIAL_ID = 'a791118f-a1ea-46cd-b876-56da1b9bc71c'
+@Field String DOCKER_IMAGE = 'artifactory.ci1.us-west-2.aws-dev.app.snowflake.com/internal-production-docker-snowflake-virtual/docker/rhel8-universal-driver-coverage:3'
 
 pipeline {
     agent none
@@ -163,7 +164,7 @@ pipeline {
                                         -v "$(pwd)":/workspace \
                                         -w /workspace \
                                         rocky-old-odbc-build \
-                                        bash -c 'python3.9 -m pip install --target /workspace/.benchstore_deps pyyaml benchstore-client-library --extra-index-url https://nexus.int.snowflakecomputing.com/repository/pypi-internal/simple'
+                                        bash -c 'python3.9 -m pip install --target /workspace/.benchstore_deps pyyaml benchstore-client-library --extra-index-url https://artifactory.ci1.us-west-2.aws-dev.app.snowflake.com/artifactory/api/pypi/internal-production-pypi-snowflake-virtual/simple'
                                 '''
                             }
                         }
@@ -256,8 +257,10 @@ pipeline {
 
                         stage('Python: Setup Docker') {
                             steps {
-                                withCredentials([string(credentialsId: NEXUS_CREDENTIAL_ID, variable: 'NEXUS_PASSWORD')]) {
-                                    sh 'export USERNAME=jenkins && source ./scripts/login_internal_docker.sh'
+                                script {
+                                    new DevEnvUtils().withSfCli {
+                                        sh "sf artifact oci auth"
+                                    }
                                 }
                                 sh "docker pull ${DOCKER_IMAGE}"
                             }
@@ -319,7 +322,7 @@ pipeline {
                                         -v "\$(pwd)":/workspace \
                                         -w /workspace \
                                         ${DOCKER_IMAGE} \
-                                        pip install --target /workspace/.benchstore_deps pyyaml benchstore-client-library --extra-index-url https://nexus.int.snowflakecomputing.com/repository/pypi-internal/simple
+                                        pip install --target /workspace/.benchstore_deps pyyaml benchstore-client-library --extra-index-url https://artifactory.ci1.us-west-2.aws-dev.app.snowflake.com/artifactory/api/pypi/internal-production-pypi-snowflake-virtual/simple
                                 """
                             }
                         }

@@ -6,6 +6,8 @@ use super::connection::with_valid_session;
 use super::error::*;
 use super::global_state::{CONN_HANDLE_MANAGER, STMT_HANDLE_MANAGER};
 use crate::apis::database_driver_v1::query::process_query_response;
+use crate::protobuf_gen::database_driver_v1::ColumnMetadata;
+use crate::rest::snowflake::query_response::Data;
 use crate::{
     config::{rest_parameters::QueryParameters, settings::Setting},
     rest::snowflake::{self, QueryExecutionMode, snowflake_query_with_client},
@@ -23,6 +25,84 @@ use std::{collections::HashMap, sync::Arc};
 
 use super::connection::Connection;
 use crate::rest::snowflake::query_request;
+
+/// Sentinel returned when the server does not report a row count.
+const ROWCOUNT_UNKNOWN: i64 = -1;
+
+/// Column names whose values are summed to compute DML rows-affected (exact match).
+const DML_AFFECTED_ROWS_COLUMNS: &[&str] = &[
+    "number of rows updated",
+    "number of multi-joined rows updated",
+    "number of rows deleted",
+];
+
+/// Column name prefixes whose values are summed to compute DML rows-affected.
+const DML_AFFECTED_ROWS_COLUMN_PREFIXES: &[&str] = &["number of rows inserted"];
+
+// Statement type ID constants for DML detection
+const STATEMENT_TYPE_ID_DML: i64 = 0x3000;
+const STATEMENT_TYPE_ID_INSERT: i64 = 0x3100;
+const STATEMENT_TYPE_ID_UPDATE: i64 = 0x3200;
+const STATEMENT_TYPE_ID_DELETE: i64 = 0x3300;
+const STATEMENT_TYPE_ID_MERGE: i64 = 0x3400;
+const STATEMENT_TYPE_ID_MULTI_TABLE_INSERT: i64 = 0x3500;
+
+/// Check if a statement type ID represents a DML operation
+fn is_dml_statement(statement_type_id: Option<i64>) -> bool {
+    if let Some(type_id) = statement_type_id {
+        matches!(
+            type_id,
+            STATEMENT_TYPE_ID_DML
+                | STATEMENT_TYPE_ID_INSERT
+                | STATEMENT_TYPE_ID_UPDATE
+                | STATEMENT_TYPE_ID_DELETE
+                | STATEMENT_TYPE_ID_MERGE
+                | STATEMENT_TYPE_ID_MULTI_TABLE_INSERT
+        )
+    } else {
+        false
+    }
+}
+
+/// Calculate rows affected based on statement type
+/// - For DML: Parse rowset columns to sum affected rows
+/// - For SELECT and DDL: Use total field
+/// - For unknown: Return ROWCOUNT_UNKNOWN (-1)
+fn calculate_rows_affected(data: &Data) -> i64 {
+    // Check if this is a DML statement
+    if is_dml_statement(data.statement_type_id) {
+        // For DML, parse the rowset to get affected rows
+        if let (Some(rowset), Some(row_types)) = (&data.rowset, &data.row_type)
+            && !rowset.is_empty()
+            && !rowset[0].is_empty()
+        {
+            let mut affected_rows = 0i64;
+
+            // Look for specific column names that indicate affected rows
+            for (idx, col) in row_types.iter().enumerate() {
+                let col_name = col.name.to_lowercase();
+
+                if (DML_AFFECTED_ROWS_COLUMNS.contains(&col_name.as_str())
+                    || DML_AFFECTED_ROWS_COLUMN_PREFIXES
+                        .iter()
+                        .any(|p| col_name.starts_with(p)))
+                    && let Some(value) = rowset[0].get(idx)
+                    && let Ok(count) = value.parse::<i64>()
+                {
+                    affected_rows += count;
+                }
+            }
+
+            return affected_rows;
+        }
+        // DML with no affected rows
+        return 0;
+    }
+
+    // For SELECT and other queries, use total
+    // Return ROWCOUNT_UNKNOWN if total is not available
+    data.total.unwrap_or(ROWCOUNT_UNKNOWN)
+}
 
 pub fn statement_new(conn_handle: Handle) -> Result<Handle, ApiError> {
     let handle = conn_handle;
@@ -137,6 +217,8 @@ pub unsafe fn statement_bind(
 pub struct ExecuteResult {
     pub stream: Box<FFI_ArrowArrayStream>,
     pub rows_affected: i64,
+    pub query_id: String,
+    pub columns: Vec<ColumnMetadata>,
 }
 
 pub fn statement_execute_query(stmt_handle: Handle) -> Result<ExecuteResult, ApiError> {
@@ -207,11 +289,39 @@ pub fn statement_execute_query(stmt_handle: Handle) -> Result<ExecuteResult, Api
 
     let rowset_stream = Box::new(FFI_ArrowArrayStream::new(response_reader));
 
+    // Extract query_id from response
+    let query_id = response.data.query_id.clone().unwrap_or_default();
+
+    // Calculate rows_affected based on statement type
+    // For DML: Sum of affected rows from rowset columns
+    // For SELECT: Total rows in result set
+    // For DDL/Unknown: -1
+    let rows_affected = calculate_rows_affected(&response.data);
+
+    // Extract column metadata from rowtype
+    let columns = response
+        .data
+        .row_type
+        .unwrap_or_default()
+        .iter()
+        .map(|rt| ColumnMetadata {
+            name: rt.name.clone(),
+            r#type: rt.type_.clone(),
+            precision: rt.precision.map(|v| v as i64),
+            scale: rt.scale.map(|v| v as i64),
+            length: rt.length.map(|v| v as i64),
+            byte_length: rt.byte_length.map(|v| v as i64),
+            nullable: rt.nullable,
+        })
+        .collect();
+
     // Serialize pointer into integer
     stmt.state = StatementState::Executed;
     Ok(ExecuteResult {
         stream: rowset_stream,
-        rows_affected: 0,
+        rows_affected,
+        query_id,
+        columns,
     })
 }
 

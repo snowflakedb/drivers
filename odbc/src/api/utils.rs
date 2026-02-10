@@ -25,7 +25,7 @@ pub fn row_count(statement_handle: sql::Handle, row_count_ptr: *mut sql::Len) ->
             std::ptr::write(row_count_ptr, *rows_affected as i32);
         },
         _ => unsafe {
-            std::ptr::write(row_count_ptr, 0);
+            std::ptr::write(row_count_ptr, -1);
         },
     }
     Ok(())

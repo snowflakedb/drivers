@@ -9,6 +9,8 @@ from urllib.parse import urlparse
 
 import pytest
 
+from snowflake.connector.cursor import DictCursor
+
 from .compatibility import IS_UNIVERSAL_DRIVER
 from .connector_factory import ConnectorFactory, create_connection_with_adapter
 from .private_key_helper import get_test_private_key_path
@@ -57,6 +59,13 @@ def connection_factory(connector_adapter):
 def cursor(connection):
     """Create a test cursor from a connection."""
     with connection.cursor() as cursor:
+        yield cursor
+
+
+@pytest.fixture
+def dict_cursor(connection):
+    """Create a DictCursor from a connection."""
+    with connection.cursor(cursor_class=DictCursor) as cursor:
         yield cursor
 
 
