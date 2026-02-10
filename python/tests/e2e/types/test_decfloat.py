@@ -264,3 +264,99 @@ class TestDecfloatTable:
         # And All values should be returned as appropriate type
         assert_type(values, Decimal)
         assert_sequential_values(values, LARGE_RESULT_SET_SIZE, transform=Decimal)
+
+
+class TestDecfloatBinding:
+    """Tests for DECFLOAT type using parameter binding."""
+
+    def test_should_select_decfloat_using_parameter_binding(self, execute_query):
+        # Given Snowflake client is logged in
+
+        # When Query "SELECT ?::DECFLOAT, ?::DECFLOAT, ?::DECFLOAT" is executed
+        # with bound DECFLOAT values [123.456, -789.012, 42.0]
+        result = execute_query(
+            "SELECT ?::DECFLOAT, ?::DECFLOAT, ?::DECFLOAT",
+            (("DECFLOAT", Decimal("123.456")), ("DECFLOAT", Decimal("-789.012")), ("DECFLOAT", Decimal("42.0"))),
+            single_row=True,
+        )
+
+        # Then Result should contain [123.456, -789.012, 42.0]
+        assert result == (Decimal("123.456"), Decimal("-789.012"), Decimal("42.0"))
+        assert_type(result, Decimal)
+
+        # When Query "SELECT ?::DECFLOAT" is executed with bound NULL value
+        result = execute_query("SELECT ?::DECFLOAT", (None,), single_row=True)
+
+        # Then Result should contain [NULL]
+        assert result == (None,)
+
+    def test_should_select_extreme_decfloat_values_using_parameter_binding(self, execute_query):
+        # Given Snowflake client is logged in
+
+        # When Query "SELECT ?::DECFLOAT" is executed with bound value 1E+16384
+        result = execute_query(
+            "SELECT ?::DECFLOAT",
+            (("DECFLOAT", DECFLOAT_MAX_EXPONENT),),
+            single_row=True,
+        )
+
+        # Then Result should contain [1E+16384]
+        assert result == (DECFLOAT_MAX_EXPONENT,)
+        assert_type(result, Decimal)
+
+        # When Query "SELECT ?::DECFLOAT" is executed with bound value -1.234E+8000
+        result = execute_query(
+            "SELECT ?::DECFLOAT",
+            (("DECFLOAT", DECFLOAT_LARGE_POS_EXPONENT),),
+            single_row=True,
+        )
+
+        # Then Result should contain [-1.234E+8000]
+        assert result == (DECFLOAT_LARGE_POS_EXPONENT,)
+        assert_type(result, Decimal)
+
+    def test_should_insert_decfloat_using_parameter_binding(self, execute_query, executemany_insert, tmp_schema):
+        # Given Snowflake client is logged in
+
+        # And Table with DECFLOAT column exists
+        table_name = f"{tmp_schema}.decfloat_bind_table"
+        execute_query(f"CREATE TABLE {table_name} (col DECFLOAT)")
+
+        # When DECFLOAT values [0, 123.456, -789.012, NULL] are inserted using explicit binding
+        test_rows = [
+            (("DECFLOAT", Decimal("0")),),
+            (("DECFLOAT", Decimal("123.456")),),
+            (("DECFLOAT", Decimal("-789.012")),),
+            (None,),
+        ]
+        rows = executemany_insert(table_name, f"INSERT INTO {table_name} VALUES (?)", test_rows)
+
+        # Then SELECT should return the same exact values (order may vary due to ORDER BY)
+        result = [row[0] for row in rows]
+        expected = {Decimal("0"), Decimal("123.456"), Decimal("-789.012"), None}
+        assert set(result) == expected
+        assert_type(result, Decimal, can_be_none=True)
+
+    def test_should_insert_extreme_decfloat_values_using_parameter_binding(self, execute_query, executemany_insert, tmp_schema):
+        # Given Snowflake client is logged in
+
+        # And Table with DECFLOAT column exists
+        table_name = f"{tmp_schema}.decfloat_extreme_bind_table"
+        execute_query(f"CREATE TABLE {table_name} (col DECFLOAT)")
+
+        # When DECFLOAT values [1E+16384, 1E-16383, -1.234E+8000] are inserted using explicit binding
+        extreme_values = [
+            DECFLOAT_MAX_EXPONENT,
+            DECFLOAT_MIN_EXPONENT,
+            DECFLOAT_LARGE_POS_EXPONENT,
+        ]
+        test_rows = [(("DECFLOAT", val),) for val in extreme_values]
+        rows = executemany_insert(table_name, f"INSERT INTO {table_name} VALUES (?)", test_rows)
+
+        # And Query "SELECT * FROM <table>" is executed
+        rows = execute_query(f"SELECT * FROM {table_name}")
+
+        # Then SELECT should return the same exact values
+        result = [row[0] for row in rows]
+        assert_type(result, Decimal)
+        assert set(result) == set(extreme_values)

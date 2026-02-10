@@ -128,3 +128,40 @@ class TestBooleanTable:
         total, num_true = len(values), sum(values)
         assert total == LARGE_RESULT_SET_SIZE
         assert num_true == LARGE_RESULT_SET_SIZE // 2
+
+
+class TestBooleanBinding:
+    """Tests for BOOLEAN type using parameter binding."""
+
+    def test_should_select_boolean_using_parameter_binding(self, execute_query):
+        # Given Snowflake client is logged in
+
+        # When Query "SELECT ?::BOOLEAN, ?::BOOLEAN, ?::BOOLEAN" is executed
+        # with bound boolean values [TRUE, FALSE, TRUE]
+        result = execute_query("SELECT ?::BOOLEAN, ?::BOOLEAN, ?::BOOLEAN", (True, False, True), single_row=True)
+
+        # Then Result should contain [TRUE, FALSE, TRUE]
+        assert result == (True, False, True)
+        assert_type(result, bool)
+
+        # When Query "SELECT ?::BOOLEAN" is executed with bound NULL value
+        result = execute_query("SELECT ?::BOOLEAN", (None,), single_row=True)
+
+        # Then Result should contain [NULL]
+        assert result == (None,)
+
+    def test_should_insert_boolean_using_parameter_binding(self, execute_query, executemany_insert, tmp_schema):
+        # Given Snowflake client is logged in
+
+        # And Table with BOOLEAN column exists
+        table_name = f"{tmp_schema}.boolean_bind_table"
+        execute_query(f"CREATE TABLE {table_name} (col BOOLEAN)")
+
+        # When Boolean values [TRUE, FALSE, NULL] are bulk-inserted using executemany
+        test_values = [(True,), (False,), (None,)]
+        rows = executemany_insert(table_name, f"INSERT INTO {table_name} VALUES (?)", test_values)
+
+        # Then SELECT should return the same values in any order
+        result = [row[0] for row in rows]
+        assert set(result) == {True, False, None}
+        assert_type(result, bool, can_be_none=True)

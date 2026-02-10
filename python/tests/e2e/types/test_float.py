@@ -292,3 +292,56 @@ class TestFloatTable:
         values = [row[0] for row in rows]
         assert_type(values, float)
         assert_sequential_values(values, LARGE_RESULT_SET_SIZE, transform=float, compare=floats_equal)
+
+
+class TestFloatBinding:
+    """Tests for FLOAT type using parameter binding."""
+
+    @float_type_parametrize
+    def test_should_select_float_using_parameter_binding_for_float_and_synonyms(self, execute_query, float_type):
+        # Given Snowflake client is logged in
+
+        # When Query "SELECT ?::<type>, ?::<type>, ?::<type>" is executed
+        # with bound float values [123.456, -789.012, 42.0]
+        sql = f"SELECT ?::{float_type}, ?::{float_type}, ?::{float_type}"
+        result = execute_query(sql, (123.456, -789.012, 42.0), single_row=True)
+
+        # Then Result should contain floats [123.456, -789.012, 42.0]
+        assert_floats_equal(result, [123.456, -789.012, 42.0])
+        assert_type(result, float)
+
+        # Note: NaN, inf, -inf cannot be bound via parameter binding in Snowflake.
+        # Snowflake rejects them with "Invalid bind value (nan) for type (REAL)".
+        # Special float values are tested via literals in TestFloatLiteral instead.
+
+        # When Query "SELECT ?::<type>" is executed with bound NULL value
+        sql_null = f"SELECT ?::{float_type}"
+        result = execute_query(sql_null, (None,), single_row=True)
+
+        # Then Result should contain NULL
+        assert_floats_equal(result, [None])
+
+    @float_type_parametrize
+    def test_should_insert_float_using_parameter_binding_for_float_and_synonyms(
+        self, execute_query, executemany_insert, tmp_schema, float_type
+    ):
+        # Given Snowflake client is logged in
+
+        # And Table with <type> column exists
+        table_name = f"{tmp_schema}.float_bind_table_{float_type.replace(' ', '_').lower()}"
+        execute_query(f"CREATE TABLE {table_name} (col {float_type})")
+
+        # When Float values [0.0, 123.456, -789.012, NULL] are bulk-inserted using executemany
+        # Note: NaN, inf, -inf cannot be bound — Snowflake rejects them as bind values.
+        test_rows = [(0.0,), (123.456,), (-789.012,), (None,)]
+        rows = executemany_insert(table_name, f"INSERT INTO {table_name} VALUES (?)", test_rows)
+
+        # Then Result should contain the same values including NULL
+        result = [row[0] for row in rows]
+        assert len(result) == len(test_rows)
+        assert_type(result, float, can_be_none=True)
+        # Compare as sets (order depends on ORDER BY in executemany_insert fixture)
+        non_null_result = {v for v in result if v is not None}
+        non_null_expected = {0.0, 123.456, -789.012}
+        assert non_null_result == non_null_expected
+        assert result.count(None) == 1

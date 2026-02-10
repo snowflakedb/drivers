@@ -129,6 +129,9 @@ class BindingSerializer:
             "1": {"type": "FIXED", "value": ["1", "2", "3"]},
             "2": {"type": "TEXT", "value": ["hello", "world", "foo"]}
         }
+
+        Supports explicit type-hint tuples: ("SNOWFLAKE_TYPE", value).
+        This mirrors the reference connector's _get_snowflake_type_and_binding.
         """
         bindings = {}
 
@@ -139,10 +142,26 @@ class BindingSerializer:
                 snowflake_type, values = cls._convert_array(value)
                 bindings[str(idx + 1)] = {"type": snowflake_type, "value": values}
             else:
-                snowflake_type, snowflake_value = cls._convert_value(value)
+                snowflake_type, snowflake_value = cls._get_type_and_binding(value)
                 bindings[str(idx + 1)] = {"type": snowflake_type, "value": snowflake_value}
 
         return bindings
+
+    @classmethod
+    def _get_type_and_binding(cls, value: Any) -> tuple[str, Any]:
+        """Resolve the Snowflake type and serialized value for a parameter.
+
+        Supports explicit type-hint tuples ``("SNOWFLAKE_TYPE", value)`` as used
+        by the reference connector (e.g. ``("DECFLOAT", Decimal("1.23"))``).
+        When *value* is a 2-tuple whose first element is a string, the tuple is
+        unpacked and the explicit type is used; otherwise, the type is inferred
+        via ``_convert_value``.
+        """
+        if isinstance(value, tuple) and len(value) == 2 and isinstance(value[0], str):
+            snowflake_type, raw_value = value
+            _, converted = cls._convert_value(raw_value)
+            return snowflake_type, converted
+        return cls._convert_value(value)
 
     @classmethod
     def _convert_value(cls, value: Any) -> tuple[str, Any]:
@@ -199,6 +218,8 @@ class BindingSerializer:
         """
         Convert an array of Python values to Snowflake binding format.
 
+        Supports explicit type-hint tuples via ``_get_type_and_binding``.
+
         Returns:
             Tuple of (Snowflake type string, list of converted values)
         """
@@ -210,7 +231,7 @@ class BindingSerializer:
         types = set()
 
         for value in values:
-            snowflake_type, converted = cls._convert_value(value)
+            snowflake_type, converted = cls._get_type_and_binding(value)
             converted_values.append(converted)
             if value is not None:
                 types.add(snowflake_type)

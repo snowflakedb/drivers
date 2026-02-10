@@ -311,3 +311,53 @@ class TestIntTable:
         values = [row[0] for row in rows]
         assert_type(values, int)
         assert_sequential_values(values, LARGE_RESULT_SET_SIZE)
+
+
+class TestIntBinding:
+    """Tests for INT type using parameter binding."""
+
+    @int_type_parametrize
+    def test_should_insert_integer_using_parameter_binding_for_int_and_synonyms(
+        self, execute_query, tmp_schema, int_type
+    ):
+        # Given Snowflake client is logged in
+
+        # And Table with <type> column exists
+        table_name = f"{tmp_schema}.int_bind_table_{int_type.lower()}"
+        execute_query(f"CREATE TABLE {table_name} (col {int_type})")
+
+        # When Integer values [0, -2147483648, 2147483647, 9223372036854775807] are inserted using binding
+        test_values = [0, INT32_SIGNED_MIN, INT32_SIGNED_MAX, INT64_SIGNED_MAX]
+        for val in test_values:
+            execute_query(f"INSERT INTO {table_name} VALUES (?)", (val,))
+
+        # And Query "SELECT * FROM <table>" is executed
+        rows = execute_query(f"SELECT * FROM {table_name}")
+
+        # Then Result should contain integers [0, -2147483648, 2147483647, 9223372036854775807]
+        result = [row[0] for row in rows]
+        assert result == test_values
+        assert_type(result, int)
+
+    @int_type_parametrize
+    def test_should_insert_and_select_integers_from_table_using_parameter_binding_for_int_and_synonyms(
+        self, execute_query, executemany_insert, tmp_schema, int_type
+    ):
+        # Given Snowflake client is logged in
+
+        # And Table with <type> column exists
+        table_name = f"{tmp_schema}.int_bind_table_{int_type.lower()}"
+        execute_query(f"CREATE TABLE {table_name} (col {int_type})")
+
+        # When Integer values [0, 42, -2147483648, 9223372036854775807] are inserted using binding
+        test_values = [0, 42, INT32_SIGNED_MIN, INT64_SIGNED_MAX]
+        rows = executemany_insert(table_name, f"INSERT INTO {table_name} VALUES (?)", [(val,) for val in test_values])
+
+        # And Query "SELECT * FROM <table>" is executed
+        rows = execute_query(f"SELECT * FROM {table_name}")
+
+        # Then Result should contain integers [0, 42, -2147483648, 9223372036854775807]
+        result = sorted([row[0] for row in rows])
+        expected = sorted(test_values)
+        assert result == expected
+        assert_type(result, int)
