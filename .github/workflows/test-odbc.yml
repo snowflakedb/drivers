@@ -35,14 +35,8 @@ jobs:
       - name: Install dependencies (Windows)
         if: matrix.os == 'windows-latest'
         run: |
-          choco install cmake --installargs 'ADD_CMAKE_TO_PATH=System' -y
-          choco install openssl -y
-          vcpkg install zlib:x64-windows
-          cmake --version
-          # GPG is pre-installed on Windows GitHub runners
-          gpg --version
-          curl -O https://sfc-repo.snowflakecomputing.com/odbc/windows/3.9.0/snowflake-odbc-3.9.0.x86_64.msi
-          msiexec /i snowflake-odbc-3.9.0.x86_64.msi /quiet
+          curl -O https://sfc-repo.snowflakecomputing.com/odbc/win64/3.9.0/snowflake64_odbc-3.9.0.msi
+          msiexec /i snowflake64_odbc-3.9.0.msi /quiet
           if ($LASTEXITCODE -ne 0) {
             throw "Failed to install Snowflake ODBC driver"
           }
@@ -52,6 +46,12 @@ jobs:
           } else {
             throw "Snowflake ODBC driver not installed"
           }
+          choco install cmake --installargs 'ADD_CMAKE_TO_PATH=System' -y
+          choco install openssl -y
+          vcpkg install zlib:x64-windows
+          cmake --version
+          # GPG is pre-installed on Windows GitHub runners
+          gpg --version
 
       - name: Install dependencies (Linux)
         if: matrix.os == 'ubuntu-latest'
