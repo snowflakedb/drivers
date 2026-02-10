@@ -9,7 +9,6 @@ Feature: Session Logout - ODBC-specific behavior
   #                      ODBC Default Configuration
   # ===========================================================================
 
-@odbc_e2e
   Scenario: should use ODBC default 300 second timeout
     # ODBC historically uses 300s (DEFAULT_RETRY_TIMEOUT) for logout
     Given ODBC connection is created with default timeout configuration

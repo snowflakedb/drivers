@@ -333,6 +333,7 @@ async fn should_reject_queries_client_side_after_connection_is_closed() {
     let client = SnowflakeTestClient::connect_integration_test(Some(&server.uri()));
 
     //And Simple query SELECT 1 executes successfully
+
     // Note: For this test we skip the pre-logout query since we're testing
     // client-side rejection, not server behavior. The key is that after
     // close(), queries are rejected without reaching the server.

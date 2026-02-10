@@ -30,7 +30,8 @@ Feature: Session Logout
   #                    Post-Logout Session Invalidation
   # ===========================================================================
 
-  @core_int @python_int
+  @core_int
+  # TODO: Add @python_int when Python test is implemented
   Scenario: should reject queries client-side after connection is closed
     Given Snowflake client is logged in
     And Simple query SELECT 1 executes successfully
@@ -38,7 +39,8 @@ Feature: Session Logout
     And Query is attempted on closed connection
     Then Query fails with connection closed error
 
-  @core_int @python_not_needed
+  # TODO: Add @core_int when test is implemented
+  @python_not_needed
   Scenario: should handle SESSION_GONE error when using invalidated session token
     # Tests Core handling when server returns SESSION_GONE (token already invalidated)
     Given Mock server is configured to return SESSION_GONE 390111
@@ -51,7 +53,7 @@ Feature: Session Logout
   #                        Process Exit and Thread Management
   # ===========================================================================
 
-  @core_e2e @python_e2e
+  # TODO: Add @core_e2e @python_e2e when test is implemented
   Scenario: should allow process to exit cleanly when session kept alive
     # Requires: SNOW-2881763 (Heartbeat), SNOW-2912513 (Telemetry)
     Given Connection with heartbeat enabled

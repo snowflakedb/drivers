@@ -5,7 +5,7 @@ Feature: Session Logout - Python-specific behavior
   #                   Python Default Configuration
   # ===========================================================================
 
-@python_e2e
+  # TODO: Add @python_e2e when test is implemented
   Scenario: should use Python default 5 second timeout
     # Python historically uses 5s timeout for logout
     Given Python connection is created with default timeout configuration
@@ -117,7 +117,7 @@ Feature: Session Logout - Python-specific behavior
   #                     Python-Specific Defaults
   # ===========================================================================
 
-@python_e2e
+  # TODO: Add @python_e2e when test is implemented
   Scenario: should skip logout when server_session_keep_alive is true regardless of auto_detection
     # Phase 2 truth table: True + any + any → No logout, No deprecation
     # Verifies Python correctly passes true to Core
@@ -165,7 +165,7 @@ Feature: Session Logout - Python-specific behavior
   # ===========================================================================
   # Old Python driver: close(retry: bool = True) parameter (line 1182)
 
-@python_e2e
+  # TODO: Add @python_e2e when test is implemented
   Scenario: should pass retry true to telemetry and logout by default
     # Old Python driver: close(retry=True) is default (line 1182)
     Given Python connection is established
@@ -174,7 +174,7 @@ Feature: Session Logout - Python-specific behavior
     And Logout delete_session is called with retry=True
     And Retries are enabled for both operations
 
-@python_e2e
+  # TODO: Add @python_e2e when test is implemented
   Scenario: should pass retry false when explicitly specified
     # Old Python driver: close(retry=False) disables retries (line 1182)
     # Used by atexit handler (line 2390)
