@@ -161,6 +161,30 @@ Feature: Session Logout - Python-specific behavior
     And Error handling strategy is best-effort by default
 
   # ===========================================================================
+  #                       retry Parameter Support
+  # ===========================================================================
+  # Old Python driver: close(retry: bool = True) parameter (line 1182)
+
+@python_e2e
+  Scenario: should pass retry true to telemetry and logout by default
+    # Old Python driver: close(retry=True) is default (line 1182)
+    Given Python connection is established
+    When close() is called with default parameters
+    Then Telemetry close is called with retry=True
+    And Logout delete_session is called with retry=True
+    And Retries are enabled for both operations
+
+@python_e2e
+  Scenario: should pass retry false when explicitly specified
+    # Old Python driver: close(retry=False) disables retries (line 1182)
+    # Used by atexit handler (line 2390)
+    Given Python connection is established
+    When close(retry=False) is called
+    Then Telemetry close is called with retry=False
+    And Logout delete_session is called with retry=False
+    And No retry attempts are made on failures
+
+  # ===========================================================================
   #                       Auto-cleanup Deprecation
   # ===========================================================================
   # Phase 1 (doc for: SNOW-2314152) deprecation: Python still registers atexit handlers.

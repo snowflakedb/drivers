@@ -132,49 +132,178 @@ Feature: Session Logout - Core HTTP Layer Integration
   # Tests Core logout behavior with different error strategies injected
   # Both strategies are tested to ensure Core implements strategy pattern correctly
 
-  Scenario: should ignore SESSION_GONE 390111 with strict strategy injected
-    Given Core logout function called with strict strategy
+  # ---------------------------------------------------------------------------
+  #  Backend Behaviors (Same for Both Strategies)
+  # ---------------------------------------------------------------------------
+
+  Scenario Outline: should ignore SESSION_GONE 390111 with <strategy> strategy
+    Given Core logout function called with <strategy> strategy
     And Mock server returns SESSION_GONE 390111
     When Logout is executed
     Then Close succeeds
     And Error is ignored
 
-  Scenario: should ignore SESSION_GONE 390111 with best-effort strategy injected
-    Given Core logout function called with best-effort strategy
-    And Mock server returns SESSION_GONE 390111
-    When Logout is executed
-    Then Close succeeds
-    And Error is ignored
+    Examples:
+      | strategy    |
+      | strict      |
+      | best-effort |
 
-  Scenario: should retry transient errors with strict strategy injected
-    Given Core logout function called with strict strategy
-    And Mock server returns 503 on attempt 1
+  Scenario Outline: should retry on <error_type> with <strategy> strategy
+    Given Core logout function called with <strategy> strategy
+    And Mock server returns <error_type> on attempt 1
     And Mock server returns 200 on attempt 2
     When Logout is executed
     Then Logout is retried
     And Close succeeds
 
-  Scenario: should retry transient errors with best-effort strategy injected
-    Given Core logout function called with best-effort strategy
-    And Mock server returns 503 on attempt 1
-    And Mock server returns 200 on attempt 2
+    Examples:
+      | strategy    | error_type              |
+      | strict      | 503 Service Unavailable |
+      | best-effort | 503 Service Unavailable |
+      | strict      | 429 Too Many Requests   |
+      | best-effort | 429 Too Many Requests   |
+      | strict      | connection reset        |
+      | best-effort | connection reset        |
+
+  Scenario Outline: should attempt session token renewal on 390112 with <strategy> strategy
+    # SESSION_TOKEN_EXPIRED: recoverable via master token refresh
+    Given Core logout function called with <strategy> strategy
+    And Mock server returns SESSION_TOKEN_EXPIRED 390112
+    And Master token is valid for renewal
     When Logout is executed
-    Then Logout is retried
+    Then Session token renewal is attempted using master token
+    And Logout is retried with new session token
     And Close succeeds
 
-  Scenario: should throw on non-retryable error with strict strategy injected
-    Given Core logout function called with strict strategy
-    And Mock server returns 400 Bad Request
+    Examples:
+      | strategy    |
+      | strict      |
+      | best-effort |
+
+  # ---------------------------------------------------------------------------
+  #  Retry and Timeout Configuration (Honors Provided Values)
+  # ---------------------------------------------------------------------------
+  # Design doc: Approach 4 + Extension 1 - wrappers can override retry config
+  # Default: 5s timeout, HTTP-wide retry count
+  # Wrappers pass their historical defaults (Python: 5s, JDBC/ODBC: 300s)
+
+  # -- Success path: retry then succeed (same outcome for both strategies) --
+
+  Scenario Outline: should honor provided retry config and succeed with <strategy> strategy
+    Given Core logout function called with <strategy> strategy
+    And Retry policy configured with <max_attempts> max attempts
+    And Mock server fails <failures> times then returns 200
     When Logout is executed
-    Then Close throws error
+    Then Exactly <expected_attempts> attempts are made
+    And Close succeeds
+
+    Examples:
+      | strategy    | max_attempts | failures | expected_attempts |
+      | strict      | 1            | 0        | 1                 |
+      | best-effort | 1            | 0        | 1                 |
+      | strict      | 3            | 1        | 2                 |
+      | best-effort | 3            | 1        | 2                 |
+      | strict      | 5            | 4        | 5                 |
+      | best-effort | 5            | 4        | 5                 |
+
+  Scenario Outline: should honor provided timeout config and succeed with <strategy> strategy
+    # Wrappers pass their historical defaults (Python: 5s, JDBC/ODBC: 300s)
+    Given Core logout function called with <strategy> strategy
+    And Timeout configured to <timeout_seconds> seconds
+    And Mock server delays response by <delay_seconds> seconds then returns 200
+    When Logout is executed
+    Then Request completes within <timeout_seconds> seconds
+    And Close succeeds
+
+    Examples:
+      | strategy    | timeout_seconds | delay_seconds |
+      | strict      | 5               | 3             |
+      | best-effort | 5               | 3             |
+      | strict      | 300             | 10            |
+      | best-effort | 300             | 10            |
+
+  # -- Failure path: exhausted retries (outcome differs per strategy) --
+
+  Scenario Outline: should throw after exhausted retries with strict strategy
+    Given Core logout function called with strict strategy
+    And Retry policy configured with <max_attempts> max attempts
+    And Mock server returns 503 on all attempts
+    When Logout is executed
+    Then Exactly <max_attempts> attempts are made
+    And No further retries after max reached
+    And WARN log is emitted
+    And Close throws error
+
+    Examples:
+      | max_attempts |
+      | 2            |
+      | 3            |
+
+  Scenario Outline: should log WARN and succeed after exhausted retries with best-effort strategy
+    Given Core logout function called with best-effort strategy
+    And Retry policy configured with <max_attempts> max attempts
+    And Mock server returns 503 on all attempts
+    When Logout is executed
+    Then Exactly <max_attempts> attempts are made
+    And No further retries after max reached
+    And WARN log is emitted
+    And Close succeeds
+
+    Examples:
+      | max_attempts |
+      | 2            |
+      | 3            |
+
+  # -- Failure path: timeout (outcome differs per strategy) --
+
+  Scenario Outline: should throw on timeout with strict strategy
+    Given Core logout function called with strict strategy
+    And Timeout configured to <timeout_seconds> seconds
+    And Mock server delays response by <delay_seconds> seconds
+    When Logout is executed
+    Then Request times out after <timeout_seconds> seconds
+    And Close throws timeout error
+
+    Examples:
+      | timeout_seconds | delay_seconds |
+      | 3               | 5             |
+      | 5               | 10            |
+
+  Scenario Outline: should log WARN and succeed on timeout with best-effort strategy
+    Given Core logout function called with best-effort strategy
+    And Timeout configured to <timeout_seconds> seconds
+    And Mock server delays response by <delay_seconds> seconds
+    When Logout is executed
+    Then Request times out after <timeout_seconds> seconds
+    And Timeout is logged as WARN
+    And Close succeeds
+
+    Examples:
+      | timeout_seconds | delay_seconds |
+      | 3               | 5             |
+      | 5               | 10            |
+
+  # ---------------------------------------------------------------------------
+  #  Strategy-Specific Behaviors
+  # ---------------------------------------------------------------------------
+
+  Scenario: should throw on non-retryable errors in strict strategy
+    # Parametrized test implementation should cover: 400, 401, 403, 404, 405, 409
+    Given Core logout function called with strict strategy
+    And Mock server returns non-retryable HTTP error
+    When Logout is executed
+    Then Close throws error immediately
     And Error is surfaced to caller
+    And No retries are attempted
 
-  Scenario: should log and succeed on non-retryable error with best-effort strategy injected
+  Scenario: should log and suppress non-retryable errors in best-effort strategy
+    # Parametrized test implementation should cover: 400, 401, 403, 404, 405, 409
     Given Core logout function called with best-effort strategy
-    And Mock server returns 400 Bad Request
+    And Mock server returns non-retryable HTTP error
     When Logout is executed
     Then Error is logged as WARN
     And Close succeeds without throwing
+    And No retries are attempted
 
   Scenario: should handle master token expired 390114 with strict strategy injected
     Given Core logout function called with strict strategy
@@ -187,22 +316,6 @@ Feature: Session Logout - Core HTTP Layer Integration
     And Mock server returns MASTER_TOKEN_EXPIRED 390114
     When Logout is executed
     Then Error is logged as WARN
-    And Close succeeds
-
-  Scenario: should handle final retry failure with strict strategy injected
-    Given Core logout function called with strict strategy
-    And Mock server returns 503 on all attempts
-    When Logout is executed with max 3 attempts
-    Then All retries exhausted
-    And WARN log emitted
-    And Close throws error
-
-  Scenario: should handle final retry failure with best-effort strategy injected
-    Given Core logout function called with best-effort strategy
-    And Mock server returns 503 on all attempts
-    When Logout is executed with max 3 attempts
-    Then All retries exhausted
-    And WARN log emitted
     And Close succeeds
 
   # ===========================================================================
