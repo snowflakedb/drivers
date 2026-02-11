@@ -1,17 +1,17 @@
 #ifndef COMPATIBILITY_HPP
 #define COMPATIBILITY_HPP
 
-#include "compatibility.hpp"
-
 #include <catch2/catch_test_macros.hpp>
+
+#include "compatibility.hpp"
 
 // Cross-platform process ID
 #ifdef _WIN32
-  #include <process.h>
-  #define GET_PROCESS_ID() _getpid()
+#include <process.h>
+#define GET_PROCESS_ID() _getpid()
 #else
-  #include <unistd.h>
-  #define GET_PROCESS_ID() getpid()
+#include <unistd.h>
+#define GET_PROCESS_ID() getpid()
 #endif
 
 enum class DRIVER_TYPE {
@@ -35,12 +35,9 @@ extern DRIVER_TYPE get_driver_type();
     SKIP("Skipping for new driver: " << bd << ": " << message); \
   }
 
-// Skip test if running against the new Universal Driver
-#define SKIP_NEW_DRIVER_NOT_IMPLEMENTED()                                      \
-  do {                                                                         \
-    if (get_driver_type() == DRIVER_TYPE::NEW) {                               \
-      SKIP("Feature not yet implemented in new Universal Driver");             \
-    }                                                                          \
-  } while (0)
+#define SKIP_NEW_DRIVER_NOT_IMPLEMENTED()      \
+  if (get_driver_type() == DRIVER_TYPE::NEW) { \
+    SKIP("Not implemented for new driver");    \
+  }
 
 #endif  // COMPATIBILITY_HPP
