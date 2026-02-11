@@ -4,7 +4,7 @@ edition = "2024"
 
 [lib]
 name = "sf_core"
-crate-type = ["dylib", "rlib"]
+crate-type = ["rlib"]  # Temporarily disabled dylib due to linker version script issue
 
 [dependencies]
 tracing-opentelemetry = "0.31.0"
