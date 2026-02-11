@@ -219,7 +219,7 @@ class TestEdgeCases:
         # Given Snowflake client is logged in
 
         # When Query with 2 placeholders is executed with 3 arguments
-        # Then Query should succesfully execute
+        # Then Query should successfully execute
         cursor.execute("SELECT ?, ?", (1, 2, 3))
 
         # When Query with 3 placeholders is executed with 1 argument
