@@ -28,7 +28,8 @@ from ._internal.protobuf_gen.database_driver_v1_pb2 import (
     StringPtr,
 )
 from ._internal.type_codes import get_type_code
-from .errors import NotSupportedError, ProgrammingError
+from ._internal.protobuf_gen.proto_exception import ProtoApplicationException
+from .errors import DatabaseError, NotSupportedError, ProgrammingError
 
 
 if TYPE_CHECKING:
@@ -38,12 +39,34 @@ Row = tuple[Any, ...]
 DictRow = dict[str, Any]
 
 
+def _convert_proto_error(exc: ProtoApplicationException) -> DatabaseError:
+    """Convert a ProtoApplicationException from Rust core into the appropriate PEP 249 error.
+
+    Inspects the protobuf DriverException's message to classify the error.
+    SQL compilation errors (e.g. wrong number of bind variables) become
+    ProgrammingError, which is the PEP 249 category for "syntax error in
+    the SQL statement, wrong number of parameters specified, etc."
+    """
+    msg = str(exc.message) if hasattr(exc, "message") else str(exc)
+
+    # SQL compilation errors are programming mistakes (wrong SQL, missing
+    # bind variables, type mismatches, etc.)
+    if "SQL compilation error" in msg:
+        return ProgrammingError(msg)
+
+    # Default: surface as a generic DatabaseError so callers can still
+    # catch it via the PEP 249 hierarchy.
+    return DatabaseError(msg)
+
 class ResultMetadata(NamedTuple):
     """PEP 249 column description entry.
 
     Each item in ``Cursor.description`` is a ``ResultMetadata`` instance.
     Being a :class:`~typing.NamedTuple` it is fully tuple-compatible as
     required by the spec, while also providing named attribute access.
+    """
+
+class Cursor:
     """
 
     name: str
@@ -241,7 +264,10 @@ class SnowflakeCursorBase(abc.ABC):
         else:
             request = StatementExecuteQueryRequest(stmt_handle=stmt_handle)
 
-        self.execute_result = self.connection.db_api.statement_execute_query(request).result
+        try:
+            self.execute_result = self.connection.db_api.statement_execute_query(request).result
+        except ProtoApplicationException as e:
+            raise _convert_proto_error(e) from e
 
         # Reset streaming state for a new result
         self._binding_data = None
