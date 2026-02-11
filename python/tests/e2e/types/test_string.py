@@ -186,7 +186,7 @@ class TestStringBinding:
 
         # When String value 'Test binding value 日本語' is inserted using parameter binding
         test_value = "Test binding value 日本語"
-        rows = executemany_insert(table_name, f"INSERT INTO {table_name} VALUES (?)", [(test_value,)])
+        executemany_insert(table_name, f"INSERT INTO {table_name} VALUES (?)", [(test_value,)])
 
         # And Query "SELECT * FROM {table}" is executed
         rows = execute_query(f"SELECT * FROM {table_name}")
