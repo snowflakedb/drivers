@@ -87,23 +87,51 @@ Feature: Session Logout - Core HTTP Layer Integration
     And Total wall-clock time does not exceed 7 seconds for closing the connection
 
   # ===========================================================================
-  #                      Concurrency and State Management
+  #                      Close vs Active Query Execution
   # ===========================================================================
 
-  Scenario: should handle close during session token refresh
-    Given Mock HTTP server simulates concurrent logout and refresh
-    And Session token refresh is in progress
+  Scenario: should reject new query after close is initiated
+    Given Mock HTTP server is configured
+    And UD Core connection is logged in
     When Connection close is initiated
-    Then Refresh operation is cancelled or completed
-    And Logout proceeds with available token
-    And No race conditions occur
+    And A new query SELECT 1 is submitted after close started
+    Then Query is rejected immediately with connection closed error
+    And No query HTTP request is sent to server
 
-  Scenario: should handle close during active query execution
-    Given Connection has active query in progress
-    When Connection close is initiated
-    Then New operations are rejected with connection closed error
-    And Active query execution is interrupted
-    And Resources are cleaned up
+  Scenario: should cancel running query when close is initiated
+    Given Mock HTTP server delays query response by 10 seconds
+    And UD Core connection is logged in
+    And Query is submitted and server has not responded yet
+    When Connection close is initiated while query response is pending
+    Then In-flight query request is cancelled
+    And Query caller receives cancellation or connection closed error
+    And Logout proceeds without waiting for query to complete
+
+  # ===========================================================================
+  #                  Close vs Token Refresh Race Conditions
+  # ===========================================================================
+
+  Scenario: should cancel in-progress token refresh when close is initiated
+    Given Mock HTTP server delays token refresh response by 5 seconds
+    And UD Core connection is logged in
+    And Session token refresh request is in-flight
+    When Connection close is initiated before refresh response arrives
+    Then Token refresh request is cancelled
+    And Session and master tokens are cleared despite incomplete refresh
+    And Logout proceeds with the token that was available at close initiation time
+
+  Scenario: should not renew token when 390112 arrives for a query after close already cleared tokens
+    # Timeline: query executing → close() called → tokens cleared →
+    # server responds 390112 to the in-flight query → query handler must NOT renew
+    # because renewed tokens would overwrite the already-cleared token state
+    Given Mock HTTP server returns 390112 SESSION_TOKEN_EXPIRED to query after 3 second delay
+    And UD Core connection is logged in
+    And Query is submitted and waiting for server response
+    When Connection close is initiated while query is in-flight
+    And Server responds 390112 SESSION_TOKEN_EXPIRED to the in-flight query after close started
+    Then No token refresh request is sent to server
+    And Previously cleared tokens are not overwritten by a renewal
+    And Query fails with connection closed error
 
   # ===========================================================================
   #                  Error Strategy Behavior (Injected Strategy Testing)

@@ -472,37 +472,6 @@ class TestLogoutTimeoutRetry:
     # #And Error is handled according to error strategy
     # assert conn.is_closed()
 
-    def test_should_respect_max_retry_attempts_from_http_policy(self, connection_factory):
-        # Given Snowflake client is logged in with max 2 retry attempts
-        conn = connection_factory()
-
-        # And Server will always return 503 error
-
-        # (Tested in Core)
-
-        # When Connection is closed
-        conn.close()
-
-        # Then Logout is attempted at most 3 times
-        # And Final error is handled according to error strategy
-        assert conn.is_closed()
-
-    def test_should_use_exponential_backoff_for_logout_retries(self, connection_factory):
-        # Given Snowflake client is logged in
-        conn = connection_factory()
-
-        # And Server will return 503 error twice then succeed
-
-        # (Tested in Core)
-
-        # When Connection is closed
-        conn.close()
-
-        # Then First retry waits exponential backoff duration
-        # And Second retry waits longer exponential backoff duration
-        # And Third attempt succeeds
-        assert conn.is_closed()
-
     # TODO: Uncomment when scenario gets language-level tag
     # DEF test_should_not_block_process_exit_when_timeout_expires(self, connection_factory):
     # #Given Snowflake client is logged in

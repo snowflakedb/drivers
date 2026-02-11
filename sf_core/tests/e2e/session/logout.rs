@@ -990,57 +990,6 @@ fn should_be_idempotent_when_close_called_multiple_times() {
 //     // Non-retryable error handling tested in integration tests
 // }
 
-#[test]
-fn should_respect_max_retry_attempts_from_http_policy() {
-    //Given Snowflake client is logged in with max 2 retry attempts
-    let client = SnowflakeTestClient::connect_with_default_auth();
-
-    //And Server will always return 503 error
-
-    // Note: Can't force persistent 503 in E2E
-
-    //When Connection is closed
-    let result = DatabaseDriverClient::connection_close(ConnectionCloseRequest {
-        conn_handle: Some(client.conn_handle),
-        server_session_keep_alive: None,
-        enable_auto_detection: None,
-        error_strategy: Some("BestEffort".to_string()),
-        timeout_seconds: None,
-    });
-
-    //Then Logout is attempted at most 3 times
-    //And Final error is handled according to error strategy
-    assert!(result.is_ok(), "BestEffort should succeed");
-
-    // Max retry attempts tested in integration tests
-}
-
-#[test]
-fn should_use_exponential_backoff_for_logout_retries() {
-    //Given Snowflake client is logged in
-    let client = SnowflakeTestClient::connect_with_default_auth();
-
-    //And Server will return 503 error twice then succeed
-
-    // Note: Tested in integration tests with mock server
-
-    //When Connection is closed
-    let result = DatabaseDriverClient::connection_close(ConnectionCloseRequest {
-        conn_handle: Some(client.conn_handle),
-        server_session_keep_alive: None,
-        enable_auto_detection: None,
-        error_strategy: None,
-        timeout_seconds: None,
-    });
-
-    //Then First retry waits exponential backoff duration
-    //And Second retry waits longer exponential backoff duration
-    //And Third attempt succeeds
-    assert!(result.is_ok(), "Close should succeed");
-
-    // Exponential backoff verified in integration tests
-}
-
 // TODO: Uncomment when scenario gets @core_e2e/@core_int tag
 // #[test]
 // fn should_not_block_process_exit_when_timeout_expires() {

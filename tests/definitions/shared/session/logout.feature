@@ -65,28 +65,6 @@ Feature: Session Logout
     And Telemetry thread is terminated
     And Process can exit immediately without hanging
 
-  # ===========================================================================
-  #                        Timeout and Retry Behavior
-  # ===========================================================================
-  # Error handling scenarios moved to core/session/logout.feature
-  # Core tests strategies with injection, wrappers test default strategy choice
-
-  @core_e2e @python_e2e
-  Scenario: should respect max retry attempts from HTTP policy
-    Given Snowflake client is logged in with max 2 retry attempts
-    And Server will always return 503 error
-    When Connection is closed
-    Then Logout is attempted at most 3 times
-    And Final error is handled according to error strategy
-
-  @core_e2e @python_e2e
-  Scenario: should use exponential backoff for logout retries
-    Given Snowflake client is logged in
-    And Server will return 503 error twice then succeed
-    When Connection is closed
-    Then First retry waits exponential backoff duration
-    And Second retry waits longer exponential backoff duration
-    And Third attempt succeeds
 
   # ===========================================================================
   #                        Concurrency
