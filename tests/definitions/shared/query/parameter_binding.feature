@@ -106,6 +106,14 @@ Feature: Parameter binding
     When Query "SELECT ?::NUMBER, ?::VARCHAR, ?::BOOLEAN" is executed with parameters [42, "hello", True]
     Then Result should match the type-casted parameters [42, "hello", True]
 
+  @python_e2e
+  Scenario: should raise error when placeholder count mismatches argument count
+    Given Snowflake client is logged in
+    When Query with 2 placeholders is executed with 3 arguments
+    Then Query should succesfully execute
+    When Query with 3 placeholders is executed with 1 argument
+    Then Error should be raised for too few arguments
+
   # =========================================================================== #
   #                        Multirow binding                                   #
   # =========================================================================== #
@@ -153,5 +161,5 @@ Feature: Parameter binding
     Given Snowflake client is logged in
     And A temporary table with columns (id NUMBER, name VARCHAR) exists
     And Rows [1, "Alice"], [2, "Bob"], [3, "Charlie"], [4, "David"], [5, "Eve"] are inserted
-    When Query SELECT * FROM {table_name} WHERE id = ? OR id = ? OR id = ? ORDER BY id is executed with parameters [1, 3, 5]
+    When Query with multiple OR conditions is executed with parameters [1, 3, 5]
     Then Result should contain [("Alice"), ("Charlie"), ("Eve")]

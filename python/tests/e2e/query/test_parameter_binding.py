@@ -215,6 +215,18 @@ class TestEdgeCases:
         # Then Result should match the type-casted parameters [42, "hello", True]
         assert result == (42, "hello", True)
 
+    def test_should_raise_error_when_placeholder_count_mismatches_argument_count(self, cursor):
+        # Given Snowflake client is logged in
+
+        # When Query with 2 placeholders is executed with 3 arguments
+        # Then Query should succesfully execute
+        cursor.execute("SELECT ?, ?", (1, 2, 3))
+
+        # When Query with 3 placeholders is executed with 1 argument
+        # Then Error should be raised for too few arguments
+        with pytest.raises(ProgrammingError):
+            cursor.execute("SELECT ?, ?, ?", (1,))
+
 
 class TestArrayBinding:
     """Tests for multirow binding (executemany functionality)."""
@@ -312,23 +324,23 @@ class TestComplexScenarios:
         # Then Result should contain all 20 values in order
         assert result == params
 
-
-    def test_should_bind_parameters_with_or_clause_for_multiple_value_matching(self, execute_query, executemany_insert, tmp_schema):
+    def test_should_bind_parameters_with_or_clause_for_multiple_value_matching(self, cursor, tmp_schema):
         # Given Snowflake client is logged in
 
         # And A temporary table with columns (id NUMBER, name VARCHAR) exists
         table_name = f"{tmp_schema}.test_in_clause"
-        execute_query(f"CREATE TABLE {table_name} (id NUMBER, name VARCHAR)")
+        cursor.execute(f"CREATE TABLE {table_name} (id NUMBER, name VARCHAR)")
 
         # And Rows [1, "Alice"], [2, "Bob"], [3, "Charlie"], [4, "David"], [5, "Eve"] are inserted
-        rows = [(i, name) for i, name in enumerate(["Alice", "Bob", "Charlie", "David", "Eve"], 1)]
-        executemany_insert(table_name, f"INSERT INTO {table_name} VALUES (?, ?)", rows)
-        # When Query SELECT * FROM {table_name} WHERE id = ? OR id = ? OR id = ? ORDER BY id is executed with parameters [1, 3, 5]
+        for i, name in enumerate(["Alice", "Bob", "Charlie", "David", "Eve"], 1):
+            cursor.execute(f"INSERT INTO {table_name} VALUES (?, ?)", (i, name))
 
-        result = execute_query(
+        # When Query with multiple OR conditions is executed with parameters [1, 3, 5]
+        cursor.execute(
             f"SELECT * FROM {table_name} WHERE id = ? OR id = ? OR id = ? ORDER BY id",
             (1, 3, 5),
         )
+        result = cursor.fetchall()
 
         # Then Result should contain [("Alice"), ("Charlie"), ("Eve")]
         assert len(result) == 3
