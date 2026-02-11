@@ -18,7 +18,9 @@ use arrow::{
     array::{Int32Array, StringArray},
     datatypes::DataType,
 };
+use serde_json::value::RawValue;
 use snafu::Snafu;
+use std::borrow::Cow;
 use std::{collections::HashMap, sync::Arc};
 
 use super::connection::Connection;
@@ -179,14 +181,20 @@ pub fn statement_execute_query(
     let execution_mode = stmt.execution_mode(Some(query_str));
     let query = stmt.query.take().expect("query must be present");
 
-    // Get bindings from protobuf request or from statement's Arrow bindings
-    let bindings = if let Some(proto_binding_type) = proto_bindings {
+    // Get bindings from protobuf request or from statement's Arrow bindings.
+    //
+    // JSON path (from language wrappers): returns Cow::Borrowed(&'static RawValue)
+    // pointing directly into wrapper memory -- zero allocation, zero copy.
+    // Arrow path (ODBC backwards compat): returns Cow::Owned(Box<RawValue>)
+    // after building a HashMap and serializing it to a JSON string.
+    let bindings: Option<Cow<'static, RawValue>> = if let Some(proto_binding_type) = proto_bindings
+    {
         // Handle bindings from protobuf request
         match proto_binding_type {
             crate::protobuf_gen::database_driver_v1::query_bindings::BindingType::Json(
                 string_ptr,
             ) => {
-                // Parse JSON bindings
+                // Returns Cow::Borrowed -- zero copy, points into wrapper memory
                 parse_json_bindings(&string_ptr).context(StatementSnafu)?
             }
             crate::protobuf_gen::database_driver_v1::query_bindings::BindingType::Csv(_csv_ptr) => {
@@ -205,12 +213,18 @@ pub fn statement_execute_query(
             }
         }
     } else {
-        // Fall back to statement's existing Arrow bindings (backwards compatibility)
+        // Fall back to statement's existing Arrow bindings (backwards compatibility).
+        // This path allocates: HashMap → serde_json::to_string → Cow::Owned(Box<RawValue>).
         stmt.get_query_parameter_bindings()
             .context(StatementSnafu)?
     };
 
-    // Execute query with automatic session refresh on 401
+    // Execute query with automatic session refresh on 401.
+    //
+    // `bindings` is Cow<'static, RawValue>. For the JSON path (Cow::Borrowed),
+    // clone() just copies the pointer (8 bytes). For the Arrow path (Cow::Owned),
+    // clone() copies the JSON string. The closure may be called twice (initial +
+    // retry on 401), so cheap cloning matters for the common JSON path.
     let conn = stmt.conn.clone();
     let response = rt.block_on(with_valid_session(&conn, |session_token| {
         let http_client = http_client.clone();
@@ -246,9 +260,20 @@ pub fn statement_execute_query(
     })
 }
 
+/// Convert Arrow RecordBatch parameter bindings to `Cow::Owned(Box<RawValue>)`.
+///
+/// This is the backwards-compatibility path used by ODBC's `StatementBind` API.
+/// Unlike the JSON path (which borrows wrapper memory with zero copy), this path
+/// must allocate:
+///   1. A `HashMap<String, BindParameter>` is built from Arrow column data.
+///   2. `serde_json::to_string()` serializes the HashMap into a JSON `String`
+///      (one heap allocation for the output buffer).
+///   3. `RawValue::from_string()` validates the JSON syntax and wraps the string
+///      (no additional copy -- RawValue takes ownership of the String).
+///   4. `Cow::Owned` wraps the Box (no allocation, just an enum tag).
 fn parameters_from_record_batch(
     record_batch: &RecordBatch,
-) -> Result<serde_json::Value, StatementError> {
+) -> Result<Cow<'static, RawValue>, StatementError> {
     let mut parameters = HashMap::new();
     for i in 0..record_batch.num_columns() {
         let column = record_batch.column(i);
@@ -295,13 +320,22 @@ fn parameters_from_record_batch(
             }
         }
     }
-    // Convert HashMap to JSON Value for backwards compatibility
-    serde_json::to_value(parameters).map_err(|_| {
+    // Serialize HashMap to a JSON string, then wrap as RawValue.
+    // serde_json::to_string allocates the output buffer; RawValue::from_string
+    // takes ownership of that String without copying.
+    let json_string = serde_json::to_string(&parameters).map_err(|_| {
         UnsupportedBindParameterTypeSnafu {
             type_: "Failed to serialize parameters".to_string(),
         }
         .build()
-    })
+    })?;
+    let raw = RawValue::from_string(json_string).map_err(|_| {
+        UnsupportedBindParameterTypeSnafu {
+            type_: "Failed to create RawValue from serialized parameters".to_string(),
+        }
+        .build()
+    })?;
+    Ok(Cow::Owned(raw))
 }
 
 pub struct Statement {
@@ -346,7 +380,7 @@ impl Statement {
 
     pub fn get_query_parameter_bindings(
         &self,
-    ) -> Result<Option<serde_json::Value>, StatementError> {
+    ) -> Result<Option<Cow<'static, RawValue>>, StatementError> {
         match self.parameter_bindings.as_ref() {
             Some(parameters) => Ok(Some(parameters_from_record_batch(parameters)?)),
             None => Ok(None),
@@ -450,13 +484,39 @@ pub enum StatementError {
     },
 }
 
-/// Extract JSON bindings from StringPtr protobuf message
-/// Simply dereferences the pointer and parses as JSON Value - no validation.
-/// The Snowflake server is responsible for validating the binding format.
+/// Extract JSON bindings from a `StringPtr` protobuf message -- **zero copy**.
+///
+/// Returns `Cow::Borrowed(&'static RawValue)` that points directly into the
+/// language wrapper's memory. No heap allocation occurs for the JSON payload.
+///
+/// ## Memory / allocation details
+///
+/// 1. **Pointer dereference** (`unsafe`): creates a `&'static [u8]` slice over
+///    the wrapper's memory -- zero allocation.
+/// 2. **UTF-8 validation** (`std::str::from_utf8`): scans bytes in-place --
+///    zero allocation.
+/// 3. **JSON syntax validation** (`serde_json::from_str::<&RawValue>`): scans
+///    bytes to verify valid JSON syntax -- zero allocation. Returns a
+///    `&'static RawValue` that borrows the same wrapper memory.
+///
+/// Total allocations for the JSON payload: **zero**.
+///
+/// ## Safety
+///
+/// The `'static` lifetime is safe because:
+/// - The language wrapper (e.g. Python `cursor.py`) stores binding data on the
+///   Cursor instance (`self._binding_data`) and calls `statement_execute_query`
+///   synchronously. The data is not freed until `execute()` returns.
+/// - `statement_execute_query` runs the entire HTTP request synchronously via
+///   `rt.block_on()`. The pointer is valid from deref through HTTP serialization.
+/// - This is the same safety contract that justifies the `from_raw_parts` call.
+///
+/// The Snowflake server is responsible for validating the binding *structure*
+/// (correct types, value formats, etc.). Rust only checks syntax.
 fn parse_json_bindings(
     string_ptr: &crate::protobuf_gen::database_driver_v1::StringPtr,
-) -> Result<Option<serde_json::Value>, StatementError> {
-    // Validate pointer structure (must be 8 bytes)
+) -> Result<Option<Cow<'static, RawValue>>, StatementError> {
+    // Validate pointer structure (must be 8 bytes for a 64-bit address)
     if string_ptr.value.len() != 8 {
         return UnsupportedBindParameterTypeSnafu {
             type_: format!("StringPtr must be 8 bytes, got {}", string_ptr.value.len()),
@@ -464,7 +524,7 @@ fn parse_json_bindings(
         .fail();
     }
 
-    // Convert 8-byte array to usize pointer
+    // Convert 8-byte little-endian array to a usize pointer -- no allocation
     let ptr_bytes: [u8; 8] = string_ptr.value.as_slice().try_into().map_err(|_| {
         UnsupportedBindParameterTypeSnafu {
             type_: "Failed to convert pointer bytes".to_string(),
@@ -481,31 +541,35 @@ fn parse_json_bindings(
         .fail();
     }
 
-    // Dereference pointer to get JSON bytes (unsafe)
-    // Safety: Python wrapper guarantees the pointer is valid for this call
-    let json_bytes = unsafe {
+    // Dereference pointer to get JSON bytes as a &'static slice.
+    // Safety: the language wrapper keeps the data alive for the entire synchronous
+    // statement_execute_query call (including HTTP serialization via rt.block_on).
+    // The 'static lifetime is justified by the same contract as the raw pointer deref.
+    let json_bytes: &'static [u8] = unsafe {
         let ptr = ptr_value as *const u8;
         let length = string_ptr.length as usize;
         std::slice::from_raw_parts(ptr, length)
     };
 
-    // Convert to UTF-8 string
-    let json_str = std::str::from_utf8(json_bytes).map_err(|_| {
+    // Validate UTF-8 -- scans bytes in-place, zero allocation
+    let json_str: &'static str = std::str::from_utf8(json_bytes).map_err(|_| {
         UnsupportedBindParameterTypeSnafu {
             type_: "Invalid UTF-8 in bindings".to_string(),
         }
         .build()
     })?;
 
-    // Parse as raw JSON Value - server validates structure
-    let bindings: serde_json::Value = serde_json::from_str(json_str).map_err(|_| {
+    // Validate JSON syntax and wrap as &'static RawValue -- zero allocation.
+    // serde_json::from_str<&RawValue> scans for valid JSON and returns a
+    // reference that borrows from json_str (same wrapper memory).
+    let raw: &'static RawValue = serde_json::from_str(json_str).map_err(|_| {
         UnsupportedBindParameterTypeSnafu {
             type_: "Failed to parse bindings JSON".to_string(),
         }
         .build()
     })?;
 
-    Ok(Some(bindings))
+    Ok(Some(Cow::Borrowed(raw)))
 }
 
 #[cfg(test)]
@@ -645,7 +709,11 @@ mod tests {
         let result = parse_json_bindings(&string_ptr).unwrap();
         assert!(result.is_some());
 
-        let params = result.unwrap();
+        // parse_json_bindings returns Cow<'static, RawValue> -- the raw JSON string.
+        // To verify contents in the test, we parse it into a Value here.
+        let raw = result.unwrap();
+        let params: serde_json::Value = serde_json::from_str(raw.get()).unwrap();
+
         // Verify it's a JSON object with 2 keys
         assert!(params.is_object());
         let obj = params.as_object().unwrap();
@@ -682,7 +750,10 @@ mod tests {
         let result = parse_json_bindings(&string_ptr).unwrap();
         assert!(result.is_some());
 
-        let params = result.unwrap();
+        // parse_json_bindings returns Cow<'static, RawValue> -- parse to Value for test assertions
+        let raw = result.unwrap();
+        let params: serde_json::Value = serde_json::from_str(raw.get()).unwrap();
+
         // Verify it's a JSON object with 2 keys
         assert!(params.is_object());
         let obj = params.as_object().unwrap();

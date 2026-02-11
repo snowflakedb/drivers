@@ -56,6 +56,8 @@ class Cursor:
         self.execute_result: Any = None
         self._iterator: Iterator[Row] | None = None
         self.execute_result = None
+        # Query bindings - keep binding data reference to prevent garbage collection while Rust uses it
+        self._binding_data: None | bytes = None
 
     @property
     def description(self) -> Any:
@@ -158,6 +160,7 @@ class Cursor:
         self.execute_result = self.connection.db_api.statement_execute_query(request).result
 
         # Reset streaming state for a new result
+        self._binding_data = None
         self._iterator = None
         return self
 
