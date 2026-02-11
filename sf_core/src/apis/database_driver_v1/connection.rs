@@ -47,7 +47,7 @@ pub fn connection_init(conn_handle: Handle, _db_handle: Handle) -> Result<(), Ap
                 .context(LoginSnafu)?;
 
             // Initialize connection with session parameters from login response
-            // If missing, cache will be empty (None) - matching JDBC/Python/ODBC behavior
+            // Assume login always returns parameters (empty if none)
             conn_ptr
                 .lock()
                 .map_err(|_| ConnectionLockingSnafu {}.build())?
@@ -56,7 +56,7 @@ pub fn connection_init(conn_handle: Handle, _db_handle: Handle) -> Result<(), Ap
                     http_client,
                     login_parameters.server_url.clone(),
                     login_parameters.client_info.clone(),
-                    session_params,
+                    session_params.unwrap_or_default(),
                 );
             Ok(())
         }
@@ -158,7 +158,7 @@ impl Connection {
         http_client: reqwest::Client,
         server_url: String,
         client_info: ClientInfo,
-        session_params: Option<HashMap<String, String>>,
+        session_params: HashMap<String, String>,
     ) {
         // Use blocking_write since we're in a sync context during connection_init
         *self.tokens.blocking_write() = Some(tokens);
@@ -166,11 +166,9 @@ impl Connection {
         self.server_url = Some(server_url);
         self.client_info = Some(client_info);
 
-        // Populate session parameters cache if provided
-        if let Some(params) = session_params
-            && let Ok(mut cache) = self.session_parameters.write()
-        {
-            *cache = params;
+        // Populate session parameters cache (assume login always returns parameters)
+        if let Ok(mut cache) = self.session_parameters.write() {
+            *cache = session_params;
         }
     }
 }

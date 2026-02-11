@@ -67,7 +67,7 @@ conn = snowflake.connector.connect(
 - Dedicated RPC method is cleaner than special-key workarounds
 - Clean separation from regular connection options (account, user, etc.)
 
-### 3. Session Parameters Cache with SQL Fallback and Invalidation
+### 3. Session Parameters Cache
 
 The Rust `Connection` struct maintains a session parameters cache:
 
@@ -79,9 +79,9 @@ pub struct Connection {
 ```
 
 **Cache population:**
-- Initialized from auth response `_parameters` field after login
+- Initialized from auth response `_parameters` field after login (assumed always present)
+- Empty HashMap if no parameters returned
 - Parameter names normalized to uppercase for case-insensitive access
-- Updated when parameters are retrieved via SQL fallback
 
 **Cache update from query responses:**
 - Cache is **updated** after every successful query execution
@@ -90,21 +90,25 @@ pub struct Connection {
 - This approach matches the old Python connector's behavior
 - Implemented in `statement_execute_query` after successful query execution
 
-**SQL Fallback:**
-When a parameter is not found in cache, `connection_get_parameter`:
-1. Checks cache first (fast path)
-2. If not found, executes `SHOW PARAMETERS LIKE 'param_name' IN SESSION`
-3. Parses the result to extract the value
-4. Updates cache with retrieved value
-5. Returns the value or `None` if parameter doesn't exist
+**ALTER SESSION optimistic cache update:**
+- Before executing any query, the SQL is parsed to detect `ALTER SESSION SET` statements
+- If detected, the parameter name and value are extracted and the cache is updated immediately
+- This provides immediate consistency, matching Python driver behavior
+- The cache is still updated from the query response for verification
+- Implemented using a dedicated SQL parser in `alter_session_parser.rs`
+
+**Cache-only reads:**
+When `connection_get_parameter` is called:
+1. Returns value from cache if present
+2. Returns `None` if not in cache
+3. No SQL fallback - matches JDBC/Python/ODBC behavior
 
 **Rationale:**
-- Fast path avoids server roundtrips for frequently accessed parameters
-- SQL fallback ensures accuracy for parameters not in initial auth response
+- Cache-only reads avoid unnecessary server roundtrips
 - Automatic cache update from query responses keeps cache synchronized with server state
+- ALTER SESSION parsing provides immediate cache updates, matching Python driver behavior
+- Matches behavior of JDBC, Python, and ODBC drivers (no SQL fallback)
 - Matches the old Python connector's behavior (updates cache from every query response)
-- More efficient than clearing cache and re-fetching: preserves valid cached values
-- Automatic cache update on SQL fallback prevents repeated queries
 - `Arc<RwLock<>>` allows concurrent reads with exclusive writes
 - Uppercase normalization provides case-insensitive behavior matching Snowflake semantics
 
@@ -207,11 +211,16 @@ pub fn connection_get_parameter(
 ```
 
 **Module:** `sf_core/src/apis/database_driver_v1/session_parameters.rs`
-- Implements `connection_get_parameter` with two-tier lookup:
-  1. Cache lookup (fast path)
-  2. SQL fallback via `SHOW PARAMETERS LIKE 'param' IN SESSION`
-- Executes query using `with_valid_session` for automatic token refresh
-- Parses result and updates cache
+- Implements `connection_get_parameter` with cache-only lookup
+- Returns value from cache if present, `None` otherwise
+- No SQL fallback - matches behavior of existing drivers
+
+**Module:** `sf_core/src/apis/database_driver_v1/alter_session_parser.rs`
+- Parses `ALTER SESSION SET` SQL statements to extract parameter changes
+- Supports various SQL formats (quoted/unquoted values, single/double quotes)
+- Handles SQL comments and escaped quotes
+- Returns `AlterSessionParameter { name, value }` on successful parse
+- Used by `statement_execute_query` for optimistic cache updates
 
 **Handlers:** `sf_core/src/protobuf_apis/database_driver_v1.rs`
 - `connection_set_session_parameters`: Stores parameters for init
@@ -253,7 +262,7 @@ def _get_session_parameter(self, name: str) -> str | None:
 ### Negative
 
 - **No public API:** Users cannot programmatically inspect session parameters
-- **SQL fallback overhead:** First access to uncached parameters requires query execution
+- **Cache-only reads:** Parameters not in cache return `None` (user must query via SQL if needed)
 - **Internal implementation only:** `_get_session_parameter` is private, subject to change
 
 ### Future Enhancements
