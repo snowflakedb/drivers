@@ -16,8 +16,7 @@ use reqwest;
 pub fn connection_init(conn_handle: Handle, _db_handle: Handle) -> Result<(), ApiError> {
     match CONN_HANDLE_MANAGER.get_obj(conn_handle) {
         Some(conn_ptr) => {
-            // Create a blocking runtime for the login process
-            let rt = tokio::runtime::Runtime::new().context(RuntimeCreationSnafu)?;
+            let rt = crate::async_bridge::runtime().context(RuntimeCreationSnafu)?;
 
             let settings_guard = conn_ptr
                 .lock()
