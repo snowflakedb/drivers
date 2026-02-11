@@ -153,6 +153,8 @@ pub struct Statement<'a> {
     pub parameter_bindings: HashMap<u16, ParameterBinding>,
     pub column_bindings: HashMap<u16, Binding>,
     pub diagnostic_info: DiagnosticInfo,
+    /// JSON binding data - stored to prevent deallocation while Rust core uses it
+    pub json_binding_data: Option<String>,
 }
 
 // Helper functions for handle conversion

@@ -52,6 +52,7 @@ pub fn alloc_statement(input_handle: sql::Handle) -> OdbcResult<*mut Statement<'
                 parameter_bindings: std::collections::HashMap::new(),
                 column_bindings: std::collections::HashMap::new(),
                 diagnostic_info: DiagnosticInfo::default(),
+                json_binding_data: None,
             });
             Ok(Box::into_raw(stmt))
         }

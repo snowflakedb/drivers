@@ -1,38 +1,21 @@
 use crate::api::api_utils::{cstr_to_string, utf16_to_string};
 use crate::api::error::{
-    ArrowArrayStreamReaderCreationSnafu, ArrowBindingSnafu, DisconnectedSnafu,
+    ArrowArrayStreamReaderCreationSnafu, BindParametersSnafu, DisconnectedSnafu,
     InvalidParameterNumberSnafu, Required,
 };
 use crate::api::{ConnectionState, OdbcResult, ParameterBinding, StatementState, stmt_from_handle};
 use crate::cdata_types::CDataType;
 use crate::conversion::Binding;
-use crate::write_arrow::odbc_bindings_to_arrow_bindings;
-use arrow::ffi::{FFI_ArrowArray, FFI_ArrowSchema};
+use crate::json_binding;
 use arrow::ffi_stream::{ArrowArrayStreamReader, FFI_ArrowArrayStream};
 use odbc_sys as sql;
 use sf_core::protobuf_apis::database_driver_v1::DatabaseDriverClient;
 use sf_core::protobuf_gen::database_driver_v1::{
-    ArrowArrayPtr, ArrowSchemaPtr, StatementBindRequest, StatementExecuteQueryRequest,
-    StatementExecuteQueryResponse, StatementPrepareRequest, StatementSetSqlQueryRequest,
+    QueryBindings, StatementExecuteQueryRequest, StatementExecuteQueryResponse,
+    StatementPrepareRequest, StatementSetSqlQueryRequest, StringPtr, query_bindings,
 };
 use snafu::ResultExt;
 use tracing;
-
-fn protobuf_from_ffi_arrow_array(raw: *mut FFI_ArrowArray) -> ArrowArrayPtr {
-    let len = std::mem::size_of::<*mut FFI_ArrowArray>();
-    let buf_ptr = std::ptr::addr_of!(raw) as *const u8;
-    let slice = unsafe { std::slice::from_raw_parts(buf_ptr, len) };
-    let vec = slice.to_vec();
-    ArrowArrayPtr { value: vec }
-}
-
-fn protobuf_from_ffi_arrow_schema(raw: *mut FFI_ArrowSchema) -> ArrowSchemaPtr {
-    let len = std::mem::size_of::<*mut FFI_ArrowSchema>();
-    let buf_ptr = std::ptr::addr_of!(raw) as *const u8;
-    let slice = unsafe { std::slice::from_raw_parts(buf_ptr, len) };
-    let vec = slice.to_vec();
-    ArrowSchemaPtr { value: vec }
-}
 
 pub fn exec_direct_n(
     statement_handle: sql::Handle,
@@ -131,31 +114,55 @@ pub fn execute(statement_handle: sql::Handle) -> OdbcResult<()> {
             db_handle: _,
             conn_handle: _,
         } => {
-            // If there are bound parameters, we should bind them to the statement
-            if !stmt.parameter_bindings.is_empty() {
+            // If there are bound parameters, serialize them to JSON
+            let bindings = if !stmt.parameter_bindings.is_empty() {
                 tracing::info!(
                     "execute: Found {} bound parameters",
                     stmt.parameter_bindings.len()
                 );
 
-                let (schema, array) = odbc_bindings_to_arrow_bindings(&stmt.parameter_bindings)
-                    .context(ArrowBindingSnafu {})?;
+                // Serialize bindings to JSON
+                let json_str =
+                    json_binding::serialize_bindings(&stmt.parameter_bindings).map_err(|e| {
+                        BindParametersSnafu {
+                            parameters: format!("Failed to serialize bindings: {}", e),
+                        }
+                        .build()
+                    })?;
 
-                // Bind parameters to statement
-                DatabaseDriverClient::statement_bind(StatementBindRequest {
-                    stmt_handle: Some(stmt.stmt_handle),
-                    schema: Some(protobuf_from_ffi_arrow_schema(Box::into_raw(schema))),
-                    array: Some(protobuf_from_ffi_arrow_array(Box::into_raw(array))),
-                })?;
+                if json_str.is_empty() {
+                    None
+                } else {
+                    // Store JSON string in statement to prevent deallocation
+                    stmt.json_binding_data = Some(json_str);
 
-                tracing::info!("Successfully bound parameters");
-            }
+                    // Get pointer to the stored JSON string
+                    let json_bytes = stmt.json_binding_data.as_ref().unwrap().as_bytes();
+                    let ptr_value = json_bytes.as_ptr() as usize;
 
-            // Execute the prepared statement
+                    // Convert pointer to 8-byte little-endian representation
+                    let ptr_bytes = ptr_value.to_le_bytes().to_vec();
+
+                    // Create StringPtr with memory pointer
+                    let string_ptr = StringPtr {
+                        value: ptr_bytes,
+                        length: json_bytes.len() as i64,
+                    };
+
+                    // Create QueryBindings with JSON binding type
+                    Some(QueryBindings {
+                        binding_type: Some(query_bindings::BindingType::Json(string_ptr)),
+                    })
+                }
+            } else {
+                None
+            };
+
+            // Execute the prepared statement with bindings
             let response =
                 DatabaseDriverClient::statement_execute_query(StatementExecuteQueryRequest {
                     stmt_handle: Some(stmt.stmt_handle),
-                    bindings: None,
+                    bindings,
                 })?;
 
             tracing::info!("execute: Successfully executed statement");

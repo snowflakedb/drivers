@@ -2712,9 +2712,11 @@ version = "0.1.0"
 dependencies = [
  "arrow",
  "chrono",
+ "hex",
  "lazy_static",
  "odbc-sys",
  "proto_utils",
+ "serde_json",
  "sf_core",
  "snafu 0.8.9",
  "tracing",
