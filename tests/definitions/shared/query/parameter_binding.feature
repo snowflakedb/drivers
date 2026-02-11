@@ -161,5 +161,5 @@ Feature: Parameter binding
     Given Snowflake client is logged in
     And A temporary table with columns (id NUMBER, name VARCHAR) exists
     And Rows [1, "Alice"], [2, "Bob"], [3, "Charlie"], [4, "David"], [5, "Eve"] are inserted
-    When Query with multiple OR conditions is executed with parameters [1, 3, 5]
+    When Query "SELECT FROM {table_name} WHERE id = ? OR id = ? OR id = ? ORDER BY id" is executed with parameters [1, 3, 5]
     Then Result should contain [("Alice"), ("Charlie"), ("Eve")]

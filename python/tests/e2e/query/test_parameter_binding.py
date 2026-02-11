@@ -335,7 +335,8 @@ class TestComplexScenarios:
         for i, name in enumerate(["Alice", "Bob", "Charlie", "David", "Eve"], 1):
             cursor.execute(f"INSERT INTO {table_name} VALUES (?, ?)", (i, name))
 
-        # When Query with multiple OR conditions is executed with parameters [1, 3, 5]
+        # When Query "SELECT FROM {table_name} WHERE id = ? OR id = ? OR id = ? ORDER BY id"
+        # is executed with parameters [1, 3, 5]
         cursor.execute(
             f"SELECT * FROM {table_name} WHERE id = ? OR id = ? OR id = ? ORDER BY id",
             (1, 3, 5),
