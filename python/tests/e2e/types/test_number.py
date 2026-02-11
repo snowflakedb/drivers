@@ -518,7 +518,7 @@ class TestNumberBinding:
             (999999, Decimal("999.99")),
             (None, None),
         ]
-        rows = executemany_insert(table_name, f"INSERT INTO {table_name} VALUES (?, ?)", test_data)
+        executemany_insert(table_name, f"INSERT INTO {table_name} VALUES (?, ?)", test_data)
 
         # Then Result should contain 5 rows with expected values
         rows = execute_query(f"SELECT * FROM {table_name}")
