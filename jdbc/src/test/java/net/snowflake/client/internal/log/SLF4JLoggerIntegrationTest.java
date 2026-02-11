@@ -3,6 +3,7 @@ package net.snowflake.client.internal.log;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.lang.reflect.InvocationHandler;
@@ -44,6 +45,16 @@ public class SLF4JLoggerIntegrationTest {
     assertFalse(
         capturedLog.throwable.getMessage().contains("AbCdEf123"),
         "raw exception secret should not be present");
+  }
+
+  @Test
+  public void testNullLoggerNameThrows() {
+    assertThrows(IllegalArgumentException.class, () -> new SLF4JLogger((String) null));
+  }
+
+  @Test
+  public void testNullLoggerClassThrows() {
+    assertThrows(IllegalArgumentException.class, () -> new SLF4JLogger((Class<?>) null));
   }
 
   private static Logger createCapturingLogger(CapturedLog capturedLog) {

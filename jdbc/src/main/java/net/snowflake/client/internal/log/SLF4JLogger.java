@@ -1,5 +1,6 @@
 package net.snowflake.client.internal.log;
 
+import java.util.function.Supplier;
 import net.snowflake.client.internal.util.MaskedException;
 import net.snowflake.client.internal.util.SecretDetector;
 import org.slf4j.Logger;
@@ -9,17 +10,17 @@ import org.slf4j.helpers.MessageFormatter;
 import org.slf4j.spi.LocationAwareLogger;
 
 public class SLF4JLogger implements SFLogger {
-  private static final String FQCN = SLF4JLogger.class.getName();
+  private static final String fqcn = SLF4JLogger.class.getName();
 
   private final Logger slf4jLogger;
   private final boolean isLocationAwareLogger;
 
   public SLF4JLogger(Class<?> clazz) {
-    this(clazz == null ? "null" : clazz.getName());
+    this(LoggerFactory.getLogger(requireLoggerClass(clazz)));
   }
 
   public SLF4JLogger(String name) {
-    this(LoggerFactory.getLogger(name == null ? "null" : name));
+    this(LoggerFactory.getLogger(requireLoggerName(name)));
   }
 
   SLF4JLogger(Logger slf4jLogger) {
@@ -168,9 +169,13 @@ public class SLF4JLogger implements SFLogger {
   }
 
   private void logToSlf4j(LogLevel level, String message, Throwable throwable) {
+    if (level == LogLevel.OFF) {
+      return;
+    }
+
     if (isLocationAwareLogger) {
       ((LocationAwareLogger) slf4jLogger)
-          .log(null, FQCN, toLocationAwareLevel(level), message, null, throwable);
+          .log(null, fqcn, toLocationAwareLevel(level), message, null, throwable);
       return;
     }
     switch (level) {
@@ -210,14 +215,15 @@ public class SLF4JLogger implements SFLogger {
         }
         break;
       case OFF:
+        return;
       default:
-        break;
+        throw new IllegalArgumentException("Unsupported log level: " + level);
     }
   }
 
   private static int toLocationAwareLevel(LogLevel level) {
     if (level == null) {
-      return LocationAwareLogger.INFO_INT;
+      throw new IllegalArgumentException("Log level must not be null");
     }
     switch (level) {
       case ERROR:
@@ -231,8 +237,9 @@ public class SLF4JLogger implements SFLogger {
       case TRACE:
         return LocationAwareLogger.TRACE_INT;
       case OFF:
+        throw new IllegalArgumentException("OFF level must not be emitted");
       default:
-        return LocationAwareLogger.INFO_INT;
+        throw new IllegalArgumentException("Unsupported log level: " + level);
     }
   }
 
@@ -242,9 +249,23 @@ public class SLF4JLogger implements SFLogger {
     }
     final Object[] result = new Object[args.length];
     for (int i = 0; i < args.length; i++) {
-      result[i] = args[i] instanceof ArgSupplier ? ((ArgSupplier) args[i]).get() : args[i];
+      result[i] = args[i] instanceof Supplier ? ((Supplier<?>) args[i]).get() : args[i];
     }
     return result;
+  }
+
+  private static Class<?> requireLoggerClass(Class<?> clazz) {
+    if (clazz == null) {
+      throw new IllegalArgumentException("Logger class must not be null");
+    }
+    return clazz;
+  }
+
+  private static String requireLoggerName(String name) {
+    if (name == null) {
+      throw new IllegalArgumentException("Logger name must not be null");
+    }
+    return name;
   }
 
   private enum LogLevel {
