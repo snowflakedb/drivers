@@ -17,7 +17,6 @@
 // =============================================================================
 
 TEST_CASE("SQLBindCol binds a column and SQLFetch returns data in bound buffer.", "[query][bind_col]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "SQLBindCol is used to associate, or bind, columns in the result set
   //       to data buffers and length/indicator buffers in the application."
   // Doc: "When the application calls SQLFetch, SQLFetchScroll, or SQLSetPos to
@@ -48,7 +47,6 @@ TEST_CASE("SQLBindCol binds a column and SQLFetch returns data in bound buffer."
 }
 
 TEST_CASE("SQLBindCol returns SQL_SUCCESS on successful binding.", "[query][bind_col]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "Returns SQL_SUCCESS, SQL_SUCCESS_WITH_INFO, SQL_ERROR, or SQL_INVALID_HANDLE."
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlbindcol-function#returns
 
@@ -66,7 +64,6 @@ TEST_CASE("SQLBindCol returns SQL_SUCCESS on successful binding.", "[query][bind
 }
 
 TEST_CASE("SQLBindCol binds multiple columns in a result set.", "[query][bind_col]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "SQLBindCol is used to associate, or bind, columns in the result set
   //       to data buffers and length/indicator buffers in the application."
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlbindcol-function#comments
@@ -109,7 +106,6 @@ TEST_CASE("SQLBindCol binds multiple columns in a result set.", "[query][bind_co
 // =============================================================================
 
 TEST_CASE("SQLBindCol uses 1-based column numbering when bookmarks are not used.", "[query][bind_col]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "Columns are numbered in increasing column order starting at 0, where
   //       column 0 is the bookmark column. If bookmarks are not used - that is,
   //       the SQL_ATTR_USE_BOOKMARKS statement attribute is set to SQL_UB_OFF -
@@ -147,7 +143,6 @@ TEST_CASE("SQLBindCol uses 1-based column numbering when bookmarks are not used.
 // =============================================================================
 
 TEST_CASE("SQLBindCol can be called before SQLExecDirect.", "[query][bind_col]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "The use of these buffers is deferred; that is, the application binds
   //       them in SQLBindCol but the driver accesses them from other functions -
   //       namely SQLBulkOperations, SQLFetch, SQLFetchScroll, or SQLSetPos."
@@ -175,7 +170,6 @@ TEST_CASE("SQLBindCol can be called before SQLExecDirect.", "[query][bind_col]")
 }
 
 TEST_CASE("SQLBindCol can be called after SQLExecDirect.", "[query][bind_col]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "A column can be bound, unbound, or rebound at any time, even after
   //       data has been fetched from the result set."
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlbindcol-function#binding-unbinding-and-rebinding-columns
@@ -1205,7 +1199,6 @@ TEST_CASE("SQLBindCol returns 07009 when ColumnNumber exceeds max columns.", "[q
 }
 
 TEST_CASE("SQLBindCol returns SQL_INVALID_HANDLE for invalid statement handle.", "[query][bind_col]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "Returns SQL_SUCCESS, SQL_SUCCESS_WITH_INFO, SQL_ERROR, or
   //       SQL_INVALID_HANDLE."
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlbindcol-function#returns
