@@ -204,13 +204,6 @@ pub fn statement_execute_query(
                 }
                 .build());
             }
-            crate::protobuf_gen::database_driver_v1::query_bindings::BindingType::Arrow(
-                _arrow_bindings,
-            ) => {
-                // Arrow bindings removed from protobuf - this case will be gone after regeneration
-                // Using backwards compatible fallback to StatementBind instead
-                unreachable!("Arrow bindings should not be passed via protobuf")
-            }
         }
     } else {
         // Fall back to statement's existing Arrow bindings (backwards compatibility).
