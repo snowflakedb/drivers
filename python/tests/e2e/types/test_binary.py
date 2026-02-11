@@ -241,7 +241,9 @@ class TestBinaryBinding:
         assert result == (b"Hello", b"World", b"\x01\x23\x45\x67\x89\xab\xcd\xef")
 
     @binary_type_parametrize
-    def test_should_insert_binary_using_parameter_binding(self, execute_query, executemany_insert, tmp_schema, binary_type):
+    def test_should_insert_binary_using_parameter_binding(
+        self, execute_query, executemany_insert, tmp_schema, binary_type
+    ):
         # Given Snowflake client is logged in
 
         # And Table with BINARY column exists
@@ -262,7 +264,6 @@ class TestBinaryBinding:
         expected = set(str(val[0]) for val in test_values)
         returned = set(str(bytes(val)) for val in result)
         assert expected == returned
-
 
     @binary_type_parametrize
     def test_should_bind_corner_case_binary_values(self, execute_query, binary_type):

@@ -177,7 +177,7 @@ class TestStringBinding:
     @string_type_parametrize
     def test_should_insert_and_select_back_hardcoded_string_values_using_parameter_binding(
         self, execute_query, executemany_insert, tmp_schema, string_type
-    ):  
+    ):
         # Given Snowflake client is logged in
 
         # And A temporary table with VARCHAR column is created

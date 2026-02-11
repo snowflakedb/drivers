@@ -125,8 +125,8 @@ class TestConvertValueScalars:
         assert value == ""
 
     def test_string_with_special_characters(self):
-        _, value = BindingSerializer._convert_value("it's a \"test\"\nnewline")
-        assert value == "it's a \"test\"\nnewline"
+        _, value = BindingSerializer._convert_value('it\'s a "test"\nnewline')
+        assert value == 'it\'s a "test"\nnewline'
 
     def test_bool_true_converts_to_lowercase(self):
         _, value = BindingSerializer._convert_value(True)
@@ -366,9 +366,7 @@ class TestConvertArray:
         assert values == ["01", "02"]
 
     def test_decimal_array(self):
-        snowflake_type, values = BindingSerializer._convert_array(
-            [Decimal("1.1"), Decimal("2.2")]
-        )
+        snowflake_type, values = BindingSerializer._convert_array([Decimal("1.1"), Decimal("2.2")])
         assert snowflake_type == "FIXED"
         assert values == ["1.1", "2.2"]
 
@@ -453,18 +451,18 @@ class TestSerializeParameters:
     def test_all_types_together(self):
         """Smoke test with one value of each supported type."""
         params = [
-            42,                            # int -> FIXED
-            3.14,                          # float -> REAL
-            "text",                        # str -> TEXT
-            True,                          # bool -> BOOLEAN
-            b"\xab\xcd",                   # bytes -> BINARY
-            Decimal("9.99"),               # Decimal -> FIXED
-            date(2024, 6, 15),             # date -> DATE
-            time(10, 30, 0),               # time -> TIME
-            datetime(2024, 6, 15, 10, 30), # datetime -> TIMESTAMP_NTZ
-            None,                          # None -> ANY (null)
-            bytearray(b"\x01\x02"),        # bytearray -> BINARY
-            timedelta(hours=1),            # timedelta -> TIME
+            42,  # int -> FIXED
+            3.14,  # float -> REAL
+            "text",  # str -> TEXT
+            True,  # bool -> BOOLEAN
+            b"\xab\xcd",  # bytes -> BINARY
+            Decimal("9.99"),  # Decimal -> FIXED
+            date(2024, 6, 15),  # date -> DATE
+            time(10, 30, 0),  # time -> TIME
+            datetime(2024, 6, 15, 10, 30),  # datetime -> TIMESTAMP_NTZ
+            None,  # None -> ANY (null)
+            bytearray(b"\x01\x02"),  # bytearray -> BINARY
+            timedelta(hours=1),  # timedelta -> TIME
         ]
         json_str, length = BindingSerializer.serialize_parameters(params)
         assert json_str is not None
@@ -489,9 +487,7 @@ class TestSerializeParameters:
 
     def test_array_binding(self):
         """Test bulk insert style array parameters."""
-        json_str, _ = BindingSerializer.serialize_parameters(
-            [[1, 2, 3], ["a", "b", "c"]]
-        )
+        json_str, _ = BindingSerializer.serialize_parameters([[1, 2, 3], ["a", "b", "c"]])
         parsed = json.loads(json_str)
         assert parsed["1"]["type"] == "FIXED"
         assert parsed["1"]["value"] == ["1", "2", "3"]
@@ -747,15 +743,13 @@ class TestHelperMethods:
 
     def test_datetime_epoch_zero(self):
         """Epoch datetime produces zero nanoseconds."""
-        result = BindingSerializer._convert_datetime_to_epoch_nanoseconds(
-            datetime(1970, 1, 1, 0, 0, 0)
-        )
+        result = BindingSerializer._convert_datetime_to_epoch_nanoseconds(datetime(1970, 1, 1, 0, 0, 0))
         assert int(result) == 0
 
     def test_datetime_tz_aware_converts_to_utc(self):
         """Timezone-aware datetimes should be normalized to UTC."""
         # 2024-01-01 05:00:00 UTC+5 == 2024-01-01 00:00:00 UTC
-        import pytz
+
         utc_dt = datetime(2024, 1, 1, 0, 0, 0)
         result_utc = BindingSerializer._convert_datetime_to_epoch_nanoseconds(utc_dt)
         try:

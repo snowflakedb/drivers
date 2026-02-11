@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from .utils import assert_type
 
 
@@ -157,7 +155,7 @@ class TestBooleanBinding:
         table_name = f"{tmp_schema}.boolean_bind_table"
         execute_query(f"CREATE TABLE {table_name} (col BOOLEAN)")
 
-        # When Boolean values [TRUE, FALSE, NULL] are bulk-inserted using executemany
+        # When Boolean values [TRUE, FALSE, NULL] are bulk-inserted using multirow binding
         test_values = [(True,), (False,), (None,)]
         rows = executemany_insert(table_name, f"INSERT INTO {table_name} VALUES (?)", test_values)
 

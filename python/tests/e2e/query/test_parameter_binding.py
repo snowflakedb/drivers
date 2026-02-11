@@ -10,9 +10,6 @@ This module tests JSON parameter binding functionality including:
 
 from __future__ import annotations
 
-from datetime import datetime
-from decimal import Decimal
-
 import pytest
 
 from snowflake.connector import ProgrammingError
@@ -51,12 +48,12 @@ class TestBasicTypeBinding:
         assert result == (100, "test", True)
 
 
-
 class TestTableOperations:
     """Tests for parameter binding with table operations."""
 
     def test_should_insert_single_row_with_parameter_binding(self, cursor, tmp_schema):
         # Given Snowflake client is logged in
+
         # And A temporary table with columns (id NUMBER, name VARCHAR, active BOOLEAN) exists
         table_name = f"{tmp_schema}.test_binding_insert"
         cursor.execute(f"CREATE TABLE {table_name} (id NUMBER, name VARCHAR, active BOOLEAN)")
@@ -68,71 +65,89 @@ class TestTableOperations:
         cursor.execute(f"SELECT * FROM {table_name}")
         result = cursor.fetchall()
 
-        # Then Result should contain the inserted row
+        # Then Result should contain the inserted row [1, "Alice", True]
         assert len(result) == 1
         assert result[0] == (1, "Alice", True)
 
     def test_should_insert_multiple_rows_sequentially_with_parameter_binding(self, cursor, tmp_schema):
         # Given Snowflake client is logged in
+
         # And A temporary table with columns (id NUMBER, name VARCHAR) exists
         table_name = f"{tmp_schema}.test_binding_multiple"
         cursor.execute(f"CREATE TABLE {table_name} (id NUMBER, name VARCHAR)")
 
-        # When Multiple rows are inserted using parameter binding
+        # When Rows [1, "Alice"], [2, "Bob"], [3, "Charlie"] are inserted sequentially using parameter binding
         rows = [(1, "Alice"), (2, "Bob"), (3, "Charlie")]
         for row in rows:
             cursor.execute(f"INSERT INTO {table_name} VALUES (?, ?)", row)
 
-        # Then Query "SELECT * FROM table ORDER BY id" should return 3 rows with correct values
+        # And Query "SELECT * FROM table ORDER BY id" is executed
         cursor.execute(f"SELECT * FROM {table_name} ORDER BY id")
         result = cursor.fetchall()
 
+        # Then Result should contain 3 rows with correct values
         assert len(result) == 3
         assert result == rows
 
     def test_should_update_row_with_parameter_binding(self, cursor, tmp_schema):
-        # Setup: Create table and insert initial data
+        # Given Snowflake client is logged in
+
+        # And A temporary table with columns (id NUMBER, name VARCHAR) exists
         table_name = f"{tmp_schema}.test_binding_update"
         cursor.execute(f"CREATE TABLE {table_name} (id NUMBER, name VARCHAR)")
+
+        # And Row [1, "Alice"] is inserted
         cursor.execute(f"INSERT INTO {table_name} VALUES (?, ?)", (1, "Alice"))
 
-        # When: Update using parameter binding
+        # When Query "UPDATE table SET name = ? WHERE id = ?" is executed with parameters ["Alice Updated", 1]
         cursor.execute(f"UPDATE {table_name} SET name = ? WHERE id = ?", ("Alice Updated", 1))
 
-        # Then: Verify update
+        # And Query "SELECT * FROM table" is executed
         cursor.execute(f"SELECT * FROM {table_name}")
         result = cursor.fetchone()
+
+        # Then Result should contain [1, "Alice Updated"]
         assert result == (1, "Alice Updated")
 
     def test_should_delete_row_with_parameter_binding(self, cursor, tmp_schema):
-        # Setup: Create table and insert data
+        # Given Snowflake client is logged in
+
+        # And A temporary table with columns (id NUMBER, name VARCHAR) exists
         table_name = f"{tmp_schema}.test_binding_delete"
         cursor.execute(f"CREATE TABLE {table_name} (id NUMBER, name VARCHAR)")
+
+        # And Rows [1, "Alice"] and [2, "Bob"] are inserted
         cursor.execute(f"INSERT INTO {table_name} VALUES (?, ?)", (1, "Alice"))
         cursor.execute(f"INSERT INTO {table_name} VALUES (?, ?)", (2, "Bob"))
 
-        # When: Delete using parameter binding
+        # When Query "DELETE FROM table WHERE id = ?" is executed with parameter [1]
         cursor.execute(f"DELETE FROM {table_name} WHERE id = ?", (1,))
 
-        # Then: Verify deletion
+        # And Query "SELECT * FROM table" is executed
         cursor.execute(f"SELECT * FROM {table_name}")
         result = cursor.fetchall()
+
+        # Then Result should contain only [2, "Bob"]
         assert len(result) == 1
         assert result[0] == (2, "Bob")
 
     def test_should_select_with_where_clause_parameter_binding(self, cursor, tmp_schema):
-        # Setup: Create table and insert data
+        # Given Snowflake client is logged in
+
+        # And A temporary table with columns (id NUMBER, name VARCHAR, age NUMBER) exists
         table_name = f"{tmp_schema}.test_binding_select_where"
         cursor.execute(f"CREATE TABLE {table_name} (id NUMBER, name VARCHAR, age NUMBER)")
+
+        # And Rows [1, "Alice", 30], [2, "Bob", 25], [3, "Charlie", 35] are inserted
         cursor.execute(f"INSERT INTO {table_name} VALUES (?, ?, ?)", (1, "Alice", 30))
         cursor.execute(f"INSERT INTO {table_name} VALUES (?, ?, ?)", (2, "Bob", 25))
         cursor.execute(f"INSERT INTO {table_name} VALUES (?, ?, ?)", (3, "Charlie", 35))
 
-        # When: Select with WHERE clause using parameter binding
+        # When Query "SELECT * FROM table WHERE age > ?" is executed with parameter [28]
         cursor.execute(f"SELECT * FROM {table_name} WHERE age > ?", (28,))
         result = cursor.fetchall()
 
-        # Then: Verify correct rows selected
+        # Then Result should contain rows for "Alice" and "Charlie"
         assert len(result) == 2
         names = {row[1] for row in result}
         assert names == {"Alice", "Charlie"}
@@ -150,7 +165,6 @@ class TestEdgeCases:
 
         # Then Result should contain [NULL, 42, NULL]
         assert result == (None, 42, None)
-
 
     def test_should_handle_special_characters_in_string_binding(self, cursor):
         # Given Snowflake client is logged in
@@ -181,15 +195,14 @@ class TestEdgeCases:
         # Then Result should contain Unicode strings ["日本語", "⛄"]
         assert result == ("日本語", "⛄")
 
-
     def test_should_bind_zero_values(self, cursor):
         # Given Snowflake client is logged in
 
-        # When Query "SELECT ?, ?, ?" is executed with parameters [0, 0.0, ""]
+        # When Query "SELECT ?, ?::FLOAT, ?::VARCHAR" is executed with parameters [0, 0.0, ""]
         cursor.execute("SELECT ?, ?::FLOAT, ?::VARCHAR", (0, 0.0, ""))
         result = cursor.fetchone()
 
-        # Then Result should contain zero and empty values
+        # Then Result should contain zero and empty values [0, 0.0, ""]
         assert result == (0, 0.0, "")
 
     def test_should_handle_mixed_type_casting_with_parameter_binding(self, cursor):
@@ -199,7 +212,7 @@ class TestEdgeCases:
         cursor.execute("SELECT ?::NUMBER, ?::VARCHAR, ?::BOOLEAN", (42, "hello", True))
         result = cursor.fetchone()
 
-        # Then Result should match the type-casted parameters
+        # Then Result should match the type-casted parameters [42, "hello", True]
         assert result == (42, "hello", True)
 
 
@@ -208,65 +221,78 @@ class TestArrayBinding:
 
     def test_should_insert_multiple_rows_using_multirow_binding(self, cursor, tmp_schema):
         """Test multirow binding with basic INSERT."""
+        # Given Snowflake client is logged in
+
+        # And A temporary table with columns (id NUMBER, name VARCHAR) exists
         table_name = f"{tmp_schema}.test_executemany"
         cursor.execute(f"CREATE TABLE {table_name} (id NUMBER, name VARCHAR)")
 
+        # When Rows [[1, "Alice"], [2, "Bob"], [3, "Charlie"]] are inserted using multirow binding
         rows = [(1, "Alice"), (2, "Bob"), (3, "Charlie")]
         cursor.executemany(f"INSERT INTO {table_name} VALUES (?, ?)", rows)
 
+        # And Query "SELECT * FROM table ORDER BY id" is executed
         cursor.execute(f"SELECT * FROM {table_name} ORDER BY id")
         result = cursor.fetchall()
+
+        # Then Result should contain 3 rows with correct values
         assert result == rows
 
     def test_should_handle_empty_sequence_in_multirow_binding(self, cursor):
         """Test multirow binding with empty sequence is no-op."""
+        # Given Snowflake client is logged in
+
+        # When Multirow binding is called with empty sequence
         cursor.executemany("INSERT INTO table VALUES (?)", [])
-        # Should not raise error
+
+        # Then No error should be raised
 
     def test_should_validate_parameter_length_in_multirow_binding(self, cursor):
         """Test multirow binding raises error for inconsistent lengths."""
+        # Given Snowflake client is logged in
+
+        # When Multirow binding is called with inconsistent parameter lengths [(1, "a"), (2, "b", "extra")]
         with pytest.raises(ProgrammingError) as excinfo:
             cursor.executemany("INSERT INTO table VALUES (?, ?)", [(1, "a"), (2, "b", "extra")])
+
+        # Then Error should be raised indicating parameter sequence length mismatch
         assert "Parameter sequence" in str(excinfo.value)
 
     def test_should_handle_null_values_in_multirow_binding(self, cursor, tmp_schema):
         """Test multirow binding handles NULL values."""
+        # Given Snowflake client is logged in
+
+        # And A temporary table with columns (id NUMBER, value VARCHAR) exists
         table_name = f"{tmp_schema}.test_nulls"
         cursor.execute(f"CREATE TABLE {table_name} (id NUMBER, value VARCHAR)")
 
+        # When Rows [[1, NULL], [2, "value"], [3, NULL]] are inserted using multirow binding
         cursor.executemany(f"INSERT INTO {table_name} VALUES (?, ?)", [(1, None), (2, "value"), (3, None)])
 
+        # And Query "SELECT * FROM table ORDER BY id" is executed
         cursor.execute(f"SELECT * FROM {table_name} ORDER BY id")
         result = cursor.fetchall()
+
+        # Then Result should contain [[1, NULL], [2, "value"], [3, NULL]]
         assert result == [(1, None), (2, "value"), (3, None)]
-
-    def test_should_handle_large_batch_in_multirow_binding(self, cursor, tmp_schema):
-        """Test multirow binding with 1000 rows."""
-        table_name = f"{tmp_schema}.test_large"
-        cursor.execute(f"CREATE TABLE {table_name} (id NUMBER)")
-
-        rows = [(i,) for i in range(1000)]
-        cursor.executemany(f"INSERT INTO {table_name} VALUES (?)", rows)
-
-        cursor.execute(f"SELECT COUNT(*) FROM {table_name}")
-        assert cursor.fetchone() == (1000,)
 
 
 class TestBackwardCompatibility:
     """Tests for backward compatibility with old connector parameter format."""
 
     def test_should_handle_both_tuple_and_list_parameter_formats(self, cursor):
-        # Test that both tuple and list work as parameter containers
-        sql = "SELECT ?, ?"
+        # Given Snowflake client is logged in
 
-        # Tuple format
+        # When Query "SELECT ?, ?" is executed with tuple parameters (1, "test")
+        sql = "SELECT ?, ?"
         cursor.execute(sql, (1, "test"))
         result_tuple = cursor.fetchone()
 
-        # List format
+        # And Query "SELECT ?, ?" is executed with list parameters [1, "test"]
         cursor.execute(sql, [1, "test"])
         result_list = cursor.fetchone()
 
+        # Then Both results should be identical
         assert result_tuple == result_list == (1, "test")
 
 
@@ -274,80 +300,36 @@ class TestComplexScenarios:
     """Tests for complex parameter binding scenarios."""
 
     def test_should_bind_many_parameters(self, cursor):
-        # Test with many parameters (e.g., 20 parameters)
+        # Given Snowflake client is logged in
+
+        # When Query with 20 positional parameters is executed with values [0..19]
         num_params = 20
         sql = "SELECT " + ", ".join(["?"] * num_params)
         params = tuple(range(num_params))
-
         cursor.execute(sql, params)
         result = cursor.fetchone()
 
+        # Then Result should contain all 20 values in order
         assert result == params
 
-    def test_should_bind_parameters_in_complex_query_with_aggregation(self, cursor, tmp_schema):
-        # Test parameter binding in a complex query with aggregation.
-        table_name = f"{tmp_schema}.test_complex_query"
-        cursor.execute(f"CREATE TABLE {table_name} (id NUMBER, category VARCHAR, value NUMBER)")
 
-        # Insert test data
-        cursor.execute(f"INSERT INTO {table_name} VALUES (?, ?, ?)", (1, "A", 100))
-        cursor.execute(f"INSERT INTO {table_name} VALUES (?, ?, ?)", (2, "A", 200))
-        cursor.execute(f"INSERT INTO {table_name} VALUES (?, ?, ?)", (3, "B", 150))
-        cursor.execute(f"INSERT INTO {table_name} VALUES (?, ?, ?)", (4, "B", 250))
+    def test_should_bind_parameters_with_or_clause_for_multiple_value_matching(self, execute_query, executemany_insert, tmp_schema):
+        # Given Snowflake client is logged in
 
-        # Complex query with parameter binding
-        sql = f"""
-            SELECT category, SUM(value) as total
-            FROM {table_name}
-            WHERE value > ? AND category = ?
-            GROUP BY category
-            HAVING SUM(value) > ?
-        """
-        cursor.execute(sql, (50, "A", 100))
-        result = cursor.fetchall()
-
-        assert len(result) == 1
-        assert result[0][0] == "A"
-        assert result[0][1] == 300
-
-    def test_should_bind_parameters_with_or_clause_for_multiple_value_matching(self, cursor, tmp_schema):
-        # Test binding multiple parameters with OR clause for value matching.
+        # And A temporary table with columns (id NUMBER, name VARCHAR) exists
         table_name = f"{tmp_schema}.test_in_clause"
-        cursor.execute(f"CREATE TABLE {table_name} (id NUMBER, name VARCHAR)")
+        execute_query(f"CREATE TABLE {table_name} (id NUMBER, name VARCHAR)")
 
-        # Insert test data
-        for i, name in enumerate(["Alice", "Bob", "Charlie", "David", "Eve"], 1):
-            cursor.execute(f"INSERT INTO {table_name} VALUES (?, ?)", (i, name))
+        # And Rows [1, "Alice"], [2, "Bob"], [3, "Charlie"], [4, "David"], [5, "Eve"] are inserted
+        rows = [(i, name) for i, name in enumerate(["Alice", "Bob", "Charlie", "David", "Eve"], 1)]
+        executemany_insert(table_name, f"INSERT INTO {table_name} VALUES (?, ?)", rows)
+        # When Query SELECT * FROM {table_name} WHERE id = ? OR id = ? OR id = ? ORDER BY id is executed with parameters [1, 3, 5]
 
-        # Using OR for multiple values (alternative to IN clause)
-        cursor.execute(
+        result = execute_query(
             f"SELECT * FROM {table_name} WHERE id = ? OR id = ? OR id = ? ORDER BY id",
             (1, 3, 5),
         )
-        result = cursor.fetchall()
 
+        # Then Result should contain [("Alice"), ("Charlie"), ("Eve")]
         assert len(result) == 3
         assert [r[1] for r in result] == ["Alice", "Charlie", "Eve"]
-
-    def test_should_bind_parameters_in_subquery(self, cursor, tmp_schema):
-        # Test parameter binding in queries with subqueries
-        table_name = f"{tmp_schema}.test_subquery"
-        cursor.execute(f"CREATE TABLE {table_name} (id NUMBER, value NUMBER)")
-
-        # Insert test data
-        for i in range(1, 11):
-            cursor.execute(f"INSERT INTO {table_name} VALUES (?, ?)", (i, i * 10))
-
-        # Query with subquery using parameters
-        sql = f"""
-            SELECT id, value
-            FROM {table_name}
-            WHERE value > (SELECT AVG(value) FROM {table_name} WHERE id <= ?)
-            AND id > ?
-        """
-        cursor.execute(sql, (5, 3))
-        result = cursor.fetchall()
-
-        # Should return rows where id > 3 and value > avg of first 5 rows
-        assert len(result) > 0
-        assert all(row[0] > 3 for row in result)

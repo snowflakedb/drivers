@@ -331,7 +331,8 @@ class TestFloatBinding:
         table_name = f"{tmp_schema}.float_bind_table_{float_type.replace(' ', '_').lower()}"
         execute_query(f"CREATE TABLE {table_name} (col {float_type})")
 
-        # When Float values [0.0, 123.456, -789.012, NULL] are bulk-inserted using executemany
+        # When Float values [0.0, 123.456, -789.012, NULL] are bulk-inserted using multirow binding
+
         # Note: NaN, inf, -inf cannot be bound — Snowflake rejects them as bind values.
         test_rows = [(0.0,), (123.456,), (-789.012,), (None,)]
         rows = executemany_insert(table_name, f"INSERT INTO {table_name} VALUES (?)", test_rows)

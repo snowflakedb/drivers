@@ -13,8 +13,6 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-import pytest
-
 from .utils import assert_sequential_values, assert_type
 
 
@@ -331,13 +329,15 @@ class TestDecfloatBinding:
         ]
         rows = executemany_insert(table_name, f"INSERT INTO {table_name} VALUES (?)", test_rows)
 
-        # Then SELECT should return the same exact values (order may vary due to ORDER BY)
+        # Then SELECT should return the same exact values
         result = [row[0] for row in rows]
         expected = {Decimal("0"), Decimal("123.456"), Decimal("-789.012"), None}
         assert set(result) == expected
         assert_type(result, Decimal, can_be_none=True)
 
-    def test_should_insert_extreme_decfloat_values_using_parameter_binding(self, execute_query, executemany_insert, tmp_schema):
+    def test_should_insert_extreme_decfloat_values_using_parameter_binding(
+        self, execute_query, executemany_insert, tmp_schema
+    ):
         # Given Snowflake client is logged in
 
         # And Table with DECFLOAT column exists
