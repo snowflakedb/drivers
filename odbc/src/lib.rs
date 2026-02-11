@@ -11,3 +11,7 @@ extern crate tracing_subscriber;
 // #[macro_use]
 // extern crate lazy_static;
 extern crate odbc_sys;
+
+// Re-export types for testing
+pub use api::types::ParameterBinding;
+pub use cdata_types::CDataType;
