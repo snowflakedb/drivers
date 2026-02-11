@@ -254,7 +254,7 @@ TEST_CASE("SQLGetData with SQL_C_DEFAULT selects default C type based on SQL typ
   auto stmt = conn.execute_fetch("SELECT 42 AS value");
 
   // And we determine the SQL data type of the column
-  SQLSMALLINT sql_type = 0;
+  SQLLEN sql_type = 0;
   SQLRETURN ret = SQLColAttribute(stmt.getHandle(), 1, SQL_DESC_TYPE, NULL, 0, NULL, (SQLLEN*)&sql_type);
   CHECK_ODBC(ret, stmt);
   REQUIRE(sql_type == SQL_DECIMAL);
@@ -427,7 +427,7 @@ TEST_CASE("SQLGetData ignores BufferLength for fixed-length data types.", "[quer
   // When SQLGetData is called with BufferLength 0 for a fixed-length type
   SQLINTEGER value = 0;
   SQLLEN indicator = 0;
-  SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_LONG, &value, 2312312, &indicator);
+  SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_LONG, &value, 0, &indicator);
 
   // Then the driver should ignore BufferLength and return the data
   CHECK_ODBC(ret, stmt);

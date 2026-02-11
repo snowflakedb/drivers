@@ -36,15 +36,16 @@ TEST_CASE("SQLFetch returns data about number of rows affected.") {
   // When SQLExecDirect is called to execute the query that returns 1 row
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT 42 AS value", SQL_NTS);
   CHECK_ODBC(ret, stmt);
-  SQLINTEGER rows_affected = 0;
+  SQLULEN rows_fetched = 0;
   // And SQLSetStmtAttr is called to set the rows fetched pointer
-  SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_ROWS_FETCHED_PTR, &rows_affected, sizeof(rows_affected));
+  ret = SQLSetStmtAttr(stmt.getHandle(), SQL_ATTR_ROWS_FETCHED_PTR, &rows_fetched, 0);
+  CHECK_ODBC(ret, stmt);
   // And SQLFetch is called to fetch the row
   ret = SQLFetch(stmt.getHandle());
   // Then SQLFetch should return SQL_SUCCESS and retrieve the value
   CHECK_ODBC(ret, stmt);
   // And the number of rows affected should be 1
-  REQUIRE(rows_affected == 1);
+  REQUIRE(rows_fetched == 1);
 }
 
 TEST_CASE("SQLSetStmtAttr sets supported cursor types.") {

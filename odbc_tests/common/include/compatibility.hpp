@@ -3,7 +3,6 @@
 
 #include <catch2/catch_test_macros.hpp>
 
-#include "compatibility.hpp"
 
 // Cross-platform process ID
 #ifdef _WIN32
