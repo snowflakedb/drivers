@@ -70,6 +70,7 @@ pub fn exec_direct(statement_handle: sql::Handle, statement_text: &str) -> OdbcR
             let response =
                 DatabaseDriverClient::statement_execute_query(StatementExecuteQueryRequest {
                     stmt_handle: Some(stmt.stmt_handle),
+                    bindings: None,
                 })?;
 
             stmt.state = create_execute_state(response)?.into();
@@ -154,6 +155,7 @@ pub fn execute(statement_handle: sql::Handle) -> OdbcResult<()> {
             let response =
                 DatabaseDriverClient::statement_execute_query(StatementExecuteQueryRequest {
                     stmt_handle: Some(stmt.stmt_handle),
+                    bindings: None,
                 })?;
 
             tracing::info!("execute: Successfully executed statement");

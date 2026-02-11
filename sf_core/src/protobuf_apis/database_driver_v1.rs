@@ -618,7 +618,10 @@ impl DatabaseDriver for DatabaseDriverImpl {
     ) -> Result<StatementExecuteQueryResponse, DriverException> {
         let stmt_handle = required(input.stmt_handle, "Statement handle is required")?;
 
-        let result = statement_execute_query(stmt_handle.into()).to_protobuf()?;
+        // Extract optional bindings from request
+        let bindings_opt = input.bindings.and_then(|b| b.binding_type);
+
+        let result = statement_execute_query(stmt_handle.into(), bindings_opt).to_protobuf()?;
         let stream_ptr: ArrowArrayStreamPtr = Box::into_raw(result.stream).into();
 
         Ok(StatementExecuteQueryResponse {

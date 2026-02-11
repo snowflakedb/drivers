@@ -18,7 +18,9 @@ use arrow::{
     array::{Int32Array, StringArray},
     datatypes::DataType,
 };
+use serde_json::value::RawValue;
 use snafu::Snafu;
+use std::borrow::Cow;
 use std::{collections::HashMap, sync::Arc};
 
 use super::connection::Connection;
@@ -139,7 +141,10 @@ pub struct ExecuteResult {
     pub rows_affected: i64,
 }
 
-pub fn statement_execute_query(stmt_handle: Handle) -> Result<ExecuteResult, ApiError> {
+pub fn statement_execute_query(
+    stmt_handle: Handle,
+    proto_bindings: Option<crate::protobuf_gen::database_driver_v1::query_bindings::BindingType>,
+) -> Result<ExecuteResult, ApiError> {
     let handle = stmt_handle;
     let stmt_ptr = STMT_HANDLE_MANAGER.get_obj(handle).ok_or_else(|| {
         InvalidArgumentSnafu {
@@ -175,11 +180,51 @@ pub fn statement_execute_query(stmt_handle: Handle) -> Result<ExecuteResult, Api
 
     let execution_mode = stmt.execution_mode(Some(query_str));
     let query = stmt.query.take().expect("query must be present");
-    let bindings = stmt
-        .get_query_parameter_bindings()
-        .context(StatementSnafu)?;
 
-    // Execute query with automatic session refresh on 401
+    // Get bindings from protobuf request or from statement's Arrow bindings.
+    //
+    // JSON path (from language wrappers): returns Cow::Borrowed(&'static RawValue)
+    // pointing directly into wrapper memory -- zero allocation, zero copy.
+    // Arrow path (ODBC backwards compat): returns Cow::Owned(Box<RawValue>)
+    // after building a HashMap and serializing it to a JSON string.
+    let bindings: Option<Cow<'static, RawValue>> = if let Some(proto_binding_type) = proto_bindings
+    {
+        // Handle bindings from protobuf request
+        match proto_binding_type {
+            crate::protobuf_gen::database_driver_v1::query_bindings::BindingType::Json(
+                string_ptr,
+            ) => {
+                // Returns Cow::Borrowed -- zero copy, points into wrapper memory
+                parse_json_bindings(&string_ptr).context(StatementSnafu)?
+            }
+            crate::protobuf_gen::database_driver_v1::query_bindings::BindingType::Csv(_csv_ptr) => {
+                // TODO: Implement CSV binding handling (stage upload)
+                return Err(InvalidArgumentSnafu {
+                    argument: "CSV bindings are not yet implemented".to_string(),
+                }
+                .build());
+            }
+            crate::protobuf_gen::database_driver_v1::query_bindings::BindingType::Arrow(
+                _arrow_bindings,
+            ) => {
+                // Arrow bindings removed from protobuf - this case will be gone after regeneration
+                // Using backwards compatible fallback to StatementBind instead
+                unreachable!("Arrow bindings should not be passed via protobuf")
+            }
+        }
+    } else {
+        // Fall back to statement's existing Arrow bindings (backwards compatibility).
+        // This path allocates: HashMap → serde_json::to_string → Cow::Owned(Box<RawValue>).
+        stmt.get_query_parameter_bindings()
+            .context(StatementSnafu)?
+    };
+
+    // Execute query with automatic session refresh on 401.
+    //
+    // `bindings` is Cow<'static, RawValue>. For the JSON path (Cow::Borrowed),
+    // clone() just copies the pointer (8 bytes). For the Arrow path (Cow::Owned),
+    // clone() copies the JSON string. The closure may be called twice (initial +
+    // retry on 401), so cheap cloning matters for the common JSON path.
     let conn = stmt.conn.clone();
     let response = rt.block_on(with_valid_session(&conn, |session_token| {
         let http_client = http_client.clone();
@@ -215,9 +260,20 @@ pub fn statement_execute_query(stmt_handle: Handle) -> Result<ExecuteResult, Api
     })
 }
 
+/// Convert Arrow RecordBatch parameter bindings to `Cow::Owned(Box<RawValue>)`.
+///
+/// This is the backwards-compatibility path used by ODBC's `StatementBind` API.
+/// Unlike the JSON path (which borrows wrapper memory with zero copy), this path
+/// must allocate:
+///   1. A `HashMap<String, BindParameter>` is built from Arrow column data.
+///   2. `serde_json::to_string()` serializes the HashMap into a JSON `String`
+///      (one heap allocation for the output buffer).
+///   3. `RawValue::from_string()` validates the JSON syntax and wraps the string
+///      (no additional copy -- RawValue takes ownership of the String).
+///   4. `Cow::Owned` wraps the Box (no allocation, just an enum tag).
 fn parameters_from_record_batch(
     record_batch: &RecordBatch,
-) -> Result<HashMap<String, query_request::BindParameter>, StatementError> {
+) -> Result<Cow<'static, RawValue>, StatementError> {
     let mut parameters = HashMap::new();
     for i in 0..record_batch.num_columns() {
         let column = record_batch.column(i);
@@ -264,7 +320,22 @@ fn parameters_from_record_batch(
             }
         }
     }
-    Ok(parameters)
+    // Serialize HashMap to a JSON string, then wrap as RawValue.
+    // serde_json::to_string allocates the output buffer; RawValue::from_string
+    // takes ownership of that String without copying.
+    let json_string = serde_json::to_string(&parameters).map_err(|_| {
+        UnsupportedBindParameterTypeSnafu {
+            type_: "Failed to serialize parameters".to_string(),
+        }
+        .build()
+    })?;
+    let raw = RawValue::from_string(json_string).map_err(|_| {
+        UnsupportedBindParameterTypeSnafu {
+            type_: "Failed to create RawValue from serialized parameters".to_string(),
+        }
+        .build()
+    })?;
+    Ok(Cow::Owned(raw))
 }
 
 pub struct Statement {
@@ -309,7 +380,7 @@ impl Statement {
 
     pub fn get_query_parameter_bindings(
         &self,
-    ) -> Result<Option<HashMap<String, query_request::BindParameter>>, StatementError> {
+    ) -> Result<Option<Cow<'static, RawValue>>, StatementError> {
         match self.parameter_bindings.as_ref() {
             Some(parameters) => Ok(Some(parameters_from_record_batch(parameters)?)),
             None => Ok(None),
@@ -411,6 +482,94 @@ pub enum StatementError {
         #[snafu(implicit)]
         location: snafu::Location,
     },
+}
+
+/// Extract JSON bindings from a `StringPtr` protobuf message -- **zero copy**.
+///
+/// Returns `Cow::Borrowed(&'static RawValue)` that points directly into the
+/// language wrapper's memory. No heap allocation occurs for the JSON payload.
+///
+/// ## Memory / allocation details
+///
+/// 1. **Pointer dereference** (`unsafe`): creates a `&'static [u8]` slice over
+///    the wrapper's memory -- zero allocation.
+/// 2. **UTF-8 validation** (`std::str::from_utf8`): scans bytes in-place --
+///    zero allocation.
+/// 3. **JSON syntax validation** (`serde_json::from_str::<&RawValue>`): scans
+///    bytes to verify valid JSON syntax -- zero allocation. Returns a
+///    `&'static RawValue` that borrows the same wrapper memory.
+///
+/// Total allocations for the JSON payload: **zero**.
+///
+/// ## Safety
+///
+/// The `'static` lifetime is safe because:
+/// - The language wrapper (e.g. Python `cursor.py`) stores binding data on the
+///   Cursor instance (`self._binding_data`) and calls `statement_execute_query`
+///   synchronously. The data is not freed until `execute()` returns.
+/// - `statement_execute_query` runs the entire HTTP request synchronously via
+///   `rt.block_on()`. The pointer is valid from deref through HTTP serialization.
+/// - This is the same safety contract that justifies the `from_raw_parts` call.
+///
+/// The Snowflake server is responsible for validating the binding *structure*
+/// (correct types, value formats, etc.). Rust only checks syntax.
+fn parse_json_bindings(
+    string_ptr: &crate::protobuf_gen::database_driver_v1::StringPtr,
+) -> Result<Option<Cow<'static, RawValue>>, StatementError> {
+    // Validate pointer structure (must be 8 bytes for a 64-bit address)
+    if string_ptr.value.len() != 8 {
+        return UnsupportedBindParameterTypeSnafu {
+            type_: format!("StringPtr must be 8 bytes, got {}", string_ptr.value.len()),
+        }
+        .fail();
+    }
+
+    // Convert 8-byte little-endian array to a usize pointer -- no allocation
+    let ptr_bytes: [u8; 8] = string_ptr.value.as_slice().try_into().map_err(|_| {
+        UnsupportedBindParameterTypeSnafu {
+            type_: "Failed to convert pointer bytes".to_string(),
+        }
+        .build()
+    })?;
+    let ptr_value = usize::from_le_bytes(ptr_bytes);
+
+    // Validate pointer is not null
+    if ptr_value == 0 {
+        return UnsupportedBindParameterTypeSnafu {
+            type_: "Null pointer in bindings".to_string(),
+        }
+        .fail();
+    }
+
+    // Dereference pointer to get JSON bytes as a &'static slice.
+    // Safety: the language wrapper keeps the data alive for the entire synchronous
+    // statement_execute_query call (including HTTP serialization via rt.block_on).
+    // The 'static lifetime is justified by the same contract as the raw pointer deref.
+    let json_bytes: &'static [u8] = unsafe {
+        let ptr = ptr_value as *const u8;
+        let length = string_ptr.length as usize;
+        std::slice::from_raw_parts(ptr, length)
+    };
+
+    // Validate UTF-8 -- scans bytes in-place, zero allocation
+    let json_str: &'static str = std::str::from_utf8(json_bytes).map_err(|_| {
+        UnsupportedBindParameterTypeSnafu {
+            type_: "Invalid UTF-8 in bindings".to_string(),
+        }
+        .build()
+    })?;
+
+    // Validate JSON syntax and wrap as &'static RawValue -- zero allocation.
+    // serde_json::from_str<&RawValue> scans for valid JSON and returns a
+    // reference that borrows from json_str (same wrapper memory).
+    let raw: &'static RawValue = serde_json::from_str(json_str).map_err(|_| {
+        UnsupportedBindParameterTypeSnafu {
+            type_: "Failed to parse bindings JSON".to_string(),
+        }
+        .build()
+    })?;
+
+    Ok(Some(Cow::Borrowed(raw)))
 }
 
 #[cfg(test)]
@@ -527,5 +686,542 @@ mod tests {
         assert!(!is_file_transfer("PU"));
         assert!(!is_file_transfer("GE"));
         assert!(!is_file_transfer("P"));
+    }
+
+    #[test]
+    fn test_parse_json_bindings() {
+        use crate::protobuf_gen::database_driver_v1::StringPtr;
+
+        // Test simple bindings
+        let json =
+            r#"{"1": {"type": "FIXED", "value": "123"}, "2": {"type": "TEXT", "value": "hello"}}"#;
+
+        // Create a pointer to the JSON bytes (simulating Python's no-copy scheme)
+        let json_bytes = json.as_bytes();
+        let ptr_value = json_bytes.as_ptr() as usize;
+        let ptr_bytes = ptr_value.to_le_bytes();
+
+        let string_ptr = StringPtr {
+            value: ptr_bytes.to_vec(),
+            length: json.len() as i64,
+        };
+
+        let result = parse_json_bindings(&string_ptr).unwrap();
+        assert!(result.is_some());
+
+        // parse_json_bindings returns Cow<'static, RawValue> -- the raw JSON string.
+        // To verify contents in the test, we parse it into a Value here.
+        let raw = result.unwrap();
+        let params: serde_json::Value = serde_json::from_str(raw.get()).unwrap();
+
+        // Verify it's a JSON object with 2 keys
+        assert!(params.is_object());
+        let obj = params.as_object().unwrap();
+        assert_eq!(obj.len(), 2);
+
+        // Verify parameter 1
+        let param1 = obj.get("1").unwrap();
+        assert_eq!(param1["type"], "FIXED");
+        assert_eq!(param1["value"], "123");
+
+        // Verify parameter 2
+        let param2 = obj.get("2").unwrap();
+        assert_eq!(param2["type"], "TEXT");
+        assert_eq!(param2["value"], "hello");
+    }
+
+    #[test]
+    fn test_parse_json_bindings_with_array() {
+        use crate::protobuf_gen::database_driver_v1::StringPtr;
+
+        // Test array bindings (multi-row)
+        let json = r#"{"1": {"type": "FIXED", "value": ["1", "2", "3"]}, "2": {"type": "TEXT", "value": ["a", "b", "c"]}}"#;
+
+        // Create a pointer to the JSON bytes (simulating Python's no-copy scheme)
+        let json_bytes = json.as_bytes();
+        let ptr_value = json_bytes.as_ptr() as usize;
+        let ptr_bytes = ptr_value.to_le_bytes();
+
+        let string_ptr = StringPtr {
+            value: ptr_bytes.to_vec(),
+            length: json.len() as i64,
+        };
+
+        let result = parse_json_bindings(&string_ptr).unwrap();
+        assert!(result.is_some());
+
+        // parse_json_bindings returns Cow<'static, RawValue> -- parse to Value for test assertions
+        let raw = result.unwrap();
+        let params: serde_json::Value = serde_json::from_str(raw.get()).unwrap();
+
+        // Verify it's a JSON object with 2 keys
+        assert!(params.is_object());
+        let obj = params.as_object().unwrap();
+        assert_eq!(obj.len(), 2);
+
+        // Verify parameter 1
+        let param1 = obj.get("1").unwrap();
+        assert_eq!(param1["type"], "FIXED");
+        assert!(param1["value"].is_array());
+
+        // Verify parameter 2
+        let param2 = obj.get("2").unwrap();
+        assert_eq!(param2["type"], "TEXT");
+        assert!(param2["value"].is_array());
+    }
+
+    // ---------------------------------------------------------------
+    // parse_json_bindings: error cases
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn test_parse_json_bindings_rejects_invalid_pointer_size() {
+        use crate::protobuf_gen::database_driver_v1::StringPtr;
+
+        // StringPtr.value must be exactly 8 bytes (64-bit pointer).
+        // Passing fewer bytes should be rejected.
+        let string_ptr = StringPtr {
+            value: vec![0x01, 0x02, 0x03, 0x04], // 4 bytes -- too short
+            length: 10,
+        };
+
+        let result = parse_json_bindings(&string_ptr);
+        assert!(result.is_err());
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(
+            err_msg.contains("8 bytes"),
+            "Expected error about 8 bytes, got: {err_msg}"
+        );
+    }
+
+    #[test]
+    fn test_parse_json_bindings_rejects_null_pointer() {
+        use crate::protobuf_gen::database_driver_v1::StringPtr;
+
+        // A zero pointer (all 8 bytes = 0) is a null pointer and must be rejected.
+        let string_ptr = StringPtr {
+            value: vec![0u8; 8],
+            length: 10,
+        };
+
+        let result = parse_json_bindings(&string_ptr);
+        assert!(result.is_err());
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(
+            err_msg.contains("Null pointer"),
+            "Expected null pointer error, got: {err_msg}"
+        );
+    }
+
+    #[test]
+    fn test_parse_json_bindings_rejects_invalid_utf8() {
+        use crate::protobuf_gen::database_driver_v1::StringPtr;
+
+        // Create a byte buffer with invalid UTF-8 (0xFF is never valid in UTF-8)
+        let bad_bytes: Vec<u8> = vec![0xFF, 0xFE, 0x7B, 0x7D]; // invalid followed by "{}"
+        let ptr_value = bad_bytes.as_ptr() as usize;
+        let ptr_bytes = ptr_value.to_le_bytes();
+
+        let string_ptr = StringPtr {
+            value: ptr_bytes.to_vec(),
+            length: bad_bytes.len() as i64,
+        };
+
+        let result = parse_json_bindings(&string_ptr);
+        assert!(result.is_err());
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(
+            err_msg.contains("UTF-8"),
+            "Expected UTF-8 error, got: {err_msg}"
+        );
+    }
+
+    #[test]
+    fn test_parse_json_bindings_rejects_invalid_json() {
+        use crate::protobuf_gen::database_driver_v1::StringPtr;
+
+        // Valid UTF-8 but not valid JSON
+        let bad_json = "{ this is not json }";
+        let json_bytes = bad_json.as_bytes();
+        let ptr_value = json_bytes.as_ptr() as usize;
+        let ptr_bytes = ptr_value.to_le_bytes();
+
+        let string_ptr = StringPtr {
+            value: ptr_bytes.to_vec(),
+            length: bad_json.len() as i64,
+        };
+
+        let result = parse_json_bindings(&string_ptr);
+        assert!(result.is_err());
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(
+            err_msg.contains("JSON"),
+            "Expected JSON parse error, got: {err_msg}"
+        );
+    }
+
+    #[test]
+    fn test_parse_json_bindings_rejects_truncated_json() {
+        use crate::protobuf_gen::database_driver_v1::StringPtr;
+
+        // JSON that starts valid but is cut short
+        let truncated = r#"{"1": {"type": "FIXED""#;
+        let json_bytes = truncated.as_bytes();
+        let ptr_value = json_bytes.as_ptr() as usize;
+        let ptr_bytes = ptr_value.to_le_bytes();
+
+        let string_ptr = StringPtr {
+            value: ptr_bytes.to_vec(),
+            length: truncated.len() as i64,
+        };
+
+        let result = parse_json_bindings(&string_ptr);
+        assert!(result.is_err());
+    }
+
+    // ---------------------------------------------------------------
+    // parse_json_bindings: zero-copy verification
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn test_parse_json_bindings_returns_borrowed_cow() {
+        use crate::protobuf_gen::database_driver_v1::StringPtr;
+
+        let json = r#"{"1": {"type": "TEXT", "value": "abc"}}"#;
+        let json_bytes = json.as_bytes();
+        let ptr_value = json_bytes.as_ptr() as usize;
+        let ptr_bytes = ptr_value.to_le_bytes();
+
+        let string_ptr = StringPtr {
+            value: ptr_bytes.to_vec(),
+            length: json.len() as i64,
+        };
+
+        let result = parse_json_bindings(&string_ptr).unwrap().unwrap();
+
+        // The returned Cow must be the Borrowed variant (zero-copy path)
+        assert!(
+            matches!(result, Cow::Borrowed(_)),
+            "Expected Cow::Borrowed for JSON bindings (zero-copy), got Cow::Owned"
+        );
+
+        // The borrowed RawValue's underlying string must point into the
+        // same memory region as the original json_bytes buffer.
+        let raw_ptr = result.get().as_ptr() as usize;
+        let original_start = json_bytes.as_ptr() as usize;
+        let original_end = original_start + json_bytes.len();
+        assert!(
+            raw_ptr >= original_start && raw_ptr < original_end,
+            "Borrowed RawValue should point into the original buffer"
+        );
+    }
+
+    // ---------------------------------------------------------------
+    // parse_json_bindings: additional happy-path cases
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn test_parse_json_bindings_single_parameter() {
+        use crate::protobuf_gen::database_driver_v1::StringPtr;
+
+        let json = r#"{"1": {"type": "FIXED", "value": "42"}}"#;
+        let json_bytes = json.as_bytes();
+        let ptr_value = json_bytes.as_ptr() as usize;
+        let ptr_bytes = ptr_value.to_le_bytes();
+
+        let string_ptr = StringPtr {
+            value: ptr_bytes.to_vec(),
+            length: json.len() as i64,
+        };
+
+        let result = parse_json_bindings(&string_ptr).unwrap().unwrap();
+        let params: serde_json::Value = serde_json::from_str(result.get()).unwrap();
+
+        let obj = params.as_object().unwrap();
+        assert_eq!(obj.len(), 1);
+        assert_eq!(obj["1"]["type"], "FIXED");
+        assert_eq!(obj["1"]["value"], "42");
+    }
+
+    #[test]
+    fn test_parse_json_bindings_with_null_values() {
+        use crate::protobuf_gen::database_driver_v1::StringPtr;
+
+        let json = r#"{"1": {"type": "TEXT", "value": null}}"#;
+        let json_bytes = json.as_bytes();
+        let ptr_value = json_bytes.as_ptr() as usize;
+        let ptr_bytes = ptr_value.to_le_bytes();
+
+        let string_ptr = StringPtr {
+            value: ptr_bytes.to_vec(),
+            length: json.len() as i64,
+        };
+
+        let result = parse_json_bindings(&string_ptr).unwrap().unwrap();
+        let params: serde_json::Value = serde_json::from_str(result.get()).unwrap();
+        assert!(params["1"]["value"].is_null());
+    }
+
+    #[test]
+    fn test_parse_json_bindings_with_unicode_values() {
+        use crate::protobuf_gen::database_driver_v1::StringPtr;
+
+        let json = r#"{"1": {"type": "TEXT", "value": "日本語テスト 🎉"}}"#;
+        let json_bytes = json.as_bytes();
+        let ptr_value = json_bytes.as_ptr() as usize;
+        let ptr_bytes = ptr_value.to_le_bytes();
+
+        let string_ptr = StringPtr {
+            value: ptr_bytes.to_vec(),
+            length: json.len() as i64,
+        };
+
+        let result = parse_json_bindings(&string_ptr).unwrap().unwrap();
+        let params: serde_json::Value = serde_json::from_str(result.get()).unwrap();
+        assert_eq!(params["1"]["value"], "日本語テスト 🎉");
+    }
+
+    #[test]
+    fn test_parse_json_bindings_with_special_characters() {
+        use crate::protobuf_gen::database_driver_v1::StringPtr;
+
+        let json = r#"{"1": {"type": "TEXT", "value": "line1\nline2\ttab\"quote"}}"#;
+        let json_bytes = json.as_bytes();
+        let ptr_value = json_bytes.as_ptr() as usize;
+        let ptr_bytes = ptr_value.to_le_bytes();
+
+        let string_ptr = StringPtr {
+            value: ptr_bytes.to_vec(),
+            length: json.len() as i64,
+        };
+
+        let result = parse_json_bindings(&string_ptr).unwrap().unwrap();
+        let params: serde_json::Value = serde_json::from_str(result.get()).unwrap();
+        assert!(params["1"]["value"].is_string());
+    }
+
+    #[test]
+    fn test_parse_json_bindings_empty_object() {
+        use crate::protobuf_gen::database_driver_v1::StringPtr;
+
+        // An empty JSON object is valid -- zero bindings
+        let json = r#"{}"#;
+        let json_bytes = json.as_bytes();
+        let ptr_value = json_bytes.as_ptr() as usize;
+        let ptr_bytes = ptr_value.to_le_bytes();
+
+        let string_ptr = StringPtr {
+            value: ptr_bytes.to_vec(),
+            length: json.len() as i64,
+        };
+
+        let result = parse_json_bindings(&string_ptr).unwrap().unwrap();
+        let params: serde_json::Value = serde_json::from_str(result.get()).unwrap();
+        assert!(params.is_object());
+        assert_eq!(params.as_object().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn test_parse_json_bindings_many_parameters() {
+        use crate::protobuf_gen::database_driver_v1::StringPtr;
+
+        // Build a JSON object with 20 parameters
+        let mut entries: Vec<String> = Vec::new();
+        for i in 1..=20 {
+            entries.push(format!(r#""{i}": {{"type": "FIXED", "value": "{i}"}}"#));
+        }
+        let json = format!("{{{}}}", entries.join(", "));
+
+        let json_bytes = json.as_bytes();
+        let ptr_value = json_bytes.as_ptr() as usize;
+        let ptr_bytes = ptr_value.to_le_bytes();
+
+        let string_ptr = StringPtr {
+            value: ptr_bytes.to_vec(),
+            length: json.len() as i64,
+        };
+
+        let result = parse_json_bindings(&string_ptr).unwrap().unwrap();
+        let params: serde_json::Value = serde_json::from_str(result.get()).unwrap();
+        assert_eq!(params.as_object().unwrap().len(), 20);
+    }
+
+    // ---------------------------------------------------------------
+    // parameters_from_record_batch (Arrow backwards-compat path)
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn test_parameters_from_record_batch_int32() {
+        use arrow::array::Int32Array;
+        use arrow::datatypes::{Field, Schema};
+
+        let schema = Schema::new(vec![Field::new("1", DataType::Int32, false)]);
+        let batch =
+            RecordBatch::try_new(Arc::new(schema), vec![Arc::new(Int32Array::from(vec![42]))])
+                .unwrap();
+
+        let result = parameters_from_record_batch(&batch).unwrap();
+
+        // Arrow path must return Cow::Owned (it builds a fresh JSON string)
+        assert!(
+            matches!(result, Cow::Owned(_)),
+            "Expected Cow::Owned for Arrow path"
+        );
+
+        let params: serde_json::Value = serde_json::from_str(result.get()).unwrap();
+        let obj = params.as_object().unwrap();
+        assert_eq!(obj.len(), 1);
+        assert_eq!(obj["1"]["type"], "FIXED");
+        assert_eq!(obj["1"]["value"], "42");
+    }
+
+    #[test]
+    fn test_parameters_from_record_batch_utf8() {
+        use arrow::array::StringArray;
+        use arrow::datatypes::{Field, Schema};
+
+        let schema = Schema::new(vec![Field::new("1", DataType::Utf8, false)]);
+        let batch = RecordBatch::try_new(
+            Arc::new(schema),
+            vec![Arc::new(StringArray::from(vec!["hello"]))],
+        )
+        .unwrap();
+
+        let result = parameters_from_record_batch(&batch).unwrap();
+        let params: serde_json::Value = serde_json::from_str(result.get()).unwrap();
+        let obj = params.as_object().unwrap();
+        assert_eq!(obj.len(), 1);
+        assert_eq!(obj["1"]["type"], "TEXT");
+        assert_eq!(obj["1"]["value"], "hello");
+    }
+
+    #[test]
+    fn test_parameters_from_record_batch_mixed_columns() {
+        use arrow::array::{Int32Array, StringArray};
+        use arrow::datatypes::{Field, Schema};
+
+        let schema = Schema::new(vec![
+            Field::new("1", DataType::Int32, false),
+            Field::new("2", DataType::Utf8, false),
+        ]);
+        let batch = RecordBatch::try_new(
+            Arc::new(schema),
+            vec![
+                Arc::new(Int32Array::from(vec![99])),
+                Arc::new(StringArray::from(vec!["world"])),
+            ],
+        )
+        .unwrap();
+
+        let result = parameters_from_record_batch(&batch).unwrap();
+        let params: serde_json::Value = serde_json::from_str(result.get()).unwrap();
+        let obj = params.as_object().unwrap();
+        assert_eq!(obj.len(), 2);
+
+        assert_eq!(obj["1"]["type"], "FIXED");
+        assert_eq!(obj["1"]["value"], "99");
+
+        assert_eq!(obj["2"]["type"], "TEXT");
+        assert_eq!(obj["2"]["value"], "world");
+    }
+
+    #[test]
+    fn test_parameters_from_record_batch_unsupported_type() {
+        use arrow::array::Float64Array;
+        use arrow::datatypes::{Field, Schema};
+
+        let schema = Schema::new(vec![Field::new("1", DataType::Float64, false)]);
+        let batch = RecordBatch::try_new(
+            Arc::new(schema),
+            vec![Arc::new(Float64Array::from(vec![1.234]))],
+        )
+        .unwrap();
+
+        let result = parameters_from_record_batch(&batch);
+        assert!(
+            result.is_err(),
+            "Float64 is not a supported bind parameter type"
+        );
+    }
+
+    // ---------------------------------------------------------------
+    // Request serialization round-trip
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn test_request_serialization_with_borrowed_bindings() {
+        // Simulate the JSON path: Cow::Borrowed(&RawValue)
+        let json = r#"{"1":{"type":"FIXED","value":"7"}}"#;
+        let raw: &RawValue = serde_json::from_str(json).unwrap();
+
+        let request = query_request::Request {
+            sql_text: "SELECT ?".to_string(),
+            async_exec: false,
+            sequence_id: 1,
+            query_submission_time: 0,
+            is_internal: false,
+            describe_only: None,
+            parameters: None,
+            bindings: Some(Cow::Borrowed(raw)),
+            bind_stage: None,
+            query_context: query_request::QueryContext { entries: None },
+        };
+
+        let serialized = serde_json::to_string(&request).unwrap();
+
+        // The bindings JSON should appear verbatim in the serialized output
+        assert!(
+            serialized.contains(json),
+            "Serialized request must contain the raw JSON verbatim.\nSerialized: {serialized}"
+        );
+    }
+
+    #[test]
+    fn test_request_serialization_with_owned_bindings() {
+        // Simulate the Arrow path: Cow::Owned(Box<RawValue>)
+        let json = r#"{"1":{"type":"TEXT","value":"test"}}"#;
+        let raw = RawValue::from_string(json.to_string()).unwrap();
+
+        let request = query_request::Request {
+            sql_text: "SELECT ?".to_string(),
+            async_exec: false,
+            sequence_id: 1,
+            query_submission_time: 0,
+            is_internal: false,
+            describe_only: None,
+            parameters: None,
+            bindings: Some(Cow::Owned(raw)),
+            bind_stage: None,
+            query_context: query_request::QueryContext { entries: None },
+        };
+
+        let serialized = serde_json::to_string(&request).unwrap();
+        assert!(
+            serialized.contains(json),
+            "Serialized request must contain the raw JSON verbatim.\nSerialized: {serialized}"
+        );
+    }
+
+    #[test]
+    fn test_request_serialization_without_bindings() {
+        // When bindings is None, the "bindings" key should be omitted entirely
+        let request = query_request::Request {
+            sql_text: "SELECT 1".to_string(),
+            async_exec: false,
+            sequence_id: 1,
+            query_submission_time: 0,
+            is_internal: false,
+            describe_only: None,
+            parameters: None,
+            bindings: None,
+            bind_stage: None,
+            query_context: query_request::QueryContext { entries: None },
+        };
+
+        let serialized = serde_json::to_string(&request).unwrap();
+        assert!(
+            !serialized.contains("bindings"),
+            "None bindings should be omitted from serialized output.\nSerialized: {serialized}"
+        );
     }
 }
