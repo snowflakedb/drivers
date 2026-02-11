@@ -252,7 +252,7 @@ class TestBinaryBinding:
 
         # When Binary values [0x48656C6C6F, 0x576F726C64, 0x00, 0xFF, 0x] are inserted using binding
         test_values = [(b"Hello",), (b"World",), (b"\x00",), (b"\xff",), (b"",)]
-        rows = executemany_insert(table_name, f"INSERT INTO {table_name} VALUES (?)", test_values)
+        executemany_insert(table_name, f"INSERT INTO {table_name} VALUES (?)", test_values)
 
         # And Query "SELECT * FROM {table}" is executed
         rows = execute_query(f"SELECT * FROM {table_name}")
