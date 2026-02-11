@@ -100,6 +100,8 @@ async fn should_only_refresh_once_with_concurrent_401_errors() {
         retry_policy: RetryPolicy::default(),
         server_url: Some(format!("http://{}", addr)),
         client_info: Some(test_client_info()),
+        init_session_parameters: None,
+        session_parameters: Arc::new(std::sync::RwLock::new(HashMap::new())),
     }));
 
     // When multiple concurrent requests receive 401 errors

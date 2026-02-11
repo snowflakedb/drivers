@@ -2,6 +2,7 @@ use snafu::{OptionExt, ResultExt};
 use std::sync::{Mutex, MutexGuard};
 
 use super::Handle;
+use super::alter_session_parser;
 use super::connection::with_valid_session;
 use super::error::*;
 use super::global_state::{CONN_HANDLE_MANAGER, STMT_HANDLE_MANAGER};
@@ -260,6 +261,24 @@ pub fn statement_execute_query(stmt_handle: Handle) -> Result<ExecuteResult, Api
         .get_query_parameter_bindings()
         .context(StatementSnafu)?;
 
+    // Parse ALTER SESSION SET statements and optimistically update cache
+    // This matches Python driver behavior for immediate parameter updates
+    if let Some(alter_param) = alter_session_parser::parse_alter_session(&query) {
+        tracing::debug!(
+            param_name = %alter_param.name,
+            param_value = %alter_param.value,
+            "Detected ALTER SESSION SET, updating cache optimistically"
+        );
+
+        let conn = stmt
+            .conn
+            .lock()
+            .map_err(|_| ConnectionLockingSnafu.build())?;
+        if let Ok(mut cache) = conn.session_parameters.write() {
+            cache.insert(alter_param.name.clone(), alter_param.value.clone());
+        }
+    }
+
     // Execute query with automatic session refresh on 401
     let conn = stmt.conn.clone();
     let response = rt.block_on(with_valid_session(&conn, |session_token| {
@@ -285,7 +304,10 @@ pub fn statement_execute_query(stmt_handle: Handle) -> Result<ExecuteResult, Api
     // Update session parameters cache from query response
     // Snowflake includes updated session parameters in every query response
     if let Some(parameters) = &response.data.parameters {
-        let conn = stmt.conn.lock().map_err(|_| ConnectionLockingSnafu.build())?;
+        let conn = stmt
+            .conn
+            .lock()
+            .map_err(|_| ConnectionLockingSnafu.build())?;
         if let Ok(mut cache) = conn.session_parameters.write() {
             for param in parameters {
                 // Convert JSON value to string for storage

@@ -46,6 +46,8 @@ pub fn connection_init(conn_handle: Handle, _db_handle: Handle) -> Result<(), Ap
                 })
                 .context(LoginSnafu)?;
 
+            // Initialize connection with session parameters from login response
+            // If missing, cache will be empty (None) - matching JDBC/Python/ODBC behavior
             conn_ptr
                 .lock()
                 .map_err(|_| ConnectionLockingSnafu {}.build())?
@@ -165,14 +167,16 @@ impl Connection {
         self.client_info = Some(client_info);
 
         // Populate session parameters cache if provided
-        if let Some(params) = session_params {
-            if let Ok(mut cache) = self.session_parameters.write() {
-                *cache = params;
-            }
+        if let Some(params) = session_params
+            && let Ok(mut cache) = self.session_parameters.write()
+        {
+            *cache = params;
         }
     }
 }
 
+/// Fetch all session parameters using "SHOW PARAMETERS IN SESSION" query.
+/// This is used as a fallback when the login response doesn't include session parameters.
 /// Execute an operation with automatic session refresh on 401.
 ///
 /// This function:

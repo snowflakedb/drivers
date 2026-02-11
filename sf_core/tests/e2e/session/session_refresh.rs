@@ -99,6 +99,7 @@ fn should_refresh_session_proactively() {
             warehouse: parameters.warehouse.clone(),
             role: parameters.role.clone(),
             client_info: client_info.clone(),
+            session_parameters: None,
         };
 
         let http_client = create_tls_client_with_config(TlsConfig::insecure())

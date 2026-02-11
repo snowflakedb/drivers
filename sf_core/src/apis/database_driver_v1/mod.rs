@@ -1,4 +1,5 @@
 #![allow(clippy::result_large_err)]
+mod alter_session_parser;
 mod connection;
 mod database;
 pub(crate) mod error;

@@ -66,7 +66,7 @@ pub fn connection_get_parameter(
                         query_parameters,
                         session_token,
                         sql,
-                        None,  // No parameter bindings
+                        None, // No parameter bindings
                         &retry_policy,
                         QueryExecutionMode::Blocking,
                     )
@@ -76,30 +76,29 @@ pub fn connection_get_parameter(
 
             // Parse the response to extract the parameter value
             // SHOW PARAMETERS returns columns: key, value, default, level, description, type
-            if let Some(rowset) = &response.data.rowset {
-                if !rowset.is_empty() && !rowset[0].is_empty() {
-                    // Find the "value" column index
-                    if let Some(row_type) = &response.data.row_type {
-                        if let Some(value_idx) = row_type.iter().position(|col| col.name.to_uppercase() == "VALUE") {
-                            if let Some(value) = rowset[0].get(value_idx) {
-                                let param_value = value.to_string();
+            if let Some(rowset) = &response.data.rowset
+                && !rowset.is_empty()
+                && !rowset[0].is_empty()
+                && let Some(row_type) = &response.data.row_type
+                && let Some(value_idx) = row_type
+                    .iter()
+                    .position(|col| col.name.to_uppercase() == "VALUE")
+                && let Some(value) = rowset[0].get(value_idx)
+            {
+                let param_value = value.to_string();
 
-                                // Update cache with the retrieved value
-                                {
-                                    let conn = conn_ptr
-                                        .lock()
-                                        .map_err(|_| ConnectionLockingSnafu {}.build())?;
+                // Update cache with the retrieved value
+                {
+                    let conn = conn_ptr
+                        .lock()
+                        .map_err(|_| ConnectionLockingSnafu {}.build())?;
 
-                                    if let Ok(mut cache) = conn.session_parameters.write() {
-                                        cache.insert(key.to_uppercase(), param_value.clone());
-                                    }
-                                }
-
-                                return Ok(Some(param_value));
-                            }
-                        }
+                    if let Ok(mut cache) = conn.session_parameters.write() {
+                        cache.insert(key.to_uppercase(), param_value.clone());
                     }
                 }
+
+                return Ok(Some(param_value));
             }
 
             // No matching parameter found
