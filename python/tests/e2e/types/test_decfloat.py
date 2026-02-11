@@ -351,7 +351,7 @@ class TestDecfloatBinding:
             DECFLOAT_LARGE_POS_EXPONENT,
         ]
         test_rows = [(("DECFLOAT", val),) for val in extreme_values]
-        rows = executemany_insert(table_name, f"INSERT INTO {table_name} VALUES (?)", test_rows)
+        executemany_insert(table_name, f"INSERT INTO {table_name} VALUES (?)", test_rows)
 
         # And Query "SELECT * FROM <table>" is executed
         rows = execute_query(f"SELECT * FROM {table_name}")
