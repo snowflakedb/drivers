@@ -351,7 +351,7 @@ class TestIntBinding:
 
         # When Integer values [0, 42, -2147483648, 9223372036854775807] are inserted using binding
         test_values = [0, 42, INT32_SIGNED_MIN, INT64_SIGNED_MAX]
-        rows = executemany_insert(table_name, f"INSERT INTO {table_name} VALUES (?)", [(val,) for val in test_values])
+        executemany_insert(table_name, f"INSERT INTO {table_name} VALUES (?)", [(val,) for val in test_values])
 
         # And Query "SELECT * FROM <table>" is executed
         rows = execute_query(f"SELECT * FROM {table_name}")
