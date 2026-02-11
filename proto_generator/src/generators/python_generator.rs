@@ -250,8 +250,14 @@ class ProtoError(Exception):
 
         let mut content = format!(
             r#"class {service_name}Client:
-    def __init__(self, transport):
+    def __init__(self, transport, error_handler=None):
         self._transport = transport
+        self._error_handler = error_handler
+
+    def _raise_error(self, exc):
+        if self._error_handler is not None:
+            raise self._error_handler(exc) from None
+        raise exc
 
 "#
         );
@@ -287,12 +293,11 @@ class ProtoError(Exception):
         elif code == 1:
             error = {error_type}()
             error.ParseFromString(response_bytes)
-            raise ProtoApplicationException(error)
+            self._raise_error(ProtoApplicationException(error))
         elif code == 2:
-            raise ProtoTransportException(str(response_bytes))
+            self._raise_error(ProtoTransportException(str(response_bytes)))
         else:
-            raise ProtoTransportException(f"Unknown error code: %s", code)
-
+            self._raise_error(ProtoTransportException(f"Unknown error code: %s", code))
 "#
             );
         }

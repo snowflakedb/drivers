@@ -114,6 +114,15 @@ message DriverException {
   StatusCode status_code = 2;
   DriverError error = 3;
   repeated ErrorTraceEntry error_trace = 4;
+  // Snowflake server error code (e.g. 1003 for syntax error, 904 for invalid identifier).
+  // Present when the error originated from a Snowflake server response.
+  optional int32 vendor_code = 5;
+  // ANSI SQL state code (e.g. "42000" for syntax error).
+  // Present when the server provides a sqlState in its response.
+  optional string sql_state = 6;
+  // The deepest cause in the error chain (root cause).
+  // More informative than the top-level message for end users.
+  optional string root_cause = 7;
 }
 
 // Column metadata for description

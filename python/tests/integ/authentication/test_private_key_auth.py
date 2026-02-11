@@ -1,5 +1,7 @@
 import pytest
 
+from snowflake.connector import ProgrammingError
+
 from ...compatibility import NEW_DRIVER_ONLY, OLD_DRIVER_ONLY
 
 
@@ -9,25 +11,17 @@ class TestPrivateKeyAuthentication:
         authenticator = "SNOWFLAKE_JWT"
 
         # When Trying to Connect with no private file provided
-        with pytest.raises(Exception) as exception:
+        with pytest.raises(Exception) as exception_info:
             int_test_connection_factory(authenticator=authenticator, private_key_file=None)
 
-        # Then There is error returned
-        self._verify_missing_parameter_error(exception)
+        exception = exception_info.value
 
-    def _verify_missing_parameter_error(self, exception):
+        # Then There is error returned
         assert exception is not None
-        assert str(exception.value).strip() != "", "Missing parameter error message should not be empty"
+
         if NEW_DRIVER_ONLY("BD#4"):
-            assert hasattr(exception.value, "error") and exception.value.error.missing_parameter is not None, (
-                "Expected missing parameter error"
-            )
-            assert exception.value.error.missing_parameter.parameter.strip() != "", (
-                "Missing parameter name should not be empty"
-            )
-        if OLD_DRIVER_ONLY("BD#4"):
-            assert isinstance(exception.value, TypeError), "Old driver throws TypeError for missing private key"
-            error_msg = str(exception.value).lower()
-            assert any(keyword in error_msg for keyword in ["private", "key", "missing"]), (
-                f"Expected error related to missing private key parameters, got: {exception.value}"
-            )
+            assert isinstance(exception, ProgrammingError)
+            assert "Missing required parameter: private_key or private_key_file" in str(exception)
+        elif OLD_DRIVER_ONLY("BD#4"):
+            assert isinstance(exception, TypeError)
+            assert "Expected bytes or RSAPrivateKey" in str(exception)

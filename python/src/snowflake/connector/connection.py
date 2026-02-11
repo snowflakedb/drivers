@@ -10,6 +10,7 @@ from collections.abc import Generator, Iterable
 from io import StringIO
 from typing import Any, Callable, Union
 
+from snowflake.connector._internal.errorcode import ER_CONNECTION_IS_CLOSED
 from snowflake.connector._internal.protobuf_gen.database_driver_v1_services import (
     ConnectionGetInfoRequest,
     ConnectionGetInfoResponse,
@@ -160,9 +161,12 @@ class Connection:
         Returns:
             SnowflakeCursorBase: A new cursor object
         """
-        if self._closed:
-            raise InterfaceError("Connection is closed")
+        self._check_not_closed()
         return cursor_class(self)
+
+    def _check_not_closed(self) -> None:
+        if self._closed:
+            raise InterfaceError("Connection is closed.", errno=ER_CONNECTION_IS_CLOSED)
 
     # Context manager support
     def __enter__(self) -> Connection:

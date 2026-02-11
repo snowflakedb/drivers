@@ -8,9 +8,6 @@ behavior_differences:
   3:
     name: "BROTLI compression type option is now supported"
 
-  4:
-    name: "Error structure changed"
-
   5:
     name: "Private key password parameter name changed"
     description: |

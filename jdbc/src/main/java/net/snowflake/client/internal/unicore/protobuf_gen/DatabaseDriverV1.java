@@ -7025,6 +7025,91 @@ public final class DatabaseDriverV1 extends com.google.protobuf.GeneratedFile {
      */
     net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ErrorTraceEntryOrBuilder getErrorTraceOrBuilder(
         int index);
+
+    /**
+     * <pre>
+     * Snowflake server error code (e.g. 1003 for syntax error, 904 for invalid identifier).
+     * Present when the error originated from a Snowflake server response.
+     * </pre>
+     *
+     * <code>optional int32 vendor_code = 5;</code>
+     * @return Whether the vendorCode field is set.
+     */
+    boolean hasVendorCode();
+    /**
+     * <pre>
+     * Snowflake server error code (e.g. 1003 for syntax error, 904 for invalid identifier).
+     * Present when the error originated from a Snowflake server response.
+     * </pre>
+     *
+     * <code>optional int32 vendor_code = 5;</code>
+     * @return The vendorCode.
+     */
+    int getVendorCode();
+
+    /**
+     * <pre>
+     * ANSI SQL state code (e.g. "42000" for syntax error).
+     * Present when the server provides a sqlState in its response.
+     * </pre>
+     *
+     * <code>optional string sql_state = 6;</code>
+     * @return Whether the sqlState field is set.
+     */
+    boolean hasSqlState();
+    /**
+     * <pre>
+     * ANSI SQL state code (e.g. "42000" for syntax error).
+     * Present when the server provides a sqlState in its response.
+     * </pre>
+     *
+     * <code>optional string sql_state = 6;</code>
+     * @return The sqlState.
+     */
+    java.lang.String getSqlState();
+    /**
+     * <pre>
+     * ANSI SQL state code (e.g. "42000" for syntax error).
+     * Present when the server provides a sqlState in its response.
+     * </pre>
+     *
+     * <code>optional string sql_state = 6;</code>
+     * @return The bytes for sqlState.
+     */
+    com.google.protobuf.ByteString
+        getSqlStateBytes();
+
+    /**
+     * <pre>
+     * The deepest cause in the error chain (root cause).
+     * More informative than the top-level message for end users.
+     * </pre>
+     *
+     * <code>optional string root_cause = 7;</code>
+     * @return Whether the rootCause field is set.
+     */
+    boolean hasRootCause();
+    /**
+     * <pre>
+     * The deepest cause in the error chain (root cause).
+     * More informative than the top-level message for end users.
+     * </pre>
+     *
+     * <code>optional string root_cause = 7;</code>
+     * @return The rootCause.
+     */
+    java.lang.String getRootCause();
+    /**
+     * <pre>
+     * The deepest cause in the error chain (root cause).
+     * More informative than the top-level message for end users.
+     * </pre>
+     *
+     * <code>optional string root_cause = 7;</code>
+     * @return The bytes for rootCause.
+     */
+    com.google.protobuf.ByteString
+        getRootCauseBytes();
   }
   /**
    * <pre>
@@ -7055,6 +7140,8 @@ public final class DatabaseDriverV1 extends com.google.protobuf.GeneratedFile {
       message_ = "";
       statusCode_ = 0;
       errorTrace_ = java.util.Collections.emptyList();
+      sqlState_ = "";
+      rootCause_ = "";
     }
 
     public static final com.google.protobuf.Descriptors.Descriptor
@@ -7195,6 +7282,159 @@ public final class DatabaseDriverV1 extends com.google.protobuf.GeneratedFile {
       return errorTrace_.get(index);
     }
 
+    public static final int VENDOR_CODE_FIELD_NUMBER = 5;
+    private int vendorCode_ = 0;
+    /**
+     * <pre>
+     * Snowflake server error code (e.g. 1003 for syntax error, 904 for invalid identifier).
+     * Present when the error originated from a Snowflake server response.
+     * </pre>
+     *
+     * <code>optional int32 vendor_code = 5;</code>
+     * @return Whether the vendorCode field is set.
+     */
+    @java.lang.Override
+    public boolean hasVendorCode() {
+      return ((bitField0_ & 0x00000002) != 0);
+    }
+    /**
+     * <pre>
+     * Snowflake server error code (e.g. 1003 for syntax error, 904 for invalid identifier).
+     * Present when the error originated from a Snowflake server response.
+     * </pre>
+     *
+     * <code>optional int32 vendor_code = 5;</code>
+     * @return The vendorCode.
+     */
+    @java.lang.Override
+    public int getVendorCode() {
+      return vendorCode_;
+    }
+
+    public static final int SQL_STATE_FIELD_NUMBER = 6;
+    @SuppressWarnings("serial")
+    private volatile java.lang.Object sqlState_ = "";
+    /**
+     * <pre>
+     * ANSI SQL state code (e.g. "42000" for syntax error).
+     * Present when the server provides a sqlState in its response.
+     * </pre>
+     *
+     * <code>optional string sql_state = 6;</code>
+     * @return Whether the sqlState field is set.
+     */
+    @java.lang.Override
+    public boolean hasSqlState() {
+      return ((bitField0_ & 0x00000004) != 0);
+    }
+    /**
+     * <pre>
+     * ANSI SQL state code (e.g. "42000" for syntax error).
+     * Present when the server provides a sqlState in its response.
+     * </pre>
+     *
+     * <code>optional string sql_state = 6;</code>
+     * @return The sqlState.
+     */
+    @java.lang.Override
+    public java.lang.String getSqlState() {
+      java.lang.Object ref = sqlState_;
+      if (ref instanceof java.lang.String) {
+        return (java.lang.String) ref;
+      } else {
+        com.google.protobuf.ByteString bs = 
+            (com.google.protobuf.ByteString) ref;
+        java.lang.String s = bs.toStringUtf8();
+        sqlState_ = s;
+        return s;
+      }
+    }
+    /**
+     * <pre>
+     * ANSI SQL state code (e.g. "42000" for syntax error).
+     * Present when the server provides a sqlState in its response.
+     * </pre>
+     *
+     * <code>optional string sql_state = 6;</code>
+     * @return The bytes for sqlState.
+     */
+    @java.lang.Override
+    public com.google.protobuf.ByteString
+        getSqlStateBytes() {
+      java.lang.Object ref = sqlState_;
+      if (ref instanceof java.lang.String) {
+        com.google.protobuf.ByteString b = 
+            com.google.protobuf.ByteString.copyFromUtf8(
+                (java.lang.String) ref);
+        sqlState_ = b;
+        return b;
+      } else {
+        return (com.google.protobuf.ByteString) ref;
+      }
+    }
+
+    public static final int ROOT_CAUSE_FIELD_NUMBER = 7;
+    @SuppressWarnings("serial")
+    private volatile java.lang.Object rootCause_ = "";
+    /**
+     * <pre>
+     * The deepest cause in the error chain (root cause).
+     * More informative than the top-level message for end users.
+     * </pre>
+     *
+     * <code>optional string root_cause = 7;</code>
+     * @return Whether the rootCause field is set.
+     */
+    @java.lang.Override
+    public boolean hasRootCause() {
+      return ((bitField0_ & 0x00000008) != 0);
+    }
+    /**
+     * <pre>
+     * The deepest cause in the error chain (root cause).
+     * More informative than the top-level message for end users.
+     * </pre>
+     *
+     * <code>optional string root_cause = 7;</code>
+     * @return The rootCause.
+     */
+    @java.lang.Override
+    public java.lang.String getRootCause() {
+      java.lang.Object ref = rootCause_;
+      if (ref instanceof java.lang.String) {
+        return (java.lang.String) ref;
+      } else {
+        com.google.protobuf.ByteString bs = 
+            (com.google.protobuf.ByteString) ref;
+        java.lang.String s = bs.toStringUtf8();
+        rootCause_ = s;
+        return s;
+      }
+    }
+    /**
+     * <pre>
+     * The deepest cause in the error chain (root cause).
+     * More informative than the top-level message for end users.
+     * </pre>
+     *
+     * <code>optional string root_cause = 7;</code>
+     * @return The bytes for rootCause.
+     */
+    @java.lang.Override
+    public com.google.protobuf.ByteString
+        getRootCauseBytes() {
+      java.lang.Object ref = rootCause_;
+      if (ref instanceof java.lang.String) {
+        com.google.protobuf.ByteString b = 
+            com.google.protobuf.ByteString.copyFromUtf8(
+                (java.lang.String) ref);
+        rootCause_ = b;
+        return b;
+      } else {
+        return (com.google.protobuf.ByteString) ref;
+      }
+    }
+
     private byte memoizedIsInitialized = -1;
     @java.lang.Override
     public final boolean isInitialized() {
@@ -7221,6 +7461,15 @@ public final class DatabaseDriverV1 extends com.google.protobuf.GeneratedFile {
       for (int i = 0; i < errorTrace_.size(); i++) {
         output.writeMessage(4, errorTrace_.get(i));
       }
+      if (((bitField0_ & 0x00000002) != 0)) {
+        output.writeInt32(5, vendorCode_);
+      }
+      if (((bitField0_ & 0x00000004) != 0)) {
+        com.google.protobuf.GeneratedMessage.writeString(output, 6, sqlState_);
+      }
+      if (((bitField0_ & 0x00000008) != 0)) {
+        com.google.protobuf.GeneratedMessage.writeString(output, 7, rootCause_);
+      }
       getUnknownFields().writeTo(output);
     }
 
@@ -7244,6 +7493,16 @@ public final class DatabaseDriverV1 extends com.google.protobuf.GeneratedFile {
       for (int i = 0; i < errorTrace_.size(); i++) {
         size += com.google.protobuf.CodedOutputStream
           .computeMessageSize(4, errorTrace_.get(i));
+      }
+      if (((bitField0_ & 0x00000002) != 0)) {
+        size += com.google.protobuf.CodedOutputStream
+          .computeInt32Size(5, vendorCode_);
+      }
+      if (((bitField0_ & 0x00000004) != 0)) {
+        size += com.google.protobuf.GeneratedMessage.computeStringSize(6, sqlState_);
+      }
+      if (((bitField0_ & 0x00000008) != 0)) {
+        size += com.google.protobuf.GeneratedMessage.computeStringSize(7, rootCause_);
       }
       size += getUnknownFields().getSerializedSize();
       memoizedSize = size;
@@ -7270,6 +7529,21 @@ public final class DatabaseDriverV1 extends com.google.protobuf.GeneratedFile {
       }
       if (!getErrorTraceList()
           .equals(other.getErrorTraceList())) return false;
+      if (hasVendorCode() != other.hasVendorCode()) return false;
+      if (hasVendorCode()) {
+        if (getVendorCode()
+            != other.getVendorCode()) return false;
+      }
+      if (hasSqlState() != other.hasSqlState()) return false;
+      if (hasSqlState()) {
+        if (!getSqlState()
+            .equals(other.getSqlState())) return false;
+      }
+      if (hasRootCause() != other.hasRootCause()) return false;
+      if (hasRootCause()) {
+        if (!getRootCause()
+            .equals(other.getRootCause())) return false;
+      }
       if (!getUnknownFields().equals(other.getUnknownFields())) return false;
       return true;
     }
@@ -7292,6 +7566,18 @@ public final class DatabaseDriverV1 extends com.google.protobuf.GeneratedFile {
       if (getErrorTraceCount() > 0) {
         hash = (37 * hash) + ERROR_TRACE_FIELD_NUMBER;
         hash = (53 * hash) + getErrorTraceList().hashCode();
+      }
+      if (hasVendorCode()) {
+        hash = (37 * hash) + VENDOR_CODE_FIELD_NUMBER;
+        hash = (53 * hash) + getVendorCode();
+      }
+      if (hasSqlState()) {
+        hash = (37 * hash) + SQL_STATE_FIELD_NUMBER;
+        hash = (53 * hash) + getSqlState().hashCode();
+      }
+      if (hasRootCause()) {
+        hash = (37 * hash) + ROOT_CAUSE_FIELD_NUMBER;
+        hash = (53 * hash) + getRootCause().hashCode();
       }
       hash = (29 * hash) + getUnknownFields().hashCode();
       memoizedHashCode = hash;
@@ -7449,6 +7735,9 @@ public final class DatabaseDriverV1 extends com.google.protobuf.GeneratedFile {
           errorTraceBuilder_.clear();
         }
         bitField0_ = (bitField0_ & ~0x00000008);
+        vendorCode_ = 0;
+        sqlState_ = "";
+        rootCause_ = "";
         return this;
       }
 
@@ -7508,6 +7797,18 @@ public final class DatabaseDriverV1 extends com.google.protobuf.GeneratedFile {
               : errorBuilder_.build();
           to_bitField0_ |= 0x00000001;
         }
+        if (((from_bitField0_ & 0x00000010) != 0)) {
+          result.vendorCode_ = vendorCode_;
+          to_bitField0_ |= 0x00000002;
+        }
+        if (((from_bitField0_ & 0x00000020) != 0)) {
+          result.sqlState_ = sqlState_;
+          to_bitField0_ |= 0x00000004;
+        }
+        if (((from_bitField0_ & 0x00000040) != 0)) {
+          result.rootCause_ = rootCause_;
+          to_bitField0_ |= 0x00000008;
+        }
         result.bitField0_ |= to_bitField0_;
       }
 
@@ -7559,6 +7860,19 @@ public final class DatabaseDriverV1 extends com.google.protobuf.GeneratedFile {
               errorTraceBuilder_.addAllMessages(other.errorTrace_);
             }
           }
+        }
+        if (other.hasVendorCode()) {
+          setVendorCode(other.getVendorCode());
+        }
+        if (other.hasSqlState()) {
+          sqlState_ = other.sqlState_;
+          bitField0_ |= 0x00000020;
+          onChanged();
+        }
+        if (other.hasRootCause()) {
+          rootCause_ = other.rootCause_;
+          bitField0_ |= 0x00000040;
+          onChanged();
         }
         this.mergeUnknownFields(other.getUnknownFields());
         onChanged();
@@ -7616,6 +7930,21 @@ public final class DatabaseDriverV1 extends com.google.protobuf.GeneratedFile {
                 }
                 break;
               } // case 34
+              case 40: {
+                vendorCode_ = input.readInt32();
+                bitField0_ |= 0x00000010;
+                break;
+              } // case 40
+              case 50: {
+                sqlState_ = input.readStringRequireUtf8();
+                bitField0_ |= 0x00000020;
+                break;
+              } // case 50
+              case 58: {
+                rootCause_ = input.readStringRequireUtf8();
+                bitField0_ |= 0x00000040;
+                break;
+              } // case 58
               default: {
                 if (!super.parseUnknownField(input, extensionRegistry, tag)) {
                   done = true; // was an endgroup tag
@@ -8115,6 +8444,284 @@ public final class DatabaseDriverV1 extends com.google.protobuf.GeneratedFile {
           errorTrace_ = null;
         }
         return errorTraceBuilder_;
+      }
+
+      private int vendorCode_ ;
+      /**
+       * <pre>
+       * Snowflake server error code (e.g. 1003 for syntax error, 904 for invalid identifier).
+       * Present when the error originated from a Snowflake server response.
+       * </pre>
+       *
+       * <code>optional int32 vendor_code = 5;</code>
+       * @return Whether the vendorCode field is set.
+       */
+      @java.lang.Override
+      public boolean hasVendorCode() {
+        return ((bitField0_ & 0x00000010) != 0);
+      }
+      /**
+       * <pre>
+       * Snowflake server error code (e.g. 1003 for syntax error, 904 for invalid identifier).
+       * Present when the error originated from a Snowflake server response.
+       * </pre>
+       *
+       * <code>optional int32 vendor_code = 5;</code>
+       * @return The vendorCode.
+       */
+      @java.lang.Override
+      public int getVendorCode() {
+        return vendorCode_;
+      }
+      /**
+       * <pre>
+       * Snowflake server error code (e.g. 1003 for syntax error, 904 for invalid identifier).
+       * Present when the error originated from a Snowflake server response.
+       * </pre>
+       *
+       * <code>optional int32 vendor_code = 5;</code>
+       * @param value The vendorCode to set.
+       * @return This builder for chaining.
+       */
+      public Builder setVendorCode(int value) {
+
+        vendorCode_ = value;
+        bitField0_ |= 0x00000010;
+        onChanged();
+        return this;
+      }
+      /**
+       * <pre>
+       * Snowflake server error code (e.g. 1003 for syntax error, 904 for invalid identifier).
+       * Present when the error originated from a Snowflake server response.
+       * </pre>
+       *
+       * <code>optional int32 vendor_code = 5;</code>
+       * @return This builder for chaining.
+       */
+      public Builder clearVendorCode() {
+        bitField0_ = (bitField0_ & ~0x00000010);
+        vendorCode_ = 0;
+        onChanged();
+        return this;
+      }
+
+      private java.lang.Object sqlState_ = "";
+      /**
+       * <pre>
+       * ANSI SQL state code (e.g. "42000" for syntax error).
+       * Present when the server provides a sqlState in its response.
+       * </pre>
+       *
+       * <code>optional string sql_state = 6;</code>
+       * @return Whether the sqlState field is set.
+       */
+      public boolean hasSqlState() {
+        return ((bitField0_ & 0x00000020) != 0);
+      }
+      /**
+       * <pre>
+       * ANSI SQL state code (e.g. "42000" for syntax error).
+       * Present when the server provides a sqlState in its response.
+       * </pre>
+       *
+       * <code>optional string sql_state = 6;</code>
+       * @return The sqlState.
+       */
+      public java.lang.String getSqlState() {
+        java.lang.Object ref = sqlState_;
+        if (!(ref instanceof java.lang.String)) {
+          com.google.protobuf.ByteString bs =
+              (com.google.protobuf.ByteString) ref;
+          java.lang.String s = bs.toStringUtf8();
+          sqlState_ = s;
+          return s;
+        } else {
+          return (java.lang.String) ref;
+        }
+      }
+      /**
+       * <pre>
+       * ANSI SQL state code (e.g. "42000" for syntax error).
+       * Present when the server provides a sqlState in its response.
+       * </pre>
+       *
+       * <code>optional string sql_state = 6;</code>
+       * @return The bytes for sqlState.
+       */
+      public com.google.protobuf.ByteString
+          getSqlStateBytes() {
+        java.lang.Object ref = sqlState_;
+        if (ref instanceof String) {
+          com.google.protobuf.ByteString b = 
+              com.google.protobuf.ByteString.copyFromUtf8(
+                  (java.lang.String) ref);
+          sqlState_ = b;
+          return b;
+        } else {
+          return (com.google.protobuf.ByteString) ref;
+        }
+      }
+      /**
+       * <pre>
+       * ANSI SQL state code (e.g. "42000" for syntax error).
+       * Present when the server provides a sqlState in its response.
+       * </pre>
+       *
+       * <code>optional string sql_state = 6;</code>
+       * @param value The sqlState to set.
+       * @return This builder for chaining.
+       */
+      public Builder setSqlState(
+          java.lang.String value) {
+        if (value == null) { throw new NullPointerException(); }
+        sqlState_ = value;
+        bitField0_ |= 0x00000020;
+        onChanged();
+        return this;
+      }
+      /**
+       * <pre>
+       * ANSI SQL state code (e.g. "42000" for syntax error).
+       * Present when the server provides a sqlState in its response.
+       * </pre>
+       *
+       * <code>optional string sql_state = 6;</code>
+       * @return This builder for chaining.
+       */
+      public Builder clearSqlState() {
+        sqlState_ = getDefaultInstance().getSqlState();
+        bitField0_ = (bitField0_ & ~0x00000020);
+        onChanged();
+        return this;
+      }
+      /**
+       * <pre>
+       * ANSI SQL state code (e.g. "42000" for syntax error).
+       * Present when the server provides a sqlState in its response.
+       * </pre>
+       *
+       * <code>optional string sql_state = 6;</code>
+       * @param value The bytes for sqlState to set.
+       * @return This builder for chaining.
+       */
+      public Builder setSqlStateBytes(
+          com.google.protobuf.ByteString value) {
+        if (value == null) { throw new NullPointerException(); }
+        checkByteStringIsUtf8(value);
+        sqlState_ = value;
+        bitField0_ |= 0x00000020;
+        onChanged();
+        return this;
+      }
+
+      private java.lang.Object rootCause_ = "";
+      /**
+       * <pre>
+       * The deepest cause in the error chain (root cause).
+       * More informative than the top-level message for end users.
+       * </pre>
+       *
+       * <code>optional string root_cause = 7;</code>
+       * @return Whether the rootCause field is set.
+       */
+      public boolean hasRootCause() {
+        return ((bitField0_ & 0x00000040) != 0);
+      }
+      /**
+       * <pre>
+       * The deepest cause in the error chain (root cause).
+       * More informative than the top-level message for end users.
+       * </pre>
+       *
+       * <code>optional string root_cause = 7;</code>
+       * @return The rootCause.
+       */
+      public java.lang.String getRootCause() {
+        java.lang.Object ref = rootCause_;
+        if (!(ref instanceof java.lang.String)) {
+          com.google.protobuf.ByteString bs =
+              (com.google.protobuf.ByteString) ref;
+          java.lang.String s = bs.toStringUtf8();
+          rootCause_ = s;
+          return s;
+        } else {
+          return (java.lang.String) ref;
+        }
+      }
+      /**
+       * <pre>
+       * The deepest cause in the error chain (root cause).
+       * More informative than the top-level message for end users.
+       * </pre>
+       *
+       * <code>optional string root_cause = 7;</code>
+       * @return The bytes for rootCause.
+       */
+      public com.google.protobuf.ByteString
+          getRootCauseBytes() {
+        java.lang.Object ref = rootCause_;
+        if (ref instanceof String) {
+          com.google.protobuf.ByteString b = 
+              com.google.protobuf.ByteString.copyFromUtf8(
+                  (java.lang.String) ref);
+          rootCause_ = b;
+          return b;
+        } else {
+          return (com.google.protobuf.ByteString) ref;
+        }
+      }
+      /**
+       * <pre>
+       * The deepest cause in the error chain (root cause).
+       * More informative than the top-level message for end users.
+       * </pre>
+       *
+       * <code>optional string root_cause = 7;</code>
+       * @param value The rootCause to set.
+       * @return This builder for chaining.
+       */
+      public Builder setRootCause(
+          java.lang.String value) {
+        if (value == null) { throw new NullPointerException(); }
+        rootCause_ = value;
+        bitField0_ |= 0x00000040;
+        onChanged();
+        return this;
+      }
+      /**
+       * <pre>
+       * The deepest cause in the error chain (root cause).
+       * More informative than the top-level message for end users.
+       * </pre>
+       *
+       * <code>optional string root_cause = 7;</code>
+       * @return This builder for chaining.
+       */
+      public Builder clearRootCause() {
+        rootCause_ = getDefaultInstance().getRootCause();
+        bitField0_ = (bitField0_ & ~0x00000040);
+        onChanged();
+        return this;
+      }
+      /**
+       * <pre>
+       * The deepest cause in the error chain (root cause).
+       * More informative than the top-level message for end users.
+       * </pre>
+       *
+       * <code>optional string root_cause = 7;</code>
+       * @param value The bytes for rootCause to set.
+       * @return This builder for chaining.
+       */
+      public Builder setRootCauseBytes(
+          com.google.protobuf.ByteString value) {
+        if (value == null) { throw new NullPointerException(); }
+        checkByteStringIsUtf8(value);
+        rootCause_ = value;
+        bitField0_ |= 0x00000040;
+        onChanged();
+        return this;
       }
 
       // @@protoc_insertion_point(builder_scope:database_driver_v1.DriverException)
@@ -64326,12 +64933,15 @@ net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSettin
       "ueH\000\0225\n\013login_error\030\006 \001(\0132\036.database_dri" +
       "ver_v1.LoginErrorH\000B\014\n\nerror_type\"N\n\017Err" +
       "orTraceEntry\022\014\n\004file\030\001 \001(\t\022\014\n\004line\030\002 \001(\r" +
-      "\022\016\n\006column\030\003 \001(\r\022\017\n\007message\030\004 \001(\t\"\301\001\n\017Dr" +
+      "\022\016\n\006column\030\003 \001(\r\022\017\n\007message\030\004 \001(\t\"\271\002\n\017Dr" +
       "iverException\022\017\n\007message\030\001 \001(\t\0223\n\013status" +
       "_code\030\002 \001(\0162\036.database_driver_v1.StatusC" +
       "ode\022.\n\005error\030\003 \001(\0132\037.database_driver_v1." +
       "DriverError\0228\n\013error_trace\030\004 \003(\0132#.datab" +
-      "ase_driver_v1.ErrorTraceEntry\"\314\001\n\016Column" +
+      "ase_driver_v1.ErrorTraceEntry\022\030\n\013vendor_" +
+      "code\030\005 \001(\005H\000\210\001\001\022\026\n\tsql_state\030\006 \001(\tH\001\210\001\001\022" +
+      "\027\n\nroot_cause\030\007 \001(\tH\002\210\001\001B\016\n\014_vendor_code" +
+      "B\014\n\n_sql_stateB\r\n\013_root_cause\"\314\001\n\016Column" +
       "Metadata\022\014\n\004name\030\001 \001(\t\022\014\n\004type\030\002 \001(\t\022\026\n\t" +
       "precision\030\003 \001(\003H\000\210\001\001\022\022\n\005scale\030\004 \001(\003H\001\210\001\001" +
       "\022\023\n\006length\030\005 \001(\003H\002\210\001\001\022\030\n\013byte_length\030\006 \001" +
@@ -64745,7 +65355,7 @@ net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSettin
     internal_static_database_driver_v1_DriverException_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_database_driver_v1_DriverException_descriptor,
-        new java.lang.String[] { "Message", "StatusCode", "Error", "ErrorTrace", });
+        new java.lang.String[] { "Message", "StatusCode", "Error", "ErrorTrace", "VendorCode", "SqlState", "RootCause", });
     internal_static_database_driver_v1_ColumnMetadata_descriptor =
       getDescriptor().getMessageTypes().get(10);
     internal_static_database_driver_v1_ColumnMetadata_fieldAccessorTable = new

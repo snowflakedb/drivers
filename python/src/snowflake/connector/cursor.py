@@ -17,6 +17,8 @@ import ctypes
 from collections.abc import Iterator, Sequence
 from typing import TYPE_CHECKING, Any, Callable, NamedTuple, Union, cast
 
+from snowflake.connector._internal.errorcode import ER_CONNECTION_IS_CLOSED, ER_CURSOR_IS_CLOSED
+
 from ._internal.arrow_context import ArrowConverterContext
 from ._internal.arrow_stream_iterator import ArrowStreamIterator
 from ._internal.binding_converters import (
@@ -240,6 +242,14 @@ class SnowflakeCursorBase(abc.ABC):
         """Close the cursor now (rather than whenever __del__ is called)."""
         self._closed = True
 
+    def _check_not_closed(self) -> None:
+        if self._closed:
+            raise InterfaceError("Cursor is closed.", errno=ER_CURSOR_IS_CLOSED)
+
+    def _check_connection_open(self) -> None:
+        if self.connection.is_closed():
+            raise InterfaceError("Connection is closed.", errno=ER_CONNECTION_IS_CLOSED)
+
     def _build_query_bindings(self, parameters: Sequence[Any]) -> QueryBindings | None:
         """Serialize parameters and build a QueryBindings protobuf message.
 
@@ -334,8 +344,9 @@ class SnowflakeCursorBase(abc.ABC):
                 For pyformat paramstyle: sequence (%s) or dict (%(name)s)
                 For format paramstyle: sequence (%s)
         """
+        self._check_not_closed()
+        self._check_connection_open()
         query, bindings = self._prepare_query(operation, parameters)
-
         stmt_handle = self._connection.db_api.statement_new(
             StatementNewRequest(conn_handle=self._connection.conn_handle)
         ).stmt_handle
@@ -490,6 +501,7 @@ class SnowflakeCursorBase(abc.ABC):
         Return a dict if ``_use_dict_result`` is True, otherwise a tuple.
         Concrete subclasses expose this through a type-safe ``fetchone``.
         """
+        self._check_not_closed()
         if self._iterator is None:
             self._iterator = self._get_iterator()
         try:
@@ -540,6 +552,7 @@ class SnowflakeCursorBase(abc.ABC):
         Returns:
             sequence: List of all remaining rows
         """
+        self._check_not_closed()
         if self._iterator is None:
             self._iterator = self._get_iterator()
         return list(self._iterator)

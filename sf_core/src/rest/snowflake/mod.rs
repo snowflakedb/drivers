@@ -791,7 +791,17 @@ async fn execute_sync_query<'a>(
         let message = query_response
             .message
             .unwrap_or_else(|| "Unknown error".to_owned());
-        return QueryFailedSnafu { message }.fail();
+        let code = query_response
+            .code
+            .as_deref()
+            .and_then(|c| c.parse::<i32>().ok());
+        let sql_state = query_response.data.sql_state.clone();
+        return QueryFailedSnafu {
+            message,
+            code,
+            sql_state,
+        }
+        .fail();
     }
     Ok(query_response)
 }
@@ -959,6 +969,10 @@ pub enum RestError {
     #[snafu(display("Query failed: {message}"))]
     QueryFailed {
         message: String,
+        /// Snowflake server error code (e.g. 1003 for syntax error).
+        code: Option<i32>,
+        /// ANSI SQL state code (e.g. "42000" for syntax error).
+        sql_state: Option<String>,
         #[snafu(implicit)]
         location: Location,
     },

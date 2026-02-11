@@ -22,6 +22,7 @@ use crate::apis::database_driver_v1::{
 use crate::config::config_manager;
 use crate::config::path_resolver;
 use crate::protobuf::generated::database_driver_v1::*;
+use crate::rest::snowflake::error::SfError;
 use arrow::ffi::FFI_ArrowArray;
 use arrow::ffi::FFI_ArrowSchema;
 use arrow::ffi_stream::FFI_ArrowArrayStream;
@@ -355,6 +356,31 @@ fn to_driver_error(error: &ApiError) -> DriverError {
     }
 }
 
+/// Extract the Snowflake server vendor code and SQL state from an ApiError, if available.
+///
+/// Only populates vendor_code/sql_state for query errors where the Snowflake server
+/// code is the user-facing error number.  Login errors use client-side error codes
+/// (mapped by the Python layer) so the server code is NOT surfaced here.
+fn extract_vendor_info(error: &ApiError) -> (Option<i32>, Option<String>) {
+    match error {
+        ApiError::Query {
+            source: RestError::QueryFailed {
+                code, sql_state, ..
+            },
+            ..
+        } => (*code, sql_state.clone()),
+        ApiError::Query {
+            source:
+                RestError::AsyncQuery {
+                    source: SfError::SnowflakeBody { code, .. },
+                    ..
+                },
+            ..
+        } => (Some(*code), None),
+        _ => (None, None),
+    }
+}
+
 fn to_driver_exception(error: ApiError) -> DriverException {
     let status_code = match &error {
         ApiError::GenericError { .. } => StatusCode::GenericError,
@@ -410,7 +436,9 @@ fn to_driver_exception(error: ApiError) -> DriverException {
         ApiError::InvalidRefreshState { .. } => StatusCode::InternalError,
     };
 
+    let (vendor_code, sql_state) = extract_vendor_info(&error);
     let message = error.to_string();
+    let root_cause = extract_root_cause(&error);
     let driver_error = to_driver_error(&error);
     let error_trace = error
         .error_trace()
@@ -427,7 +455,23 @@ fn to_driver_exception(error: ApiError) -> DriverException {
         status_code: status_code as i32,
         error: Some(driver_error),
         error_trace,
+        vendor_code,
+        sql_state,
+        root_cause,
     }
+}
+
+/// Walk the `source()` chain to the deepest error and return its message.
+/// Returns `None` when the error has no source (i.e. the message itself is
+/// already the root cause).
+fn extract_root_cause(error: &dyn std::error::Error) -> Option<String> {
+    let mut deepest: Option<&dyn std::error::Error> = None;
+    let mut current = error.source();
+    while let Some(cause) = current {
+        deepest = Some(cause);
+        current = cause.source();
+    }
+    deepest.map(|e| e.to_string())
 }
 
 #[allow(clippy::result_large_err)]
@@ -437,6 +481,9 @@ fn required<T>(value: Option<T>, message: &str) -> Result<T, DriverException> {
         status_code: StatusCode::InvalidArgument as i32,
         error: None,
         error_trace: vec![],
+        vendor_code: None,
+        sql_state: None,
+        root_cause: None,
     })
 }
 
@@ -446,6 +493,9 @@ fn not_implemented(message: &str) -> DriverException {
         status_code: StatusCode::NotImplemented as i32,
         error: None,
         error_trace: vec![],
+        vendor_code: None,
+        sql_state: None,
+        root_cause: None,
     }
 }
 
