@@ -675,8 +675,12 @@ impl InfoCode {
             "INFO_CODE_VENDOR_ARROW_VERSION" => Some(Self::VendorArrowVersion),
             "INFO_CODE_VENDOR_SQL" => Some(Self::VendorSql),
             "INFO_CODE_VENDOR_SUBSTRAIT" => Some(Self::VendorSubstrait),
-            "INFO_CODE_VENDOR_SUBSTRAIT_MIN_VERSION" => Some(Self::VendorSubstraitMinVersion),
-            "INFO_CODE_VENDOR_SUBSTRAIT_MAX_VERSION" => Some(Self::VendorSubstraitMaxVersion),
+            "INFO_CODE_VENDOR_SUBSTRAIT_MIN_VERSION" => {
+                Some(Self::VendorSubstraitMinVersion)
+            }
+            "INFO_CODE_VENDOR_SUBSTRAIT_MAX_VERSION" => {
+                Some(Self::VendorSubstraitMaxVersion)
+            }
             "INFO_CODE_DRIVER_NAME" => Some(Self::DriverName),
             "INFO_CODE_DRIVER_VERSION" => Some(Self::DriverVersion),
             "INFO_CODE_DRIVER_ARROW_VERSION" => Some(Self::DriverArrowVersion),
@@ -686,509 +690,444 @@ impl InfoCode {
     }
 }
 
-use prost::Message;
 use proto_utils::*;
+use prost::Message;
 pub trait DatabaseDriver {
-    fn database_new(input: DatabaseNewRequest) -> Result<DatabaseNewResponse, DriverException>;
-    fn database_set_option_string(
-        input: DatabaseSetOptionStringRequest,
-    ) -> Result<DatabaseSetOptionStringResponse, DriverException>;
-    fn database_set_option_bytes(
-        input: DatabaseSetOptionBytesRequest,
-    ) -> Result<DatabaseSetOptionBytesResponse, DriverException>;
-    fn database_set_option_int(
-        input: DatabaseSetOptionIntRequest,
-    ) -> Result<DatabaseSetOptionIntResponse, DriverException>;
-    fn database_set_option_double(
-        input: DatabaseSetOptionDoubleRequest,
-    ) -> Result<DatabaseSetOptionDoubleResponse, DriverException>;
-    fn database_init(input: DatabaseInitRequest) -> Result<DatabaseInitResponse, DriverException>;
-    fn database_release(
-        input: DatabaseReleaseRequest,
-    ) -> Result<DatabaseReleaseResponse, DriverException>;
-    fn connection_new(
-        input: ConnectionNewRequest,
-    ) -> Result<ConnectionNewResponse, DriverException>;
-    fn connection_set_option_string(
-        input: ConnectionSetOptionStringRequest,
-    ) -> Result<ConnectionSetOptionStringResponse, DriverException>;
-    fn connection_set_option_bytes(
-        input: ConnectionSetOptionBytesRequest,
-    ) -> Result<ConnectionSetOptionBytesResponse, DriverException>;
-    fn connection_set_option_int(
-        input: ConnectionSetOptionIntRequest,
-    ) -> Result<ConnectionSetOptionIntResponse, DriverException>;
-    fn connection_set_option_double(
-        input: ConnectionSetOptionDoubleRequest,
-    ) -> Result<ConnectionSetOptionDoubleResponse, DriverException>;
-    fn connection_init(
-        input: ConnectionInitRequest,
-    ) -> Result<ConnectionInitResponse, DriverException>;
-    fn connection_release(
-        input: ConnectionReleaseRequest,
-    ) -> Result<ConnectionReleaseResponse, DriverException>;
-    fn connection_get_info(
-        input: ConnectionGetInfoRequest,
-    ) -> Result<ConnectionGetInfoResponse, DriverException>;
-    fn connection_get_objects(
-        input: ConnectionGetObjectsRequest,
-    ) -> Result<ConnectionGetObjectsResponse, DriverException>;
-    fn connection_get_table_schema(
-        input: ConnectionGetTableSchemaRequest,
-    ) -> Result<ConnectionGetTableSchemaResponse, DriverException>;
-    fn connection_get_table_types(
-        input: ConnectionGetTableTypesRequest,
-    ) -> Result<ConnectionGetTableTypesResponse, DriverException>;
-    fn connection_commit(
-        input: ConnectionCommitRequest,
-    ) -> Result<ConnectionCommitResponse, DriverException>;
-    fn connection_rollback(
-        input: ConnectionRollbackRequest,
-    ) -> Result<ConnectionRollbackResponse, DriverException>;
-    fn statement_new(input: StatementNewRequest) -> Result<StatementNewResponse, DriverException>;
-    fn statement_release(
-        input: StatementReleaseRequest,
-    ) -> Result<StatementReleaseResponse, DriverException>;
-    fn statement_set_sql_query(
-        input: StatementSetSqlQueryRequest,
-    ) -> Result<StatementSetSqlQueryResponse, DriverException>;
-    fn statement_set_substrait_plan(
-        input: StatementSetSubstraitPlanRequest,
-    ) -> Result<StatementSetSubstraitPlanResponse, DriverException>;
-    fn statement_prepare(
-        input: StatementPrepareRequest,
-    ) -> Result<StatementPrepareResponse, DriverException>;
-    fn statement_set_option_string(
-        input: StatementSetOptionStringRequest,
-    ) -> Result<StatementSetOptionStringResponse, DriverException>;
-    fn statement_set_option_bytes(
-        input: StatementSetOptionBytesRequest,
-    ) -> Result<StatementSetOptionBytesResponse, DriverException>;
-    fn statement_set_option_int(
-        input: StatementSetOptionIntRequest,
-    ) -> Result<StatementSetOptionIntResponse, DriverException>;
-    fn statement_set_option_double(
-        input: StatementSetOptionDoubleRequest,
-    ) -> Result<StatementSetOptionDoubleResponse, DriverException>;
-    fn statement_get_parameter_schema(
-        input: StatementGetParameterSchemaRequest,
-    ) -> Result<StatementGetParameterSchemaResponse, DriverException>;
-    fn statement_bind(
-        input: StatementBindRequest,
-    ) -> Result<StatementBindResponse, DriverException>;
-    fn statement_bind_stream(
-        input: StatementBindStreamRequest,
-    ) -> Result<StatementBindStreamResponse, DriverException>;
-    fn statement_execute_query(
-        input: StatementExecuteQueryRequest,
-    ) -> Result<StatementExecuteQueryResponse, DriverException>;
-    fn statement_execute_partitions(
-        input: StatementExecutePartitionsRequest,
-    ) -> Result<StatementExecutePartitionsResponse, DriverException>;
-    fn statement_read_partition(
-        input: StatementReadPartitionRequest,
-    ) -> Result<StatementReadPartitionResponse, DriverException>;
+	fn database_new(input: DatabaseNewRequest) -> Result<DatabaseNewResponse, DriverException>;
+	fn database_set_option_string(input: DatabaseSetOptionStringRequest) -> Result<DatabaseSetOptionStringResponse, DriverException>;
+	fn database_set_option_bytes(input: DatabaseSetOptionBytesRequest) -> Result<DatabaseSetOptionBytesResponse, DriverException>;
+	fn database_set_option_int(input: DatabaseSetOptionIntRequest) -> Result<DatabaseSetOptionIntResponse, DriverException>;
+	fn database_set_option_double(input: DatabaseSetOptionDoubleRequest) -> Result<DatabaseSetOptionDoubleResponse, DriverException>;
+	fn database_init(input: DatabaseInitRequest) -> Result<DatabaseInitResponse, DriverException>;
+	fn database_release(input: DatabaseReleaseRequest) -> Result<DatabaseReleaseResponse, DriverException>;
+	fn connection_new(input: ConnectionNewRequest) -> Result<ConnectionNewResponse, DriverException>;
+	fn connection_set_option_string(input: ConnectionSetOptionStringRequest) -> Result<ConnectionSetOptionStringResponse, DriverException>;
+	fn connection_set_option_bytes(input: ConnectionSetOptionBytesRequest) -> Result<ConnectionSetOptionBytesResponse, DriverException>;
+	fn connection_set_option_int(input: ConnectionSetOptionIntRequest) -> Result<ConnectionSetOptionIntResponse, DriverException>;
+	fn connection_set_option_double(input: ConnectionSetOptionDoubleRequest) -> Result<ConnectionSetOptionDoubleResponse, DriverException>;
+	fn connection_init(input: ConnectionInitRequest) -> Result<ConnectionInitResponse, DriverException>;
+	fn connection_release(input: ConnectionReleaseRequest) -> Result<ConnectionReleaseResponse, DriverException>;
+	fn connection_get_info(input: ConnectionGetInfoRequest) -> Result<ConnectionGetInfoResponse, DriverException>;
+	fn connection_get_objects(input: ConnectionGetObjectsRequest) -> Result<ConnectionGetObjectsResponse, DriverException>;
+	fn connection_get_table_schema(input: ConnectionGetTableSchemaRequest) -> Result<ConnectionGetTableSchemaResponse, DriverException>;
+	fn connection_get_table_types(input: ConnectionGetTableTypesRequest) -> Result<ConnectionGetTableTypesResponse, DriverException>;
+	fn connection_commit(input: ConnectionCommitRequest) -> Result<ConnectionCommitResponse, DriverException>;
+	fn connection_rollback(input: ConnectionRollbackRequest) -> Result<ConnectionRollbackResponse, DriverException>;
+	fn statement_new(input: StatementNewRequest) -> Result<StatementNewResponse, DriverException>;
+	fn statement_release(input: StatementReleaseRequest) -> Result<StatementReleaseResponse, DriverException>;
+	fn statement_set_sql_query(input: StatementSetSqlQueryRequest) -> Result<StatementSetSqlQueryResponse, DriverException>;
+	fn statement_set_substrait_plan(input: StatementSetSubstraitPlanRequest) -> Result<StatementSetSubstraitPlanResponse, DriverException>;
+	fn statement_prepare(input: StatementPrepareRequest) -> Result<StatementPrepareResponse, DriverException>;
+	fn statement_set_option_string(input: StatementSetOptionStringRequest) -> Result<StatementSetOptionStringResponse, DriverException>;
+	fn statement_set_option_bytes(input: StatementSetOptionBytesRequest) -> Result<StatementSetOptionBytesResponse, DriverException>;
+	fn statement_set_option_int(input: StatementSetOptionIntRequest) -> Result<StatementSetOptionIntResponse, DriverException>;
+	fn statement_set_option_double(input: StatementSetOptionDoubleRequest) -> Result<StatementSetOptionDoubleResponse, DriverException>;
+	fn statement_get_parameter_schema(input: StatementGetParameterSchemaRequest) -> Result<StatementGetParameterSchemaResponse, DriverException>;
+	fn statement_bind(input: StatementBindRequest) -> Result<StatementBindResponse, DriverException>;
+	fn statement_bind_stream(input: StatementBindStreamRequest) -> Result<StatementBindStreamResponse, DriverException>;
+	fn statement_execute_query(input: StatementExecuteQueryRequest) -> Result<StatementExecuteQueryResponse, DriverException>;
+	fn statement_execute_partitions(input: StatementExecutePartitionsRequest) -> Result<StatementExecutePartitionsResponse, DriverException>;
+	fn statement_read_partition(input: StatementReadPartitionRequest) -> Result<StatementReadPartitionResponse, DriverException>;
 }
 
-pub trait DatabaseDriverServer: DatabaseDriver {
-    fn handle_message(method: &str, message: Vec<u8>) -> Result<Vec<u8>, ProtoError<Vec<u8>>> {
-        match method {
-            "database_new" => {
-                let input = match DatabaseNewRequest::decode(&message[..]) {
-                    Ok(input) => input,
-                    Err(e) => return Err(ProtoError::Transport(e.to_string())),
-                };
-                let result = Self::database_new(input);
-                match result {
-                    Ok(output) => Ok(output.encode_to_vec()),
-                    Err(e) => Err(ProtoError::Application(e.encode_to_vec())),
-                }
-            }
-            "database_set_option_string" => {
-                let input = match DatabaseSetOptionStringRequest::decode(&message[..]) {
-                    Ok(input) => input,
-                    Err(e) => return Err(ProtoError::Transport(e.to_string())),
-                };
-                let result = Self::database_set_option_string(input);
-                match result {
-                    Ok(output) => Ok(output.encode_to_vec()),
-                    Err(e) => Err(ProtoError::Application(e.encode_to_vec())),
-                }
-            }
-            "database_set_option_bytes" => {
-                let input = match DatabaseSetOptionBytesRequest::decode(&message[..]) {
-                    Ok(input) => input,
-                    Err(e) => return Err(ProtoError::Transport(e.to_string())),
-                };
-                let result = Self::database_set_option_bytes(input);
-                match result {
-                    Ok(output) => Ok(output.encode_to_vec()),
-                    Err(e) => Err(ProtoError::Application(e.encode_to_vec())),
-                }
-            }
-            "database_set_option_int" => {
-                let input = match DatabaseSetOptionIntRequest::decode(&message[..]) {
-                    Ok(input) => input,
-                    Err(e) => return Err(ProtoError::Transport(e.to_string())),
-                };
-                let result = Self::database_set_option_int(input);
-                match result {
-                    Ok(output) => Ok(output.encode_to_vec()),
-                    Err(e) => Err(ProtoError::Application(e.encode_to_vec())),
-                }
-            }
-            "database_set_option_double" => {
-                let input = match DatabaseSetOptionDoubleRequest::decode(&message[..]) {
-                    Ok(input) => input,
-                    Err(e) => return Err(ProtoError::Transport(e.to_string())),
-                };
-                let result = Self::database_set_option_double(input);
-                match result {
-                    Ok(output) => Ok(output.encode_to_vec()),
-                    Err(e) => Err(ProtoError::Application(e.encode_to_vec())),
-                }
-            }
-            "database_init" => {
-                let input = match DatabaseInitRequest::decode(&message[..]) {
-                    Ok(input) => input,
-                    Err(e) => return Err(ProtoError::Transport(e.to_string())),
-                };
-                let result = Self::database_init(input);
-                match result {
-                    Ok(output) => Ok(output.encode_to_vec()),
-                    Err(e) => Err(ProtoError::Application(e.encode_to_vec())),
-                }
-            }
-            "database_release" => {
-                let input = match DatabaseReleaseRequest::decode(&message[..]) {
-                    Ok(input) => input,
-                    Err(e) => return Err(ProtoError::Transport(e.to_string())),
-                };
-                let result = Self::database_release(input);
-                match result {
-                    Ok(output) => Ok(output.encode_to_vec()),
-                    Err(e) => Err(ProtoError::Application(e.encode_to_vec())),
-                }
-            }
-            "connection_new" => {
-                let input = match ConnectionNewRequest::decode(&message[..]) {
-                    Ok(input) => input,
-                    Err(e) => return Err(ProtoError::Transport(e.to_string())),
-                };
-                let result = Self::connection_new(input);
-                match result {
-                    Ok(output) => Ok(output.encode_to_vec()),
-                    Err(e) => Err(ProtoError::Application(e.encode_to_vec())),
-                }
-            }
-            "connection_set_option_string" => {
-                let input = match ConnectionSetOptionStringRequest::decode(&message[..]) {
-                    Ok(input) => input,
-                    Err(e) => return Err(ProtoError::Transport(e.to_string())),
-                };
-                let result = Self::connection_set_option_string(input);
-                match result {
-                    Ok(output) => Ok(output.encode_to_vec()),
-                    Err(e) => Err(ProtoError::Application(e.encode_to_vec())),
-                }
-            }
-            "connection_set_option_bytes" => {
-                let input = match ConnectionSetOptionBytesRequest::decode(&message[..]) {
-                    Ok(input) => input,
-                    Err(e) => return Err(ProtoError::Transport(e.to_string())),
-                };
-                let result = Self::connection_set_option_bytes(input);
-                match result {
-                    Ok(output) => Ok(output.encode_to_vec()),
-                    Err(e) => Err(ProtoError::Application(e.encode_to_vec())),
-                }
-            }
-            "connection_set_option_int" => {
-                let input = match ConnectionSetOptionIntRequest::decode(&message[..]) {
-                    Ok(input) => input,
-                    Err(e) => return Err(ProtoError::Transport(e.to_string())),
-                };
-                let result = Self::connection_set_option_int(input);
-                match result {
-                    Ok(output) => Ok(output.encode_to_vec()),
-                    Err(e) => Err(ProtoError::Application(e.encode_to_vec())),
-                }
-            }
-            "connection_set_option_double" => {
-                let input = match ConnectionSetOptionDoubleRequest::decode(&message[..]) {
-                    Ok(input) => input,
-                    Err(e) => return Err(ProtoError::Transport(e.to_string())),
-                };
-                let result = Self::connection_set_option_double(input);
-                match result {
-                    Ok(output) => Ok(output.encode_to_vec()),
-                    Err(e) => Err(ProtoError::Application(e.encode_to_vec())),
-                }
-            }
-            "connection_init" => {
-                let input = match ConnectionInitRequest::decode(&message[..]) {
-                    Ok(input) => input,
-                    Err(e) => return Err(ProtoError::Transport(e.to_string())),
-                };
-                let result = Self::connection_init(input);
-                match result {
-                    Ok(output) => Ok(output.encode_to_vec()),
-                    Err(e) => Err(ProtoError::Application(e.encode_to_vec())),
-                }
-            }
-            "connection_release" => {
-                let input = match ConnectionReleaseRequest::decode(&message[..]) {
-                    Ok(input) => input,
-                    Err(e) => return Err(ProtoError::Transport(e.to_string())),
-                };
-                let result = Self::connection_release(input);
-                match result {
-                    Ok(output) => Ok(output.encode_to_vec()),
-                    Err(e) => Err(ProtoError::Application(e.encode_to_vec())),
-                }
-            }
-            "connection_get_info" => {
-                let input = match ConnectionGetInfoRequest::decode(&message[..]) {
-                    Ok(input) => input,
-                    Err(e) => return Err(ProtoError::Transport(e.to_string())),
-                };
-                let result = Self::connection_get_info(input);
-                match result {
-                    Ok(output) => Ok(output.encode_to_vec()),
-                    Err(e) => Err(ProtoError::Application(e.encode_to_vec())),
-                }
-            }
-            "connection_get_objects" => {
-                let input = match ConnectionGetObjectsRequest::decode(&message[..]) {
-                    Ok(input) => input,
-                    Err(e) => return Err(ProtoError::Transport(e.to_string())),
-                };
-                let result = Self::connection_get_objects(input);
-                match result {
-                    Ok(output) => Ok(output.encode_to_vec()),
-                    Err(e) => Err(ProtoError::Application(e.encode_to_vec())),
-                }
-            }
-            "connection_get_table_schema" => {
-                let input = match ConnectionGetTableSchemaRequest::decode(&message[..]) {
-                    Ok(input) => input,
-                    Err(e) => return Err(ProtoError::Transport(e.to_string())),
-                };
-                let result = Self::connection_get_table_schema(input);
-                match result {
-                    Ok(output) => Ok(output.encode_to_vec()),
-                    Err(e) => Err(ProtoError::Application(e.encode_to_vec())),
-                }
-            }
-            "connection_get_table_types" => {
-                let input = match ConnectionGetTableTypesRequest::decode(&message[..]) {
-                    Ok(input) => input,
-                    Err(e) => return Err(ProtoError::Transport(e.to_string())),
-                };
-                let result = Self::connection_get_table_types(input);
-                match result {
-                    Ok(output) => Ok(output.encode_to_vec()),
-                    Err(e) => Err(ProtoError::Application(e.encode_to_vec())),
-                }
-            }
-            "connection_commit" => {
-                let input = match ConnectionCommitRequest::decode(&message[..]) {
-                    Ok(input) => input,
-                    Err(e) => return Err(ProtoError::Transport(e.to_string())),
-                };
-                let result = Self::connection_commit(input);
-                match result {
-                    Ok(output) => Ok(output.encode_to_vec()),
-                    Err(e) => Err(ProtoError::Application(e.encode_to_vec())),
-                }
-            }
-            "connection_rollback" => {
-                let input = match ConnectionRollbackRequest::decode(&message[..]) {
-                    Ok(input) => input,
-                    Err(e) => return Err(ProtoError::Transport(e.to_string())),
-                };
-                let result = Self::connection_rollback(input);
-                match result {
-                    Ok(output) => Ok(output.encode_to_vec()),
-                    Err(e) => Err(ProtoError::Application(e.encode_to_vec())),
-                }
-            }
-            "statement_new" => {
-                let input = match StatementNewRequest::decode(&message[..]) {
-                    Ok(input) => input,
-                    Err(e) => return Err(ProtoError::Transport(e.to_string())),
-                };
-                let result = Self::statement_new(input);
-                match result {
-                    Ok(output) => Ok(output.encode_to_vec()),
-                    Err(e) => Err(ProtoError::Application(e.encode_to_vec())),
-                }
-            }
-            "statement_release" => {
-                let input = match StatementReleaseRequest::decode(&message[..]) {
-                    Ok(input) => input,
-                    Err(e) => return Err(ProtoError::Transport(e.to_string())),
-                };
-                let result = Self::statement_release(input);
-                match result {
-                    Ok(output) => Ok(output.encode_to_vec()),
-                    Err(e) => Err(ProtoError::Application(e.encode_to_vec())),
-                }
-            }
-            "statement_set_sql_query" => {
-                let input = match StatementSetSqlQueryRequest::decode(&message[..]) {
-                    Ok(input) => input,
-                    Err(e) => return Err(ProtoError::Transport(e.to_string())),
-                };
-                let result = Self::statement_set_sql_query(input);
-                match result {
-                    Ok(output) => Ok(output.encode_to_vec()),
-                    Err(e) => Err(ProtoError::Application(e.encode_to_vec())),
-                }
-            }
-            "statement_set_substrait_plan" => {
-                let input = match StatementSetSubstraitPlanRequest::decode(&message[..]) {
-                    Ok(input) => input,
-                    Err(e) => return Err(ProtoError::Transport(e.to_string())),
-                };
-                let result = Self::statement_set_substrait_plan(input);
-                match result {
-                    Ok(output) => Ok(output.encode_to_vec()),
-                    Err(e) => Err(ProtoError::Application(e.encode_to_vec())),
-                }
-            }
-            "statement_prepare" => {
-                let input = match StatementPrepareRequest::decode(&message[..]) {
-                    Ok(input) => input,
-                    Err(e) => return Err(ProtoError::Transport(e.to_string())),
-                };
-                let result = Self::statement_prepare(input);
-                match result {
-                    Ok(output) => Ok(output.encode_to_vec()),
-                    Err(e) => Err(ProtoError::Application(e.encode_to_vec())),
-                }
-            }
-            "statement_set_option_string" => {
-                let input = match StatementSetOptionStringRequest::decode(&message[..]) {
-                    Ok(input) => input,
-                    Err(e) => return Err(ProtoError::Transport(e.to_string())),
-                };
-                let result = Self::statement_set_option_string(input);
-                match result {
-                    Ok(output) => Ok(output.encode_to_vec()),
-                    Err(e) => Err(ProtoError::Application(e.encode_to_vec())),
-                }
-            }
-            "statement_set_option_bytes" => {
-                let input = match StatementSetOptionBytesRequest::decode(&message[..]) {
-                    Ok(input) => input,
-                    Err(e) => return Err(ProtoError::Transport(e.to_string())),
-                };
-                let result = Self::statement_set_option_bytes(input);
-                match result {
-                    Ok(output) => Ok(output.encode_to_vec()),
-                    Err(e) => Err(ProtoError::Application(e.encode_to_vec())),
-                }
-            }
-            "statement_set_option_int" => {
-                let input = match StatementSetOptionIntRequest::decode(&message[..]) {
-                    Ok(input) => input,
-                    Err(e) => return Err(ProtoError::Transport(e.to_string())),
-                };
-                let result = Self::statement_set_option_int(input);
-                match result {
-                    Ok(output) => Ok(output.encode_to_vec()),
-                    Err(e) => Err(ProtoError::Application(e.encode_to_vec())),
-                }
-            }
-            "statement_set_option_double" => {
-                let input = match StatementSetOptionDoubleRequest::decode(&message[..]) {
-                    Ok(input) => input,
-                    Err(e) => return Err(ProtoError::Transport(e.to_string())),
-                };
-                let result = Self::statement_set_option_double(input);
-                match result {
-                    Ok(output) => Ok(output.encode_to_vec()),
-                    Err(e) => Err(ProtoError::Application(e.encode_to_vec())),
-                }
-            }
-            "statement_get_parameter_schema" => {
-                let input = match StatementGetParameterSchemaRequest::decode(&message[..]) {
-                    Ok(input) => input,
-                    Err(e) => return Err(ProtoError::Transport(e.to_string())),
-                };
-                let result = Self::statement_get_parameter_schema(input);
-                match result {
-                    Ok(output) => Ok(output.encode_to_vec()),
-                    Err(e) => Err(ProtoError::Application(e.encode_to_vec())),
-                }
-            }
-            "statement_bind" => {
-                let input = match StatementBindRequest::decode(&message[..]) {
-                    Ok(input) => input,
-                    Err(e) => return Err(ProtoError::Transport(e.to_string())),
-                };
-                let result = Self::statement_bind(input);
-                match result {
-                    Ok(output) => Ok(output.encode_to_vec()),
-                    Err(e) => Err(ProtoError::Application(e.encode_to_vec())),
-                }
-            }
-            "statement_bind_stream" => {
-                let input = match StatementBindStreamRequest::decode(&message[..]) {
-                    Ok(input) => input,
-                    Err(e) => return Err(ProtoError::Transport(e.to_string())),
-                };
-                let result = Self::statement_bind_stream(input);
-                match result {
-                    Ok(output) => Ok(output.encode_to_vec()),
-                    Err(e) => Err(ProtoError::Application(e.encode_to_vec())),
-                }
-            }
-            "statement_execute_query" => {
-                let input = match StatementExecuteQueryRequest::decode(&message[..]) {
-                    Ok(input) => input,
-                    Err(e) => return Err(ProtoError::Transport(e.to_string())),
-                };
-                let result = Self::statement_execute_query(input);
-                match result {
-                    Ok(output) => Ok(output.encode_to_vec()),
-                    Err(e) => Err(ProtoError::Application(e.encode_to_vec())),
-                }
-            }
-            "statement_execute_partitions" => {
-                let input = match StatementExecutePartitionsRequest::decode(&message[..]) {
-                    Ok(input) => input,
-                    Err(e) => return Err(ProtoError::Transport(e.to_string())),
-                };
-                let result = Self::statement_execute_partitions(input);
-                match result {
-                    Ok(output) => Ok(output.encode_to_vec()),
-                    Err(e) => Err(ProtoError::Application(e.encode_to_vec())),
-                }
-            }
-            "statement_read_partition" => {
-                let input = match StatementReadPartitionRequest::decode(&message[..]) {
-                    Ok(input) => input,
-                    Err(e) => return Err(ProtoError::Transport(e.to_string())),
-                };
-                let result = Self::statement_read_partition(input);
-                match result {
-                    Ok(output) => Ok(output.encode_to_vec()),
-                    Err(e) => Err(ProtoError::Application(e.encode_to_vec())),
-                }
-            }
-            _ => Err(ProtoError::Transport(format!("Unknown method: {}", method))),
-        }
-    }
+pub trait DatabaseDriverServer : DatabaseDriver {
+	fn handle_message(method: &str, message: Vec<u8>) -> Result<Vec<u8>, ProtoError<Vec<u8>>> {
+		match method {
+			"database_new" => {
+				let input = match DatabaseNewRequest::decode(&message[..]) {
+					Ok(input) => input,
+					Err(e) => return Err(ProtoError::Transport(e.to_string())),
+				};
+				let result = Self::database_new(input);
+				match result {
+				Ok(output) => Ok(output.encode_to_vec()),
+				Err(e) => Err(ProtoError::Application(e.encode_to_vec())),
+				}
+			}
+			"database_set_option_string" => {
+				let input = match DatabaseSetOptionStringRequest::decode(&message[..]) {
+					Ok(input) => input,
+					Err(e) => return Err(ProtoError::Transport(e.to_string())),
+				};
+				let result = Self::database_set_option_string(input);
+				match result {
+				Ok(output) => Ok(output.encode_to_vec()),
+				Err(e) => Err(ProtoError::Application(e.encode_to_vec())),
+				}
+			}
+			"database_set_option_bytes" => {
+				let input = match DatabaseSetOptionBytesRequest::decode(&message[..]) {
+					Ok(input) => input,
+					Err(e) => return Err(ProtoError::Transport(e.to_string())),
+				};
+				let result = Self::database_set_option_bytes(input);
+				match result {
+				Ok(output) => Ok(output.encode_to_vec()),
+				Err(e) => Err(ProtoError::Application(e.encode_to_vec())),
+				}
+			}
+			"database_set_option_int" => {
+				let input = match DatabaseSetOptionIntRequest::decode(&message[..]) {
+					Ok(input) => input,
+					Err(e) => return Err(ProtoError::Transport(e.to_string())),
+				};
+				let result = Self::database_set_option_int(input);
+				match result {
+				Ok(output) => Ok(output.encode_to_vec()),
+				Err(e) => Err(ProtoError::Application(e.encode_to_vec())),
+				}
+			}
+			"database_set_option_double" => {
+				let input = match DatabaseSetOptionDoubleRequest::decode(&message[..]) {
+					Ok(input) => input,
+					Err(e) => return Err(ProtoError::Transport(e.to_string())),
+				};
+				let result = Self::database_set_option_double(input);
+				match result {
+				Ok(output) => Ok(output.encode_to_vec()),
+				Err(e) => Err(ProtoError::Application(e.encode_to_vec())),
+				}
+			}
+			"database_init" => {
+				let input = match DatabaseInitRequest::decode(&message[..]) {
+					Ok(input) => input,
+					Err(e) => return Err(ProtoError::Transport(e.to_string())),
+				};
+				let result = Self::database_init(input);
+				match result {
+				Ok(output) => Ok(output.encode_to_vec()),
+				Err(e) => Err(ProtoError::Application(e.encode_to_vec())),
+				}
+			}
+			"database_release" => {
+				let input = match DatabaseReleaseRequest::decode(&message[..]) {
+					Ok(input) => input,
+					Err(e) => return Err(ProtoError::Transport(e.to_string())),
+				};
+				let result = Self::database_release(input);
+				match result {
+				Ok(output) => Ok(output.encode_to_vec()),
+				Err(e) => Err(ProtoError::Application(e.encode_to_vec())),
+				}
+			}
+			"connection_new" => {
+				let input = match ConnectionNewRequest::decode(&message[..]) {
+					Ok(input) => input,
+					Err(e) => return Err(ProtoError::Transport(e.to_string())),
+				};
+				let result = Self::connection_new(input);
+				match result {
+				Ok(output) => Ok(output.encode_to_vec()),
+				Err(e) => Err(ProtoError::Application(e.encode_to_vec())),
+				}
+			}
+			"connection_set_option_string" => {
+				let input = match ConnectionSetOptionStringRequest::decode(&message[..]) {
+					Ok(input) => input,
+					Err(e) => return Err(ProtoError::Transport(e.to_string())),
+				};
+				let result = Self::connection_set_option_string(input);
+				match result {
+				Ok(output) => Ok(output.encode_to_vec()),
+				Err(e) => Err(ProtoError::Application(e.encode_to_vec())),
+				}
+			}
+			"connection_set_option_bytes" => {
+				let input = match ConnectionSetOptionBytesRequest::decode(&message[..]) {
+					Ok(input) => input,
+					Err(e) => return Err(ProtoError::Transport(e.to_string())),
+				};
+				let result = Self::connection_set_option_bytes(input);
+				match result {
+				Ok(output) => Ok(output.encode_to_vec()),
+				Err(e) => Err(ProtoError::Application(e.encode_to_vec())),
+				}
+			}
+			"connection_set_option_int" => {
+				let input = match ConnectionSetOptionIntRequest::decode(&message[..]) {
+					Ok(input) => input,
+					Err(e) => return Err(ProtoError::Transport(e.to_string())),
+				};
+				let result = Self::connection_set_option_int(input);
+				match result {
+				Ok(output) => Ok(output.encode_to_vec()),
+				Err(e) => Err(ProtoError::Application(e.encode_to_vec())),
+				}
+			}
+			"connection_set_option_double" => {
+				let input = match ConnectionSetOptionDoubleRequest::decode(&message[..]) {
+					Ok(input) => input,
+					Err(e) => return Err(ProtoError::Transport(e.to_string())),
+				};
+				let result = Self::connection_set_option_double(input);
+				match result {
+				Ok(output) => Ok(output.encode_to_vec()),
+				Err(e) => Err(ProtoError::Application(e.encode_to_vec())),
+				}
+			}
+			"connection_init" => {
+				let input = match ConnectionInitRequest::decode(&message[..]) {
+					Ok(input) => input,
+					Err(e) => return Err(ProtoError::Transport(e.to_string())),
+				};
+				let result = Self::connection_init(input);
+				match result {
+				Ok(output) => Ok(output.encode_to_vec()),
+				Err(e) => Err(ProtoError::Application(e.encode_to_vec())),
+				}
+			}
+			"connection_release" => {
+				let input = match ConnectionReleaseRequest::decode(&message[..]) {
+					Ok(input) => input,
+					Err(e) => return Err(ProtoError::Transport(e.to_string())),
+				};
+				let result = Self::connection_release(input);
+				match result {
+				Ok(output) => Ok(output.encode_to_vec()),
+				Err(e) => Err(ProtoError::Application(e.encode_to_vec())),
+				}
+			}
+			"connection_get_info" => {
+				let input = match ConnectionGetInfoRequest::decode(&message[..]) {
+					Ok(input) => input,
+					Err(e) => return Err(ProtoError::Transport(e.to_string())),
+				};
+				let result = Self::connection_get_info(input);
+				match result {
+				Ok(output) => Ok(output.encode_to_vec()),
+				Err(e) => Err(ProtoError::Application(e.encode_to_vec())),
+				}
+			}
+			"connection_get_objects" => {
+				let input = match ConnectionGetObjectsRequest::decode(&message[..]) {
+					Ok(input) => input,
+					Err(e) => return Err(ProtoError::Transport(e.to_string())),
+				};
+				let result = Self::connection_get_objects(input);
+				match result {
+				Ok(output) => Ok(output.encode_to_vec()),
+				Err(e) => Err(ProtoError::Application(e.encode_to_vec())),
+				}
+			}
+			"connection_get_table_schema" => {
+				let input = match ConnectionGetTableSchemaRequest::decode(&message[..]) {
+					Ok(input) => input,
+					Err(e) => return Err(ProtoError::Transport(e.to_string())),
+				};
+				let result = Self::connection_get_table_schema(input);
+				match result {
+				Ok(output) => Ok(output.encode_to_vec()),
+				Err(e) => Err(ProtoError::Application(e.encode_to_vec())),
+				}
+			}
+			"connection_get_table_types" => {
+				let input = match ConnectionGetTableTypesRequest::decode(&message[..]) {
+					Ok(input) => input,
+					Err(e) => return Err(ProtoError::Transport(e.to_string())),
+				};
+				let result = Self::connection_get_table_types(input);
+				match result {
+				Ok(output) => Ok(output.encode_to_vec()),
+				Err(e) => Err(ProtoError::Application(e.encode_to_vec())),
+				}
+			}
+			"connection_commit" => {
+				let input = match ConnectionCommitRequest::decode(&message[..]) {
+					Ok(input) => input,
+					Err(e) => return Err(ProtoError::Transport(e.to_string())),
+				};
+				let result = Self::connection_commit(input);
+				match result {
+				Ok(output) => Ok(output.encode_to_vec()),
+				Err(e) => Err(ProtoError::Application(e.encode_to_vec())),
+				}
+			}
+			"connection_rollback" => {
+				let input = match ConnectionRollbackRequest::decode(&message[..]) {
+					Ok(input) => input,
+					Err(e) => return Err(ProtoError::Transport(e.to_string())),
+				};
+				let result = Self::connection_rollback(input);
+				match result {
+				Ok(output) => Ok(output.encode_to_vec()),
+				Err(e) => Err(ProtoError::Application(e.encode_to_vec())),
+				}
+			}
+			"statement_new" => {
+				let input = match StatementNewRequest::decode(&message[..]) {
+					Ok(input) => input,
+					Err(e) => return Err(ProtoError::Transport(e.to_string())),
+				};
+				let result = Self::statement_new(input);
+				match result {
+				Ok(output) => Ok(output.encode_to_vec()),
+				Err(e) => Err(ProtoError::Application(e.encode_to_vec())),
+				}
+			}
+			"statement_release" => {
+				let input = match StatementReleaseRequest::decode(&message[..]) {
+					Ok(input) => input,
+					Err(e) => return Err(ProtoError::Transport(e.to_string())),
+				};
+				let result = Self::statement_release(input);
+				match result {
+				Ok(output) => Ok(output.encode_to_vec()),
+				Err(e) => Err(ProtoError::Application(e.encode_to_vec())),
+				}
+			}
+			"statement_set_sql_query" => {
+				let input = match StatementSetSqlQueryRequest::decode(&message[..]) {
+					Ok(input) => input,
+					Err(e) => return Err(ProtoError::Transport(e.to_string())),
+				};
+				let result = Self::statement_set_sql_query(input);
+				match result {
+				Ok(output) => Ok(output.encode_to_vec()),
+				Err(e) => Err(ProtoError::Application(e.encode_to_vec())),
+				}
+			}
+			"statement_set_substrait_plan" => {
+				let input = match StatementSetSubstraitPlanRequest::decode(&message[..]) {
+					Ok(input) => input,
+					Err(e) => return Err(ProtoError::Transport(e.to_string())),
+				};
+				let result = Self::statement_set_substrait_plan(input);
+				match result {
+				Ok(output) => Ok(output.encode_to_vec()),
+				Err(e) => Err(ProtoError::Application(e.encode_to_vec())),
+				}
+			}
+			"statement_prepare" => {
+				let input = match StatementPrepareRequest::decode(&message[..]) {
+					Ok(input) => input,
+					Err(e) => return Err(ProtoError::Transport(e.to_string())),
+				};
+				let result = Self::statement_prepare(input);
+				match result {
+				Ok(output) => Ok(output.encode_to_vec()),
+				Err(e) => Err(ProtoError::Application(e.encode_to_vec())),
+				}
+			}
+			"statement_set_option_string" => {
+				let input = match StatementSetOptionStringRequest::decode(&message[..]) {
+					Ok(input) => input,
+					Err(e) => return Err(ProtoError::Transport(e.to_string())),
+				};
+				let result = Self::statement_set_option_string(input);
+				match result {
+				Ok(output) => Ok(output.encode_to_vec()),
+				Err(e) => Err(ProtoError::Application(e.encode_to_vec())),
+				}
+			}
+			"statement_set_option_bytes" => {
+				let input = match StatementSetOptionBytesRequest::decode(&message[..]) {
+					Ok(input) => input,
+					Err(e) => return Err(ProtoError::Transport(e.to_string())),
+				};
+				let result = Self::statement_set_option_bytes(input);
+				match result {
+				Ok(output) => Ok(output.encode_to_vec()),
+				Err(e) => Err(ProtoError::Application(e.encode_to_vec())),
+				}
+			}
+			"statement_set_option_int" => {
+				let input = match StatementSetOptionIntRequest::decode(&message[..]) {
+					Ok(input) => input,
+					Err(e) => return Err(ProtoError::Transport(e.to_string())),
+				};
+				let result = Self::statement_set_option_int(input);
+				match result {
+				Ok(output) => Ok(output.encode_to_vec()),
+				Err(e) => Err(ProtoError::Application(e.encode_to_vec())),
+				}
+			}
+			"statement_set_option_double" => {
+				let input = match StatementSetOptionDoubleRequest::decode(&message[..]) {
+					Ok(input) => input,
+					Err(e) => return Err(ProtoError::Transport(e.to_string())),
+				};
+				let result = Self::statement_set_option_double(input);
+				match result {
+				Ok(output) => Ok(output.encode_to_vec()),
+				Err(e) => Err(ProtoError::Application(e.encode_to_vec())),
+				}
+			}
+			"statement_get_parameter_schema" => {
+				let input = match StatementGetParameterSchemaRequest::decode(&message[..]) {
+					Ok(input) => input,
+					Err(e) => return Err(ProtoError::Transport(e.to_string())),
+				};
+				let result = Self::statement_get_parameter_schema(input);
+				match result {
+				Ok(output) => Ok(output.encode_to_vec()),
+				Err(e) => Err(ProtoError::Application(e.encode_to_vec())),
+				}
+			}
+			"statement_bind" => {
+				let input = match StatementBindRequest::decode(&message[..]) {
+					Ok(input) => input,
+					Err(e) => return Err(ProtoError::Transport(e.to_string())),
+				};
+				let result = Self::statement_bind(input);
+				match result {
+				Ok(output) => Ok(output.encode_to_vec()),
+				Err(e) => Err(ProtoError::Application(e.encode_to_vec())),
+				}
+			}
+			"statement_bind_stream" => {
+				let input = match StatementBindStreamRequest::decode(&message[..]) {
+					Ok(input) => input,
+					Err(e) => return Err(ProtoError::Transport(e.to_string())),
+				};
+				let result = Self::statement_bind_stream(input);
+				match result {
+				Ok(output) => Ok(output.encode_to_vec()),
+				Err(e) => Err(ProtoError::Application(e.encode_to_vec())),
+				}
+			}
+			"statement_execute_query" => {
+				let input = match StatementExecuteQueryRequest::decode(&message[..]) {
+					Ok(input) => input,
+					Err(e) => return Err(ProtoError::Transport(e.to_string())),
+				};
+				let result = Self::statement_execute_query(input);
+				match result {
+				Ok(output) => Ok(output.encode_to_vec()),
+				Err(e) => Err(ProtoError::Application(e.encode_to_vec())),
+				}
+			}
+			"statement_execute_partitions" => {
+				let input = match StatementExecutePartitionsRequest::decode(&message[..]) {
+					Ok(input) => input,
+					Err(e) => return Err(ProtoError::Transport(e.to_string())),
+				};
+				let result = Self::statement_execute_partitions(input);
+				match result {
+				Ok(output) => Ok(output.encode_to_vec()),
+				Err(e) => Err(ProtoError::Application(e.encode_to_vec())),
+				}
+			}
+			"statement_read_partition" => {
+				let input = match StatementReadPartitionRequest::decode(&message[..]) {
+					Ok(input) => input,
+					Err(e) => return Err(ProtoError::Transport(e.to_string())),
+				};
+				let result = Self::statement_read_partition(input);
+				match result {
+				Ok(output) => Ok(output.encode_to_vec()),
+				Err(e) => Err(ProtoError::Application(e.encode_to_vec())),
+				}
+			}
+			_ => Err(ProtoError::Transport(format!("Unknown method: {}", method))),
+		}
+	}
 }
 pub struct DatabaseDriverClient<T: Transport> {
-    _marker: ::core::marker::PhantomData<T>,
+	_marker: ::core::marker::PhantomData<T>,
 }
 impl<T: Transport> DatabaseDriverClient<T> {
-    pub fn database_new(
-        input: DatabaseNewRequest,
-    ) -> Result<DatabaseNewResponse, ProtoError<DriverException>> {
+
+    pub fn database_new(input: DatabaseNewRequest) -> Result<DatabaseNewResponse, ProtoError<DriverException>> {
         let result = T::handle_message("DatabaseDriver", "database_new", input.encode_to_vec());
         match result {
             Ok(output) => {
@@ -1197,26 +1136,20 @@ impl<T: Transport> DatabaseDriverClient<T> {
                     Ok(output) => Ok(output),
                     Err(e) => Err(ProtoError::Transport(e.to_string())),
                 }
-            }
+            },
             Err(ProtoError::Application(e)) => {
                 let output = DriverException::decode(&e[..]);
                 match output {
                     Ok(output) => Err(ProtoError::Application(output)),
                     Err(e) => Err(ProtoError::Transport(e.to_string())),
                 }
-            }
+            },
             Err(ProtoError::Transport(e)) => Err(ProtoError::Transport(e)),
         }
     }
 
-    pub fn database_set_option_string(
-        input: DatabaseSetOptionStringRequest,
-    ) -> Result<DatabaseSetOptionStringResponse, ProtoError<DriverException>> {
-        let result = T::handle_message(
-            "DatabaseDriver",
-            "database_set_option_string",
-            input.encode_to_vec(),
-        );
+    pub fn database_set_option_string(input: DatabaseSetOptionStringRequest) -> Result<DatabaseSetOptionStringResponse, ProtoError<DriverException>> {
+        let result = T::handle_message("DatabaseDriver", "database_set_option_string", input.encode_to_vec());
         match result {
             Ok(output) => {
                 let output = DatabaseSetOptionStringResponse::decode(&output[..]);
@@ -1224,26 +1157,20 @@ impl<T: Transport> DatabaseDriverClient<T> {
                     Ok(output) => Ok(output),
                     Err(e) => Err(ProtoError::Transport(e.to_string())),
                 }
-            }
+            },
             Err(ProtoError::Application(e)) => {
                 let output = DriverException::decode(&e[..]);
                 match output {
                     Ok(output) => Err(ProtoError::Application(output)),
                     Err(e) => Err(ProtoError::Transport(e.to_string())),
                 }
-            }
+            },
             Err(ProtoError::Transport(e)) => Err(ProtoError::Transport(e)),
         }
     }
 
-    pub fn database_set_option_bytes(
-        input: DatabaseSetOptionBytesRequest,
-    ) -> Result<DatabaseSetOptionBytesResponse, ProtoError<DriverException>> {
-        let result = T::handle_message(
-            "DatabaseDriver",
-            "database_set_option_bytes",
-            input.encode_to_vec(),
-        );
+    pub fn database_set_option_bytes(input: DatabaseSetOptionBytesRequest) -> Result<DatabaseSetOptionBytesResponse, ProtoError<DriverException>> {
+        let result = T::handle_message("DatabaseDriver", "database_set_option_bytes", input.encode_to_vec());
         match result {
             Ok(output) => {
                 let output = DatabaseSetOptionBytesResponse::decode(&output[..]);
@@ -1251,26 +1178,20 @@ impl<T: Transport> DatabaseDriverClient<T> {
                     Ok(output) => Ok(output),
                     Err(e) => Err(ProtoError::Transport(e.to_string())),
                 }
-            }
+            },
             Err(ProtoError::Application(e)) => {
                 let output = DriverException::decode(&e[..]);
                 match output {
                     Ok(output) => Err(ProtoError::Application(output)),
                     Err(e) => Err(ProtoError::Transport(e.to_string())),
                 }
-            }
+            },
             Err(ProtoError::Transport(e)) => Err(ProtoError::Transport(e)),
         }
     }
 
-    pub fn database_set_option_int(
-        input: DatabaseSetOptionIntRequest,
-    ) -> Result<DatabaseSetOptionIntResponse, ProtoError<DriverException>> {
-        let result = T::handle_message(
-            "DatabaseDriver",
-            "database_set_option_int",
-            input.encode_to_vec(),
-        );
+    pub fn database_set_option_int(input: DatabaseSetOptionIntRequest) -> Result<DatabaseSetOptionIntResponse, ProtoError<DriverException>> {
+        let result = T::handle_message("DatabaseDriver", "database_set_option_int", input.encode_to_vec());
         match result {
             Ok(output) => {
                 let output = DatabaseSetOptionIntResponse::decode(&output[..]);
@@ -1278,26 +1199,20 @@ impl<T: Transport> DatabaseDriverClient<T> {
                     Ok(output) => Ok(output),
                     Err(e) => Err(ProtoError::Transport(e.to_string())),
                 }
-            }
+            },
             Err(ProtoError::Application(e)) => {
                 let output = DriverException::decode(&e[..]);
                 match output {
                     Ok(output) => Err(ProtoError::Application(output)),
                     Err(e) => Err(ProtoError::Transport(e.to_string())),
                 }
-            }
+            },
             Err(ProtoError::Transport(e)) => Err(ProtoError::Transport(e)),
         }
     }
 
-    pub fn database_set_option_double(
-        input: DatabaseSetOptionDoubleRequest,
-    ) -> Result<DatabaseSetOptionDoubleResponse, ProtoError<DriverException>> {
-        let result = T::handle_message(
-            "DatabaseDriver",
-            "database_set_option_double",
-            input.encode_to_vec(),
-        );
+    pub fn database_set_option_double(input: DatabaseSetOptionDoubleRequest) -> Result<DatabaseSetOptionDoubleResponse, ProtoError<DriverException>> {
+        let result = T::handle_message("DatabaseDriver", "database_set_option_double", input.encode_to_vec());
         match result {
             Ok(output) => {
                 let output = DatabaseSetOptionDoubleResponse::decode(&output[..]);
@@ -1305,21 +1220,19 @@ impl<T: Transport> DatabaseDriverClient<T> {
                     Ok(output) => Ok(output),
                     Err(e) => Err(ProtoError::Transport(e.to_string())),
                 }
-            }
+            },
             Err(ProtoError::Application(e)) => {
                 let output = DriverException::decode(&e[..]);
                 match output {
                     Ok(output) => Err(ProtoError::Application(output)),
                     Err(e) => Err(ProtoError::Transport(e.to_string())),
                 }
-            }
+            },
             Err(ProtoError::Transport(e)) => Err(ProtoError::Transport(e)),
         }
     }
 
-    pub fn database_init(
-        input: DatabaseInitRequest,
-    ) -> Result<DatabaseInitResponse, ProtoError<DriverException>> {
+    pub fn database_init(input: DatabaseInitRequest) -> Result<DatabaseInitResponse, ProtoError<DriverException>> {
         let result = T::handle_message("DatabaseDriver", "database_init", input.encode_to_vec());
         match result {
             Ok(output) => {
@@ -1328,21 +1241,19 @@ impl<T: Transport> DatabaseDriverClient<T> {
                     Ok(output) => Ok(output),
                     Err(e) => Err(ProtoError::Transport(e.to_string())),
                 }
-            }
+            },
             Err(ProtoError::Application(e)) => {
                 let output = DriverException::decode(&e[..]);
                 match output {
                     Ok(output) => Err(ProtoError::Application(output)),
                     Err(e) => Err(ProtoError::Transport(e.to_string())),
                 }
-            }
+            },
             Err(ProtoError::Transport(e)) => Err(ProtoError::Transport(e)),
         }
     }
 
-    pub fn database_release(
-        input: DatabaseReleaseRequest,
-    ) -> Result<DatabaseReleaseResponse, ProtoError<DriverException>> {
+    pub fn database_release(input: DatabaseReleaseRequest) -> Result<DatabaseReleaseResponse, ProtoError<DriverException>> {
         let result = T::handle_message("DatabaseDriver", "database_release", input.encode_to_vec());
         match result {
             Ok(output) => {
@@ -1351,21 +1262,19 @@ impl<T: Transport> DatabaseDriverClient<T> {
                     Ok(output) => Ok(output),
                     Err(e) => Err(ProtoError::Transport(e.to_string())),
                 }
-            }
+            },
             Err(ProtoError::Application(e)) => {
                 let output = DriverException::decode(&e[..]);
                 match output {
                     Ok(output) => Err(ProtoError::Application(output)),
                     Err(e) => Err(ProtoError::Transport(e.to_string())),
                 }
-            }
+            },
             Err(ProtoError::Transport(e)) => Err(ProtoError::Transport(e)),
         }
     }
 
-    pub fn connection_new(
-        input: ConnectionNewRequest,
-    ) -> Result<ConnectionNewResponse, ProtoError<DriverException>> {
+    pub fn connection_new(input: ConnectionNewRequest) -> Result<ConnectionNewResponse, ProtoError<DriverException>> {
         let result = T::handle_message("DatabaseDriver", "connection_new", input.encode_to_vec());
         match result {
             Ok(output) => {
@@ -1374,26 +1283,20 @@ impl<T: Transport> DatabaseDriverClient<T> {
                     Ok(output) => Ok(output),
                     Err(e) => Err(ProtoError::Transport(e.to_string())),
                 }
-            }
+            },
             Err(ProtoError::Application(e)) => {
                 let output = DriverException::decode(&e[..]);
                 match output {
                     Ok(output) => Err(ProtoError::Application(output)),
                     Err(e) => Err(ProtoError::Transport(e.to_string())),
                 }
-            }
+            },
             Err(ProtoError::Transport(e)) => Err(ProtoError::Transport(e)),
         }
     }
 
-    pub fn connection_set_option_string(
-        input: ConnectionSetOptionStringRequest,
-    ) -> Result<ConnectionSetOptionStringResponse, ProtoError<DriverException>> {
-        let result = T::handle_message(
-            "DatabaseDriver",
-            "connection_set_option_string",
-            input.encode_to_vec(),
-        );
+    pub fn connection_set_option_string(input: ConnectionSetOptionStringRequest) -> Result<ConnectionSetOptionStringResponse, ProtoError<DriverException>> {
+        let result = T::handle_message("DatabaseDriver", "connection_set_option_string", input.encode_to_vec());
         match result {
             Ok(output) => {
                 let output = ConnectionSetOptionStringResponse::decode(&output[..]);
@@ -1401,26 +1304,20 @@ impl<T: Transport> DatabaseDriverClient<T> {
                     Ok(output) => Ok(output),
                     Err(e) => Err(ProtoError::Transport(e.to_string())),
                 }
-            }
+            },
             Err(ProtoError::Application(e)) => {
                 let output = DriverException::decode(&e[..]);
                 match output {
                     Ok(output) => Err(ProtoError::Application(output)),
                     Err(e) => Err(ProtoError::Transport(e.to_string())),
                 }
-            }
+            },
             Err(ProtoError::Transport(e)) => Err(ProtoError::Transport(e)),
         }
     }
 
-    pub fn connection_set_option_bytes(
-        input: ConnectionSetOptionBytesRequest,
-    ) -> Result<ConnectionSetOptionBytesResponse, ProtoError<DriverException>> {
-        let result = T::handle_message(
-            "DatabaseDriver",
-            "connection_set_option_bytes",
-            input.encode_to_vec(),
-        );
+    pub fn connection_set_option_bytes(input: ConnectionSetOptionBytesRequest) -> Result<ConnectionSetOptionBytesResponse, ProtoError<DriverException>> {
+        let result = T::handle_message("DatabaseDriver", "connection_set_option_bytes", input.encode_to_vec());
         match result {
             Ok(output) => {
                 let output = ConnectionSetOptionBytesResponse::decode(&output[..]);
@@ -1428,26 +1325,20 @@ impl<T: Transport> DatabaseDriverClient<T> {
                     Ok(output) => Ok(output),
                     Err(e) => Err(ProtoError::Transport(e.to_string())),
                 }
-            }
+            },
             Err(ProtoError::Application(e)) => {
                 let output = DriverException::decode(&e[..]);
                 match output {
                     Ok(output) => Err(ProtoError::Application(output)),
                     Err(e) => Err(ProtoError::Transport(e.to_string())),
                 }
-            }
+            },
             Err(ProtoError::Transport(e)) => Err(ProtoError::Transport(e)),
         }
     }
 
-    pub fn connection_set_option_int(
-        input: ConnectionSetOptionIntRequest,
-    ) -> Result<ConnectionSetOptionIntResponse, ProtoError<DriverException>> {
-        let result = T::handle_message(
-            "DatabaseDriver",
-            "connection_set_option_int",
-            input.encode_to_vec(),
-        );
+    pub fn connection_set_option_int(input: ConnectionSetOptionIntRequest) -> Result<ConnectionSetOptionIntResponse, ProtoError<DriverException>> {
+        let result = T::handle_message("DatabaseDriver", "connection_set_option_int", input.encode_to_vec());
         match result {
             Ok(output) => {
                 let output = ConnectionSetOptionIntResponse::decode(&output[..]);
@@ -1455,26 +1346,20 @@ impl<T: Transport> DatabaseDriverClient<T> {
                     Ok(output) => Ok(output),
                     Err(e) => Err(ProtoError::Transport(e.to_string())),
                 }
-            }
+            },
             Err(ProtoError::Application(e)) => {
                 let output = DriverException::decode(&e[..]);
                 match output {
                     Ok(output) => Err(ProtoError::Application(output)),
                     Err(e) => Err(ProtoError::Transport(e.to_string())),
                 }
-            }
+            },
             Err(ProtoError::Transport(e)) => Err(ProtoError::Transport(e)),
         }
     }
 
-    pub fn connection_set_option_double(
-        input: ConnectionSetOptionDoubleRequest,
-    ) -> Result<ConnectionSetOptionDoubleResponse, ProtoError<DriverException>> {
-        let result = T::handle_message(
-            "DatabaseDriver",
-            "connection_set_option_double",
-            input.encode_to_vec(),
-        );
+    pub fn connection_set_option_double(input: ConnectionSetOptionDoubleRequest) -> Result<ConnectionSetOptionDoubleResponse, ProtoError<DriverException>> {
+        let result = T::handle_message("DatabaseDriver", "connection_set_option_double", input.encode_to_vec());
         match result {
             Ok(output) => {
                 let output = ConnectionSetOptionDoubleResponse::decode(&output[..]);
@@ -1482,21 +1367,19 @@ impl<T: Transport> DatabaseDriverClient<T> {
                     Ok(output) => Ok(output),
                     Err(e) => Err(ProtoError::Transport(e.to_string())),
                 }
-            }
+            },
             Err(ProtoError::Application(e)) => {
                 let output = DriverException::decode(&e[..]);
                 match output {
                     Ok(output) => Err(ProtoError::Application(output)),
                     Err(e) => Err(ProtoError::Transport(e.to_string())),
                 }
-            }
+            },
             Err(ProtoError::Transport(e)) => Err(ProtoError::Transport(e)),
         }
     }
 
-    pub fn connection_init(
-        input: ConnectionInitRequest,
-    ) -> Result<ConnectionInitResponse, ProtoError<DriverException>> {
+    pub fn connection_init(input: ConnectionInitRequest) -> Result<ConnectionInitResponse, ProtoError<DriverException>> {
         let result = T::handle_message("DatabaseDriver", "connection_init", input.encode_to_vec());
         match result {
             Ok(output) => {
@@ -1505,26 +1388,20 @@ impl<T: Transport> DatabaseDriverClient<T> {
                     Ok(output) => Ok(output),
                     Err(e) => Err(ProtoError::Transport(e.to_string())),
                 }
-            }
+            },
             Err(ProtoError::Application(e)) => {
                 let output = DriverException::decode(&e[..]);
                 match output {
                     Ok(output) => Err(ProtoError::Application(output)),
                     Err(e) => Err(ProtoError::Transport(e.to_string())),
                 }
-            }
+            },
             Err(ProtoError::Transport(e)) => Err(ProtoError::Transport(e)),
         }
     }
 
-    pub fn connection_release(
-        input: ConnectionReleaseRequest,
-    ) -> Result<ConnectionReleaseResponse, ProtoError<DriverException>> {
-        let result = T::handle_message(
-            "DatabaseDriver",
-            "connection_release",
-            input.encode_to_vec(),
-        );
+    pub fn connection_release(input: ConnectionReleaseRequest) -> Result<ConnectionReleaseResponse, ProtoError<DriverException>> {
+        let result = T::handle_message("DatabaseDriver", "connection_release", input.encode_to_vec());
         match result {
             Ok(output) => {
                 let output = ConnectionReleaseResponse::decode(&output[..]);
@@ -1532,26 +1409,20 @@ impl<T: Transport> DatabaseDriverClient<T> {
                     Ok(output) => Ok(output),
                     Err(e) => Err(ProtoError::Transport(e.to_string())),
                 }
-            }
+            },
             Err(ProtoError::Application(e)) => {
                 let output = DriverException::decode(&e[..]);
                 match output {
                     Ok(output) => Err(ProtoError::Application(output)),
                     Err(e) => Err(ProtoError::Transport(e.to_string())),
                 }
-            }
+            },
             Err(ProtoError::Transport(e)) => Err(ProtoError::Transport(e)),
         }
     }
 
-    pub fn connection_get_info(
-        input: ConnectionGetInfoRequest,
-    ) -> Result<ConnectionGetInfoResponse, ProtoError<DriverException>> {
-        let result = T::handle_message(
-            "DatabaseDriver",
-            "connection_get_info",
-            input.encode_to_vec(),
-        );
+    pub fn connection_get_info(input: ConnectionGetInfoRequest) -> Result<ConnectionGetInfoResponse, ProtoError<DriverException>> {
+        let result = T::handle_message("DatabaseDriver", "connection_get_info", input.encode_to_vec());
         match result {
             Ok(output) => {
                 let output = ConnectionGetInfoResponse::decode(&output[..]);
@@ -1559,26 +1430,20 @@ impl<T: Transport> DatabaseDriverClient<T> {
                     Ok(output) => Ok(output),
                     Err(e) => Err(ProtoError::Transport(e.to_string())),
                 }
-            }
+            },
             Err(ProtoError::Application(e)) => {
                 let output = DriverException::decode(&e[..]);
                 match output {
                     Ok(output) => Err(ProtoError::Application(output)),
                     Err(e) => Err(ProtoError::Transport(e.to_string())),
                 }
-            }
+            },
             Err(ProtoError::Transport(e)) => Err(ProtoError::Transport(e)),
         }
     }
 
-    pub fn connection_get_objects(
-        input: ConnectionGetObjectsRequest,
-    ) -> Result<ConnectionGetObjectsResponse, ProtoError<DriverException>> {
-        let result = T::handle_message(
-            "DatabaseDriver",
-            "connection_get_objects",
-            input.encode_to_vec(),
-        );
+    pub fn connection_get_objects(input: ConnectionGetObjectsRequest) -> Result<ConnectionGetObjectsResponse, ProtoError<DriverException>> {
+        let result = T::handle_message("DatabaseDriver", "connection_get_objects", input.encode_to_vec());
         match result {
             Ok(output) => {
                 let output = ConnectionGetObjectsResponse::decode(&output[..]);
@@ -1586,26 +1451,20 @@ impl<T: Transport> DatabaseDriverClient<T> {
                     Ok(output) => Ok(output),
                     Err(e) => Err(ProtoError::Transport(e.to_string())),
                 }
-            }
+            },
             Err(ProtoError::Application(e)) => {
                 let output = DriverException::decode(&e[..]);
                 match output {
                     Ok(output) => Err(ProtoError::Application(output)),
                     Err(e) => Err(ProtoError::Transport(e.to_string())),
                 }
-            }
+            },
             Err(ProtoError::Transport(e)) => Err(ProtoError::Transport(e)),
         }
     }
 
-    pub fn connection_get_table_schema(
-        input: ConnectionGetTableSchemaRequest,
-    ) -> Result<ConnectionGetTableSchemaResponse, ProtoError<DriverException>> {
-        let result = T::handle_message(
-            "DatabaseDriver",
-            "connection_get_table_schema",
-            input.encode_to_vec(),
-        );
+    pub fn connection_get_table_schema(input: ConnectionGetTableSchemaRequest) -> Result<ConnectionGetTableSchemaResponse, ProtoError<DriverException>> {
+        let result = T::handle_message("DatabaseDriver", "connection_get_table_schema", input.encode_to_vec());
         match result {
             Ok(output) => {
                 let output = ConnectionGetTableSchemaResponse::decode(&output[..]);
@@ -1613,26 +1472,20 @@ impl<T: Transport> DatabaseDriverClient<T> {
                     Ok(output) => Ok(output),
                     Err(e) => Err(ProtoError::Transport(e.to_string())),
                 }
-            }
+            },
             Err(ProtoError::Application(e)) => {
                 let output = DriverException::decode(&e[..]);
                 match output {
                     Ok(output) => Err(ProtoError::Application(output)),
                     Err(e) => Err(ProtoError::Transport(e.to_string())),
                 }
-            }
+            },
             Err(ProtoError::Transport(e)) => Err(ProtoError::Transport(e)),
         }
     }
 
-    pub fn connection_get_table_types(
-        input: ConnectionGetTableTypesRequest,
-    ) -> Result<ConnectionGetTableTypesResponse, ProtoError<DriverException>> {
-        let result = T::handle_message(
-            "DatabaseDriver",
-            "connection_get_table_types",
-            input.encode_to_vec(),
-        );
+    pub fn connection_get_table_types(input: ConnectionGetTableTypesRequest) -> Result<ConnectionGetTableTypesResponse, ProtoError<DriverException>> {
+        let result = T::handle_message("DatabaseDriver", "connection_get_table_types", input.encode_to_vec());
         match result {
             Ok(output) => {
                 let output = ConnectionGetTableTypesResponse::decode(&output[..]);
@@ -1640,23 +1493,20 @@ impl<T: Transport> DatabaseDriverClient<T> {
                     Ok(output) => Ok(output),
                     Err(e) => Err(ProtoError::Transport(e.to_string())),
                 }
-            }
+            },
             Err(ProtoError::Application(e)) => {
                 let output = DriverException::decode(&e[..]);
                 match output {
                     Ok(output) => Err(ProtoError::Application(output)),
                     Err(e) => Err(ProtoError::Transport(e.to_string())),
                 }
-            }
+            },
             Err(ProtoError::Transport(e)) => Err(ProtoError::Transport(e)),
         }
     }
 
-    pub fn connection_commit(
-        input: ConnectionCommitRequest,
-    ) -> Result<ConnectionCommitResponse, ProtoError<DriverException>> {
-        let result =
-            T::handle_message("DatabaseDriver", "connection_commit", input.encode_to_vec());
+    pub fn connection_commit(input: ConnectionCommitRequest) -> Result<ConnectionCommitResponse, ProtoError<DriverException>> {
+        let result = T::handle_message("DatabaseDriver", "connection_commit", input.encode_to_vec());
         match result {
             Ok(output) => {
                 let output = ConnectionCommitResponse::decode(&output[..]);
@@ -1664,26 +1514,20 @@ impl<T: Transport> DatabaseDriverClient<T> {
                     Ok(output) => Ok(output),
                     Err(e) => Err(ProtoError::Transport(e.to_string())),
                 }
-            }
+            },
             Err(ProtoError::Application(e)) => {
                 let output = DriverException::decode(&e[..]);
                 match output {
                     Ok(output) => Err(ProtoError::Application(output)),
                     Err(e) => Err(ProtoError::Transport(e.to_string())),
                 }
-            }
+            },
             Err(ProtoError::Transport(e)) => Err(ProtoError::Transport(e)),
         }
     }
 
-    pub fn connection_rollback(
-        input: ConnectionRollbackRequest,
-    ) -> Result<ConnectionRollbackResponse, ProtoError<DriverException>> {
-        let result = T::handle_message(
-            "DatabaseDriver",
-            "connection_rollback",
-            input.encode_to_vec(),
-        );
+    pub fn connection_rollback(input: ConnectionRollbackRequest) -> Result<ConnectionRollbackResponse, ProtoError<DriverException>> {
+        let result = T::handle_message("DatabaseDriver", "connection_rollback", input.encode_to_vec());
         match result {
             Ok(output) => {
                 let output = ConnectionRollbackResponse::decode(&output[..]);
@@ -1691,21 +1535,19 @@ impl<T: Transport> DatabaseDriverClient<T> {
                     Ok(output) => Ok(output),
                     Err(e) => Err(ProtoError::Transport(e.to_string())),
                 }
-            }
+            },
             Err(ProtoError::Application(e)) => {
                 let output = DriverException::decode(&e[..]);
                 match output {
                     Ok(output) => Err(ProtoError::Application(output)),
                     Err(e) => Err(ProtoError::Transport(e.to_string())),
                 }
-            }
+            },
             Err(ProtoError::Transport(e)) => Err(ProtoError::Transport(e)),
         }
     }
 
-    pub fn statement_new(
-        input: StatementNewRequest,
-    ) -> Result<StatementNewResponse, ProtoError<DriverException>> {
+    pub fn statement_new(input: StatementNewRequest) -> Result<StatementNewResponse, ProtoError<DriverException>> {
         let result = T::handle_message("DatabaseDriver", "statement_new", input.encode_to_vec());
         match result {
             Ok(output) => {
@@ -1714,23 +1556,20 @@ impl<T: Transport> DatabaseDriverClient<T> {
                     Ok(output) => Ok(output),
                     Err(e) => Err(ProtoError::Transport(e.to_string())),
                 }
-            }
+            },
             Err(ProtoError::Application(e)) => {
                 let output = DriverException::decode(&e[..]);
                 match output {
                     Ok(output) => Err(ProtoError::Application(output)),
                     Err(e) => Err(ProtoError::Transport(e.to_string())),
                 }
-            }
+            },
             Err(ProtoError::Transport(e)) => Err(ProtoError::Transport(e)),
         }
     }
 
-    pub fn statement_release(
-        input: StatementReleaseRequest,
-    ) -> Result<StatementReleaseResponse, ProtoError<DriverException>> {
-        let result =
-            T::handle_message("DatabaseDriver", "statement_release", input.encode_to_vec());
+    pub fn statement_release(input: StatementReleaseRequest) -> Result<StatementReleaseResponse, ProtoError<DriverException>> {
+        let result = T::handle_message("DatabaseDriver", "statement_release", input.encode_to_vec());
         match result {
             Ok(output) => {
                 let output = StatementReleaseResponse::decode(&output[..]);
@@ -1738,26 +1577,20 @@ impl<T: Transport> DatabaseDriverClient<T> {
                     Ok(output) => Ok(output),
                     Err(e) => Err(ProtoError::Transport(e.to_string())),
                 }
-            }
+            },
             Err(ProtoError::Application(e)) => {
                 let output = DriverException::decode(&e[..]);
                 match output {
                     Ok(output) => Err(ProtoError::Application(output)),
                     Err(e) => Err(ProtoError::Transport(e.to_string())),
                 }
-            }
+            },
             Err(ProtoError::Transport(e)) => Err(ProtoError::Transport(e)),
         }
     }
 
-    pub fn statement_set_sql_query(
-        input: StatementSetSqlQueryRequest,
-    ) -> Result<StatementSetSqlQueryResponse, ProtoError<DriverException>> {
-        let result = T::handle_message(
-            "DatabaseDriver",
-            "statement_set_sql_query",
-            input.encode_to_vec(),
-        );
+    pub fn statement_set_sql_query(input: StatementSetSqlQueryRequest) -> Result<StatementSetSqlQueryResponse, ProtoError<DriverException>> {
+        let result = T::handle_message("DatabaseDriver", "statement_set_sql_query", input.encode_to_vec());
         match result {
             Ok(output) => {
                 let output = StatementSetSqlQueryResponse::decode(&output[..]);
@@ -1765,26 +1598,20 @@ impl<T: Transport> DatabaseDriverClient<T> {
                     Ok(output) => Ok(output),
                     Err(e) => Err(ProtoError::Transport(e.to_string())),
                 }
-            }
+            },
             Err(ProtoError::Application(e)) => {
                 let output = DriverException::decode(&e[..]);
                 match output {
                     Ok(output) => Err(ProtoError::Application(output)),
                     Err(e) => Err(ProtoError::Transport(e.to_string())),
                 }
-            }
+            },
             Err(ProtoError::Transport(e)) => Err(ProtoError::Transport(e)),
         }
     }
 
-    pub fn statement_set_substrait_plan(
-        input: StatementSetSubstraitPlanRequest,
-    ) -> Result<StatementSetSubstraitPlanResponse, ProtoError<DriverException>> {
-        let result = T::handle_message(
-            "DatabaseDriver",
-            "statement_set_substrait_plan",
-            input.encode_to_vec(),
-        );
+    pub fn statement_set_substrait_plan(input: StatementSetSubstraitPlanRequest) -> Result<StatementSetSubstraitPlanResponse, ProtoError<DriverException>> {
+        let result = T::handle_message("DatabaseDriver", "statement_set_substrait_plan", input.encode_to_vec());
         match result {
             Ok(output) => {
                 let output = StatementSetSubstraitPlanResponse::decode(&output[..]);
@@ -1792,23 +1619,20 @@ impl<T: Transport> DatabaseDriverClient<T> {
                     Ok(output) => Ok(output),
                     Err(e) => Err(ProtoError::Transport(e.to_string())),
                 }
-            }
+            },
             Err(ProtoError::Application(e)) => {
                 let output = DriverException::decode(&e[..]);
                 match output {
                     Ok(output) => Err(ProtoError::Application(output)),
                     Err(e) => Err(ProtoError::Transport(e.to_string())),
                 }
-            }
+            },
             Err(ProtoError::Transport(e)) => Err(ProtoError::Transport(e)),
         }
     }
 
-    pub fn statement_prepare(
-        input: StatementPrepareRequest,
-    ) -> Result<StatementPrepareResponse, ProtoError<DriverException>> {
-        let result =
-            T::handle_message("DatabaseDriver", "statement_prepare", input.encode_to_vec());
+    pub fn statement_prepare(input: StatementPrepareRequest) -> Result<StatementPrepareResponse, ProtoError<DriverException>> {
+        let result = T::handle_message("DatabaseDriver", "statement_prepare", input.encode_to_vec());
         match result {
             Ok(output) => {
                 let output = StatementPrepareResponse::decode(&output[..]);
@@ -1816,26 +1640,20 @@ impl<T: Transport> DatabaseDriverClient<T> {
                     Ok(output) => Ok(output),
                     Err(e) => Err(ProtoError::Transport(e.to_string())),
                 }
-            }
+            },
             Err(ProtoError::Application(e)) => {
                 let output = DriverException::decode(&e[..]);
                 match output {
                     Ok(output) => Err(ProtoError::Application(output)),
                     Err(e) => Err(ProtoError::Transport(e.to_string())),
                 }
-            }
+            },
             Err(ProtoError::Transport(e)) => Err(ProtoError::Transport(e)),
         }
     }
 
-    pub fn statement_set_option_string(
-        input: StatementSetOptionStringRequest,
-    ) -> Result<StatementSetOptionStringResponse, ProtoError<DriverException>> {
-        let result = T::handle_message(
-            "DatabaseDriver",
-            "statement_set_option_string",
-            input.encode_to_vec(),
-        );
+    pub fn statement_set_option_string(input: StatementSetOptionStringRequest) -> Result<StatementSetOptionStringResponse, ProtoError<DriverException>> {
+        let result = T::handle_message("DatabaseDriver", "statement_set_option_string", input.encode_to_vec());
         match result {
             Ok(output) => {
                 let output = StatementSetOptionStringResponse::decode(&output[..]);
@@ -1843,26 +1661,20 @@ impl<T: Transport> DatabaseDriverClient<T> {
                     Ok(output) => Ok(output),
                     Err(e) => Err(ProtoError::Transport(e.to_string())),
                 }
-            }
+            },
             Err(ProtoError::Application(e)) => {
                 let output = DriverException::decode(&e[..]);
                 match output {
                     Ok(output) => Err(ProtoError::Application(output)),
                     Err(e) => Err(ProtoError::Transport(e.to_string())),
                 }
-            }
+            },
             Err(ProtoError::Transport(e)) => Err(ProtoError::Transport(e)),
         }
     }
 
-    pub fn statement_set_option_bytes(
-        input: StatementSetOptionBytesRequest,
-    ) -> Result<StatementSetOptionBytesResponse, ProtoError<DriverException>> {
-        let result = T::handle_message(
-            "DatabaseDriver",
-            "statement_set_option_bytes",
-            input.encode_to_vec(),
-        );
+    pub fn statement_set_option_bytes(input: StatementSetOptionBytesRequest) -> Result<StatementSetOptionBytesResponse, ProtoError<DriverException>> {
+        let result = T::handle_message("DatabaseDriver", "statement_set_option_bytes", input.encode_to_vec());
         match result {
             Ok(output) => {
                 let output = StatementSetOptionBytesResponse::decode(&output[..]);
@@ -1870,26 +1682,20 @@ impl<T: Transport> DatabaseDriverClient<T> {
                     Ok(output) => Ok(output),
                     Err(e) => Err(ProtoError::Transport(e.to_string())),
                 }
-            }
+            },
             Err(ProtoError::Application(e)) => {
                 let output = DriverException::decode(&e[..]);
                 match output {
                     Ok(output) => Err(ProtoError::Application(output)),
                     Err(e) => Err(ProtoError::Transport(e.to_string())),
                 }
-            }
+            },
             Err(ProtoError::Transport(e)) => Err(ProtoError::Transport(e)),
         }
     }
 
-    pub fn statement_set_option_int(
-        input: StatementSetOptionIntRequest,
-    ) -> Result<StatementSetOptionIntResponse, ProtoError<DriverException>> {
-        let result = T::handle_message(
-            "DatabaseDriver",
-            "statement_set_option_int",
-            input.encode_to_vec(),
-        );
+    pub fn statement_set_option_int(input: StatementSetOptionIntRequest) -> Result<StatementSetOptionIntResponse, ProtoError<DriverException>> {
+        let result = T::handle_message("DatabaseDriver", "statement_set_option_int", input.encode_to_vec());
         match result {
             Ok(output) => {
                 let output = StatementSetOptionIntResponse::decode(&output[..]);
@@ -1897,26 +1703,20 @@ impl<T: Transport> DatabaseDriverClient<T> {
                     Ok(output) => Ok(output),
                     Err(e) => Err(ProtoError::Transport(e.to_string())),
                 }
-            }
+            },
             Err(ProtoError::Application(e)) => {
                 let output = DriverException::decode(&e[..]);
                 match output {
                     Ok(output) => Err(ProtoError::Application(output)),
                     Err(e) => Err(ProtoError::Transport(e.to_string())),
                 }
-            }
+            },
             Err(ProtoError::Transport(e)) => Err(ProtoError::Transport(e)),
         }
     }
 
-    pub fn statement_set_option_double(
-        input: StatementSetOptionDoubleRequest,
-    ) -> Result<StatementSetOptionDoubleResponse, ProtoError<DriverException>> {
-        let result = T::handle_message(
-            "DatabaseDriver",
-            "statement_set_option_double",
-            input.encode_to_vec(),
-        );
+    pub fn statement_set_option_double(input: StatementSetOptionDoubleRequest) -> Result<StatementSetOptionDoubleResponse, ProtoError<DriverException>> {
+        let result = T::handle_message("DatabaseDriver", "statement_set_option_double", input.encode_to_vec());
         match result {
             Ok(output) => {
                 let output = StatementSetOptionDoubleResponse::decode(&output[..]);
@@ -1924,26 +1724,20 @@ impl<T: Transport> DatabaseDriverClient<T> {
                     Ok(output) => Ok(output),
                     Err(e) => Err(ProtoError::Transport(e.to_string())),
                 }
-            }
+            },
             Err(ProtoError::Application(e)) => {
                 let output = DriverException::decode(&e[..]);
                 match output {
                     Ok(output) => Err(ProtoError::Application(output)),
                     Err(e) => Err(ProtoError::Transport(e.to_string())),
                 }
-            }
+            },
             Err(ProtoError::Transport(e)) => Err(ProtoError::Transport(e)),
         }
     }
 
-    pub fn statement_get_parameter_schema(
-        input: StatementGetParameterSchemaRequest,
-    ) -> Result<StatementGetParameterSchemaResponse, ProtoError<DriverException>> {
-        let result = T::handle_message(
-            "DatabaseDriver",
-            "statement_get_parameter_schema",
-            input.encode_to_vec(),
-        );
+    pub fn statement_get_parameter_schema(input: StatementGetParameterSchemaRequest) -> Result<StatementGetParameterSchemaResponse, ProtoError<DriverException>> {
+        let result = T::handle_message("DatabaseDriver", "statement_get_parameter_schema", input.encode_to_vec());
         match result {
             Ok(output) => {
                 let output = StatementGetParameterSchemaResponse::decode(&output[..]);
@@ -1951,21 +1745,19 @@ impl<T: Transport> DatabaseDriverClient<T> {
                     Ok(output) => Ok(output),
                     Err(e) => Err(ProtoError::Transport(e.to_string())),
                 }
-            }
+            },
             Err(ProtoError::Application(e)) => {
                 let output = DriverException::decode(&e[..]);
                 match output {
                     Ok(output) => Err(ProtoError::Application(output)),
                     Err(e) => Err(ProtoError::Transport(e.to_string())),
                 }
-            }
+            },
             Err(ProtoError::Transport(e)) => Err(ProtoError::Transport(e)),
         }
     }
 
-    pub fn statement_bind(
-        input: StatementBindRequest,
-    ) -> Result<StatementBindResponse, ProtoError<DriverException>> {
+    pub fn statement_bind(input: StatementBindRequest) -> Result<StatementBindResponse, ProtoError<DriverException>> {
         let result = T::handle_message("DatabaseDriver", "statement_bind", input.encode_to_vec());
         match result {
             Ok(output) => {
@@ -1974,26 +1766,20 @@ impl<T: Transport> DatabaseDriverClient<T> {
                     Ok(output) => Ok(output),
                     Err(e) => Err(ProtoError::Transport(e.to_string())),
                 }
-            }
+            },
             Err(ProtoError::Application(e)) => {
                 let output = DriverException::decode(&e[..]);
                 match output {
                     Ok(output) => Err(ProtoError::Application(output)),
                     Err(e) => Err(ProtoError::Transport(e.to_string())),
                 }
-            }
+            },
             Err(ProtoError::Transport(e)) => Err(ProtoError::Transport(e)),
         }
     }
 
-    pub fn statement_bind_stream(
-        input: StatementBindStreamRequest,
-    ) -> Result<StatementBindStreamResponse, ProtoError<DriverException>> {
-        let result = T::handle_message(
-            "DatabaseDriver",
-            "statement_bind_stream",
-            input.encode_to_vec(),
-        );
+    pub fn statement_bind_stream(input: StatementBindStreamRequest) -> Result<StatementBindStreamResponse, ProtoError<DriverException>> {
+        let result = T::handle_message("DatabaseDriver", "statement_bind_stream", input.encode_to_vec());
         match result {
             Ok(output) => {
                 let output = StatementBindStreamResponse::decode(&output[..]);
@@ -2001,26 +1787,20 @@ impl<T: Transport> DatabaseDriverClient<T> {
                     Ok(output) => Ok(output),
                     Err(e) => Err(ProtoError::Transport(e.to_string())),
                 }
-            }
+            },
             Err(ProtoError::Application(e)) => {
                 let output = DriverException::decode(&e[..]);
                 match output {
                     Ok(output) => Err(ProtoError::Application(output)),
                     Err(e) => Err(ProtoError::Transport(e.to_string())),
                 }
-            }
+            },
             Err(ProtoError::Transport(e)) => Err(ProtoError::Transport(e)),
         }
     }
 
-    pub fn statement_execute_query(
-        input: StatementExecuteQueryRequest,
-    ) -> Result<StatementExecuteQueryResponse, ProtoError<DriverException>> {
-        let result = T::handle_message(
-            "DatabaseDriver",
-            "statement_execute_query",
-            input.encode_to_vec(),
-        );
+    pub fn statement_execute_query(input: StatementExecuteQueryRequest) -> Result<StatementExecuteQueryResponse, ProtoError<DriverException>> {
+        let result = T::handle_message("DatabaseDriver", "statement_execute_query", input.encode_to_vec());
         match result {
             Ok(output) => {
                 let output = StatementExecuteQueryResponse::decode(&output[..]);
@@ -2028,26 +1808,20 @@ impl<T: Transport> DatabaseDriverClient<T> {
                     Ok(output) => Ok(output),
                     Err(e) => Err(ProtoError::Transport(e.to_string())),
                 }
-            }
+            },
             Err(ProtoError::Application(e)) => {
                 let output = DriverException::decode(&e[..]);
                 match output {
                     Ok(output) => Err(ProtoError::Application(output)),
                     Err(e) => Err(ProtoError::Transport(e.to_string())),
                 }
-            }
+            },
             Err(ProtoError::Transport(e)) => Err(ProtoError::Transport(e)),
         }
     }
 
-    pub fn statement_execute_partitions(
-        input: StatementExecutePartitionsRequest,
-    ) -> Result<StatementExecutePartitionsResponse, ProtoError<DriverException>> {
-        let result = T::handle_message(
-            "DatabaseDriver",
-            "statement_execute_partitions",
-            input.encode_to_vec(),
-        );
+    pub fn statement_execute_partitions(input: StatementExecutePartitionsRequest) -> Result<StatementExecutePartitionsResponse, ProtoError<DriverException>> {
+        let result = T::handle_message("DatabaseDriver", "statement_execute_partitions", input.encode_to_vec());
         match result {
             Ok(output) => {
                 let output = StatementExecutePartitionsResponse::decode(&output[..]);
@@ -2055,26 +1829,20 @@ impl<T: Transport> DatabaseDriverClient<T> {
                     Ok(output) => Ok(output),
                     Err(e) => Err(ProtoError::Transport(e.to_string())),
                 }
-            }
+            },
             Err(ProtoError::Application(e)) => {
                 let output = DriverException::decode(&e[..]);
                 match output {
                     Ok(output) => Err(ProtoError::Application(output)),
                     Err(e) => Err(ProtoError::Transport(e.to_string())),
                 }
-            }
+            },
             Err(ProtoError::Transport(e)) => Err(ProtoError::Transport(e)),
         }
     }
 
-    pub fn statement_read_partition(
-        input: StatementReadPartitionRequest,
-    ) -> Result<StatementReadPartitionResponse, ProtoError<DriverException>> {
-        let result = T::handle_message(
-            "DatabaseDriver",
-            "statement_read_partition",
-            input.encode_to_vec(),
-        );
+    pub fn statement_read_partition(input: StatementReadPartitionRequest) -> Result<StatementReadPartitionResponse, ProtoError<DriverException>> {
+        let result = T::handle_message("DatabaseDriver", "statement_read_partition", input.encode_to_vec());
         match result {
             Ok(output) => {
                 let output = StatementReadPartitionResponse::decode(&output[..]);
@@ -2082,14 +1850,14 @@ impl<T: Transport> DatabaseDriverClient<T> {
                     Ok(output) => Ok(output),
                     Err(e) => Err(ProtoError::Transport(e.to_string())),
                 }
-            }
+            },
             Err(ProtoError::Application(e)) => {
                 let output = DriverException::decode(&e[..]);
                 match output {
                     Ok(output) => Err(ProtoError::Application(output)),
                     Err(e) => Err(ProtoError::Transport(e.to_string())),
                 }
-            }
+            },
             Err(ProtoError::Transport(e)) => Err(ProtoError::Transport(e)),
         }
     }

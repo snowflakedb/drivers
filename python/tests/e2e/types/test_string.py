@@ -174,10 +174,9 @@ class TestStringTable:
 class TestStringBinding:
     """Tests for STRING type using parameter binding."""
 
-    @pytest.mark.skip("SNOW-3006013 - parameter binding is not yet implemented")
     @string_type_parametrize
     def test_should_insert_and_select_back_hardcoded_string_values_using_parameter_binding(
-        self, execute_query, tmp_schema, string_type
+        self, execute_query, executemany_insert, tmp_schema, string_type
     ):
         # Given Snowflake client is logged in
 
@@ -187,17 +186,17 @@ class TestStringBinding:
 
         # When String value 'Test binding value 日本語' is inserted using parameter binding
         test_value = "Test binding value 日本語"
-        execute_query(f"INSERT INTO {table_name} VALUES (?)", (test_value,))
+        rows = executemany_insert(table_name, f"INSERT INTO {table_name} VALUES (?)", [(test_value,)])
 
         # And Query "SELECT * FROM {table}" is executed
         rows = execute_query(f"SELECT * FROM {table_name}")
 
         # Then the result should contain the bound string value 'Test binding value 日本語'
         result = [row[0] for row in rows]
-        assert_type(result, str)
+        assert len(result) == 1
+        assert_type(result[0], str)
         assert result == [test_value]
 
-    @pytest.mark.skip("SNOW-3006013 - parameter binding is not yet implemented")
     @string_type_parametrize
     def test_should_select_string_literals_using_parameter_binding(self, execute_query, string_type):
         # SELECT binding test: Uses SELECT ?::VARCHAR to bind string values
@@ -216,7 +215,6 @@ class TestStringBinding:
         assert_type(result, str)
         assert result == ("hello", "Hello World", "日本語テスト")
 
-    @pytest.mark.skip("SNOW-3006013 - parameter binding is not yet implemented")
     @string_type_parametrize
     def test_should_select_corner_case_string_values_using_parameter_binding(self, execute_query, string_type):
         # Given Snowflake client is logged in

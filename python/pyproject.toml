@@ -204,6 +204,8 @@ dev-mode = true
 [tool.hatch.envs.dev.env-vars]
 # IMPORTANT: PARAMETER_PATH must be explicitly set
 PARAMETER_PATH = "{env:PARAMETER_PATH:../parameters.json}"
+# Skip core build if library already exists (avoids cmake build issues)
+SKIP_CORE_BUILD = "{env:SKIP_CORE_BUILD:1}"
 
 [[tool.hatch.envs.dev.matrix]]
 python = ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]
