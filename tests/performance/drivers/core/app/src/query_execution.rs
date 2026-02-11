@@ -6,16 +6,19 @@ use std::time::Instant;
 
 use crate::arrow::fetch_result_rows;
 use crate::connection::{DatabaseDriver, reset_statement_query};
-use crate::results::{print_statistics, write_csv_results, write_run_metadata_json};
+use crate::results::{
+    current_unix_timestamp, print_statistics, write_csv_results, write_metadata_if_not_replay,
+};
 use crate::types::IterationResult;
+use sf_core::protobuf_gen::database_driver_v1::ConnectionHandle;
 
 pub fn execute_fetch_test(
+    conn_handle: ConnectionHandle,
     stmt_handle: StatementHandle,
     sql_command: &str,
     warmup_iterations: usize,
     iterations: usize,
     test_name: &str,
-    server_version: &str,
 ) -> Result<()> {
     println!("\n=== Executing SELECT Test ===");
     println!("Query: {}", sql_command);
@@ -36,8 +39,9 @@ pub fn execute_fetch_test(
     // Write & print
     let results_file = write_csv_results(&results, test_name)
         .map_err(|e| format!("Failed to write results: {:?}", e))?;
-    write_run_metadata_json(server_version)
-        .map_err(|e| format!("Failed to write metadata: {:?}", e))?;
+
+    write_metadata_if_not_replay(conn_handle)?;
+
     print_statistics(&results);
 
     println!("\n✓ Complete → {}", results_file);
@@ -66,17 +70,18 @@ pub fn run_test_iterations(
     iterations: usize,
 ) -> Result<Vec<IterationResult>> {
     let mut results = Vec::with_capacity(iterations);
+    let mut expected_row_count = get_expected_row_count();
 
     for i in 0..iterations {
-        let (query_time, fetch_time, _row_count) = execute_iteration(stmt_handle)?;
+        let (query_time, fetch_time, row_count) = execute_iteration(stmt_handle)?;
+
+        expected_row_count = validate_row_count(row_count, expected_row_count, i)?;
 
         results.push(IterationResult {
-            timestamp: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs() as i64,
+            timestamp: current_unix_timestamp(),
             query_time_s: query_time,
             fetch_time_s: fetch_time,
+            row_count,
         });
 
         if i < iterations - 1 {
@@ -85,6 +90,44 @@ pub fn run_test_iterations(
     }
 
     Ok(results)
+}
+
+fn get_expected_row_count() -> Option<usize> {
+    let expected_from_recording = std::env::var("EXPECTED_ROW_COUNT")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok());
+
+    if let Some(expected) = expected_from_recording {
+        println!(
+            "Row count baseline: {} rows (from recording phase)",
+            expected
+        );
+        Some(expected)
+    } else {
+        None
+    }
+}
+
+fn validate_row_count(
+    row_count: usize,
+    expected: Option<usize>,
+    iteration: usize,
+) -> Result<Option<usize>> {
+    if let Some(expected) = expected {
+        if row_count != expected {
+            return Err(format!(
+                "Row count mismatch: iteration {} returned {} rows, expected {} rows",
+                iteration, row_count, expected
+            ));
+        }
+        Ok(Some(expected))
+    } else {
+        println!(
+            "Row count baseline: {} rows (from first iteration)",
+            row_count
+        );
+        Ok(Some(row_count))
+    }
 }
 
 fn execute_iteration(stmt_handle: StatementHandle) -> Result<(f64, f64, usize)> {

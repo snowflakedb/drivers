@@ -1,46 +1,52 @@
+"""Performance test for 1M rows with WireMock - for stability testing"""
 import pytest
+from runner.test_types import TestType
 
-# Match recorded_http iteration counts for fair CoV comparison
 ITERATIONS = 30
-WARMUP_ITERATIONS = 1
+WARMUP_ITERATIONS = 2
 
 
 @pytest.mark.iterations(ITERATIONS)
 @pytest.mark.warmup_iterations(WARMUP_ITERATIONS)
-def test_select_string_1M_arrow(perf_test):
+def test_select_string_1M_arrow_recorded_http(perf_test):
     perf_test(
-        sql_command="SELECT L_COMMENT FROM SNOWFLAKE_SAMPLE_DATA.TPCH_SF100.LINEITEM LIMIT 1000000"
+        test_type=TestType.SELECT_RECORDED_HTTP,
+        sql_command="SELECT L_COMMENT FROM SNOWFLAKE_SAMPLE_DATA.TPCH_SF100.LINEITEM LIMIT 1000000",
     )
 
 
 @pytest.mark.iterations(ITERATIONS)
 @pytest.mark.warmup_iterations(WARMUP_ITERATIONS)
-def test_select_number_1M_arrow(perf_test):
+def test_select_number_1M_arrow_recorded_http(perf_test):
     perf_test(
-        sql_command="SELECT L_LINENUMBER::INT FROM SNOWFLAKE_SAMPLE_DATA.TPCH_SF100.LINEITEM LIMIT 1000000"
+        test_type=TestType.SELECT_RECORDED_HTTP,
+        sql_command="SELECT L_LINENUMBER::INT FROM SNOWFLAKE_SAMPLE_DATA.TPCH_SF100.LINEITEM LIMIT 1000000",
     )
 
 
 @pytest.mark.iterations(ITERATIONS)
 @pytest.mark.warmup_iterations(WARMUP_ITERATIONS)
-def test_select_date_1M_arrow(perf_test):
+def test_select_date_1M_arrow_recorded_http(perf_test):
     perf_test(
-        sql_command="SELECT L_SHIPDATE FROM SNOWFLAKE_SAMPLE_DATA.TPCH_SF100.LINEITEM LIMIT 1000000"
+        test_type=TestType.SELECT_RECORDED_HTTP,
+        sql_command="SELECT L_SHIPDATE FROM SNOWFLAKE_SAMPLE_DATA.TPCH_SF100.LINEITEM LIMIT 1000000",
     )
 
 
 @pytest.mark.iterations(ITERATIONS)
 @pytest.mark.warmup_iterations(WARMUP_ITERATIONS)
-def test_select_float_1M_arrow(perf_test):
+def test_select_float_1M_arrow_recorded_http(perf_test):
     perf_test(
-        sql_command="SELECT L_EXTENDEDPRICE FROM SNOWFLAKE_SAMPLE_DATA.TPCH_SF100.LINEITEM LIMIT 1000000"
+        test_type=TestType.SELECT_RECORDED_HTTP,
+        sql_command="SELECT L_EXTENDEDPRICE FROM SNOWFLAKE_SAMPLE_DATA.TPCH_SF100.LINEITEM LIMIT 1000000",
     )
 
 
 @pytest.mark.iterations(ITERATIONS)
 @pytest.mark.warmup_iterations(WARMUP_ITERATIONS)
-def test_select_15columns_1M_arrow(perf_test):
+def test_select_15columns_1M_arrow_recorded_http(perf_test):
     perf_test(
+        test_type=TestType.SELECT_RECORDED_HTTP,
         sql_command="""
             SELECT 
                 L_ORDERKEY,
@@ -60,6 +66,5 @@ def test_select_15columns_1M_arrow(perf_test):
                 L_COMMENT
             FROM SNOWFLAKE_SAMPLE_DATA.TPCH_SF100.LINEITEM 
             LIMIT 1000000
-        """
+        """,
     )
-

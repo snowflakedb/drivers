@@ -5,6 +5,7 @@ FROM --platform=${BUILDPLATFORM} artifactory.ci1.us-west-2.aws-dev.app.snowflake
 
 RUN apt-get update && apt-get install -y \
     ca-certificates \
+    build-essential \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /workdir
@@ -22,8 +23,9 @@ RUN pip install --no-cache-dir /workdir/python/
 # Copy test application
 COPY tests/performance/drivers/python/app/ /workdir/
 
-# Install test dependencies (includes old driver)
-RUN pip install --no-cache-dir -r requirements.txt
+# Install old driver to separate directory for comparison tests
+# Using -t flag to install to old_driver_src without overwriting universal driver
+RUN pip install --no-cache-dir snowflake-connector-python -t /workdir/old_driver_src
 
 # Detect OS version at build time (major version only) and write to file
 RUN bash -c '. /etc/os-release && echo "${ID^}_$(echo $VERSION_ID | cut -d. -f1)" > /etc/os_info'

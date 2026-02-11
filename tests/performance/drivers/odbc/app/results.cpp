@@ -10,6 +10,7 @@
 #include <memory>
 #include <sstream>
 
+#include "connection.h"
 #include "put_execution.h"
 
 // Forward declarations for private functions
@@ -23,9 +24,10 @@ void write_csv_results(const std::vector<TestResult>& results, const std::string
   auto csv = open_csv_file(filename);
   if (!csv) return;
 
-  *csv << "timestamp,query_s,fetch_s\n";
+  *csv << "timestamp,query_s,fetch_s,row_count\n";
   for (const auto& r : results) {
-    *csv << r.timestamp << "," << std::fixed << std::setprecision(6) << r.query_time_s << "," << r.fetch_time_s << "\n";
+    *csv << r.timestamp << "," << std::fixed << std::setprecision(6) << r.query_time_s << "," << r.fetch_time_s << ","
+         << r.row_count << "\n";
   }
   csv->close();
 }
@@ -55,10 +57,20 @@ std::string generate_metadata_filename(const std::string& driver_type) {
   return (results_dir / metadata_filename_ss.str()).string();
 }
 
-void finalize_test_execution(const std::string& results_file, const std::string& driver_type,
-                             const std::string& driver_version, const std::string& server_version, time_t timestamp) {
+void finalize_test_execution(SQLHDBC dbc, const std::string& results_file, const std::string& driver_type,
+                             const std::string& driver_version, time_t timestamp) {
+  // In replay mode, skip server version query and use N/A
+  std::string actual_server_version;
+  const char* replay_mode = std::getenv("WIREMOCK_REPLAY");
+  if (replay_mode != nullptr && std::string(replay_mode) == "true") {
+    actual_server_version = "N/A";
+  } else {
+    actual_server_version = get_server_version(dbc);
+  }
+
   std::string metadata_filename = generate_metadata_filename(driver_type);
-  write_run_metadata_json(driver_type, driver_version, server_version, timestamp, metadata_filename);
+  write_run_metadata_json(driver_type, driver_version, actual_server_version, timestamp, metadata_filename);
+
   std::cout << "\n✓ Complete → " << results_file << "\n";
 }
 
