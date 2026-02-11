@@ -17,8 +17,8 @@ from collections.abc import Iterator, Sequence
 from typing import TYPE_CHECKING, Any, NamedTuple
 
 from ._internal.arrow_context import ArrowConverterContext
-from ._internal.arrow_stream_iterator import ArrowStreamIterator  # type: ignore[import-not-found]
-from ._internal.protobuf_gen.database_driver_v1_pb2 import (  # type: ignore[attr-defined]
+from ._internal.arrow_stream_iterator import ArrowStreamIterator
+from ._internal.protobuf_gen.database_driver_v1_pb2 import (
     ExecuteResult,
     StatementExecuteQueryRequest,
     StatementNewRequest,
@@ -99,14 +99,14 @@ class SnowflakeCursorBase(abc.ABC):
         """
         self.connection = connection
         self._description: list[ResultMetadata] | None = None
-        self._rowcount = None
+        self._rowcount: int | None = None
         self.arraysize = 1  # Instance attribute overrides class attribute
         self._closed = False
         # Streaming state for Arrow results
         self._reader = None
         self._current_batch = None
         self._current_row_in_batch = 0
-        self.execute_result: ExecuteResult = None
+        self.execute_result: ExecuteResult | None = None
         self._iterator: Iterator[Row] | Iterator[DictRow] | None = None
 
     # ------------------------------------------------------------------
