@@ -6,6 +6,11 @@ on:
   pull_request:
     branches: [ "main" ]
 
+concurrency:
+  # Group by PR number for PRs, or fall back to the run ID for main (which is unique, so it won't cancel)
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
 
