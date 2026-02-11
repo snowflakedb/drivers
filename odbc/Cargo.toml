@@ -13,7 +13,6 @@ tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.19", features = ["fmt", "env-filter"] }
 snafu = "0.8.7"
 odbc-sys = "0.25.1"
-lazy_static = "1.5.0"
 arrow = { version = "56.0.0", features = ["ffi"] }
 chrono = "0.4.43"
 
