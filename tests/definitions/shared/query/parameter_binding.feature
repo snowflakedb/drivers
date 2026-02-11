@@ -110,7 +110,7 @@ Feature: Parameter binding
   Scenario: should raise error when placeholder count mismatches argument count
     Given Snowflake client is logged in
     When Query with 2 placeholders is executed with 3 arguments
-    Then Query should succesfully execute
+    Then Query should successfully execute
     When Query with 3 placeholders is executed with 1 argument
     Then Error should be raised for too few arguments
 
