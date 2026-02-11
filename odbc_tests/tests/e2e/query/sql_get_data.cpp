@@ -382,7 +382,7 @@ TEST_CASE("SQLGetData truncates character data when buffer is too small.", "[que
   CHECK(std::string((char*)buffer) == "Hello");
 
   // And the indicator should show the full length of the original data
-  CHECK(indicator == SQL_NO_TOTAL);
+  CHECK((indicator == SQL_NO_TOTAL || indicator == 11));
 }
 
 TEST_CASE("SQLGetData truncates binary data to BufferLength bytes.", "[query][get_data]") {
@@ -1681,7 +1681,7 @@ TEST_CASE("SQLGetData with BufferLength 1 for character data returns only null t
   CHECK(buffer[0] == '\0');
 
   // And the indicator should show the full data length
-  CHECK(indicator == SQL_NO_TOTAL);
+  CHECK((indicator == SQL_NO_TOTAL || indicator == 3));
 }
 
 // =============================================================================

@@ -35,9 +35,11 @@ extern DRIVER_TYPE get_driver_type();
     SKIP("Skipping for new driver: " << bd << ": " << message); \
   }
 
-#define SKIP_NEW_DRIVER_NOT_IMPLEMENTED()      \
-  if (get_driver_type() == DRIVER_TYPE::NEW) { \
-    SKIP("Not implemented for new driver");    \
-  }
+#define SKIP_NEW_DRIVER_NOT_IMPLEMENTED()          \
+  do {                                             \
+    if (get_driver_type() == DRIVER_TYPE::NEW) {   \
+      SKIP("Not implemented for new driver");      \
+    }                                              \
+  } while (0)
 
 #endif  // COMPATIBILITY_HPP
