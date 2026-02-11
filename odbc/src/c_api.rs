@@ -75,6 +75,16 @@ pub unsafe extern "C" fn SQLFreeHandle(
 /// # Safety
 /// This function is called by the ODBC driver manager.
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn SQLFreeStmt(
+    statement_handle: sql::Handle,
+    option: sql::FreeStmtOption,
+) -> sql::RetCode {
+    api::statement::free_stmt(statement_handle, option).to_sql_code()
+}
+
+/// # Safety
+/// This function is called by the ODBC driver manager.
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn SQLConnect(
     connection_handle: sql::Handle,
     server_name: *const sql::Char,
