@@ -89,49 +89,72 @@ Feature: Session Logout - Core HTTP Layer Integration
   # ===========================================================================
   #                      Close vs Active Query Execution
   # ===========================================================================
+  # Close does not cancel in-flight HTTP connections (e.g. by signaling
+  # connected sockets to close). While technically possible, this would cross
+  # abstraction boundaries and be hard to maintain. Instead, internal services
+  # are invalidated during close, causing subsequent operations (e.g.
+  # parse_response on SnowflakeRequestService) to fail naturally when the
+  # server response eventually arrives.
+  # From the moment close is entered, the connection is in closing state and
+  # absolutely no new queries can be scheduled.
 
-  Scenario: should reject new query after close is initiated
-    Given Mock HTTP server is configured
+  Scenario: should reject new query with connection closed error when submitted after close started
+    Given Mock HTTP server delays logout response by 5 seconds then returns 200
     And UD Core connection is logged in
-    When Connection close is initiated
-    And A new query SELECT 1 is submitted after close started
-    Then Query is rejected immediately with connection closed error
-    And No query HTTP request is sent to server
+    And Socket timeout is set to 10 seconds
+    When Connection close is initiated on a separate thread
+    And Query SELECT 1 is submitted while logout is still in-flight
+    Then Query SELECT 1 fails with connection closed error
+    And Mock server did not receive any query request
+    And Close completes successfully after logout response arrives
 
-  Scenario: should cancel running query when close is initiated
-    Given Mock HTTP server delays query response by 10 seconds
+  Scenario: should fail in-flight query when server response arrives after closing process started
+    # The server completes the query — the HTTP connection is not cancelled.
+    # The query fails because post-response processing cannot operate on
+    # invalidated services after close.
+    Given Mock HTTP server delays query response by 3 seconds then returns query result
+    And Mock HTTP server accepts logout requests with 200
     And UD Core connection is logged in
+    And Socket timeout is set to 10 seconds
     And Query is submitted and server has not responded yet
-    When Connection close is initiated while query response is pending
-    Then In-flight query request is cancelled
-    And Query caller receives cancellation or connection closed error
-    And Logout proceeds without waiting for query to complete
+    When Connection close is initiated
+    And Server returns query response after closing process started
+    Then Mock server successfully completed query response delivery
+    And Query caller receives connection closed error
+    And Mock server received POST /session?delete=true logout request
+    And Close completes successfully
 
   # ===========================================================================
-  #                  Close vs Token Refresh Race Conditions
+  #                  Close vs Token Refresh
   # ===========================================================================
+  # If token renewal is already in-flight when close is called, close waits
+  # for it to complete before proceeding. This prevents a race condition where
+  # close and renewal both try to modify tokens simultaneously.
+  # This contention is expected to be rare in practice.
 
-  Scenario: should cancel in-progress token refresh when close is initiated
-    Given Mock HTTP server delays token refresh response by 5 seconds
+  Scenario: should wait for in-flight token renewal to complete then logout with refreshed token
+    Given Mock HTTP server delays token refresh response by 3 seconds then returns new token
+    And Mock HTTP server accepts logout requests with 200
     And UD Core connection is logged in
-    And Session token refresh request is in-flight
-    When Connection close is initiated before refresh response arrives
-    Then Token refresh request is cancelled
-    And Session and master tokens are cleared despite incomplete refresh
-    And Logout proceeds with the token that was available at close initiation time
+    And Token refresh is already in-flight
+    When Connection close is requested while refresh is still in-flight
+    Then Mock server received token refresh request before logout request
+    And Logout request Authorization header contains the refreshed session token
+    And Close completes successfully
 
-  Scenario: should not renew token when 390112 arrives for a query after close already cleared tokens
-    # Timeline: query executing → close() called → tokens cleared →
-    # server responds 390112 to the in-flight query → query handler must NOT renew
-    # because renewed tokens would overwrite the already-cleared token state
+  Scenario: should not start token renewal when query receives 390112 after closing process started
+    # After closing process starts, a query receiving 390112 cannot initiate
+    # renewal — the internal services required for renewal are no longer available.
     Given Mock HTTP server returns 390112 SESSION_TOKEN_EXPIRED to query after 3 second delay
+    And Mock HTTP server accepts logout requests with 200
     And UD Core connection is logged in
+    And Socket timeout is set to 10 seconds
     And Query is submitted and waiting for server response
-    When Connection close is initiated while query is in-flight
-    And Server responds 390112 SESSION_TOKEN_EXPIRED to the in-flight query after close started
-    Then No token refresh request is sent to server
-    And Previously cleared tokens are not overwritten by a renewal
-    And Query fails with connection closed error
+    When Connection close is initiated
+    And Server responds 390112 SESSION_TOKEN_EXPIRED to the in-flight query
+    Then Mock server did not receive any token refresh request
+    And Query caller receives connection closed error
+    And Close completes successfully
 
   # ===========================================================================
   #                  Error Strategy Behavior (Injected Strategy Testing)
