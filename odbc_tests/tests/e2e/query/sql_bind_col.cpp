@@ -314,9 +314,8 @@ TEST_CASE("SQLBindCol can unbind data buffer while keeping indicator bound.", "[
   // Then SQLBindCol should return SQL_SUCCESS
   CHECK(ret == SQL_SUCCESS);
 
-  // And the indicator should contain the length of the data (even though data buffer is unbound)
-  OLD_DRIVER_ONLY("BD#9") { CHECK(indicator == 999); }
-  NEW_DRIVER_ONLY("BD#9") { CHECK(indicator == sizeof(SQLINTEGER)); }
+  // And the indicator should remain unchanged (column was fully unbound because TargetValuePtr is null)
+  CHECK(indicator == 999);
 }
 
 // =============================================================================
@@ -740,7 +739,6 @@ TEST_CASE("SQLBindCol supports SQL_C_DEFAULT as TargetType.", "[query][bind_col]
 // =============================================================================
 
 TEST_CASE("SQLBindCol updates SQL_DESC_COUNT on the ARD.", "[query][bind_col]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "Calls SQLGetDescField to get this descriptor's SQL_DESC_COUNT field,
   //       and if the value in the ColumnNumber argument exceeds the value of
   //       SQL_DESC_COUNT, calls SQLSetDescField to increase the value of
@@ -775,7 +773,6 @@ TEST_CASE("SQLBindCol updates SQL_DESC_COUNT on the ARD.", "[query][bind_col]") 
 }
 
 TEST_CASE("SQLBindCol sets SQL_DESC_COUNT only when increasing.", "[query][bind_col]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "SQLBindCol sets SQL_DESC_COUNT to the value of the ColumnNumber
   //       argument only when this would increase the value of SQL_DESC_COUNT."
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlbindcol-function#implicit-resetting-of-count-field
@@ -814,7 +811,6 @@ TEST_CASE("SQLBindCol sets SQL_DESC_COUNT only when increasing.", "[query][bind_
 }
 
 TEST_CASE("SQLBindCol decreases SQL_DESC_COUNT when unbinding highest bound column.", "[query][bind_col]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "If the value in the TargetValuePtr argument is a null pointer and the
   //       value in the ColumnNumber argument is equal to SQL_DESC_COUNT (that is,
   //       when unbinding the highest bound column), then SQL_DESC_COUNT is set to
@@ -856,8 +852,53 @@ TEST_CASE("SQLBindCol decreases SQL_DESC_COUNT when unbinding highest bound colu
   CHECK(desc_count == 2);
 }
 
+TEST_CASE("SQLBindCol decreases SQL_DESC_COUNT when TargetValuePtr is null even if StrLen_or_IndPtr is not null.",
+          "[query][bind_col]") {
+  // Doc: "If TargetValuePtr is a null pointer, the driver unbinds the data buffer
+  //       for the column."
+  // Doc: "If the value in the TargetValuePtr argument is a null pointer and the
+  //       value in the ColumnNumber argument is equal to SQL_DESC_COUNT (that is,
+  //       when unbinding the highest bound column), then SQL_DESC_COUNT is set to
+  //       the number of the highest remaining bound column."
+  // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlbindcol-function#implicit-resetting-of-count-field
+
+  // Given Snowflake client is logged in
+  Connection conn;
+  auto stmt = conn.createStatement();
+
+  // When SQLBindCol is called to bind columns 1, 2, and 3
+  SQLINTEGER val1 = 0, val2 = 0, val3 = 0;
+  SQLLEN ind1 = 0, ind2 = 0, ind3 = 0;
+  SQLRETURN ret = SQLBindCol(stmt.getHandle(), 1, SQL_C_LONG, &val1, sizeof(val1), &ind1);
+  CHECK_ODBC(ret, stmt);
+  ret = SQLBindCol(stmt.getHandle(), 2, SQL_C_LONG, &val2, sizeof(val2), &ind2);
+  CHECK_ODBC(ret, stmt);
+  ret = SQLBindCol(stmt.getHandle(), 3, SQL_C_LONG, &val3, sizeof(val3), &ind3);
+  CHECK_ODBC(ret, stmt);
+
+  // And the ARD descriptor is obtained
+  SQLHDESC ard = SQL_NULL_HDESC;
+  ret = SQLGetStmtAttr(stmt.getHandle(), SQL_ATTR_APP_ROW_DESC, &ard, 0, NULL);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  // Then SQL_DESC_COUNT should be 3
+  SQLSMALLINT desc_count = 0;
+  ret = SQLGetDescField(ard, 0, SQL_DESC_COUNT, &desc_count, 0, NULL);
+  REQUIRE(ret == SQL_SUCCESS);
+  CHECK(desc_count == 3);
+
+  // And when the highest bound column (3) is unbound with null TargetValuePtr but non-null StrLen_or_IndPtr
+  SQLLEN indicator = 0;
+  ret = SQLBindCol(stmt.getHandle(), 3, SQL_C_LONG, NULL, 0, &indicator);
+  CHECK_ODBC(ret, stmt);
+
+  // Then SQL_DESC_COUNT should decrease to 2 (column was unbound because TargetValuePtr is null)
+  ret = SQLGetDescField(ard, 0, SQL_DESC_COUNT, &desc_count, 0, NULL);
+  REQUIRE(ret == SQL_SUCCESS);
+  CHECK(desc_count == 2);
+}
+
 TEST_CASE("SQLBindCol sets descriptor fields on the ARD.", "[query][bind_col]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "Conceptually, SQLBindCol performs the following steps in sequence:
   //       1. Calls SQLGetStmtAttr to obtain the ARD handle.
   //       ...
@@ -920,6 +961,252 @@ TEST_CASE("SQLBindCol sets descriptor fields on the ARD.", "[query][bind_col]") 
   ret = SQLGetDescField(ard, 1, SQL_DESC_OCTET_LENGTH_PTR, &oct_len_ptr, 0, NULL);
   REQUIRE(ret == SQL_SUCCESS);
   CHECK(oct_len_ptr == &indicator);
+}
+
+TEST_CASE("SQLBindCol sets ARD descriptor fields for fixed-length type.", "[query][bind_col]") {
+  // Doc: "Conceptually, SQLBindCol performs the following steps in sequence:
+  //       ...
+  //       3. Calls SQLSetDescField multiple times to assign values to the
+  //          following fields of the ARD:
+  //          - Sets SQL_DESC_TYPE and SQL_DESC_CONCISE_TYPE to the value of TargetType
+  //          - Sets the SQL_DESC_OCTET_LENGTH field to the value of BufferLength
+  //          - Sets the SQL_DESC_DATA_PTR field to the value of TargetValuePtr
+  //          - Sets the SQL_DESC_INDICATOR_PTR field to the value of StrLen_or_IndPtr
+  //          - Sets the SQL_DESC_OCTET_LENGTH_PTR field to the value of StrLen_or_IndPtr"
+  // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlbindcol-function#argument-mappings
+
+  // Given Snowflake client is logged in
+  Connection conn;
+  auto stmt = conn.createStatement();
+
+  // When SQLBindCol is called with a fixed-length type (SQL_C_LONG)
+  SQLINTEGER value = 0;
+  SQLLEN indicator = 0;
+  SQLRETURN ret = SQLBindCol(stmt.getHandle(), 1, SQL_C_LONG, &value, sizeof(value), &indicator);
+  CHECK_ODBC(ret, stmt);
+
+  // And the ARD descriptor is obtained
+  SQLHDESC ard = SQL_NULL_HDESC;
+  ret = SQLGetStmtAttr(stmt.getHandle(), SQL_ATTR_APP_ROW_DESC, &ard, 0, NULL);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  // Then SQL_DESC_TYPE should be SQL_C_LONG
+  SQLSMALLINT desc_type = 0;
+  ret = SQLGetDescField(ard, 1, SQL_DESC_TYPE, &desc_type, 0, NULL);
+  REQUIRE(ret == SQL_SUCCESS);
+  CHECK(desc_type == SQL_C_LONG);
+
+  // And SQL_DESC_CONCISE_TYPE should be SQL_C_LONG
+  SQLSMALLINT concise_type = 0;
+  ret = SQLGetDescField(ard, 1, SQL_DESC_CONCISE_TYPE, &concise_type, 0, NULL);
+  REQUIRE(ret == SQL_SUCCESS);
+  CHECK(concise_type == SQL_C_LONG);
+
+  // And SQL_DESC_OCTET_LENGTH should match BufferLength
+  SQLLEN octet_length = 0;
+  ret = SQLGetDescField(ard, 1, SQL_DESC_OCTET_LENGTH, &octet_length, sizeof(octet_length), NULL);
+  REQUIRE(ret == SQL_SUCCESS);
+  CHECK(octet_length == sizeof(SQLINTEGER));
+
+  // And SQL_DESC_DATA_PTR should match TargetValuePtr
+  SQLPOINTER data_ptr = NULL;
+  ret = SQLGetDescField(ard, 1, SQL_DESC_DATA_PTR, &data_ptr, 0, NULL);
+  REQUIRE(ret == SQL_SUCCESS);
+  CHECK(data_ptr == (SQLPOINTER)&value);
+
+  // And SQL_DESC_INDICATOR_PTR should match StrLen_or_IndPtr
+  SQLLEN* ind_ptr = NULL;
+  ret = SQLGetDescField(ard, 1, SQL_DESC_INDICATOR_PTR, &ind_ptr, 0, NULL);
+  REQUIRE(ret == SQL_SUCCESS);
+  CHECK(ind_ptr == &indicator);
+
+  // And SQL_DESC_OCTET_LENGTH_PTR should match StrLen_or_IndPtr
+  SQLLEN* oct_len_ptr = NULL;
+  ret = SQLGetDescField(ard, 1, SQL_DESC_OCTET_LENGTH_PTR, &oct_len_ptr, 0, NULL);
+  REQUIRE(ret == SQL_SUCCESS);
+  CHECK(oct_len_ptr == &indicator);
+}
+
+TEST_CASE("SQLBindCol updates ARD descriptor fields on rebind.", "[query][bind_col]") {
+  // Doc: "Call SQLBindCol to specify a new binding for a column that is already
+  //       bound. The driver overwrites the old binding with the new one."
+  // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlbindcol-function#rebinding-columns
+
+  // Given Snowflake client is logged in
+  Connection conn;
+  auto stmt = conn.createStatement();
+
+  // When SQLBindCol binds column 1 as SQL_C_LONG
+  SQLINTEGER int_value = 0;
+  SQLLEN int_indicator = 0;
+  SQLRETURN ret = SQLBindCol(stmt.getHandle(), 1, SQL_C_LONG, &int_value, sizeof(int_value), &int_indicator);
+  CHECK_ODBC(ret, stmt);
+
+  // And the ARD descriptor is obtained
+  SQLHDESC ard = SQL_NULL_HDESC;
+  ret = SQLGetStmtAttr(stmt.getHandle(), SQL_ATTR_APP_ROW_DESC, &ard, 0, NULL);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  // And the type is verified as SQL_C_LONG
+  SQLSMALLINT desc_type = 0;
+  ret = SQLGetDescField(ard, 1, SQL_DESC_TYPE, &desc_type, 0, NULL);
+  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE(desc_type == SQL_C_LONG);
+
+  // And SQLBindCol rebinds column 1 as SQL_C_CHAR with different buffers
+  SQLCHAR char_buffer[50] = {0};
+  SQLLEN char_indicator = 0;
+  ret = SQLBindCol(stmt.getHandle(), 1, SQL_C_CHAR, char_buffer, sizeof(char_buffer), &char_indicator);
+  CHECK_ODBC(ret, stmt);
+
+  // Then SQL_DESC_TYPE should be updated to SQL_C_CHAR
+  ret = SQLGetDescField(ard, 1, SQL_DESC_TYPE, &desc_type, 0, NULL);
+  REQUIRE(ret == SQL_SUCCESS);
+  CHECK(desc_type == SQL_C_CHAR);
+
+  // And SQL_DESC_OCTET_LENGTH should be updated to the new BufferLength
+  SQLLEN octet_length = 0;
+  ret = SQLGetDescField(ard, 1, SQL_DESC_OCTET_LENGTH, &octet_length, sizeof(octet_length), NULL);
+  REQUIRE(ret == SQL_SUCCESS);
+  CHECK(octet_length == sizeof(char_buffer));
+
+  // And SQL_DESC_DATA_PTR should point to the new buffer
+  SQLPOINTER data_ptr = NULL;
+  ret = SQLGetDescField(ard, 1, SQL_DESC_DATA_PTR, &data_ptr, 0, NULL);
+  REQUIRE(ret == SQL_SUCCESS);
+  CHECK(data_ptr == (SQLPOINTER)char_buffer);
+
+  // And SQL_DESC_INDICATOR_PTR should point to the new indicator
+  SQLLEN* ind_ptr = NULL;
+  ret = SQLGetDescField(ard, 1, SQL_DESC_INDICATOR_PTR, &ind_ptr, 0, NULL);
+  REQUIRE(ret == SQL_SUCCESS);
+  CHECK(ind_ptr == &char_indicator);
+}
+
+TEST_CASE("SQLBindCol clears ARD descriptor fields on unbind.", "[query][bind_col]") {
+  // Doc: "If TargetValuePtr is a null pointer, the driver unbinds the data buffer
+  //       for the column."
+  // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlbindcol-function#unbinding-columns
+
+  // Given Snowflake client is logged in
+  Connection conn;
+  auto stmt = conn.createStatement();
+
+  // When SQLBindCol binds column 1
+  SQLINTEGER value = 0;
+  SQLLEN indicator = 0;
+  SQLRETURN ret = SQLBindCol(stmt.getHandle(), 1, SQL_C_LONG, &value, sizeof(value), &indicator);
+  CHECK_ODBC(ret, stmt);
+
+  // And the ARD descriptor is obtained
+  SQLHDESC ard = SQL_NULL_HDESC;
+  ret = SQLGetStmtAttr(stmt.getHandle(), SQL_ATTR_APP_ROW_DESC, &ard, 0, NULL);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  // And the binding is verified
+  SQLPOINTER data_ptr = NULL;
+  ret = SQLGetDescField(ard, 1, SQL_DESC_DATA_PTR, &data_ptr, 0, NULL);
+  REQUIRE(ret == SQL_SUCCESS);
+  REQUIRE(data_ptr == (SQLPOINTER)&value);
+
+  // And SQLBindCol unbinds column 1 with NULL TargetValuePtr
+  ret = SQLBindCol(stmt.getHandle(), 1, SQL_C_LONG, NULL, 0, NULL);
+  CHECK_ODBC(ret, stmt);
+
+  // Then SQL_DESC_DATA_PTR should have been cleared
+  data_ptr = (SQLPOINTER)0xDEAD;
+  ret = SQLGetDescField(ard, 1, SQL_DESC_DATA_PTR, &data_ptr, 0, NULL);
+  REQUIRE(ret == SQL_NO_DATA);
+  CHECK(data_ptr == (SQLPOINTER)0xDEAD);
+
+  // And SQL_DESC_INDICATOR_PTR should have been cleared
+  SQLLEN* ind_ptr = (SQLLEN*)0xDEAD;
+  ret = SQLGetDescField(ard, 1, SQL_DESC_INDICATOR_PTR, &ind_ptr, 0, NULL);
+  REQUIRE(ret == SQL_NO_DATA);
+  CHECK(ind_ptr == (SQLLEN*)0xDEAD);
+
+  // And SQL_DESC_OCTET_LENGTH_PTR should have been cleared
+  SQLLEN* oct_len_ptr = (SQLLEN*)0xDEAD;
+  ret = SQLGetDescField(ard, 1, SQL_DESC_OCTET_LENGTH_PTR, &oct_len_ptr, 0, NULL);
+  REQUIRE(ret == SQL_NO_DATA);
+  CHECK(oct_len_ptr == (SQLLEN*)0xDEAD);
+}
+
+TEST_CASE("SQLBindCol sets ARD descriptor fields for multiple columns.", "[query][bind_col]") {
+  // Doc: "Conceptually, SQLBindCol performs the following steps in sequence:
+  //       ...
+  //       3. Calls SQLSetDescField multiple times to assign values to the
+  //          following fields of the ARD."
+  // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlbindcol-function#argument-mappings
+
+  // Given Snowflake client is logged in
+  Connection conn;
+  auto stmt = conn.createStatement();
+
+  // When SQLBindCol binds three columns with different types
+  SQLINTEGER col1 = 0;
+  SQLLEN col1_ind = 0;
+  SQLRETURN ret = SQLBindCol(stmt.getHandle(), 1, SQL_C_LONG, &col1, sizeof(col1), &col1_ind);
+  CHECK_ODBC(ret, stmt);
+
+  SQLCHAR col2[50] = {0};
+  SQLLEN col2_ind = 0;
+  ret = SQLBindCol(stmt.getHandle(), 2, SQL_C_CHAR, col2, sizeof(col2), &col2_ind);
+  CHECK_ODBC(ret, stmt);
+
+  SQLDOUBLE col3 = 0.0;
+  SQLLEN col3_ind = 0;
+  ret = SQLBindCol(stmt.getHandle(), 3, SQL_C_DOUBLE, &col3, sizeof(col3), &col3_ind);
+  CHECK_ODBC(ret, stmt);
+
+  // And the ARD descriptor is obtained
+  SQLHDESC ard = SQL_NULL_HDESC;
+  ret = SQLGetStmtAttr(stmt.getHandle(), SQL_ATTR_APP_ROW_DESC, &ard, 0, NULL);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  // Then SQL_DESC_COUNT should be 3
+  SQLSMALLINT desc_count = 0;
+  ret = SQLGetDescField(ard, 0, SQL_DESC_COUNT, &desc_count, 0, NULL);
+  REQUIRE(ret == SQL_SUCCESS);
+  CHECK(desc_count == 3);
+
+  // And column 1 descriptor fields should match SQL_C_LONG binding
+  SQLSMALLINT type1 = 0;
+  ret = SQLGetDescField(ard, 1, SQL_DESC_TYPE, &type1, 0, NULL);
+  REQUIRE(ret == SQL_SUCCESS);
+  CHECK(type1 == SQL_C_LONG);
+
+  SQLPOINTER ptr1 = NULL;
+  ret = SQLGetDescField(ard, 1, SQL_DESC_DATA_PTR, &ptr1, 0, NULL);
+  REQUIRE(ret == SQL_SUCCESS);
+  CHECK(ptr1 == (SQLPOINTER)&col1);
+
+  // And column 2 descriptor fields should match SQL_C_CHAR binding
+  SQLSMALLINT type2 = 0;
+  ret = SQLGetDescField(ard, 2, SQL_DESC_TYPE, &type2, 0, NULL);
+  REQUIRE(ret == SQL_SUCCESS);
+  CHECK(type2 == SQL_C_CHAR);
+
+  SQLLEN octet2 = 0;
+  ret = SQLGetDescField(ard, 2, SQL_DESC_OCTET_LENGTH, &octet2, sizeof(octet2), NULL);
+  REQUIRE(ret == SQL_SUCCESS);
+  CHECK(octet2 == sizeof(col2));
+
+  SQLPOINTER ptr2 = NULL;
+  ret = SQLGetDescField(ard, 2, SQL_DESC_DATA_PTR, &ptr2, 0, NULL);
+  REQUIRE(ret == SQL_SUCCESS);
+  CHECK(ptr2 == (SQLPOINTER)col2);
+
+  // And column 3 descriptor fields should match SQL_C_DOUBLE binding
+  SQLSMALLINT type3 = 0;
+  ret = SQLGetDescField(ard, 3, SQL_DESC_TYPE, &type3, 0, NULL);
+  REQUIRE(ret == SQL_SUCCESS);
+  CHECK(type3 == SQL_C_DOUBLE);
+
+  SQLPOINTER ptr3 = NULL;
+  ret = SQLGetDescField(ard, 3, SQL_DESC_DATA_PTR, &ptr3, 0, NULL);
+  REQUIRE(ret == SQL_SUCCESS);
+  CHECK(ptr3 == (SQLPOINTER)&col3);
 }
 
 // =============================================================================
@@ -1538,7 +1825,6 @@ TEST_CASE("SQLBindCol binding is removed by SQLFreeStmt SQL_UNBIND.", "[query][b
 // =============================================================================
 
 TEST_CASE("Setting SQL_DESC_COUNT to 0 on the ARD unbinds all columns.", "[query][bind_col]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "To unbind all columns, an application calls SQLFreeStmt with fOption
   //       set to SQL_UNBIND. This can also be accomplished by setting the
   //       SQL_DESC_COUNT field of the ARD to zero."
@@ -1572,6 +1858,149 @@ TEST_CASE("Setting SQL_DESC_COUNT to 0 on the ARD unbinds all columns.", "[query
   // Then the buffers should not be modified (all columns were unbound)
   CHECK(val1 == 0);
   CHECK(val2 == 0);
+}
+
+TEST_CASE("Setting SQL_DESC_COUNT to 1 on the ARD unbinds columns above 1.", "[query][bind_col]") {
+  // Doc: "To unbind all columns, an application calls SQLFreeStmt with fOption
+  //       set to SQL_UNBIND. This can also be accomplished by setting the
+  //       SQL_DESC_COUNT field of the ARD to zero."
+  // Doc: "If the value of the SQL_DESC_COUNT field is set to a value that is
+  //       less than the highest-numbered column that is bound, all bound columns
+  //       with numbers greater than the new count value are effectively unbound."
+  // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlbindcol-function#unbinding-columns
+
+  // Given Snowflake client is logged in
+  Connection conn;
+  auto stmt = conn.createStatement();
+
+  // When SQLBindCol is called to bind 3 columns
+  SQLINTEGER val1 = 0, val2 = 0, val3 = 0;
+  SQLLEN ind1 = 0, ind2 = 0, ind3 = 0;
+  SQLRETURN ret = SQLBindCol(stmt.getHandle(), 1, SQL_C_LONG, &val1, sizeof(val1), &ind1);
+  CHECK_ODBC(ret, stmt);
+  ret = SQLBindCol(stmt.getHandle(), 2, SQL_C_LONG, &val2, sizeof(val2), &ind2);
+  CHECK_ODBC(ret, stmt);
+  ret = SQLBindCol(stmt.getHandle(), 3, SQL_C_LONG, &val3, sizeof(val3), &ind3);
+  CHECK_ODBC(ret, stmt);
+
+  // And SQL_DESC_COUNT is set to 1 on the ARD
+  SQLHDESC ard = SQL_NULL_HDESC;
+  ret = SQLGetStmtAttr(stmt.getHandle(), SQL_ATTR_APP_ROW_DESC, &ard, 0, NULL);
+  REQUIRE(ret == SQL_SUCCESS);
+  ret = SQLSetDescField(ard, 0, SQL_DESC_COUNT, (SQLPOINTER)1, 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  // And SQL_DESC_COUNT is verified to be 1
+  SQLSMALLINT desc_count = -1;
+  ret = SQLGetDescField(ard, 0, SQL_DESC_COUNT, &desc_count, 0, NULL);
+  REQUIRE(ret == SQL_SUCCESS);
+  CHECK(desc_count == 1);
+
+  // And a query is executed and fetched
+  ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT 10 AS col1, 20 AS col2, 30 AS col3", SQL_NTS);
+  CHECK_ODBC(ret, stmt);
+  ret = SQLFetch(stmt.getHandle());
+  CHECK_ODBC(ret, stmt);
+
+  // Then column 1 buffer should be populated (still bound)
+  CHECK(val1 == 10);
+
+  // And columns 2 and 3 buffers should not be modified (unbound by setting count to 1)
+  CHECK(val2 == 0);
+  CHECK(val3 == 0);
+}
+
+TEST_CASE("Setting SQL_DESC_COUNT greater than number of bound columns does not affect existing bindings.",
+          "[query][bind_col]") {
+  // Doc: "SQL_DESC_COUNT is not the count of columns that are bound...
+  //       An application can allocate space for descriptors at any time by calling
+  //       SQLSetDescField to set the SQL_DESC_COUNT field."
+  // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlsetdescfield-function
+
+  // Given Snowflake client is logged in
+  Connection conn;
+  auto stmt = conn.createStatement();
+
+  // When SQLBindCol is called to bind 2 columns
+  SQLINTEGER val1 = 0, val2 = 0;
+  SQLLEN ind1 = 0, ind2 = 0;
+  SQLRETURN ret = SQLBindCol(stmt.getHandle(), 1, SQL_C_LONG, &val1, sizeof(val1), &ind1);
+  CHECK_ODBC(ret, stmt);
+  ret = SQLBindCol(stmt.getHandle(), 2, SQL_C_LONG, &val2, sizeof(val2), &ind2);
+  CHECK_ODBC(ret, stmt);
+
+  // And the ARD descriptor is obtained
+  SQLHDESC ard = SQL_NULL_HDESC;
+  ret = SQLGetStmtAttr(stmt.getHandle(), SQL_ATTR_APP_ROW_DESC, &ard, 0, NULL);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  // And SQL_DESC_COUNT is verified to be 2
+  SQLSMALLINT desc_count = 0;
+  ret = SQLGetDescField(ard, 0, SQL_DESC_COUNT, &desc_count, 0, NULL);
+  REQUIRE(ret == SQL_SUCCESS);
+  CHECK(desc_count == 2);
+
+  // And SQL_DESC_COUNT is set to 5 (greater than bound column count)
+  ret = SQLSetDescField(ard, 0, SQL_DESC_COUNT, (SQLPOINTER)3, 0);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  // And SQL_DESC_COUNT is verified to be 5
+  ret = SQLGetDescField(ard, 0, SQL_DESC_COUNT, &desc_count, 0, NULL);
+  REQUIRE(ret == SQL_SUCCESS);
+  CHECK(desc_count == 3);
+
+  // And the default values for the 3rd column descriptor are verified
+  SQLPOINTER data_ptr = nullptr;
+  ret = SQLGetDescField(ard, 3, SQL_DESC_DATA_PTR, &data_ptr, 0, NULL);
+  REQUIRE(ret == SQL_SUCCESS);
+  CHECK(data_ptr == nullptr);  // Should be NULL/0 by default
+
+  SQLLEN octet_length = -1;
+  ret = SQLGetDescField(ard, 3, SQL_DESC_OCTET_LENGTH, &octet_length, 0, NULL);
+  REQUIRE(ret == SQL_SUCCESS);
+  CHECK(octet_length == 0);  // Should be 0 by default
+
+  SQLPOINTER indicator_ptr = nullptr;
+  ret = SQLGetDescField(ard, 3, SQL_DESC_INDICATOR_PTR, &indicator_ptr, 0, NULL);
+  REQUIRE(ret == SQL_SUCCESS);
+  CHECK(indicator_ptr == nullptr);  // Should be NULL/0 by default
+
+  SQLSMALLINT concise_type = -1;
+  ret = SQLGetDescField(ard, 3, SQL_DESC_CONCISE_TYPE, &concise_type, 0, NULL);
+  REQUIRE(ret == SQL_SUCCESS);
+  CHECK(concise_type == SQL_C_DEFAULT);  // Should be SQL_C_DEFAULT by default
+
+  // And a query is executed and fetched
+  ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT 10 AS col1, 20 AS col2", SQL_NTS);
+  CHECK_ODBC(ret, stmt);
+  ret = SQLFetch(stmt.getHandle());
+  CHECK_ODBC(ret, stmt);
+
+  // Then the bound columns should still receive data
+  CHECK(val1 == 10);
+  CHECK(val2 == 20);
+}
+
+TEST_CASE("Setting SQL_DESC_COUNT to -1 on the ARD returns an error.", "[query][bind_col]") {
+  // Doc: "SQL_DESC_COUNT is the count of the highest-numbered column that is
+  //       bound. It is a SQLUSMALLINT value and should be non-negative."
+  // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlsetdescfield-function
+
+  // Given Snowflake client is logged in
+  Connection conn;
+  auto stmt = conn.createStatement();
+
+  // When the ARD descriptor is obtained
+  SQLHDESC ard = SQL_NULL_HDESC;
+  SQLRETURN ret = SQLGetStmtAttr(stmt.getHandle(), SQL_ATTR_APP_ROW_DESC, &ard, 0, NULL);
+  REQUIRE(ret == SQL_SUCCESS);
+
+  // And SQL_DESC_COUNT is set to -1 on the ARD
+  ret = SQLSetDescField(ard, 0, SQL_DESC_COUNT, (SQLPOINTER)(intptr_t)-1, 0);
+
+  // Then SQLSetDescField should return an error
+  CHECK(ret == SQL_ERROR);
+  CHECK(get_sqlstate(SQL_HANDLE_DESC, ard) == "07009");
 }
 
 // =============================================================================

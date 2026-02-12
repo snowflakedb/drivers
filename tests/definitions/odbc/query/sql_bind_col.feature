@@ -74,7 +74,7 @@ Feature: ODBC SQLBindCol function behavior
     And a query is executed
     And SQLFetch is called to fetch the data
     Then SQLBindCol should return SQL_SUCCESS
-    And the indicator should contain the length of the data (even though data buffer is unbound)
+    And the indicator should remain unchanged (column was fully unbound because TargetValuePtr is null)
 
   @odbc_e2e
   Scenario: SQLBindCol replaces old binding when called on already bound column.
@@ -206,6 +206,15 @@ Feature: ODBC SQLBindCol function behavior
     Then SQL_DESC_COUNT should decrease to 2 (next highest bound column)
 
   @odbc_e2e
+  Scenario: SQLBindCol decreases SQL_DESC_COUNT when TargetValuePtr is null even if StrLen_or_IndPtr is not null.
+    Given Snowflake client is logged in
+    When SQLBindCol is called to bind columns 1, 2, and 3
+    And the ARD descriptor is obtained
+    Then SQL_DESC_COUNT should be 3
+    And when the highest bound column (3) is unbound with null TargetValuePtr but non-null StrLen_or_IndPtr
+    Then SQL_DESC_COUNT should decrease to 2 (column was unbound because TargetValuePtr is null)
+
+  @odbc_e2e
   Scenario: SQLBindCol sets descriptor fields on the ARD.
     Given Snowflake client is logged in
     When SQLBindCol is called
@@ -216,6 +225,51 @@ Feature: ODBC SQLBindCol function behavior
     And SQL_DESC_DATA_PTR should match TargetValuePtr
     And SQL_DESC_INDICATOR_PTR should match StrLen_or_IndPtr
     And SQL_DESC_OCTET_LENGTH_PTR should match StrLen_or_IndPtr
+
+  @odbc_e2e
+  Scenario: SQLBindCol sets ARD descriptor fields for fixed-length type.
+    Given Snowflake client is logged in
+    When SQLBindCol is called with a fixed-length type (SQL_C_LONG)
+    And the ARD descriptor is obtained
+    Then SQL_DESC_TYPE should be SQL_C_LONG
+    And SQL_DESC_CONCISE_TYPE should be SQL_C_LONG
+    And SQL_DESC_OCTET_LENGTH should match BufferLength
+    And SQL_DESC_DATA_PTR should match TargetValuePtr
+    And SQL_DESC_INDICATOR_PTR should match StrLen_or_IndPtr
+    And SQL_DESC_OCTET_LENGTH_PTR should match StrLen_or_IndPtr
+
+  @odbc_e2e
+  Scenario: SQLBindCol updates ARD descriptor fields on rebind.
+    Given Snowflake client is logged in
+    When SQLBindCol binds column 1 as SQL_C_LONG
+    And the ARD descriptor is obtained
+    And the type is verified as SQL_C_LONG
+    And SQLBindCol rebinds column 1 as SQL_C_CHAR with different buffers
+    Then SQL_DESC_TYPE should be updated to SQL_C_CHAR
+    And SQL_DESC_OCTET_LENGTH should be updated to the new BufferLength
+    And SQL_DESC_DATA_PTR should point to the new buffer
+    And SQL_DESC_INDICATOR_PTR should point to the new indicator
+
+  @odbc_e2e
+  Scenario: SQLBindCol clears ARD descriptor fields on unbind.
+    Given Snowflake client is logged in
+    When SQLBindCol binds column 1
+    And the ARD descriptor is obtained
+    And the binding is verified
+    And SQLBindCol unbinds column 1 with NULL TargetValuePtr
+    Then SQL_DESC_DATA_PTR should have been cleared
+    And SQL_DESC_INDICATOR_PTR should have been cleared
+    And SQL_DESC_OCTET_LENGTH_PTR should have been cleared
+
+  @odbc_e2e
+  Scenario: SQLBindCol sets ARD descriptor fields for multiple columns.
+    Given Snowflake client is logged in
+    When SQLBindCol binds three columns with different types
+    And the ARD descriptor is obtained
+    Then SQL_DESC_COUNT should be 3
+    And column 1 descriptor fields should match SQL_C_LONG binding
+    And column 2 descriptor fields should match SQL_C_CHAR binding
+    And column 3 descriptor fields should match SQL_C_DOUBLE binding
 
   @odbc_e2e
   Scenario: SQLBindCol supports column-wise binding with arrays.
@@ -358,6 +412,33 @@ Feature: ODBC SQLBindCol function behavior
     And SQL_DESC_COUNT is set to 0 on the ARD
     And a query is executed and fetched
     Then the buffers should not be modified (all columns were unbound)
+
+  @odbc_e2e
+  Scenario: Setting SQL_DESC_COUNT to 1 on the ARD unbinds columns above 1.
+    Given Snowflake client is logged in
+    When SQLBindCol is called to bind 3 columns
+    And SQL_DESC_COUNT is set to 1 on the ARD
+    And SQL_DESC_COUNT is verified to be 1
+    And a query is executed and fetched
+    Then column 1 buffer should be populated (still bound)
+    And columns 2 and 3 buffers should not be modified (unbound by setting count to 1)
+
+  @odbc_e2e
+  Scenario: Setting SQL_DESC_COUNT greater than number of bound columns does not affect existing bindings.
+    Given Snowflake client is logged in
+    When SQLBindCol is called to bind 2 columns
+    And the ARD descriptor is obtained
+    And SQL_DESC_COUNT is verified to be 2
+    And SQL_DESC_COUNT is set to 5 (greater than bound column count)
+    And a query is executed and fetched
+    Then the bound columns should still receive data
+
+  @odbc_e2e
+  Scenario: Setting SQL_DESC_COUNT to -1 on the ARD returns an error.
+    Given Snowflake client is logged in
+    When the ARD descriptor is obtained
+    And SQL_DESC_COUNT is set to -1 on the ARD
+    Then SQLSetDescField should return an error
 
   @odbc_e2e
   Scenario: SQLBindCol converts string to integer type.

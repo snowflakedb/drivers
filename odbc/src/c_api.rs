@@ -389,3 +389,65 @@ pub unsafe extern "C" fn SQLBindCol(
     )
     .to_sql_code()
 }
+
+/// # Safety
+/// This function is called by the ODBC driver manager.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn SQLGetStmtAttr(
+    statement_handle: sql::Handle,
+    attribute: sql::Integer,
+    value_ptr: sql::Pointer,
+    buffer_length: sql::Integer,
+    string_length_ptr: *mut sql::Integer,
+) -> sql::RetCode {
+    api::statement::get_stmt_attr(
+        statement_handle,
+        attribute,
+        value_ptr,
+        buffer_length,
+        string_length_ptr,
+    )
+    .to_sql_code()
+}
+
+/// # Safety
+/// This function is called by the ODBC driver manager.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn SQLGetDescField(
+    descriptor_handle: sql::Handle,
+    rec_number: sql::SmallInt,
+    field_identifier: sql::SmallInt,
+    value_ptr: sql::Pointer,
+    buffer_length: sql::Integer,
+    string_length_ptr: *mut sql::Integer,
+) -> sql::RetCode {
+    api::descriptor::get_desc_field(
+        descriptor_handle,
+        rec_number,
+        field_identifier,
+        value_ptr,
+        buffer_length,
+        string_length_ptr,
+    )
+    .to_sql_code()
+}
+
+/// # Safety
+/// This function is called by the ODBC driver manager.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn SQLSetDescField(
+    descriptor_handle: sql::Handle,
+    rec_number: sql::SmallInt,
+    field_identifier: sql::SmallInt,
+    value_ptr: sql::Pointer,
+    buffer_length: sql::Integer,
+) -> sql::RetCode {
+    api::descriptor::set_desc_field(
+        descriptor_handle,
+        rec_number,
+        field_identifier,
+        value_ptr,
+        buffer_length,
+    )
+    .to_sql_code()
+}
