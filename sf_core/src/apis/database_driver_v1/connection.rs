@@ -173,10 +173,6 @@ impl Connection {
     }
 }
 
-/// Fetch all session parameters using "SHOW PARAMETERS IN SESSION" query.
-/// This is used as a fallback when the login response doesn't include session parameters.
-/// Execute an operation with automatic session refresh on 401.
-///
 /// This function:
 /// 1. Reads the session token (allows concurrent readers)
 /// 2. Runs the provided function with that token
