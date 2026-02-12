@@ -3,30 +3,30 @@
 isort:skip_file
 """
 
-import builtins
-import collections.abc
-import google.protobuf.descriptor
-import google.protobuf.descriptor_pb2
-import google.protobuf.internal.containers
-import google.protobuf.internal.enum_type_wrapper
-import google.protobuf.internal.extension_dict
-import google.protobuf.message
+from collections import abc as _abc
+from google.protobuf import descriptor as _descriptor
+from google.protobuf import descriptor_pb2 as _descriptor_pb2
+from google.protobuf import message as _message
+from google.protobuf.internal import containers as _containers
+from google.protobuf.internal import enum_type_wrapper as _enum_type_wrapper
+from google.protobuf.internal import extension_dict as _extension_dict
+import builtins as _builtins
 import sys
-import typing
+import typing as _typing
 
 if sys.version_info >= (3, 10):
-    import typing as typing_extensions
+    from typing import TypeAlias as _TypeAlias
 else:
-    import typing_extensions
+    from typing_extensions import TypeAlias as _TypeAlias
 
-DESCRIPTOR: google.protobuf.descriptor.FileDescriptor
+DESCRIPTOR: _descriptor.FileDescriptor
 
 class _StatusCode:
-    ValueType = typing.NewType("ValueType", builtins.int)
-    V: typing_extensions.TypeAlias = ValueType
+    ValueType = _typing.NewType("ValueType", _builtins.int)
+    V: _TypeAlias = ValueType  # noqa: Y015
 
-class _StatusCodeEnumTypeWrapper(google.protobuf.internal.enum_type_wrapper._EnumTypeWrapper[_StatusCode.ValueType], builtins.type):
-    DESCRIPTOR: google.protobuf.descriptor.EnumDescriptor
+class _StatusCodeEnumTypeWrapper(_enum_type_wrapper._EnumTypeWrapper[_StatusCode.ValueType], _builtins.type):
+    DESCRIPTOR: _descriptor.EnumDescriptor
     STATUS_CODE_UNSPECIFIED: _StatusCode.ValueType  # 0
     STATUS_CODE_OK: _StatusCode.ValueType  # 1
     STATUS_CODE_AUTHENTICATION_ERROR: _StatusCode.ValueType  # 2
@@ -67,14 +67,14 @@ STATUS_CODE_INTERNAL_ERROR: StatusCode.ValueType  # 14
 STATUS_CODE_MISSING_PARAMETER: StatusCode.ValueType  # 15
 STATUS_CODE_INVALID_PARAMETER_VALUE: StatusCode.ValueType  # 16
 STATUS_CODE_LOGIN_ERROR: StatusCode.ValueType  # 17
-global___StatusCode = StatusCode
+Global___StatusCode: _TypeAlias = StatusCode  # noqa: Y015
 
 class _InfoCode:
-    ValueType = typing.NewType("ValueType", builtins.int)
-    V: typing_extensions.TypeAlias = ValueType
+    ValueType = _typing.NewType("ValueType", _builtins.int)
+    V: _TypeAlias = ValueType  # noqa: Y015
 
-class _InfoCodeEnumTypeWrapper(google.protobuf.internal.enum_type_wrapper._EnumTypeWrapper[_InfoCode.ValueType], builtins.type):
-    DESCRIPTOR: google.protobuf.descriptor.EnumDescriptor
+class _InfoCodeEnumTypeWrapper(_enum_type_wrapper._EnumTypeWrapper[_InfoCode.ValueType], _builtins.type):
+    DESCRIPTOR: _descriptor.EnumDescriptor
     INFO_CODE_UNSPECIFIED: _InfoCode.ValueType  # 0
     INFO_CODE_VENDOR_NAME: _InfoCode.ValueType  # 1
     INFO_CODE_VENDOR_VERSION: _InfoCode.ValueType  # 2
@@ -103,1552 +103,1680 @@ INFO_CODE_DRIVER_NAME: InfoCode.ValueType  # 201
 INFO_CODE_DRIVER_VERSION: InfoCode.ValueType  # 202
 INFO_CODE_DRIVER_ARROW_VERSION: InfoCode.ValueType  # 203
 INFO_CODE_DRIVER_ADBC_VERSION: InfoCode.ValueType  # 204
-global___InfoCode = InfoCode
+Global___InfoCode: _TypeAlias = InfoCode  # noqa: Y015
 
-@typing.final
-class ErrorDetail(google.protobuf.message.Message):
+@_typing.final
+class ErrorDetail(_message.Message):
     """Error detail message"""
 
-    DESCRIPTOR: google.protobuf.descriptor.Descriptor
+    DESCRIPTOR: _descriptor.Descriptor
 
-    KEY_FIELD_NUMBER: builtins.int
-    VALUE_FIELD_NUMBER: builtins.int
-    key: builtins.str
-    value: builtins.str
+    KEY_FIELD_NUMBER: _builtins.int
+    VALUE_FIELD_NUMBER: _builtins.int
+    key: _builtins.str
+    value: _builtins.str
     def __init__(
         self,
         *,
-        key: builtins.str = ...,
-        value: builtins.str = ...,
+        key: _builtins.str = ...,
+        value: _builtins.str = ...,
     ) -> None: ...
-    def ClearField(self, field_name: typing.Literal["key", b"key", "value", b"value"]) -> None: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["key", b"key", "value", b"value"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
 
-global___ErrorDetail = ErrorDetail
+Global___ErrorDetail: _TypeAlias = ErrorDetail  # noqa: Y015
 
-@typing.final
-class AuthenticationError(google.protobuf.message.Message):
+@_typing.final
+class AuthenticationError(_message.Message):
     """Authentication error details"""
 
-    DESCRIPTOR: google.protobuf.descriptor.Descriptor
+    DESCRIPTOR: _descriptor.Descriptor
 
-    DETAIL_FIELD_NUMBER: builtins.int
-    detail: builtins.str
+    DETAIL_FIELD_NUMBER: _builtins.int
+    detail: _builtins.str
     def __init__(
         self,
         *,
-        detail: builtins.str = ...,
+        detail: _builtins.str = ...,
     ) -> None: ...
-    def ClearField(self, field_name: typing.Literal["detail", b"detail"]) -> None: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["detail", b"detail"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
 
-global___AuthenticationError = AuthenticationError
+Global___AuthenticationError: _TypeAlias = AuthenticationError  # noqa: Y015
 
-@typing.final
-class GenericError(google.protobuf.message.Message):
+@_typing.final
+class GenericError(_message.Message):
     """Generic error (empty message)"""
 
-    DESCRIPTOR: google.protobuf.descriptor.Descriptor
+    DESCRIPTOR: _descriptor.Descriptor
 
     def __init__(
         self,
     ) -> None: ...
 
-global___GenericError = GenericError
+Global___GenericError: _TypeAlias = GenericError  # noqa: Y015
 
-@typing.final
-class InternalError(google.protobuf.message.Message):
+@_typing.final
+class InternalError(_message.Message):
     """Internal error (empty message)"""
 
-    DESCRIPTOR: google.protobuf.descriptor.Descriptor
+    DESCRIPTOR: _descriptor.Descriptor
 
     def __init__(
         self,
     ) -> None: ...
 
-global___InternalError = InternalError
+Global___InternalError: _TypeAlias = InternalError  # noqa: Y015
 
-@typing.final
-class LoginError(google.protobuf.message.Message):
+@_typing.final
+class LoginError(_message.Message):
     """Login error details"""
 
-    DESCRIPTOR: google.protobuf.descriptor.Descriptor
+    DESCRIPTOR: _descriptor.Descriptor
 
-    MESSAGE_FIELD_NUMBER: builtins.int
-    CODE_FIELD_NUMBER: builtins.int
-    message: builtins.str
-    code: builtins.int
+    MESSAGE_FIELD_NUMBER: _builtins.int
+    CODE_FIELD_NUMBER: _builtins.int
+    message: _builtins.str
+    code: _builtins.int
     def __init__(
         self,
         *,
-        message: builtins.str = ...,
-        code: builtins.int = ...,
+        message: _builtins.str = ...,
+        code: _builtins.int = ...,
     ) -> None: ...
-    def ClearField(self, field_name: typing.Literal["code", b"code", "message", b"message"]) -> None: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["code", b"code", "message", b"message"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
 
-global___LoginError = LoginError
+Global___LoginError: _TypeAlias = LoginError  # noqa: Y015
 
-@typing.final
-class MissingParameter(google.protobuf.message.Message):
+@_typing.final
+class MissingParameter(_message.Message):
     """Missing parameter error"""
 
-    DESCRIPTOR: google.protobuf.descriptor.Descriptor
+    DESCRIPTOR: _descriptor.Descriptor
 
-    PARAMETER_FIELD_NUMBER: builtins.int
-    parameter: builtins.str
+    PARAMETER_FIELD_NUMBER: _builtins.int
+    parameter: _builtins.str
     def __init__(
         self,
         *,
-        parameter: builtins.str = ...,
+        parameter: _builtins.str = ...,
     ) -> None: ...
-    def ClearField(self, field_name: typing.Literal["parameter", b"parameter"]) -> None: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["parameter", b"parameter"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
 
-global___MissingParameter = MissingParameter
+Global___MissingParameter: _TypeAlias = MissingParameter  # noqa: Y015
 
-@typing.final
-class InvalidParameterValue(google.protobuf.message.Message):
+@_typing.final
+class InvalidParameterValue(_message.Message):
     """Invalid parameter value error"""
 
-    DESCRIPTOR: google.protobuf.descriptor.Descriptor
+    DESCRIPTOR: _descriptor.Descriptor
 
-    PARAMETER_FIELD_NUMBER: builtins.int
-    VALUE_FIELD_NUMBER: builtins.int
-    EXPLANATION_FIELD_NUMBER: builtins.int
-    parameter: builtins.str
-    value: builtins.str
-    explanation: builtins.str
+    PARAMETER_FIELD_NUMBER: _builtins.int
+    VALUE_FIELD_NUMBER: _builtins.int
+    EXPLANATION_FIELD_NUMBER: _builtins.int
+    parameter: _builtins.str
+    value: _builtins.str
+    explanation: _builtins.str
     def __init__(
         self,
         *,
-        parameter: builtins.str = ...,
-        value: builtins.str = ...,
-        explanation: builtins.str | None = ...,
+        parameter: _builtins.str = ...,
+        value: _builtins.str = ...,
+        explanation: _builtins.str | None = ...,
     ) -> None: ...
-    def HasField(self, field_name: typing.Literal["_explanation", b"_explanation", "explanation", b"explanation"]) -> builtins.bool: ...
-    def ClearField(self, field_name: typing.Literal["_explanation", b"_explanation", "explanation", b"explanation", "parameter", b"parameter", "value", b"value"]) -> None: ...
-    def WhichOneof(self, oneof_group: typing.Literal["_explanation", b"_explanation"]) -> typing.Literal["explanation"] | None: ...
+    _HasFieldArgType: _TypeAlias = _typing.Literal["_explanation", b"_explanation", "explanation", b"explanation"]  # noqa: Y015
+    def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["_explanation", b"_explanation", "explanation", b"explanation", "parameter", b"parameter", "value", b"value"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
+    _WhichOneofReturnType__explanation: _TypeAlias = _typing.Literal["explanation"]  # noqa: Y015
+    _WhichOneofArgType__explanation: _TypeAlias = _typing.Literal["_explanation", b"_explanation"]  # noqa: Y015
+    def WhichOneof(self, oneof_group: _WhichOneofArgType__explanation) -> _WhichOneofReturnType__explanation | None: ...
 
-global___InvalidParameterValue = InvalidParameterValue
+Global___InvalidParameterValue: _TypeAlias = InvalidParameterValue  # noqa: Y015
 
-@typing.final
-class DriverError(google.protobuf.message.Message):
+@_typing.final
+class DriverError(_message.Message):
     """Driver error union (using oneof)"""
 
-    DESCRIPTOR: google.protobuf.descriptor.Descriptor
+    DESCRIPTOR: _descriptor.Descriptor
 
-    AUTH_ERROR_FIELD_NUMBER: builtins.int
-    GENERIC_ERROR_FIELD_NUMBER: builtins.int
-    INTERNAL_ERROR_FIELD_NUMBER: builtins.int
-    MISSING_PARAMETER_FIELD_NUMBER: builtins.int
-    INVALID_PARAMETER_VALUE_FIELD_NUMBER: builtins.int
-    LOGIN_ERROR_FIELD_NUMBER: builtins.int
-    @property
-    def auth_error(self) -> global___AuthenticationError: ...
-    @property
-    def generic_error(self) -> global___GenericError: ...
-    @property
-    def internal_error(self) -> global___InternalError: ...
-    @property
-    def missing_parameter(self) -> global___MissingParameter: ...
-    @property
-    def invalid_parameter_value(self) -> global___InvalidParameterValue: ...
-    @property
-    def login_error(self) -> global___LoginError: ...
+    AUTH_ERROR_FIELD_NUMBER: _builtins.int
+    GENERIC_ERROR_FIELD_NUMBER: _builtins.int
+    INTERNAL_ERROR_FIELD_NUMBER: _builtins.int
+    MISSING_PARAMETER_FIELD_NUMBER: _builtins.int
+    INVALID_PARAMETER_VALUE_FIELD_NUMBER: _builtins.int
+    LOGIN_ERROR_FIELD_NUMBER: _builtins.int
+    @_builtins.property
+    def auth_error(self) -> Global___AuthenticationError: ...
+    @_builtins.property
+    def generic_error(self) -> Global___GenericError: ...
+    @_builtins.property
+    def internal_error(self) -> Global___InternalError: ...
+    @_builtins.property
+    def missing_parameter(self) -> Global___MissingParameter: ...
+    @_builtins.property
+    def invalid_parameter_value(self) -> Global___InvalidParameterValue: ...
+    @_builtins.property
+    def login_error(self) -> Global___LoginError: ...
     def __init__(
         self,
         *,
-        auth_error: global___AuthenticationError | None = ...,
-        generic_error: global___GenericError | None = ...,
-        internal_error: global___InternalError | None = ...,
-        missing_parameter: global___MissingParameter | None = ...,
-        invalid_parameter_value: global___InvalidParameterValue | None = ...,
-        login_error: global___LoginError | None = ...,
+        auth_error: Global___AuthenticationError | None = ...,
+        generic_error: Global___GenericError | None = ...,
+        internal_error: Global___InternalError | None = ...,
+        missing_parameter: Global___MissingParameter | None = ...,
+        invalid_parameter_value: Global___InvalidParameterValue | None = ...,
+        login_error: Global___LoginError | None = ...,
     ) -> None: ...
-    def HasField(self, field_name: typing.Literal["auth_error", b"auth_error", "error_type", b"error_type", "generic_error", b"generic_error", "internal_error", b"internal_error", "invalid_parameter_value", b"invalid_parameter_value", "login_error", b"login_error", "missing_parameter", b"missing_parameter"]) -> builtins.bool: ...
-    def ClearField(self, field_name: typing.Literal["auth_error", b"auth_error", "error_type", b"error_type", "generic_error", b"generic_error", "internal_error", b"internal_error", "invalid_parameter_value", b"invalid_parameter_value", "login_error", b"login_error", "missing_parameter", b"missing_parameter"]) -> None: ...
-    def WhichOneof(self, oneof_group: typing.Literal["error_type", b"error_type"]) -> typing.Literal["auth_error", "generic_error", "internal_error", "missing_parameter", "invalid_parameter_value", "login_error"] | None: ...
+    _HasFieldArgType: _TypeAlias = _typing.Literal["auth_error", b"auth_error", "error_type", b"error_type", "generic_error", b"generic_error", "internal_error", b"internal_error", "invalid_parameter_value", b"invalid_parameter_value", "login_error", b"login_error", "missing_parameter", b"missing_parameter"]  # noqa: Y015
+    def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["auth_error", b"auth_error", "error_type", b"error_type", "generic_error", b"generic_error", "internal_error", b"internal_error", "invalid_parameter_value", b"invalid_parameter_value", "login_error", b"login_error", "missing_parameter", b"missing_parameter"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
+    _WhichOneofReturnType_error_type: _TypeAlias = _typing.Literal["auth_error", "generic_error", "internal_error", "missing_parameter", "invalid_parameter_value", "login_error"]  # noqa: Y015
+    _WhichOneofArgType_error_type: _TypeAlias = _typing.Literal["error_type", b"error_type"]  # noqa: Y015
+    def WhichOneof(self, oneof_group: _WhichOneofArgType_error_type) -> _WhichOneofReturnType_error_type | None: ...
 
-global___DriverError = DriverError
+Global___DriverError: _TypeAlias = DriverError  # noqa: Y015
 
-@typing.final
-class DriverException(google.protobuf.message.Message):
+@_typing.final
+class DriverException(_message.Message):
     """Driver exception"""
 
-    DESCRIPTOR: google.protobuf.descriptor.Descriptor
+    DESCRIPTOR: _descriptor.Descriptor
 
-    MESSAGE_FIELD_NUMBER: builtins.int
-    STATUS_CODE_FIELD_NUMBER: builtins.int
-    ERROR_FIELD_NUMBER: builtins.int
-    REPORT_FIELD_NUMBER: builtins.int
-    message: builtins.str
-    status_code: global___StatusCode.ValueType
-    report: builtins.str
-    @property
-    def error(self) -> global___DriverError: ...
+    MESSAGE_FIELD_NUMBER: _builtins.int
+    STATUS_CODE_FIELD_NUMBER: _builtins.int
+    ERROR_FIELD_NUMBER: _builtins.int
+    REPORT_FIELD_NUMBER: _builtins.int
+    message: _builtins.str
+    status_code: Global___StatusCode.ValueType
+    report: _builtins.str
+    @_builtins.property
+    def error(self) -> Global___DriverError: ...
     def __init__(
         self,
         *,
-        message: builtins.str = ...,
-        status_code: global___StatusCode.ValueType = ...,
-        error: global___DriverError | None = ...,
-        report: builtins.str = ...,
+        message: _builtins.str = ...,
+        status_code: Global___StatusCode.ValueType = ...,
+        error: Global___DriverError | None = ...,
+        report: _builtins.str = ...,
     ) -> None: ...
-    def HasField(self, field_name: typing.Literal["error", b"error"]) -> builtins.bool: ...
-    def ClearField(self, field_name: typing.Literal["error", b"error", "message", b"message", "report", b"report", "status_code", b"status_code"]) -> None: ...
+    _HasFieldArgType: _TypeAlias = _typing.Literal["error", b"error"]  # noqa: Y015
+    def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["error", b"error", "message", b"message", "report", b"report", "status_code", b"status_code"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
 
-global___DriverException = DriverException
+Global___DriverException: _TypeAlias = DriverException  # noqa: Y015
 
-@typing.final
-class ColumnMetadata(google.protobuf.message.Message):
+@_typing.final
+class ColumnMetadata(_message.Message):
     """Column metadata for description"""
 
-    DESCRIPTOR: google.protobuf.descriptor.Descriptor
+    DESCRIPTOR: _descriptor.Descriptor
 
-    NAME_FIELD_NUMBER: builtins.int
-    TYPE_FIELD_NUMBER: builtins.int
-    PRECISION_FIELD_NUMBER: builtins.int
-    SCALE_FIELD_NUMBER: builtins.int
-    LENGTH_FIELD_NUMBER: builtins.int
-    BYTE_LENGTH_FIELD_NUMBER: builtins.int
-    NULLABLE_FIELD_NUMBER: builtins.int
-    name: builtins.str
-    type: builtins.str
-    precision: builtins.int
-    scale: builtins.int
-    length: builtins.int
-    byte_length: builtins.int
-    nullable: builtins.bool
+    NAME_FIELD_NUMBER: _builtins.int
+    TYPE_FIELD_NUMBER: _builtins.int
+    PRECISION_FIELD_NUMBER: _builtins.int
+    SCALE_FIELD_NUMBER: _builtins.int
+    LENGTH_FIELD_NUMBER: _builtins.int
+    BYTE_LENGTH_FIELD_NUMBER: _builtins.int
+    NULLABLE_FIELD_NUMBER: _builtins.int
+    name: _builtins.str
+    type: _builtins.str
+    precision: _builtins.int
+    scale: _builtins.int
+    length: _builtins.int
+    byte_length: _builtins.int
+    nullable: _builtins.bool
     def __init__(
         self,
         *,
-        name: builtins.str = ...,
-        type: builtins.str = ...,
-        precision: builtins.int | None = ...,
-        scale: builtins.int | None = ...,
-        length: builtins.int | None = ...,
-        byte_length: builtins.int | None = ...,
-        nullable: builtins.bool = ...,
+        name: _builtins.str = ...,
+        type: _builtins.str = ...,
+        precision: _builtins.int | None = ...,
+        scale: _builtins.int | None = ...,
+        length: _builtins.int | None = ...,
+        byte_length: _builtins.int | None = ...,
+        nullable: _builtins.bool = ...,
     ) -> None: ...
-    def HasField(self, field_name: typing.Literal["_byte_length", b"_byte_length", "_length", b"_length", "_precision", b"_precision", "_scale", b"_scale", "byte_length", b"byte_length", "length", b"length", "precision", b"precision", "scale", b"scale"]) -> builtins.bool: ...
-    def ClearField(self, field_name: typing.Literal["_byte_length", b"_byte_length", "_length", b"_length", "_precision", b"_precision", "_scale", b"_scale", "byte_length", b"byte_length", "length", b"length", "name", b"name", "nullable", b"nullable", "precision", b"precision", "scale", b"scale", "type", b"type"]) -> None: ...
-    @typing.overload
-    def WhichOneof(self, oneof_group: typing.Literal["_byte_length", b"_byte_length"]) -> typing.Literal["byte_length"] | None: ...
-    @typing.overload
-    def WhichOneof(self, oneof_group: typing.Literal["_length", b"_length"]) -> typing.Literal["length"] | None: ...
-    @typing.overload
-    def WhichOneof(self, oneof_group: typing.Literal["_precision", b"_precision"]) -> typing.Literal["precision"] | None: ...
-    @typing.overload
-    def WhichOneof(self, oneof_group: typing.Literal["_scale", b"_scale"]) -> typing.Literal["scale"] | None: ...
+    _HasFieldArgType: _TypeAlias = _typing.Literal["_byte_length", b"_byte_length", "_length", b"_length", "_precision", b"_precision", "_scale", b"_scale", "byte_length", b"byte_length", "length", b"length", "precision", b"precision", "scale", b"scale"]  # noqa: Y015
+    def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["_byte_length", b"_byte_length", "_length", b"_length", "_precision", b"_precision", "_scale", b"_scale", "byte_length", b"byte_length", "length", b"length", "name", b"name", "nullable", b"nullable", "precision", b"precision", "scale", b"scale", "type", b"type"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
+    _WhichOneofReturnType__byte_length: _TypeAlias = _typing.Literal["byte_length"]  # noqa: Y015
+    _WhichOneofArgType__byte_length: _TypeAlias = _typing.Literal["_byte_length", b"_byte_length"]  # noqa: Y015
+    _WhichOneofReturnType__length: _TypeAlias = _typing.Literal["length"]  # noqa: Y015
+    _WhichOneofArgType__length: _TypeAlias = _typing.Literal["_length", b"_length"]  # noqa: Y015
+    _WhichOneofReturnType__precision: _TypeAlias = _typing.Literal["precision"]  # noqa: Y015
+    _WhichOneofArgType__precision: _TypeAlias = _typing.Literal["_precision", b"_precision"]  # noqa: Y015
+    _WhichOneofReturnType__scale: _TypeAlias = _typing.Literal["scale"]  # noqa: Y015
+    _WhichOneofArgType__scale: _TypeAlias = _typing.Literal["_scale", b"_scale"]  # noqa: Y015
+    @_typing.overload
+    def WhichOneof(self, oneof_group: _WhichOneofArgType__byte_length) -> _WhichOneofReturnType__byte_length | None: ...
+    @_typing.overload
+    def WhichOneof(self, oneof_group: _WhichOneofArgType__length) -> _WhichOneofReturnType__length | None: ...
+    @_typing.overload
+    def WhichOneof(self, oneof_group: _WhichOneofArgType__precision) -> _WhichOneofReturnType__precision | None: ...
+    @_typing.overload
+    def WhichOneof(self, oneof_group: _WhichOneofArgType__scale) -> _WhichOneofReturnType__scale | None: ...
 
-global___ColumnMetadata = ColumnMetadata
+Global___ColumnMetadata: _TypeAlias = ColumnMetadata  # noqa: Y015
 
-@typing.final
-class ExecuteResult(google.protobuf.message.Message):
+@_typing.final
+class ExecuteResult(_message.Message):
     """Execute result"""
 
-    DESCRIPTOR: google.protobuf.descriptor.Descriptor
+    DESCRIPTOR: _descriptor.Descriptor
 
-    STREAM_FIELD_NUMBER: builtins.int
-    ROWS_AFFECTED_FIELD_NUMBER: builtins.int
-    QUERY_ID_FIELD_NUMBER: builtins.int
-    COLUMNS_FIELD_NUMBER: builtins.int
-    rows_affected: builtins.int
-    query_id: builtins.str
-    @property
-    def stream(self) -> global___ArrowArrayStreamPtr: ...
-    @property
-    def columns(self) -> google.protobuf.internal.containers.RepeatedCompositeFieldContainer[global___ColumnMetadata]: ...
+    STREAM_FIELD_NUMBER: _builtins.int
+    ROWS_AFFECTED_FIELD_NUMBER: _builtins.int
+    QUERY_ID_FIELD_NUMBER: _builtins.int
+    COLUMNS_FIELD_NUMBER: _builtins.int
+    rows_affected: _builtins.int
+    query_id: _builtins.str
+    @_builtins.property
+    def stream(self) -> Global___ArrowArrayStreamPtr: ...
+    @_builtins.property
+    def columns(self) -> _containers.RepeatedCompositeFieldContainer[Global___ColumnMetadata]: ...
     def __init__(
         self,
         *,
-        stream: global___ArrowArrayStreamPtr | None = ...,
-        rows_affected: builtins.int = ...,
-        query_id: builtins.str = ...,
-        columns: collections.abc.Iterable[global___ColumnMetadata] | None = ...,
+        stream: Global___ArrowArrayStreamPtr | None = ...,
+        rows_affected: _builtins.int = ...,
+        query_id: _builtins.str = ...,
+        columns: _abc.Iterable[Global___ColumnMetadata] | None = ...,
     ) -> None: ...
-    def HasField(self, field_name: typing.Literal["stream", b"stream"]) -> builtins.bool: ...
-    def ClearField(self, field_name: typing.Literal["columns", b"columns", "query_id", b"query_id", "rows_affected", b"rows_affected", "stream", b"stream"]) -> None: ...
+    _HasFieldArgType: _TypeAlias = _typing.Literal["stream", b"stream"]  # noqa: Y015
+    def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["columns", b"columns", "query_id", b"query_id", "rows_affected", b"rows_affected", "stream", b"stream"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
 
-global___ExecuteResult = ExecuteResult
+Global___ExecuteResult: _TypeAlias = ExecuteResult  # noqa: Y015
 
-@typing.final
-class PartitionedResult(google.protobuf.message.Message):
+@_typing.final
+class PartitionedResult(_message.Message):
     """Partitioned result"""
 
-    DESCRIPTOR: google.protobuf.descriptor.Descriptor
+    DESCRIPTOR: _descriptor.Descriptor
 
-    SCHEMA_FIELD_NUMBER: builtins.int
-    PARTITIONS_FIELD_NUMBER: builtins.int
-    ROWS_AFFECTED_FIELD_NUMBER: builtins.int
-    schema: builtins.int
-    rows_affected: builtins.int
-    @property
-    def partitions(self) -> google.protobuf.internal.containers.RepeatedScalarFieldContainer[builtins.bytes]: ...
+    SCHEMA_FIELD_NUMBER: _builtins.int
+    PARTITIONS_FIELD_NUMBER: _builtins.int
+    ROWS_AFFECTED_FIELD_NUMBER: _builtins.int
+    schema: _builtins.int
+    rows_affected: _builtins.int
+    @_builtins.property
+    def partitions(self) -> _containers.RepeatedScalarFieldContainer[_builtins.bytes]: ...
     def __init__(
         self,
         *,
-        schema: builtins.int = ...,
-        partitions: collections.abc.Iterable[builtins.bytes] | None = ...,
-        rows_affected: builtins.int = ...,
+        schema: _builtins.int = ...,
+        partitions: _abc.Iterable[_builtins.bytes] | None = ...,
+        rows_affected: _builtins.int = ...,
     ) -> None: ...
-    def ClearField(self, field_name: typing.Literal["partitions", b"partitions", "rows_affected", b"rows_affected", "schema", b"schema"]) -> None: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["partitions", b"partitions", "rows_affected", b"rows_affected", "schema", b"schema"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
 
-global___PartitionedResult = PartitionedResult
+Global___PartitionedResult: _TypeAlias = PartitionedResult  # noqa: Y015
 
-@typing.final
-class DatabaseHandle(google.protobuf.message.Message):
+@_typing.final
+class DatabaseHandle(_message.Message):
     """Database handle"""
 
-    DESCRIPTOR: google.protobuf.descriptor.Descriptor
+    DESCRIPTOR: _descriptor.Descriptor
 
-    ID_FIELD_NUMBER: builtins.int
-    MAGIC_FIELD_NUMBER: builtins.int
-    id: builtins.int
-    magic: builtins.int
+    ID_FIELD_NUMBER: _builtins.int
+    MAGIC_FIELD_NUMBER: _builtins.int
+    id: _builtins.int
+    magic: _builtins.int
     def __init__(
         self,
         *,
-        id: builtins.int = ...,
-        magic: builtins.int = ...,
+        id: _builtins.int = ...,
+        magic: _builtins.int = ...,
     ) -> None: ...
-    def ClearField(self, field_name: typing.Literal["id", b"id", "magic", b"magic"]) -> None: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["id", b"id", "magic", b"magic"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
 
-global___DatabaseHandle = DatabaseHandle
+Global___DatabaseHandle: _TypeAlias = DatabaseHandle  # noqa: Y015
 
-@typing.final
-class ConnectionHandle(google.protobuf.message.Message):
+@_typing.final
+class ConnectionHandle(_message.Message):
     """Connection handle"""
 
-    DESCRIPTOR: google.protobuf.descriptor.Descriptor
+    DESCRIPTOR: _descriptor.Descriptor
 
-    ID_FIELD_NUMBER: builtins.int
-    MAGIC_FIELD_NUMBER: builtins.int
-    id: builtins.int
-    magic: builtins.int
+    ID_FIELD_NUMBER: _builtins.int
+    MAGIC_FIELD_NUMBER: _builtins.int
+    id: _builtins.int
+    magic: _builtins.int
     def __init__(
         self,
         *,
-        id: builtins.int = ...,
-        magic: builtins.int = ...,
+        id: _builtins.int = ...,
+        magic: _builtins.int = ...,
     ) -> None: ...
-    def ClearField(self, field_name: typing.Literal["id", b"id", "magic", b"magic"]) -> None: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["id", b"id", "magic", b"magic"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
 
-global___ConnectionHandle = ConnectionHandle
+Global___ConnectionHandle: _TypeAlias = ConnectionHandle  # noqa: Y015
 
-@typing.final
-class StatementHandle(google.protobuf.message.Message):
+@_typing.final
+class StatementHandle(_message.Message):
     """Statement handle"""
 
-    DESCRIPTOR: google.protobuf.descriptor.Descriptor
+    DESCRIPTOR: _descriptor.Descriptor
 
-    ID_FIELD_NUMBER: builtins.int
-    MAGIC_FIELD_NUMBER: builtins.int
-    id: builtins.int
-    magic: builtins.int
+    ID_FIELD_NUMBER: _builtins.int
+    MAGIC_FIELD_NUMBER: _builtins.int
+    id: _builtins.int
+    magic: _builtins.int
     def __init__(
         self,
         *,
-        id: builtins.int = ...,
-        magic: builtins.int = ...,
+        id: _builtins.int = ...,
+        magic: _builtins.int = ...,
     ) -> None: ...
-    def ClearField(self, field_name: typing.Literal["id", b"id", "magic", b"magic"]) -> None: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["id", b"id", "magic", b"magic"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
 
-global___StatementHandle = StatementHandle
+Global___StatementHandle: _TypeAlias = StatementHandle  # noqa: Y015
 
-@typing.final
-class ArrowArrayStreamPtr(google.protobuf.message.Message):
+@_typing.final
+class ArrowArrayStreamPtr(_message.Message):
     """Arrow array stream pointer"""
 
-    DESCRIPTOR: google.protobuf.descriptor.Descriptor
+    DESCRIPTOR: _descriptor.Descriptor
 
-    VALUE_FIELD_NUMBER: builtins.int
-    value: builtins.bytes
+    VALUE_FIELD_NUMBER: _builtins.int
+    value: _builtins.bytes
     def __init__(
         self,
         *,
-        value: builtins.bytes = ...,
+        value: _builtins.bytes = ...,
     ) -> None: ...
-    def ClearField(self, field_name: typing.Literal["value", b"value"]) -> None: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["value", b"value"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
 
-global___ArrowArrayStreamPtr = ArrowArrayStreamPtr
+Global___ArrowArrayStreamPtr: _TypeAlias = ArrowArrayStreamPtr  # noqa: Y015
 
-@typing.final
-class ArrowSchemaPtr(google.protobuf.message.Message):
+@_typing.final
+class ArrowSchemaPtr(_message.Message):
     """Arrow schema pointer"""
 
-    DESCRIPTOR: google.protobuf.descriptor.Descriptor
+    DESCRIPTOR: _descriptor.Descriptor
 
-    VALUE_FIELD_NUMBER: builtins.int
-    value: builtins.bytes
+    VALUE_FIELD_NUMBER: _builtins.int
+    value: _builtins.bytes
     def __init__(
         self,
         *,
-        value: builtins.bytes = ...,
+        value: _builtins.bytes = ...,
     ) -> None: ...
-    def ClearField(self, field_name: typing.Literal["value", b"value"]) -> None: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["value", b"value"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
 
-global___ArrowSchemaPtr = ArrowSchemaPtr
+Global___ArrowSchemaPtr: _TypeAlias = ArrowSchemaPtr  # noqa: Y015
 
-@typing.final
-class ArrowArrayPtr(google.protobuf.message.Message):
+@_typing.final
+class ArrowArrayPtr(_message.Message):
     """Arrow array pointer"""
 
-    DESCRIPTOR: google.protobuf.descriptor.Descriptor
+    DESCRIPTOR: _descriptor.Descriptor
 
-    VALUE_FIELD_NUMBER: builtins.int
-    value: builtins.bytes
+    VALUE_FIELD_NUMBER: _builtins.int
+    value: _builtins.bytes
     def __init__(
         self,
         *,
-        value: builtins.bytes = ...,
+        value: _builtins.bytes = ...,
     ) -> None: ...
-    def ClearField(self, field_name: typing.Literal["value", b"value"]) -> None: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["value", b"value"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
 
-global___ArrowArrayPtr = ArrowArrayPtr
+Global___ArrowArrayPtr: _TypeAlias = ArrowArrayPtr  # noqa: Y015
 
-@typing.final
-class DatabaseNewRequest(google.protobuf.message.Message):
+@_typing.final
+class DatabaseNewRequest(_message.Message):
     """Database service requests and responses"""
 
-    DESCRIPTOR: google.protobuf.descriptor.Descriptor
+    DESCRIPTOR: _descriptor.Descriptor
 
     def __init__(
         self,
     ) -> None: ...
 
-global___DatabaseNewRequest = DatabaseNewRequest
+Global___DatabaseNewRequest: _TypeAlias = DatabaseNewRequest  # noqa: Y015
 
-@typing.final
-class DatabaseNewResponse(google.protobuf.message.Message):
-    DESCRIPTOR: google.protobuf.descriptor.Descriptor
+@_typing.final
+class DatabaseNewResponse(_message.Message):
+    DESCRIPTOR: _descriptor.Descriptor
 
-    DB_HANDLE_FIELD_NUMBER: builtins.int
-    @property
-    def db_handle(self) -> global___DatabaseHandle: ...
-    def __init__(
-        self,
-        *,
-        db_handle: global___DatabaseHandle | None = ...,
-    ) -> None: ...
-    def HasField(self, field_name: typing.Literal["db_handle", b"db_handle"]) -> builtins.bool: ...
-    def ClearField(self, field_name: typing.Literal["db_handle", b"db_handle"]) -> None: ...
-
-global___DatabaseNewResponse = DatabaseNewResponse
-
-@typing.final
-class DatabaseSetOptionStringRequest(google.protobuf.message.Message):
-    DESCRIPTOR: google.protobuf.descriptor.Descriptor
-
-    DB_HANDLE_FIELD_NUMBER: builtins.int
-    KEY_FIELD_NUMBER: builtins.int
-    VALUE_FIELD_NUMBER: builtins.int
-    key: builtins.str
-    value: builtins.str
-    @property
-    def db_handle(self) -> global___DatabaseHandle: ...
+    DB_HANDLE_FIELD_NUMBER: _builtins.int
+    @_builtins.property
+    def db_handle(self) -> Global___DatabaseHandle: ...
     def __init__(
         self,
         *,
-        db_handle: global___DatabaseHandle | None = ...,
-        key: builtins.str = ...,
-        value: builtins.str = ...,
+        db_handle: Global___DatabaseHandle | None = ...,
     ) -> None: ...
-    def HasField(self, field_name: typing.Literal["db_handle", b"db_handle"]) -> builtins.bool: ...
-    def ClearField(self, field_name: typing.Literal["db_handle", b"db_handle", "key", b"key", "value", b"value"]) -> None: ...
+    _HasFieldArgType: _TypeAlias = _typing.Literal["db_handle", b"db_handle"]  # noqa: Y015
+    def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["db_handle", b"db_handle"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
 
-global___DatabaseSetOptionStringRequest = DatabaseSetOptionStringRequest
+Global___DatabaseNewResponse: _TypeAlias = DatabaseNewResponse  # noqa: Y015
 
-@typing.final
-class DatabaseSetOptionStringResponse(google.protobuf.message.Message):
-    DESCRIPTOR: google.protobuf.descriptor.Descriptor
+@_typing.final
+class DatabaseSetOptionStringRequest(_message.Message):
+    DESCRIPTOR: _descriptor.Descriptor
 
-    def __init__(
-        self,
-    ) -> None: ...
-
-global___DatabaseSetOptionStringResponse = DatabaseSetOptionStringResponse
-
-@typing.final
-class DatabaseSetOptionBytesRequest(google.protobuf.message.Message):
-    DESCRIPTOR: google.protobuf.descriptor.Descriptor
-
-    DB_HANDLE_FIELD_NUMBER: builtins.int
-    KEY_FIELD_NUMBER: builtins.int
-    VALUE_FIELD_NUMBER: builtins.int
-    key: builtins.str
-    value: builtins.bytes
-    @property
-    def db_handle(self) -> global___DatabaseHandle: ...
+    DB_HANDLE_FIELD_NUMBER: _builtins.int
+    KEY_FIELD_NUMBER: _builtins.int
+    VALUE_FIELD_NUMBER: _builtins.int
+    key: _builtins.str
+    value: _builtins.str
+    @_builtins.property
+    def db_handle(self) -> Global___DatabaseHandle: ...
     def __init__(
         self,
         *,
-        db_handle: global___DatabaseHandle | None = ...,
-        key: builtins.str = ...,
-        value: builtins.bytes = ...,
+        db_handle: Global___DatabaseHandle | None = ...,
+        key: _builtins.str = ...,
+        value: _builtins.str = ...,
     ) -> None: ...
-    def HasField(self, field_name: typing.Literal["db_handle", b"db_handle"]) -> builtins.bool: ...
-    def ClearField(self, field_name: typing.Literal["db_handle", b"db_handle", "key", b"key", "value", b"value"]) -> None: ...
+    _HasFieldArgType: _TypeAlias = _typing.Literal["db_handle", b"db_handle"]  # noqa: Y015
+    def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["db_handle", b"db_handle", "key", b"key", "value", b"value"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
 
-global___DatabaseSetOptionBytesRequest = DatabaseSetOptionBytesRequest
+Global___DatabaseSetOptionStringRequest: _TypeAlias = DatabaseSetOptionStringRequest  # noqa: Y015
 
-@typing.final
-class DatabaseSetOptionBytesResponse(google.protobuf.message.Message):
-    DESCRIPTOR: google.protobuf.descriptor.Descriptor
+@_typing.final
+class DatabaseSetOptionStringResponse(_message.Message):
+    DESCRIPTOR: _descriptor.Descriptor
 
     def __init__(
         self,
     ) -> None: ...
 
-global___DatabaseSetOptionBytesResponse = DatabaseSetOptionBytesResponse
+Global___DatabaseSetOptionStringResponse: _TypeAlias = DatabaseSetOptionStringResponse  # noqa: Y015
 
-@typing.final
-class DatabaseSetOptionIntRequest(google.protobuf.message.Message):
-    DESCRIPTOR: google.protobuf.descriptor.Descriptor
+@_typing.final
+class DatabaseSetOptionBytesRequest(_message.Message):
+    DESCRIPTOR: _descriptor.Descriptor
 
-    DB_HANDLE_FIELD_NUMBER: builtins.int
-    KEY_FIELD_NUMBER: builtins.int
-    VALUE_FIELD_NUMBER: builtins.int
-    key: builtins.str
-    value: builtins.int
-    @property
-    def db_handle(self) -> global___DatabaseHandle: ...
-    def __init__(
-        self,
-        *,
-        db_handle: global___DatabaseHandle | None = ...,
-        key: builtins.str = ...,
-        value: builtins.int = ...,
-    ) -> None: ...
-    def HasField(self, field_name: typing.Literal["db_handle", b"db_handle"]) -> builtins.bool: ...
-    def ClearField(self, field_name: typing.Literal["db_handle", b"db_handle", "key", b"key", "value", b"value"]) -> None: ...
-
-global___DatabaseSetOptionIntRequest = DatabaseSetOptionIntRequest
-
-@typing.final
-class DatabaseSetOptionIntResponse(google.protobuf.message.Message):
-    DESCRIPTOR: google.protobuf.descriptor.Descriptor
-
-    def __init__(
-        self,
-    ) -> None: ...
-
-global___DatabaseSetOptionIntResponse = DatabaseSetOptionIntResponse
-
-@typing.final
-class DatabaseSetOptionDoubleRequest(google.protobuf.message.Message):
-    DESCRIPTOR: google.protobuf.descriptor.Descriptor
-
-    DB_HANDLE_FIELD_NUMBER: builtins.int
-    KEY_FIELD_NUMBER: builtins.int
-    VALUE_FIELD_NUMBER: builtins.int
-    key: builtins.str
-    value: builtins.float
-    @property
-    def db_handle(self) -> global___DatabaseHandle: ...
+    DB_HANDLE_FIELD_NUMBER: _builtins.int
+    KEY_FIELD_NUMBER: _builtins.int
+    VALUE_FIELD_NUMBER: _builtins.int
+    key: _builtins.str
+    value: _builtins.bytes
+    @_builtins.property
+    def db_handle(self) -> Global___DatabaseHandle: ...
     def __init__(
         self,
         *,
-        db_handle: global___DatabaseHandle | None = ...,
-        key: builtins.str = ...,
-        value: builtins.float = ...,
+        db_handle: Global___DatabaseHandle | None = ...,
+        key: _builtins.str = ...,
+        value: _builtins.bytes = ...,
     ) -> None: ...
-    def HasField(self, field_name: typing.Literal["db_handle", b"db_handle"]) -> builtins.bool: ...
-    def ClearField(self, field_name: typing.Literal["db_handle", b"db_handle", "key", b"key", "value", b"value"]) -> None: ...
+    _HasFieldArgType: _TypeAlias = _typing.Literal["db_handle", b"db_handle"]  # noqa: Y015
+    def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["db_handle", b"db_handle", "key", b"key", "value", b"value"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
 
-global___DatabaseSetOptionDoubleRequest = DatabaseSetOptionDoubleRequest
+Global___DatabaseSetOptionBytesRequest: _TypeAlias = DatabaseSetOptionBytesRequest  # noqa: Y015
 
-@typing.final
-class DatabaseSetOptionDoubleResponse(google.protobuf.message.Message):
-    DESCRIPTOR: google.protobuf.descriptor.Descriptor
+@_typing.final
+class DatabaseSetOptionBytesResponse(_message.Message):
+    DESCRIPTOR: _descriptor.Descriptor
 
     def __init__(
         self,
     ) -> None: ...
 
-global___DatabaseSetOptionDoubleResponse = DatabaseSetOptionDoubleResponse
+Global___DatabaseSetOptionBytesResponse: _TypeAlias = DatabaseSetOptionBytesResponse  # noqa: Y015
 
-@typing.final
-class DatabaseInitRequest(google.protobuf.message.Message):
-    DESCRIPTOR: google.protobuf.descriptor.Descriptor
+@_typing.final
+class DatabaseSetOptionIntRequest(_message.Message):
+    DESCRIPTOR: _descriptor.Descriptor
 
-    DB_HANDLE_FIELD_NUMBER: builtins.int
-    @property
-    def db_handle(self) -> global___DatabaseHandle: ...
-    def __init__(
-        self,
-        *,
-        db_handle: global___DatabaseHandle | None = ...,
-    ) -> None: ...
-    def HasField(self, field_name: typing.Literal["db_handle", b"db_handle"]) -> builtins.bool: ...
-    def ClearField(self, field_name: typing.Literal["db_handle", b"db_handle"]) -> None: ...
-
-global___DatabaseInitRequest = DatabaseInitRequest
-
-@typing.final
-class DatabaseInitResponse(google.protobuf.message.Message):
-    DESCRIPTOR: google.protobuf.descriptor.Descriptor
-
-    def __init__(
-        self,
-    ) -> None: ...
-
-global___DatabaseInitResponse = DatabaseInitResponse
-
-@typing.final
-class DatabaseReleaseRequest(google.protobuf.message.Message):
-    DESCRIPTOR: google.protobuf.descriptor.Descriptor
-
-    DB_HANDLE_FIELD_NUMBER: builtins.int
-    @property
-    def db_handle(self) -> global___DatabaseHandle: ...
+    DB_HANDLE_FIELD_NUMBER: _builtins.int
+    KEY_FIELD_NUMBER: _builtins.int
+    VALUE_FIELD_NUMBER: _builtins.int
+    key: _builtins.str
+    value: _builtins.int
+    @_builtins.property
+    def db_handle(self) -> Global___DatabaseHandle: ...
     def __init__(
         self,
         *,
-        db_handle: global___DatabaseHandle | None = ...,
+        db_handle: Global___DatabaseHandle | None = ...,
+        key: _builtins.str = ...,
+        value: _builtins.int = ...,
     ) -> None: ...
-    def HasField(self, field_name: typing.Literal["db_handle", b"db_handle"]) -> builtins.bool: ...
-    def ClearField(self, field_name: typing.Literal["db_handle", b"db_handle"]) -> None: ...
+    _HasFieldArgType: _TypeAlias = _typing.Literal["db_handle", b"db_handle"]  # noqa: Y015
+    def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["db_handle", b"db_handle", "key", b"key", "value", b"value"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
 
-global___DatabaseReleaseRequest = DatabaseReleaseRequest
+Global___DatabaseSetOptionIntRequest: _TypeAlias = DatabaseSetOptionIntRequest  # noqa: Y015
 
-@typing.final
-class DatabaseReleaseResponse(google.protobuf.message.Message):
-    DESCRIPTOR: google.protobuf.descriptor.Descriptor
+@_typing.final
+class DatabaseSetOptionIntResponse(_message.Message):
+    DESCRIPTOR: _descriptor.Descriptor
 
     def __init__(
         self,
     ) -> None: ...
 
-global___DatabaseReleaseResponse = DatabaseReleaseResponse
+Global___DatabaseSetOptionIntResponse: _TypeAlias = DatabaseSetOptionIntResponse  # noqa: Y015
 
-@typing.final
-class ConnectionNewRequest(google.protobuf.message.Message):
+@_typing.final
+class DatabaseSetOptionDoubleRequest(_message.Message):
+    DESCRIPTOR: _descriptor.Descriptor
+
+    DB_HANDLE_FIELD_NUMBER: _builtins.int
+    KEY_FIELD_NUMBER: _builtins.int
+    VALUE_FIELD_NUMBER: _builtins.int
+    key: _builtins.str
+    value: _builtins.float
+    @_builtins.property
+    def db_handle(self) -> Global___DatabaseHandle: ...
+    def __init__(
+        self,
+        *,
+        db_handle: Global___DatabaseHandle | None = ...,
+        key: _builtins.str = ...,
+        value: _builtins.float = ...,
+    ) -> None: ...
+    _HasFieldArgType: _TypeAlias = _typing.Literal["db_handle", b"db_handle"]  # noqa: Y015
+    def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["db_handle", b"db_handle", "key", b"key", "value", b"value"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
+
+Global___DatabaseSetOptionDoubleRequest: _TypeAlias = DatabaseSetOptionDoubleRequest  # noqa: Y015
+
+@_typing.final
+class DatabaseSetOptionDoubleResponse(_message.Message):
+    DESCRIPTOR: _descriptor.Descriptor
+
+    def __init__(
+        self,
+    ) -> None: ...
+
+Global___DatabaseSetOptionDoubleResponse: _TypeAlias = DatabaseSetOptionDoubleResponse  # noqa: Y015
+
+@_typing.final
+class DatabaseInitRequest(_message.Message):
+    DESCRIPTOR: _descriptor.Descriptor
+
+    DB_HANDLE_FIELD_NUMBER: _builtins.int
+    @_builtins.property
+    def db_handle(self) -> Global___DatabaseHandle: ...
+    def __init__(
+        self,
+        *,
+        db_handle: Global___DatabaseHandle | None = ...,
+    ) -> None: ...
+    _HasFieldArgType: _TypeAlias = _typing.Literal["db_handle", b"db_handle"]  # noqa: Y015
+    def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["db_handle", b"db_handle"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
+
+Global___DatabaseInitRequest: _TypeAlias = DatabaseInitRequest  # noqa: Y015
+
+@_typing.final
+class DatabaseInitResponse(_message.Message):
+    DESCRIPTOR: _descriptor.Descriptor
+
+    def __init__(
+        self,
+    ) -> None: ...
+
+Global___DatabaseInitResponse: _TypeAlias = DatabaseInitResponse  # noqa: Y015
+
+@_typing.final
+class DatabaseReleaseRequest(_message.Message):
+    DESCRIPTOR: _descriptor.Descriptor
+
+    DB_HANDLE_FIELD_NUMBER: _builtins.int
+    @_builtins.property
+    def db_handle(self) -> Global___DatabaseHandle: ...
+    def __init__(
+        self,
+        *,
+        db_handle: Global___DatabaseHandle | None = ...,
+    ) -> None: ...
+    _HasFieldArgType: _TypeAlias = _typing.Literal["db_handle", b"db_handle"]  # noqa: Y015
+    def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["db_handle", b"db_handle"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
+
+Global___DatabaseReleaseRequest: _TypeAlias = DatabaseReleaseRequest  # noqa: Y015
+
+@_typing.final
+class DatabaseReleaseResponse(_message.Message):
+    DESCRIPTOR: _descriptor.Descriptor
+
+    def __init__(
+        self,
+    ) -> None: ...
+
+Global___DatabaseReleaseResponse: _TypeAlias = DatabaseReleaseResponse  # noqa: Y015
+
+@_typing.final
+class ConnectionNewRequest(_message.Message):
     """Connection service requests and responses"""
 
-    DESCRIPTOR: google.protobuf.descriptor.Descriptor
+    DESCRIPTOR: _descriptor.Descriptor
 
     def __init__(
         self,
     ) -> None: ...
 
-global___ConnectionNewRequest = ConnectionNewRequest
+Global___ConnectionNewRequest: _TypeAlias = ConnectionNewRequest  # noqa: Y015
 
-@typing.final
-class ConnectionNewResponse(google.protobuf.message.Message):
-    DESCRIPTOR: google.protobuf.descriptor.Descriptor
+@_typing.final
+class ConnectionNewResponse(_message.Message):
+    DESCRIPTOR: _descriptor.Descriptor
 
-    CONN_HANDLE_FIELD_NUMBER: builtins.int
-    @property
-    def conn_handle(self) -> global___ConnectionHandle: ...
-    def __init__(
-        self,
-        *,
-        conn_handle: global___ConnectionHandle | None = ...,
-    ) -> None: ...
-    def HasField(self, field_name: typing.Literal["conn_handle", b"conn_handle"]) -> builtins.bool: ...
-    def ClearField(self, field_name: typing.Literal["conn_handle", b"conn_handle"]) -> None: ...
-
-global___ConnectionNewResponse = ConnectionNewResponse
-
-@typing.final
-class ConnectionSetOptionStringRequest(google.protobuf.message.Message):
-    DESCRIPTOR: google.protobuf.descriptor.Descriptor
-
-    CONN_HANDLE_FIELD_NUMBER: builtins.int
-    KEY_FIELD_NUMBER: builtins.int
-    VALUE_FIELD_NUMBER: builtins.int
-    key: builtins.str
-    value: builtins.str
-    @property
-    def conn_handle(self) -> global___ConnectionHandle: ...
+    CONN_HANDLE_FIELD_NUMBER: _builtins.int
+    @_builtins.property
+    def conn_handle(self) -> Global___ConnectionHandle: ...
     def __init__(
         self,
         *,
-        conn_handle: global___ConnectionHandle | None = ...,
-        key: builtins.str = ...,
-        value: builtins.str = ...,
+        conn_handle: Global___ConnectionHandle | None = ...,
     ) -> None: ...
-    def HasField(self, field_name: typing.Literal["conn_handle", b"conn_handle"]) -> builtins.bool: ...
-    def ClearField(self, field_name: typing.Literal["conn_handle", b"conn_handle", "key", b"key", "value", b"value"]) -> None: ...
+    _HasFieldArgType: _TypeAlias = _typing.Literal["conn_handle", b"conn_handle"]  # noqa: Y015
+    def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["conn_handle", b"conn_handle"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
 
-global___ConnectionSetOptionStringRequest = ConnectionSetOptionStringRequest
+Global___ConnectionNewResponse: _TypeAlias = ConnectionNewResponse  # noqa: Y015
 
-@typing.final
-class ConnectionSetOptionStringResponse(google.protobuf.message.Message):
-    DESCRIPTOR: google.protobuf.descriptor.Descriptor
+@_typing.final
+class ConnectionSetOptionStringRequest(_message.Message):
+    DESCRIPTOR: _descriptor.Descriptor
 
-    def __init__(
-        self,
-    ) -> None: ...
-
-global___ConnectionSetOptionStringResponse = ConnectionSetOptionStringResponse
-
-@typing.final
-class ConnectionSetOptionBytesRequest(google.protobuf.message.Message):
-    DESCRIPTOR: google.protobuf.descriptor.Descriptor
-
-    CONN_HANDLE_FIELD_NUMBER: builtins.int
-    KEY_FIELD_NUMBER: builtins.int
-    VALUE_FIELD_NUMBER: builtins.int
-    key: builtins.str
-    value: builtins.bytes
-    @property
-    def conn_handle(self) -> global___ConnectionHandle: ...
+    CONN_HANDLE_FIELD_NUMBER: _builtins.int
+    KEY_FIELD_NUMBER: _builtins.int
+    VALUE_FIELD_NUMBER: _builtins.int
+    key: _builtins.str
+    value: _builtins.str
+    @_builtins.property
+    def conn_handle(self) -> Global___ConnectionHandle: ...
     def __init__(
         self,
         *,
-        conn_handle: global___ConnectionHandle | None = ...,
-        key: builtins.str = ...,
-        value: builtins.bytes = ...,
+        conn_handle: Global___ConnectionHandle | None = ...,
+        key: _builtins.str = ...,
+        value: _builtins.str = ...,
     ) -> None: ...
-    def HasField(self, field_name: typing.Literal["conn_handle", b"conn_handle"]) -> builtins.bool: ...
-    def ClearField(self, field_name: typing.Literal["conn_handle", b"conn_handle", "key", b"key", "value", b"value"]) -> None: ...
+    _HasFieldArgType: _TypeAlias = _typing.Literal["conn_handle", b"conn_handle"]  # noqa: Y015
+    def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["conn_handle", b"conn_handle", "key", b"key", "value", b"value"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
 
-global___ConnectionSetOptionBytesRequest = ConnectionSetOptionBytesRequest
+Global___ConnectionSetOptionStringRequest: _TypeAlias = ConnectionSetOptionStringRequest  # noqa: Y015
 
-@typing.final
-class ConnectionSetOptionBytesResponse(google.protobuf.message.Message):
-    DESCRIPTOR: google.protobuf.descriptor.Descriptor
+@_typing.final
+class ConnectionSetOptionStringResponse(_message.Message):
+    DESCRIPTOR: _descriptor.Descriptor
 
     def __init__(
         self,
     ) -> None: ...
 
-global___ConnectionSetOptionBytesResponse = ConnectionSetOptionBytesResponse
+Global___ConnectionSetOptionStringResponse: _TypeAlias = ConnectionSetOptionStringResponse  # noqa: Y015
 
-@typing.final
-class ConnectionSetOptionIntRequest(google.protobuf.message.Message):
-    DESCRIPTOR: google.protobuf.descriptor.Descriptor
+@_typing.final
+class ConnectionSetOptionBytesRequest(_message.Message):
+    DESCRIPTOR: _descriptor.Descriptor
 
-    CONN_HANDLE_FIELD_NUMBER: builtins.int
-    KEY_FIELD_NUMBER: builtins.int
-    VALUE_FIELD_NUMBER: builtins.int
-    key: builtins.str
-    value: builtins.int
-    @property
-    def conn_handle(self) -> global___ConnectionHandle: ...
-    def __init__(
-        self,
-        *,
-        conn_handle: global___ConnectionHandle | None = ...,
-        key: builtins.str = ...,
-        value: builtins.int = ...,
-    ) -> None: ...
-    def HasField(self, field_name: typing.Literal["conn_handle", b"conn_handle"]) -> builtins.bool: ...
-    def ClearField(self, field_name: typing.Literal["conn_handle", b"conn_handle", "key", b"key", "value", b"value"]) -> None: ...
-
-global___ConnectionSetOptionIntRequest = ConnectionSetOptionIntRequest
-
-@typing.final
-class ConnectionSetOptionIntResponse(google.protobuf.message.Message):
-    DESCRIPTOR: google.protobuf.descriptor.Descriptor
-
-    def __init__(
-        self,
-    ) -> None: ...
-
-global___ConnectionSetOptionIntResponse = ConnectionSetOptionIntResponse
-
-@typing.final
-class ConnectionSetOptionDoubleRequest(google.protobuf.message.Message):
-    DESCRIPTOR: google.protobuf.descriptor.Descriptor
-
-    CONN_HANDLE_FIELD_NUMBER: builtins.int
-    KEY_FIELD_NUMBER: builtins.int
-    VALUE_FIELD_NUMBER: builtins.int
-    key: builtins.str
-    value: builtins.float
-    @property
-    def conn_handle(self) -> global___ConnectionHandle: ...
+    CONN_HANDLE_FIELD_NUMBER: _builtins.int
+    KEY_FIELD_NUMBER: _builtins.int
+    VALUE_FIELD_NUMBER: _builtins.int
+    key: _builtins.str
+    value: _builtins.bytes
+    @_builtins.property
+    def conn_handle(self) -> Global___ConnectionHandle: ...
     def __init__(
         self,
         *,
-        conn_handle: global___ConnectionHandle | None = ...,
-        key: builtins.str = ...,
-        value: builtins.float = ...,
+        conn_handle: Global___ConnectionHandle | None = ...,
+        key: _builtins.str = ...,
+        value: _builtins.bytes = ...,
     ) -> None: ...
-    def HasField(self, field_name: typing.Literal["conn_handle", b"conn_handle"]) -> builtins.bool: ...
-    def ClearField(self, field_name: typing.Literal["conn_handle", b"conn_handle", "key", b"key", "value", b"value"]) -> None: ...
+    _HasFieldArgType: _TypeAlias = _typing.Literal["conn_handle", b"conn_handle"]  # noqa: Y015
+    def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["conn_handle", b"conn_handle", "key", b"key", "value", b"value"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
 
-global___ConnectionSetOptionDoubleRequest = ConnectionSetOptionDoubleRequest
+Global___ConnectionSetOptionBytesRequest: _TypeAlias = ConnectionSetOptionBytesRequest  # noqa: Y015
 
-@typing.final
-class ConnectionSetOptionDoubleResponse(google.protobuf.message.Message):
-    DESCRIPTOR: google.protobuf.descriptor.Descriptor
+@_typing.final
+class ConnectionSetOptionBytesResponse(_message.Message):
+    DESCRIPTOR: _descriptor.Descriptor
 
     def __init__(
         self,
     ) -> None: ...
 
-global___ConnectionSetOptionDoubleResponse = ConnectionSetOptionDoubleResponse
+Global___ConnectionSetOptionBytesResponse: _TypeAlias = ConnectionSetOptionBytesResponse  # noqa: Y015
 
-@typing.final
-class ConnectionInitRequest(google.protobuf.message.Message):
-    DESCRIPTOR: google.protobuf.descriptor.Descriptor
+@_typing.final
+class ConnectionSetOptionIntRequest(_message.Message):
+    DESCRIPTOR: _descriptor.Descriptor
 
-    CONN_HANDLE_FIELD_NUMBER: builtins.int
-    DB_HANDLE_FIELD_NUMBER: builtins.int
-    @property
-    def conn_handle(self) -> global___ConnectionHandle: ...
-    @property
-    def db_handle(self) -> global___DatabaseHandle: ...
-    def __init__(
-        self,
-        *,
-        conn_handle: global___ConnectionHandle | None = ...,
-        db_handle: global___DatabaseHandle | None = ...,
-    ) -> None: ...
-    def HasField(self, field_name: typing.Literal["conn_handle", b"conn_handle", "db_handle", b"db_handle"]) -> builtins.bool: ...
-    def ClearField(self, field_name: typing.Literal["conn_handle", b"conn_handle", "db_handle", b"db_handle"]) -> None: ...
-
-global___ConnectionInitRequest = ConnectionInitRequest
-
-@typing.final
-class ConnectionInitResponse(google.protobuf.message.Message):
-    DESCRIPTOR: google.protobuf.descriptor.Descriptor
-
-    def __init__(
-        self,
-    ) -> None: ...
-
-global___ConnectionInitResponse = ConnectionInitResponse
-
-@typing.final
-class ConnectionReleaseRequest(google.protobuf.message.Message):
-    DESCRIPTOR: google.protobuf.descriptor.Descriptor
-
-    CONN_HANDLE_FIELD_NUMBER: builtins.int
-    @property
-    def conn_handle(self) -> global___ConnectionHandle: ...
+    CONN_HANDLE_FIELD_NUMBER: _builtins.int
+    KEY_FIELD_NUMBER: _builtins.int
+    VALUE_FIELD_NUMBER: _builtins.int
+    key: _builtins.str
+    value: _builtins.int
+    @_builtins.property
+    def conn_handle(self) -> Global___ConnectionHandle: ...
     def __init__(
         self,
         *,
-        conn_handle: global___ConnectionHandle | None = ...,
+        conn_handle: Global___ConnectionHandle | None = ...,
+        key: _builtins.str = ...,
+        value: _builtins.int = ...,
     ) -> None: ...
-    def HasField(self, field_name: typing.Literal["conn_handle", b"conn_handle"]) -> builtins.bool: ...
-    def ClearField(self, field_name: typing.Literal["conn_handle", b"conn_handle"]) -> None: ...
+    _HasFieldArgType: _TypeAlias = _typing.Literal["conn_handle", b"conn_handle"]  # noqa: Y015
+    def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["conn_handle", b"conn_handle", "key", b"key", "value", b"value"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
 
-global___ConnectionReleaseRequest = ConnectionReleaseRequest
+Global___ConnectionSetOptionIntRequest: _TypeAlias = ConnectionSetOptionIntRequest  # noqa: Y015
 
-@typing.final
-class ConnectionReleaseResponse(google.protobuf.message.Message):
-    DESCRIPTOR: google.protobuf.descriptor.Descriptor
+@_typing.final
+class ConnectionSetOptionIntResponse(_message.Message):
+    DESCRIPTOR: _descriptor.Descriptor
 
     def __init__(
         self,
     ) -> None: ...
 
-global___ConnectionReleaseResponse = ConnectionReleaseResponse
+Global___ConnectionSetOptionIntResponse: _TypeAlias = ConnectionSetOptionIntResponse  # noqa: Y015
 
-@typing.final
-class ConnectionGetInfoRequest(google.protobuf.message.Message):
-    DESCRIPTOR: google.protobuf.descriptor.Descriptor
+@_typing.final
+class ConnectionSetOptionDoubleRequest(_message.Message):
+    DESCRIPTOR: _descriptor.Descriptor
 
-    CONN_HANDLE_FIELD_NUMBER: builtins.int
-    INFO_CODES_FIELD_NUMBER: builtins.int
-    @property
-    def conn_handle(self) -> global___ConnectionHandle: ...
-    @property
-    def info_codes(self) -> google.protobuf.internal.containers.RepeatedScalarFieldContainer[global___InfoCode.ValueType]: ...
-    def __init__(
-        self,
-        *,
-        conn_handle: global___ConnectionHandle | None = ...,
-        info_codes: collections.abc.Iterable[global___InfoCode.ValueType] | None = ...,
-    ) -> None: ...
-    def HasField(self, field_name: typing.Literal["conn_handle", b"conn_handle"]) -> builtins.bool: ...
-    def ClearField(self, field_name: typing.Literal["conn_handle", b"conn_handle", "info_codes", b"info_codes"]) -> None: ...
-
-global___ConnectionGetInfoRequest = ConnectionGetInfoRequest
-
-@typing.final
-class ConnectionGetInfoResponse(google.protobuf.message.Message):
-    DESCRIPTOR: google.protobuf.descriptor.Descriptor
-
-    INFO_DATA_FIELD_NUMBER: builtins.int
-    info_data: builtins.bytes
+    CONN_HANDLE_FIELD_NUMBER: _builtins.int
+    KEY_FIELD_NUMBER: _builtins.int
+    VALUE_FIELD_NUMBER: _builtins.int
+    key: _builtins.str
+    value: _builtins.float
+    @_builtins.property
+    def conn_handle(self) -> Global___ConnectionHandle: ...
     def __init__(
         self,
         *,
-        info_data: builtins.bytes = ...,
+        conn_handle: Global___ConnectionHandle | None = ...,
+        key: _builtins.str = ...,
+        value: _builtins.float = ...,
     ) -> None: ...
-    def ClearField(self, field_name: typing.Literal["info_data", b"info_data"]) -> None: ...
+    _HasFieldArgType: _TypeAlias = _typing.Literal["conn_handle", b"conn_handle"]  # noqa: Y015
+    def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["conn_handle", b"conn_handle", "key", b"key", "value", b"value"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
 
-global___ConnectionGetInfoResponse = ConnectionGetInfoResponse
+Global___ConnectionSetOptionDoubleRequest: _TypeAlias = ConnectionSetOptionDoubleRequest  # noqa: Y015
 
-@typing.final
-class ConnectionGetObjectsRequest(google.protobuf.message.Message):
-    DESCRIPTOR: google.protobuf.descriptor.Descriptor
+@_typing.final
+class ConnectionSetOptionDoubleResponse(_message.Message):
+    DESCRIPTOR: _descriptor.Descriptor
 
-    CONN_HANDLE_FIELD_NUMBER: builtins.int
-    DEPTH_FIELD_NUMBER: builtins.int
-    CATALOG_FIELD_NUMBER: builtins.int
-    DB_SCHEMA_FIELD_NUMBER: builtins.int
-    TABLE_NAME_FIELD_NUMBER: builtins.int
-    TABLE_TYPE_FIELD_NUMBER: builtins.int
-    COLUMN_NAME_FIELD_NUMBER: builtins.int
-    depth: builtins.int
-    catalog: builtins.str
-    db_schema: builtins.str
-    table_name: builtins.str
-    column_name: builtins.str
-    @property
-    def conn_handle(self) -> global___ConnectionHandle: ...
-    @property
-    def table_type(self) -> google.protobuf.internal.containers.RepeatedScalarFieldContainer[builtins.str]: ...
+    def __init__(
+        self,
+    ) -> None: ...
+
+Global___ConnectionSetOptionDoubleResponse: _TypeAlias = ConnectionSetOptionDoubleResponse  # noqa: Y015
+
+@_typing.final
+class ConnectionInitRequest(_message.Message):
+    DESCRIPTOR: _descriptor.Descriptor
+
+    CONN_HANDLE_FIELD_NUMBER: _builtins.int
+    DB_HANDLE_FIELD_NUMBER: _builtins.int
+    @_builtins.property
+    def conn_handle(self) -> Global___ConnectionHandle: ...
+    @_builtins.property
+    def db_handle(self) -> Global___DatabaseHandle: ...
     def __init__(
         self,
         *,
-        conn_handle: global___ConnectionHandle | None = ...,
-        depth: builtins.int = ...,
-        catalog: builtins.str | None = ...,
-        db_schema: builtins.str | None = ...,
-        table_name: builtins.str | None = ...,
-        table_type: collections.abc.Iterable[builtins.str] | None = ...,
-        column_name: builtins.str | None = ...,
+        conn_handle: Global___ConnectionHandle | None = ...,
+        db_handle: Global___DatabaseHandle | None = ...,
     ) -> None: ...
-    def HasField(self, field_name: typing.Literal["_catalog", b"_catalog", "_column_name", b"_column_name", "_db_schema", b"_db_schema", "_table_name", b"_table_name", "catalog", b"catalog", "column_name", b"column_name", "conn_handle", b"conn_handle", "db_schema", b"db_schema", "table_name", b"table_name"]) -> builtins.bool: ...
-    def ClearField(self, field_name: typing.Literal["_catalog", b"_catalog", "_column_name", b"_column_name", "_db_schema", b"_db_schema", "_table_name", b"_table_name", "catalog", b"catalog", "column_name", b"column_name", "conn_handle", b"conn_handle", "db_schema", b"db_schema", "depth", b"depth", "table_name", b"table_name", "table_type", b"table_type"]) -> None: ...
-    @typing.overload
-    def WhichOneof(self, oneof_group: typing.Literal["_catalog", b"_catalog"]) -> typing.Literal["catalog"] | None: ...
-    @typing.overload
-    def WhichOneof(self, oneof_group: typing.Literal["_column_name", b"_column_name"]) -> typing.Literal["column_name"] | None: ...
-    @typing.overload
-    def WhichOneof(self, oneof_group: typing.Literal["_db_schema", b"_db_schema"]) -> typing.Literal["db_schema"] | None: ...
-    @typing.overload
-    def WhichOneof(self, oneof_group: typing.Literal["_table_name", b"_table_name"]) -> typing.Literal["table_name"] | None: ...
+    _HasFieldArgType: _TypeAlias = _typing.Literal["conn_handle", b"conn_handle", "db_handle", b"db_handle"]  # noqa: Y015
+    def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["conn_handle", b"conn_handle", "db_handle", b"db_handle"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
 
-global___ConnectionGetObjectsRequest = ConnectionGetObjectsRequest
+Global___ConnectionInitRequest: _TypeAlias = ConnectionInitRequest  # noqa: Y015
 
-@typing.final
-class ConnectionGetObjectsResponse(google.protobuf.message.Message):
-    DESCRIPTOR: google.protobuf.descriptor.Descriptor
+@_typing.final
+class ConnectionInitResponse(_message.Message):
+    DESCRIPTOR: _descriptor.Descriptor
 
-    OBJECTS_DATA_FIELD_NUMBER: builtins.int
-    objects_data: builtins.bytes
+    def __init__(
+        self,
+    ) -> None: ...
+
+Global___ConnectionInitResponse: _TypeAlias = ConnectionInitResponse  # noqa: Y015
+
+@_typing.final
+class ConnectionReleaseRequest(_message.Message):
+    DESCRIPTOR: _descriptor.Descriptor
+
+    CONN_HANDLE_FIELD_NUMBER: _builtins.int
+    @_builtins.property
+    def conn_handle(self) -> Global___ConnectionHandle: ...
     def __init__(
         self,
         *,
-        objects_data: builtins.bytes = ...,
+        conn_handle: Global___ConnectionHandle | None = ...,
     ) -> None: ...
-    def ClearField(self, field_name: typing.Literal["objects_data", b"objects_data"]) -> None: ...
+    _HasFieldArgType: _TypeAlias = _typing.Literal["conn_handle", b"conn_handle"]  # noqa: Y015
+    def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["conn_handle", b"conn_handle"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
 
-global___ConnectionGetObjectsResponse = ConnectionGetObjectsResponse
+Global___ConnectionReleaseRequest: _TypeAlias = ConnectionReleaseRequest  # noqa: Y015
 
-@typing.final
-class ConnectionGetTableSchemaRequest(google.protobuf.message.Message):
-    DESCRIPTOR: google.protobuf.descriptor.Descriptor
+@_typing.final
+class ConnectionReleaseResponse(_message.Message):
+    DESCRIPTOR: _descriptor.Descriptor
 
-    CONN_HANDLE_FIELD_NUMBER: builtins.int
-    CATALOG_FIELD_NUMBER: builtins.int
-    DB_SCHEMA_FIELD_NUMBER: builtins.int
-    TABLE_NAME_FIELD_NUMBER: builtins.int
-    catalog: builtins.str
-    db_schema: builtins.str
-    table_name: builtins.str
-    @property
-    def conn_handle(self) -> global___ConnectionHandle: ...
+    def __init__(
+        self,
+    ) -> None: ...
+
+Global___ConnectionReleaseResponse: _TypeAlias = ConnectionReleaseResponse  # noqa: Y015
+
+@_typing.final
+class ConnectionGetInfoRequest(_message.Message):
+    DESCRIPTOR: _descriptor.Descriptor
+
+    CONN_HANDLE_FIELD_NUMBER: _builtins.int
+    INFO_CODES_FIELD_NUMBER: _builtins.int
+    @_builtins.property
+    def conn_handle(self) -> Global___ConnectionHandle: ...
+    @_builtins.property
+    def info_codes(self) -> _containers.RepeatedScalarFieldContainer[Global___InfoCode.ValueType]: ...
     def __init__(
         self,
         *,
-        conn_handle: global___ConnectionHandle | None = ...,
-        catalog: builtins.str | None = ...,
-        db_schema: builtins.str | None = ...,
-        table_name: builtins.str = ...,
+        conn_handle: Global___ConnectionHandle | None = ...,
+        info_codes: _abc.Iterable[Global___InfoCode.ValueType] | None = ...,
     ) -> None: ...
-    def HasField(self, field_name: typing.Literal["_catalog", b"_catalog", "_db_schema", b"_db_schema", "catalog", b"catalog", "conn_handle", b"conn_handle", "db_schema", b"db_schema"]) -> builtins.bool: ...
-    def ClearField(self, field_name: typing.Literal["_catalog", b"_catalog", "_db_schema", b"_db_schema", "catalog", b"catalog", "conn_handle", b"conn_handle", "db_schema", b"db_schema", "table_name", b"table_name"]) -> None: ...
-    @typing.overload
-    def WhichOneof(self, oneof_group: typing.Literal["_catalog", b"_catalog"]) -> typing.Literal["catalog"] | None: ...
-    @typing.overload
-    def WhichOneof(self, oneof_group: typing.Literal["_db_schema", b"_db_schema"]) -> typing.Literal["db_schema"] | None: ...
+    _HasFieldArgType: _TypeAlias = _typing.Literal["conn_handle", b"conn_handle"]  # noqa: Y015
+    def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["conn_handle", b"conn_handle", "info_codes", b"info_codes"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
 
-global___ConnectionGetTableSchemaRequest = ConnectionGetTableSchemaRequest
+Global___ConnectionGetInfoRequest: _TypeAlias = ConnectionGetInfoRequest  # noqa: Y015
 
-@typing.final
-class ConnectionGetTableSchemaResponse(google.protobuf.message.Message):
-    DESCRIPTOR: google.protobuf.descriptor.Descriptor
+@_typing.final
+class ConnectionGetInfoResponse(_message.Message):
+    DESCRIPTOR: _descriptor.Descriptor
 
-    SCHEMA_DATA_FIELD_NUMBER: builtins.int
-    schema_data: builtins.bytes
+    INFO_DATA_FIELD_NUMBER: _builtins.int
+    info_data: _builtins.bytes
     def __init__(
         self,
         *,
-        schema_data: builtins.bytes = ...,
+        info_data: _builtins.bytes = ...,
     ) -> None: ...
-    def ClearField(self, field_name: typing.Literal["schema_data", b"schema_data"]) -> None: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["info_data", b"info_data"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
 
-global___ConnectionGetTableSchemaResponse = ConnectionGetTableSchemaResponse
+Global___ConnectionGetInfoResponse: _TypeAlias = ConnectionGetInfoResponse  # noqa: Y015
 
-@typing.final
-class ConnectionGetTableTypesRequest(google.protobuf.message.Message):
-    DESCRIPTOR: google.protobuf.descriptor.Descriptor
+@_typing.final
+class ConnectionGetObjectsRequest(_message.Message):
+    DESCRIPTOR: _descriptor.Descriptor
 
-    CONN_HANDLE_FIELD_NUMBER: builtins.int
-    @property
-    def conn_handle(self) -> global___ConnectionHandle: ...
+    CONN_HANDLE_FIELD_NUMBER: _builtins.int
+    DEPTH_FIELD_NUMBER: _builtins.int
+    CATALOG_FIELD_NUMBER: _builtins.int
+    DB_SCHEMA_FIELD_NUMBER: _builtins.int
+    TABLE_NAME_FIELD_NUMBER: _builtins.int
+    TABLE_TYPE_FIELD_NUMBER: _builtins.int
+    COLUMN_NAME_FIELD_NUMBER: _builtins.int
+    depth: _builtins.int
+    catalog: _builtins.str
+    db_schema: _builtins.str
+    table_name: _builtins.str
+    column_name: _builtins.str
+    @_builtins.property
+    def conn_handle(self) -> Global___ConnectionHandle: ...
+    @_builtins.property
+    def table_type(self) -> _containers.RepeatedScalarFieldContainer[_builtins.str]: ...
     def __init__(
         self,
         *,
-        conn_handle: global___ConnectionHandle | None = ...,
+        conn_handle: Global___ConnectionHandle | None = ...,
+        depth: _builtins.int = ...,
+        catalog: _builtins.str | None = ...,
+        db_schema: _builtins.str | None = ...,
+        table_name: _builtins.str | None = ...,
+        table_type: _abc.Iterable[_builtins.str] | None = ...,
+        column_name: _builtins.str | None = ...,
     ) -> None: ...
-    def HasField(self, field_name: typing.Literal["conn_handle", b"conn_handle"]) -> builtins.bool: ...
-    def ClearField(self, field_name: typing.Literal["conn_handle", b"conn_handle"]) -> None: ...
+    _HasFieldArgType: _TypeAlias = _typing.Literal["_catalog", b"_catalog", "_column_name", b"_column_name", "_db_schema", b"_db_schema", "_table_name", b"_table_name", "catalog", b"catalog", "column_name", b"column_name", "conn_handle", b"conn_handle", "db_schema", b"db_schema", "table_name", b"table_name"]  # noqa: Y015
+    def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["_catalog", b"_catalog", "_column_name", b"_column_name", "_db_schema", b"_db_schema", "_table_name", b"_table_name", "catalog", b"catalog", "column_name", b"column_name", "conn_handle", b"conn_handle", "db_schema", b"db_schema", "depth", b"depth", "table_name", b"table_name", "table_type", b"table_type"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
+    _WhichOneofReturnType__catalog: _TypeAlias = _typing.Literal["catalog"]  # noqa: Y015
+    _WhichOneofArgType__catalog: _TypeAlias = _typing.Literal["_catalog", b"_catalog"]  # noqa: Y015
+    _WhichOneofReturnType__column_name: _TypeAlias = _typing.Literal["column_name"]  # noqa: Y015
+    _WhichOneofArgType__column_name: _TypeAlias = _typing.Literal["_column_name", b"_column_name"]  # noqa: Y015
+    _WhichOneofReturnType__db_schema: _TypeAlias = _typing.Literal["db_schema"]  # noqa: Y015
+    _WhichOneofArgType__db_schema: _TypeAlias = _typing.Literal["_db_schema", b"_db_schema"]  # noqa: Y015
+    _WhichOneofReturnType__table_name: _TypeAlias = _typing.Literal["table_name"]  # noqa: Y015
+    _WhichOneofArgType__table_name: _TypeAlias = _typing.Literal["_table_name", b"_table_name"]  # noqa: Y015
+    @_typing.overload
+    def WhichOneof(self, oneof_group: _WhichOneofArgType__catalog) -> _WhichOneofReturnType__catalog | None: ...
+    @_typing.overload
+    def WhichOneof(self, oneof_group: _WhichOneofArgType__column_name) -> _WhichOneofReturnType__column_name | None: ...
+    @_typing.overload
+    def WhichOneof(self, oneof_group: _WhichOneofArgType__db_schema) -> _WhichOneofReturnType__db_schema | None: ...
+    @_typing.overload
+    def WhichOneof(self, oneof_group: _WhichOneofArgType__table_name) -> _WhichOneofReturnType__table_name | None: ...
 
-global___ConnectionGetTableTypesRequest = ConnectionGetTableTypesRequest
+Global___ConnectionGetObjectsRequest: _TypeAlias = ConnectionGetObjectsRequest  # noqa: Y015
 
-@typing.final
-class ConnectionGetTableTypesResponse(google.protobuf.message.Message):
-    DESCRIPTOR: google.protobuf.descriptor.Descriptor
+@_typing.final
+class ConnectionGetObjectsResponse(_message.Message):
+    DESCRIPTOR: _descriptor.Descriptor
 
-    TABLE_TYPES_DATA_FIELD_NUMBER: builtins.int
-    table_types_data: builtins.bytes
+    OBJECTS_DATA_FIELD_NUMBER: _builtins.int
+    objects_data: _builtins.bytes
     def __init__(
         self,
         *,
-        table_types_data: builtins.bytes = ...,
+        objects_data: _builtins.bytes = ...,
     ) -> None: ...
-    def ClearField(self, field_name: typing.Literal["table_types_data", b"table_types_data"]) -> None: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["objects_data", b"objects_data"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
 
-global___ConnectionGetTableTypesResponse = ConnectionGetTableTypesResponse
+Global___ConnectionGetObjectsResponse: _TypeAlias = ConnectionGetObjectsResponse  # noqa: Y015
 
-@typing.final
-class ConnectionCommitRequest(google.protobuf.message.Message):
-    DESCRIPTOR: google.protobuf.descriptor.Descriptor
+@_typing.final
+class ConnectionGetTableSchemaRequest(_message.Message):
+    DESCRIPTOR: _descriptor.Descriptor
 
-    CONN_HANDLE_FIELD_NUMBER: builtins.int
-    @property
-    def conn_handle(self) -> global___ConnectionHandle: ...
+    CONN_HANDLE_FIELD_NUMBER: _builtins.int
+    CATALOG_FIELD_NUMBER: _builtins.int
+    DB_SCHEMA_FIELD_NUMBER: _builtins.int
+    TABLE_NAME_FIELD_NUMBER: _builtins.int
+    catalog: _builtins.str
+    db_schema: _builtins.str
+    table_name: _builtins.str
+    @_builtins.property
+    def conn_handle(self) -> Global___ConnectionHandle: ...
     def __init__(
         self,
         *,
-        conn_handle: global___ConnectionHandle | None = ...,
+        conn_handle: Global___ConnectionHandle | None = ...,
+        catalog: _builtins.str | None = ...,
+        db_schema: _builtins.str | None = ...,
+        table_name: _builtins.str = ...,
     ) -> None: ...
-    def HasField(self, field_name: typing.Literal["conn_handle", b"conn_handle"]) -> builtins.bool: ...
-    def ClearField(self, field_name: typing.Literal["conn_handle", b"conn_handle"]) -> None: ...
+    _HasFieldArgType: _TypeAlias = _typing.Literal["_catalog", b"_catalog", "_db_schema", b"_db_schema", "catalog", b"catalog", "conn_handle", b"conn_handle", "db_schema", b"db_schema"]  # noqa: Y015
+    def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["_catalog", b"_catalog", "_db_schema", b"_db_schema", "catalog", b"catalog", "conn_handle", b"conn_handle", "db_schema", b"db_schema", "table_name", b"table_name"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
+    _WhichOneofReturnType__catalog: _TypeAlias = _typing.Literal["catalog"]  # noqa: Y015
+    _WhichOneofArgType__catalog: _TypeAlias = _typing.Literal["_catalog", b"_catalog"]  # noqa: Y015
+    _WhichOneofReturnType__db_schema: _TypeAlias = _typing.Literal["db_schema"]  # noqa: Y015
+    _WhichOneofArgType__db_schema: _TypeAlias = _typing.Literal["_db_schema", b"_db_schema"]  # noqa: Y015
+    @_typing.overload
+    def WhichOneof(self, oneof_group: _WhichOneofArgType__catalog) -> _WhichOneofReturnType__catalog | None: ...
+    @_typing.overload
+    def WhichOneof(self, oneof_group: _WhichOneofArgType__db_schema) -> _WhichOneofReturnType__db_schema | None: ...
 
-global___ConnectionCommitRequest = ConnectionCommitRequest
+Global___ConnectionGetTableSchemaRequest: _TypeAlias = ConnectionGetTableSchemaRequest  # noqa: Y015
 
-@typing.final
-class ConnectionCommitResponse(google.protobuf.message.Message):
-    DESCRIPTOR: google.protobuf.descriptor.Descriptor
+@_typing.final
+class ConnectionGetTableSchemaResponse(_message.Message):
+    DESCRIPTOR: _descriptor.Descriptor
 
-    def __init__(
-        self,
-    ) -> None: ...
-
-global___ConnectionCommitResponse = ConnectionCommitResponse
-
-@typing.final
-class ConnectionRollbackRequest(google.protobuf.message.Message):
-    DESCRIPTOR: google.protobuf.descriptor.Descriptor
-
-    CONN_HANDLE_FIELD_NUMBER: builtins.int
-    @property
-    def conn_handle(self) -> global___ConnectionHandle: ...
+    SCHEMA_DATA_FIELD_NUMBER: _builtins.int
+    schema_data: _builtins.bytes
     def __init__(
         self,
         *,
-        conn_handle: global___ConnectionHandle | None = ...,
+        schema_data: _builtins.bytes = ...,
     ) -> None: ...
-    def HasField(self, field_name: typing.Literal["conn_handle", b"conn_handle"]) -> builtins.bool: ...
-    def ClearField(self, field_name: typing.Literal["conn_handle", b"conn_handle"]) -> None: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["schema_data", b"schema_data"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
 
-global___ConnectionRollbackRequest = ConnectionRollbackRequest
+Global___ConnectionGetTableSchemaResponse: _TypeAlias = ConnectionGetTableSchemaResponse  # noqa: Y015
 
-@typing.final
-class ConnectionRollbackResponse(google.protobuf.message.Message):
-    DESCRIPTOR: google.protobuf.descriptor.Descriptor
+@_typing.final
+class ConnectionGetTableTypesRequest(_message.Message):
+    DESCRIPTOR: _descriptor.Descriptor
+
+    CONN_HANDLE_FIELD_NUMBER: _builtins.int
+    @_builtins.property
+    def conn_handle(self) -> Global___ConnectionHandle: ...
+    def __init__(
+        self,
+        *,
+        conn_handle: Global___ConnectionHandle | None = ...,
+    ) -> None: ...
+    _HasFieldArgType: _TypeAlias = _typing.Literal["conn_handle", b"conn_handle"]  # noqa: Y015
+    def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["conn_handle", b"conn_handle"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
+
+Global___ConnectionGetTableTypesRequest: _TypeAlias = ConnectionGetTableTypesRequest  # noqa: Y015
+
+@_typing.final
+class ConnectionGetTableTypesResponse(_message.Message):
+    DESCRIPTOR: _descriptor.Descriptor
+
+    TABLE_TYPES_DATA_FIELD_NUMBER: _builtins.int
+    table_types_data: _builtins.bytes
+    def __init__(
+        self,
+        *,
+        table_types_data: _builtins.bytes = ...,
+    ) -> None: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["table_types_data", b"table_types_data"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
+
+Global___ConnectionGetTableTypesResponse: _TypeAlias = ConnectionGetTableTypesResponse  # noqa: Y015
+
+@_typing.final
+class ConnectionCommitRequest(_message.Message):
+    DESCRIPTOR: _descriptor.Descriptor
+
+    CONN_HANDLE_FIELD_NUMBER: _builtins.int
+    @_builtins.property
+    def conn_handle(self) -> Global___ConnectionHandle: ...
+    def __init__(
+        self,
+        *,
+        conn_handle: Global___ConnectionHandle | None = ...,
+    ) -> None: ...
+    _HasFieldArgType: _TypeAlias = _typing.Literal["conn_handle", b"conn_handle"]  # noqa: Y015
+    def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["conn_handle", b"conn_handle"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
+
+Global___ConnectionCommitRequest: _TypeAlias = ConnectionCommitRequest  # noqa: Y015
+
+@_typing.final
+class ConnectionCommitResponse(_message.Message):
+    DESCRIPTOR: _descriptor.Descriptor
 
     def __init__(
         self,
     ) -> None: ...
 
-global___ConnectionRollbackResponse = ConnectionRollbackResponse
+Global___ConnectionCommitResponse: _TypeAlias = ConnectionCommitResponse  # noqa: Y015
 
-@typing.final
-class StatementNewRequest(google.protobuf.message.Message):
+@_typing.final
+class ConnectionRollbackRequest(_message.Message):
+    DESCRIPTOR: _descriptor.Descriptor
+
+    CONN_HANDLE_FIELD_NUMBER: _builtins.int
+    @_builtins.property
+    def conn_handle(self) -> Global___ConnectionHandle: ...
+    def __init__(
+        self,
+        *,
+        conn_handle: Global___ConnectionHandle | None = ...,
+    ) -> None: ...
+    _HasFieldArgType: _TypeAlias = _typing.Literal["conn_handle", b"conn_handle"]  # noqa: Y015
+    def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["conn_handle", b"conn_handle"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
+
+Global___ConnectionRollbackRequest: _TypeAlias = ConnectionRollbackRequest  # noqa: Y015
+
+@_typing.final
+class ConnectionRollbackResponse(_message.Message):
+    DESCRIPTOR: _descriptor.Descriptor
+
+    def __init__(
+        self,
+    ) -> None: ...
+
+Global___ConnectionRollbackResponse: _TypeAlias = ConnectionRollbackResponse  # noqa: Y015
+
+@_typing.final
+class StatementNewRequest(_message.Message):
     """Statement service requests and responses"""
 
-    DESCRIPTOR: google.protobuf.descriptor.Descriptor
+    DESCRIPTOR: _descriptor.Descriptor
 
-    CONN_HANDLE_FIELD_NUMBER: builtins.int
-    @property
-    def conn_handle(self) -> global___ConnectionHandle: ...
+    CONN_HANDLE_FIELD_NUMBER: _builtins.int
+    @_builtins.property
+    def conn_handle(self) -> Global___ConnectionHandle: ...
     def __init__(
         self,
         *,
-        conn_handle: global___ConnectionHandle | None = ...,
+        conn_handle: Global___ConnectionHandle | None = ...,
     ) -> None: ...
-    def HasField(self, field_name: typing.Literal["conn_handle", b"conn_handle"]) -> builtins.bool: ...
-    def ClearField(self, field_name: typing.Literal["conn_handle", b"conn_handle"]) -> None: ...
+    _HasFieldArgType: _TypeAlias = _typing.Literal["conn_handle", b"conn_handle"]  # noqa: Y015
+    def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["conn_handle", b"conn_handle"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
 
-global___StatementNewRequest = StatementNewRequest
+Global___StatementNewRequest: _TypeAlias = StatementNewRequest  # noqa: Y015
 
-@typing.final
-class StatementNewResponse(google.protobuf.message.Message):
-    DESCRIPTOR: google.protobuf.descriptor.Descriptor
+@_typing.final
+class StatementNewResponse(_message.Message):
+    DESCRIPTOR: _descriptor.Descriptor
 
-    STMT_HANDLE_FIELD_NUMBER: builtins.int
-    @property
-    def stmt_handle(self) -> global___StatementHandle: ...
+    STMT_HANDLE_FIELD_NUMBER: _builtins.int
+    @_builtins.property
+    def stmt_handle(self) -> Global___StatementHandle: ...
     def __init__(
         self,
         *,
-        stmt_handle: global___StatementHandle | None = ...,
+        stmt_handle: Global___StatementHandle | None = ...,
     ) -> None: ...
-    def HasField(self, field_name: typing.Literal["stmt_handle", b"stmt_handle"]) -> builtins.bool: ...
-    def ClearField(self, field_name: typing.Literal["stmt_handle", b"stmt_handle"]) -> None: ...
+    _HasFieldArgType: _TypeAlias = _typing.Literal["stmt_handle", b"stmt_handle"]  # noqa: Y015
+    def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["stmt_handle", b"stmt_handle"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
 
-global___StatementNewResponse = StatementNewResponse
+Global___StatementNewResponse: _TypeAlias = StatementNewResponse  # noqa: Y015
 
-@typing.final
-class StatementReleaseRequest(google.protobuf.message.Message):
-    DESCRIPTOR: google.protobuf.descriptor.Descriptor
+@_typing.final
+class StatementReleaseRequest(_message.Message):
+    DESCRIPTOR: _descriptor.Descriptor
 
-    STMT_HANDLE_FIELD_NUMBER: builtins.int
-    @property
-    def stmt_handle(self) -> global___StatementHandle: ...
+    STMT_HANDLE_FIELD_NUMBER: _builtins.int
+    @_builtins.property
+    def stmt_handle(self) -> Global___StatementHandle: ...
     def __init__(
         self,
         *,
-        stmt_handle: global___StatementHandle | None = ...,
+        stmt_handle: Global___StatementHandle | None = ...,
     ) -> None: ...
-    def HasField(self, field_name: typing.Literal["stmt_handle", b"stmt_handle"]) -> builtins.bool: ...
-    def ClearField(self, field_name: typing.Literal["stmt_handle", b"stmt_handle"]) -> None: ...
+    _HasFieldArgType: _TypeAlias = _typing.Literal["stmt_handle", b"stmt_handle"]  # noqa: Y015
+    def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["stmt_handle", b"stmt_handle"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
 
-global___StatementReleaseRequest = StatementReleaseRequest
+Global___StatementReleaseRequest: _TypeAlias = StatementReleaseRequest  # noqa: Y015
 
-@typing.final
-class StatementReleaseResponse(google.protobuf.message.Message):
-    DESCRIPTOR: google.protobuf.descriptor.Descriptor
+@_typing.final
+class StatementReleaseResponse(_message.Message):
+    DESCRIPTOR: _descriptor.Descriptor
 
     def __init__(
         self,
     ) -> None: ...
 
-global___StatementReleaseResponse = StatementReleaseResponse
+Global___StatementReleaseResponse: _TypeAlias = StatementReleaseResponse  # noqa: Y015
 
-@typing.final
-class StatementSetSqlQueryRequest(google.protobuf.message.Message):
-    DESCRIPTOR: google.protobuf.descriptor.Descriptor
+@_typing.final
+class StatementSetSqlQueryRequest(_message.Message):
+    DESCRIPTOR: _descriptor.Descriptor
 
-    STMT_HANDLE_FIELD_NUMBER: builtins.int
-    QUERY_FIELD_NUMBER: builtins.int
-    query: builtins.str
-    @property
-    def stmt_handle(self) -> global___StatementHandle: ...
-    def __init__(
-        self,
-        *,
-        stmt_handle: global___StatementHandle | None = ...,
-        query: builtins.str = ...,
-    ) -> None: ...
-    def HasField(self, field_name: typing.Literal["stmt_handle", b"stmt_handle"]) -> builtins.bool: ...
-    def ClearField(self, field_name: typing.Literal["query", b"query", "stmt_handle", b"stmt_handle"]) -> None: ...
-
-global___StatementSetSqlQueryRequest = StatementSetSqlQueryRequest
-
-@typing.final
-class StatementSetSqlQueryResponse(google.protobuf.message.Message):
-    DESCRIPTOR: google.protobuf.descriptor.Descriptor
-
-    def __init__(
-        self,
-    ) -> None: ...
-
-global___StatementSetSqlQueryResponse = StatementSetSqlQueryResponse
-
-@typing.final
-class StatementSetSubstraitPlanRequest(google.protobuf.message.Message):
-    DESCRIPTOR: google.protobuf.descriptor.Descriptor
-
-    STMT_HANDLE_FIELD_NUMBER: builtins.int
-    PLAN_FIELD_NUMBER: builtins.int
-    plan: builtins.bytes
-    @property
-    def stmt_handle(self) -> global___StatementHandle: ...
+    STMT_HANDLE_FIELD_NUMBER: _builtins.int
+    QUERY_FIELD_NUMBER: _builtins.int
+    query: _builtins.str
+    @_builtins.property
+    def stmt_handle(self) -> Global___StatementHandle: ...
     def __init__(
         self,
         *,
-        stmt_handle: global___StatementHandle | None = ...,
-        plan: builtins.bytes = ...,
+        stmt_handle: Global___StatementHandle | None = ...,
+        query: _builtins.str = ...,
     ) -> None: ...
-    def HasField(self, field_name: typing.Literal["stmt_handle", b"stmt_handle"]) -> builtins.bool: ...
-    def ClearField(self, field_name: typing.Literal["plan", b"plan", "stmt_handle", b"stmt_handle"]) -> None: ...
+    _HasFieldArgType: _TypeAlias = _typing.Literal["stmt_handle", b"stmt_handle"]  # noqa: Y015
+    def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["query", b"query", "stmt_handle", b"stmt_handle"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
 
-global___StatementSetSubstraitPlanRequest = StatementSetSubstraitPlanRequest
+Global___StatementSetSqlQueryRequest: _TypeAlias = StatementSetSqlQueryRequest  # noqa: Y015
 
-@typing.final
-class StatementSetSubstraitPlanResponse(google.protobuf.message.Message):
-    DESCRIPTOR: google.protobuf.descriptor.Descriptor
+@_typing.final
+class StatementSetSqlQueryResponse(_message.Message):
+    DESCRIPTOR: _descriptor.Descriptor
 
     def __init__(
         self,
     ) -> None: ...
 
-global___StatementSetSubstraitPlanResponse = StatementSetSubstraitPlanResponse
+Global___StatementSetSqlQueryResponse: _TypeAlias = StatementSetSqlQueryResponse  # noqa: Y015
 
-@typing.final
-class StatementPrepareRequest(google.protobuf.message.Message):
-    DESCRIPTOR: google.protobuf.descriptor.Descriptor
+@_typing.final
+class StatementSetSubstraitPlanRequest(_message.Message):
+    DESCRIPTOR: _descriptor.Descriptor
 
-    STMT_HANDLE_FIELD_NUMBER: builtins.int
-    @property
-    def stmt_handle(self) -> global___StatementHandle: ...
-    def __init__(
-        self,
-        *,
-        stmt_handle: global___StatementHandle | None = ...,
-    ) -> None: ...
-    def HasField(self, field_name: typing.Literal["stmt_handle", b"stmt_handle"]) -> builtins.bool: ...
-    def ClearField(self, field_name: typing.Literal["stmt_handle", b"stmt_handle"]) -> None: ...
-
-global___StatementPrepareRequest = StatementPrepareRequest
-
-@typing.final
-class StatementPrepareResponse(google.protobuf.message.Message):
-    DESCRIPTOR: google.protobuf.descriptor.Descriptor
-
-    def __init__(
-        self,
-    ) -> None: ...
-
-global___StatementPrepareResponse = StatementPrepareResponse
-
-@typing.final
-class StatementSetOptionStringRequest(google.protobuf.message.Message):
-    DESCRIPTOR: google.protobuf.descriptor.Descriptor
-
-    STMT_HANDLE_FIELD_NUMBER: builtins.int
-    KEY_FIELD_NUMBER: builtins.int
-    VALUE_FIELD_NUMBER: builtins.int
-    key: builtins.str
-    value: builtins.str
-    @property
-    def stmt_handle(self) -> global___StatementHandle: ...
+    STMT_HANDLE_FIELD_NUMBER: _builtins.int
+    PLAN_FIELD_NUMBER: _builtins.int
+    plan: _builtins.bytes
+    @_builtins.property
+    def stmt_handle(self) -> Global___StatementHandle: ...
     def __init__(
         self,
         *,
-        stmt_handle: global___StatementHandle | None = ...,
-        key: builtins.str = ...,
-        value: builtins.str = ...,
+        stmt_handle: Global___StatementHandle | None = ...,
+        plan: _builtins.bytes = ...,
     ) -> None: ...
-    def HasField(self, field_name: typing.Literal["stmt_handle", b"stmt_handle"]) -> builtins.bool: ...
-    def ClearField(self, field_name: typing.Literal["key", b"key", "stmt_handle", b"stmt_handle", "value", b"value"]) -> None: ...
+    _HasFieldArgType: _TypeAlias = _typing.Literal["stmt_handle", b"stmt_handle"]  # noqa: Y015
+    def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["plan", b"plan", "stmt_handle", b"stmt_handle"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
 
-global___StatementSetOptionStringRequest = StatementSetOptionStringRequest
+Global___StatementSetSubstraitPlanRequest: _TypeAlias = StatementSetSubstraitPlanRequest  # noqa: Y015
 
-@typing.final
-class StatementSetOptionStringResponse(google.protobuf.message.Message):
-    DESCRIPTOR: google.protobuf.descriptor.Descriptor
+@_typing.final
+class StatementSetSubstraitPlanResponse(_message.Message):
+    DESCRIPTOR: _descriptor.Descriptor
 
     def __init__(
         self,
     ) -> None: ...
 
-global___StatementSetOptionStringResponse = StatementSetOptionStringResponse
+Global___StatementSetSubstraitPlanResponse: _TypeAlias = StatementSetSubstraitPlanResponse  # noqa: Y015
 
-@typing.final
-class StatementSetOptionBytesRequest(google.protobuf.message.Message):
-    DESCRIPTOR: google.protobuf.descriptor.Descriptor
+@_typing.final
+class StatementPrepareRequest(_message.Message):
+    DESCRIPTOR: _descriptor.Descriptor
 
-    STMT_HANDLE_FIELD_NUMBER: builtins.int
-    KEY_FIELD_NUMBER: builtins.int
-    VALUE_FIELD_NUMBER: builtins.int
-    key: builtins.str
-    value: builtins.bytes
-    @property
-    def stmt_handle(self) -> global___StatementHandle: ...
+    STMT_HANDLE_FIELD_NUMBER: _builtins.int
+    @_builtins.property
+    def stmt_handle(self) -> Global___StatementHandle: ...
     def __init__(
         self,
         *,
-        stmt_handle: global___StatementHandle | None = ...,
-        key: builtins.str = ...,
-        value: builtins.bytes = ...,
+        stmt_handle: Global___StatementHandle | None = ...,
     ) -> None: ...
-    def HasField(self, field_name: typing.Literal["stmt_handle", b"stmt_handle"]) -> builtins.bool: ...
-    def ClearField(self, field_name: typing.Literal["key", b"key", "stmt_handle", b"stmt_handle", "value", b"value"]) -> None: ...
+    _HasFieldArgType: _TypeAlias = _typing.Literal["stmt_handle", b"stmt_handle"]  # noqa: Y015
+    def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["stmt_handle", b"stmt_handle"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
 
-global___StatementSetOptionBytesRequest = StatementSetOptionBytesRequest
+Global___StatementPrepareRequest: _TypeAlias = StatementPrepareRequest  # noqa: Y015
 
-@typing.final
-class StatementSetOptionBytesResponse(google.protobuf.message.Message):
-    DESCRIPTOR: google.protobuf.descriptor.Descriptor
+@_typing.final
+class StatementPrepareResponse(_message.Message):
+    DESCRIPTOR: _descriptor.Descriptor
 
     def __init__(
         self,
     ) -> None: ...
 
-global___StatementSetOptionBytesResponse = StatementSetOptionBytesResponse
+Global___StatementPrepareResponse: _TypeAlias = StatementPrepareResponse  # noqa: Y015
 
-@typing.final
-class StatementSetOptionIntRequest(google.protobuf.message.Message):
-    DESCRIPTOR: google.protobuf.descriptor.Descriptor
+@_typing.final
+class StatementSetOptionStringRequest(_message.Message):
+    DESCRIPTOR: _descriptor.Descriptor
 
-    STMT_HANDLE_FIELD_NUMBER: builtins.int
-    KEY_FIELD_NUMBER: builtins.int
-    VALUE_FIELD_NUMBER: builtins.int
-    key: builtins.str
-    value: builtins.int
-    @property
-    def stmt_handle(self) -> global___StatementHandle: ...
-    def __init__(
-        self,
-        *,
-        stmt_handle: global___StatementHandle | None = ...,
-        key: builtins.str = ...,
-        value: builtins.int = ...,
-    ) -> None: ...
-    def HasField(self, field_name: typing.Literal["stmt_handle", b"stmt_handle"]) -> builtins.bool: ...
-    def ClearField(self, field_name: typing.Literal["key", b"key", "stmt_handle", b"stmt_handle", "value", b"value"]) -> None: ...
-
-global___StatementSetOptionIntRequest = StatementSetOptionIntRequest
-
-@typing.final
-class StatementSetOptionIntResponse(google.protobuf.message.Message):
-    DESCRIPTOR: google.protobuf.descriptor.Descriptor
-
-    def __init__(
-        self,
-    ) -> None: ...
-
-global___StatementSetOptionIntResponse = StatementSetOptionIntResponse
-
-@typing.final
-class StatementSetOptionDoubleRequest(google.protobuf.message.Message):
-    DESCRIPTOR: google.protobuf.descriptor.Descriptor
-
-    STMT_HANDLE_FIELD_NUMBER: builtins.int
-    KEY_FIELD_NUMBER: builtins.int
-    VALUE_FIELD_NUMBER: builtins.int
-    key: builtins.str
-    value: builtins.float
-    @property
-    def stmt_handle(self) -> global___StatementHandle: ...
+    STMT_HANDLE_FIELD_NUMBER: _builtins.int
+    KEY_FIELD_NUMBER: _builtins.int
+    VALUE_FIELD_NUMBER: _builtins.int
+    key: _builtins.str
+    value: _builtins.str
+    @_builtins.property
+    def stmt_handle(self) -> Global___StatementHandle: ...
     def __init__(
         self,
         *,
-        stmt_handle: global___StatementHandle | None = ...,
-        key: builtins.str = ...,
-        value: builtins.float = ...,
+        stmt_handle: Global___StatementHandle | None = ...,
+        key: _builtins.str = ...,
+        value: _builtins.str = ...,
     ) -> None: ...
-    def HasField(self, field_name: typing.Literal["stmt_handle", b"stmt_handle"]) -> builtins.bool: ...
-    def ClearField(self, field_name: typing.Literal["key", b"key", "stmt_handle", b"stmt_handle", "value", b"value"]) -> None: ...
+    _HasFieldArgType: _TypeAlias = _typing.Literal["stmt_handle", b"stmt_handle"]  # noqa: Y015
+    def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["key", b"key", "stmt_handle", b"stmt_handle", "value", b"value"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
 
-global___StatementSetOptionDoubleRequest = StatementSetOptionDoubleRequest
+Global___StatementSetOptionStringRequest: _TypeAlias = StatementSetOptionStringRequest  # noqa: Y015
 
-@typing.final
-class StatementSetOptionDoubleResponse(google.protobuf.message.Message):
-    DESCRIPTOR: google.protobuf.descriptor.Descriptor
+@_typing.final
+class StatementSetOptionStringResponse(_message.Message):
+    DESCRIPTOR: _descriptor.Descriptor
 
     def __init__(
         self,
     ) -> None: ...
 
-global___StatementSetOptionDoubleResponse = StatementSetOptionDoubleResponse
+Global___StatementSetOptionStringResponse: _TypeAlias = StatementSetOptionStringResponse  # noqa: Y015
 
-@typing.final
-class StatementGetParameterSchemaRequest(google.protobuf.message.Message):
-    DESCRIPTOR: google.protobuf.descriptor.Descriptor
+@_typing.final
+class StatementSetOptionBytesRequest(_message.Message):
+    DESCRIPTOR: _descriptor.Descriptor
 
-    STMT_HANDLE_FIELD_NUMBER: builtins.int
-    @property
-    def stmt_handle(self) -> global___StatementHandle: ...
-    def __init__(
-        self,
-        *,
-        stmt_handle: global___StatementHandle | None = ...,
-    ) -> None: ...
-    def HasField(self, field_name: typing.Literal["stmt_handle", b"stmt_handle"]) -> builtins.bool: ...
-    def ClearField(self, field_name: typing.Literal["stmt_handle", b"stmt_handle"]) -> None: ...
-
-global___StatementGetParameterSchemaRequest = StatementGetParameterSchemaRequest
-
-@typing.final
-class StatementGetParameterSchemaResponse(google.protobuf.message.Message):
-    DESCRIPTOR: google.protobuf.descriptor.Descriptor
-
-    SCHEMA_FIELD_NUMBER: builtins.int
-    @property
-    def schema(self) -> global___ArrowSchemaPtr: ...
+    STMT_HANDLE_FIELD_NUMBER: _builtins.int
+    KEY_FIELD_NUMBER: _builtins.int
+    VALUE_FIELD_NUMBER: _builtins.int
+    key: _builtins.str
+    value: _builtins.bytes
+    @_builtins.property
+    def stmt_handle(self) -> Global___StatementHandle: ...
     def __init__(
         self,
         *,
-        schema: global___ArrowSchemaPtr | None = ...,
+        stmt_handle: Global___StatementHandle | None = ...,
+        key: _builtins.str = ...,
+        value: _builtins.bytes = ...,
     ) -> None: ...
-    def HasField(self, field_name: typing.Literal["schema", b"schema"]) -> builtins.bool: ...
-    def ClearField(self, field_name: typing.Literal["schema", b"schema"]) -> None: ...
+    _HasFieldArgType: _TypeAlias = _typing.Literal["stmt_handle", b"stmt_handle"]  # noqa: Y015
+    def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["key", b"key", "stmt_handle", b"stmt_handle", "value", b"value"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
 
-global___StatementGetParameterSchemaResponse = StatementGetParameterSchemaResponse
+Global___StatementSetOptionBytesRequest: _TypeAlias = StatementSetOptionBytesRequest  # noqa: Y015
 
-@typing.final
-class StatementBindRequest(google.protobuf.message.Message):
-    DESCRIPTOR: google.protobuf.descriptor.Descriptor
+@_typing.final
+class StatementSetOptionBytesResponse(_message.Message):
+    DESCRIPTOR: _descriptor.Descriptor
 
-    STMT_HANDLE_FIELD_NUMBER: builtins.int
-    SCHEMA_FIELD_NUMBER: builtins.int
-    ARRAY_FIELD_NUMBER: builtins.int
-    @property
-    def stmt_handle(self) -> global___StatementHandle: ...
-    @property
-    def schema(self) -> global___ArrowSchemaPtr: ...
-    @property
-    def array(self) -> global___ArrowArrayPtr: ...
+    def __init__(
+        self,
+    ) -> None: ...
+
+Global___StatementSetOptionBytesResponse: _TypeAlias = StatementSetOptionBytesResponse  # noqa: Y015
+
+@_typing.final
+class StatementSetOptionIntRequest(_message.Message):
+    DESCRIPTOR: _descriptor.Descriptor
+
+    STMT_HANDLE_FIELD_NUMBER: _builtins.int
+    KEY_FIELD_NUMBER: _builtins.int
+    VALUE_FIELD_NUMBER: _builtins.int
+    key: _builtins.str
+    value: _builtins.int
+    @_builtins.property
+    def stmt_handle(self) -> Global___StatementHandle: ...
     def __init__(
         self,
         *,
-        stmt_handle: global___StatementHandle | None = ...,
-        schema: global___ArrowSchemaPtr | None = ...,
-        array: global___ArrowArrayPtr | None = ...,
+        stmt_handle: Global___StatementHandle | None = ...,
+        key: _builtins.str = ...,
+        value: _builtins.int = ...,
     ) -> None: ...
-    def HasField(self, field_name: typing.Literal["array", b"array", "schema", b"schema", "stmt_handle", b"stmt_handle"]) -> builtins.bool: ...
-    def ClearField(self, field_name: typing.Literal["array", b"array", "schema", b"schema", "stmt_handle", b"stmt_handle"]) -> None: ...
+    _HasFieldArgType: _TypeAlias = _typing.Literal["stmt_handle", b"stmt_handle"]  # noqa: Y015
+    def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["key", b"key", "stmt_handle", b"stmt_handle", "value", b"value"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
 
-global___StatementBindRequest = StatementBindRequest
+Global___StatementSetOptionIntRequest: _TypeAlias = StatementSetOptionIntRequest  # noqa: Y015
 
-@typing.final
-class StatementBindResponse(google.protobuf.message.Message):
-    DESCRIPTOR: google.protobuf.descriptor.Descriptor
+@_typing.final
+class StatementSetOptionIntResponse(_message.Message):
+    DESCRIPTOR: _descriptor.Descriptor
 
     def __init__(
         self,
     ) -> None: ...
 
-global___StatementBindResponse = StatementBindResponse
+Global___StatementSetOptionIntResponse: _TypeAlias = StatementSetOptionIntResponse  # noqa: Y015
 
-@typing.final
-class StatementBindStreamRequest(google.protobuf.message.Message):
-    DESCRIPTOR: google.protobuf.descriptor.Descriptor
+@_typing.final
+class StatementSetOptionDoubleRequest(_message.Message):
+    DESCRIPTOR: _descriptor.Descriptor
 
-    STMT_HANDLE_FIELD_NUMBER: builtins.int
-    STREAM_FIELD_NUMBER: builtins.int
-    stream: builtins.bytes
-    @property
-    def stmt_handle(self) -> global___StatementHandle: ...
-    def __init__(
-        self,
-        *,
-        stmt_handle: global___StatementHandle | None = ...,
-        stream: builtins.bytes = ...,
-    ) -> None: ...
-    def HasField(self, field_name: typing.Literal["stmt_handle", b"stmt_handle"]) -> builtins.bool: ...
-    def ClearField(self, field_name: typing.Literal["stmt_handle", b"stmt_handle", "stream", b"stream"]) -> None: ...
-
-global___StatementBindStreamRequest = StatementBindStreamRequest
-
-@typing.final
-class StatementBindStreamResponse(google.protobuf.message.Message):
-    DESCRIPTOR: google.protobuf.descriptor.Descriptor
-
-    def __init__(
-        self,
-    ) -> None: ...
-
-global___StatementBindStreamResponse = StatementBindStreamResponse
-
-@typing.final
-class StatementExecuteQueryRequest(google.protobuf.message.Message):
-    DESCRIPTOR: google.protobuf.descriptor.Descriptor
-
-    STMT_HANDLE_FIELD_NUMBER: builtins.int
-    @property
-    def stmt_handle(self) -> global___StatementHandle: ...
+    STMT_HANDLE_FIELD_NUMBER: _builtins.int
+    KEY_FIELD_NUMBER: _builtins.int
+    VALUE_FIELD_NUMBER: _builtins.int
+    key: _builtins.str
+    value: _builtins.float
+    @_builtins.property
+    def stmt_handle(self) -> Global___StatementHandle: ...
     def __init__(
         self,
         *,
-        stmt_handle: global___StatementHandle | None = ...,
+        stmt_handle: Global___StatementHandle | None = ...,
+        key: _builtins.str = ...,
+        value: _builtins.float = ...,
     ) -> None: ...
-    def HasField(self, field_name: typing.Literal["stmt_handle", b"stmt_handle"]) -> builtins.bool: ...
-    def ClearField(self, field_name: typing.Literal["stmt_handle", b"stmt_handle"]) -> None: ...
+    _HasFieldArgType: _TypeAlias = _typing.Literal["stmt_handle", b"stmt_handle"]  # noqa: Y015
+    def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["key", b"key", "stmt_handle", b"stmt_handle", "value", b"value"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
 
-global___StatementExecuteQueryRequest = StatementExecuteQueryRequest
+Global___StatementSetOptionDoubleRequest: _TypeAlias = StatementSetOptionDoubleRequest  # noqa: Y015
 
-@typing.final
-class StatementExecuteQueryResponse(google.protobuf.message.Message):
-    DESCRIPTOR: google.protobuf.descriptor.Descriptor
+@_typing.final
+class StatementSetOptionDoubleResponse(_message.Message):
+    DESCRIPTOR: _descriptor.Descriptor
 
-    RESULT_FIELD_NUMBER: builtins.int
-    @property
-    def result(self) -> global___ExecuteResult: ...
+    def __init__(
+        self,
+    ) -> None: ...
+
+Global___StatementSetOptionDoubleResponse: _TypeAlias = StatementSetOptionDoubleResponse  # noqa: Y015
+
+@_typing.final
+class StatementGetParameterSchemaRequest(_message.Message):
+    DESCRIPTOR: _descriptor.Descriptor
+
+    STMT_HANDLE_FIELD_NUMBER: _builtins.int
+    @_builtins.property
+    def stmt_handle(self) -> Global___StatementHandle: ...
     def __init__(
         self,
         *,
-        result: global___ExecuteResult | None = ...,
+        stmt_handle: Global___StatementHandle | None = ...,
     ) -> None: ...
-    def HasField(self, field_name: typing.Literal["result", b"result"]) -> builtins.bool: ...
-    def ClearField(self, field_name: typing.Literal["result", b"result"]) -> None: ...
+    _HasFieldArgType: _TypeAlias = _typing.Literal["stmt_handle", b"stmt_handle"]  # noqa: Y015
+    def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["stmt_handle", b"stmt_handle"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
 
-global___StatementExecuteQueryResponse = StatementExecuteQueryResponse
+Global___StatementGetParameterSchemaRequest: _TypeAlias = StatementGetParameterSchemaRequest  # noqa: Y015
 
-@typing.final
-class StatementExecutePartitionsRequest(google.protobuf.message.Message):
-    DESCRIPTOR: google.protobuf.descriptor.Descriptor
+@_typing.final
+class StatementGetParameterSchemaResponse(_message.Message):
+    DESCRIPTOR: _descriptor.Descriptor
 
-    STMT_HANDLE_FIELD_NUMBER: builtins.int
-    @property
-    def stmt_handle(self) -> global___StatementHandle: ...
+    SCHEMA_FIELD_NUMBER: _builtins.int
+    @_builtins.property
+    def schema(self) -> Global___ArrowSchemaPtr: ...
     def __init__(
         self,
         *,
-        stmt_handle: global___StatementHandle | None = ...,
+        schema: Global___ArrowSchemaPtr | None = ...,
     ) -> None: ...
-    def HasField(self, field_name: typing.Literal["stmt_handle", b"stmt_handle"]) -> builtins.bool: ...
-    def ClearField(self, field_name: typing.Literal["stmt_handle", b"stmt_handle"]) -> None: ...
+    _HasFieldArgType: _TypeAlias = _typing.Literal["schema", b"schema"]  # noqa: Y015
+    def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["schema", b"schema"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
 
-global___StatementExecutePartitionsRequest = StatementExecutePartitionsRequest
+Global___StatementGetParameterSchemaResponse: _TypeAlias = StatementGetParameterSchemaResponse  # noqa: Y015
 
-@typing.final
-class StatementExecutePartitionsResponse(google.protobuf.message.Message):
-    DESCRIPTOR: google.protobuf.descriptor.Descriptor
+@_typing.final
+class StatementBindRequest(_message.Message):
+    DESCRIPTOR: _descriptor.Descriptor
 
-    RESULT_FIELD_NUMBER: builtins.int
-    @property
-    def result(self) -> global___PartitionedResult: ...
+    STMT_HANDLE_FIELD_NUMBER: _builtins.int
+    SCHEMA_FIELD_NUMBER: _builtins.int
+    ARRAY_FIELD_NUMBER: _builtins.int
+    @_builtins.property
+    def stmt_handle(self) -> Global___StatementHandle: ...
+    @_builtins.property
+    def schema(self) -> Global___ArrowSchemaPtr: ...
+    @_builtins.property
+    def array(self) -> Global___ArrowArrayPtr: ...
     def __init__(
         self,
         *,
-        result: global___PartitionedResult | None = ...,
+        stmt_handle: Global___StatementHandle | None = ...,
+        schema: Global___ArrowSchemaPtr | None = ...,
+        array: Global___ArrowArrayPtr | None = ...,
     ) -> None: ...
-    def HasField(self, field_name: typing.Literal["result", b"result"]) -> builtins.bool: ...
-    def ClearField(self, field_name: typing.Literal["result", b"result"]) -> None: ...
+    _HasFieldArgType: _TypeAlias = _typing.Literal["array", b"array", "schema", b"schema", "stmt_handle", b"stmt_handle"]  # noqa: Y015
+    def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["array", b"array", "schema", b"schema", "stmt_handle", b"stmt_handle"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
 
-global___StatementExecutePartitionsResponse = StatementExecutePartitionsResponse
+Global___StatementBindRequest: _TypeAlias = StatementBindRequest  # noqa: Y015
 
-@typing.final
-class StatementReadPartitionRequest(google.protobuf.message.Message):
-    DESCRIPTOR: google.protobuf.descriptor.Descriptor
+@_typing.final
+class StatementBindResponse(_message.Message):
+    DESCRIPTOR: _descriptor.Descriptor
 
-    STMT_HANDLE_FIELD_NUMBER: builtins.int
-    PARTITION_DESCRIPTOR_FIELD_NUMBER: builtins.int
-    partition_descriptor: builtins.bytes
-    @property
-    def stmt_handle(self) -> global___StatementHandle: ...
+    def __init__(
+        self,
+    ) -> None: ...
+
+Global___StatementBindResponse: _TypeAlias = StatementBindResponse  # noqa: Y015
+
+@_typing.final
+class StatementBindStreamRequest(_message.Message):
+    DESCRIPTOR: _descriptor.Descriptor
+
+    STMT_HANDLE_FIELD_NUMBER: _builtins.int
+    STREAM_FIELD_NUMBER: _builtins.int
+    stream: _builtins.bytes
+    @_builtins.property
+    def stmt_handle(self) -> Global___StatementHandle: ...
     def __init__(
         self,
         *,
-        stmt_handle: global___StatementHandle | None = ...,
-        partition_descriptor: builtins.bytes = ...,
+        stmt_handle: Global___StatementHandle | None = ...,
+        stream: _builtins.bytes = ...,
     ) -> None: ...
-    def HasField(self, field_name: typing.Literal["stmt_handle", b"stmt_handle"]) -> builtins.bool: ...
-    def ClearField(self, field_name: typing.Literal["partition_descriptor", b"partition_descriptor", "stmt_handle", b"stmt_handle"]) -> None: ...
+    _HasFieldArgType: _TypeAlias = _typing.Literal["stmt_handle", b"stmt_handle"]  # noqa: Y015
+    def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["stmt_handle", b"stmt_handle", "stream", b"stream"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
 
-global___StatementReadPartitionRequest = StatementReadPartitionRequest
+Global___StatementBindStreamRequest: _TypeAlias = StatementBindStreamRequest  # noqa: Y015
 
-@typing.final
-class StatementReadPartitionResponse(google.protobuf.message.Message):
-    DESCRIPTOR: google.protobuf.descriptor.Descriptor
+@_typing.final
+class StatementBindStreamResponse(_message.Message):
+    DESCRIPTOR: _descriptor.Descriptor
 
-    PARTITION_STREAM_FIELD_NUMBER: builtins.int
-    partition_stream: builtins.int
+    def __init__(
+        self,
+    ) -> None: ...
+
+Global___StatementBindStreamResponse: _TypeAlias = StatementBindStreamResponse  # noqa: Y015
+
+@_typing.final
+class StatementExecuteQueryRequest(_message.Message):
+    DESCRIPTOR: _descriptor.Descriptor
+
+    STMT_HANDLE_FIELD_NUMBER: _builtins.int
+    @_builtins.property
+    def stmt_handle(self) -> Global___StatementHandle: ...
     def __init__(
         self,
         *,
-        partition_stream: builtins.int = ...,
+        stmt_handle: Global___StatementHandle | None = ...,
     ) -> None: ...
-    def ClearField(self, field_name: typing.Literal["partition_stream", b"partition_stream"]) -> None: ...
+    _HasFieldArgType: _TypeAlias = _typing.Literal["stmt_handle", b"stmt_handle"]  # noqa: Y015
+    def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["stmt_handle", b"stmt_handle"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
 
-global___StatementReadPartitionResponse = StatementReadPartitionResponse
+Global___StatementExecuteQueryRequest: _TypeAlias = StatementExecuteQueryRequest  # noqa: Y015
 
-SERVICE_ERROR_FIELD_NUMBER: builtins.int
-METHOD_ERROR_FIELD_NUMBER: builtins.int
-service_error: google.protobuf.internal.extension_dict._ExtensionFieldDescriptor[google.protobuf.descriptor_pb2.ServiceOptions, builtins.str]
-method_error: google.protobuf.internal.extension_dict._ExtensionFieldDescriptor[google.protobuf.descriptor_pb2.MethodOptions, builtins.str]
+@_typing.final
+class StatementExecuteQueryResponse(_message.Message):
+    DESCRIPTOR: _descriptor.Descriptor
+
+    RESULT_FIELD_NUMBER: _builtins.int
+    @_builtins.property
+    def result(self) -> Global___ExecuteResult: ...
+    def __init__(
+        self,
+        *,
+        result: Global___ExecuteResult | None = ...,
+    ) -> None: ...
+    _HasFieldArgType: _TypeAlias = _typing.Literal["result", b"result"]  # noqa: Y015
+    def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["result", b"result"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
+
+Global___StatementExecuteQueryResponse: _TypeAlias = StatementExecuteQueryResponse  # noqa: Y015
+
+@_typing.final
+class StatementExecutePartitionsRequest(_message.Message):
+    DESCRIPTOR: _descriptor.Descriptor
+
+    STMT_HANDLE_FIELD_NUMBER: _builtins.int
+    @_builtins.property
+    def stmt_handle(self) -> Global___StatementHandle: ...
+    def __init__(
+        self,
+        *,
+        stmt_handle: Global___StatementHandle | None = ...,
+    ) -> None: ...
+    _HasFieldArgType: _TypeAlias = _typing.Literal["stmt_handle", b"stmt_handle"]  # noqa: Y015
+    def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["stmt_handle", b"stmt_handle"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
+
+Global___StatementExecutePartitionsRequest: _TypeAlias = StatementExecutePartitionsRequest  # noqa: Y015
+
+@_typing.final
+class StatementExecutePartitionsResponse(_message.Message):
+    DESCRIPTOR: _descriptor.Descriptor
+
+    RESULT_FIELD_NUMBER: _builtins.int
+    @_builtins.property
+    def result(self) -> Global___PartitionedResult: ...
+    def __init__(
+        self,
+        *,
+        result: Global___PartitionedResult | None = ...,
+    ) -> None: ...
+    _HasFieldArgType: _TypeAlias = _typing.Literal["result", b"result"]  # noqa: Y015
+    def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["result", b"result"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
+
+Global___StatementExecutePartitionsResponse: _TypeAlias = StatementExecutePartitionsResponse  # noqa: Y015
+
+@_typing.final
+class StatementReadPartitionRequest(_message.Message):
+    DESCRIPTOR: _descriptor.Descriptor
+
+    STMT_HANDLE_FIELD_NUMBER: _builtins.int
+    PARTITION_DESCRIPTOR_FIELD_NUMBER: _builtins.int
+    partition_descriptor: _builtins.bytes
+    @_builtins.property
+    def stmt_handle(self) -> Global___StatementHandle: ...
+    def __init__(
+        self,
+        *,
+        stmt_handle: Global___StatementHandle | None = ...,
+        partition_descriptor: _builtins.bytes = ...,
+    ) -> None: ...
+    _HasFieldArgType: _TypeAlias = _typing.Literal["stmt_handle", b"stmt_handle"]  # noqa: Y015
+    def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["partition_descriptor", b"partition_descriptor", "stmt_handle", b"stmt_handle"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
+
+Global___StatementReadPartitionRequest: _TypeAlias = StatementReadPartitionRequest  # noqa: Y015
+
+@_typing.final
+class StatementReadPartitionResponse(_message.Message):
+    DESCRIPTOR: _descriptor.Descriptor
+
+    PARTITION_STREAM_FIELD_NUMBER: _builtins.int
+    partition_stream: _builtins.int
+    def __init__(
+        self,
+        *,
+        partition_stream: _builtins.int = ...,
+    ) -> None: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["partition_stream", b"partition_stream"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
+
+Global___StatementReadPartitionResponse: _TypeAlias = StatementReadPartitionResponse  # noqa: Y015
+
+SERVICE_ERROR_FIELD_NUMBER: _builtins.int
+METHOD_ERROR_FIELD_NUMBER: _builtins.int
+service_error: _extension_dict._ExtensionFieldDescriptor[_descriptor_pb2.ServiceOptions, _builtins.str]
+method_error: _extension_dict._ExtensionFieldDescriptor[_descriptor_pb2.MethodOptions, _builtins.str]
