@@ -502,7 +502,7 @@ use std::time::Instant;
 #[test]
 fn should_cleanup_all_tokens_on_close_regardless_of_whether_logout_was_sent() {
     //Given Snowflake client is logged in
-    //And server_session_keep_alive is set to any of (true, false, None)
+    //And <server_session_keep_alive> is set to any value
 
     for keep_alive in [Some(true), Some(false), None] {
         let client = SnowflakeTestClient::connect_with_default_auth();

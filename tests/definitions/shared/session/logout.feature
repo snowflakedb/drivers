@@ -11,11 +11,19 @@ Feature: Session Logout
 
   @core_e2e @python_e2e
   Scenario: should cleanup all tokens on close regardless of whether logout was sent
+    # Tests that tokens are cleared regardless of logout decision
     Given Snowflake client is logged in
-    And server_session_keep_alive is set to any of (true, false, None)
+    And <server_session_keep_alive> is set to any value
     When Connection is closed
     Then Session token is cleared
     And Master token is cleared
+
+    Examples:
+      | server_session_keep_alive |
+      | False                     |
+      | True                      |
+      | None                      |
+
 
   @core_e2e @python_e2e
   Scenario: should be idempotent when close called multiple times

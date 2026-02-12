@@ -12,25 +12,52 @@ Feature: Session Logout - JDBC-specific behavior
     Then Logout timeout of 300 seconds is passed to Core
     And Logout request uses 300 second timeout
 
-  # ===========================================================================
-  #                   Phase 2 Backward Compatibility Logic
-  # ===========================================================================
-  # Phase 2 (doc for: SNOW-2314152) behavior: JDBC defaults to auto-detection enabled
-  # when server_session_keep_alive is null. This will migrate to Phase 3
-  # behavior where null means "always logout". ODBC shows target behavior.
-
-  Scenario: should have Phase 2 defaults that enable auto_detection
-    # Phase 2 (doc for: SNOW-2314152) defaults for backward compatibility. Will change in Phase 3.
-    # JDBC Phase 2 defaults: server_session_keep_alive=null, enable_server_session_keep_alive_auto_detection=true
+  Scenario: should use strict error handling strategy by default
     Given Snowflake JDBC connection is created with default parameters
-    And server_session_keep_alive defaults to null
-    And enable_server_session_keep_alive_auto_detection defaults to true
-    When Connection connects and then closes
-    Then Auto-detection is performed
+    And Server will return 400 Bad Request error on logout
+    When Connection is closed
+    Then SQLException is thrown
+    And Error is propagated to caller
+    And close() method throws exception
+    And Error handling strategy is strict by default
 
   # ===========================================================================
-  #                   Phase 2 Truth Table - Explicit Tests
+  #                   Phase 2 Defaults and Truth Table
   # ===========================================================================
+  # "Phase 2" refers to the UD migration phase from SNOW-2314152 design doc.
+  # Phase 2: UD mirrors old JDBC behavior (auto-detection enabled by default).
+  # Phase 3: All drivers converge on unified model (auto-detection disabled by default).
+
+  Scenario: should have auto_detection enabled and server_session_keep_alive null by default
+    # Phase 2 (doc for: SNOW-2314152): JDBC defaults mirror old driver behavior
+    # server_session_keep_alive=null, enable_server_session_keep_alive_auto_detection=true
+    # Using these defaults emits deprecation warning because auto-detection
+    # will be switched off by default in the future (Phase 3)
+    Given Snowflake JDBC connection is created with default parameters
+    When Connection configuration is checked
+    Then server_session_keep_alive defaults to null
+    And enable_server_session_keep_alive_auto_detection defaults to true
+    When Connection is closed
+    Then Deprecation warning is logged
+    And Warning states that auto_detection will be disabled by default in the future
+
+  Scenario: should skip logout when server_session_keep_alive is true
+    # Phase 2 (doc for: SNOW-2314152) truth table: true + any → No logout
+    # Verifies JDBC correctly passes true to Core
+    Given Snowflake JDBC connection is created with server_session_keep_alive set to true
+    When Connection is closed
+    Then No logout request is sent
+    And server_session_keep_alive true is passed to Core
+
+  Scenario: should always send logout when server_session_keep_alive is false
+    # Phase 2 (doc for: SNOW-2314152) truth table: false + any → Always logout, ignore auto-detect
+    Given Snowflake JDBC connection is created with server_session_keep_alive set to false
+    And Long-running async query is executed using SYSTEM$SLEEP(300)
+    When Connection is closed
+    Then Auto-detection is not performed
+    And Logout request is sent
+    And No deprecation warning is emitted
+    And Test cleans up the running query after assertions complete
 
   Scenario: should skip logout when server_session_keep_alive is null and auto_detection true and async queries found
     # Phase 2 (doc for: SNOW-2314152) truth table: null + true + queries found → No logout + deprecation
@@ -66,26 +93,6 @@ Feature: Session Logout - JDBC-specific behavior
     And Logout request is sent
     And Connection close metrics are recorded in telemetry
     And No deprecation warning is emitted
-
-  # ===========================================================================
-  #                     JDBC-Specific Defaults
-  # ===========================================================================
-
-  Scenario: should have enable_server_session_keep_alive_auto_detection default to true
-    # Phase 2 (doc for: SNOW-2314152) default for backward compatibility. Phase 3 defaults to false.
-    Given Snowflake JDBC connection is created without enable_server_session_keep_alive_auto_detection property
-    When Connection configuration is checked
-    Then enable_server_session_keep_alive_auto_detection defaults to true
-    And Auto-detection is enabled by default
-
-  Scenario: should use strict error handling strategy by default
-    Given Snowflake JDBC connection is created with default parameters
-    And Server will return 400 Bad Request error on logout
-    When Connection is closed
-    Then SQLException is thrown
-    And Error is propagated to caller
-    And close() method throws exception
-    And Error handling strategy is strict by default
 
   # ===========================================================================
   #                         Resource Management
