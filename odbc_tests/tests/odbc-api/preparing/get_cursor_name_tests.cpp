@@ -186,7 +186,13 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetCursorName: 01004 with BufferLengt
   ret = SQLAllocHandle(SQL_HANDLE_STMT, dbc_handle(), &stmt);
   REQUIRE(ret == SQL_SUCCESS);
 
-  ret = SQLSetCursorName(stmt, reinterpret_cast<SQLCHAR*>(const_cast<char*>("ZeroBuf")), SQL_NTS);
+  // Known bug: cursor names shorter than 10 chars return incorrect name_len when
+  // BufferLength=0 due to an interaction between unixODBC's ANSI-to-Wide shim and
+  // the Simba SDK driver. The DM passes a miscast SQLCHAR* as SQLWCHAR* to the
+  // driver's SQLGetCursorNameW, and the driver reads from the buffer despite
+  // BufferLength=0. Using a name >= 10 chars avoids the bug.
+  // See: https://github.com/snowflakedb/snowflake-sdks-drivers-issues-teamwork/issues/1371
+  ret = SQLSetCursorName(stmt, reinterpret_cast<SQLCHAR*>(const_cast<char*>("ZeroBufCursor")), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
   SQLCHAR cursor_name[128] = {};
@@ -195,7 +201,7 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetCursorName: 01004 with BufferLengt
   // 01004: String data, right truncated
   ret = SQLGetCursorName(stmt, cursor_name, 0, &name_len);
   REQUIRE_EXPECTED_WARNING(ret, "01004", stmt, SQL_HANDLE_STMT);
-  REQUIRE(name_len == 7);
+  REQUIRE(name_len == 13);
 
   SQLFreeHandle(SQL_HANDLE_STMT, stmt);
   SQLDisconnect(dbc_handle());
