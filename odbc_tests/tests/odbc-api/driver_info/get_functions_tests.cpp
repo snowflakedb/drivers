@@ -4,8 +4,8 @@
 
 #include <catch2/catch_test_macros.hpp>
 
-#include "compatibility.hpp"
 #include "ODBCFixtures.hpp"
+#include "compatibility.hpp"
 #include "get_diag_rec.hpp"
 #include "test_macros.hpp"
 
@@ -106,13 +106,15 @@ static const FunctionTest ALL_ODBC_FUNCTIONS[] = {
 // SQLGetFunctions - Basic Functionality
 // ============================================================================
 
-TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetFunctions: Returns all supported functions with SQL_API_ODBC3_ALL_FUNCTIONS",
+TEST_CASE_METHOD(DbcDefaultDSNFixture,
+                 "SQLGetFunctions: Returns all supported functions with SQL_API_ODBC3_ALL_FUNCTIONS",
                  "[odbc-api][getfunctions][driver_info]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   // Note: Reference driver requires an active connection
-  SQLRETURN ret = SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(config.value().dsn_name().c_str())),
-                             SQL_NTS, nullptr, 0, nullptr, 0);
+  SQLRETURN ret =
+      SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(config.value().dsn_name().c_str())),
+                 SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
   SQLUSMALLINT supported[SQL_API_ODBC3_ALL_FUNCTIONS_SIZE] = {};
@@ -127,16 +129,18 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetFunctions: Returns all supported f
   SQLDisconnect(dbc_handle());
 }
 
-TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetFunctions: Returns all supported functions with SQL_API_ALL_FUNCTIONS (ODBC 2.x)",
+TEST_CASE_METHOD(DbcDefaultDSNFixture,
+                 "SQLGetFunctions: Returns all supported functions with SQL_API_ALL_FUNCTIONS (ODBC 2.x)",
                  "[odbc-api][getfunctions][driver_info]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   // Note: Reference driver requires an active connection
-  SQLRETURN ret = SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(config.value().dsn_name().c_str())),
-                             SQL_NTS, nullptr, 0, nullptr, 0);
+  SQLRETURN ret =
+      SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(config.value().dsn_name().c_str())),
+                 SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
-  SQLUSMALLINT supported[100] = {}; // Size must be at least the largest function ID in ALL_ODBC_FUNCTIONS
+  SQLUSMALLINT supported[100] = {};  // Size must be at least the largest function ID in ALL_ODBC_FUNCTIONS
 
   ret = SQLGetFunctions(dbc_handle(), SQL_API_ALL_FUNCTIONS, supported);
   REQUIRE(ret == SQL_SUCCESS);
@@ -155,8 +159,9 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetFunctions: Correctly reports unsup
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   // Note: Reference driver requires an active connection
-  SQLRETURN ret = SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(config.value().dsn_name().c_str())),
-                             SQL_NTS, nullptr, 0, nullptr, 0);
+  SQLRETURN ret =
+      SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(config.value().dsn_name().c_str())),
+                 SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
   SQLUSMALLINT supported = SQL_TRUE;
@@ -186,7 +191,7 @@ TEST_CASE("SQLGetFunctions: SQL_INVALID_HANDLE - NULL connection handle",
 }
 
 TEST_CASE_METHOD(EnvFixture, "SQLGetFunctions: SQL_INVALID_HANDLE - Invalid handle type",
-          "[odbc-api][getfunctions][driver_info][error]") {
+                 "[odbc-api][getfunctions][driver_info][error]") {
   SQLUSMALLINT supported = SQL_FALSE;
   const SQLRETURN ret = SQLGetFunctions(env_handle(), SQL_API_SQLCONNECT, &supported);
   REQUIRE(ret == SQL_INVALID_HANDLE);
@@ -199,8 +204,9 @@ TEST_CASE_METHOD(EnvFixture, "SQLGetFunctions: SQL_INVALID_HANDLE - Invalid hand
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetFunctions: Accepts NULL output pointer",
                  "[odbc-api][getfunctions][driver_info]") {
   // Note: Reference driver requires an active connection
-  SQLRETURN ret = SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(config.value().dsn_name().c_str())),
-                             SQL_NTS, nullptr, 0, nullptr, 0);
+  SQLRETURN ret =
+      SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(config.value().dsn_name().c_str())),
+                 SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
   // Note: Reference driver returns SUCCESS for NULL pointer (differs from ODBC spec)
@@ -213,8 +219,9 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetFunctions: Accepts NULL output poi
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetFunctions: HY095 - Invalid FunctionId",
                  "[odbc-api][getfunctions][driver_info][error]") {
   // Note: Reference driver requires an active connection
-  SQLRETURN ret = SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(config.value().dsn_name().c_str())),
-                             SQL_NTS, nullptr, 0, nullptr, 0);
+  SQLRETURN ret =
+      SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(config.value().dsn_name().c_str())),
+                 SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
   SQLUSMALLINT supported = SQL_FALSE;
@@ -245,8 +252,8 @@ TEST_CASE_METHOD(DbcFixture, "SQLGetFunctions: Requires active connection",
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetFunctions: Can be called after connection established",
                  "[odbc-api][getfunctions][driver_info]") {
   const std::string dsn = config.value().dsn_name();
-  SQLRETURN ret = SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(dsn.c_str())), SQL_NTS,
-                             nullptr, 0, nullptr, 0);
+  SQLRETURN ret = SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(dsn.c_str())), SQL_NTS, nullptr,
+                             0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
   SQLUSMALLINT supported = SQL_FALSE;
@@ -266,8 +273,9 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetFunctions: All known supported fun
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   // Note: Reference driver requires an active connection
-  SQLRETURN ret = SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(config.value().dsn_name().c_str())),
-                             SQL_NTS, nullptr, 0, nullptr, 0);
+  SQLRETURN ret =
+      SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(config.value().dsn_name().c_str())),
+                 SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
   for (const auto& func : ALL_ODBC_FUNCTIONS) {

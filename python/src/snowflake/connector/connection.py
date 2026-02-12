@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from snowflake.connector._internal.protobuf_gen.database_driver_v1_services import (  # type: ignore[attr-defined]
+from snowflake.connector._internal.protobuf_gen.database_driver_v1_services import (
     ConnectionGetParameterRequest,
     ConnectionInitRequest,
     ConnectionNewRequest,
@@ -50,7 +50,7 @@ class Connection:
         self.conn_handle = self.db_api.connection_new(ConnectionNewRequest()).conn_handle
 
         # Extract session_parameters before processing other kwargs
-        session_params = kwargs.pop('session_parameters', None)
+        session_params = kwargs.pop("session_parameters", None)
 
         # Pre-process private_key if present - normalize for Rust core
         if "private_key" in kwargs:
@@ -80,10 +80,7 @@ class Connection:
         # Set session parameters if provided (before connection_init)
         if session_params:
             self.db_api.connection_set_session_parameters(
-                ConnectionSetSessionParametersRequest(
-                    conn_handle=self.conn_handle,
-                    parameters=session_params
-                )
+                ConnectionSetSessionParametersRequest(conn_handle=self.conn_handle, parameters=session_params)
             )
 
         self.db_api.connection_init(ConnectionInitRequest(conn_handle=self.conn_handle, db_handle=self.db_handle))
@@ -248,9 +245,6 @@ class Connection:
         Returns:
             str | None: The parameter value, or None if not found
         """
-        request = ConnectionGetParameterRequest(
-            conn_handle=self.conn_handle,
-            key=name
-        )
+        request = ConnectionGetParameterRequest(conn_handle=self.conn_handle, key=name)
         response = self.db_api.connection_get_parameter(request)
         return response.value if response.value else None

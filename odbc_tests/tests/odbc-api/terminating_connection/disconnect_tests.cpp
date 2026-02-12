@@ -4,10 +4,10 @@
 
 #include <catch2/catch_test_macros.hpp>
 
-#include "compatibility.hpp"
 #include "Connection.hpp"
 #include "ODBCConfig.hpp"
 #include "ODBCFixtures.hpp"
+#include "compatibility.hpp"
 #include "get_diag_rec.hpp"
 #include "test_macros.hpp"
 #include "test_setup.hpp"
@@ -21,8 +21,9 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDisconnect: Successfully disconnects 
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   // Connect first
-  SQLRETURN ret = SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(config.value().dsn_name().c_str())),
-                             SQL_NTS, nullptr, 0, nullptr, 0);
+  SQLRETURN ret =
+      SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(config.value().dsn_name().c_str())),
+                 SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
   ret = SQLDisconnect(dbc_handle());
@@ -39,8 +40,9 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDisconnect: Can reconnect after disco
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   // Connect, disconnect, reconnect
-  SQLRETURN ret = SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(config.value().dsn_name().c_str())),
-                             SQL_NTS, nullptr, 0, nullptr, 0);
+  SQLRETURN ret =
+      SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(config.value().dsn_name().c_str())),
+                 SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
   ret = SQLDisconnect(dbc_handle());
@@ -53,9 +55,9 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDisconnect: Can reconnect after disco
   SQLHSTMT stmt = SQL_NULL_HSTMT;
   ret = SQLAllocHandle(SQL_HANDLE_STMT, dbc_handle(), &stmt);
   REQUIRE(ret == SQL_SUCCESS);
-  
+
   SQLFreeHandle(SQL_HANDLE_STMT, stmt);
-  
+
   ret = SQLDisconnect(dbc_handle());
   REQUIRE(ret == SQL_SUCCESS);
 }
@@ -65,8 +67,9 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDisconnect: Idempotency of multiple d
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   // Connect first
-  SQLRETURN ret = SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(config.value().dsn_name().c_str())),
-                             SQL_NTS, nullptr, 0, nullptr, 0);
+  SQLRETURN ret =
+      SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(config.value().dsn_name().c_str())),
+                 SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
   // First disconnect
@@ -89,8 +92,9 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDisconnect: Closes open statements au
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   // Connect
-  SQLRETURN ret = SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(config.value().dsn_name().c_str())),
-                             SQL_NTS, nullptr, 0, nullptr, 0);
+  SQLRETURN ret =
+      SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(config.value().dsn_name().c_str())),
+                 SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
   // Allocate statement
@@ -112,14 +116,15 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDisconnect: Handles active transactio
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   // Connect with manual commit mode
-  SQLRETURN ret = SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(config.value().dsn_name().c_str())),
-                             SQL_NTS, nullptr, 0, nullptr, 0);
+  SQLRETURN ret =
+      SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(config.value().dsn_name().c_str())),
+                 SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
   // Set manual commit mode
   ret = SQLSetConnectAttr(dbc_handle(), SQL_ATTR_AUTOCOMMIT, SQL_AUTOCOMMIT_OFF, 0);
   REQUIRE(ret == SQL_SUCCESS);
-  
+
   // Execute a statement to start transaction
   SQLHSTMT stmt = SQL_NULL_HSTMT;
   ret = SQLAllocHandle(SQL_HANDLE_STMT, dbc_handle(), &stmt);
@@ -127,16 +132,16 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDisconnect: Handles active transactio
 
   ret = SQLExecDirect(stmt, reinterpret_cast<SQLCHAR*>(const_cast<char*>("SELECT 1")), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
-  
+
   SQLFreeHandle(SQL_HANDLE_STMT, stmt);
-  
+
   // Note: Reference driver requires explicit transaction cleanup before disconnecting
   ret = SQLDisconnect(dbc_handle());
   REQUIRE(ret == SQL_ERROR);
-  
+
   ret = SQLEndTran(SQL_HANDLE_DBC, dbc_handle(), SQL_ROLLBACK);
   REQUIRE(ret == SQL_SUCCESS);
-  
+
   ret = SQLDisconnect(dbc_handle());
   REQUIRE(ret == SQL_SUCCESS);
 }
@@ -146,8 +151,9 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDisconnect: With active result sets",
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   // Connect
-  SQLRETURN ret = SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(config.value().dsn_name().c_str())),
-                             SQL_NTS, nullptr, 0, nullptr, 0);
+  SQLRETURN ret =
+      SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(config.value().dsn_name().c_str())),
+                 SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
   // Execute query with result set
@@ -157,11 +163,11 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDisconnect: With active result sets",
 
   ret = SQLExecDirect(stmt, reinterpret_cast<SQLCHAR*>(const_cast<char*>("SELECT 1")), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
-  
+
   // Note: Reference driver allows disconnecting with active result sets
   ret = SQLDisconnect(dbc_handle());
   REQUIRE(ret == SQL_SUCCESS);
-  
+
   ret = SQLFreeHandle(SQL_HANDLE_STMT, stmt);
   REQUIRE(ret == SQL_INVALID_HANDLE);
 }
@@ -206,7 +212,8 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDisconnect: After failed connection a
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   // Attempt to connect with invalid credentials
-  SQLRETURN ret = SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>("InvalidDSN")), SQL_NTS, nullptr, 0, nullptr, 0);
+  SQLRETURN ret = SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>("InvalidDSN")), SQL_NTS,
+                             nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_ERROR);
 
   // Note: Reference driver returns error (08003: Connection not open)
@@ -219,8 +226,9 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDisconnect: With multiple statement h
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   // Connect
-  SQLRETURN ret = SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(config.value().dsn_name().c_str())),
-                             SQL_NTS, nullptr, 0, nullptr, 0);
+  SQLRETURN ret =
+      SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(config.value().dsn_name().c_str())),
+                 SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
   // Allocate multiple statements
@@ -234,13 +242,13 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDisconnect: With multiple statement h
 
   ret = SQLDisconnect(dbc_handle());
   REQUIRE(ret == SQL_SUCCESS);
-  
+
   ret = SQLExecDirect(stmt1, reinterpret_cast<SQLCHAR*>(const_cast<char*>("SELECT 1")), SQL_NTS);
   REQUIRE(ret == SQL_INVALID_HANDLE);
-  
+
   ret = SQLExecDirect(stmt2, reinterpret_cast<SQLCHAR*>(const_cast<char*>("SELECT 1")), SQL_NTS);
   REQUIRE(ret == SQL_INVALID_HANDLE);
-  
+
   ret = SQLExecDirect(stmt3, reinterpret_cast<SQLCHAR*>(const_cast<char*>("SELECT 1")), SQL_NTS);
   REQUIRE(ret == SQL_INVALID_HANDLE);
 }
@@ -250,8 +258,9 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDisconnect: Preserves connection hand
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   // Connect, disconnect, verify handle can be reused
-  SQLRETURN ret = SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(config.value().dsn_name().c_str())),
-                             SQL_NTS, nullptr, 0, nullptr, 0);
+  SQLRETURN ret =
+      SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(config.value().dsn_name().c_str())),
+                 SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
   ret = SQLDisconnect(dbc_handle());
@@ -261,7 +270,7 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDisconnect: Preserves connection hand
   SQLUINTEGER timeout = 0;
   ret = SQLGetConnectAttr(dbc_handle(), SQL_ATTR_CONNECTION_TIMEOUT, &timeout, 0, nullptr);
   REQUIRE(ret == SQL_ERROR);
-  
+
   ret = SQLSetConnectAttr(dbc_handle(), SQL_ATTR_CONNECTION_TIMEOUT, reinterpret_cast<SQLPOINTER>(30), 0);
   REQUIRE(ret == SQL_SUCCESS);
 }
@@ -275,27 +284,29 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDisconnect: Clears previous diagnosti
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   // Connect
-  SQLRETURN ret = SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(config.value().dsn_name().c_str())),
-                             SQL_NTS, nullptr, 0, nullptr, 0);
+  SQLRETURN ret =
+      SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(config.value().dsn_name().c_str())),
+                 SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
   // Cause an error to populate diagnostic records
   SQLHSTMT stmt = SQL_NULL_HSTMT;
   ret = SQLAllocHandle(SQL_HANDLE_STMT, dbc_handle(), &stmt);
   REQUIRE(ret == SQL_SUCCESS);
-  
+
   // Execute invalid SQL
   ret = SQLExecDirect(stmt, reinterpret_cast<SQLCHAR*>(const_cast<char*>("INVALID SQL STATEMENT")), SQL_NTS);
   REQUIRE(ret == SQL_ERROR);
-  
+
   SQLCHAR temp_sqlstate[6];
   SQLINTEGER temp_native_error;
   SQLCHAR temp_message[256];
   SQLSMALLINT temp_message_len;
-  
-  ret = SQLGetDiagRec(SQL_HANDLE_STMT, stmt, 1, temp_sqlstate, &temp_native_error, temp_message, sizeof(temp_message), &temp_message_len);
+
+  ret = SQLGetDiagRec(SQL_HANDLE_STMT, stmt, 1, temp_sqlstate, &temp_native_error, temp_message, sizeof(temp_message),
+                      &temp_message_len);
   REQUIRE(ret == SQL_SUCCESS);
-  
+
   SQLFreeHandle(SQL_HANDLE_STMT, stmt);
 
   ret = SQLDisconnect(dbc_handle());
@@ -306,7 +317,7 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDisconnect: Clears previous diagnosti
   SQLINTEGER native_error;
   SQLCHAR message[256];
   SQLSMALLINT message_len;
-  
+
   ret = SQLGetDiagRec(SQL_HANDLE_DBC, dbc_handle(), 1, sqlstate, &native_error, message, sizeof(message), &message_len);
   REQUIRE(ret == SQL_NO_DATA);
 }
