@@ -158,14 +158,41 @@ pub fn set_desc_field(
         let column_number = rec_number as u16;
 
         match field {
-            DescField::Precision | DescField::Scale | DescField::DataPtr => {
+            DescField::Precision => {
+                let precision = value_ptr as i16;
                 tracing::debug!(
-                    "set_desc_field: setting field {:?} on record {} (no-op for now)",
-                    field,
-                    column_number
+                    "set_desc_field: setting precision={precision} on record {column_number}"
                 );
-                // For now, these are accepted but not stored separately
-                // The values are already stored in the Binding via SQLBindCol
+                if let Some(binding) = desc.bindings.get_mut(&column_number) {
+                    binding.precision = Some(precision);
+                } else {
+                    tracing::warn!(
+                        "set_desc_field: no binding for record {column_number}, ignoring precision"
+                    );
+                }
+                Ok(())
+            }
+            DescField::Scale => {
+                let scale = value_ptr as i16;
+                tracing::debug!("set_desc_field: setting scale={scale} on record {column_number}");
+                if let Some(binding) = desc.bindings.get_mut(&column_number) {
+                    binding.scale = Some(scale);
+                } else {
+                    tracing::warn!(
+                        "set_desc_field: no binding for record {column_number}, ignoring scale"
+                    );
+                }
+                Ok(())
+            }
+            DescField::DataPtr => {
+                tracing::debug!("set_desc_field: setting data_ptr on record {column_number}");
+                if let Some(binding) = desc.bindings.get_mut(&column_number) {
+                    binding.target_value_ptr = value_ptr;
+                } else {
+                    tracing::warn!(
+                        "set_desc_field: no binding for record {column_number}, ignoring data_ptr"
+                    );
+                }
                 Ok(())
             }
             _ => {

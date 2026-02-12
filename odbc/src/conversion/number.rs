@@ -1,8 +1,11 @@
 use arrow::array::{Array, ArrowPrimitiveType, PrimitiveArray};
+use odbc_sys as sql;
 use odbc_sys::Len;
 
 use crate::cdata_types::CDataType;
-use crate::conversion::error::{ReadArrowError, UnsupportedOdbcTypeSnafu, WriteOdbcError};
+use crate::conversion::error::{
+    InvalidValueSnafu, ReadArrowError, UnsupportedOdbcTypeSnafu, WriteOdbcError,
+};
 use crate::conversion::traits::Binding;
 use crate::conversion::warning::Warnings;
 use crate::conversion::{ReadArrowType, SnowflakeType, WriteODBCType};
@@ -71,6 +74,48 @@ impl WriteODBCType for SnowflakeNumber {
             CDataType::SBigInt | CDataType::UBigInt => {
                 let int_value = (snowflake_value as i64) / 10i64.pow(self.scale);
                 binding.write_fixed(int_value);
+                Ok(vec![])
+            }
+            CDataType::Numeric => {
+                // The application must set SQL_DESC_PRECISION and SQL_DESC_SCALE on the ARD
+                // via SQLSetDescField before fetching SQL_C_NUMERIC data.
+                let target_precision = binding.precision.ok_or_else(|| {
+                    InvalidValueSnafu {
+                        reason:
+                            "SQL_DESC_PRECISION must be set on the ARD for SQL_C_NUMERIC bindings"
+                                .to_string(),
+                    }
+                    .build()
+                })?;
+                let target_scale = binding.scale.ok_or_else(|| {
+                    InvalidValueSnafu {
+                        reason: "SQL_DESC_SCALE must be set on the ARD for SQL_C_NUMERIC bindings"
+                            .to_string(),
+                    }
+                    .build()
+                })?;
+
+                let is_negative = snowflake_value < 0;
+                let abs_value = snowflake_value.unsigned_abs();
+
+                // Rescale: convert from Snowflake scale to target scale.
+                // unscaled_target = abs_value * 10^(target_scale - snowflake_scale)
+                let scale_diff = target_scale as i32 - self.scale as i32;
+                let unscaled: u128 = if scale_diff >= 0 {
+                    abs_value * 10u128.pow(scale_diff as u32)
+                } else {
+                    abs_value / 10u128.pow((-scale_diff) as u32)
+                };
+
+                // Build the SQL_NUMERIC_STRUCT (odbc_sys::Numeric)
+                let numeric = sql::Numeric {
+                    precision: target_precision as u8,
+                    scale: target_scale as i8,
+                    sign: if is_negative { 0 } else { 1 },
+                    val: unscaled.to_le_bytes(),
+                };
+
+                binding.write_fixed(numeric);
                 Ok(vec![])
             }
             CDataType::Char => {

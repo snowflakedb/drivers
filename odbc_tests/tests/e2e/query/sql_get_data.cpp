@@ -944,7 +944,6 @@ TEST_CASE("SQLGetData returns 24000 when cursor is positioned after end of resul
 // =============================================================================
 
 TEST_CASE("SQLGetData supports SQL_C_CHAR retrieval.", "[query][get_data]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "TargetType [Input] The type identifier of the C data type of the
   //       *TargetValuePtr buffer."
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlgetdata-function#arguments
@@ -965,7 +964,6 @@ TEST_CASE("SQLGetData supports SQL_C_CHAR retrieval.", "[query][get_data]") {
 }
 
 TEST_CASE("SQLGetData supports SQL_C_SBIGINT retrieval.", "[query][get_data]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "TargetType [Input] The type identifier of the C data type of the
   //       *TargetValuePtr buffer."
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlgetdata-function#arguments
@@ -986,7 +984,6 @@ TEST_CASE("SQLGetData supports SQL_C_SBIGINT retrieval.", "[query][get_data]") {
 }
 
 TEST_CASE("SQLGetData supports SQL_C_DOUBLE retrieval.", "[query][get_data]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "TargetType [Input] The type identifier of the C data type of the
   //       *TargetValuePtr buffer."
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlgetdata-function#arguments
@@ -1007,7 +1004,6 @@ TEST_CASE("SQLGetData supports SQL_C_DOUBLE retrieval.", "[query][get_data]") {
 }
 
 TEST_CASE("SQLGetData supports SQL_C_FLOAT retrieval.", "[query][get_data]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "TargetType [Input] The type identifier of the C data type of the
   //       *TargetValuePtr buffer."
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlgetdata-function#arguments
@@ -1028,7 +1024,6 @@ TEST_CASE("SQLGetData supports SQL_C_FLOAT retrieval.", "[query][get_data]") {
 }
 
 TEST_CASE("SQLGetData supports SQL_C_SHORT retrieval.", "[query][get_data]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "TargetType [Input] The type identifier of the C data type of the
   //       *TargetValuePtr buffer."
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlgetdata-function#arguments
@@ -1049,7 +1044,6 @@ TEST_CASE("SQLGetData supports SQL_C_SHORT retrieval.", "[query][get_data]") {
 }
 
 TEST_CASE("SQLGetData supports SQL_C_BIT retrieval.", "[query][get_data]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "TargetType [Input] The type identifier of the C data type of the
   //       *TargetValuePtr buffer."
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlgetdata-function#arguments
@@ -1069,7 +1063,6 @@ TEST_CASE("SQLGetData supports SQL_C_BIT retrieval.", "[query][get_data]") {
 }
 
 TEST_CASE("SQLGetData supports SQL_C_TYPE_DATE retrieval.", "[query][get_data]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "TargetType [Input] The type identifier of the C data type of the
   //       *TargetValuePtr buffer."
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlgetdata-function#arguments
@@ -1091,7 +1084,6 @@ TEST_CASE("SQLGetData supports SQL_C_TYPE_DATE retrieval.", "[query][get_data]")
 }
 
 TEST_CASE("SQLGetData supports SQL_C_TYPE_TIMESTAMP retrieval.", "[query][get_data]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "TargetType [Input] The type identifier of the C data type of the
   //       *TargetValuePtr buffer."
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlgetdata-function#arguments
@@ -1116,7 +1108,6 @@ TEST_CASE("SQLGetData supports SQL_C_TYPE_TIMESTAMP retrieval.", "[query][get_da
 }
 
 TEST_CASE("SQLGetData supports SQL_C_BINARY retrieval.", "[query][get_data]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "TargetType [Input] The type identifier of the C data type of the
   //       *TargetValuePtr buffer."
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlgetdata-function#arguments
@@ -1689,7 +1680,6 @@ TEST_CASE("SQLGetData with BufferLength 1 for character data returns only null t
 // =============================================================================
 
 TEST_CASE("SQLGetData converts same integer to multiple C types.", "[query][get_data]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "Converts the data to the type specified in TargetType."
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlgetdata-function#retrieving-data-with-sqlgetdata
 

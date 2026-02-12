@@ -4,13 +4,17 @@ mod parsers;
 mod traits;
 pub mod warning;
 
+mod binary;
+mod boolean;
+mod date;
 mod nullable;
 mod number;
+mod timestamp;
 mod varchar;
 
 use arrow::array::Array;
 use arrow::datatypes::{
-    DataType, Decimal128Type, Field, Int8Type, Int16Type, Int32Type, Int64Type,
+    DataType, Date32Type, Decimal128Type, Field, Int8Type, Int16Type, Int32Type, Int64Type,
 };
 use snafu::ResultExt;
 pub use traits::{Binding, ReadArrowType, SnowflakeType, WriteODBCType};
@@ -88,7 +92,7 @@ macro_rules! make_converter {
     }};
 }
 
-macro_rules! make_number_converter {
+macro_rules! make_primitive_data_converter {
     ($arrow_type:ty, $snowflake_type:expr, $arrow_array:expr, $nullable:expr) => {{
         make_converter!(
             arrow::array::PrimitiveArray<$arrow_type>,
@@ -145,25 +149,61 @@ pub fn make_converter<'a>(
             let snowflake_type = number::SnowflakeNumber { scale, precision };
             match field.data_type() {
                 DataType::Int8 => {
-                    make_number_converter!(Int8Type, snowflake_type, arrow_array, nullable)
+                    make_primitive_data_converter!(Int8Type, snowflake_type, arrow_array, nullable)
                 }
                 DataType::Int16 => {
-                    make_number_converter!(Int16Type, snowflake_type, arrow_array, nullable)
+                    make_primitive_data_converter!(Int16Type, snowflake_type, arrow_array, nullable)
                 }
                 DataType::Int32 => {
-                    make_number_converter!(Int32Type, snowflake_type, arrow_array, nullable)
+                    make_primitive_data_converter!(Int32Type, snowflake_type, arrow_array, nullable)
                 }
                 DataType::Int64 => {
-                    make_number_converter!(Int64Type, snowflake_type, arrow_array, nullable)
+                    make_primitive_data_converter!(Int64Type, snowflake_type, arrow_array, nullable)
                 }
                 DataType::Decimal128(_, _) => {
-                    make_number_converter!(Decimal128Type, snowflake_type, arrow_array, nullable)
+                    make_primitive_data_converter!(
+                        Decimal128Type,
+                        snowflake_type,
+                        arrow_array,
+                        nullable
+                    )
                 }
                 dt => UnsupportedArrowDataTypeSnafu {
                     data_type: dt.clone(),
                 }
                 .fail(),
             }
+        }
+        ("DATE", DataType::Date32) => {
+            let snowflake_type = date::SnowflakeDate;
+            make_primitive_data_converter!(Date32Type, snowflake_type, arrow_array, nullable)
+        }
+        ("TIMESTAMP_NTZ", DataType::Struct(_)) => {
+            let snowflake_type = timestamp::SnowflakeTimestampNtz;
+            make_converter!(
+                arrow::array::StructArray,
+                snowflake_type,
+                arrow_array,
+                nullable
+            )
+        }
+        ("BOOLEAN", DataType::Boolean) => {
+            let snowflake_type = boolean::SnowflakeBoolean;
+            make_converter!(
+                arrow::array::BooleanArray,
+                snowflake_type,
+                arrow_array,
+                nullable
+            )
+        }
+        ("BINARY", DataType::Binary) => {
+            let snowflake_type = binary::SnowflakeBinary;
+            make_converter!(
+                arrow::array::GenericByteArray<arrow::datatypes::GenericBinaryType<i32>>,
+                snowflake_type,
+                arrow_array,
+                nullable
+            )
         }
         (lt, dt) => IncompatibleFieldMetadataSnafu {
             logical_type: lt.to_string(),

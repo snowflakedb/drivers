@@ -10,6 +10,12 @@ pub struct Binding {
     pub target_value_ptr: sql::Pointer,
     pub buffer_length: sql::Len,
     pub str_len_or_ind_ptr: *mut sql::Len,
+    /// Numeric precision, set via SQLSetDescField(SQL_DESC_PRECISION) on the ARD.
+    /// Used for SQL_C_NUMERIC conversions.
+    pub precision: Option<i16>,
+    /// Numeric scale, set via SQLSetDescField(SQL_DESC_SCALE) on the ARD.
+    /// Used for SQL_C_NUMERIC conversions.
+    pub scale: Option<i16>,
 }
 
 impl Binding {

@@ -285,6 +285,8 @@ pub fn bind_col(
                 target_value_ptr,
                 buffer_length,
                 str_len_or_ind_ptr,
+                precision: None,
+                scale: None,
             },
         );
     }

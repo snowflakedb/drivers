@@ -13,24 +13,13 @@ use snafu::ResultExt;
 use tracing;
 
 fn read_arrow_value(
-    target_type: CDataType,
-    target_value_ptr: sql::Pointer,
-    buffer_length: sql::Len,
-    str_len_or_ind_ptr: *mut sql::Len,
+    binding: &Binding,
     array_ref: &dyn Array,
     field: &Field,
     batch_idx: usize,
 ) -> Result<Warnings, ConversionError> {
     let converter = make_converter(field, array_ref)?;
-    let warnings = converter.convert_arrow_value(
-        batch_idx,
-        &Binding {
-            target_type,
-            target_value_ptr,
-            buffer_length,
-            str_len_or_ind_ptr,
-        },
-    )?;
+    let warnings = converter.convert_arrow_value(batch_idx, binding)?;
     Ok(warnings)
 }
 
@@ -137,16 +126,8 @@ fn execute_bindings(stmt: &mut Statement) -> OdbcResult<Warnings> {
                 column_number,
                 binding
             );
-            let conversion_warnings = read_arrow_value(
-                binding.target_type,
-                binding.target_value_ptr,
-                binding.buffer_length,
-                binding.str_len_or_ind_ptr,
-                array_ref,
-                field,
-                *batch_idx,
-            )
-            .context(ConversionSnafu)?;
+            let conversion_warnings =
+                read_arrow_value(binding, array_ref, field, *batch_idx).context(ConversionSnafu)?;
             tracing::debug!(
                 "execute_bindings: column_number={}, binding={:?}, conversion_warnings={:?}",
                 column_number,
@@ -181,16 +162,16 @@ pub fn get_data(
             let schema = record_batch.schema();
             let field = schema.field((col_or_param_num - 1) as usize);
 
-            let conversion_warnings = read_arrow_value(
+            let binding = Binding {
                 target_type,
                 target_value_ptr,
                 buffer_length,
                 str_len_or_ind_ptr,
-                array_ref,
-                field,
-                *batch_idx,
-            )
-            .context(ConversionSnafu)?;
+                precision: None,
+                scale: None,
+            };
+            let conversion_warnings = read_arrow_value(&binding, array_ref, field, *batch_idx)
+                .context(ConversionSnafu)?;
 
             warnings.extend(conversion_warnings);
             Ok(())
@@ -258,15 +239,15 @@ mod tests {
             let mut buffer = vec![0u8; 32];
             let mut str_len: sql::Len = 0;
 
-            let result = read_arrow_value(
-                CDataType::Char,
-                buffer.as_mut_ptr() as sql::Pointer,
-                buffer.len() as sql::Len,
-                &mut str_len,
-                &array,
-                &field,
-                0,
-            );
+            let binding = Binding {
+                target_type: CDataType::Char,
+                target_value_ptr: buffer.as_mut_ptr() as sql::Pointer,
+                buffer_length: buffer.len() as sql::Len,
+                str_len_or_ind_ptr: &mut str_len,
+                precision: None,
+                scale: None,
+            };
+            let result = read_arrow_value(&binding, &array, &field, 0);
 
             assert!(result.is_ok());
             assert_eq!(str_len, 5);
@@ -280,15 +261,15 @@ mod tests {
             let mut buffer = vec![0u8; 32];
             let mut str_len: sql::Len = 0;
 
-            let result = read_arrow_value(
-                CDataType::Char,
-                buffer.as_mut_ptr() as sql::Pointer,
-                buffer.len() as sql::Len,
-                &mut str_len,
-                &array,
-                &field,
-                0,
-            );
+            let binding = Binding {
+                target_type: CDataType::Char,
+                target_value_ptr: buffer.as_mut_ptr() as sql::Pointer,
+                buffer_length: buffer.len() as sql::Len,
+                str_len_or_ind_ptr: &mut str_len,
+                precision: None,
+                scale: None,
+            };
+            let result = read_arrow_value(&binding, &array, &field, 0);
 
             assert!(result.is_ok());
             assert_eq!(str_len, 6);
@@ -302,15 +283,15 @@ mod tests {
             let mut buffer = vec![0u8; 5];
             let mut str_len: sql::Len = 0;
 
-            let result = read_arrow_value(
-                CDataType::Char,
-                buffer.as_mut_ptr() as sql::Pointer,
-                buffer.len() as sql::Len,
-                &mut str_len,
-                &array,
-                &field,
-                0,
-            );
+            let binding = Binding {
+                target_type: CDataType::Char,
+                target_value_ptr: buffer.as_mut_ptr() as sql::Pointer,
+                buffer_length: buffer.len() as sql::Len,
+                str_len_or_ind_ptr: &mut str_len,
+                precision: None,
+                scale: None,
+            };
+            let result = read_arrow_value(&binding, &array, &field, 0);
 
             assert!(result.is_ok());
             assert_eq!(str_len, sql::NO_TOTAL); // SQL_NO_TOTAL when truncated
@@ -329,15 +310,15 @@ mod tests {
             let field = field_with_fixed_meta(DataType::Int64, 0, 20);
             let mut value: UBigInt = 0;
 
-            let result = read_arrow_value(
-                CDataType::UBigInt,
-                &mut value as *mut UBigInt as sql::Pointer,
-                0,
-                std::ptr::null_mut(),
-                &array,
-                &field,
-                0,
-            );
+            let binding = Binding {
+                target_type: CDataType::UBigInt,
+                target_value_ptr: &mut value as *mut UBigInt as sql::Pointer,
+                buffer_length: 0,
+                str_len_or_ind_ptr: std::ptr::null_mut(),
+                precision: None,
+                scale: None,
+            };
+            let result = read_arrow_value(&binding, &array, &field, 0);
 
             assert!(result.is_ok());
             assert_eq!(value, 9876543210u64);
@@ -349,15 +330,15 @@ mod tests {
             let field = field_with_fixed_meta(DataType::Int64, 2, 10);
             let mut value: UBigInt = 0;
 
-            let result = read_arrow_value(
-                CDataType::UBigInt,
-                &mut value as *mut UBigInt as sql::Pointer,
-                0,
-                std::ptr::null_mut(),
-                &array,
-                &field,
-                0,
-            );
+            let binding = Binding {
+                target_type: CDataType::UBigInt,
+                target_value_ptr: &mut value as *mut UBigInt as sql::Pointer,
+                buffer_length: 0,
+                str_len_or_ind_ptr: std::ptr::null_mut(),
+                precision: None,
+                scale: None,
+            };
+            let result = read_arrow_value(&binding, &array, &field, 0);
 
             assert!(result.is_ok());
             assert_eq!(value, 123u64);
@@ -371,15 +352,15 @@ mod tests {
             let field = decimal128_field(10, 2);
             let mut value: UBigInt = 0;
 
-            let result = read_arrow_value(
-                CDataType::UBigInt,
-                &mut value as *mut UBigInt as sql::Pointer,
-                0,
-                std::ptr::null_mut(),
-                &array,
-                &field,
-                0,
-            );
+            let binding = Binding {
+                target_type: CDataType::UBigInt,
+                target_value_ptr: &mut value as *mut UBigInt as sql::Pointer,
+                buffer_length: 0,
+                str_len_or_ind_ptr: std::ptr::null_mut(),
+                precision: None,
+                scale: None,
+            };
+            let result = read_arrow_value(&binding, &array, &field, 0);
 
             assert!(result.is_ok());
             assert_eq!(value, 123u64);
@@ -396,15 +377,15 @@ mod tests {
             let field = field_with_fixed_meta(DataType::Int64, 0, 20);
             let mut value: SBigInt = 0;
 
-            let result = read_arrow_value(
-                CDataType::SBigInt,
-                &mut value as *mut SBigInt as sql::Pointer,
-                0,
-                std::ptr::null_mut(),
-                &array,
-                &field,
-                0,
-            );
+            let binding = Binding {
+                target_type: CDataType::SBigInt,
+                target_value_ptr: &mut value as *mut SBigInt as sql::Pointer,
+                buffer_length: 0,
+                str_len_or_ind_ptr: std::ptr::null_mut(),
+                precision: None,
+                scale: None,
+            };
+            let result = read_arrow_value(&binding, &array, &field, 0);
 
             assert!(result.is_ok());
             assert_eq!(value, -9876543210i64);
@@ -416,15 +397,15 @@ mod tests {
             let field = field_with_fixed_meta(DataType::Int64, 2, 10);
             let mut value: SBigInt = 0;
 
-            let result = read_arrow_value(
-                CDataType::SBigInt,
-                &mut value as *mut SBigInt as sql::Pointer,
-                0,
-                std::ptr::null_mut(),
-                &array,
-                &field,
-                0,
-            );
+            let binding = Binding {
+                target_type: CDataType::SBigInt,
+                target_value_ptr: &mut value as *mut SBigInt as sql::Pointer,
+                buffer_length: 0,
+                str_len_or_ind_ptr: std::ptr::null_mut(),
+                precision: None,
+                scale: None,
+            };
+            let result = read_arrow_value(&binding, &array, &field, 0);
 
             assert!(result.is_ok());
             assert_eq!(value, -123i64);
@@ -441,15 +422,15 @@ mod tests {
             let field = field_with_fixed_meta(DataType::Int32, 0, 10);
             let mut value: sql::Integer = 0;
 
-            let result = read_arrow_value(
-                CDataType::Long,
-                &mut value as *mut sql::Integer as sql::Pointer,
-                0,
-                std::ptr::null_mut(),
-                &array,
-                &field,
-                0,
-            );
+            let binding = Binding {
+                target_type: CDataType::Long,
+                target_value_ptr: &mut value as *mut sql::Integer as sql::Pointer,
+                buffer_length: 0,
+                str_len_or_ind_ptr: std::ptr::null_mut(),
+                precision: None,
+                scale: None,
+            };
+            let result = read_arrow_value(&binding, &array, &field, 0);
 
             assert!(result.is_ok());
             assert_eq!(value, 123456);
@@ -461,15 +442,15 @@ mod tests {
             let field = field_with_fixed_meta(DataType::Int32, 0, 10);
             let mut value: sql::Integer = 0;
 
-            let result = read_arrow_value(
-                CDataType::SLong,
-                &mut value as *mut sql::Integer as sql::Pointer,
-                0,
-                std::ptr::null_mut(),
-                &array,
-                &field,
-                0,
-            );
+            let binding = Binding {
+                target_type: CDataType::SLong,
+                target_value_ptr: &mut value as *mut sql::Integer as sql::Pointer,
+                buffer_length: 0,
+                str_len_or_ind_ptr: std::ptr::null_mut(),
+                precision: None,
+                scale: None,
+            };
+            let result = read_arrow_value(&binding, &array, &field, 0);
 
             assert!(result.is_ok());
             assert_eq!(value, -123456);
@@ -486,15 +467,15 @@ mod tests {
             let field = field_with_fixed_meta(DataType::Int32, 0, 10);
             let mut value: sql::UInteger = 0;
 
-            let result = read_arrow_value(
-                CDataType::ULong,
-                &mut value as *mut sql::UInteger as sql::Pointer,
-                0,
-                std::ptr::null_mut(),
-                &array,
-                &field,
-                0,
-            );
+            let binding = Binding {
+                target_type: CDataType::ULong,
+                target_value_ptr: &mut value as *mut sql::UInteger as sql::Pointer,
+                buffer_length: 0,
+                str_len_or_ind_ptr: std::ptr::null_mut(),
+                precision: None,
+                scale: None,
+            };
+            let result = read_arrow_value(&binding, &array, &field, 0);
 
             assert!(result.is_ok());
             assert_eq!(value, 123456);
@@ -511,15 +492,15 @@ mod tests {
             let field = field_with_fixed_meta(DataType::Int16, 0, 5);
             let mut value: sql::SmallInt = 0;
 
-            let result = read_arrow_value(
-                CDataType::Short,
-                &mut value as *mut sql::SmallInt as sql::Pointer,
-                0,
-                std::ptr::null_mut(),
-                &array,
-                &field,
-                0,
-            );
+            let binding = Binding {
+                target_type: CDataType::Short,
+                target_value_ptr: &mut value as *mut sql::SmallInt as sql::Pointer,
+                buffer_length: 0,
+                str_len_or_ind_ptr: std::ptr::null_mut(),
+                precision: None,
+                scale: None,
+            };
+            let result = read_arrow_value(&binding, &array, &field, 0);
 
             assert!(result.is_ok());
             assert_eq!(value, 1234);
@@ -531,15 +512,15 @@ mod tests {
             let field = field_with_fixed_meta(DataType::Int16, 0, 5);
             let mut value: sql::SmallInt = 0;
 
-            let result = read_arrow_value(
-                CDataType::SShort,
-                &mut value as *mut sql::SmallInt as sql::Pointer,
-                0,
-                std::ptr::null_mut(),
-                &array,
-                &field,
-                0,
-            );
+            let binding = Binding {
+                target_type: CDataType::SShort,
+                target_value_ptr: &mut value as *mut sql::SmallInt as sql::Pointer,
+                buffer_length: 0,
+                str_len_or_ind_ptr: std::ptr::null_mut(),
+                precision: None,
+                scale: None,
+            };
+            let result = read_arrow_value(&binding, &array, &field, 0);
 
             assert!(result.is_ok());
             assert_eq!(value, -1234);
@@ -556,15 +537,15 @@ mod tests {
             let field = field_with_fixed_meta(DataType::Int16, 0, 5);
             let mut value: sql::USmallInt = 0;
 
-            let result = read_arrow_value(
-                CDataType::UShort,
-                &mut value as *mut sql::USmallInt as sql::Pointer,
-                0,
-                std::ptr::null_mut(),
-                &array,
-                &field,
-                0,
-            );
+            let binding = Binding {
+                target_type: CDataType::UShort,
+                target_value_ptr: &mut value as *mut sql::USmallInt as sql::Pointer,
+                buffer_length: 0,
+                str_len_or_ind_ptr: std::ptr::null_mut(),
+                precision: None,
+                scale: None,
+            };
+            let result = read_arrow_value(&binding, &array, &field, 0);
 
             assert!(result.is_ok());
             assert_eq!(value, 1234);
@@ -581,15 +562,15 @@ mod tests {
             let field = field_with_fixed_meta(DataType::Int8, 0, 3);
             let mut value: sql::SChar = 0;
 
-            let result = read_arrow_value(
-                CDataType::TinyInt,
-                &mut value as *mut sql::SChar as sql::Pointer,
-                0,
-                std::ptr::null_mut(),
-                &array,
-                &field,
-                0,
-            );
+            let binding = Binding {
+                target_type: CDataType::TinyInt,
+                target_value_ptr: &mut value as *mut sql::SChar as sql::Pointer,
+                buffer_length: 0,
+                str_len_or_ind_ptr: std::ptr::null_mut(),
+                precision: None,
+                scale: None,
+            };
+            let result = read_arrow_value(&binding, &array, &field, 0);
 
             assert!(result.is_ok());
             assert_eq!(value, 42);
@@ -601,15 +582,15 @@ mod tests {
             let field = field_with_fixed_meta(DataType::Int8, 0, 3);
             let mut value: sql::SChar = 0;
 
-            let result = read_arrow_value(
-                CDataType::STinyInt,
-                &mut value as *mut sql::SChar as sql::Pointer,
-                0,
-                std::ptr::null_mut(),
-                &array,
-                &field,
-                0,
-            );
+            let binding = Binding {
+                target_type: CDataType::STinyInt,
+                target_value_ptr: &mut value as *mut sql::SChar as sql::Pointer,
+                buffer_length: 0,
+                str_len_or_ind_ptr: std::ptr::null_mut(),
+                precision: None,
+                scale: None,
+            };
+            let result = read_arrow_value(&binding, &array, &field, 0);
 
             assert!(result.is_ok());
             assert_eq!(value, -42);
@@ -626,15 +607,15 @@ mod tests {
             let field = field_with_fixed_meta(DataType::Int8, 0, 3);
             let mut value: sql::Char = 0;
 
-            let result = read_arrow_value(
-                CDataType::UTinyInt,
-                &mut value as *mut sql::Char as sql::Pointer,
-                0,
-                std::ptr::null_mut(),
-                &array,
-                &field,
-                0,
-            );
+            let binding = Binding {
+                target_type: CDataType::UTinyInt,
+                target_value_ptr: &mut value as *mut sql::Char as sql::Pointer,
+                buffer_length: 0,
+                str_len_or_ind_ptr: std::ptr::null_mut(),
+                precision: None,
+                scale: None,
+            };
+            let result = read_arrow_value(&binding, &array, &field, 0);
 
             assert!(result.is_ok());
             assert_eq!(value, 42);
@@ -651,15 +632,15 @@ mod tests {
             let field = field_with_fixed_meta(DataType::Int64, 2, 10);
             let mut value: Real = 0.0;
 
-            let result = read_arrow_value(
-                CDataType::Float,
-                &mut value as *mut Real as sql::Pointer,
-                0,
-                std::ptr::null_mut(),
-                &array,
-                &field,
-                0,
-            );
+            let binding = Binding {
+                target_type: CDataType::Float,
+                target_value_ptr: &mut value as *mut Real as sql::Pointer,
+                buffer_length: 0,
+                str_len_or_ind_ptr: std::ptr::null_mut(),
+                precision: None,
+                scale: None,
+            };
+            let result = read_arrow_value(&binding, &array, &field, 0);
 
             assert!(result.is_ok());
             assert!((value - 123.45f32).abs() < 0.01);
@@ -676,15 +657,15 @@ mod tests {
             let field = field_with_fixed_meta(DataType::Int64, 2, 10);
             let mut value: Double = 0.0;
 
-            let result = read_arrow_value(
-                CDataType::Double,
-                &mut value as *mut Double as sql::Pointer,
-                0,
-                std::ptr::null_mut(),
-                &array,
-                &field,
-                0,
-            );
+            let binding = Binding {
+                target_type: CDataType::Double,
+                target_value_ptr: &mut value as *mut Double as sql::Pointer,
+                buffer_length: 0,
+                str_len_or_ind_ptr: std::ptr::null_mut(),
+                precision: None,
+                scale: None,
+            };
+            let result = read_arrow_value(&binding, &array, &field, 0);
 
             assert!(result.is_ok());
             assert!((value - 123.45f64).abs() < 0.001);
@@ -698,15 +679,15 @@ mod tests {
             let field = decimal128_field(10, 2);
             let mut value: Double = 0.0;
 
-            let result = read_arrow_value(
-                CDataType::Double,
-                &mut value as *mut Double as sql::Pointer,
-                0,
-                std::ptr::null_mut(),
-                &array,
-                &field,
-                0,
-            );
+            let binding = Binding {
+                target_type: CDataType::Double,
+                target_value_ptr: &mut value as *mut Double as sql::Pointer,
+                buffer_length: 0,
+                str_len_or_ind_ptr: std::ptr::null_mut(),
+                precision: None,
+                scale: None,
+            };
+            let result = read_arrow_value(&binding, &array, &field, 0);
 
             assert!(result.is_ok());
             assert!((value - 123.45f64).abs() < 0.001);
@@ -723,15 +704,15 @@ mod tests {
             let field = field_with_fixed_meta(DataType::Int64, 0, 10);
             let mut value: i64 = 0;
 
-            let result = read_arrow_value(
-                CDataType::Binary, // Unsupported
-                &mut value as *mut i64 as sql::Pointer,
-                0,
-                std::ptr::null_mut(),
-                &array,
-                &field,
-                0,
-            );
+            let binding = Binding {
+                target_type: CDataType::Binary, // Unsupported
+                target_value_ptr: &mut value as *mut i64 as sql::Pointer,
+                buffer_length: 0,
+                str_len_or_ind_ptr: std::ptr::null_mut(),
+                precision: None,
+                scale: None,
+            };
+            let result = read_arrow_value(&binding, &array, &field, 0);
 
             assert!(matches!(
                 result,
@@ -746,15 +727,15 @@ mod tests {
             let mut buffer = vec![0u16; 32];
             let mut str_len: sql::Len = 0;
 
-            let result = read_arrow_value(
-                CDataType::WChar,
-                buffer.as_mut_ptr() as sql::Pointer,
-                (buffer.len() * 2) as sql::Len, // buffer_length is in bytes for WChar
-                &mut str_len,
-                &array,
-                &field,
-                0,
-            );
+            let binding = Binding {
+                target_type: CDataType::WChar,
+                target_value_ptr: buffer.as_mut_ptr() as sql::Pointer,
+                buffer_length: (buffer.len() * 2) as sql::Len, // buffer_length is in bytes for WChar
+                str_len_or_ind_ptr: &mut str_len,
+                precision: None,
+                scale: None,
+            };
+            let result = read_arrow_value(&binding, &array, &field, 0);
 
             assert!(result.is_ok());
             assert_eq!(str_len, 10); // "hello" is 5 UTF-16 code units = 10 bytes
@@ -784,15 +765,15 @@ mod tests {
             for (idx, expected) in [(0, 100u64), (1, 200u64), (2, 300u64)] {
                 let mut value: UBigInt = 0;
 
-                let result = read_arrow_value(
-                    CDataType::UBigInt,
-                    &mut value as *mut UBigInt as sql::Pointer,
-                    0,
-                    std::ptr::null_mut(),
-                    &array,
-                    &field,
-                    idx,
-                );
+                let binding = Binding {
+                    target_type: CDataType::UBigInt,
+                    target_value_ptr: &mut value as *mut UBigInt as sql::Pointer,
+                    buffer_length: 0,
+                    str_len_or_ind_ptr: std::ptr::null_mut(),
+                    precision: None,
+                    scale: None,
+                };
+                let result = read_arrow_value(&binding, &array, &field, idx);
 
                 assert!(result.is_ok());
                 assert_eq!(value, expected);
@@ -808,15 +789,15 @@ mod tests {
                 let mut buffer = vec![0u8; 32];
                 let mut str_len: sql::Len = 0;
 
-                let result = read_arrow_value(
-                    CDataType::Char,
-                    buffer.as_mut_ptr() as sql::Pointer,
-                    buffer.len() as sql::Len,
-                    &mut str_len,
-                    &array,
-                    &field,
-                    idx,
-                );
+                let binding = Binding {
+                    target_type: CDataType::Char,
+                    target_value_ptr: buffer.as_mut_ptr() as sql::Pointer,
+                    buffer_length: buffer.len() as sql::Len,
+                    str_len_or_ind_ptr: &mut str_len,
+                    precision: None,
+                    scale: None,
+                };
+                let result = read_arrow_value(&binding, &array, &field, idx);
 
                 assert!(result.is_ok());
                 assert_eq!(str_len, expected.len() as sql::Len);
@@ -835,15 +816,15 @@ mod tests {
             let field = field_with_fixed_meta(DataType::Int64, 0, 10);
             let mut value: UBigInt = 0;
 
-            let result = read_arrow_value(
-                CDataType::UBigInt,
-                &mut value as *mut UBigInt as sql::Pointer,
-                0,
-                std::ptr::null_mut(), // null indicator
-                &array,
-                &field,
-                0,
-            );
+            let binding = Binding {
+                target_type: CDataType::UBigInt,
+                target_value_ptr: &mut value as *mut UBigInt as sql::Pointer,
+                buffer_length: 0,
+                str_len_or_ind_ptr: std::ptr::null_mut(), // null indicator
+                precision: None,
+                scale: None,
+            };
+            let result = read_arrow_value(&binding, &array, &field, 0);
 
             assert!(result.is_ok());
             assert_eq!(value, 42u64);
@@ -855,18 +836,139 @@ mod tests {
             let field = field_with_text_meta();
             let mut buffer = vec![0u8; 32];
 
-            let result = read_arrow_value(
-                CDataType::Char,
-                buffer.as_mut_ptr() as sql::Pointer,
-                buffer.len() as sql::Len,
-                std::ptr::null_mut(), // null indicator
-                &array,
-                &field,
-                0,
-            );
+            let binding = Binding {
+                target_type: CDataType::Char,
+                target_value_ptr: buffer.as_mut_ptr() as sql::Pointer,
+                buffer_length: buffer.len() as sql::Len,
+                str_len_or_ind_ptr: std::ptr::null_mut(), // null indicator
+                precision: None,
+                scale: None,
+            };
+            let result = read_arrow_value(&binding, &array, &field, 0);
 
             assert!(result.is_ok());
             assert_eq!(&buffer[..5], b"hello");
+        }
+    }
+
+    // Tests for CDataType::Numeric (SQL_C_NUMERIC)
+    mod read_to_numeric {
+        use super::*;
+
+        #[test]
+        fn reads_int64_as_numeric_with_rescale() {
+            // SELECT 12345 AS value -> Arrow stores 12345 with scale=0
+            // Application requests SQL_C_NUMERIC with precision=10, scale=2
+            // Expected: unscaled value = 12345 * 10^2 = 1234500, sign=1
+            let array = Int64Array::from(vec![12345i64]);
+            let field = field_with_fixed_meta(DataType::Int64, 0, 10);
+            let mut numeric = sql::Numeric::default();
+            let mut indicator: sql::Len = 0;
+
+            let binding = Binding {
+                target_type: CDataType::Numeric,
+                target_value_ptr: &mut numeric as *mut sql::Numeric as sql::Pointer,
+                buffer_length: std::mem::size_of::<sql::Numeric>() as sql::Len,
+                str_len_or_ind_ptr: &mut indicator,
+                precision: Some(10),
+                scale: Some(2),
+            };
+
+            let result = read_arrow_value(&binding, &array, &field, 0);
+
+            assert!(result.is_ok());
+            assert_eq!(numeric.sign, 1); // positive
+            assert_eq!(numeric.precision, 10);
+            assert_eq!(numeric.scale, 2);
+
+            // Reconstruct value from little-endian val[]
+            let mut reconstructed: u128 = 0;
+            for i in (0..16).rev() {
+                reconstructed = (reconstructed << 8) | numeric.val[i] as u128;
+            }
+            assert_eq!(reconstructed, 1234500);
+        }
+
+        #[test]
+        fn reads_negative_int64_as_numeric() {
+            let array = Int64Array::from(vec![-500i64]);
+            let field = field_with_fixed_meta(DataType::Int64, 0, 5);
+            let mut numeric = sql::Numeric::default();
+
+            let binding = Binding {
+                target_type: CDataType::Numeric,
+                target_value_ptr: &mut numeric as *mut sql::Numeric as sql::Pointer,
+                buffer_length: std::mem::size_of::<sql::Numeric>() as sql::Len,
+                str_len_or_ind_ptr: std::ptr::null_mut(),
+                precision: Some(5),
+                scale: Some(0),
+            };
+
+            let result = read_arrow_value(&binding, &array, &field, 0);
+
+            assert!(result.is_ok());
+            assert_eq!(numeric.sign, 0); // negative
+            assert_eq!(numeric.precision, 5);
+            assert_eq!(numeric.scale, 0);
+
+            let mut reconstructed: u128 = 0;
+            for i in (0..16).rev() {
+                reconstructed = (reconstructed << 8) | numeric.val[i] as u128;
+            }
+            assert_eq!(reconstructed, 500);
+        }
+
+        #[test]
+        fn reads_decimal128_as_numeric() {
+            // Decimal128 value 12345 with arrow scale=2 => actual value 123.45
+            // Target: precision=10, scale=4 => unscaled = 1234500
+            let array = Decimal128Array::from(vec![12345i128])
+                .with_precision_and_scale(10, 2)
+                .unwrap();
+            let field = decimal128_field(10, 2);
+            let mut numeric = sql::Numeric::default();
+
+            let binding = Binding {
+                target_type: CDataType::Numeric,
+                target_value_ptr: &mut numeric as *mut sql::Numeric as sql::Pointer,
+                buffer_length: std::mem::size_of::<sql::Numeric>() as sql::Len,
+                str_len_or_ind_ptr: std::ptr::null_mut(),
+                precision: Some(10),
+                scale: Some(4),
+            };
+
+            let result = read_arrow_value(&binding, &array, &field, 0);
+
+            assert!(result.is_ok());
+            assert_eq!(numeric.sign, 1);
+            assert_eq!(numeric.precision, 10);
+            assert_eq!(numeric.scale, 4);
+
+            let mut reconstructed: u128 = 0;
+            for i in (0..16).rev() {
+                reconstructed = (reconstructed << 8) | numeric.val[i] as u128;
+            }
+            // 12345 (arrow) * 10^(4-2) = 12345 * 100 = 1234500
+            assert_eq!(reconstructed, 1234500);
+        }
+
+        #[test]
+        fn returns_error_without_precision() {
+            let array = Int64Array::from(vec![42i64]);
+            let field = field_with_fixed_meta(DataType::Int64, 0, 10);
+            let mut numeric = sql::Numeric::default();
+
+            let binding = Binding {
+                target_type: CDataType::Numeric,
+                target_value_ptr: &mut numeric as *mut sql::Numeric as sql::Pointer,
+                buffer_length: std::mem::size_of::<sql::Numeric>() as sql::Len,
+                str_len_or_ind_ptr: std::ptr::null_mut(),
+                precision: None, // not set
+                scale: Some(0),
+            };
+
+            let result = read_arrow_value(&binding, &array, &field, 0);
+            assert!(result.is_err());
         }
     }
 }
