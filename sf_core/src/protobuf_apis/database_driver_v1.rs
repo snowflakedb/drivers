@@ -4,6 +4,7 @@ use crate::apis::database_driver_v1::Setting;
 use crate::apis::database_driver_v1::error::ConfigError;
 use crate::apis::database_driver_v1::error::RestError;
 use crate::apis::database_driver_v1::statement_bind;
+use crate::apis::database_driver_v1::{BindingType, DataPtr};
 use crate::apis::database_driver_v1::{
     connection_init, connection_new, connection_release, connection_set_option,
 };
@@ -618,8 +619,34 @@ impl DatabaseDriver for DatabaseDriverImpl {
     ) -> Result<StatementExecuteQueryResponse, DriverException> {
         let stmt_handle = required(input.stmt_handle, "Statement handle is required")?;
 
-        // Extract optional bindings from request
-        let bindings_opt = input.bindings.and_then(|b| b.binding_type);
+        // Convert protobuf bindings to API bindings (removes protobuf dependency from core).
+        // Protobuf uses BinaryDataPtr for both JSON and CSV (both point to raw bytes).
+        // Convert to our DataPtr type which has the same structure.
+        let bindings_opt = input
+            .bindings
+            .and_then(|b| b.binding_type)
+            .map(|proto_binding| {
+                match proto_binding {
+                    crate::protobuf_gen::database_driver_v1::query_bindings::BindingType::Json(
+                        proto_ptr,
+                    ) => {
+                        // JSON: protobuf BinaryDataPtr → DataPtr (UTF-8 bytes)
+                        BindingType::Json(DataPtr {
+                            value: proto_ptr.value,
+                            length: proto_ptr.length,
+                        })
+                    }
+                    crate::protobuf_gen::database_driver_v1::query_bindings::BindingType::Csv(
+                        proto_ptr,
+                    ) => {
+                        // CSV: protobuf BinaryDataPtr → DataPtr (raw CSV bytes)
+                        BindingType::Csv(DataPtr {
+                            value: proto_ptr.value,
+                            length: proto_ptr.length,
+                        })
+                    }
+                }
+            });
 
         let result = statement_execute_query(stmt_handle.into(), bindings_opt).to_protobuf()?;
         let stream_ptr: ArrowArrayStreamPtr = Box::into_raw(result.stream).into();
