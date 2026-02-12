@@ -148,29 +148,22 @@ pub unsafe extern "C" fn SQLGetConnectAttr(
     string_length_ptr: *mut sql::Integer,
 ) -> sql::RetCode {
     api::diagnostic::clear_diag_info(sql::HandleType::Dbc, connection_handle);
+    let mut warnings = vec![];
     let result = api::connection::get_connect_attr(
         connection_handle,
         attribute,
         value,
         buffer_length,
         string_length_ptr,
+        &mut warnings,
     );
-    match &result {
-        Ok(truncated) if *truncated => {
-            // Report truncation as SQL_SUCCESS_WITH_INFO with SQLSTATE 01004
-            let warnings = vec![crate::conversion::warning::Warning::StringDataTruncated];
-            api::diagnostic::set_diag_info_from_warnings(
-                sql::HandleType::Dbc,
-                connection_handle,
-                &warnings,
-            );
-            return sql::SqlReturn::SUCCESS_WITH_INFO.0;
-        }
-        _ => {}
-    }
-    let result = result.map(|_| ());
+    api::diagnostic::set_diag_info_from_warnings(
+        sql::HandleType::Dbc,
+        connection_handle,
+        &warnings,
+    );
     api::diagnostic::set_diag_info_from_result(sql::HandleType::Dbc, connection_handle, &result);
-    result.to_sql_code()
+    result.to_sql_code_with_warnings(&warnings)
 }
 
 /// # Safety

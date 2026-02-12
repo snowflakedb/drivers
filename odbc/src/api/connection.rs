@@ -1,12 +1,10 @@
 use crate::api::error::Required;
 use crate::api::{
-    ConnectionState, OdbcResult, api_utils::cstr_to_string, conn_from_handle,
+    ConnectionState, OdbcResult, api_utils, conn_from_handle,
     error::{InvalidPortSnafu, UnknownAttributeSnafu},
-    types::{
-        SQL_SF_CONN_ATTR_APPLICATION, SQL_SF_CONN_ATTR_PRIV_KEY, SQL_SF_CONN_ATTR_PRIV_KEY_BASE64,
-        SQL_SF_CONN_ATTR_PRIV_KEY_CONTENT, SQL_SF_CONN_ATTR_PRIV_KEY_PASSWORD,
-    },
+    types::ConnectionAttribute,
 };
+use crate::conversion::warning::{Warning, Warnings};
 use odbc_sys as sql;
 use sf_core::protobuf_apis::database_driver_v1::DatabaseDriverClient;
 use sf_core::protobuf_gen::database_driver_v1::*;
@@ -14,10 +12,6 @@ use snafu::ResultExt;
 use std::collections::HashMap;
 use tracing;
 
-// Standard ODBC connection attribute constants (from sql.h / sqlext.h)
-const SQL_ATTR_AUTOCOMMIT: i32 = 102;
-const SQL_ATTR_LOGIN_TIMEOUT: i32 = 103;
-const SQL_ATTR_CONNECTION_TIMEOUT: i32 = 113;
 const SQL_AUTOCOMMIT_ON: sql::ULen = 1;
 
 /// Parse connection string into key-value pairs
@@ -39,7 +33,7 @@ pub fn driver_connect(
     in_string_length: sql::SmallInt,
 ) -> OdbcResult<()> {
     // Parse the connection string
-    let connection_string = cstr_to_string(in_connection_string, in_string_length as i32)?;
+    let connection_string = api_utils::cstr_to_string(in_connection_string, in_string_length as i32)?;
     let connection_string_map = parse_connection_string(&connection_string);
     tracing::info!(
         "driver_connect: connection_string={:?}",
@@ -271,8 +265,8 @@ pub fn driver_connect(
 /// string parameters are applied first, then pre-connection attributes override them.
 ///
 /// Private key priority (matching old driver SFConnection.cpp):
-///   1. SQL_SF_CONN_ATTR_PRIV_KEY_CONTENT (PEM string)
-///   2. SQL_SF_CONN_ATTR_PRIV_KEY_BASE64 (base64-encoded key)
+///   1. PrivKeyContent (PEM string)
+///   2. PrivKeyBase64 (base64-encoded key)
 ///   3. Connection string PRIV_KEY_BASE64
 ///   4. Connection string PRIV_KEY_FILE / PRIV_KEY_FILE_PWD (lowest priority)
 fn apply_pre_connection_attrs(
@@ -281,10 +275,10 @@ fn apply_pre_connection_attrs(
 ) -> OdbcResult<()> {
     let attrs = &connection.pre_connection_attrs;
 
-    // Private key: PRIV_KEY_CONTENT takes priority over PRIV_KEY_BASE64 (matching old driver).
+    // Private key: PrivKeyContent takes priority over PrivKeyBase64 (matching old driver).
     // Only one of these should be forwarded to core as "private_key".
-    if let Some(ref content) = attrs.private_key_content {
-        // SQL_SF_CONN_ATTR_PRIV_KEY_CONTENT -> private_key (PEM string sent as base64 to core)
+    if let Some(content) = attrs.get(&ConnectionAttribute::PrivKeyContent) {
+        // PrivKeyContent -> private_key (PEM string sent as base64 to core)
         use base64::{Engine as _, engine::general_purpose};
         let encoded = general_purpose::STANDARD.encode(content.as_bytes());
         DatabaseDriverClient::connection_set_option_string(ConnectionSetOptionStringRequest {
@@ -292,8 +286,8 @@ fn apply_pre_connection_attrs(
             key: "private_key".to_owned(),
             value: encoded,
         })?;
-    } else if let Some(ref base64_key) = attrs.private_key_base64 {
-        // SQL_SF_CONN_ATTR_PRIV_KEY_BASE64 -> private_key (already base64-encoded)
+    } else if let Some(base64_key) = attrs.get(&ConnectionAttribute::PrivKeyBase64) {
+        // PrivKeyBase64 -> private_key (already base64-encoded)
         DatabaseDriverClient::connection_set_option_string(ConnectionSetOptionStringRequest {
             conn_handle: Some(conn_handle),
             key: "private_key".to_owned(),
@@ -301,8 +295,8 @@ fn apply_pre_connection_attrs(
         })?;
     }
 
-    // SQL_SF_CONN_ATTR_PRIV_KEY_PASSWORD -> private_key_password
-    if let Some(ref password) = attrs.private_key_password {
+    // PrivKeyPassword -> private_key_password
+    if let Some(password) = attrs.get(&ConnectionAttribute::PrivKeyPassword) {
         DatabaseDriverClient::connection_set_option_string(ConnectionSetOptionStringRequest {
             conn_handle: Some(conn_handle),
             key: "private_key_password".to_owned(),
@@ -310,8 +304,8 @@ fn apply_pre_connection_attrs(
         })?;
     }
 
-    // SQL_SF_CONN_ATTR_APPLICATION -> application
-    if let Some(ref app) = attrs.application {
+    // Application -> application
+    if let Some(app) = attrs.get(&ConnectionAttribute::Application) {
         DatabaseDriverClient::connection_set_option_string(ConnectionSetOptionStringRequest {
             conn_handle: Some(conn_handle),
             key: "application".to_owned(),
@@ -355,63 +349,51 @@ pub fn set_connect_attr(
     let connection = conn_from_handle(connection_handle);
     tracing::debug!("set_connect_attr: attribute={}", attribute);
 
-    match attribute {
+    let attr = match ConnectionAttribute::from_raw(attribute) {
+        Some(a) => a,
+        None => {
+            tracing::warn!("set_connect_attr: unknown attribute {}", attribute);
+            // Return Ok for unrecognized standard attributes to avoid breaking
+            // driver manager attribute propagation
+            return Ok(());
+        }
+    };
+
+    match attr {
         // Standard ODBC attributes
-        SQL_ATTR_LOGIN_TIMEOUT => {
-            tracing::debug!("set_connect_attr: SQL_ATTR_LOGIN_TIMEOUT (ignored)");
+        ConnectionAttribute::LoginTimeout => {
+            tracing::debug!("set_connect_attr: LoginTimeout (ignored)");
             Ok(())
         }
-        SQL_ATTR_CONNECTION_TIMEOUT => {
-            tracing::debug!("set_connect_attr: SQL_ATTR_CONNECTION_TIMEOUT (ignored)");
+        ConnectionAttribute::ConnectionTimeout => {
+            tracing::debug!("set_connect_attr: ConnectionTimeout (ignored)");
             Ok(())
         }
-        SQL_ATTR_AUTOCOMMIT => {
-            tracing::debug!("set_connect_attr: SQL_ATTR_AUTOCOMMIT (ignored)");
+        ConnectionAttribute::Autocommit => {
+            tracing::debug!("set_connect_attr: Autocommit (ignored)");
             Ok(())
         }
 
         // Custom Snowflake attributes for private key authentication
-        SQL_SF_CONN_ATTR_PRIV_KEY => {
+        ConnectionAttribute::PrivKey => {
             // The old driver accepted an EVP_PKEY pointer here. We cannot support raw
             // OpenSSL pointers in the Rust driver, so this attribute is not supported.
             tracing::warn!(
-                "set_connect_attr: SQL_SF_CONN_ATTR_PRIV_KEY (EVP_PKEY pointer) is not supported. \
-                 Use SQL_SF_CONN_ATTR_PRIV_KEY_CONTENT or SQL_SF_CONN_ATTR_PRIV_KEY_BASE64 instead."
+                "set_connect_attr: PrivKey (EVP_PKEY pointer) is not supported. \
+                 Use PrivKeyContent or PrivKeyBase64 instead."
             );
             UnknownAttributeSnafu {
-                attribute: SQL_SF_CONN_ATTR_PRIV_KEY,
+                attribute: attr.as_raw(),
             }
             .fail()
         }
-        SQL_SF_CONN_ATTR_PRIV_KEY_CONTENT => {
-            let value = read_string_attr(value_ptr, string_length)?;
-            tracing::debug!("set_connect_attr: SQL_SF_CONN_ATTR_PRIV_KEY_CONTENT (set)");
-            connection.pre_connection_attrs.private_key_content = Some(value);
-            Ok(())
-        }
-        SQL_SF_CONN_ATTR_PRIV_KEY_PASSWORD => {
-            let value = read_string_attr(value_ptr, string_length)?;
-            tracing::debug!("set_connect_attr: SQL_SF_CONN_ATTR_PRIV_KEY_PASSWORD (set)");
-            connection.pre_connection_attrs.private_key_password = Some(value);
-            Ok(())
-        }
-        SQL_SF_CONN_ATTR_PRIV_KEY_BASE64 => {
-            let value = read_string_attr(value_ptr, string_length)?;
-            tracing::debug!("set_connect_attr: SQL_SF_CONN_ATTR_PRIV_KEY_BASE64 (set)");
-            connection.pre_connection_attrs.private_key_base64 = Some(value);
-            Ok(())
-        }
-        SQL_SF_CONN_ATTR_APPLICATION => {
-            let value = read_string_attr(value_ptr, string_length)?;
-            tracing::debug!("set_connect_attr: SQL_SF_CONN_ATTR_APPLICATION = {}", value);
-            connection.pre_connection_attrs.application = Some(value);
-            Ok(())
-        }
-
-        _ => {
-            tracing::warn!("set_connect_attr: unknown attribute {}", attribute);
-            // Return Ok for unrecognized standard attributes to avoid breaking
-            // driver manager attribute propagation
+        ConnectionAttribute::PrivKeyContent
+        | ConnectionAttribute::PrivKeyPassword
+        | ConnectionAttribute::PrivKeyBase64
+        | ConnectionAttribute::Application => {
+            let value = api_utils::read_string_from_ptr(value_ptr, string_length)?;
+            tracing::debug!("set_connect_attr: {:?} (set)", attr);
+            connection.pre_connection_attrs.insert(attr, value);
             Ok(())
         }
     }
@@ -419,102 +401,70 @@ pub fn set_connect_attr(
 
 /// Get a connection attribute (SQLGetConnectAttr).
 /// Handles both standard ODBC attributes and custom Snowflake attributes.
-/// Returns true if string data was truncated (caller should return SQL_SUCCESS_WITH_INFO).
+/// Pushes `StringDataTruncated` into `warnings` if the value was truncated.
 pub fn get_connect_attr(
     connection_handle: sql::Handle,
     attribute: sql::Integer,
     value_ptr: sql::Pointer,
     buffer_length: sql::Integer,
     string_length_ptr: *mut sql::Integer,
-) -> OdbcResult<bool> {
+    warnings: &mut Warnings,
+) -> OdbcResult<()> {
     let connection = conn_from_handle(connection_handle);
     tracing::debug!("get_connect_attr: attribute={}", attribute);
 
-    match attribute {
-        SQL_SF_CONN_ATTR_PRIV_KEY_CONTENT => {
-            let truncated = write_string_attr(
-                connection.pre_connection_attrs.private_key_content.as_deref().unwrap_or(""),
+    let attr = match ConnectionAttribute::from_raw(attribute) {
+        Some(a) => a,
+        None => {
+            tracing::warn!("get_connect_attr: unknown attribute {}", attribute);
+            return Ok(());
+        }
+    };
+
+    match attr {
+        ConnectionAttribute::PrivKeyContent
+        | ConnectionAttribute::PrivKeyPassword
+        | ConnectionAttribute::PrivKeyBase64
+        | ConnectionAttribute::Application => {
+            let value = connection
+                .pre_connection_attrs
+                .get(&attr)
+                .map(|s| s.as_str())
+                .unwrap_or("");
+            let truncated = api_utils::write_string_to_buffer(
+                value,
                 value_ptr,
                 buffer_length,
                 string_length_ptr,
             );
-            Ok(truncated)
+            if truncated {
+                warnings.push(Warning::StringDataTruncated);
+            }
+            Ok(())
         }
-        SQL_SF_CONN_ATTR_PRIV_KEY_PASSWORD => {
-            let truncated = write_string_attr(
-                connection.pre_connection_attrs.private_key_password.as_deref().unwrap_or(""),
-                value_ptr,
-                buffer_length,
-                string_length_ptr,
-            );
-            Ok(truncated)
-        }
-        SQL_SF_CONN_ATTR_PRIV_KEY_BASE64 => {
-            let truncated = write_string_attr(
-                connection.pre_connection_attrs.private_key_base64.as_deref().unwrap_or(""),
-                value_ptr,
-                buffer_length,
-                string_length_ptr,
-            );
-            Ok(truncated)
-        }
-        SQL_SF_CONN_ATTR_APPLICATION => {
-            let truncated = write_string_attr(
-                connection.pre_connection_attrs.application.as_deref().unwrap_or(""),
-                value_ptr,
-                buffer_length,
-                string_length_ptr,
-            );
-            Ok(truncated)
-        }
-        SQL_ATTR_AUTOCOMMIT => {
+        ConnectionAttribute::Autocommit => {
             if !value_ptr.is_null() {
                 unsafe {
-                    *(value_ptr as *mut sql::ULen) = SQL_AUTOCOMMIT_ON as sql::ULen;
+                    *(value_ptr as *mut sql::ULen) = SQL_AUTOCOMMIT_ON;
                 }
             }
-            Ok(false)
+            Ok(())
         }
-        _ => {
-            tracing::warn!("get_connect_attr: unknown attribute {}", attribute);
-            Ok(false)
+        ConnectionAttribute::LoginTimeout | ConnectionAttribute::ConnectionTimeout => {
+            // These are accepted but not stored; return 0
+            if !value_ptr.is_null() {
+                unsafe {
+                    *(value_ptr as *mut sql::ULen) = 0;
+                }
+            }
+            Ok(())
+        }
+        ConnectionAttribute::PrivKey => {
+            UnknownAttributeSnafu {
+                attribute: attr.as_raw(),
+            }
+            .fail()
         }
     }
 }
 
-/// Read a string value from a SQLSetConnectAttr value pointer
-fn read_string_attr(value_ptr: sql::Pointer, string_length: sql::Integer) -> OdbcResult<String> {
-    if value_ptr.is_null() {
-        return Ok(String::new());
-    }
-    let c_str_ptr = value_ptr as *const sql::Char;
-    cstr_to_string(c_str_ptr, string_length)
-}
-
-/// Write a string value to a SQLGetConnectAttr output buffer.
-/// Returns true if the value was truncated (caller should report SQL_SUCCESS_WITH_INFO / 01004).
-fn write_string_attr(
-    value: &str,
-    value_ptr: sql::Pointer,
-    buffer_length: sql::Integer,
-    string_length_ptr: *mut sql::Integer,
-) -> bool {
-    // Always report the full length, even if truncated (per ODBC spec)
-    if !string_length_ptr.is_null() {
-        unsafe {
-            *string_length_ptr = value.len() as sql::Integer;
-        }
-    }
-    if !value_ptr.is_null() && buffer_length > 0 {
-        let buf = value_ptr as *mut sql::Char;
-        let max_len = std::cmp::min(value.len(), (buffer_length - 1) as usize);
-        unsafe {
-            std::ptr::copy_nonoverlapping(value.as_ptr() as *const sql::Char, buf, max_len);
-            *buf.add(max_len) = 0; // NUL terminate
-        }
-        // Truncation occurred if the value is longer than the available buffer
-        value.len() > (buffer_length - 1) as usize
-    } else {
-        false
-    }
-}

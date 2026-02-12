@@ -15,20 +15,9 @@
 #include "compatibility.hpp"
 #include "get_diag_rec.hpp"
 #include "macros.hpp"
+#include "sf_odbc.h"
 #include "test_setup.hpp"
 #include "utils.hpp"
-
-// Custom Snowflake connection attribute IDs (matching sf_odbc.h)
-#ifndef SQL_SF_CONN_ATTR_BASE
-  #ifndef SQL_DRIVER_CONN_ATTR_BASE
-    #define SQL_DRIVER_CONN_ATTR_BASE 0x00004000
-  #endif
-  #define SQL_SF_CONN_ATTR_BASE (SQL_DRIVER_CONN_ATTR_BASE + 0x53)
-#endif
-
-#define SQL_SF_CONN_ATTR_PRIV_KEY_CONTENT   (SQL_SF_CONN_ATTR_BASE + 3)
-#define SQL_SF_CONN_ATTR_PRIV_KEY_PASSWORD  (SQL_SF_CONN_ATTR_BASE + 4)
-#define SQL_SF_CONN_ATTR_PRIV_KEY_BASE64    (SQL_SF_CONN_ATTR_BASE + 5)
 
 std::string get_jwt_connection_string_without_private_key() {
   std::stringstream ss;
