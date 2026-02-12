@@ -15,6 +15,7 @@
 #include "compatibility.hpp"
 #include "get_diag_rec.hpp"
 #include "macros.hpp"
+#include "put_get_utils.hpp"
 #include "sf_odbc.h"
 #include "test_setup.hpp"
 #include "utils.hpp"
@@ -193,14 +194,11 @@ TEST_CASE("should forward private key password set via SQLSetConnectAttr to core
   auto dbc = get_connection_handle_integration(env);
 
   // Create an encrypted key file from the test key so we can test password forwarding
+  TempTestDir tmp("int_auth_pwd_");
   std::string test_key_pem = read_test_private_key_content();
-  const std::string unencrypted_path = "/tmp/odbc_int_test_unencrypted.pem";
-  const std::string encrypted_path = "/tmp/odbc_int_test_encrypted.pem";
+  const std::string unencrypted_path = (tmp.path() / "unencrypted.pem").string();
+  const std::string encrypted_path = (tmp.path() / "encrypted.pem").string();
   const std::string test_password = "test_password_123";
-
-  // Cleanup any leftover temp files from a previously failed run
-  std::remove(unencrypted_path.c_str());
-  std::remove(encrypted_path.c_str());
 
   {
     std::ofstream f(unencrypted_path, std::ios::out | std::ios::trunc);
@@ -229,8 +227,4 @@ TEST_CASE("should forward private key password set via SQLSetConnectAttr to core
 
   // Then The private key password is forwarded to core and used for JWT authentication
   verify_private_key_forwarded_to_core(dbc, connection_string);
-
-  // Cleanup temp files
-  std::remove(unencrypted_path.c_str());
-  std::remove(encrypted_path.c_str());
 }

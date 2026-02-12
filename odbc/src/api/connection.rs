@@ -48,6 +48,16 @@ pub fn driver_connect(
         .conn_handle
         .required("Connection handle is required")?;
 
+    // Check whether attribute-based key options supersede file-based connection string params.
+    // Matches old driver (SFConnection.cpp): if PrivKeyContent or PrivKeyBase64 was set via
+    // SQLSetConnectAttr, PRIV_KEY_FILE from the connection string is not used.
+    let attr_key_set = connection
+        .pre_connection_attrs
+        .contains_key(&ConnectionAttribute::PrivKeyContent)
+        || connection
+            .pre_connection_attrs
+            .contains_key(&ConnectionAttribute::PrivKeyBase64);
+
     for (key, value) in connection_string_map {
         match key.as_str() {
             // TODO: Do it more generically
@@ -146,13 +156,19 @@ pub fn driver_connect(
                 )?;
             }
             "PRIV_KEY_FILE" => {
-                DatabaseDriverClient::connection_set_option_string(
-                    ConnectionSetOptionStringRequest {
-                        conn_handle: Some(conn_handle),
-                        key: "private_key_file".to_owned(),
-                        value,
-                    },
-                )?;
+                if attr_key_set {
+                    tracing::debug!(
+                        "driver_connect: skipping PRIV_KEY_FILE — attribute-based key takes priority"
+                    );
+                } else {
+                    DatabaseDriverClient::connection_set_option_string(
+                        ConnectionSetOptionStringRequest {
+                            conn_handle: Some(conn_handle),
+                            key: "private_key_file".to_owned(),
+                            value,
+                        },
+                    )?;
+                }
             }
             "AUTHENTICATOR" => {
                 DatabaseDriverClient::connection_set_option_string(
@@ -164,22 +180,38 @@ pub fn driver_connect(
                 )?;
             }
             "PRIV_KEY_FILE_PWD" | "PRIV_KEY_PWD" => {
-                DatabaseDriverClient::connection_set_option_string(
-                    ConnectionSetOptionStringRequest {
-                        conn_handle: Some(conn_handle),
-                        key: "private_key_password".to_owned(),
-                        value,
-                    },
-                )?;
+                if connection
+                    .pre_connection_attrs
+                    .contains_key(&ConnectionAttribute::PrivKeyPassword)
+                {
+                    tracing::debug!(
+                        "driver_connect: skipping {} — attribute-based password takes priority",
+                        key
+                    );
+                } else {
+                    DatabaseDriverClient::connection_set_option_string(
+                        ConnectionSetOptionStringRequest {
+                            conn_handle: Some(conn_handle),
+                            key: "private_key_password".to_owned(),
+                            value,
+                        },
+                    )?;
+                }
             }
             "PRIV_KEY_BASE64" => {
-                DatabaseDriverClient::connection_set_option_string(
-                    ConnectionSetOptionStringRequest {
-                        conn_handle: Some(conn_handle),
-                        key: "private_key".to_owned(),
-                        value,
-                    },
-                )?;
+                if attr_key_set {
+                    tracing::debug!(
+                        "driver_connect: skipping PRIV_KEY_BASE64 — attribute-based key takes priority"
+                    );
+                } else {
+                    DatabaseDriverClient::connection_set_option_string(
+                        ConnectionSetOptionStringRequest {
+                            conn_handle: Some(conn_handle),
+                            key: "private_key".to_owned(),
+                            value,
+                        },
+                    )?;
+                }
             }
             "TOKEN" => {
                 DatabaseDriverClient::connection_set_option_string(
@@ -242,7 +274,10 @@ pub fn driver_connect(
         }
     }
 
-    // Apply any pre-connection attributes set via SQLSetConnectAttr
+    // Apply any pre-connection attributes set via SQLSetConnectAttr.
+    // When attribute-based key options are present, skip file-based connection string
+    // parameters to avoid sending conflicting key sources to core (matching old driver
+    // SFConnection.cpp behavior which checks attributes before falling back to PRIV_KEY_FILE).
     apply_pre_connection_attrs(connection, conn_handle)?;
 
     DatabaseDriverClient::connection_init(ConnectionInitRequest {

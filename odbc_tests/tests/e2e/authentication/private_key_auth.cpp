@@ -14,26 +14,27 @@
 #include "compatibility.hpp"
 #include "get_diag_rec.hpp"
 #include "macros.hpp"
+#include "put_get_utils.hpp"
 #include "test_setup.hpp"
 #include "utils.hpp"
 
-std::string get_private_key_path_for_auth(picojson::object& params) {
+std::string get_private_key_path_for_auth(picojson::object& params, const TempTestDir& tmp) {
   auto private_key = read_private_key(params);
-  const std::string path = "./rsa_key_auth.p8";
+  auto path = tmp.path() / "rsa_key_auth.p8";
   std::ofstream file(path, std::ios::out | std::ios::trunc);
   REQUIRE(file.is_open());
   file << private_key;
   file.close();
-  return path;
+  return path.string();
 }
 
-std::string get_jwt_connection_string_with_private_key() {
+std::string get_jwt_connection_string_with_private_key(const TempTestDir& tmp) {
   auto params = get_test_parameters("testconnection");
   std::stringstream ss;
   read_default_params(ss, params);
   add_param_optional<std::string>(ss, params, "SNOWFLAKE_TEST_PRIVATE_KEY_PASSWORD", "PRIV_KEY_FILE_PWD");
   ss << "AUTHENTICATOR=SNOWFLAKE_JWT;";
-  ss << "PRIV_KEY_FILE=" << get_private_key_path_for_auth(params) << ";";
+  ss << "PRIV_KEY_FILE=" << get_private_key_path_for_auth(params, tmp) << ";";
   return ss.str();
 }
 
@@ -92,9 +93,10 @@ void assert_login_error(ConnectionHandleWrapper& dbc) {
 
 TEST_CASE("should authenticate using private file with password", "[private_key_auth]") {
   // Given Authentication is set to JWT and private file with password is provided
+  TempTestDir tmp("e2e_auth_pwd_");
   auto env = setup_environment();
   auto dbc = get_connection_handle(env);
-  std::string connection_string = get_jwt_connection_string_with_private_key();
+  std::string connection_string = get_jwt_connection_string_with_private_key(tmp);
 
   // When Trying to Connect
   attempt_connection(dbc, connection_string);
@@ -124,6 +126,7 @@ TEST_CASE("should authenticate using unencrypted private key file", "[private_ke
   SKIP_OLD_DRIVER("", "New-driver-only test — unencrypted key file without password");
 
   // Given Authentication is set to JWT and an unencrypted private key file is provided (no password)
+  TempTestDir tmp("e2e_auth_unenc_");
   auto params = get_test_parameters("testconnection");
   auto env = setup_environment();
   auto dbc = get_connection_handle(env);
@@ -131,8 +134,8 @@ TEST_CASE("should authenticate using unencrypted private key file", "[private_ke
   // The test key in parameters.json is encrypted. We must decrypt it first
   // to produce an unencrypted PEM file for this test.
   std::string encrypted_pem = read_private_key(params);
-  const std::string encrypted_path = "./rsa_key_encrypted.p8";
-  const std::string unencrypted_path = "./rsa_key_unencrypted.p8";
+  const std::string encrypted_path = (tmp.path() / "encrypted.p8").string();
+  const std::string unencrypted_path = (tmp.path() / "unencrypted.p8").string();
 
   {
     std::ofstream file(encrypted_path, std::ios::out | std::ios::trunc);
@@ -211,11 +214,12 @@ TEST_CASE("should authenticate using PRIV_KEY_PWD as alias for private key passw
     SKIP("No private key password configured; skipping PRIV_KEY_PWD test");
   }
 
+  TempTestDir tmp("e2e_auth_pwd_alias_");
   auto env = setup_environment();
   auto dbc = get_connection_handle(env);
 
   // Write encrypted key to file
-  std::string key_path = get_private_key_path_for_auth(params);
+  std::string key_path = get_private_key_path_for_auth(params, tmp);
   std::string password = pwd_it->second.get<std::string>();
 
   // Build connection string using PRIV_KEY_PWD instead of PRIV_KEY_FILE_PWD

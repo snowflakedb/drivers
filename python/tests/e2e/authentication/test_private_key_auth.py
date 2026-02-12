@@ -49,16 +49,16 @@ class TestPrivateKeyAuthentication:
             encryption_algorithm=serialization.NoEncryption(),
         )
 
-        with tempfile.NamedTemporaryFile(suffix=".p8", delete=False) as tmp:
+        with tempfile.NamedTemporaryFile(suffix=".p8") as tmp:
             tmp.write(unencrypted_pem)
-            unencrypted_path = tmp.name
+            tmp.flush()
 
-        # When Trying to Connect
-        connection = create_jwt_connection(connection_factory, unencrypted_path)
+            # When Trying to Connect
+            connection = create_jwt_connection(connection_factory, tmp.name)
 
-        # Then Login is successful and simple query can be executed
-        with connection:
-            verify_simple_query_execution(connection)
+            # Then Login is successful and simple query can be executed
+            with connection:
+                verify_simple_query_execution(connection)
 
     def test_should_fail_jwt_authentication_when_invalid_private_key_provided(self, connection_factory):
         # Given Authentication is set to JWT and invalid private key file is provided
