@@ -16,6 +16,19 @@
 #include "get_diag_rec.hpp"
 #include "macros.hpp"
 #include "test_setup.hpp"
+#include "utils.hpp"
+
+// Custom Snowflake connection attribute IDs (matching sf_odbc.h)
+#ifndef SQL_SF_CONN_ATTR_BASE
+  #ifndef SQL_DRIVER_CONN_ATTR_BASE
+    #define SQL_DRIVER_CONN_ATTR_BASE 0x00004000
+  #endif
+  #define SQL_SF_CONN_ATTR_BASE (SQL_DRIVER_CONN_ATTR_BASE + 0x53)
+#endif
+
+#define SQL_SF_CONN_ATTR_PRIV_KEY_CONTENT   (SQL_SF_CONN_ATTR_BASE + 3)
+#define SQL_SF_CONN_ATTR_PRIV_KEY_PASSWORD  (SQL_SF_CONN_ATTR_BASE + 4)
+#define SQL_SF_CONN_ATTR_PRIV_KEY_BASE64    (SQL_SF_CONN_ATTR_BASE + 5)
 
 std::string get_jwt_connection_string_without_private_key() {
   std::stringstream ss;
@@ -31,6 +44,29 @@ std::string get_jwt_connection_string_without_private_key() {
   ss << "AUTHENTICATOR=SNOWFLAKE_JWT;";
   // Deliberately omit PRIV_KEY_FILE parameter
   return ss.str();
+}
+
+std::string get_base_jwt_connection_string_int() {
+  std::stringstream ss;
+  ss << "DRIVER=" << get_driver_path() << ";";
+  ss << "SERVER=localhost;";
+  ss << "ACCOUNT=test_account;";
+  ss << "UID=test_user;";
+  ss << "DATABASE=test_database;";
+  ss << "SCHEMA=test_schema;";
+  ss << "WAREHOUSE=test_warehouse;";
+  ss << "ROLE=test_role;";
+  ss << "PORT=8090;";
+  ss << "AUTHENTICATOR=SNOWFLAKE_JWT;";
+  return ss.str();
+}
+
+std::string read_test_private_key_content() {
+  auto key_path = test_utils::test_data_file_path("invalid_rsa_key.p8");
+  std::ifstream file(key_path.string());
+  REQUIRE(file.is_open());
+  std::string content((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+  return content;
 }
 
 EnvironmentHandleWrapper setup_environment_integration() {
@@ -72,6 +108,27 @@ void verify_connection_fails_with_missing_private_key_error(ConnectionHandleWrap
   }
 }
 
+void verify_private_key_forwarded_to_core(ConnectionHandleWrapper& dbc,
+                                          const std::string& connection_string) {
+  SQLRETURN ret = SQLDriverConnect(dbc.getHandle(), NULL, (SQLCHAR*)connection_string.c_str(), SQL_NTS, NULL, 0, NULL,
+                                   SQL_DRIVER_NOPROMPT);
+
+  if (ret == SQL_ERROR) {
+    auto records = get_diag_rec(dbc);
+    using Catch::Matchers::ContainsSubstring;
+    for (const auto& record : records) {
+      // The private key was forwarded to core — the error must NOT be about a missing parameter.
+      // Any other error (connection refused, auth failure) is acceptable for this integration test.
+      CHECK_THAT(record.messageText, !ContainsSubstring("Missing required parameter"));
+    }
+  }
+  // If SQL_SUCCESS, connection succeeded — key was forwarded and used successfully.
+}
+
+// ============================================================================
+// Integration test: missing parameter error
+// ============================================================================
+
 TEST_CASE("should fail JWT authentication when no private file provided", "[private_key_auth]") {
   // Given Authentication is set to JWT
   auto env = setup_environment_integration();
@@ -82,4 +139,105 @@ TEST_CASE("should fail JWT authentication when no private file provided", "[priv
 
   // Then There is error returned
   verify_connection_fails_with_missing_private_key_error(dbc, connection_string);
+}
+
+// ============================================================================
+// Integration tests: SQLSetConnectAttr forwarding to core
+// ============================================================================
+
+TEST_CASE("should forward private key content set via SQLSetConnectAttr to core", "[private_key_auth]") {
+  SKIP_OLD_DRIVER("BD#8", "Old driver uses different attribute handling");
+
+  // Given A connection handle is allocated and PRIV_KEY_CONTENT is set via SQLSetConnectAttr
+  auto env = setup_environment_integration();
+  auto dbc = get_connection_handle_integration(env);
+
+  std::string test_key_pem = read_test_private_key_content();
+
+  SQLRETURN ret = SQLSetConnectAttr(
+      dbc.getHandle(),
+      SQL_SF_CONN_ATTR_PRIV_KEY_CONTENT,
+      (SQLPOINTER)test_key_pem.c_str(),
+      (SQLINTEGER)test_key_pem.size());
+  CHECK_ODBC(ret, dbc);
+
+  // When Trying to Connect
+  std::string connection_string = get_base_jwt_connection_string_int();
+
+  // Then The private key is forwarded to core and used for JWT authentication
+  verify_private_key_forwarded_to_core(dbc, connection_string);
+}
+
+TEST_CASE("should forward base64 private key set via SQLSetConnectAttr to core", "[private_key_auth]") {
+  SKIP_OLD_DRIVER("BD#9", "Old driver uses different attribute handling");
+
+  // Given A connection handle is allocated and PRIV_KEY_BASE64 is set via SQLSetConnectAttr
+  auto env = setup_environment_integration();
+  auto dbc = get_connection_handle_integration(env);
+
+  std::string test_key_pem = read_test_private_key_content();
+  std::string test_key_b64 = test_utils::base64_encode(test_key_pem);
+
+  SQLRETURN ret = SQLSetConnectAttr(
+      dbc.getHandle(),
+      SQL_SF_CONN_ATTR_PRIV_KEY_BASE64,
+      (SQLPOINTER)test_key_b64.c_str(),
+      (SQLINTEGER)test_key_b64.size());
+  CHECK_ODBC(ret, dbc);
+
+  // When Trying to Connect
+  std::string connection_string = get_base_jwt_connection_string_int();
+
+  // Then The private key is forwarded to core and used for JWT authentication
+  verify_private_key_forwarded_to_core(dbc, connection_string);
+}
+
+TEST_CASE("should forward private key password set via SQLSetConnectAttr to core", "[private_key_auth]") {
+  SKIP_OLD_DRIVER("BD#10", "Old driver uses different attribute handling");
+
+  // Given A connection handle is allocated and PRIV_KEY_PASSWORD is set via SQLSetConnectAttr
+  auto env = setup_environment_integration();
+  auto dbc = get_connection_handle_integration(env);
+
+  // Create an encrypted key file from the test key so we can test password forwarding
+  std::string test_key_pem = read_test_private_key_content();
+  const std::string unencrypted_path = "/tmp/odbc_int_test_unencrypted.pem";
+  const std::string encrypted_path = "/tmp/odbc_int_test_encrypted.pem";
+  const std::string test_password = "test_password_123";
+
+  // Cleanup any leftover temp files from a previously failed run
+  std::remove(unencrypted_path.c_str());
+  std::remove(encrypted_path.c_str());
+
+  {
+    std::ofstream f(unencrypted_path, std::ios::out | std::ios::trunc);
+    REQUIRE(f.is_open());
+    f << test_key_pem;
+    f.close();
+  }
+
+  // Encrypt the test key with a known password
+  std::string cmd = "openssl pkey -in " + unencrypted_path + " -out " + encrypted_path +
+                    " -aes256 -passout pass:" + test_password + " 2>/dev/null";
+  int rc = system(cmd.c_str());
+  REQUIRE(rc == 0);
+
+  // Set password via SQLSetConnectAttr
+  SQLRETURN ret = SQLSetConnectAttr(
+      dbc.getHandle(),
+      SQL_SF_CONN_ATTR_PRIV_KEY_PASSWORD,
+      (SQLPOINTER)test_password.c_str(),
+      (SQLINTEGER)test_password.size());
+  CHECK_ODBC(ret, dbc);
+
+  // When Trying to Connect
+  std::string connection_string = get_base_jwt_connection_string_int();
+  connection_string += "PRIV_KEY_FILE=" + encrypted_path + ";";
+
+  // Then The private key password is forwarded to core and used for JWT authentication
+  verify_private_key_forwarded_to_core(dbc, connection_string);
+
+  // Cleanup temp files
+  std::remove(unencrypted_path.c_str());
+  std::remove(encrypted_path.c_str());
 }

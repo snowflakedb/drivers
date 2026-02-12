@@ -1,4 +1,5 @@
 import base64
+import tempfile
 
 import pytest
 
@@ -22,6 +23,38 @@ class TestPrivateKeyAuthentication:
 
         # When Trying to Connect
         connection = create_jwt_connection(connection_factory, private_key_path, private_key_password)
+
+        # Then Login is successful and simple query can be executed
+        with connection:
+            verify_simple_query_execution(connection)
+
+    def test_should_authenticate_using_unencrypted_private_key_file(self, connection_factory):
+        # Given Authentication is set to JWT and an unencrypted private key file is provided (no password)
+        private_key_path = get_private_key_from_parameters()
+        private_key_password = get_private_key_password()
+
+        if not private_key_password:
+            pytest.skip("No private key password configured; cannot create unencrypted key for test")
+
+        # Decrypt the key and write as unencrypted PEM
+        with open(private_key_path, "rb") as f:
+            key = serialization.load_pem_private_key(
+                f.read(),
+                password=private_key_password.encode(),
+                backend=default_backend(),
+            )
+        unencrypted_pem = key.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.PKCS8,
+            encryption_algorithm=serialization.NoEncryption(),
+        )
+
+        with tempfile.NamedTemporaryFile(suffix=".p8", delete=False) as tmp:
+            tmp.write(unencrypted_pem)
+            unencrypted_path = tmp.name
+
+        # When Trying to Connect
+        connection = create_jwt_connection(connection_factory, unencrypted_path)
 
         # Then Login is successful and simple query can be executed
         with connection:
@@ -66,8 +99,8 @@ class TestPrivateKeyAuthentication:
         with connection:
             verify_simple_query_execution(connection)
 
-    def test_should_authenticate_using_private_key_as_str(self, connection_factory):
-        # Given Authentication is set to JWT and private key is provided as str
+    def test_should_authenticate_using_private_key_as_base64_string(self, connection_factory):
+        # Given Authentication is set to JWT and private key is provided as base64-encoded string
         private_key_path = get_private_key_from_parameters()
         private_key_password = get_private_key_password()
 

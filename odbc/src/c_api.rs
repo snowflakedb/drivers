@@ -124,6 +124,58 @@ pub unsafe extern "C" fn SQLGetEnvAttr(
 /// # Safety
 /// This function is called by the ODBC driver manager.
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn SQLSetConnectAttr(
+    connection_handle: sql::Handle,
+    attribute: sql::Integer,
+    value: sql::Pointer,
+    string_length: sql::Integer,
+) -> sql::RetCode {
+    api::diagnostic::clear_diag_info(sql::HandleType::Dbc, connection_handle);
+    let result =
+        api::connection::set_connect_attr(connection_handle, attribute, value, string_length);
+    api::diagnostic::set_diag_info_from_result(sql::HandleType::Dbc, connection_handle, &result);
+    result.to_sql_code()
+}
+
+/// # Safety
+/// This function is called by the ODBC driver manager.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn SQLGetConnectAttr(
+    connection_handle: sql::Handle,
+    attribute: sql::Integer,
+    value: sql::Pointer,
+    buffer_length: sql::Integer,
+    string_length_ptr: *mut sql::Integer,
+) -> sql::RetCode {
+    api::diagnostic::clear_diag_info(sql::HandleType::Dbc, connection_handle);
+    let result = api::connection::get_connect_attr(
+        connection_handle,
+        attribute,
+        value,
+        buffer_length,
+        string_length_ptr,
+    );
+    match &result {
+        Ok(truncated) if *truncated => {
+            // Report truncation as SQL_SUCCESS_WITH_INFO with SQLSTATE 01004
+            let warnings = vec![crate::conversion::warning::Warning::StringDataTruncated];
+            api::diagnostic::set_diag_info_from_warnings(
+                sql::HandleType::Dbc,
+                connection_handle,
+                &warnings,
+            );
+            return sql::SqlReturn::SUCCESS_WITH_INFO.0;
+        }
+        _ => {}
+    }
+    let result = result.map(|_| ());
+    api::diagnostic::set_diag_info_from_result(sql::HandleType::Dbc, connection_handle, &result);
+    result.to_sql_code()
+}
+
+/// # Safety
+/// This function is called by the ODBC driver manager.
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn SQLDriverConnect(
     connection_handle: sql::Handle,
     _window_handle: sql::Handle,

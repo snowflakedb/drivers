@@ -237,6 +237,10 @@ lazy_static! {
         set.insert("PRIV_KEY_FILE".to_string());
         set.insert("PRIVATE_KEY_FILE".to_string());
         set.insert("PRIV_KEY_FILE_PWD".to_string());
+        set.insert("PRIV_KEY_BASE64".to_string());
+        set.insert("PRIV_KEY_PWD".to_string());
+        set.insert("PRIVATE_KEY".to_string());
+        set.insert("PRIVATE_KEY_PASSWORD".to_string());
         set.insert("TOKEN".to_string());
         set.insert("AUTHENTICATOR".to_string());
         set.insert("USER".to_string());
@@ -263,7 +267,7 @@ impl OdbcError {
             OdbcError::InvalidDiagnosticIdentifier { .. } => {
                 SqlState::InvalidDescriptorFieldIdentifier
             }
-            OdbcError::UnknownAttribute { .. } => SqlState::GeneralError,
+            OdbcError::UnknownAttribute { .. } => SqlState::OptionalFeatureNotImplemented,
             OdbcError::InvalidParameterNumber { .. } => SqlState::WrongNumberOfParameters,
             OdbcError::StatementNotExecuted { .. } => SqlState::FunctionSequenceError,
             OdbcError::DataNotFetched { .. } => SqlState::FunctionSequenceError,

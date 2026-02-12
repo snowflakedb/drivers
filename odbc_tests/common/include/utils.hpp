@@ -17,6 +17,31 @@
 
 namespace test_utils {
 
+/// Base64-encode a string (no external dependency).
+inline std::string base64_encode(const std::string& input) {
+  static const char base64_chars[] =
+      "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  std::string encoded;
+  encoded.reserve(((input.size() + 2) / 3) * 4);
+  unsigned int val = 0;
+  int valb = -6;
+  for (unsigned char c : input) {
+    val = (val << 8) + c;
+    valb += 8;
+    while (valb >= 0) {
+      encoded.push_back(base64_chars[(val >> valb) & 0x3F]);
+      valb -= 6;
+    }
+  }
+  if (valb > -6) {
+    encoded.push_back(base64_chars[((val << 8) >> (valb + 8)) & 0x3F]);
+  }
+  while (encoded.size() % 4) {
+    encoded.push_back('=');
+  }
+  return encoded;
+}
+
 inline std::filesystem::path repo_root() {
   const char* git_root_env_value = std::getenv("GIT_ROOT");
   if (git_root_env_value != nullptr && git_root_env_value[0] != '\0') {

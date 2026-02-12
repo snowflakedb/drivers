@@ -117,3 +117,117 @@ TEST_CASE("should fail JWT authentication when invalid private key provided", "[
   // Then There is error returned
   assert_login_error(dbc);
 }
+
+TEST_CASE("should authenticate using unencrypted private key file", "[private_key_auth]") {
+  SKIP_OLD_DRIVER("BD#6", "Test specific to new driver - unencrypted key file without password");
+
+  // Given Authentication is set to JWT and an unencrypted private key file is provided (no password)
+  auto params = get_test_parameters("testconnection");
+  auto env = setup_environment();
+  auto dbc = get_connection_handle(env);
+
+  // The test key in parameters.json is encrypted. We must decrypt it first
+  // to produce an unencrypted PEM file for this test.
+  std::string encrypted_pem = read_private_key(params);
+  const std::string encrypted_path = "./rsa_key_encrypted.p8";
+  const std::string unencrypted_path = "./rsa_key_unencrypted.p8";
+
+  {
+    std::ofstream file(encrypted_path, std::ios::out | std::ios::trunc);
+    REQUIRE(file.is_open());
+    file << encrypted_pem;
+    file.close();
+  }
+
+  // Decrypt the key using openssl
+  auto pwd_it = params.find("SNOWFLAKE_TEST_PRIVATE_KEY_PASSWORD");
+  if (pwd_it == params.end() || !pwd_it->second.is<std::string>() || pwd_it->second.get<std::string>().empty()) {
+    SKIP("No private key password configured; cannot decrypt key for unencrypted test");
+  }
+  std::string password = pwd_it->second.get<std::string>();
+
+  std::string cmd = "openssl pkey -in " + encrypted_path + " -out " + unencrypted_path +
+                    " -passin pass:" + password;
+  int rc = system(cmd.c_str());
+  REQUIRE(rc == 0);
+
+  // Build connection string without PRIV_KEY_FILE_PWD
+  std::stringstream ss;
+  read_default_params(ss, params);
+  ss << "AUTHENTICATOR=SNOWFLAKE_JWT;";
+  ss << "PRIV_KEY_FILE=" << unencrypted_path << ";";
+  std::string connection_string = ss.str();
+
+  // When Trying to Connect
+  attempt_connection(dbc, connection_string);
+
+  // Then Login is successful and simple query can be executed
+  verify_simple_query_execution(dbc);
+
+  SQLDisconnect(dbc.getHandle());
+}
+
+TEST_CASE("should authenticate using private_key as base64 string", "[private_key_auth]") {
+  SKIP_OLD_DRIVER("BD#7", "PRIV_KEY_BASE64 may differ in old driver behavior");
+
+  // Given Authentication is set to JWT and private key is provided as base64-encoded string
+  auto params = get_test_parameters("testconnection");
+  auto env = setup_environment();
+  auto dbc = get_connection_handle(env);
+
+  // Read the PEM private key and base64-encode it for PRIV_KEY_BASE64
+  std::string private_key_pem = read_private_key(params);
+  std::string private_key_b64 = test_utils::base64_encode(private_key_pem);
+
+  // Build connection string with PRIV_KEY_BASE64 instead of PRIV_KEY_FILE
+  // The key in parameters.json is encrypted, so we must also provide the password
+  std::stringstream ss;
+  read_default_params(ss, params);
+  add_param_optional<std::string>(ss, params, "SNOWFLAKE_TEST_PRIVATE_KEY_PASSWORD", "PRIV_KEY_PWD");
+  ss << "AUTHENTICATOR=SNOWFLAKE_JWT;";
+  ss << "PRIV_KEY_BASE64=" << private_key_b64 << ";";
+  std::string connection_string = ss.str();
+
+  // When Trying to Connect
+  attempt_connection(dbc, connection_string);
+
+  // Then Login is successful and simple query can be executed
+  verify_simple_query_execution(dbc);
+
+  SQLDisconnect(dbc.getHandle());
+}
+
+TEST_CASE("should authenticate using PRIV_KEY_PWD as alias for private key password", "[private_key_auth]") {
+  // Given Authentication is set to JWT with encrypted key file and PRIV_KEY_PWD parameter
+  auto params = get_test_parameters("testconnection");
+
+  // This test only makes sense if we have a password-protected key
+  auto pwd_it = params.find("SNOWFLAKE_TEST_PRIVATE_KEY_PASSWORD");
+  if (pwd_it == params.end() || !pwd_it->second.is<std::string>() || pwd_it->second.get<std::string>().empty()) {
+    SKIP("No private key password configured; skipping PRIV_KEY_PWD test");
+  }
+
+  auto env = setup_environment();
+  auto dbc = get_connection_handle(env);
+
+  // Write encrypted key to file
+  std::string key_path = get_private_key_path_for_auth(params);
+  std::string password = pwd_it->second.get<std::string>();
+
+  // Build connection string using PRIV_KEY_PWD instead of PRIV_KEY_FILE_PWD
+  std::stringstream ss;
+  read_default_params(ss, params);
+  ss << "AUTHENTICATOR=SNOWFLAKE_JWT;";
+  ss << "PRIV_KEY_FILE=" << key_path << ";";
+  ss << "PRIV_KEY_PWD=" << password << ";";
+  std::string connection_string = ss.str();
+
+  // When Trying to Connect
+  attempt_connection(dbc, connection_string);
+
+  // Then Login is successful and simple query can be executed
+  verify_simple_query_execution(dbc);
+
+  SQLDisconnect(dbc.getHandle());
+}
+

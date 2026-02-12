@@ -9,6 +9,22 @@ use sf_core::protobuf_gen::database_driver_v1::{
 };
 use std::collections::HashMap;
 
+/// Custom Snowflake connection attribute base.
+/// Mirrors the old driver's sf_odbc.h: SQL_DRIVER_CONN_ATTR_BASE (0x4000) + 0x53
+const SQL_SF_CONN_ATTR_BASE: i32 = 0x4000 + 0x53;
+
+/// Custom Snowflake connection attribute IDs (matching old driver sf_odbc.h)
+/// SQL_SF_CONN_ATTR_PRIV_KEY - EVP_PKEY pointer (not supported in new driver)
+pub const SQL_SF_CONN_ATTR_PRIV_KEY: i32 = SQL_SF_CONN_ATTR_BASE + 1;
+/// SQL_SF_CONN_ATTR_APPLICATION - Application name
+pub const SQL_SF_CONN_ATTR_APPLICATION: i32 = SQL_SF_CONN_ATTR_BASE + 2;
+/// SQL_SF_CONN_ATTR_PRIV_KEY_CONTENT - Private key as PEM string
+pub const SQL_SF_CONN_ATTR_PRIV_KEY_CONTENT: i32 = SQL_SF_CONN_ATTR_BASE + 3;
+/// SQL_SF_CONN_ATTR_PRIV_KEY_PASSWORD - Private key password/passphrase
+pub const SQL_SF_CONN_ATTR_PRIV_KEY_PASSWORD: i32 = SQL_SF_CONN_ATTR_BASE + 4;
+/// SQL_SF_CONN_ATTR_PRIV_KEY_BASE64 - Private key as base64-encoded string
+pub const SQL_SF_CONN_ATTR_PRIV_KEY_BASE64: i32 = SQL_SF_CONN_ATTR_BASE + 5;
+
 /// Result type for ODBC operations
 pub type OdbcResult<T> = Result<T, OdbcError>;
 
@@ -56,9 +72,25 @@ pub enum ConnectionState {
     },
 }
 
+/// Pre-connection attributes set via SQLSetConnectAttr before connecting.
+/// These are applied to the sf_core connection during driver_connect/connect.
+#[derive(Default)]
+pub struct PreConnectionAttributes {
+    /// Private key as PEM string (from SQL_SF_CONN_ATTR_PRIV_KEY_CONTENT)
+    pub private_key_content: Option<String>,
+    /// Private key passphrase (from SQL_SF_CONN_ATTR_PRIV_KEY_PASSWORD)
+    pub private_key_password: Option<String>,
+    /// Private key as base64-encoded string (from SQL_SF_CONN_ATTR_PRIV_KEY_BASE64)
+    pub private_key_base64: Option<String>,
+    /// Application name (from SQL_SF_CONN_ATTR_APPLICATION)
+    pub application: Option<String>,
+}
+
 pub struct Connection {
     pub state: ConnectionState,
     pub diagnostic_info: DiagnosticInfo,
+    /// Attributes set via SQLSetConnectAttr before the connection is established
+    pub pre_connection_attrs: PreConnectionAttributes,
 }
 
 #[derive(Debug, Clone)]
