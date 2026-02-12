@@ -1,7 +1,7 @@
 use crate::api::error::Required;
 use crate::api::{
     ConnectionState, OdbcResult, api_utils, conn_from_handle,
-    error::{InvalidPortSnafu, UnknownAttributeSnafu},
+    error::{InvalidPortSnafu, UnknownAttributeSnafu, UnsupportedAttributeSnafu},
     types::ConnectionAttribute,
 };
 use crate::conversion::warning::{Warning, Warnings};
@@ -382,7 +382,7 @@ pub fn set_connect_attr(
                 "set_connect_attr: PrivKey (EVP_PKEY pointer) is not supported. \
                  Use PrivKeyContent or PrivKeyBase64 instead."
             );
-            UnknownAttributeSnafu {
+            UnsupportedAttributeSnafu {
                 attribute: attr.as_raw(),
             }
             .fail()
@@ -416,8 +416,9 @@ pub fn get_connect_attr(
     let attr = match ConnectionAttribute::from_raw(attribute) {
         Some(a) => a,
         None => {
+            // Old driver returns an error for unrecognized attributes.
             tracing::warn!("get_connect_attr: unknown attribute {}", attribute);
-            return Ok(());
+            return UnknownAttributeSnafu { attribute }.fail();
         }
     };
 
@@ -460,7 +461,7 @@ pub fn get_connect_attr(
             Ok(())
         }
         ConnectionAttribute::PrivKey => {
-            UnknownAttributeSnafu {
+            UnsupportedAttributeSnafu {
                 attribute: attr.as_raw(),
             }
             .fail()

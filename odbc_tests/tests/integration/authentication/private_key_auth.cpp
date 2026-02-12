@@ -135,7 +135,9 @@ TEST_CASE("should fail JWT authentication when no private file provided", "[priv
 // ============================================================================
 
 TEST_CASE("should forward private key content set via SQLSetConnectAttr to core", "[private_key_auth]") {
-  SKIP_OLD_DRIVER("BD#8", "Old driver uses different attribute handling");
+  // New-driver-only: integration test targets the new driver's direct attribute handling.
+  // The old driver delegates to the Simba SDK which has a different connection flow.
+  SKIP_OLD_DRIVER("", "New-driver-only integration test");
 
   // Given A connection handle is allocated and PRIV_KEY_CONTENT is set via SQLSetConnectAttr
   auto env = setup_environment_integration();
@@ -158,7 +160,8 @@ TEST_CASE("should forward private key content set via SQLSetConnectAttr to core"
 }
 
 TEST_CASE("should forward base64 private key set via SQLSetConnectAttr to core", "[private_key_auth]") {
-  SKIP_OLD_DRIVER("BD#9", "Old driver uses different attribute handling");
+  // New-driver-only: integration test targets the new driver's direct attribute handling.
+  SKIP_OLD_DRIVER("", "New-driver-only integration test");
 
   // Given A connection handle is allocated and PRIV_KEY_BASE64 is set via SQLSetConnectAttr
   auto env = setup_environment_integration();
@@ -182,7 +185,8 @@ TEST_CASE("should forward base64 private key set via SQLSetConnectAttr to core",
 }
 
 TEST_CASE("should forward private key password set via SQLSetConnectAttr to core", "[private_key_auth]") {
-  SKIP_OLD_DRIVER("BD#10", "Old driver uses different attribute handling");
+  // New-driver-only: integration test targets the new driver's direct attribute handling.
+  SKIP_OLD_DRIVER("", "New-driver-only integration test");
 
   // Given A connection handle is allocated and PRIV_KEY_PASSWORD is set via SQLSetConnectAttr
   auto env = setup_environment_integration();
