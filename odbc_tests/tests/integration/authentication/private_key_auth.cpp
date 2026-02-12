@@ -196,22 +196,9 @@ TEST_CASE("should forward private key password set via SQLSetConnectAttr to core
   // Create an encrypted key file from the test key so we can test password forwarding
   TempTestDir tmp("int_auth_pwd_");
   std::string test_key_pem = read_test_private_key_content();
-  const std::string unencrypted_path = (tmp.path() / "unencrypted.pem").string();
-  const std::string encrypted_path = (tmp.path() / "encrypted.pem").string();
+  const auto encrypted_path = tmp.path() / "encrypted.pem";
   const std::string test_password = "test_password_123";
-
-  {
-    std::ofstream f(unencrypted_path, std::ios::out | std::ios::trunc);
-    REQUIRE(f.is_open());
-    f << test_key_pem;
-    f.close();
-  }
-
-  // Encrypt the test key with a known password
-  std::string cmd = "openssl pkey -in " + unencrypted_path + " -out " + encrypted_path +
-                    " -aes256 -passout pass:" + test_password + " 2>/dev/null";
-  int rc = system(cmd.c_str());
-  REQUIRE(rc == 0);
+  test_utils::encrypt_pem_key_to_file(test_key_pem, test_password, encrypted_path);
 
   // Set password via SQLSetConnectAttr
   SQLRETURN ret = SQLSetConnectAttr(
@@ -223,7 +210,7 @@ TEST_CASE("should forward private key password set via SQLSetConnectAttr to core
 
   // When Trying to Connect
   std::string connection_string = get_base_jwt_connection_string_int();
-  connection_string += "PRIV_KEY_FILE=" + encrypted_path + ";";
+  connection_string += "PRIV_KEY_FILE=" + encrypted_path.string() + ";";
 
   // Then The private key password is forwarded to core and used for JWT authentication
   verify_private_key_forwarded_to_core(dbc, connection_string);

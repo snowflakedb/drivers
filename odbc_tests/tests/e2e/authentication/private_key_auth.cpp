@@ -134,27 +134,14 @@ TEST_CASE("should authenticate using unencrypted private key file", "[private_ke
   // The test key in parameters.json is encrypted. We must decrypt it first
   // to produce an unencrypted PEM file for this test.
   std::string encrypted_pem = read_private_key(params);
-  const std::string encrypted_path = (tmp.path() / "encrypted.p8").string();
-  const std::string unencrypted_path = (tmp.path() / "unencrypted.p8").string();
+  const auto unencrypted_path = tmp.path() / "unencrypted.p8";
 
-  {
-    std::ofstream file(encrypted_path, std::ios::out | std::ios::trunc);
-    REQUIRE(file.is_open());
-    file << encrypted_pem;
-    file.close();
-  }
-
-  // Decrypt the key using openssl
   auto pwd_it = params.find("SNOWFLAKE_TEST_PRIVATE_KEY_PASSWORD");
   if (pwd_it == params.end() || !pwd_it->second.is<std::string>() || pwd_it->second.get<std::string>().empty()) {
     SKIP("No private key password configured; cannot decrypt key for unencrypted test");
   }
   std::string password = pwd_it->second.get<std::string>();
-
-  std::string cmd = "openssl pkey -in " + encrypted_path + " -out " + unencrypted_path +
-                    " -passin pass:" + password;
-  int rc = system(cmd.c_str());
-  REQUIRE(rc == 0);
+  test_utils::decrypt_pem_key_to_file(encrypted_pem, password, unencrypted_path);
 
   // Build connection string without PRIV_KEY_FILE_PWD
   std::stringstream ss;
