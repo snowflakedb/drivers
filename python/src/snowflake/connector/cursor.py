@@ -12,6 +12,7 @@ Hierarchy:
 from __future__ import annotations
 
 import abc
+import ctypes
 
 from collections.abc import Iterator, Sequence
 from typing import TYPE_CHECKING, Any, NamedTuple
@@ -28,8 +29,7 @@ from ._internal.protobuf_gen.database_driver_v1_pb2 import (
     StringPtr,
 )
 from ._internal.type_codes import get_type_code
-from ._internal.protobuf_gen.proto_exception import ProtoApplicationException
-from .errors import DatabaseError, NotSupportedError, ProgrammingError
+from .errors import NotSupportedError, ProgrammingError
 
 
 if TYPE_CHECKING:
@@ -39,36 +39,8 @@ Row = tuple[Any, ...]
 DictRow = dict[str, Any]
 
 
-def _convert_proto_error(exc: ProtoApplicationException) -> DatabaseError:
-    """Convert a ProtoApplicationException from Rust core into the appropriate PEP 249 error.
-
-    Inspects the protobuf DriverException's message to classify the error.
-    SQL compilation errors (e.g. wrong number of bind variables) become
-    ProgrammingError, which is the PEP 249 category for "syntax error in
-    the SQL statement, wrong number of parameters specified, etc."
-    """
-    msg = str(exc.message) if hasattr(exc, "message") else str(exc)
-
-    # SQL compilation errors are programming mistakes (wrong SQL, missing
-    # bind variables, type mismatches, etc.)
-    if "SQL compilation error" in msg:
-        return ProgrammingError(msg)
-
-    # Default: surface as a generic DatabaseError so callers can still
-    # catch it via the PEP 249 hierarchy.
-    return DatabaseError(msg)
-
-class ResultMetadata(NamedTuple):
-    """PEP 249 column description entry.
-
-    Each item in ``Cursor.description`` is a ``ResultMetadata`` instance.
-    Being a :class:`~typing.NamedTuple` it is fully tuple-compatible as
-    required by the spec, while also providing named attribute access.
-    """
-
 class Cursor:
     """
-
     name: str
     type_code: int
     display_size: int | None
@@ -76,6 +48,7 @@ class Cursor:
     precision: int | None
     scale: int | None
     is_nullable: bool | None
+    """
 
     @classmethod
     def from_column(cls, col: Any) -> ResultMetadata:
@@ -216,7 +189,44 @@ class SnowflakeCursorBase(abc.ABC):
         """Close the cursor now (rather than whenever __del__ is called)."""
         self._closed = True
 
-    def execute(self, operation: str, parameters: Sequence[Any] | dict[str, Any] | None = None) -> SnowflakeCursorBase:
+    def _build_query_bindings(self, parameters: Sequence[Any]) -> QueryBindings | None:
+        """Serialize parameters and build a QueryBindings protobuf message.
+
+        Converts Python parameter values to JSON via BindingSerializer, then
+        wraps the result in a zero-copy StringPtr so the Rust core can read
+        the JSON directly from Python memory.
+
+        The encoded bytes are stored on ``self._binding_data`` to prevent
+        garbage collection while Rust holds the pointer.
+
+        Returns:
+            QueryBindings with the serialized JSON, or None if parameters
+            serialize to nothing (e.g. empty list).
+        """
+        json_str, length = BindingSerializer.serialize_parameters(parameters)
+        if json_str is None:
+            return None
+
+        # Convert string to bytes and keep a reference to prevent garbage
+        # collection while Rust uses the underlying buffer.
+        json_bytes = json_str.encode("utf-8")
+        self._binding_data = json_bytes
+
+        # Get memory address of the bytes buffer (no-copy scheme)
+        ptr_value = ctypes.cast(ctypes.c_char_p(json_bytes), ctypes.c_void_p).value
+        if ptr_value is None:
+            raise RuntimeError("Failed to obtain memory pointer for binding data")
+
+        # Convert pointer to 8-byte little-endian representation
+        ptr_bytes = ptr_value.to_bytes(8, byteorder="little", signed=False)
+
+        string_ptr = StringPtr(
+            value=ptr_bytes,  # 8-byte pointer value
+            length=length,
+        )
+        return QueryBindings(json=string_ptr)
+
+    def execute(self, operation: str, parameters: Sequence[Any] | dict[str, Any] | None = None) -> Cursor:
         """
         Execute a database operation (query or command).
 
@@ -231,43 +241,10 @@ class SnowflakeCursorBase(abc.ABC):
             StatementSetSqlQueryRequest(stmt_handle=stmt_handle, query=operation)
         )
 
-        # Serialize parameters if provided
-        if parameters is not None:
-            json_str, length = BindingSerializer.serialize_parameters(parameters)
-            if json_str is not None:
-                # Convert string to bytes
-                json_bytes = json_str.encode("utf-8")
+        bindings = self._build_query_bindings(parameters) if parameters is not None else None
+        request = StatementExecuteQueryRequest(stmt_handle=stmt_handle, bindings=bindings)
 
-                # Keep reference to prevent garbage collection while Rust uses it
-                self._binding_data = json_bytes
-
-                # Get memory address of the bytes buffer (no-copy scheme)
-                import ctypes
-
-                ptr_value = ctypes.cast(ctypes.c_char_p(json_bytes), ctypes.c_void_p).value
-                if ptr_value is None:
-                    raise RuntimeError("Failed to obtain memory pointer for binding data")
-
-                # Convert pointer to 8-byte little-endian representation
-                ptr_bytes = ptr_value.to_bytes(8, byteorder="little", signed=False)
-
-                # Create StringPtr with actual memory pointer (not data copy)
-                string_ptr = StringPtr(
-                    value=ptr_bytes,  # 8-byte pointer value
-                    length=length,
-                )
-
-                # Create request with bindings (no CopyFrom - direct assignment)
-                request = StatementExecuteQueryRequest(stmt_handle=stmt_handle, bindings=QueryBindings(json=string_ptr))
-            else:
-                request = StatementExecuteQueryRequest(stmt_handle=stmt_handle)
-        else:
-            request = StatementExecuteQueryRequest(stmt_handle=stmt_handle)
-
-        try:
-            self.execute_result = self.connection.db_api.statement_execute_query(request).result
-        except ProtoApplicationException as e:
-            raise _convert_proto_error(e) from e
+        self.execute_result = self.connection.db_api.statement_execute_query(request).result
 
         # Reset streaming state for a new result
         self._binding_data = None

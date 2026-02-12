@@ -13,6 +13,7 @@ from __future__ import annotations
 import pytest
 
 from snowflake.connector import ProgrammingError
+from snowflake.connector._internal.protobuf_gen.proto_exception import ProtoApplicationException
 
 
 class TestBasicTypeBinding:
@@ -224,7 +225,7 @@ class TestEdgeCases:
 
         # When Query with 3 placeholders is executed with 1 argument
         # Then Error should be raised for too few arguments
-        with pytest.raises(ProgrammingError):
+        with pytest.raises(ProtoApplicationException):
             cursor.execute("SELECT ?, ?, ?", (1,))
 
 

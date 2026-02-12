@@ -19,6 +19,8 @@ from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 from typing import Any
 
+from .type_codes import PYTHON_TO_SNOWFLAKE_TYPE
+
 
 # Epoch constants (timezone-independent)
 _ZERO_EPOCH_DATE = date(1970, 1, 1)
@@ -27,26 +29,6 @@ _ZERO_EPOCH = datetime.fromtimestamp(0, timezone.utc).replace(tzinfo=None)
 
 class BindingSerializer:
     """Serializes Python parameters to Snowflake binding JSON format."""
-
-    # Python type to Snowflake type mapping
-    # Mirrors PYTHON_TO_SNOWFLAKE_TYPE from the reference connector's converter.py
-    TYPE_MAP = {
-        "int": "FIXED",
-        "long": "FIXED",
-        "float": "REAL",
-        "str": "TEXT",
-        "unicode": "TEXT",
-        "bool": "BOOLEAN",
-        "bytes": "BINARY",
-        "bytearray": "BINARY",
-        "datetime": "TIMESTAMP_NTZ",
-        "date": "DATE",
-        "time": "TIME",
-        "decimal": "FIXED",
-        "struct_time": "TIMESTAMP_NTZ",
-        "timedelta": "TIME",
-        "nonetype": "ANY",
-    }
 
     @staticmethod
     def _convert_datetime_to_epoch_nanoseconds(dt: datetime) -> str:
@@ -175,7 +157,7 @@ class BindingSerializer:
             return "ANY", None
 
         type_name = value.__class__.__name__.lower()
-        snowflake_type = cls.TYPE_MAP.get(type_name, "TEXT")
+        snowflake_type = PYTHON_TO_SNOWFLAKE_TYPE.get(type_name, "TEXT")
 
         # Convert value to string representation for JSON
         # Order matters: bool before int (bool is subclass of int),

@@ -208,6 +208,58 @@ class TestConvertValueDatetime:
         _, value = BindingSerializer._convert_value(dt)
         assert int(value) == 1_000_000_000
 
+    def test_datetime_with_microseconds_at_epoch(self):
+        """Microsecond precision must be preserved in nanosecond output.
+
+        datetime(1970, 1, 1, 0, 0, 0, 123456) = 123456 microseconds
+        = 123456000 nanoseconds.
+        """
+        dt = datetime(1970, 1, 1, 0, 0, 0, 123456)
+        _, value = BindingSerializer._convert_value(dt)
+        assert int(value) == 123_456_000
+
+    def test_datetime_with_one_microsecond(self):
+        """Single microsecond must not be lost.
+
+        datetime(1970, 1, 1, 0, 0, 0, 1) = 1 microsecond = 1000 nanoseconds.
+        """
+        dt = datetime(1970, 1, 1, 0, 0, 0, 1)
+        _, value = BindingSerializer._convert_value(dt)
+        assert int(value) == 1_000
+
+    def test_datetime_with_microseconds_and_seconds(self):
+        """Combined seconds and microseconds must produce correct nanoseconds.
+
+        datetime(1970, 1, 1, 0, 0, 1, 123456) = 1.123456 seconds
+        = 1_123_456_000 nanoseconds.
+        """
+        dt = datetime(1970, 1, 1, 0, 0, 1, 123456)
+        _, value = BindingSerializer._convert_value(dt)
+        assert int(value) == 1_123_456_000
+
+    def test_datetime_with_microseconds_far_from_epoch(self):
+        """Microsecond precision must be preserved even for dates far from epoch.
+
+        Large epoch offsets increase the total_seconds() float magnitude,
+        which can cause loss of microsecond precision due to float64 limits.
+        """
+        dt = datetime(2024, 6, 15, 10, 30, 0, 123456)
+        dt_no_us = datetime(2024, 6, 15, 10, 30, 0, 0)
+        _, value = BindingSerializer._convert_value(dt)
+        _, value_no_us = BindingSerializer._convert_value(dt_no_us)
+        # The difference must be exactly 123456 microseconds = 123456000 nanoseconds
+        assert int(value) - int(value_no_us) == 123_456_000
+
+    def test_datetime_max_microseconds(self):
+        """Maximum microsecond value (999999) must be preserved.
+
+        datetime(1970, 1, 1, 0, 0, 0, 999999) = 999999 microseconds
+        = 999_999_000 nanoseconds.
+        """
+        dt = datetime(1970, 1, 1, 0, 0, 0, 999999)
+        _, value = BindingSerializer._convert_value(dt)
+        assert int(value) == 999_999_000
+
     def test_date_epoch_is_zero(self):
         """date at Unix epoch should produce zero milliseconds (timezone-independent)."""
         d = date(1970, 1, 1)
@@ -745,6 +797,22 @@ class TestHelperMethods:
         """Epoch datetime produces zero nanoseconds."""
         result = BindingSerializer._convert_datetime_to_epoch_nanoseconds(datetime(1970, 1, 1, 0, 0, 0))
         assert int(result) == 0
+
+    def test_datetime_microseconds_at_epoch(self):
+        """Microseconds at epoch must produce exact nanoseconds."""
+        result = BindingSerializer._convert_datetime_to_epoch_nanoseconds(datetime(1970, 1, 1, 0, 0, 0, 123456))
+        assert int(result) == 123_456_000
+
+    def test_datetime_one_microsecond_at_epoch(self):
+        """A single microsecond must not be lost."""
+        result = BindingSerializer._convert_datetime_to_epoch_nanoseconds(datetime(1970, 1, 1, 0, 0, 0, 1))
+        assert int(result) == 1_000
+
+    def test_datetime_microseconds_far_from_epoch(self):
+        """Microsecond precision must survive float64 representation for large epoch values."""
+        result = BindingSerializer._convert_datetime_to_epoch_nanoseconds(datetime(2024, 6, 15, 10, 30, 0, 123456))
+        result_no_us = BindingSerializer._convert_datetime_to_epoch_nanoseconds(datetime(2024, 6, 15, 10, 30, 0, 0))
+        assert int(result) - int(result_no_us) == 123_456_000
 
     def test_datetime_tz_aware_converts_to_utc(self):
         """Timezone-aware datetimes should be normalized to UTC."""
