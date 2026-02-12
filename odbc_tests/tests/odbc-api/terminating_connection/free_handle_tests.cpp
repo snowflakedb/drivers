@@ -4,10 +4,10 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include "compatibility.hpp"
 #include "Connection.hpp"
 #include "ODBCConfig.hpp"
 #include "ODBCFixtures.hpp"
-#include "compatibility.hpp"
 #include "get_diag_rec.hpp"
 #include "test_macros.hpp"
 #include "test_setup.hpp"
@@ -16,7 +16,8 @@
 // SQLFreeHandle - Environment Handle
 // ============================================================================
 
-TEST_CASE("SQLFreeHandle: Successfully frees environment handle", "[odbc-api][freehandle][terminating_connection]") {
+TEST_CASE("SQLFreeHandle: Successfully frees environment handle",
+          "[odbc-api][freehandle][terminating_connection]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   // Allocate environment
@@ -60,7 +61,8 @@ TEST_CASE_METHOD(EnvFixture, "SQLFreeHandle: HY010 - Cannot free environment wit
   SQLFreeHandle(SQL_HANDLE_DBC, dbc);
 }
 
-TEST_CASE("SQLFreeHandle: Double free environment handle", "[odbc-api][freehandle][terminating_connection][error]") {
+TEST_CASE("SQLFreeHandle: Double free environment handle",
+          "[odbc-api][freehandle][terminating_connection][error]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   // Allocate and free environment
@@ -110,9 +112,8 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLFreeHandle: HY010 - Cannot free conne
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   // Connect
-  SQLRETURN ret =
-      SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(config.value().dsn_name().c_str())),
-                 SQL_NTS, nullptr, 0, nullptr, 0);
+  SQLRETURN ret = SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(config.value().dsn_name().c_str())),
+                             SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
   // Try to free while still connected
@@ -129,9 +130,8 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLFreeHandle: Can free disconnected con
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   // Connect and disconnect
-  SQLRETURN ret =
-      SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(config.value().dsn_name().c_str())),
-                 SQL_NTS, nullptr, 0, nullptr, 0);
+  SQLRETURN ret = SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(config.value().dsn_name().c_str())),
+                             SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
   ret = SQLDisconnect(dbc_handle());
@@ -145,15 +145,13 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLFreeHandle: Can free disconnected con
   dbc_wrapper.reset();
 }
 
-TEST_CASE_METHOD(DbcDefaultDSNFixture,
-                 "SQLFreeHandle: Frees dependent statement handles when connection handle is freed",
+TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLFreeHandle: Frees dependent statement handles when connection handle is freed",
                  "[odbc-api][freehandle][terminating_connection]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
+  
   // Connect first (required to allocate statement)
-  SQLRETURN ret =
-      SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(config.value().dsn_name().c_str())),
-                 SQL_NTS, nullptr, 0, nullptr, 0);
+  SQLRETURN ret = SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(config.value().dsn_name().c_str())),
+                             SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
   // Allocate statement
@@ -168,10 +166,10 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture,
   // Note: Reference driver automatically frees dependent statement handles
   ret = SQLFreeHandle(SQL_HANDLE_DBC, dbc_handle());
   REQUIRE(ret == SQL_SUCCESS);
-
+  
   ret = SQLExecDirect(stmt, reinterpret_cast<SQLCHAR*>(const_cast<char*>("SELECT 1")), SQL_NTS);
   REQUIRE(ret == SQL_INVALID_HANDLE);
-
+  
   dbc_wrapper.reset();
 }
 
@@ -189,9 +187,8 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLFreeHandle: Successfully frees statem
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   // Connect first
-  SQLRETURN ret =
-      SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(config.value().dsn_name().c_str())),
-                 SQL_NTS, nullptr, 0, nullptr, 0);
+  SQLRETURN ret = SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(config.value().dsn_name().c_str())),
+                             SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
   // Allocate statement
@@ -220,9 +217,8 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLFreeHandle: Can free statement with p
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   // Connect
-  SQLRETURN ret =
-      SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(config.value().dsn_name().c_str())),
-                 SQL_NTS, nullptr, 0, nullptr, 0);
+  SQLRETURN ret = SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(config.value().dsn_name().c_str())),
+                             SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
   // Allocate and prepare statement
@@ -232,7 +228,7 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLFreeHandle: Can free statement with p
 
   ret = SQLPrepare(stmt, reinterpret_cast<SQLCHAR*>(const_cast<char*>("SELECT 1")), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
-
+  
   ret = SQLFreeHandle(SQL_HANDLE_STMT, stmt);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -244,9 +240,8 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLFreeHandle: Can free statement with a
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   // Connect
-  SQLRETURN ret =
-      SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(config.value().dsn_name().c_str())),
-                 SQL_NTS, nullptr, 0, nullptr, 0);
+  SQLRETURN ret = SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(config.value().dsn_name().c_str())),
+                             SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
   // Execute query
@@ -256,7 +251,7 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLFreeHandle: Can free statement with a
 
   ret = SQLExecDirect(stmt, reinterpret_cast<SQLCHAR*>(const_cast<char*>("SELECT 1")), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
-
+  
   ret = SQLFreeHandle(SQL_HANDLE_STMT, stmt);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -268,9 +263,8 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLFreeHandle: Can free statement with b
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   // Connect
-  SQLRETURN ret =
-      SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(config.value().dsn_name().c_str())),
-                 SQL_NTS, nullptr, 0, nullptr, 0);
+  SQLRETURN ret = SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(config.value().dsn_name().c_str())),
+                             SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
   // Allocate statement and bind parameter
@@ -281,7 +275,7 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLFreeHandle: Can free statement with b
   SQLINTEGER param_value = 42;
   ret = SQLBindParameter(stmt, 1, SQL_PARAM_INPUT, SQL_C_SLONG, SQL_INTEGER, 0, 0, &param_value, 0, nullptr);
   REQUIRE(ret == SQL_SUCCESS);
-
+  
   ret = SQLFreeHandle(SQL_HANDLE_STMT, stmt);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -293,9 +287,8 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLFreeHandle: Can free statement with b
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   // Connect
-  SQLRETURN ret =
-      SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(config.value().dsn_name().c_str())),
-                 SQL_NTS, nullptr, 0, nullptr, 0);
+  SQLRETURN ret = SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(config.value().dsn_name().c_str())),
+                             SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
   // Allocate statement and bind column
@@ -306,7 +299,7 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLFreeHandle: Can free statement with b
   SQLINTEGER col_value = 0;
   ret = SQLBindCol(stmt, 1, SQL_C_SLONG, &col_value, 0, nullptr);
   REQUIRE(ret == SQL_SUCCESS);
-
+  
   ret = SQLFreeHandle(SQL_HANDLE_STMT, stmt);
   REQUIRE(ret == SQL_SUCCESS);
 
@@ -318,9 +311,8 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLFreeHandle: Double free statement han
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   // Connect
-  SQLRETURN ret =
-      SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(config.value().dsn_name().c_str())),
-                 SQL_NTS, nullptr, 0, nullptr, 0);
+  SQLRETURN ret = SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(config.value().dsn_name().c_str())),
+                             SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
   // Allocate and free statement
@@ -346,9 +338,8 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLFreeHandle: Can free explicitly alloc
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   // Connect
-  SQLRETURN ret =
-      SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(config.value().dsn_name().c_str())),
-                 SQL_NTS, nullptr, 0, nullptr, 0);
+  SQLRETURN ret = SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(config.value().dsn_name().c_str())),
+                             SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
   // Allocate explicit descriptor
@@ -377,9 +368,8 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLFreeHandle: HY017 - Cannot free impli
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   // Connect
-  SQLRETURN ret =
-      SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(config.value().dsn_name().c_str())),
-                 SQL_NTS, nullptr, 0, nullptr, 0);
+  SQLRETURN ret = SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(config.value().dsn_name().c_str())),
+                             SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
   // Allocate statement
@@ -392,7 +382,7 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLFreeHandle: HY017 - Cannot free impli
   ret = SQLGetStmtAttr(stmt, SQL_ATTR_APP_ROW_DESC, &ard, 0, nullptr);
   REQUIRE(ret == SQL_SUCCESS);
   REQUIRE(ard != SQL_NULL_HDESC);
-
+  
   // Try to free implicit descriptor
   // HY017: Invalid use of an automatically allocated descriptor handle
   ret = SQLFreeHandle(SQL_HANDLE_DESC, ard);
@@ -428,9 +418,8 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLFreeHandle: SQL_INVALID_HANDLE for wr
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   // Connect
-  SQLRETURN ret =
-      SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(config.value().dsn_name().c_str())),
-                 SQL_NTS, nullptr, 0, nullptr, 0);
+  SQLRETURN ret = SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(config.value().dsn_name().c_str())),
+                             SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
   // Allocate statement
@@ -473,9 +462,8 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLFreeHandle: Can free multiple stateme
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   // Connect
-  SQLRETURN ret =
-      SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(config.value().dsn_name().c_str())),
-                 SQL_NTS, nullptr, 0, nullptr, 0);
+  SQLRETURN ret = SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(config.value().dsn_name().c_str())),
+                             SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
   // Allocate multiple statements
@@ -501,7 +489,7 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLFreeHandle: Can free multiple stateme
 TEST_CASE("SQLFreeHandle: Complete handle hierarchy cleanup in correct order",
           "[odbc-api][freehandle][terminating_connection]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
+  
   // Create hierarchy: ENV -> DBC
   SQLHENV env = SQL_NULL_HENV;
   SQLRETURN ret = SQLAllocHandle(SQL_HANDLE_ENV, SQL_NULL_HANDLE, &env);
@@ -552,16 +540,17 @@ TEST_CASE_METHOD(EnvDefaultDSNFixture, "SQLFreeHandle: Freeing handle clears att
   REQUIRE(ret == SQL_ERROR);
 
   // Connect and verify the attribute is the default after connecting
-  ret = SQLConnect(dbc2, reinterpret_cast<SQLCHAR*>(const_cast<char*>(config.value().dsn_name().c_str())), SQL_NTS,
-                   nullptr, 0, nullptr, 0);
+  ret = SQLConnect(dbc2, reinterpret_cast<SQLCHAR*>(const_cast<char*>(config.value().dsn_name().c_str())),
+        SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
   ret = SQLGetConnectAttr(dbc2, SQL_ATTR_CONNECTION_TIMEOUT, &timeout, 0, nullptr);
   REQUIRE(ret == SQL_SUCCESS);
-  REQUIRE(timeout == 0);  // Default value
+  REQUIRE(timeout == 0); // Default value
 
   ret = SQLDisconnect(dbc2);
   REQUIRE(ret == SQL_SUCCESS);
+
 
   ret = SQLFreeHandle(SQL_HANDLE_DBC, dbc2);
   REQUIRE(ret == SQL_SUCCESS);
