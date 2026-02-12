@@ -2,7 +2,7 @@ use snafu::{OptionExt, ResultExt};
 use std::sync::{Mutex, MutexGuard};
 
 use super::Handle;
-use super::connection::with_valid_session;
+use super::connection::RefreshContext;
 use super::error::*;
 use super::global_state::{CONN_HANDLE_MANAGER, STMT_HANDLE_MANAGER};
 use crate::apis::database_driver_v1::query::process_query_response;
@@ -20,7 +20,6 @@ use arrow::{
 };
 use serde_json::value::RawValue;
 use snafu::Snafu;
-use std::borrow::Cow;
 use std::{collections::HashMap, sync::Arc};
 
 use super::connection::Connection;
@@ -216,16 +215,22 @@ pub fn statement_execute_query(
     // Get bindings from request or from statement's Arrow bindings.
     //
     // JSON path (from language wrappers): **ZERO COPY** - borrows directly from wrapper memory.
-    //   Returns Cow::Borrowed with 'static lifetime (safe because rt.block_on is synchronous).
-    // Arrow path (ODBC backwards compat): builds HashMap and serializes to JSON (allocations).
-    //   Returns Cow::Owned.
-    let query_bindings: Option<Cow<'static, RawValue>> = if let Some(binding_type) = bindings {
+    // Arrow path (ODBC backwards compat): builds HashMap and serializes to JSON (allocations),
+    //   stored in `owned_bindings` so `query_bindings` can borrow it.
+    // Arrow path produces owned Box<RawValue>; keep it alive so query_bindings can borrow it.
+    let owned_bindings = if bindings.is_none() {
+        stmt.get_query_parameter_bindings()
+            .context(StatementSnafu)?
+    } else {
+        None
+    };
+    let query_bindings: Option<&RawValue> = if let Some(binding_type) = &bindings {
         // Handle bindings from request
-        match binding_type {
+        match &binding_type {
             BindingType::Json(data_ptr) => {
                 // True zero-copy: pointer → &'static RawValue (no allocation, no validation).
                 // Wrapper guarantees data lives through synchronous execute call.
-                parse_json_bindings(&data_ptr).context(StatementSnafu)?
+                Some(parse_json_bindings(data_ptr).context(StatementSnafu)?)
             }
             BindingType::Csv(_csv_ptr) => {
                 // TODO: Implement CSV binding handling (stage upload)
@@ -236,37 +241,30 @@ pub fn statement_execute_query(
             }
         }
     } else {
-        // Fall back to statement's existing Arrow bindings (backwards compatibility).
-        // This path allocates: HashMap → serde_json::to_string → Cow::Owned(Box<RawValue>).
-        stmt.get_query_parameter_bindings()
-            .context(StatementSnafu)?
+        owned_bindings.as_deref()
     };
 
-    // Execute query with automatic session refresh on 401.
-    //
-    // `query_bindings` is Cow<'static, RawValue>. For JSON path (Cow::Borrowed),
-    // clone() just copies 8-byte pointer. For Arrow path (Cow::Owned), clone()
-    // increments Arc. Closure may be called twice (retry on 401), so cheap clone matters.
-    let conn = stmt.conn.clone();
-    let response = rt.block_on(with_valid_session(&conn, |session_token| {
-        let http_client = http_client.clone();
-        let query_parameters = query_parameters.clone();
-        let query = query.clone();
-        let query_bindings = query_bindings.clone();
-        let retry_policy = retry_policy.clone();
-        async move {
-            snowflake_query_with_client(
+    let response = rt.block_on(async {
+        let mut ctx = RefreshContext::from_arc(&stmt.conn)?;
+        let mut last_error = None;
+        loop {
+            let session_token = ctx.refresh_token(last_error).await?;
+            match snowflake_query_with_client(
                 &http_client,
-                query_parameters,
+                query_parameters.clone(),
                 session_token,
-                query,
+                query.clone(),
                 query_bindings,
                 &retry_policy,
                 execution_mode,
             )
             .await
+            {
+                Ok(result) => return Ok(result),
+                Err(e) => last_error = Some(e),
+            }
         }
-    }))?;
+    })?;
 
     let response_reader = rt
         .block_on(process_query_response(&response.data, &http_client))
@@ -293,9 +291,7 @@ pub fn statement_execute_query(
 ///   3. `RawValue::from_string()` validates the JSON syntax and wraps the string
 ///      (no additional copy -- RawValue takes ownership of the String).
 ///   4. `Cow::Owned` wraps the Box (no allocation, just an enum tag).
-fn parameters_from_record_batch(
-    record_batch: &RecordBatch,
-) -> Result<Cow<'static, RawValue>, StatementError> {
+fn parameters_from_record_batch(record_batch: &RecordBatch) -> Result<String, StatementError> {
     let mut parameters = HashMap::new();
     for i in 0..record_batch.num_columns() {
         let column = record_batch.column(i);
@@ -351,13 +347,7 @@ fn parameters_from_record_batch(
         }
         .build()
     })?;
-    let raw = RawValue::from_string(json_string).map_err(|_| {
-        UnsupportedBindParameterTypeSnafu {
-            type_: "Failed to create RawValue from serialized parameters".to_string(),
-        }
-        .build()
-    })?;
-    Ok(Cow::Owned(raw))
+    Ok(json_string)
 }
 
 pub struct Statement {
@@ -400,11 +390,18 @@ impl Statement {
         Ok(())
     }
 
-    pub fn get_query_parameter_bindings(
-        &self,
-    ) -> Result<Option<Cow<'static, RawValue>>, StatementError> {
+    pub fn get_query_parameter_bindings(&self) -> Result<Option<Box<RawValue>>, StatementError> {
         match self.parameter_bindings.as_ref() {
-            Some(parameters) => Ok(Some(parameters_from_record_batch(parameters)?)),
+            Some(parameters) => {
+                let json_string = parameters_from_record_batch(parameters)?;
+                let raw = RawValue::from_string(json_string).map_err(|_| {
+                    UnsupportedBindParameterTypeSnafu {
+                        type_: "Failed to create RawValue from serialized parameters".to_string(),
+                    }
+                    .build()
+                })?;
+                Ok(Some(raw))
+            }
             None => Ok(None),
         }
     }
@@ -540,9 +537,7 @@ pub enum StatementError {
 /// The `'static` lifetime is a lie (data doesn't live forever), but it's safe because
 /// the synchronous call guarantees the data lives long enough. This is documented and
 /// understood by wrapper implementors.
-fn parse_json_bindings(
-    data_ptr: &DataPtr,
-) -> Result<Option<Cow<'static, RawValue>>, StatementError> {
+fn parse_json_bindings<'a>(data_ptr: &'a DataPtr) -> Result<&'a RawValue, StatementError> {
     // Validate pointer structure (must be 8 bytes for a 64-bit address)
     if data_ptr.value.len() != 8 {
         return UnsupportedBindParameterTypeSnafu {
@@ -576,22 +571,15 @@ fn parse_json_bindings(
         std::slice::from_raw_parts(ptr, length)
     };
 
-    // Extend lifetime to 'static (safe because rt.block_on ensures synchronous execution).
-    // Safety: The wrapper contract guarantees data lives through statement_execute_query.
-    // The 'static is a lie to satisfy the borrow checker, but the actual lifetime is
-    // "duration of the synchronous HTTP request" which is sufficient.
-    let json_bytes_static: &'static [u8] = unsafe { std::mem::transmute(json_bytes) };
-
     // Convert bytes to &str without UTF-8 validation - zero allocation.
-    // Safety: Wrapper must provide valid UTF-8. If not, HTTP serialization will fail.
-    let json_str: &'static str = unsafe { std::str::from_utf8_unchecked(json_bytes_static) };
+    let json_str: &'a str = unsafe { std::str::from_utf8_unchecked(json_bytes) };
 
     // Convert &str to &RawValue without JSON validation - zero allocation.
     // Safety: RawValue is a transparent wrapper around str. We skip all validation.
     // Wrapper must provide valid JSON syntax. Server will validate and reject if invalid.
-    let raw: &'static RawValue = unsafe { std::mem::transmute(json_str) };
+    let raw: &'a RawValue = unsafe { std::mem::transmute(json_str) };
 
-    Ok(Some(Cow::Borrowed(raw)))
+    Ok(raw)
 }
 
 #[cfg(test)]
@@ -726,12 +714,7 @@ mod tests {
             length: json.len() as i64,
         };
 
-        let result = parse_json_bindings(&data_ptr).unwrap();
-        assert!(result.is_some());
-
-        // parse_json_bindings returns Cow<'static, RawValue> -- the raw JSON string.
-        // To verify contents in the test, we parse it into a Value here.
-        let raw = result.unwrap();
+        let raw = parse_json_bindings(&data_ptr).unwrap();
         let params: serde_json::Value = serde_json::from_str(raw.get()).unwrap();
 
         // Verify it's a JSON object with 2 keys
@@ -765,11 +748,7 @@ mod tests {
             length: json.len() as i64,
         };
 
-        let result = parse_json_bindings(&data_ptr).unwrap();
-        assert!(result.is_some());
-
-        // parse_json_bindings returns Cow<'static, RawValue> -- parse to Value for test assertions
-        let raw = result.unwrap();
+        let raw = parse_json_bindings(&data_ptr).unwrap();
         let params: serde_json::Value = serde_json::from_str(raw.get()).unwrap();
 
         // Verify it's a JSON object with 2 keys
@@ -892,7 +871,7 @@ mod tests {
     // ---------------------------------------------------------------
 
     #[test]
-    fn test_parse_json_bindings_returns_borrowed_cow_zero_copy() {
+    fn test_parse_json_bindings_zero_copy() {
         let json = r#"{"1": {"type": "TEXT", "value": "abc"}}"#;
         let json_bytes = json.as_bytes();
         let ptr_value = json_bytes.as_ptr() as usize;
@@ -903,15 +882,9 @@ mod tests {
             length: json.len() as i64,
         };
 
-        let result = parse_json_bindings(&data_ptr).unwrap().unwrap();
+        let result = parse_json_bindings(&data_ptr).unwrap();
 
-        // The returned Cow must be Borrowed (true zero-copy - no allocation)
-        assert!(
-            matches!(result, Cow::Borrowed(_)),
-            "Expected Cow::Borrowed for JSON bindings (zero-copy), got Cow::Owned"
-        );
-
-        // Verify the borrowed data points into the original buffer (zero-copy)
+        // Verify the returned reference points into the original buffer (zero-copy)
         let raw_ptr = result.get().as_ptr() as usize;
         let original_start = json_bytes.as_ptr() as usize;
         let original_end = original_start + json_bytes.len();
@@ -942,7 +915,7 @@ mod tests {
             length: json.len() as i64,
         };
 
-        let result = parse_json_bindings(&data_ptr).unwrap().unwrap();
+        let result = parse_json_bindings(&data_ptr).unwrap();
         let params: serde_json::Value = serde_json::from_str(result.get()).unwrap();
 
         let obj = params.as_object().unwrap();
@@ -963,7 +936,7 @@ mod tests {
             length: json.len() as i64,
         };
 
-        let result = parse_json_bindings(&data_ptr).unwrap().unwrap();
+        let result = parse_json_bindings(&data_ptr).unwrap();
         let params: serde_json::Value = serde_json::from_str(result.get()).unwrap();
         assert!(params["1"]["value"].is_null());
     }
@@ -980,7 +953,7 @@ mod tests {
             length: json.len() as i64,
         };
 
-        let result = parse_json_bindings(&data_ptr).unwrap().unwrap();
+        let result = parse_json_bindings(&data_ptr).unwrap();
         let params: serde_json::Value = serde_json::from_str(result.get()).unwrap();
         assert_eq!(params["1"]["value"], "日本語テスト 🎉");
     }
@@ -997,7 +970,7 @@ mod tests {
             length: json.len() as i64,
         };
 
-        let result = parse_json_bindings(&data_ptr).unwrap().unwrap();
+        let result = parse_json_bindings(&data_ptr).unwrap();
         let params: serde_json::Value = serde_json::from_str(result.get()).unwrap();
         assert!(params["1"]["value"].is_string());
     }
@@ -1015,7 +988,7 @@ mod tests {
             length: json.len() as i64,
         };
 
-        let result = parse_json_bindings(&data_ptr).unwrap().unwrap();
+        let result = parse_json_bindings(&data_ptr).unwrap();
         let params: serde_json::Value = serde_json::from_str(result.get()).unwrap();
         assert!(params.is_object());
         assert_eq!(params.as_object().unwrap().len(), 0);
@@ -1039,7 +1012,7 @@ mod tests {
             length: json.len() as i64,
         };
 
-        let result = parse_json_bindings(&data_ptr).unwrap().unwrap();
+        let result = parse_json_bindings(&data_ptr).unwrap();
         let params: serde_json::Value = serde_json::from_str(result.get()).unwrap();
         assert_eq!(params.as_object().unwrap().len(), 20);
     }
@@ -1059,14 +1032,7 @@ mod tests {
                 .unwrap();
 
         let result = parameters_from_record_batch(&batch).unwrap();
-
-        // Arrow path must return Cow::Owned (it builds a fresh JSON string)
-        assert!(
-            matches!(result, Cow::Owned(_)),
-            "Expected Cow::Owned for Arrow path"
-        );
-
-        let params: serde_json::Value = serde_json::from_str(result.get()).unwrap();
+        let params: serde_json::Value = serde_json::from_str(&result).unwrap();
         let obj = params.as_object().unwrap();
         assert_eq!(obj.len(), 1);
         assert_eq!(obj["1"]["type"], "FIXED");
@@ -1086,7 +1052,7 @@ mod tests {
         .unwrap();
 
         let result = parameters_from_record_batch(&batch).unwrap();
-        let params: serde_json::Value = serde_json::from_str(result.get()).unwrap();
+        let params: serde_json::Value = serde_json::from_str(&result).unwrap();
         let obj = params.as_object().unwrap();
         assert_eq!(obj.len(), 1);
         assert_eq!(obj["1"]["type"], "TEXT");
@@ -1112,7 +1078,7 @@ mod tests {
         .unwrap();
 
         let result = parameters_from_record_batch(&batch).unwrap();
-        let params: serde_json::Value = serde_json::from_str(result.get()).unwrap();
+        let params: serde_json::Value = serde_json::from_str(&result).unwrap();
         let obj = params.as_object().unwrap();
         assert_eq!(obj.len(), 2);
 
@@ -1147,8 +1113,7 @@ mod tests {
     // ---------------------------------------------------------------
 
     #[test]
-    fn test_request_serialization_with_borrowed_bindings() {
-        // Simulate the JSON path: Cow::Borrowed(&RawValue)
+    fn test_request_serialization_with_bindings() {
         let json = r#"{"1":{"type":"FIXED","value":"7"}}"#;
         let raw: &RawValue = serde_json::from_str(json).unwrap();
 
@@ -1160,7 +1125,7 @@ mod tests {
             is_internal: false,
             describe_only: None,
             parameters: None,
-            bindings: Some(Cow::Borrowed(raw)),
+            bindings: Some(raw),
             bind_stage: None,
             query_context: query_request::QueryContext { entries: None },
         };
@@ -1176,7 +1141,7 @@ mod tests {
 
     #[test]
     fn test_request_serialization_with_owned_bindings() {
-        // Simulate the Arrow path: Cow::Owned(Box<RawValue>)
+        // Simulate the Arrow path: Box<RawValue> (owned, passed by reference)
         let json = r#"{"1":{"type":"TEXT","value":"test"}}"#;
         let raw = RawValue::from_string(json.to_string()).unwrap();
 
@@ -1188,7 +1153,7 @@ mod tests {
             is_internal: false,
             describe_only: None,
             parameters: None,
-            bindings: Some(Cow::Owned(raw)),
+            bindings: Some(&*raw),
             bind_stage: None,
             query_context: query_request::QueryContext { entries: None },
         };

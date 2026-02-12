@@ -196,6 +196,9 @@ fn to_driver_error(error: &ApiError) -> DriverError {
                 detail: "Master token expired, full re-authentication required".to_string(),
             })),
         },
+        ApiError::InvalidRefreshState { .. } => DriverError {
+            error_type: Some(driver_error::ErrorType::InternalError(InternalError {})),
+        },
     }
 }
 
@@ -227,6 +230,7 @@ fn to_driver_exception(error: ApiError) -> DriverException {
         ApiError::Statement { .. } => StatusCode::InternalError,
         ApiError::Query { .. } => StatusCode::InternalError,
         ApiError::MasterTokenExpired { .. } => StatusCode::AuthenticationError,
+        ApiError::InvalidRefreshState { .. } => StatusCode::InternalError,
     };
 
     let message = error.to_string();
