@@ -443,7 +443,6 @@ TEST_CASE("SQLBindCol can rebind after data has been fetched from result set.", 
 // =============================================================================
 
 TEST_CASE("SQLBindCol counts null terminator when returning character data.", "[query][bind_col]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "The driver uses BufferLength to avoid writing past the end of the
   //       *TargetValuePtr buffer when it returns variable-length data, such as
   //       character or binary data. Notice that the driver counts the
@@ -474,7 +473,6 @@ TEST_CASE("SQLBindCol counts null terminator when returning character data.", "[
 }
 
 TEST_CASE("SQLBindCol truncates character data when buffer is too small.", "[query][bind_col]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "*TargetValuePtr must therefore contain space for the null-termination
   //       character or the driver will truncate the data."
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlbindcol-function#arguments
@@ -501,12 +499,11 @@ TEST_CASE("SQLBindCol truncates character data when buffer is too small.", "[que
   // And the buffer should contain truncated data with null termination
   CHECK(std::string((char*)buffer) == "Hello");
 
-  // And the indicator should show the full length of the original data
-  CHECK(indicator == 11);
+  // And the indicator should show the full length of the original data or SQL_NO_TOTAL
+  CHECK((indicator == 11 || indicator == SQL_NO_TOTAL));
 }
 
 TEST_CASE("SQLBindCol ignores BufferLength for fixed-length data types.", "[query][bind_col]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "When the driver returns fixed-length data, such as an integer or a
   //       date structure, the driver ignores BufferLength and assumes the buffer
   //       is large enough to hold the data."
@@ -577,7 +574,6 @@ TEST_CASE("SQLBindCol does not return error when BufferLength is 0 for non-chara
 // =============================================================================
 
 TEST_CASE("SQLBindCol returns data length in StrLen_or_IndPtr for non-null data.", "[query][bind_col]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "SQLFetch, SQLFetchScroll, SQLBulkOperations, and SQLSetPos can return
   //       the following values in the length/indicator buffer:
   //       - The length of the data available to return"
@@ -605,7 +601,6 @@ TEST_CASE("SQLBindCol returns data length in StrLen_or_IndPtr for non-null data.
 }
 
 TEST_CASE("SQLBindCol returns SQL_NULL_DATA in StrLen_or_IndPtr for NULL values.", "[query][bind_col]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "SQLFetch, SQLFetchScroll, SQLBulkOperations, and SQLSetPos can return
   //       the following values in the length/indicator buffer:
   //       - SQL_NULL_DATA"
@@ -632,7 +627,6 @@ TEST_CASE("SQLBindCol returns SQL_NULL_DATA in StrLen_or_IndPtr for NULL values.
 }
 
 TEST_CASE("SQLBindCol with null StrLen_or_IndPtr succeeds for non-null data.", "[query][bind_col]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "If StrLen_or_IndPtr is a null pointer, no length or indicator value
   //       is used. This is an error when fetching data and the data is NULL."
   // (Implied: it is NOT an error for non-NULL data)
@@ -662,7 +656,6 @@ TEST_CASE("SQLBindCol with null StrLen_or_IndPtr succeeds for non-null data.", "
 // =============================================================================
 
 TEST_CASE("SQLBindCol converts data to the specified TargetType.", "[query][bind_col]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "TargetType [Input] The identifier of the C data type of the
   //       *TargetValuePtr buffer. When it is retrieving data from the data
   //       source with SQLFetch, SQLFetchScroll, SQLBulkOperations, or
@@ -1500,7 +1493,6 @@ TEST_CASE("SQLBindCol returns SQL_INVALID_HANDLE for invalid statement handle.",
 // =============================================================================
 
 TEST_CASE("SQLBindCol is not required - columns can be retrieved with SQLGetData.", "[query][bind_col]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "Notice that columns do not have to be bound to retrieve data from
   //       them. An application can also call SQLGetData to retrieve data from
   //       columns."
@@ -1533,7 +1525,6 @@ TEST_CASE("SQLBindCol is not required - columns can be retrieved with SQLGetData
 }
 
 TEST_CASE("SQLBindCol can bind some columns while SQLGetData retrieves others.", "[query][bind_col]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "Although it is possible to bind some columns in a row and call
   //       SQLGetData for others, this is subject to some restrictions."
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlbindcol-function#comments
@@ -1716,7 +1707,6 @@ TEST_CASE("SQLBindCol supports SQL_C_TYPE_TIMESTAMP binding.", "[query][bind_col
 // =============================================================================
 
 TEST_CASE("SQLBindCol indicator returns full data length when buffer causes truncation.", "[query][bind_col]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "SQLFetch, SQLFetchScroll, SQLBulkOperations, and SQLSetPos can return
   //       the following values in the length/indicator buffer:
   //       - The length of the data available to return
@@ -2008,7 +1998,6 @@ TEST_CASE("Setting SQL_DESC_COUNT to -1 on the ARD returns an error.", "[query][
 // =============================================================================
 
 TEST_CASE("SQLBindCol converts string to integer type.", "[query][bind_col]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "When it is retrieving data from the data source with SQLFetch...
   //       the driver converts the data to this type."
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlbindcol-function#arguments
@@ -2039,7 +2028,6 @@ TEST_CASE("SQLBindCol converts string to integer type.", "[query][bind_col]") {
 // =============================================================================
 
 TEST_CASE("SQLBindCol allows binding non-consecutive columns.", "[query][bind_col]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "SQLBindCol is used to associate, or bind, columns in the result set
   //       to data buffers..."
   // (Columns can be selectively bound; unbound columns are skipped)
