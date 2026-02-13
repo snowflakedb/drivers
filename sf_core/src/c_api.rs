@@ -17,10 +17,28 @@ pub extern "C" fn sf_core_init_logger(callback: logging::CLogCallback) -> u32 {
 }
 
 fn write_buffer(vec: Vec<u8>, buffer: *mut *const u8, len: *mut usize) {
+    let boxed = vec.into_boxed_slice();
     unsafe {
-        *buffer = vec.as_ptr();
-        *len = vec.len();
-        std::mem::forget(vec);
+        *len = boxed.len();
+        *buffer = Box::into_raw(boxed) as *const u8;
+    }
+}
+
+/// Frees a buffer previously returned by `sf_core_api_call_proto` via `write_buffer`.
+///
+/// # Safety
+/// The caller must pass the exact `buffer` pointer and `len` that were written by a prior
+/// call to `sf_core_api_call_proto`. Each (buffer, len) pair must be freed at most once.
+/// Passing any other pointer or length is undefined behavior.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sf_core_free_buffer(buffer: *const u8, len: usize) {
+    if !buffer.is_null() {
+        unsafe {
+            drop(Box::from_raw(std::slice::from_raw_parts_mut(
+                buffer as *mut u8,
+                len,
+            )));
+        }
     }
 }
 
