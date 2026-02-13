@@ -100,8 +100,7 @@ void verify_connection_fails_with_missing_private_key_error(ConnectionHandleWrap
   }
 }
 
-void verify_private_key_forwarded_to_core(ConnectionHandleWrapper& dbc,
-                                          const std::string& connection_string) {
+void verify_private_key_forwarded_to_core(ConnectionHandleWrapper& dbc, const std::string& connection_string) {
   SQLRETURN ret = SQLDriverConnect(dbc.getHandle(), NULL, (SQLCHAR*)connection_string.c_str(), SQL_NTS, NULL, 0, NULL,
                                    SQL_DRIVER_NOPROMPT);
 
@@ -148,11 +147,8 @@ TEST_CASE("should forward private key content set via SQLSetConnectAttr to core"
 
   std::string test_key_pem = read_test_private_key_content();
 
-  SQLRETURN ret = SQLSetConnectAttr(
-      dbc.getHandle(),
-      SQL_SF_CONN_ATTR_PRIV_KEY_CONTENT,
-      (SQLPOINTER)test_key_pem.c_str(),
-      (SQLINTEGER)test_key_pem.size());
+  SQLRETURN ret = SQLSetConnectAttr(dbc.getHandle(), SQL_SF_CONN_ATTR_PRIV_KEY_CONTENT,
+                                    (SQLPOINTER)test_key_pem.c_str(), (SQLINTEGER)test_key_pem.size());
   CHECK_ODBC(ret, dbc);
 
   // When Trying to Connect
@@ -173,11 +169,8 @@ TEST_CASE("should forward base64 private key set via SQLSetConnectAttr to core",
   std::string test_key_pem = read_test_private_key_content();
   std::string test_key_b64 = test_utils::base64_encode(test_key_pem);
 
-  SQLRETURN ret = SQLSetConnectAttr(
-      dbc.getHandle(),
-      SQL_SF_CONN_ATTR_PRIV_KEY_BASE64,
-      (SQLPOINTER)test_key_b64.c_str(),
-      (SQLINTEGER)test_key_b64.size());
+  SQLRETURN ret = SQLSetConnectAttr(dbc.getHandle(), SQL_SF_CONN_ATTR_PRIV_KEY_BASE64,
+                                    (SQLPOINTER)test_key_b64.c_str(), (SQLINTEGER)test_key_b64.size());
   CHECK_ODBC(ret, dbc);
 
   // When Trying to Connect
@@ -203,11 +196,8 @@ TEST_CASE("should forward private key password set via SQLSetConnectAttr to core
   test_utils::encrypt_pem_key_to_file(test_key_pem, test_password, encrypted_path);
 
   // Set password via SQLSetConnectAttr
-  SQLRETURN ret = SQLSetConnectAttr(
-      dbc.getHandle(),
-      SQL_SF_CONN_ATTR_PRIV_KEY_PASSWORD,
-      (SQLPOINTER)test_password.c_str(),
-      (SQLINTEGER)test_password.size());
+  SQLRETURN ret = SQLSetConnectAttr(dbc.getHandle(), SQL_SF_CONN_ATTR_PRIV_KEY_PASSWORD,
+                                    (SQLPOINTER)test_password.c_str(), (SQLINTEGER)test_password.size());
   CHECK_ODBC(ret, dbc);
 
   // When Trying to Connect

@@ -234,4 +234,3 @@ TEST_CASE("should authenticate using PRIV_KEY_PWD as alias for private key passw
 
   SQLDisconnect(dbc.getHandle());
 }
-
