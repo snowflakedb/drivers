@@ -1,7 +1,10 @@
 use crate::api::error::Required;
 use crate::api::{
     ConnectionState, OdbcResult, api_utils, conn_from_handle,
-    error::{InvalidPortSnafu, UnknownAttributeSnafu, UnsupportedAttributeSnafu},
+    error::{
+        AttributeCannotBeSetNowSnafu, InvalidPortSnafu, UnknownAttributeSnafu,
+        UnsupportedAttributeSnafu,
+    },
     types::ConnectionAttribute,
 };
 use crate::conversion::warning::{Warning, Warnings};
@@ -33,7 +36,8 @@ pub fn driver_connect(
     in_string_length: sql::SmallInt,
 ) -> OdbcResult<()> {
     // Parse the connection string
-    let connection_string = api_utils::cstr_to_string(in_connection_string, in_string_length as i32)?;
+    let connection_string =
+        api_utils::cstr_to_string(in_connection_string, in_string_length as i32)?;
     let connection_string_map = parse_connection_string(&connection_string);
     tracing::info!(
         "driver_connect: connection_string={:?}",
@@ -375,6 +379,8 @@ pub fn disconnect(_connection_handle: sql::Handle) -> OdbcResult<()> {
 
 /// Set a connection attribute (SQLSetConnectAttr).
 /// Handles both standard ODBC attributes and custom Snowflake attributes.
+// TODO: Once all auth methods are implemented, clear sensitive key material
+// from pre_connection_attrs after apply_pre_connection_attrs.
 pub fn set_connect_attr(
     connection_handle: sql::Handle,
     attribute: sql::Integer,
@@ -386,10 +392,18 @@ pub fn set_connect_attr(
 
     let attr = match ConnectionAttribute::from_raw(attribute) {
         Some(a) => a,
+        None if ConnectionAttribute::is_snowflake_custom(attribute) => {
+            // Unknown attribute in the Snowflake custom range — likely a typo or
+            // unsupported custom attr.  Return HY092, consistent with get_connect_attr.
+            return UnknownAttributeSnafu { attribute }.fail();
+        }
         None => {
-            tracing::warn!("set_connect_attr: unknown attribute {}", attribute);
-            // Return Ok for unrecognized standard attributes to avoid breaking
-            // driver manager attribute propagation
+            // Standard ODBC attribute the driver doesn't handle — return Ok to
+            // avoid breaking driver-manager attribute propagation.
+            tracing::debug!(
+                "set_connect_attr: ignoring standard attribute {}",
+                attribute
+            );
             return Ok(());
         }
     };
@@ -426,6 +440,13 @@ pub fn set_connect_attr(
         | ConnectionAttribute::PrivKeyPassword
         | ConnectionAttribute::PrivKeyBase64
         | ConnectionAttribute::Application => {
+            // These are pre-connection attributes — reject if already connected.
+            if matches!(connection.state, ConnectionState::Connected { .. }) {
+                return AttributeCannotBeSetNowSnafu {
+                    attribute: attr.as_raw(),
+                }
+                .fail();
+            }
             let value = api_utils::read_string_from_ptr(value_ptr, string_length)?;
             tracing::debug!("set_connect_attr: {:?} (set)", attr);
             connection.pre_connection_attrs.insert(attr, value);
@@ -495,12 +516,9 @@ pub fn get_connect_attr(
             }
             Ok(())
         }
-        ConnectionAttribute::PrivKey => {
-            UnsupportedAttributeSnafu {
-                attribute: attr.as_raw(),
-            }
-            .fail()
+        ConnectionAttribute::PrivKey => UnsupportedAttributeSnafu {
+            attribute: attr.as_raw(),
         }
+        .fail(),
     }
 }
-

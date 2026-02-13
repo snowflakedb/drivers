@@ -10,6 +10,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_all.hpp>
 
+#include "Connection.hpp"
 #include "HandleWrapper.hpp"
 #include "compatibility.hpp"
 #include "get_diag_rec.hpp"
@@ -17,6 +18,8 @@
 #include "put_get_utils.hpp"
 #include "test_setup.hpp"
 #include "utils.hpp"
+
+using pg_utils::TempTestDir;
 
 std::string get_private_key_path_for_auth(picojson::object& params, const TempTestDir& tmp) {
   auto private_key = read_private_key(params);

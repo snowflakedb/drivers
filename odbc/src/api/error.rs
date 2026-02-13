@@ -65,6 +65,13 @@ pub enum OdbcError {
         location: Location,
     },
 
+    #[snafu(display("Attribute cannot be set now: {attribute}"))]
+    AttributeCannotBeSetNow {
+        attribute: i32,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
     #[snafu(display("Parameter number cannot be 0"))]
     InvalidParameterNumber {
         #[snafu(implicit)]
@@ -276,6 +283,7 @@ impl OdbcError {
             }
             OdbcError::UnknownAttribute { .. } => SqlState::InvalidAttributeOptionIdentifier,
             OdbcError::UnsupportedAttribute { .. } => SqlState::OptionalFeatureNotImplemented,
+            OdbcError::AttributeCannotBeSetNow { .. } => SqlState::AttributeCannotBeSetNow,
             OdbcError::InvalidParameterNumber { .. } => SqlState::WrongNumberOfParameters,
             OdbcError::StatementNotExecuted { .. } => SqlState::FunctionSequenceError,
             OdbcError::DataNotFetched { .. } => SqlState::FunctionSequenceError,

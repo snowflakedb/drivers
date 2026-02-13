@@ -20,6 +20,8 @@
 #include "test_setup.hpp"
 #include "utils.hpp"
 
+using pg_utils::TempTestDir;
+
 std::string get_jwt_connection_string_without_private_key() {
   std::stringstream ss;
   ss << "DRIVER=" << get_driver_path() << ";";

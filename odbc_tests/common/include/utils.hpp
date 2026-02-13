@@ -21,7 +21,7 @@
 
 namespace test_utils {
 
-/// Base64-encode a string using OpenSSL (same library the Rust driver uses via the `base64` crate).
+/// Base64-encode a string using OpenSSL's EVP_EncodeBlock.
 inline std::string base64_encode(const std::string& input) {
   // EVP_EncodeBlock output size: 4 * ceil(n/3) + 1 (for NUL)
   std::string encoded(4 * ((input.size() + 2) / 3) + 1, '\0');

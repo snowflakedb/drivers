@@ -56,6 +56,11 @@ impl ConnectionAttribute {
         }
     }
 
+    /// Check whether a raw attribute ID falls in the Snowflake custom range.
+    pub fn is_snowflake_custom(raw: i32) -> bool {
+        raw >= SQL_SF_CONN_ATTR_BASE
+    }
+
     /// Convert back to the raw ODBC attribute ID.
     pub fn as_raw(&self) -> i32 {
         match self {
