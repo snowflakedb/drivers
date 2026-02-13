@@ -162,9 +162,10 @@ class ConfigOption:
 
         if not all_sections:
             raise MissingConfigOptionError(
-                f"Configuration option '{self.option_name}' is not defined anywhere, "
-                "have you forgotten to set it in a configuration file, "
-                "or environmental variable?"
+                f"Configuration option '{self.option_name}' is not defined anywhere. "
+                "No configuration files were found or they could not be loaded. "
+                "Ensure that config files exist in the SNOWFLAKE_HOME directory "
+                "or set the value via an environment variable."
             )
 
         # Build the path to the config option
@@ -368,7 +369,7 @@ class ConfigManager:
                         connections[conn_name] = section_settings
                 return connections
 
-            raise ConfigSourceError(f"No ConfigManager, or ConfigOption can be found with the name '{name}'")
+            raise KeyError(f"No ConfigManager, or ConfigOption can be found with the name '{name}'")
         return self._sub_managers[name]
 
 
@@ -424,7 +425,6 @@ def _get_default_connection_params() -> dict[str, Any]:
         result[key] = _parse_setting_from_json(setting)
 
     return result
-
 
 
 # Deprecated alias for backward compatibility

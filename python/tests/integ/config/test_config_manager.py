@@ -5,11 +5,9 @@ import os
 import pytest
 
 from snowflake.connector.config_manager import (
-    CONFIG_MANAGER,
     ConfigManager,
     ConfigOption,
 )
-
 from tests.compatibility import NEW_DRIVER_ONLY
 
 

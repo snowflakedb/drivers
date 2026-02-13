@@ -107,14 +107,8 @@ number = 42
         assert!(table.contains_key("section"));
 
         let section = table.get("section").unwrap().as_table().unwrap();
-        assert_eq!(
-            section.get("key").unwrap().as_str().unwrap(),
-            "value"
-        );
-        assert_eq!(
-            section.get("number").unwrap().as_integer().unwrap(),
-            42
-        );
+        assert_eq!(section.get("key").unwrap().as_str().unwrap(), "value");
+        assert_eq!(section.get("number").unwrap().as_integer().unwrap(), 42);
     }
 
     #[test]
@@ -150,10 +144,12 @@ number = 42
 
         let result = check_file_permissions(&file_path);
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Insecure file permissions"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Insecure file permissions")
+        );
     }
 
     #[cfg(unix)]

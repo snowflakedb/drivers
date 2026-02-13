@@ -1,3 +1,4 @@
+use super::{ConfigDirNotFoundSnafu, ConfigError};
 use std::env;
 use std::path::PathBuf;
 
@@ -17,24 +18,24 @@ pub fn get_snowflake_home() -> Option<PathBuf> {
 }
 
 /// Get the configuration file paths based on platform and environment
-pub fn get_config_paths() -> ConfigPaths {
+pub fn get_config_paths() -> Result<ConfigPaths, ConfigError> {
     // First, check if SNOWFLAKE_HOME is set
     if let Some(snowflake_home) = get_snowflake_home() {
-        return ConfigPaths {
+        return Ok(ConfigPaths {
             connections_file: snowflake_home.join("connections.toml"),
             config_file: snowflake_home.join("config.toml"),
-        };
+        });
     }
 
     // Otherwise, use platform-specific defaults
     let config_dir = dirs::config_dir()
-        .expect("Failed to determine config directory")
+        .ok_or_else(|| ConfigDirNotFoundSnafu.build())?
         .join("snowflake");
 
-    ConfigPaths {
+    Ok(ConfigPaths {
         connections_file: config_dir.join("connections.toml"),
         config_file: config_dir.join("config.toml"),
-    }
+    })
 }
 
 #[cfg(test)]
@@ -51,14 +52,24 @@ mod tests {
             ()
         });
 
-        let paths = get_config_paths();
+        let paths = get_config_paths().unwrap();
 
         // Should contain 'snowflake' in the path
-        assert!(paths.connections_file.to_string_lossy().contains("snowflake"));
+        assert!(
+            paths
+                .connections_file
+                .to_string_lossy()
+                .contains("snowflake")
+        );
         assert!(paths.config_file.to_string_lossy().contains("snowflake"));
 
         // Should end with the correct file names
-        assert!(paths.connections_file.to_string_lossy().ends_with("connections.toml"));
+        assert!(
+            paths
+                .connections_file
+                .to_string_lossy()
+                .ends_with("connections.toml")
+        );
         assert!(paths.config_file.to_string_lossy().ends_with("config.toml"));
     }
 
@@ -69,11 +80,16 @@ mod tests {
 
         env::set_var("SNOWFLAKE_HOME", temp_path);
 
-        let paths = get_config_paths();
+        let paths = get_config_paths().unwrap();
 
         assert!(paths.connections_file.starts_with(temp_path));
         assert!(paths.config_file.starts_with(temp_path));
-        assert!(paths.connections_file.to_string_lossy().ends_with("connections.toml"));
+        assert!(
+            paths
+                .connections_file
+                .to_string_lossy()
+                .ends_with("connections.toml")
+        );
         assert!(paths.config_file.to_string_lossy().ends_with("config.toml"));
 
         // Clean up
@@ -90,8 +106,13 @@ mod tests {
         assert!(snowflake_home.is_none());
 
         // get_config_paths should fall back to default
-        let paths = get_config_paths();
-        assert!(paths.connections_file.to_string_lossy().contains("snowflake"));
+        let paths = get_config_paths().unwrap();
+        assert!(
+            paths
+                .connections_file
+                .to_string_lossy()
+                .contains("snowflake")
+        );
 
         // Clean up
         env::remove_var("SNOWFLAKE_HOME");

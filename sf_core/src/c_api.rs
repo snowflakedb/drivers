@@ -47,6 +47,21 @@ pub unsafe extern "C" fn sf_core_free_buffer(buffer: *const u8, len: usize) {
     }
 }
 
+/// Free a buffer previously allocated by sf_core via `write_buffer`.
+/// # Safety
+/// The caller must ensure that `ptr` and `len` correspond to a buffer
+/// previously returned by one of the sf_core C API functions.
+/// The buffer must not be used after calling this function.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn sf_core_free_buffer(ptr: *const u8, len: usize) {
+    if !ptr.is_null() {
+        // Reconstruct the Vec from the raw parts and let it drop to free the memory
+        unsafe {
+            drop(Vec::from_raw_parts(ptr as *mut u8, len, len));
+        }
+    }
+}
+
 /// # Safety
 /// This function dereferences raw pointers `api`, `method`, `request`, `response`, and `response_len`.
 /// The caller must ensure that `api`, `method`, `request`, `response`, and `response_len` are valid.

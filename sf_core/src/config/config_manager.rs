@@ -6,8 +6,10 @@ use std::collections::HashMap;
 use std::env;
 
 /// Load configuration for a specific connection from TOML files
-pub fn load_connection_config(connection_name: &str) -> Result<HashMap<String, Setting>, ConfigError> {
-    let paths = get_config_paths();
+pub fn load_connection_config(
+    connection_name: &str,
+) -> Result<HashMap<String, Setting>, ConfigError> {
+    let paths = get_config_paths()?;
     let mut settings = HashMap::new();
 
     // Load config.toml first (lower precedence)
@@ -15,7 +17,10 @@ pub fn load_connection_config(connection_name: &str) -> Result<HashMap<String, S
 
     // Check for [connections.connection_name] section in config.toml
     if let Some(connections_section) = config_toml.get("connections").and_then(|v| v.as_table()) {
-        if let Some(conn_config) = connections_section.get(connection_name).and_then(|v| v.as_table()) {
+        if let Some(conn_config) = connections_section
+            .get(connection_name)
+            .and_then(|v| v.as_table())
+        {
             for (key, value) in conn_config {
                 if let Some(setting) = toml_value_to_setting(value) {
                     settings.insert(key.clone(), setting);
@@ -27,7 +32,10 @@ pub fn load_connection_config(connection_name: &str) -> Result<HashMap<String, S
     // Load connections.toml (higher precedence - overrides config.toml)
     let connections_toml = load_toml_file(&paths.connections_file)?;
 
-    if let Some(conn_config) = connections_toml.get(connection_name).and_then(|v| v.as_table()) {
+    if let Some(conn_config) = connections_toml
+        .get(connection_name)
+        .and_then(|v| v.as_table())
+    {
         for (key, value) in conn_config {
             if let Some(setting) = toml_value_to_setting(value) {
                 settings.insert(key.clone(), setting);
@@ -51,7 +59,7 @@ pub fn load_connection_config(connection_name: &str) -> Result<HashMap<String, S
 
 /// Load all connections from config files
 pub fn load_all_connections() -> Result<HashMap<String, HashMap<String, Setting>>, ConfigError> {
-    let paths = get_config_paths();
+    let paths = get_config_paths()?;
     let mut all_connections = HashMap::new();
 
     // Load from config.toml
@@ -70,18 +78,19 @@ pub fn load_all_connections() -> Result<HashMap<String, HashMap<String, Setting>
         }
     }
 
-    // Load from connections.toml (overrides config.toml)
+    // Load from connections.toml (higher precedence - merges into config.toml settings)
     let connections_toml = load_toml_file(&paths.connections_file)?;
     if let Some(table) = connections_toml.as_table() {
         for (conn_name, conn_config) in table {
             if let Some(config_table) = conn_config.as_table() {
-                let mut settings = HashMap::new();
+                let settings = all_connections
+                    .entry(conn_name.clone())
+                    .or_insert_with(HashMap::new);
                 for (key, value) in config_table {
                     if let Some(setting) = toml_value_to_setting(value) {
                         settings.insert(key.clone(), setting);
                     }
                 }
-                all_connections.insert(conn_name.clone(), settings);
             }
         }
     }
@@ -107,8 +116,10 @@ fn toml_value_to_setting(value: &toml::Value) -> Option<Setting> {
 /// - `load_config_section("database.pool")` loads `[database.pool]`
 ///
 /// Returns None if the section doesn't exist or if it's a connections section
-pub fn load_config_section(section_name: &str) -> Result<Option<HashMap<String, Setting>>, ConfigError> {
-    let paths = get_config_paths();
+pub fn load_config_section(
+    section_name: &str,
+) -> Result<Option<HashMap<String, Setting>>, ConfigError> {
+    let paths = get_config_paths()?;
     let config_toml = load_toml_file(&paths.config_file)?;
 
     // Block access to connections section (and nested connections sections)
@@ -155,7 +166,7 @@ pub fn load_config_section(section_name: &str) -> Result<Option<HashMap<String, 
 pub fn load_all_config_sections_with_options(
     apply_env_overrides_flag: bool,
 ) -> Result<HashMap<String, HashMap<String, Setting>>, ConfigError> {
-    let paths = get_config_paths();
+    let paths = get_config_paths()?;
     let config_toml = load_toml_file(&paths.config_file)?;
     let mut all_sections = HashMap::new();
 
@@ -219,7 +230,8 @@ pub fn load_all_config_sections_with_options(
 }
 
 /// Load all sections from config files with env overrides applied (default behavior)
-pub fn load_all_config_sections() -> Result<HashMap<String, HashMap<String, Setting>>, ConfigError> {
+pub fn load_all_config_sections() -> Result<HashMap<String, HashMap<String, Setting>>, ConfigError>
+{
     load_all_config_sections_with_options(true)
 }
 
@@ -233,14 +245,16 @@ fn apply_env_overrides_for_section(section_name: &str, settings: &mut HashMap<St
     let is_connection = section_name.starts_with("connections.");
 
     for key in settings.keys().cloned().collect::<Vec<_>>() {
+        // Sanitize key for env var name: replace hyphens and dots with underscores
+        let sanitized_key = key.replace(['-', '.'], "_").to_uppercase();
         let env_key = if is_connection {
             // For connections: SNOWFLAKE_<KEY>
-            format!("SNOWFLAKE_{}", key.to_uppercase())
+            format!("SNOWFLAKE_{}", sanitized_key)
         } else {
             // For other sections: SNOWFLAKE_<SECTION>_<KEY>
             // Convert section.name to SECTION_NAME
-            let section_upper = section_name.replace('.', "_").to_uppercase();
-            format!("SNOWFLAKE_{}_{}", section_upper, key.to_uppercase())
+            let section_upper = section_name.replace(['-', '.'], "_").to_uppercase();
+            format!("SNOWFLAKE_{}_{}", section_upper, sanitized_key)
         };
 
         if let Ok(env_value) = env::var(&env_key) {
@@ -252,7 +266,9 @@ fn apply_env_overrides_for_section(section_name: &str, settings: &mut HashMap<St
 /// Apply environment variable overrides to settings (legacy, for load_connection_config)
 fn apply_env_overrides(settings: &mut HashMap<String, Setting>) {
     for key in settings.keys().cloned().collect::<Vec<_>>() {
-        let env_key = format!("SNOWFLAKE_{}", key.to_uppercase());
+        // Sanitize key for env var name: replace hyphens and dots with underscores
+        let sanitized_key = key.replace(['-', '.'], "_").to_uppercase();
+        let env_key = format!("SNOWFLAKE_{}", sanitized_key);
         if let Ok(env_value) = env::var(&env_key) {
             settings.insert(key, Setting::String(env_value));
         }
@@ -268,13 +284,22 @@ mod tests {
     #[test]
     fn test_toml_value_to_setting() {
         let string_val = toml::Value::String("test".to_string());
-        assert!(matches!(toml_value_to_setting(&string_val), Some(Setting::String(_))));
+        assert!(matches!(
+            toml_value_to_setting(&string_val),
+            Some(Setting::String(_))
+        ));
 
         let int_val = toml::Value::Integer(42);
-        assert!(matches!(toml_value_to_setting(&int_val), Some(Setting::Int(42))));
+        assert!(matches!(
+            toml_value_to_setting(&int_val),
+            Some(Setting::Int(42))
+        ));
 
         let float_val = toml::Value::Float(3.14);
-        assert!(matches!(toml_value_to_setting(&float_val), Some(Setting::Double(_))));
+        assert!(matches!(
+            toml_value_to_setting(&float_val),
+            Some(Setting::Double(_))
+        ));
 
         let bool_val = toml::Value::Boolean(true);
         if let Some(Setting::String(s)) = toml_value_to_setting(&bool_val) {
@@ -564,15 +589,24 @@ account = "myaccount"
 
         // Verify log section content
         let log_settings = sections.get("log").unwrap();
-        assert!(matches!(log_settings.get("level"), Some(Setting::String(_))));
+        assert!(matches!(
+            log_settings.get("level"),
+            Some(Setting::String(_))
+        ));
 
         // Verify proxy section content
         let proxy_settings = sections.get("proxy").unwrap();
-        assert!(matches!(proxy_settings.get("host"), Some(Setting::String(_))));
+        assert!(matches!(
+            proxy_settings.get("host"),
+            Some(Setting::String(_))
+        ));
 
         // Verify connection section content
         let conn_settings = sections.get("connections.testconn").unwrap();
-        assert!(matches!(conn_settings.get("account"), Some(Setting::String(_))));
+        assert!(matches!(
+            conn_settings.get("account"),
+            Some(Setting::String(_))
+        ));
 
         env::remove_var("SNOWFLAKE_HOME");
     }
@@ -770,9 +804,7 @@ level = "debug"
     fn test_env_override_snowflake_section_key_pattern() {
         // Test the generic pattern: SNOWFLAKE_<SECTION>_<KEY> overrides [section].key
         let temp_dir = TempDir::new().unwrap();
-        unsafe {
-            env::set_var("SNOWFLAKE_HOME", temp_dir.path().to_str().unwrap());
-        }
+        env::set_var("SNOWFLAKE_HOME", temp_dir.path().to_str().unwrap());
 
         let config_file = temp_dir.path().join("config.toml");
         let content = r#"
@@ -788,9 +820,7 @@ foo = "file_value"
         }
 
         // Set SNOWFLAKE_BAR_FOO env var
-        unsafe {
-            env::set_var("SNOWFLAKE_BAR_FOO", "env_value");
-        }
+        env::set_var("SNOWFLAKE_BAR_FOO", "env_value");
 
         // Load with env overrides enabled (default)
         let result = load_all_config_sections();
@@ -799,24 +829,23 @@ foo = "file_value"
         let sections = result.unwrap();
         let bar_section = sections.get("bar").expect("bar section should exist");
         if let Some(Setting::String(value)) = bar_section.get("foo") {
-            assert_eq!(value, "env_value", "SNOWFLAKE_BAR_FOO should override [bar].foo");
+            assert_eq!(
+                value, "env_value",
+                "SNOWFLAKE_BAR_FOO should override [bar].foo"
+            );
         } else {
             panic!("Expected foo setting in bar section");
         }
 
-        unsafe {
-            env::remove_var("SNOWFLAKE_HOME");
-            env::remove_var("SNOWFLAKE_BAR_FOO");
-        }
+        env::remove_var("SNOWFLAKE_HOME");
+        env::remove_var("SNOWFLAKE_BAR_FOO");
     }
 
     #[test]
     fn test_env_override_disabled() {
         // Test that env overrides can be skipped
         let temp_dir = TempDir::new().unwrap();
-        unsafe {
-            env::set_var("SNOWFLAKE_HOME", temp_dir.path().to_str().unwrap());
-        }
+        env::set_var("SNOWFLAKE_HOME", temp_dir.path().to_str().unwrap());
 
         let config_file = temp_dir.path().join("config.toml");
         let content = r#"
@@ -832,9 +861,7 @@ foo = "file_value"
         }
 
         // Set SNOWFLAKE_BAR_FOO env var
-        unsafe {
-            env::set_var("SNOWFLAKE_BAR_FOO", "env_value");
-        }
+        env::set_var("SNOWFLAKE_BAR_FOO", "env_value");
 
         // Load with env overrides DISABLED
         let result = load_all_config_sections_with_options(false);
@@ -843,14 +870,15 @@ foo = "file_value"
         let sections = result.unwrap();
         let bar_section = sections.get("bar").expect("bar section should exist");
         if let Some(Setting::String(value)) = bar_section.get("foo") {
-            assert_eq!(value, "file_value", "With env overrides disabled, should get file value");
+            assert_eq!(
+                value, "file_value",
+                "With env overrides disabled, should get file value"
+            );
         } else {
             panic!("Expected foo setting in bar section");
         }
 
-        unsafe {
-            env::remove_var("SNOWFLAKE_HOME");
-            env::remove_var("SNOWFLAKE_BAR_FOO");
-        }
+        env::remove_var("SNOWFLAKE_HOME");
+        env::remove_var("SNOWFLAKE_BAR_FOO");
     }
 }

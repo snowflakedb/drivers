@@ -5,8 +5,8 @@ import base64
 import pytest
 
 from snowflake.connector.config_manager import ConfigManager, ConfigOption
-
 from tests.compatibility import IS_UNIVERSAL_DRIVER
+
 
 if IS_UNIVERSAL_DRIVER:
     from snowflake.connector.config_manager import _parse_setting_from_json

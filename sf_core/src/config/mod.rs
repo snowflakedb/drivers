@@ -56,4 +56,11 @@ pub enum ConfigError {
         #[snafu(implicit)]
         location: Location,
     },
+    #[snafu(display(
+        "Could not determine platform config directory. Set SNOWFLAKE_HOME environment variable to specify the configuration directory."
+    ))]
+    ConfigDirNotFound {
+        #[snafu(implicit)]
+        location: Location,
+    },
 }

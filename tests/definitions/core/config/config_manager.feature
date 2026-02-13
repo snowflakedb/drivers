@@ -2,83 +2,100 @@
 Feature: Config Manager Core (TOML Loading)
 
   @core_int
-  Scenario: should load configuration from config.toml file
-    Given A config.toml file with account setting
-    When sf_core loads the configuration
-    Then The account value should be read from the file
-
-  @core_int
-  Scenario: should load connections from connections.toml file
+  Scenario: connection load from config basic
     Given A connections.toml file with test_connection defined
-    When sf_core loads all sections
-    Then The test_connection should be available under connections prefix
+    When sf_core loads the connection config
+    Then The connection settings should be loaded
 
   @core_int
-  Scenario: should merge connections from both config files
-    Given A config.toml with connection having account setting
-    And A connections.toml with same connection having user setting
-    When sf_core loads the connection
-    Then Both account and user settings should be present
+  Scenario: explicit setting overrides config
+    Given A connections.toml with connection having account setting
+    And An explicit account setting on the connection
+    When sf_core loads the connection config
+    Then The explicit setting should take precedence
 
   @core_int
-  Scenario: should prioritize connections.toml over config.toml
-    Given A config.toml with connection account set to config_account
-    And A connections.toml with same connection account set to conn_account
-    When sf_core loads the connection
-    Then The account should be conn_account
-
-  @core_int
-  Scenario: should parse string setting type
-    Given A config file with string value
-    When sf_core parses the TOML
-    Then Setting type should be String
-
-  @core_int
-  Scenario: should parse integer setting type
-    Given A config file with integer value
-    When sf_core parses the TOML
-    Then Setting type should be Int
-
-  @core_int
-  Scenario: should parse float setting type
-    Given A config file with float value
-    When sf_core parses the TOML
-    Then Setting type should be Double
-
-  @core_int
-  Scenario: should convert boolean to string setting
-    Given A config file with boolean value
-    When sf_core parses the TOML
-    Then Setting type should be String with value "true" or "false"
-
-  @core_int
-  Scenario: should return error for non-existent connection
+  Scenario: connection not found in config
     Given No configuration files exist
     When sf_core loads connection named nonexistent
     Then ConnectionNotFound error should be returned
 
   @core_int
-  Scenario: should load nested sections from config.toml
-    Given A config.toml with nested section database.pool
-    When sf_core loads section database.pool
-    Then The nested section settings should be returned
+  Scenario: config precedence
+    Given A config.toml with connection account set to config_account
+    And A connections.toml with same connection account set to connections_account
+    When sf_core loads the connection config
+    Then connections.toml values should override config.toml
 
   @core_int
-  Scenario: should exclude connections from load_config_section
+  Scenario: env var override
+    Given A connections.toml with account set to file_account
+    And Environment variable SNOWFLAKE_ACCOUNT is set to env_account
+    When sf_core loads the connection config
+    Then The env var value should override the file value
+
+  @core_int
+  Scenario: insecure permissions rejected
+    Given A connections.toml file with insecure permissions
+    When sf_core loads the connection config
+    Then An insecure permissions error should be returned
+
+  @core_int
+  Scenario: multiple data types
+    Given A connections.toml with string, integer, float, and boolean values
+    When sf_core loads the connection config
+    Then Each value should be parsed to the correct Setting type
+
+  @core_int
+  Scenario: empty config files
+    Given Empty config.toml and connections.toml files
+    When sf_core loads connection named testconn
+    Then ConnectionNotFound error should be returned
+
+  @core_int
+  Scenario: load log section
+    Given A config.toml with a log section
+    When sf_core loads the log section
+    Then The log settings should be returned
+
+  @core_int
+  Scenario: load multiple sections
+    Given A config.toml with log, proxy, and retry sections
+    When sf_core loads all config sections
+    Then All non-connection sections should be returned
+
+  @core_int
+  Scenario: connections toml does not override log section
+    Given A config.toml with log section and a connections.toml with log section
+    When sf_core loads the log config section
+    Then The config.toml log values should be used
+
+  @core_int
+  Scenario: load nonexistent section
+    Given A config.toml with a log section
+    When sf_core loads a nonexistent section
+    Then None should be returned
+
+  @core_int
+  Scenario: cannot load connections via load config section
     Given A config.toml with connections section
     When sf_core loads section connections
     Then None should be returned
 
   @core_int
-  Scenario: should override config value with SNOWFLAKE_SECTION_KEY environment variable
-    Given A config.toml with key FOO in section BAR set to file_value
-    And Environment variable SNOWFLAKE_BAR_FOO is set to env_value
-    When sf_core loads all sections
-    Then The value of FOO in section BAR should be env_value
+  Scenario: load nested config section
+    Given A config.toml with nested sections like database.connection
+    When sf_core loads a nested section by dotted path
+    Then The nested section settings should be returned
 
   @core_int
-  Scenario: should skip environment variable overrides when disabled
-    Given A config.toml with key FOO in section BAR set to file_value
-    And Environment variable SNOWFLAKE_BAR_FOO is set to env_value
-    When sf_core loads all sections with apply_env_overrides=false
-    Then The value of FOO in section BAR should be file_value
+  Scenario: nested connections blocked
+    Given A config.toml with connections.dev and connections.prod
+    When sf_core loads section connections.dev
+    Then None should be returned
+
+  @core_int
+  Scenario: nonexistent nested section
+    Given A config.toml with database.connection section
+    When sf_core loads section database.pool
+    Then None should be returned

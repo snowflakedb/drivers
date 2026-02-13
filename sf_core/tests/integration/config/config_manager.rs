@@ -1,14 +1,14 @@
-use sf_core::apis::database_driver_v1::connection::{
-    connection_init, connection_load_from_config, connection_new, connection_set_option,
-};
 use sf_core::apis::database_driver_v1::Setting;
+use sf_core::apis::database_driver_v1::connection::{
+    connection_load_from_config, connection_new, connection_set_option,
+};
 use sf_core::config::config_manager::{load_all_config_sections, load_config_section};
 use std::env;
 use std::fs;
 use tempfile::TempDir;
 
 #[test]
-fn test_connection_load_from_config_basic() {
+fn connection_load_from_config_basic() {
     let temp_dir = TempDir::new().unwrap();
     env::set_var("SNOWFLAKE_HOME", temp_dir.path().to_str().unwrap());
 
@@ -36,7 +36,7 @@ warehouse = "mywarehouse"
 }
 
 #[test]
-fn test_explicit_setting_overrides_config() {
+fn explicit_setting_overrides_config() {
     let temp_dir = TempDir::new().unwrap();
     env::set_var("SNOWFLAKE_HOME", temp_dir.path().to_str().unwrap());
 
@@ -73,7 +73,7 @@ user = "config_user"
 }
 
 #[test]
-fn test_connection_not_found_in_config() {
+fn connection_not_found_in_config() {
     let temp_dir = TempDir::new().unwrap();
     env::set_var("SNOWFLAKE_HOME", temp_dir.path().to_str().unwrap());
 
@@ -87,7 +87,7 @@ fn test_connection_not_found_in_config() {
 }
 
 #[test]
-fn test_config_precedence() {
+fn config_precedence() {
     let temp_dir = TempDir::new().unwrap();
     env::set_var("SNOWFLAKE_HOME", temp_dir.path().to_str().unwrap());
 
@@ -129,7 +129,7 @@ warehouse = "connections_wh"
 }
 
 #[test]
-fn test_env_var_override() {
+fn env_var_override() {
     let temp_dir = TempDir::new().unwrap();
     env::set_var("SNOWFLAKE_HOME", temp_dir.path().to_str().unwrap());
     env::set_var("SNOWFLAKE_ACCOUNT", "env_account");
@@ -160,7 +160,7 @@ user = "testuser"
 
 #[cfg(unix)]
 #[test]
-fn test_insecure_permissions_rejected() {
+fn insecure_permissions_rejected() {
     use std::os::unix::fs::PermissionsExt;
 
     let temp_dir = TempDir::new().unwrap();
@@ -187,7 +187,7 @@ account = "myaccount"
 }
 
 #[test]
-fn test_multiple_data_types() {
+fn multiple_data_types() {
     let temp_dir = TempDir::new().unwrap();
     env::set_var("SNOWFLAKE_HOME", temp_dir.path().to_str().unwrap());
 
@@ -217,7 +217,7 @@ validate_certs = true
 }
 
 #[test]
-fn test_empty_config_files() {
+fn empty_config_files() {
     let temp_dir = TempDir::new().unwrap();
     env::set_var("SNOWFLAKE_HOME", temp_dir.path().to_str().unwrap());
 
@@ -247,7 +247,7 @@ fn test_empty_config_files() {
 // Tests for non-connection sections
 
 #[test]
-fn test_load_log_section() {
+fn load_log_section() {
     let temp_dir = TempDir::new().unwrap();
     env::set_var("SNOWFLAKE_HOME", temp_dir.path().to_str().unwrap());
 
@@ -282,7 +282,7 @@ account = "myaccount"
 }
 
 #[test]
-fn test_load_multiple_sections() {
+fn load_multiple_sections() {
     let temp_dir = TempDir::new().unwrap();
     env::set_var("SNOWFLAKE_HOME", temp_dir.path().to_str().unwrap());
 
@@ -323,7 +323,7 @@ account = "myaccount"
 }
 
 #[test]
-fn test_connections_toml_does_not_override_log_section() {
+fn connections_toml_does_not_override_log_section() {
     let temp_dir = TempDir::new().unwrap();
     env::set_var("SNOWFLAKE_HOME", temp_dir.path().to_str().unwrap());
 
@@ -384,7 +384,7 @@ file = "connections_log.txt"
 }
 
 #[test]
-fn test_load_nonexistent_section() {
+fn load_nonexistent_section() {
     let temp_dir = TempDir::new().unwrap();
     env::set_var("SNOWFLAKE_HOME", temp_dir.path().to_str().unwrap());
 
@@ -411,7 +411,7 @@ level = "info"
 }
 
 #[test]
-fn test_cannot_load_connections_via_load_config_section() {
+fn cannot_load_connections_via_load_config_section() {
     let temp_dir = TempDir::new().unwrap();
     env::set_var("SNOWFLAKE_HOME", temp_dir.path().to_str().unwrap());
 
@@ -437,7 +437,7 @@ account = "myaccount"
 }
 
 #[test]
-fn test_load_nested_config_section() {
+fn load_nested_config_section() {
     let temp_dir = TempDir::new().unwrap();
     env::set_var("SNOWFLAKE_HOME", temp_dir.path().to_str().unwrap());
 
@@ -499,7 +499,7 @@ max_size = 10485760
 }
 
 #[test]
-fn test_nested_connections_blocked() {
+fn nested_connections_blocked() {
     let temp_dir = TempDir::new().unwrap();
     env::set_var("SNOWFLAKE_HOME", temp_dir.path().to_str().unwrap());
 
@@ -532,7 +532,7 @@ account = "prod_account"
 }
 
 #[test]
-fn test_nonexistent_nested_section() {
+fn nonexistent_nested_section() {
     let temp_dir = TempDir::new().unwrap();
     env::set_var("SNOWFLAKE_HOME", temp_dir.path().to_str().unwrap());
 
