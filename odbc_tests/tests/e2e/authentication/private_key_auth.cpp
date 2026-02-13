@@ -159,6 +159,13 @@ TEST_CASE("should authenticate using unencrypted private key file", "[private_ke
 }
 
 TEST_CASE("should authenticate using private_key as base64 string", "[private_key_auth]") {
+  // The old driver requires PRIV_KEY_FILE to be present even when PRIV_KEY_BASE64 is
+  // supplied via connection string (it checks PRIV_KEY_FILE as mandatory for JWT auth).
+  // The old driver's own base64 tests use a DSN with PRIV_KEY_FILE pre-configured.
+  // TODO: Re-enable for the old driver once DSN support is implemented in the new driver,
+  // so we can provide PRIV_KEY_FILE via DSN like the old driver's tests do.
+  SKIP_OLD_DRIVER("", "Old driver requires PRIV_KEY_FILE even when PRIV_KEY_BASE64 is set");
+
   // Given Authentication is set to JWT and private key is provided as base64-encoded string
   auto params = get_test_parameters("testconnection");
   auto env = setup_environment();
@@ -187,6 +194,13 @@ TEST_CASE("should authenticate using private_key as base64 string", "[private_ke
 }
 
 TEST_CASE("should authenticate using PRIV_KEY_PWD as alias for private key password", "[private_key_auth]") {
+  // In the old driver PRIV_KEY_PWD is only used with inline key content/base64,
+  // not with PRIV_KEY_FILE (which uses PRIV_KEY_FILE_PWD). The new driver treats
+  // PRIV_KEY_PWD as a universal password alias that works with both file and inline keys.
+  // TODO: Re-enable for the old driver once DSN support is implemented — the test could
+  // then use a DSN-based setup matching the old driver's expected parameter layout.
+  SKIP_OLD_DRIVER("", "Old driver's PRIV_KEY_PWD only works with inline keys, not PRIV_KEY_FILE");
+
   // Given Authentication is set to JWT with encrypted key file and PRIV_KEY_PWD parameter
   auto params = get_test_parameters("testconnection");
 
