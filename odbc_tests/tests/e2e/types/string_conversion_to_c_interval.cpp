@@ -291,9 +291,7 @@ TEST_CASE("should truncate trailing fields when converting interval strings",
   }
 
   // And minute-second to minute will lose precision since driver treats it as hour-minute
-  {
-    check_interval_precision_lost<SQL_C_INTERVAL_MINUTE>(stmt, 4);
-  }
+  check_interval_precision_lost<SQL_C_INTERVAL_MINUTE>(stmt, 4);
 }
 
 TEST_CASE("should truncate trailing fields in day-time intervals",
