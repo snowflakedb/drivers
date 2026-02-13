@@ -29,8 +29,7 @@ pre-install-commands = [
 ]
 
 [tool.hatch.envs.default.env-vars]
-# Configure pip to use internal Nexus for packages like benchstore-client-library
-PIP_EXTRA_INDEX_URL = "https://nexus.int.snowflakecomputing.com/repository/pypi-internal/simple"
+PIP_EXTRA_INDEX_URL = "https://artifactory.ci1.us-west-2.aws-dev.app.snowflake.com/artifactory/api/pypi/internal-production-pypi-snowflake-virtual/simple"
 
 [tool.pytest.ini_options]
 log_cli = true

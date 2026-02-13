@@ -414,15 +414,25 @@ impl MethodBoundaryFinder {
                 }
 
                 // Fallback: Check if any end pattern matches (mainly for Python)
+                // Only match if the line is at the same or lower indentation level as the method start
                 if !self.config.method_end_patterns.is_empty() {
-                    for pattern in self.config.method_end_patterns {
-                        if line == *pattern || line.starts_with(pattern) {
-                            method_end_line = Some(i);
+                    // Note: `line` is shadowed to trimmed above, use lines[i] for indent
+                    let original_line = lines[i];
+                    let line_indent = original_line.len() - original_line.trim_start().len();
+                    let start_line_indent =
+                        lines[start_idx].len() - lines[start_idx].trim_start().len();
+
+                    // Only consider end patterns at same or lower indentation (not nested code)
+                    if line_indent <= start_line_indent {
+                        for pattern in self.config.method_end_patterns {
+                            if line == *pattern || line.starts_with(pattern) {
+                                method_end_line = Some(i);
+                                break;
+                            }
+                        }
+                        if method_end_line.is_some() {
                             break;
                         }
-                    }
-                    if method_end_line.is_some() {
-                        break;
                     }
                 }
             }
@@ -781,5 +791,129 @@ impl StepFinder {
         }
 
         Ok(methods)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Test that Python method boundary detection correctly handles nested constructs.
+    /// This is a regression test for the fix where nested `import` or `def` statements
+    /// inside a test method were incorrectly terminating the method boundary.
+    #[test]
+    fn test_python_method_boundary_with_nested_constructs() {
+        let boundary_finder = MethodBoundaryFinder::new(LanguageConfig::python());
+
+        // Python test with nested import and nested def - these should NOT end the method
+        let content = r#"
+import pytest
+
+def test_something_with_nested_constructs():
+    # Given the system is ready
+    value = 42
+    
+    # Nested import inside the function (e.g., lazy import)
+    import json
+    
+    # Nested function definition
+    def helper():
+        return "helper result"
+    
+    # When we process the data
+    result = helper()
+    
+    # Then we should get the expected result
+    assert result == "helper result"
+    
+    # Nested async def
+    async def async_helper():
+        return "async result"
+
+def test_next_method():
+    # This is a different test
+    pass
+"#;
+
+        // Find boundaries for test_something_with_nested_constructs
+        let boundaries = boundary_finder
+            .find_method_boundaries(content, "test_something_with_nested_constructs")
+            .expect("Should find method boundaries");
+
+        assert!(boundaries.is_some(), "Should find the method");
+        let (start, end) = boundaries.unwrap();
+
+        // The method should include all the nested constructs
+        let lines: Vec<&str> = content.lines().collect();
+
+        // Method should start at the def line
+        assert!(
+            lines[start].contains("def test_something_with_nested_constructs"),
+            "Start line should be the method definition"
+        );
+
+        // Method should end at or before the next top-level def (test_next_method)
+        // The end should be after the nested async def but before the next test
+        let method_content: String = lines[start..end].join("\n");
+
+        // Verify the nested import is included
+        assert!(
+            method_content.contains("import json"),
+            "Method should include nested import"
+        );
+
+        // Verify the nested def is included
+        assert!(
+            method_content.contains("def helper():"),
+            "Method should include nested def"
+        );
+
+        // Verify the nested async def is included
+        assert!(
+            method_content.contains("async def async_helper():"),
+            "Method should include nested async def"
+        );
+
+        // Verify the next test method is NOT included
+        assert!(
+            !method_content.contains("def test_next_method"),
+            "Method should NOT include the next test method"
+        );
+    }
+
+    /// Test that top-level constructs still correctly end methods
+    #[test]
+    fn test_python_method_boundary_ends_at_top_level_def() {
+        let boundary_finder = MethodBoundaryFinder::new(LanguageConfig::python());
+
+        let content = r#"
+def test_first():
+    # Given something
+    x = 1
+    # Then check
+    assert x == 1
+
+def test_second():
+    # Given something else
+    y = 2
+"#;
+
+        let boundaries = boundary_finder
+            .find_method_boundaries(content, "test_first")
+            .expect("Should find method boundaries");
+
+        assert!(boundaries.is_some());
+        let (start, end) = boundaries.unwrap();
+
+        let lines: Vec<&str> = content.lines().collect();
+        let method_content: String = lines[start..end].join("\n");
+
+        // Should include the first test's content
+        assert!(method_content.contains("x = 1"));
+        assert!(method_content.contains("assert x == 1"));
+
+        // Should NOT include the second test
+        assert!(!method_content.contains("def test_second"));
+        assert!(!method_content.contains("y = 2"));
     }
 }

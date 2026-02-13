@@ -48,7 +48,18 @@ pub unsafe extern "C" fn SQLExecDirect(
     statement_text: *const sql::Char,
     text_length: sql::Integer,
 ) -> sql::RetCode {
-    api::statement::exec_direct(statement_handle, statement_text, text_length).to_sql_code()
+    api::statement::exec_direct_n(statement_handle, statement_text, text_length).to_sql_code()
+}
+
+/// # Safety
+/// This function is called by the ODBC driver manager.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn SQLExecDirectW(
+    statement_handle: sql::Handle,
+    statement_text: *const sql::WChar,
+    text_length: sql::Integer,
+) -> sql::RetCode {
+    api::statement::exec_direct_w(statement_handle, statement_text, text_length).to_sql_code()
 }
 
 /// # Safety
@@ -140,7 +151,15 @@ pub unsafe extern "C" fn SQLDisconnect(connection_handle: sql::Handle) -> sql::R
 /// This function is called by the ODBC driver manager.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SQLFetch(statement_handle: sql::Handle) -> sql::RetCode {
-    api::data::fetch(statement_handle).to_sql_code()
+    let mut warnings = vec![];
+    let result = api::data::fetch(statement_handle, &mut warnings);
+    api::diagnostic::set_diag_info_from_warnings(
+        sql::HandleType::Stmt,
+        statement_handle,
+        &warnings,
+    );
+    api::diagnostic::set_diag_info_from_result(sql::HandleType::Stmt, statement_handle, &result);
+    result.to_sql_code_with_warnings(&warnings)
 }
 
 /// # Safety
@@ -154,15 +173,24 @@ pub unsafe extern "C" fn SQLGetData(
     buffer_length: sql::Len,
     str_len_or_ind_ptr: *mut sql::Len,
 ) -> sql::RetCode {
-    api::data::get_data(
+    api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
+    let mut warnings = vec![];
+    let result = api::data::get_data(
         statement_handle,
         col_or_param_num,
         target_type,
         target_value_ptr,
         buffer_length,
         str_len_or_ind_ptr,
-    )
-    .to_sql_code()
+        &mut warnings,
+    );
+    api::diagnostic::set_diag_info_from_warnings(
+        sql::HandleType::Stmt,
+        statement_handle,
+        &warnings,
+    );
+    api::diagnostic::set_diag_info_from_result(sql::HandleType::Stmt, statement_handle, &result);
+    result.to_sql_code_with_warnings(&warnings)
 }
 
 /// # Safety
@@ -281,6 +309,28 @@ pub unsafe extern "C" fn SQLGetDiagField(
         diag_info_ptr,
         buffer_length,
         string_length_ptr,
+    )
+    .to_sql_code()
+}
+
+/// # Safety
+/// This function is called by the ODBC driver manager.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn SQLBindCol(
+    statement_handle: sql::Handle,
+    column_number: sql::USmallInt,
+    target_type: CDataType,
+    target_value_ptr: sql::Pointer,
+    buffer_length: sql::Len,
+    str_len_or_ind_ptr: *mut sql::Len,
+) -> sql::RetCode {
+    api::statement::bind_col(
+        statement_handle,
+        column_number,
+        target_type,
+        target_value_ptr,
+        buffer_length,
+        str_len_or_ind_ptr,
     )
     .to_sql_code()
 }

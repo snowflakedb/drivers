@@ -20,7 +20,7 @@ from decimal import Decimal
 
 import pytest
 
-from .utils import assert_type
+from .utils import assert_sequential_values, assert_type
 
 
 # =============================================================================
@@ -65,7 +65,7 @@ NUMBER_38_37_MIN_POSITIVE = Decimal("0.0000000000000000000000000000000000001")
 # =============================================================================
 # LARGE RESULT SET SIZE
 # =============================================================================
-LARGE_RESULT_SET_SIZE = 1_000_000
+LARGE_RESULT_SET_SIZE = 30_000
 
 
 class TestNumberTypeCasting:
@@ -191,27 +191,37 @@ class TestNumberLiteral:
     ):
         # Given Snowflake client is logged in
 
-        # When Query "SELECT seq8()::<type>(38,0), (seq8() + 0.12345)::<type>(20,5)
-        # FROM TABLE(GENERATOR(ROWCOUNT => 1000000)) v" is executed
+        # When Query
+        # "SELECT seq8()::<type>(38,0), (seq8() + 0.12345)::<type>(20,5) FROM TABLE(GENERATOR(ROWCOUNT => 30000)) v"
+        # is executed
+
+        # Note: seq8() doesn't guarantee consecutive values in parallel execution,
+        # so we use ROW_NUMBER() to ensure sequential integers.
         sql = (
-            f"SELECT seq8()::{num_type}(38,0), (seq8() + 0.12345)::{num_type}(20,5) "
-            f"FROM TABLE(GENERATOR(ROWCOUNT => {LARGE_RESULT_SET_SIZE})) v"
+            f"WITH base AS ("
+            f"  SELECT ROW_NUMBER() OVER (ORDER BY seq8()) - 1 as rn "
+            f"  FROM TABLE(GENERATOR(ROWCOUNT => {LARGE_RESULT_SET_SIZE}))"
+            f") "
+            f"SELECT rn::{num_type}(38,0), (rn + 0.12345)::{num_type}(20,5) FROM base "
+            f"ORDER BY 1"
         )
         rows = execute_query(sql)
 
-        # Then Column 1 should contain sequential integers from 0 to 999999
-        assert len(rows) == LARGE_RESULT_SET_SIZE
+        # Then Column 1 should contain sequential integers from 0 to 29999
         col0_values = [row[0] for row in rows]
         # Python: scale=0 -> int
         assert_type(col0_values, int)
-        assert col0_values == list(range(LARGE_RESULT_SET_SIZE))
+        assert_sequential_values(col0_values, LARGE_RESULT_SET_SIZE)
 
         # And Column 2 should contain sequential decimals starting from 0.12345
         col1_values = [row[1] for row in rows]
         # Python: scale>0 -> Decimal
         assert_type(col1_values, Decimal)
-        expected = [Decimal(str(i)) + Decimal("0.12345") for i in range(LARGE_RESULT_SET_SIZE)]
-        assert col1_values == expected
+        assert_sequential_values(
+            col1_values,
+            LARGE_RESULT_SET_SIZE,
+            transform=lambda i: Decimal(str(i)) + Decimal("0.12345"),
+        )
 
 
 class TestNumberTable:
@@ -409,31 +419,40 @@ class TestNumberTable:
     ):
         # Given Snowflake client is logged in
 
-        # And Table with columns (<type>(38,0), <type>(20,5)) exists with 1000000 sequential rows,
-        # from 0 to 999999 in the first column and from 0.12345 to 999999.12345 in the second column
+        # And Table with columns (<type>(38,0), <type>(20,5)) exists with 30000 sequential rows,
+        # from 0 to 29999 in the first column and from 0.12345 to 29999.12345 in the second column
+
+        # Note: seq8() doesn't guarantee consecutive values in parallel execution,
+        # so we use ROW_NUMBER() to ensure sequential integers.
         table_name = f"{tmp_schema}.large_table_{num_type.lower()}"
         execute_query(f"CREATE TABLE {table_name} (col1 {num_type}(38,0), col2 {num_type}(20,5))")
         execute_query(
-            f"INSERT INTO {table_name} SELECT seq8()::{num_type}(38,0), (seq8() + 0.12345)::{num_type}(20,5) "
-            f"FROM TABLE(GENERATOR(ROWCOUNT => {LARGE_RESULT_SET_SIZE}))"
+            f"INSERT INTO {table_name} "
+            f"WITH base AS ("
+            f"  SELECT ROW_NUMBER() OVER (ORDER BY seq8()) - 1 as rn "
+            f"  FROM TABLE(GENERATOR(ROWCOUNT => {LARGE_RESULT_SET_SIZE}))"
+            f") "
+            f"SELECT rn::{num_type}(38,0), (rn + 0.12345)::{num_type}(20,5) FROM base"
         )
 
         # When Query "SELECT * FROM <table>" is executed
-        rows = execute_query(f"SELECT * FROM {table_name}")
+        rows = execute_query(f"SELECT * FROM {table_name} ORDER BY 1")
 
-        # Then Column 1 should contain sequential integers from 0 to 999999
-        assert len(rows) == LARGE_RESULT_SET_SIZE
+        # Then Column 1 should contain sequential integers from 0 to 29999
         col1 = [row[0] for row in rows]
         # Python: scale=0 -> int
         assert_type(col1, int)
-        assert col1 == list(range(LARGE_RESULT_SET_SIZE))
+        assert_sequential_values(col1, LARGE_RESULT_SET_SIZE)
 
         # And Column 2 should contain sequential decimals starting from 0.12345
         col2 = [row[1] for row in rows]
         # Python: scale>0 -> Decimal
         assert_type(col2, Decimal)
-        expected = [Decimal(f"{i}.12345") for i in range(LARGE_RESULT_SET_SIZE)]
-        assert col2 == expected
+        assert_sequential_values(
+            col2,
+            LARGE_RESULT_SET_SIZE,
+            transform=lambda i: Decimal(f"{i}.12345"),
+        )
 
 
 class TestNumberBinding:

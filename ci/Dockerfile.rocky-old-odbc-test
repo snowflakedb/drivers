@@ -48,9 +48,15 @@ RUN ARCH=$(uname -m) && \
     rm -rf /tmp/cmake*
 
 # Install Snowflake ODBC driver (detect architecture automatically)
+# Note: Snowflake repo uses "linux" for x86_64 and "linuxaarch64" for aarch64
 RUN ARCH=$(uname -m) && \
+    if [ "$ARCH" = "x86_64" ]; then \
+        URL_PATH="linux"; \
+    else \
+        URL_PATH="linux${ARCH}"; \
+    fi && \
     cd /tmp && \
-    curl -O "https://sfc-repo.snowflakecomputing.com/odbc/linux${ARCH}/3.13.0/snowflake-odbc-3.13.0.${ARCH}.rpm" && \
+    curl -O "https://sfc-repo.snowflakecomputing.com/odbc/${URL_PATH}/3.13.0/snowflake-odbc-3.13.0.${ARCH}.rpm" && \
     rpm -i --nosignature snowflake-odbc-3.13.0.${ARCH}.rpm && \
     rm -f snowflake-odbc-*.rpm
 

@@ -1,20 +1,22 @@
-from typing import Optional
+def _check_if_universal():
+    try:
+        # Import universal driver specific code
+        from snowflake.connector._internal.api_client.client_api import database_driver_client  # noqa
+
+        return True
+    except ImportError:
+        return False
 
 
-_current_connector: Optional[str] = None  # "universal" or "reference"
-
-
-def set_current_connector(name: str) -> None:
-    global _current_connector
-    _current_connector = name
+IS_UNIVERSAL_DRIVER = _check_if_universal()
 
 
 def is_new_driver() -> bool:
-    return _current_connector == "universal"
+    return IS_UNIVERSAL_DRIVER
 
 
 def is_old_driver() -> bool:
-    return _current_connector == "reference"
+    return not IS_UNIVERSAL_DRIVER
 
 
 def NEW_DRIVER_ONLY(bc_id: str) -> bool:

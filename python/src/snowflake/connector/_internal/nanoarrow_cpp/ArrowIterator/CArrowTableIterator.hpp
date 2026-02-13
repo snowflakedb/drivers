@@ -21,9 +21,21 @@ class CArrowTableIterator : public CArrowIterator {
  public:
   /**
    * Constructor
+   *
+   * @param context Python context object for conversions
+   * @param arrow_bytes Arrow IPC bytes
+   * @param arrow_bytes_size Size of the arrow bytes
+   * @param number_to_decimal Whether to convert numbers to decimal
+   * @param force_microsecond_precision When true, all timestamp columns are converted
+   *        to microsecond precision, ensuring consistent schema across all batches.
+   *        This is useful when your data contains timestamps outside the nanosecond
+   *        range (1677-2262), such as '9999-12-31' or '0001-01-01'. When false
+   *        (default), precision is determined per-batch based on the data, which
+   *        may cause pyarrow schema mismatch errors when combining batches.
+   *        Note: enabling this truncates sub-microsecond precision (scale 7-9).
    */
   CArrowTableIterator(PyObject* context, char* arrow_bytes, int64_t arrow_bytes_size,
-                      bool number_to_decimal);
+                      bool number_to_decimal, bool force_microsecond_precision = false);
 
   /**
    * Destructor
@@ -49,6 +61,8 @@ class CArrowTableIterator : public CArrowIterator {
   /** local time zone */
   char* m_timezone;
   const bool m_convert_number_to_decimal;
+  /** force microsecond precision for timestamps to ensure consistent schema between batches */
+  const bool m_force_microsecond_precision;
 
   /**
    * Reconstruct record batches with type conversion in place

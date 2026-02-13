@@ -64,6 +64,29 @@ def assert_float_equal(actual: float, expected: float | None, msg: str = "") -> 
         assert diff < 1e-10, error_msg
 
 
+def floats_equal(actual: float, expected: float) -> bool:
+    """Check if two float values are equal within appropriate tolerance.
+
+    This is a non-asserting version of assert_float_equal for use as a comparator.
+    """
+    if expected is None:
+        return actual is None
+    if isnan(expected):
+        return isnan(actual)
+    if isinf(expected):
+        return actual == expected
+
+    abs_expected = abs(expected)
+    diff = abs(actual - expected)
+
+    if abs_expected < FLOAT_MIN_NORMAL:
+        return diff <= 1e-325
+    elif abs_expected > 1e10:
+        return diff <= abs_expected * 1e-14
+    else:
+        return diff < 1e-10
+
+
 def assert_floats_equal(actual: Iterable[float], expected: Iterable[float]) -> None:
     """Assert two iterables of float values are equal element-wise.
 
@@ -74,3 +97,43 @@ def assert_floats_equal(actual: Iterable[float], expected: Iterable[float]) -> N
     assert len(actual_list) == len(expected_list), f"Length mismatch: {len(actual_list)} != {len(expected_list)}"
     for i, (a, e) in enumerate(zip(actual_list, expected_list)):
         assert_float_equal(a, e, f"Mismatch at index {i}: expected {e}, got {a}")
+
+
+def assert_sequential_values(
+    values: list,
+    expected_count: int,
+    start: int = 0,
+    transform=None,
+    compare=None,
+) -> None:
+    """Assert values are sequential integers, optionally transformed.
+
+    This is an efficient alternative to `assert values == [transform(i) for i in range(count)]`
+    which avoids pytest's expensive diff computation on large lists.
+
+    Args:
+        values: List of values to check.
+        expected_count: Expected number of elements.
+        start: Starting value for the sequence (default 0).
+        transform: Optional function to transform expected values (e.g., float, Decimal).
+                   If None, compares against raw integers.
+        compare: Optional comparison function (actual, expected) -> bool.
+                 If None, uses equality (==). Use for float tolerance comparisons.
+
+    Raises:
+        AssertionError: If length doesn't match or any value doesn't match expected.
+    """
+    assert len(values) == expected_count, f"Length mismatch: expected {expected_count}, got {len(values)}"
+
+    for i, actual in enumerate(values):
+        expected = start + i
+        if transform is not None:
+            expected = transform(expected)
+
+        if compare is not None:
+            is_equal = compare(actual, expected)
+        else:
+            is_equal = actual == expected
+
+        if not is_equal:
+            raise AssertionError(f"Value mismatch at index {i}: expected {expected!r}, got {actual!r}")

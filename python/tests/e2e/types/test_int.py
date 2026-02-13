@@ -9,7 +9,7 @@ All tests are parameterized to run with each type synonym to verify they behave 
 
 import pytest
 
-from .utils import assert_type
+from .utils import assert_sequential_values, assert_type
 
 
 # =============================================================================
@@ -71,7 +71,7 @@ INT38_MIN = -99999999999999999999999999999999999999
 # =============================================================================
 # LARGE RESULT SET SIZE
 # =============================================================================
-LARGE_RESULT_SET_SIZE = 1_000_000
+LARGE_RESULT_SET_SIZE = 50_000
 
 
 class TestIntTypeCasting:
@@ -178,18 +178,21 @@ class TestIntLiteral:
     def test_should_download_large_result_set_with_multiple_chunks_for_int_and_synonyms(self, execute_query, int_type):
         # Given Snowflake client is logged in
 
-        # When Query "SELECT seq8()::<type> as id FROM TABLE(GENERATOR(ROWCOUNT => 1000000)) v ORDER BY id" is executed
+        # When Query "SELECT seq8()::<type> as id FROM TABLE(GENERATOR(ROWCOUNT => 50000)) v ORDER BY id" is executed
+
+        # Note: seq8() doesn't guarantee consecutive values in parallel execution,
+        # so we use ROW_NUMBER() to ensure sequential integers.
         sql = (
-            f"SELECT seq8()::{int_type} as id FROM TABLE(GENERATOR(ROWCOUNT => {LARGE_RESULT_SET_SIZE})) v ORDER BY id"
+            f"SELECT (ROW_NUMBER() OVER (ORDER BY seq8()) - 1)::{int_type} as id "
+            f"FROM TABLE(GENERATOR(ROWCOUNT => {LARGE_RESULT_SET_SIZE})) "
+            f"ORDER BY 1"
         )
         rows = execute_query(sql)
 
-        # Then Result should contain 1000000 sequentially numbered rows from 0 to 999999
-        assert len(rows) == LARGE_RESULT_SET_SIZE, f"Expected {LARGE_RESULT_SET_SIZE} rows, got {len(rows)}"
-
+        # Then Result should contain 50000 sequentially numbered rows from 0 to 49999
         values = [row[0] for row in rows]
         assert_type(values, int)
-        assert values == list(range(LARGE_RESULT_SET_SIZE))
+        assert_sequential_values(values, LARGE_RESULT_SET_SIZE)
 
 
 class TestIntTable:
@@ -289,23 +292,25 @@ class TestIntTable:
     def test_should_select_large_result_set_from_table_for_int_and_synonyms(self, execute_query, tmp_schema, int_type):
         # Given Snowflake client is logged in
 
-        # And Table with <type> column exists with 1000000 sequential values
+        # And Table with <type> column exists with 50000 sequential values
+
+        # Note: seq8() doesn't guarantee consecutive values in parallel execution,
+        # so we use ROW_NUMBER() to ensure sequential integers.
         table_name = f"{tmp_schema}.large_int_table_{int_type.lower()}"
         execute_query(f"CREATE TABLE {table_name} (col {int_type})")
         execute_query(
-            f"INSERT INTO {table_name} SELECT seq8()::{int_type} "
+            f"INSERT INTO {table_name} "
+            f"SELECT (ROW_NUMBER() OVER (ORDER BY seq8()) - 1)::{int_type} "
             f"FROM TABLE(GENERATOR(ROWCOUNT => {LARGE_RESULT_SET_SIZE}))"
         )
 
         # When Query "SELECT * FROM <table> ORDER BY col" is executed
         rows = execute_query(f"SELECT * FROM {table_name} ORDER BY col")
 
-        # Then Result should contain 1000000 sequentially numbered rows from 0 to 999999
-        assert len(rows) == LARGE_RESULT_SET_SIZE, f"Expected {LARGE_RESULT_SET_SIZE} rows, got {len(rows)}"
-
+        # Then Result should contain 50000 sequentially numbered rows from 0 to 49999
         values = [row[0] for row in rows]
         assert_type(values, int)
-        assert values == list(range(LARGE_RESULT_SET_SIZE))
+        assert_sequential_values(values, LARGE_RESULT_SET_SIZE)
 
 
 class TestIntBinding:

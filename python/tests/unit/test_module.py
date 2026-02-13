@@ -2,16 +2,18 @@
 Tests for PEP 249 module interface.
 """
 
+import pytest
+
 import snowflake.connector as pep249_dbapi
 
 from snowflake.connector import (
     Binary,
     Connection,
-    Cursor,
     DatabaseError,
     DataError,
     Date,
     DateFromTicks,
+    DictCursor,
     Error,
     IntegrityError,
     InterfaceError,
@@ -19,6 +21,7 @@ from snowflake.connector import (
     NotSupportedError,
     OperationalError,
     ProgrammingError,
+    SnowflakeCursor,
     Time,
     TimeFromTicks,
     Timestamp,
@@ -82,9 +85,9 @@ class TestModuleExports:
         assert pep249_dbapi.Connection is Connection
 
     def test_cursor_class_exported(self):
-        """Test that Cursor class is exported."""
-        assert hasattr(pep249_dbapi, "Cursor")
-        assert pep249_dbapi.Cursor is Cursor
+        """Test that SnowflakeCursor class is exported."""
+        assert hasattr(pep249_dbapi, "SnowflakeCursor")
+        assert pep249_dbapi.SnowflakeCursor is SnowflakeCursor
 
     def test_exception_classes_exported(self):
         """Test that all exception classes are exported."""
@@ -225,7 +228,8 @@ class TestPEP249Compliance:
             assert hasattr(Connection, method), f"Connection missing required method '{method}'"
             assert callable(getattr(Connection, method))
 
-    def test_cursor_interface_compliance(self):
+    @pytest.mark.parametrize("cursor_class", [SnowflakeCursor, DictCursor])
+    def test_cursor_interface_compliance(self, cursor_class):
         """Test that Cursor class has required methods."""
         required_methods = [
             "callproc",
@@ -241,11 +245,11 @@ class TestPEP249Compliance:
         ]
 
         for method in required_methods:
-            assert hasattr(Cursor, method), f"Cursor missing required method '{method}'"
-            assert callable(getattr(Cursor, method))
+            assert hasattr(cursor_class, method), f"Cursor missing required method '{method}'"
+            assert callable(getattr(cursor_class, method))
 
         # Test required attributes
         required_attrs = ["description", "rowcount", "arraysize"]
 
         for attr in required_attrs:
-            assert hasattr(Cursor, attr), f"Cursor missing required attribute '{attr}'"
+            assert hasattr(cursor_class, attr), f"Cursor missing required attribute '{attr}'"

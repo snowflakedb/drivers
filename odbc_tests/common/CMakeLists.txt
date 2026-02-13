@@ -6,6 +6,9 @@ add_library(common STATIC
     src/test_setup.cpp
     src/compatibility.cpp
     src/get_diag_rec.cpp
+    src/ODBCConfig.cpp
+    src/DataSourceConfig.cpp
+    src/ConfigInstallation.cpp
     include/test_setup.hpp
     include/macros.hpp
     include/Connection.hpp
@@ -14,6 +17,9 @@ add_library(common STATIC
     include/MetaOfSqlCTypes.hpp
     include/get_diag_rec.hpp
     include/compatibility.hpp
+    include/ODBCConfig.hpp
+    include/ODBCFixtures.hpp
+    include/EnvOverride.hpp
 )
 
 target_include_directories(common PUBLIC ${picojson_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/include)

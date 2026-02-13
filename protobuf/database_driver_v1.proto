@@ -1,7 +1,7 @@
 syntax = "proto3";
 
 package database_driver_v1;
-option java_package = "com.snowflake.unicore.protobuf_gen";
+option java_package = "net.snowflake.client.internal.unicore.protobuf_gen";
 
 import "google/protobuf/descriptor.proto";
 
@@ -108,10 +108,23 @@ message DriverException {
   string report = 4;
 }
 
+// Column metadata for description
+message ColumnMetadata {
+  string name = 1;
+  string type = 2;
+  optional int64 precision = 3;
+  optional int64 scale = 4;
+  optional int64 length = 5;
+  optional int64 byte_length = 6;
+  bool nullable = 7;
+}
+
 // Execute result
 message ExecuteResult {
   ArrowArrayStreamPtr stream = 1;
   int64 rows_affected = 2;
+  string query_id = 3;
+  repeated ColumnMetadata columns = 4;
 }
 
 // Partitioned result

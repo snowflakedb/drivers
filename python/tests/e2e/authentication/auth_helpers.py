@@ -1,5 +1,3 @@
-from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import DriverException
-
 from ...compatibility import NEW_DRIVER_ONLY, OLD_DRIVER_ONLY
 
 
@@ -12,13 +10,15 @@ def verify_simple_query_execution(connection):
         assert result[0] == 1
 
 
-def verify_login_error(exception, reference_connector):
+def verify_login_error(exception):
     """Verify that an exception contains a valid login error with code and message."""
     # Debug information about the exception can be seen when tests fail
     assert exception is not None
     assert str(exception).strip() != "", "Login error message should not be empty"
 
     if NEW_DRIVER_ONLY("BD#4"):
+        from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import DriverException
+
         assert isinstance(exception.value.api_error_pb, DriverException), (
             f"Expected DriverException, got: {type(exception.value)}"
         )
@@ -28,9 +28,9 @@ def verify_login_error(exception, reference_connector):
 
     if OLD_DRIVER_ONLY("BD#4"):
         # Reference driver uses DatabaseError from snowflake.connector.errors
-        assert isinstance(exception.value, reference_connector.errors.DatabaseError), (
-            f"Expected DatabaseError, got: {type(exception.value)}"
-        )
+        from snowflake.connector.errors import DatabaseError
+
+        assert isinstance(exception.value, DatabaseError), f"Expected DatabaseError, got: {type(exception.value)}"
         # Verify it's specifically an authentication/JWT error
         error_msg = str(exception.value).lower()
         assert "jwt" in error_msg or "token" in error_msg or "invalid" in error_msg, (

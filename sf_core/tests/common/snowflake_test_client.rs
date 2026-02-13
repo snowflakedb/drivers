@@ -259,6 +259,15 @@ impl SnowflakeTestClient {
         .unwrap();
     }
 
+    pub fn set_connection_option_bytes(&self, option_name: &str, option_value: &[u8]) {
+        DatabaseDriverClient::connection_set_option_bytes(ConnectionSetOptionBytesRequest {
+            conn_handle: Some(self.conn_handle),
+            key: option_name.to_string(),
+            value: option_value.to_vec(),
+        })
+        .unwrap();
+    }
+
     pub fn set_statement_async_execution(&self, stmt: &StatementHandle, enabled: bool) {
         DatabaseDriverClient::statement_set_option_string(StatementSetOptionStringRequest {
             stmt_handle: Some(*stmt),

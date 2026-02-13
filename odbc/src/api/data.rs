@@ -1,9 +1,10 @@
 use crate::api::error::{
-    ArrowReadSnafu, DataNotFetchedSnafu, ExecutionDoneSnafu, FetchDataSnafu, NoMoreDataSnafu,
+    ConversionSnafu, DataNotFetchedSnafu, ExecutionDoneSnafu, FetchDataSnafu, NoMoreDataSnafu,
     StatementErrorStateSnafu, StatementNotExecutedSnafu,
 };
-use crate::api::{OdbcResult, StatementState, WithState, stmt_from_handle};
+use crate::api::{OdbcResult, Statement, StatementState, WithState, stmt_from_handle};
 use crate::cdata_types::CDataType;
+use crate::conversion::warning::Warnings;
 use crate::conversion::{Binding, ConversionError, make_converter};
 use arrow::array::Array;
 use arrow::datatypes::Field;
@@ -19,21 +20,22 @@ fn read_arrow_value(
     array_ref: &dyn Array,
     field: &Field,
     batch_idx: usize,
-) -> Result<(), ConversionError> {
+) -> Result<Warnings, ConversionError> {
     let converter = make_converter(field, array_ref)?;
-    converter.convert_arrow_value(
+    let warnings = converter.convert_arrow_value(
         batch_idx,
         &Binding {
             target_type,
-            value: target_value_ptr,
+            target_value_ptr,
             buffer_length,
             str_len_or_ind_ptr,
         },
-    )
+    )?;
+    Ok(warnings)
 }
 
 /// Fetch the next row of data
-pub fn fetch(statement_handle: sql::Handle) -> OdbcResult<()> {
+pub fn fetch(statement_handle: sql::Handle, warnings: &mut Warnings) -> OdbcResult<()> {
     tracing::debug!("fetch called");
     let stmt = stmt_from_handle(statement_handle);
     stmt.state.transition_or_err(|state| match state {
@@ -105,7 +107,42 @@ pub fn fetch(statement_handle: sql::Handle) -> OdbcResult<()> {
             tracing::error!("fetch: statement not executed");
             StatementNotExecutedSnafu.fail().with_state(state)
         }
-    })
+    })?;
+    warnings.extend(execute_bindings(stmt)?);
+    Ok(())
+}
+
+fn execute_bindings(stmt: &mut Statement) -> OdbcResult<Warnings> {
+    let mut warnings = vec![];
+    if let StatementState::Fetching {
+        reader: _,
+        record_batch,
+        batch_idx,
+    } = &stmt.state.as_ref()
+    {
+        for (column_number, binding) in &stmt.column_bindings {
+            let array_ref = record_batch.column((column_number - 1) as usize);
+            let schema = record_batch.schema();
+            let field = schema.field((column_number - 1) as usize);
+            tracing::debug!(
+                "execute_bindings: column_number={}, binding={:?}",
+                column_number,
+                binding
+            );
+            let conversion_warnings = read_arrow_value(
+                binding.target_type,
+                binding.target_value_ptr,
+                binding.buffer_length,
+                binding.str_len_or_ind_ptr,
+                array_ref,
+                field,
+                *batch_idx,
+            )
+            .context(ConversionSnafu)?;
+            warnings.extend(conversion_warnings);
+        }
+    }
+    Ok(vec![])
 }
 
 /// Get data from a specific column
@@ -116,6 +153,7 @@ pub fn get_data(
     target_value_ptr: sql::Pointer,
     buffer_length: sql::Len,
     str_len_or_ind_ptr: *mut sql::Len,
+    warnings: &mut Warnings,
 ) -> OdbcResult<()> {
     tracing::debug!("get_data: statement_handle={:?}", statement_handle);
     let stmt = stmt_from_handle(statement_handle);
@@ -129,7 +167,7 @@ pub fn get_data(
             let schema = record_batch.schema();
             let field = schema.field((col_or_param_num - 1) as usize);
 
-            read_arrow_value(
+            let conversion_warnings = read_arrow_value(
                 target_type,
                 target_value_ptr,
                 buffer_length,
@@ -138,8 +176,9 @@ pub fn get_data(
                 field,
                 *batch_idx,
             )
-            .context(ArrowReadSnafu)?;
+            .context(ConversionSnafu)?;
 
+            warnings.extend(conversion_warnings);
             Ok(())
         }
         StatementState::Done => {
@@ -681,7 +720,7 @@ mod tests {
 
             assert!(matches!(
                 result,
-                Err(ConversionError::UnsupportedOdbcType { .. })
+                Err(ConversionError::WriteOdbcValue { .. })
             ));
         }
 
@@ -703,7 +742,7 @@ mod tests {
 
             assert!(matches!(
                 result,
-                Err(ConversionError::UnsupportedOdbcType { .. })
+                Err(ConversionError::WriteOdbcValue { .. })
             ));
         }
     }

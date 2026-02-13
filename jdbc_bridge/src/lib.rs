@@ -41,7 +41,7 @@ pub extern "system" fn JNI_OnUnload(_jvm: *mut jni::sys::JavaVM, _: *mut u8) -> 
 /// # Safety
 /// Called from Java, so we need to be careful with the pointer.
 #[unsafe(no_mangle)]
-pub unsafe extern "system" fn Java_com_snowflake_unicore_JNICoreTransport_nativeHandleMessage(
+pub unsafe extern "system" fn Java_net_snowflake_client_internal_unicore_JNICoreTransport_nativeHandleMessage(
     mut env: JNIEnv,
     _class: JClass,
     service_name: JString,
@@ -70,11 +70,12 @@ pub unsafe extern "system" fn Java_com_snowflake_unicore_JNICoreTransport_native
     );
 
     // Find the TransportResponse class
-    let response_class =
-        match env.find_class("com/snowflake/unicore/CoreTransport$TransportResponse") {
-            Ok(c) => c,
-            Err(_) => return std::ptr::null_mut(),
-        };
+    let response_class = match env
+        .find_class("net/snowflake/client/internal/unicore/CoreTransport$TransportResponse")
+    {
+        Ok(c) => c,
+        Err(_) => return std::ptr::null_mut(),
+    };
 
     // Create the appropriate response based on the result
     let response_obj = match result {

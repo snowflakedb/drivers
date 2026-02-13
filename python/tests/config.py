@@ -1,7 +1,11 @@
 import json
 import os
 
+from pathlib import Path
 from typing import Any
+
+
+PROJECT_ROOT = Path(__file__).parent.parent.parent
 
 
 def get_test_parameters() -> dict[str, Any]:
@@ -12,7 +16,7 @@ def get_test_parameters() -> dict[str, Any]:
         or environment variables as fallback.
     """
     # First try environment variable
-    parameter_path = os.environ.get("PARAMETER_PATH")
+    parameter_path = os.environ.get("PARAMETER_PATH", PROJECT_ROOT / "parameters.json")
     if parameter_path and os.path.exists(parameter_path):
         with open(parameter_path) as f:
             parameters = json.load(f)

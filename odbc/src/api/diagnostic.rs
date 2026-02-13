@@ -3,14 +3,17 @@
 //! This module provides functions for retrieving diagnostic information
 //! from ODBC handles, including error messages, SQL states, and native error codes.
 
-use crate::api::{
-    Connection, Environment, OdbcError, OdbcResult, SqlState, Statement, api_utils,
-    conn_from_handle, env_from_handle,
-    error::{
-        InvalidDiagnosticIdentifierSnafu, InvalidHandleSnafu, InvalidRecordNumberSnafu,
-        NoMoreDataSnafu,
+use crate::{
+    api::{
+        Connection, Environment, OdbcError, OdbcResult, SqlState, Statement, api_utils,
+        conn_from_handle, env_from_handle,
+        error::{
+            InvalidDiagnosticIdentifierSnafu, InvalidHandleSnafu, InvalidRecordNumberSnafu,
+            NoMoreDataSnafu,
+        },
+        stmt_from_handle,
     },
-    stmt_from_handle,
+    conversion::warning::{Warning, Warnings},
 };
 use odbc_sys as sql;
 
@@ -202,25 +205,66 @@ pub fn clear_diag_info(handle_type: sql::HandleType, handle: sql::Handle) {
     t.get_diag_info_mut().clear();
 }
 
+pub fn from_handle_type<'a>(
+    handle_type: sql::HandleType,
+    handle: sql::Handle,
+) -> Option<&'a mut dyn WithDiagnosticInfo> {
+    match handle_type {
+        sql::HandleType::Env => Some(env_from_handle(handle)),
+        sql::HandleType::Dbc => Some(conn_from_handle(handle)),
+        sql::HandleType::Stmt => Some(stmt_from_handle(handle)),
+        _ => {
+            tracing::info!("Invalid handle type: {:?}", handle_type);
+            None
+        }
+    }
+}
+
+pub fn from_warning(warning: &Warning) -> DiagnosticRecord {
+    let message_text = match warning {
+        Warning::StringDataTruncated => "String data truncated",
+        Warning::NumericValueTruncated => "Numeric value truncated",
+    };
+    let sql_state = match warning {
+        Warning::StringDataTruncated => SqlState::StringDataRightTruncated,
+        Warning::NumericValueTruncated => SqlState::FractionalTruncation,
+    };
+    DiagnosticRecord {
+        native_error: 0,
+        sql_state,
+        class_origin: ClassOrigin::Odbc3_0,
+        column_number: None,
+        row_number: None,
+        connection_name: "".to_string(),
+        message_text: message_text.to_string(),
+    }
+}
+
+pub fn set_diag_info_from_warnings(
+    handle_type: sql::HandleType,
+    handle: sql::Handle,
+    warnings: &Warnings,
+) {
+    if let Some(t) = from_handle_type(handle_type, handle) {
+        let diagnostic_info = t.get_diag_info_mut();
+        for warning in warnings {
+            diagnostic_info.add_record(from_warning(warning));
+        }
+    }
+}
+
 pub fn set_diag_info_from_result(
     handle_type: sql::HandleType,
     handle: sql::Handle,
     result: &OdbcResult<()>,
 ) {
-    let t: &mut dyn WithDiagnosticInfo = match handle_type {
-        sql::HandleType::Env => env_from_handle(handle),
-        sql::HandleType::Dbc => conn_from_handle(handle),
-        sql::HandleType::Stmt => stmt_from_handle(handle),
-        _ => {
-            tracing::info!("Invalid handle type: {:?}", handle_type);
-            return;
-        }
-    };
-    let diagnostic_info = t.get_diag_info_mut();
-    match result {
-        Ok(_) => {}
-        Err(error) => {
-            diagnostic_info.add_record(error.to_diagnostic_record());
+    if let Some(t) = from_handle_type(handle_type, handle) {
+        let diagnostic_info = t.get_diag_info_mut();
+        match result {
+            Ok(_) => {}
+            Err(error) => {
+                diagnostic_info.add_record(error.to_diagnostic_record());
+            }
         }
     }
 }
@@ -279,7 +323,9 @@ pub unsafe fn get_diag_rec(
         *native_error_ptr = record.native_error;
         let max_msg_len = (buffer_length - 1).max(0) as usize;
         let written = std::cmp::min(record.message_text.len(), max_msg_len);
-        *text_length_ptr = written as sql::SmallInt;
+        if !text_length_ptr.is_null() {
+            std::ptr::write(text_length_ptr, written as sql::SmallInt);
+        }
     }
     Ok(())
 }

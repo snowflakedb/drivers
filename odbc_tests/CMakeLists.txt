@@ -17,6 +17,10 @@ FetchContent_Declare(
 
 FetchContent_MakeAvailable(Catch2)
 
+list(APPEND CMAKE_MODULE_PATH ${Catch2_SOURCE_DIR}/extras)
+include(CTest)
+include(Catch)
+
 FetchContent_Declare(
   picojson
   GIT_REPOSITORY https://github.com/kazuho/picojson.git
@@ -30,24 +34,10 @@ if (NOT DEFINED DRIVER_TYPE)
   set(DRIVER_TYPE "NEW")
 endif()
 
-set(CATCH_TAGS "")
-
-if (DRIVER_TYPE STREQUAL "OLD")
-  set(CATCH_TAGS "~[new_odbc]")
-endif()
-
-if (DRIVER_TYPE STREQUAL "NEW")
-  set(CATCH_TAGS "")
-endif()
-
-if (DEFINED ENV{CATCH_TAGS})
-  set(CATCH_TAGS $ENV{CATCH_TAGS})
-endif()
-
-message(STATUS "CATCH_TAGS: ${CATCH_TAGS}")
-
-# Find odbc library
+# Find required libraries
 find_package(ODBC REQUIRED)
+find_package(Threads REQUIRED)
+
 message(STATUS "ODBC_INCLUDE_DIRS: ${ODBC_INCLUDE_DIRS}")
 message(STATUS "ODBC_LIBRARIES: ${ODBC_LIBRARIES}")
 
@@ -55,9 +45,9 @@ add_subdirectory(common)
 
 function(add_odbc_test name)
   add_executable(${name} ${ARGN})
-  target_link_libraries(${name} PRIVATE Catch2::Catch2WithMain ODBC::ODBC common)
+  target_link_libraries(${name} PRIVATE Catch2::Catch2WithMain ODBC::ODBC common Threads::Threads)
   target_include_directories(${name} PRIVATE ${picojson_SOURCE_DIR})
-  add_test(NAME ${name} COMMAND ${name} ${CATCH_TAGS})
+  catch_discover_tests(${name} TEST_PREFIX "${name}: ")
 endfunction()
 
 add_subdirectory(tests)

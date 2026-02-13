@@ -56,9 +56,9 @@ pub struct Data {
     #[serde(rename = "parameters")]
     _parameters: Option<Vec<NameValueParameter>>,
     #[serde(rename = "total")]
-    _total: Option<i64>,
+    pub total: Option<i64>,
     #[serde(rename = "returned")]
-    _returned: Option<i64>,
+    pub returned: Option<i64>,
     #[serde(rename = "queryId")]
     pub query_id: Option<String>,
     #[serde(rename = "sqlState")]
@@ -76,7 +76,7 @@ pub struct Data {
     #[serde(rename = "numberOfBinds")]
     _number_of_binds: Option<i32>,
     #[serde(rename = "statementTypeId")]
-    _statement_type_id: Option<i64>,
+    pub statement_type_id: Option<i64>,
     #[serde(rename = "version")]
     _version: Option<i64>,
     #[serde(rename = "getResultUrl")]
@@ -111,6 +111,8 @@ pub struct Data {
     _operation: Option<String>,
     #[serde(rename = "queryContext")]
     _query_context: Option<QueryContext>,
+    #[serde(rename = "stats")]
+    pub stats: Option<Stats>,
 }
 
 #[derive(Deserialize)]
@@ -151,6 +153,19 @@ pub struct SnowflakeResult {}
 
 #[derive(Deserialize)]
 pub struct SnowflakeRows {}
+
+/// Statistics for DML operations (INSERT, UPDATE, DELETE)
+#[derive(Deserialize, Default)]
+pub struct Stats {
+    #[serde(rename = "numRowsInserted")]
+    pub num_rows_inserted: Option<i64>,
+    #[serde(rename = "numRowsUpdated")]
+    pub num_rows_updated: Option<i64>,
+    #[serde(rename = "numRowsDeleted")]
+    pub num_rows_deleted: Option<i64>,
+    #[serde(rename = "numDmlDuplicates")]
+    pub num_dml_duplicates: Option<i64>,
+}
 
 #[derive(Debug, Deserialize)]
 pub struct NameValueParameter {

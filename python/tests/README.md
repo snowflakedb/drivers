@@ -75,7 +75,7 @@ hatch run test:all --json-report --json-report-file=reports/universal.json
 REFERENCE_DRIVER_VERSION=3.17.2 hatch run reference:run --json-report --json-report-file=reports/reference.json
 
 # Compare results
-hatch run ci:compare --py 3.13 --os ubuntu-latest --universal reports/universal.json --reference reports/reference.json --fail-on-regressions 0
+hatch run reference:compare --py 3.13 --os ubuntu-latest --universal reports/universal.json --reference reports/reference.json --fail-on-regressions 0
 ```
 
 ## Testing Commands

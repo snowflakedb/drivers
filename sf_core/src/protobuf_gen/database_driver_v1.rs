@@ -79,13 +79,35 @@ pub struct DriverException {
     #[prost(string, tag = "4")]
     pub report: ::prost::alloc::string::String,
 }
-/// Execute result
+/// Column metadata for description
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ColumnMetadata {
+    #[prost(string, tag = "1")]
+    pub name: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub r#type: ::prost::alloc::string::String,
+    #[prost(int64, optional, tag = "3")]
+    pub precision: ::core::option::Option<i64>,
+    #[prost(int64, optional, tag = "4")]
+    pub scale: ::core::option::Option<i64>,
+    #[prost(int64, optional, tag = "5")]
+    pub length: ::core::option::Option<i64>,
+    #[prost(int64, optional, tag = "6")]
+    pub byte_length: ::core::option::Option<i64>,
+    #[prost(bool, tag = "7")]
+    pub nullable: bool,
+}
+/// Execute result
+#[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ExecuteResult {
     #[prost(message, optional, tag = "1")]
     pub stream: ::core::option::Option<ArrowArrayStreamPtr>,
     #[prost(int64, tag = "2")]
     pub rows_affected: i64,
+    #[prost(string, tag = "3")]
+    pub query_id: ::prost::alloc::string::String,
+    #[prost(message, repeated, tag = "4")]
+    pub columns: ::prost::alloc::vec::Vec<ColumnMetadata>,
 }
 /// Partitioned result
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
@@ -466,7 +488,7 @@ pub struct StatementExecuteQueryRequest {
     #[prost(message, optional, tag = "1")]
     pub stmt_handle: ::core::option::Option<StatementHandle>,
 }
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+#[derive(Clone, PartialEq, ::prost::Message)]
 pub struct StatementExecuteQueryResponse {
     #[prost(message, optional, tag = "1")]
     pub result: ::core::option::Option<ExecuteResult>,

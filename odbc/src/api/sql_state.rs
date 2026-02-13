@@ -94,6 +94,12 @@ pub enum SqlState {
     /// 0A000 - Feature not supported
     FeatureNotSupported,
 
+    // Cast error class (22)
+    /// 22003 - Numeric value out of range
+    NumericValueOutOfRange,
+    /// 22018 - Invalid character value for cast
+    InvalidCharacterValueForCast,
+
     // Invalid transaction state class (25)
     /// 25000 - Invalid transaction state
     InvalidTransactionState,
@@ -332,6 +338,8 @@ impl SqlState {
             SqlState::CommunicationLinkFailure => "08S01",
             SqlState::TriggeredActionException => "09000",
             SqlState::FeatureNotSupported => "0A000",
+            SqlState::NumericValueOutOfRange => "22003",
+            SqlState::InvalidCharacterValueForCast => "22018",
             SqlState::InvalidTransactionState => "25000",
             SqlState::TransactionStateUnknown => "25S01",
             SqlState::TransactionIsStillActive => "25S02",

@@ -1,12 +1,21 @@
-use arrow::array::GenericByteArray;
+use arrow::array::{Array, GenericByteArray};
 use arrow::datatypes::Utf8Type;
-use odbc_sys::Len;
+use chrono::{Datelike, NaiveDate, NaiveDateTime, NaiveTime, Timelike};
+use odbc_sys as sql;
+use snafu::ResultExt;
 
 use crate::cdata_types::CDataType;
+use crate::conversion::error::{
+    InvalidValueSnafu, NumericLiteralParsingSnafu, NumericValueOutOfRangeSnafu, ReadArrowError,
+    RustParsingSnafu, UnsupportedOdbcTypeSnafu, WriteOdbcError,
+};
+use crate::conversion::parsers::numeric_literal_parser::{Sign, parse_numeric_literal};
 use crate::conversion::traits::Binding;
-use crate::conversion::{ConversionError, ReadArrowType, SnowflakeType, WriteODBCType};
+use crate::conversion::warning::{Warning, Warnings};
+use crate::conversion::{ReadArrowType, SnowflakeType, WriteODBCType};
 
 pub(crate) struct SnowflakeVarchar {
+    #[allow(dead_code)]
     pub len: u32,
 }
 
@@ -19,10 +28,242 @@ impl ReadArrowType<GenericByteArray<Utf8Type>> for SnowflakeVarchar {
         &self,
         array: &'a GenericByteArray<Utf8Type>,
         row_idx: usize,
-    ) -> Result<Self::Representation<'a>, ConversionError> {
+    ) -> Result<Self::Representation<'a>, ReadArrowError> {
+        if array.is_null(row_idx) {
+            return Err(ReadArrowError::NullValue {
+                location: snafu::location!(),
+            });
+        }
         let v = array.value(row_idx);
         Ok(v)
     }
+}
+
+macro_rules! parse_i_number {
+    ($value:expr, $type:ty) => {{
+        let value = parse_numeric_literal($value).context(NumericLiteralParsingSnafu {})?;
+        let normalized_value = value.normalize().context(NumericLiteralParsingSnafu {})?;
+        let whole_part = normalized_value.whole_part_with_sign();
+        let value = whole_part.parse::<$type>().map_err(|_| {
+            RustParsingSnafu {
+                reason: format!(
+                    "Failed to parse whole part of numeric literal: {}",
+                    whole_part
+                ),
+            }
+            .build()
+        })?;
+        let warnings: Warnings = if normalized_value.has_fractional_part() {
+            vec![Warning::NumericValueTruncated]
+        } else {
+            vec![]
+        };
+        (value, warnings)
+    }};
+}
+
+macro_rules! parse_u_number {
+    ($value:expr, $type:ty) => {{
+        let value = parse_numeric_literal($value).context(NumericLiteralParsingSnafu {})?;
+        let normalized_value = value.normalize().context(NumericLiteralParsingSnafu {})?;
+        let whole_part = normalized_value.whole_part_with_sign();
+        let value = whole_part.parse::<$type>().map_err(|_| {
+            RustParsingSnafu {
+                reason: format!(
+                    "Failed to parse whole part of numeric literal: {}",
+                    whole_part
+                ),
+            }
+            .build()
+        })?;
+        let warnings: Warnings = if normalized_value.has_fractional_part() {
+            vec![Warning::NumericValueTruncated]
+        } else {
+            vec![]
+        };
+        (value, warnings)
+    }};
+}
+
+macro_rules! write_i_number {
+    ($value:expr, $type:ty, $binding:expr) => {{
+        let (value, warnings) = parse_i_number!($value, $type);
+        unsafe { std::ptr::write($binding.target_value_ptr as *mut $type, value) };
+        if !$binding.str_len_or_ind_ptr.is_null() {
+            unsafe {
+                std::ptr::write(
+                    $binding.str_len_or_ind_ptr,
+                    std::mem::size_of::<$type>() as sql::Len,
+                )
+            };
+        };
+        Ok(warnings)
+    }};
+}
+
+macro_rules! write_u_number {
+    ($value:expr, $type:ty, $binding:expr) => {{
+        let (value, warnings) = parse_u_number!($value, $type);
+        unsafe { std::ptr::write($binding.target_value_ptr as *mut $type, value) };
+        if !$binding.str_len_or_ind_ptr.is_null() {
+            unsafe {
+                std::ptr::write(
+                    $binding.str_len_or_ind_ptr,
+                    std::mem::size_of::<$type>() as sql::Len,
+                )
+            };
+        };
+        Ok(warnings)
+    }};
+}
+
+macro_rules! parse_float {
+    ($value:expr, $type:ty) => {{
+        if $value.trim().to_lowercase() == "nan" {
+            <$type>::NAN
+        } else if $value.trim().to_lowercase() == "inf" {
+            <$type>::INFINITY
+        } else if $value.trim().to_lowercase() == "-inf" {
+            <$type>::NEG_INFINITY
+        } else {
+            let value = parse_numeric_literal($value).context(NumericLiteralParsingSnafu {})?;
+            let normalized_value = value.normalize().context(NumericLiteralParsingSnafu {})?;
+            let float_value_str = normalized_value.float_with_sign();
+            let float_value = float_value_str.parse::<$type>().map_err(|e| {
+                RustParsingSnafu {
+                    reason: e.to_string(),
+                }
+                .build()
+            })?;
+            if float_value.is_infinite() {
+                return NumericValueOutOfRangeSnafu {
+                    reason: format!("Overflow float value({:?}): nan or inf", float_value_str),
+                }
+                .fail();
+            }
+            float_value
+        }
+    }};
+}
+
+macro_rules! write_float {
+    ($value:expr, $type:ty, $binding:expr) => {{
+        let value = parse_float!($value, $type);
+        unsafe {
+            std::ptr::write($binding.target_value_ptr as *mut $type, value);
+        };
+        if !$binding.str_len_or_ind_ptr.is_null() {
+            unsafe {
+                std::ptr::write(
+                    $binding.str_len_or_ind_ptr,
+                    std::mem::size_of::<$type>() as sql::Len,
+                )
+            };
+        }
+        Ok(vec![])
+    }};
+}
+
+/// Validates that a date string is in strict YYYY-MM-DD format.
+/// Returns false for formats like "24-01-15" (2-digit year) or "2024-1-5" (single-digit month/day).
+fn is_valid_date_format(s: &str) -> bool {
+    // Must be exactly 10 characters: YYYY-MM-DD
+    if s.len() != 10 {
+        return false;
+    }
+    let bytes = s.as_bytes();
+    // Check format: DDDD-DD-DD where D is digit
+    bytes[0].is_ascii_digit()
+        && bytes[1].is_ascii_digit()
+        && bytes[2].is_ascii_digit()
+        && bytes[3].is_ascii_digit()
+        && bytes[4] == b'-'
+        && bytes[5].is_ascii_digit()
+        && bytes[6].is_ascii_digit()
+        && bytes[7] == b'-'
+        && bytes[8].is_ascii_digit()
+        && bytes[9].is_ascii_digit()
+}
+
+/// Validates that a time string is in strict HH:MM:SS format.
+/// Returns false for formats like "9:5:3" (single-digit components).
+fn is_valid_time_format(s: &str) -> bool {
+    // Must be exactly 8 characters: HH:MM:SS
+    if s.len() != 8 {
+        return false;
+    }
+    let bytes = s.as_bytes();
+    // Check format: DD:DD:DD where D is digit
+    bytes[0].is_ascii_digit()
+        && bytes[1].is_ascii_digit()
+        && bytes[2] == b':'
+        && bytes[3].is_ascii_digit()
+        && bytes[4].is_ascii_digit()
+        && bytes[5] == b':'
+        && bytes[6].is_ascii_digit()
+        && bytes[7].is_ascii_digit()
+}
+
+fn write_wchar_string(src: &str, binding: &Binding) -> Warnings {
+    let max_len = (binding.buffer_length / 2) as usize;
+    let value_ptr = binding.target_value_ptr as *mut u16;
+    let mut dst_idx = 0;
+    for c in src.encode_utf16() {
+        if dst_idx == max_len - 1 {
+            unsafe {
+                std::ptr::write(value_ptr.add(max_len - 1), 0);
+                if !binding.str_len_or_ind_ptr.is_null() {
+                    std::ptr::write(binding.str_len_or_ind_ptr, sql::NO_TOTAL);
+                }
+            }
+            return vec![Warning::StringDataTruncated];
+        }
+        unsafe {
+            std::ptr::write(value_ptr.add(dst_idx), c);
+        }
+        dst_idx += 1;
+    }
+    unsafe {
+        std::ptr::write(value_ptr.add(dst_idx), 0);
+        if !binding.str_len_or_ind_ptr.is_null() {
+            // COMPATIBILITY: ODBC 3.80 specification says that the string length should be the number of characters, not the number of bytes.
+            // However, older versions of Snowflake ODBC driver returns the number of bytes.
+            // So we need to convert the number of characters to the number of bytes.
+            let num_characters = dst_idx as sql::Len;
+            let num_bytes = num_characters * 2;
+            std::ptr::write(binding.str_len_or_ind_ptr, num_bytes);
+        }
+    }
+    vec![]
+}
+
+fn write_char_string(src: &str, binding: &Binding) -> Warnings {
+    let max_len = binding.buffer_length as usize;
+    let mut dst_idx = 0;
+    let value_ptr = binding.target_value_ptr as *mut u8;
+    for c in src.chars() {
+        if dst_idx == max_len - 1 {
+            unsafe {
+                std::ptr::write(value_ptr.add(max_len - 1), 0);
+                if !binding.str_len_or_ind_ptr.is_null() {
+                    std::ptr::write(binding.str_len_or_ind_ptr, sql::NO_TOTAL);
+                }
+            }
+            return vec![Warning::StringDataTruncated];
+        }
+        let byte = if c.is_ascii() { c as u8 } else { 0x1a };
+        unsafe {
+            std::ptr::write(value_ptr.add(dst_idx), byte);
+        }
+        dst_idx += 1;
+    }
+    unsafe {
+        std::ptr::write(value_ptr.add(dst_idx), 0);
+        if !binding.str_len_or_ind_ptr.is_null() {
+            std::ptr::write(binding.str_len_or_ind_ptr, dst_idx as sql::Len);
+        }
+    }
+    vec![]
 }
 
 impl WriteODBCType for SnowflakeVarchar {
@@ -30,30 +271,225 @@ impl WriteODBCType for SnowflakeVarchar {
         &self,
         snowflake_value: Self::Representation<'_>,
         binding: &Binding,
-    ) -> Result<(), ConversionError> {
+    ) -> Result<Warnings, WriteOdbcError> {
         match binding.target_type {
-            CDataType::Char => {
+            CDataType::Char => Ok(write_char_string(snowflake_value, binding)),
+            CDataType::WChar => Ok(write_wchar_string(snowflake_value, binding)),
+            CDataType::SBigInt => write_i_number!(snowflake_value, i64, binding),
+            CDataType::UBigInt => write_u_number!(snowflake_value, u64, binding),
+            CDataType::Long | CDataType::SLong => write_i_number!(snowflake_value, i32, binding),
+            CDataType::ULong => write_u_number!(snowflake_value, u32, binding),
+            CDataType::Short | CDataType::SShort => write_i_number!(snowflake_value, i16, binding),
+            CDataType::UShort => write_u_number!(snowflake_value, u16, binding),
+            CDataType::TinyInt | CDataType::STinyInt => {
+                write_i_number!(snowflake_value, i8, binding)
+            }
+            CDataType::UTinyInt => write_u_number!(snowflake_value, u8, binding),
+            CDataType::Double => write_float!(snowflake_value, f64, binding),
+            CDataType::Float => write_float!(snowflake_value, f32, binding),
+            CDataType::Bit => {
+                let (value, warnings) = parse_u_number!(snowflake_value, u8);
+                match value {
+                    0 | 1 => {
+                        unsafe { std::ptr::write(binding.target_value_ptr as *mut u8, value) };
+                        if !binding.str_len_or_ind_ptr.is_null() {
+                            unsafe {
+                                std::ptr::write(
+                                    binding.str_len_or_ind_ptr,
+                                    std::mem::size_of::<u8>() as sql::Len,
+                                )
+                            };
+                        }
+                        Ok(warnings)
+                    }
+                    _ => NumericValueOutOfRangeSnafu {
+                        reason: "Trying to convert non-binary integer to BIT".to_string(),
+                    }
+                    .fail(),
+                }
+            }
+            CDataType::Date | CDataType::TypeDate => {
+                // Strict format validation: YYYY-MM-DD (exactly 10 chars)
+                let value = snowflake_value.trim();
+                if !is_valid_date_format(value) {
+                    return InvalidValueSnafu {
+                        reason: "Date must be in YYYY-MM-DD format".to_string(),
+                    }
+                    .fail();
+                }
+                let date = NaiveDate::parse_from_str(value, "%Y-%m-%d").map_err(|e| {
+                    InvalidValueSnafu {
+                        reason: e.to_string(),
+                    }
+                    .build()
+                })?;
+                let date = sql::Date {
+                    year: Datelike::year(&date) as i16,
+                    month: Datelike::month(&date) as u16,
+                    day: Datelike::day(&date) as u16,
+                };
+                unsafe { std::ptr::write(binding.target_value_ptr as *mut sql::Date, date) };
                 if !binding.str_len_or_ind_ptr.is_null() {
                     unsafe {
-                        std::ptr::write(binding.str_len_or_ind_ptr, snowflake_value.len() as Len)
+                        std::ptr::write(
+                            binding.str_len_or_ind_ptr,
+                            std::mem::size_of::<sql::Date>() as sql::Len,
+                        )
+                    };
+                }
+                Ok(vec![])
+            }
+            CDataType::Time | CDataType::TypeTime => {
+                // Strict format validation: HH:MM:SS (exactly 8 chars)
+                let value = snowflake_value.trim();
+                if !is_valid_time_format(value) {
+                    return InvalidValueSnafu {
+                        reason: "Time must be in HH:MM:SS format".to_string(),
+                    }
+                    .fail();
+                }
+                let time = NaiveTime::parse_from_str(value, "%H:%M:%S").map_err(|e| {
+                    InvalidValueSnafu {
+                        reason: e.to_string(),
+                    }
+                    .build()
+                })?;
+                let time = sql::Time {
+                    hour: Timelike::hour(&time) as u16,
+                    minute: Timelike::minute(&time) as u16,
+                    second: Timelike::second(&time) as u16,
+                };
+                unsafe { std::ptr::write(binding.target_value_ptr as *mut sql::Time, time) };
+                if !binding.str_len_or_ind_ptr.is_null() {
+                    unsafe {
+                        std::ptr::write(
+                            binding.str_len_or_ind_ptr,
+                            std::mem::size_of::<sql::Time>() as sql::Len,
+                        )
+                    };
+                }
+                Ok(vec![])
+            }
+            CDataType::TimeStamp | CDataType::TypeTimestamp => {
+                // Try parsing as full timestamp first, then as date-only with midnight default,
+                // then as time-only with today's date
+                let value = snowflake_value.trim();
+                let timestamp = if let Ok(ts) =
+                    NaiveDateTime::parse_from_str(value, "%Y-%m-%d %H:%M:%S")
+                {
+                    ts
+                } else if is_valid_date_format(value) {
+                    // Date-only string: default time to midnight
+                    let date = NaiveDate::parse_from_str(value, "%Y-%m-%d").map_err(|e| {
+                        InvalidValueSnafu {
+                            reason: e.to_string(),
+                        }
+                        .build()
+                    })?;
+                    date.and_hms_opt(0, 0, 0).ok_or_else(|| {
+                        InvalidValueSnafu {
+                            reason: "Failed to create midnight timestamp".to_string(),
+                        }
+                        .build()
+                    })?
+                } else if is_valid_time_format(value) {
+                    // Time-only string: default date to today
+                    let time = NaiveTime::parse_from_str(value, "%H:%M:%S").map_err(|e| {
+                        InvalidValueSnafu {
+                            reason: e.to_string(),
+                        }
+                        .build()
+                    })?;
+                    let today = chrono::Local::now().date_naive();
+                    today.and_time(time)
+                } else {
+                    return InvalidValueSnafu {
+                        reason: "Timestamp must be in YYYY-MM-DD HH:MM:SS, YYYY-MM-DD, or HH:MM:SS format".to_string(),
+                    }.fail();
+                };
+                let timestamp = sql::Timestamp {
+                    year: Datelike::year(&timestamp) as i16,
+                    month: Datelike::month(&timestamp) as u16,
+                    day: Datelike::day(&timestamp) as u16,
+                    hour: Timelike::hour(&timestamp) as u16,
+                    minute: Timelike::minute(&timestamp) as u16,
+                    second: Timelike::second(&timestamp) as u16,
+                    fraction: 0,
+                };
+                if !binding.str_len_or_ind_ptr.is_null() {
+                    unsafe {
+                        std::ptr::write(
+                            binding.str_len_or_ind_ptr,
+                            std::mem::size_of::<sql::Timestamp>() as sql::Len,
+                        )
                     };
                 }
                 unsafe {
-                    std::ptr::copy_nonoverlapping(
-                        snowflake_value.as_ptr(),
-                        binding.value as *mut u8,
-                        std::cmp::min(
-                            binding.buffer_length as usize,
-                            std::cmp::min(snowflake_value.len(), self.len as usize),
+                    std::ptr::write(binding.target_value_ptr as *mut sql::Timestamp, timestamp)
+                };
+                Ok(vec![])
+            }
+            CDataType::Numeric => {
+                let value = parse_numeric_literal(snowflake_value)
+                    .context(NumericLiteralParsingSnafu {})?;
+                let normalized_value = value.normalize().context(NumericLiteralParsingSnafu {})?;
+                let whole_part = normalized_value.whole_part.clone();
+                let value = whole_part.parse::<u128>().map_err(|_| {
+                    RustParsingSnafu {
+                        reason: format!(
+                            "Failed to parse whole part of numeric literal: {}",
+                            whole_part
                         ),
+                    }
+                    .build()
+                })?;
+                let warnings: Warnings = if normalized_value.has_fractional_part() {
+                    vec![Warning::NumericValueTruncated]
+                } else {
+                    vec![]
+                };
+                let sign = if normalized_value.sign == Sign::Positive {
+                    1
+                } else {
+                    0
+                };
+                let numeric = sql::Numeric {
+                    precision: 38,
+                    scale: 0,
+                    sign,
+                    val: value.to_le_bytes(),
+                };
+                unsafe { std::ptr::write(binding.target_value_ptr as *mut sql::Numeric, numeric) };
+                if !binding.str_len_or_ind_ptr.is_null() {
+                    unsafe {
+                        std::ptr::write(
+                            binding.str_len_or_ind_ptr,
+                            std::mem::size_of::<sql::Numeric>() as sql::Len,
+                        )
+                    };
+                }
+                Ok(warnings)
+            }
+            CDataType::Binary => {
+                // Copy the string bytes directly to the buffer
+                let bytes = snowflake_value.as_bytes();
+                let copy_len = std::cmp::min(bytes.len(), binding.buffer_length as usize);
+                unsafe {
+                    std::ptr::copy_nonoverlapping(
+                        bytes.as_ptr(),
+                        binding.target_value_ptr as *mut u8,
+                        copy_len,
                     );
                 }
-                Ok(())
+                if !binding.str_len_or_ind_ptr.is_null() {
+                    unsafe { std::ptr::write(binding.str_len_or_ind_ptr, bytes.len() as sql::Len) };
+                }
+                Ok(vec![])
             }
-            _ => Err(ConversionError::UnsupportedOdbcType {
+            _ => UnsupportedOdbcTypeSnafu {
                 target_type: binding.target_type,
-                location: snafu::location!(),
-            }),
+            }
+            .fail(),
         }
     }
 }
