@@ -124,10 +124,6 @@ TEST_CASE("should fail JWT authentication when invalid private key provided", "[
 }
 
 TEST_CASE("should authenticate using unencrypted private key file", "[private_key_auth]") {
-  // New-driver-only: this test decrypts the key in setup and re-connects with an
-  // unencrypted PEM file.  The old driver test suite does not include this scenario.
-  SKIP_OLD_DRIVER("", "New-driver-only test — unencrypted key file without password");
-
   // Given Authentication is set to JWT and an unencrypted private key file is provided (no password)
   TempTestDir tmp("e2e_auth_unenc_");
   auto params = get_test_parameters("testconnection");
@@ -150,7 +146,7 @@ TEST_CASE("should authenticate using unencrypted private key file", "[private_ke
   std::stringstream ss;
   read_default_params(ss, params);
   ss << "AUTHENTICATOR=SNOWFLAKE_JWT;";
-  ss << "PRIV_KEY_FILE=" << unencrypted_path << ";";
+  ss << "PRIV_KEY_FILE=" << unencrypted_path.string() << ";";
   std::string connection_string = ss.str();
 
   // When Trying to Connect
@@ -163,10 +159,6 @@ TEST_CASE("should authenticate using unencrypted private key file", "[private_ke
 }
 
 TEST_CASE("should authenticate using private_key as base64 string", "[private_key_auth]") {
-  // New-driver-only: PRIV_KEY_BASE64 as a connection string parameter is a new feature
-  // not present in the old driver's connection string parsing.
-  SKIP_OLD_DRIVER("", "New-driver-only test — PRIV_KEY_BASE64 connection string parameter");
-
   // Given Authentication is set to JWT and private key is provided as base64-encoded string
   auto params = get_test_parameters("testconnection");
   auto env = setup_environment();

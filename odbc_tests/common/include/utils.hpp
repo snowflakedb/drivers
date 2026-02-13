@@ -92,7 +92,7 @@ inline void decrypt_pem_key_to_file(const std::string& encrypted_pem,
   BIO_free(bio_in);
   if (!pkey) throw std::runtime_error("PEM_read_bio_PrivateKey failed — wrong password?");
 
-  auto* bio_out = BIO_new_file(output_path.string().c_str(), "w");
+  auto* bio_out = BIO_new_file(output_path.string().c_str(), "wb");
   if (!bio_out) { EVP_PKEY_free(pkey); throw std::runtime_error("BIO_new_file failed"); }
 
   int rc = PEM_write_bio_PrivateKey(bio_out, pkey, nullptr, nullptr, 0, nullptr, nullptr);
@@ -112,7 +112,7 @@ inline void encrypt_pem_key_to_file(const std::string& unencrypted_pem,
   BIO_free(bio_in);
   if (!pkey) throw std::runtime_error("PEM_read_bio_PrivateKey failed");
 
-  auto* bio_out = BIO_new_file(output_path.string().c_str(), "w");
+  auto* bio_out = BIO_new_file(output_path.string().c_str(), "wb");
   if (!bio_out) { EVP_PKEY_free(pkey); throw std::runtime_error("BIO_new_file failed"); }
 
   int rc = PEM_write_bio_PrivateKey(bio_out, pkey, EVP_aes_256_cbc(),

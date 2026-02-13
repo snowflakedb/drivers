@@ -379,10 +379,9 @@ pub fn disconnect(_connection_handle: sql::Handle) -> OdbcResult<()> {
 
 /// Set a connection attribute (SQLSetConnectAttr).
 /// Handles both standard ODBC attributes and custom Snowflake attributes.
-// TODO: Once all auth methods are implemented, reject authentication attributes
-// (PrivKeyContent, PrivKeyBase64, PrivKeyPassword, etc.) when the connection is
-// already in the Connected state (return HY011), and clear sensitive key material
-// from pre_connection_attrs after apply_pre_connection_attrs.
+// TODO: Once all auth methods are implemented, clear sensitive key material
+// (PrivKeyContent, PrivKeyBase64, PrivKeyPassword) from pre_connection_attrs
+// after apply_pre_connection_attrs.
 pub fn set_connect_attr(
     connection_handle: sql::Handle,
     attribute: sql::Integer,
