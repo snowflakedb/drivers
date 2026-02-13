@@ -2,16 +2,16 @@
 #include <sqlext.h>
 #include <sqltypes.h>
 
-#include <catch2/catch_test_macros.hpp>
-
 #include <atomic>
 #include <thread>
 #include <vector>
 
-#include "compatibility.hpp"
+#include <catch2/catch_test_macros.hpp>
+
 #include "Connection.hpp"
 #include "ODBCConfig.hpp"
 #include "ODBCFixtures.hpp"
+#include "compatibility.hpp"
 #include "get_diag_rec.hpp"
 #include "macros.hpp"
 #include "test_macros.hpp"
@@ -23,15 +23,16 @@
 // NOTE: SQLConnect requires a configured DSN in odbc.ini, not a raw hostname
 // Most tests focus on error conditions that don't require a real DSN
 
-TEST_CASE_METHOD(DbcFixture, "SQLConnect: Completes without crashing with valid parameters", "[odbc-api][connect][connecting]") {
+TEST_CASE_METHOD(DbcFixture, "SQLConnect: Completes without crashing with valid parameters",
+                 "[odbc-api][connect][connecting]") {
   // Use a non-existent DSN - should fail gracefully with IM002
   const std::string dsn = "NonExistentDSN";
   const std::string uid = "testuser";
   const std::string pwd = "testpwd";
 
   const SQLRETURN ret = SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(dsn.c_str())), SQL_NTS,
-                   reinterpret_cast<SQLCHAR*>(const_cast<char*>(uid.c_str())), SQL_NTS,
-                   reinterpret_cast<SQLCHAR*>(const_cast<char*>(pwd.c_str())), SQL_NTS);
+                                   reinterpret_cast<SQLCHAR*>(const_cast<char*>(uid.c_str())), SQL_NTS,
+                                   reinterpret_cast<SQLCHAR*>(const_cast<char*>(pwd.c_str())), SQL_NTS);
 
   // Should fail with IM002 (DSN not found)
   REQUIRE_EXPECTED_ERROR(ret, "IM002", dbc_handle(), SQL_HANDLE_DBC);
@@ -43,12 +44,10 @@ TEST_CASE_METHOD(DbcFixture, "SQLConnect: Accepts explicit string lengths", "[od
   const std::string pwd = "cred";
 
   // Connect with explicit lengths instead of SQL_NTS
-  const SQLRETURN ret = SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(dsn.c_str())),
-                   static_cast<SQLSMALLINT>(dsn.length()),
-                   reinterpret_cast<SQLCHAR*>(const_cast<char*>(uid.c_str())),
-                   static_cast<SQLSMALLINT>(uid.length()),
-                   reinterpret_cast<SQLCHAR*>(const_cast<char*>(pwd.c_str())),
-                   static_cast<SQLSMALLINT>(pwd.length()));
+  const SQLRETURN ret = SQLConnect(
+      dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(dsn.c_str())), static_cast<SQLSMALLINT>(dsn.length()),
+      reinterpret_cast<SQLCHAR*>(const_cast<char*>(uid.c_str())), static_cast<SQLSMALLINT>(uid.length()),
+      reinterpret_cast<SQLCHAR*>(const_cast<char*>(pwd.c_str())), static_cast<SQLSMALLINT>(pwd.length()));
 
   // Should fail with IM002 (DSN not found) - the important thing is it doesn't crash with explicit lengths
   REQUIRE(ret == SQL_ERROR);
@@ -58,7 +57,8 @@ TEST_CASE_METHOD(DbcFixture, "SQLConnect: Accepts NULL credentials", "[odbc-api]
   const std::string dsn = "TestDSN";
 
   // Connect with NULL UID and PWD parameters
-  const SQLRETURN ret = SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(dsn.c_str())), SQL_NTS, nullptr, 0, nullptr, 0);
+  const SQLRETURN ret = SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(dsn.c_str())), SQL_NTS,
+                                   nullptr, 0, nullptr, 0);
 
   // Should fail (DSN doesn't exist) but accepts NULL credentials
   REQUIRE(ret == SQL_ERROR);
@@ -72,8 +72,8 @@ TEST_CASE("SQLConnect: SQL_INVALID_HANDLE - NULL connection handle", "[odbc-api]
   const auto params = get_test_parameters("testconnection");
   const std::string server = params.at("SNOWFLAKE_TEST_HOST").get<std::string>();
 
-  const SQLRETURN ret =
-      SQLConnect(SQL_NULL_HDBC, reinterpret_cast<SQLCHAR*>(const_cast<char*>(server.c_str())), SQL_NTS, nullptr, 0, nullptr, 0);
+  const SQLRETURN ret = SQLConnect(SQL_NULL_HDBC, reinterpret_cast<SQLCHAR*>(const_cast<char*>(server.c_str())),
+                                   SQL_NTS, nullptr, 0, nullptr, 0);
 
   REQUIRE(ret == SQL_INVALID_HANDLE);
 }
@@ -107,9 +107,10 @@ TEST_CASE("SQLConnect: SQL_INVALID_HANDLE - Invalid handle type", "[odbc-api][co
 
 TEST_CASE_METHOD(DbcFixture, "SQLConnect: IM002 - Non-existent DSN", "[odbc-api][connect][connecting][error]") {
   // Use non-existent DSN
-  const SQLRETURN ret = SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>("INVALID_DSN_DOES_NOT_EXIST")), SQL_NTS,
-                   reinterpret_cast<SQLCHAR*>(const_cast<char*>("user")), SQL_NTS,
-                   reinterpret_cast<SQLCHAR*>(const_cast<char*>("pwd")), SQL_NTS);
+  const SQLRETURN ret =
+      SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>("INVALID_DSN_DOES_NOT_EXIST")), SQL_NTS,
+                 reinterpret_cast<SQLCHAR*>(const_cast<char*>("user")), SQL_NTS,
+                 reinterpret_cast<SQLCHAR*>(const_cast<char*>("pwd")), SQL_NTS);
 
   REQUIRE_EXPECTED_ERROR(ret, "IM002", dbc_handle(), SQL_HANDLE_DBC);
 }
@@ -118,12 +119,14 @@ TEST_CASE_METHOD(DbcFixture, "SQLConnect: IM002 - Non-existent DSN", "[odbc-api]
 // SQLConnect - Error Cases: HY090 Invalid String or Buffer Length
 // ============================================================================
 
-TEST_CASE_METHOD(DbcFixture, "SQLConnect: HY090 - Negative server name length", "[odbc-api][connect][connecting][error]") {
+TEST_CASE_METHOD(DbcFixture, "SQLConnect: HY090 - Negative server name length",
+                 "[odbc-api][connect][connecting][error]") {
   const auto params = get_test_parameters("testconnection");
   const std::string server = params.at("SNOWFLAKE_TEST_HOST").get<std::string>();
 
   // Use negative length (invalid, should be >= 0 or SQL_NTS)
-  const SQLRETURN ret = SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(server.c_str())), -5, nullptr, 0, nullptr, 0);
+  const SQLRETURN ret = SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(server.c_str())), -5,
+                                   nullptr, 0, nullptr, 0);
 
   REQUIRE_EXPECTED_ERROR(ret, "HY090", dbc_handle(), SQL_HANDLE_DBC);
 }
@@ -133,7 +136,7 @@ TEST_CASE_METHOD(DbcFixture, "SQLConnect: HY090 - Negative username length", "[o
   const std::string user = "testuser";
 
   const SQLRETURN ret = SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(dsn.c_str())), SQL_NTS,
-                   reinterpret_cast<SQLCHAR*>(const_cast<char*>(user.c_str())), -3, nullptr, 0);
+                                   reinterpret_cast<SQLCHAR*>(const_cast<char*>(user.c_str())), -3, nullptr, 0);
 
   REQUIRE(ret == SQL_ERROR);
 
@@ -149,8 +152,8 @@ TEST_CASE_METHOD(DbcFixture, "SQLConnect: HY090 - Negative PWD length", "[odbc-a
   const std::string pwd = "testpwd";
 
   const SQLRETURN ret = SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(dsn.c_str())), SQL_NTS,
-                   reinterpret_cast<SQLCHAR*>(const_cast<char*>(uid.c_str())), SQL_NTS,
-                   reinterpret_cast<SQLCHAR*>(const_cast<char*>(pwd.c_str())), -2);
+                                   reinterpret_cast<SQLCHAR*>(const_cast<char*>(uid.c_str())), SQL_NTS,
+                                   reinterpret_cast<SQLCHAR*>(const_cast<char*>(pwd.c_str())), -2);
 
   REQUIRE(ret == SQL_ERROR);
 
@@ -164,12 +167,14 @@ TEST_CASE_METHOD(DbcFixture, "SQLConnect: HY090 - Negative PWD length", "[odbc-a
 // SQLConnect - Error Cases: IM010 or HY090 Data Source Name Too Long
 // ============================================================================
 
-TEST_CASE_METHOD(DbcFixture, "SQLConnect: IM010/HY090 - Data source name too long", "[odbc-api][connect][connecting][error]") {
+TEST_CASE_METHOD(DbcFixture, "SQLConnect: IM010/HY090 - Data source name too long",
+                 "[odbc-api][connect][connecting][error]") {
   // Create a very long data source name (> SQL_MAX_DSN_LENGTH which is typically 32)
   // Per ODBC spec: IM010 = "*ServerName was longer than SQL_MAX_DSN_LENGTH characters"
   const std::string long_dsn(300, 'A');
 
-  const SQLRETURN ret = SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(long_dsn.c_str())), SQL_NTS, nullptr, 0, nullptr, 0);
+  const SQLRETURN ret = SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(long_dsn.c_str())),
+                                   SQL_NTS, nullptr, 0, nullptr, 0);
 
   REQUIRE(ret == SQL_ERROR);
 
@@ -183,7 +188,8 @@ TEST_CASE_METHOD(DbcFixture, "SQLConnect: IM010/HY090 - Data source name too lon
 // SQLConnect - Error Cases: Default DSN Handling
 // ============================================================================
 
-TEST_CASE_METHOD(DbcFixture, "SQLConnect: NULL DSN uses default data source", "[odbc-api][connect][connecting][error]") {
+TEST_CASE_METHOD(DbcFixture, "SQLConnect: NULL DSN uses default data source",
+                 "[odbc-api][connect][connecting][error]") {
   // NULL DSN triggers default data source lookup per ODBC spec
   const SQLRETURN ret = SQLConnect(dbc_handle(), nullptr, 0, nullptr, 0, nullptr, 0);
 
@@ -196,25 +202,26 @@ TEST_CASE_METHOD(DbcFixture, "SQLConnect: NULL DSN uses default data source", "[
 // NOTE: These tests validate API behavior without requiring configured DSNs
 
 TEST_CASE_METHOD(DbcFixture, "SQLConnect: Can be called multiple times on same handle after disconnect",
-          "[odbc-api][connect][connecting][lifecycle]") {
+                 "[odbc-api][connect][connecting][lifecycle]") {
   const std::string dsn = "TestDSN";
 
   // Multiple attempts (all will fail with IM002, but the API should handle it)
   for (int i = 0; i < 3; i++) {
-    const SQLRETURN ret = SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(dsn.c_str())), SQL_NTS, nullptr, 0, nullptr, 0);
+    const SQLRETURN ret = SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(dsn.c_str())), SQL_NTS,
+                                     nullptr, 0, nullptr, 0);
     REQUIRE(ret == SQL_ERROR);  // DSN doesn't exist
   }
 }
 
 TEST_CASE_METHOD(EnvFixture, "SQLConnect: Multiple connection handles from same environment",
-          "[odbc-api][connect][connecting][concurrent]") {
+                 "[odbc-api][connect][connecting][concurrent]") {
   constexpr int NUM_CONNECTIONS = 3;
   SQLHDBC connections[NUM_CONNECTIONS];
 
   const std::string dsn = "TestDSN";
 
   // Allocate multiple connection handles
-  for (auto & connection : connections) {
+  for (auto& connection : connections) {
     connection = SQL_NULL_HDBC;
     SQLRETURN ret = SQLAllocHandle(SQL_HANDLE_DBC, env_handle(), &connection);
     REQUIRE(ret == SQL_SUCCESS);
@@ -226,7 +233,7 @@ TEST_CASE_METHOD(EnvFixture, "SQLConnect: Multiple connection handles from same 
   }
 
   // Clean up
-  for (const auto & connection : connections) {
+  for (const auto& connection : connections) {
     SQLFreeHandle(SQL_HANDLE_DBC, connection);
   }
 }
@@ -237,7 +244,8 @@ TEST_CASE_METHOD(EnvFixture, "SQLConnect: Multiple connection handles from same 
 
 TEST_CASE_METHOD(DbcFixture, "SQLConnect: Empty string parameters", "[odbc-api][connect][connecting][edge]") {
   // Connect with empty server name
-  const SQLRETURN ret = SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>("")), 0, nullptr, 0, nullptr, 0);
+  const SQLRETURN ret =
+      SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>("")), 0, nullptr, 0, nullptr, 0);
 
   REQUIRE_EXPECTED_ERROR(ret, "IM002", dbc_handle(), SQL_HANDLE_DBC);
 }
@@ -245,8 +253,8 @@ TEST_CASE_METHOD(DbcFixture, "SQLConnect: Empty string parameters", "[odbc-api][
 TEST_CASE_METHOD(DbcFixture, "SQLConnect: Zero-length strings with SQL_NTS", "[odbc-api][connect][connecting][edge]") {
   // Empty strings with SQL_NTS should be treated as empty
   const SQLRETURN ret = SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>("")), SQL_NTS,
-                   reinterpret_cast<SQLCHAR*>(const_cast<char*>("")), SQL_NTS,
-                   reinterpret_cast<SQLCHAR*>(const_cast<char*>("")), SQL_NTS);
+                                   reinterpret_cast<SQLCHAR*>(const_cast<char*>("")), SQL_NTS,
+                                   reinterpret_cast<SQLCHAR*>(const_cast<char*>("")), SQL_NTS);
 
   REQUIRE(ret == SQL_ERROR);
 }
@@ -255,7 +263,8 @@ TEST_CASE_METHOD(DbcFixture, "SQLConnect: Zero-length strings with SQL_NTS", "[o
 // SQLConnect - Connection Attribute Tests
 // ============================================================================
 
-TEST_CASE_METHOD(DbcFixture, "SQLConnect: SQL_ATTR_LOGIN_TIMEOUT can be set before connect", "[odbc-api][connect][connecting][attributes]") {
+TEST_CASE_METHOD(DbcFixture, "SQLConnect: SQL_ATTR_LOGIN_TIMEOUT can be set before connect",
+                 "[odbc-api][connect][connecting][attributes]") {
   // Set login timeout to 5 seconds per Microsoft example code
   SQLRETURN ret = SQLSetConnectAttr(dbc_handle(), SQL_ATTR_LOGIN_TIMEOUT, reinterpret_cast<SQLPOINTER>(5), 0);
   REQUIRE((ret == SQL_SUCCESS || ret == SQL_SUCCESS_WITH_INFO));
@@ -268,7 +277,8 @@ TEST_CASE_METHOD(DbcFixture, "SQLConnect: SQL_ATTR_LOGIN_TIMEOUT can be set befo
 
   // Connect attempt (will fail with IM002, validates attribute setting doesn't break connect)
   const std::string dsn = "NonExistentDSN";
-  ret = SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(dsn.c_str())), SQL_NTS, nullptr, 0, nullptr, 0);
+  ret = SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(dsn.c_str())), SQL_NTS, nullptr, 0,
+                   nullptr, 0);
   REQUIRE(ret == SQL_ERROR);
 }
 
@@ -276,11 +286,13 @@ TEST_CASE_METHOD(DbcFixture, "SQLConnect: SQL_ATTR_LOGIN_TIMEOUT can be set befo
 // SQLConnect - Handle Cleanup Verification
 // ============================================================================
 
-TEST_CASE_METHOD(DbcFixture, "SQLConnect: Verify proper cleanup after failed connection", "[odbc-api][connect][connecting][cleanup]") {
+TEST_CASE_METHOD(DbcFixture, "SQLConnect: Verify proper cleanup after failed connection",
+                 "[odbc-api][connect][connecting][cleanup]") {
   const std::string dsn = "NonExistentDSN";
 
   // Attempt connection that will fail
-  const SQLRETURN ret = SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(dsn.c_str())), SQL_NTS, nullptr, 0, nullptr, 0);
+  const SQLRETURN ret = SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(dsn.c_str())), SQL_NTS,
+                                   nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_ERROR);
 
   // Per ODBC spec: SQLDisconnect should not be called if connection was never established
@@ -303,16 +315,18 @@ TEST_CASE("SQLConnect: DSN configuration check", "[odbc-api][connect][dsn][integ
   // Verify the DSN name has correct format (with unique suffix for parallel isolation)
   const std::string dsn = config.dsn_name();
   REQUIRE(dsn.rfind("Snowflake_", 0) == 0);  // C++17 compatible starts_with
-  REQUIRE(dsn.length() > 10);  // Has suffix
+  REQUIRE(dsn.length() > 10);                // Has suffix
 }
 
-TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLConnect: Basic DSN connection succeeds", "[odbc-api][connect][dsn][integration]") {
+TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLConnect: Basic DSN connection succeeds",
+                 "[odbc-api][connect][dsn][integration]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   const std::string dsn = config.value().dsn_name();
 
   // Credentials are in odbc.ini, pass NULL for UID/PWD
-  SQLRETURN ret = SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(dsn.c_str())), SQL_NTS, nullptr, 0, nullptr, 0);
+  SQLRETURN ret = SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(dsn.c_str())), SQL_NTS, nullptr,
+                             0, nullptr, 0);
   REQUIRE((ret == SQL_SUCCESS || ret == SQL_SUCCESS_WITH_INFO));
 
   // Verify connection by executing a query
@@ -332,18 +346,20 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLConnect: Basic DSN connection succeed
   REQUIRE(ret == SQL_SUCCESS);
 }
 
-TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLConnect: 08002 - Connection already open", "[odbc-api][connect][dsn][integration][error]") {
-
+TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLConnect: 08002 - Connection already open",
+                 "[odbc-api][connect][dsn][integration][error]") {
   const std::string dsn = config.value().dsn_name();
 
   // First connection must succeed
-  SQLRETURN ret = SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(dsn.c_str())), SQL_NTS, nullptr, 0, nullptr, 0);
+  SQLRETURN ret = SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(dsn.c_str())), SQL_NTS, nullptr,
+                             0, nullptr, 0);
   REQUIRE((ret == SQL_SUCCESS || ret == SQL_SUCCESS_WITH_INFO));
 
   // Try to connect again without disconnecting - should fail with 08002
   // Per ODBC spec: "The specified ConnectionHandle had already been used to establish
   // a connection with a data source, and the connection was still open"
-  ret = SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(dsn.c_str())), SQL_NTS, nullptr, 0, nullptr, 0);
+  ret = SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(dsn.c_str())), SQL_NTS, nullptr, 0,
+                   nullptr, 0);
   REQUIRE_EXPECTED_ERROR(ret, "08002", dbc_handle(), SQL_HANDLE_DBC);
 
   ret = SQLDisconnect(dbc_handle());
@@ -351,7 +367,7 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLConnect: 08002 - Connection already o
 }
 
 TEST_CASE_METHOD(DbcNoAuthDSNFixture, "SQLConnect: 28000 - Invalid authorization specification",
-          "[odbc-api][connect][dsn][integration][error]") {
+                 "[odbc-api][connect][dsn][integration][error]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   // Use DSN without credentials and provide invalid ones
@@ -362,18 +378,18 @@ TEST_CASE_METHOD(DbcNoAuthDSNFixture, "SQLConnect: 28000 - Invalid authorization
   const std::string bad_pwd = "invalid_cred_xyz";
 
   const SQLRETURN ret = SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(dsn.c_str())), SQL_NTS,
-                   reinterpret_cast<SQLCHAR*>(const_cast<char*>(bad_uid.c_str())), SQL_NTS,
-                   reinterpret_cast<SQLCHAR*>(const_cast<char*>(bad_pwd.c_str())), SQL_NTS);
+                                   reinterpret_cast<SQLCHAR*>(const_cast<char*>(bad_uid.c_str())), SQL_NTS,
+                                   reinterpret_cast<SQLCHAR*>(const_cast<char*>(bad_pwd.c_str())), SQL_NTS);
 
   REQUIRE_EXPECTED_ERROR(ret, "28000", dbc_handle(), SQL_HANDLE_DBC);
 }
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLConnect: SQL_SUCCESS_WITH_INFO has retrievable diagnostics",
-          "[odbc-api][connect][dsn][integration]") {
-
+                 "[odbc-api][connect][dsn][integration]") {
   const std::string dsn = config.value().dsn_name();
 
-  SQLRETURN ret = SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(dsn.c_str())), SQL_NTS, nullptr, 0, nullptr, 0);
+  SQLRETURN ret = SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(dsn.c_str())), SQL_NTS, nullptr,
+                             0, nullptr, 0);
   REQUIRE((ret == SQL_SUCCESS || ret == SQL_SUCCESS_WITH_INFO));
 
   if (ret == SQL_SUCCESS_WITH_INFO) {
@@ -387,14 +403,16 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLConnect: SQL_SUCCESS_WITH_INFO has re
   REQUIRE(ret == SQL_SUCCESS);
 }
 
-TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLConnect: Disconnect and reconnect cycle", "[odbc-api][connect][dsn][integration][lifecycle]") {
+TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLConnect: Disconnect and reconnect cycle",
+                 "[odbc-api][connect][dsn][integration][lifecycle]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   const std::string dsn = config.value().dsn_name();
 
   constexpr int CYCLES = 3;
   for (int i = 0; i < CYCLES; i++) {
-    SQLRETURN ret = SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(dsn.c_str())), SQL_NTS, nullptr, 0, nullptr, 0);
+    SQLRETURN ret = SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(dsn.c_str())), SQL_NTS,
+                               nullptr, 0, nullptr, 0);
     REQUIRE((ret == SQL_SUCCESS || ret == SQL_SUCCESS_WITH_INFO));
 
     SQLHSTMT stmt = SQL_NULL_HSTMT;
@@ -412,7 +430,8 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLConnect: Disconnect and reconnect cyc
   }
 }
 
-TEST_CASE_METHOD(EnvDefaultDSNFixture, "SQLConnect: Multiple concurrent connections", "[odbc-api][connect][dsn][integration][concurrent]") {
+TEST_CASE_METHOD(EnvDefaultDSNFixture, "SQLConnect: Multiple concurrent connections",
+                 "[odbc-api][connect][dsn][integration][concurrent]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   constexpr int NUM_CONNECTIONS = 3;
@@ -421,7 +440,7 @@ TEST_CASE_METHOD(EnvDefaultDSNFixture, "SQLConnect: Multiple concurrent connecti
   const std::string dsn = config.value().dsn_name();
 
   // Allocate and connect all connections
-  for (auto & connection : connections) {
+  for (auto& connection : connections) {
     connection = SQL_NULL_HDBC;
     SQLRETURN ret = SQLAllocHandle(SQL_HANDLE_DBC, env_handle(), &connection);
     REQUIRE(ret == SQL_SUCCESS);
@@ -446,7 +465,7 @@ TEST_CASE_METHOD(EnvDefaultDSNFixture, "SQLConnect: Multiple concurrent connecti
   }
 
   // Clean up
-  for (auto & connection : connections) {
+  for (auto& connection : connections) {
     SQLRETURN ret = SQLDisconnect(connection);
     REQUIRE(ret == SQL_SUCCESS);
     ret = SQLFreeHandle(SQL_HANDLE_DBC, connection);
@@ -484,8 +503,8 @@ static void dsn_connection_thread(const std::string& dsn, std::atomic<SQLRETURN>
     // Retry logic for driver loading issues
     int retry = 0;
     do {
-      ret = SQLConnect(dbc, reinterpret_cast<SQLCHAR*>(const_cast<char*>(dsn.c_str())), SQL_NTS, nullptr, 0,
-                       nullptr, 0);
+      ret =
+          SQLConnect(dbc, reinterpret_cast<SQLCHAR*>(const_cast<char*>(dsn.c_str())), SQL_NTS, nullptr, 0, nullptr, 0);
       if (ret == SQL_SUCCESS || ret == SQL_SUCCESS_WITH_INFO) {
         break;
       }
