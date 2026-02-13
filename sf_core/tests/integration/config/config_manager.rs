@@ -7,10 +7,19 @@ use std::env;
 use std::fs;
 use tempfile::TempDir;
 
+fn set_env(key: &str, value: &str) {
+    unsafe { env::set_var(key, value) }
+}
+
+fn remove_env(key: &str) {
+    unsafe { env::remove_var(key) }
+}
+
 #[test]
 fn connection_load_from_config_basic() {
+    // Given A connections.toml file with test_connection defined
     let temp_dir = TempDir::new().unwrap();
-    env::set_var("SNOWFLAKE_HOME", temp_dir.path().to_str().unwrap());
+    set_env("SNOWFLAKE_HOME", temp_dir.path().to_str().unwrap());
 
     let connections_file = temp_dir.path().join("connections.toml");
     let content = r#"
@@ -27,18 +36,21 @@ warehouse = "mywarehouse"
         fs::set_permissions(&connections_file, fs::Permissions::from_mode(0o600)).unwrap();
     }
 
-    // Create connection and load config
+    // When sf_core loads the connection config
     let conn_handle = connection_new();
     let result = connection_load_from_config(conn_handle, "testconn");
+
+    // Then The connection settings should be loaded
     assert!(result.is_ok());
 
-    env::remove_var("SNOWFLAKE_HOME");
+    remove_env("SNOWFLAKE_HOME");
 }
 
 #[test]
 fn explicit_setting_overrides_config() {
+    // Given A connections.toml with connection having account setting
     let temp_dir = TempDir::new().unwrap();
-    env::set_var("SNOWFLAKE_HOME", temp_dir.path().to_str().unwrap());
+    set_env("SNOWFLAKE_HOME", temp_dir.path().to_str().unwrap());
 
     let connections_file = temp_dir.path().join("connections.toml");
     let content = r#"
@@ -54,7 +66,7 @@ user = "config_user"
         fs::set_permissions(&connections_file, fs::Permissions::from_mode(0o600)).unwrap();
     }
 
-    // Create connection with explicit account setting
+    // And An explicit account setting on the connection
     let conn_handle = connection_new();
     connection_set_option(
         conn_handle,
@@ -63,35 +75,38 @@ user = "config_user"
     )
     .unwrap();
 
-    // Load from config
+    // When sf_core loads the connection config
     let result = connection_load_from_config(conn_handle, "testconn");
+
+    // Then The explicit setting should take precedence
     assert!(result.is_ok());
 
-    // Verify explicit account wins (would need to add a getter function to verify this properly)
-
-    env::remove_var("SNOWFLAKE_HOME");
+    remove_env("SNOWFLAKE_HOME");
 }
 
 #[test]
 fn connection_not_found_in_config() {
+    // Given No configuration files exist
     let temp_dir = TempDir::new().unwrap();
-    env::set_var("SNOWFLAKE_HOME", temp_dir.path().to_str().unwrap());
+    set_env("SNOWFLAKE_HOME", temp_dir.path().to_str().unwrap());
 
+    // When sf_core loads connection named nonexistent
     let conn_handle = connection_new();
     let result = connection_load_from_config(conn_handle, "nonexistent");
 
+    // Then ConnectionNotFound error should be returned
     assert!(result.is_err());
     assert!(result.unwrap_err().to_string().contains("not found"));
 
-    env::remove_var("SNOWFLAKE_HOME");
+    remove_env("SNOWFLAKE_HOME");
 }
 
 #[test]
 fn config_precedence() {
+    // Given A config.toml with connection account set to config_account
     let temp_dir = TempDir::new().unwrap();
-    env::set_var("SNOWFLAKE_HOME", temp_dir.path().to_str().unwrap());
+    set_env("SNOWFLAKE_HOME", temp_dir.path().to_str().unwrap());
 
-    // Create config.toml with lower precedence
     let config_file = temp_dir.path().join("config.toml");
     let config_content = r#"
 [connections.testconn]
@@ -101,7 +116,7 @@ database = "config_db"
 "#;
     fs::write(&config_file, config_content).unwrap();
 
-    // Create connections.toml with higher precedence
+    // And A connections.toml with same connection account set to connections_account
     let connections_file = temp_dir.path().join("connections.toml");
     let connections_content = r#"
 [testconn]
@@ -117,22 +132,21 @@ warehouse = "connections_wh"
         fs::set_permissions(&connections_file, fs::Permissions::from_mode(0o600)).unwrap();
     }
 
+    // When sf_core loads the connection config
     let conn_handle = connection_new();
     let result = connection_load_from_config(conn_handle, "testconn");
+
+    // Then connections.toml values should override config.toml
     assert!(result.is_ok());
 
-    // Account should come from connections.toml (higher precedence)
-    // User and database should come from config.toml
-    // Warehouse should come from connections.toml
-
-    env::remove_var("SNOWFLAKE_HOME");
+    remove_env("SNOWFLAKE_HOME");
 }
 
 #[test]
 fn env_var_override() {
+    // Given A connections.toml with account set to file_account
     let temp_dir = TempDir::new().unwrap();
-    env::set_var("SNOWFLAKE_HOME", temp_dir.path().to_str().unwrap());
-    env::set_var("SNOWFLAKE_ACCOUNT", "env_account");
+    set_env("SNOWFLAKE_HOME", temp_dir.path().to_str().unwrap());
 
     let connections_file = temp_dir.path().join("connections.toml");
     let content = r#"
@@ -148,14 +162,18 @@ user = "testuser"
         fs::set_permissions(&connections_file, fs::Permissions::from_mode(0o600)).unwrap();
     }
 
+    // And Environment variable SNOWFLAKE_ACCOUNT is set to env_account
+    set_env("SNOWFLAKE_ACCOUNT", "env_account");
+
+    // When sf_core loads the connection config
     let conn_handle = connection_new();
     let result = connection_load_from_config(conn_handle, "testconn");
+
+    // Then The env var value should override the file value
     assert!(result.is_ok());
 
-    // Environment variable should override file config
-
-    env::remove_var("SNOWFLAKE_HOME");
-    env::remove_var("SNOWFLAKE_ACCOUNT");
+    remove_env("SNOWFLAKE_HOME");
+    remove_env("SNOWFLAKE_ACCOUNT");
 }
 
 #[cfg(unix)]
@@ -163,8 +181,9 @@ user = "testuser"
 fn insecure_permissions_rejected() {
     use std::os::unix::fs::PermissionsExt;
 
+    // Given A connections.toml file with insecure permissions
     let temp_dir = TempDir::new().unwrap();
-    env::set_var("SNOWFLAKE_HOME", temp_dir.path().to_str().unwrap());
+    set_env("SNOWFLAKE_HOME", temp_dir.path().to_str().unwrap());
 
     let connections_file = temp_dir.path().join("connections.toml");
     let content = r#"
@@ -176,20 +195,22 @@ account = "myaccount"
     // Set insecure permissions (writable by others)
     fs::set_permissions(&connections_file, fs::Permissions::from_mode(0o666)).unwrap();
 
+    // When sf_core loads the connection config
     let conn_handle = connection_new();
     let result = connection_load_from_config(conn_handle, "testconn");
 
-    // Should fail due to insecure permissions
+    // Then An insecure permissions error should be returned
     assert!(result.is_err());
     assert!(result.unwrap_err().to_string().contains("Insecure"));
 
-    env::remove_var("SNOWFLAKE_HOME");
+    remove_env("SNOWFLAKE_HOME");
 }
 
 #[test]
 fn multiple_data_types() {
+    // Given A connections.toml with string, integer, float, and boolean values
     let temp_dir = TempDir::new().unwrap();
-    env::set_var("SNOWFLAKE_HOME", temp_dir.path().to_str().unwrap());
+    set_env("SNOWFLAKE_HOME", temp_dir.path().to_str().unwrap());
 
     let connections_file = temp_dir.path().join("connections.toml");
     let content = r#"
@@ -207,21 +228,22 @@ validate_certs = true
         fs::set_permissions(&connections_file, fs::Permissions::from_mode(0o600)).unwrap();
     }
 
+    // When sf_core loads the connection config
     let conn_handle = connection_new();
     let result = connection_load_from_config(conn_handle, "testconn");
+
+    // Then Each value should be parsed to the correct Setting type
     assert!(result.is_ok());
 
-    // Different data types should be properly converted to Setting types
-
-    env::remove_var("SNOWFLAKE_HOME");
+    remove_env("SNOWFLAKE_HOME");
 }
 
 #[test]
 fn empty_config_files() {
+    // Given Empty config.toml and connections.toml files
     let temp_dir = TempDir::new().unwrap();
-    env::set_var("SNOWFLAKE_HOME", temp_dir.path().to_str().unwrap());
+    set_env("SNOWFLAKE_HOME", temp_dir.path().to_str().unwrap());
 
-    // Create empty config files
     let connections_file = temp_dir.path().join("connections.toml");
     fs::write(&connections_file, "").unwrap();
 
@@ -235,21 +257,23 @@ fn empty_config_files() {
         fs::set_permissions(&config_file, fs::Permissions::from_mode(0o600)).unwrap();
     }
 
+    // When sf_core loads connection named testconn
     let conn_handle = connection_new();
     let result = connection_load_from_config(conn_handle, "testconn");
 
-    // Should fail - connection not found
+    // Then ConnectionNotFound error should be returned
     assert!(result.is_err());
 
-    env::remove_var("SNOWFLAKE_HOME");
+    remove_env("SNOWFLAKE_HOME");
 }
 
 // Tests for non-connection sections
 
 #[test]
 fn load_log_section() {
+    // Given A config.toml with a log section
     let temp_dir = TempDir::new().unwrap();
-    env::set_var("SNOWFLAKE_HOME", temp_dir.path().to_str().unwrap());
+    set_env("SNOWFLAKE_HOME", temp_dir.path().to_str().unwrap());
 
     let config_file = temp_dir.path().join("config.toml");
     let content = r#"
@@ -268,9 +292,11 @@ account = "myaccount"
         fs::set_permissions(&config_file, fs::Permissions::from_mode(0o600)).unwrap();
     }
 
+    // When sf_core loads the log section
     let result = load_config_section("log");
     assert!(result.is_ok());
 
+    // Then The log settings should be returned
     let log_section = result.unwrap();
     assert!(log_section.is_some());
 
@@ -278,13 +304,14 @@ account = "myaccount"
     assert!(matches!(settings.get("level"), Some(Setting::String(_))));
     assert!(matches!(settings.get("path"), Some(Setting::String(_))));
 
-    env::remove_var("SNOWFLAKE_HOME");
+    remove_env("SNOWFLAKE_HOME");
 }
 
 #[test]
 fn load_multiple_sections() {
+    // Given A config.toml with log, proxy, and retry sections
     let temp_dir = TempDir::new().unwrap();
-    env::set_var("SNOWFLAKE_HOME", temp_dir.path().to_str().unwrap());
+    set_env("SNOWFLAKE_HOME", temp_dir.path().to_str().unwrap());
 
     let config_file = temp_dir.path().join("config.toml");
     let content = r#"
@@ -309,9 +336,11 @@ account = "myaccount"
         fs::set_permissions(&config_file, fs::Permissions::from_mode(0o600)).unwrap();
     }
 
+    // When sf_core loads all config sections
     let result = load_all_config_sections();
     assert!(result.is_ok());
 
+    // Then All non-connection sections should be returned
     let sections = result.unwrap();
     assert_eq!(sections.len(), 3); // log, proxy, retry (not connections)
     assert!(sections.contains_key("log"));
@@ -319,15 +348,15 @@ account = "myaccount"
     assert!(sections.contains_key("retry"));
     assert!(!sections.contains_key("connections"));
 
-    env::remove_var("SNOWFLAKE_HOME");
+    remove_env("SNOWFLAKE_HOME");
 }
 
 #[test]
 fn connections_toml_does_not_override_log_section() {
+    // Given A config.toml with log section and a connections.toml with log section
     let temp_dir = TempDir::new().unwrap();
-    env::set_var("SNOWFLAKE_HOME", temp_dir.path().to_str().unwrap());
+    set_env("SNOWFLAKE_HOME", temp_dir.path().to_str().unwrap());
 
-    // Create config.toml with log section
     let config_file = temp_dir.path().join("config.toml");
     let config_content = r#"
 [log]
@@ -339,7 +368,6 @@ account = "config_account"
 "#;
     fs::write(&config_file, config_content).unwrap();
 
-    // Create connections.toml that tries to override log section
     let connections_file = temp_dir.path().join("connections.toml");
     let connections_content = r#"
 [testconn]
@@ -358,35 +386,35 @@ file = "connections_log.txt"
         fs::set_permissions(&connections_file, fs::Permissions::from_mode(0o600)).unwrap();
     }
 
-    // Load log section - should only come from config.toml
+    // When sf_core loads the log config section
     let result = load_config_section("log");
     assert!(result.is_ok());
 
+    // Then The config.toml log values should be used
     let log_section = result.unwrap();
     assert!(log_section.is_some());
 
     let settings = log_section.unwrap();
     if let Some(Setting::String(level)) = settings.get("level") {
-        // Should be "info" from config.toml, not "debug" from connections.toml
         assert_eq!(level, "info");
     } else {
         panic!("Expected level setting");
     }
 
     if let Some(Setting::String(file)) = settings.get("file") {
-        // Should be "config_log.txt" from config.toml, not "connections_log.txt"
         assert_eq!(file, "config_log.txt");
     } else {
         panic!("Expected file setting");
     }
 
-    env::remove_var("SNOWFLAKE_HOME");
+    remove_env("SNOWFLAKE_HOME");
 }
 
 #[test]
 fn load_nonexistent_section() {
+    // Given A config.toml with a log section
     let temp_dir = TempDir::new().unwrap();
-    env::set_var("SNOWFLAKE_HOME", temp_dir.path().to_str().unwrap());
+    set_env("SNOWFLAKE_HOME", temp_dir.path().to_str().unwrap());
 
     let config_file = temp_dir.path().join("config.toml");
     let content = r#"
@@ -401,19 +429,22 @@ level = "info"
         fs::set_permissions(&config_file, fs::Permissions::from_mode(0o600)).unwrap();
     }
 
+    // When sf_core loads a nonexistent section
     let result = load_config_section("nonexistent_section");
     assert!(result.is_ok());
 
+    // Then None should be returned
     let section = result.unwrap();
     assert!(section.is_none());
 
-    env::remove_var("SNOWFLAKE_HOME");
+    remove_env("SNOWFLAKE_HOME");
 }
 
 #[test]
 fn cannot_load_connections_via_load_config_section() {
+    // Given A config.toml with connections section
     let temp_dir = TempDir::new().unwrap();
-    env::set_var("SNOWFLAKE_HOME", temp_dir.path().to_str().unwrap());
+    set_env("SNOWFLAKE_HOME", temp_dir.path().to_str().unwrap());
 
     let config_file = temp_dir.path().join("config.toml");
     let content = r#"
@@ -428,18 +459,21 @@ account = "myaccount"
         fs::set_permissions(&config_file, fs::Permissions::from_mode(0o600)).unwrap();
     }
 
-    // Should return None when trying to load connections section
+    // When sf_core loads section connections
     let result = load_config_section("connections");
+
+    // Then None should be returned
     assert!(result.is_ok());
     assert!(result.unwrap().is_none());
 
-    env::remove_var("SNOWFLAKE_HOME");
+    remove_env("SNOWFLAKE_HOME");
 }
 
 #[test]
 fn load_nested_config_section() {
+    // Given A config.toml with nested sections like database.connection
     let temp_dir = TempDir::new().unwrap();
-    env::set_var("SNOWFLAKE_HOME", temp_dir.path().to_str().unwrap());
+    set_env("SNOWFLAKE_HOME", temp_dir.path().to_str().unwrap());
 
     let config_file = temp_dir.path().join("config.toml");
     let content = r#"
@@ -463,17 +497,18 @@ max_size = 10485760
         fs::set_permissions(&config_file, fs::Permissions::from_mode(0o600)).unwrap();
     }
 
-    // Load database.connection section
+    // When sf_core loads a nested section by dotted path
     let result = load_config_section("database.connection");
     assert!(result.is_ok());
     let section = result.unwrap();
     assert!(section.is_some());
 
+    // Then The nested section settings should be returned
     let settings = section.unwrap();
     assert!(matches!(settings.get("timeout"), Some(Setting::Int(30))));
     assert!(matches!(settings.get("max_retries"), Some(Setting::Int(5))));
 
-    // Load database.pool section
+    // Also verify other nested sections
     let result = load_config_section("database.pool");
     assert!(result.is_ok());
     let section = result.unwrap();
@@ -482,7 +517,6 @@ max_size = 10485760
     let settings = section.unwrap();
     assert!(matches!(settings.get("max_size"), Some(Setting::Int(20))));
 
-    // Load deeply nested section
     let result = load_config_section("app.logging.file");
     assert!(result.is_ok());
     let section = result.unwrap();
@@ -495,13 +529,14 @@ max_size = 10485760
         panic!("Expected path setting");
     }
 
-    env::remove_var("SNOWFLAKE_HOME");
+    remove_env("SNOWFLAKE_HOME");
 }
 
 #[test]
 fn nested_connections_blocked() {
+    // Given A config.toml with connections.dev and connections.prod
     let temp_dir = TempDir::new().unwrap();
-    env::set_var("SNOWFLAKE_HOME", temp_dir.path().to_str().unwrap());
+    set_env("SNOWFLAKE_HOME", temp_dir.path().to_str().unwrap());
 
     let config_file = temp_dir.path().join("config.toml");
     let content = r#"
@@ -519,8 +554,10 @@ account = "prod_account"
         fs::set_permissions(&config_file, fs::Permissions::from_mode(0o600)).unwrap();
     }
 
-    // Should return None for nested connections paths
+    // When sf_core loads section connections.dev
     let result = load_config_section("connections.dev");
+
+    // Then None should be returned
     assert!(result.is_ok());
     assert!(result.unwrap().is_none());
 
@@ -528,13 +565,14 @@ account = "prod_account"
     assert!(result.is_ok());
     assert!(result.unwrap().is_none());
 
-    env::remove_var("SNOWFLAKE_HOME");
+    remove_env("SNOWFLAKE_HOME");
 }
 
 #[test]
 fn nonexistent_nested_section() {
+    // Given A config.toml with database.connection section
     let temp_dir = TempDir::new().unwrap();
-    env::set_var("SNOWFLAKE_HOME", temp_dir.path().to_str().unwrap());
+    set_env("SNOWFLAKE_HOME", temp_dir.path().to_str().unwrap());
 
     let config_file = temp_dir.path().join("config.toml");
     let content = r#"
@@ -549,8 +587,10 @@ timeout = 30
         fs::set_permissions(&config_file, fs::Permissions::from_mode(0o600)).unwrap();
     }
 
-    // Try to load non-existent nested sections
+    // When sf_core loads section database.pool
     let result = load_config_section("database.pool");
+
+    // Then None should be returned
     assert!(result.is_ok());
     assert!(result.unwrap().is_none());
 
@@ -558,5 +598,5 @@ timeout = 30
     assert!(result.is_ok());
     assert!(result.unwrap().is_none());
 
-    env::remove_var("SNOWFLAKE_HOME");
+    remove_env("SNOWFLAKE_HOME");
 }

@@ -281,6 +281,22 @@ mod tests {
     use std::fs;
     use tempfile::TempDir;
 
+    /// Helper to set environment variables in tests.
+    /// SAFETY: Tests using env vars must not run in parallel (use serial_test if needed).
+    fn set_env(key: &str, value: &str) {
+        // SAFETY: We accept the risk of data races for testing purposes.
+        // These tests should not be run in parallel with each other.
+        unsafe { env::set_var(key, value) }
+    }
+
+    /// Helper to remove environment variables in tests.
+    /// SAFETY: Tests using env vars must not run in parallel (use serial_test if needed).
+    fn remove_env(key: &str) {
+        // SAFETY: We accept the risk of data races for testing purposes.
+        // These tests should not be run in parallel with each other.
+        unsafe { env::remove_var(key) }
+    }
+
     #[test]
     fn test_toml_value_to_setting() {
         let string_val = toml::Value::String("test".to_string());
@@ -312,7 +328,7 @@ mod tests {
     #[test]
     fn test_load_connection_config() {
         let temp_dir = TempDir::new().unwrap();
-        env::set_var("SNOWFLAKE_HOME", temp_dir.path().to_str().unwrap());
+        set_env("SNOWFLAKE_HOME", temp_dir.path().to_str().unwrap());
 
         let connections_file = temp_dir.path().join("connections.toml");
         let content = r#"
@@ -336,25 +352,25 @@ password = "mypass"
         assert!(matches!(settings.get("account"), Some(Setting::String(_))));
         assert!(matches!(settings.get("user"), Some(Setting::String(_))));
 
-        env::remove_var("SNOWFLAKE_HOME");
+        remove_env("SNOWFLAKE_HOME");
     }
 
     #[test]
     fn test_connection_not_found() {
         let temp_dir = TempDir::new().unwrap();
-        env::set_var("SNOWFLAKE_HOME", temp_dir.path().to_str().unwrap());
+        set_env("SNOWFLAKE_HOME", temp_dir.path().to_str().unwrap());
 
         let result = load_connection_config("nonexistent");
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("not found"));
 
-        env::remove_var("SNOWFLAKE_HOME");
+        remove_env("SNOWFLAKE_HOME");
     }
 
     #[test]
     fn test_connections_toml_overrides_config_toml() {
         let temp_dir = TempDir::new().unwrap();
-        env::set_var("SNOWFLAKE_HOME", temp_dir.path().to_str().unwrap());
+        set_env("SNOWFLAKE_HOME", temp_dir.path().to_str().unwrap());
 
         let config_file = temp_dir.path().join("config.toml");
         let config_content = r#"
@@ -394,14 +410,14 @@ account = "connections_account"
             panic!("Expected user setting");
         }
 
-        env::remove_var("SNOWFLAKE_HOME");
+        remove_env("SNOWFLAKE_HOME");
     }
 
     #[test]
     fn test_env_override() {
         let temp_dir = TempDir::new().unwrap();
-        env::set_var("SNOWFLAKE_HOME", temp_dir.path().to_str().unwrap());
-        env::set_var("SNOWFLAKE_ACCOUNT", "env_account");
+        set_env("SNOWFLAKE_HOME", temp_dir.path().to_str().unwrap());
+        set_env("SNOWFLAKE_ACCOUNT", "env_account");
 
         let connections_file = temp_dir.path().join("connections.toml");
         let content = r#"
@@ -427,14 +443,14 @@ user = "testuser"
             panic!("Expected account setting");
         }
 
-        env::remove_var("SNOWFLAKE_HOME");
-        env::remove_var("SNOWFLAKE_ACCOUNT");
+        remove_env("SNOWFLAKE_HOME");
+        remove_env("SNOWFLAKE_ACCOUNT");
     }
 
     #[test]
     fn test_load_all_connections() {
         let temp_dir = TempDir::new().unwrap();
-        env::set_var("SNOWFLAKE_HOME", temp_dir.path().to_str().unwrap());
+        set_env("SNOWFLAKE_HOME", temp_dir.path().to_str().unwrap());
 
         let connections_file = temp_dir.path().join("connections.toml");
         let content = r#"
@@ -460,13 +476,13 @@ account = "account2"
         assert!(all_conns.contains_key("conn1"));
         assert!(all_conns.contains_key("conn2"));
 
-        env::remove_var("SNOWFLAKE_HOME");
+        remove_env("SNOWFLAKE_HOME");
     }
 
     #[test]
     fn test_load_config_section() {
         let temp_dir = TempDir::new().unwrap();
-        env::set_var("SNOWFLAKE_HOME", temp_dir.path().to_str().unwrap());
+        set_env("SNOWFLAKE_HOME", temp_dir.path().to_str().unwrap());
 
         let config_file = temp_dir.path().join("config.toml");
         let content = r#"
@@ -495,13 +511,13 @@ account = "myaccount"
         assert!(matches!(settings.get("level"), Some(Setting::String(_))));
         assert!(matches!(settings.get("file"), Some(Setting::String(_))));
 
-        env::remove_var("SNOWFLAKE_HOME");
+        remove_env("SNOWFLAKE_HOME");
     }
 
     #[test]
     fn test_load_config_section_nonexistent() {
         let temp_dir = TempDir::new().unwrap();
-        env::set_var("SNOWFLAKE_HOME", temp_dir.path().to_str().unwrap());
+        set_env("SNOWFLAKE_HOME", temp_dir.path().to_str().unwrap());
 
         let config_file = temp_dir.path().join("config.toml");
         let content = r#"
@@ -522,13 +538,13 @@ level = "info"
         let section = result.unwrap();
         assert!(section.is_none());
 
-        env::remove_var("SNOWFLAKE_HOME");
+        remove_env("SNOWFLAKE_HOME");
     }
 
     #[test]
     fn test_load_config_section_excludes_connections() {
         let temp_dir = TempDir::new().unwrap();
-        env::set_var("SNOWFLAKE_HOME", temp_dir.path().to_str().unwrap());
+        set_env("SNOWFLAKE_HOME", temp_dir.path().to_str().unwrap());
 
         let config_file = temp_dir.path().join("config.toml");
         let content = r#"
@@ -548,13 +564,13 @@ account = "myaccount"
         assert!(result.is_ok());
         assert!(result.unwrap().is_none());
 
-        env::remove_var("SNOWFLAKE_HOME");
+        remove_env("SNOWFLAKE_HOME");
     }
 
     #[test]
     fn test_load_all_config_sections() {
         let temp_dir = TempDir::new().unwrap();
-        env::set_var("SNOWFLAKE_HOME", temp_dir.path().to_str().unwrap());
+        set_env("SNOWFLAKE_HOME", temp_dir.path().to_str().unwrap());
 
         let config_file = temp_dir.path().join("config.toml");
         let content = r#"
@@ -608,13 +624,13 @@ account = "myaccount"
             Some(Setting::String(_))
         ));
 
-        env::remove_var("SNOWFLAKE_HOME");
+        remove_env("SNOWFLAKE_HOME");
     }
 
     #[test]
     fn test_load_nested_section() {
         let temp_dir = TempDir::new().unwrap();
-        env::set_var("SNOWFLAKE_HOME", temp_dir.path().to_str().unwrap());
+        set_env("SNOWFLAKE_HOME", temp_dir.path().to_str().unwrap());
 
         let config_file = temp_dir.path().join("config.toml");
         let content = r#"
@@ -654,13 +670,13 @@ min_size = 2
         assert!(matches!(settings2.get("max_size"), Some(Setting::Int(10))));
         assert!(matches!(settings2.get("min_size"), Some(Setting::Int(2))));
 
-        env::remove_var("SNOWFLAKE_HOME");
+        remove_env("SNOWFLAKE_HOME");
     }
 
     #[test]
     fn test_load_deeply_nested_section() {
         let temp_dir = TempDir::new().unwrap();
-        env::set_var("SNOWFLAKE_HOME", temp_dir.path().to_str().unwrap());
+        set_env("SNOWFLAKE_HOME", temp_dir.path().to_str().unwrap());
 
         let config_file = temp_dir.path().join("config.toml");
         let content = r#"
@@ -689,13 +705,13 @@ cert_path = "/etc/certs/server.crt"
             panic!("Expected enabled setting");
         }
 
-        env::remove_var("SNOWFLAKE_HOME");
+        remove_env("SNOWFLAKE_HOME");
     }
 
     #[test]
     fn test_load_nonexistent_nested_section() {
         let temp_dir = TempDir::new().unwrap();
-        env::set_var("SNOWFLAKE_HOME", temp_dir.path().to_str().unwrap());
+        set_env("SNOWFLAKE_HOME", temp_dir.path().to_str().unwrap());
 
         let config_file = temp_dir.path().join("config.toml");
         let content = r#"
@@ -720,13 +736,13 @@ timeout = 30
         assert!(result2.is_ok());
         assert!(result2.unwrap().is_none());
 
-        env::remove_var("SNOWFLAKE_HOME");
+        remove_env("SNOWFLAKE_HOME");
     }
 
     #[test]
     fn test_cannot_load_nested_connections_section() {
         let temp_dir = TempDir::new().unwrap();
-        env::set_var("SNOWFLAKE_HOME", temp_dir.path().to_str().unwrap());
+        set_env("SNOWFLAKE_HOME", temp_dir.path().to_str().unwrap());
 
         let config_file = temp_dir.path().join("config.toml");
         let content = r#"
@@ -746,13 +762,13 @@ account = "myaccount"
         assert!(result.is_ok());
         assert!(result.unwrap().is_none());
 
-        env::remove_var("SNOWFLAKE_HOME");
+        remove_env("SNOWFLAKE_HOME");
     }
 
     #[test]
     fn test_connections_toml_does_not_affect_other_sections() {
         let temp_dir = TempDir::new().unwrap();
-        env::set_var("SNOWFLAKE_HOME", temp_dir.path().to_str().unwrap());
+        set_env("SNOWFLAKE_HOME", temp_dir.path().to_str().unwrap());
 
         // Create config.toml with log section
         let config_file = temp_dir.path().join("config.toml");
@@ -797,14 +813,14 @@ level = "debug"
             panic!("Expected level setting");
         }
 
-        env::remove_var("SNOWFLAKE_HOME");
+        remove_env("SNOWFLAKE_HOME");
     }
 
     #[test]
     fn test_env_override_snowflake_section_key_pattern() {
         // Test the generic pattern: SNOWFLAKE_<SECTION>_<KEY> overrides [section].key
         let temp_dir = TempDir::new().unwrap();
-        env::set_var("SNOWFLAKE_HOME", temp_dir.path().to_str().unwrap());
+        set_env("SNOWFLAKE_HOME", temp_dir.path().to_str().unwrap());
 
         let config_file = temp_dir.path().join("config.toml");
         let content = r#"
@@ -820,7 +836,7 @@ foo = "file_value"
         }
 
         // Set SNOWFLAKE_BAR_FOO env var
-        env::set_var("SNOWFLAKE_BAR_FOO", "env_value");
+        set_env("SNOWFLAKE_BAR_FOO", "env_value");
 
         // Load with env overrides enabled (default)
         let result = load_all_config_sections();
@@ -837,15 +853,15 @@ foo = "file_value"
             panic!("Expected foo setting in bar section");
         }
 
-        env::remove_var("SNOWFLAKE_HOME");
-        env::remove_var("SNOWFLAKE_BAR_FOO");
+        remove_env("SNOWFLAKE_HOME");
+        remove_env("SNOWFLAKE_BAR_FOO");
     }
 
     #[test]
     fn test_env_override_disabled() {
         // Test that env overrides can be skipped
         let temp_dir = TempDir::new().unwrap();
-        env::set_var("SNOWFLAKE_HOME", temp_dir.path().to_str().unwrap());
+        set_env("SNOWFLAKE_HOME", temp_dir.path().to_str().unwrap());
 
         let config_file = temp_dir.path().join("config.toml");
         let content = r#"
@@ -861,7 +877,7 @@ foo = "file_value"
         }
 
         // Set SNOWFLAKE_BAR_FOO env var
-        env::set_var("SNOWFLAKE_BAR_FOO", "env_value");
+        set_env("SNOWFLAKE_BAR_FOO", "env_value");
 
         // Load with env overrides DISABLED
         let result = load_all_config_sections_with_options(false);
@@ -878,7 +894,7 @@ foo = "file_value"
             panic!("Expected foo setting in bar section");
         }
 
-        env::remove_var("SNOWFLAKE_HOME");
-        env::remove_var("SNOWFLAKE_BAR_FOO");
+        remove_env("SNOWFLAKE_HOME");
+        remove_env("SNOWFLAKE_BAR_FOO");
     }
 }

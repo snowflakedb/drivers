@@ -165,13 +165,15 @@ number = 42
         fs::set_permissions(&file_path, fs::Permissions::from_mode(0o644)).unwrap();
 
         // Set env var to skip warning
-        env::set_var("SF_SKIP_WARNING_FOR_READ_PERMISSIONS_ON_CONFIG_FILE", "1");
+        // SAFETY: Test-only, not run in parallel.
+        unsafe { env::set_var("SF_SKIP_WARNING_FOR_READ_PERMISSIONS_ON_CONFIG_FILE", "1") };
 
         // Should not print warning (we can't easily test stderr output,
         // but at least verify it doesn't error)
         let result = check_file_permissions(&file_path);
         assert!(result.is_ok());
 
-        env::remove_var("SF_SKIP_WARNING_FOR_READ_PERMISSIONS_ON_CONFIG_FILE");
+        // SAFETY: Test-only, not run in parallel.
+        unsafe { env::remove_var("SF_SKIP_WARNING_FOR_READ_PERMISSIONS_ON_CONFIG_FILE") };
     }
 }

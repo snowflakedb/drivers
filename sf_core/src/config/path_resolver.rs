@@ -44,13 +44,20 @@ mod tests {
     use std::env;
     use tempfile::TempDir;
 
+    fn set_env(key: &str, value: &str) {
+        unsafe { env::set_var(key, value) }
+    }
+
+    fn remove_env(key: &str) {
+        unsafe { env::remove_var(key) }
+    }
+
     #[test]
     fn test_get_config_paths_default() {
         // Remove SNOWFLAKE_HOME if set
-        let _guard = env::var("SNOWFLAKE_HOME").ok().map(|_| {
-            env::remove_var("SNOWFLAKE_HOME");
-            ()
-        });
+        let _guard = env::var("SNOWFLAKE_HOME")
+            .ok()
+            .map(|_| remove_env("SNOWFLAKE_HOME"));
 
         let paths = get_config_paths().unwrap();
 
@@ -78,7 +85,7 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let temp_path = temp_dir.path().to_str().unwrap();
 
-        env::set_var("SNOWFLAKE_HOME", temp_path);
+        set_env("SNOWFLAKE_HOME", temp_path);
 
         let paths = get_config_paths().unwrap();
 
@@ -93,12 +100,12 @@ mod tests {
         assert!(paths.config_file.to_string_lossy().ends_with("config.toml"));
 
         // Clean up
-        env::remove_var("SNOWFLAKE_HOME");
+        remove_env("SNOWFLAKE_HOME");
     }
 
     #[test]
     fn test_snowflake_home_nonexistent() {
-        env::set_var("SNOWFLAKE_HOME", "/nonexistent/path/that/does/not/exist");
+        set_env("SNOWFLAKE_HOME", "/nonexistent/path/that/does/not/exist");
 
         let snowflake_home = get_snowflake_home();
 
@@ -115,7 +122,7 @@ mod tests {
         );
 
         // Clean up
-        env::remove_var("SNOWFLAKE_HOME");
+        remove_env("SNOWFLAKE_HOME");
     }
 
     #[test]
@@ -123,23 +130,22 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let temp_path = temp_dir.path().to_str().unwrap();
 
-        env::set_var("SNOWFLAKE_HOME", temp_path);
+        set_env("SNOWFLAKE_HOME", temp_path);
 
         let snowflake_home = get_snowflake_home();
         assert!(snowflake_home.is_some());
         assert_eq!(snowflake_home.unwrap().to_str().unwrap(), temp_path);
 
         // Clean up
-        env::remove_var("SNOWFLAKE_HOME");
+        remove_env("SNOWFLAKE_HOME");
     }
 
     #[test]
     fn test_get_snowflake_home_not_set() {
         // Ensure SNOWFLAKE_HOME is not set
-        let _guard = env::var("SNOWFLAKE_HOME").ok().map(|_| {
-            env::remove_var("SNOWFLAKE_HOME");
-            ()
-        });
+        let _guard = env::var("SNOWFLAKE_HOME")
+            .ok()
+            .map(|_| remove_env("SNOWFLAKE_HOME"));
 
         let snowflake_home = get_snowflake_home();
         assert!(snowflake_home.is_none());
