@@ -18,7 +18,6 @@ class EnvFixture {
 public:
   std::optional<ConfigInstallation> config;
   std::optional<EnvironmentHandleWrapper> env_wrapper;
-  SQLHENV env = SQL_NULL_HENV;
 
   // Constructor with optional DSN configuration
   explicit EnvFixture(std::optional<DataSourceConfig> dsn_config = std::nullopt) {
@@ -29,8 +28,8 @@ public:
 
     // Create ENV handle (will see installed DSN)
     env_wrapper.emplace();
-    env = env_wrapper->getHandle();
-    SQLRETURN ret = SQLSetEnvAttr(env, SQL_ATTR_ODBC_VERSION, reinterpret_cast<SQLPOINTER>(SQL_OV_ODBC3), 0);
+    SQLRETURN ret = SQLSetEnvAttr(env_wrapper->getHandle(), SQL_ATTR_ODBC_VERSION,
+                            reinterpret_cast<SQLPOINTER>(SQL_OV_ODBC3), 0);
     REQUIRE(ret == SQL_SUCCESS);
   }
 
@@ -40,19 +39,17 @@ public:
   EnvFixture(EnvFixture&&) = delete;
   EnvFixture& operator=(EnvFixture&&) = delete;
 
-  SQLHENV env_handle() const { return env; }
+  [[nodiscard]] SQLHENV env_handle() const { return env_wrapper->getHandle(); }
 };
 
 class DbcFixture : public EnvFixture {
 public:
   std::optional<ConnectionHandleWrapper> dbc_wrapper;
-  SQLHDBC dbc = SQL_NULL_HDBC;
 
   // Constructor with optional DSN configuration
   explicit DbcFixture(std::optional<DataSourceConfig> dsn_config = std::nullopt)
     : EnvFixture(std::move(dsn_config)) {
     dbc_wrapper.emplace(env_wrapper->createConnectionHandle());
-    dbc = dbc_wrapper->getHandle();
   }
 
   // Disable copy and move (RAII resource management)
@@ -61,7 +58,7 @@ public:
   DbcFixture(DbcFixture&&) = delete;
   DbcFixture& operator=(DbcFixture&&) = delete;
 
-  SQLHDBC dbc_handle() const { return dbc; }
+  [[nodiscard]] SQLHDBC dbc_handle() const { return dbc_wrapper->getHandle(); }
 };
 
 // ============================================================================

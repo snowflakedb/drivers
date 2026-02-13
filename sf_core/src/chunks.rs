@@ -113,8 +113,7 @@ pub fn get_chunk_data_sync(
     client: &Client,
     chunk: &ChunkDownloadData,
 ) -> Result<Vec<u8>, ChunkError> {
-    // TODO: Find a better way of managing tokio runtimes
-    let rt = tokio::runtime::Runtime::new().unwrap();
+    let rt = crate::async_bridge::runtime().context(RuntimeCreationSnafu)?;
     rt.block_on(async { get_chunk_data(client, chunk).await })
 }
 
@@ -224,6 +223,12 @@ fn decode_chunk_body(body: Vec<u8>, encoding: Option<&HeaderValue>) -> Result<Ve
 
 #[derive(Snafu, Debug)]
 pub enum ChunkError {
+    #[snafu(display("Failed to create runtime"))]
+    RuntimeCreation {
+        source: std::io::Error,
+        #[snafu(implicit)]
+        location: Location,
+    },
     #[snafu(display("Invalid header name for {key}"))]
     HeaderName {
         key: String,

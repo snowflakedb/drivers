@@ -21,9 +21,13 @@ behavior_differences:
     name: "ALTER USER ADD PROGRAMMATIC ACCESS TOKEN returns result set with token in new driver, old driver returns invalid cursor state (10510)"
 
   8:
-    name: "Float max/min boundary values are returned successfully instead of numeric out of range error"
 
+    name: "Float max/min boundary values are returned successfully instead of numeric out of range error"
   9:
+
+    name: "SQLBindCol doesn't set indicator when TargetValuePtr is null."
+
+  10:
     name: "SQL_SF_CONN_ATTR_PRIV_KEY (EVP_PKEY pointer) is not supported"
     description: |
       The old driver accepted a raw OpenSSL EVP_PKEY* pointer via

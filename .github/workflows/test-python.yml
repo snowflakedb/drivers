@@ -6,9 +6,9 @@ on:
   pull_request:
 
 concurrency:
-  # older builds for the same pull request number or branch should be cancelled
-  cancel-in-progress: true
+  # Group by PR number for PRs, or fall back to the run ID for main (which is unique, so it won't cancel)
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
