@@ -18,6 +18,27 @@ jobs:
   detect-changes:
     uses: ./.github/workflows/detect-changes.yml
 
+  odbc_unit_tests:
+    needs: detect-changes
+    if: github.event_name == 'push' || needs.detect-changes.outputs.run_odbc == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y unixodbc-dev
+
+      - name: Run ODBC unit tests
+        # Workaround for Rust 1.89+ linker bug with dylib crates (rust-lang/rust#131292):
+        # Rust passes --no-undefined-version to GNU ld with a version script that omits
+        # allocator shim symbols, causing sf_core dylib builds to fail.
+        run: cargo test --package odbc
+        env:
+          RUSTFLAGS: "-C link-arg=-Wl,--undefined-version"
+
   odbc_tests_reference:
     needs: detect-changes
     if: github.event_name == 'push' || needs.detect-changes.outputs.run_odbc == 'true'
@@ -151,7 +172,7 @@ jobs:
           .\scripts\odbc\run_tests_windows.ps1
 
   odbc-status:
-    needs: [detect-changes, odbc_tests_reference, odbc_tests]
+    needs: [detect-changes, odbc_unit_tests, odbc_tests_reference, odbc_tests]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -166,10 +187,12 @@ jobs:
             exit 0
           fi
           
-          # Check if tests failed or were cancelled
-          if [[ "${{ needs.odbc_tests_reference.result }}" =~ ^(failure|cancelled)$ ]] || \
+          # Check if any job failed or was cancelled
+          if [[ "${{ needs.odbc_unit_tests.result }}" =~ ^(failure|cancelled)$ ]] || \
+             [[ "${{ needs.odbc_tests_reference.result }}" =~ ^(failure|cancelled)$ ]] || \
              [[ "${{ needs.odbc_tests.result }}" =~ ^(failure|cancelled)$ ]]; then
             echo "✗ ODBC tests were RUN and FAILED or CANCELLED"
+            echo "  - odbc_unit_tests: ${{ needs.odbc_unit_tests.result }}"
             echo "  - odbc_tests_reference: ${{ needs.odbc_tests_reference.result }}"
             echo "  - odbc_tests: ${{ needs.odbc_tests.result }}"
             exit 1
