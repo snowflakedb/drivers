@@ -17,7 +17,7 @@ jobs:
   detect-changes:
     uses: ./.github/workflows/detect-changes.yml
 
-  jdbc-tests:
+  jdbc_tests:
     needs: detect-changes
     if: github.event_name == 'push' || needs.detect-changes.outputs.run_jdbc == 'true'
     name: JDBC Tests (full suite)
@@ -58,10 +58,10 @@ jobs:
           cd jdbc
           ./gradlew test jacocoTestReport --stacktrace
 
-  jdbc-compat-old:
+  jdbc_tests_reference:
     needs: detect-changes
     if: github.event_name == 'push' || needs.detect-changes.outputs.run_jdbc == 'true'
-    name: JDBC Old Driver Compatibility Tests
+    name: JDBC Old Driver Reference Tests
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -81,34 +81,34 @@ jobs:
       - name: Make gradlew executable
         run: chmod +x jdbc/gradlew
 
-      - name: Run JDBC compatibility tests
+      - name: Run JDBC reference tests
         run: |
           export PARAMETER_PATH=$(pwd)/parameters.json
           cd jdbc
-          ./gradlew compatibilityTest jacocoCompatibilityReport --stacktrace
+          ./gradlew referenceTest jacocoReferenceReport --stacktrace
 
-      - name: Upload OLD compatibility artifacts
+      - name: Upload OLD reference artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: jdbc-compat-old-artifacts
+          name: jdbc-reference-artifacts
           path: |
-            jdbc/build/test-results/compatibilityTest/**/*.xml
-            jdbc/build/jacoco/compatibilityTest.exec
-            jdbc/build/reports/jacoco/compatibilityTest/**
+            jdbc/build/test-results/referenceTest/**/*.xml
+            jdbc/build/jacoco/referenceTest.exec
+            jdbc/build/reports/jacoco/referenceTest/**
           if-no-files-found: error
 
-      - name: Print OLD compatibility overall coverage
+      - name: Print OLD reference overall coverage
         if: always()
         run: |
           python3 jdbc/ci/reference_tests/extract_coverage.py \
-            --report jdbc/build/reports/jacoco/compatibilityTest/coverage.xml \
-            --label "OLD JDBC compatibility" \
+            --report jdbc/build/reports/jacoco/referenceTest/coverage.xml \
+            --label "OLD JDBC reference" \
             --summary "$GITHUB_STEP_SUMMARY" \
             --allow-missing
 
   jdbc-status:
-    needs: [detect-changes, jdbc-tests, jdbc-compat-old]
+    needs: [detect-changes, jdbc_tests, jdbc_tests_reference]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -116,26 +116,26 @@ jobs:
         run: |
           echo "=== JDBC CI Status ==="
           
-          NEW_RESULT="${{ needs.jdbc-tests.result }}"
-          COMPAT_RESULT="${{ needs.jdbc-compat-old.result }}"
+          NEW_RESULT="${{ needs.jdbc_tests.result }}"
+          REFERENCE_RESULT="${{ needs.jdbc_tests_reference.result }}"
 
           # Check if tests were skipped
-          if [[ "$NEW_RESULT" == "skipped" && "$COMPAT_RESULT" == "skipped" ]]; then
+          if [[ "$NEW_RESULT" == "skipped" && "$REFERENCE_RESULT" == "skipped" ]]; then
             echo "✓ JDBC jobs were SKIPPED (no relevant changes detected)"
             echo "  - run_jdbc: ${{ needs.detect-changes.outputs.run_jdbc }}"
             exit 0
           fi
           
           # Check if any job failed or was cancelled
-          if [[ "$NEW_RESULT" =~ ^(failure|cancelled)$ || "$COMPAT_RESULT" =~ ^(failure|cancelled)$ ]]; then
+          if [[ "$NEW_RESULT" =~ ^(failure|cancelled)$ || "$REFERENCE_RESULT" =~ ^(failure|cancelled)$ ]]; then
             echo "✗ JDBC CI FAILED or CANCELLED"
             echo "  - JDBC Tests (new): $NEW_RESULT"
-            echo "  - JDBC Compat (old): $COMPAT_RESULT"
+            echo "  - JDBC Reference (old): $REFERENCE_RESULT"
             exit 1
           fi
           
           # Tests ran and passed
           echo "✓ JDBC jobs were RUN and PASSED"
           echo "  - JDBC Tests (new): $NEW_RESULT"
-          echo "  - JDBC Compat (old): $COMPAT_RESULT"
+          echo "  - JDBC Reference (old): $REFERENCE_RESULT"
           exit 0
