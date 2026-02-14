@@ -6,6 +6,7 @@ Generates coverage reports showing which scenarios and tests are implemented
 across different languages based on e2e feature files.
 """
 
+import html
 import json
 import os
 import re
@@ -564,6 +565,19 @@ class CoverageReportGenerator:
     def extract_test_methods_with_lines(self, file_path: str, scenario_names: List[str]) -> Dict[str, int]:
         """Extract test method line numbers from a test file for given scenarios."""
         return self.feature_parser.extract_test_methods_with_lines(file_path, scenario_names)
+    
+    @staticmethod
+    def _slugify_scenario(name: str) -> str:
+        """Convert a scenario name to a URL/ID-safe slug.
+        
+        Strips angle brackets (from Scenario Outline placeholders like <type>),
+        parentheses, quotes, and replaces spaces with hyphens.
+        """
+        return (name.lower()
+                .replace('<', '').replace('>', '')
+                .replace('(', '').replace(')', '')
+                .replace("'", '').replace('"', '')
+                .replace(' ', '-'))
     
     def _method_matches_scenario(self, method_name: str, scenario_name: str) -> bool:
         """Check if a method name matches a scenario name using similar logic to the Rust validator."""
@@ -1140,10 +1154,11 @@ class CoverageReportGenerator:
                     test_level_label = '<span class="test-level-integration">Integration</span>' if has_int_tag else '<span class="test-level-e2e">E2E</span>'
                     
                     # Create unique scenario ID for navigation (same logic as detailed breakdown)
-                    scenario_clean = scenario.lower().replace(' ', '-').replace('(', '').replace(')', '').replace("'", '').replace('"', '')
-                    scenario_id = f"scenario-{feature_id}-{scenario_clean}"
+                    scenario_slug = self._slugify_scenario(scenario)
+                    scenario_id = f"scenario-{feature_id}-{scenario_slug}"
+                    scenario_escaped = html.escape(scenario)
                     
-                    test_cell = f'<td><div class="{test_class}">• <a href="#" onclick="showTab(\'details-tab\'); expandToFeature(\'{feature_id}\'); setTimeout(() => document.getElementById(\'{scenario_id}\').scrollIntoView({{behavior: \'smooth\', block: \'center\'}}), 200); return false;">{scenario} {test_level_label}</a></div></td>'
+                    test_cell = f'<td><div class="{test_class}">• <a href="#" onclick="showTab(\'details-tab\'); expandToFeature(\'{feature_id}\'); setTimeout(() => document.getElementById(\'{scenario_id}\').scrollIntoView({{behavior: \'smooth\', block: \'center\'}}), 200); return false;">{scenario_escaped} {test_level_label}</a></div></td>'
                     
                     # Status cells for each language
                     status_cells = []
@@ -1183,8 +1198,7 @@ class CoverageReportGenerator:
                                 # Behavior Difference scenario for this specific driver - show Behavior Difference popup with list
                                 if behavior_difference_ids_for_link:
                                     # Generate unique popup ID for this scenario
-                                    scenario_clean = scenario.lower().replace(" ", "-").replace("'", "")
-                                    popup_id = f'behavior_difference-popup-{scenario_clean}-{lang.lower()}'
+                                    popup_id = f'behavior_difference-popup-{self._slugify_scenario(scenario)}-{lang.lower()}'
                                     
                                     # Create Behavior Difference list items
                                     behavior_difference_items = []
@@ -1258,8 +1272,7 @@ class CoverageReportGenerator:
                                 # Behavior Difference scenario for this specific driver (even if not implemented) - show Behavior Difference popup with list
                                 if behavior_difference_ids_for_link:
                                     # Generate unique popup ID for this scenario
-                                    scenario_clean = scenario.lower().replace(" ", "-").replace("'", "")
-                                    popup_id = f'behavior_difference-popup-{scenario_clean}-{lang.lower()}'
+                                    popup_id = f'behavior_difference-popup-{self._slugify_scenario(scenario)}-{lang.lower()}'
                                     
                                     # Create Behavior Difference list items
                                     behavior_difference_items = []
@@ -1651,12 +1664,13 @@ class CoverageReportGenerator:
                         impl_html = '\n                        '.join(impl_items)
                         
                         # Create unique scenario ID for navigation
-                        scenario_clean = scenario.lower().replace(' ', '-').replace('(', '').replace(')', '').replace("'", '').replace('"', '')
-                        scenario_id = f"scenario-{feature_id}-{scenario_clean}"
+                        scenario_slug = self._slugify_scenario(scenario)
+                        scenario_id = f"scenario-{feature_id}-{scenario_slug}"
+                        scenario_escaped = html.escape(scenario)
                         
                         scenario_item = dedent(f"""
                             <div class="scenario-section" id="{scenario_id}">
-                                <h5 class="scenario-title">📝 {scenario}{test_level_label}</h5>
+                                <h5 class="scenario-title">📝 {scenario_escaped}{test_level_label}</h5>
                                 <ul class="implementation-list">
                                     {impl_html}
                                 </ul>
@@ -1700,7 +1714,7 @@ class CoverageReportGenerator:
                             impl_html = '\n                            '.join(impl_items)
                             scenario_items.append(dedent(f"""
                                 <div class="scenario-section">
-                                    <h5 class="scenario-title">📝 {scenario}</h5>
+                                    <h5 class="scenario-title">📝 {html.escape(scenario)}</h5>
                                     <ul class="implementation-list">
                                         {impl_html}
                                     </ul>
@@ -1863,7 +1877,7 @@ class CoverageReportGenerator:
             
             scenario_item = dedent(f"""
                 <div class="scenario-section">
-                    <h5 class="scenario-title">📝 {scenario}</h5>
+                    <h5 class="scenario-title">📝 {html.escape(scenario)}</h5>
                     <ul class="implementation-list">
                         {impl_html}
                     </ul>
@@ -1994,7 +2008,7 @@ class CoverageReportGenerator:
                 # Find the formatted feature name from any item
                 formatted_feature = next(item['formatted_feature'] for item in missing_items if item['feature'] == feature_name)
                 
-                scenario_list = '\n                        '.join([f'<li>• {scenario}</li>' for scenario in sorted(scenarios)])
+                scenario_list = '\n                        '.join([f'<li>• {html.escape(scenario)}</li>' for scenario in sorted(scenarios)])
                 feature_items.append(dedent(f"""
                     <li>
                         <strong>{formatted_feature}</strong>
@@ -2357,14 +2371,15 @@ class CoverageReportGenerator:
                     
                     # Test name cell with link to detailed breakdown (same as Shared tab)
                     # Create unique scenario ID for navigation
-                    scenario_clean = scenario.lower().replace(' ', '-').replace('(', '').replace(')', '').replace("'", '').replace('"', '')
-                    scenario_id = f"scenario-{feature_id}-{scenario_clean}"
+                    scenario_slug = self._slugify_scenario(scenario)
+                    scenario_id = f"scenario-{feature_id}-{scenario_slug}"
+                    scenario_escaped = html.escape(scenario)
                     
                     # Determine test level for inline label
                     has_int_tag = any(tag.endswith('_int') for tag in tags)
                     test_level_label = '<span class="test-level-integration">Integration</span>' if has_int_tag else '<span class="test-level-e2e">E2E</span>'
                     
-                    test_name_cell = f'<td><div class="test-name">• <a href="#" onclick="showTab(\'details-tab\'); expandToFeature(\'{feature_id}\'); setTimeout(() => document.getElementById(\'{scenario_id}\').scrollIntoView({{behavior: \'smooth\', block: \'center\'}}), 200); return false;">{scenario} {test_level_label}</a></div></td>'
+                    test_name_cell = f'<td><div class="test-name">• <a href="#" onclick="showTab(\'details-tab\'); expandToFeature(\'{feature_id}\'); setTimeout(() => document.getElementById(\'{scenario_id}\').scrollIntoView({{behavior: \'smooth\', block: \'center\'}}), 200); return false;">{scenario_escaped} {test_level_label}</a></div></td>'
                     
                     # Check if implemented
                     scenario_implemented = False
@@ -2482,7 +2497,7 @@ class CoverageReportGenerator:
                 for scenario in scenarios:
                     scenario_name = scenario['name']
                     tags = ', '.join(scenario.get('tags', []))
-                    html_parts.append(f'<li>• {scenario_name}<br/><small style="color: #666;">Tags: {tags}</small></li>')
+                    html_parts.append(f'<li>• {html.escape(scenario_name)}<br/><small style="color: #666;">Tags: {html.escape(tags)}</small></li>')
                 
                 html_parts.append(f'</ul>')
                 html_parts.append(f'</li>')
