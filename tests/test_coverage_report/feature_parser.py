@@ -16,8 +16,9 @@ CPP_METHOD_PATTERN = re.compile(r'void\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(')
 RUST_FUNCTION_PATTERN = re.compile(r'fn\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(')
 PYTHON_TEST_PATTERN = re.compile(r'def\s+(test_[a-zA-Z_][a-zA-Z0-9_]*)\s*\(')
 
-# All recognized Gherkin scenario keywords (longest first for correct prefix stripping).
-SCENARIO_PREFIXES = ("Scenario Outline:", "Scenario Template:", "Scenario:")
+# All recognized Gherkin scenario keywords (longest prefixes first so that
+# "Scenario Outline:" and "Scenario Template:" are matched before "Scenario:").
+SCENARIO_PREFIXES = ("Scenario Template:", "Scenario Outline:", "Scenario:")
 
 
 class FeatureParser:

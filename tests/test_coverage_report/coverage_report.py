@@ -2333,7 +2333,6 @@ class CoverageReportGenerator:
                 
                 # Generate unique IDs for links (same as Shared tab)
                 feature_id = f"feature-{feature_name.replace('/', '-').replace('_', '-').replace(' ', '-').lower()}"
-                feature_id_for_bd = feature_name.replace('/', '-').replace('_', '-').replace(' ', '-').lower()
                 
                 # Feature header row with collapsible functionality (same as Shared tab)
                 feature_cells = [f'<td><div class="feature-name" onclick="toggleFeature(\'{feature_id}\')">{formatted_name}</div></td>']

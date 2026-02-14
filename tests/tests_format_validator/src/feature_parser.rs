@@ -3,8 +3,9 @@ use regex::Regex;
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 
-/// All recognized Gherkin scenario keywords (longest first for correct prefix stripping).
-const SCENARIO_PREFIXES: &[&str] = &["Scenario Outline:", "Scenario Template:", "Scenario:"];
+/// All recognized Gherkin scenario keywords (longest prefixes first so that
+/// `Scenario Outline:` and `Scenario Template:` are matched before `Scenario:`).
+const SCENARIO_PREFIXES: &[&str] = &["Scenario Template:", "Scenario Outline:", "Scenario:"];
 
 static TAG_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"@(\w+)").unwrap());
 static STEP_REGEX: LazyLock<Regex> =
