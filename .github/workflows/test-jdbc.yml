@@ -36,15 +36,10 @@ jobs:
         env:
           PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
 
-      - name: Install lld
-        run: sudo apt-get update && sudo apt-get install -y lld
-
       - name: Build Rust components
         run: |
           cargo build --package sf_core
           cargo build --package jdbc_bridge
-        env:
-          RUSTFLAGS: "-C link-arg=-fuse-ld=lld"
 
       - name: Make gradlew executable
         run: chmod +x jdbc/gradlew
