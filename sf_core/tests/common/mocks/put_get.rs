@@ -9,6 +9,10 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 /// The response contains src_locations pointing to .xz files which are not supported.
 /// The `repo_root` parameter should be the workspace root path for the file pattern.
 pub async fn mount_unsupported_compression(server: &MockServer, repo_root: &str) {
+    let normalized_repo_root = repo_root.replace('\\', "/");
+    let src_locations_pattern =
+        format!("{normalized_repo_root}/tests/test_data/generated_test_data/compression/*.xz");
+
     Mock::given(method("POST"))
         .and(path_regex(r"/queries/v1/query-request.*"))
         .and(body_string_contains("PUT"))
@@ -35,9 +39,7 @@ pub async fn mount_unsupported_compression(server: &MockServer, repo_root: &str)
                             "queryId": "mock-query-id",
                             "smkId": 1
                         },
-                        "src_locations": [
-                            format!("{}/tests/test_data/generated_test_data/compression/*.xz", repo_root)
-                        ],
+                        "src_locations": [src_locations_pattern],
                         "autoCompress": true,
                         "overwrite": false,
                         "sourceCompression": "auto_detect"
