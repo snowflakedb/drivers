@@ -1079,6 +1079,11 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetTypeInfo: Can bind columns and fet
 // ============================================================================
 // SQLGetTypeInfo - Comprehensive Deep Validation for All Types
 // ============================================================================
+// Note: A rare intermittent CI failure has been observed where MAXIMUM_SCALE
+// for SQL_DECIMAL or SQL_NUMERIC returns 8192 (0x2000) instead of the expected
+// 38. The TYPE_NAME and all prior column checks pass, ruling out row-ordering
+// issues. The value 8192 is not a valid scale and appears to be a driver or
+// driver-manager bug that leaks an internal buffer/page size.
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetTypeInfo: Documents all supported types with exact column values",
                  "[odbc-api][gettypeinfo][driver_info]") {
