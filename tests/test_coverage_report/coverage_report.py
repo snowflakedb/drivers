@@ -117,8 +117,9 @@ class CoverageReportGenerator:
             if line.startswith('📋 Feature:'):
                 # Extract feature path
                 feature_path = line.split('📋 Feature: ')[1]
-                feature_name = Path(feature_path).stem
-                current_feature = feature_name
+                # Use path-based feature ID to distinguish features with the same
+                # name in different directories (matching Rust validator behavior)
+                current_feature = self._get_feature_id(feature_path)
                 
                 # Extract feature tags from the feature file
                 feature_tags = self._extract_feature_tags(feature_path)
@@ -425,8 +426,11 @@ class CoverageReportGenerator:
             except Exception as e:
                 print(f"Error reading feature file {feature_path}: {e}")
         
-        # Fallback to dynamic formatting if feature file parsing fails
-        words = feature_name.replace('_', ' ').split()
+        # Fallback to dynamic formatting if feature file parsing fails.
+        # Feature name may be a path-based ID (e.g., 'shared/types/string'),
+        # so extract just the last component (file stem) for display.
+        display_name = Path(feature_name).name if '/' in feature_name else feature_name
+        words = display_name.replace('_', ' ').split()
         formatted_words = []
         
         for word in words:
@@ -452,6 +456,26 @@ class CoverageReportGenerator:
         
         return ' '.join(formatted_words)
     
+    @staticmethod
+    def _get_feature_id(feature_file_path: str, definitions_dir: str = 'definitions') -> str:
+        """Get a unique feature ID from its file path, mirroring the Rust validator's approach.
+        
+        Uses the relative path (without extension) under the definitions directory as ID,
+        so that features with the same name in different directories are kept separate
+        (e.g., 'shared/types/string' vs 'odbc/types/string').
+        
+        Falls back to the file stem if the definitions dir is not in the path.
+        """
+        parts = Path(feature_file_path).parts
+        # Find the definitions directory and take everything after it
+        for i, part in enumerate(parts):
+            if part == definitions_dir and i + 1 < len(parts):
+                relative = Path(*parts[i + 1:]).with_suffix('')
+                # Normalize to forward slashes for cross-platform consistency
+                return str(relative).replace('\\', '/')
+        # Fallback to stem
+        return Path(feature_file_path).stem
+    
     def _convert_validator_data_to_features(self, validator_data: Dict) -> Dict:
         """Convert validator JSON data to the features format expected by the report generator."""
         features = {}
@@ -459,11 +483,12 @@ class CoverageReportGenerator:
         for validation_result in validator_data.get('validation_results', []):
             feature_file_path = validation_result.get('feature_file', '')
             
-            # Extract feature name from path
-            feature_name = Path(feature_file_path).stem
+            # Use path-based feature ID to distinguish features with the same name
+            # in different directories (e.g., shared/types/string vs odbc/types/string)
+            feature_id = self._get_feature_id(feature_file_path)
             
             # Initialize feature data
-            features[feature_name] = {
+            features[feature_id] = {
                 'path': feature_file_path,
                 'languages': {}
             }
@@ -489,7 +514,7 @@ class CoverageReportGenerator:
                     elif test_file_path.startswith(str(self.workspace_root)):
                         relative_path = Path(test_file_path).relative_to(self.workspace_root)
                 
-                features[feature_name]['languages'][language] = {
+                features[feature_id]['languages'][language] = {
                     'implemented': is_implemented,
                     'status': status,
                     'path': str(relative_path),
@@ -1011,7 +1036,7 @@ class CoverageReportGenerator:
                 scenarios = [s['name'] for s in scenarios_with_annotations] if scenarios_with_annotations else self.get_feature_scenarios(feature_data['path'])
                 
                 # Generate unique ID for this feature (same as in detailed breakdown)
-                feature_id = f"feature-{feature_name.replace('_', '-').replace(' ', '-').lower()}"
+                feature_id = f"feature-{feature_name.replace('/', '-').replace('_', '-').replace(' ', '-').lower()}"
                 
                 # Feature header row with collapsible functionality
                 feature_cells = [f'<td><div class="feature-name" onclick="toggleFeature(\'{feature_id}\')">{formatted_name}</div></td>']
@@ -1518,7 +1543,7 @@ class CoverageReportGenerator:
                 formatted_name = self.format_feature_name(feature_name, feature_data['path'])
                 
                 # Generate unique ID for this feature (needed for scenario navigation)
-                feature_id = f"feature-{feature_name.replace('_', '-').replace(' ', '-').lower()}"
+                feature_id = f"feature-{feature_name.replace('/', '-').replace('_', '-').replace(' ', '-').lower()}"
                 
                 # Get scenarios with annotations for this feature
                 scenarios_with_annotations = self.get_feature_scenarios_with_annotations(feature_data['path'])
@@ -2307,8 +2332,8 @@ class CoverageReportGenerator:
                         bd_count += len(behavior_difference_ids)
                 
                 # Generate unique IDs for links (same as Shared tab)
-                feature_id = f"feature-{feature_name.replace('_', '-').replace(' ', '-').lower()}"
-                feature_id_for_bd = feature_name.replace('_', '-').replace(' ', '-').lower()
+                feature_id = f"feature-{feature_name.replace('/', '-').replace('_', '-').replace(' ', '-').lower()}"
+                feature_id_for_bd = feature_name.replace('/', '-').replace('_', '-').replace(' ', '-').lower()
                 
                 # Feature header row with collapsible functionality (same as Shared tab)
                 feature_cells = [f'<td><div class="feature-name" onclick="toggleFeature(\'{feature_id}\')">{formatted_name}</div></td>']
