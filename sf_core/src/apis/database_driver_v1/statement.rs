@@ -238,8 +238,7 @@ pub fn statement_execute_query(stmt_handle: Handle) -> Result<ExecuteResult, Api
         .build()
     })?;
 
-    // Create a blocking runtime for the async operations
-    let rt = tokio::runtime::Runtime::new().context(RuntimeCreationSnafu)?;
+    let rt = crate::async_bridge::runtime().context(RuntimeCreationSnafu)?;
 
     let (query_parameters, http_client, retry_policy) = {
         let conn = stmt

@@ -2,6 +2,7 @@ use std::{
     collections::HashSet,
     str::Utf8Error,
     string::{FromUtf8Error, FromUtf16Error},
+    sync::LazyLock,
 };
 
 use crate::{
@@ -10,7 +11,6 @@ use crate::{
     write_arrow::ArrowBindingError,
 };
 use arrow::error::ArrowError;
-use lazy_static::lazy_static;
 use odbc_sys as sql;
 use proto_utils::ProtoError;
 use sf_core::protobuf_gen::database_driver_v1::{
@@ -231,19 +231,17 @@ impl<T> Required<T> for Option<T> {
     }
 }
 
-lazy_static! {
-    static ref AUTHENTICATOR_PARAMETERS: HashSet<String> = {
-        let mut set = HashSet::new();
-        set.insert("PRIV_KEY_FILE".to_string());
-        set.insert("PRIVATE_KEY_FILE".to_string());
-        set.insert("PRIV_KEY_FILE_PWD".to_string());
-        set.insert("TOKEN".to_string());
-        set.insert("AUTHENTICATOR".to_string());
-        set.insert("USER".to_string());
-        set.insert("PASSWORD".to_string());
-        set
-    };
-}
+static AUTHENTICATOR_PARAMETERS: LazyLock<HashSet<String>> = LazyLock::new(|| {
+    let mut set = HashSet::new();
+    set.insert("PRIV_KEY_FILE".to_string());
+    set.insert("PRIVATE_KEY_FILE".to_string());
+    set.insert("PRIV_KEY_FILE_PWD".to_string());
+    set.insert("TOKEN".to_string());
+    set.insert("AUTHENTICATOR".to_string());
+    set.insert("USER".to_string());
+    set.insert("PASSWORD".to_string());
+    set
+});
 
 impl OdbcError {
     pub fn to_diagnostic_record(&self) -> DiagnosticRecord {

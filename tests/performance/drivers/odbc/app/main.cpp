@@ -14,7 +14,7 @@
 #include "types.h"
 
 using TestExecutor = std::function<void(SQLHDBC, const std::string&, int, int, const std::string&, const std::string&,
-                                        const std::string&, const std::string&, time_t)>;
+                                        const std::string&, time_t)>;
 
 const std::map<TestType, TestExecutor> TEST_EXECUTORS = {
     {TestType::Select, execute_fetch_test},
@@ -38,18 +38,17 @@ int main() {
   SQLHDBC dbc = create_connection(env);
 
   std::string driver_version_str = get_driver_version(dbc);
-  std::string server_version = get_server_version(dbc);
+  std::string driver_type_str = get_driver_type();
 
   execute_setup_queries(dbc, setup_queries);
 
-  std::string driver_type_str = get_driver_type();
   time_t now = time(nullptr);
 
   // Use appropriate test executor
   auto executor_it = TEST_EXECUTORS.find(test_type);
   if (executor_it != TEST_EXECUTORS.end()) {
     executor_it->second(dbc, sql_command, warmup_iterations, iterations, test_name, driver_type_str, driver_version_str,
-                        server_version, now);
+                        now);
   } else {
     std::cerr << "ERROR: Unknown test type: " << test_type_to_string(test_type) << "\n";
     std::cerr << "Supported types: select, put_get\n";

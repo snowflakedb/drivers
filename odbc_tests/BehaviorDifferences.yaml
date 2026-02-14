@@ -21,4 +21,8 @@ behavior_differences:
     name: "ALTER USER ADD PROGRAMMATIC ACCESS TOKEN returns result set with token in new driver, old driver returns invalid cursor state (10510)"
 
   8:
+
     name: "Float max/min boundary values are returned successfully instead of numeric out of range error"
+  9:
+
+    name: "SQLBindCol doesn't set indicator when TargetValuePtr is null."

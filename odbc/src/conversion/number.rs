@@ -45,44 +45,32 @@ impl WriteODBCType for SnowflakeNumber {
         match binding.target_type {
             CDataType::Double => {
                 let double_value: f64 = snowflake_value as f64 / 10f64.powi(self.scale as i32);
-                unsafe {
-                    std::ptr::write(binding.target_value_ptr as *mut f64, double_value);
-                }
+                binding.write_fixed(double_value);
                 Ok(vec![])
             }
             CDataType::Float => {
                 let float_value: f32 = snowflake_value as f32 / 10f32.powi(self.scale as i32);
-                unsafe {
-                    std::ptr::write(binding.target_value_ptr as *mut f32, float_value);
-                }
+                binding.write_fixed(float_value);
                 Ok(vec![])
             }
             CDataType::Short | CDataType::SShort | CDataType::UShort => {
                 let short_value = (snowflake_value as i64) / 10i64.pow(self.scale);
-                unsafe {
-                    std::ptr::write(binding.target_value_ptr as *mut i16, short_value as i16);
-                }
+                binding.write_fixed(short_value as u16);
                 Ok(vec![])
             }
             CDataType::TinyInt | CDataType::STinyInt | CDataType::UTinyInt => {
                 let tinyint_value = (snowflake_value as i64) / 10i64.pow(self.scale);
-                unsafe {
-                    std::ptr::write(binding.target_value_ptr as *mut i8, tinyint_value as i8);
-                }
+                binding.write_fixed(tinyint_value as u8);
                 Ok(vec![])
             }
             CDataType::Long | CDataType::SLong | CDataType::ULong => {
                 let long_value = (snowflake_value as i32) / 10i32.pow(self.scale);
-                unsafe {
-                    std::ptr::write(binding.target_value_ptr as *mut i32, long_value);
-                }
+                binding.write_fixed(long_value);
                 Ok(vec![])
             }
             CDataType::SBigInt | CDataType::UBigInt => {
                 let int_value = (snowflake_value as i64) / 10i64.pow(self.scale);
-                unsafe {
-                    std::ptr::write(binding.target_value_ptr as *mut i64, int_value);
-                }
+                binding.write_fixed(int_value);
                 Ok(vec![])
             }
             CDataType::Char => {

@@ -1,15 +1,14 @@
 use anyhow::{Context, Result};
-use lazy_static::lazy_static;
 use regex::Regex;
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
 
 /// All recognized Gherkin scenario keywords (longest first for correct prefix stripping).
 const SCENARIO_PREFIXES: &[&str] = &["Scenario Outline:", "Scenario Template:", "Scenario:"];
 
-lazy_static! {
-    static ref TAG_REGEX: Regex = Regex::new(r"@(\w+)").unwrap();
-    static ref STEP_REGEX: Regex = Regex::new(r"^\s*(Given|When|Then|And|But)\s+(.+)$").unwrap();
-}
+static TAG_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"@(\w+)").unwrap());
+static STEP_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^\s*(Given|When|Then|And|But)\s+(.+)$").unwrap());
 
 /// Check if a trimmed line starts a scenario (any keyword).
 fn is_scenario_start(line: &str) -> bool {

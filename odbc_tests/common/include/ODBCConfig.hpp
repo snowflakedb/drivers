@@ -70,7 +70,7 @@ class DataSourceConfig {
   // Helper methods
   static picojson::object load_parameters(const std::string& connection_name);
   static std::string get_string(const picojson::object& obj, const std::string& key,
-                                 const std::string& default_value = "");
+                                const std::string& default_value = "");
 };
 
 // ============================================================================
