@@ -5,5 +5,3 @@
 
 pub mod auth;
 pub mod put_get;
-pub mod retry;
-pub mod session;
