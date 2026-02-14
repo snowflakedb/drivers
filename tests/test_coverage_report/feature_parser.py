@@ -141,7 +141,7 @@ class FeatureParser:
                     current_tags = []  # Reset tags after processing scenario
                     continue
                 
-                # Skip Examples table sections (Scenario Outline)
+                # Skip table rows (Examples tables and step data tables)
                 if line.startswith('Examples:') or line.startswith('|'):
                     continue
                 

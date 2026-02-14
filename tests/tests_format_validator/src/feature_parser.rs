@@ -154,7 +154,7 @@ impl Feature {
                 break;
             }
 
-            // Skip Examples table sections (Scenario Outline)
+            // Skip table rows (Examples tables and step data tables)
             if line.starts_with("Examples:") || line.starts_with("|") {
                 *i += 1;
                 continue;
