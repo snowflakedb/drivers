@@ -141,8 +141,10 @@ class FeatureParser:
                     current_tags = []  # Reset tags after processing scenario
                     continue
                 
-                # Skip table rows (Examples tables and step data tables)
+                # Skip table rows (Examples tables and step data tables).
+                # Clear tags so that tags on Examples: blocks don't leak to the next scenario.
                 if line.startswith('Examples:') or line.startswith('|'):
+                    current_tags = []
                     continue
                 
                 # Reset tags if we hit a non-tag, non-scenario line
