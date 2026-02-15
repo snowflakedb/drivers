@@ -1,21 +1,7 @@
-# Logout Gherkins Plan - Phase 2
+# Logout Gherkins — Current State
 
-**Date:** January 27, 2026  
-**Related Tickets:** SNOW-2314152 (Phase 3 Migration), SNOW-2923705 (Fire&Forget), SNOW-2314136 (Log out)  
-**Design Docs:** UD_LOGOUT_API_DD.md, UD_Design_Doc_Fire_Forget.md
-
----
-
-## Overview
-
-This document outlines the planned Gherkin scenarios for Logout functionality across all Universal Driver implementations. The scenarios cover Phase 2 behavior with clear annotations for upcoming Phase 3 changes.
-
-**Key Principles:**
-- **Shared behavior** goes in `shared/session/logout.feature`
-- **Wrapper-specific behavior** goes in each wrapper's directory
-- **Phase 2 behaviors** marked with SNOW-2314152 comments explaining future changes
-- **ODBC** implements Phase 3 from the start (reference implementation)
-- **Fire-and-Forget** scenarios deferred to async API gherkins (out of scope)
+**Ticket:** SNOW-2872349  
+**Related:** SNOW-2314152 (Phase migration), SNOW-2923705 (Fire&Forget), SNOW-2314136 (Log out)
 
 ---
 
@@ -23,403 +9,168 @@ This document outlines the planned Gherkin scenarios for Logout functionality ac
 
 ```
 tests/definitions/
-├── shared/session/logout.feature          # 42 scenarios - Core mechanics
-├── python/session/logout.feature          # 11 scenarios - Python Phase 2 + auto-cleanup
-├── jdbc/session/logout.feature            # 9 scenarios - JDBC Phase 2 + resource mgmt
-├── go/session/logout.feature              # 5 scenarios - Go Phase 2
-├── odbc/session/logout.feature            # 8 scenarios - ODBC Phase 3 (reference)
-└── core/session/logout_internal.feature   # 4 scenarios - Core integration (optional)
+├── core/session/logout.feature       # 26 scenarios (~50 test cases with Outlines)
+├── shared/session/logout.feature     # 6 scenarios
+├── python/session/logout.feature     # 18 scenarios
+├── jdbc/session/logout.feature       # 9 scenarios
+└── odbc/session/logout.feature       # 4 scenarios
 ```
 
 ---
 
-## Shared Feature: `shared/session/logout.feature`
+## Core: `core/session/logout.feature`
 
-**Tag:** `@core @python @odbc @jdbc`
+Core owns HTTP protocol, retry/timeout mechanics, error strategy injection, and concurrency.
 
-### Basic Logout Request (4 scenarios)
+### HTTP Request Construction (2)
+- `should construct logout request with correct HTTP method URL headers and body`
+- `should not send logout when connection was never established`
 
-1. **should send logout request with correct endpoint method headers and payload**
-   - Validates: POST /session?delete=true
-   - Headers: Authorization, Content-Type, Accept, User-Agent
-   - Payload: Empty JSON object `{}`
+### Parameter-Based Logout Control (2)
+- `should not send logout when server_session_keep_alive is explicitly true`
+- `should send logout when server_session_keep_alive is explicitly false`
 
-2. **should send logout request with default 5 second timeout**
-   - Validates: Default timeout is 5s
+### Default Configuration and Timeout Concepts (3)
+- `should use default 5 second timeout for logout requests`
+- `should cancel individual request when per-request socket timeout exceeded`
+- `should respect total retry budget timeout across all attempts`
 
-3. **should send logout request with custom timeout when configured**
-   - Validates: Custom timeout overrides default
+### Close vs Active Query Execution (2)
+- `should reject new query with connection closed error when submitted after close started`
+- `should fail in-flight query when server response arrives after closing process started`
 
-4. **should not send logout when connection was never established**
-   - Edge case: Close without successful connect
+### Close vs Token Refresh (2)
+- `should wait for in-flight token renewal to complete then logout with refreshed token`
+- `should not start token renewal when query receives 390112 after closing process started`
 
-### Server Session Keep Alive - Explicit Control (3 scenarios)
+### Error Strategy — Backend Behaviors (7)
+Same outcome for both strategies:
+- `should ignore SESSION_GONE 390111 for each <strategy_type>` (2 examples)
+- `should retry logout on retryable <error_type> for each <strategy_type>` (6 examples: 503, 429, reset × 2 strategies)
+- `should not attempt token refresh when retry count is 0 with strict strategy`
+- `should not attempt token refresh when retry count is 0 with best-effort strategy`
+- `should attempt token refresh on 390112 when retries allowed for each <strategy_type>` (2 examples)
+- `should include token refresh time in total logout timeout budget`
 
-5. **should not send logout when server_session_keep_alive is explicitly true**
-   - Validates: Explicit true always skips logout
+### Retry/Timeout Configuration — Success Path (2)
+- `should honor provided retry config and succeed for each <strategy_type>` (6 examples)
+- `should honor provided timeout config and succeed for each <strategy_type>` (6 examples: 5s, 10s, 300s × 2)
 
-6. **should send logout when server_session_keep_alive is explicitly false**
-   - Validates: Explicit false always sends logout
+### Retry/Timeout Configuration — Failure Path (4)
+- `should throw after exhausted retries with strict strategy` (2 examples)
+- `should log WARN and succeed after exhausted retries with best-effort strategy` (2 examples)
+- `should throw on timeout with strict strategy` (2 examples)
+- `should log WARN and succeed on timeout with best-effort strategy` (2 examples)
 
-7. **should not start async queries detection when server_session_keep_alive is explicitly set**
-   - Validates: Detection bypassed when true OR false (optimization)
+### Non-Retryable Errors (2)
+- `should throw on non-retryable <error_code> in strict strategy` (4 examples: 400, 403, 404, 390114)
+- `should log and suppress non-retryable <error_code> in best-effort strategy` (4 examples)
 
-### Auto-Detection Mechanics (3 scenarios)
-
-8. **should skip logout when auto_detection enabled and running async query detected**
-   - Validates: Detection finds queries and prevents logout
-
-9. **should send logout when auto_detection enabled and no async queries detected**
-   - Validates: Detection finds nothing and allows logout
-
-10. **should return true when first running async query is detected without checking remaining queries**
-    - Validates: Optimization - early return on first match
-
-### Async Query Registry (2 scenarios)
-
-11. **should register async query when asyncExec is true**
-    - Validates: Registry populated correctly
-
-12. **should unregister async query when query completes**
-    - Validates: Registry cleanup on completion
-
-### Resource Cleanup Contract (7 scenarios)
-
-13. **should allow process to exit cleanly when connection closed regardless of parameters**
-    - Validates: No hanging threads (heartbeat, telemetry, etc.)
-
-14. **should stop heartbeat on close regardless of logout result**
-    - Validates: Heartbeat stops even if logout fails
-
-15. **should flush telemetry on close regardless of logout result**
-    - Validates: Telemetry flushed even if logout fails
-
-16. **should clear query result cache on close regardless of logout result**
-    - Validates: QCC cleared even if logout fails
-
-17. **should cleanup all tokens on close regardless of whether logout was sent**
-    - Validates: Session and master tokens cleaned up
-
-18. **should not allow token renewal after connection is closed**
-    - Validates: No renewal even if query execution started
-
-19. **should be idempotent when close called multiple times**
-    - Validates: Safe to call close() repeatedly
-
-### Error Handling - Strict Strategy (6 scenarios)
-
-20. **should ignore SESSION_GONE error in strict strategy**
-    - Validates: 390111 error code ignored
-
-21. **should retry on transient error in strict strategy**
-    - Validates: Retryable errors trigger retry logic
-
-22. **should fail close on non-retryable error in strict strategy**
-    - Validates: Non-retryable errors bubble up
-
-23. **should attempt token renewal and retry logout when session token expired in strict strategy**
-    - Validates: 390112 error triggers token renewal then retry
-
-24. **should surface reauth error when master token expired in strict strategy**
-    - Validates: 390114 error bubbles up as reauth error
-
-25. **should log WARN on final logout failure after all retries exhausted in strict strategy**
-    - Validates: Final failure logged appropriately
-
-### Error Handling - Best-Effort Strategy (5 scenarios)
-
-26. **should log all errors as WARN in best-effort strategy**
-    - Validates: Errors logged, not thrown
-
-27. **should never throw exception from close in best-effort strategy**
-    - Validates: close() is infallible
-
-28. **should succeed close even on logout timeout in best-effort strategy**
-    - Validates: Timeout doesn't fail close()
-
-29. **should log WARN and suppress error when master token expired in best-effort strategy**
-    - Validates: 390114 error logged but doesn't fail close()
-
-30. **should log WARN on final logout failure after all retries exhausted in best-effort strategy**
-    - Validates: Final failure logged but doesn't throw
-
-### Timeout and Retry Behavior (6 scenarios)
-
-31. **should timeout logout request after configured timeout**
-    - Validates: Timeout mechanism works
-
-32. **should retry logout on retryable HTTP errors**
-    - Validates: HTTP retry policy applied
-
-33. **should not retry logout on non-retryable errors**
-    - Validates: No retry on 4xx errors
-
-34. **should respect max retry attempts from HTTP policy**
-    - Validates: Max attempts honored
-
-35. **should use exponential backoff for logout retries**
-    - Validates: Backoff strategy applied
-
-36. **should not block process exit when timeout expires**
-    - Validates: Process can exit after timeout
-
-### Edge Cases and Concurrency (6 scenarios)
-
-37. **should handle concurrent close calls safely**
-    - Validates: Thread-safe close()
-
-38. **should handle close during active query execution**
-    - Validates: Cleanup during query
-
-39. **should handle close during session token refresh**
-    - Validates: Cleanup during refresh
-
-40. **should handle network failure during logout**
-    - Validates: Network errors handled
-
-41. **should handle close with expired session token**
-    - Validates: Expired token edge case
-
-42. **should handle close when server is unreachable**
-    - Validates: Server unavailable edge case
+### Telemetry (1)
+- `should record connection close decision metrics before logout` (Requires: SNOW-2912513)
 
 ---
 
-## Python-Specific: `python/session/logout.feature`
+## Shared: `shared/session/logout.feature`
 
-**Tag:** `@python`
+Minimal shared E2E scenarios tagged `@core @python`.
 
-1. **should send logout with default settings**
-   - Tag: `@python_e2e`
-   - Validates: Basic Python wrapper integration
-
-2. **should fallback to auto_detection when server_session_keep_alive is null by default**
-   - Tag: `@python_e2e`
-   - **Comment:** Phase 2 behavior (SNOW-2314152). Will change in Phase 3 to always logout by default unless explicitly configured.
-
-3. **should skip logout when server_session_keep_alive is null and async query detected**
-   - Tag: `@python_e2e`
-   - **Comment:** Phase 2 behavior (SNOW-2314152). In Phase 3, null will mean "always logout" and auto-detection will require explicit enable.
-
-4. **should emit deprecation warning when using auto_detection fallback with null param**
-   - Tag: `@python_e2e`
-   - **Comment:** Phase 2 behavior (SNOW-2314152). This warning prepares users for Phase 3 breaking change.
-
-5. **should detect async queries using _async_sfqids registry**
-   - Tag: `@python_e2e`
-   - Validates: Python-specific registry implementation
-
-6. **should support server_session_keep_alive parameter**
-   - Tag: `@python_e2e`
-   - Validates: Parameter recognized and applied
-
-7. **should use best-effort error handling strategy**
-   - Tag: `@python_e2e`
-   - Validates: Python uses best-effort (never throws from close)
-
-### Auto-cleanup Deprecation (3 scenarios)
-
-8. **should register atexit handler that calls close in legacy mode**
-   - Tag: `@python_e2e`
-   - **Comment:** Phase 1 deprecation. Will be disabled by default in Phase 2.
-   - Validates: atexit hook registered and invokes close()
-
-9. **should emit deprecation warning on first auto-cleanup run per process**
-   - Tag: `@python_e2e`
-   - **Comment:** Phase 1 deprecation. Prepares users for explicit close() requirement.
-   - Validates: Warning logged once per process lifetime
-
-10. **should not register atexit handler when auto-cleanup explicitly disabled**
-    - Tag: `@python_e2e`
-    - Validates: Opt-out mechanism works
-
-11. **should emit telemetry and WARN when connection leaked at process exit**
-    - Tag: `@python_e2e`
-    - Validates: Leak detection for debugging
+- `should cleanup all tokens on close regardless of whether logout was sent` (3 examples: True/False/None)
+- `should be idempotent when close called multiple times`
+- `should reject queries client-side after connection is closed`
+- `should handle SESSION_GONE error when using invalidated session token`
+- `should allow process to exit cleanly when session kept alive` (Requires: heartbeat + telemetry)
+- `should handle concurrent close calls safely`
 
 ---
 
-## JDBC-Specific: `jdbc/session/logout.feature`
+## Python: `python/session/logout.feature`
 
-**Tag:** `@jdbc`
+Phase 2 backward compatibility, truth table, atexit, retry param.
 
-1. **should send logout with default settings**
-   - Tag: `@jdbc_e2e`
-   - Validates: Basic JDBC wrapper integration
+### Defaults (3)
+- `should use Python default 5 second timeout`
+- `should have auto_detection enabled and server_session_keep_alive null by default` (no deprecation)
+- `should have enable_server_session_keep_alive_auto_detection default to true`
 
-2. **should depend on auto_detection by default when server_session_keep_alive is null**
-   - Tag: `@jdbc_e2e`
-   - **Comment:** Phase 2 behavior (SNOW-2314152). Will change in Phase 3 to always logout by default. ODBC implementation shows target behavior.
+### Phase 2 Truth Table (7)
+All per design doc SNOW-2314152 Phase 2 Python table:
 
-3. **should skip logout when server_session_keep_alive is null and async query detected**
-   - Tag: `@jdbc_e2e`
-   - **Comment:** Phase 2 behavior (SNOW-2314152). Will migrate to ODBC-style Phase 3 behavior where null means "always logout".
+| server_session_keep_alive | auto_detect | queries | Logout? | Deprecation? |
+|---------------------------|-------------|---------|---------|-------------|
+| None | True | found | No | No |
+| None | True | none | Yes | No |
+| None | False | — | Yes | No |
+| False | True | found | No | **Yes** |
+| False | True | none | Yes | **Yes** |
+| False | False | — | Yes | **Yes** |
+| True | any | — | No | No |
 
-4. **should emit deprecation warning when using auto_detection fallback with null param**
-   - Tag: `@jdbc_e2e`
-   - **Comment:** Phase 2 behavior (SNOW-2314152). Warning users of upcoming breaking change to align with ODBC.
+### Error Strategy Default (1)
+- `should use best-effort error handling strategy by default`
 
-5. **should detect async queries using activeAsyncQueries registry**
-   - Tag: `@jdbc_e2e`
-   - Validates: JDBC-specific registry implementation
+### retry Parameter (2)
+- `should pass retry true to telemetry and logout by default`
+- `should pass retry false when explicitly specified`
 
-6. **should expose server_session_keep_alive parameter**
-   - Tag: `@jdbc_e2e`
-   - Validates: Parameter exposed in JDBC API
-
-7. **should expose enable_server_session_keep_alive_auto_detection parameter**
-   - Tag: `@jdbc_e2e`
-   - Validates: Auto-detection control parameter exposed
-
-8. **should use strict error handling strategy**
-   - Tag: `@jdbc_e2e`
-   - Validates: JDBC uses strict (can throw from close)
-
-### Resource Management (1 scenario)
-
-9. **should invalidate all active statements on close regardless of logout result**
-   - Tag: `@jdbc_e2e`
-   - Validates: JDBC statement cleanup contract honored
+### Auto-cleanup (5)
+- `should unregister atexit handler when close called explicitly`
+- `should call close with retry false from atexit handler`
+- `should emit deprecation warning on first auto-cleanup run per process`
+- `should not register atexit handler when auto-cleanup explicitly disabled`
+- `should emit telemetry and WARN when connection leaked at process exit`
 
 ---
 
-## Go-Specific: `go/session/logout.feature`
+## JDBC: `jdbc/session/logout.feature`
 
-**Tag:** `@go`
+Phase 2 backward compatibility, truth table, strict strategy default.
 
-1. **should send logout with default settings**
-   - Tag: `@go_e2e`
-   - Validates: Basic Go wrapper integration
+### Defaults (2)
+- `should use JDBC default 300 second timeout`
+- `should use strict error handling strategy by default`
 
-2. **should depend on auto_detection by default when KeepSessionAlive is null**
-   - Tag: `@go_e2e`
-   - **Comment:** Phase 2 behavior (SNOW-2314152). Will migrate to ODBC Phase 3 behavior in future release.
+### Phase 2 Defaults + Truth Table (7)
+- `should have auto_detection enabled and server_session_keep_alive null by default` (**with deprecation**)
+- `should skip logout when server_session_keep_alive is true` (no deprecation)
+- `should always send logout when server_session_keep_alive is false` (no deprecation)
+- `should skip logout when ... null and auto_detection true and async queries found` (deprecation)
+- `should send logout when ... null and auto_detection true and no async queries found` (deprecation)
+- `should send logout when ... null and auto_detection false` (no deprecation)
 
-3. **should emit deprecation warning when using auto_detection fallback**
-   - Tag: `@go_e2e`
-   - **Comment:** Phase 2 behavior (SNOW-2314152). Preparing for migration to unified Phase 3 model.
-
-4. **should support KeepSessionAlive parameter**
-   - Tag: `@go_e2e`
-   - Validates: Go-specific parameter name
-
-5. **should use strict error handling strategy**
-   - Tag: `@go_e2e`
-   - Validates: Go uses strict strategy
+### Resource Management (1)
+- `should invalidate all active statements on close regardless of logout result`
 
 ---
 
-## ODBC-Specific: `odbc/session/logout.feature`
+## ODBC: `odbc/session/logout.feature`
 
-**Tag:** `@odbc`
+Phase 3 reference implementation (simplest).
 
-**Note:** ODBC implements Phase 3 behavior from the start (reference implementation)
-
-1. **should send logout with default settings**
-   - Tag: `@odbc_e2e`
-   - Validates: Basic ODBC wrapper integration
-
-2. **should always send logout when server_session_keep_alive is null and auto_detection disabled by default**
-   - Tag: `@odbc_e2e`
-   - **Comment:** Phase 3 unified behavior (SNOW-2314152). This is the target model that Python, JDBC, and Go will migrate to.
-
-3. **should not send logout when server_session_keep_alive is explicitly true**
-   - Tag: `@odbc_e2e`
-   - Validates: Explicit true respected
-
-4. **should send logout when server_session_keep_alive is explicitly false**
-   - Tag: `@odbc_e2e`
-   - Validates: Explicit false respected
-
-5. **should skip logout when server_session_keep_alive is null and auto_detection explicitly enabled with running queries**
-   - Tag: `@odbc_e2e`
-   - **Comment:** Phase 3 safety-net behavior (SNOW-2314152). Auto-detection requires explicit opt-in unlike Phase 2 drivers.
-
-6. **should expose server_session_keep_alive parameter**
-   - Tag: `@odbc_e2e`
-   - Validates: Parameter exposed in ODBC API
-
-7. **should expose enable_server_session_keep_alive_auto_detection parameter with default false**
-   - Tag: `@odbc_e2e`
-   - **Comment:** Phase 3 default (SNOW-2314152). Phase 2 drivers (Python/JDBC/Go) default this to true for backward compatibility.
-
-8. **should support both strict and best-effort error handling strategies**
-   - Tag: `@odbc_e2e`
-   - Validates: ODBC can use either strategy
-
----
-
-## Core Integration (Optional): `core/session/logout_internal.feature`
-
-**Tag:** `@core`
-
-1. **should construct logout request with correct URL parameters**
-   - Tag: `@core_int`
-   - Validates: HTTP request construction
-
-2. **should apply retry policy to logout HTTP request**
-   - Tag: `@core_int`
-   - Validates: Retry policy integration
-
-3. **should handle HTTP connection reset during logout**
-   - Tag: `@core_int`
-   - Validates: Connection reset handling
-
-4. **should track logout metrics in telemetry**
-   - Tag: `@core_int`
-   - Validates: Telemetry integration
-
----
-
-## Summary Statistics
-
-| Feature File | Scenarios | Test Type | Phase |
-|--------------|-----------|-----------|-------|
-| shared/session/logout.feature | 42 | E2E | Both |
-| python/session/logout.feature | 11 | E2E | 2 |
-| jdbc/session/logout.feature | 9 | E2E | 2 |
-| go/session/logout.feature | 5 | E2E | 2 |
-| odbc/session/logout.feature | 8 | E2E | 3 |
-| core/session/logout_internal.feature | 4 | Integration | Both |
-| **Total** | **79** | | |
-
----
-
-## Phase Transition Strategy
-
-### Phase 2 (Current - Python, JDBC, Go)
-- **Default behavior:** `server_session_keep_alive = null` → Auto-detection enabled
-- **Fallback:** Check async registry, skip logout if queries found
-- **Warning:** Emit deprecation warnings about future change
-- **BCR:** Users relying on auto-detection must explicitly enable it
-
-### Phase 3 (Target - ODBC reference)
-- **Default behavior:** `server_session_keep_alive = null` → Always logout
-- **Safety-net:** `enable_auto_detection = true` → Check registry (explicit opt-in)
-- **No warnings:** Clean, predictable behavior
-- **Migration path:** Phase 2 drivers will adopt this over time
+- `should use ODBC default 300 second timeout`
+- `should have enable_server_session_keep_alive_auto_detection default to false` (Phase 3 key default)
+- `should have server_session_keep_alive default to null`
+- `should use strict error handling strategy by default`
 
 ---
 
 ## Out of Scope
 
-The following are intentionally excluded from this plan:
-
-1. **Fire-and-Forget scenarios** - Deferred to async API gherkins
-2. **Async execution API** - Separate feature set
-3. **Query result retrieval by ID** - Part of async API
-4. **Heartbeat implementation details** - Covered by SNOW-2881763
-5. **Telemetry batch implementation** - Covered by SNOW-2912513
-6. **Low-level HTTP protocol details** - requestId format, request_guid uniqueness → Core integration tests
-7. **Server-side behavior validation** - ABORT_DETACHED_QUERY effects on GS → Not driver concern
-8. **Telemetry instrumentation** - Logout metrics tracking → Core integration tests
+- **Auto-detection logic** — Moved to fire-and-forget ticket (SNOW-2923705)
+- **Resource cleanup** (heartbeat/telemetry/QCC) — Delegated to respective tickets
+- **Go driver** — Deferred
+- **Async query registry** — Part of fire-and-forget
+- **Server-side behavior** (ABORT_DETACHED_QUERY) — Not driver concern
 
 ---
 
-## Next Steps
+## Key Design Decisions Reflected in Gherkins
 
-1. Review and approve this plan
-2. Create feature files with full Gherkin syntax (Given/When/Then)
-3. Validate scenarios match design doc requirements
-4. Begin implementation in sf_core and wrappers
-5. Update plan based on implementation findings
+1. **UD Python default is `None`** (not old driver's `False`) — avoids noisy deprecation for users who never set the param
+2. **`False` + auto_detect=True → deprecation** in Python (Phase 2) — warns that False will mean "force logout" in Phase 3
+3. **JDBC defaults emit deprecation** (null + true) — because old JDBC never had this param
+4. **ODBC implements Phase 3 from day one** — auto-detection disabled by default
+5. **Error strategy tested via Core injection** — wrappers only test they pass correct default strategy
+6. **Socket timeout vs retry budget** are independent concepts, tested separately
+7. **Token refresh depends on retry count** — 0 retries = no refresh, 1+ retries = refresh + retry
+8. **Close doesn't cancel in-flight HTTP** — services invalidated, processing fails naturally
