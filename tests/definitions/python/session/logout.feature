@@ -70,15 +70,20 @@ Feature: Session Logout - Python-specific behavior
   #                     Python-Specific Defaults
   # ===========================================================================
 
-  Scenario: should skip logout when server_session_keep_alive is true regardless of auto_detection
+  Scenario Outline: should skip logout when server_session_keep_alive is true regardless of auto_detection
     # Phase 2 truth table: True + any + any → No logout, No deprecation
     # Verifies Python correctly passes true to Core
     Given Snowflake Python client is created with server_session_keep_alive set to true
-    And enable_server_session_keep_alive_auto_detection set to any value
+    And enable_server_session_keep_alive_auto_detection is set to <auto_detection>
     When Connection is closed
     Then No logout request is sent
     And server_session_keep_alive true is passed to Core
     And No deprecation warning is emitted
+
+    Examples:
+      | auto_detection |
+      | true           |
+      | false          |
 
   Scenario: should have enable_server_session_keep_alive_auto_detection default to true
     # Phase 2 (doc for: SNOW-2314152) default for backward compatibility. Phase 3 defaults to false.
@@ -100,23 +105,25 @@ Feature: Session Logout - Python-specific behavior
   #                       retry Parameter Support
   # ===========================================================================
   # Old Python driver: close(retry: bool = True) parameter (line 1182)
+  # Tests observable retry behavior by introducing transient failures
 
-  Scenario: should pass retry true to telemetry and logout by default
+  Scenario: should retry logout on transient failure when close called with default retry
     # Old Python driver: close(retry=True) is default (line 1182)
-    Given Python connection is established
+    Given Snowflake Python client is logged in
+    And Server will return 503 on first logout attempt then succeed
     When close() is called with default parameters
-    Then Telemetry close is called with retry=True
-    And Logout delete_session is called with retry=True
-    And Retries are enabled for both operations
+    Then Logout succeeds after retry
+    And Two logout requests were sent to server
 
-  Scenario: should pass retry false when explicitly specified
+  Scenario: should not retry logout on transient failure when close called with retry false
     # Old Python driver: close(retry=False) disables retries (line 1182)
     # Used by atexit handler (line 2390)
-    Given Python connection is established
+    Given Snowflake Python client is logged in
+    And Server will return 503 on first logout attempt then succeed
     When close(retry=False) is called
-    Then Telemetry close is called with retry=False
-    And Logout delete_session is called with retry=False
-    And No retry attempts are made on failures
+    Then Logout is not retried
+    And Only one logout request was sent to server
+    And Error is handled according to best-effort strategy
 
   # ===========================================================================
   #                       Auto-cleanup Deprecation

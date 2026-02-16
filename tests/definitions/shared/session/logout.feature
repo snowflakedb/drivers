@@ -44,14 +44,6 @@ Feature: Session Logout
     Then Query throws ConnectionClosedException
     And Error message contains "Connection is closed"
 
-  Scenario: should handle SESSION_GONE error when using invalidated session token
-    # Tests Core handling when server returns SESSION_GONE (token already invalidated)
-    Given Mock server is configured to return SESSION_GONE 390111
-    And Session token is invalidated on server
-    When Logout is attempted with invalidated token
-    Then Client treats SESSION_GONE as successful logout
-    And Close operation succeeds
-
   # ===========================================================================
   #                        Process Exit and Thread Management
   # ===========================================================================

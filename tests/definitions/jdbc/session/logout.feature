@@ -16,9 +16,7 @@ Feature: Session Logout - JDBC-specific behavior
     Given Snowflake JDBC connection is created with default parameters
     And Server will return 400 Bad Request error on logout
     When Connection is closed
-    Then SQLException is thrown
-    And Error is propagated to caller
-    And close() method throws exception
+    Then close() throws SQLException
     And Error handling strategy is strict by default
 
   # ===========================================================================
@@ -42,7 +40,7 @@ Feature: Session Logout - JDBC-specific behavior
     And Warning states that auto_detection will be disabled by default in the future
 
   Scenario: should skip logout when server_session_keep_alive is true
-    # Phase 2 (doc for: SNOW-2314152) truth table: true + any → No logout
+    # Phase 2 (doc for: SNOW-2314152) truth table: true + any → No logout, No deprecation
     Given Snowflake JDBC connection is created with server_session_keep_alive set to true
     When Connection is closed
     Then server_session_keep_alive true is passed to Core
