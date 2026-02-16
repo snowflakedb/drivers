@@ -278,10 +278,7 @@ pub fn driver_connect(
         }
     }
 
-    // Apply any pre-connection attributes set via SQLSetConnectAttr.
-    // When attribute-based key options are present, skip file-based connection string
-    // parameters to avoid sending conflicting key sources to core (matching old driver
-    // SFConnection.cpp behavior which checks attributes before falling back to PRIV_KEY_FILE).
+    // Apply SQLSetConnectAttr values (override connection string parameters).
     apply_pre_connection_attrs(connection, conn_handle)?;
 
     DatabaseDriverClient::connection_init(ConnectionInitRequest {
@@ -297,25 +294,14 @@ pub fn driver_connect(
     Ok(())
 }
 
-/// Apply pre-connection attributes (set via SQLSetConnectAttr) to the sf_core connection.
-///
-/// Attributes set via SQLSetConnectAttr take priority over connection string parameters,
-/// matching the behavior of the old Snowflake ODBC driver (snowflake-odbc). Connection
-/// string parameters are applied first, then pre-connection attributes override them.
-///
-/// Private key priority (matching old driver SFConnection.cpp):
-///   1. PrivKeyContent (PEM string)
-///   2. PrivKeyBase64 (base64-encoded key)
-///   3. Connection string PRIV_KEY_BASE64
-///   4. Connection string PRIV_KEY_FILE / PRIV_KEY_FILE_PWD (lowest priority)
+/// Apply pre-connection attributes to sf_core. SQLSetConnectAttr values override
+/// connection string parameters. PrivKeyContent takes priority over PrivKeyBase64.
 fn apply_pre_connection_attrs(
     connection: &mut crate::api::Connection,
     conn_handle: ConnectionHandle,
 ) -> OdbcResult<()> {
     let attrs = &connection.pre_connection_attrs;
 
-    // Private key: PrivKeyContent takes priority over PrivKeyBase64 (matching old driver).
-    // Only one of these should be forwarded to core as "private_key".
     if let Some(content) = attrs.get(&ConnectionAttribute::PrivKeyContent) {
         // PrivKeyContent -> private_key (PEM string sent as base64 to core)
         use base64::{Engine as _, engine::general_purpose};
@@ -378,10 +364,7 @@ pub fn disconnect(_connection_handle: sql::Handle) -> OdbcResult<()> {
 }
 
 /// Set a connection attribute (SQLSetConnectAttr).
-/// Handles both standard ODBC attributes and custom Snowflake attributes.
-// TODO: Once all auth methods are implemented, clear sensitive key material
-// (PrivKeyContent, PrivKeyBase64, PrivKeyPassword) from pre_connection_attrs
-// after apply_pre_connection_attrs.
+// TODO: Clear sensitive pre_connection_attrs after apply_pre_connection_attrs.
 pub fn set_connect_attr(
     connection_handle: sql::Handle,
     attribute: sql::Integer,
@@ -394,13 +377,10 @@ pub fn set_connect_attr(
     let attr = match ConnectionAttribute::from_raw(attribute) {
         Some(a) => a,
         None if ConnectionAttribute::is_snowflake_custom(attribute) => {
-            // Unknown attribute in the Snowflake custom range — likely a typo or
-            // unsupported custom attr.  Return HY092, consistent with get_connect_attr.
             return UnknownAttributeSnafu { attribute }.fail();
         }
         None => {
-            // Standard ODBC attribute the driver doesn't handle — return Ok to
-            // avoid breaking driver-manager attribute propagation.
+            // Ignore standard ODBC attributes to avoid breaking driver-manager propagation.
             tracing::debug!(
                 "set_connect_attr: ignoring standard attribute {}",
                 attribute
@@ -424,10 +404,8 @@ pub fn set_connect_attr(
             Ok(())
         }
 
-        // Custom Snowflake attributes for private key authentication
+        // EVP_PKEY pointer — not supported across FFI boundary (see BD#10).
         ConnectionAttribute::PrivKey => {
-            // The old driver accepted an EVP_PKEY pointer here. We cannot support raw
-            // OpenSSL pointers in the Rust driver, so this attribute is not supported.
             tracing::warn!(
                 "set_connect_attr: PrivKey (EVP_PKEY pointer) is not supported. \
                  Use PrivKeyContent or PrivKeyBase64 instead."
@@ -441,7 +419,7 @@ pub fn set_connect_attr(
         | ConnectionAttribute::PrivKeyPassword
         | ConnectionAttribute::PrivKeyBase64
         | ConnectionAttribute::Application => {
-            // These are pre-connection attributes — reject if already connected.
+            // Pre-connection only — reject if already connected.
             if matches!(connection.state, ConnectionState::Connected { .. }) {
                 return AttributeCannotBeSetNowSnafu {
                     attribute: attr.as_raw(),
@@ -457,8 +435,6 @@ pub fn set_connect_attr(
 }
 
 /// Get a connection attribute (SQLGetConnectAttr).
-/// Handles both standard ODBC attributes and custom Snowflake attributes.
-/// Pushes `StringDataTruncated` into `warnings` if the value was truncated.
 pub fn get_connect_attr(
     connection_handle: sql::Handle,
     attribute: sql::Integer,
@@ -473,7 +449,6 @@ pub fn get_connect_attr(
     let attr = match ConnectionAttribute::from_raw(attribute) {
         Some(a) => a,
         None => {
-            // Old driver returns an error for unrecognized attributes.
             tracing::warn!("get_connect_attr: unknown attribute {}", attribute);
             return UnknownAttributeSnafu { attribute }.fail();
         }

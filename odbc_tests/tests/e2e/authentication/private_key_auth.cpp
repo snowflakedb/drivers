@@ -130,8 +130,7 @@ TEST_CASE("should authenticate using unencrypted private key file", "[private_ke
   auto env = setup_environment();
   auto dbc = get_connection_handle(env);
 
-  // The test key in parameters.json is encrypted. We must decrypt it first
-  // to produce an unencrypted PEM file for this test.
+  // Decrypt the test key to produce an unencrypted PEM file.
   std::string encrypted_pem = read_private_key(params);
   const auto unencrypted_path = tmp.path() / "unencrypted.p8";
 
@@ -159,11 +158,8 @@ TEST_CASE("should authenticate using unencrypted private key file", "[private_ke
 }
 
 TEST_CASE("should authenticate using private_key as base64 string", "[private_key_auth]") {
-  // The old driver requires PRIV_KEY_FILE to be present even when PRIV_KEY_BASE64 is
-  // supplied via connection string (it checks PRIV_KEY_FILE as mandatory for JWT auth).
-  // The old driver's own base64 tests use a DSN with PRIV_KEY_FILE pre-configured.
-  // TODO: Re-enable for the old driver once DSN support is implemented in the new driver,
-  // so we can provide PRIV_KEY_FILE via DSN like the old driver's tests do.
+  // Old driver requires PRIV_KEY_FILE even when PRIV_KEY_BASE64 is provided.
+  // TODO: Re-enable once DSN support is implemented (provide PRIV_KEY_FILE via DSN).
   SKIP_OLD_DRIVER("", "Old driver requires PRIV_KEY_FILE even when PRIV_KEY_BASE64 is set");
 
   // Given Authentication is set to JWT and private key is provided as base64-encoded string
@@ -171,12 +167,11 @@ TEST_CASE("should authenticate using private_key as base64 string", "[private_ke
   auto env = setup_environment();
   auto dbc = get_connection_handle(env);
 
-  // Read the PEM private key and base64-encode it for PRIV_KEY_BASE64
+  // Base64-encode the PEM private key
   std::string private_key_pem = read_private_key(params);
   std::string private_key_b64 = test_utils::base64_encode(private_key_pem);
 
-  // Build connection string with PRIV_KEY_BASE64 instead of PRIV_KEY_FILE
-  // The key in parameters.json is encrypted, so we must also provide the password
+  // Build connection string with PRIV_KEY_BASE64 (key is encrypted, so include password)
   std::stringstream ss;
   read_default_params(ss, params);
   add_param_optional<std::string>(ss, params, "SNOWFLAKE_TEST_PRIVATE_KEY_PASSWORD", "PRIV_KEY_PWD");
@@ -194,17 +189,14 @@ TEST_CASE("should authenticate using private_key as base64 string", "[private_ke
 }
 
 TEST_CASE("should authenticate using PRIV_KEY_PWD as alias for private key password", "[private_key_auth]") {
-  // In the old driver PRIV_KEY_PWD is only used with inline key content/base64,
-  // not with PRIV_KEY_FILE (which uses PRIV_KEY_FILE_PWD). The new driver treats
-  // PRIV_KEY_PWD as a universal password alias that works with both file and inline keys.
-  // TODO: Re-enable for the old driver once DSN support is implemented — the test could
-  // then use a DSN-based setup matching the old driver's expected parameter layout.
+  // Old driver's PRIV_KEY_PWD only works with inline keys, not PRIV_KEY_FILE.
+  // TODO: Re-enable once DSN support is implemented.
   SKIP_OLD_DRIVER("", "Old driver's PRIV_KEY_PWD only works with inline keys, not PRIV_KEY_FILE");
 
   // Given Authentication is set to JWT with encrypted key file and PRIV_KEY_PWD parameter
   auto params = get_test_parameters("testconnection");
 
-  // This test only makes sense if we have a password-protected key
+  // Need a password-protected key for this test
   auto pwd_it = params.find("SNOWFLAKE_TEST_PRIVATE_KEY_PASSWORD");
   if (pwd_it == params.end() || !pwd_it->second.is<std::string>() || pwd_it->second.get<std::string>().empty()) {
     SKIP("No private key password configured; skipping PRIV_KEY_PWD test");
@@ -218,7 +210,7 @@ TEST_CASE("should authenticate using PRIV_KEY_PWD as alias for private key passw
   std::string key_path = get_private_key_path_for_auth(params, tmp);
   std::string password = pwd_it->second.get<std::string>();
 
-  // Build connection string using PRIV_KEY_PWD instead of PRIV_KEY_FILE_PWD
+  // Use PRIV_KEY_PWD instead of PRIV_KEY_FILE_PWD
   std::stringstream ss;
   read_default_params(ss, params);
   ss << "AUTHENTICATOR=SNOWFLAKE_JWT;";

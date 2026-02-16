@@ -85,7 +85,7 @@ void verify_connection_fails_with_missing_private_key_error(ConnectionHandleWrap
   attempt_connection_expect_error_integration(dbc, connection_string);
 
   auto records = get_diag_rec(dbc);
-  REQUIRE(records.size() == 1);  // Expecting one error record
+  REQUIRE(records.size() == 1);
   using Catch::Matchers::ContainsSubstring;
   OLD_DRIVER_ONLY("BD#1") {
     CHECK(records[0].sqlState == "28000");
@@ -108,12 +108,11 @@ void verify_private_key_forwarded_to_core(ConnectionHandleWrapper& dbc, const st
     auto records = get_diag_rec(dbc);
     using Catch::Matchers::ContainsSubstring;
     for (const auto& record : records) {
-      // The private key was forwarded to core — the error must NOT be about a missing parameter.
-      // Any other error (connection refused, auth failure) is acceptable for this integration test.
+      // Error must not be about a missing parameter (any other error is acceptable).
       CHECK_THAT(record.messageText, !ContainsSubstring("Missing required parameter"));
     }
   }
-  // If SQL_SUCCESS, connection succeeded — key was forwarded and used successfully.
+  // SQL_SUCCESS means the key was forwarded and used successfully.
 }
 
 // ============================================================================
@@ -137,9 +136,7 @@ TEST_CASE("should fail JWT authentication when no private file provided", "[priv
 // ============================================================================
 
 TEST_CASE("should forward private key content set via SQLSetConnectAttr to core", "[private_key_auth]") {
-  // New-driver-only: integration test targets the new driver's direct attribute handling.
-  // The old driver delegates to the Simba SDK which has a different connection flow.
-  SKIP_OLD_DRIVER("", "New-driver-only integration test");
+  SKIP_OLD_DRIVER("", "New-driver-only: tests direct attribute handling");
 
   // Given A connection handle is allocated and PRIV_KEY_CONTENT is set via SQLSetConnectAttr
   auto env = setup_environment_integration();
@@ -159,8 +156,7 @@ TEST_CASE("should forward private key content set via SQLSetConnectAttr to core"
 }
 
 TEST_CASE("should forward base64 private key set via SQLSetConnectAttr to core", "[private_key_auth]") {
-  // New-driver-only: integration test targets the new driver's direct attribute handling.
-  SKIP_OLD_DRIVER("", "New-driver-only integration test");
+  SKIP_OLD_DRIVER("", "New-driver-only: tests direct attribute handling");
 
   // Given A connection handle is allocated and PRIV_KEY_BASE64 is set via SQLSetConnectAttr
   auto env = setup_environment_integration();
@@ -169,8 +165,8 @@ TEST_CASE("should forward base64 private key set via SQLSetConnectAttr to core",
   std::string test_key_pem = read_test_private_key_content();
   std::string test_key_b64 = test_utils::base64_encode(test_key_pem);
 
-  SQLRETURN ret = SQLSetConnectAttr(dbc.getHandle(), SQL_SF_CONN_ATTR_PRIV_KEY_BASE64,
-                                    (SQLPOINTER)test_key_b64.c_str(), (SQLINTEGER)test_key_b64.size());
+  SQLRETURN ret = SQLSetConnectAttr(dbc.getHandle(), SQL_SF_CONN_ATTR_PRIV_KEY_BASE64, (SQLPOINTER)test_key_b64.c_str(),
+                                    (SQLINTEGER)test_key_b64.size());
   CHECK_ODBC(ret, dbc);
 
   // When Trying to Connect
@@ -181,14 +177,13 @@ TEST_CASE("should forward base64 private key set via SQLSetConnectAttr to core",
 }
 
 TEST_CASE("should forward private key password set via SQLSetConnectAttr to core", "[private_key_auth]") {
-  // New-driver-only: integration test targets the new driver's direct attribute handling.
-  SKIP_OLD_DRIVER("", "New-driver-only integration test");
+  SKIP_OLD_DRIVER("", "New-driver-only: tests direct attribute handling");
 
   // Given A connection handle is allocated and PRIV_KEY_PASSWORD is set via SQLSetConnectAttr
   auto env = setup_environment_integration();
   auto dbc = get_connection_handle_integration(env);
 
-  // Create an encrypted key file from the test key so we can test password forwarding
+  // Create an encrypted key file to test password forwarding
   TempTestDir tmp("int_auth_pwd_");
   std::string test_key_pem = read_test_private_key_content();
   const auto encrypted_path = tmp.path() / "encrypted.pem";

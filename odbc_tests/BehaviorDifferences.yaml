@@ -30,8 +30,5 @@ behavior_differences:
   10:
     name: "SQL_SF_CONN_ATTR_PRIV_KEY (EVP_PKEY pointer) is not supported"
     description: |
-      The old driver accepted a raw OpenSSL EVP_PKEY* pointer via
-      SQLSetConnectAttr(dbc, SQL_SF_CONN_ATTR_PRIV_KEY, pkey, 0).
-      The new driver cannot accept raw C pointers across the Rust FFI boundary.
-      Use SQL_SF_CONN_ATTR_PRIV_KEY_CONTENT (PEM string) or
-      SQL_SF_CONN_ATTR_PRIV_KEY_BASE64 (base64-encoded key) instead.
+      The old driver accepted raw EVP_PKEY* pointers via SQLSetConnectAttr.
+      Not supported across the Rust FFI boundary — use PRIV_KEY_CONTENT or PRIV_KEY_BASE64 instead.
