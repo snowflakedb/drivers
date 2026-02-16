@@ -157,13 +157,21 @@ fn extract_double_quoted_value(sql: &str) -> Option<String> {
 /// Extract an unquoted value (everything until end of statement or semicolon/comment)
 fn extract_unquoted_value(sql: &str) -> Option<String> {
     let mut result = String::new();
+    let mut chars = sql.chars().peekable();
 
-    for c in sql.chars() {
-        if c == ';' || c == '-' || c == '/' {
-            // End of value (semicolon or start of comment)
-            break;
+    while let Some(&c) = chars.peek() {
+        match c {
+            // Semicolon always terminates the value
+            ';' => break,
+            // '--' starts a line comment, but a lone '-' is part of the value
+            '-' if chars.clone().nth(1) == Some('-') => break,
+            // '/*' starts a block comment, but a lone '/' is part of the value
+            '/' if chars.clone().nth(1) == Some('*') => break,
+            _ => {
+                result.push(c);
+                chars.next();
+            }
         }
-        result.push(c);
     }
 
     let result = result.trim().to_string();
