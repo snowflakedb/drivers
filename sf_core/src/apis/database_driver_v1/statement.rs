@@ -235,8 +235,8 @@ fn update_session_params_cache(
     };
 
     // 1. ALTER SESSION SET: optimistically apply the parameter the user just set.
-    // This matches Python driver behavior for immediate parameter updates,
-    // and is necessary as not all parameters are returned in the response.
+    // This matches Python driver behavior for immediate parameter updates.
+    // This is necessary as Snowflake returns only system-level parameters in the response.
     if let Some(alter_param) = alter_session_parser::parse_alter_session(query) {
         tracing::debug!(
             param_name = %alter_param.name,

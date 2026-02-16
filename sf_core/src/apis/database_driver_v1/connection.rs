@@ -46,8 +46,17 @@ pub fn connection_init(conn_handle: Handle, _db_handle: Handle) -> Result<(), Ap
                 })
                 .context(LoginSnafu)?;
 
-            // Initialize connection with session parameters from login response
-            // Assume login always returns parameters (empty if none)
+            // Initialize connection with session parameters from login response.
+            // The server returns system-level parameters but may not echo back
+            // user-set parameters (e.g. QUERY_TAG), so we merge in the
+            // init_session_parameters the caller explicitly requested.
+            let mut merged_params = session_params.unwrap_or_default();
+            if let Some(init) = login_parameters.session_parameters {
+                for (k, v) in init {
+                    merged_params.insert(k.to_uppercase(), v);
+                }
+            }
+
             conn_ptr
                 .lock()
                 .map_err(|_| ConnectionLockingSnafu {}.build())?
@@ -56,7 +65,7 @@ pub fn connection_init(conn_handle: Handle, _db_handle: Handle) -> Result<(), Ap
                     http_client,
                     login_parameters.server_url.clone(),
                     login_parameters.client_info.clone(),
-                    session_params.unwrap_or_default(),
+                    merged_params,
                 );
             Ok(())
         }
