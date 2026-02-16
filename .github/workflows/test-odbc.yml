@@ -56,8 +56,13 @@ jobs:
           sudo sh cmake-4.0.3-linux-x86_64.sh --skip-license --prefix=/usr/local
           sudo rm cmake-4.0.3-linux-x86_64.sh
           cmake --version
-          curl -O https://sfc-repo.snowflakecomputing.com/odbc/linux/3.9.0/snowflake-odbc-3.9.0.x86_64.deb
-          sudo dpkg -i snowflake-odbc-3.9.0.x86_64.deb
+          REFERENCE_ODBC_VERSION=$(cat ci/reference-odbc-version | tr -d '[:space:]')
+          . ci/reference-odbc-checksums
+          echo "Installing reference ODBC driver version: $REFERENCE_ODBC_VERSION"
+          DEB="snowflake-odbc-${REFERENCE_ODBC_VERSION}.x86_64.deb"
+          curl -O "https://sfc-repo.snowflakecomputing.com/odbc/linux/${REFERENCE_ODBC_VERSION}/${DEB}"
+          echo "${DEB_X86_64_SHA256}  ${DEB}" | sha256sum -c -
+          sudo dpkg -i "${DEB}"
           sudo sed -i 's,ODBCInstLib=.*,ODBCInstLib=/usr/lib/x86_64-linux-gnu/libodbcinst.so.2,g' /usr/lib/snowflake/odbc/lib/simba.snowflake.ini
 
       - name: Decode secrets
