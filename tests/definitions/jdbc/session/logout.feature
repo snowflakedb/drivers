@@ -48,6 +48,7 @@ Feature: Session Logout - JDBC-specific behavior
     Then server_session_keep_alive true is passed to Core
 
   Scenario: should always send logout when server_session_keep_alive is false
+    # E2E sanity check: Verifies JDBC wrapper + Core integration works end-to-end
     # Phase 2 (doc for: SNOW-2314152) truth table: false + any → Always logout, ignore auto-detect
     Given Snowflake JDBC connection is created with server_session_keep_alive set to false
     And Long-running async query is executed using SYSTEM$SLEEP(300)
@@ -57,39 +58,25 @@ Feature: Session Logout - JDBC-specific behavior
     And No deprecation warning is emitted
     And Test cleans up the running query after assertions complete
 
-  Scenario: should skip logout when server_session_keep_alive is null and auto_detection true and async queries found
-    # Phase 2 (doc for: SNOW-2314152) truth table: null + true + queries found → No logout + deprecation
+  Scenario: should pass correct parameters when server_session_keep_alive is null and auto_detection true
+    # Tests wrapper parameter passing (not E2E HTTP behavior - covered by Core tests)
+    # Phase 2 (doc for: SNOW-2314152) truth table: null + true → parameters passed to Core
     Given Snowflake JDBC connection is created with server_session_keep_alive set to null
     And enable_server_session_keep_alive_auto_detection is set to true
-    And Long-running async query is executed using SYSTEM$SLEEP(300)
     When Connection is closed
-    Then Auto-detection finds running query
-    And No logout request is sent
-    And Connection close metrics are recorded in telemetry
-    And Deprecation warning is logged
-    And Warning mentions migration to Phase 3 compliant behavior
-    And Test cleans up the running query after assertions complete
-
-  Scenario: should send logout when server_session_keep_alive is null and auto_detection true and no async queries found
-    # Phase 2 (doc for: SNOW-2314152) truth table: null + true + no queries → Send logout + deprecation
-    Given Snowflake JDBC connection is created with server_session_keep_alive set to null
-    And enable_server_session_keep_alive_auto_detection is set to true
-    And No async queries are running
-    When Connection is closed
-    Then Auto-detection finds no running queries
-    And Logout request is sent
-    And Connection close metrics are recorded in telemetry
+    Then server_session_keep_alive null is passed to Core
+    And enable_server_session_keep_alive_auto_detection true is passed to Core
     And Deprecation warning is logged
     And Warning mentions migration to Phase 3 compliant behavior
 
-  Scenario: should send logout when server_session_keep_alive is null and auto_detection false
-    # Phase 2 (doc for: SNOW-2314152) truth table: null + false → Send logout (no detection), No deprecation
+  Scenario: should pass correct parameters when server_session_keep_alive is null and auto_detection false
+    # Tests wrapper parameter passing (not E2E HTTP behavior - covered by Core tests)
+    # Phase 2 (doc for: SNOW-2314152) truth table: null + false → parameters passed to Core
     Given Snowflake JDBC connection is created with server_session_keep_alive set to null
     And enable_server_session_keep_alive_auto_detection is set to false
     When Connection is closed
-    Then Auto-detection is not performed
-    And Logout request is sent
-    And Connection close metrics are recorded in telemetry
+    Then server_session_keep_alive null is passed to Core
+    And enable_server_session_keep_alive_auto_detection false is passed to Core
     And No deprecation warning is emitted
 
   # ===========================================================================
