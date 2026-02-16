@@ -222,6 +222,27 @@ pub struct ExecuteResult {
     pub columns: Vec<ColumnMetadata>,
 }
 
+/// Parse ALTER SESSION SET statements and optimistically update the session parameters cache.
+/// This matches Python driver behavior for immediate parameter updates.
+fn optimistically_update_session_params_cache(
+    conn: &Arc<Mutex<Connection>>,
+    query: &str,
+) -> Result<(), ApiError> {
+    if let Some(alter_param) = alter_session_parser::parse_alter_session(query) {
+        tracing::debug!(
+            param_name = %alter_param.name,
+            param_value = %alter_param.value,
+            "Detected ALTER SESSION SET, updating cache optimistically"
+        );
+
+        let conn = conn.lock().map_err(|_| ConnectionLockingSnafu.build())?;
+        if let Ok(mut cache) = conn.session_parameters.write() {
+            cache.insert(alter_param.name.clone(), alter_param.value.clone());
+        }
+    }
+    Ok(())
+}
+
 pub fn statement_execute_query(stmt_handle: Handle) -> Result<ExecuteResult, ApiError> {
     let handle = stmt_handle;
     let stmt_ptr = STMT_HANDLE_MANAGER.get_obj(handle).ok_or_else(|| {
@@ -261,23 +282,7 @@ pub fn statement_execute_query(stmt_handle: Handle) -> Result<ExecuteResult, Api
         .get_query_parameter_bindings()
         .context(StatementSnafu)?;
 
-    // Parse ALTER SESSION SET statements and optimistically update cache
-    // This matches Python driver behavior for immediate parameter updates
-    if let Some(alter_param) = alter_session_parser::parse_alter_session(&query) {
-        tracing::debug!(
-            param_name = %alter_param.name,
-            param_value = %alter_param.value,
-            "Detected ALTER SESSION SET, updating cache optimistically"
-        );
-
-        let conn = stmt
-            .conn
-            .lock()
-            .map_err(|_| ConnectionLockingSnafu.build())?;
-        if let Ok(mut cache) = conn.session_parameters.write() {
-            cache.insert(alter_param.name.clone(), alter_param.value.clone());
-        }
-    }
+    optimistically_update_session_params_cache(&stmt.conn, &query)?;
 
     // Execute query with automatic session refresh on 401
     let conn = stmt.conn.clone();
