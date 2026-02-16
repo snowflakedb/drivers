@@ -2,6 +2,12 @@
 Integration tests for session parameters API.
 """
 
+import pytest
+
+
+# this module is heavily dependent on _get_session_parameter, which is not a part of the reference driver
+pytestmark = pytest.mark.skip_reference
+
 
 class TestSessionParametersGet:
     """Test getting session parameter values."""
