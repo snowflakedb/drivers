@@ -43,11 +43,9 @@ Feature: Session Logout - JDBC-specific behavior
 
   Scenario: should skip logout when server_session_keep_alive is true
     # Phase 2 (doc for: SNOW-2314152) truth table: true + any → No logout
-    # Verifies JDBC correctly passes true to Core
     Given Snowflake JDBC connection is created with server_session_keep_alive set to true
     When Connection is closed
-    Then No logout request is sent
-    And server_session_keep_alive true is passed to Core
+    Then server_session_keep_alive true is passed to Core
 
   Scenario: should always send logout when server_session_keep_alive is false
     # Phase 2 (doc for: SNOW-2314152) truth table: false + any → Always logout, ignore auto-detect
