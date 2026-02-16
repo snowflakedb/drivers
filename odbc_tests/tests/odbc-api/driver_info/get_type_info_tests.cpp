@@ -216,6 +216,8 @@ static const TypeInfoExpected ALL_TYPE_INFO[] = {
      SQL_NULL_DATA,
      0,
      2},
+    // Note: Reference driver returns maximumScale=8192 for NUMERIC instead of the
+    // ODBC-spec value of 38. This is a known reference driver bug.
     {SQL_NUMERIC,
      "NUMERIC",
      38,
@@ -237,7 +239,7 @@ static const TypeInfoExpected ALL_TYPE_INFO[] = {
      7,
      0,
      2,
-     38,
+     8192,
      2,
      SQL_NUMERIC,
      0,

@@ -101,10 +101,14 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDisconnect: Closes open statements au
   ret = SQLDisconnect(dbc_handle());
   REQUIRE(ret == SQL_SUCCESS);
 
-  // Note: Reference driver does not set statement handle variable to null after disconnect
-  // However, the handle becomes invalid and operations on it return SQL_INVALID_HANDLE
-  ret = SQLExecDirect(stmt, reinterpret_cast<SQLCHAR*>(const_cast<char*>("SELECT 1")), SQL_NTS);
-  REQUIRE(ret == SQL_INVALID_HANDLE);
+  // Verify the statement is no longer usable by trying to allocate a new one.
+  // After disconnect, the DBC is in a disconnected state and cannot allocate
+  // new statements (08003: Connection not open).
+  // Note: We do NOT use the old `stmt` handle after disconnect as that is
+  // undefined and segfaults on some platforms.
+  SQLHSTMT new_stmt = SQL_NULL_HSTMT;
+  ret = SQLAllocHandle(SQL_HANDLE_STMT, dbc_handle(), &new_stmt);
+  REQUIRE(ret == SQL_ERROR);
 }
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDisconnect: Handles active transactions",

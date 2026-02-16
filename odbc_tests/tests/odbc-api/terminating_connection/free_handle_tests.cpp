@@ -143,38 +143,15 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLFreeHandle: Can free disconnected con
   release_dbc();
 }
 
-TEST_CASE_METHOD(DbcDefaultDSNFixture,
-                 "SQLFreeHandle: Frees dependent statement handles when connection handle is freed",
-                 "[odbc-api][freehandle][terminating_connection]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
-  // Connect first (required to allocate statement)
-  SQLRETURN ret = SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(dsn_name().c_str())), SQL_NTS,
-                             nullptr, 0, nullptr, 0);
-  REQUIRE(ret == SQL_SUCCESS);
-
-  // Allocate statement
-  SQLHSTMT stmt = SQL_NULL_HSTMT;
-  ret = SQLAllocHandle(SQL_HANDLE_STMT, dbc_handle(), &stmt);
-  REQUIRE(ret == SQL_SUCCESS);
-
-  // Disconnect first
-  ret = SQLDisconnect(dbc_handle());
-  REQUIRE(ret == SQL_SUCCESS);
-
-  // Note: Reference driver automatically frees dependent statement handles
-  ret = SQLFreeHandle(SQL_HANDLE_DBC, dbc_handle());
-  REQUIRE(ret == SQL_SUCCESS);
-
-  ret = SQLExecDirect(stmt, reinterpret_cast<SQLCHAR*>(const_cast<char*>("SELECT 1")), SQL_NTS);
-  REQUIRE(ret == SQL_INVALID_HANDLE);
-
-  release_dbc();
-}
+// SQLFreeHandle: Frees dependent statement handles when connection handle is freed
+// Note: Reference driver should free the statement handle and it shouldn't be
+// reusable after. Attempeting to use this handle is undefined behavior and SEGFAULTs
+// on some platforms.
+// Skipping test case to prevent SEGFAULT
 
 // SQLFreeHandle: Double free connection handle
 // Note: Reference driver crashes on double-free of connection handle
-// This is undefined behavior that must be avoided
+// This is undefined behavior that must be avoided.
 // Skipping test case to prevent crash
 
 // ============================================================================
