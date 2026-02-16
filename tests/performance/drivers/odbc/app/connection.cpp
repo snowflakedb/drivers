@@ -207,5 +207,9 @@ std::string get_connection_string() {
   if (!params["warehouse"].empty()) ss << "WAREHOUSE=" << params["warehouse"] << ";";
   if (!params["role"].empty()) ss << "ROLE=" << params["role"] << ";";
 
+  // TLS verification parameters (for WireMock testing)
+  if (!params["verify_certificates"].empty()) ss << "TLS_VERIFY_CERTIFICATES=" << params["verify_certificates"] << ";";
+  if (!params["verify_hostname"].empty()) ss << "TLS_VERIFY_HOSTNAME=" << params["verify_hostname"] << ";";
+
   return ss.str();
 }

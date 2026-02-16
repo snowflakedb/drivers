@@ -1,21 +1,30 @@
 """
 PEP 249 Database API 2.0 Cursor Objects
 
-This module defines the Cursor class as specified in PEP 249.
+This module defines the cursor classes as specified in PEP 249.
+
+Hierarchy:
+    SnowflakeCursorBase
+    ├── SnowflakeCursor  — returns tuple rows
+    └── DictCursor       — returns dict rows
 """
 
 from __future__ import annotations
 
+import abc
+
 from collections.abc import Iterator, Sequence
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 from ._internal.arrow_context import ArrowConverterContext
-from ._internal.arrow_stream_iterator import ArrowStreamIterator  # type: ignore[import-not-found]
-from ._internal.protobuf_gen.database_driver_v1_pb2 import (  # type: ignore[attr-defined]
+from ._internal.arrow_stream_iterator import ArrowStreamIterator
+from ._internal.protobuf_gen.database_driver_v1_pb2 import (
+    ExecuteResult,
     StatementExecuteQueryRequest,
     StatementNewRequest,
     StatementSetSqlQueryRequest,
 )
+from ._internal.type_codes import get_type_code
 from .errors import NotSupportedError, ProgrammingError
 
 
@@ -23,12 +32,59 @@ if TYPE_CHECKING:
     from .connection import Connection
 
 Row = tuple[Any, ...]
+DictRow = dict[str, Any]
 
 
-class Cursor:
+class ResultMetadata(NamedTuple):
+    """PEP 249 column description entry.
+
+    Each item in ``Cursor.description`` is a ``ResultMetadata`` instance.
+    Being a :class:`~typing.NamedTuple` it is fully tuple-compatible as
+    required by the spec, while also providing named attribute access.
     """
-    Cursor objects represent a database cursor, which is used to manage the context
-    of a fetch operation.
+
+    name: str
+    type_code: int
+    display_size: int | None
+    internal_size: int | None
+    precision: int | None
+    scale: int | None
+    is_nullable: bool | None
+
+    @classmethod
+    def from_column(cls, col: Any) -> ResultMetadata:
+        """Create a ``ResultMetadata`` from a protobuf ``ColumnMetadata``."""
+        type_code = get_type_code(col.type)
+
+        display_size = (
+            col.length if col.HasField("length") and col.type.upper() in ("TEXT", "VARCHAR", "CHAR", "STRING") else None
+        )
+        internal_size = col.byte_length if col.HasField("byte_length") else None
+        precision = col.precision if col.HasField("precision") else None
+        scale = col.scale if col.HasField("scale") else None
+
+        return cls(
+            name=col.name,
+            type_code=type_code,
+            display_size=display_size,
+            internal_size=internal_size,
+            precision=precision,
+            scale=scale,
+            is_nullable=col.nullable,
+        )
+
+
+# Backward compatibility alias
+ResultMetadataV2 = ResultMetadata
+
+
+class SnowflakeCursorBase(abc.ABC):
+    """
+    Base cursor class for database operations (PEP 249).
+
+    This is the abstract base for all cursor types, equivalent to
+    ``SnowflakeCursorBase`` in the old connector. Concrete subclasses
+    must override :pyattr:`_use_dict_result` and :pymeth:`fetchone`.
     """
 
     # Class attribute for arraysize
@@ -42,47 +98,74 @@ class Cursor:
             connection: Connection object that created this cursor
         """
         self.connection = connection
-        self.description = None
-        self.rowcount = -1
+        self._description: list[ResultMetadata] | None = None
+        self._rowcount: int | None = None
         self.arraysize = 1  # Instance attribute overrides class attribute
         self._closed = False
         # Streaming state for Arrow results
         self._reader = None
         self._current_batch = None
         self._current_row_in_batch = 0
-        self.execute_result: Any = None
-        self._iterator: Iterator[Row] | None = None
-        self.execute_result = None
+        self.execute_result: ExecuteResult | None = None
+        self._iterator: Iterator[Row] | Iterator[DictRow] | None = None
+
+    # ------------------------------------------------------------------
+    # PEP 249 attributes
+    # ------------------------------------------------------------------
 
     @property
-    def description(self) -> Any:
+    def description(self) -> list[ResultMetadata] | None:
         """
         Read-only attribute describing the result columns of a query.
 
-        Returns:
-            tuple: Sequence of 7-item tuples describing each result column:
-                   (name, type_code, display_size, internal_size, precision, scale, null_ok)
+        Returns a sequence of 7-item tuples, each containing:
+        - name: Column name (str)
+        - type_code: Integer type code (int)
+        - display_size: Display size in characters (int | None)
+        - internal_size: Internal size in bytes (int | None)
+        - precision: Precision for numeric types (int | None)
+        - scale: Scale for numeric types (int | None)
+        - null_ok: True if column can contain NULLs (bool | None)
+
+        Returns None if no query has been executed or if the query didn't produce a result set.
         """
         return self._description
 
-    @description.setter
-    def description(self, value: Any) -> None:
-        self._description = value
-
     @property
-    def rowcount(self) -> int:
+    def rowcount(self) -> int | None:
         """
         Read-only attribute specifying the number of rows that the last
         .execute*() produced or affected.
 
         Returns:
-            int: Number of rows affected, or -1 if not determined
+            int: Number of rows affected, or None if not determined
         """
         return self._rowcount
 
-    @rowcount.setter
-    def rowcount(self, value: int) -> None:
-        self._rowcount = value
+    # ------------------------------------------------------------------
+    # Result format control
+    # ------------------------------------------------------------------
+
+    @property
+    @abc.abstractmethod
+    def _use_dict_result(self) -> bool:
+        """Whether fetch methods return dicts instead of tuples."""
+
+    # ------------------------------------------------------------------
+    # Execution
+    # ------------------------------------------------------------------
+
+    @property
+    def sfqid(self) -> str | None:
+        """
+        Read-only attribute containing the Snowflake Query ID for the last executed query.
+
+        Returns:
+            str | None: Snowflake Query ID (UUID format), or None if no query has been executed
+        """
+        if self.execute_result is None:
+            return None
+        return self.execute_result.query_id if self.execute_result.query_id else None
 
     def callproc(self, procname: str, parameters: Sequence[Any] | None = None) -> Sequence[Any]:
         """
@@ -104,7 +187,7 @@ class Cursor:
         """Close the cursor now (rather than whenever __del__ is called)."""
         self._closed = True
 
-    def execute(self, operation: str, parameters: Sequence[Any] | dict[str, Any] | None = None) -> Cursor:
+    def execute(self, operation: str, parameters: Sequence[Any] | dict[str, Any] | None = None) -> SnowflakeCursorBase:
         """
         Execute a database operation (query or command).
 
@@ -124,7 +207,17 @@ class Cursor:
 
         # Reset streaming state for a new result
         self._iterator = None
+
+        # Populate description and rowcount
+        self._populate_description()
+        self._populate_rowcount()
         return self
+
+    def _populate_rowcount(self) -> None:
+        if self.execute_result:
+            self._rowcount = self.execute_result.rows_affected
+        else:
+            self._rowcount = None
 
     def executemany(self, operation: str, seq_of_parameters: Sequence[Sequence[Any]]) -> None:
         """
@@ -138,6 +231,10 @@ class Cursor:
             NotSupportedError: If not implemented
         """
         raise NotSupportedError("executemany is not implemented")
+
+    # ------------------------------------------------------------------
+    # Arrow stream helpers
+    # ------------------------------------------------------------------
 
     def _get_stream_ptr(self) -> int:
         """Get the ArrowArrayStream pointer from execute result.
@@ -168,23 +265,39 @@ class Cursor:
 
         return stream_ptr
 
+    def _populate_description(self) -> None:
+        """Populate cursor description from execute result column metadata."""
+        if self.execute_result is None:
+            self._description = None
+            return
+
+        columns = self.execute_result.columns
+        if not columns:
+            self._description = None
+            return
+
+        self._description = [ResultMetadata.from_column(col) for col in columns]
+
     def _get_iterator(self) -> ArrowStreamIterator:
         stream_ptr = self._get_stream_ptr()
         arrow_context = ArrowConverterContext()
         return ArrowStreamIterator(
             stream_ptr,
             arrow_context,
-            # TODO: SNOW-2997742, SNOW-2997786, temporarily hardcoded
-            use_dict_result=False,
+            use_dict_result=self._use_dict_result,
+            # TODO: SNOW-2997786, temporarily hardcoded
             use_numpy=False,
         )
 
-    def fetchone(self) -> Row | None:
-        """
-        Fetch the next row of a query result set.
+    # ------------------------------------------------------------------
+    # Fetch – shared implementation
+    # ------------------------------------------------------------------
 
-        Returns:
-            sequence: Next row, or None when no more data is available
+    def _fetchone(self) -> Row | DictRow | None:
+        """Fetch the next row internally.
+
+        Return a dict if ``_use_dict_result`` is True, otherwise a tuple.
+        Concrete subclasses expose this through a type-safe ``fetchone``.
         """
         if self._iterator is None:
             self._iterator = self._get_iterator()
@@ -193,7 +306,11 @@ class Cursor:
         except StopIteration:
             return None
 
-    def fetchmany(self, size: int | None = None) -> list[Row]:
+    @abc.abstractmethod
+    def fetchone(self) -> Row | DictRow | None:
+        """Fetch the next row of a query result set."""
+
+    def fetchmany(self, size: int | None = None) -> list[Any]:
         """
         Fetch the next set of rows of a query result.
 
@@ -222,7 +339,7 @@ class Cursor:
 
         return ret
 
-    def fetchall(self) -> list[Row]:
+    def fetchall(self) -> list[Any]:
         """
         Fetch all (remaining) rows of a query result.
 
@@ -232,6 +349,10 @@ class Cursor:
         if self._iterator is None:
             self._iterator = self._get_iterator()
         return list(self._iterator)
+
+    # ------------------------------------------------------------------
+    # PEP 249 optional / no-op methods
+    # ------------------------------------------------------------------
 
     def nextset(self) -> None:
         """
@@ -246,36 +367,27 @@ class Cursor:
         raise NotSupportedError("nextset is not implemented")
 
     def setinputsizes(self, sizes: Sequence[Any]) -> None:
-        """
-        Predefine memory areas for the operation parameters.
-
-        Args:
-            sizes (sequence): Sequence of type objects or integers
-        """
-        # This method is optional and can be implemented as a no-op
-        pass
+        """Not supported."""
+        return None
 
     def setoutputsize(self, size: int, column: int | None = None) -> None:
-        """
-        Set a column buffer size for fetches of large columns.
+        """Not supported."""
+        return None
 
-        Args:
-            size (int): Buffer size
-            column (int): Column index (optional)
-        """
-        # This method is optional and can be implemented as a no-op
-        pass
+    # ------------------------------------------------------------------
+    # Iterator protocol
+    # ------------------------------------------------------------------
 
-    def __iter__(self) -> Cursor:
+    def __iter__(self) -> SnowflakeCursorBase:
         """
         Return the cursor itself as an iterator.
 
         Returns:
-            Cursor: Self
+            SnowflakeCursorBase: Self
         """
         return self
 
-    def __next__(self) -> Row:
+    def __next__(self) -> Row | DictRow:
         """
         Fetch the next row from the currently executed statement.
 
@@ -291,16 +403,20 @@ class Cursor:
         return row
 
     # Python 2 compatibility
-    def next(self) -> Row:
+    def next(self) -> Row | DictRow:
         """Python 2 compatibility method."""
         return self.__next__()
 
-    def __enter__(self) -> Cursor:
+    # ------------------------------------------------------------------
+    # Context manager
+    # ------------------------------------------------------------------
+
+    def __enter__(self) -> SnowflakeCursorBase:
         """
         Enter the runtime context for the cursor.
 
         Returns:
-            Cursor: Self
+            SnowflakeCursorBase: Self
         """
         return self
 
@@ -316,3 +432,105 @@ class Cursor:
             bool: True if closed, False otherwise
         """
         return self._closed
+
+
+# ======================================================================
+# Concrete cursor classes
+# ======================================================================
+
+
+class SnowflakeCursor(SnowflakeCursorBase):
+    """Cursor returning results as tuples (default).
+
+    This is the standard cursor returned by ``connection.cursor()``.
+    """
+
+    @property
+    def _use_dict_result(self) -> bool:
+        return False
+
+    def fetchone(self) -> Row | None:
+        """
+        Fetch the next row of a query result set.
+
+        Returns:
+            tuple: Next row, or None when no more data is available
+        """
+        row = self._fetchone()
+        if not (row is None or isinstance(row, tuple)):
+            raise TypeError(f"fetchone got unexpected result: {row}")
+        return row
+
+    def fetchmany(self, size: int | None = None) -> list[Row]:
+        """
+        Fetch the next set of rows of a query result.
+
+        Args:
+            size (int): Number of rows to fetch (defaults to arraysize)
+
+        Returns:
+            list[tuple]: List of rows as tuples
+        """
+        return super().fetchmany(size)
+
+    def fetchall(self) -> list[Row]:
+        """
+        Fetch all (remaining) rows of a query result.
+
+        Returns:
+            list[tuple]: List of all remaining rows as tuples
+        """
+        return super().fetchall()
+
+
+class DictCursor(SnowflakeCursorBase):
+    """Cursor returning results as dictionaries with column names as keys.
+
+    Usage::
+
+        with connection.cursor(DictCursor) as cur:
+            cur.execute("SELECT 1 AS id, 'hello' AS name")
+            row = cur.fetchone()
+            # row == {"ID": 1, "NAME": "hello"}
+    """
+
+    @property
+    def _use_dict_result(self) -> bool:
+        return True
+
+    def fetchone(self) -> DictRow | None:
+        """
+        Fetch the next row of a query result set as a dictionary.
+
+        Returns:
+            dict: Next row as a dictionary with column names as keys,
+                  or None when no more data is available
+        """
+        row = self._fetchone()
+        if not (row is None or isinstance(row, dict)):
+            raise TypeError(f"fetchone got unexpected result: {row}")
+        return row
+
+    def fetchmany(self, size: int | None = None) -> list[DictRow]:
+        """
+        Fetch the next set of rows as dictionaries.
+
+        Args:
+            size (int): Number of rows to fetch (defaults to arraysize)
+
+        Returns:
+            list[dict]: List of rows as dictionaries
+        """
+        return super().fetchmany(size)
+
+    def fetchall(self) -> list[DictRow]:
+        """
+        Fetch all (remaining) rows as dictionaries.
+
+        Returns:
+            list[dict]: List of all remaining rows as dictionaries
+        """
+        return super().fetchall()
+
+
+__all__ = ["SnowflakeCursor", "DictCursor"]

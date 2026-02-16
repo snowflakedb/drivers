@@ -219,10 +219,24 @@ class BuildHook(BuildHookInterface):
 
         if os.environ.get("SKIP_CORE_BUILD", "").lower() in ["true", "1"]:
             return
+
         # Get paths relative to the Python wrapper directory
+        # Uses symlinked Cargo.toml in dev (points to ../Cargo.toml) or actual file in sdist
         python_dir = Path(__file__).parent
-        cargo_manifest = python_dir.parent / "Cargo.toml"
         target_dir = python_dir / "src" / "snowflake" / "connector" / "_core"
+        cargo_manifest = python_dir / "Cargo.toml"
+
+        if not cargo_manifest.exists():
+            warnings.warn(
+                "Cargo.toml not found. Cannot build sf_core native extension. "
+                "Ensure symlinks are set up (ln -s ../Cargo.toml Cargo.toml) or "
+                "install from a pre-built wheel.",
+                stacklevel=1,
+            )
+            return
+
+        # Resolve symlinks so cargo uses the actual path (important for workspace resolution)
+        cargo_manifest = cargo_manifest.resolve()
 
         # Ensure target directory exists
         target_dir.mkdir(parents=True, exist_ok=True)

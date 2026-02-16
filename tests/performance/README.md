@@ -4,6 +4,7 @@
 
 - [Usage](#usage)
 - [Adding New Tests](#adding-new-tests)
+- [Tests with Recorded HTTP Traffic](#tests-with-recorded-http-traffic)
 - [Architecture](#architecture)
 - [Driver Containers](#driver-containers)
 - [Results](#results)
@@ -114,6 +115,8 @@ hatch run core-local --parameters-json=parameters/parameters_perf_azure.json
 | `--upload-to-benchstore` | Upload metrics to Benchstore | `false` |
 | `--local-benchstore-upload` | Use local auth for Benchstore | `false` |
 | `--use-local-binary` | Use local binary (Core only) | `false` |
+| `--preserve-mappings` | Keep WireMock mappings after tests (for debugging) | `false` (enabled in local runs) |
+| `--reuse-mappings` | Reuse existing mappings directory (e.g., `run_20260115_120000`) | None (runs recording phase) |
 
 #### Examples with Custom Arguments
 
@@ -217,6 +220,42 @@ def test_put_files_12mx100(perf_test):
 4. Add hatch scripts to `pyproject.toml`
 5. Update this README
 
+---
+
+## Tests with Recorded HTTP Traffic
+
+Tests with recorded HTTP traffic use WireMock to record HTTP traffic to Snowflake and replay it for deterministic performance testing without requiring live Snowflake connections.
+
+### How It Works
+
+1. **Recording Phase**: Real Snowflake requests/responses are captured via WireMock proxy and saved as mappings
+2. **Replay Phase**: Recorded mappings are replayed for consistent, repeatable performance measurements
+
+### Running Tests with Recorded HTTP Traffic
+
+```bash
+# Run with fresh recording (both record and replay phases)
+hatch run python-universal-local tests/test_select_1M_recorded_http.py::test_select_string_1M_arrow_recorded_http
+
+# Reuse existing mappings (skip recording, only replay phase)
+hatch run python-universal-local tests/test_select_1M_recorded_http.py::test_select_string_1M_arrow_recorded_http --reuse-mappings run_20260115_120000
+```
+
+### WireMock-Specific Parameters
+
+| Parameter | Description | Use Case |
+|-----------|-------------|----------|
+| `--preserve-mappings` | Keep mappings after test completion | Debugging or reusing mappings later. Enabled by default in local runs. |
+| `--reuse-mappings <dir>` | Skip recording phase and reuse existing mappings | Faster iteration when testing against the same recorded traffic (e.g., `--reuse-mappings run_20260115_120000`) |
+
+**Note**: Mappings are stored in `mappings/<run_id>/<test_name>/` and can be found by checking the test output for the run ID.
+
+### Key Details
+
+- **Test naming**: Tests end with `_recorded_http` (e.g., `test_select_string_1M_arrow_recorded_http`)
+- **Benchstore upload**: Only replay phase metrics are uploaded; recording phase results are for debugging only
+- **Docker networking**: Test driver and WireMock containers run in a shared Docker network for communication
+- **Server version**: Marked as "N/A" in replay mode for Old driver since tests don't connect to real Snowflake
 ---
 
 ## Architecture
@@ -406,7 +445,6 @@ The following tags are automatically attached to each metric:
 | `REGION` | Cloud region | Extracted from host | `"us-west-2"`, `"east-us-2"` |
 | `ARCHITECTURE` | CPU architecture | Detected from system | `"x86_64"`, `"arm64"` |
 | `OS` | Operating system | Detected from system | `"Debian_13"`, `"Darwin_24.6.0"` |
-| `TYPE` | Test execution type | For now e2e, will be expanded when tests with recorded http traffic will be added | `"e2e"` (end-to-end) |
 | `JENKINS_NODE` | Jenkins node label | Jenkins `JENKINS_NODE_LABEL` env var | `"regular-memory-node-snowos"` |
 | `DOCKER_MEMORY` | Container memory limit | Docker resource configuration | `"4g"` |
 | `DOCKER_CPU` | Container CPU limit | Docker resource configuration | `"2.0"` |

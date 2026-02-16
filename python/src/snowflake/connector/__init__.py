@@ -9,7 +9,7 @@ from typing import Any
 
 from ._internal.api_client.c_api import register_default_logger_callback
 from .connection import Connection
-from .cursor import Cursor
+from .cursor import DictCursor, SnowflakeCursor
 from .errors import (
     DatabaseError,
     DataError,
@@ -36,6 +36,7 @@ from .types import (
     Timestamp,
     TimestampFromTicks,
 )
+from .version import __version__
 
 
 # Module Interface Constants
@@ -66,6 +67,8 @@ def connect(**kwargs: Any) -> Connection:
 
 # Export all public symbols
 __all__ = [
+    # Version
+    "__version__",
     # Module constants
     "apilevel",
     "threadsafety",
@@ -74,7 +77,8 @@ __all__ = [
     "connect",
     # Classes
     "Connection",
-    "Cursor",
+    "DictCursor",
+    "SnowflakeCursor",
     # Exceptions
     "Warning",
     "Error",

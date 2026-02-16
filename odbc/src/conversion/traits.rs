@@ -12,6 +12,22 @@ pub struct Binding {
     pub str_len_or_ind_ptr: *mut sql::Len,
 }
 
+impl Binding {
+    pub fn write_fixed<T>(&self, value: T) {
+        unsafe {
+            if !self.target_value_ptr.is_null() {
+                std::ptr::write(self.target_value_ptr as *mut T, value);
+            }
+            if !self.str_len_or_ind_ptr.is_null() {
+                std::ptr::write(
+                    self.str_len_or_ind_ptr,
+                    std::mem::size_of::<T>() as sql::Len,
+                );
+            }
+        }
+    }
+}
+
 pub trait WriteODBCType: SnowflakeType {
     fn write_odbc_type(
         &self,

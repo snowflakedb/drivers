@@ -57,10 +57,15 @@ std::map<std::string, std::string> parse_parameters_json() {
   std::string search_str = json_str;
 
   std::vector<std::pair<std::string, std::vector<std::string>>> key_mappings = {
-      {"account", {"SNOWFLAKE_TEST_ACCOUNT", "account"}}, {"host", {"SNOWFLAKE_TEST_HOST", "host"}},
-      {"user", {"SNOWFLAKE_TEST_USER", "user"}},          {"database", {"SNOWFLAKE_TEST_DATABASE", "database"}},
-      {"schema", {"SNOWFLAKE_TEST_SCHEMA", "schema"}},    {"warehouse", {"SNOWFLAKE_TEST_WAREHOUSE", "warehouse"}},
-      {"role", {"SNOWFLAKE_TEST_ROLE", "role"}}};
+      {"account", {"SNOWFLAKE_TEST_ACCOUNT", "account"}},
+      {"host", {"SNOWFLAKE_TEST_HOST", "host"}},
+      {"user", {"SNOWFLAKE_TEST_USER", "user"}},
+      {"database", {"SNOWFLAKE_TEST_DATABASE", "database"}},
+      {"schema", {"SNOWFLAKE_TEST_SCHEMA", "schema"}},
+      {"warehouse", {"SNOWFLAKE_TEST_WAREHOUSE", "warehouse"}},
+      {"role", {"SNOWFLAKE_TEST_ROLE", "role"}},
+      {"verify_certificates", {"verify_certificates"}},
+      {"verify_hostname", {"verify_hostname"}}};
 
   for (const auto& [param_name, json_keys] : key_mappings) {
     for (const auto& json_key : json_keys) {

@@ -19,7 +19,7 @@ void create_get_target_directory(const std::string& sql_command);
 
 void execute_put_get_test(SQLHDBC dbc, const std::string& sql_command, int warmup_iterations, int iterations,
                           const std::string& test_name, const std::string& driver_type_str,
-                          const std::string& driver_version_str, const std::string& server_version, time_t now) {
+                          const std::string& driver_version_str, time_t now) {
   std::cout << "\n=== Executing PUT_GET Test ===\n";
   std::cout << "Query: " << sql_command << "\n";
 
@@ -30,7 +30,7 @@ void execute_put_get_test(SQLHDBC dbc, const std::string& sql_command, int warmu
   write_csv_results_put_get(results, filename);
 
   print_statistics_put_get(results);
-  finalize_test_execution(filename, driver_type_str, driver_version_str, server_version, now);
+  finalize_test_execution(dbc, filename, driver_type_str, driver_version_str, now);
 }
 
 void run_warmup_put_get(SQLHDBC dbc, const std::string& sql, int warmup_iterations) {

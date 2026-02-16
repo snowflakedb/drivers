@@ -5,7 +5,7 @@ pipeline {
 
     options {
         timestamps()
-        timeout(time: 4, unit: 'HOURS')
+        timeout(time: 6, unit: 'HOURS')
         skipDefaultCheckout()
     }
 
@@ -122,12 +122,18 @@ pipeline {
                                 )
                             ]) {
                                 script {
+                                    echo "Building WireMock image..."
+                                    sh """
+                                        source .venv/bin/activate
+                                        python -m hatch run build-wiremock
+                                    """
+                                    
+                                    // Build driver image
                                     echo "Building ${params.DRIVER} driver image..."
-                                    def buildCommand = """
+                                    sh """
                                         source .venv/bin/activate
                                         python -m hatch run build-${params.DRIVER}
                                     """
-                                    sh buildCommand
                                 }
                             }
                         }

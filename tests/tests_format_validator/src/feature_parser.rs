@@ -1,12 +1,11 @@
 use anyhow::{Context, Result};
-use lazy_static::lazy_static;
 use regex::Regex;
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
 
-lazy_static! {
-    static ref TAG_REGEX: Regex = Regex::new(r"@(\w+)").unwrap();
-    static ref STEP_REGEX: Regex = Regex::new(r"^\s*(Given|When|Then|And|But)\s+(.+)$").unwrap();
-}
+static TAG_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"@(\w+)").unwrap());
+static STEP_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^\s*(Given|When|Then|And|But)\s+(.+)$").unwrap());
 
 #[derive(Debug, Clone)]
 pub struct Feature {

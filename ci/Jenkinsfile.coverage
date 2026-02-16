@@ -2,11 +2,12 @@
  * Jenkinsfile for code coverage generation and upload to Codecov
  */
 
+@Library('pipeline-utils')
+import com.snowflake.DevEnvUtils
 import groovy.transform.Field
 
-@Field String DOCKER_IMAGE = 'nexus.int.snowflakecomputing.com:8086/docker/rhel8-universal-driver-coverage:3'
+@Field String DOCKER_IMAGE = 'artifactory.ci1.us-west-2.aws-dev.app.snowflake.com/internal-production-docker-snowflake-virtual/docker/rhel8-universal-driver-coverage:3'
 @Field String CODECOV_CREDENTIAL_ID = 'ud_repo_codecov'
-@Field String NEXUS_CREDENTIAL_ID = 'a791118f-a1ea-46cd-b876-56da1b9bc71c'
 @Field String PARAMS_CREDENTIAL_ID = 'sfctest0-parameters-secret'
 @Field Map coverageResults = [:]
 @Field Map DISPLAY_NAMES = [
@@ -17,8 +18,8 @@ import groovy.transform.Field
 ]
 
 def dockerSetup() {
-    withCredentials([string(credentialsId: NEXUS_CREDENTIAL_ID, variable: 'NEXUS_PASSWORD')]) {
-        sh label: 'Docker Login', script: 'export USERNAME=jenkins && source ./scripts/login_internal_docker.sh'
+    new DevEnvUtils().withSfCli {
+        sh "sf artifact oci auth"
     }
     sh label: 'Docker Pull', script: "docker pull ${DOCKER_IMAGE}"
 }

@@ -1,0 +1,20 @@
+name: Old Tests Coverage Check
+
+on:
+  pull_request:
+    types: [opened, synchronize, labeled, unlabeled]
+    branches:
+      - main
+
+jobs:
+  check_old_tests_coverage:
+    runs-on: ubuntu-latest
+    if: ${{ !contains(github.event.pull_request.labels.*.name, 'NO_OLD_COVERAGE_UPDATES') }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Ensure tests/oldTestsCoverage files are updated
+        run: git diff --name-only --diff-filter=ACMRT ${{ github.event.pull_request.base.sha }} ${{ github.sha }} | grep -q "^tests/oldTestsCoverage/"

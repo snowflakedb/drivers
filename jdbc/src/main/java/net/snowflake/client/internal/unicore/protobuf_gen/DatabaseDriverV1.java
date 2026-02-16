@@ -7127,6 +7127,1148 @@ public final class DatabaseDriverV1 extends com.google.protobuf.GeneratedFile {
 
   }
 
+  public interface ColumnMetadataOrBuilder extends
+      // @@protoc_insertion_point(interface_extends:database_driver_v1.ColumnMetadata)
+      com.google.protobuf.MessageOrBuilder {
+
+    /**
+     * <code>string name = 1;</code>
+     * @return The name.
+     */
+    java.lang.String getName();
+    /**
+     * <code>string name = 1;</code>
+     * @return The bytes for name.
+     */
+    com.google.protobuf.ByteString
+        getNameBytes();
+
+    /**
+     * <code>string type = 2;</code>
+     * @return The type.
+     */
+    java.lang.String getType();
+    /**
+     * <code>string type = 2;</code>
+     * @return The bytes for type.
+     */
+    com.google.protobuf.ByteString
+        getTypeBytes();
+
+    /**
+     * <code>optional int64 precision = 3;</code>
+     * @return Whether the precision field is set.
+     */
+    boolean hasPrecision();
+    /**
+     * <code>optional int64 precision = 3;</code>
+     * @return The precision.
+     */
+    long getPrecision();
+
+    /**
+     * <code>optional int64 scale = 4;</code>
+     * @return Whether the scale field is set.
+     */
+    boolean hasScale();
+    /**
+     * <code>optional int64 scale = 4;</code>
+     * @return The scale.
+     */
+    long getScale();
+
+    /**
+     * <code>optional int64 length = 5;</code>
+     * @return Whether the length field is set.
+     */
+    boolean hasLength();
+    /**
+     * <code>optional int64 length = 5;</code>
+     * @return The length.
+     */
+    long getLength();
+
+    /**
+     * <code>optional int64 byte_length = 6;</code>
+     * @return Whether the byteLength field is set.
+     */
+    boolean hasByteLength();
+    /**
+     * <code>optional int64 byte_length = 6;</code>
+     * @return The byteLength.
+     */
+    long getByteLength();
+
+    /**
+     * <code>bool nullable = 7;</code>
+     * @return The nullable.
+     */
+    boolean getNullable();
+  }
+  /**
+   * <pre>
+   * Column metadata for description
+   * </pre>
+   *
+   * Protobuf type {@code database_driver_v1.ColumnMetadata}
+   */
+  public static final class ColumnMetadata extends
+      com.google.protobuf.GeneratedMessage implements
+      // @@protoc_insertion_point(message_implements:database_driver_v1.ColumnMetadata)
+      ColumnMetadataOrBuilder {
+  private static final long serialVersionUID = 0L;
+    static {
+      com.google.protobuf.RuntimeVersion.validateProtobufGencodeVersion(
+        com.google.protobuf.RuntimeVersion.RuntimeDomain.PUBLIC,
+        /* major= */ 4,
+        /* minor= */ 32,
+        /* patch= */ 1,
+        /* suffix= */ "",
+        ColumnMetadata.class.getName());
+    }
+    // Use ColumnMetadata.newBuilder() to construct.
+    private ColumnMetadata(com.google.protobuf.GeneratedMessage.Builder<?> builder) {
+      super(builder);
+    }
+    private ColumnMetadata() {
+      name_ = "";
+      type_ = "";
+    }
+
+    public static final com.google.protobuf.Descriptors.Descriptor
+        getDescriptor() {
+      return net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.internal_static_database_driver_v1_ColumnMetadata_descriptor;
+    }
+
+    @java.lang.Override
+    protected com.google.protobuf.GeneratedMessage.FieldAccessorTable
+        internalGetFieldAccessorTable() {
+      return net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.internal_static_database_driver_v1_ColumnMetadata_fieldAccessorTable
+          .ensureFieldAccessorsInitialized(
+              net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ColumnMetadata.class, net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ColumnMetadata.Builder.class);
+    }
+
+    private int bitField0_;
+    public static final int NAME_FIELD_NUMBER = 1;
+    @SuppressWarnings("serial")
+    private volatile java.lang.Object name_ = "";
+    /**
+     * <code>string name = 1;</code>
+     * @return The name.
+     */
+    @java.lang.Override
+    public java.lang.String getName() {
+      java.lang.Object ref = name_;
+      if (ref instanceof java.lang.String) {
+        return (java.lang.String) ref;
+      } else {
+        com.google.protobuf.ByteString bs = 
+            (com.google.protobuf.ByteString) ref;
+        java.lang.String s = bs.toStringUtf8();
+        name_ = s;
+        return s;
+      }
+    }
+    /**
+     * <code>string name = 1;</code>
+     * @return The bytes for name.
+     */
+    @java.lang.Override
+    public com.google.protobuf.ByteString
+        getNameBytes() {
+      java.lang.Object ref = name_;
+      if (ref instanceof java.lang.String) {
+        com.google.protobuf.ByteString b = 
+            com.google.protobuf.ByteString.copyFromUtf8(
+                (java.lang.String) ref);
+        name_ = b;
+        return b;
+      } else {
+        return (com.google.protobuf.ByteString) ref;
+      }
+    }
+
+    public static final int TYPE_FIELD_NUMBER = 2;
+    @SuppressWarnings("serial")
+    private volatile java.lang.Object type_ = "";
+    /**
+     * <code>string type = 2;</code>
+     * @return The type.
+     */
+    @java.lang.Override
+    public java.lang.String getType() {
+      java.lang.Object ref = type_;
+      if (ref instanceof java.lang.String) {
+        return (java.lang.String) ref;
+      } else {
+        com.google.protobuf.ByteString bs = 
+            (com.google.protobuf.ByteString) ref;
+        java.lang.String s = bs.toStringUtf8();
+        type_ = s;
+        return s;
+      }
+    }
+    /**
+     * <code>string type = 2;</code>
+     * @return The bytes for type.
+     */
+    @java.lang.Override
+    public com.google.protobuf.ByteString
+        getTypeBytes() {
+      java.lang.Object ref = type_;
+      if (ref instanceof java.lang.String) {
+        com.google.protobuf.ByteString b = 
+            com.google.protobuf.ByteString.copyFromUtf8(
+                (java.lang.String) ref);
+        type_ = b;
+        return b;
+      } else {
+        return (com.google.protobuf.ByteString) ref;
+      }
+    }
+
+    public static final int PRECISION_FIELD_NUMBER = 3;
+    private long precision_ = 0L;
+    /**
+     * <code>optional int64 precision = 3;</code>
+     * @return Whether the precision field is set.
+     */
+    @java.lang.Override
+    public boolean hasPrecision() {
+      return ((bitField0_ & 0x00000001) != 0);
+    }
+    /**
+     * <code>optional int64 precision = 3;</code>
+     * @return The precision.
+     */
+    @java.lang.Override
+    public long getPrecision() {
+      return precision_;
+    }
+
+    public static final int SCALE_FIELD_NUMBER = 4;
+    private long scale_ = 0L;
+    /**
+     * <code>optional int64 scale = 4;</code>
+     * @return Whether the scale field is set.
+     */
+    @java.lang.Override
+    public boolean hasScale() {
+      return ((bitField0_ & 0x00000002) != 0);
+    }
+    /**
+     * <code>optional int64 scale = 4;</code>
+     * @return The scale.
+     */
+    @java.lang.Override
+    public long getScale() {
+      return scale_;
+    }
+
+    public static final int LENGTH_FIELD_NUMBER = 5;
+    private long length_ = 0L;
+    /**
+     * <code>optional int64 length = 5;</code>
+     * @return Whether the length field is set.
+     */
+    @java.lang.Override
+    public boolean hasLength() {
+      return ((bitField0_ & 0x00000004) != 0);
+    }
+    /**
+     * <code>optional int64 length = 5;</code>
+     * @return The length.
+     */
+    @java.lang.Override
+    public long getLength() {
+      return length_;
+    }
+
+    public static final int BYTE_LENGTH_FIELD_NUMBER = 6;
+    private long byteLength_ = 0L;
+    /**
+     * <code>optional int64 byte_length = 6;</code>
+     * @return Whether the byteLength field is set.
+     */
+    @java.lang.Override
+    public boolean hasByteLength() {
+      return ((bitField0_ & 0x00000008) != 0);
+    }
+    /**
+     * <code>optional int64 byte_length = 6;</code>
+     * @return The byteLength.
+     */
+    @java.lang.Override
+    public long getByteLength() {
+      return byteLength_;
+    }
+
+    public static final int NULLABLE_FIELD_NUMBER = 7;
+    private boolean nullable_ = false;
+    /**
+     * <code>bool nullable = 7;</code>
+     * @return The nullable.
+     */
+    @java.lang.Override
+    public boolean getNullable() {
+      return nullable_;
+    }
+
+    private byte memoizedIsInitialized = -1;
+    @java.lang.Override
+    public final boolean isInitialized() {
+      byte isInitialized = memoizedIsInitialized;
+      if (isInitialized == 1) return true;
+      if (isInitialized == 0) return false;
+
+      memoizedIsInitialized = 1;
+      return true;
+    }
+
+    @java.lang.Override
+    public void writeTo(com.google.protobuf.CodedOutputStream output)
+                        throws java.io.IOException {
+      if (!com.google.protobuf.GeneratedMessage.isStringEmpty(name_)) {
+        com.google.protobuf.GeneratedMessage.writeString(output, 1, name_);
+      }
+      if (!com.google.protobuf.GeneratedMessage.isStringEmpty(type_)) {
+        com.google.protobuf.GeneratedMessage.writeString(output, 2, type_);
+      }
+      if (((bitField0_ & 0x00000001) != 0)) {
+        output.writeInt64(3, precision_);
+      }
+      if (((bitField0_ & 0x00000002) != 0)) {
+        output.writeInt64(4, scale_);
+      }
+      if (((bitField0_ & 0x00000004) != 0)) {
+        output.writeInt64(5, length_);
+      }
+      if (((bitField0_ & 0x00000008) != 0)) {
+        output.writeInt64(6, byteLength_);
+      }
+      if (nullable_ != false) {
+        output.writeBool(7, nullable_);
+      }
+      getUnknownFields().writeTo(output);
+    }
+
+    @java.lang.Override
+    public int getSerializedSize() {
+      int size = memoizedSize;
+      if (size != -1) return size;
+
+      size = 0;
+      if (!com.google.protobuf.GeneratedMessage.isStringEmpty(name_)) {
+        size += com.google.protobuf.GeneratedMessage.computeStringSize(1, name_);
+      }
+      if (!com.google.protobuf.GeneratedMessage.isStringEmpty(type_)) {
+        size += com.google.protobuf.GeneratedMessage.computeStringSize(2, type_);
+      }
+      if (((bitField0_ & 0x00000001) != 0)) {
+        size += com.google.protobuf.CodedOutputStream
+          .computeInt64Size(3, precision_);
+      }
+      if (((bitField0_ & 0x00000002) != 0)) {
+        size += com.google.protobuf.CodedOutputStream
+          .computeInt64Size(4, scale_);
+      }
+      if (((bitField0_ & 0x00000004) != 0)) {
+        size += com.google.protobuf.CodedOutputStream
+          .computeInt64Size(5, length_);
+      }
+      if (((bitField0_ & 0x00000008) != 0)) {
+        size += com.google.protobuf.CodedOutputStream
+          .computeInt64Size(6, byteLength_);
+      }
+      if (nullable_ != false) {
+        size += com.google.protobuf.CodedOutputStream
+          .computeBoolSize(7, nullable_);
+      }
+      size += getUnknownFields().getSerializedSize();
+      memoizedSize = size;
+      return size;
+    }
+
+    @java.lang.Override
+    public boolean equals(final java.lang.Object obj) {
+      if (obj == this) {
+       return true;
+      }
+      if (!(obj instanceof net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ColumnMetadata)) {
+        return super.equals(obj);
+      }
+      net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ColumnMetadata other = (net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ColumnMetadata) obj;
+
+      if (!getName()
+          .equals(other.getName())) return false;
+      if (!getType()
+          .equals(other.getType())) return false;
+      if (hasPrecision() != other.hasPrecision()) return false;
+      if (hasPrecision()) {
+        if (getPrecision()
+            != other.getPrecision()) return false;
+      }
+      if (hasScale() != other.hasScale()) return false;
+      if (hasScale()) {
+        if (getScale()
+            != other.getScale()) return false;
+      }
+      if (hasLength() != other.hasLength()) return false;
+      if (hasLength()) {
+        if (getLength()
+            != other.getLength()) return false;
+      }
+      if (hasByteLength() != other.hasByteLength()) return false;
+      if (hasByteLength()) {
+        if (getByteLength()
+            != other.getByteLength()) return false;
+      }
+      if (getNullable()
+          != other.getNullable()) return false;
+      if (!getUnknownFields().equals(other.getUnknownFields())) return false;
+      return true;
+    }
+
+    @java.lang.Override
+    public int hashCode() {
+      if (memoizedHashCode != 0) {
+        return memoizedHashCode;
+      }
+      int hash = 41;
+      hash = (19 * hash) + getDescriptor().hashCode();
+      hash = (37 * hash) + NAME_FIELD_NUMBER;
+      hash = (53 * hash) + getName().hashCode();
+      hash = (37 * hash) + TYPE_FIELD_NUMBER;
+      hash = (53 * hash) + getType().hashCode();
+      if (hasPrecision()) {
+        hash = (37 * hash) + PRECISION_FIELD_NUMBER;
+        hash = (53 * hash) + com.google.protobuf.Internal.hashLong(
+            getPrecision());
+      }
+      if (hasScale()) {
+        hash = (37 * hash) + SCALE_FIELD_NUMBER;
+        hash = (53 * hash) + com.google.protobuf.Internal.hashLong(
+            getScale());
+      }
+      if (hasLength()) {
+        hash = (37 * hash) + LENGTH_FIELD_NUMBER;
+        hash = (53 * hash) + com.google.protobuf.Internal.hashLong(
+            getLength());
+      }
+      if (hasByteLength()) {
+        hash = (37 * hash) + BYTE_LENGTH_FIELD_NUMBER;
+        hash = (53 * hash) + com.google.protobuf.Internal.hashLong(
+            getByteLength());
+      }
+      hash = (37 * hash) + NULLABLE_FIELD_NUMBER;
+      hash = (53 * hash) + com.google.protobuf.Internal.hashBoolean(
+          getNullable());
+      hash = (29 * hash) + getUnknownFields().hashCode();
+      memoizedHashCode = hash;
+      return hash;
+    }
+
+    public static net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ColumnMetadata parseFrom(
+        java.nio.ByteBuffer data)
+        throws com.google.protobuf.InvalidProtocolBufferException {
+      return PARSER.parseFrom(data);
+    }
+    public static net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ColumnMetadata parseFrom(
+        java.nio.ByteBuffer data,
+        com.google.protobuf.ExtensionRegistryLite extensionRegistry)
+        throws com.google.protobuf.InvalidProtocolBufferException {
+      return PARSER.parseFrom(data, extensionRegistry);
+    }
+    public static net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ColumnMetadata parseFrom(
+        com.google.protobuf.ByteString data)
+        throws com.google.protobuf.InvalidProtocolBufferException {
+      return PARSER.parseFrom(data);
+    }
+    public static net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ColumnMetadata parseFrom(
+        com.google.protobuf.ByteString data,
+        com.google.protobuf.ExtensionRegistryLite extensionRegistry)
+        throws com.google.protobuf.InvalidProtocolBufferException {
+      return PARSER.parseFrom(data, extensionRegistry);
+    }
+    public static net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ColumnMetadata parseFrom(byte[] data)
+        throws com.google.protobuf.InvalidProtocolBufferException {
+      return PARSER.parseFrom(data);
+    }
+    public static net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ColumnMetadata parseFrom(
+        byte[] data,
+        com.google.protobuf.ExtensionRegistryLite extensionRegistry)
+        throws com.google.protobuf.InvalidProtocolBufferException {
+      return PARSER.parseFrom(data, extensionRegistry);
+    }
+    public static net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ColumnMetadata parseFrom(java.io.InputStream input)
+        throws java.io.IOException {
+      return com.google.protobuf.GeneratedMessage
+          .parseWithIOException(PARSER, input);
+    }
+    public static net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ColumnMetadata parseFrom(
+        java.io.InputStream input,
+        com.google.protobuf.ExtensionRegistryLite extensionRegistry)
+        throws java.io.IOException {
+      return com.google.protobuf.GeneratedMessage
+          .parseWithIOException(PARSER, input, extensionRegistry);
+    }
+
+    public static net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ColumnMetadata parseDelimitedFrom(java.io.InputStream input)
+        throws java.io.IOException {
+      return com.google.protobuf.GeneratedMessage
+          .parseDelimitedWithIOException(PARSER, input);
+    }
+
+    public static net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ColumnMetadata parseDelimitedFrom(
+        java.io.InputStream input,
+        com.google.protobuf.ExtensionRegistryLite extensionRegistry)
+        throws java.io.IOException {
+      return com.google.protobuf.GeneratedMessage
+          .parseDelimitedWithIOException(PARSER, input, extensionRegistry);
+    }
+    public static net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ColumnMetadata parseFrom(
+        com.google.protobuf.CodedInputStream input)
+        throws java.io.IOException {
+      return com.google.protobuf.GeneratedMessage
+          .parseWithIOException(PARSER, input);
+    }
+    public static net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ColumnMetadata parseFrom(
+        com.google.protobuf.CodedInputStream input,
+        com.google.protobuf.ExtensionRegistryLite extensionRegistry)
+        throws java.io.IOException {
+      return com.google.protobuf.GeneratedMessage
+          .parseWithIOException(PARSER, input, extensionRegistry);
+    }
+
+    @java.lang.Override
+    public Builder newBuilderForType() { return newBuilder(); }
+    public static Builder newBuilder() {
+      return DEFAULT_INSTANCE.toBuilder();
+    }
+    public static Builder newBuilder(net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ColumnMetadata prototype) {
+      return DEFAULT_INSTANCE.toBuilder().mergeFrom(prototype);
+    }
+    @java.lang.Override
+    public Builder toBuilder() {
+      return this == DEFAULT_INSTANCE
+          ? new Builder() : new Builder().mergeFrom(this);
+    }
+
+    @java.lang.Override
+    protected Builder newBuilderForType(
+        com.google.protobuf.GeneratedMessage.BuilderParent parent) {
+      Builder builder = new Builder(parent);
+      return builder;
+    }
+    /**
+     * <pre>
+     * Column metadata for description
+     * </pre>
+     *
+     * Protobuf type {@code database_driver_v1.ColumnMetadata}
+     */
+    public static final class Builder extends
+        com.google.protobuf.GeneratedMessage.Builder<Builder> implements
+        // @@protoc_insertion_point(builder_implements:database_driver_v1.ColumnMetadata)
+        net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ColumnMetadataOrBuilder {
+      public static final com.google.protobuf.Descriptors.Descriptor
+          getDescriptor() {
+        return net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.internal_static_database_driver_v1_ColumnMetadata_descriptor;
+      }
+
+      @java.lang.Override
+      protected com.google.protobuf.GeneratedMessage.FieldAccessorTable
+          internalGetFieldAccessorTable() {
+        return net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.internal_static_database_driver_v1_ColumnMetadata_fieldAccessorTable
+            .ensureFieldAccessorsInitialized(
+                net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ColumnMetadata.class, net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ColumnMetadata.Builder.class);
+      }
+
+      // Construct using net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ColumnMetadata.newBuilder()
+      private Builder() {
+
+      }
+
+      private Builder(
+          com.google.protobuf.GeneratedMessage.BuilderParent parent) {
+        super(parent);
+
+      }
+      @java.lang.Override
+      public Builder clear() {
+        super.clear();
+        bitField0_ = 0;
+        name_ = "";
+        type_ = "";
+        precision_ = 0L;
+        scale_ = 0L;
+        length_ = 0L;
+        byteLength_ = 0L;
+        nullable_ = false;
+        return this;
+      }
+
+      @java.lang.Override
+      public com.google.protobuf.Descriptors.Descriptor
+          getDescriptorForType() {
+        return net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.internal_static_database_driver_v1_ColumnMetadata_descriptor;
+      }
+
+      @java.lang.Override
+      public net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ColumnMetadata getDefaultInstanceForType() {
+        return net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ColumnMetadata.getDefaultInstance();
+      }
+
+      @java.lang.Override
+      public net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ColumnMetadata build() {
+        net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ColumnMetadata result = buildPartial();
+        if (!result.isInitialized()) {
+          throw newUninitializedMessageException(result);
+        }
+        return result;
+      }
+
+      @java.lang.Override
+      public net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ColumnMetadata buildPartial() {
+        net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ColumnMetadata result = new net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ColumnMetadata(this);
+        if (bitField0_ != 0) { buildPartial0(result); }
+        onBuilt();
+        return result;
+      }
+
+      private void buildPartial0(net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ColumnMetadata result) {
+        int from_bitField0_ = bitField0_;
+        if (((from_bitField0_ & 0x00000001) != 0)) {
+          result.name_ = name_;
+        }
+        if (((from_bitField0_ & 0x00000002) != 0)) {
+          result.type_ = type_;
+        }
+        int to_bitField0_ = 0;
+        if (((from_bitField0_ & 0x00000004) != 0)) {
+          result.precision_ = precision_;
+          to_bitField0_ |= 0x00000001;
+        }
+        if (((from_bitField0_ & 0x00000008) != 0)) {
+          result.scale_ = scale_;
+          to_bitField0_ |= 0x00000002;
+        }
+        if (((from_bitField0_ & 0x00000010) != 0)) {
+          result.length_ = length_;
+          to_bitField0_ |= 0x00000004;
+        }
+        if (((from_bitField0_ & 0x00000020) != 0)) {
+          result.byteLength_ = byteLength_;
+          to_bitField0_ |= 0x00000008;
+        }
+        if (((from_bitField0_ & 0x00000040) != 0)) {
+          result.nullable_ = nullable_;
+        }
+        result.bitField0_ |= to_bitField0_;
+      }
+
+      @java.lang.Override
+      public Builder mergeFrom(com.google.protobuf.Message other) {
+        if (other instanceof net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ColumnMetadata) {
+          return mergeFrom((net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ColumnMetadata)other);
+        } else {
+          super.mergeFrom(other);
+          return this;
+        }
+      }
+
+      public Builder mergeFrom(net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ColumnMetadata other) {
+        if (other == net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ColumnMetadata.getDefaultInstance()) return this;
+        if (!other.getName().isEmpty()) {
+          name_ = other.name_;
+          bitField0_ |= 0x00000001;
+          onChanged();
+        }
+        if (!other.getType().isEmpty()) {
+          type_ = other.type_;
+          bitField0_ |= 0x00000002;
+          onChanged();
+        }
+        if (other.hasPrecision()) {
+          setPrecision(other.getPrecision());
+        }
+        if (other.hasScale()) {
+          setScale(other.getScale());
+        }
+        if (other.hasLength()) {
+          setLength(other.getLength());
+        }
+        if (other.hasByteLength()) {
+          setByteLength(other.getByteLength());
+        }
+        if (other.getNullable() != false) {
+          setNullable(other.getNullable());
+        }
+        this.mergeUnknownFields(other.getUnknownFields());
+        onChanged();
+        return this;
+      }
+
+      @java.lang.Override
+      public final boolean isInitialized() {
+        return true;
+      }
+
+      @java.lang.Override
+      public Builder mergeFrom(
+          com.google.protobuf.CodedInputStream input,
+          com.google.protobuf.ExtensionRegistryLite extensionRegistry)
+          throws java.io.IOException {
+        if (extensionRegistry == null) {
+          throw new java.lang.NullPointerException();
+        }
+        try {
+          boolean done = false;
+          while (!done) {
+            int tag = input.readTag();
+            switch (tag) {
+              case 0:
+                done = true;
+                break;
+              case 10: {
+                name_ = input.readStringRequireUtf8();
+                bitField0_ |= 0x00000001;
+                break;
+              } // case 10
+              case 18: {
+                type_ = input.readStringRequireUtf8();
+                bitField0_ |= 0x00000002;
+                break;
+              } // case 18
+              case 24: {
+                precision_ = input.readInt64();
+                bitField0_ |= 0x00000004;
+                break;
+              } // case 24
+              case 32: {
+                scale_ = input.readInt64();
+                bitField0_ |= 0x00000008;
+                break;
+              } // case 32
+              case 40: {
+                length_ = input.readInt64();
+                bitField0_ |= 0x00000010;
+                break;
+              } // case 40
+              case 48: {
+                byteLength_ = input.readInt64();
+                bitField0_ |= 0x00000020;
+                break;
+              } // case 48
+              case 56: {
+                nullable_ = input.readBool();
+                bitField0_ |= 0x00000040;
+                break;
+              } // case 56
+              default: {
+                if (!super.parseUnknownField(input, extensionRegistry, tag)) {
+                  done = true; // was an endgroup tag
+                }
+                break;
+              } // default:
+            } // switch (tag)
+          } // while (!done)
+        } catch (com.google.protobuf.InvalidProtocolBufferException e) {
+          throw e.unwrapIOException();
+        } finally {
+          onChanged();
+        } // finally
+        return this;
+      }
+      private int bitField0_;
+
+      private java.lang.Object name_ = "";
+      /**
+       * <code>string name = 1;</code>
+       * @return The name.
+       */
+      public java.lang.String getName() {
+        java.lang.Object ref = name_;
+        if (!(ref instanceof java.lang.String)) {
+          com.google.protobuf.ByteString bs =
+              (com.google.protobuf.ByteString) ref;
+          java.lang.String s = bs.toStringUtf8();
+          name_ = s;
+          return s;
+        } else {
+          return (java.lang.String) ref;
+        }
+      }
+      /**
+       * <code>string name = 1;</code>
+       * @return The bytes for name.
+       */
+      public com.google.protobuf.ByteString
+          getNameBytes() {
+        java.lang.Object ref = name_;
+        if (ref instanceof String) {
+          com.google.protobuf.ByteString b = 
+              com.google.protobuf.ByteString.copyFromUtf8(
+                  (java.lang.String) ref);
+          name_ = b;
+          return b;
+        } else {
+          return (com.google.protobuf.ByteString) ref;
+        }
+      }
+      /**
+       * <code>string name = 1;</code>
+       * @param value The name to set.
+       * @return This builder for chaining.
+       */
+      public Builder setName(
+          java.lang.String value) {
+        if (value == null) { throw new NullPointerException(); }
+        name_ = value;
+        bitField0_ |= 0x00000001;
+        onChanged();
+        return this;
+      }
+      /**
+       * <code>string name = 1;</code>
+       * @return This builder for chaining.
+       */
+      public Builder clearName() {
+        name_ = getDefaultInstance().getName();
+        bitField0_ = (bitField0_ & ~0x00000001);
+        onChanged();
+        return this;
+      }
+      /**
+       * <code>string name = 1;</code>
+       * @param value The bytes for name to set.
+       * @return This builder for chaining.
+       */
+      public Builder setNameBytes(
+          com.google.protobuf.ByteString value) {
+        if (value == null) { throw new NullPointerException(); }
+        checkByteStringIsUtf8(value);
+        name_ = value;
+        bitField0_ |= 0x00000001;
+        onChanged();
+        return this;
+      }
+
+      private java.lang.Object type_ = "";
+      /**
+       * <code>string type = 2;</code>
+       * @return The type.
+       */
+      public java.lang.String getType() {
+        java.lang.Object ref = type_;
+        if (!(ref instanceof java.lang.String)) {
+          com.google.protobuf.ByteString bs =
+              (com.google.protobuf.ByteString) ref;
+          java.lang.String s = bs.toStringUtf8();
+          type_ = s;
+          return s;
+        } else {
+          return (java.lang.String) ref;
+        }
+      }
+      /**
+       * <code>string type = 2;</code>
+       * @return The bytes for type.
+       */
+      public com.google.protobuf.ByteString
+          getTypeBytes() {
+        java.lang.Object ref = type_;
+        if (ref instanceof String) {
+          com.google.protobuf.ByteString b = 
+              com.google.protobuf.ByteString.copyFromUtf8(
+                  (java.lang.String) ref);
+          type_ = b;
+          return b;
+        } else {
+          return (com.google.protobuf.ByteString) ref;
+        }
+      }
+      /**
+       * <code>string type = 2;</code>
+       * @param value The type to set.
+       * @return This builder for chaining.
+       */
+      public Builder setType(
+          java.lang.String value) {
+        if (value == null) { throw new NullPointerException(); }
+        type_ = value;
+        bitField0_ |= 0x00000002;
+        onChanged();
+        return this;
+      }
+      /**
+       * <code>string type = 2;</code>
+       * @return This builder for chaining.
+       */
+      public Builder clearType() {
+        type_ = getDefaultInstance().getType();
+        bitField0_ = (bitField0_ & ~0x00000002);
+        onChanged();
+        return this;
+      }
+      /**
+       * <code>string type = 2;</code>
+       * @param value The bytes for type to set.
+       * @return This builder for chaining.
+       */
+      public Builder setTypeBytes(
+          com.google.protobuf.ByteString value) {
+        if (value == null) { throw new NullPointerException(); }
+        checkByteStringIsUtf8(value);
+        type_ = value;
+        bitField0_ |= 0x00000002;
+        onChanged();
+        return this;
+      }
+
+      private long precision_ ;
+      /**
+       * <code>optional int64 precision = 3;</code>
+       * @return Whether the precision field is set.
+       */
+      @java.lang.Override
+      public boolean hasPrecision() {
+        return ((bitField0_ & 0x00000004) != 0);
+      }
+      /**
+       * <code>optional int64 precision = 3;</code>
+       * @return The precision.
+       */
+      @java.lang.Override
+      public long getPrecision() {
+        return precision_;
+      }
+      /**
+       * <code>optional int64 precision = 3;</code>
+       * @param value The precision to set.
+       * @return This builder for chaining.
+       */
+      public Builder setPrecision(long value) {
+
+        precision_ = value;
+        bitField0_ |= 0x00000004;
+        onChanged();
+        return this;
+      }
+      /**
+       * <code>optional int64 precision = 3;</code>
+       * @return This builder for chaining.
+       */
+      public Builder clearPrecision() {
+        bitField0_ = (bitField0_ & ~0x00000004);
+        precision_ = 0L;
+        onChanged();
+        return this;
+      }
+
+      private long scale_ ;
+      /**
+       * <code>optional int64 scale = 4;</code>
+       * @return Whether the scale field is set.
+       */
+      @java.lang.Override
+      public boolean hasScale() {
+        return ((bitField0_ & 0x00000008) != 0);
+      }
+      /**
+       * <code>optional int64 scale = 4;</code>
+       * @return The scale.
+       */
+      @java.lang.Override
+      public long getScale() {
+        return scale_;
+      }
+      /**
+       * <code>optional int64 scale = 4;</code>
+       * @param value The scale to set.
+       * @return This builder for chaining.
+       */
+      public Builder setScale(long value) {
+
+        scale_ = value;
+        bitField0_ |= 0x00000008;
+        onChanged();
+        return this;
+      }
+      /**
+       * <code>optional int64 scale = 4;</code>
+       * @return This builder for chaining.
+       */
+      public Builder clearScale() {
+        bitField0_ = (bitField0_ & ~0x00000008);
+        scale_ = 0L;
+        onChanged();
+        return this;
+      }
+
+      private long length_ ;
+      /**
+       * <code>optional int64 length = 5;</code>
+       * @return Whether the length field is set.
+       */
+      @java.lang.Override
+      public boolean hasLength() {
+        return ((bitField0_ & 0x00000010) != 0);
+      }
+      /**
+       * <code>optional int64 length = 5;</code>
+       * @return The length.
+       */
+      @java.lang.Override
+      public long getLength() {
+        return length_;
+      }
+      /**
+       * <code>optional int64 length = 5;</code>
+       * @param value The length to set.
+       * @return This builder for chaining.
+       */
+      public Builder setLength(long value) {
+
+        length_ = value;
+        bitField0_ |= 0x00000010;
+        onChanged();
+        return this;
+      }
+      /**
+       * <code>optional int64 length = 5;</code>
+       * @return This builder for chaining.
+       */
+      public Builder clearLength() {
+        bitField0_ = (bitField0_ & ~0x00000010);
+        length_ = 0L;
+        onChanged();
+        return this;
+      }
+
+      private long byteLength_ ;
+      /**
+       * <code>optional int64 byte_length = 6;</code>
+       * @return Whether the byteLength field is set.
+       */
+      @java.lang.Override
+      public boolean hasByteLength() {
+        return ((bitField0_ & 0x00000020) != 0);
+      }
+      /**
+       * <code>optional int64 byte_length = 6;</code>
+       * @return The byteLength.
+       */
+      @java.lang.Override
+      public long getByteLength() {
+        return byteLength_;
+      }
+      /**
+       * <code>optional int64 byte_length = 6;</code>
+       * @param value The byteLength to set.
+       * @return This builder for chaining.
+       */
+      public Builder setByteLength(long value) {
+
+        byteLength_ = value;
+        bitField0_ |= 0x00000020;
+        onChanged();
+        return this;
+      }
+      /**
+       * <code>optional int64 byte_length = 6;</code>
+       * @return This builder for chaining.
+       */
+      public Builder clearByteLength() {
+        bitField0_ = (bitField0_ & ~0x00000020);
+        byteLength_ = 0L;
+        onChanged();
+        return this;
+      }
+
+      private boolean nullable_ ;
+      /**
+       * <code>bool nullable = 7;</code>
+       * @return The nullable.
+       */
+      @java.lang.Override
+      public boolean getNullable() {
+        return nullable_;
+      }
+      /**
+       * <code>bool nullable = 7;</code>
+       * @param value The nullable to set.
+       * @return This builder for chaining.
+       */
+      public Builder setNullable(boolean value) {
+
+        nullable_ = value;
+        bitField0_ |= 0x00000040;
+        onChanged();
+        return this;
+      }
+      /**
+       * <code>bool nullable = 7;</code>
+       * @return This builder for chaining.
+       */
+      public Builder clearNullable() {
+        bitField0_ = (bitField0_ & ~0x00000040);
+        nullable_ = false;
+        onChanged();
+        return this;
+      }
+
+      // @@protoc_insertion_point(builder_scope:database_driver_v1.ColumnMetadata)
+    }
+
+    // @@protoc_insertion_point(class_scope:database_driver_v1.ColumnMetadata)
+    private static final net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ColumnMetadata DEFAULT_INSTANCE;
+    static {
+      DEFAULT_INSTANCE = new net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ColumnMetadata();
+    }
+
+    public static net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ColumnMetadata getDefaultInstance() {
+      return DEFAULT_INSTANCE;
+    }
+
+    private static final com.google.protobuf.Parser<ColumnMetadata>
+        PARSER = new com.google.protobuf.AbstractParser<ColumnMetadata>() {
+      @java.lang.Override
+      public ColumnMetadata parsePartialFrom(
+          com.google.protobuf.CodedInputStream input,
+          com.google.protobuf.ExtensionRegistryLite extensionRegistry)
+          throws com.google.protobuf.InvalidProtocolBufferException {
+        Builder builder = newBuilder();
+        try {
+          builder.mergeFrom(input, extensionRegistry);
+        } catch (com.google.protobuf.InvalidProtocolBufferException e) {
+          throw e.setUnfinishedMessage(builder.buildPartial());
+        } catch (com.google.protobuf.UninitializedMessageException e) {
+          throw e.asInvalidProtocolBufferException().setUnfinishedMessage(builder.buildPartial());
+        } catch (java.io.IOException e) {
+          throw new com.google.protobuf.InvalidProtocolBufferException(e)
+              .setUnfinishedMessage(builder.buildPartial());
+        }
+        return builder.buildPartial();
+      }
+    };
+
+    public static com.google.protobuf.Parser<ColumnMetadata> parser() {
+      return PARSER;
+    }
+
+    @java.lang.Override
+    public com.google.protobuf.Parser<ColumnMetadata> getParserForType() {
+      return PARSER;
+    }
+
+    @java.lang.Override
+    public net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ColumnMetadata getDefaultInstanceForType() {
+      return DEFAULT_INSTANCE;
+    }
+
+  }
+
   public interface ExecuteResultOrBuilder extends
       // @@protoc_insertion_point(interface_extends:database_driver_v1.ExecuteResult)
       com.google.protobuf.MessageOrBuilder {
@@ -7151,6 +8293,42 @@ public final class DatabaseDriverV1 extends com.google.protobuf.GeneratedFile {
      * @return The rowsAffected.
      */
     long getRowsAffected();
+
+    /**
+     * <code>string query_id = 3;</code>
+     * @return The queryId.
+     */
+    java.lang.String getQueryId();
+    /**
+     * <code>string query_id = 3;</code>
+     * @return The bytes for queryId.
+     */
+    com.google.protobuf.ByteString
+        getQueryIdBytes();
+
+    /**
+     * <code>repeated .database_driver_v1.ColumnMetadata columns = 4;</code>
+     */
+    java.util.List<net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ColumnMetadata> 
+        getColumnsList();
+    /**
+     * <code>repeated .database_driver_v1.ColumnMetadata columns = 4;</code>
+     */
+    net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ColumnMetadata getColumns(int index);
+    /**
+     * <code>repeated .database_driver_v1.ColumnMetadata columns = 4;</code>
+     */
+    int getColumnsCount();
+    /**
+     * <code>repeated .database_driver_v1.ColumnMetadata columns = 4;</code>
+     */
+    java.util.List<? extends net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ColumnMetadataOrBuilder> 
+        getColumnsOrBuilderList();
+    /**
+     * <code>repeated .database_driver_v1.ColumnMetadata columns = 4;</code>
+     */
+    net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ColumnMetadataOrBuilder getColumnsOrBuilder(
+        int index);
   }
   /**
    * <pre>
@@ -7178,6 +8356,8 @@ public final class DatabaseDriverV1 extends com.google.protobuf.GeneratedFile {
       super(builder);
     }
     private ExecuteResult() {
+      queryId_ = "";
+      columns_ = java.util.Collections.emptyList();
     }
 
     public static final com.google.protobuf.Descriptors.Descriptor
@@ -7231,6 +8411,86 @@ public final class DatabaseDriverV1 extends com.google.protobuf.GeneratedFile {
       return rowsAffected_;
     }
 
+    public static final int QUERY_ID_FIELD_NUMBER = 3;
+    @SuppressWarnings("serial")
+    private volatile java.lang.Object queryId_ = "";
+    /**
+     * <code>string query_id = 3;</code>
+     * @return The queryId.
+     */
+    @java.lang.Override
+    public java.lang.String getQueryId() {
+      java.lang.Object ref = queryId_;
+      if (ref instanceof java.lang.String) {
+        return (java.lang.String) ref;
+      } else {
+        com.google.protobuf.ByteString bs = 
+            (com.google.protobuf.ByteString) ref;
+        java.lang.String s = bs.toStringUtf8();
+        queryId_ = s;
+        return s;
+      }
+    }
+    /**
+     * <code>string query_id = 3;</code>
+     * @return The bytes for queryId.
+     */
+    @java.lang.Override
+    public com.google.protobuf.ByteString
+        getQueryIdBytes() {
+      java.lang.Object ref = queryId_;
+      if (ref instanceof java.lang.String) {
+        com.google.protobuf.ByteString b = 
+            com.google.protobuf.ByteString.copyFromUtf8(
+                (java.lang.String) ref);
+        queryId_ = b;
+        return b;
+      } else {
+        return (com.google.protobuf.ByteString) ref;
+      }
+    }
+
+    public static final int COLUMNS_FIELD_NUMBER = 4;
+    @SuppressWarnings("serial")
+    private java.util.List<net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ColumnMetadata> columns_;
+    /**
+     * <code>repeated .database_driver_v1.ColumnMetadata columns = 4;</code>
+     */
+    @java.lang.Override
+    public java.util.List<net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ColumnMetadata> getColumnsList() {
+      return columns_;
+    }
+    /**
+     * <code>repeated .database_driver_v1.ColumnMetadata columns = 4;</code>
+     */
+    @java.lang.Override
+    public java.util.List<? extends net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ColumnMetadataOrBuilder> 
+        getColumnsOrBuilderList() {
+      return columns_;
+    }
+    /**
+     * <code>repeated .database_driver_v1.ColumnMetadata columns = 4;</code>
+     */
+    @java.lang.Override
+    public int getColumnsCount() {
+      return columns_.size();
+    }
+    /**
+     * <code>repeated .database_driver_v1.ColumnMetadata columns = 4;</code>
+     */
+    @java.lang.Override
+    public net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ColumnMetadata getColumns(int index) {
+      return columns_.get(index);
+    }
+    /**
+     * <code>repeated .database_driver_v1.ColumnMetadata columns = 4;</code>
+     */
+    @java.lang.Override
+    public net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ColumnMetadataOrBuilder getColumnsOrBuilder(
+        int index) {
+      return columns_.get(index);
+    }
+
     private byte memoizedIsInitialized = -1;
     @java.lang.Override
     public final boolean isInitialized() {
@@ -7251,6 +8511,12 @@ public final class DatabaseDriverV1 extends com.google.protobuf.GeneratedFile {
       if (rowsAffected_ != 0L) {
         output.writeInt64(2, rowsAffected_);
       }
+      if (!com.google.protobuf.GeneratedMessage.isStringEmpty(queryId_)) {
+        com.google.protobuf.GeneratedMessage.writeString(output, 3, queryId_);
+      }
+      for (int i = 0; i < columns_.size(); i++) {
+        output.writeMessage(4, columns_.get(i));
+      }
       getUnknownFields().writeTo(output);
     }
 
@@ -7267,6 +8533,13 @@ public final class DatabaseDriverV1 extends com.google.protobuf.GeneratedFile {
       if (rowsAffected_ != 0L) {
         size += com.google.protobuf.CodedOutputStream
           .computeInt64Size(2, rowsAffected_);
+      }
+      if (!com.google.protobuf.GeneratedMessage.isStringEmpty(queryId_)) {
+        size += com.google.protobuf.GeneratedMessage.computeStringSize(3, queryId_);
+      }
+      for (int i = 0; i < columns_.size(); i++) {
+        size += com.google.protobuf.CodedOutputStream
+          .computeMessageSize(4, columns_.get(i));
       }
       size += getUnknownFields().getSerializedSize();
       memoizedSize = size;
@@ -7290,6 +8563,10 @@ public final class DatabaseDriverV1 extends com.google.protobuf.GeneratedFile {
       }
       if (getRowsAffected()
           != other.getRowsAffected()) return false;
+      if (!getQueryId()
+          .equals(other.getQueryId())) return false;
+      if (!getColumnsList()
+          .equals(other.getColumnsList())) return false;
       if (!getUnknownFields().equals(other.getUnknownFields())) return false;
       return true;
     }
@@ -7308,6 +8585,12 @@ public final class DatabaseDriverV1 extends com.google.protobuf.GeneratedFile {
       hash = (37 * hash) + ROWS_AFFECTED_FIELD_NUMBER;
       hash = (53 * hash) + com.google.protobuf.Internal.hashLong(
           getRowsAffected());
+      hash = (37 * hash) + QUERY_ID_FIELD_NUMBER;
+      hash = (53 * hash) + getQueryId().hashCode();
+      if (getColumnsCount() > 0) {
+        hash = (37 * hash) + COLUMNS_FIELD_NUMBER;
+        hash = (53 * hash) + getColumnsList().hashCode();
+      }
       hash = (29 * hash) + getUnknownFields().hashCode();
       memoizedHashCode = hash;
       return hash;
@@ -7443,6 +8726,7 @@ public final class DatabaseDriverV1 extends com.google.protobuf.GeneratedFile {
         if (com.google.protobuf.GeneratedMessage
                 .alwaysUseFieldBuilders) {
           internalGetStreamFieldBuilder();
+          internalGetColumnsFieldBuilder();
         }
       }
       @java.lang.Override
@@ -7455,6 +8739,14 @@ public final class DatabaseDriverV1 extends com.google.protobuf.GeneratedFile {
           streamBuilder_ = null;
         }
         rowsAffected_ = 0L;
+        queryId_ = "";
+        if (columnsBuilder_ == null) {
+          columns_ = java.util.Collections.emptyList();
+        } else {
+          columns_ = null;
+          columnsBuilder_.clear();
+        }
+        bitField0_ = (bitField0_ & ~0x00000008);
         return this;
       }
 
@@ -7481,9 +8773,22 @@ public final class DatabaseDriverV1 extends com.google.protobuf.GeneratedFile {
       @java.lang.Override
       public net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ExecuteResult buildPartial() {
         net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ExecuteResult result = new net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ExecuteResult(this);
+        buildPartialRepeatedFields(result);
         if (bitField0_ != 0) { buildPartial0(result); }
         onBuilt();
         return result;
+      }
+
+      private void buildPartialRepeatedFields(net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ExecuteResult result) {
+        if (columnsBuilder_ == null) {
+          if (((bitField0_ & 0x00000008) != 0)) {
+            columns_ = java.util.Collections.unmodifiableList(columns_);
+            bitField0_ = (bitField0_ & ~0x00000008);
+          }
+          result.columns_ = columns_;
+        } else {
+          result.columns_ = columnsBuilder_.build();
+        }
       }
 
       private void buildPartial0(net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ExecuteResult result) {
@@ -7497,6 +8802,9 @@ public final class DatabaseDriverV1 extends com.google.protobuf.GeneratedFile {
         }
         if (((from_bitField0_ & 0x00000002) != 0)) {
           result.rowsAffected_ = rowsAffected_;
+        }
+        if (((from_bitField0_ & 0x00000004) != 0)) {
+          result.queryId_ = queryId_;
         }
         result.bitField0_ |= to_bitField0_;
       }
@@ -7518,6 +8826,37 @@ public final class DatabaseDriverV1 extends com.google.protobuf.GeneratedFile {
         }
         if (other.getRowsAffected() != 0L) {
           setRowsAffected(other.getRowsAffected());
+        }
+        if (!other.getQueryId().isEmpty()) {
+          queryId_ = other.queryId_;
+          bitField0_ |= 0x00000004;
+          onChanged();
+        }
+        if (columnsBuilder_ == null) {
+          if (!other.columns_.isEmpty()) {
+            if (columns_.isEmpty()) {
+              columns_ = other.columns_;
+              bitField0_ = (bitField0_ & ~0x00000008);
+            } else {
+              ensureColumnsIsMutable();
+              columns_.addAll(other.columns_);
+            }
+            onChanged();
+          }
+        } else {
+          if (!other.columns_.isEmpty()) {
+            if (columnsBuilder_.isEmpty()) {
+              columnsBuilder_.dispose();
+              columnsBuilder_ = null;
+              columns_ = other.columns_;
+              bitField0_ = (bitField0_ & ~0x00000008);
+              columnsBuilder_ = 
+                com.google.protobuf.GeneratedMessage.alwaysUseFieldBuilders ?
+                   internalGetColumnsFieldBuilder() : null;
+            } else {
+              columnsBuilder_.addAllMessages(other.columns_);
+            }
+          }
         }
         this.mergeUnknownFields(other.getUnknownFields());
         onChanged();
@@ -7557,6 +8896,24 @@ public final class DatabaseDriverV1 extends com.google.protobuf.GeneratedFile {
                 bitField0_ |= 0x00000002;
                 break;
               } // case 16
+              case 26: {
+                queryId_ = input.readStringRequireUtf8();
+                bitField0_ |= 0x00000004;
+                break;
+              } // case 26
+              case 34: {
+                net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ColumnMetadata m =
+                    input.readMessage(
+                        net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ColumnMetadata.parser(),
+                        extensionRegistry);
+                if (columnsBuilder_ == null) {
+                  ensureColumnsIsMutable();
+                  columns_.add(m);
+                } else {
+                  columnsBuilder_.addMessage(m);
+                }
+                break;
+              } // case 34
               default: {
                 if (!super.parseUnknownField(input, extensionRegistry, tag)) {
                   done = true; // was an endgroup tag
@@ -7725,6 +9082,318 @@ public final class DatabaseDriverV1 extends com.google.protobuf.GeneratedFile {
         rowsAffected_ = 0L;
         onChanged();
         return this;
+      }
+
+      private java.lang.Object queryId_ = "";
+      /**
+       * <code>string query_id = 3;</code>
+       * @return The queryId.
+       */
+      public java.lang.String getQueryId() {
+        java.lang.Object ref = queryId_;
+        if (!(ref instanceof java.lang.String)) {
+          com.google.protobuf.ByteString bs =
+              (com.google.protobuf.ByteString) ref;
+          java.lang.String s = bs.toStringUtf8();
+          queryId_ = s;
+          return s;
+        } else {
+          return (java.lang.String) ref;
+        }
+      }
+      /**
+       * <code>string query_id = 3;</code>
+       * @return The bytes for queryId.
+       */
+      public com.google.protobuf.ByteString
+          getQueryIdBytes() {
+        java.lang.Object ref = queryId_;
+        if (ref instanceof String) {
+          com.google.protobuf.ByteString b = 
+              com.google.protobuf.ByteString.copyFromUtf8(
+                  (java.lang.String) ref);
+          queryId_ = b;
+          return b;
+        } else {
+          return (com.google.protobuf.ByteString) ref;
+        }
+      }
+      /**
+       * <code>string query_id = 3;</code>
+       * @param value The queryId to set.
+       * @return This builder for chaining.
+       */
+      public Builder setQueryId(
+          java.lang.String value) {
+        if (value == null) { throw new NullPointerException(); }
+        queryId_ = value;
+        bitField0_ |= 0x00000004;
+        onChanged();
+        return this;
+      }
+      /**
+       * <code>string query_id = 3;</code>
+       * @return This builder for chaining.
+       */
+      public Builder clearQueryId() {
+        queryId_ = getDefaultInstance().getQueryId();
+        bitField0_ = (bitField0_ & ~0x00000004);
+        onChanged();
+        return this;
+      }
+      /**
+       * <code>string query_id = 3;</code>
+       * @param value The bytes for queryId to set.
+       * @return This builder for chaining.
+       */
+      public Builder setQueryIdBytes(
+          com.google.protobuf.ByteString value) {
+        if (value == null) { throw new NullPointerException(); }
+        checkByteStringIsUtf8(value);
+        queryId_ = value;
+        bitField0_ |= 0x00000004;
+        onChanged();
+        return this;
+      }
+
+      private java.util.List<net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ColumnMetadata> columns_ =
+        java.util.Collections.emptyList();
+      private void ensureColumnsIsMutable() {
+        if (!((bitField0_ & 0x00000008) != 0)) {
+          columns_ = new java.util.ArrayList<net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ColumnMetadata>(columns_);
+          bitField0_ |= 0x00000008;
+         }
+      }
+
+      private com.google.protobuf.RepeatedFieldBuilder<
+          net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ColumnMetadata, net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ColumnMetadata.Builder, net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ColumnMetadataOrBuilder> columnsBuilder_;
+
+      /**
+       * <code>repeated .database_driver_v1.ColumnMetadata columns = 4;</code>
+       */
+      public java.util.List<net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ColumnMetadata> getColumnsList() {
+        if (columnsBuilder_ == null) {
+          return java.util.Collections.unmodifiableList(columns_);
+        } else {
+          return columnsBuilder_.getMessageList();
+        }
+      }
+      /**
+       * <code>repeated .database_driver_v1.ColumnMetadata columns = 4;</code>
+       */
+      public int getColumnsCount() {
+        if (columnsBuilder_ == null) {
+          return columns_.size();
+        } else {
+          return columnsBuilder_.getCount();
+        }
+      }
+      /**
+       * <code>repeated .database_driver_v1.ColumnMetadata columns = 4;</code>
+       */
+      public net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ColumnMetadata getColumns(int index) {
+        if (columnsBuilder_ == null) {
+          return columns_.get(index);
+        } else {
+          return columnsBuilder_.getMessage(index);
+        }
+      }
+      /**
+       * <code>repeated .database_driver_v1.ColumnMetadata columns = 4;</code>
+       */
+      public Builder setColumns(
+          int index, net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ColumnMetadata value) {
+        if (columnsBuilder_ == null) {
+          if (value == null) {
+            throw new NullPointerException();
+          }
+          ensureColumnsIsMutable();
+          columns_.set(index, value);
+          onChanged();
+        } else {
+          columnsBuilder_.setMessage(index, value);
+        }
+        return this;
+      }
+      /**
+       * <code>repeated .database_driver_v1.ColumnMetadata columns = 4;</code>
+       */
+      public Builder setColumns(
+          int index, net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ColumnMetadata.Builder builderForValue) {
+        if (columnsBuilder_ == null) {
+          ensureColumnsIsMutable();
+          columns_.set(index, builderForValue.build());
+          onChanged();
+        } else {
+          columnsBuilder_.setMessage(index, builderForValue.build());
+        }
+        return this;
+      }
+      /**
+       * <code>repeated .database_driver_v1.ColumnMetadata columns = 4;</code>
+       */
+      public Builder addColumns(net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ColumnMetadata value) {
+        if (columnsBuilder_ == null) {
+          if (value == null) {
+            throw new NullPointerException();
+          }
+          ensureColumnsIsMutable();
+          columns_.add(value);
+          onChanged();
+        } else {
+          columnsBuilder_.addMessage(value);
+        }
+        return this;
+      }
+      /**
+       * <code>repeated .database_driver_v1.ColumnMetadata columns = 4;</code>
+       */
+      public Builder addColumns(
+          int index, net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ColumnMetadata value) {
+        if (columnsBuilder_ == null) {
+          if (value == null) {
+            throw new NullPointerException();
+          }
+          ensureColumnsIsMutable();
+          columns_.add(index, value);
+          onChanged();
+        } else {
+          columnsBuilder_.addMessage(index, value);
+        }
+        return this;
+      }
+      /**
+       * <code>repeated .database_driver_v1.ColumnMetadata columns = 4;</code>
+       */
+      public Builder addColumns(
+          net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ColumnMetadata.Builder builderForValue) {
+        if (columnsBuilder_ == null) {
+          ensureColumnsIsMutable();
+          columns_.add(builderForValue.build());
+          onChanged();
+        } else {
+          columnsBuilder_.addMessage(builderForValue.build());
+        }
+        return this;
+      }
+      /**
+       * <code>repeated .database_driver_v1.ColumnMetadata columns = 4;</code>
+       */
+      public Builder addColumns(
+          int index, net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ColumnMetadata.Builder builderForValue) {
+        if (columnsBuilder_ == null) {
+          ensureColumnsIsMutable();
+          columns_.add(index, builderForValue.build());
+          onChanged();
+        } else {
+          columnsBuilder_.addMessage(index, builderForValue.build());
+        }
+        return this;
+      }
+      /**
+       * <code>repeated .database_driver_v1.ColumnMetadata columns = 4;</code>
+       */
+      public Builder addAllColumns(
+          java.lang.Iterable<? extends net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ColumnMetadata> values) {
+        if (columnsBuilder_ == null) {
+          ensureColumnsIsMutable();
+          com.google.protobuf.AbstractMessageLite.Builder.addAll(
+              values, columns_);
+          onChanged();
+        } else {
+          columnsBuilder_.addAllMessages(values);
+        }
+        return this;
+      }
+      /**
+       * <code>repeated .database_driver_v1.ColumnMetadata columns = 4;</code>
+       */
+      public Builder clearColumns() {
+        if (columnsBuilder_ == null) {
+          columns_ = java.util.Collections.emptyList();
+          bitField0_ = (bitField0_ & ~0x00000008);
+          onChanged();
+        } else {
+          columnsBuilder_.clear();
+        }
+        return this;
+      }
+      /**
+       * <code>repeated .database_driver_v1.ColumnMetadata columns = 4;</code>
+       */
+      public Builder removeColumns(int index) {
+        if (columnsBuilder_ == null) {
+          ensureColumnsIsMutable();
+          columns_.remove(index);
+          onChanged();
+        } else {
+          columnsBuilder_.remove(index);
+        }
+        return this;
+      }
+      /**
+       * <code>repeated .database_driver_v1.ColumnMetadata columns = 4;</code>
+       */
+      public net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ColumnMetadata.Builder getColumnsBuilder(
+          int index) {
+        return internalGetColumnsFieldBuilder().getBuilder(index);
+      }
+      /**
+       * <code>repeated .database_driver_v1.ColumnMetadata columns = 4;</code>
+       */
+      public net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ColumnMetadataOrBuilder getColumnsOrBuilder(
+          int index) {
+        if (columnsBuilder_ == null) {
+          return columns_.get(index);  } else {
+          return columnsBuilder_.getMessageOrBuilder(index);
+        }
+      }
+      /**
+       * <code>repeated .database_driver_v1.ColumnMetadata columns = 4;</code>
+       */
+      public java.util.List<? extends net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ColumnMetadataOrBuilder> 
+           getColumnsOrBuilderList() {
+        if (columnsBuilder_ != null) {
+          return columnsBuilder_.getMessageOrBuilderList();
+        } else {
+          return java.util.Collections.unmodifiableList(columns_);
+        }
+      }
+      /**
+       * <code>repeated .database_driver_v1.ColumnMetadata columns = 4;</code>
+       */
+      public net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ColumnMetadata.Builder addColumnsBuilder() {
+        return internalGetColumnsFieldBuilder().addBuilder(
+            net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ColumnMetadata.getDefaultInstance());
+      }
+      /**
+       * <code>repeated .database_driver_v1.ColumnMetadata columns = 4;</code>
+       */
+      public net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ColumnMetadata.Builder addColumnsBuilder(
+          int index) {
+        return internalGetColumnsFieldBuilder().addBuilder(
+            index, net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ColumnMetadata.getDefaultInstance());
+      }
+      /**
+       * <code>repeated .database_driver_v1.ColumnMetadata columns = 4;</code>
+       */
+      public java.util.List<net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ColumnMetadata.Builder> 
+           getColumnsBuilderList() {
+        return internalGetColumnsFieldBuilder().getBuilderList();
+      }
+      private com.google.protobuf.RepeatedFieldBuilder<
+          net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ColumnMetadata, net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ColumnMetadata.Builder, net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ColumnMetadataOrBuilder> 
+          internalGetColumnsFieldBuilder() {
+        if (columnsBuilder_ == null) {
+          columnsBuilder_ = new com.google.protobuf.RepeatedFieldBuilder<
+              net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ColumnMetadata, net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ColumnMetadata.Builder, net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ColumnMetadataOrBuilder>(
+                  columns_,
+                  ((bitField0_ & 0x00000008) != 0),
+                  getParentForChildren(),
+                  isClean());
+          columns_ = null;
+        }
+        return columnsBuilder_;
       }
 
       // @@protoc_insertion_point(builder_scope:database_driver_v1.ExecuteResult)
@@ -52501,6 +54170,11 @@ public final class DatabaseDriverV1 extends com.google.protobuf.GeneratedFile {
     com.google.protobuf.GeneratedMessage.FieldAccessorTable
       internal_static_database_driver_v1_DriverException_fieldAccessorTable;
   private static final com.google.protobuf.Descriptors.Descriptor
+    internal_static_database_driver_v1_ColumnMetadata_descriptor;
+  private static final 
+    com.google.protobuf.GeneratedMessage.FieldAccessorTable
+      internal_static_database_driver_v1_ColumnMetadata_fieldAccessorTable;
+  private static final com.google.protobuf.Descriptors.Descriptor
     internal_static_database_driver_v1_ExecuteResult_descriptor;
   private static final 
     com.google.protobuf.GeneratedMessage.FieldAccessorTable
@@ -52932,298 +54606,305 @@ public final class DatabaseDriverV1 extends com.google.protobuf.GeneratedFile {
       "iverException\022\017\n\007message\030\001 \001(\t\0223\n\013status" +
       "_code\030\002 \001(\0162\036.database_driver_v1.StatusC" +
       "ode\022.\n\005error\030\003 \001(\0132\037.database_driver_v1." +
-      "DriverError\022\016\n\006report\030\004 \001(\t\"_\n\rExecuteRe" +
-      "sult\0227\n\006stream\030\001 \001(\0132\'.database_driver_v" +
-      "1.ArrowArrayStreamPtr\022\025\n\rrows_affected\030\002" +
-      " \001(\003\"N\n\021PartitionedResult\022\016\n\006schema\030\001 \001(" +
-      "\003\022\022\n\npartitions\030\002 \003(\014\022\025\n\rrows_affected\030\003" +
-      " \001(\003\"+\n\016DatabaseHandle\022\n\n\002id\030\001 \001(\003\022\r\n\005ma" +
-      "gic\030\002 \001(\003\"-\n\020ConnectionHandle\022\n\n\002id\030\001 \001(" +
-      "\003\022\r\n\005magic\030\002 \001(\003\",\n\017StatementHandle\022\n\n\002i" +
-      "d\030\001 \001(\003\022\r\n\005magic\030\002 \001(\003\"$\n\023ArrowArrayStre" +
-      "amPtr\022\r\n\005value\030\001 \001(\014\"\037\n\016ArrowSchemaPtr\022\r" +
-      "\n\005value\030\001 \001(\014\"\036\n\rArrowArrayPtr\022\r\n\005value\030" +
-      "\001 \001(\014\".\n\rBinaryDataPtr\022\r\n\005value\030\001 \001(\014\022\016\n" +
-      "\006length\030\002 \001(\003\"\204\001\n\rQueryBindings\0221\n\004json\030" +
-      "\001 \001(\0132!.database_driver_v1.BinaryDataPtr" +
-      "H\000\0220\n\003csv\030\002 \001(\0132!.database_driver_v1.Bin" +
-      "aryDataPtrH\000B\016\n\014binding_type\"\024\n\022Database" +
-      "NewRequest\"L\n\023DatabaseNewResponse\0225\n\tdb_" +
-      "handle\030\001 \001(\0132\".database_driver_v1.Databa" +
-      "seHandle\"s\n\036DatabaseSetOptionStringReque" +
-      "st\0225\n\tdb_handle\030\001 \001(\0132\".database_driver_" +
-      "v1.DatabaseHandle\022\013\n\003key\030\002 \001(\t\022\r\n\005value\030" +
-      "\003 \001(\t\"!\n\037DatabaseSetOptionStringResponse" +
-      "\"r\n\035DatabaseSetOptionBytesRequest\0225\n\tdb_" +
-      "handle\030\001 \001(\0132\".database_driver_v1.Databa" +
-      "seHandle\022\013\n\003key\030\002 \001(\t\022\r\n\005value\030\003 \001(\014\" \n\036" +
-      "DatabaseSetOptionBytesResponse\"p\n\033Databa" +
-      "seSetOptionIntRequest\0225\n\tdb_handle\030\001 \001(\013" +
-      "2\".database_driver_v1.DatabaseHandle\022\013\n\003" +
-      "key\030\002 \001(\t\022\r\n\005value\030\003 \001(\003\"\036\n\034DatabaseSetO" +
-      "ptionIntResponse\"s\n\036DatabaseSetOptionDou" +
-      "bleRequest\0225\n\tdb_handle\030\001 \001(\0132\".database" +
-      "_driver_v1.DatabaseHandle\022\013\n\003key\030\002 \001(\t\022\r" +
-      "\n\005value\030\003 \001(\001\"!\n\037DatabaseSetOptionDouble" +
-      "Response\"L\n\023DatabaseInitRequest\0225\n\tdb_ha" +
-      "ndle\030\001 \001(\0132\".database_driver_v1.Database" +
-      "Handle\"\026\n\024DatabaseInitResponse\"O\n\026Databa" +
-      "seReleaseRequest\0225\n\tdb_handle\030\001 \001(\0132\".da" +
-      "tabase_driver_v1.DatabaseHandle\"\031\n\027Datab" +
-      "aseReleaseResponse\"\026\n\024ConnectionNewReque" +
-      "st\"R\n\025ConnectionNewResponse\0229\n\013conn_hand" +
-      "le\030\001 \001(\0132$.database_driver_v1.Connection" +
-      "Handle\"y\n ConnectionSetOptionStringReque" +
-      "st\0229\n\013conn_handle\030\001 \001(\0132$.database_drive" +
-      "r_v1.ConnectionHandle\022\013\n\003key\030\002 \001(\t\022\r\n\005va" +
-      "lue\030\003 \001(\t\"#\n!ConnectionSetOptionStringRe" +
-      "sponse\"x\n\037ConnectionSetOptionBytesReques" +
+      "DriverError\022\016\n\006report\030\004 \001(\t\"\314\001\n\016ColumnMe" +
+      "tadata\022\014\n\004name\030\001 \001(\t\022\014\n\004type\030\002 \001(\t\022\026\n\tpr" +
+      "ecision\030\003 \001(\003H\000\210\001\001\022\022\n\005scale\030\004 \001(\003H\001\210\001\001\022\023" +
+      "\n\006length\030\005 \001(\003H\002\210\001\001\022\030\n\013byte_length\030\006 \001(\003" +
+      "H\003\210\001\001\022\020\n\010nullable\030\007 \001(\010B\014\n\n_precisionB\010\n" +
+      "\006_scaleB\t\n\007_lengthB\016\n\014_byte_length\"\246\001\n\rE" +
+      "xecuteResult\0227\n\006stream\030\001 \001(\0132\'.database_" +
+      "driver_v1.ArrowArrayStreamPtr\022\025\n\rrows_af" +
+      "fected\030\002 \001(\003\022\020\n\010query_id\030\003 \001(\t\0223\n\007column" +
+      "s\030\004 \003(\0132\".database_driver_v1.ColumnMetad" +
+      "ata\"N\n\021PartitionedResult\022\016\n\006schema\030\001 \001(\003" +
+      "\022\022\n\npartitions\030\002 \003(\014\022\025\n\rrows_affected\030\003 " +
+      "\001(\003\"+\n\016DatabaseHandle\022\n\n\002id\030\001 \001(\003\022\r\n\005mag" +
+      "ic\030\002 \001(\003\"-\n\020ConnectionHandle\022\n\n\002id\030\001 \001(\003" +
+      "\022\r\n\005magic\030\002 \001(\003\",\n\017StatementHandle\022\n\n\002id" +
+      "\030\001 \001(\003\022\r\n\005magic\030\002 \001(\003\"$\n\023ArrowArrayStrea" +
+      "mPtr\022\r\n\005value\030\001 \001(\014\"\037\n\016ArrowSchemaPtr\022\r\n" +
+      "\005value\030\001 \001(\014\"\036\n\rArrowArrayPtr\022\r\n\005value\030\001" +
+      " \001(\014\".\n\rBinaryDataPtr\022\r\n\005value\030\001 \001(\014\022\016\n\006" +
+      "length\030\002 \001(\003\"\204\001\n\rQueryBindings\0221\n\004json\030\001" +
+      " \001(\0132!.database_driver_v1.BinaryDataPtrH" +
+      "\000\0220\n\003csv\030\002 \001(\0132!.database_driver_v1.Bina" +
+      "ryDataPtrH\000B\016\n\014binding_type\"\024\n\022DatabaseN" +
+      "ewRequest\"L\n\023DatabaseNewResponse\0225\n\tdb_h" +
+      "andle\030\001 \001(\0132\".database_driver_v1.Databas" +
+      "eHandle\"s\n\036DatabaseSetOptionStringReques" +
+      "t\0225\n\tdb_handle\030\001 \001(\0132\".database_driver_v" +
+      "1.DatabaseHandle\022\013\n\003key\030\002 \001(\t\022\r\n\005value\030\003" +
+      " \001(\t\"!\n\037DatabaseSetOptionStringResponse\"" +
+      "r\n\035DatabaseSetOptionBytesRequest\0225\n\tdb_h" +
+      "andle\030\001 \001(\0132\".database_driver_v1.Databas" +
+      "eHandle\022\013\n\003key\030\002 \001(\t\022\r\n\005value\030\003 \001(\014\" \n\036D" +
+      "atabaseSetOptionBytesResponse\"p\n\033Databas" +
+      "eSetOptionIntRequest\0225\n\tdb_handle\030\001 \001(\0132" +
+      "\".database_driver_v1.DatabaseHandle\022\013\n\003k" +
+      "ey\030\002 \001(\t\022\r\n\005value\030\003 \001(\003\"\036\n\034DatabaseSetOp" +
+      "tionIntResponse\"s\n\036DatabaseSetOptionDoub" +
+      "leRequest\0225\n\tdb_handle\030\001 \001(\0132\".database_" +
+      "driver_v1.DatabaseHandle\022\013\n\003key\030\002 \001(\t\022\r\n" +
+      "\005value\030\003 \001(\001\"!\n\037DatabaseSetOptionDoubleR" +
+      "esponse\"L\n\023DatabaseInitRequest\0225\n\tdb_han" +
+      "dle\030\001 \001(\0132\".database_driver_v1.DatabaseH" +
+      "andle\"\026\n\024DatabaseInitResponse\"O\n\026Databas" +
+      "eReleaseRequest\0225\n\tdb_handle\030\001 \001(\0132\".dat" +
+      "abase_driver_v1.DatabaseHandle\"\031\n\027Databa" +
+      "seReleaseResponse\"\026\n\024ConnectionNewReques" +
+      "t\"R\n\025ConnectionNewResponse\0229\n\013conn_handl" +
+      "e\030\001 \001(\0132$.database_driver_v1.ConnectionH" +
+      "andle\"y\n ConnectionSetOptionStringReques" +
       "t\0229\n\013conn_handle\030\001 \001(\0132$.database_driver" +
       "_v1.ConnectionHandle\022\013\n\003key\030\002 \001(\t\022\r\n\005val" +
-      "ue\030\003 \001(\014\"\"\n ConnectionSetOptionBytesResp" +
-      "onse\"v\n\035ConnectionSetOptionIntRequest\0229\n" +
-      "\013conn_handle\030\001 \001(\0132$.database_driver_v1." +
-      "ConnectionHandle\022\013\n\003key\030\002 \001(\t\022\r\n\005value\030\003" +
-      " \001(\003\" \n\036ConnectionSetOptionIntResponse\"y" +
-      "\n ConnectionSetOptionDoubleRequest\0229\n\013co" +
-      "nn_handle\030\001 \001(\0132$.database_driver_v1.Con" +
-      "nectionHandle\022\013\n\003key\030\002 \001(\t\022\r\n\005value\030\003 \001(" +
-      "\001\"#\n!ConnectionSetOptionDoubleResponse\"\211" +
-      "\001\n\025ConnectionInitRequest\0229\n\013conn_handle\030" +
-      "\001 \001(\0132$.database_driver_v1.ConnectionHan" +
-      "dle\0225\n\tdb_handle\030\002 \001(\0132\".database_driver" +
-      "_v1.DatabaseHandle\"\030\n\026ConnectionInitResp" +
-      "onse\"U\n\030ConnectionReleaseRequest\0229\n\013conn" +
-      "_handle\030\001 \001(\0132$.database_driver_v1.Conne" +
-      "ctionHandle\"\033\n\031ConnectionReleaseResponse" +
-      "\"\207\001\n\030ConnectionGetInfoRequest\0229\n\013conn_ha" +
-      "ndle\030\001 \001(\0132$.database_driver_v1.Connecti" +
-      "onHandle\0220\n\ninfo_codes\030\002 \003(\0162\034.database_" +
-      "driver_v1.InfoCode\".\n\031ConnectionGetInfoR" +
-      "esponse\022\021\n\tinfo_data\030\001 \001(\014\"\225\002\n\033Connectio" +
-      "nGetObjectsRequest\0229\n\013conn_handle\030\001 \001(\0132" +
-      "$.database_driver_v1.ConnectionHandle\022\r\n" +
-      "\005depth\030\002 \001(\005\022\024\n\007catalog\030\003 \001(\tH\000\210\001\001\022\026\n\tdb" +
-      "_schema\030\004 \001(\tH\001\210\001\001\022\027\n\ntable_name\030\005 \001(\tH\002" +
-      "\210\001\001\022\022\n\ntable_type\030\006 \003(\t\022\030\n\013column_name\030\007" +
-      " \001(\tH\003\210\001\001B\n\n\010_catalogB\014\n\n_db_schemaB\r\n\013_" +
-      "table_nameB\016\n\014_column_name\"4\n\034Connection" +
-      "GetObjectsResponse\022\024\n\014objects_data\030\001 \001(\014" +
-      "\"\270\001\n\037ConnectionGetTableSchemaRequest\0229\n\013" +
+      "ue\030\003 \001(\t\"#\n!ConnectionSetOptionStringRes" +
+      "ponse\"x\n\037ConnectionSetOptionBytesRequest" +
+      "\0229\n\013conn_handle\030\001 \001(\0132$.database_driver_" +
+      "v1.ConnectionHandle\022\013\n\003key\030\002 \001(\t\022\r\n\005valu" +
+      "e\030\003 \001(\014\"\"\n ConnectionSetOptionBytesRespo" +
+      "nse\"v\n\035ConnectionSetOptionIntRequest\0229\n\013" +
       "conn_handle\030\001 \001(\0132$.database_driver_v1.C" +
-      "onnectionHandle\022\024\n\007catalog\030\002 \001(\tH\000\210\001\001\022\026\n" +
-      "\tdb_schema\030\003 \001(\tH\001\210\001\001\022\022\n\ntable_name\030\004 \001(" +
-      "\tB\n\n\010_catalogB\014\n\n_db_schema\"7\n Connectio" +
-      "nGetTableSchemaResponse\022\023\n\013schema_data\030\001" +
-      " \001(\014\"[\n\036ConnectionGetTableTypesRequest\0229" +
-      "\n\013conn_handle\030\001 \001(\0132$.database_driver_v1" +
-      ".ConnectionHandle\";\n\037ConnectionGetTableT" +
-      "ypesResponse\022\030\n\020table_types_data\030\001 \001(\014\"T" +
-      "\n\027ConnectionCommitRequest\0229\n\013conn_handle" +
-      "\030\001 \001(\0132$.database_driver_v1.ConnectionHa" +
-      "ndle\"\032\n\030ConnectionCommitResponse\"V\n\031Conn" +
-      "ectionRollbackRequest\0229\n\013conn_handle\030\001 \001" +
-      "(\0132$.database_driver_v1.ConnectionHandle" +
-      "\"\034\n\032ConnectionRollbackResponse\"P\n\023Statem" +
-      "entNewRequest\0229\n\013conn_handle\030\001 \001(\0132$.dat" +
-      "abase_driver_v1.ConnectionHandle\"P\n\024Stat" +
-      "ementNewResponse\0228\n\013stmt_handle\030\001 \001(\0132#." +
-      "database_driver_v1.StatementHandle\"S\n\027St" +
-      "atementReleaseRequest\0228\n\013stmt_handle\030\001 \001" +
-      "(\0132#.database_driver_v1.StatementHandle\"" +
-      "\032\n\030StatementReleaseResponse\"f\n\033Statement" +
-      "SetSqlQueryRequest\0228\n\013stmt_handle\030\001 \001(\0132" +
-      "#.database_driver_v1.StatementHandle\022\r\n\005" +
-      "query\030\002 \001(\t\"\036\n\034StatementSetSqlQueryRespo" +
-      "nse\"j\n StatementSetSubstraitPlanRequest\022" +
-      "8\n\013stmt_handle\030\001 \001(\0132#.database_driver_v" +
-      "1.StatementHandle\022\014\n\004plan\030\002 \001(\014\"#\n!State" +
-      "mentSetSubstraitPlanResponse\"S\n\027Statemen" +
-      "tPrepareRequest\0228\n\013stmt_handle\030\001 \001(\0132#.d" +
-      "atabase_driver_v1.StatementHandle\"\032\n\030Sta" +
-      "tementPrepareResponse\"w\n\037StatementSetOpt" +
-      "ionStringRequest\0228\n\013stmt_handle\030\001 \001(\0132#." +
-      "database_driver_v1.StatementHandle\022\013\n\003ke" +
-      "y\030\002 \001(\t\022\r\n\005value\030\003 \001(\t\"\"\n StatementSetOp" +
-      "tionStringResponse\"v\n\036StatementSetOption" +
-      "BytesRequest\0228\n\013stmt_handle\030\001 \001(\0132#.data" +
-      "base_driver_v1.StatementHandle\022\013\n\003key\030\002 " +
-      "\001(\t\022\r\n\005value\030\003 \001(\014\"!\n\037StatementSetOption" +
-      "BytesResponse\"t\n\034StatementSetOptionIntRe" +
+      "onnectionHandle\022\013\n\003key\030\002 \001(\t\022\r\n\005value\030\003 " +
+      "\001(\003\" \n\036ConnectionSetOptionIntResponse\"y\n" +
+      " ConnectionSetOptionDoubleRequest\0229\n\013con" +
+      "n_handle\030\001 \001(\0132$.database_driver_v1.Conn" +
+      "ectionHandle\022\013\n\003key\030\002 \001(\t\022\r\n\005value\030\003 \001(\001" +
+      "\"#\n!ConnectionSetOptionDoubleResponse\"\211\001" +
+      "\n\025ConnectionInitRequest\0229\n\013conn_handle\030\001" +
+      " \001(\0132$.database_driver_v1.ConnectionHand" +
+      "le\0225\n\tdb_handle\030\002 \001(\0132\".database_driver_" +
+      "v1.DatabaseHandle\"\030\n\026ConnectionInitRespo" +
+      "nse\"U\n\030ConnectionReleaseRequest\0229\n\013conn_" +
+      "handle\030\001 \001(\0132$.database_driver_v1.Connec" +
+      "tionHandle\"\033\n\031ConnectionReleaseResponse\"" +
+      "\207\001\n\030ConnectionGetInfoRequest\0229\n\013conn_han" +
+      "dle\030\001 \001(\0132$.database_driver_v1.Connectio" +
+      "nHandle\0220\n\ninfo_codes\030\002 \003(\0162\034.database_d" +
+      "river_v1.InfoCode\".\n\031ConnectionGetInfoRe" +
+      "sponse\022\021\n\tinfo_data\030\001 \001(\014\"\225\002\n\033Connection" +
+      "GetObjectsRequest\0229\n\013conn_handle\030\001 \001(\0132$" +
+      ".database_driver_v1.ConnectionHandle\022\r\n\005" +
+      "depth\030\002 \001(\005\022\024\n\007catalog\030\003 \001(\tH\000\210\001\001\022\026\n\tdb_" +
+      "schema\030\004 \001(\tH\001\210\001\001\022\027\n\ntable_name\030\005 \001(\tH\002\210" +
+      "\001\001\022\022\n\ntable_type\030\006 \003(\t\022\030\n\013column_name\030\007 " +
+      "\001(\tH\003\210\001\001B\n\n\010_catalogB\014\n\n_db_schemaB\r\n\013_t" +
+      "able_nameB\016\n\014_column_name\"4\n\034ConnectionG" +
+      "etObjectsResponse\022\024\n\014objects_data\030\001 \001(\014\"" +
+      "\270\001\n\037ConnectionGetTableSchemaRequest\0229\n\013c" +
+      "onn_handle\030\001 \001(\0132$.database_driver_v1.Co" +
+      "nnectionHandle\022\024\n\007catalog\030\002 \001(\tH\000\210\001\001\022\026\n\t" +
+      "db_schema\030\003 \001(\tH\001\210\001\001\022\022\n\ntable_name\030\004 \001(\t" +
+      "B\n\n\010_catalogB\014\n\n_db_schema\"7\n Connection" +
+      "GetTableSchemaResponse\022\023\n\013schema_data\030\001 " +
+      "\001(\014\"[\n\036ConnectionGetTableTypesRequest\0229\n" +
+      "\013conn_handle\030\001 \001(\0132$.database_driver_v1." +
+      "ConnectionHandle\";\n\037ConnectionGetTableTy" +
+      "pesResponse\022\030\n\020table_types_data\030\001 \001(\014\"T\n" +
+      "\027ConnectionCommitRequest\0229\n\013conn_handle\030" +
+      "\001 \001(\0132$.database_driver_v1.ConnectionHan" +
+      "dle\"\032\n\030ConnectionCommitResponse\"V\n\031Conne" +
+      "ctionRollbackRequest\0229\n\013conn_handle\030\001 \001(" +
+      "\0132$.database_driver_v1.ConnectionHandle\"" +
+      "\034\n\032ConnectionRollbackResponse\"P\n\023Stateme" +
+      "ntNewRequest\0229\n\013conn_handle\030\001 \001(\0132$.data" +
+      "base_driver_v1.ConnectionHandle\"P\n\024State" +
+      "mentNewResponse\0228\n\013stmt_handle\030\001 \001(\0132#.d" +
+      "atabase_driver_v1.StatementHandle\"S\n\027Sta" +
+      "tementReleaseRequest\0228\n\013stmt_handle\030\001 \001(" +
+      "\0132#.database_driver_v1.StatementHandle\"\032" +
+      "\n\030StatementReleaseResponse\"f\n\033StatementS" +
+      "etSqlQueryRequest\0228\n\013stmt_handle\030\001 \001(\0132#" +
+      ".database_driver_v1.StatementHandle\022\r\n\005q" +
+      "uery\030\002 \001(\t\"\036\n\034StatementSetSqlQueryRespon" +
+      "se\"j\n StatementSetSubstraitPlanRequest\0228" +
+      "\n\013stmt_handle\030\001 \001(\0132#.database_driver_v1" +
+      ".StatementHandle\022\014\n\004plan\030\002 \001(\014\"#\n!Statem" +
+      "entSetSubstraitPlanResponse\"S\n\027Statement" +
+      "PrepareRequest\0228\n\013stmt_handle\030\001 \001(\0132#.da" +
+      "tabase_driver_v1.StatementHandle\"\032\n\030Stat" +
+      "ementPrepareResponse\"w\n\037StatementSetOpti" +
+      "onStringRequest\0228\n\013stmt_handle\030\001 \001(\0132#.d" +
+      "atabase_driver_v1.StatementHandle\022\013\n\003key" +
+      "\030\002 \001(\t\022\r\n\005value\030\003 \001(\t\"\"\n StatementSetOpt" +
+      "ionStringResponse\"v\n\036StatementSetOptionB" +
+      "ytesRequest\0228\n\013stmt_handle\030\001 \001(\0132#.datab" +
+      "ase_driver_v1.StatementHandle\022\013\n\003key\030\002 \001" +
+      "(\t\022\r\n\005value\030\003 \001(\014\"!\n\037StatementSetOptionB" +
+      "ytesResponse\"t\n\034StatementSetOptionIntReq" +
+      "uest\0228\n\013stmt_handle\030\001 \001(\0132#.database_dri" +
+      "ver_v1.StatementHandle\022\013\n\003key\030\002 \001(\t\022\r\n\005v" +
+      "alue\030\003 \001(\003\"\037\n\035StatementSetOptionIntRespo" +
+      "nse\"w\n\037StatementSetOptionDoubleRequest\0228" +
+      "\n\013stmt_handle\030\001 \001(\0132#.database_driver_v1" +
+      ".StatementHandle\022\013\n\003key\030\002 \001(\t\022\r\n\005value\030\003" +
+      " \001(\001\"\"\n StatementSetOptionDoubleResponse" +
+      "\"^\n\"StatementGetParameterSchemaRequest\0228" +
+      "\n\013stmt_handle\030\001 \001(\0132#.database_driver_v1" +
+      ".StatementHandle\"Y\n#StatementGetParamete" +
+      "rSchemaResponse\0222\n\006schema\030\001 \001(\0132\".databa" +
+      "se_driver_v1.ArrowSchemaPtr\"\266\001\n\024Statemen" +
+      "tBindRequest\0228\n\013stmt_handle\030\001 \001(\0132#.data" +
+      "base_driver_v1.StatementHandle\0222\n\006schema" +
+      "\030\002 \001(\0132\".database_driver_v1.ArrowSchemaP" +
+      "tr\0220\n\005array\030\003 \001(\0132!.database_driver_v1.A" +
+      "rrowArrayPtr\"\027\n\025StatementBindResponse\"f\n" +
+      "\032StatementBindStreamRequest\0228\n\013stmt_hand" +
+      "le\030\001 \001(\0132#.database_driver_v1.StatementH" +
+      "andle\022\016\n\006stream\030\002 \001(\014\"\035\n\033StatementBindSt" +
+      "reamResponse\"\237\001\n\034StatementExecuteQueryRe" +
       "quest\0228\n\013stmt_handle\030\001 \001(\0132#.database_dr" +
-      "iver_v1.StatementHandle\022\013\n\003key\030\002 \001(\t\022\r\n\005" +
-      "value\030\003 \001(\003\"\037\n\035StatementSetOptionIntResp" +
-      "onse\"w\n\037StatementSetOptionDoubleRequest\022" +
+      "iver_v1.StatementHandle\0228\n\010bindings\030\002 \001(" +
+      "\0132!.database_driver_v1.QueryBindingsH\000\210\001" +
+      "\001B\013\n\t_bindings\"R\n\035StatementExecuteQueryR" +
+      "esponse\0221\n\006result\030\001 \001(\0132!.database_drive" +
+      "r_v1.ExecuteResult\"]\n!StatementExecutePa" +
+      "rtitionsRequest\0228\n\013stmt_handle\030\001 \001(\0132#.d" +
+      "atabase_driver_v1.StatementHandle\"[\n\"Sta" +
+      "tementExecutePartitionsResponse\0225\n\006resul" +
+      "t\030\001 \001(\0132%.database_driver_v1.Partitioned" +
+      "Result\"w\n\035StatementReadPartitionRequest\022" +
       "8\n\013stmt_handle\030\001 \001(\0132#.database_driver_v" +
-      "1.StatementHandle\022\013\n\003key\030\002 \001(\t\022\r\n\005value\030" +
-      "\003 \001(\001\"\"\n StatementSetOptionDoubleRespons" +
-      "e\"^\n\"StatementGetParameterSchemaRequest\022" +
-      "8\n\013stmt_handle\030\001 \001(\0132#.database_driver_v" +
-      "1.StatementHandle\"Y\n#StatementGetParamet" +
-      "erSchemaResponse\0222\n\006schema\030\001 \001(\0132\".datab" +
-      "ase_driver_v1.ArrowSchemaPtr\"\266\001\n\024Stateme" +
-      "ntBindRequest\0228\n\013stmt_handle\030\001 \001(\0132#.dat" +
-      "abase_driver_v1.StatementHandle\0222\n\006schem" +
-      "a\030\002 \001(\0132\".database_driver_v1.ArrowSchema" +
-      "Ptr\0220\n\005array\030\003 \001(\0132!.database_driver_v1." +
-      "ArrowArrayPtr\"\027\n\025StatementBindResponse\"f" +
-      "\n\032StatementBindStreamRequest\0228\n\013stmt_han" +
-      "dle\030\001 \001(\0132#.database_driver_v1.Statement" +
-      "Handle\022\016\n\006stream\030\002 \001(\014\"\035\n\033StatementBindS" +
-      "treamResponse\"\237\001\n\034StatementExecuteQueryR" +
-      "equest\0228\n\013stmt_handle\030\001 \001(\0132#.database_d" +
-      "river_v1.StatementHandle\0228\n\010bindings\030\002 \001" +
-      "(\0132!.database_driver_v1.QueryBindingsH\000\210" +
-      "\001\001B\013\n\t_bindings\"R\n\035StatementExecuteQuery" +
-      "Response\0221\n\006result\030\001 \001(\0132!.database_driv" +
-      "er_v1.ExecuteResult\"]\n!StatementExecuteP" +
-      "artitionsRequest\0228\n\013stmt_handle\030\001 \001(\0132#." +
-      "database_driver_v1.StatementHandle\"[\n\"St" +
-      "atementExecutePartitionsResponse\0225\n\006resu" +
-      "lt\030\001 \001(\0132%.database_driver_v1.Partitione" +
-      "dResult\"w\n\035StatementReadPartitionRequest" +
-      "\0228\n\013stmt_handle\030\001 \001(\0132#.database_driver_" +
-      "v1.StatementHandle\022\034\n\024partition_descript" +
-      "or\030\002 \001(\014\":\n\036StatementReadPartitionRespon" +
-      "se\022\030\n\020partition_stream\030\001 \001(\003*\264\004\n\nStatusC" +
-      "ode\022\033\n\027STATUS_CODE_UNSPECIFIED\020\000\022\022\n\016STAT" +
-      "US_CODE_OK\020\001\022$\n STATUS_CODE_AUTHENTICATI" +
-      "ON_ERROR\020\002\022\037\n\033STATUS_CODE_NOT_IMPLEMENTE" +
-      "D\020\003\022\031\n\025STATUS_CODE_NOT_FOUND\020\004\022\036\n\032STATUS" +
-      "_CODE_ALREADY_EXISTS\020\005\022 \n\034STATUS_CODE_IN" +
-      "VALID_ARGUMENT\020\006\022\035\n\031STATUS_CODE_INVALID_" +
-      "STATE\020\007\022\034\n\030STATUS_CODE_INVALID_DATA\020\010\022\022\n" +
-      "\016STATUS_CODE_IO\020\t\022\031\n\025STATUS_CODE_CANCELL" +
-      "ED\020\n\022\037\n\033STATUS_CODE_UNAUTHENTICATED\020\013\022\034\n" +
-      "\030STATUS_CODE_UNAUTHORIZED\020\014\022\035\n\031STATUS_CO" +
-      "DE_GENERIC_ERROR\020\r\022\036\n\032STATUS_CODE_INTERN" +
-      "AL_ERROR\020\016\022!\n\035STATUS_CODE_MISSING_PARAME" +
-      "TER\020\017\022\'\n#STATUS_CODE_INVALID_PARAMETER_V" +
-      "ALUE\020\020\022\033\n\027STATUS_CODE_LOGIN_ERROR\020\021*\230\003\n\010" +
-      "InfoCode\022\031\n\025INFO_CODE_UNSPECIFIED\020\000\022\031\n\025I" +
-      "NFO_CODE_VENDOR_NAME\020\001\022\034\n\030INFO_CODE_VEND" +
-      "OR_VERSION\020\002\022\"\n\036INFO_CODE_VENDOR_ARROW_V" +
-      "ERSION\020\003\022\030\n\024INFO_CODE_VENDOR_SQL\020e\022\036\n\032IN" +
-      "FO_CODE_VENDOR_SUBSTRAIT\020f\022*\n&INFO_CODE_" +
-      "VENDOR_SUBSTRAIT_MIN_VERSION\020g\022*\n&INFO_C" +
-      "ODE_VENDOR_SUBSTRAIT_MAX_VERSION\020h\022\032\n\025IN" +
-      "FO_CODE_DRIVER_NAME\020\311\001\022\035\n\030INFO_CODE_DRIV" +
-      "ER_VERSION\020\312\001\022#\n\036INFO_CODE_DRIVER_ARROW_" +
-      "VERSION\020\313\001\022\"\n\035INFO_CODE_DRIVER_ADBC_VERS" +
-      "ION\020\314\0012\357!\n\016DatabaseDriver\022^\n\013DatabaseNew" +
-      "\022&.database_driver_v1.DatabaseNewRequest" +
-      "\032\'.database_driver_v1.DatabaseNewRespons" +
-      "e\022\202\001\n\027DatabaseSetOptionString\0222.database" +
-      "_driver_v1.DatabaseSetOptionStringReques" +
-      "t\0323.database_driver_v1.DatabaseSetOption" +
-      "StringResponse\022\177\n\026DatabaseSetOptionBytes" +
-      "\0221.database_driver_v1.DatabaseSetOptionB" +
-      "ytesRequest\0322.database_driver_v1.Databas" +
-      "eSetOptionBytesResponse\022y\n\024DatabaseSetOp" +
-      "tionInt\022/.database_driver_v1.DatabaseSet" +
-      "OptionIntRequest\0320.database_driver_v1.Da" +
-      "tabaseSetOptionIntResponse\022\202\001\n\027DatabaseS" +
-      "etOptionDouble\0222.database_driver_v1.Data" +
-      "baseSetOptionDoubleRequest\0323.database_dr" +
-      "iver_v1.DatabaseSetOptionDoubleResponse\022" +
-      "a\n\014DatabaseInit\022\'.database_driver_v1.Dat" +
-      "abaseInitRequest\032(.database_driver_v1.Da" +
-      "tabaseInitResponse\022j\n\017DatabaseRelease\022*." +
-      "database_driver_v1.DatabaseReleaseReques" +
-      "t\032+.database_driver_v1.DatabaseReleaseRe" +
-      "sponse\022d\n\rConnectionNew\022(.database_drive" +
-      "r_v1.ConnectionNewRequest\032).database_dri" +
-      "ver_v1.ConnectionNewResponse\022\210\001\n\031Connect" +
-      "ionSetOptionString\0224.database_driver_v1." +
-      "ConnectionSetOptionStringRequest\0325.datab" +
-      "ase_driver_v1.ConnectionSetOptionStringR" +
-      "esponse\022\205\001\n\030ConnectionSetOptionBytes\0223.d" +
-      "atabase_driver_v1.ConnectionSetOptionByt" +
-      "esRequest\0324.database_driver_v1.Connectio" +
-      "nSetOptionBytesResponse\022\177\n\026ConnectionSet" +
-      "OptionInt\0221.database_driver_v1.Connectio" +
-      "nSetOptionIntRequest\0322.database_driver_v" +
-      "1.ConnectionSetOptionIntResponse\022\210\001\n\031Con" +
-      "nectionSetOptionDouble\0224.database_driver" +
-      "_v1.ConnectionSetOptionDoubleRequest\0325.d" +
-      "atabase_driver_v1.ConnectionSetOptionDou" +
-      "bleResponse\022g\n\016ConnectionInit\022).database" +
-      "_driver_v1.ConnectionInitRequest\032*.datab" +
-      "ase_driver_v1.ConnectionInitResponse\022p\n\021" +
-      "ConnectionRelease\022,.database_driver_v1.C" +
-      "onnectionReleaseRequest\032-.database_drive" +
-      "r_v1.ConnectionReleaseResponse\022p\n\021Connec" +
-      "tionGetInfo\022,.database_driver_v1.Connect" +
-      "ionGetInfoRequest\032-.database_driver_v1.C" +
-      "onnectionGetInfoResponse\022y\n\024ConnectionGe" +
-      "tObjects\022/.database_driver_v1.Connection" +
-      "GetObjectsRequest\0320.database_driver_v1.C" +
-      "onnectionGetObjectsResponse\022\205\001\n\030Connecti" +
-      "onGetTableSchema\0223.database_driver_v1.Co" +
-      "nnectionGetTableSchemaRequest\0324.database" +
-      "_driver_v1.ConnectionGetTableSchemaRespo" +
-      "nse\022\202\001\n\027ConnectionGetTableTypes\0222.databa" +
-      "se_driver_v1.ConnectionGetTableTypesRequ" +
-      "est\0323.database_driver_v1.ConnectionGetTa" +
-      "bleTypesResponse\022m\n\020ConnectionCommit\022+.d" +
-      "atabase_driver_v1.ConnectionCommitReques" +
-      "t\032,.database_driver_v1.ConnectionCommitR" +
-      "esponse\022s\n\022ConnectionRollback\022-.database" +
-      "_driver_v1.ConnectionRollbackRequest\032..d" +
-      "atabase_driver_v1.ConnectionRollbackResp" +
-      "onse\022a\n\014StatementNew\022\'.database_driver_v" +
-      "1.StatementNewRequest\032(.database_driver_" +
-      "v1.StatementNewResponse\022m\n\020StatementRele" +
-      "ase\022+.database_driver_v1.StatementReleas" +
-      "eRequest\032,.database_driver_v1.StatementR" +
-      "eleaseResponse\022y\n\024StatementSetSqlQuery\022/" +
-      ".database_driver_v1.StatementSetSqlQuery" +
-      "Request\0320.database_driver_v1.StatementSe" +
-      "tSqlQueryResponse\022\210\001\n\031StatementSetSubstr" +
-      "aitPlan\0224.database_driver_v1.StatementSe" +
-      "tSubstraitPlanRequest\0325.database_driver_" +
-      "v1.StatementSetSubstraitPlanResponse\022m\n\020" +
-      "StatementPrepare\022+.database_driver_v1.St" +
-      "atementPrepareRequest\032,.database_driver_" +
-      "v1.StatementPrepareResponse\022\205\001\n\030Statemen" +
-      "tSetOptionString\0223.database_driver_v1.St" +
-      "atementSetOptionStringRequest\0324.database" +
-      "_driver_v1.StatementSetOptionStringRespo" +
-      "nse\022\202\001\n\027StatementSetOptionBytes\0222.databa" +
-      "se_driver_v1.StatementSetOptionBytesRequ" +
-      "est\0323.database_driver_v1.StatementSetOpt" +
-      "ionBytesResponse\022|\n\025StatementSetOptionIn" +
-      "t\0220.database_driver_v1.StatementSetOptio" +
-      "nIntRequest\0321.database_driver_v1.Stateme" +
-      "ntSetOptionIntResponse\022\205\001\n\030StatementSetO" +
-      "ptionDouble\0223.database_driver_v1.Stateme" +
-      "ntSetOptionDoubleRequest\0324.database_driv" +
-      "er_v1.StatementSetOptionDoubleResponse\022\216" +
-      "\001\n\033StatementGetParameterSchema\0226.databas" +
-      "e_driver_v1.StatementGetParameterSchemaR" +
-      "equest\0327.database_driver_v1.StatementGet" +
-      "ParameterSchemaResponse\022d\n\rStatementBind" +
-      "\022(.database_driver_v1.StatementBindReque" +
-      "st\032).database_driver_v1.StatementBindRes" +
-      "ponse\022v\n\023StatementBindStream\022..database_" +
-      "driver_v1.StatementBindStreamRequest\032/.d" +
-      "atabase_driver_v1.StatementBindStreamRes" +
-      "ponse\022|\n\025StatementExecuteQuery\0220.databas" +
-      "e_driver_v1.StatementExecuteQueryRequest" +
-      "\0321.database_driver_v1.StatementExecuteQu" +
-      "eryResponse\022\213\001\n\032StatementExecutePartitio" +
-      "ns\0225.database_driver_v1.StatementExecute" +
-      "PartitionsRequest\0326.database_driver_v1.S" +
-      "tatementExecutePartitionsResponse\022\177\n\026Sta" +
-      "tementReadPartition\0221.database_driver_v1" +
-      ".StatementReadPartitionRequest\0322.databas" +
-      "e_driver_v1.StatementReadPartitionRespon" +
-      "se\032\024\302\251\311\001\017DriverException:;\n\rservice_erro" +
-      "r\022\037.google.protobuf.ServiceOptions\030\230\225\031 \001" +
-      "(\t\210\001\001:9\n\014method_error\022\036.google.protobuf." +
-      "MethodOptions\030\230\225\031 \001(\t\210\001\001B4\n2net.snowflak" +
-      "e.client.internal.unicore.protobuf_genb\006" +
-      "proto3"
+      "1.StatementHandle\022\034\n\024partition_descripto" +
+      "r\030\002 \001(\014\":\n\036StatementReadPartitionRespons" +
+      "e\022\030\n\020partition_stream\030\001 \001(\003*\264\004\n\nStatusCo" +
+      "de\022\033\n\027STATUS_CODE_UNSPECIFIED\020\000\022\022\n\016STATU" +
+      "S_CODE_OK\020\001\022$\n STATUS_CODE_AUTHENTICATIO" +
+      "N_ERROR\020\002\022\037\n\033STATUS_CODE_NOT_IMPLEMENTED" +
+      "\020\003\022\031\n\025STATUS_CODE_NOT_FOUND\020\004\022\036\n\032STATUS_" +
+      "CODE_ALREADY_EXISTS\020\005\022 \n\034STATUS_CODE_INV" +
+      "ALID_ARGUMENT\020\006\022\035\n\031STATUS_CODE_INVALID_S" +
+      "TATE\020\007\022\034\n\030STATUS_CODE_INVALID_DATA\020\010\022\022\n\016" +
+      "STATUS_CODE_IO\020\t\022\031\n\025STATUS_CODE_CANCELLE" +
+      "D\020\n\022\037\n\033STATUS_CODE_UNAUTHENTICATED\020\013\022\034\n\030" +
+      "STATUS_CODE_UNAUTHORIZED\020\014\022\035\n\031STATUS_COD" +
+      "E_GENERIC_ERROR\020\r\022\036\n\032STATUS_CODE_INTERNA" +
+      "L_ERROR\020\016\022!\n\035STATUS_CODE_MISSING_PARAMET" +
+      "ER\020\017\022\'\n#STATUS_CODE_INVALID_PARAMETER_VA" +
+      "LUE\020\020\022\033\n\027STATUS_CODE_LOGIN_ERROR\020\021*\230\003\n\010I" +
+      "nfoCode\022\031\n\025INFO_CODE_UNSPECIFIED\020\000\022\031\n\025IN" +
+      "FO_CODE_VENDOR_NAME\020\001\022\034\n\030INFO_CODE_VENDO" +
+      "R_VERSION\020\002\022\"\n\036INFO_CODE_VENDOR_ARROW_VE" +
+      "RSION\020\003\022\030\n\024INFO_CODE_VENDOR_SQL\020e\022\036\n\032INF" +
+      "O_CODE_VENDOR_SUBSTRAIT\020f\022*\n&INFO_CODE_V" +
+      "ENDOR_SUBSTRAIT_MIN_VERSION\020g\022*\n&INFO_CO" +
+      "DE_VENDOR_SUBSTRAIT_MAX_VERSION\020h\022\032\n\025INF" +
+      "O_CODE_DRIVER_NAME\020\311\001\022\035\n\030INFO_CODE_DRIVE" +
+      "R_VERSION\020\312\001\022#\n\036INFO_CODE_DRIVER_ARROW_V" +
+      "ERSION\020\313\001\022\"\n\035INFO_CODE_DRIVER_ADBC_VERSI" +
+      "ON\020\314\0012\357!\n\016DatabaseDriver\022^\n\013DatabaseNew\022" +
+      "&.database_driver_v1.DatabaseNewRequest\032" +
+      "\'.database_driver_v1.DatabaseNewResponse" +
+      "\022\202\001\n\027DatabaseSetOptionString\0222.database_" +
+      "driver_v1.DatabaseSetOptionStringRequest" +
+      "\0323.database_driver_v1.DatabaseSetOptionS" +
+      "tringResponse\022\177\n\026DatabaseSetOptionBytes\022" +
+      "1.database_driver_v1.DatabaseSetOptionBy" +
+      "tesRequest\0322.database_driver_v1.Database" +
+      "SetOptionBytesResponse\022y\n\024DatabaseSetOpt" +
+      "ionInt\022/.database_driver_v1.DatabaseSetO" +
+      "ptionIntRequest\0320.database_driver_v1.Dat" +
+      "abaseSetOptionIntResponse\022\202\001\n\027DatabaseSe" +
+      "tOptionDouble\0222.database_driver_v1.Datab" +
+      "aseSetOptionDoubleRequest\0323.database_dri" +
+      "ver_v1.DatabaseSetOptionDoubleResponse\022a" +
+      "\n\014DatabaseInit\022\'.database_driver_v1.Data" +
+      "baseInitRequest\032(.database_driver_v1.Dat" +
+      "abaseInitResponse\022j\n\017DatabaseRelease\022*.d" +
+      "atabase_driver_v1.DatabaseReleaseRequest" +
+      "\032+.database_driver_v1.DatabaseReleaseRes" +
+      "ponse\022d\n\rConnectionNew\022(.database_driver" +
+      "_v1.ConnectionNewRequest\032).database_driv" +
+      "er_v1.ConnectionNewResponse\022\210\001\n\031Connecti" +
+      "onSetOptionString\0224.database_driver_v1.C" +
+      "onnectionSetOptionStringRequest\0325.databa" +
+      "se_driver_v1.ConnectionSetOptionStringRe" +
+      "sponse\022\205\001\n\030ConnectionSetOptionBytes\0223.da" +
+      "tabase_driver_v1.ConnectionSetOptionByte" +
+      "sRequest\0324.database_driver_v1.Connection" +
+      "SetOptionBytesResponse\022\177\n\026ConnectionSetO" +
+      "ptionInt\0221.database_driver_v1.Connection" +
+      "SetOptionIntRequest\0322.database_driver_v1" +
+      ".ConnectionSetOptionIntResponse\022\210\001\n\031Conn" +
+      "ectionSetOptionDouble\0224.database_driver_" +
+      "v1.ConnectionSetOptionDoubleRequest\0325.da" +
+      "tabase_driver_v1.ConnectionSetOptionDoub" +
+      "leResponse\022g\n\016ConnectionInit\022).database_" +
+      "driver_v1.ConnectionInitRequest\032*.databa" +
+      "se_driver_v1.ConnectionInitResponse\022p\n\021C" +
+      "onnectionRelease\022,.database_driver_v1.Co" +
+      "nnectionReleaseRequest\032-.database_driver" +
+      "_v1.ConnectionReleaseResponse\022p\n\021Connect" +
+      "ionGetInfo\022,.database_driver_v1.Connecti" +
+      "onGetInfoRequest\032-.database_driver_v1.Co" +
+      "nnectionGetInfoResponse\022y\n\024ConnectionGet" +
+      "Objects\022/.database_driver_v1.ConnectionG" +
+      "etObjectsRequest\0320.database_driver_v1.Co" +
+      "nnectionGetObjectsResponse\022\205\001\n\030Connectio" +
+      "nGetTableSchema\0223.database_driver_v1.Con" +
+      "nectionGetTableSchemaRequest\0324.database_" +
+      "driver_v1.ConnectionGetTableSchemaRespon" +
+      "se\022\202\001\n\027ConnectionGetTableTypes\0222.databas" +
+      "e_driver_v1.ConnectionGetTableTypesReque" +
+      "st\0323.database_driver_v1.ConnectionGetTab" +
+      "leTypesResponse\022m\n\020ConnectionCommit\022+.da" +
+      "tabase_driver_v1.ConnectionCommitRequest" +
+      "\032,.database_driver_v1.ConnectionCommitRe" +
+      "sponse\022s\n\022ConnectionRollback\022-.database_" +
+      "driver_v1.ConnectionRollbackRequest\032..da" +
+      "tabase_driver_v1.ConnectionRollbackRespo" +
+      "nse\022a\n\014StatementNew\022\'.database_driver_v1" +
+      ".StatementNewRequest\032(.database_driver_v" +
+      "1.StatementNewResponse\022m\n\020StatementRelea" +
+      "se\022+.database_driver_v1.StatementRelease" +
+      "Request\032,.database_driver_v1.StatementRe" +
+      "leaseResponse\022y\n\024StatementSetSqlQuery\022/." +
+      "database_driver_v1.StatementSetSqlQueryR" +
+      "equest\0320.database_driver_v1.StatementSet" +
+      "SqlQueryResponse\022\210\001\n\031StatementSetSubstra" +
+      "itPlan\0224.database_driver_v1.StatementSet" +
+      "SubstraitPlanRequest\0325.database_driver_v" +
+      "1.StatementSetSubstraitPlanResponse\022m\n\020S" +
+      "tatementPrepare\022+.database_driver_v1.Sta" +
+      "tementPrepareRequest\032,.database_driver_v" +
+      "1.StatementPrepareResponse\022\205\001\n\030Statement" +
+      "SetOptionString\0223.database_driver_v1.Sta" +
+      "tementSetOptionStringRequest\0324.database_" +
+      "driver_v1.StatementSetOptionStringRespon" +
+      "se\022\202\001\n\027StatementSetOptionBytes\0222.databas" +
+      "e_driver_v1.StatementSetOptionBytesReque" +
+      "st\0323.database_driver_v1.StatementSetOpti" +
+      "onBytesResponse\022|\n\025StatementSetOptionInt" +
+      "\0220.database_driver_v1.StatementSetOption" +
+      "IntRequest\0321.database_driver_v1.Statemen" +
+      "tSetOptionIntResponse\022\205\001\n\030StatementSetOp" +
+      "tionDouble\0223.database_driver_v1.Statemen" +
+      "tSetOptionDoubleRequest\0324.database_drive" +
+      "r_v1.StatementSetOptionDoubleResponse\022\216\001" +
+      "\n\033StatementGetParameterSchema\0226.database" +
+      "_driver_v1.StatementGetParameterSchemaRe" +
+      "quest\0327.database_driver_v1.StatementGetP" +
+      "arameterSchemaResponse\022d\n\rStatementBind\022" +
+      "(.database_driver_v1.StatementBindReques" +
+      "t\032).database_driver_v1.StatementBindResp" +
+      "onse\022v\n\023StatementBindStream\022..database_d" +
+      "river_v1.StatementBindStreamRequest\032/.da" +
+      "tabase_driver_v1.StatementBindStreamResp" +
+      "onse\022|\n\025StatementExecuteQuery\0220.database" +
+      "_driver_v1.StatementExecuteQueryRequest\032" +
+      "1.database_driver_v1.StatementExecuteQue" +
+      "ryResponse\022\213\001\n\032StatementExecutePartition" +
+      "s\0225.database_driver_v1.StatementExecuteP" +
+      "artitionsRequest\0326.database_driver_v1.St" +
+      "atementExecutePartitionsResponse\022\177\n\026Stat" +
+      "ementReadPartition\0221.database_driver_v1." +
+      "StatementReadPartitionRequest\0322.database" +
+      "_driver_v1.StatementReadPartitionRespons" +
+      "e\032\024\302\251\311\001\017DriverException:;\n\rservice_error" +
+      "\022\037.google.protobuf.ServiceOptions\030\230\225\031 \001(" +
+      "\t\210\001\001:9\n\014method_error\022\036.google.protobuf.M" +
+      "ethodOptions\030\230\225\031 \001(\t\210\001\001B4\n2net.snowflake" +
+      ".client.internal.unicore.protobuf_genb\006p" +
+      "roto3"
     };
     descriptor = com.google.protobuf.Descriptors.FileDescriptor
       .internalBuildGeneratedFileFrom(descriptorData,
@@ -53284,482 +54965,488 @@ public final class DatabaseDriverV1 extends com.google.protobuf.GeneratedFile {
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_database_driver_v1_DriverException_descriptor,
         new java.lang.String[] { "Message", "StatusCode", "Error", "Report", });
-    internal_static_database_driver_v1_ExecuteResult_descriptor =
+    internal_static_database_driver_v1_ColumnMetadata_descriptor =
       getDescriptor().getMessageTypes().get(9);
+    internal_static_database_driver_v1_ColumnMetadata_fieldAccessorTable = new
+      com.google.protobuf.GeneratedMessage.FieldAccessorTable(
+        internal_static_database_driver_v1_ColumnMetadata_descriptor,
+        new java.lang.String[] { "Name", "Type", "Precision", "Scale", "Length", "ByteLength", "Nullable", });
+    internal_static_database_driver_v1_ExecuteResult_descriptor =
+      getDescriptor().getMessageTypes().get(10);
     internal_static_database_driver_v1_ExecuteResult_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_database_driver_v1_ExecuteResult_descriptor,
-        new java.lang.String[] { "Stream", "RowsAffected", });
+        new java.lang.String[] { "Stream", "RowsAffected", "QueryId", "Columns", });
     internal_static_database_driver_v1_PartitionedResult_descriptor =
-      getDescriptor().getMessageTypes().get(10);
+      getDescriptor().getMessageTypes().get(11);
     internal_static_database_driver_v1_PartitionedResult_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_database_driver_v1_PartitionedResult_descriptor,
         new java.lang.String[] { "Schema", "Partitions", "RowsAffected", });
     internal_static_database_driver_v1_DatabaseHandle_descriptor =
-      getDescriptor().getMessageTypes().get(11);
+      getDescriptor().getMessageTypes().get(12);
     internal_static_database_driver_v1_DatabaseHandle_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_database_driver_v1_DatabaseHandle_descriptor,
         new java.lang.String[] { "Id", "Magic", });
     internal_static_database_driver_v1_ConnectionHandle_descriptor =
-      getDescriptor().getMessageTypes().get(12);
+      getDescriptor().getMessageTypes().get(13);
     internal_static_database_driver_v1_ConnectionHandle_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_database_driver_v1_ConnectionHandle_descriptor,
         new java.lang.String[] { "Id", "Magic", });
     internal_static_database_driver_v1_StatementHandle_descriptor =
-      getDescriptor().getMessageTypes().get(13);
+      getDescriptor().getMessageTypes().get(14);
     internal_static_database_driver_v1_StatementHandle_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_database_driver_v1_StatementHandle_descriptor,
         new java.lang.String[] { "Id", "Magic", });
     internal_static_database_driver_v1_ArrowArrayStreamPtr_descriptor =
-      getDescriptor().getMessageTypes().get(14);
+      getDescriptor().getMessageTypes().get(15);
     internal_static_database_driver_v1_ArrowArrayStreamPtr_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_database_driver_v1_ArrowArrayStreamPtr_descriptor,
         new java.lang.String[] { "Value", });
     internal_static_database_driver_v1_ArrowSchemaPtr_descriptor =
-      getDescriptor().getMessageTypes().get(15);
+      getDescriptor().getMessageTypes().get(16);
     internal_static_database_driver_v1_ArrowSchemaPtr_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_database_driver_v1_ArrowSchemaPtr_descriptor,
         new java.lang.String[] { "Value", });
     internal_static_database_driver_v1_ArrowArrayPtr_descriptor =
-      getDescriptor().getMessageTypes().get(16);
+      getDescriptor().getMessageTypes().get(17);
     internal_static_database_driver_v1_ArrowArrayPtr_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_database_driver_v1_ArrowArrayPtr_descriptor,
         new java.lang.String[] { "Value", });
     internal_static_database_driver_v1_BinaryDataPtr_descriptor =
-      getDescriptor().getMessageTypes().get(17);
+      getDescriptor().getMessageTypes().get(18);
     internal_static_database_driver_v1_BinaryDataPtr_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_database_driver_v1_BinaryDataPtr_descriptor,
         new java.lang.String[] { "Value", "Length", });
     internal_static_database_driver_v1_QueryBindings_descriptor =
-      getDescriptor().getMessageTypes().get(18);
+      getDescriptor().getMessageTypes().get(19);
     internal_static_database_driver_v1_QueryBindings_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_database_driver_v1_QueryBindings_descriptor,
         new java.lang.String[] { "Json", "Csv", "BindingType", });
     internal_static_database_driver_v1_DatabaseNewRequest_descriptor =
-      getDescriptor().getMessageTypes().get(19);
+      getDescriptor().getMessageTypes().get(20);
     internal_static_database_driver_v1_DatabaseNewRequest_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_database_driver_v1_DatabaseNewRequest_descriptor,
         new java.lang.String[] { });
     internal_static_database_driver_v1_DatabaseNewResponse_descriptor =
-      getDescriptor().getMessageTypes().get(20);
+      getDescriptor().getMessageTypes().get(21);
     internal_static_database_driver_v1_DatabaseNewResponse_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_database_driver_v1_DatabaseNewResponse_descriptor,
         new java.lang.String[] { "DbHandle", });
     internal_static_database_driver_v1_DatabaseSetOptionStringRequest_descriptor =
-      getDescriptor().getMessageTypes().get(21);
+      getDescriptor().getMessageTypes().get(22);
     internal_static_database_driver_v1_DatabaseSetOptionStringRequest_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_database_driver_v1_DatabaseSetOptionStringRequest_descriptor,
         new java.lang.String[] { "DbHandle", "Key", "Value", });
     internal_static_database_driver_v1_DatabaseSetOptionStringResponse_descriptor =
-      getDescriptor().getMessageTypes().get(22);
+      getDescriptor().getMessageTypes().get(23);
     internal_static_database_driver_v1_DatabaseSetOptionStringResponse_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_database_driver_v1_DatabaseSetOptionStringResponse_descriptor,
         new java.lang.String[] { });
     internal_static_database_driver_v1_DatabaseSetOptionBytesRequest_descriptor =
-      getDescriptor().getMessageTypes().get(23);
+      getDescriptor().getMessageTypes().get(24);
     internal_static_database_driver_v1_DatabaseSetOptionBytesRequest_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_database_driver_v1_DatabaseSetOptionBytesRequest_descriptor,
         new java.lang.String[] { "DbHandle", "Key", "Value", });
     internal_static_database_driver_v1_DatabaseSetOptionBytesResponse_descriptor =
-      getDescriptor().getMessageTypes().get(24);
+      getDescriptor().getMessageTypes().get(25);
     internal_static_database_driver_v1_DatabaseSetOptionBytesResponse_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_database_driver_v1_DatabaseSetOptionBytesResponse_descriptor,
         new java.lang.String[] { });
     internal_static_database_driver_v1_DatabaseSetOptionIntRequest_descriptor =
-      getDescriptor().getMessageTypes().get(25);
+      getDescriptor().getMessageTypes().get(26);
     internal_static_database_driver_v1_DatabaseSetOptionIntRequest_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_database_driver_v1_DatabaseSetOptionIntRequest_descriptor,
         new java.lang.String[] { "DbHandle", "Key", "Value", });
     internal_static_database_driver_v1_DatabaseSetOptionIntResponse_descriptor =
-      getDescriptor().getMessageTypes().get(26);
+      getDescriptor().getMessageTypes().get(27);
     internal_static_database_driver_v1_DatabaseSetOptionIntResponse_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_database_driver_v1_DatabaseSetOptionIntResponse_descriptor,
         new java.lang.String[] { });
     internal_static_database_driver_v1_DatabaseSetOptionDoubleRequest_descriptor =
-      getDescriptor().getMessageTypes().get(27);
+      getDescriptor().getMessageTypes().get(28);
     internal_static_database_driver_v1_DatabaseSetOptionDoubleRequest_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_database_driver_v1_DatabaseSetOptionDoubleRequest_descriptor,
         new java.lang.String[] { "DbHandle", "Key", "Value", });
     internal_static_database_driver_v1_DatabaseSetOptionDoubleResponse_descriptor =
-      getDescriptor().getMessageTypes().get(28);
+      getDescriptor().getMessageTypes().get(29);
     internal_static_database_driver_v1_DatabaseSetOptionDoubleResponse_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_database_driver_v1_DatabaseSetOptionDoubleResponse_descriptor,
         new java.lang.String[] { });
     internal_static_database_driver_v1_DatabaseInitRequest_descriptor =
-      getDescriptor().getMessageTypes().get(29);
+      getDescriptor().getMessageTypes().get(30);
     internal_static_database_driver_v1_DatabaseInitRequest_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_database_driver_v1_DatabaseInitRequest_descriptor,
         new java.lang.String[] { "DbHandle", });
     internal_static_database_driver_v1_DatabaseInitResponse_descriptor =
-      getDescriptor().getMessageTypes().get(30);
+      getDescriptor().getMessageTypes().get(31);
     internal_static_database_driver_v1_DatabaseInitResponse_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_database_driver_v1_DatabaseInitResponse_descriptor,
         new java.lang.String[] { });
     internal_static_database_driver_v1_DatabaseReleaseRequest_descriptor =
-      getDescriptor().getMessageTypes().get(31);
+      getDescriptor().getMessageTypes().get(32);
     internal_static_database_driver_v1_DatabaseReleaseRequest_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_database_driver_v1_DatabaseReleaseRequest_descriptor,
         new java.lang.String[] { "DbHandle", });
     internal_static_database_driver_v1_DatabaseReleaseResponse_descriptor =
-      getDescriptor().getMessageTypes().get(32);
+      getDescriptor().getMessageTypes().get(33);
     internal_static_database_driver_v1_DatabaseReleaseResponse_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_database_driver_v1_DatabaseReleaseResponse_descriptor,
         new java.lang.String[] { });
     internal_static_database_driver_v1_ConnectionNewRequest_descriptor =
-      getDescriptor().getMessageTypes().get(33);
+      getDescriptor().getMessageTypes().get(34);
     internal_static_database_driver_v1_ConnectionNewRequest_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_database_driver_v1_ConnectionNewRequest_descriptor,
         new java.lang.String[] { });
     internal_static_database_driver_v1_ConnectionNewResponse_descriptor =
-      getDescriptor().getMessageTypes().get(34);
+      getDescriptor().getMessageTypes().get(35);
     internal_static_database_driver_v1_ConnectionNewResponse_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_database_driver_v1_ConnectionNewResponse_descriptor,
         new java.lang.String[] { "ConnHandle", });
     internal_static_database_driver_v1_ConnectionSetOptionStringRequest_descriptor =
-      getDescriptor().getMessageTypes().get(35);
+      getDescriptor().getMessageTypes().get(36);
     internal_static_database_driver_v1_ConnectionSetOptionStringRequest_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_database_driver_v1_ConnectionSetOptionStringRequest_descriptor,
         new java.lang.String[] { "ConnHandle", "Key", "Value", });
     internal_static_database_driver_v1_ConnectionSetOptionStringResponse_descriptor =
-      getDescriptor().getMessageTypes().get(36);
+      getDescriptor().getMessageTypes().get(37);
     internal_static_database_driver_v1_ConnectionSetOptionStringResponse_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_database_driver_v1_ConnectionSetOptionStringResponse_descriptor,
         new java.lang.String[] { });
     internal_static_database_driver_v1_ConnectionSetOptionBytesRequest_descriptor =
-      getDescriptor().getMessageTypes().get(37);
+      getDescriptor().getMessageTypes().get(38);
     internal_static_database_driver_v1_ConnectionSetOptionBytesRequest_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_database_driver_v1_ConnectionSetOptionBytesRequest_descriptor,
         new java.lang.String[] { "ConnHandle", "Key", "Value", });
     internal_static_database_driver_v1_ConnectionSetOptionBytesResponse_descriptor =
-      getDescriptor().getMessageTypes().get(38);
+      getDescriptor().getMessageTypes().get(39);
     internal_static_database_driver_v1_ConnectionSetOptionBytesResponse_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_database_driver_v1_ConnectionSetOptionBytesResponse_descriptor,
         new java.lang.String[] { });
     internal_static_database_driver_v1_ConnectionSetOptionIntRequest_descriptor =
-      getDescriptor().getMessageTypes().get(39);
+      getDescriptor().getMessageTypes().get(40);
     internal_static_database_driver_v1_ConnectionSetOptionIntRequest_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_database_driver_v1_ConnectionSetOptionIntRequest_descriptor,
         new java.lang.String[] { "ConnHandle", "Key", "Value", });
     internal_static_database_driver_v1_ConnectionSetOptionIntResponse_descriptor =
-      getDescriptor().getMessageTypes().get(40);
+      getDescriptor().getMessageTypes().get(41);
     internal_static_database_driver_v1_ConnectionSetOptionIntResponse_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_database_driver_v1_ConnectionSetOptionIntResponse_descriptor,
         new java.lang.String[] { });
     internal_static_database_driver_v1_ConnectionSetOptionDoubleRequest_descriptor =
-      getDescriptor().getMessageTypes().get(41);
+      getDescriptor().getMessageTypes().get(42);
     internal_static_database_driver_v1_ConnectionSetOptionDoubleRequest_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_database_driver_v1_ConnectionSetOptionDoubleRequest_descriptor,
         new java.lang.String[] { "ConnHandle", "Key", "Value", });
     internal_static_database_driver_v1_ConnectionSetOptionDoubleResponse_descriptor =
-      getDescriptor().getMessageTypes().get(42);
+      getDescriptor().getMessageTypes().get(43);
     internal_static_database_driver_v1_ConnectionSetOptionDoubleResponse_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_database_driver_v1_ConnectionSetOptionDoubleResponse_descriptor,
         new java.lang.String[] { });
     internal_static_database_driver_v1_ConnectionInitRequest_descriptor =
-      getDescriptor().getMessageTypes().get(43);
+      getDescriptor().getMessageTypes().get(44);
     internal_static_database_driver_v1_ConnectionInitRequest_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_database_driver_v1_ConnectionInitRequest_descriptor,
         new java.lang.String[] { "ConnHandle", "DbHandle", });
     internal_static_database_driver_v1_ConnectionInitResponse_descriptor =
-      getDescriptor().getMessageTypes().get(44);
+      getDescriptor().getMessageTypes().get(45);
     internal_static_database_driver_v1_ConnectionInitResponse_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_database_driver_v1_ConnectionInitResponse_descriptor,
         new java.lang.String[] { });
     internal_static_database_driver_v1_ConnectionReleaseRequest_descriptor =
-      getDescriptor().getMessageTypes().get(45);
+      getDescriptor().getMessageTypes().get(46);
     internal_static_database_driver_v1_ConnectionReleaseRequest_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_database_driver_v1_ConnectionReleaseRequest_descriptor,
         new java.lang.String[] { "ConnHandle", });
     internal_static_database_driver_v1_ConnectionReleaseResponse_descriptor =
-      getDescriptor().getMessageTypes().get(46);
+      getDescriptor().getMessageTypes().get(47);
     internal_static_database_driver_v1_ConnectionReleaseResponse_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_database_driver_v1_ConnectionReleaseResponse_descriptor,
         new java.lang.String[] { });
     internal_static_database_driver_v1_ConnectionGetInfoRequest_descriptor =
-      getDescriptor().getMessageTypes().get(47);
+      getDescriptor().getMessageTypes().get(48);
     internal_static_database_driver_v1_ConnectionGetInfoRequest_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_database_driver_v1_ConnectionGetInfoRequest_descriptor,
         new java.lang.String[] { "ConnHandle", "InfoCodes", });
     internal_static_database_driver_v1_ConnectionGetInfoResponse_descriptor =
-      getDescriptor().getMessageTypes().get(48);
+      getDescriptor().getMessageTypes().get(49);
     internal_static_database_driver_v1_ConnectionGetInfoResponse_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_database_driver_v1_ConnectionGetInfoResponse_descriptor,
         new java.lang.String[] { "InfoData", });
     internal_static_database_driver_v1_ConnectionGetObjectsRequest_descriptor =
-      getDescriptor().getMessageTypes().get(49);
+      getDescriptor().getMessageTypes().get(50);
     internal_static_database_driver_v1_ConnectionGetObjectsRequest_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_database_driver_v1_ConnectionGetObjectsRequest_descriptor,
         new java.lang.String[] { "ConnHandle", "Depth", "Catalog", "DbSchema", "TableName", "TableType", "ColumnName", });
     internal_static_database_driver_v1_ConnectionGetObjectsResponse_descriptor =
-      getDescriptor().getMessageTypes().get(50);
+      getDescriptor().getMessageTypes().get(51);
     internal_static_database_driver_v1_ConnectionGetObjectsResponse_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_database_driver_v1_ConnectionGetObjectsResponse_descriptor,
         new java.lang.String[] { "ObjectsData", });
     internal_static_database_driver_v1_ConnectionGetTableSchemaRequest_descriptor =
-      getDescriptor().getMessageTypes().get(51);
+      getDescriptor().getMessageTypes().get(52);
     internal_static_database_driver_v1_ConnectionGetTableSchemaRequest_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_database_driver_v1_ConnectionGetTableSchemaRequest_descriptor,
         new java.lang.String[] { "ConnHandle", "Catalog", "DbSchema", "TableName", });
     internal_static_database_driver_v1_ConnectionGetTableSchemaResponse_descriptor =
-      getDescriptor().getMessageTypes().get(52);
+      getDescriptor().getMessageTypes().get(53);
     internal_static_database_driver_v1_ConnectionGetTableSchemaResponse_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_database_driver_v1_ConnectionGetTableSchemaResponse_descriptor,
         new java.lang.String[] { "SchemaData", });
     internal_static_database_driver_v1_ConnectionGetTableTypesRequest_descriptor =
-      getDescriptor().getMessageTypes().get(53);
+      getDescriptor().getMessageTypes().get(54);
     internal_static_database_driver_v1_ConnectionGetTableTypesRequest_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_database_driver_v1_ConnectionGetTableTypesRequest_descriptor,
         new java.lang.String[] { "ConnHandle", });
     internal_static_database_driver_v1_ConnectionGetTableTypesResponse_descriptor =
-      getDescriptor().getMessageTypes().get(54);
+      getDescriptor().getMessageTypes().get(55);
     internal_static_database_driver_v1_ConnectionGetTableTypesResponse_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_database_driver_v1_ConnectionGetTableTypesResponse_descriptor,
         new java.lang.String[] { "TableTypesData", });
     internal_static_database_driver_v1_ConnectionCommitRequest_descriptor =
-      getDescriptor().getMessageTypes().get(55);
+      getDescriptor().getMessageTypes().get(56);
     internal_static_database_driver_v1_ConnectionCommitRequest_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_database_driver_v1_ConnectionCommitRequest_descriptor,
         new java.lang.String[] { "ConnHandle", });
     internal_static_database_driver_v1_ConnectionCommitResponse_descriptor =
-      getDescriptor().getMessageTypes().get(56);
+      getDescriptor().getMessageTypes().get(57);
     internal_static_database_driver_v1_ConnectionCommitResponse_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_database_driver_v1_ConnectionCommitResponse_descriptor,
         new java.lang.String[] { });
     internal_static_database_driver_v1_ConnectionRollbackRequest_descriptor =
-      getDescriptor().getMessageTypes().get(57);
+      getDescriptor().getMessageTypes().get(58);
     internal_static_database_driver_v1_ConnectionRollbackRequest_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_database_driver_v1_ConnectionRollbackRequest_descriptor,
         new java.lang.String[] { "ConnHandle", });
     internal_static_database_driver_v1_ConnectionRollbackResponse_descriptor =
-      getDescriptor().getMessageTypes().get(58);
+      getDescriptor().getMessageTypes().get(59);
     internal_static_database_driver_v1_ConnectionRollbackResponse_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_database_driver_v1_ConnectionRollbackResponse_descriptor,
         new java.lang.String[] { });
     internal_static_database_driver_v1_StatementNewRequest_descriptor =
-      getDescriptor().getMessageTypes().get(59);
+      getDescriptor().getMessageTypes().get(60);
     internal_static_database_driver_v1_StatementNewRequest_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_database_driver_v1_StatementNewRequest_descriptor,
         new java.lang.String[] { "ConnHandle", });
     internal_static_database_driver_v1_StatementNewResponse_descriptor =
-      getDescriptor().getMessageTypes().get(60);
+      getDescriptor().getMessageTypes().get(61);
     internal_static_database_driver_v1_StatementNewResponse_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_database_driver_v1_StatementNewResponse_descriptor,
         new java.lang.String[] { "StmtHandle", });
     internal_static_database_driver_v1_StatementReleaseRequest_descriptor =
-      getDescriptor().getMessageTypes().get(61);
+      getDescriptor().getMessageTypes().get(62);
     internal_static_database_driver_v1_StatementReleaseRequest_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_database_driver_v1_StatementReleaseRequest_descriptor,
         new java.lang.String[] { "StmtHandle", });
     internal_static_database_driver_v1_StatementReleaseResponse_descriptor =
-      getDescriptor().getMessageTypes().get(62);
+      getDescriptor().getMessageTypes().get(63);
     internal_static_database_driver_v1_StatementReleaseResponse_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_database_driver_v1_StatementReleaseResponse_descriptor,
         new java.lang.String[] { });
     internal_static_database_driver_v1_StatementSetSqlQueryRequest_descriptor =
-      getDescriptor().getMessageTypes().get(63);
+      getDescriptor().getMessageTypes().get(64);
     internal_static_database_driver_v1_StatementSetSqlQueryRequest_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_database_driver_v1_StatementSetSqlQueryRequest_descriptor,
         new java.lang.String[] { "StmtHandle", "Query", });
     internal_static_database_driver_v1_StatementSetSqlQueryResponse_descriptor =
-      getDescriptor().getMessageTypes().get(64);
+      getDescriptor().getMessageTypes().get(65);
     internal_static_database_driver_v1_StatementSetSqlQueryResponse_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_database_driver_v1_StatementSetSqlQueryResponse_descriptor,
         new java.lang.String[] { });
     internal_static_database_driver_v1_StatementSetSubstraitPlanRequest_descriptor =
-      getDescriptor().getMessageTypes().get(65);
+      getDescriptor().getMessageTypes().get(66);
     internal_static_database_driver_v1_StatementSetSubstraitPlanRequest_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_database_driver_v1_StatementSetSubstraitPlanRequest_descriptor,
         new java.lang.String[] { "StmtHandle", "Plan", });
     internal_static_database_driver_v1_StatementSetSubstraitPlanResponse_descriptor =
-      getDescriptor().getMessageTypes().get(66);
+      getDescriptor().getMessageTypes().get(67);
     internal_static_database_driver_v1_StatementSetSubstraitPlanResponse_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_database_driver_v1_StatementSetSubstraitPlanResponse_descriptor,
         new java.lang.String[] { });
     internal_static_database_driver_v1_StatementPrepareRequest_descriptor =
-      getDescriptor().getMessageTypes().get(67);
+      getDescriptor().getMessageTypes().get(68);
     internal_static_database_driver_v1_StatementPrepareRequest_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_database_driver_v1_StatementPrepareRequest_descriptor,
         new java.lang.String[] { "StmtHandle", });
     internal_static_database_driver_v1_StatementPrepareResponse_descriptor =
-      getDescriptor().getMessageTypes().get(68);
+      getDescriptor().getMessageTypes().get(69);
     internal_static_database_driver_v1_StatementPrepareResponse_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_database_driver_v1_StatementPrepareResponse_descriptor,
         new java.lang.String[] { });
     internal_static_database_driver_v1_StatementSetOptionStringRequest_descriptor =
-      getDescriptor().getMessageTypes().get(69);
+      getDescriptor().getMessageTypes().get(70);
     internal_static_database_driver_v1_StatementSetOptionStringRequest_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_database_driver_v1_StatementSetOptionStringRequest_descriptor,
         new java.lang.String[] { "StmtHandle", "Key", "Value", });
     internal_static_database_driver_v1_StatementSetOptionStringResponse_descriptor =
-      getDescriptor().getMessageTypes().get(70);
+      getDescriptor().getMessageTypes().get(71);
     internal_static_database_driver_v1_StatementSetOptionStringResponse_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_database_driver_v1_StatementSetOptionStringResponse_descriptor,
         new java.lang.String[] { });
     internal_static_database_driver_v1_StatementSetOptionBytesRequest_descriptor =
-      getDescriptor().getMessageTypes().get(71);
+      getDescriptor().getMessageTypes().get(72);
     internal_static_database_driver_v1_StatementSetOptionBytesRequest_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_database_driver_v1_StatementSetOptionBytesRequest_descriptor,
         new java.lang.String[] { "StmtHandle", "Key", "Value", });
     internal_static_database_driver_v1_StatementSetOptionBytesResponse_descriptor =
-      getDescriptor().getMessageTypes().get(72);
+      getDescriptor().getMessageTypes().get(73);
     internal_static_database_driver_v1_StatementSetOptionBytesResponse_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_database_driver_v1_StatementSetOptionBytesResponse_descriptor,
         new java.lang.String[] { });
     internal_static_database_driver_v1_StatementSetOptionIntRequest_descriptor =
-      getDescriptor().getMessageTypes().get(73);
+      getDescriptor().getMessageTypes().get(74);
     internal_static_database_driver_v1_StatementSetOptionIntRequest_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_database_driver_v1_StatementSetOptionIntRequest_descriptor,
         new java.lang.String[] { "StmtHandle", "Key", "Value", });
     internal_static_database_driver_v1_StatementSetOptionIntResponse_descriptor =
-      getDescriptor().getMessageTypes().get(74);
+      getDescriptor().getMessageTypes().get(75);
     internal_static_database_driver_v1_StatementSetOptionIntResponse_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_database_driver_v1_StatementSetOptionIntResponse_descriptor,
         new java.lang.String[] { });
     internal_static_database_driver_v1_StatementSetOptionDoubleRequest_descriptor =
-      getDescriptor().getMessageTypes().get(75);
+      getDescriptor().getMessageTypes().get(76);
     internal_static_database_driver_v1_StatementSetOptionDoubleRequest_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_database_driver_v1_StatementSetOptionDoubleRequest_descriptor,
         new java.lang.String[] { "StmtHandle", "Key", "Value", });
     internal_static_database_driver_v1_StatementSetOptionDoubleResponse_descriptor =
-      getDescriptor().getMessageTypes().get(76);
+      getDescriptor().getMessageTypes().get(77);
     internal_static_database_driver_v1_StatementSetOptionDoubleResponse_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_database_driver_v1_StatementSetOptionDoubleResponse_descriptor,
         new java.lang.String[] { });
     internal_static_database_driver_v1_StatementGetParameterSchemaRequest_descriptor =
-      getDescriptor().getMessageTypes().get(77);
+      getDescriptor().getMessageTypes().get(78);
     internal_static_database_driver_v1_StatementGetParameterSchemaRequest_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_database_driver_v1_StatementGetParameterSchemaRequest_descriptor,
         new java.lang.String[] { "StmtHandle", });
     internal_static_database_driver_v1_StatementGetParameterSchemaResponse_descriptor =
-      getDescriptor().getMessageTypes().get(78);
+      getDescriptor().getMessageTypes().get(79);
     internal_static_database_driver_v1_StatementGetParameterSchemaResponse_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_database_driver_v1_StatementGetParameterSchemaResponse_descriptor,
         new java.lang.String[] { "Schema", });
     internal_static_database_driver_v1_StatementBindRequest_descriptor =
-      getDescriptor().getMessageTypes().get(79);
+      getDescriptor().getMessageTypes().get(80);
     internal_static_database_driver_v1_StatementBindRequest_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_database_driver_v1_StatementBindRequest_descriptor,
         new java.lang.String[] { "StmtHandle", "Schema", "Array", });
     internal_static_database_driver_v1_StatementBindResponse_descriptor =
-      getDescriptor().getMessageTypes().get(80);
+      getDescriptor().getMessageTypes().get(81);
     internal_static_database_driver_v1_StatementBindResponse_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_database_driver_v1_StatementBindResponse_descriptor,
         new java.lang.String[] { });
     internal_static_database_driver_v1_StatementBindStreamRequest_descriptor =
-      getDescriptor().getMessageTypes().get(81);
+      getDescriptor().getMessageTypes().get(82);
     internal_static_database_driver_v1_StatementBindStreamRequest_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_database_driver_v1_StatementBindStreamRequest_descriptor,
         new java.lang.String[] { "StmtHandle", "Stream", });
     internal_static_database_driver_v1_StatementBindStreamResponse_descriptor =
-      getDescriptor().getMessageTypes().get(82);
+      getDescriptor().getMessageTypes().get(83);
     internal_static_database_driver_v1_StatementBindStreamResponse_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_database_driver_v1_StatementBindStreamResponse_descriptor,
         new java.lang.String[] { });
     internal_static_database_driver_v1_StatementExecuteQueryRequest_descriptor =
-      getDescriptor().getMessageTypes().get(83);
+      getDescriptor().getMessageTypes().get(84);
     internal_static_database_driver_v1_StatementExecuteQueryRequest_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_database_driver_v1_StatementExecuteQueryRequest_descriptor,
         new java.lang.String[] { "StmtHandle", "Bindings", });
     internal_static_database_driver_v1_StatementExecuteQueryResponse_descriptor =
-      getDescriptor().getMessageTypes().get(84);
+      getDescriptor().getMessageTypes().get(85);
     internal_static_database_driver_v1_StatementExecuteQueryResponse_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_database_driver_v1_StatementExecuteQueryResponse_descriptor,
         new java.lang.String[] { "Result", });
     internal_static_database_driver_v1_StatementExecutePartitionsRequest_descriptor =
-      getDescriptor().getMessageTypes().get(85);
+      getDescriptor().getMessageTypes().get(86);
     internal_static_database_driver_v1_StatementExecutePartitionsRequest_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_database_driver_v1_StatementExecutePartitionsRequest_descriptor,
         new java.lang.String[] { "StmtHandle", });
     internal_static_database_driver_v1_StatementExecutePartitionsResponse_descriptor =
-      getDescriptor().getMessageTypes().get(86);
+      getDescriptor().getMessageTypes().get(87);
     internal_static_database_driver_v1_StatementExecutePartitionsResponse_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_database_driver_v1_StatementExecutePartitionsResponse_descriptor,
         new java.lang.String[] { "Result", });
     internal_static_database_driver_v1_StatementReadPartitionRequest_descriptor =
-      getDescriptor().getMessageTypes().get(87);
+      getDescriptor().getMessageTypes().get(88);
     internal_static_database_driver_v1_StatementReadPartitionRequest_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_database_driver_v1_StatementReadPartitionRequest_descriptor,
         new java.lang.String[] { "StmtHandle", "PartitionDescriptor", });
     internal_static_database_driver_v1_StatementReadPartitionResponse_descriptor =
-      getDescriptor().getMessageTypes().get(88);
+      getDescriptor().getMessageTypes().get(89);
     internal_static_database_driver_v1_StatementReadPartitionResponse_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_database_driver_v1_StatementReadPartitionResponse_descriptor,
