@@ -181,7 +181,6 @@ public class IntTests extends SnowflakeIntegrationTestBase {
   public void shouldSelectIntegersFromTableForIntAndSynonyms(String typeName) throws Exception {
     // Given Snowflake client is logged in
     Connection connection = getDefaultConnection();
-    ensureDatabaseAndSchema(connection);
     // And Table with <type> column exists with values [0, 1, -1, 100]
     String tableName = createTempTable(connection, "col " + typeName);
     execute(connection, "INSERT INTO " + tableName + " VALUES (0), (1), (-1), (100)");
@@ -205,7 +204,6 @@ public class IntTests extends SnowflakeIntegrationTestBase {
   public void shouldSelectCornerCaseValuesFromTableForIntAndSynonyms() throws Exception {
     // Given Snowflake client is logged in
     Connection connection = getDefaultConnection();
-    ensureDatabaseAndSchema(connection);
     // And Table with columns (tinyint_col TINYINT, byteint_col BYTEINT, smallint_col SMALLINT,
     // int_col INT, integer_col INTEGER, bigint_col BIGINT, int38_col INT) exists
     String tableName =
@@ -286,7 +284,6 @@ public class IntTests extends SnowflakeIntegrationTestBase {
       throws Exception {
     // Given Snowflake client is logged in
     Connection connection = getDefaultConnection();
-    ensureDatabaseAndSchema(connection);
     // And Table with <type> column exists with 50000 sequential values
     String tableName = createTempTable(connection, "col " + typeName);
     execute(
