@@ -808,33 +808,24 @@ static const TypeInfoExpected ALL_TYPE_INFO[] = {
 // SQLGetTypeInfo - Basic Functionality
 // ============================================================================
 
-TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetTypeInfo: Result set ordering when using SQL_ALL_TYPES",
+TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetTypeInfo: Result set ordering when using SQL_ALL_TYPES",
                  "[odbc-api][gettypeinfo][driver_info]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
-  SQLRETURN ret =
-      SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(config.value().dsn_name().c_str())),
-                 SQL_NTS, nullptr, 0, nullptr, 0);
-  REQUIRE(ret == SQL_SUCCESS);
-
-  SQLHSTMT stmt = SQL_NULL_HSTMT;
-  ret = SQLAllocHandle(SQL_HANDLE_STMT, dbc_handle(), &stmt);
-  REQUIRE(ret == SQL_SUCCESS);
-
-  ret = SQLGetTypeInfo(stmt, SQL_ALL_TYPES);
+  SQLRETURN ret = SQLGetTypeInfo(stmt_handle(), SQL_ALL_TYPES);
   REQUIRE(ret == SQL_SUCCESS);
 
   std::vector<std::pair<SQLSMALLINT, std::string>> types;
 
-  while ((ret = SQLFetch(stmt)) == SQL_SUCCESS) {
+  while ((ret = SQLFetch(stmt_handle())) == SQL_SUCCESS) {
     SQLSMALLINT dataType;
     char typeName[256];
     SQLLEN indicator;
 
-    ret = SQLGetData(stmt, 2, SQL_C_SSHORT, &dataType, sizeof(dataType), &indicator);
+    ret = SQLGetData(stmt_handle(), 2, SQL_C_SSHORT, &dataType, sizeof(dataType), &indicator);
     REQUIRE(ret == SQL_SUCCESS);
 
-    ret = SQLGetData(stmt, 1, SQL_C_CHAR, typeName, sizeof(typeName), &indicator);
+    ret = SQLGetData(stmt_handle(), 1, SQL_C_CHAR, typeName, sizeof(typeName), &indicator);
     REQUIRE(ret == SQL_SUCCESS);
 
     types.emplace_back(dataType, typeName);
@@ -866,9 +857,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetTypeInfo: Result set ordering when
   REQUIRE(types[20].first == SQL_WCHAR);
   REQUIRE(types[21].first == SQL_WVARCHAR);
   REQUIRE(types[22].first == SQL_BIT);
-
-  SQLFreeHandle(SQL_HANDLE_STMT, stmt);
-  SQLDisconnect(dbc_handle());
 }
 
 // ============================================================================
@@ -882,9 +870,8 @@ TEST_CASE("SQLGetTypeInfo: SQL_INVALID_HANDLE - NULL statement handle", "[odbc-a
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetTypeInfo: SQL_INVALID_HANDLE - Invalid handle type",
                  "[odbc-api][gettypeinfo][driver_info][error]") {
-  SQLRETURN ret =
-      SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(config.value().dsn_name().c_str())),
-                 SQL_NTS, nullptr, 0, nullptr, 0);
+  SQLRETURN ret = SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(dsn_name().c_str())), SQL_NTS,
+                             nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
   ret = SQLGetTypeInfo(dbc_handle(), SQL_ALL_TYPES);
@@ -897,29 +884,17 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetTypeInfo: SQL_INVALID_HANDLE - Inv
 // SQLGetTypeInfo - Error Cases: Invalid Parameters
 // ============================================================================
 
-TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetTypeInfo: Returns empty result for invalid SQL data type",
+TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetTypeInfo: Returns empty result for invalid SQL data type",
                  "[odbc-api][gettypeinfo][driver_info]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
-  SQLRETURN ret =
-      SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(config.value().dsn_name().c_str())),
-                 SQL_NTS, nullptr, 0, nullptr, 0);
-  REQUIRE(ret == SQL_SUCCESS);
-
-  SQLHSTMT stmt = SQL_NULL_HSTMT;
-  ret = SQLAllocHandle(SQL_HANDLE_STMT, dbc_handle(), &stmt);
-  REQUIRE(ret == SQL_SUCCESS);
-
-  ret = SQLGetTypeInfo(stmt, 9999);
+  SQLRETURN ret = SQLGetTypeInfo(stmt_handle(), 9999);
 
   // Note: Reference driver returns SUCCESS with empty result set (differs from ODBC spec)
   REQUIRE(ret == SQL_SUCCESS);
 
-  ret = SQLFetch(stmt);
+  ret = SQLFetch(stmt_handle());
   REQUIRE(ret == SQL_NO_DATA);
-
-  SQLFreeHandle(SQL_HANDLE_STMT, stmt);
-  SQLDisconnect(dbc_handle());
 }
 
 // ============================================================================
@@ -946,58 +921,37 @@ TEST_CASE_METHOD(DbcFixture, "SQLGetTypeInfo: Requires active connection",
   SQLFreeHandle(SQL_HANDLE_STMT, stmt);
 }
 
-TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetTypeInfo: Can be called multiple times on same statement",
+TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetTypeInfo: Can be called multiple times on same statement",
                  "[odbc-api][gettypeinfo][driver_info]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
-  SQLRETURN ret =
-      SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(config.value().dsn_name().c_str())),
-                 SQL_NTS, nullptr, 0, nullptr, 0);
+  SQLRETURN ret = SQLGetTypeInfo(stmt_handle(), SQL_VARCHAR);
   REQUIRE(ret == SQL_SUCCESS);
 
-  SQLHSTMT stmt = SQL_NULL_HSTMT;
-  ret = SQLAllocHandle(SQL_HANDLE_STMT, dbc_handle(), &stmt);
+  ret = SQLCloseCursor(stmt_handle());
   REQUIRE(ret == SQL_SUCCESS);
 
-  ret = SQLGetTypeInfo(stmt, SQL_VARCHAR);
+  ret = SQLGetTypeInfo(stmt_handle(), SQL_INTEGER);
   REQUIRE(ret == SQL_SUCCESS);
 
-  ret = SQLCloseCursor(stmt);
+  ret = SQLFetch(stmt_handle());
   REQUIRE(ret == SQL_SUCCESS);
-
-  ret = SQLGetTypeInfo(stmt, SQL_INTEGER);
-  REQUIRE(ret == SQL_SUCCESS);
-
-  ret = SQLFetch(stmt);
-  REQUIRE(ret == SQL_SUCCESS);
-
-  SQLFreeHandle(SQL_HANDLE_STMT, stmt);
-  SQLDisconnect(dbc_handle());
 }
 
 // ============================================================================
 // SQLGetTypeInfo - Result Set Column Tests
 // ============================================================================
 
-TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetTypeInfo: Result set has correct columns",
+TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetTypeInfo: Result set has correct columns",
                  "[odbc-api][gettypeinfo][driver_info]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
-  SQLRETURN ret =
-      SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(config.value().dsn_name().c_str())),
-                 SQL_NTS, nullptr, 0, nullptr, 0);
-  REQUIRE(ret == SQL_SUCCESS);
-
-  SQLHSTMT stmt = SQL_NULL_HSTMT;
-  ret = SQLAllocHandle(SQL_HANDLE_STMT, dbc_handle(), &stmt);
-  REQUIRE(ret == SQL_SUCCESS);
-
-  ret = SQLGetTypeInfo(stmt, SQL_ALL_TYPES);
+  SQLRETURN ret = SQLGetTypeInfo(stmt_handle(), SQL_ALL_TYPES);
   REQUIRE(ret == SQL_SUCCESS);
 
   // Note: Reference driver returns 20 columns instead of standard 19
   SQLSMALLINT numCols = 0;
-  ret = SQLNumResultCols(stmt, &numCols);
+  ret = SQLNumResultCols(stmt_handle(), &numCols);
   REQUIRE(ret == SQL_SUCCESS);
   REQUIRE(numCols == 20);
 
@@ -1015,28 +969,16 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetTypeInfo: Result set has correct c
                                     "SQL_DATETIME_SUB", "NUM_PREC_RADIX",     "INTERVAL_PRECISION", "USER_DATA_TYPE"};
 
   for (SQLSMALLINT col = 1; col <= numCols; col++) {
-    ret = SQLDescribeCol(stmt, col, reinterpret_cast<SQLCHAR*>(colName), sizeof(colName), &nameLen, &dataType, &colSize,
-                         &decDigits, &nullable);
+    ret = SQLDescribeCol(stmt_handle(), col, reinterpret_cast<SQLCHAR*>(colName), sizeof(colName), &nameLen, &dataType,
+                         &colSize, &decDigits, &nullable);
     REQUIRE(ret == SQL_SUCCESS);
     REQUIRE(std::string(colName) == expectedColNames[col - 1]);
   }
-
-  SQLFreeHandle(SQL_HANDLE_STMT, stmt);
-  SQLDisconnect(dbc_handle());
 }
 
-TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetTypeInfo: Can bind columns and fetch data",
+TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetTypeInfo: Can bind columns and fetch data",
                  "[odbc-api][gettypeinfo][driver_info]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
-  SQLRETURN ret =
-      SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(config.value().dsn_name().c_str())),
-                 SQL_NTS, nullptr, 0, nullptr, 0);
-  REQUIRE(ret == SQL_SUCCESS);
-
-  SQLHSTMT stmt = SQL_NULL_HSTMT;
-  ret = SQLAllocHandle(SQL_HANDLE_STMT, dbc_handle(), &stmt);
-  REQUIRE(ret == SQL_SUCCESS);
 
   char typeName[256];
   SQLLEN typeNameInd;
@@ -1045,19 +987,19 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetTypeInfo: Can bind columns and fet
   SQLINTEGER columnSize;
   SQLLEN columnSizeInd;
 
-  ret = SQLGetTypeInfo(stmt, SQL_ALL_TYPES);
+  SQLRETURN ret = SQLGetTypeInfo(stmt_handle(), SQL_ALL_TYPES);
   REQUIRE(ret == SQL_SUCCESS);
 
-  ret = SQLBindCol(stmt, 1, SQL_C_CHAR, typeName, sizeof(typeName), &typeNameInd);
+  ret = SQLBindCol(stmt_handle(), 1, SQL_C_CHAR, typeName, sizeof(typeName), &typeNameInd);
   REQUIRE(ret == SQL_SUCCESS);
 
-  ret = SQLBindCol(stmt, 2, SQL_C_SSHORT, &dataType, sizeof(dataType), &dataTypeInd);
+  ret = SQLBindCol(stmt_handle(), 2, SQL_C_SSHORT, &dataType, sizeof(dataType), &dataTypeInd);
   REQUIRE(ret == SQL_SUCCESS);
 
-  ret = SQLBindCol(stmt, 3, SQL_C_SLONG, &columnSize, sizeof(columnSize), &columnSizeInd);
+  ret = SQLBindCol(stmt_handle(), 3, SQL_C_SLONG, &columnSize, sizeof(columnSize), &columnSizeInd);
   REQUIRE(ret == SQL_SUCCESS);
 
-  ret = SQLFetch(stmt);
+  ret = SQLFetch(stmt_handle());
   REQUIRE(ret == SQL_SUCCESS);
 
   REQUIRE(typeNameInd != SQL_NULL_DATA);
@@ -1071,9 +1013,6 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetTypeInfo: Can bind columns and fet
            dataType == SQL_BINARY || dataType == SQL_VARBINARY || dataType == SQL_TYPE_DATE ||
            dataType == SQL_TYPE_TIME || dataType == SQL_TYPE_TIMESTAMP));
   REQUIRE(columnSize > 0);
-
-  SQLFreeHandle(SQL_HANDLE_STMT, stmt);
-  SQLDisconnect(dbc_handle());
 }
 
 // ============================================================================
@@ -1084,9 +1023,8 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetTypeInfo: Documents all supported 
                  "[odbc-api][gettypeinfo][driver_info]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
-  SQLRETURN ret =
-      SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(config.value().dsn_name().c_str())),
-                 SQL_NTS, nullptr, 0, nullptr, 0);
+  SQLRETURN ret = SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(dsn_name().c_str())), SQL_NTS,
+                             nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
   for (const auto& expected : ALL_TYPE_INFO) {

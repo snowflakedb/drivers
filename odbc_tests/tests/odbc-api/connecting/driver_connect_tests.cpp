@@ -155,7 +155,7 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDriverConnect: SQL_DRIVER_NOPROMPT mo
 
   // SQL_DRIVER_NOPROMPT: Never prompt, fail if info missing
   // With complete DSN (has credentials), should succeed
-  std::string connStr = "DSN=" + config.value().dsn_name();
+  std::string connStr = "DSN=" + dsn_name();
   SQLRETURN ret =
       SQLDriverConnect(dbc_handle(), nullptr, reinterpret_cast<SQLCHAR*>(const_cast<char*>(connStr.c_str())), SQL_NTS,
                        nullptr, 0, nullptr, SQL_DRIVER_NOPROMPT);
@@ -172,7 +172,7 @@ TEST_CASE_METHOD(DbcNoAuthDSNFixture, "SQLDriverConnect: SQL_DRIVER_NOPROMPT mod
   // SQL_DRIVER_NOPROMPT: With DSN that has no credentials, should fail
   // Note: Snowflake driver returns 28000 for authentication failures.
   // ODBC spec allows 28000, 08001, 08004, or HY000, but Snowflake consistently uses 28000.
-  std::string connStr = "DSN=" + config->dsn_name();
+  std::string connStr = "DSN=" + dsn_name();
   const SQLRETURN ret =
       SQLDriverConnect(dbc_handle(), nullptr, reinterpret_cast<SQLCHAR*>(const_cast<char*>(connStr.c_str())), SQL_NTS,
                        nullptr, 0, nullptr, SQL_DRIVER_NOPROMPT);
@@ -185,7 +185,7 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDriverConnect: SQL_DRIVER_COMPLETE mo
 
   // SQL_DRIVER_COMPLETE: Prompt only if info is missing
   // With complete DSN, no prompting needed, should succeed
-  std::string connStr = "DSN=" + config.value().dsn_name();
+  std::string connStr = "DSN=" + dsn_name();
   SQLRETURN ret =
       SQLDriverConnect(dbc_handle(), nullptr, reinterpret_cast<SQLCHAR*>(const_cast<char*>(connStr.c_str())), SQL_NTS,
                        nullptr, 0, nullptr, SQL_DRIVER_COMPLETE);
@@ -203,7 +203,7 @@ TEST_CASE_METHOD(DbcNoAuthDSNFixture, "SQLDriverConnect: SQL_DRIVER_COMPLETE mod
   // but fails with NULL window handle in headless environment
   // Note: Snowflake driver returns 28000 for authentication failures.
   // ODBC spec allows 28000, 08001, 08004, or HY000, but Snowflake consistently uses 28000.
-  std::string connStr = "DSN=" + config->dsn_name();
+  std::string connStr = "DSN=" + dsn_name();
   const SQLRETURN ret =
       SQLDriverConnect(dbc_handle(), nullptr, reinterpret_cast<SQLCHAR*>(const_cast<char*>(connStr.c_str())), SQL_NTS,
                        nullptr, 0, nullptr, SQL_DRIVER_COMPLETE);
@@ -216,7 +216,7 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDriverConnect: SQL_DRIVER_COMPLETE_RE
 
   // SQL_DRIVER_COMPLETE_REQUIRED: Only prompt for required info
   // With complete DSN, no prompting needed, should succeed
-  std::string connStr = "DSN=" + config.value().dsn_name();
+  std::string connStr = "DSN=" + dsn_name();
   SQLRETURN ret =
       SQLDriverConnect(dbc_handle(), nullptr, reinterpret_cast<SQLCHAR*>(const_cast<char*>(connStr.c_str())), SQL_NTS,
                        nullptr, 0, nullptr, SQL_DRIVER_COMPLETE_REQUIRED);
@@ -234,7 +234,7 @@ TEST_CASE_METHOD(DbcNoAuthDSNFixture, "SQLDriverConnect: SQL_DRIVER_COMPLETE_REQ
   // but fails with NULL window handle in headless environment
   // Note: Snowflake driver returns 28000 for authentication failures.
   // ODBC spec allows 28000, 08001, 08004, or HY000, but Snowflake consistently uses 28000.
-  std::string connStr = "DSN=" + config->dsn_name();
+  std::string connStr = "DSN=" + dsn_name();
   const SQLRETURN ret =
       SQLDriverConnect(dbc_handle(), nullptr, reinterpret_cast<SQLCHAR*>(const_cast<char*>(connStr.c_str())), SQL_NTS,
                        nullptr, 0, nullptr, SQL_DRIVER_COMPLETE_REQUIRED);
@@ -246,7 +246,7 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDriverConnect: SQL_DRIVER_PROMPT mode
   // SQL_DRIVER_PROMPT: Always display dialog, even with complete DSN
   // Per ODBC spec, with NULL window handle should return HY092 or fail
   // Even though DSN is complete, PROMPT mode MUST show dialog
-  std::string connStr = "DSN=" + config.value().dsn_name();
+  std::string connStr = "DSN=" + dsn_name();
   const SQLRETURN ret =
       SQLDriverConnect(dbc_handle(), nullptr, reinterpret_cast<SQLCHAR*>(const_cast<char*>(connStr.c_str())), SQL_NTS,
                        nullptr, 0, nullptr, SQL_DRIVER_PROMPT);
@@ -260,7 +260,7 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDriverConnect: 08002 - Connection alr
                  "[odbc-api][driverconnect][dsn][integration][error]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
-  const std::string connStr = build_dsn_connection_string(config.value().dsn_name());
+  const std::string connStr = build_dsn_connection_string(dsn_name());
 
   // First connection
   SQLRETURN ret =
@@ -291,7 +291,7 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDriverConnect: OutConnectionString bu
                  "[odbc-api][driverconnect][dsn][integration][buffer]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
-  const std::string connStr = build_dsn_connection_string(config.value().dsn_name());
+  const std::string connStr = build_dsn_connection_string(dsn_name());
 
   // Test with output buffer
   SQLCHAR outConnStr[1024];
@@ -315,7 +315,7 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDriverConnect: OutConnectionString tr
                  "[odbc-api][driverconnect][dsn][integration][buffer]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
-  const std::string connStr = build_dsn_connection_string(config.value().dsn_name());
+  const std::string connStr = build_dsn_connection_string(dsn_name());
 
   // Very small buffer to force truncation
   SQLCHAR outConnStr[10];
@@ -343,7 +343,7 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDriverConnect: NULL OutConnectionStri
                  "[odbc-api][driverconnect][dsn][integration][buffer]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
-  const std::string connStr = build_dsn_connection_string(config.value().dsn_name());
+  const std::string connStr = build_dsn_connection_string(dsn_name());
   SQLSMALLINT outConnStrLen = 0;
 
   // NULL buffer but valid length pointer - should report required length
@@ -363,7 +363,7 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDriverConnect: NULL StringLength2Ptr 
                  "[odbc-api][driverconnect][dsn][integration][buffer]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
-  const std::string connStr = build_dsn_connection_string(config.value().dsn_name());
+  const std::string connStr = build_dsn_connection_string(dsn_name());
   SQLCHAR outConnStr[1024];
 
   // Valid buffer but NULL length pointer - should still succeed
@@ -383,7 +383,7 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDriverConnect: Both OutConnectionStri
                  "[odbc-api][driverconnect][dsn][integration][buffer]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
-  const std::string connStr = build_dsn_connection_string(config.value().dsn_name());
+  const std::string connStr = build_dsn_connection_string(dsn_name());
 
   // Both NULL - should still connect, just no output
   SQLRETURN ret =
@@ -452,7 +452,7 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDriverConnect: Basic DSN connection s
                  "[odbc-api][driverconnect][dsn][integration]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
-  const std::string connStr = build_dsn_connection_string(config.value().dsn_name());
+  const std::string connStr = build_dsn_connection_string(dsn_name());
 
   SQLRETURN ret =
       SQLDriverConnect(dbc_handle(), nullptr, reinterpret_cast<SQLCHAR*>(const_cast<char*>(connStr.c_str())), SQL_NTS,
@@ -481,7 +481,7 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDriverConnect: Connection with additi
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   // DSN with additional Snowflake-specific parameters
-  const std::string connStr = "DSN=" + config.value().dsn_name() + ";TRACING=0";
+  const std::string connStr = "DSN=" + dsn_name() + ";TRACING=0";
 
   SQLRETURN ret =
       SQLDriverConnect(dbc_handle(), nullptr, reinterpret_cast<SQLCHAR*>(const_cast<char*>(connStr.c_str())), SQL_NTS,
@@ -498,7 +498,7 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture,
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   // Per ODBC spec, unrecognized keywords return SQL_SUCCESS_WITH_INFO with 01S00
-  const std::string connStr = "DSN=" + config.value().dsn_name() + ";INVALIDKEY=abc";
+  const std::string connStr = "DSN=" + dsn_name() + ";INVALIDKEY=abc";
 
   SQLRETURN ret =
       SQLDriverConnect(dbc_handle(), nullptr, reinterpret_cast<SQLCHAR*>(const_cast<char*>(connStr.c_str())), SQL_NTS,
@@ -520,7 +520,7 @@ TEST_CASE_METHOD(DbcNoAuthDSNFixture, "SQLDriverConnect: 28000 - Invalid authori
   // Use DSN without auth but provide invalid credentials
   // Note: Snowflake driver returns 28000 for authentication failures.
   // ODBC spec allows 28000, 08001, 08004, or HY000, but Snowflake consistently uses 28000.
-  const std::string connStr = "DSN=" + config.value().dsn_name() + ";UID=invalid_user_xyz;PWD=invalid_cred_xyz";
+  const std::string connStr = "DSN=" + dsn_name() + ";UID=invalid_user_xyz;PWD=invalid_cred_xyz";
 
   const SQLRETURN ret =
       SQLDriverConnect(dbc_handle(), nullptr, reinterpret_cast<SQLCHAR*>(const_cast<char*>(connStr.c_str())), SQL_NTS,
@@ -532,7 +532,7 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDriverConnect: Disconnect and reconne
                  "[odbc-api][driverconnect][dsn][integration][lifecycle]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
-  const std::string connStr = build_dsn_connection_string(config.value().dsn_name());
+  const std::string connStr = build_dsn_connection_string(dsn_name());
 
   for (int i = 0; i < 3; i++) {
     SQLRETURN ret =
@@ -561,7 +561,7 @@ TEST_CASE_METHOD(EnvDefaultDSNFixture, "SQLDriverConnect: Multiple concurrent co
   constexpr int NUM_CONNECTIONS = 4;
   SQLHDBC connections[NUM_CONNECTIONS];
 
-  const std::string connStr = build_dsn_connection_string(config.value().dsn_name());
+  const std::string connStr = build_dsn_connection_string(dsn_name());
   int successful_connections = 0;
 
   // Allocate and connect all handles
@@ -599,7 +599,7 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDriverConnect: Snowflake TRACING para
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   // Note: TRACING is a Snowflake-specific parameter that controls logging level (0-6)
-  const std::string connStr = "DSN=" + config.value().dsn_name() + ";TRACING=0";
+  const std::string connStr = "DSN=" + dsn_name() + ";TRACING=0";
 
   SQLRETURN ret =
       SQLDriverConnect(dbc_handle(), nullptr, reinterpret_cast<SQLCHAR*>(const_cast<char*>(connStr.c_str())), SQL_NTS,
@@ -615,7 +615,7 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDriverConnect: Snowflake CLIENT_SESSI
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   // Note: CLIENT_SESSION_KEEP_ALIVE is a Snowflake-specific parameter that enables heartbeat to keep session alive
-  const std::string connStr = "DSN=" + config.value().dsn_name() + ";CLIENT_SESSION_KEEP_ALIVE=true";
+  const std::string connStr = "DSN=" + dsn_name() + ";CLIENT_SESSION_KEEP_ALIVE=true";
 
   SQLRETURN ret =
       SQLDriverConnect(dbc_handle(), nullptr, reinterpret_cast<SQLCHAR*>(const_cast<char*>(connStr.c_str())), SQL_NTS,
@@ -640,7 +640,7 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDriverConnect: Snowflake LOGIN_TIMEOU
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   // LOGIN_TIMEOUT sets connection timeout in seconds
-  const std::string connStr = "DSN=" + config.value().dsn_name() + ";LOGIN_TIMEOUT=120";
+  const std::string connStr = "DSN=" + dsn_name() + ";LOGIN_TIMEOUT=120";
 
   SQLRETURN ret =
       SQLDriverConnect(dbc_handle(), nullptr, reinterpret_cast<SQLCHAR*>(const_cast<char*>(connStr.c_str())), SQL_NTS,
@@ -656,7 +656,7 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDriverConnect: Snowflake APPLICATION 
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   // APPLICATION parameter sets client application name
-  const std::string connStr = "DSN=" + config.value().dsn_name() + ";APPLICATION=ODBCTestSuite";
+  const std::string connStr = "DSN=" + dsn_name() + ";APPLICATION=ODBCTestSuite";
 
   SQLRETURN ret =
       SQLDriverConnect(dbc_handle(), nullptr, reinterpret_cast<SQLCHAR*>(const_cast<char*>(connStr.c_str())), SQL_NTS,
@@ -681,7 +681,7 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDriverConnect: Snowflake QUERY_TIMEOU
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   // QUERY_TIMEOUT sets query execution timeout (0 = no timeout)
-  const std::string connStr = "DSN=" + config.value().dsn_name() + ";QUERY_TIMEOUT=0";
+  const std::string connStr = "DSN=" + dsn_name() + ";QUERY_TIMEOUT=0";
 
   SQLRETURN ret =
       SQLDriverConnect(dbc_handle(), nullptr, reinterpret_cast<SQLCHAR*>(const_cast<char*>(connStr.c_str())), SQL_NTS,
@@ -697,7 +697,7 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDriverConnect: Snowflake NETWORK_TIME
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   // NETWORK_TIMEOUT sets network operation timeout
-  const std::string connStr = "DSN=" + config.value().dsn_name() + ";NETWORK_TIMEOUT=0";
+  const std::string connStr = "DSN=" + dsn_name() + ";NETWORK_TIMEOUT=0";
 
   SQLRETURN ret =
       SQLDriverConnect(dbc_handle(), nullptr, reinterpret_cast<SQLCHAR*>(const_cast<char*>(connStr.c_str())), SQL_NTS,
@@ -713,7 +713,7 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDriverConnect: Snowflake DisableOCSPC
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   // Note: DisableOCSPCheck is a Snowflake-specific parameter that controls OCSP certificate validation
-  const std::string connStr = "DSN=" + config.value().dsn_name() + ";DisableOCSPCheck=true";
+  const std::string connStr = "DSN=" + dsn_name() + ";DisableOCSPCheck=true";
 
   SQLRETURN ret =
       SQLDriverConnect(dbc_handle(), nullptr, reinterpret_cast<SQLCHAR*>(const_cast<char*>(connStr.c_str())), SQL_NTS,
@@ -730,7 +730,7 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDriverConnect: Snowflake DATABASE and
 
   // DATABASE and SCHEMA can override default namespace
   // Empty values should not break connection
-  const std::string connStr = "DSN=" + config.value().dsn_name() + ";DATABASE=;SCHEMA=";
+  const std::string connStr = "DSN=" + dsn_name() + ";DATABASE=;SCHEMA=";
 
   SQLRETURN ret =
       SQLDriverConnect(dbc_handle(), nullptr, reinterpret_cast<SQLCHAR*>(const_cast<char*>(connStr.c_str())), SQL_NTS,
@@ -746,7 +746,7 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDriverConnect: Snowflake WAREHOUSE pa
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   // WAREHOUSE can override default warehouse (empty = use default)
-  const std::string connStr = "DSN=" + config.value().dsn_name() + ";WAREHOUSE=";
+  const std::string connStr = "DSN=" + dsn_name() + ";WAREHOUSE=";
 
   SQLRETURN ret =
       SQLDriverConnect(dbc_handle(), nullptr, reinterpret_cast<SQLCHAR*>(const_cast<char*>(connStr.c_str())), SQL_NTS,
@@ -762,7 +762,7 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDriverConnect: Snowflake ROLE paramet
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   // ROLE can override default role (empty = use default)
-  const std::string connStr = "DSN=" + config.value().dsn_name() + ";ROLE=";
+  const std::string connStr = "DSN=" + dsn_name() + ";ROLE=";
 
   SQLRETURN ret =
       SQLDriverConnect(dbc_handle(), nullptr, reinterpret_cast<SQLCHAR*>(const_cast<char*>(connStr.c_str())), SQL_NTS,
@@ -778,7 +778,7 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDriverConnect: Snowflake multiple par
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   // Combination of multiple Snowflake-specific parameters
-  const std::string connStr = "DSN=" + config.value().dsn_name() +
+  const std::string connStr = "DSN=" + dsn_name() +
                               ";APPLICATION=ODBCTest"
                               ";TRACING=0"
                               ";LOGIN_TIMEOUT=60"
