@@ -27,36 +27,41 @@ use std::{collections::HashMap, sync::Arc};
 use super::connection::Connection;
 use crate::rest::snowflake::query_request;
 
-/// Protobuf-independent pointer to raw bytes in memory.
-///
-/// Used for passing data from language wrappers without protobuf dependency.
-/// Both JSON and CSV use the same pointer type - they both point to raw bytes.
-///
-/// # Important
-/// This points to **bytes**, not string objects:
-/// - JSON: UTF-8 encoded JSON bytes (e.g., from Python `json_str.encode('utf-8')`)
-/// - CSV: Raw CSV file bytes
-///
-/// Avoids protobuf dependency so this interface can be used with ADBC and other protocols.
-#[derive(Debug, Clone)]
-pub struct DataPtr {
-    /// 8-byte pointer value encoded as little-endian bytes
-    pub value: Vec<u8>,
+/// Pointer to raw bytes in memory - used by query bindings
+#[derive(Debug)]
+pub struct DataPtr<'a> {
+    /// Pointer to the data
+    value: *const u8,
     /// Length of data in bytes
-    pub length: i64,
+    length: i64,
+    /// Phantom data to enforce lifetime
+    _phantom: std::marker::PhantomData<&'a [u8]>,
 }
 
-/// Union of all binding types - protobuf-independent version.
-///
-/// This allows the core API to work with bindings without depending on protobuf.
-/// Both variants use the same `DataPtr` type since both point to raw bytes in memory.
-#[derive(Debug, Clone)]
-pub enum BindingType {
+impl<'a> DataPtr<'a> {
+    /// Create a new DataPtr from a raw pointer and length
+    pub fn new(value: *const u8, length: i64) -> Self {
+        Self {
+            value,
+            length,
+            _phantom: std::marker::PhantomData,
+        }
+    }
+
+    /// Get a slice view of the data
+    pub fn slice(&self) -> &'a [u8] {
+        // Safety: The caller must ensure the pointer is valid for the lifetime 'a
+        unsafe { std::slice::from_raw_parts(self.value, self.length as usize) }
+    }
+}
+
+#[derive(Debug)]
+pub enum BindingType<'a> {
     /// JSON bindings - pointer to UTF-8 encoded JSON bytes.
-    /// The bytes must represent valid UTF-8 JSON (unchecked - server validates).
-    Json(DataPtr),
+    /// The bytes must represent valid UTF-8 JSON.
+    Json(DataPtr<'a>),
     /// CSV bindings - pointer to raw CSV data bytes for bulk upload.
-    Csv(DataPtr),
+    Csv(DataPtr<'a>),
 }
 
 /// Sentinel returned when the server does not report a row count.
@@ -254,9 +259,9 @@ pub struct ExecuteResult {
     pub columns: Vec<ColumnMetadata>,
 }
 
-pub fn statement_execute_query(
+pub fn statement_execute_query<'a>(
     stmt_handle: Handle,
-    bindings: Option<BindingType>,
+    bindings: Option<BindingType<'a>>,
 ) -> Result<ExecuteResult, ApiError> {
     let handle = stmt_handle;
     let stmt_ptr = STMT_HANDLE_MANAGER.get_obj(handle).ok_or_else(|| {
@@ -612,81 +617,52 @@ pub enum StatementError {
     },
 }
 
-/// Extract JSON bindings from a `DataPtr` -- **true zero-copy**.
+/// Extract JSON bindings from a `DataPtr` -- **zero-copy with validation**.
 ///
 /// Returns a reference directly into the language wrapper's memory with **no allocation**.
-/// The reference is extended to `'static` lifetime, which is safe because:
-/// 1. The wrapper keeps data alive for the entire `statement_execute_query` call
-/// 2. `statement_execute_query` uses `rt.block_on()` - runs synchronously
-/// 3. The data is valid from pointer deref through HTTP serialization completion
+/// The lifetime is tied to the DataPtr, ensuring the slice doesn't outlive the pointed data.
 ///
 /// ## Memory / allocation details
 ///
 /// Total allocations: **ZERO**
-/// 1. **Pointer dereference** (`unsafe`): creates a `&[u8]` slice over wrapper memory
-/// 2. **Transmute to &str**: reinterprets bytes as str (no copy, no validation)
-/// 3. **Transmute to &RawValue**: reinterprets str as RawValue (no copy, no validation)
+/// 1. **DataPtr.slice()**: creates a `&[u8]` slice over wrapper memory (no allocation)
+/// 2. **UTF-8 validation**: validates bytes are valid UTF-8 (no allocation)
+/// 3. **JSON syntax validation**: RawValue::from_string checks JSON syntax (no allocation)
 ///
-/// ## No validation
+/// ## Validation
 ///
-/// This function performs **ZERO validation**:
-/// - **No UTF-8 validation**: Wrapper must provide valid UTF-8
-/// - **No JSON syntax validation**: Wrapper must provide valid JSON syntax
-/// - **Server validates everything**: Snowflake server validates structure, types, formats
+/// This function performs validation to catch errors early:
+/// - **UTF-8 validation**: Ensures the bytes are valid UTF-8
+/// - **JSON syntax validation**: RawValue validates basic JSON structure
 ///
-/// This is the fastest possible path - just pointer arithmetic, no allocations, no validation.
+/// The Snowflake server still validates the full JSON structure, types, and formats.
 ///
 /// ## Safety contract
 ///
 /// The caller (language wrapper) MUST guarantee:
-/// 1. The pointer points to valid UTF-8 encoded JSON bytes
-/// 2. The data remains valid and unmodified for the entire `statement_execute_query` call
-/// 3. `statement_execute_query` is called synchronously (blocks until HTTP completes)
-///
-/// The `'static` lifetime is a lie (data doesn't live forever), but it's safe because
-/// the synchronous call guarantees the data lives long enough. This is documented and
-/// understood by wrapper implementors.
-fn parse_json_bindings<'a>(data_ptr: &'a DataPtr) -> Result<&'a RawValue, StatementError> {
-    // Validate pointer structure (must be 8 bytes for a 64-bit address)
-    if data_ptr.value.len() != 8 {
-        return UnsupportedBindParameterTypeSnafu {
-            type_: format!("DataPtr must be 8 bytes, got {}", data_ptr.value.len()),
-        }
-        .fail();
-    }
+/// 1. The pointer points to memory that remains valid for the entire `statement_execute_query` call
+/// 2. `statement_execute_query` is called synchronously (blocks until HTTP completes)
+fn parse_json_bindings<'a>(data_ptr: &'a DataPtr<'a>) -> Result<&'a RawValue, StatementError> {
+    // Get the byte slice from the pointer - zero allocation.
+    // The slice lifetime is tied to DataPtr, ensuring safety.
+    let json_bytes: &'a [u8] = data_ptr.slice();
 
-    // Convert 8-byte little-endian array to a usize pointer
-    let ptr_bytes: [u8; 8] = data_ptr.value.as_slice().try_into().map_err(|_| {
+    // Validate UTF-8 encoding - zero allocation.
+    let json_str: &'a str = std::str::from_utf8(json_bytes).map_err(|_| {
         UnsupportedBindParameterTypeSnafu {
-            type_: "Failed to convert pointer bytes".to_string(),
+            type_: "Bindings data is not valid UTF-8".to_string(),
         }
         .build()
     })?;
-    let ptr_value = usize::from_le_bytes(ptr_bytes);
 
-    // Validate pointer is not null
-    if ptr_value == 0 {
-        return UnsupportedBindParameterTypeSnafu {
-            type_: "Null pointer in bindings".to_string(),
+    // Validate JSON syntax - zero allocation.
+    // RawValue::from_string checks that the string is valid JSON without parsing it fully.
+    let raw: &'a RawValue = serde_json::from_str(json_str).map_err(|e| {
+        UnsupportedBindParameterTypeSnafu {
+            type_: format!("Bindings data is not valid JSON: {}", e),
         }
-        .fail();
-    }
-
-    // Dereference pointer to get raw bytes - zero allocation.
-    // Safety: Wrapper guarantees data lives through entire synchronous execute call.
-    let json_bytes: &[u8] = unsafe {
-        let ptr = ptr_value as *const u8;
-        let length = data_ptr.length as usize;
-        std::slice::from_raw_parts(ptr, length)
-    };
-
-    // Convert bytes to &str without UTF-8 validation - zero allocation.
-    let json_str: &'a str = unsafe { std::str::from_utf8_unchecked(json_bytes) };
-
-    // Convert &str to &RawValue without JSON validation - zero allocation.
-    // Safety: RawValue is a transparent wrapper around str. We skip all validation.
-    // Wrapper must provide valid JSON syntax. Server will validate and reject if invalid.
-    let raw: &'a RawValue = unsafe { std::mem::transmute(json_str) };
+        .build()
+    })?;
 
     Ok(raw)
 }
@@ -815,13 +791,9 @@ mod tests {
 
         // Create a pointer to the JSON bytes (simulating Python's no-copy scheme)
         let json_bytes = json.as_bytes();
-        let ptr_value = json_bytes.as_ptr() as usize;
-        let ptr_bytes = ptr_value.to_le_bytes();
+        let ptr = json_bytes.as_ptr();
 
-        let data_ptr = DataPtr {
-            value: ptr_bytes.to_vec(),
-            length: json.len() as i64,
-        };
+        let data_ptr = DataPtr::new(ptr, json.len() as i64);
 
         let raw = parse_json_bindings(&data_ptr).unwrap();
         let params: serde_json::Value = serde_json::from_str(raw.get()).unwrap();
@@ -849,13 +821,9 @@ mod tests {
 
         // Create a pointer to the JSON bytes (simulating Python's no-copy scheme)
         let json_bytes = json.as_bytes();
-        let ptr_value = json_bytes.as_ptr() as usize;
-        let ptr_bytes = ptr_value.to_le_bytes();
+        let ptr = json_bytes.as_ptr();
 
-        let data_ptr = DataPtr {
-            value: ptr_bytes.to_vec(),
-            length: json.len() as i64,
-        };
+        let data_ptr = DataPtr::new(ptr, json.len() as i64);
 
         let raw = parse_json_bindings(&data_ptr).unwrap();
         let params: serde_json::Value = serde_json::from_str(raw.get()).unwrap();
@@ -880,99 +848,63 @@ mod tests {
     // parse_json_bindings: error cases
     // ---------------------------------------------------------------
 
-    #[test]
-    fn test_parse_json_bindings_rejects_invalid_pointer_size() {
-        // DataPtr.value must be exactly 8 bytes (64-bit pointer).
-        // Passing fewer bytes should be rejected.
-        let data_ptr = DataPtr {
-            value: vec![0x01, 0x02, 0x03, 0x04], // 4 bytes -- too short
-            length: 10,
-        };
-
-        let result = parse_json_bindings(&data_ptr);
-        assert!(result.is_err());
-        let err_msg = format!("{}", result.unwrap_err());
-        assert!(
-            err_msg.contains("8 bytes"),
-            "Expected error about 8 bytes, got: {err_msg}"
-        );
-    }
+    // Note: These tests are removed as pointer validation is now handled at construction time
+    // by the caller (language wrapper), not in parse_json_bindings
 
     #[test]
-    fn test_parse_json_bindings_rejects_null_pointer() {
-        // A zero pointer (all 8 bytes = 0) is a null pointer and must be rejected.
-        let data_ptr = DataPtr {
-            value: vec![0u8; 8],
-            length: 10,
-        };
-
-        let result = parse_json_bindings(&data_ptr);
-        assert!(result.is_err());
-        let err_msg = format!("{}", result.unwrap_err());
-        assert!(
-            err_msg.contains("Null pointer"),
-            "Expected null pointer error, got: {err_msg}"
-        );
-    }
-
-    #[test]
-    fn test_parse_json_bindings_allows_invalid_utf8_zero_validation() {
+    fn test_parse_json_bindings_rejects_invalid_utf8() {
         // Create a byte buffer with invalid UTF-8 (0xFF is never valid in UTF-8).
-        // With zero-validation (from_utf8_unchecked + transmute), this passes through.
-        // The invalid UTF-8 will either:
-        // 1. Cause HTTP serialization to fail (serde can't serialize invalid UTF-8), or
-        // 2. Get mangled during serialization and rejected by server
-        // Either way, validation happens downstream, not here.
+        // With validation, this should be rejected early.
         let bad_bytes: Vec<u8> = vec![0xFF, 0xFE, 0x7B, 0x7D]; // invalid followed by "{}"
-        let ptr_value = bad_bytes.as_ptr() as usize;
-        let ptr_bytes = ptr_value.to_le_bytes();
+        let ptr = bad_bytes.as_ptr();
 
-        let data_ptr = DataPtr {
-            value: ptr_bytes.to_vec(),
-            length: bad_bytes.len() as i64,
-        };
+        let data_ptr = DataPtr::new(ptr, bad_bytes.len() as i64);
 
         let result = parse_json_bindings(&data_ptr);
-        // No validation - succeeds here, will fail during HTTP serialization or at server
-        assert!(result.is_ok());
+        assert!(result.is_err());
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(
+            err_msg.contains("not valid UTF-8"),
+            "Expected UTF-8 validation error, got: {err_msg}"
+        );
     }
 
     #[test]
-    fn test_parse_json_bindings_allows_invalid_json_zero_validation() {
+    fn test_parse_json_bindings_rejects_invalid_json() {
         // Valid UTF-8 but not valid JSON.
-        // With zero-validation approach, we pass this through - server will reject it.
+        // With validation, this should be rejected early.
         let bad_json = "{ this is not json }";
         let json_bytes = bad_json.as_bytes();
-        let ptr_value = json_bytes.as_ptr() as usize;
-        let ptr_bytes = ptr_value.to_le_bytes();
+        let ptr = json_bytes.as_ptr();
 
-        let data_ptr = DataPtr {
-            value: ptr_bytes.to_vec(),
-            length: bad_json.len() as i64,
-        };
+        let data_ptr = DataPtr::new(ptr, bad_json.len() as i64);
 
         let result = parse_json_bindings(&data_ptr);
-        // No validation in Rust - succeeds, server will reject
-        assert!(result.is_ok());
+        assert!(result.is_err());
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(
+            err_msg.contains("not valid JSON"),
+            "Expected JSON validation error, got: {err_msg}"
+        );
     }
 
     #[test]
-    fn test_parse_json_bindings_allows_truncated_json_zero_validation() {
+    fn test_parse_json_bindings_rejects_truncated_json() {
         // JSON that starts valid but is cut short.
-        // With zero-validation, we pass this through - server will reject it.
+        // With validation, this should be rejected early.
         let truncated = r#"{"1": {"type": "FIXED""#;
         let json_bytes = truncated.as_bytes();
-        let ptr_value = json_bytes.as_ptr() as usize;
-        let ptr_bytes = ptr_value.to_le_bytes();
+        let ptr = json_bytes.as_ptr();
 
-        let data_ptr = DataPtr {
-            value: ptr_bytes.to_vec(),
-            length: truncated.len() as i64,
-        };
+        let data_ptr = DataPtr::new(ptr, truncated.len() as i64);
 
         let result = parse_json_bindings(&data_ptr);
-        // No validation in Rust - succeeds, server will reject
-        assert!(result.is_ok());
+        assert!(result.is_err());
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(
+            err_msg.contains("not valid JSON"),
+            "Expected JSON validation error, got: {err_msg}"
+        );
     }
 
     // ---------------------------------------------------------------
@@ -983,13 +915,9 @@ mod tests {
     fn test_parse_json_bindings_zero_copy() {
         let json = r#"{"1": {"type": "TEXT", "value": "abc"}}"#;
         let json_bytes = json.as_bytes();
-        let ptr_value = json_bytes.as_ptr() as usize;
-        let ptr_bytes = ptr_value.to_le_bytes();
+        let ptr = json_bytes.as_ptr();
 
-        let data_ptr = DataPtr {
-            value: ptr_bytes.to_vec(),
-            length: json.len() as i64,
-        };
+        let data_ptr = DataPtr::new(ptr, json.len() as i64);
 
         let result = parse_json_bindings(&data_ptr).unwrap();
 
@@ -1016,13 +944,9 @@ mod tests {
     fn test_parse_json_bindings_single_parameter() {
         let json = r#"{"1": {"type": "FIXED", "value": "42"}}"#;
         let json_bytes = json.as_bytes();
-        let ptr_value = json_bytes.as_ptr() as usize;
-        let ptr_bytes = ptr_value.to_le_bytes();
+        let ptr = json_bytes.as_ptr();
 
-        let data_ptr = DataPtr {
-            value: ptr_bytes.to_vec(),
-            length: json.len() as i64,
-        };
+        let data_ptr = DataPtr::new(ptr, json.len() as i64);
 
         let result = parse_json_bindings(&data_ptr).unwrap();
         let params: serde_json::Value = serde_json::from_str(result.get()).unwrap();
@@ -1037,13 +961,9 @@ mod tests {
     fn test_parse_json_bindings_with_null_values() {
         let json = r#"{"1": {"type": "TEXT", "value": null}}"#;
         let json_bytes = json.as_bytes();
-        let ptr_value = json_bytes.as_ptr() as usize;
-        let ptr_bytes = ptr_value.to_le_bytes();
+        let ptr = json_bytes.as_ptr();
 
-        let data_ptr = DataPtr {
-            value: ptr_bytes.to_vec(),
-            length: json.len() as i64,
-        };
+        let data_ptr = DataPtr::new(ptr, json.len() as i64);
 
         let result = parse_json_bindings(&data_ptr).unwrap();
         let params: serde_json::Value = serde_json::from_str(result.get()).unwrap();
@@ -1054,13 +974,9 @@ mod tests {
     fn test_parse_json_bindings_with_unicode_values() {
         let json = r#"{"1": {"type": "TEXT", "value": "日本語テスト 🎉"}}"#;
         let json_bytes = json.as_bytes();
-        let ptr_value = json_bytes.as_ptr() as usize;
-        let ptr_bytes = ptr_value.to_le_bytes();
+        let ptr = json_bytes.as_ptr();
 
-        let data_ptr = DataPtr {
-            value: ptr_bytes.to_vec(),
-            length: json.len() as i64,
-        };
+        let data_ptr = DataPtr::new(ptr, json.len() as i64);
 
         let result = parse_json_bindings(&data_ptr).unwrap();
         let params: serde_json::Value = serde_json::from_str(result.get()).unwrap();
@@ -1071,13 +987,9 @@ mod tests {
     fn test_parse_json_bindings_with_special_characters() {
         let json = r#"{"1": {"type": "TEXT", "value": "line1\nline2\ttab\"quote"}}"#;
         let json_bytes = json.as_bytes();
-        let ptr_value = json_bytes.as_ptr() as usize;
-        let ptr_bytes = ptr_value.to_le_bytes();
+        let ptr = json_bytes.as_ptr();
 
-        let data_ptr = DataPtr {
-            value: ptr_bytes.to_vec(),
-            length: json.len() as i64,
-        };
+        let data_ptr = DataPtr::new(ptr, json.len() as i64);
 
         let result = parse_json_bindings(&data_ptr).unwrap();
         let params: serde_json::Value = serde_json::from_str(result.get()).unwrap();
@@ -1089,13 +1001,9 @@ mod tests {
         // An empty JSON object is valid -- zero bindings
         let json = r#"{}"#;
         let json_bytes = json.as_bytes();
-        let ptr_value = json_bytes.as_ptr() as usize;
-        let ptr_bytes = ptr_value.to_le_bytes();
+        let ptr = json_bytes.as_ptr();
 
-        let data_ptr = DataPtr {
-            value: ptr_bytes.to_vec(),
-            length: json.len() as i64,
-        };
+        let data_ptr = DataPtr::new(ptr, json.len() as i64);
 
         let result = parse_json_bindings(&data_ptr).unwrap();
         let params: serde_json::Value = serde_json::from_str(result.get()).unwrap();
@@ -1113,13 +1021,9 @@ mod tests {
         let json = format!("{{{}}}", entries.join(", "));
 
         let json_bytes = json.as_bytes();
-        let ptr_value = json_bytes.as_ptr() as usize;
-        let ptr_bytes = ptr_value.to_le_bytes();
+        let ptr = json_bytes.as_ptr();
 
-        let data_ptr = DataPtr {
-            value: ptr_bytes.to_vec(),
-            length: json.len() as i64,
-        };
+        let data_ptr = DataPtr::new(ptr, json.len() as i64);
 
         let result = parse_json_bindings(&data_ptr).unwrap();
         let params: serde_json::Value = serde_json::from_str(result.get()).unwrap();

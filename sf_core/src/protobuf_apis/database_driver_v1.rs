@@ -651,19 +651,29 @@ impl DatabaseDriver for DatabaseDriverImpl {
                         proto_ptr,
                     ) => {
                         // JSON: protobuf BinaryDataPtr → DataPtr (UTF-8 bytes)
-                        BindingType::Json(DataPtr {
-                            value: proto_ptr.value,
-                            length: proto_ptr.length,
-                        })
+                        // Convert 8-byte little-endian pointer value to *const u8
+                        let ptr_bytes: [u8; 8] = proto_ptr
+                            .value
+                            .as_slice()
+                            .try_into()
+                            .expect("Pointer must be 8 bytes");
+                        let ptr_value = usize::from_le_bytes(ptr_bytes);
+                        let ptr = ptr_value as *const u8;
+                        BindingType::Json(DataPtr::new(ptr, proto_ptr.length))
                     }
                     crate::protobuf_gen::database_driver_v1::query_bindings::BindingType::Csv(
                         proto_ptr,
                     ) => {
                         // CSV: protobuf BinaryDataPtr → DataPtr (raw CSV bytes)
-                        BindingType::Csv(DataPtr {
-                            value: proto_ptr.value,
-                            length: proto_ptr.length,
-                        })
+                        // Convert 8-byte little-endian pointer value to *const u8
+                        let ptr_bytes: [u8; 8] = proto_ptr
+                            .value
+                            .as_slice()
+                            .try_into()
+                            .expect("Pointer must be 8 bytes");
+                        let ptr_value = usize::from_le_bytes(ptr_bytes);
+                        let ptr = ptr_value as *const u8;
+                        BindingType::Csv(DataPtr::new(ptr, proto_ptr.length))
                     }
                 }
             });
