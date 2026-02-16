@@ -1,4 +1,8 @@
 //! E2E tests for session logout functionality.
+//!
+//! These tests connect to real Snowflake and verify logout behavior end-to-end.
+//! Most scenarios are better tested in integration tests with mock servers.
+//! E2E tests focus on verifying the complete flow works against real Snowflake.
 
 use crate::common::snowflake_test_client::SnowflakeTestClient;
 use sf_core::protobuf_apis::database_driver_v1::DatabaseDriverClient;
@@ -1205,6 +1209,65 @@ fn should_handle_concurrent_close_calls_safely() {
 // ===========================================================================
 //                    Post-Logout Session Invalidation
 // ===========================================================================
+
+#[test]
+fn should_reject_queries_after_connection_is_closed() {
+    //Given Snowflake client is logged in
+    let client = SnowflakeTestClient::connect_with_default_auth();
+
+    //And Simple query SELECT 1 executes successfully
+    let result_before = client.execute_query("SELECT 1");
+    assert!(
+        result_before.is_ok(),
+        "Query should succeed before close: {:?}",
+        result_before.err()
+    );
+
+    //When Connection is closed
+    let close_result = DatabaseDriverClient::connection_close(ConnectionCloseRequest {
+        conn_handle: Some(client.conn_handle),
+        server_session_keep_alive: None,
+        enable_auto_detection: None,
+        error_strategy: None,
+        timeout_seconds: None,
+    });
+    assert!(close_result.is_ok(), "Close should succeed");
+
+    //And Query is attempted on closed connection
+    let result_after = client.execute_query_no_unwrap("SELECT 1");
+
+    //Then Query throws ConnectionClosedException
+    assert!(
+        result_after.is_err(),
+        "Query should fail after close, but got: {:?}",
+        result_after
+    );
+
+    //And Error message contains "Connection is closed"
+    let error_msg = result_after.unwrap_err();
+    assert!(
+        error_msg.contains("closed")
+            || error_msg.contains("Closed")
+            || error_msg.contains("not open")
+            || error_msg.contains("not initialized"),
+        "Error should indicate connection is closed: {}",
+        error_msg
+    );
+}
+
+#[test]
+#[ignore = "TODO: Requires heartbeat implementation - SNOW-2881763"]
+fn should_allow_process_to_exit_cleanly_when_session_kept_alive() {
+    //Given Connection with heartbeat enabled
+    //And Telemetry is active
+    //And server_session_keep_alive is set to true
+    //When Connection is closed
+    //Then All background threads are stopped
+    //And Heartbeat thread is terminated
+    //And Process can exit immediately without hanging
+
+    // TODO: SNOW-2881763 - Implement after heartbeat is available
+}
 
 // Note: The "should return SESSION_GONE from server when using invalidated session token"
 // test requires the ability to capture tokens and restore connection state after logout.
