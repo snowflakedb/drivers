@@ -14,8 +14,8 @@ Feature: Session Logout
     Given Snowflake client is logged in
     And <server_session_keep_alive> is set to any value
     When Connection is closed
-    Then Session token is cleared
-    And Master token is cleared
+    Then Session token in Connection.tokens is null
+    And Master token in Connection.tokens is null
 
     Examples:
       | server_session_keep_alive |
@@ -41,7 +41,8 @@ Feature: Session Logout
     And Simple query SELECT 1 executes successfully
     When Connection is closed
     And Query is attempted on closed connection
-    Then Query fails with connection closed error
+    Then Query throws ConnectionClosedException
+    And Error message contains "Connection is closed"
 
   Scenario: should handle SESSION_GONE error when using invalidated session token
     # Tests Core handling when server returns SESSION_GONE (token already invalidated)
