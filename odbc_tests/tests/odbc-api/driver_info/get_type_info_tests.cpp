@@ -2,14 +2,14 @@
 #include <sqlext.h>
 #include <sqltypes.h>
 
-#include <catch2/catch_test_macros.hpp>
-
 #include <set>
 #include <string>
 #include <vector>
 
-#include "compatibility.hpp"
+#include <catch2/catch_test_macros.hpp>
+
 #include "ODBCFixtures.hpp"
+#include "compatibility.hpp"
 #include "get_diag_rec.hpp"
 #include "test_macros.hpp"
 
@@ -54,102 +54,784 @@ struct TypeInfoExpected {
 
 static const TypeInfoExpected ALL_TYPE_INFO[] = {
     // Character Types
-    {SQL_CHAR, "CHAR", 134217728, "'", 1, "'", 1, "LENGTH", 6, SQL_NULLABLE, SQL_TRUE, SQL_SEARCHABLE, 0, SQL_NULL_DATA, SQL_FALSE, 0, SQL_NULL_DATA, 
-     "CHAR", 4, 0, SQL_NULL_DATA, 0, SQL_NULL_DATA, SQL_CHAR, 0, SQL_NULL_DATA, 0, SQL_NULL_DATA, 0, SQL_NULL_DATA, 0, 2},
-    {SQL_VARCHAR, "VARCHAR", 134217728, "'", 1, "'", 1, "max length", 10, SQL_NULLABLE, SQL_TRUE, SQL_SEARCHABLE, 0, SQL_NULL_DATA, SQL_FALSE, 0, SQL_NULL_DATA,
-     "VARCHAR", 7, 0, SQL_NULL_DATA, 0, SQL_NULL_DATA, SQL_VARCHAR, 0, SQL_NULL_DATA, 0, SQL_NULL_DATA, 0, SQL_NULL_DATA, 0, 2},
-    {SQL_WCHAR, "CHAR", 134217728, "'", 1, "'", 1, "LENGTH", 6, SQL_NULLABLE, SQL_TRUE, SQL_SEARCHABLE, 0, SQL_NULL_DATA, SQL_FALSE, 0, SQL_NULL_DATA,
-     "WCHAR", 5, 0, SQL_NULL_DATA, 0, SQL_NULL_DATA, SQL_WCHAR, 0, SQL_NULL_DATA, 0, SQL_NULL_DATA, 0, SQL_NULL_DATA, 0, 2},
-    {SQL_WVARCHAR, "VARCHAR", 134217728, "'", 1, "'", 1, "LENGTH", 6, SQL_NULLABLE, SQL_TRUE, SQL_SEARCHABLE, 0, SQL_NULL_DATA, SQL_FALSE, 0, SQL_NULL_DATA,
-     "WVARCHAR", 8, 0, SQL_NULL_DATA, 0, SQL_NULL_DATA, SQL_WVARCHAR, 0, SQL_NULL_DATA, 0, SQL_NULL_DATA, 0, SQL_NULL_DATA, 0, 2},
-    
+    {SQL_CHAR,
+     "CHAR",
+     134217728,
+     "'",
+     1,
+     "'",
+     1,
+     "LENGTH",
+     6,
+     SQL_NULLABLE,
+     SQL_TRUE,
+     SQL_SEARCHABLE,
+     0,
+     SQL_NULL_DATA,
+     SQL_FALSE,
+     0,
+     SQL_NULL_DATA,
+     "CHAR",
+     4,
+     0,
+     SQL_NULL_DATA,
+     0,
+     SQL_NULL_DATA,
+     SQL_CHAR,
+     0,
+     SQL_NULL_DATA,
+     0,
+     SQL_NULL_DATA,
+     0,
+     SQL_NULL_DATA,
+     0,
+     2},
+    {SQL_VARCHAR,
+     "VARCHAR",
+     134217728,
+     "'",
+     1,
+     "'",
+     1,
+     "max length",
+     10,
+     SQL_NULLABLE,
+     SQL_TRUE,
+     SQL_SEARCHABLE,
+     0,
+     SQL_NULL_DATA,
+     SQL_FALSE,
+     0,
+     SQL_NULL_DATA,
+     "VARCHAR",
+     7,
+     0,
+     SQL_NULL_DATA,
+     0,
+     SQL_NULL_DATA,
+     SQL_VARCHAR,
+     0,
+     SQL_NULL_DATA,
+     0,
+     SQL_NULL_DATA,
+     0,
+     SQL_NULL_DATA,
+     0,
+     2},
+    {SQL_WCHAR,
+     "CHAR",
+     134217728,
+     "'",
+     1,
+     "'",
+     1,
+     "LENGTH",
+     6,
+     SQL_NULLABLE,
+     SQL_TRUE,
+     SQL_SEARCHABLE,
+     0,
+     SQL_NULL_DATA,
+     SQL_FALSE,
+     0,
+     SQL_NULL_DATA,
+     "WCHAR",
+     5,
+     0,
+     SQL_NULL_DATA,
+     0,
+     SQL_NULL_DATA,
+     SQL_WCHAR,
+     0,
+     SQL_NULL_DATA,
+     0,
+     SQL_NULL_DATA,
+     0,
+     SQL_NULL_DATA,
+     0,
+     2},
+    {SQL_WVARCHAR,
+     "VARCHAR",
+     134217728,
+     "'",
+     1,
+     "'",
+     1,
+     "LENGTH",
+     6,
+     SQL_NULLABLE,
+     SQL_TRUE,
+     SQL_SEARCHABLE,
+     0,
+     SQL_NULL_DATA,
+     SQL_FALSE,
+     0,
+     SQL_NULL_DATA,
+     "WVARCHAR",
+     8,
+     0,
+     SQL_NULL_DATA,
+     0,
+     SQL_NULL_DATA,
+     SQL_WVARCHAR,
+     0,
+     SQL_NULL_DATA,
+     0,
+     SQL_NULL_DATA,
+     0,
+     SQL_NULL_DATA,
+     0,
+     2},
+
     // Exact Numeric Types (Note: buffer contents undefined when indicator is SQL_NULL_DATA)
-    {SQL_DECIMAL, "DECIMAL", 38, "", SQL_NULL_DATA, "", SQL_NULL_DATA, "precision,scale", 15, SQL_NULLABLE, SQL_FALSE, SQL_PRED_BASIC, SQL_FALSE, 2, SQL_FALSE, 2, SQL_NULL_DATA,
-     "DECIMAL", 7, 0, 2, 38, 2, SQL_DECIMAL, 0, SQL_NULL_DATA, 10, 4, 0, SQL_NULL_DATA, 0, 2},
-    {SQL_NUMERIC, "NUMERIC", 38, "", SQL_NULL_DATA, "", SQL_NULL_DATA, "precision,scale", 15, SQL_NULLABLE, SQL_FALSE, SQL_PRED_BASIC, SQL_FALSE, 2, SQL_FALSE, 2, SQL_NULL_DATA,
-     "NUMERIC", 7, 0, 2, 38, 2, SQL_NUMERIC, 0, SQL_NULL_DATA, 10, 4, 0, SQL_NULL_DATA, 0, 2},
-    {SQL_INTEGER, "INTEGER", 10, "", SQL_NULL_DATA, "", SQL_NULL_DATA, "", SQL_NULL_DATA, SQL_NULLABLE, SQL_FALSE, SQL_PRED_BASIC, SQL_FALSE, 2, SQL_FALSE, 2, SQL_NULL_DATA,
-     "INTEGER", 7, 0, SQL_NULL_DATA, 0, SQL_NULL_DATA, SQL_INTEGER, 0, SQL_NULL_DATA, 2, 4, 0, SQL_NULL_DATA, 0, 2},
-    {SQL_BIGINT, "BIGINT", 19, "", SQL_NULL_DATA, "", SQL_NULL_DATA, "", SQL_NULL_DATA, SQL_NULLABLE, SQL_FALSE, SQL_PRED_BASIC, SQL_FALSE, 2, SQL_FALSE, 2, SQL_NULL_DATA,
-     "BIGINT", 6, 0, SQL_NULL_DATA, 0, SQL_NULL_DATA, SQL_BIGINT, 0, SQL_NULL_DATA, 2, 4, 0, SQL_NULL_DATA, 0, 2},
-    
+    {SQL_DECIMAL,
+     "DECIMAL",
+     38,
+     "",
+     SQL_NULL_DATA,
+     "",
+     SQL_NULL_DATA,
+     "precision,scale",
+     15,
+     SQL_NULLABLE,
+     SQL_FALSE,
+     SQL_PRED_BASIC,
+     SQL_FALSE,
+     2,
+     SQL_FALSE,
+     2,
+     SQL_NULL_DATA,
+     "DECIMAL",
+     7,
+     0,
+     2,
+     38,
+     2,
+     SQL_DECIMAL,
+     0,
+     SQL_NULL_DATA,
+     10,
+     4,
+     0,
+     SQL_NULL_DATA,
+     0,
+     2},
+    {SQL_NUMERIC,
+     "NUMERIC",
+     38,
+     "",
+     SQL_NULL_DATA,
+     "",
+     SQL_NULL_DATA,
+     "precision,scale",
+     15,
+     SQL_NULLABLE,
+     SQL_FALSE,
+     SQL_PRED_BASIC,
+     SQL_FALSE,
+     2,
+     SQL_FALSE,
+     2,
+     SQL_NULL_DATA,
+     "NUMERIC",
+     7,
+     0,
+     2,
+     38,
+     2,
+     SQL_NUMERIC,
+     0,
+     SQL_NULL_DATA,
+     10,
+     4,
+     0,
+     SQL_NULL_DATA,
+     0,
+     2},
+    {SQL_INTEGER,
+     "INTEGER",
+     10,
+     "",
+     SQL_NULL_DATA,
+     "",
+     SQL_NULL_DATA,
+     "",
+     SQL_NULL_DATA,
+     SQL_NULLABLE,
+     SQL_FALSE,
+     SQL_PRED_BASIC,
+     SQL_FALSE,
+     2,
+     SQL_FALSE,
+     2,
+     SQL_NULL_DATA,
+     "INTEGER",
+     7,
+     0,
+     SQL_NULL_DATA,
+     0,
+     SQL_NULL_DATA,
+     SQL_INTEGER,
+     0,
+     SQL_NULL_DATA,
+     2,
+     4,
+     0,
+     SQL_NULL_DATA,
+     0,
+     2},
+    {SQL_BIGINT,
+     "BIGINT",
+     19,
+     "",
+     SQL_NULL_DATA,
+     "",
+     SQL_NULL_DATA,
+     "",
+     SQL_NULL_DATA,
+     SQL_NULLABLE,
+     SQL_FALSE,
+     SQL_PRED_BASIC,
+     SQL_FALSE,
+     2,
+     SQL_FALSE,
+     2,
+     SQL_NULL_DATA,
+     "BIGINT",
+     6,
+     0,
+     SQL_NULL_DATA,
+     0,
+     SQL_NULL_DATA,
+     SQL_BIGINT,
+     0,
+     SQL_NULL_DATA,
+     2,
+     4,
+     0,
+     SQL_NULL_DATA,
+     0,
+     2},
+
     // Approximate Numeric Types (Note: buffer contents undefined when indicator is SQL_NULL_DATA)
-    {SQL_REAL, "REAL", 7, "", SQL_NULL_DATA, "", SQL_NULL_DATA, "", SQL_NULL_DATA, SQL_NULLABLE, SQL_FALSE, SQL_PRED_BASIC, SQL_FALSE, 2, SQL_FALSE, 2, SQL_NULL_DATA,
-     "REAL", 4, 0, SQL_NULL_DATA, 0, SQL_NULL_DATA, SQL_REAL, 0, SQL_NULL_DATA, 2, 4, 0, SQL_NULL_DATA, 0, 2},
-    {SQL_FLOAT, "FLOAT", 15, "", SQL_NULL_DATA, "", SQL_NULL_DATA, "", SQL_NULL_DATA, SQL_NULLABLE, SQL_FALSE, SQL_PRED_BASIC, SQL_FALSE, 2, SQL_FALSE, 2, SQL_NULL_DATA,
-     "FLOAT", 5, 0, SQL_NULL_DATA, 0, SQL_NULL_DATA, SQL_FLOAT, 0, SQL_NULL_DATA, 2, 4, 0, SQL_NULL_DATA, 0, 2},
-    {SQL_DOUBLE, "DOUBLE", 15, "", SQL_NULL_DATA, "", SQL_NULL_DATA, "", SQL_NULL_DATA, SQL_NULLABLE, SQL_FALSE, SQL_PRED_BASIC, SQL_FALSE, 2, SQL_FALSE, 2, SQL_NULL_DATA,
-     "DOUBLE", 6, 0, SQL_NULL_DATA, 0, SQL_NULL_DATA, SQL_DOUBLE, 0, SQL_NULL_DATA, 2, 4, 0, SQL_NULL_DATA, 0, 2},
-    
+    {SQL_REAL,
+     "REAL",
+     7,
+     "",
+     SQL_NULL_DATA,
+     "",
+     SQL_NULL_DATA,
+     "",
+     SQL_NULL_DATA,
+     SQL_NULLABLE,
+     SQL_FALSE,
+     SQL_PRED_BASIC,
+     SQL_FALSE,
+     2,
+     SQL_FALSE,
+     2,
+     SQL_NULL_DATA,
+     "REAL",
+     4,
+     0,
+     SQL_NULL_DATA,
+     0,
+     SQL_NULL_DATA,
+     SQL_REAL,
+     0,
+     SQL_NULL_DATA,
+     2,
+     4,
+     0,
+     SQL_NULL_DATA,
+     0,
+     2},
+    {SQL_FLOAT,
+     "FLOAT",
+     15,
+     "",
+     SQL_NULL_DATA,
+     "",
+     SQL_NULL_DATA,
+     "",
+     SQL_NULL_DATA,
+     SQL_NULLABLE,
+     SQL_FALSE,
+     SQL_PRED_BASIC,
+     SQL_FALSE,
+     2,
+     SQL_FALSE,
+     2,
+     SQL_NULL_DATA,
+     "FLOAT",
+     5,
+     0,
+     SQL_NULL_DATA,
+     0,
+     SQL_NULL_DATA,
+     SQL_FLOAT,
+     0,
+     SQL_NULL_DATA,
+     2,
+     4,
+     0,
+     SQL_NULL_DATA,
+     0,
+     2},
+    {SQL_DOUBLE,
+     "DOUBLE",
+     15,
+     "",
+     SQL_NULL_DATA,
+     "",
+     SQL_NULL_DATA,
+     "",
+     SQL_NULL_DATA,
+     SQL_NULLABLE,
+     SQL_FALSE,
+     SQL_PRED_BASIC,
+     SQL_FALSE,
+     2,
+     SQL_FALSE,
+     2,
+     SQL_NULL_DATA,
+     "DOUBLE",
+     6,
+     0,
+     SQL_NULL_DATA,
+     0,
+     SQL_NULL_DATA,
+     SQL_DOUBLE,
+     0,
+     SQL_NULL_DATA,
+     2,
+     4,
+     0,
+     SQL_NULL_DATA,
+     0,
+     2},
+
     // Boolean Type (Note: buffer contents undefined when indicator is SQL_NULL_DATA)
-    {SQL_BIT, "BOOLEAN", 1, "", SQL_NULL_DATA, "", SQL_NULL_DATA, "", SQL_NULL_DATA, SQL_NULLABLE, SQL_FALSE, SQL_PRED_BASIC, 0, SQL_NULL_DATA, SQL_FALSE, 2, SQL_NULL_DATA,
-     "BIT", 3, 0, SQL_NULL_DATA, 0, SQL_NULL_DATA, SQL_BIT, 0, SQL_NULL_DATA, 0, SQL_NULL_DATA, 0, SQL_NULL_DATA, 0, 2},
-    
+    {SQL_BIT,
+     "BOOLEAN",
+     1,
+     "",
+     SQL_NULL_DATA,
+     "",
+     SQL_NULL_DATA,
+     "",
+     SQL_NULL_DATA,
+     SQL_NULLABLE,
+     SQL_FALSE,
+     SQL_PRED_BASIC,
+     0,
+     SQL_NULL_DATA,
+     SQL_FALSE,
+     2,
+     SQL_NULL_DATA,
+     "BIT",
+     3,
+     0,
+     SQL_NULL_DATA,
+     0,
+     SQL_NULL_DATA,
+     SQL_BIT,
+     0,
+     SQL_NULL_DATA,
+     0,
+     SQL_NULL_DATA,
+     0,
+     SQL_NULL_DATA,
+     0,
+     2},
+
     // Binary Types
-    {SQL_BINARY, "BINARY", 67108864, "0x", 2, "", 0, "LENGTH", 6, SQL_NULLABLE, SQL_TRUE, SQL_SEARCHABLE, 0, SQL_NULL_DATA, SQL_FALSE, 2, SQL_NULL_DATA,
-     "BINARY", 6, 0, SQL_NULL_DATA, 0, SQL_NULL_DATA, SQL_BINARY, 0, SQL_NULL_DATA, 0, SQL_NULL_DATA, 0, SQL_NULL_DATA, 0, 2},
-    {SQL_VARBINARY, "VARBINARY", 67108864, "0x", 2, "", 0, "max length", 10, SQL_NULLABLE, SQL_TRUE, SQL_SEARCHABLE, 0, SQL_NULL_DATA, SQL_FALSE, 2, SQL_NULL_DATA,
-     "VARBINARY", 9, 0, SQL_NULL_DATA, 0, SQL_NULL_DATA, SQL_VARBINARY, 0, SQL_NULL_DATA, 0, SQL_NULL_DATA, 0, SQL_NULL_DATA, 0, 2},
-    
+    {SQL_BINARY,
+     "BINARY",
+     67108864,
+     "0x",
+     2,
+     "",
+     0,
+     "LENGTH",
+     6,
+     SQL_NULLABLE,
+     SQL_TRUE,
+     SQL_SEARCHABLE,
+     0,
+     SQL_NULL_DATA,
+     SQL_FALSE,
+     2,
+     SQL_NULL_DATA,
+     "BINARY",
+     6,
+     0,
+     SQL_NULL_DATA,
+     0,
+     SQL_NULL_DATA,
+     SQL_BINARY,
+     0,
+     SQL_NULL_DATA,
+     0,
+     SQL_NULL_DATA,
+     0,
+     SQL_NULL_DATA,
+     0,
+     2},
+    {SQL_VARBINARY,
+     "VARBINARY",
+     67108864,
+     "0x",
+     2,
+     "",
+     0,
+     "max length",
+     10,
+     SQL_NULLABLE,
+     SQL_TRUE,
+     SQL_SEARCHABLE,
+     0,
+     SQL_NULL_DATA,
+     SQL_FALSE,
+     2,
+     SQL_NULL_DATA,
+     "VARBINARY",
+     9,
+     0,
+     SQL_NULL_DATA,
+     0,
+     SQL_NULL_DATA,
+     SQL_VARBINARY,
+     0,
+     SQL_NULL_DATA,
+     0,
+     SQL_NULL_DATA,
+     0,
+     SQL_NULL_DATA,
+     0,
+     2},
+
     // Date/Time Types (Note: buffer contents undefined when indicator is SQL_NULL_DATA)
-    {SQL_TYPE_DATE, "DATE", 10, "'", 1, "'", 1, "", SQL_NULL_DATA, SQL_NULLABLE, SQL_FALSE, SQL_SEARCHABLE, 0, SQL_NULL_DATA, SQL_FALSE, 2, SQL_NULL_DATA,
-     "TYPE_DATE", 9, 0, SQL_NULL_DATA, 0, SQL_NULL_DATA, SQL_DATETIME, SQL_CODE_DATE, 2, 0, SQL_NULL_DATA, 0, SQL_NULL_DATA, 0, 2},
-    {SQL_TYPE_TIME, "TIME", 18, "'", 1, "'", 1, "", SQL_NULL_DATA, SQL_NULLABLE, SQL_FALSE, SQL_SEARCHABLE, 0, SQL_NULL_DATA, SQL_FALSE, 2, SQL_NULL_DATA,
-     "TYPE_TIME", 9, 0, 2, 0, 2, SQL_DATETIME, SQL_CODE_TIME, 2, 0, SQL_NULL_DATA, 0, SQL_NULL_DATA, 0, 2},
-    {SQL_TYPE_TIMESTAMP, "TIMESTAMP", 35, "'", 1, "'", 1, "", SQL_NULL_DATA, SQL_NULLABLE, SQL_FALSE, SQL_SEARCHABLE, 0, SQL_NULL_DATA, SQL_FALSE, 2, SQL_NULL_DATA,
-     "TYPE_TIMESTAMP", 14, 0, 2, 0, 2, SQL_DATETIME, SQL_CODE_TIMESTAMP, 2, 0, SQL_NULL_DATA, 0, SQL_NULL_DATA, 0, 2},
-    
+    {SQL_TYPE_DATE,
+     "DATE",
+     10,
+     "'",
+     1,
+     "'",
+     1,
+     "",
+     SQL_NULL_DATA,
+     SQL_NULLABLE,
+     SQL_FALSE,
+     SQL_SEARCHABLE,
+     0,
+     SQL_NULL_DATA,
+     SQL_FALSE,
+     2,
+     SQL_NULL_DATA,
+     "TYPE_DATE",
+     9,
+     0,
+     SQL_NULL_DATA,
+     0,
+     SQL_NULL_DATA,
+     SQL_DATETIME,
+     SQL_CODE_DATE,
+     2,
+     0,
+     SQL_NULL_DATA,
+     0,
+     SQL_NULL_DATA,
+     0,
+     2},
+    {SQL_TYPE_TIME,
+     "TIME",
+     18,
+     "'",
+     1,
+     "'",
+     1,
+     "",
+     SQL_NULL_DATA,
+     SQL_NULLABLE,
+     SQL_FALSE,
+     SQL_SEARCHABLE,
+     0,
+     SQL_NULL_DATA,
+     SQL_FALSE,
+     2,
+     SQL_NULL_DATA,
+     "TYPE_TIME",
+     9,
+     0,
+     2,
+     0,
+     2,
+     SQL_DATETIME,
+     SQL_CODE_TIME,
+     2,
+     0,
+     SQL_NULL_DATA,
+     0,
+     SQL_NULL_DATA,
+     0,
+     2},
+    {SQL_TYPE_TIMESTAMP,
+     "TIMESTAMP",
+     35,
+     "'",
+     1,
+     "'",
+     1,
+     "",
+     SQL_NULL_DATA,
+     SQL_NULLABLE,
+     SQL_FALSE,
+     SQL_SEARCHABLE,
+     0,
+     SQL_NULL_DATA,
+     SQL_FALSE,
+     2,
+     SQL_NULL_DATA,
+     "TYPE_TIMESTAMP",
+     14,
+     0,
+     2,
+     0,
+     2,
+     SQL_DATETIME,
+     SQL_CODE_TIMESTAMP,
+     2,
+     0,
+     SQL_NULL_DATA,
+     0,
+     SQL_NULL_DATA,
+     0,
+     2},
+
     // Vendor-Specific Types (Note: buffer contents undefined when indicator is SQL_NULL_DATA)
-    {2000, "TIMESTAMP_LTZ", 35, "'", 1, "'", 1, "", SQL_NULL_DATA, SQL_NULLABLE, SQL_FALSE, SQL_SEARCHABLE, 0, SQL_NULL_DATA, SQL_FALSE, 2, SQL_NULL_DATA,
-     "STAMP_LTZ", 9, 0, SQL_NULL_DATA, 0, SQL_NULL_DATA, 2000, 0, SQL_NULL_DATA, 0, SQL_NULL_DATA, 0, SQL_NULL_DATA, 0, 2},
-    {2001, "TIMESTAMP_TZ", 35, "'", 1, "'", 1, "", SQL_NULL_DATA, SQL_NULLABLE, SQL_FALSE, SQL_SEARCHABLE, 0, SQL_NULL_DATA, SQL_FALSE, 2, SQL_NULL_DATA,
-     "STAMP_TZ", 8, 0, SQL_NULL_DATA, 0, SQL_NULL_DATA, 2001, 0, SQL_NULL_DATA, 0, SQL_NULL_DATA, 0, SQL_NULL_DATA, 0, 2},
-    {2002, "TIMESTAMP_NTZ", 35, "'", 1, "'", 1, "", SQL_NULL_DATA, SQL_NULLABLE, SQL_FALSE, SQL_SEARCHABLE, 0, SQL_NULL_DATA, SQL_FALSE, 2, SQL_NULL_DATA,
-     "STAMP_NTZ", 9, 0, SQL_NULL_DATA, 0, SQL_NULL_DATA, 2002, 0, SQL_NULL_DATA, 0, SQL_NULL_DATA, 0, SQL_NULL_DATA, 0, 2},
-    {2003, "ARRAY", 134217728, "'", 1, "'", 1, "max length", 10, SQL_NULLABLE, SQL_TRUE, SQL_SEARCHABLE, 0, SQL_NULL_DATA, SQL_FALSE, 2, SQL_NULL_DATA,
-     "OWN", 3, 0, SQL_NULL_DATA, 0, SQL_NULL_DATA, 2003, 0, SQL_NULL_DATA, 0, SQL_NULL_DATA, 0, SQL_NULL_DATA, 0, 2},
-    {2004, "OBJECT", 134217728, "'", 1, "'", 1, "max length", 10, SQL_NULLABLE, SQL_TRUE, SQL_SEARCHABLE, 0, SQL_NULL_DATA, SQL_FALSE, 2, SQL_NULL_DATA,
-     "OWN", 3, 0, SQL_NULL_DATA, 0, SQL_NULL_DATA, 2004, 0, SQL_NULL_DATA, 0, SQL_NULL_DATA, 0, SQL_NULL_DATA, 0, 2},
-    {2005, "VARIANT", 134217728, "'", 1, "'", 1, "max length", 10, SQL_NULLABLE, SQL_TRUE, SQL_SEARCHABLE, 0, SQL_NULL_DATA, SQL_FALSE, 2, SQL_NULL_DATA,
-     "OWN", 3, 0, SQL_NULL_DATA, 0, SQL_NULL_DATA, 2005, 0, SQL_NULL_DATA, 0, SQL_NULL_DATA, 0, SQL_NULL_DATA, 0, 2},
+    {2000,
+     "TIMESTAMP_LTZ",
+     35,
+     "'",
+     1,
+     "'",
+     1,
+     "",
+     SQL_NULL_DATA,
+     SQL_NULLABLE,
+     SQL_FALSE,
+     SQL_SEARCHABLE,
+     0,
+     SQL_NULL_DATA,
+     SQL_FALSE,
+     2,
+     SQL_NULL_DATA,
+     "STAMP_LTZ",
+     9,
+     0,
+     SQL_NULL_DATA,
+     0,
+     SQL_NULL_DATA,
+     2000,
+     0,
+     SQL_NULL_DATA,
+     0,
+     SQL_NULL_DATA,
+     0,
+     SQL_NULL_DATA,
+     0,
+     2},
+    {2001,
+     "TIMESTAMP_TZ",
+     35,
+     "'",
+     1,
+     "'",
+     1,
+     "",
+     SQL_NULL_DATA,
+     SQL_NULLABLE,
+     SQL_FALSE,
+     SQL_SEARCHABLE,
+     0,
+     SQL_NULL_DATA,
+     SQL_FALSE,
+     2,
+     SQL_NULL_DATA,
+     "STAMP_TZ",
+     8,
+     0,
+     SQL_NULL_DATA,
+     0,
+     SQL_NULL_DATA,
+     2001,
+     0,
+     SQL_NULL_DATA,
+     0,
+     SQL_NULL_DATA,
+     0,
+     SQL_NULL_DATA,
+     0,
+     2},
+    {2002,
+     "TIMESTAMP_NTZ",
+     35,
+     "'",
+     1,
+     "'",
+     1,
+     "",
+     SQL_NULL_DATA,
+     SQL_NULLABLE,
+     SQL_FALSE,
+     SQL_SEARCHABLE,
+     0,
+     SQL_NULL_DATA,
+     SQL_FALSE,
+     2,
+     SQL_NULL_DATA,
+     "STAMP_NTZ",
+     9,
+     0,
+     SQL_NULL_DATA,
+     0,
+     SQL_NULL_DATA,
+     2002,
+     0,
+     SQL_NULL_DATA,
+     0,
+     SQL_NULL_DATA,
+     0,
+     SQL_NULL_DATA,
+     0,
+     2},
+    {2003,
+     "ARRAY",
+     134217728,
+     "'",
+     1,
+     "'",
+     1,
+     "max length",
+     10,
+     SQL_NULLABLE,
+     SQL_TRUE,
+     SQL_SEARCHABLE,
+     0,
+     SQL_NULL_DATA,
+     SQL_FALSE,
+     2,
+     SQL_NULL_DATA,
+     "OWN",
+     3,
+     0,
+     SQL_NULL_DATA,
+     0,
+     SQL_NULL_DATA,
+     2003,
+     0,
+     SQL_NULL_DATA,
+     0,
+     SQL_NULL_DATA,
+     0,
+     SQL_NULL_DATA,
+     0,
+     2},
+    {2004,
+     "OBJECT",
+     134217728,
+     "'",
+     1,
+     "'",
+     1,
+     "max length",
+     10,
+     SQL_NULLABLE,
+     SQL_TRUE,
+     SQL_SEARCHABLE,
+     0,
+     SQL_NULL_DATA,
+     SQL_FALSE,
+     2,
+     SQL_NULL_DATA,
+     "OWN",
+     3,
+     0,
+     SQL_NULL_DATA,
+     0,
+     SQL_NULL_DATA,
+     2004,
+     0,
+     SQL_NULL_DATA,
+     0,
+     SQL_NULL_DATA,
+     0,
+     SQL_NULL_DATA,
+     0,
+     2},
+    {2005,
+     "VARIANT",
+     134217728,
+     "'",
+     1,
+     "'",
+     1,
+     "max length",
+     10,
+     SQL_NULLABLE,
+     SQL_TRUE,
+     SQL_SEARCHABLE,
+     0,
+     SQL_NULL_DATA,
+     SQL_FALSE,
+     2,
+     SQL_NULL_DATA,
+     "OWN",
+     3,
+     0,
+     SQL_NULL_DATA,
+     0,
+     SQL_NULL_DATA,
+     2005,
+     0,
+     SQL_NULL_DATA,
+     0,
+     SQL_NULL_DATA,
+     0,
+     SQL_NULL_DATA,
+     0,
+     2},
 };
 
 // ============================================================================
 // SQLGetTypeInfo - Basic Functionality
 // ============================================================================
 
-TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetTypeInfo: Result set ordering when using SQL_ALL_TYPES",
+TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetTypeInfo: Result set ordering when using SQL_ALL_TYPES",
                  "[odbc-api][gettypeinfo][driver_info]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
-  SQLRETURN ret = SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(config.value().dsn_name().c_str())),
-                             SQL_NTS, nullptr, 0, nullptr, 0);
-  REQUIRE(ret == SQL_SUCCESS);
-
-  SQLHSTMT stmt = SQL_NULL_HSTMT;
-  ret = SQLAllocHandle(SQL_HANDLE_STMT, dbc_handle(), &stmt);
-  REQUIRE(ret == SQL_SUCCESS);
-
-  ret = SQLGetTypeInfo(stmt, SQL_ALL_TYPES);
+  SQLRETURN ret = SQLGetTypeInfo(stmt_handle(), SQL_ALL_TYPES);
   REQUIRE(ret == SQL_SUCCESS);
 
   std::vector<std::pair<SQLSMALLINT, std::string>> types;
 
-  while ((ret = SQLFetch(stmt)) == SQL_SUCCESS) {
+  while ((ret = SQLFetch(stmt_handle())) == SQL_SUCCESS) {
     SQLSMALLINT dataType;
     char typeName[256];
     SQLLEN indicator;
 
-    ret = SQLGetData(stmt, 2, SQL_C_SSHORT, &dataType, sizeof(dataType), &indicator);
+    ret = SQLGetData(stmt_handle(), 2, SQL_C_SSHORT, &dataType, sizeof(dataType), &indicator);
     REQUIRE(ret == SQL_SUCCESS);
 
-    ret = SQLGetData(stmt, 1, SQL_C_CHAR, typeName, sizeof(typeName), &indicator);
+    ret = SQLGetData(stmt_handle(), 1, SQL_C_CHAR, typeName, sizeof(typeName), &indicator);
     REQUIRE(ret == SQL_SUCCESS);
 
     types.emplace_back(dataType, typeName);
   }
   REQUIRE(ret == SQL_NO_DATA);
-  
+
   // Note: The reference driver does not sort types by data type, unlike in the ODBC spec
   REQUIRE(types.size() == 23);
   REQUIRE(types[0].first == SQL_CHAR);
@@ -175,25 +857,21 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetTypeInfo: Result set ordering when
   REQUIRE(types[20].first == SQL_WCHAR);
   REQUIRE(types[21].first == SQL_WVARCHAR);
   REQUIRE(types[22].first == SQL_BIT);
-
-  SQLFreeHandle(SQL_HANDLE_STMT, stmt);
-  SQLDisconnect(dbc_handle());
 }
 
 // ============================================================================
 // SQLGetTypeInfo - Error Cases: Invalid Handle
 // ============================================================================
 
-TEST_CASE("SQLGetTypeInfo: SQL_INVALID_HANDLE - NULL statement handle",
-          "[odbc-api][gettypeinfo][driver_info][error]") {
+TEST_CASE("SQLGetTypeInfo: SQL_INVALID_HANDLE - NULL statement handle", "[odbc-api][gettypeinfo][driver_info][error]") {
   const SQLRETURN ret = SQLGetTypeInfo(SQL_NULL_HSTMT, SQL_ALL_TYPES);
   REQUIRE(ret == SQL_INVALID_HANDLE);
 }
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetTypeInfo: SQL_INVALID_HANDLE - Invalid handle type",
                  "[odbc-api][gettypeinfo][driver_info][error]") {
-  SQLRETURN ret = SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(config.value().dsn_name().c_str())),
-                             SQL_NTS, nullptr, 0, nullptr, 0);
+  SQLRETURN ret = SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(dsn_name().c_str())), SQL_NTS,
+                             nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
   ret = SQLGetTypeInfo(dbc_handle(), SQL_ALL_TYPES);
@@ -206,28 +884,17 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetTypeInfo: SQL_INVALID_HANDLE - Inv
 // SQLGetTypeInfo - Error Cases: Invalid Parameters
 // ============================================================================
 
-TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetTypeInfo: Returns empty result for invalid SQL data type",
+TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetTypeInfo: Returns empty result for invalid SQL data type",
                  "[odbc-api][gettypeinfo][driver_info]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
-  SQLRETURN ret = SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(config.value().dsn_name().c_str())),
-                             SQL_NTS, nullptr, 0, nullptr, 0);
-  REQUIRE(ret == SQL_SUCCESS);
-
-  SQLHSTMT stmt = SQL_NULL_HSTMT;
-  ret = SQLAllocHandle(SQL_HANDLE_STMT, dbc_handle(), &stmt);
-  REQUIRE(ret == SQL_SUCCESS);
-
-  ret = SQLGetTypeInfo(stmt, 9999);
+  SQLRETURN ret = SQLGetTypeInfo(stmt_handle(), 9999);
 
   // Note: Reference driver returns SUCCESS with empty result set (differs from ODBC spec)
   REQUIRE(ret == SQL_SUCCESS);
-  
-  ret = SQLFetch(stmt);
-  REQUIRE(ret == SQL_NO_DATA);
 
-  SQLFreeHandle(SQL_HANDLE_STMT, stmt);
-  SQLDisconnect(dbc_handle());
+  ret = SQLFetch(stmt_handle());
+  REQUIRE(ret == SQL_NO_DATA);
 }
 
 // ============================================================================
@@ -238,14 +905,14 @@ TEST_CASE_METHOD(DbcFixture, "SQLGetTypeInfo: Requires active connection",
                  "[odbc-api][gettypeinfo][driver_info][error]") {
   SQLHSTMT stmt = SQL_NULL_HSTMT;
   SQLRETURN ret = SQLAllocHandle(SQL_HANDLE_STMT, dbc_handle(), &stmt);
-  
+
   // Note: Reference driver requires connection to allocate statement (differs from ODBC spec)
   if (ret == SQL_ERROR) {
     const auto records = get_diag_rec(SQL_HANDLE_DBC, dbc_handle());
     REQUIRE(!records.empty());
     return;
   }
-  
+
   REQUIRE(ret == SQL_SUCCESS);
 
   ret = SQLGetTypeInfo(stmt, SQL_ALL_TYPES);
@@ -254,56 +921,37 @@ TEST_CASE_METHOD(DbcFixture, "SQLGetTypeInfo: Requires active connection",
   SQLFreeHandle(SQL_HANDLE_STMT, stmt);
 }
 
-TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetTypeInfo: Can be called multiple times on same statement",
+TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetTypeInfo: Can be called multiple times on same statement",
                  "[odbc-api][gettypeinfo][driver_info]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
-  SQLRETURN ret = SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(config.value().dsn_name().c_str())),
-                             SQL_NTS, nullptr, 0, nullptr, 0);
+  SQLRETURN ret = SQLGetTypeInfo(stmt_handle(), SQL_VARCHAR);
   REQUIRE(ret == SQL_SUCCESS);
 
-  SQLHSTMT stmt = SQL_NULL_HSTMT;
-  ret = SQLAllocHandle(SQL_HANDLE_STMT, dbc_handle(), &stmt);
+  ret = SQLCloseCursor(stmt_handle());
   REQUIRE(ret == SQL_SUCCESS);
 
-  ret = SQLGetTypeInfo(stmt, SQL_VARCHAR);
+  ret = SQLGetTypeInfo(stmt_handle(), SQL_INTEGER);
   REQUIRE(ret == SQL_SUCCESS);
 
-  ret = SQLCloseCursor(stmt);
+  ret = SQLFetch(stmt_handle());
   REQUIRE(ret == SQL_SUCCESS);
-
-  ret = SQLGetTypeInfo(stmt, SQL_INTEGER);
-  REQUIRE(ret == SQL_SUCCESS);
-
-  ret = SQLFetch(stmt);
-  REQUIRE(ret == SQL_SUCCESS);
-
-  SQLFreeHandle(SQL_HANDLE_STMT, stmt);
-  SQLDisconnect(dbc_handle());
 }
 
 // ============================================================================
 // SQLGetTypeInfo - Result Set Column Tests
 // ============================================================================
 
-TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetTypeInfo: Result set has correct columns",
+TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetTypeInfo: Result set has correct columns",
                  "[odbc-api][gettypeinfo][driver_info]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
-  SQLRETURN ret = SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(config.value().dsn_name().c_str())),
-                             SQL_NTS, nullptr, 0, nullptr, 0);
-  REQUIRE(ret == SQL_SUCCESS);
-
-  SQLHSTMT stmt = SQL_NULL_HSTMT;
-  ret = SQLAllocHandle(SQL_HANDLE_STMT, dbc_handle(), &stmt);
-  REQUIRE(ret == SQL_SUCCESS);
-
-  ret = SQLGetTypeInfo(stmt, SQL_ALL_TYPES);
+  SQLRETURN ret = SQLGetTypeInfo(stmt_handle(), SQL_ALL_TYPES);
   REQUIRE(ret == SQL_SUCCESS);
 
   // Note: Reference driver returns 20 columns instead of standard 19
   SQLSMALLINT numCols = 0;
-  ret = SQLNumResultCols(stmt, &numCols);
+  ret = SQLNumResultCols(stmt_handle(), &numCols);
   REQUIRE(ret == SQL_SUCCESS);
   REQUIRE(numCols == 20);
 
@@ -314,36 +962,23 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetTypeInfo: Result set has correct c
   SQLSMALLINT decDigits;
   SQLSMALLINT nullable;
 
-  const char* expectedColNames[] = {
-    "TYPE_NAME", "DATA_TYPE", "COLUMN_SIZE", "LITERAL_PREFIX", "LITERAL_SUFFIX",
-    "CREATE_PARAMS", "NULLABLE", "CASE_SENSITIVE", "SEARCHABLE", "UNSIGNED_ATTRIBUTE",
-    "FIXED_PREC_SCALE", "AUTO_UNIQUE_VALUE", "LOCAL_TYPE_NAME", "MINIMUM_SCALE",
-    "MAXIMUM_SCALE", "SQL_DATA_TYPE", "SQL_DATETIME_SUB", "NUM_PREC_RADIX",
-    "INTERVAL_PRECISION", "USER_DATA_TYPE"
-  };
+  const char* expectedColNames[] = {"TYPE_NAME",        "DATA_TYPE",          "COLUMN_SIZE",        "LITERAL_PREFIX",
+                                    "LITERAL_SUFFIX",   "CREATE_PARAMS",      "NULLABLE",           "CASE_SENSITIVE",
+                                    "SEARCHABLE",       "UNSIGNED_ATTRIBUTE", "FIXED_PREC_SCALE",   "AUTO_UNIQUE_VALUE",
+                                    "LOCAL_TYPE_NAME",  "MINIMUM_SCALE",      "MAXIMUM_SCALE",      "SQL_DATA_TYPE",
+                                    "SQL_DATETIME_SUB", "NUM_PREC_RADIX",     "INTERVAL_PRECISION", "USER_DATA_TYPE"};
 
   for (SQLSMALLINT col = 1; col <= numCols; col++) {
-    ret = SQLDescribeCol(stmt, col, reinterpret_cast<SQLCHAR*>(colName), sizeof(colName),
-                        &nameLen, &dataType, &colSize, &decDigits, &nullable);
+    ret = SQLDescribeCol(stmt_handle(), col, reinterpret_cast<SQLCHAR*>(colName), sizeof(colName), &nameLen, &dataType,
+                         &colSize, &decDigits, &nullable);
     REQUIRE(ret == SQL_SUCCESS);
-    REQUIRE(std::string(colName) == expectedColNames[col-1]);
+    REQUIRE(std::string(colName) == expectedColNames[col - 1]);
   }
-
-  SQLFreeHandle(SQL_HANDLE_STMT, stmt);
-  SQLDisconnect(dbc_handle());
 }
 
-TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetTypeInfo: Can bind columns and fetch data",
+TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetTypeInfo: Can bind columns and fetch data",
                  "[odbc-api][gettypeinfo][driver_info]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
-  SQLRETURN ret = SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(config.value().dsn_name().c_str())),
-                             SQL_NTS, nullptr, 0, nullptr, 0);
-  REQUIRE(ret == SQL_SUCCESS);
-
-  SQLHSTMT stmt = SQL_NULL_HSTMT;
-  ret = SQLAllocHandle(SQL_HANDLE_STMT, dbc_handle(), &stmt);
-  REQUIRE(ret == SQL_SUCCESS);
 
   char typeName[256];
   SQLLEN typeNameInd;
@@ -352,19 +987,19 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetTypeInfo: Can bind columns and fet
   SQLINTEGER columnSize;
   SQLLEN columnSizeInd;
 
-  ret = SQLGetTypeInfo(stmt, SQL_ALL_TYPES);
+  SQLRETURN ret = SQLGetTypeInfo(stmt_handle(), SQL_ALL_TYPES);
   REQUIRE(ret == SQL_SUCCESS);
 
-  ret = SQLBindCol(stmt, 1, SQL_C_CHAR, typeName, sizeof(typeName), &typeNameInd);
+  ret = SQLBindCol(stmt_handle(), 1, SQL_C_CHAR, typeName, sizeof(typeName), &typeNameInd);
   REQUIRE(ret == SQL_SUCCESS);
 
-  ret = SQLBindCol(stmt, 2, SQL_C_SSHORT, &dataType, sizeof(dataType), &dataTypeInd);
+  ret = SQLBindCol(stmt_handle(), 2, SQL_C_SSHORT, &dataType, sizeof(dataType), &dataTypeInd);
   REQUIRE(ret == SQL_SUCCESS);
 
-  ret = SQLBindCol(stmt, 3, SQL_C_SLONG, &columnSize, sizeof(columnSize), &columnSizeInd);
+  ret = SQLBindCol(stmt_handle(), 3, SQL_C_SLONG, &columnSize, sizeof(columnSize), &columnSizeInd);
   REQUIRE(ret == SQL_SUCCESS);
 
-  ret = SQLFetch(stmt);
+  ret = SQLFetch(stmt_handle());
   REQUIRE(ret == SQL_SUCCESS);
 
   REQUIRE(typeNameInd != SQL_NULL_DATA);
@@ -372,18 +1007,13 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetTypeInfo: Can bind columns and fet
   REQUIRE(columnSizeInd != SQL_NULL_DATA);
 
   REQUIRE(strlen(typeName) > 0);
-  REQUIRE((dataType == SQL_CHAR || dataType == SQL_VARCHAR || dataType == SQL_WCHAR || 
-           dataType == SQL_WVARCHAR || dataType == SQL_DECIMAL || dataType == SQL_NUMERIC ||
-           dataType == SQL_INTEGER || dataType == SQL_BIGINT || dataType == SQL_REAL ||
-           dataType == SQL_FLOAT || dataType == SQL_DOUBLE || dataType == SQL_BIT ||
+  REQUIRE((dataType == SQL_CHAR || dataType == SQL_VARCHAR || dataType == SQL_WCHAR || dataType == SQL_WVARCHAR ||
+           dataType == SQL_DECIMAL || dataType == SQL_NUMERIC || dataType == SQL_INTEGER || dataType == SQL_BIGINT ||
+           dataType == SQL_REAL || dataType == SQL_FLOAT || dataType == SQL_DOUBLE || dataType == SQL_BIT ||
            dataType == SQL_BINARY || dataType == SQL_VARBINARY || dataType == SQL_TYPE_DATE ||
            dataType == SQL_TYPE_TIME || dataType == SQL_TYPE_TIMESTAMP));
   REQUIRE(columnSize > 0);
-
-  SQLFreeHandle(SQL_HANDLE_STMT, stmt);
-  SQLDisconnect(dbc_handle());
 }
-
 
 // ============================================================================
 // SQLGetTypeInfo - Comprehensive Deep Validation for All Types
@@ -392,9 +1022,9 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetTypeInfo: Can bind columns and fet
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetTypeInfo: Documents all supported types with exact column values",
                  "[odbc-api][gettypeinfo][driver_info]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-  
-  SQLRETURN ret = SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(config.value().dsn_name().c_str())),
-                             SQL_NTS, nullptr, 0, nullptr, 0);
+
+  SQLRETURN ret = SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(dsn_name().c_str())), SQL_NTS,
+                             nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
   for (const auto& expected : ALL_TYPE_INFO) {

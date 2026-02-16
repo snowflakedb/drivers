@@ -12,7 +12,6 @@ import org.json.JSONObject;
 import org.json.JSONTokener;
 
 public abstract class SnowflakeIntegrationTestBase {
-
   protected Properties loadConnectionProperties() throws Exception {
     // Load parameters.json from test resources
     String paramPath = System.getenv("PARAMETER_PATH");
@@ -40,7 +39,7 @@ public abstract class SnowflakeIntegrationTestBase {
   protected Connection openConnection() throws Exception {
     Properties props = loadConnectionProperties();
     String url = buildJdbcUrl(props);
-    SnowflakeDriver.empty();
+    prepareDriver();
     return DriverManager.getConnection(url, props);
   }
 
@@ -87,5 +86,9 @@ public abstract class SnowflakeIntegrationTestBase {
     if (params.has("SNOWFLAKE_TEST_PROTOCOL")) {
       props.setProperty("protocol", params.getString("SNOWFLAKE_TEST_PROTOCOL"));
     }
+  }
+
+  private static synchronized void prepareDriver() throws Exception {
+    Class.forName(SnowflakeDriver.class.getName());
   }
 }

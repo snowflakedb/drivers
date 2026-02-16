@@ -5,3 +5,4 @@ LIBRARY sf_core
 EXPORTS
     sf_core_init_logger
     sf_core_api_call_proto
+    sf_core_free_buffer

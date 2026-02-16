@@ -3,17 +3,16 @@ use proto_generator::{CodeGenerator, GenerationResult, GeneratorContext};
 use proto_generator::{JavaGenerator, JsonGenerator, PythonGenerator, RustGenerator};
 use snafu::Whatever;
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
 
-use lazy_static::lazy_static;
-
-lazy_static! {
-    static ref generators: Vec<Box<dyn CodeGenerator + Sync>> = vec![
+static GENERATORS: LazyLock<Vec<Box<dyn CodeGenerator + Sync + Send>>> = LazyLock::new(|| {
+    vec![
         Box::new(RustGenerator::new()),
         Box::new(JsonGenerator::new()),
         Box::new(PythonGenerator::new()),
-        Box::new(JavaGenerator::new())
-    ];
-}
+        Box::new(JavaGenerator::new()),
+    ]
+});
 
 fn main() -> Result<(), Whatever> {
     env_logger::init();
@@ -98,7 +97,7 @@ fn handle_generate_command(matches: &ArgMatches) -> Result<(), Whatever> {
     }
 
     // Create registry with built-in generators
-    let generator_opt = generators.iter().find(|g| g.name() == generator_name);
+    let generator_opt = GENERATORS.iter().find(|g| g.name() == generator_name);
 
     if generator_opt.is_none() {
         eprintln!("Generator not found: {}", generator_name);

@@ -167,6 +167,30 @@ message ArrowArrayPtr {
   bytes value = 1;
 }
 
+// =============================================================================
+// POINTER TYPES - For passing data references to core
+// =============================================================================
+
+// Pointer to raw binary data in memory with explicit length.
+// Used for passing data from language wrappers without copying.
+//
+// Both JSON and CSV use this same pointer type since both point to raw bytes:
+// - JSON: pointer to UTF-8 encoded JSON bytes (e.g., from json_str.encode('utf-8'))
+// - CSV: pointer to raw CSV file bytes
+message BinaryDataPtr {
+  bytes value = 1;   // 8-byte pointer (encoded as little-endian)
+  int64 length = 2;  // Length of data in bytes
+}
+
+// Union of all binding types.
+// Both variants use BinaryDataPtr since both point to raw bytes in memory.
+message QueryBindings {
+  oneof binding_type {
+    BinaryDataPtr json = 1;  // Pointer to UTF-8 encoded JSON bytes
+    BinaryDataPtr csv = 2;   // Pointer to raw CSV bytes
+  }
+}
+
 // Database service requests and responses
 
 message DatabaseNewRequest {
@@ -443,8 +467,10 @@ message StatementBindStreamRequest {
 message StatementBindStreamResponse {
 }
 
+// Extend current StatementExecute
 message StatementExecuteQueryRequest {
   StatementHandle stmt_handle = 1;
+  optional QueryBindings bindings = 2;  // None = no bindings
 }
 
 message StatementExecuteQueryResponse {

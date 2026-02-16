@@ -9,6 +9,73 @@ use sf_core::protobuf_gen::database_driver_v1::{
 };
 use std::collections::HashMap;
 
+/// Custom Snowflake connection attribute base.
+/// Mirrors the old driver's sf_odbc.h: SQL_DRIVER_CONN_ATTR_BASE (0x4000) + 0x53
+const SQL_SF_CONN_ATTR_BASE: i32 = 0x4000 + 0x53;
+
+/// ODBC connection attributes — both standard and custom Snowflake attributes.
+///
+/// Numeric IDs for custom attributes match sf_odbc.h from the old driver.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ConnectionAttribute {
+    // Standard ODBC attributes (from sql.h / sqlext.h)
+    /// SQL_ATTR_AUTOCOMMIT (102)
+    Autocommit,
+    /// SQL_ATTR_LOGIN_TIMEOUT (103)
+    LoginTimeout,
+    /// SQL_ATTR_CONNECTION_TIMEOUT (113)
+    ConnectionTimeout,
+
+    // Custom Snowflake attributes (matching sf_odbc.h)
+    /// SQL_SF_CONN_ATTR_PRIV_KEY — EVP_PKEY pointer (not supported in new driver)
+    PrivKey,
+    /// SQL_SF_CONN_ATTR_APPLICATION — Application name
+    Application,
+    /// SQL_SF_CONN_ATTR_PRIV_KEY_CONTENT — Private key as PEM string
+    PrivKeyContent,
+    /// SQL_SF_CONN_ATTR_PRIV_KEY_PASSWORD — Private key password/passphrase
+    PrivKeyPassword,
+    /// SQL_SF_CONN_ATTR_PRIV_KEY_BASE64 — Private key as base64-encoded string
+    PrivKeyBase64,
+}
+
+impl ConnectionAttribute {
+    /// Convert a raw ODBC attribute ID to a `ConnectionAttribute`.
+    /// Returns `None` for unrecognized attributes.
+    pub fn from_raw(value: i32) -> Option<Self> {
+        match value {
+            102 => Some(Self::Autocommit),
+            103 => Some(Self::LoginTimeout),
+            113 => Some(Self::ConnectionTimeout),
+            x if x == SQL_SF_CONN_ATTR_BASE + 1 => Some(Self::PrivKey),
+            x if x == SQL_SF_CONN_ATTR_BASE + 2 => Some(Self::Application),
+            x if x == SQL_SF_CONN_ATTR_BASE + 3 => Some(Self::PrivKeyContent),
+            x if x == SQL_SF_CONN_ATTR_BASE + 4 => Some(Self::PrivKeyPassword),
+            x if x == SQL_SF_CONN_ATTR_BASE + 5 => Some(Self::PrivKeyBase64),
+            _ => None,
+        }
+    }
+
+    /// Check whether a raw attribute ID falls in the Snowflake custom range.
+    pub fn is_snowflake_custom(raw: i32) -> bool {
+        raw >= SQL_SF_CONN_ATTR_BASE
+    }
+
+    /// Convert back to the raw ODBC attribute ID.
+    pub fn as_raw(&self) -> i32 {
+        match self {
+            Self::Autocommit => 102,
+            Self::LoginTimeout => 103,
+            Self::ConnectionTimeout => 113,
+            Self::PrivKey => SQL_SF_CONN_ATTR_BASE + 1,
+            Self::Application => SQL_SF_CONN_ATTR_BASE + 2,
+            Self::PrivKeyContent => SQL_SF_CONN_ATTR_BASE + 3,
+            Self::PrivKeyPassword => SQL_SF_CONN_ATTR_BASE + 4,
+            Self::PrivKeyBase64 => SQL_SF_CONN_ATTR_BASE + 5,
+        }
+    }
+}
+
 /// Result type for ODBC operations
 pub type OdbcResult<T> = Result<T, OdbcError>;
 
@@ -56,9 +123,15 @@ pub enum ConnectionState {
     },
 }
 
+/// Pre-connection attributes set via SQLSetConnectAttr before connecting.
+/// These are applied to the sf_core connection during driver_connect/connect.
+pub type PreConnectionAttributes = HashMap<ConnectionAttribute, String>;
+
 pub struct Connection {
     pub state: ConnectionState,
     pub diagnostic_info: DiagnosticInfo,
+    /// Attributes set via SQLSetConnectAttr before the connection is established
+    pub pre_connection_attrs: PreConnectionAttributes,
 }
 
 #[derive(Debug, Clone)]

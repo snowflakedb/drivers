@@ -5,6 +5,7 @@ import os
 from datetime import datetime
 from pathlib import Path
 from runner.test_types import TestType
+from runner.utils import perf_tests_root
 import pytest
 
 logger = logging.getLogger(__name__)
@@ -14,6 +15,12 @@ _test_failures = []
 
 # Track current run directory (session-scoped)
 _current_run_dir = None
+
+
+def pytest_configure():
+    """Configure pytest and suppress verbose library logs"""
+    # Suppress testcontainers INFO logs (image pulling, container started, etc.)
+    logging.getLogger("testcontainers").setLevel(logging.WARNING)
 
 
 def pytest_addoption(parser):
@@ -73,6 +80,18 @@ def pytest_addoption(parser):
         action="store_true",
         default=False,
         help="Use locally built binary instead of Docker container (Core only)",
+    )
+    parser.addoption(
+        "--preserve-mappings",
+        action="store_true",
+        default=False,
+        help="Preserve WireMock mapping directories after tests (useful for debugging). Default: delete after completion",
+    )
+    parser.addoption(
+        "--reuse-mappings",
+        action="store",
+        default=None,
+        help="Reuse existing WireMock mappings directory (e.g., 'run_20251230_155413'). Skips recording phase.",
     )
 
 
@@ -234,6 +253,12 @@ def session_results_dir(run_id):
 
 
 @pytest.fixture
+def reuse_mappings_dir(request):
+    """Get reuse mappings directory from command line"""
+    return request.config.getoption("--reuse-mappings")
+
+
+@pytest.fixture
 def results_dir(session_results_dir):
     """Return the session-specific results directory"""
     return session_results_dir
@@ -245,12 +270,45 @@ def use_local_binary(request):
     return request.config.getoption("--use-local-binary")
 
 
+@pytest.fixture
+def preserve_mappings(request):
+    """Get preserve-mappings flag from command line"""
+    return request.config.getoption("--preserve-mappings")
+
+
+def _derive_test_name(func_name: str) -> str:
+    """Derive test name from function name by stripping 'test_' prefix."""
+    if func_name.startswith("test_"):
+        return func_name[5:]
+    return func_name
+
+
+def _normalize_driver_type(driver: str, driver_type: str) -> str:
+    """Normalize driver type (Core only has universal implementation)."""
+    return None if driver == "core" else driver_type
+
+
+def _should_run_comparison(driver: str, driver_type: str) -> bool:
+    """Check if test should run as comparison (both driver types)."""
+    return driver_type == "both" and driver != "core"
+
+
+def _validate_wiremock_old_driver(driver: str, driver_type: str):
+    """Validate that old driver is not used alone with WireMock tests."""
+    if driver_type == "old" and driver != "core":
+        raise pytest.UsageError(
+            f"WireMock tests cannot run with --driver-type=old only.\n"
+            f"The old {driver} driver requires mappings from the universal driver.\n"
+            f"Use --driver-type=universal or --driver-type=both instead."
+        )
+
+
 def _prepare_setup_queries(test_type: TestType, parameters_json: str, setup_queries: list[str] = None) -> list[str]:
     """
     Prepare setup queries based on test type.
     
     Args:
-        test_type: Type of test (SELECT or PUT_GET)
+        test_type: Type of test (SELECT, PUT_GET, or SELECT_RECORDED_HTTP)
         parameters_json: JSON string with connection parameters
         setup_queries: Optional user-provided setup queries
     
@@ -258,7 +316,7 @@ def _prepare_setup_queries(test_type: TestType, parameters_json: str, setup_quer
         List of setup queries with test-type-specific prefixes
     """
     match test_type:
-        case TestType.SELECT:
+        case TestType.SELECT | TestType.SELECT_RECORDED_HTTP:
             # SELECT tests: always use ARROW format
             arrow_query = "alter session set query_result_format = 'ARROW'"
             return [arrow_query] + (setup_queries or [])
@@ -274,7 +332,7 @@ def _prepare_setup_queries(test_type: TestType, parameters_json: str, setup_quer
 
 
 @pytest.fixture
-def perf_test(parameters_json, results_dir, iterations, warmup_iterations, driver, driver_type, use_local_binary, request):
+def perf_test(parameters_json, results_dir, run_id, iterations, warmup_iterations, driver, driver_type, use_local_binary, preserve_mappings, reuse_mappings_dir, request):
     """
     Returns a callable for running performance tests with pre-configured parameters.
     
@@ -293,7 +351,7 @@ def perf_test(parameters_json, results_dir, iterations, warmup_iterations, drive
     
     For drivers with --driver-type=both, runs test twice (universal, then old)
     """
-    from runner.runner import run_performance_test, run_comparison_test
+    from runner.modes.e2e_runner import run_performance_test, run_comparison_test
     
     # Validate: local binary only works with Core
     if use_local_binary and driver != "core":
@@ -309,44 +367,93 @@ def perf_test(parameters_json, results_dir, iterations, warmup_iterations, drive
         s3_download_url: str = None,  # S3 URL for PUT/GET tests
         s3_download_dir: str = None  # Local directory for downloaded files
     ):
-        # Auto-derive test name from function name if not provided
+        # Prepare test parameters
         if test_name is None:
-            func_name = request.node.name
-            if func_name.startswith("test_"):
-                test_name = func_name[5:]  # Strip "test_" prefix
-            else:
-                test_name = func_name
+            test_name = _derive_test_name(request.node.name)
         
         final_setup_queries = _prepare_setup_queries(test_type, parameters_json, setup_queries)
+        s3_files_dir = _download_s3_files_if_needed(s3_download_url, s3_download_dir)
+        is_comparison = _should_run_comparison(driver, driver_type)
         
-        # Download S3 files if needed (for PUT/GET tests)
-        s3_files_dir = None
-        if s3_download_url:
-            from runner.s3_utils import download_s3_files
-            from pathlib import Path
-            
-            # Default download dir: tests/performance/put_get_files/{dataset_name_from_s3_url}
-            if s3_download_dir is None:
-                s3_files_base = Path(__file__).parent / "put_get_files"
-                # Extract dataset name from S3 URL
-                # e.g., "s3://bucket/path/12Mx100/" -> "12Mx100"
-                dataset_name = s3_download_url.rstrip('/').split('/')[-1]
-                s3_download_dir = str(s3_files_base / dataset_name)
-            
-            s3_files_dir = Path(s3_download_dir)
-            
-            try:
-                download_s3_files(s3_download_url, s3_files_dir)
-            except Exception as e:
-                pytest.fail(f"S3 download failed: {e}")
-        
-        # For drivers with "both" option, run comparison
-        # Core only has universal implementation
-        if driver_type == "both" and driver != "core":
-            return run_comparison_test(
+        # Route to appropriate runner based on test type
+        if test_type == TestType.SELECT_RECORDED_HTTP:
+            return _run_wiremock_test(
                 test_name=test_name,
                 sql_command=sql_command,
                 setup_queries=final_setup_queries,
+                s3_files_dir=s3_files_dir,
+                is_comparison=is_comparison,
+            )
+        else:
+            return _run_e2e_test(
+                test_name=test_name,
+                sql_command=sql_command,
+                setup_queries=final_setup_queries,
+                test_type=test_type,
+                s3_files_dir=s3_files_dir,
+                is_comparison=is_comparison,
+            )
+    
+    def _run_wiremock_test(
+        test_name: str,
+        sql_command: str,
+        setup_queries: list[str],
+        s3_files_dir,
+        is_comparison: bool,
+    ):
+        """Run WireMock test (recorded HTTP traffic)."""
+        _validate_wiremock_old_driver(driver, driver_type)
+        
+        if is_comparison:
+            from runner.modes.wiremock_runner import run_wiremock_comparison_test
+            return run_wiremock_comparison_test(
+                test_name=test_name,
+                sql_command=sql_command,
+                setup_queries=setup_queries,
+                parameters_json=parameters_json,
+                results_dir=results_dir,
+                iterations=iterations,
+                warmup_iterations=warmup_iterations,
+                driver=driver,
+                use_local_binary=use_local_binary,
+                s3_files_dir=s3_files_dir,
+                run_id=run_id,
+                preserve_mappings=preserve_mappings,
+                reuse_mappings_dir=reuse_mappings_dir,
+            )
+        else:
+            from runner.modes.wiremock_runner import run_wiremock_performance_test
+            return run_wiremock_performance_test(
+                test_name=test_name,
+                sql_command=sql_command,
+                setup_queries=setup_queries,
+                parameters_json=parameters_json,
+                results_dir=results_dir,
+                iterations=iterations,
+                warmup_iterations=warmup_iterations,
+                driver=driver,
+                driver_type=_normalize_driver_type(driver, driver_type),
+                use_local_binary=use_local_binary,
+                s3_files_dir=s3_files_dir,
+                run_id=run_id,
+                preserve_mappings=preserve_mappings,
+                reuse_mappings_dir=reuse_mappings_dir,
+            )
+    
+    def _run_e2e_test(
+        test_name: str,
+        sql_command: str,
+        setup_queries: list[str],
+        test_type: TestType,
+        s3_files_dir,
+        is_comparison: bool,
+    ):
+        """Run E2E test (real Snowflake connection)."""
+        if is_comparison:
+            return run_comparison_test(
+                test_name=test_name,
+                sql_command=sql_command,
+                setup_queries=setup_queries,
                 test_type=test_type,
                 parameters_json=parameters_json,
                 results_dir=results_dir,
@@ -359,14 +466,14 @@ def perf_test(parameters_json, results_dir, iterations, warmup_iterations, drive
             return run_performance_test(
                 test_name=test_name,
                 sql_command=sql_command,
-                setup_queries=final_setup_queries,
+                setup_queries=setup_queries,
                 test_type=test_type,
                 parameters_json=parameters_json,
                 results_dir=results_dir,
                 iterations=iterations,
                 warmup_iterations=warmup_iterations,
                 driver=driver,
-                driver_type=driver_type if driver != "core" else None,
+                driver_type=_normalize_driver_type(driver, driver_type),
                 use_local_binary=use_local_binary,
                 s3_files_dir=s3_files_dir,
             )
@@ -464,3 +571,37 @@ def pytest_sessionfinish(session, exitstatus):
                 handler.setLevel(level)
     else:
         logger.info("\nSkipping Benchstore upload (use --upload-to-benchstore to enable)")
+
+
+def _download_s3_files_if_needed(s3_download_url: str = None, s3_download_dir: str = None):
+    """
+    Download S3 files if needed (for PUT/GET tests).
+    
+    Args:
+        s3_download_url: S3 URL to download files from
+        s3_download_dir: Local directory to download files to (optional)
+    
+    Returns:
+        Path to downloaded files directory, or None if no download needed
+    """
+    if not s3_download_url:
+        return None
+    
+    from runner.s3_utils import download_s3_files
+    
+    # Default download dir: tests/performance/put_get_files/{dataset_name_from_s3_url}
+    if s3_download_dir is None:
+        s3_files_base = perf_tests_root() / "put_get_files"
+        # Extract dataset name from S3 URL
+        # e.g., "s3://bucket/path/12Mx100/" -> "12Mx100"
+        dataset_name = s3_download_url.rstrip('/').split('/')[-1]
+        s3_download_dir = str(s3_files_base / dataset_name)
+    
+    s3_files_dir = Path(s3_download_dir)
+    
+    try:
+        download_s3_files(s3_download_url, s3_files_dir)
+    except Exception as e:
+        pytest.fail(f"S3 download failed: {e}")
+    
+    return s3_files_dir

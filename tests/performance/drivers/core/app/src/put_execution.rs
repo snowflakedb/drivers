@@ -9,17 +9,19 @@ use std::time::Instant;
 
 use crate::connection::{DatabaseDriver, reset_statement_query};
 use crate::results::{
-    print_statistics_put_get, write_csv_results_put_get, write_run_metadata_json,
+    current_unix_timestamp, print_statistics_put_get, write_csv_results_put_get,
+    write_metadata_if_not_replay,
 };
 use crate::types::PutGetResult;
+use sf_core::protobuf_gen::database_driver_v1::ConnectionHandle;
 
 pub fn execute_put_get_test(
+    conn_handle: ConnectionHandle,
     stmt_handle: StatementHandle,
     sql_command: &str,
     warmup_iterations: usize,
     iterations: usize,
     test_name: &str,
-    server_version: &str,
 ) -> Result<()> {
     println!("\n=== Executing PUT_GET Test ===");
     println!("Query: {}", sql_command);
@@ -40,8 +42,9 @@ pub fn execute_put_get_test(
     // Write & print
     let results_file = write_csv_results_put_get(&results, test_name)
         .map_err(|e| format!("Failed to write results: {:?}", e))?;
-    write_run_metadata_json(server_version)
-        .map_err(|e| format!("Failed to write metadata: {:?}", e))?;
+
+    write_metadata_if_not_replay(conn_handle)?;
+
     print_statistics_put_get(&results);
 
     println!("\n✓ Complete → {}", results_file);
@@ -79,10 +82,7 @@ pub fn run_test_iterations_put_get(
         let query_time = execute_put_get_iteration(stmt_handle, sql)?;
 
         results.push(PutGetResult {
-            timestamp: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs() as i64,
+            timestamp: current_unix_timestamp(),
             query_time_s: query_time,
         });
 

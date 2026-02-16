@@ -49,18 +49,20 @@ markers = [
 build-python = "bash -c 'cd drivers/python && ./build.sh'"
 build-core = "bash -c 'cd drivers/core && ./build.sh'"
 build-odbc = "bash -c 'cd drivers/odbc && ./build.sh'"
-build = "bash -c 'cd drivers/python && ./build.sh && cd ../core && ./build.sh && cd ../odbc && ./build.sh'"
+build-wiremock = "bash -c 'cd wiremock && ./build.sh'"
+build = "bash -c 'cd drivers/python && ./build.sh && cd ../core && ./build.sh && cd ../odbc && ./build.sh && cd ../wiremock && ./build.sh'"
 
-# Local (always builds before execution)
-core-local = ["build-core", "python -m pytest {args:tests/} --driver=core -s -v"]
+# Local (always builds before execution, including WireMock for tests that need it)
+# Preserves WireMock mappings for debugging
+core-local = ["build-core", "build-wiremock", "python -m pytest {args:tests/} --driver=core --preserve-mappings -s -v"]
 # Core with local binary (no Docker, no build needed)
-core-local-no-docker = "python -m pytest {args:tests/} --driver=core --use-local-binary -s -v"
-python-universal-local = ["build-python", "python -m pytest {args:tests/} --driver=python --driver-type=universal -s -v"]
-python-old-local = ["build-python", "python -m pytest {args:tests/} --driver=python --driver-type=old -s -v"]
-python-both-local = ["build-python", "python -m pytest {args:tests/} --driver=python --driver-type=both -s -v"]
-odbc-universal-local = ["build-odbc", "python -m pytest {args:tests/} --driver=odbc --driver-type=universal -s -v"]
-odbc-old-local = ["build-odbc", "python -m pytest {args:tests/} --driver=odbc --driver-type=old -s -v"]
-odbc-both-local = ["build-odbc", "python -m pytest {args:tests/} --driver=odbc --driver-type=both -s -v"]
+core-local-no-docker = "python -m pytest {args:tests/} --driver=core --use-local-binary --preserve-mappings -s -v"
+python-universal-local = ["build-python", "build-wiremock", "python -m pytest {args:tests/} --driver=python --driver-type=universal --preserve-mappings -s -v"]
+python-old-local = ["build-python", "build-wiremock", "python -m pytest {args:tests/} --driver=python --driver-type=old --preserve-mappings -s -v"]
+python-both-local = ["build-python", "build-wiremock", "python -m pytest {args:tests/} --driver=python --driver-type=both --preserve-mappings -s -v"]
+odbc-universal-local = ["build-odbc", "build-wiremock", "python -m pytest {args:tests/} --driver=odbc --driver-type=universal --preserve-mappings -s -v"]
+odbc-old-local = ["build-odbc", "build-wiremock", "python -m pytest {args:tests/} --driver=odbc --driver-type=old --preserve-mappings -s -v"]
+odbc-both-local = ["build-odbc", "build-wiremock", "python -m pytest {args:tests/} --driver=odbc --driver-type=both --preserve-mappings -s -v"]
 
 # CI
 core = "python -m pytest {args:tests/} --driver=core --upload-to-benchstore -s -v"
@@ -72,13 +74,17 @@ odbc-old = "python -m pytest {args:tests/} --driver=odbc --driver-type=old --upl
 odbc-both = "python -m pytest {args:tests/} --driver=odbc --driver-type=both --upload-to-benchstore -s -v"
 
 # Clean all generated files and results
-clean = """python -c "
+clean = """python -c '
 import shutil
 from pathlib import Path
-dirs = ['.pytest_cache', 'tests/__pycache__', 'runner/__pycache__', 'results']
+
+# Clean all generated directories
+dirs = [".pytest_cache", "tests/__pycache__", "runner/__pycache__", "wiremock/__pycache__", "results", "mappings"]
 for d in dirs:
     if Path(d).exists():
         shutil.rmtree(d)
-print('✓ Cleaned cache directories and results')
-"
+        print("✓ Cleaned:", d)
+
+print("✓ All cache directories, results, and mappings cleaned")
+'
 """

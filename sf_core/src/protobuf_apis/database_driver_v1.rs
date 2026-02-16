@@ -4,6 +4,7 @@ use crate::apis::database_driver_v1::Setting;
 use crate::apis::database_driver_v1::error::ConfigError;
 use crate::apis::database_driver_v1::error::RestError;
 use crate::apis::database_driver_v1::statement_bind;
+use crate::apis::database_driver_v1::{BindingType, DataPtr};
 use crate::apis::database_driver_v1::{
     connection_init, connection_new, connection_release, connection_set_option,
 };
@@ -47,6 +48,31 @@ impl From<*mut FFI_ArrowArrayStream> for ArrowArrayStreamPtr {
         let slice = unsafe { std::slice::from_raw_parts(buf_ptr, len) };
         let vec = slice.to_vec();
         ArrowArrayStreamPtr { value: vec }
+    }
+}
+
+// Convert protobuf BinaryDataPtr to internal DataPtr.
+// Both represent a raw pointer + length; this avoids leaking protobuf types into core.
+impl<'a> From<BinaryDataPtr> for DataPtr<'a> {
+    fn from(proto_ptr: BinaryDataPtr) -> Self {
+        let ptr_bytes: [u8; 8] = proto_ptr
+            .value
+            .as_slice()
+            .try_into()
+            .expect("Pointer must be 8 bytes");
+        let ptr_value = usize::from_le_bytes(ptr_bytes);
+        let ptr = ptr_value as *const u8;
+        DataPtr::new(ptr, proto_ptr.length)
+    }
+}
+
+// Convert protobuf QueryBindings variant to internal BindingType.
+impl<'a> From<query_bindings::BindingType> for BindingType<'a> {
+    fn from(proto: query_bindings::BindingType) -> Self {
+        match proto {
+            query_bindings::BindingType::Json(ptr) => BindingType::Json(ptr.into()),
+            query_bindings::BindingType::Csv(ptr) => BindingType::Csv(ptr.into()),
+        }
     }
 }
 
@@ -207,6 +233,9 @@ fn to_driver_error(error: &ApiError) -> DriverError {
                 detail: "Master token expired, full re-authentication required".to_string(),
             })),
         },
+        ApiError::InvalidRefreshState { .. } => DriverError {
+            error_type: Some(driver_error::ErrorType::InternalError(InternalError {})),
+        },
     }
 }
 
@@ -242,6 +271,7 @@ fn to_driver_exception(error: ApiError) -> DriverException {
         ApiError::Statement { .. } => StatusCode::InternalError,
         ApiError::Query { .. } => StatusCode::InternalError,
         ApiError::MasterTokenExpired { .. } => StatusCode::AuthenticationError,
+        ApiError::InvalidRefreshState { .. } => StatusCode::InternalError,
     };
 
     let message = error.to_string();
@@ -634,7 +664,12 @@ impl DatabaseDriver for DatabaseDriverImpl {
     ) -> Result<StatementExecuteQueryResponse, DriverException> {
         let stmt_handle = required(input.stmt_handle, "Statement handle is required")?;
 
-        let result = statement_execute_query(stmt_handle.into()).to_protobuf()?;
+        let bindings_opt = input
+            .bindings
+            .and_then(|b| b.binding_type)
+            .map(BindingType::from);
+
+        let result = statement_execute_query(stmt_handle.into(), bindings_opt).to_protobuf()?;
         let stream_ptr: ArrowArrayStreamPtr = Box::into_raw(result.stream).into();
 
         Ok(StatementExecuteQueryResponse {

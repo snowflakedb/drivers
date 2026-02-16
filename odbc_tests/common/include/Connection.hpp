@@ -12,6 +12,8 @@
 
 class Connection {
  public:
+  ConnectionHandleWrapper& handleWrapper() { return dbc; }
+
   static EnvironmentHandleWrapper initEnv() {
     EnvironmentHandleWrapper env;
     SQLRETURN ret = SQLSetEnvAttr(env.getHandle(), SQL_ATTR_ODBC_VERSION, (SQLPOINTER)SQL_OV_ODBC3, 0);

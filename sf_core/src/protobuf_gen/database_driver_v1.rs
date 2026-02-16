@@ -161,6 +161,40 @@ pub struct ArrowArrayPtr {
     #[prost(bytes = "vec", tag = "1")]
     pub value: ::prost::alloc::vec::Vec<u8>,
 }
+/// Pointer to raw binary data in memory with explicit length.
+/// Used for passing data from language wrappers without copying.
+///
+/// Both JSON and CSV use this same pointer type since both point to raw bytes:
+/// - JSON: pointer to UTF-8 encoded JSON bytes (e.g., from json_str.encode('utf-8'))
+/// - CSV: pointer to raw CSV file bytes
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct BinaryDataPtr {
+    /// 8-byte pointer (encoded as little-endian)
+    #[prost(bytes = "vec", tag = "1")]
+    pub value: ::prost::alloc::vec::Vec<u8>,
+    /// Length of data in bytes
+    #[prost(int64, tag = "2")]
+    pub length: i64,
+}
+/// Union of all binding types.
+/// Both variants use BinaryDataPtr since both point to raw bytes in memory.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct QueryBindings {
+    #[prost(oneof = "query_bindings::BindingType", tags = "1, 2")]
+    pub binding_type: ::core::option::Option<query_bindings::BindingType>,
+}
+/// Nested message and enum types in `QueryBindings`.
+pub mod query_bindings {
+    #[derive(Clone, PartialEq, Eq, Hash, ::prost::Oneof)]
+    pub enum BindingType {
+        /// Pointer to UTF-8 encoded JSON bytes
+        #[prost(message, tag = "1")]
+        Json(super::BinaryDataPtr),
+        /// Pointer to raw CSV bytes
+        #[prost(message, tag = "2")]
+        Csv(super::BinaryDataPtr),
+    }
+}
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct DatabaseNewRequest {}
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
@@ -483,10 +517,14 @@ pub struct StatementBindStreamRequest {
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct StatementBindStreamResponse {}
-#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+/// Extend current StatementExecute
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct StatementExecuteQueryRequest {
     #[prost(message, optional, tag = "1")]
     pub stmt_handle: ::core::option::Option<StatementHandle>,
+    /// None = no bindings
+    #[prost(message, optional, tag = "2")]
+    pub bindings: ::core::option::Option<QueryBindings>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct StatementExecuteQueryResponse {

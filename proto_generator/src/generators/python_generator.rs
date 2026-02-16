@@ -20,16 +20,45 @@ impl PythonGenerator {
     ) -> Result<GenerationResult, Whatever> {
         let temp_dir = tempfile::tempdir().whatever_context("Failed to create temp directory")?;
 
+        let out_dir = temp_dir.path().display();
+        let proto_file = context.proto_file.to_str().unwrap();
+        let include_dir = context.proto_file.parent().unwrap().display();
+
         // Run protoc with Python output
         std::process::Command::new("protoc")
-            .arg(format!("--python_out={}", temp_dir.path().display()))
-            .arg(context.proto_file.to_str().unwrap())
-            .arg(format!(
-                "-I={}",
-                context.proto_file.parent().unwrap().display()
-            ))
+            .arg(format!("--python_out={out_dir}"))
+            .arg(proto_file)
+            .arg(format!("-I={include_dir}"))
             .status()
             .whatever_context("Failed to run protoc")?;
+
+        // Generate .pyi type stubs.
+        // Prefer mypy-protobuf (--mypy_out) for higher-quality stubs that
+        // correctly handle proto3 optional fields, HasField overloads, etc.
+        // Fall back to protoc's built-in --pyi_out if mypy-protobuf is not
+        // installed.
+        let mypy_status = std::process::Command::new("protoc")
+            .arg(format!("--mypy_out={out_dir}"))
+            .arg(proto_file)
+            .arg(format!("-I={include_dir}"))
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+
+        match mypy_status {
+            Ok(status) if status.success() => {
+                info!("Generated .pyi stubs using mypy-protobuf");
+            }
+            _ => {
+                info!("mypy-protobuf not available, falling back to protoc --pyi_out");
+                std::process::Command::new("protoc")
+                    .arg(format!("--pyi_out={out_dir}"))
+                    .arg(proto_file)
+                    .arg(format!("-I={include_dir}"))
+                    .status()
+                    .whatever_context("Failed to run protoc --pyi_out")?;
+            }
+        }
 
         let mut result = GenerationResult::new();
 

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from snowflake.connector._internal.protobuf_gen.database_driver_v1_services import (  # type: ignore[attr-defined]
+from snowflake.connector._internal.protobuf_gen.database_driver_v1_services import (
     ConnectionInitRequest,
     ConnectionNewRequest,
     ConnectionSetOptionBytesRequest,

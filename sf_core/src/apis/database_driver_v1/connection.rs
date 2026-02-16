@@ -16,8 +16,7 @@ use reqwest;
 pub fn connection_init(conn_handle: Handle, _db_handle: Handle) -> Result<(), ApiError> {
     match CONN_HANDLE_MANAGER.get_obj(conn_handle) {
         Some(conn_ptr) => {
-            // Create a blocking runtime for the login process
-            let rt = tokio::runtime::Runtime::new().context(RuntimeCreationSnafu)?;
+            let rt = crate::async_bridge::runtime().context(RuntimeCreationSnafu)?;
 
             let settings_guard = conn_ptr
                 .lock()
@@ -147,85 +146,171 @@ where
     F: Fn(String) -> Fut,
     Fut: Future<Output = Result<T, RestError>>,
 {
-    // Extract connection info and get Arc to tokens RwLock
-    let (tokens_lock, http_client, server_url, client_info) = {
+    let mut ctx = RefreshContext::from_arc(conn)?;
+    let mut last_error: Option<RestError> = None;
+    loop {
+        let token = ctx.refresh_token(last_error).await?;
+        match f(token).await {
+            Ok(result) => return Ok(result),
+            Err(e) => last_error = Some(e),
+        }
+    }
+}
+
+/// Context for automatic session token refresh.
+///
+/// Instead of a higher-order function pattern, `RefreshContext` gives callers
+/// a loop-based API:
+///
+/// ```ignore
+/// let mut ctx = RefreshContext::new(&conn)?;
+/// let mut last_error: Option<RestError> = None;
+/// loop {
+///     let token = ctx.refresh_token(last_error).await?;
+///     match do_something(token).await {
+///         Ok(result) => return Ok(result),
+///         Err(e) => last_error = Some(e),
+///     }
+/// }
+/// ```
+///
+/// On first call (`last_error = None`), reads the session token (concurrent readers allowed).
+/// On subsequent calls with a `SessionExpired` error, acquires write lock and refreshes.
+/// On non-SessionExpired errors, propagates the error immediately.
+/// Only one refresh attempt is allowed; a second SessionExpired error is propagated.
+/// Tracks the state of the refresh lifecycle.
+enum RefreshState {
+    /// No token has been issued yet (initial call).
+    Initial,
+    /// A token was issued but hasn't been refreshed yet. Holds the token string
+    /// so we can detect if another request already refreshed while we waited.
+    FirstToken(String),
+    /// A refresh has already been performed. A second SessionExpired will be propagated.
+    Refreshed,
+}
+
+pub struct RefreshContext {
+    tokens_lock: Arc<AsyncRwLock<Option<SessionTokens>>>,
+    http_client: reqwest::Client,
+    server_url: String,
+    client_info: ClientInfo,
+    state: RefreshState,
+}
+
+impl RefreshContext {
+    pub fn from_arc(conn: &Arc<Mutex<Connection>>) -> Result<Self, ApiError> {
         let guard = conn.lock().map_err(|_| ConnectionLockingSnafu.build())?;
-        (
-            guard.tokens.clone(),
-            guard
+        Self::new(&guard)
+    }
+    /// Create a new `RefreshContext` by extracting connection info.
+    pub fn new(conn: &Connection) -> Result<Self, ApiError> {
+        Ok(Self {
+            tokens_lock: conn.tokens.clone(),
+            http_client: conn
                 .http_client
                 .clone()
                 .context(ConnectionNotInitializedSnafu)?,
-            guard
+            server_url: conn
                 .server_url
                 .clone()
                 .context(ConnectionNotInitializedSnafu)?,
-            guard
+            client_info: conn
                 .client_info
                 .clone()
                 .context(ConnectionNotInitializedSnafu)?,
-        )
-    };
+            state: RefreshState::Initial,
+        })
+    }
 
-    // Read session token - concurrent readers allowed
-    let session_token = {
-        let tokens_guard = tokens_lock.read().await;
-        tokens_guard
-            .as_ref()
-            .map(|t| t.session_token.clone())
-            .context(ConnectionNotInitializedSnafu)?
-    };
-
-    // First attempt - save the token we used so we can detect if it changed
-    let failed_token = session_token.clone();
-    match f(session_token).await {
-        Ok(result) => Ok(result),
-        Err(RestError::InvalidSnowflakeResponse {
-            source: SnowflakeResponseError::SessionExpired { .. },
-            ..
-        }) => {
-            tracing::info!("Session expired, attempting refresh");
-
-            // Acquire write lock - blocks other readers/writers during refresh
-            let mut tokens_guard = tokens_lock.write().await;
-
-            let tokens = tokens_guard
-                .as_ref()
-                .cloned()
-                .context(ConnectionNotInitializedSnafu)?;
-
-            // If another request already refreshed while we waited, use the new token.
-            // Compare actual token strings - more reliable than expiration times.
-            if tokens.session_token != failed_token {
-                tracing::debug!("Session already refreshed by another request");
-                let token = tokens.session_token.clone();
-                drop(tokens_guard); // Release write lock before async call
-                return f(token).await.context(QuerySnafu);
+    /// Get a valid session token, optionally refreshing if the previous call failed.
+    ///
+    /// - `last_error = None`: reads the current session token (first call).
+    /// - `last_error = Some(SessionExpired)`: refreshes the session and returns a new token.
+    /// - `last_error = Some(other)`: propagates the error immediately.
+    ///
+    /// Only one refresh is allowed. If the refreshed token also triggers SessionExpired,
+    /// the error is propagated on the next call.
+    pub async fn refresh_token(
+        &mut self,
+        last_error: Option<RestError>,
+    ) -> Result<String, ApiError> {
+        match &self.state {
+            // No token issued yet - read the current session token
+            RefreshState::Initial => {
+                let tokens_guard = self.tokens_lock.read().await;
+                let token = tokens_guard
+                    .as_ref()
+                    .map(|t| t.session_token.clone())
+                    .context(ConnectionNotInitializedSnafu)?;
+                self.state = RefreshState::FirstToken(token.clone());
+                Ok(token)
             }
 
-            // Check if master token is expired (can't refresh without valid master token)
-            if tokens.is_master_expired() {
-                tracing::error!("Master token expired, full re-authentication required");
-                return MasterTokenExpiredSnafu.fail();
-            }
+            // First token was issued - check if it failed with SessionExpired
+            RefreshState::FirstToken(failed_token) => match last_error {
+                Some(RestError::InvalidSnowflakeResponse {
+                    source: SnowflakeResponseError::SessionExpired { .. },
+                    ..
+                }) => {
+                    tracing::info!("Session expired, attempting refresh");
+                    let failed_token = failed_token.clone();
+                    self.state = RefreshState::Refreshed;
 
-            // Refresh session (still holding write lock to prevent concurrent refreshes)
-            let new_tokens =
-                snowflake::refresh_session(&http_client, &server_url, &client_info, &tokens)
+                    // Acquire write lock - blocks other readers/writers during refresh
+                    let mut tokens_guard = self.tokens_lock.write().await;
+
+                    let tokens = tokens_guard
+                        .as_ref()
+                        .cloned()
+                        .context(ConnectionNotInitializedSnafu)?;
+
+                    // If another request already refreshed while we waited, use the new token.
+                    if tokens.session_token != failed_token {
+                        tracing::debug!("Session already refreshed by another request");
+                        return Ok(tokens.session_token.clone());
+                    }
+
+                    // Check if master token is expired
+                    if tokens.is_master_expired() {
+                        tracing::error!("Master token expired, full re-authentication required");
+                        return MasterTokenExpiredSnafu.fail();
+                    }
+
+                    // Refresh session (still holding write lock to prevent concurrent refreshes)
+                    let new_tokens = snowflake::refresh_session(
+                        &self.http_client,
+                        &self.server_url,
+                        &self.client_info,
+                        &tokens,
+                    )
                     .await
                     .context(SessionRefreshSnafu)?;
 
-            let new_session_token = new_tokens.session_token.clone();
+                    let new_session_token = new_tokens.session_token.clone();
 
-            // Update tokens
-            *tokens_guard = Some(new_tokens);
-            drop(tokens_guard); // Release write lock before retry
+                    // Update tokens
+                    *tokens_guard = Some(new_tokens);
+                    drop(tokens_guard);
 
-            tracing::info!("Session refreshed, retrying operation");
+                    tracing::info!("Session refreshed, retrying operation");
 
-            // Retry with new token
-            f(new_session_token).await.context(QuerySnafu)
+                    Ok(new_session_token)
+                }
+                Some(other) => Err(other).context(QuerySnafu),
+                None => InvalidRefreshStateSnafu {
+                    message: "refresh_token called with None after FirstToken".to_string(),
+                }
+                .fail(),
+            },
+
+            // Already refreshed once - propagate any error
+            RefreshState::Refreshed => match last_error {
+                Some(err) => Err(err).context(QuerySnafu),
+                None => InvalidRefreshStateSnafu {
+                    message: "refresh_token called with None after Refreshed".to_string(),
+                }
+                .fail(),
+            },
         }
-        Err(e) => Err(e).context(QuerySnafu),
     }
 }
