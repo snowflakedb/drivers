@@ -28,13 +28,6 @@ Feature: Config Manager Core (TOML Loading)
     Then connections.toml values should override config.toml
 
   @core_int
-  Scenario: env var override
-    Given A connections.toml with account set to file_account
-    And Environment variable SNOWFLAKE_ACCOUNT is set to env_account
-    When sf_core loads the connection config
-    Then The env var value should override the file value
-
-  @core_int
   Scenario: insecure permissions rejected
     Given A connections.toml file with insecure permissions
     When sf_core loads the connection config
@@ -62,7 +55,7 @@ Feature: Config Manager Core (TOML Loading)
   Scenario: load multiple sections
     Given A config.toml with log, proxy, and retry sections
     When sf_core loads all config sections
-    Then All non-connection sections should be returned
+    Then All sections should be returned including connections
 
   @core_int
   Scenario: connections toml does not override log section

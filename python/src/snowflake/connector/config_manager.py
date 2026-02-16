@@ -7,8 +7,6 @@ ConfigManager while using the new Rust core for actual configuration management.
 
 from __future__ import annotations
 
-import base64
-import json
 import logging
 import os
 import warnings
@@ -17,8 +15,14 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any, Callable, Literal, NamedTuple, TypeVar
 
-from snowflake.connector._internal.api_client.c_api import (
-    sf_core_config_load_all_sections,
+from snowflake.connector._internal.api_client.client_api import (
+    database_driver_client,
+)
+from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
+    ConfigLoadAllSectionsRequest,
+)
+from snowflake.connector._internal.protobuf_gen.proto_exception import (
+    ProtoApplicationException,
 )
 from snowflake.connector.errors import (
     ConfigManagerError,
@@ -54,16 +58,18 @@ class ConfigSlice(NamedTuple):
     section: str
 
 
-def _parse_setting_from_json(setting_json: dict[str, Any]) -> Any:
-    """Parse a setting from the JSON format returned by Rust."""
-    setting_type = setting_json.get("type")
-    value = setting_json.get("value")
-
-    if setting_type == "bytes" and isinstance(value, str):
-        # Decode base64 encoded bytes
-        return base64.b64decode(value)
-
-    return value
+def _parse_config_setting(setting: Any) -> Any:
+    """Parse a ConfigSetting protobuf message to extract the value."""
+    value_field = setting.WhichOneof("value")
+    if value_field == "string_value":
+        return setting.string_value
+    elif value_field == "int_value":
+        return setting.int_value
+    elif value_field == "double_value":
+        return setting.double_value
+    elif value_field == "bytes_value":
+        return setting.bytes_value
+    return None
 
 
 class ConfigOption:
@@ -102,18 +108,13 @@ class ConfigOption:
         """Retrieve a value of option.
 
         This function implements order of precedence between different sources.
-        Priority: Custom Environment Variable > Config File (with env overrides) > Default
-
-        Note: Default environment variable overrides (SNOWFLAKE_<KEY>) are handled
-        by sf_core when loading config. Custom env_name and env_name=False are
-        Python wrapper features for backward compatibility.
+        Priority: Custom Environment Variable > Config File > Default
         """
         source = "configuration file"
         value = None
 
         # Check for custom environment variable (Python-specific feature)
         if self.env_name is not False and self.env_name is not None:
-            # Custom env var name specified - check it first
             env_var = os.environ.get(self.env_name)
             if env_var is not None:
                 source = "environment variable"
@@ -121,10 +122,7 @@ class ConfigOption:
 
         if value is None:
             try:
-                # Load config - sf_core handles default env overrides (SNOWFLAKE_<KEY>)
-                # unless env_name=False, in which case we skip env overrides
-                apply_env_overrides = self.env_name is not False
-                value = self._get_config(apply_env_overrides=apply_env_overrides)
+                value = self._get_config()
                 source = "configuration file"
             except MissingConfigOptionError:
                 if self.default is not None:
@@ -149,16 +147,12 @@ class ConfigOption:
         pieces = [p.upper() for p in self._nest_path[1:]]
         return f"SNOWFLAKE_{'_'.join(pieces)}"
 
-    def _get_config(self, apply_env_overrides: bool = True) -> Any:
+    def _get_config(self) -> Any:
         """Get value from the cached configuration.
 
         Uses the root manager's cache, loading from Rust core if cache is empty.
-
-        Args:
-            apply_env_overrides: If True, use config with SNOWFLAKE_<KEY> env overrides.
         """
-        # Get cached config from root manager
-        all_sections = self._root_manager._get_cached_config(apply_env_overrides)
+        all_sections = self._root_manager._get_cached_config()
 
         if not all_sections:
             raise MissingConfigOptionError(
@@ -177,7 +171,7 @@ class ConfigOption:
             if section_path in all_sections:
                 section_settings = all_sections[section_path]
                 if option_name in section_settings:
-                    return _parse_setting_from_json(section_settings[option_name])
+                    return section_settings[option_name]
 
             raise MissingConfigOptionError(f"Configuration option '{self.option_name}' is not defined anywhere")
         else:
@@ -195,7 +189,7 @@ class ConfigOption:
                 for section_name, section_settings in all_sections.items():
                     if not section_name.startswith("connections."):
                         if self.name in section_settings:
-                            return _parse_setting_from_json(section_settings[self.name])
+                            return section_settings[self.name]
 
                 raise MissingConfigOptionError(f"Configuration option '{self.option_name}' is not defined anywhere")
 
@@ -227,10 +221,7 @@ class ConfigManager:
         self._sub_managers: dict[str, ConfigManager] = dict()
 
         # Cache for configuration loaded from Rust core
-        # conf_file_cache: config with env overrides applied (default)
-        # _conf_file_cache_raw: config without env overrides (for env_name=False)
         self.conf_file_cache: dict[str, Any] | None = None
-        self._conf_file_cache_raw: dict[str, Any] | None = None
 
         # Information necessary to be able to nest elements
         self._root_manager: ConfigManager = self
@@ -239,63 +230,51 @@ class ConfigManager:
     def read_config(
         self,
         skip_file_permissions_check: bool = False,
-        apply_env_overrides: bool = True,
     ) -> None:
-        """Read and cache config file contents from Rust core.
+        """Read and cache config file contents from Rust core via protobuf.
 
         This method loads configuration from sf_core and caches it to avoid
         repeated calls for each config value lookup.
 
         Args:
             skip_file_permissions_check: Ignored (handled by Rust core).
-            apply_env_overrides: If True, cache config with env overrides.
-                If False, cache raw config without env overrides.
         """
-        code, result = sf_core_config_load_all_sections(apply_env_overrides)
-
-        if code != 0:
-            LOGGER.debug("Failed to load config from sf_core: %s", result.decode("utf-8", errors="replace"))
-            # Set empty cache to indicate we tried but failed
-            if apply_env_overrides:
-                self.conf_file_cache = {}
-            else:
-                self._conf_file_cache_raw = {}
-            return
-
         try:
-            all_sections = json.loads(result)
-        except json.JSONDecodeError:
-            LOGGER.debug("Failed to parse config response: %s", result.decode("utf-8", errors="replace"))
-            if apply_env_overrides:
-                self.conf_file_cache = {}
-            else:
-                self._conf_file_cache_raw = {}
+            client = database_driver_client()
+            request = ConfigLoadAllSectionsRequest()
+            response = client.config_load_all_sections(request)
+        except ProtoApplicationException as e:
+            LOGGER.debug("Failed to load config from sf_core: %s", e)
+            self.conf_file_cache = {}
+            return
+        except Exception as e:
+            LOGGER.debug("Failed to load config from sf_core: %s", e)
+            self.conf_file_cache = {}
             return
 
-        if apply_env_overrides:
-            self.conf_file_cache = all_sections
-        else:
-            self._conf_file_cache_raw = all_sections
+        # Convert protobuf response to dict for caching
+        all_sections: dict[str, Any] = {}
+        for section_name, section in response.sections.items():
+            section_dict: dict[str, Any] = {}
+            for key, setting in section.settings.items():
+                section_dict[key] = _parse_config_setting(setting)
+            all_sections[section_name] = section_dict
 
-    def _get_cached_config(self, apply_env_overrides: bool = True) -> dict[str, Any]:
+        self.conf_file_cache = all_sections
+
+    def _get_cached_config(self) -> dict[str, Any]:
         """Get cached config, loading from Rust core if cache is empty.
-
-        Args:
-            apply_env_overrides: If True, return config with env overrides.
 
         Returns:
             Dictionary of all config sections.
         """
-        cache = self.conf_file_cache if apply_env_overrides else self._conf_file_cache_raw
-        if cache is None:
-            self.read_config(apply_env_overrides=apply_env_overrides)
-            cache = self.conf_file_cache if apply_env_overrides else self._conf_file_cache_raw
-        return cache or {}
+        if self.conf_file_cache is None:
+            self.read_config()
+        return self.conf_file_cache or {}
 
     def clear_cache(self) -> None:
         """Clear the configuration cache, forcing a reload on next access."""
         self.conf_file_cache = None
-        self._conf_file_cache_raw = None
 
     def add_option(
         self,
@@ -360,7 +339,7 @@ class ConfigManager:
             # Special handling for connections
             if self.name == "CONFIG_MANAGER" and name == "connections":
                 # Use cached config
-                all_sections = self._get_cached_config(apply_env_overrides=True)
+                all_sections = self._get_cached_config()
                 # Extract connections from sections with "connections." prefix
                 connections = {}
                 for section_name, section_settings in all_sections.items():
@@ -395,7 +374,6 @@ CONFIG_MANAGER = ConfigManager(
 # Add default options (backward compatibility)
 CONFIG_MANAGER.add_option(
     name="connections",
-    parse_str=json.loads,
     default=dict(),
 )
 
@@ -417,14 +395,8 @@ def _get_default_connection_params() -> dict[str, Any]:
             f"{list(connections.keys())}"
         )
 
-    # Parse the connection settings
-    conn_settings: dict[str, Any] = connections[def_connection_name]
-    result: dict[str, Any] = {}
-
-    for key, setting in conn_settings.items():
-        result[key] = _parse_setting_from_json(setting)
-
-    return result
+    # Connection settings are already parsed from protobuf
+    return dict(connections[def_connection_name])
 
 
 # Deprecated alias for backward compatibility

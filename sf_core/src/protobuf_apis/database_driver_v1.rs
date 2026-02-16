@@ -16,6 +16,7 @@ use crate::apis::database_driver_v1::{
     statement_execute_query, statement_new, statement_prepare, statement_release,
     statement_set_option, statement_set_sql_query,
 };
+use crate::config::config_manager;
 use crate::protobuf_gen::database_driver_v1::*;
 use arrow::ffi::FFI_ArrowArray;
 use arrow::ffi::FFI_ArrowSchema;
@@ -772,6 +773,52 @@ impl DatabaseDriver for DatabaseDriverImpl {
         Err(not_implemented(
             "statement_read_partition is not yet implemented",
         ))
+    }
+
+    #[instrument(name = "DatabaseDriverV1::config_load_all_sections", skip(_input))]
+    fn config_load_all_sections(
+        _input: ConfigLoadAllSectionsRequest,
+    ) -> Result<ConfigLoadAllSectionsResponse, DriverException> {
+        let all_sections = config_manager::load_all_config_sections().map_err(|e| {
+            to_driver_exception(ApiError::Configuration {
+                source: e,
+                location: snafu::Location::new(file!(), line!(), 0),
+            })
+        })?;
+
+        let sections = all_sections
+            .into_iter()
+            .map(|(section_name, settings)| {
+                let proto_settings = settings
+                    .into_iter()
+                    .map(|(key, value)| {
+                        let proto_value = match value {
+                            Setting::String(s) => ConfigSetting {
+                                value: Some(config_setting::Value::StringValue(s)),
+                            },
+                            Setting::Int(i) => ConfigSetting {
+                                value: Some(config_setting::Value::IntValue(i)),
+                            },
+                            Setting::Double(d) => ConfigSetting {
+                                value: Some(config_setting::Value::DoubleValue(d)),
+                            },
+                            Setting::Bytes(b) => ConfigSetting {
+                                value: Some(config_setting::Value::BytesValue(b)),
+                            },
+                        };
+                        (key, proto_value)
+                    })
+                    .collect();
+                (
+                    section_name,
+                    ConfigSection {
+                        settings: proto_settings,
+                    },
+                )
+            })
+            .collect();
+
+        Ok(ConfigLoadAllSectionsResponse { sections })
     }
 }
 

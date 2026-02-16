@@ -24,13 +24,13 @@ behavior_differences:
       OLD driver: Reads config from file_path specified in ConfigManager constructor.
 
   7:
-    name: "ConfigManager supports SNOWFLAKE_<SECTION>_<KEY> environment variable overrides"
+    name: "ConfigManager does not support SNOWFLAKE_<SECTION>_<KEY> environment variable overrides"
     description: |
-      NEW driver: Environment variables like SNOWFLAKE_SECTION_KEY override [section].key in config.
+      NEW driver: Does not apply SNOWFLAKE_<SECTION>_<KEY> env var overrides to config values.
       OLD driver: Does not support this pattern; uses only custom env_name if specified.
 
   8:
     name: "ConfigManager has clear_cache method and cache attributes"
     description: |
-      NEW driver: Has clear_cache(), conf_file_cache, and _conf_file_cache_raw attributes.
+      NEW driver: Has clear_cache() and conf_file_cache attributes.
       OLD driver: Uses different caching mechanism.

@@ -3,7 +3,6 @@ use super::settings::Setting;
 use super::toml_loader::load_toml_file;
 use super::{ConfigError, ConnectionNotFoundSnafu};
 use std::collections::HashMap;
-use std::env;
 
 /// Load configuration for a specific connection from TOML files
 pub fn load_connection_config(
@@ -50,9 +49,6 @@ pub fn load_connection_config(
         }
         .fail();
     }
-
-    // Apply environment variable overrides
-    apply_env_overrides(&mut settings);
 
     Ok(settings)
 }
@@ -158,14 +154,8 @@ pub fn load_config_section(
 ///
 /// Returns a map of section names to their settings.
 /// Connections are included under "connections.<name>" keys.
-/// Environment variable overrides are applied automatically:
-/// - For connections: SNOWFLAKE_<KEY> (e.g., SNOWFLAKE_ACCOUNT)
-/// - For other sections: SNOWFLAKE_<SECTION>_<KEY> (e.g., SNOWFLAKE_LOG_LEVEL)
-///
-/// Use `apply_env_overrides` parameter to control whether env vars are applied.
-pub fn load_all_config_sections_with_options(
-    apply_env_overrides_flag: bool,
-) -> Result<HashMap<String, HashMap<String, Setting>>, ConfigError> {
+pub fn load_all_config_sections() -> Result<HashMap<String, HashMap<String, Setting>>, ConfigError>
+{
     let paths = get_config_paths()?;
     let config_toml = load_toml_file(&paths.config_file)?;
     let mut all_sections = HashMap::new();
@@ -219,65 +209,13 @@ pub fn load_all_config_sections_with_options(
         }
     }
 
-    // Apply environment variable overrides to all sections if requested
-    if apply_env_overrides_flag {
-        for (section_name, settings) in all_sections.iter_mut() {
-            apply_env_overrides_for_section(section_name, settings);
-        }
-    }
-
     Ok(all_sections)
-}
-
-/// Load all sections from config files with env overrides applied (default behavior)
-pub fn load_all_config_sections() -> Result<HashMap<String, HashMap<String, Setting>>, ConfigError>
-{
-    load_all_config_sections_with_options(true)
-}
-
-/// Apply environment variable overrides to settings based on section name
-///
-/// For connections (section starts with "connections."):
-///   - Uses SNOWFLAKE_<KEY> format (e.g., SNOWFLAKE_ACCOUNT)
-/// For other sections:
-///   - Uses SNOWFLAKE_<SECTION>_<KEY> format (e.g., SNOWFLAKE_LOG_LEVEL)
-fn apply_env_overrides_for_section(section_name: &str, settings: &mut HashMap<String, Setting>) {
-    let is_connection = section_name.starts_with("connections.");
-
-    for key in settings.keys().cloned().collect::<Vec<_>>() {
-        // Sanitize key for env var name: replace hyphens and dots with underscores
-        let sanitized_key = key.replace(['-', '.'], "_").to_uppercase();
-        let env_key = if is_connection {
-            // For connections: SNOWFLAKE_<KEY>
-            format!("SNOWFLAKE_{}", sanitized_key)
-        } else {
-            // For other sections: SNOWFLAKE_<SECTION>_<KEY>
-            // Convert section.name to SECTION_NAME
-            let section_upper = section_name.replace(['-', '.'], "_").to_uppercase();
-            format!("SNOWFLAKE_{}_{}", section_upper, sanitized_key)
-        };
-
-        if let Ok(env_value) = env::var(&env_key) {
-            settings.insert(key, Setting::String(env_value));
-        }
-    }
-}
-
-/// Apply environment variable overrides to settings (legacy, for load_connection_config)
-fn apply_env_overrides(settings: &mut HashMap<String, Setting>) {
-    for key in settings.keys().cloned().collect::<Vec<_>>() {
-        // Sanitize key for env var name: replace hyphens and dots with underscores
-        let sanitized_key = key.replace(['-', '.'], "_").to_uppercase();
-        let env_key = format!("SNOWFLAKE_{}", sanitized_key);
-        if let Ok(env_value) = env::var(&env_key) {
-            settings.insert(key, Setting::String(env_value));
-        }
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::env;
     use std::fs;
     use tempfile::TempDir;
 
@@ -411,40 +349,6 @@ account = "connections_account"
         }
 
         remove_env("SNOWFLAKE_HOME");
-    }
-
-    #[test]
-    fn test_env_override() {
-        let temp_dir = TempDir::new().unwrap();
-        set_env("SNOWFLAKE_HOME", temp_dir.path().to_str().unwrap());
-        set_env("SNOWFLAKE_ACCOUNT", "env_account");
-
-        let connections_file = temp_dir.path().join("connections.toml");
-        let content = r#"
-[testconn]
-account = "file_account"
-user = "testuser"
-"#;
-        fs::write(&connections_file, content).unwrap();
-
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(&connections_file, fs::Permissions::from_mode(0o600)).unwrap();
-        }
-
-        let result = load_connection_config("testconn");
-        assert!(result.is_ok());
-
-        let settings = result.unwrap();
-        if let Some(Setting::String(account)) = settings.get("account") {
-            assert_eq!(account, "env_account");
-        } else {
-            panic!("Expected account setting");
-        }
-
-        remove_env("SNOWFLAKE_HOME");
-        remove_env("SNOWFLAKE_ACCOUNT");
     }
 
     #[test]
@@ -814,87 +718,5 @@ level = "debug"
         }
 
         remove_env("SNOWFLAKE_HOME");
-    }
-
-    #[test]
-    fn test_env_override_snowflake_section_key_pattern() {
-        // Test the generic pattern: SNOWFLAKE_<SECTION>_<KEY> overrides [section].key
-        let temp_dir = TempDir::new().unwrap();
-        set_env("SNOWFLAKE_HOME", temp_dir.path().to_str().unwrap());
-
-        let config_file = temp_dir.path().join("config.toml");
-        let content = r#"
-[bar]
-foo = "file_value"
-"#;
-        fs::write(&config_file, content).unwrap();
-
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(&config_file, fs::Permissions::from_mode(0o600)).unwrap();
-        }
-
-        // Set SNOWFLAKE_BAR_FOO env var
-        set_env("SNOWFLAKE_BAR_FOO", "env_value");
-
-        // Load with env overrides enabled (default)
-        let result = load_all_config_sections();
-        assert!(result.is_ok());
-
-        let sections = result.unwrap();
-        let bar_section = sections.get("bar").expect("bar section should exist");
-        if let Some(Setting::String(value)) = bar_section.get("foo") {
-            assert_eq!(
-                value, "env_value",
-                "SNOWFLAKE_BAR_FOO should override [bar].foo"
-            );
-        } else {
-            panic!("Expected foo setting in bar section");
-        }
-
-        remove_env("SNOWFLAKE_HOME");
-        remove_env("SNOWFLAKE_BAR_FOO");
-    }
-
-    #[test]
-    fn test_env_override_disabled() {
-        // Test that env overrides can be skipped
-        let temp_dir = TempDir::new().unwrap();
-        set_env("SNOWFLAKE_HOME", temp_dir.path().to_str().unwrap());
-
-        let config_file = temp_dir.path().join("config.toml");
-        let content = r#"
-[bar]
-foo = "file_value"
-"#;
-        fs::write(&config_file, content).unwrap();
-
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(&config_file, fs::Permissions::from_mode(0o600)).unwrap();
-        }
-
-        // Set SNOWFLAKE_BAR_FOO env var
-        set_env("SNOWFLAKE_BAR_FOO", "env_value");
-
-        // Load with env overrides DISABLED
-        let result = load_all_config_sections_with_options(false);
-        assert!(result.is_ok());
-
-        let sections = result.unwrap();
-        let bar_section = sections.get("bar").expect("bar section should exist");
-        if let Some(Setting::String(value)) = bar_section.get("foo") {
-            assert_eq!(
-                value, "file_value",
-                "With env overrides disabled, should get file value"
-            );
-        } else {
-            panic!("Expected foo setting in bar section");
-        }
-
-        remove_env("SNOWFLAKE_HOME");
-        remove_env("SNOWFLAKE_BAR_FOO");
     }
 }

@@ -1947,6 +1947,126 @@ class StatementReadPartitionResponse(_message.Message):
 
 Global___StatementReadPartitionResponse: _TypeAlias = StatementReadPartitionResponse  # noqa: Y015
 
+@_typing.final
+class ConfigSetting(_message.Message):
+    """Config setting value (union type)"""
+
+    DESCRIPTOR: _descriptor.Descriptor
+
+    STRING_VALUE_FIELD_NUMBER: _builtins.int
+    INT_VALUE_FIELD_NUMBER: _builtins.int
+    DOUBLE_VALUE_FIELD_NUMBER: _builtins.int
+    BYTES_VALUE_FIELD_NUMBER: _builtins.int
+    string_value: _builtins.str
+    int_value: _builtins.int
+    double_value: _builtins.float
+    bytes_value: _builtins.bytes
+    def __init__(
+        self,
+        *,
+        string_value: _builtins.str = ...,
+        int_value: _builtins.int = ...,
+        double_value: _builtins.float = ...,
+        bytes_value: _builtins.bytes = ...,
+    ) -> None: ...
+    _HasFieldArgType: _TypeAlias = _typing.Literal["bytes_value", b"bytes_value", "double_value", b"double_value", "int_value", b"int_value", "string_value", b"string_value", "value", b"value"]  # noqa: Y015
+    def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["bytes_value", b"bytes_value", "double_value", b"double_value", "int_value", b"int_value", "string_value", b"string_value", "value", b"value"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
+    _WhichOneofReturnType_value: _TypeAlias = _typing.Literal["string_value", "int_value", "double_value", "bytes_value"]  # noqa: Y015
+    _WhichOneofArgType_value: _TypeAlias = _typing.Literal["value", b"value"]  # noqa: Y015
+    def WhichOneof(self, oneof_group: _WhichOneofArgType_value) -> _WhichOneofReturnType_value | None: ...
+
+Global___ConfigSetting: _TypeAlias = ConfigSetting  # noqa: Y015
+
+@_typing.final
+class ConfigSection(_message.Message):
+    """A config section containing key-value settings"""
+
+    DESCRIPTOR: _descriptor.Descriptor
+
+    @_typing.final
+    class SettingsEntry(_message.Message):
+        DESCRIPTOR: _descriptor.Descriptor
+
+        KEY_FIELD_NUMBER: _builtins.int
+        VALUE_FIELD_NUMBER: _builtins.int
+        key: _builtins.str
+        @_builtins.property
+        def value(self) -> Global___ConfigSetting: ...
+        def __init__(
+            self,
+            *,
+            key: _builtins.str = ...,
+            value: Global___ConfigSetting | None = ...,
+        ) -> None: ...
+        _HasFieldArgType: _TypeAlias = _typing.Literal["value", b"value"]  # noqa: Y015
+        def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
+        _ClearFieldArgType: _TypeAlias = _typing.Literal["key", b"key", "value", b"value"]  # noqa: Y015
+        def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
+
+    SETTINGS_FIELD_NUMBER: _builtins.int
+    @_builtins.property
+    def settings(self) -> _containers.MessageMap[_builtins.str, Global___ConfigSetting]: ...
+    def __init__(
+        self,
+        *,
+        settings: _abc.Mapping[_builtins.str, Global___ConfigSetting] | None = ...,
+    ) -> None: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["settings", b"settings"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
+
+Global___ConfigSection: _TypeAlias = ConfigSection  # noqa: Y015
+
+@_typing.final
+class ConfigLoadAllSectionsRequest(_message.Message):
+    """Config service requests and responses"""
+
+    DESCRIPTOR: _descriptor.Descriptor
+
+    def __init__(
+        self,
+    ) -> None: ...
+
+Global___ConfigLoadAllSectionsRequest: _TypeAlias = ConfigLoadAllSectionsRequest  # noqa: Y015
+
+@_typing.final
+class ConfigLoadAllSectionsResponse(_message.Message):
+    DESCRIPTOR: _descriptor.Descriptor
+
+    @_typing.final
+    class SectionsEntry(_message.Message):
+        DESCRIPTOR: _descriptor.Descriptor
+
+        KEY_FIELD_NUMBER: _builtins.int
+        VALUE_FIELD_NUMBER: _builtins.int
+        key: _builtins.str
+        @_builtins.property
+        def value(self) -> Global___ConfigSection: ...
+        def __init__(
+            self,
+            *,
+            key: _builtins.str = ...,
+            value: Global___ConfigSection | None = ...,
+        ) -> None: ...
+        _HasFieldArgType: _TypeAlias = _typing.Literal["value", b"value"]  # noqa: Y015
+        def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
+        _ClearFieldArgType: _TypeAlias = _typing.Literal["key", b"key", "value", b"value"]  # noqa: Y015
+        def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
+
+    SECTIONS_FIELD_NUMBER: _builtins.int
+    @_builtins.property
+    def sections(self) -> _containers.MessageMap[_builtins.str, Global___ConfigSection]: ...
+    def __init__(
+        self,
+        *,
+        sections: _abc.Mapping[_builtins.str, Global___ConfigSection] | None = ...,
+    ) -> None: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["sections", b"sections"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
+
+Global___ConfigLoadAllSectionsResponse: _TypeAlias = ConfigLoadAllSectionsResponse  # noqa: Y015
+
 SERVICE_ERROR_FIELD_NUMBER: _builtins.int
 METHOD_ERROR_FIELD_NUMBER: _builtins.int
 service_error: _extension_dict._ExtensionFieldDescriptor[_descriptor_pb2.ServiceOptions, _builtins.str]

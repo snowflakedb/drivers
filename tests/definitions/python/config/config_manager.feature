@@ -20,10 +20,10 @@ Feature: ConfigManager Python Wrapper
     Then The file value should be returned
 
   @python_int
-  Scenario: env override with snowflake prefix
+  Scenario: config value from file no env override
     Given A config.toml with section.mykey and SNOWFLAKE_SECTION_MYKEY env var
     When ConfigManager retrieves the option
-    Then The env var value should override the file value
+    Then The file value should be returned (env overrides are not applied)
 
   @python_int
   Scenario: custom env name
@@ -65,7 +65,7 @@ Feature: ConfigManager Python Wrapper
   Scenario: clear cache
     Given A ConfigManager with cached config
     When clear_cache is called
-    Then Both caches should be None
+    Then Cache should be None
 
   @python_int
   Scenario: config parser alias

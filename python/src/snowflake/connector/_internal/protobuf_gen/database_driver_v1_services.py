@@ -159,6 +159,10 @@ class DatabaseDriver(ABC):
     def statement_read_partition(self, request: StatementReadPartitionRequest) -> StatementReadPartitionResponse:
         pass
 
+    @abstractmethod
+    def config_load_all_sections(self, request: ConfigLoadAllSectionsRequest) -> ConfigLoadAllSectionsResponse:
+        pass
+
 
 
 class DatabaseDriverServer(DatabaseDriver):
@@ -202,7 +206,8 @@ class DatabaseDriverServer(DatabaseDriver):
                 'statement_bind_stream': (self.statement_bind_stream, StatementBindStreamRequest),
                 'statement_execute_query': (self.statement_execute_query, StatementExecuteQueryRequest),
                 'statement_execute_partitions': (self.statement_execute_partitions, StatementExecutePartitionsRequest),
-                'statement_read_partition': (self.statement_read_partition, StatementReadPartitionRequest)
+                'statement_read_partition': (self.statement_read_partition, StatementReadPartitionRequest),
+                'config_load_all_sections': (self.config_load_all_sections, ConfigLoadAllSectionsRequest)
             }
             
             if method not in method_map:
@@ -922,5 +927,24 @@ class DatabaseDriverClient:
             raise ProtoTransportException(f"Unknown error code: %s", code)
 
         response.ParseFromString(self._transport.handle_message('DatabaseDriver', 'statement_read_partition', request.SerializeToString()))
+        return response
+
+    def config_load_all_sections(self, request: ConfigLoadAllSectionsRequest) -> ConfigLoadAllSectionsResponse:
+        (code, response_bytes) = self._transport.handle_message('DatabaseDriver', 'config_load_all_sections', request.SerializeToString())
+        if code == 0:
+            response = ConfigLoadAllSectionsResponse()
+            response.ParseFromString(response_bytes)
+            return response
+        elif code == 1:
+            error = DriverException()
+            error.ParseFromString(response_bytes)
+            raise ProtoApplicationException(error)
+        elif code == 2:
+            error = str(response_bytes)
+            raise ProtoTransportException(response_bytes)
+        else:
+            raise ProtoTransportException(f"Unknown error code: %s", code)
+
+        response.ParseFromString(self._transport.handle_message('DatabaseDriver', 'config_load_all_sections', request.SerializeToString()))
         return response
 

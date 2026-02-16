@@ -102,8 +102,8 @@ my_option = "file_value"
             # Old driver has different section path handling, falls back to default
             assert option.value() == "default_value"
 
-    def test_env_override_with_snowflake_prefix(self, config_env):
-        """Test that SNOWFLAKE_<SECTION>_<KEY> env vars override config values."""
+    def test_config_value_from_file_no_env_override(self, config_env):
+        """Test that SNOWFLAKE_<SECTION>_<KEY> env vars do NOT override config values."""
         # Given A config.toml with section.mykey and SNOWFLAKE_SECTION_MYKEY env var
         config_env["config_file"].write_text("""
 [section]
@@ -121,12 +121,11 @@ mykey = "file_value"
             default="default_value",
         )
 
-        # Then The env var value should override the file value
+        # Then The file value should be returned (env overrides are not applied)
         if NEW_DRIVER_ONLY("BD#7"):
-            # New driver supports SNOWFLAKE_<SECTION>_<KEY> pattern
-            assert option.value() == "env_value"
+            assert option.value() == "file_value"
         else:
-            # Old driver doesn't support this pattern, falls back to default
+            # Old driver has different section path handling, falls back to default
             assert option.value() == "default_value"
 
     def test_custom_env_name(self, config_env):
@@ -233,16 +232,14 @@ class TestConfigManager:
         manager = ConfigManager(name="test_manager")
 
         # When clear_cache is called
-        # Then Both caches should be None
+        # Then Cache should be None
         if NEW_DRIVER_ONLY("BD#10"):
             # New driver has clear_cache and cache attributes
             manager.conf_file_cache = {"test": "value"}
-            manager._conf_file_cache_raw = {"test": "raw_value"}
 
             manager.clear_cache()
 
             assert manager.conf_file_cache is None
-            assert manager._conf_file_cache_raw is None
         else:
             # Old driver has different caching mechanism
             if hasattr(manager, "clear_cache"):

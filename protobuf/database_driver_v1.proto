@@ -511,6 +511,30 @@ message StatementReadPartitionResponse {
   int64 partition_stream = 1;
 }
 
+// Config setting value (union type)
+message ConfigSetting {
+  oneof value {
+    string string_value = 1;
+    int64 int_value = 2;
+    double double_value = 3;
+    bytes bytes_value = 4;
+  }
+}
+
+// A config section containing key-value settings
+message ConfigSection {
+  map<string, ConfigSetting> settings = 1;
+}
+
+// Config service requests and responses
+
+message ConfigLoadAllSectionsRequest {
+}
+
+message ConfigLoadAllSectionsResponse {
+  map<string, ConfigSection> sections = 1;
+}
+
 // Database Driver service definition
 service DatabaseDriver {
   option (service_error) = "DriverException";
@@ -560,4 +584,7 @@ service DatabaseDriver {
   rpc StatementExecuteQuery(StatementExecuteQueryRequest) returns (StatementExecuteQueryResponse);
   rpc StatementExecutePartitions(StatementExecutePartitionsRequest) returns (StatementExecutePartitionsResponse);
   rpc StatementReadPartition(StatementReadPartitionRequest) returns (StatementReadPartitionResponse);
+
+  // Config operations
+  rpc ConfigLoadAllSections(ConfigLoadAllSectionsRequest) returns (ConfigLoadAllSectionsResponse);
 }

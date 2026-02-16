@@ -3210,7 +3210,7 @@ tests:
   - test_name: test_simple_nesting
     ud_tests:
     - tests/integ/config/test_config_manager.py::TestConfigManager::test_add_submanager
-    - tests/integ/config/test_config_manager.py::TestConfigOption::test_env_override_with_snowflake_prefix
+    - tests/integ/config/test_config_manager.py::TestConfigOption::test_config_value_from_file_no_env_override
   - test_name: test_skip_warning_config_file_permissions
     ud_tests:
     - sf_core/src/config/toml_loader.rs::tests::test_skip_warning_env_var

@@ -1,7 +1,5 @@
 """Unit tests for the ConfigManager implementation."""
 
-import base64
-
 import pytest
 
 from snowflake.connector.config_manager import ConfigManager, ConfigOption
@@ -9,9 +7,13 @@ from tests.compatibility import IS_UNIVERSAL_DRIVER
 
 
 if IS_UNIVERSAL_DRIVER:
-    from snowflake.connector.config_manager import _parse_setting_from_json
+    from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
+        ConfigSetting,
+    )
+    from snowflake.connector.config_manager import _parse_config_setting
 else:
-    _parse_setting_from_json = None  # type: ignore[assignment,misc]
+    _parse_config_setting = None  # type: ignore[assignment,misc]
+    ConfigSetting = None  # type: ignore[assignment,misc]
 
 
 class TestConfigOptionConstructor:
@@ -36,33 +38,30 @@ class TestConfigOptionConstructor:
             )
 
 
-class TestParseSettingFromJson:
-    """Tests for _parse_setting_from_json function (new driver only)."""
+class TestParseConfigSetting:
+    """Tests for _parse_config_setting function (new driver only)."""
 
     @pytest.mark.skip_reference
     def test_string_setting(self):
         """Test parsing string setting."""
-        setting = {"type": "string", "value": "test_value"}
-        assert _parse_setting_from_json(setting) == "test_value"
+        setting = ConfigSetting(string_value="test_value")
+        assert _parse_config_setting(setting) == "test_value"
 
     @pytest.mark.skip_reference
     def test_int_setting(self):
         """Test parsing int setting."""
-        setting = {"type": "int", "value": 42}
-        assert _parse_setting_from_json(setting) == 42
+        setting = ConfigSetting(int_value=42)
+        assert _parse_config_setting(setting) == 42
 
     @pytest.mark.skip_reference
     def test_double_setting(self):
         """Test parsing double setting."""
-        setting = {"type": "double", "value": 3.14}
-        assert _parse_setting_from_json(setting) == 3.14
+        setting = ConfigSetting(double_value=3.14)
+        assert _parse_config_setting(setting) == 3.14
 
     @pytest.mark.skip_reference
     def test_bytes_setting(self):
-        """Test parsing bytes setting (base64 encoded)."""
+        """Test parsing bytes setting."""
         bytes_value = b"test bytes"
-        setting = {
-            "type": "bytes",
-            "value": base64.b64encode(bytes_value).decode("utf-8"),
-        }
-        assert _parse_setting_from_json(setting) == bytes_value
+        setting = ConfigSetting(bytes_value=bytes_value)
+        assert _parse_config_setting(setting) == bytes_value

@@ -1,7 +1,5 @@
 use sf_core::apis::database_driver_v1::Setting;
-use sf_core::apis::database_driver_v1::connection::{
-    connection_load_from_config, connection_new, connection_set_option,
-};
+use sf_core::apis::database_driver_v1::connection::{Connection, connection_load_from_config};
 use sf_core::config::config_manager::{load_all_config_sections, load_config_section};
 use std::env;
 use std::fs;
@@ -37,8 +35,8 @@ warehouse = "mywarehouse"
     }
 
     // When sf_core loads the connection config
-    let conn_handle = connection_new();
-    let result = connection_load_from_config(conn_handle, "testconn");
+    let mut conn = Connection::new();
+    let result = connection_load_from_config(&mut conn, "testconn");
 
     // Then The connection settings should be loaded
     assert!(result.is_ok());
@@ -67,16 +65,14 @@ user = "config_user"
     }
 
     // And An explicit account setting on the connection
-    let conn_handle = connection_new();
-    connection_set_option(
-        conn_handle,
+    let mut conn = Connection::new();
+    conn.settings.insert(
         "account".to_string(),
         Setting::String("explicit_account".to_string()),
-    )
-    .unwrap();
+    );
 
     // When sf_core loads the connection config
-    let result = connection_load_from_config(conn_handle, "testconn");
+    let result = connection_load_from_config(&mut conn, "testconn");
 
     // Then The explicit setting should take precedence
     assert!(result.is_ok());
@@ -91,8 +87,8 @@ fn connection_not_found_in_config() {
     set_env("SNOWFLAKE_HOME", temp_dir.path().to_str().unwrap());
 
     // When sf_core loads connection named nonexistent
-    let conn_handle = connection_new();
-    let result = connection_load_from_config(conn_handle, "nonexistent");
+    let mut conn = Connection::new();
+    let result = connection_load_from_config(&mut conn, "nonexistent");
 
     // Then ConnectionNotFound error should be returned
     assert!(result.is_err());
@@ -133,47 +129,13 @@ warehouse = "connections_wh"
     }
 
     // When sf_core loads the connection config
-    let conn_handle = connection_new();
-    let result = connection_load_from_config(conn_handle, "testconn");
+    let mut conn = Connection::new();
+    let result = connection_load_from_config(&mut conn, "testconn");
 
     // Then connections.toml values should override config.toml
     assert!(result.is_ok());
 
     remove_env("SNOWFLAKE_HOME");
-}
-
-#[test]
-fn env_var_override() {
-    // Given A connections.toml with account set to file_account
-    let temp_dir = TempDir::new().unwrap();
-    set_env("SNOWFLAKE_HOME", temp_dir.path().to_str().unwrap());
-
-    let connections_file = temp_dir.path().join("connections.toml");
-    let content = r#"
-[testconn]
-account = "file_account"
-user = "testuser"
-"#;
-    fs::write(&connections_file, content).unwrap();
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&connections_file, fs::Permissions::from_mode(0o600)).unwrap();
-    }
-
-    // And Environment variable SNOWFLAKE_ACCOUNT is set to env_account
-    set_env("SNOWFLAKE_ACCOUNT", "env_account");
-
-    // When sf_core loads the connection config
-    let conn_handle = connection_new();
-    let result = connection_load_from_config(conn_handle, "testconn");
-
-    // Then The env var value should override the file value
-    assert!(result.is_ok());
-
-    remove_env("SNOWFLAKE_HOME");
-    remove_env("SNOWFLAKE_ACCOUNT");
 }
 
 #[cfg(unix)]
@@ -196,8 +158,8 @@ account = "myaccount"
     fs::set_permissions(&connections_file, fs::Permissions::from_mode(0o666)).unwrap();
 
     // When sf_core loads the connection config
-    let conn_handle = connection_new();
-    let result = connection_load_from_config(conn_handle, "testconn");
+    let mut conn = Connection::new();
+    let result = connection_load_from_config(&mut conn, "testconn");
 
     // Then An insecure permissions error should be returned
     assert!(result.is_err());
@@ -229,8 +191,8 @@ validate_certs = true
     }
 
     // When sf_core loads the connection config
-    let conn_handle = connection_new();
-    let result = connection_load_from_config(conn_handle, "testconn");
+    let mut conn = Connection::new();
+    let result = connection_load_from_config(&mut conn, "testconn");
 
     // Then Each value should be parsed to the correct Setting type
     assert!(result.is_ok());
@@ -258,8 +220,8 @@ fn empty_config_files() {
     }
 
     // When sf_core loads connection named testconn
-    let conn_handle = connection_new();
-    let result = connection_load_from_config(conn_handle, "testconn");
+    let mut conn = Connection::new();
+    let result = connection_load_from_config(&mut conn, "testconn");
 
     // Then ConnectionNotFound error should be returned
     assert!(result.is_err());
@@ -340,12 +302,13 @@ account = "myaccount"
     let result = load_all_config_sections();
     assert!(result.is_ok());
 
-    // Then All non-connection sections should be returned
+    // Then All sections should be returned (including connections as connections.<name>)
     let sections = result.unwrap();
-    assert_eq!(sections.len(), 3); // log, proxy, retry (not connections)
+    assert_eq!(sections.len(), 4); // log, proxy, retry, connections.testconn
     assert!(sections.contains_key("log"));
     assert!(sections.contains_key("proxy"));
     assert!(sections.contains_key("retry"));
+    assert!(sections.contains_key("connections.testconn"));
     assert!(!sections.contains_key("connections"));
 
     remove_env("SNOWFLAKE_HOME");

@@ -134,4 +134,3 @@ def register_default_logger_callback() -> None:
     """
     sf_core_init_logger(c_logger_callback)
 
-
