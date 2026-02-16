@@ -62,4 +62,5 @@ repos:
         description: Run Spotless checks for the JDBC module.
         entry: bash -c 'cd jdbc && bash ./gradlew spotlessCheck'
         pass_filenames: false
+        files: ^jdbc/
         language: system
