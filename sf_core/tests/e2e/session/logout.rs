@@ -520,8 +520,8 @@ fn should_cleanup_all_tokens_on_close_regardless_of_whether_logout_was_sent() {
             timeout_seconds: None,
         });
 
-        //Then Session token is cleared
-        //And Master token is cleared
+        //Then Session token in Connection.tokens is null
+        //And Master token in Connection.tokens is null
         assert!(
             result.is_ok(),
             "Close should succeed with server_session_keep_alive={:?}",
@@ -1211,7 +1211,7 @@ fn should_handle_concurrent_close_calls_safely() {
 // ===========================================================================
 
 #[test]
-fn should_reject_queries_after_connection_is_closed() {
+fn should_reject_queries_client_side_after_connection_is_closed() {
     //Given Snowflake client is logged in
     let client = SnowflakeTestClient::connect_with_default_auth();
 
