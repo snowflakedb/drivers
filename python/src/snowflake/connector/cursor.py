@@ -21,12 +21,11 @@ from ._internal.arrow_context import ArrowConverterContext
 from ._internal.arrow_stream_iterator import ArrowStreamIterator
 from ._internal.binding_serializer import BindingSerializer
 from ._internal.protobuf_gen.database_driver_v1_pb2 import (
-    ExecuteResult,
+    BinaryDataPtr,
     QueryBindings,
     StatementExecuteQueryRequest,
     StatementNewRequest,
     StatementSetSqlQueryRequest,
-    StringPtr,
 )
 from ._internal.type_codes import get_type_code
 from .errors import NotSupportedError, ProgrammingError
@@ -39,8 +38,14 @@ Row = tuple[Any, ...]
 DictRow = dict[str, Any]
 
 
-class Cursor:
+class ResultMetadata(NamedTuple):
+    """PEP 249 column description entry.
+
+    Each item in ``Cursor.description`` is a ``ResultMetadata`` instance.
+    Being a :class:`~typing.NamedTuple` it is fully tuple-compatible as
+    required by the spec, while also providing named attribute access.
     """
+
     name: str
     type_code: int
     display_size: int | None
@@ -48,7 +53,6 @@ class Cursor:
     precision: int | None
     scale: int | None
     is_nullable: bool | None
-    """
 
     @classmethod
     def from_column(cls, col: Any) -> ResultMetadata:
@@ -193,7 +197,7 @@ class SnowflakeCursorBase(abc.ABC):
         """Serialize parameters and build a QueryBindings protobuf message.
 
         Converts Python parameter values to JSON via BindingSerializer, then
-        wraps the result in a zero-copy StringPtr so the Rust core can read
+        wraps the result in a zero-copy BinaryDataPtr so the Rust core can read
         the JSON directly from Python memory.
 
         The encoded bytes are stored on ``self._binding_data`` to prevent
@@ -220,13 +224,13 @@ class SnowflakeCursorBase(abc.ABC):
         # Convert pointer to 8-byte little-endian representation
         ptr_bytes = ptr_value.to_bytes(8, byteorder="little", signed=False)
 
-        string_ptr = StringPtr(
+        binary_data_ptr = BinaryDataPtr(
             value=ptr_bytes,  # 8-byte pointer value
             length=length,
         )
-        return QueryBindings(json=string_ptr)
+        return QueryBindings(json=binary_data_ptr)
 
-    def execute(self, operation: str, parameters: Sequence[Any] | dict[str, Any] | None = None) -> Cursor:
+    def execute(self, operation: str, parameters: Sequence[Any] | dict[str, Any] | None = None) -> SnowflakeCursorBase:
         """
         Execute a database operation (query or command).
 
@@ -241,7 +245,10 @@ class SnowflakeCursorBase(abc.ABC):
             StatementSetSqlQueryRequest(stmt_handle=stmt_handle, query=operation)
         )
 
-        bindings = self._build_query_bindings(parameters) if parameters is not None else None
+        if parameters is not None and not isinstance(parameters, dict):
+            bindings = self._build_query_bindings(parameters)
+        else:
+            bindings = None
         request = StatementExecuteQueryRequest(stmt_handle=stmt_handle, bindings=bindings)
 
         self.execute_result = self.connection.db_api.statement_execute_query(request).result
