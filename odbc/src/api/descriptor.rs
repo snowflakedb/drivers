@@ -1,4 +1,5 @@
 use crate::api::{DescField, OdbcResult, desc_from_handle};
+use crate::cdata_types::CDataType;
 use odbc_sys as sql;
 use tracing;
 
@@ -158,6 +159,16 @@ pub fn set_desc_field(
         let column_number = rec_number as u16;
 
         match field {
+            DescField::Type | DescField::ConciseType => {
+                let c_type: CDataType = unsafe { std::mem::transmute(value_ptr as i16) };
+                tracing::debug!(
+                    "set_desc_field: setting target_type={:?} on record {column_number}",
+                    c_type
+                );
+                let binding = desc.bindings.entry(column_number).or_default();
+                binding.target_type = c_type;
+                Ok(())
+            }
             DescField::Precision => {
                 let precision = value_ptr as i16;
                 if !(0..=38).contains(&precision) {
@@ -174,13 +185,8 @@ pub fn set_desc_field(
                 tracing::debug!(
                     "set_desc_field: setting precision={precision} on record {column_number}"
                 );
-                if let Some(binding) = desc.bindings.get_mut(&column_number) {
-                    binding.precision = Some(precision);
-                } else {
-                    tracing::warn!(
-                        "set_desc_field: no binding for record {column_number}, ignoring precision"
-                    );
-                }
+                let binding = desc.bindings.entry(column_number).or_default();
+                binding.precision = Some(precision);
                 Ok(())
             }
             DescField::Scale => {
@@ -197,24 +203,14 @@ pub fn set_desc_field(
                     .fail();
                 }
                 tracing::debug!("set_desc_field: setting scale={scale} on record {column_number}");
-                if let Some(binding) = desc.bindings.get_mut(&column_number) {
-                    binding.scale = Some(scale);
-                } else {
-                    tracing::warn!(
-                        "set_desc_field: no binding for record {column_number}, ignoring scale"
-                    );
-                }
+                let binding = desc.bindings.entry(column_number).or_default();
+                binding.scale = Some(scale);
                 Ok(())
             }
             DescField::DataPtr => {
                 tracing::debug!("set_desc_field: setting data_ptr on record {column_number}");
-                if let Some(binding) = desc.bindings.get_mut(&column_number) {
-                    binding.target_value_ptr = value_ptr;
-                } else {
-                    tracing::warn!(
-                        "set_desc_field: no binding for record {column_number}, ignoring data_ptr"
-                    );
-                }
+                let binding = desc.bindings.entry(column_number).or_default();
+                binding.target_value_ptr = value_ptr;
                 Ok(())
             }
             _ => {

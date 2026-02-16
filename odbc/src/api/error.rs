@@ -326,7 +326,12 @@ impl OdbcError {
                     WriteOdbcError::NumericValueOutOfRange { .. } => {
                         SqlState::NumericValueOutOfRange
                     }
-                    _ => SqlState::GeneralError,
+                    WriteOdbcError::IndicatorRequired { .. } => {
+                        SqlState::IndicatorVariableRequiredButNotSupplied
+                    }
+                    WriteOdbcError::UnsupportedOdbcType { .. } => {
+                        SqlState::RestrictedDataTypeAttributeViolation
+                    }
                 },
                 ConversionError::ReadArrowValue { .. } => SqlState::GeneralError,
                 _ => SqlState::GeneralError,

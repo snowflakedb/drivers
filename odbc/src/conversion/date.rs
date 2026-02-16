@@ -38,13 +38,18 @@ impl ReadArrowType<PrimitiveArray<Date32Type>> for SnowflakeDate {
 }
 
 impl WriteODBCType for SnowflakeDate {
+    fn sql_type(&self) -> sql::SqlDataType {
+        sql::SqlDataType::DATE
+    }
+
     fn write_odbc_type(
         &self,
         snowflake_value: Self::Representation<'_>,
         binding: &Binding,
+        _get_data_offset: &mut Option<usize>,
     ) -> Result<Warnings, WriteOdbcError> {
         match binding.target_type {
-            CDataType::Date | CDataType::TypeDate => {
+            CDataType::Default | CDataType::Date | CDataType::TypeDate => {
                 let date = sql::Date {
                     year: snowflake_value.year() as i16,
                     month: snowflake_value.month() as u16,

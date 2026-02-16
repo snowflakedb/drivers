@@ -241,6 +241,7 @@ pub fn free_stmt(statement_handle: sql::Handle, option: sql::FreeStmtOption) -> 
         sql::FreeStmtOption::Close => {
             tracing::info!("free_stmt: Closing cursor");
             stmt.state = StatementState::Created.into();
+            stmt.get_data_state = None;
         }
         sql::FreeStmtOption::Unbind => {
             tracing::info!("free_stmt: Unbinding all columns");
@@ -291,6 +292,36 @@ pub fn bind_col(
         );
     }
     Ok(())
+}
+
+/// Set a statement attribute value
+pub fn set_stmt_attr(
+    statement_handle: sql::Handle,
+    attribute: sql::Integer,
+    _value_ptr: sql::Pointer,
+    _string_length: sql::Integer,
+) -> OdbcResult<()> {
+    use crate::api::StmtAttr;
+
+    tracing::debug!(
+        "set_stmt_attr: statement_handle={:?}, attribute={}",
+        statement_handle,
+        attribute
+    );
+
+    let attr = StmtAttr::try_from(attribute)?;
+    let _stmt = stmt_from_handle(statement_handle);
+
+    match attr {
+        StmtAttr::UseBookmarks => {
+            tracing::debug!("set_stmt_attr: UseBookmarks (ignored, bookmarks not supported)");
+            Ok(())
+        }
+        _ => {
+            tracing::warn!("set_stmt_attr: unsupported attribute {:?}", attr);
+            crate::api::error::UnsupportedAttributeSnafu { attribute }.fail()
+        }
+    }
 }
 
 /// Get a statement attribute value

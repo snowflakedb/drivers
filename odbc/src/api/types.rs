@@ -81,6 +81,8 @@ impl ConnectionAttribute {
 #[allow(clippy::enum_variant_names)]
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum StmtAttr {
+    /// `SQL_ATTR_USE_BOOKMARKS` (12) - whether bookmarks are used.
+    UseBookmarks = 12,
     /// `SQL_ATTR_APP_ROW_DESC` - handle to the Application Row Descriptor.
     AppRowDesc = 10010,
     /// `SQL_ATTR_APP_PARAM_DESC` - handle to the Application Parameter Descriptor.
@@ -96,6 +98,7 @@ impl TryFrom<i32> for StmtAttr {
 
     fn try_from(value: i32) -> Result<Self, Self::Error> {
         match value {
+            12 => Ok(StmtAttr::UseBookmarks),
             10010 => Ok(StmtAttr::AppRowDesc),
             10011 => Ok(StmtAttr::AppParamDesc),
             10012 => Ok(StmtAttr::ImpRowDesc),
@@ -350,6 +353,23 @@ impl<T, R, E> WithState<T, Result<R, (T, E)>> for Result<R, E> {
     }
 }
 
+/// Tracks the state of a partial SQLGetData retrieval for a column.
+pub enum GetDataState {
+    /// All data has been returned; next call for same column returns SQL_NO_DATA.
+    Completed { col: u16 },
+    /// Partial retrieval in progress; offset tracks how many bytes have been
+    /// returned so far.
+    Partial { col: u16, offset: usize },
+}
+
+impl GetDataState {
+    pub fn col(&self) -> u16 {
+        match self {
+            GetDataState::Completed { col } | GetDataState::Partial { col, .. } => *col,
+        }
+    }
+}
+
 pub struct Statement<'a> {
     pub conn: &'a mut Connection,
     pub stmt_handle: StatementHandle,
@@ -357,6 +377,7 @@ pub struct Statement<'a> {
     pub parameter_bindings: HashMap<u16, ParameterBinding>,
     pub ard: ArdDescriptor,
     pub diagnostic_info: DiagnosticInfo,
+    pub get_data_state: Option<GetDataState>,
 }
 
 // Helper functions for handle conversion

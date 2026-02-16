@@ -33,11 +33,12 @@ impl Binding {
         }
     }
 
-    pub fn write_char_string(&self, src: &str) -> Warnings {
+    pub fn write_char_string(&self, src: &str, get_data_offset: &mut Option<usize>) -> Warnings {
+        let offset = get_data_offset.unwrap_or(0);
         let max_len = self.buffer_length as usize;
         let mut dst_idx = 0;
         let value_ptr = self.target_value_ptr as *mut u8;
-        for c in src.chars() {
+        for c in src.chars().skip(offset) {
             if dst_idx == max_len - 1 {
                 unsafe {
                     std::ptr::write(value_ptr.add(max_len - 1), 0);
@@ -45,6 +46,7 @@ impl Binding {
                         std::ptr::write(self.str_len_or_ind_ptr, sql::NO_TOTAL);
                     }
                 }
+                *get_data_offset = Some(offset + dst_idx);
                 return vec![Warning::StringDataTruncated];
             }
             let byte = if c.is_ascii() { c as u8 } else { 0x1a };
@@ -59,14 +61,45 @@ impl Binding {
                 std::ptr::write(self.str_len_or_ind_ptr, dst_idx as sql::Len);
             }
         }
+        *get_data_offset = None;
         vec![]
     }
 
-    pub fn write_wchar_string(&self, src: &str) -> Warnings {
+    pub fn write_binary(&self, src: &[u8], get_data_offset: &mut Option<usize>) -> Warnings {
+        let offset = get_data_offset.unwrap_or(0);
+        let remaining = &src[offset..];
+        let buffer_length = self.buffer_length as usize;
+        let copy_len = std::cmp::min(remaining.len(), buffer_length);
+
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                remaining.as_ptr(),
+                self.target_value_ptr as *mut u8,
+                copy_len,
+            );
+        }
+
+        if !self.str_len_or_ind_ptr.is_null() {
+            unsafe {
+                std::ptr::write(self.str_len_or_ind_ptr, remaining.len() as sql::Len);
+            }
+        }
+
+        if remaining.len() > buffer_length {
+            *get_data_offset = Some(offset + copy_len);
+            vec![Warning::StringDataTruncated]
+        } else {
+            *get_data_offset = None;
+            vec![]
+        }
+    }
+
+    pub fn write_wchar_string(&self, src: &str, get_data_offset: &mut Option<usize>) -> Warnings {
+        let offset = get_data_offset.unwrap_or(0);
         let max_len = (self.buffer_length / 2) as usize;
         let value_ptr = self.target_value_ptr as *mut u16;
         let mut dst_idx = 0;
-        for c in src.encode_utf16() {
+        for c in src.encode_utf16().skip(offset) {
             if dst_idx == max_len - 1 {
                 unsafe {
                     std::ptr::write(value_ptr.add(max_len - 1), 0);
@@ -74,6 +107,7 @@ impl Binding {
                         std::ptr::write(self.str_len_or_ind_ptr, sql::NO_TOTAL);
                     }
                 }
+                *get_data_offset = Some(offset + dst_idx);
                 return vec![Warning::StringDataTruncated];
             }
             unsafe {
@@ -92,15 +126,19 @@ impl Binding {
                 std::ptr::write(self.str_len_or_ind_ptr, num_bytes);
             }
         }
+        *get_data_offset = None;
         vec![]
     }
 }
 
 pub trait WriteODBCType: SnowflakeType {
+    fn sql_type(&self) -> sql::SqlDataType;
+
     fn write_odbc_type(
         &self,
         snowflake_value: Self::Representation<'_>,
         binding: &Binding,
+        get_data_offset: &mut Option<usize>,
     ) -> Result<Warnings, WriteOdbcError>;
 }
 

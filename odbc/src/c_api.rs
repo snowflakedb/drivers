@@ -251,6 +251,32 @@ pub unsafe extern "C" fn SQLGetData(
 /// # Safety
 /// This function is called by the ODBC driver manager.
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn SQLColAttribute(
+    statement_handle: sql::Handle,
+    column_number: sql::USmallInt,
+    field_identifier: sql::USmallInt,
+    character_attribute_ptr: sql::Pointer,
+    buffer_length: sql::SmallInt,
+    string_length_ptr: *mut sql::SmallInt,
+    numeric_attribute_ptr: *mut sql::Len,
+) -> sql::RetCode {
+    api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
+    let result = api::utils::col_attribute(
+        statement_handle,
+        column_number,
+        field_identifier,
+        character_attribute_ptr,
+        buffer_length,
+        string_length_ptr,
+        numeric_attribute_ptr,
+    );
+    api::diagnostic::set_diag_info_from_result(sql::HandleType::Stmt, statement_handle, &result);
+    result.to_sql_code()
+}
+
+/// # Safety
+/// This function is called by the ODBC driver manager.
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn SQLNumResultCols(
     statement_handle: sql::Handle,
     column_count_ptr: *mut sql::SmallInt,
@@ -388,6 +414,19 @@ pub unsafe extern "C" fn SQLBindCol(
         str_len_or_ind_ptr,
     )
     .to_sql_code()
+}
+
+/// # Safety
+/// This function is called by the ODBC driver manager.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn SQLSetStmtAttr(
+    statement_handle: sql::Handle,
+    attribute: sql::Integer,
+    value_ptr: sql::Pointer,
+    string_length: sql::Integer,
+) -> sql::RetCode {
+    api::statement::set_stmt_attr(statement_handle, attribute, value_ptr, string_length)
+        .to_sql_code()
 }
 
 /// # Safety

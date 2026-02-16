@@ -28,13 +28,18 @@ impl ReadArrowType<BooleanArray> for SnowflakeBoolean {
 }
 
 impl WriteODBCType for SnowflakeBoolean {
+    fn sql_type(&self) -> odbc_sys::SqlDataType {
+        odbc_sys::SqlDataType::EXT_BIT
+    }
+
     fn write_odbc_type(
         &self,
         snowflake_value: Self::Representation<'_>,
         binding: &Binding,
+        _get_data_offset: &mut Option<usize>,
     ) -> Result<Warnings, WriteOdbcError> {
         match binding.target_type {
-            CDataType::Bit => {
+            CDataType::Default | CDataType::Bit => {
                 binding.write_fixed(snowflake_value as u8);
                 Ok(vec![])
             }

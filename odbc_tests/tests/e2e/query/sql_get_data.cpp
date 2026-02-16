@@ -17,7 +17,6 @@
 // =============================================================================
 
 TEST_CASE("SQLGetData retrieves data for a single column after SQLFetch.", "[query][get_data]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "SQLGetData retrieves data for a single column in the result set or for
   //       a single parameter after SQLParamData returns SQL_PARAM_DATA_AVAILABLE."
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlgetdata-function#summary
@@ -44,7 +43,6 @@ TEST_CASE("SQLGetData retrieves data for a single column after SQLFetch.", "[que
 }
 
 TEST_CASE("SQLGetData can be called multiple times to retrieve variable-length data in parts.", "[query][get_data]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "It can be called multiple times to retrieve variable-length data in parts."
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlgetdata-function#summary
 
@@ -87,7 +85,6 @@ TEST_CASE("SQLGetData can be called multiple times to retrieve variable-length d
 }
 
 TEST_CASE("SQLGetData can only be called after rows have been fetched.", "[query][get_data]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "SQLGetData returns the data in a specified column. SQLGetData can be called
   //       only after one or more rows have been fetched from the result set by SQLFetch,
   //       SQLFetchScroll, or SQLExtendedFetch."
@@ -138,7 +135,6 @@ TEST_CASE("SQLGetData can retrieve data after SQLFetchScroll.", "[query][get_dat
 }
 
 TEST_CASE("SQLGetData retrieves data for multiple columns.", "[query][get_data]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "SQLGetData retrieves data for a single column in the result set..."
   // (Called once per column for multiple columns)
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlgetdata-function#summary
@@ -179,7 +175,6 @@ TEST_CASE("SQLGetData retrieves data for multiple columns.", "[query][get_data]"
 // =============================================================================
 
 TEST_CASE("SQLGetData returns SQL_SUCCESS on successful retrieval.", "[query][get_data]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "Returns: SQL_SUCCESS, SQL_SUCCESS_WITH_INFO, SQL_NO_DATA,
   //       SQL_STILL_EXECUTING, SQL_ERROR, or SQL_INVALID_HANDLE."
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlgetdata-function#returns
@@ -199,7 +194,6 @@ TEST_CASE("SQLGetData returns SQL_SUCCESS on successful retrieval.", "[query][ge
 }
 
 TEST_CASE("SQLGetData returns SQL_INVALID_HANDLE for invalid statement handle.", "[query][get_data]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "Returns: SQL_SUCCESS, SQL_SUCCESS_WITH_INFO, SQL_NO_DATA,
   //       SQL_STILL_EXECUTING, SQL_ERROR, or SQL_INVALID_HANDLE."
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlgetdata-function#returns
@@ -221,7 +215,6 @@ TEST_CASE("SQLGetData returns SQL_INVALID_HANDLE for invalid statement handle.",
 // =============================================================================
 
 TEST_CASE("SQLGetData converts data to the specified TargetType.", "[query][get_data]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "TargetType [Input] The type identifier of the C data type of the
   //       *TargetValuePtr buffer."
   // Doc: "Otherwise, the C data type specified in SQLGetData overrides the C data
@@ -244,7 +237,6 @@ TEST_CASE("SQLGetData converts data to the specified TargetType.", "[query][get_
 }
 
 TEST_CASE("SQLGetData with SQL_C_DEFAULT selects default C type based on SQL type.", "[query][get_data]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "If TargetType is SQL_C_DEFAULT, the driver selects the default C data
   //       type based on the SQL data type of the source."
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlgetdata-function#arguments
@@ -271,7 +263,6 @@ TEST_CASE("SQLGetData with SQL_C_DEFAULT selects default C type based on SQL typ
 }
 
 TEST_CASE("SQLGetData overrides SQLBindCol type when a different TargetType is specified.", "[query][get_data]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "If TargetType is SQL_ARD_TYPE, the driver uses the type identifier
   //       specified in the SQL_DESC_CONCISE_TYPE field of the ARD... Otherwise,
   //       the C data type specified in SQLGetData overrides the C data type
@@ -308,7 +299,6 @@ TEST_CASE("SQLGetData overrides SQLBindCol type when a different TargetType is s
 // =============================================================================
 
 TEST_CASE("SQLGetData returns HY009 when TargetValuePtr is null.", "[query][get_data]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "TargetValuePtr cannot be NULL."
   // Doc: "HY009 - Invalid use of null pointer: (DM) The argument TargetValuePtr
   //       was a null pointer."
@@ -333,7 +323,6 @@ TEST_CASE("SQLGetData returns HY009 when TargetValuePtr is null.", "[query][get_
 // =============================================================================
 
 TEST_CASE("SQLGetData counts null terminator when returning character data.", "[query][get_data]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "The driver uses BufferLength to avoid writing past the end of the
   //       *TargetValuePtr buffer when returning variable-length data, such as
   //       character or binary data. Note that the driver counts the
@@ -359,7 +348,6 @@ TEST_CASE("SQLGetData counts null terminator when returning character data.", "[
 }
 
 TEST_CASE("SQLGetData truncates character data when buffer is too small.", "[query][get_data]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "If the length of character data (including the null-termination character)
   //       exceeds BufferLength, SQLGetData truncates the data to BufferLength less
   //       the length of a null-termination character. It then null-terminates the data."
@@ -386,7 +374,6 @@ TEST_CASE("SQLGetData truncates character data when buffer is too small.", "[que
 }
 
 TEST_CASE("SQLGetData truncates binary data to BufferLength bytes.", "[query][get_data]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "If the length of binary data exceeds the length of the data buffer,
   //       SQLGetData truncates it to BufferLength bytes."
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlgetdata-function#retrieving-data-with-sqlgetdata
@@ -412,7 +399,6 @@ TEST_CASE("SQLGetData truncates binary data to BufferLength bytes.", "[query][ge
 }
 
 TEST_CASE("SQLGetData ignores BufferLength for fixed-length data types.", "[query][get_data]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "When the driver returns fixed-length data, such as an integer or a date
   //       structure, the driver ignores BufferLength and assumes the buffer is
   //       large enough to hold the data. It is therefore important for the
@@ -436,7 +422,6 @@ TEST_CASE("SQLGetData ignores BufferLength for fixed-length data types.", "[quer
 }
 
 TEST_CASE("SQLGetData returns HY090 when BufferLength is less than 0.", "[query][get_data]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "SQLGetData returns SQLSTATE HY090 (Invalid string or buffer length) when
   //       BufferLength is less than 0 but not when BufferLength is 0."
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlgetdata-function#arguments
@@ -456,7 +441,6 @@ TEST_CASE("SQLGetData returns HY090 when BufferLength is less than 0.", "[query]
 }
 
 TEST_CASE("SQLGetData does not return error when BufferLength is 0.", "[query][get_data]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "SQLGetData returns SQLSTATE HY090 (Invalid string or buffer length) when
   //       BufferLength is less than 0 but not when BufferLength is 0."
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlgetdata-function#arguments
@@ -479,7 +463,6 @@ TEST_CASE("SQLGetData does not return error when BufferLength is 0.", "[query][g
 // =============================================================================
 
 TEST_CASE("SQLGetData returns data length in StrLen_or_IndPtr for character data.", "[query][get_data]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "For character or binary data, this is the length of the data after
   //       conversion and before truncation due to BufferLength."
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlgetdata-function#retrieving-data-with-sqlgetdata
@@ -500,7 +483,6 @@ TEST_CASE("SQLGetData returns data length in StrLen_or_IndPtr for character data
 }
 
 TEST_CASE("SQLGetData returns type size in StrLen_or_IndPtr for fixed-length data.", "[query][get_data]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "For all other data types, this is the length of the data after
   //       conversion; that is, it is the size of the type to which the data was
   //       converted."
@@ -521,7 +503,6 @@ TEST_CASE("SQLGetData returns type size in StrLen_or_IndPtr for fixed-length dat
 }
 
 TEST_CASE("SQLGetData returns SQL_NULL_DATA in StrLen_or_IndPtr for NULL values.", "[query][get_data]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "Sets *StrLen_or_IndPtr to SQL_NULL_DATA if the data is NULL."
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlgetdata-function#retrieving-data-with-sqlgetdata
 
@@ -540,7 +521,6 @@ TEST_CASE("SQLGetData returns SQL_NULL_DATA in StrLen_or_IndPtr for NULL values.
 }
 
 TEST_CASE("SQLGetData returns 22002 when NULL data fetched without indicator pointer.", "[query][get_data]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "If the data is NULL and StrLen_or_IndPtr was a null pointer, SQLGetData
   //       returns SQLSTATE 22002 (Indicator variable required but not supplied)."
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlgetdata-function#retrieving-data-with-sqlgetdata
@@ -559,7 +539,6 @@ TEST_CASE("SQLGetData returns 22002 when NULL data fetched without indicator poi
 }
 
 TEST_CASE("SQLGetData with null StrLen_or_IndPtr succeeds for non-null data.", "[query][get_data]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "If this is a null pointer, no length or indicator value is returned."
   // (Implied: not an error for non-NULL data)
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlgetdata-function#arguments
@@ -582,7 +561,6 @@ TEST_CASE("SQLGetData with null StrLen_or_IndPtr succeeds for non-null data.", "
 // =============================================================================
 
 TEST_CASE("SQLGetData retrieves character data in parts with multiple calls.", "[query][get_data]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "To retrieve data from a column in parts, the application calls SQLGetData
   //       multiple times in succession for the same column. On each call, SQLGetData
   //       returns the next part of the data."
@@ -629,7 +607,6 @@ TEST_CASE("SQLGetData retrieves character data in parts with multiple calls.", "
 }
 
 TEST_CASE("SQLGetData returns SQL_NO_DATA after all data for a column has been retrieved.", "[query][get_data]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "Returns SQL_NO_DATA if it has already returned all of the data for the column."
   // Doc: "If SQLGetData is called after this, it returns SQL_NO_DATA."
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlgetdata-function#retrieving-variable-length-data-in-parts
@@ -651,7 +628,6 @@ TEST_CASE("SQLGetData returns SQL_NO_DATA after all data for a column has been r
 }
 
 TEST_CASE("SQLGetData returns SQL_NO_DATA for fixed-length data after first successful call.", "[query][get_data]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "SQLGetData cannot be used to return fixed-length data in parts. If
   //       SQLGetData is called more than one time in a row for a column containing
   //       fixed-length data, it returns SQL_NO_DATA for all calls after the first."
@@ -837,7 +813,6 @@ TEST_CASE("SQLGetData for a different column resets prior column offset.", "[que
 // =============================================================================
 
 TEST_CASE("SQLGetData returns 07006 when data cannot be converted to TargetType.", "[query][get_data]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "07006 - Restricted data type attribute violation: The data value of a
   //       column in the result set cannot be converted to the C data type
   //       specified by the argument TargetType."
@@ -861,7 +836,6 @@ TEST_CASE("SQLGetData returns 07006 when data cannot be converted to TargetType.
 }
 
 TEST_CASE("SQLGetData returns 07009 when Col_or_Param_Num is 0 and bookmarks are off.", "[query][get_data]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "07009 - Invalid descriptor index: The value specified for the argument
   //       Col_or_Param_Num was 0, and the SQL_ATTR_USE_BOOKMARKS statement
   //       attribute was set to SQL_UB_OFF."
@@ -892,7 +866,6 @@ TEST_CASE("SQLGetData returns 07009 when Col_or_Param_Num is 0 and bookmarks are
 }
 
 TEST_CASE("SQLGetData returns 07009 when Col_or_Param_Num exceeds result set columns.", "[query][get_data]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "07009 - Invalid descriptor index: The value specified for the argument
   //       Col_or_Param_Num was greater than the number of columns in the result set."
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlgetdata-function#diagnostics
@@ -912,7 +885,6 @@ TEST_CASE("SQLGetData returns 07009 when Col_or_Param_Num exceeds result set col
 }
 
 TEST_CASE("SQLGetData returns 24000 when cursor is positioned after end of result set.", "[query][get_data]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "24000 - Invalid cursor state: ... the cursor was positioned before the
   //       start of the result set or after the end of the result set."
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlgetdata-function#diagnostics
@@ -1132,7 +1104,6 @@ TEST_CASE("SQLGetData supports SQL_C_BINARY retrieval.", "[query][get_data]") {
 // =============================================================================
 
 TEST_CASE("SQLGetData returns 22003 when numeric value is out of range for target type.", "[query][get_data]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "22003 - Numeric value out of range: Returning the numeric value (as
   //       numeric or string) for the column would have caused the whole (as
   //       opposed to fractional) part of the number to be truncated."
@@ -1158,7 +1129,6 @@ TEST_CASE("SQLGetData returns 22003 when numeric value is out of range for targe
 // =============================================================================
 
 TEST_CASE("SQLGetData returns 01S07 when fractional part is truncated.", "[query][get_data]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "01S07 - Fractional truncation: The data returned for one or more columns
   //       was truncated. For numeric data types, the fractional part of the number
   //       was truncated."
@@ -1188,7 +1158,6 @@ TEST_CASE("SQLGetData returns 01S07 when fractional part is truncated.", "[query
 // =============================================================================
 
 TEST_CASE("SQLGetData returns 01004 when string data is truncated.", "[query][get_data]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "01004 - String data, right truncated: Not all of the data for the
   //       specified column, Col_or_Param_Num, could be retrieved in a single
   //       call to the function."
@@ -1212,7 +1181,6 @@ TEST_CASE("SQLGetData returns 01004 when string data is truncated.", "[query][ge
 }
 
 TEST_CASE("SQLGetData returns SQL_SUCCESS on the last part of truncated data.", "[query][get_data]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "When it returns the last part of the data, SQLGetData returns SQL_SUCCESS.
   //       Neither SQL_NO_TOTAL nor zero can be returned on the last valid call to
   //       retrieve data from a column."
@@ -1293,7 +1261,6 @@ TEST_CASE("SQLGetData cannot be called when SQL_ATTR_ROW_ARRAY_SIZE is set and S
 // =============================================================================
 
 TEST_CASE("SQLGetData retrieves correct data on each successive row after SQLFetch.", "[query][get_data]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "SQLGetData returns the data in a specified column. SQLGetData can be
   //       called only after one or more rows have been fetched from the result
   //       set by SQLFetch, SQLFetchScroll, or SQLExtendedFetch."
@@ -1331,7 +1298,6 @@ TEST_CASE("SQLGetData retrieves correct data on each successive row after SQLFet
 // =============================================================================
 
 TEST_CASE("SQLGetData with SQL_ARD_TYPE uses the type from the ARD descriptor.", "[query][get_data]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "If TargetType is SQL_ARD_TYPE, the driver uses the type identifier
   //       specified in the SQL_DESC_CONCISE_TYPE field of the ARD."
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlgetdata-function#arguments
@@ -1366,11 +1332,39 @@ TEST_CASE("SQLGetData with SQL_ARD_TYPE uses the type from the ARD descriptor.",
 }
 
 // =============================================================================
+// SQLGetData with SQL_ARD_TYPE and unmodified ARD returns error
+// =============================================================================
+
+TEST_CASE("SQLGetData with SQL_ARD_TYPE returns 07009 error when ARD is unmodified.", "[query][get_data]") {
+  // Doc: "If TargetType is SQL_ARD_TYPE, the driver uses the type identifier
+  //       specified in the SQL_DESC_CONCISE_TYPE field of the ARD."
+  // When no descriptor fields have been set, SQL_DESC_CONCISE_TYPE defaults to
+  // SQL_C_DEFAULT, but the current implementation returns error 07009 (Invalid descriptor index).
+  // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlgetdata-function#arguments
+
+  // Given Snowflake client is logged in
+  Connection conn;
+  auto stmt = conn.createStatement();
+
+  // When a query is executed and fetched without modifying the ARD
+  SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT 42 AS value", SQL_NTS);
+  CHECK_ODBC(ret, stmt);
+  ret = SQLFetch(stmt.getHandle());
+  CHECK_ODBC(ret, stmt);
+
+  // Then SQLGetData with SQL_ARD_TYPE should return SQL_ERROR with SQLSTATE 07009
+  SQLCHAR buffer[64] = {0};
+  SQLLEN indicator = 0;
+  ret = SQLGetData(stmt.getHandle(), 1, SQL_ARD_TYPE, buffer, sizeof(buffer), &indicator);
+  REQUIRE(ret == SQL_ERROR);
+  CHECK(get_sqlstate(stmt) == "07009");
+}
+
+// =============================================================================
 // SQLGetData does not interact directly with descriptor fields
 // =============================================================================
 
 TEST_CASE("SQLGetData does not modify ARD descriptor fields.", "[query][get_data]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "SQLGetData does not interact directly with any descriptor fields."
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlgetdata-function#descriptors-and-sqlgetdata
 
@@ -1410,7 +1404,6 @@ TEST_CASE("SQLGetData does not modify ARD descriptor fields.", "[query][get_data
 // =============================================================================
 
 TEST_CASE("SQLGetData works after SQLFreeStmt SQL_CLOSE and re-execute.", "[query][get_data]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "SQLGetData can be called only after one or more rows have been fetched
   //       from the result set..."
   // (Verifies SQLGetData works correctly on a new result set after cursor close)
@@ -1454,7 +1447,6 @@ TEST_CASE("SQLGetData works after SQLFreeStmt SQL_CLOSE and re-execute.", "[quer
 // =============================================================================
 
 TEST_CASE("SQLGetData returns SQL_NULL_DATA for NULL value regardless of TargetType.", "[query][get_data]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "Sets *StrLen_or_IndPtr to SQL_NULL_DATA if the data is NULL."
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlgetdata-function#retrieving-data-with-sqlgetdata
 
@@ -1625,7 +1617,6 @@ TEST_CASE("SQLGetData can be mixed with SQLFetch and SQLFetchScroll calls.", "[q
 // =============================================================================
 
 TEST_CASE("SQLGetData returns empty string with indicator 0 for empty string column.", "[query][get_data]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "Places the length of the data in *StrLen_or_IndPtr."
   // (For empty string, length should be 0, not SQL_NULL_DATA)
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlgetdata-function#retrieving-data-with-sqlgetdata
@@ -1650,7 +1641,6 @@ TEST_CASE("SQLGetData returns empty string with indicator 0 for empty string col
 // =============================================================================
 
 TEST_CASE("SQLGetData with BufferLength 1 for character data returns only null terminator.", "[query][get_data]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "If the data buffer supplied is too small to hold the null-termination
   //       character, SQLGetData returns SQL_SUCCESS_WITH_INFO and SQLSTATE 01004."
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlgetdata-function#retrieving-data-with-sqlgetdata

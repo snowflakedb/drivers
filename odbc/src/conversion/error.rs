@@ -50,6 +50,14 @@ pub enum WriteOdbcError {
         #[snafu(implicit)]
         location: Location,
     },
+
+    /// Indicator variable required but not supplied (SQLSTATE 22002).
+    /// Returned when data is NULL but StrLen_or_IndPtr is a null pointer.
+    #[snafu(display("Indicator variable required but not supplied"))]
+    IndicatorRequired {
+        #[snafu(implicit)]
+        location: Location,
+    },
 }
 
 /// Error type for data conversion operations between Arrow, Snowflake, and ODBC types.

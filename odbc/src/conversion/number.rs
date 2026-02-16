@@ -4,7 +4,8 @@ use odbc_sys::Len;
 
 use crate::cdata_types::CDataType;
 use crate::conversion::error::{
-    InvalidValueSnafu, ReadArrowError, UnsupportedOdbcTypeSnafu, WriteOdbcError,
+    InvalidValueSnafu, NumericValueOutOfRangeSnafu, ReadArrowError, UnsupportedOdbcTypeSnafu,
+    WriteOdbcError,
 };
 use crate::conversion::traits::Binding;
 use crate::conversion::warning::Warnings;
@@ -40,10 +41,15 @@ where
 }
 
 impl WriteODBCType for SnowflakeNumber {
+    fn sql_type(&self) -> sql::SqlDataType {
+        sql::SqlDataType::DECIMAL
+    }
+
     fn write_odbc_type(
         &self,
         snowflake_value: Self::Representation<'_>,
         binding: &Binding,
+        _get_data_offset: &mut Option<usize>,
     ) -> Result<Warnings, WriteOdbcError> {
         match binding.target_type {
             CDataType::Double => {
@@ -56,24 +62,86 @@ impl WriteODBCType for SnowflakeNumber {
                 binding.write_fixed(float_value);
                 Ok(vec![])
             }
-            CDataType::Short | CDataType::SShort | CDataType::UShort => {
-                let short_value = (snowflake_value as i64) / 10i64.pow(self.scale);
-                binding.write_fixed(short_value as u16);
+            CDataType::Short | CDataType::SShort => {
+                let scaled = (snowflake_value as i64) / 10i64.pow(self.scale);
+                let value = i16::try_from(scaled).map_err(|_| {
+                    NumericValueOutOfRangeSnafu {
+                        reason: format!("{scaled} out of range for SQL_C_SHORT"),
+                    }
+                    .build()
+                })?;
+                binding.write_fixed(value);
                 Ok(vec![])
             }
-            CDataType::TinyInt | CDataType::STinyInt | CDataType::UTinyInt => {
-                let tinyint_value = (snowflake_value as i64) / 10i64.pow(self.scale);
-                binding.write_fixed(tinyint_value as u8);
+            CDataType::UShort => {
+                let scaled = (snowflake_value as i64) / 10i64.pow(self.scale);
+                let value = u16::try_from(scaled).map_err(|_| {
+                    NumericValueOutOfRangeSnafu {
+                        reason: format!("{scaled} out of range for SQL_C_USHORT"),
+                    }
+                    .build()
+                })?;
+                binding.write_fixed(value);
                 Ok(vec![])
             }
-            CDataType::Long | CDataType::SLong | CDataType::ULong => {
-                let long_value = (snowflake_value as i32) / 10i32.pow(self.scale);
-                binding.write_fixed(long_value);
+            CDataType::TinyInt | CDataType::STinyInt => {
+                let scaled = (snowflake_value as i64) / 10i64.pow(self.scale);
+                let value = i8::try_from(scaled).map_err(|_| {
+                    NumericValueOutOfRangeSnafu {
+                        reason: format!("{scaled} out of range for SQL_C_TINYINT"),
+                    }
+                    .build()
+                })?;
+                binding.write_fixed(value);
                 Ok(vec![])
             }
-            CDataType::SBigInt | CDataType::UBigInt => {
-                let int_value = (snowflake_value as i64) / 10i64.pow(self.scale);
-                binding.write_fixed(int_value);
+            CDataType::UTinyInt => {
+                let scaled = (snowflake_value as i64) / 10i64.pow(self.scale);
+                let value = u8::try_from(scaled).map_err(|_| {
+                    NumericValueOutOfRangeSnafu {
+                        reason: format!("{scaled} out of range for SQL_C_UTINYINT"),
+                    }
+                    .build()
+                })?;
+                binding.write_fixed(value);
+                Ok(vec![])
+            }
+            CDataType::Long | CDataType::SLong => {
+                let scaled = (snowflake_value as i64) / 10i64.pow(self.scale);
+                let value = i32::try_from(scaled).map_err(|_| {
+                    NumericValueOutOfRangeSnafu {
+                        reason: format!("{scaled} out of range for SQL_C_LONG"),
+                    }
+                    .build()
+                })?;
+                binding.write_fixed(value);
+                Ok(vec![])
+            }
+            CDataType::ULong => {
+                let scaled = (snowflake_value as i64) / 10i64.pow(self.scale);
+                let value = u32::try_from(scaled).map_err(|_| {
+                    NumericValueOutOfRangeSnafu {
+                        reason: format!("{scaled} out of range for SQL_C_ULONG"),
+                    }
+                    .build()
+                })?;
+                binding.write_fixed(value);
+                Ok(vec![])
+            }
+            CDataType::SBigInt => {
+                let value = (snowflake_value as i64) / 10i64.pow(self.scale);
+                binding.write_fixed(value);
+                Ok(vec![])
+            }
+            CDataType::UBigInt => {
+                let scaled = (snowflake_value as u128) / 10u128.pow(self.scale);
+                let value = u64::try_from(scaled).map_err(|_| {
+                    NumericValueOutOfRangeSnafu {
+                        reason: format!("{scaled} out of range for SQL_C_UBIGINT"),
+                    }
+                    .build()
+                })?;
+                binding.write_fixed(value);
                 Ok(vec![])
             }
             CDataType::Numeric => {
@@ -118,7 +186,7 @@ impl WriteODBCType for SnowflakeNumber {
                 binding.write_fixed(numeric);
                 Ok(vec![])
             }
-            CDataType::Char => {
+            CDataType::Default | CDataType::Char => {
                 let num_str = if self.scale > 0 {
                     let mut s = snowflake_value.to_string();
                     let is_negative = s.starts_with('-');
