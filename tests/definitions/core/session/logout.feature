@@ -226,7 +226,7 @@ Feature: Session Logout - Core HTTP Layer Integration
     Then Token refresh request is sent to server
     And Logout is retried with new session token
     And Close succeeds
-    # TODO: Decide whether the token refresh request itself counts as a retry attempt
+    # Refresh is "free" - doesn't count in total retries limit of attempts
 
     Examples:
       | strategy_type |
