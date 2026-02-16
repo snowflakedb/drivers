@@ -16,6 +16,10 @@ from snowflake.connector import ProgrammingError
 from snowflake.connector._internal.protobuf_gen.proto_exception import ProtoApplicationException
 
 
+# TODO: syntax parity will be implemented in follow-up PR
+pytestmark = pytest.mark.skip_reference
+
+
 class TestBasicTypeBinding:
     """Tests for binding basic Python types to Snowflake."""
 
