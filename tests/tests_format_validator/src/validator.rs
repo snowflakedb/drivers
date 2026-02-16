@@ -464,7 +464,7 @@ impl GherkinValidator {
             Language::Rust => vec![self._workspace_root.join("sf_core/tests/e2e")],
             Language::Jdbc => vec![
                 self._workspace_root
-                    .join("jdbc/src/test/java/com/snowflake/jdbc/e2e"),
+                    .join("jdbc/src/test/java/net/snowflake/jdbc/e2e"),
             ],
             Language::Odbc => vec![self._workspace_root.join("odbc_tests/tests/e2e")],
             Language::Python => vec![self._workspace_root.join("python/tests/e2e")],
@@ -576,8 +576,9 @@ impl GherkinValidator {
                 }
             }
             Language::Jdbc => {
-                let test_regex =
-                    Regex::new(r"@Test\s*(?:\n\s*)?(?:public\s+)?(?:void\s+)?(\w+)\s*\(")?;
+                let test_regex = Regex::new(
+                    r"@(?:Test|ParameterizedTest)\b(?:\s*\n\s*@\w+(?:\([^)]*\))?)*\s*\n\s*(?:public|protected|private)?\s*(?:static\s+)?(?:void|Task(?:<[^>]+>)?)\s+(\w+)\s*\(",
+                )?;
                 for captures in test_regex.captures_iter(content) {
                     methods.push(captures[1].to_string());
                 }

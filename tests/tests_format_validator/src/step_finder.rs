@@ -112,7 +112,10 @@ impl MethodBoundaryFinder {
         let catch2_regex = Regex::new(r#"TEST_CASE\s*\(\s*"([^"]+)""#)?;
         // Rust: support optional async before fn
         let fn_regex = Regex::new(r"(?:async\s+)?fn\s+(\w+)")?;
-        let method_regex = Regex::new(r"(?:public\s+)?(?:void\s+)?(\w+)\s*\(")?;
+        // Match Java method declarations (not annotation lines like @MethodSource(...))
+        let method_regex = Regex::new(
+            r"^(?:public|protected|private)?\s*(?:static\s+)?(?:async\s+)?(?:final\s+)?(?:void|Task(?:<[^>]+>)?)\s+(\w+)\s*\(",
+        )?;
         let rust_test_attr_regex = Regex::new(r"^#\[\s*(?:[a-zA-Z0-9_]+::)?test(?:\(.*\))?\s*\]$")?;
 
         for (i, line) in lines.iter().enumerate() {
@@ -173,8 +176,8 @@ impl MethodBoundaryFinder {
                     }
                 }
                 "@Test" => {
-                    // Java: @Test followed by method declaration
-                    if trimmed == "@Test" {
+                    // Java: @Test/@ParameterizedTest followed by method declaration
+                    if trimmed == "@Test" || trimmed == "@ParameterizedTest" {
                         // Look ahead for the method declaration
                         for (j, method_line) in lines.iter().enumerate().skip(i + 1).take(4) {
                             if let Some(captures) = method_regex.captures(method_line.trim()) {
@@ -233,6 +236,7 @@ impl MethodBoundaryFinder {
             }
             // Look for test annotation
             else if trimmed == self.config.test_annotation
+                || (self.config.test_annotation == "@Test" && trimmed == "@ParameterizedTest")
                 || (self.config.test_annotation == "#[test]"
                     && (trimmed.starts_with("#[rstest") || trimmed.starts_with("#[test_case")))
                 || (self.config.test_annotation.contains("pytest")
@@ -915,5 +919,29 @@ def test_second():
         // Should NOT include the second test
         assert!(!method_content.contains("def test_second"));
         assert!(!method_content.contains("y = 2"));
+    }
+
+    #[test]
+    fn test_jdbc_parameterized_test_with_method_source_extracts_real_method_name() {
+        let finder = MethodBoundaryFinder::new(LanguageConfig::jdbc());
+        let content = r#"
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
+
+public class IntTests {
+    @ParameterizedTest
+    @MethodSource("intTypeSynonyms")
+    public void shouldSelectIntegerLiteralsForIntAndSynonyms(String typeName) throws Exception {
+        // Given Snowflake client is logged in
+    }
+}
+"#;
+
+        let methods = finder
+            .find_all_test_methods_with_lines(content)
+            .expect("Should parse methods");
+
+        assert_eq!(methods.len(), 1);
+        assert_eq!(methods[0].0, "shouldSelectIntegerLiteralsForIntAndSynonyms");
     }
 }

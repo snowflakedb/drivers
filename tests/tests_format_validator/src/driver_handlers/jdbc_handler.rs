@@ -63,8 +63,8 @@ impl BaseDriverHandler for JdbcHandler {
         for (line_num, line) in lines.iter().enumerate() {
             let trimmed = line.trim();
 
-            // Look for Java test methods: @Test followed by public void methodName()
-            if trimmed.starts_with("@Test") {
+            // Look for Java test methods: @Test/@ParameterizedTest followed by method declaration
+            if trimmed.starts_with("@Test") || trimmed.starts_with("@ParameterizedTest") {
                 // Look for the method declaration in the next few lines
                 for j in (line_num + 1)..std::cmp::min(line_num + 5, lines.len()) {
                     let method_line = lines[j].trim();

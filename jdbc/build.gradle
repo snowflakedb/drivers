@@ -173,6 +173,7 @@ tasks.register('referenceTest', Test) {
     configureCommonTestTask(delegate)
     testClassesDirs = sourceSets.test.output.classesDirs
     include 'net/snowflake/client/api/**'
+    include 'net/snowflake/jdbc/**'
     // Isolate old-driver reference tests from this module's main runtime deps.
     // Keep only test output/resources + test-only runtime deps + old JDBC driver deps.
     classpath = sourceSets.test.output +
