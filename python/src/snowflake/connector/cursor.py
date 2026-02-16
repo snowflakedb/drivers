@@ -22,6 +22,7 @@ from ._internal.arrow_stream_iterator import ArrowStreamIterator
 from ._internal.binding_serializer import BindingSerializer
 from ._internal.protobuf_gen.database_driver_v1_pb2 import (
     BinaryDataPtr,
+    ExecuteResult,
     QueryBindings,
     StatementExecuteQueryRequest,
     StatementNewRequest,
@@ -109,9 +110,8 @@ class SnowflakeCursorBase(abc.ABC):
         self._reader = None
         self._current_batch = None
         self._current_row_in_batch = 0
-        self.execute_result: Any = None
+        self.execute_result: ExecuteResult | None = None
         self._iterator: Iterator[Row] | None = None
-        self.execute_result = None
         # Query bindings - keep binding data reference to prevent garbage collection while Rust uses it
         self._binding_data: None | bytes = None
 
