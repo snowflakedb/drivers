@@ -8,7 +8,7 @@ use super::error::*;
 use super::global_state::{CONN_HANDLE_MANAGER, STMT_HANDLE_MANAGER};
 use crate::apis::database_driver_v1::query::process_query_response;
 use crate::protobuf_gen::database_driver_v1::ColumnMetadata;
-use crate::rest::snowflake::query_response::Data;
+use crate::rest::snowflake::{query_response, query_response::Data};
 use crate::{
     config::{rest_parameters::QueryParameters, settings::Setting},
     rest::snowflake::{self, QueryExecutionMode, snowflake_query_with_client},
@@ -222,24 +222,43 @@ pub struct ExecuteResult {
     pub columns: Vec<ColumnMetadata>,
 }
 
-/// Parse ALTER SESSION SET statements and optimistically update the session parameters cache.
-/// This matches Python driver behavior for immediate parameter updates.
-fn optimistically_update_session_params_cache(
+/// Update the session parameters cache after a successful query.
+fn update_session_params_cache(
     conn: &Arc<Mutex<Connection>>,
     query: &str,
+    response_parameters: Option<&Vec<query_response::NameValueParameter>>,
 ) -> Result<(), ApiError> {
+    let conn = conn.lock().map_err(|_| ConnectionLockingSnafu.build())?;
+    let mut cache = match conn.session_parameters.write() {
+        Ok(cache) => cache,
+        Err(_) => return Ok(()),
+    };
+
+    // 1. ALTER SESSION SET: optimistically apply the parameter the user just set.
+    // This matches Python driver behavior for immediate parameter updates,
+    // and is necessary as not all parameters are returned in the response.
     if let Some(alter_param) = alter_session_parser::parse_alter_session(query) {
         tracing::debug!(
             param_name = %alter_param.name,
             param_value = %alter_param.value,
             "Detected ALTER SESSION SET, updating cache optimistically"
         );
+        cache.insert(alter_param.name.clone(), alter_param.value.clone());
+    }
 
-        let conn = conn.lock().map_err(|_| ConnectionLockingSnafu.build())?;
-        if let Ok(mut cache) = conn.session_parameters.write() {
-            cache.insert(alter_param.name.clone(), alter_param.value.clone());
+    // 2. Response parameters: merge any server-returned session parameters into the cache.
+    if let Some(parameters) = response_parameters {
+        for param in parameters {
+            let value_str = match &param.value {
+                serde_json::Value::String(s) => s.clone(),
+                serde_json::Value::Number(n) => n.to_string(),
+                serde_json::Value::Bool(b) => b.to_string(),
+                other => other.to_string(),
+            };
+            cache.insert(param.name.to_uppercase(), value_str);
         }
     }
+
     Ok(())
 }
 
@@ -282,8 +301,6 @@ pub fn statement_execute_query(stmt_handle: Handle) -> Result<ExecuteResult, Api
         .get_query_parameter_bindings()
         .context(StatementSnafu)?;
 
-    optimistically_update_session_params_cache(&stmt.conn, &query)?;
-
     // Execute query with automatic session refresh on 401
     let conn = stmt.conn.clone();
     let response = rt.block_on(with_valid_session(&conn, |session_token| {
@@ -306,26 +323,8 @@ pub fn statement_execute_query(stmt_handle: Handle) -> Result<ExecuteResult, Api
         }
     }))?;
 
-    // Update session parameters cache from query response
-    // Snowflake includes updated session parameters in every query response
-    if let Some(parameters) = &response.data.parameters {
-        let conn = stmt
-            .conn
-            .lock()
-            .map_err(|_| ConnectionLockingSnafu.build())?;
-        if let Ok(mut cache) = conn.session_parameters.write() {
-            for param in parameters {
-                // Convert JSON value to string for storage
-                let value_str = match &param.value {
-                    serde_json::Value::String(s) => s.clone(),
-                    serde_json::Value::Number(n) => n.to_string(),
-                    serde_json::Value::Bool(b) => b.to_string(),
-                    other => other.to_string(),
-                };
-                // Normalize parameter name to uppercase for case-insensitive access
-                cache.insert(param.name.to_uppercase(), value_str);
-            }
-        }
+    if response.success {
+        update_session_params_cache(&stmt.conn, &query, response.data.parameters.as_ref())?;
     }
 
     let response_reader = rt
