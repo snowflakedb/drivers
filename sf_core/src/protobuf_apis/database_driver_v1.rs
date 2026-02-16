@@ -51,6 +51,31 @@ impl From<*mut FFI_ArrowArrayStream> for ArrowArrayStreamPtr {
     }
 }
 
+// Convert protobuf BinaryDataPtr to internal DataPtr.
+// Both represent a raw pointer + length; this avoids leaking protobuf types into core.
+impl<'a> From<BinaryDataPtr> for DataPtr<'a> {
+    fn from(proto_ptr: BinaryDataPtr) -> Self {
+        let ptr_bytes: [u8; 8] = proto_ptr
+            .value
+            .as_slice()
+            .try_into()
+            .expect("Pointer must be 8 bytes");
+        let ptr_value = usize::from_le_bytes(ptr_bytes);
+        let ptr = ptr_value as *const u8;
+        DataPtr::new(ptr, proto_ptr.length)
+    }
+}
+
+// Convert protobuf QueryBindings variant to internal BindingType.
+impl<'a> From<query_bindings::BindingType> for BindingType<'a> {
+    fn from(proto: query_bindings::BindingType) -> Self {
+        match proto {
+            query_bindings::BindingType::Json(ptr) => BindingType::Json(ptr.into()),
+            query_bindings::BindingType::Csv(ptr) => BindingType::Csv(ptr.into()),
+        }
+    }
+}
+
 // Handle conversions from protobuf types to internal Handle type
 impl From<DatabaseHandle> for Handle {
     fn from(handle: DatabaseHandle) -> Self {
@@ -639,44 +664,10 @@ impl DatabaseDriver for DatabaseDriverImpl {
     ) -> Result<StatementExecuteQueryResponse, DriverException> {
         let stmt_handle = required(input.stmt_handle, "Statement handle is required")?;
 
-        // Convert protobuf bindings to API bindings (removes protobuf dependency from core).
-        // Protobuf uses BinaryDataPtr for both JSON and CSV (both point to raw bytes).
-        // Convert to our DataPtr type which has the same structure.
         let bindings_opt = input
             .bindings
             .and_then(|b| b.binding_type)
-            .map(|proto_binding| {
-                match proto_binding {
-                    crate::protobuf_gen::database_driver_v1::query_bindings::BindingType::Json(
-                        proto_ptr,
-                    ) => {
-                        // JSON: protobuf BinaryDataPtr → DataPtr (UTF-8 bytes)
-                        // Convert 8-byte little-endian pointer value to *const u8
-                        let ptr_bytes: [u8; 8] = proto_ptr
-                            .value
-                            .as_slice()
-                            .try_into()
-                            .expect("Pointer must be 8 bytes");
-                        let ptr_value = usize::from_le_bytes(ptr_bytes);
-                        let ptr = ptr_value as *const u8;
-                        BindingType::Json(DataPtr::new(ptr, proto_ptr.length))
-                    }
-                    crate::protobuf_gen::database_driver_v1::query_bindings::BindingType::Csv(
-                        proto_ptr,
-                    ) => {
-                        // CSV: protobuf BinaryDataPtr → DataPtr (raw CSV bytes)
-                        // Convert 8-byte little-endian pointer value to *const u8
-                        let ptr_bytes: [u8; 8] = proto_ptr
-                            .value
-                            .as_slice()
-                            .try_into()
-                            .expect("Pointer must be 8 bytes");
-                        let ptr_value = usize::from_le_bytes(ptr_bytes);
-                        let ptr = ptr_value as *const u8;
-                        BindingType::Csv(DataPtr::new(ptr, proto_ptr.length))
-                    }
-                }
-            });
+            .map(BindingType::from);
 
         let result = statement_execute_query(stmt_handle.into(), bindings_opt).to_protobuf()?;
         let stream_ptr: ArrowArrayStreamPtr = Box::into_raw(result.stream).into();
