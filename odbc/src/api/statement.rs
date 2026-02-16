@@ -70,6 +70,7 @@ pub fn exec_direct(statement_handle: sql::Handle, statement_text: &str) -> OdbcR
             let response =
                 DatabaseDriverClient::statement_execute_query(StatementExecuteQueryRequest {
                     stmt_handle: Some(stmt.stmt_handle),
+                    bindings: None,
                 })?;
 
             stmt.state = create_execute_state(response)?.into();
@@ -154,6 +155,7 @@ pub fn execute(statement_handle: sql::Handle) -> OdbcResult<()> {
             let response =
                 DatabaseDriverClient::statement_execute_query(StatementExecuteQueryRequest {
                     stmt_handle: Some(stmt.stmt_handle),
+                    bindings: None,
                 })?;
 
             tracing::info!("execute: Successfully executed statement");
@@ -226,6 +228,30 @@ pub fn bind_parameter(
         "bind_parameter: Successfully bound parameter {}",
         parameter_number
     );
+    Ok(())
+}
+
+/// Free statement resources based on the option
+pub fn free_stmt(statement_handle: sql::Handle, option: sql::FreeStmtOption) -> OdbcResult<()> {
+    tracing::debug!("free_stmt: statement_handle={statement_handle:?}, option={option:?}");
+
+    let stmt = stmt_from_handle(statement_handle);
+
+    match option {
+        sql::FreeStmtOption::Close => {
+            tracing::info!("free_stmt: Closing cursor");
+            stmt.state = StatementState::Created.into();
+        }
+        sql::FreeStmtOption::Unbind => {
+            tracing::info!("free_stmt: Unbinding all columns");
+            stmt.column_bindings.clear();
+        }
+        sql::FreeStmtOption::ResetParams => {
+            tracing::info!("free_stmt: Resetting all parameters");
+            stmt.parameter_bindings.clear();
+        }
+    }
+
     Ok(())
 }
 

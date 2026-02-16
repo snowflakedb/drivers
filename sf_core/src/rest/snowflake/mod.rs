@@ -18,8 +18,8 @@ use crate::tls::client::create_tls_client_with_config;
 use crate::tls::error::TlsError;
 use reqwest::{self, header};
 use serde_json;
+use serde_json::value::RawValue;
 use snafu::{IntoError, Location, OptionExt, ResultExt, Snafu};
-use std::collections::HashMap;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tracing;
 use url::Url;
@@ -392,7 +392,7 @@ pub async fn snowflake_query(
     query_parameters: QueryParameters,
     session_token: String,
     sql: String,
-    parameter_bindings: Option<HashMap<String, query_request::BindParameter>>,
+    parameter_bindings: Option<&RawValue>,
     execution_mode: QueryExecutionMode,
 ) -> Result<query_response::Response, RestError> {
     let client = build_tls_http_client(&query_parameters.client_info)?;
@@ -418,7 +418,7 @@ pub async fn snowflake_query_with_client(
     query_parameters: QueryParameters,
     session_token: String,
     sql: String,
-    parameter_bindings: Option<HashMap<String, query_request::BindParameter>>,
+    parameter_bindings: Option<&RawValue>,
     retry_policy: &RetryPolicy,
     execution_mode: QueryExecutionMode,
 ) -> Result<query_response::Response, RestError> {
@@ -453,7 +453,7 @@ async fn execute_async_with_fallback(
     query_parameters: &QueryParameters,
     session_token: String,
     sql: String,
-    parameter_bindings: Option<HashMap<String, query_request::BindParameter>>,
+    parameter_bindings: Option<&RawValue>,
     retry_policy: &RetryPolicy,
 ) -> Result<query_response::Response, RestError> {
     match snowflake_query_async_style(
@@ -461,7 +461,7 @@ async fn execute_async_with_fallback(
         query_parameters,
         session_token.clone(),
         sql.clone(),
-        parameter_bindings.clone(),
+        parameter_bindings,
         retry_policy,
     )
     .await
@@ -539,7 +539,7 @@ async fn execute_sync_with_retry(
     query_parameters: &QueryParameters,
     session_token: &str,
     sql: String,
-    parameter_bindings: Option<HashMap<String, query_request::BindParameter>>,
+    parameter_bindings: Option<&RawValue>,
     retry_policy: &RetryPolicy,
 ) -> Result<query_response::Response, RestError> {
     // Generate requestId upfront - persisted across retries for idempotency
@@ -558,7 +558,7 @@ async fn execute_sync_with_retry(
         query_parameters,
         session_token,
         &sql,
-        parameter_bindings.as_ref(),
+        parameter_bindings,
         request_id,
         false, // not a retry
     )
@@ -605,7 +605,7 @@ async fn execute_sync_with_retry(
             query_parameters,
             session_token,
             &sql,
-            parameter_bindings.as_ref(),
+            parameter_bindings,
             request_id,
             true, // is retry
         )
@@ -650,7 +650,7 @@ async fn execute_sync_query(
     query_parameters: &QueryParameters,
     session_token: &str,
     sql: &str,
-    parameter_bindings: Option<&HashMap<String, query_request::BindParameter>>,
+    parameter_bindings: Option<&RawValue>,
     request_id: uuid::Uuid,
     is_retry: bool,
 ) -> Result<query_response::Response, RestError> {
@@ -665,7 +665,7 @@ async fn execute_sync_query(
         is_internal: false,
         describe_only: None,
         parameters: None,
-        bindings: parameter_bindings.cloned(),
+        bindings: parameter_bindings,
         bind_stage: None,
         query_context: query_request::QueryContext { entries: None },
     };
@@ -732,7 +732,7 @@ pub async fn snowflake_query_async_style(
     query_parameters: &QueryParameters,
     session_token: String,
     sql: String,
-    parameter_bindings: Option<HashMap<String, query_request::BindParameter>>,
+    parameter_bindings: Option<&RawValue>,
     retry_policy: &RetryPolicy,
 ) -> Result<query_response::Response, RestError> {
     let request_id = uuid::Uuid::new_v4();

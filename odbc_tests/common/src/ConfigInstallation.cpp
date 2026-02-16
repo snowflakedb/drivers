@@ -1,11 +1,11 @@
-#include "ODBCConfig.hpp"
-#include "compatibility.hpp"
-
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <random>
 #include <stdexcept>
+
+#include "ODBCConfig.hpp"
+#include "compatibility.hpp"
 
 // ============================================================================
 // ConfigInstallation
@@ -31,8 +31,8 @@ ConfigInstallation::~ConfigInstallation() {
     std::error_code ec;
     std::filesystem::remove_all(config_dir_, ec);
     if (ec) {
-      std::cerr << "Warning: Failed to remove temporary config directory '"
-                << config_dir_ << "': " << ec.message() << std::endl;
+      std::cerr << "Warning: Failed to remove temporary config directory '" << config_dir_ << "': " << ec.message()
+                << std::endl;
     }
   }
 }
@@ -50,8 +50,8 @@ ConfigInstallation& ConfigInstallation::operator=(ConfigInstallation&& other) no
       std::error_code ec;
       std::filesystem::remove_all(config_dir_, ec);
       if (ec) {
-        std::cerr << "Warning: Failed to remove temporary config directory '"
-                  << config_dir_ << "': " << ec.message() << std::endl;
+        std::cerr << "Warning: Failed to remove temporary config directory '" << config_dir_ << "': " << ec.message()
+                  << std::endl;
       }
     }
     config_dir_ = std::move(other.config_dir_);
@@ -62,9 +62,7 @@ ConfigInstallation& ConfigInstallation::operator=(ConfigInstallation&& other) no
   return *this;
 }
 
-const std::string& ConfigInstallation::config_dir() const {
-  return config_dir_;
-}
+const std::string& ConfigInstallation::config_dir() const { return config_dir_; }
 
 std::string ConfigInstallation::dsn_name(size_t index) const {
   if (index >= data_sources_.size()) {
@@ -85,8 +83,8 @@ std::string ConfigInstallation::create_temp_dir() {
 
   std::error_code ec;
   if (!std::filesystem::create_directories(full_path, ec) && ec) {
-    throw std::runtime_error("Failed to create temporary config directory '" + 
-                            full_path.string() + "': " + ec.message());
+    throw std::runtime_error("Failed to create temporary config directory '" + full_path.string() +
+                             "': " + ec.message());
   }
   return full_path.string();
 }
@@ -94,7 +92,7 @@ std::string ConfigInstallation::create_temp_dir() {
 void ConfigInstallation::write_odbcinst_ini() const {
   const std::string file_path = (std::filesystem::path(config_dir_) / "odbcinst.ini").string();
   std::ofstream file(file_path);
-  
+
   if (!file.is_open()) {
     throw std::runtime_error("Failed to open odbcinst.ini for writing: " + file_path);
   }

@@ -28,7 +28,6 @@ Feature: Session Logout - Core HTTP Layer Integration
     And Connection attempt failed before authentication
     When Connection close is attempted
     Then No HTTP request is sent to server
-    And Local resources are cleaned up
 
   # ===========================================================================
   #                      Parameter-Based Logout Control
@@ -50,11 +49,15 @@ Feature: Session Logout - Core HTTP Layer Integration
   #                      Default Configuration
   # ===========================================================================
 
-  Scenario: should use default 5 second timeout for logout requests
-    Given Mock HTTP server is configured
-    And UD Core connection with default timeout
+  Scenario: should timeout after 5 seconds by default when server does not respond
+    # Tests that default timeout is applied when no override provided
+    # Mock server holds connection open (10s) to verify timeout interrupts after 5s
+    Given Mock HTTP server holds connection open for 10 seconds without responding
+    And UD Core connection is logged in with no timeout override
     When Logout is initiated
-    Then Request timeout is 5 seconds
+    Then Logout request times out after approximately 5 seconds
+    And Close throws timeout error
+    And Total elapsed time is between 5 and 6 seconds
 
   Scenario: should cancel individual request when per-request socket timeout exceeded
     # Tests that per-request timeout is passed to socket and interrupts slow responses
@@ -64,6 +67,7 @@ Feature: Session Logout - Core HTTP Layer Integration
     And Total retry budget timeout is set to 10 seconds
     When Logout is initiated
     Then First request is cancelled after 2 seconds due to socket timeout
+    # Implementation: Use mock TCP server that holds connection, verify timing
     And Retry proceeds because total budget still has time remaining
     And Second request succeeds immediately
     And Close succeeds
@@ -101,7 +105,6 @@ Feature: Session Logout - Core HTTP Layer Integration
   Scenario: should reject new query with connection closed error when submitted after close started
     Given Mock HTTP server delays logout response by 5 seconds then returns 200
     And UD Core connection is logged in
-    And Socket timeout is set to 10 seconds
     When Connection close is initiated on a separate thread
     And Query SELECT 1 is submitted while logout is still in-flight
     Then Query SELECT 1 fails with connection closed error
@@ -226,7 +229,7 @@ Feature: Session Logout - Core HTTP Layer Integration
     Then Token refresh request is sent to server
     And Logout is retried with new session token
     And Close succeeds
-    # TODO: Decide whether the token refresh request itself counts as a retry attempt
+    # Refresh is "free" - doesn't count in total retries limit of attempts
 
     Examples:
       | strategy_type |
@@ -274,6 +277,7 @@ Feature: Session Logout - Core HTTP Layer Integration
 
   Scenario Outline: should honor provided timeout config and succeed for each <strategy_type>
     # Wrappers pass their historical defaults (Python: 5s, JDBC/ODBC: 300s)
+    # Note: Failure path scenarios (timeout exceeded) are below, split by strategy
     Given Core logout function called with <strategy_type> strategy
     And Timeout configured to <timeout_seconds> seconds
     And Mock server delays response by <delay_seconds> seconds then returns 200

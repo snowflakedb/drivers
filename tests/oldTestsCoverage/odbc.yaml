@@ -467,17 +467,25 @@ tests:
   - test_name: JWT renew
     ud_tests: []
   - test_name: Load base64 encoded private key
-    ud_tests: []
+    ud_tests:
+    - odbc_tests/tests/e2e/authentication/private_key_auth.cpp - should authenticate using private_key as base64 string
+    - odbc_tests/tests/integration/authentication/private_key_auth.cpp - should forward base64 private key set via SQLSetConnectAttr to core
   - test_name: Load private key through EVP_PKEY structure
     ud_tests: []
   - test_name: Load private key through PEM file
-    ud_tests: []
+    ud_tests:
+    - odbc_tests/tests/e2e/authentication/private_key_auth.cpp - should authenticate using private file with password
+    - odbc_tests/tests/e2e/authentication/private_key_auth.cpp - should authenticate using unencrypted private key file
   - test_name: Load private key through PEM file with unicode path
     ud_tests: []
   - test_name: Load private key through key file content
-    ud_tests: []
+    ud_tests:
+    - odbc_tests/tests/integration/authentication/private_key_auth.cpp - should forward private key content set via SQLSetConnectAttr to core
+    - odbc_tests/tests/integration/authentication/private_key_auth.cpp - should forward private key password set via SQLSetConnectAttr to core
   - test_name: Missing private key
-    ud_tests: []
+    ud_tests:
+    - odbc_tests/tests/integration/authentication/private_key_auth.cpp - should fail JWT authentication when no private file provided
+    - odbc_tests/tests/e2e/authentication/private_key_auth.cpp - should fail JWT authentication when invalid private key provided
   EndToEndTests/LOBCatchLatestTest/LOBCatchLatestTest.cpp:
   - test_name: InsertLobDataWithBindings
     ud_tests: []

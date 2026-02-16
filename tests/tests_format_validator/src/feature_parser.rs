@@ -1,15 +1,15 @@
 use anyhow::{Context, Result};
-use lazy_static::lazy_static;
 use regex::Regex;
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
 
-/// All recognized Gherkin scenario keywords (longest first for correct prefix stripping).
-const SCENARIO_PREFIXES: &[&str] = &["Scenario Outline:", "Scenario Template:", "Scenario:"];
+/// All recognized Gherkin scenario keywords (longest prefixes first so that
+/// `Scenario Outline:` and `Scenario Template:` are matched before `Scenario:`).
+const SCENARIO_PREFIXES: &[&str] = &["Scenario Template:", "Scenario Outline:", "Scenario:"];
 
-lazy_static! {
-    static ref TAG_REGEX: Regex = Regex::new(r"@(\w+)").unwrap();
-    static ref STEP_REGEX: Regex = Regex::new(r"^\s*(Given|When|Then|And|But)\s+(.+)$").unwrap();
-}
+static TAG_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"@(\w+)").unwrap());
+static STEP_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^\s*(Given|When|Then|And|But)\s+(.+)$").unwrap());
 
 /// Check if a trimmed line starts a scenario (any keyword).
 fn is_scenario_start(line: &str) -> bool {
@@ -154,7 +154,7 @@ impl Feature {
                 break;
             }
 
-            // Skip Examples table sections (Scenario Outline)
+            // Skip table rows (Examples tables and step data tables)
             if line.starts_with("Examples:") || line.starts_with("|") {
                 *i += 1;
                 continue;

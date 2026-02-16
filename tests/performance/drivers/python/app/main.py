@@ -1,4 +1,5 @@
 import sys
+import os
 
 from config import TestConfig
 from connection import create_connection, get_server_version, execute_setup_queries
@@ -35,8 +36,6 @@ def main():
     
     cursor = conn.cursor()
     
-    server_version = get_server_version(cursor)
-    
     try:
         execute_setup_queries(cursor, setup_queries)
     except Exception:
@@ -52,11 +51,17 @@ def main():
         config.iterations
     )
     
+    # In replay mode, skip server version query and use N/A
+    if os.getenv("WIREMOCK_REPLAY") == "true":
+        server_version = "N/A"
+    else:
+        server_version = get_server_version(cursor)
+    write_run_metadata(config.driver_type, driver_version, server_version or "UNKNOWN")
+        
     cursor.close()
     conn.close()
 
     filename = write_csv_results(results, config.test_name, config.driver_type, config.test_type)
-    write_run_metadata(config.driver_type, driver_version, server_version)
     
     print(f"\n✓ Complete → {filename}")
 

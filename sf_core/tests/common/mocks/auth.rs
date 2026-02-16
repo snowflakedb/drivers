@@ -15,14 +15,18 @@ pub async fn mount_jwt_login_success(server: &MockServer) {
                 "AUTHENTICATOR": "SNOWFLAKE_JWT"
             }
         })))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "success": true,
-            "data": {
-                "token": "mock_token",
-                "masterToken": "mock_master_token",
-                "sessionId": 12345
-            }
-        })))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({
+                    "success": true,
+                    "data": {
+                        "token": "mock_token",
+                        "masterToken": "mock_master_token",
+                        "sessionId": 12345
+                    }
+                }))
+                .insert_header("Content-Type", "application/json"),
+        )
         .mount(server)
         .await;
 }

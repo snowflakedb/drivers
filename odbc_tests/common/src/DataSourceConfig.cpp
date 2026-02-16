@@ -1,10 +1,10 @@
-#include "ODBCConfig.hpp"
-
 #include <picojson.h>
 
 #include <fstream>
 #include <random>
 #include <stdexcept>
+
+#include "ODBCConfig.hpp"
 
 // ============================================================================
 // DataSourceConfig
@@ -25,9 +25,8 @@ DataSourceConfig DataSourceConfig::Snowflake(const std::string& connection_name)
   config.parameters_["Description"] = "Snowflake Test DSN";
   config.parameters_["Driver"] = config.driver_config_.value()->name();
   config.parameters_["Locale"] = "en-US";
-  config.parameters_["SERVER"] = get_string(params, "SNOWFLAKE_TEST_HOST",
-                                             get_string(params, "SNOWFLAKE_TEST_ACCOUNT", "") +
-                                                 ".snowflakecomputing.com");
+  config.parameters_["SERVER"] = get_string(
+      params, "SNOWFLAKE_TEST_HOST", get_string(params, "SNOWFLAKE_TEST_ACCOUNT", "") + ".snowflakecomputing.com");
   config.parameters_["PORT"] = "443";
   config.parameters_["SSL"] = "on";
   config.parameters_["UID"] = get_string(params, "SNOWFLAKE_TEST_USER", "");
@@ -66,8 +65,7 @@ DataSourceConfig& DataSourceConfig::remove(const std::string& key) {
   return *this;
 }
 
-DataSourceConfig& DataSourceConfig::driver_config(
-    const std::optional<std::shared_ptr<DriverConfig>>& dc) {
+DataSourceConfig& DataSourceConfig::driver_config(const std::optional<std::shared_ptr<DriverConfig>>& dc) {
   driver_config_ = dc;
   return *this;
 }
@@ -77,21 +75,13 @@ DataSourceConfig& DataSourceConfig::name(const std::string& name) {
   return *this;
 }
 
-const std::string& DataSourceConfig::name() const {
-  return name_;
-}
+const std::string& DataSourceConfig::name() const { return name_; }
 
-const std::map<std::string, std::string>& DataSourceConfig::parameters() const {
-  return parameters_;
-}
+const std::map<std::string, std::string>& DataSourceConfig::parameters() const { return parameters_; }
 
-std::optional<std::shared_ptr<DriverConfig>> DataSourceConfig::driver_config() const {
-  return driver_config_;
-}
+std::optional<std::shared_ptr<DriverConfig>> DataSourceConfig::driver_config() const { return driver_config_; }
 
-ConfigInstallation DataSourceConfig::install() {
-  return ConfigInstallation::install({*this});
-}
+ConfigInstallation DataSourceConfig::install() { return ConfigInstallation::install({*this}); }
 
 picojson::object DataSourceConfig::load_parameters(const std::string& connection_name) {
   const char* parameter_path_env = std::getenv("PARAMETER_PATH");
@@ -122,7 +112,7 @@ picojson::object DataSourceConfig::load_parameters(const std::string& connection
 }
 
 std::string DataSourceConfig::get_string(const picojson::object& obj, const std::string& key,
-                                          const std::string& default_value) {
+                                         const std::string& default_value) {
   if (const auto it = obj.find(key); it != obj.end() && it->second.is<std::string>()) {
     return it->second.get<std::string>();
   }

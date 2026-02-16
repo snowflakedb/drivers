@@ -36,6 +36,9 @@ export PATH=$(pwd)/bin/protoc/bin:$PATH
 
 which protoc
 
+echo "--- Installing mypy-protobuf for Python .pyi stub generation ---"
+pip install "mypy-protobuf==5.0.0" 2>/dev/null || pip3 install "mypy-protobuf==5.0.0" 2>/dev/null || echo "Warning: could not install mypy-protobuf, will fall back to protoc --pyi_out"
+
 echo "--- Generating proto ---"
 cargo run --bin proto_generator -- --generator rust --input protobuf/database_driver_v1.proto --output sf_core/src/protobuf_gen/
 cargo run --bin proto_generator -- --generator python --input protobuf/database_driver_v1.proto --output python/src/snowflake/connector/_internal/protobuf_gen/

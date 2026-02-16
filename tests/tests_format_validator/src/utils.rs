@@ -10,7 +10,7 @@ pub fn to_pascal_case(s: &str) -> String {
     s.to_case(Case::Pascal)
 }
 
-/// Check if two strings match when normalized (ignoring case, spaces, underscores, angle brackets)
+/// Check if two strings match when normalized (ignoring case, spaces, underscores, hyphens, angle brackets)
 pub fn strings_match_normalized(s1: &str, s2: &str) -> bool {
     let normalize = |s: &str| {
         s.to_lowercase()

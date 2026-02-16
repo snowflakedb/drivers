@@ -6,7 +6,7 @@ from ctypes import c_char_p
 
 from ..protobuf_gen.database_driver_v1_services import DatabaseDriverClient
 from ..protobuf_gen.proto_exception import ProtoTransportException
-from .c_api import sf_core_api_call_proto
+from .c_api import sf_core_api_call_proto, sf_core_free_buffer
 
 
 class ProtoTransport:
@@ -26,7 +26,9 @@ class ProtoTransport:
             ctypes.byref(response_len),
         )
         if code == 0 or code == 1 or code == 2:
-            return (code, bytes(response[: response_len.value]))
+            result = bytes(response[: response_len.value])
+            sf_core_free_buffer(response, response_len.value)
+            return (code, result)
 
         raise ProtoTransportException(f"Unknown error code: {code}")
 
