@@ -57,3 +57,9 @@ repos:
         entry: '^\s*assert\s'
         language: pygrep
         files: ^python/src/.*\.py$
+    -   id: jdbc-spotless-check
+        name: JDBC Spotless check
+        description: Run Spotless checks for the JDBC module.
+        entry: bash -c 'cd jdbc && ./gradlew spotlessCheck'
+        pass_filenames: false
+        language: system
