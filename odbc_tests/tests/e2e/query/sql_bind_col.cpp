@@ -17,7 +17,6 @@
 // =============================================================================
 
 TEST_CASE("SQLBindCol binds a column and SQLFetch returns data in bound buffer.", "[query][bind_col]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "SQLBindCol is used to associate, or bind, columns in the result set
   //       to data buffers and length/indicator buffers in the application."
   // Doc: "When the application calls SQLFetch, SQLFetchScroll, or SQLSetPos to
@@ -48,7 +47,6 @@ TEST_CASE("SQLBindCol binds a column and SQLFetch returns data in bound buffer."
 }
 
 TEST_CASE("SQLBindCol returns SQL_SUCCESS on successful binding.", "[query][bind_col]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "Returns SQL_SUCCESS, SQL_SUCCESS_WITH_INFO, SQL_ERROR, or SQL_INVALID_HANDLE."
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlbindcol-function#returns
 
@@ -66,7 +64,6 @@ TEST_CASE("SQLBindCol returns SQL_SUCCESS on successful binding.", "[query][bind
 }
 
 TEST_CASE("SQLBindCol binds multiple columns in a result set.", "[query][bind_col]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "SQLBindCol is used to associate, or bind, columns in the result set
   //       to data buffers and length/indicator buffers in the application."
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlbindcol-function#comments
@@ -109,7 +106,6 @@ TEST_CASE("SQLBindCol binds multiple columns in a result set.", "[query][bind_co
 // =============================================================================
 
 TEST_CASE("SQLBindCol uses 1-based column numbering when bookmarks are not used.", "[query][bind_col]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "Columns are numbered in increasing column order starting at 0, where
   //       column 0 is the bookmark column. If bookmarks are not used - that is,
   //       the SQL_ATTR_USE_BOOKMARKS statement attribute is set to SQL_UB_OFF -
@@ -147,7 +143,6 @@ TEST_CASE("SQLBindCol uses 1-based column numbering when bookmarks are not used.
 // =============================================================================
 
 TEST_CASE("SQLBindCol can be called before SQLExecDirect.", "[query][bind_col]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "The use of these buffers is deferred; that is, the application binds
   //       them in SQLBindCol but the driver accesses them from other functions -
   //       namely SQLBulkOperations, SQLFetch, SQLFetchScroll, or SQLSetPos."
@@ -175,7 +170,6 @@ TEST_CASE("SQLBindCol can be called before SQLExecDirect.", "[query][bind_col]")
 }
 
 TEST_CASE("SQLBindCol can be called after SQLExecDirect.", "[query][bind_col]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "A column can be bound, unbound, or rebound at any time, even after
   //       data has been fetched from the result set."
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlbindcol-function#binding-unbinding-and-rebinding-columns
@@ -206,7 +200,6 @@ TEST_CASE("SQLBindCol can be called after SQLExecDirect.", "[query][bind_col]") 
 // =============================================================================
 
 TEST_CASE("SQLBindCol unbinds a column when TargetValuePtr is null pointer.", "[query][bind_col]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "If TargetValuePtr is a null pointer, the driver unbinds the data buffer
   //       for the column."
   // Doc: "To unbind a single column, an application calls SQLBindCol with
@@ -239,7 +232,6 @@ TEST_CASE("SQLBindCol unbinds a column when TargetValuePtr is null pointer.", "[
 }
 
 TEST_CASE("SQLBindCol returns SQL_SUCCESS when unbinding an already unbound column.", "[query][bind_col]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "If ColumnNumber refers to an unbound column, SQLBindCol still returns
   //       SQL_SUCCESS."
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlbindcol-function#unbinding-columns
@@ -260,7 +252,6 @@ TEST_CASE("SQLBindCol returns SQL_SUCCESS when unbinding an already unbound colu
 }
 
 TEST_CASE("SQLFreeStmt with SQL_UNBIND unbinds all columns.", "[query][bind_col]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "To unbind all columns, an application calls SQLFreeStmt with fOption
   //       set to SQL_UNBIND. This can also be accomplished by setting the
   //       SQL_DESC_COUNT field of the ARD to zero."
@@ -297,7 +288,6 @@ TEST_CASE("SQLFreeStmt with SQL_UNBIND unbinds all columns.", "[query][bind_col]
 }
 
 TEST_CASE("SQLBindCol can unbind data buffer while keeping indicator bound.", "[query][bind_col]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "An application can unbind the data buffer for a column but still have
   //       a length/indicator buffer bound for the column, if the TargetValuePtr
   //       argument in the call to SQLBindCol is a null pointer but the
@@ -334,7 +324,6 @@ TEST_CASE("SQLBindCol can unbind data buffer while keeping indicator bound.", "[
 // =============================================================================
 
 TEST_CASE("SQLBindCol replaces old binding when called on already bound column.", "[query][bind_col]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "Call SQLBindCol to specify a new binding for a column that is already
   //       bound. The driver overwrites the old binding with the new one."
   // Doc: "The new binding takes effect the next time that a function that uses
@@ -373,7 +362,6 @@ TEST_CASE("SQLBindCol replaces old binding when called on already bound column."
 }
 
 TEST_CASE("SQLBindCol rebinding takes effect on next fetch, not the current one.", "[query][bind_col]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "The new binding takes effect the next time that a function that uses
   //       bindings is called. For example, suppose an application binds the
   //       columns in a result set and calls SQLFetch. The driver returns the data
@@ -421,7 +409,6 @@ TEST_CASE("SQLBindCol rebinding takes effect on next fetch, not the current one.
 }
 
 TEST_CASE("SQLBindCol can rebind after data has been fetched from result set.", "[query][bind_col]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "A column can be bound, unbound, or rebound at any time, even after
   //       data has been fetched from the result set."
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlbindcol-function#binding-unbinding-and-rebinding-columns
@@ -1205,7 +1192,6 @@ TEST_CASE("SQLBindCol returns 07009 when ColumnNumber exceeds max columns.", "[q
 }
 
 TEST_CASE("SQLBindCol returns SQL_INVALID_HANDLE for invalid statement handle.", "[query][bind_col]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "Returns SQL_SUCCESS, SQL_SUCCESS_WITH_INFO, SQL_ERROR, or
   //       SQL_INVALID_HANDLE."
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlbindcol-function#returns
@@ -1479,7 +1465,6 @@ TEST_CASE("SQLBindCol indicator returns full data length when buffer causes trun
 // =============================================================================
 
 TEST_CASE("SQLBindCol binding persists across SQLFreeStmt SQL_CLOSE and re-execute.", "[query][bind_col]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "The binding remains in effect until it is replaced by a new binding,
   //       the column is unbound, or the statement is freed."
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlbindcol-function#binding-columns
@@ -1518,7 +1503,6 @@ TEST_CASE("SQLBindCol binding persists across SQLFreeStmt SQL_CLOSE and re-execu
 }
 
 TEST_CASE("SQLBindCol binding is removed by SQLFreeStmt SQL_UNBIND.", "[query][bind_col]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "The binding remains in effect until it is replaced by a new binding,
   //       the column is unbound, or the statement is freed."
   // Doc: "To unbind all columns, an application calls SQLFreeStmt with fOption

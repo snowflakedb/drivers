@@ -65,6 +65,12 @@ core.sf_core_api_call_proto.argtypes = [
     ctypes.POINTER(ctypes.c_size_t),  # size_t* response_len
 ]
 
+core.sf_core_free_buffer.restype = None
+core.sf_core_free_buffer.argtypes = [
+    ctypes.POINTER(ctypes.c_ubyte),  # uint8_t* buffer
+    ctypes.c_size_t,  # size_t len
+]
+
 
 def sf_core_api_call_proto(
     api: ctypes.c_char_p,
@@ -75,6 +81,10 @@ def sf_core_api_call_proto(
     response_len: Any,
 ) -> int:
     return core.sf_core_api_call_proto(api, method, request, request_len, response, response_len)  # type: ignore
+
+
+def sf_core_free_buffer(buffer: Any, length: int) -> None:
+    core.sf_core_free_buffer(buffer, length)
 
 
 def sf_core_init_logger(callback: Any) -> None:

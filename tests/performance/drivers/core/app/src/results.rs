@@ -1,6 +1,8 @@
 //! Results output and CSV formatting
 
+use crate::connection::get_server_version as get_server_version_internal;
 use crate::types::{IterationResult, PutGetResult};
+use sf_core::protobuf_gen::database_driver_v1::ConnectionHandle;
 use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
@@ -9,13 +11,13 @@ type Result<T> = std::result::Result<T, String>;
 
 pub fn write_csv_results(results: &[IterationResult], test_name: &str) -> Result<String> {
     write_csv_file(test_name, |file| {
-        writeln!(file, "timestamp,query_s,fetch_s")
+        writeln!(file, "timestamp,query_s,fetch_s,row_count")
             .map_err(|e| format!("Failed to write: {:?}", e))?;
         for result in results {
             writeln!(
                 file,
-                "{},{:.6},{:.6}",
-                result.timestamp, result.query_time_s, result.fetch_time_s
+                "{},{:.6},{:.6},{}",
+                result.timestamp, result.query_time_s, result.fetch_time_s, result.row_count
             )
             .map_err(|e| format!("Failed to write: {:?}", e))?;
         }
@@ -68,10 +70,7 @@ pub fn write_run_metadata_json(server_version: &str) -> Result<String> {
         return Ok(metadata_filename.display().to_string());
     }
 
-    let timestamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs();
+    let timestamp = current_unix_timestamp();
 
     // Get driver version from env (set at compile time in Cargo.toml)
     let driver_version = env!("CARGO_PKG_VERSION");
@@ -163,6 +162,13 @@ fn get_os_version() -> String {
     }
 }
 
+pub fn current_unix_timestamp() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64
+}
+
 /// Common CSV file creation logic.
 /// Handles timestamp generation, directory creation, and file setup.
 /// The caller provides a closure to write the specific CSV content.
@@ -170,10 +176,7 @@ fn write_csv_file<F>(test_name: &str, write_content: F) -> Result<String>
 where
     F: FnOnce(&mut fs::File) -> Result<()>,
 {
-    let timestamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs();
+    let timestamp = current_unix_timestamp();
 
     // Use RESULTS_DIR env var if set (for local execution), otherwise use /results (Docker)
     let results_dir = std::env::var("RESULTS_DIR").unwrap_or_else(|_| "/results".to_string());
@@ -188,6 +191,20 @@ where
     write_content(&mut file)?;
 
     Ok(filename.display().to_string())
+}
+
+pub fn write_metadata_if_not_replay(conn_handle: ConnectionHandle) -> Result<()> {
+    // In replay mode, skip server version query and use N/A
+    let actual_server_version = match std::env::var("WIREMOCK_REPLAY") {
+        Ok(val) if val == "true" => "N/A".to_string(),
+        _ => get_server_version_internal(conn_handle).unwrap_or_else(|e| {
+            eprintln!("⚠️  Warning: Could not retrieve server version: {}", e);
+            "UNKNOWN".to_string()
+        }),
+    };
+    write_run_metadata_json(&actual_server_version)
+        .map_err(|e| format!("Failed to write metadata: {:?}", e))?;
+    Ok(())
 }
 
 #[cfg(test)]

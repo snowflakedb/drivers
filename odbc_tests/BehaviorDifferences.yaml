@@ -26,3 +26,9 @@ behavior_differences:
   9:
 
     name: "SQLBindCol doesn't set indicator when TargetValuePtr is null."
+
+  10:
+    name: "SQL_SF_CONN_ATTR_PRIV_KEY (EVP_PKEY pointer) is not supported"
+    description: |
+      The old driver accepted raw EVP_PKEY* pointers via SQLSetConnectAttr.
+      Not supported across the Rust FFI boundary — use PRIV_KEY_CONTENT or PRIV_KEY_BASE64 instead.

@@ -25,6 +25,7 @@ pub fn alloc_connection() -> OdbcResult<*mut Connection> {
     let dbc = Box::new(Connection {
         state: ConnectionState::Disconnected,
         diagnostic_info: DiagnosticInfo::default(),
+        pre_connection_attrs: Default::default(),
     });
     Ok(Box::into_raw(dbc))
 }
@@ -103,13 +104,17 @@ pub fn free_statement(handle: sql::Handle) -> OdbcResult<()> {
 
 /// Initialize logging (helper function for allocation)
 pub fn init_logging() {
-    use lazy_static::lazy_static;
+    use std::sync::LazyLock;
 
-    lazy_static! {
-        // TODO: This is a hack to initialize the logging system.
-        // We should find a better way to do this.
-        static ref LOGGING_RESULT: Result<(), sf_core::logging::LogError> = sf_core::logging::init(sf_core::logging::LoggingConfig::new(Some("odbc.log".into()), true, false));
-    }
+    // TODO: This is a hack to initialize the logging system.
+    // We should find a better way to do this.
+    static LOGGING_RESULT: LazyLock<Result<(), sf_core::logging::LogError>> = LazyLock::new(|| {
+        sf_core::logging::init(sf_core::logging::LoggingConfig::new(
+            Some("odbc.log".into()),
+            true,
+            false,
+        ))
+    });
 
     if let Err(e) = LOGGING_RESULT.as_ref() {
         eprintln!("Failed to initialize logging: {e:?}");

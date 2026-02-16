@@ -8,6 +8,12 @@ Feature: Private Key Authentication
     Then Login is successful and simple query can be executed
 
   @core_e2e @odbc_e2e @python_e2e
+  Scenario: should authenticate using unencrypted private key file
+    Given Authentication is set to JWT and an unencrypted private key file is provided (no password)
+    When Trying to Connect
+    Then Login is successful and simple query can be executed
+
+  @core_e2e @odbc_e2e @python_e2e
   Scenario: should fail JWT authentication when invalid private key provided
     Given Authentication is set to JWT and invalid private key file is provided
     When Trying to Connect
@@ -25,15 +31,9 @@ Feature: Private Key Authentication
     When Trying to Connect
     Then Login is successful and simple query can be executed
 
-  @core_e2e
+  @core_e2e @odbc_e2e @python_e2e
   Scenario: should authenticate using private_key as base64 string
     Given Authentication is set to JWT and private key is provided as base64-encoded string
-    When Trying to Connect
-    Then Login is successful and simple query can be executed
-
-  @python_e2e
-  Scenario: should authenticate using private_key as str
-    Given Authentication is set to JWT and private key is provided as str
     When Trying to Connect
     Then Login is successful and simple query can be executed
 
@@ -54,3 +54,4 @@ Feature: Private Key Authentication
     Given Both private_key and private_key_file parameters are set
     When Trying to Connect
     Then There is error returned indicating conflicting parameters
+

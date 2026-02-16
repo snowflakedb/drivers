@@ -20,6 +20,7 @@ jobs:
   jdbc_tests:
     needs: detect-changes
     if: github.event_name == 'push' || needs.detect-changes.outputs.run_jdbc == 'true'
+    name: JDBC Tests (full suite)
     strategy:
       fail-fast: false
       matrix:
@@ -57,8 +58,57 @@ jobs:
           cd jdbc
           ./gradlew test jacocoTestReport --stacktrace
 
+  jdbc_tests_reference:
+    needs: detect-changes
+    if: github.event_name == 'push' || needs.detect-changes.outputs.run_jdbc == 'true'
+    name: JDBC Old Driver Reference Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java 8
+        uses: actions/setup-java@v4
+        with:
+          java-version: '8'
+          distribution: 'temurin'
+
+      - name: Decode secrets
+        run: ./scripts/decode_secrets.sh
+        env:
+          PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
+
+      - name: Make gradlew executable
+        run: chmod +x jdbc/gradlew
+
+      - name: Run JDBC reference tests
+        run: |
+          export PARAMETER_PATH=$(pwd)/parameters.json
+          cd jdbc
+          ./gradlew referenceTest jacocoReferenceReport --stacktrace
+
+      - name: Upload OLD reference artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jdbc-reference-artifacts
+          path: |
+            jdbc/build/test-results/referenceTest/**/*.xml
+            jdbc/build/jacoco/referenceTest.exec
+            jdbc/build/reports/jacoco/referenceTest/**
+          if-no-files-found: error
+
+      - name: Print OLD reference overall coverage
+        if: always()
+        run: |
+          python3 jdbc/ci/reference_tests/extract_coverage.py \
+            --report jdbc/build/reports/jacoco/referenceTest/coverage.xml \
+            --label "OLD JDBC reference" \
+            --summary "$GITHUB_STEP_SUMMARY" \
+            --allow-missing
+
   jdbc-status:
-    needs: [detect-changes, jdbc_tests]
+    needs: [detect-changes, jdbc_tests, jdbc_tests_reference]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -66,19 +116,26 @@ jobs:
         run: |
           echo "=== JDBC CI Status ==="
           
+          NEW_RESULT="${{ needs.jdbc_tests.result }}"
+          REFERENCE_RESULT="${{ needs.jdbc_tests_reference.result }}"
+
           # Check if tests were skipped
-          if [[ "${{ needs.jdbc_tests.result }}" == "skipped" ]]; then
-            echo "✓ JDBC tests were SKIPPED (no relevant changes detected)"
+          if [[ "$NEW_RESULT" == "skipped" && "$REFERENCE_RESULT" == "skipped" ]]; then
+            echo "✓ JDBC jobs were SKIPPED (no relevant changes detected)"
             echo "  - run_jdbc: ${{ needs.detect-changes.outputs.run_jdbc }}"
             exit 0
           fi
           
-          # Check if tests failed or were cancelled
-          if [[ "${{ needs.jdbc_tests.result }}" =~ ^(failure|cancelled)$ ]]; then
-            echo "✗ JDBC tests were RUN and FAILED or CANCELLED"
+          # Check if any job failed or was cancelled
+          if [[ "$NEW_RESULT" =~ ^(failure|cancelled)$ || "$REFERENCE_RESULT" =~ ^(failure|cancelled)$ ]]; then
+            echo "✗ JDBC CI FAILED or CANCELLED"
+            echo "  - JDBC Tests (new): $NEW_RESULT"
+            echo "  - JDBC Reference (old): $REFERENCE_RESULT"
             exit 1
           fi
           
           # Tests ran and passed
-          echo "✓ JDBC tests were RUN and PASSED"
+          echo "✓ JDBC jobs were RUN and PASSED"
+          echo "  - JDBC Tests (new): $NEW_RESULT"
+          echo "  - JDBC Reference (old): $REFERENCE_RESULT"
           exit 0

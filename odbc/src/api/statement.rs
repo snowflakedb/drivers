@@ -229,6 +229,30 @@ pub fn bind_parameter(
     Ok(())
 }
 
+/// Free statement resources based on the option
+pub fn free_stmt(statement_handle: sql::Handle, option: sql::FreeStmtOption) -> OdbcResult<()> {
+    tracing::debug!("free_stmt: statement_handle={statement_handle:?}, option={option:?}");
+
+    let stmt = stmt_from_handle(statement_handle);
+
+    match option {
+        sql::FreeStmtOption::Close => {
+            tracing::info!("free_stmt: Closing cursor");
+            stmt.state = StatementState::Created.into();
+        }
+        sql::FreeStmtOption::Unbind => {
+            tracing::info!("free_stmt: Unbinding all columns");
+            stmt.column_bindings.clear();
+        }
+        sql::FreeStmtOption::ResetParams => {
+            tracing::info!("free_stmt: Resetting all parameters");
+            stmt.parameter_bindings.clear();
+        }
+    }
+
+    Ok(())
+}
+
 /// Bind a column to a statement
 pub fn bind_col(
     statement_handle: sql::Handle,

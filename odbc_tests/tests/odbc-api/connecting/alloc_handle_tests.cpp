@@ -4,9 +4,9 @@
 
 #include <catch2/catch_test_macros.hpp>
 
-#include "compatibility.hpp"
 #include "Connection.hpp"
 #include "HandleWrapper.hpp"
+#include "compatibility.hpp"
 #include "get_diag_rec.hpp"
 #include "macros.hpp"
 #include "test_macros.hpp"
@@ -31,7 +31,7 @@ TEST_CASE("SQLAllocHandle ENV: Multiple allocations succeed", "[odbc-api][alloc_
   constexpr int NUM_HANDLES = 5;
   SQLHENV handles[NUM_HANDLES];
 
-  for (auto & handle : handles) {
+  for (auto& handle : handles) {
     handle = SQL_NULL_HENV;
     const SQLRETURN ret = SQLAllocHandle(SQL_HANDLE_ENV, SQL_NULL_HANDLE, &handle);
     REQUIRE(ret == SQL_SUCCESS);
@@ -46,7 +46,7 @@ TEST_CASE("SQLAllocHandle ENV: Multiple allocations succeed", "[odbc-api][alloc_
   }
 
   // Clean up
-  for (const auto & handle : handles) {
+  for (const auto& handle : handles) {
     SQLFreeHandle(SQL_HANDLE_ENV, handle);
   }
 }
@@ -58,7 +58,8 @@ TEST_CASE("SQLAllocHandle ENV: HY009 - NULL OutputHandlePtr", "[odbc-api][alloc_
   REQUIRE(ret == SQL_ERROR);
 }
 
-TEST_CASE("SQLAllocHandle ENV: Non-NULL InputHandle returns error", "[odbc-api][alloc_handle][env][connecting][error]") {
+TEST_CASE("SQLAllocHandle ENV: Non-NULL InputHandle returns error",
+          "[odbc-api][alloc_handle][env][connecting][error]") {
   SQLHENV env1 = SQL_NULL_HENV;
   SQLHENV env2 = SQL_NULL_HENV;
 
@@ -98,7 +99,8 @@ TEST_CASE("SQLAllocHandle DBC: Basic allocation succeeds", "[odbc-api][alloc_han
   SQLFreeHandle(SQL_HANDLE_ENV, env);
 }
 
-TEST_CASE("SQLAllocHandle DBC: Multiple allocations from same environment", "[odbc-api][alloc_handle][dbc][connecting]") {
+TEST_CASE("SQLAllocHandle DBC: Multiple allocations from same environment",
+          "[odbc-api][alloc_handle][dbc][connecting]") {
   SQLHENV env = SQL_NULL_HENV;
   constexpr int NUM_CONNECTIONS = 5;
   SQLHDBC connections[NUM_CONNECTIONS];
@@ -108,7 +110,7 @@ TEST_CASE("SQLAllocHandle DBC: Multiple allocations from same environment", "[od
   ret = SQLSetEnvAttr(env, SQL_ATTR_ODBC_VERSION, reinterpret_cast<SQLPOINTER>(SQL_OV_ODBC3), 0);
   REQUIRE(ret == SQL_SUCCESS);
 
-  for (auto & connection : connections) {
+  for (auto& connection : connections) {
     connection = SQL_NULL_HDBC;
     ret = SQLAllocHandle(SQL_HANDLE_DBC, env, &connection);
     REQUIRE(ret == SQL_SUCCESS);
@@ -122,7 +124,7 @@ TEST_CASE("SQLAllocHandle DBC: Multiple allocations from same environment", "[od
     }
   }
 
-  for (auto & connection : connections) {
+  for (auto& connection : connections) {
     SQLFreeHandle(SQL_HANDLE_DBC, connection);
   }
   SQLFreeHandle(SQL_HANDLE_ENV, env);
@@ -143,7 +145,8 @@ TEST_CASE("SQLAllocHandle DBC: HY009 - NULL OutputHandlePtr", "[odbc-api][alloc_
   SQLFreeHandle(SQL_HANDLE_ENV, env);
 }
 
-TEST_CASE("SQLAllocHandle DBC: SQL_INVALID_HANDLE - NULL InputHandle", "[odbc-api][alloc_handle][dbc][connecting][error]") {
+TEST_CASE("SQLAllocHandle DBC: SQL_INVALID_HANDLE - NULL InputHandle",
+          "[odbc-api][alloc_handle][dbc][connecting][error]") {
   SQLHDBC dbc = SQL_NULL_HDBC;
 
   // SQL_HANDLE_DBC requires valid environment handle
@@ -205,7 +208,8 @@ TEST_CASE("SQLAllocHandle STMT: Basic allocation succeeds", "[odbc-api][alloc_ha
 
   // Connect
   const std::string conn_str = get_connection_string();
-  ret = SQLDriverConnect(dbc, nullptr, reinterpret_cast<SQLCHAR*>(const_cast<char*>(conn_str.c_str())), SQL_NTS, nullptr, 0, nullptr, SQL_DRIVER_NOPROMPT);
+  ret = SQLDriverConnect(dbc, nullptr, reinterpret_cast<SQLCHAR*>(const_cast<char*>(conn_str.c_str())), SQL_NTS,
+                         nullptr, 0, nullptr, SQL_DRIVER_NOPROMPT);
   CHECK_ODBC_ERROR(ret, dbc, SQL_HANDLE_DBC);
 
   // Allocate statement
@@ -223,7 +227,8 @@ TEST_CASE("SQLAllocHandle STMT: Basic allocation succeeds", "[odbc-api][alloc_ha
   SQLFreeHandle(SQL_HANDLE_ENV, env);
 }
 
-TEST_CASE("SQLAllocHandle STMT: Multiple allocations from same connection", "[odbc-api][alloc_handle][stmt][connecting]") {
+TEST_CASE("SQLAllocHandle STMT: Multiple allocations from same connection",
+          "[odbc-api][alloc_handle][stmt][connecting]") {
   Connection conn;
   constexpr int NUM_STATEMENTS = 10;
   std::vector<StatementHandleWrapper> statements;
@@ -243,7 +248,8 @@ TEST_CASE("SQLAllocHandle STMT: Multiple allocations from same connection", "[od
   // Verify all statements are usable
   for (int i = 0; i < NUM_STATEMENTS; i++) {
     const std::string query = "SELECT " + std::to_string(i);
-    SQLRETURN ret = SQLExecDirect(statements[i].getHandle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(query.c_str())), SQL_NTS);
+    SQLRETURN ret =
+        SQLExecDirect(statements[i].getHandle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(query.c_str())), SQL_NTS);
     CHECK_ODBC(ret, statements[i]);
   }
 }
@@ -268,7 +274,8 @@ TEST_CASE("SQLAllocHandle STMT: HY009 - NULL OutputHandlePtr", "[odbc-api][alloc
   SQLFreeHandle(SQL_HANDLE_ENV, env);
 }
 
-TEST_CASE("SQLAllocHandle STMT: SQL_INVALID_HANDLE - NULL InputHandle", "[odbc-api][alloc_handle][stmt][connecting][error]") {
+TEST_CASE("SQLAllocHandle STMT: SQL_INVALID_HANDLE - NULL InputHandle",
+          "[odbc-api][alloc_handle][stmt][connecting][error]") {
   SQLHSTMT stmt = SQL_NULL_HSTMT;
 
   const SQLRETURN ret = SQLAllocHandle(SQL_HANDLE_STMT, SQL_NULL_HANDLE, &stmt);
@@ -337,7 +344,8 @@ TEST_CASE("SQLAllocHandle DESC: Basic allocation succeeds", "[odbc-api][alloc_ha
   REQUIRE(ret == SQL_SUCCESS);
 
   const std::string conn_str = get_connection_string();
-  ret = SQLDriverConnect(dbc, nullptr, reinterpret_cast<SQLCHAR*>(const_cast<char*>(conn_str.c_str())), SQL_NTS, nullptr, 0, nullptr, SQL_DRIVER_NOPROMPT);
+  ret = SQLDriverConnect(dbc, nullptr, reinterpret_cast<SQLCHAR*>(const_cast<char*>(conn_str.c_str())), SQL_NTS,
+                         nullptr, 0, nullptr, SQL_DRIVER_NOPROMPT);
   CHECK_ODBC_ERROR(ret, dbc, SQL_HANDLE_DBC);
 
   // Allocate descriptor handle - should succeed on ODBC 3.x compliant drivers
@@ -352,7 +360,8 @@ TEST_CASE("SQLAllocHandle DESC: Basic allocation succeeds", "[odbc-api][alloc_ha
   SQLFreeHandle(SQL_HANDLE_ENV, env);
 }
 
-TEST_CASE("SQLAllocHandle DESC: Multiple allocations from same connection", "[odbc-api][alloc_handle][desc][connecting]") {
+TEST_CASE("SQLAllocHandle DESC: Multiple allocations from same connection",
+          "[odbc-api][alloc_handle][desc][connecting]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   SQLHENV env = SQL_NULL_HENV;
@@ -368,10 +377,11 @@ TEST_CASE("SQLAllocHandle DESC: Multiple allocations from same connection", "[od
   REQUIRE(ret == SQL_SUCCESS);
 
   const std::string conn_str = get_connection_string();
-  ret = SQLDriverConnect(dbc, nullptr, reinterpret_cast<SQLCHAR*>(const_cast<char*>(conn_str.c_str())), SQL_NTS, nullptr, 0, nullptr, SQL_DRIVER_NOPROMPT);
+  ret = SQLDriverConnect(dbc, nullptr, reinterpret_cast<SQLCHAR*>(const_cast<char*>(conn_str.c_str())), SQL_NTS,
+                         nullptr, 0, nullptr, SQL_DRIVER_NOPROMPT);
   CHECK_ODBC_ERROR(ret, dbc, SQL_HANDLE_DBC);
 
-  for (auto & desc : descs) {
+  for (auto& desc : descs) {
     desc = SQL_NULL_HANDLE;
     ret = SQLAllocHandle(SQL_HANDLE_DESC, dbc, &desc);
     REQUIRE(ret == SQL_SUCCESS);
@@ -385,7 +395,7 @@ TEST_CASE("SQLAllocHandle DESC: Multiple allocations from same connection", "[od
     }
   }
 
-  for (auto & desc : descs) {
+  for (auto& desc : descs) {
     SQLFreeHandle(SQL_HANDLE_DESC, desc);
   }
 
@@ -406,7 +416,8 @@ TEST_CASE("SQLAllocHandle DESC: HY009 - NULL OutputHandlePtr", "[odbc-api][alloc
   REQUIRE(ret == SQL_SUCCESS);
 
   const std::string conn_str = get_connection_string();
-  ret = SQLDriverConnect(dbc, nullptr, reinterpret_cast<SQLCHAR*>(const_cast<char*>(conn_str.c_str())), SQL_NTS, nullptr, 0, nullptr, SQL_DRIVER_NOPROMPT);
+  ret = SQLDriverConnect(dbc, nullptr, reinterpret_cast<SQLCHAR*>(const_cast<char*>(conn_str.c_str())), SQL_NTS,
+                         nullptr, 0, nullptr, SQL_DRIVER_NOPROMPT);
   CHECK_ODBC_ERROR(ret, dbc, SQL_HANDLE_DBC);
 
   ret = SQLAllocHandle(SQL_HANDLE_DESC, dbc, nullptr);
@@ -417,7 +428,8 @@ TEST_CASE("SQLAllocHandle DESC: HY009 - NULL OutputHandlePtr", "[odbc-api][alloc
   SQLFreeHandle(SQL_HANDLE_ENV, env);
 }
 
-TEST_CASE("SQLAllocHandle DESC: SQL_INVALID_HANDLE - NULL InputHandle", "[odbc-api][alloc_handle][desc][connecting][error]") {
+TEST_CASE("SQLAllocHandle DESC: SQL_INVALID_HANDLE - NULL InputHandle",
+          "[odbc-api][alloc_handle][desc][connecting][error]") {
   SQLHANDLE desc = SQL_NULL_HANDLE;
 
   const SQLRETURN ret = SQLAllocHandle(SQL_HANDLE_DESC, SQL_NULL_HANDLE, &desc);
@@ -474,7 +486,6 @@ TEST_CASE("SQLAllocHandle: HY092 - Invalid HandleType (large number)", "[odbc-ap
 
   REQUIRE(ret == SQL_INVALID_HANDLE);
 }
-
 
 // ============================================================================
 // ODBC Version Compatibility
@@ -559,7 +570,8 @@ TEST_CASE("SQLAllocHandle: Complete ENV -> DBC -> STMT hierarchy", "[odbc-api][a
 
   // Connect
   const std::string conn_str = get_connection_string();
-  ret = SQLDriverConnect(dbc, nullptr, reinterpret_cast<SQLCHAR*>(const_cast<char*>(conn_str.c_str())), SQL_NTS, nullptr, 0, nullptr, SQL_DRIVER_NOPROMPT);
+  ret = SQLDriverConnect(dbc, nullptr, reinterpret_cast<SQLCHAR*>(const_cast<char*>(conn_str.c_str())), SQL_NTS,
+                         nullptr, 0, nullptr, SQL_DRIVER_NOPROMPT);
   CHECK_ODBC_ERROR(ret, dbc, SQL_HANDLE_DBC);
 
   // Allocate statement
@@ -694,7 +706,8 @@ TEST_CASE("SQLAllocHandle: Mixed handle type allocations", "[odbc-api][alloc_han
 // Return Value Verification
 // ============================================================================
 
-TEST_CASE("SQLAllocHandle: Returns SQL_SUCCESS on successful allocation", "[odbc-api][alloc_handle][connecting][return]") {
+TEST_CASE("SQLAllocHandle: Returns SQL_SUCCESS on successful allocation",
+          "[odbc-api][alloc_handle][connecting][return]") {
   SQLHENV env = SQL_NULL_HENV;
 
   const SQLRETURN ret = SQLAllocHandle(SQL_HANDLE_ENV, SQL_NULL_HANDLE, &env);
@@ -718,7 +731,8 @@ TEST_CASE("SQLAllocHandle: Fails with invalid parent handle", "[odbc-api][alloc_
 // Implicit Descriptor Allocation (via Statement)
 // ============================================================================
 
-TEST_CASE("SQLAllocHandle STMT: Implicit descriptor handles are allocated", "[odbc-api][alloc_handle][stmt][connecting][desc]") {
+TEST_CASE("SQLAllocHandle STMT: Implicit descriptor handles are allocated",
+          "[odbc-api][alloc_handle][stmt][connecting][desc]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   Connection conn;

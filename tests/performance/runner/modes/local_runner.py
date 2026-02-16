@@ -6,6 +6,7 @@ import shutil
 import subprocess
 from pathlib import Path
 from runner.test_types import TestType
+from runner.utils import perf_tests_root
 
 logger = logging.getLogger(__name__)
 
@@ -37,14 +38,14 @@ def run_local_core_binary(
         test_type: Type of test (TestType.SELECT or TestType.PUT_GET)
         s3_files_dir: Optional directory with S3-downloaded files (for PUT/GET tests)
     """
-    repo_root = Path(__file__).parent.parent.parent.parent
-    core_app_manifest = repo_root / "tests" / "performance" / "drivers" / "core" / "app" / "Cargo.toml"
+    perf_root = perf_tests_root()
+    core_app_manifest = perf_root / "drivers" / "core" / "app" / "Cargo.toml"
     
     logger.info("Building Core binary (release mode)...")
     
     build_result = subprocess.run(
         ["cargo", "build", "--release", "--manifest-path", str(core_app_manifest)],
-        cwd=repo_root,
+        cwd=perf_root,
         capture_output=True,
         text=True,
     )
@@ -55,7 +56,7 @@ def run_local_core_binary(
         raise RuntimeError(f"Cargo build failed with exit code {build_result.returncode}")
     
     if test_type == TestType.PUT_GET and s3_files_dir:
-        get_files_dir = repo_root / "tests" / "performance" / "get_files"
+        get_files_dir = perf_root / "get_files"
         
         global _get_files_cleaned
         if not _get_files_cleaned:
@@ -122,12 +123,12 @@ def run_local_core_binary(
         env["SETUP_QUERIES"] = json.dumps(setup_queries)
     
     # Run the binary
-    target_dir = repo_root / "tests" / "performance" / "drivers" / "core" / "app" / "target" / "release"
+    target_dir = perf_root / "drivers" / "core" / "app" / "target" / "release"
     binary_path = target_dir / "core-perf-driver"
     
     result = subprocess.run(
         [str(binary_path)],
-        cwd=repo_root,
+        cwd=perf_root,
         env=env,
         capture_output=True,
         text=True,

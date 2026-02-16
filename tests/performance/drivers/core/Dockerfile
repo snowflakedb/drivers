@@ -69,6 +69,9 @@ WORKDIR /workdir/tests/performance/drivers/core/app
 
 # Build dependencies - this layer will be cached unless dependencies change
 COPY --from=planner /workdir/tests/performance/drivers/core/app/recipe.json recipe.json
+# Copy Cargo.lock to ensure cargo-chef uses pinned dependency versions
+# (without this, cargo resolves the latest versions which may require a newer rustc)
+COPY tests/performance/drivers/core/app/Cargo.lock Cargo.lock
 RUN cargo chef cook --release --recipe-path recipe.json
 
 # Copy application source and build only the app (sf_core already compiled)

@@ -22,6 +22,15 @@ pub struct TestConnectionParams {
     pub warehouse: String,
     #[serde(rename = "SNOWFLAKE_TEST_ROLE")]
     pub role: String,
+    // Optional TLS settings for WireMock support
+    #[serde(rename = "custom_root_store_path", default)]
+    pub custom_root_store_path: Option<String>,
+    #[serde(rename = "verify_certificates", default)]
+    pub verify_certificates: Option<String>,
+    #[serde(rename = "verify_hostname", default)]
+    pub verify_hostname: Option<String>,
+    #[serde(rename = "crl_check_mode", default)]
+    pub crl_check_mode: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -34,6 +43,7 @@ pub struct IterationResult {
     pub timestamp: i64,
     pub query_time_s: f64,
     pub fetch_time_s: f64,
+    pub row_count: usize,
 }
 
 #[derive(Debug, Clone, Serialize)]

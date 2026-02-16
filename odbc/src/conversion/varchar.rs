@@ -88,15 +88,7 @@ macro_rules! parse_u_number {
 macro_rules! write_i_number {
     ($value:expr, $type:ty, $binding:expr) => {{
         let (value, warnings) = parse_i_number!($value, $type);
-        unsafe { std::ptr::write($binding.target_value_ptr as *mut $type, value) };
-        if !$binding.str_len_or_ind_ptr.is_null() {
-            unsafe {
-                std::ptr::write(
-                    $binding.str_len_or_ind_ptr,
-                    std::mem::size_of::<$type>() as sql::Len,
-                )
-            };
-        };
+        $binding.write_fixed(value);
         Ok(warnings)
     }};
 }
@@ -104,15 +96,7 @@ macro_rules! write_i_number {
 macro_rules! write_u_number {
     ($value:expr, $type:ty, $binding:expr) => {{
         let (value, warnings) = parse_u_number!($value, $type);
-        unsafe { std::ptr::write($binding.target_value_ptr as *mut $type, value) };
-        if !$binding.str_len_or_ind_ptr.is_null() {
-            unsafe {
-                std::ptr::write(
-                    $binding.str_len_or_ind_ptr,
-                    std::mem::size_of::<$type>() as sql::Len,
-                )
-            };
-        };
+        $binding.write_fixed(value);
         Ok(warnings)
     }};
 }
@@ -149,17 +133,7 @@ macro_rules! parse_float {
 macro_rules! write_float {
     ($value:expr, $type:ty, $binding:expr) => {{
         let value = parse_float!($value, $type);
-        unsafe {
-            std::ptr::write($binding.target_value_ptr as *mut $type, value);
-        };
-        if !$binding.str_len_or_ind_ptr.is_null() {
-            unsafe {
-                std::ptr::write(
-                    $binding.str_len_or_ind_ptr,
-                    std::mem::size_of::<$type>() as sql::Len,
-                )
-            };
-        }
+        $binding.write_fixed(value);
         Ok(vec![])
     }};
 }
@@ -291,15 +265,7 @@ impl WriteODBCType for SnowflakeVarchar {
                 let (value, warnings) = parse_u_number!(snowflake_value, u8);
                 match value {
                     0 | 1 => {
-                        unsafe { std::ptr::write(binding.target_value_ptr as *mut u8, value) };
-                        if !binding.str_len_or_ind_ptr.is_null() {
-                            unsafe {
-                                std::ptr::write(
-                                    binding.str_len_or_ind_ptr,
-                                    std::mem::size_of::<u8>() as sql::Len,
-                                )
-                            };
-                        }
+                        binding.write_fixed(value);
                         Ok(warnings)
                     }
                     _ => NumericValueOutOfRangeSnafu {
@@ -328,15 +294,7 @@ impl WriteODBCType for SnowflakeVarchar {
                     month: Datelike::month(&date) as u16,
                     day: Datelike::day(&date) as u16,
                 };
-                unsafe { std::ptr::write(binding.target_value_ptr as *mut sql::Date, date) };
-                if !binding.str_len_or_ind_ptr.is_null() {
-                    unsafe {
-                        std::ptr::write(
-                            binding.str_len_or_ind_ptr,
-                            std::mem::size_of::<sql::Date>() as sql::Len,
-                        )
-                    };
-                }
+                binding.write_fixed(date);
                 Ok(vec![])
             }
             CDataType::Time | CDataType::TypeTime => {
@@ -359,15 +317,7 @@ impl WriteODBCType for SnowflakeVarchar {
                     minute: Timelike::minute(&time) as u16,
                     second: Timelike::second(&time) as u16,
                 };
-                unsafe { std::ptr::write(binding.target_value_ptr as *mut sql::Time, time) };
-                if !binding.str_len_or_ind_ptr.is_null() {
-                    unsafe {
-                        std::ptr::write(
-                            binding.str_len_or_ind_ptr,
-                            std::mem::size_of::<sql::Time>() as sql::Len,
-                        )
-                    };
-                }
+                binding.write_fixed(time);
                 Ok(vec![])
             }
             CDataType::TimeStamp | CDataType::TypeTimestamp => {
@@ -416,17 +366,7 @@ impl WriteODBCType for SnowflakeVarchar {
                     second: Timelike::second(&timestamp) as u16,
                     fraction: 0,
                 };
-                if !binding.str_len_or_ind_ptr.is_null() {
-                    unsafe {
-                        std::ptr::write(
-                            binding.str_len_or_ind_ptr,
-                            std::mem::size_of::<sql::Timestamp>() as sql::Len,
-                        )
-                    };
-                }
-                unsafe {
-                    std::ptr::write(binding.target_value_ptr as *mut sql::Timestamp, timestamp)
-                };
+                binding.write_fixed(timestamp);
                 Ok(vec![])
             }
             CDataType::Numeric => {
@@ -459,15 +399,7 @@ impl WriteODBCType for SnowflakeVarchar {
                     sign,
                     val: value.to_le_bytes(),
                 };
-                unsafe { std::ptr::write(binding.target_value_ptr as *mut sql::Numeric, numeric) };
-                if !binding.str_len_or_ind_ptr.is_null() {
-                    unsafe {
-                        std::ptr::write(
-                            binding.str_len_or_ind_ptr,
-                            std::mem::size_of::<sql::Numeric>() as sql::Len,
-                        )
-                    };
-                }
+                binding.write_fixed(numeric);
                 Ok(warnings)
             }
             CDataType::Binary => {

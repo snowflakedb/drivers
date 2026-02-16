@@ -24,12 +24,13 @@ from benchstore.client.quickstore import Quickstore
 from google.protobuf.timestamp_pb2 import Timestamp
 
 from runner.container import get_resource_limits
+from runner.utils import perf_tests_root
 
 logger = logging.getLogger(__name__)
 
 PROJECT_NAME = "SnowDrivers"
 BENCHMARK_NAME = "POC_Universal_Driver"
-PERFORMANCE_TESTS_DIR = Path(__file__).parent.parent.absolute()
+PERFORMANCE_TESTS_DIR = perf_tests_root()
 
 
 def get_snowhouse_config() -> dict:
@@ -397,6 +398,13 @@ def upload_metrics(results_dir: Optional[Path] = None, use_local_auth: bool = Fa
             logger.warning(f"Skipping {csv_file.name} - could not parse filename")
             continue
         
+        # Skip recording phase results (e.g., select_string_1M_arrow_recorded_http_record_*)
+        # Recording phase test names end with "_record" suffix
+        test_name = file_info['test_name']
+        if test_name.endswith('_record'):
+            logger.info(f"Skipping recording phase result: {csv_file.name}")
+            continue
+        
         driver = file_info['driver']
         driver_type = file_info['driver_type']
         group_key = (driver, driver_type)
@@ -431,10 +439,6 @@ def upload_metrics(results_dir: Optional[Path] = None, use_local_auth: bool = Fa
         
         driver_tag_value = f"{driver}_old" if driver_type == "old" else driver
         
-        # TYPE tag: currently set to e2e (end-to-end tests)
-        # Will be expanded to include tests with recorded HTTP traffic in the future
-        test_type = "e2e"
-        
         tags = [
             f"BUILD_NUMBER={build_number}",
             f"BRANCH_NAME={branch_name}",
@@ -447,7 +451,6 @@ def upload_metrics(results_dir: Optional[Path] = None, use_local_auth: bool = Fa
             f"RUNTIME_LANGUAGE_VERSION={runtime_language_version}",
             f"CLOUD_PROVIDER={cloud_provider}",
             f"REGION={region}",
-            f"TYPE={test_type}",
             f"JENKINS_NODE={jenkins_node}",
             f"DOCKER_MEMORY={docker_memory}",
             f"DOCKER_CPU={docker_cpu}",
@@ -466,7 +469,6 @@ def upload_metrics(results_dir: Optional[Path] = None, use_local_auth: bool = Fa
             f"RUNTIME_LANGUAGE_VERSION={runtime_language_version}",
             f"CLOUD_PROVIDER={cloud_provider}",
             f"REGION={region}",
-            f"TYPE={test_type}",
             f"JENKINS_NODE={jenkins_node}",
             f"DOCKER_MEMORY={docker_memory}",
             f"DOCKER_CPU={docker_cpu}",

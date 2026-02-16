@@ -2711,8 +2711,8 @@ name = "odbc"
 version = "0.1.0"
 dependencies = [
  "arrow",
+ "base64 0.22.1",
  "chrono",
- "lazy_static",
  "odbc-sys",
  "proto_utils",
  "sf_core",
@@ -3161,7 +3161,6 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "env_logger",
- "lazy_static",
  "log",
  "prost 0.12.6",
  "prost-build",
@@ -3757,7 +3756,6 @@ dependencies = [
  "hex",
  "infer",
  "jwt",
- "lazy_static",
  "lru",
  "num-traits",
  "once_cell",
