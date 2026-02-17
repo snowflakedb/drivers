@@ -151,6 +151,9 @@ exclude_lines = [
 
 [tool.mypy]
 python_version = "3.9"
+mypy_path = "src"
+namespace_packages = true
+explicit_package_bases = true
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true
@@ -180,7 +183,19 @@ disallow_incomplete_defs = false
 features = ["test", "dev"]
 installer = "uv"
 
-# Precommit environment
+# Precommit environment - lightweight, no native builds needed
+[tool.hatch.envs.precommit]
+skip-install = true
+dependencies = [
+    "ruff",
+    "mypy",
+    "types-pytz",
+    "types-protobuf",
+    "cryptography>=44.0.1",
+    "protobuf>=6.32.1",
+    "pytz",
+]
+
 [tool.hatch.envs.precommit.scripts]
 check = [
     'ruff format --check {args:src/snowflake tests}',
