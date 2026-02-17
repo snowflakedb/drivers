@@ -22,17 +22,50 @@ from snowflake.connector._internal.protobuf_gen.database_driver_v1_services impo
 from ._internal._private_key_helper import normalize_private_key
 from ._internal.api_client.client_api import database_driver_client
 from .cursor import SnowflakeCursor, SnowflakeCursorBase
-from .errors import InterfaceError, NotSupportedError
+from .errors import InterfaceError, NotSupportedError, ProgrammingError
+
+
+# Paramstyles that enable server-side binding in the universal driver.
+_SUPPORTED_PARAMSTYLES = {"qmark", "numeric"}
+
+# TODO: to be added in follow-up PR
+_CLIENT_SIDE_PARAMSTYLES = {"format", "pyformat"}
+
+
+def _resolve_paramstyle(value: str | None) -> str | None:
+    """Validate a *paramstyle* value.
+
+    Returns the canonical lower-case paramstyle string when it names a
+    server-side binding style supported by the universal driver, ``None``
+    when it names a client-side style that we tolerate but don't support,
+    and raises :class:`ProgrammingError` for anything else.
+    """
+    if value is None:
+        return None
+
+    normalised = value.strip().lower()
+
+    if normalised in _SUPPORTED_PARAMSTYLES:
+        return normalised
+
+    # TODO: remove in follow-up PR
+    if normalised in _CLIENT_SIDE_PARAMSTYLES:
+        return None
+
+    raise ProgrammingError(
+        f"Invalid paramstyle is specified: {value!r}. Supported values: {', '.join(sorted(_SUPPORTED_PARAMSTYLES))}"
+    )
 
 
 class Connection:
     """Connection objects represent a database connection."""
 
-    def __init__(self, **kwargs: Any) -> None:
+    def __init__(self, *, paramstyle: str | None = None, **kwargs: Any) -> None:
         """
         Initialize a new connection object.
 
         Args:
+            paramstyle: Binding style – ``"qmark"`` or ``"numeric"``.
             database: Database name
             user: Username
             password: Password
@@ -41,6 +74,8 @@ class Connection:
             private_key: Private key in bytes, str (base64), or RSAPrivateKey format
             **kwargs: Additional connection parameters
         """
+        self._paramstyle = _resolve_paramstyle(paramstyle)
+
         self.db_api = database_driver_client()
         self.db_handle = self.db_api.database_new(DatabaseNewRequest()).db_handle
         self.db_api.database_init(DatabaseInitRequest(db_handle=self.db_handle))

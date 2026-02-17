@@ -14,14 +14,13 @@ import pytest
 
 from snowflake.connector import ProgrammingError
 
-
-# TODO: syntax parity will be implemented in follow-up PR
-pytestmark = pytest.mark.skip_reference
+from ...conftest import with_paramstyle
 
 
 class TestBasicTypeBinding:
     """Tests for binding basic Python types to Snowflake."""
 
+    @with_paramstyle("qmark")
     def test_should_bind_basic_types_with_positional_parameters(self, cursor):
         # Given Snowflake client is logged in
 
@@ -39,6 +38,7 @@ class TestBasicTypeBinding:
         assert result[3] is True
         assert result[4] is None
 
+    @with_paramstyle("numeric")
     def test_should_bind_positional_parameters_with_numeric_placeholders(self, cursor):
         # Given Snowflake client is logged in
 
@@ -52,6 +52,7 @@ class TestBasicTypeBinding:
         assert result == (100, "test", True)
 
 
+@with_paramstyle("qmark")
 class TestTableOperations:
     """Tests for parameter binding with table operations."""
 
@@ -157,6 +158,7 @@ class TestTableOperations:
         assert names == {"Alice", "Charlie"}
 
 
+@with_paramstyle("qmark")
 class TestEdgeCases:
     """Tests for edge cases in parameter binding."""
 
@@ -234,6 +236,7 @@ class TestEdgeCases:
             cursor.execute("SELECT ?, ?, ?", (1,))
 
 
+@with_paramstyle("qmark")
 class TestArrayBinding:
     """Tests for multirow binding (executemany functionality)."""
 
@@ -295,6 +298,7 @@ class TestArrayBinding:
         assert result == [(1, None), (2, "value"), (3, None)]
 
 
+@with_paramstyle("qmark")
 class TestBackwardCompatibility:
     """Tests for backward compatibility with old connector parameter format."""
 
@@ -314,6 +318,7 @@ class TestBackwardCompatibility:
         assert result_tuple == result_list == (1, "test")
 
 
+@with_paramstyle("qmark")
 class TestComplexScenarios:
     """Tests for complex parameter binding scenarios."""
 

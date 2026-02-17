@@ -13,6 +13,7 @@ Reference: https://docs.snowflake.com/en/sql-reference/data-types-text
 
 import pytest
 
+from ...conftest import with_paramstyle
 from .utils import assert_sequential_values, assert_type
 
 
@@ -171,7 +172,7 @@ class TestStringTable:
         assert set(result) == set(expected)
 
 
-@pytest.mark.skip_reference
+@with_paramstyle("qmark")
 class TestStringBinding:
     """Tests for STRING type using parameter binding."""
 

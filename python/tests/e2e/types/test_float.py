@@ -12,6 +12,7 @@ from math import inf, nan
 
 import pytest
 
+from ...conftest import with_paramstyle
 from .utils import (
     FLOAT_MIN_NORMAL,
     assert_floats_equal,
@@ -294,7 +295,7 @@ class TestFloatTable:
         assert_sequential_values(values, LARGE_RESULT_SET_SIZE, transform=float, compare=floats_equal)
 
 
-@pytest.mark.skip_reference
+@with_paramstyle("qmark")
 class TestFloatBinding:
     """Tests for FLOAT type using parameter binding."""
 

@@ -20,6 +20,7 @@ from decimal import Decimal
 
 import pytest
 
+from ...conftest import with_paramstyle
 from .utils import assert_sequential_values, assert_type
 
 
@@ -455,7 +456,7 @@ class TestNumberTable:
         )
 
 
-@pytest.mark.skip_reference
+@with_paramstyle("qmark")
 class TestNumberBinding:
     """Tests for NUMBER type using parameter binding."""
 

@@ -9,6 +9,7 @@ All tests are parameterized to run with each type synonym to verify they behave 
 
 import pytest
 
+from ...conftest import with_paramstyle
 from .utils import assert_sequential_values, assert_type
 
 
@@ -313,7 +314,7 @@ class TestIntTable:
         assert_sequential_values(values, LARGE_RESULT_SET_SIZE)
 
 
-@pytest.mark.skip_reference
+@with_paramstyle("qmark")
 class TestIntBinding:
     """Tests for INT type using parameter binding."""
 

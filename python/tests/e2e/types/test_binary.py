@@ -13,6 +13,7 @@ Reference: https://docs.snowflake.com/en/sql-reference/data-types-text#binary
 
 import pytest
 
+from ...conftest import with_paramstyle
 from .utils import assert_sequential_values, assert_type
 
 
@@ -219,7 +220,7 @@ class TestBinaryTable:
         assert bin_default == b"Hello"
 
 
-@pytest.mark.skip_reference
+@with_paramstyle("qmark")
 class TestBinaryBinding:
     """Tests for BINARY type using parameter binding."""
 

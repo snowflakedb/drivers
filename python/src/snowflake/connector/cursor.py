@@ -246,6 +246,11 @@ class SnowflakeCursorBase(abc.ABC):
         )
 
         if parameters is not None and not isinstance(parameters, dict):
+            if self.connection._paramstyle is None:
+                raise ProgrammingError(
+                    "Binding parameters requires paramstyle to be set. "
+                    "Pass paramstyle='qmark' or paramstyle='numeric' to connect()."
+                )
             bindings = self._build_query_bindings(parameters)
         else:
             bindings = None
