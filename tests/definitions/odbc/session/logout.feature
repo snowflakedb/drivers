@@ -2,8 +2,7 @@
 Feature: Session Logout - ODBC-specific behavior
 
   # ODBC implements Phase 3 (doc for: SNOW-2314152) unified behavior from the start.
-  # Most Phase 3 behaviors are tested in shared scenarios with @python_not_needed @jdbc_not_needed tags.
-  # This file contains only ODBC-specific implementation details.
+  # This file contains only ODBC-specific defaults and configuration.
 
   # ===========================================================================
   #                      ODBC Default Configuration
