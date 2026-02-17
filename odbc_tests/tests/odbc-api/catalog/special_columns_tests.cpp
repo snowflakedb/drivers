@@ -11,6 +11,8 @@
 #include "Schema.hpp"
 #include "compatibility.hpp"
 #include "get_diag_rec.hpp"
+#include "odbc_cast.hpp"
+#include "query_helpers.hpp"
 #include "test_macros.hpp"
 #include "test_setup.hpp"
 
@@ -26,19 +28,16 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSpecialColumns: Result set has corre
                  "[odbc-api][catalog][specialcolumns]") {
   const auto schema = Schema::use_random_schema(dbc_handle());
 
-  SQLRETURN ret = SQLExecDirect(stmt_handle(),
-                                reinterpret_cast<SQLCHAR*>(const_cast<char*>(
-                                    "CREATE TABLE test_sc_numcols (id INT PRIMARY KEY, name VARCHAR(100))")),
-                                SQL_NTS);
+  SQLRETURN ret = SQLExecDirect(
+      stmt_handle(), sqlchar("CREATE TABLE test_sc_numcols (id INT PRIMARY KEY, name VARCHAR(100))"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
   SQLFreeStmt(stmt_handle(), SQL_CLOSE);
 
   const std::string currentDb = get_current_database(dbc_handle());
 
-  ret = SQLSpecialColumns(
-      stmt_handle(), SQL_BEST_ROWID, reinterpret_cast<SQLCHAR*>(const_cast<char*>(currentDb.c_str())), SQL_NTS,
-      reinterpret_cast<SQLCHAR*>(const_cast<char*>(schema.name().c_str())), SQL_NTS,
-      reinterpret_cast<SQLCHAR*>(const_cast<char*>("TEST_SC_NUMCOLS")), SQL_NTS, SQL_SCOPE_SESSION, SQL_NULLABLE);
+  ret = SQLSpecialColumns(stmt_handle(), SQL_BEST_ROWID, sqlchar(currentDb.c_str()), SQL_NTS,
+                          sqlchar(schema.name().c_str()), SQL_NTS, sqlchar("TEST_SC_NUMCOLS"), SQL_NTS,
+                          SQL_SCOPE_SESSION, SQL_NULLABLE);
   REQUIRE(ret == SQL_SUCCESS);
 
   SQLSMALLINT numCols = 0;
@@ -51,18 +50,15 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSpecialColumns: Result set column na
                  "[odbc-api][catalog][specialcolumns]") {
   const auto schema = Schema::use_random_schema(dbc_handle());
 
-  SQLRETURN ret = SQLExecDirect(
-      stmt_handle(),
-      reinterpret_cast<SQLCHAR*>(const_cast<char*>("CREATE TABLE test_sc_colnames (id INT PRIMARY KEY)")), SQL_NTS);
+  SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("CREATE TABLE test_sc_colnames (id INT PRIMARY KEY)"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
   SQLFreeStmt(stmt_handle(), SQL_CLOSE);
 
   const std::string currentDb = get_current_database(dbc_handle());
 
-  ret = SQLSpecialColumns(
-      stmt_handle(), SQL_BEST_ROWID, reinterpret_cast<SQLCHAR*>(const_cast<char*>(currentDb.c_str())), SQL_NTS,
-      reinterpret_cast<SQLCHAR*>(const_cast<char*>(schema.name().c_str())), SQL_NTS,
-      reinterpret_cast<SQLCHAR*>(const_cast<char*>("TEST_SC_COLNAMES")), SQL_NTS, SQL_SCOPE_SESSION, SQL_NULLABLE);
+  ret = SQLSpecialColumns(stmt_handle(), SQL_BEST_ROWID, sqlchar(currentDb.c_str()), SQL_NTS,
+                          sqlchar(schema.name().c_str()), SQL_NTS, sqlchar("TEST_SC_COLNAMES"), SQL_NTS,
+                          SQL_SCOPE_SESSION, SQL_NULLABLE);
   REQUIRE(ret == SQL_SUCCESS);
 
   const char* expectedColNames[] = {"SCOPE",       "COLUMN_NAME",   "DATA_TYPE",      "TYPE_NAME",
@@ -94,19 +90,16 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSpecialColumns: SQL_BEST_ROWID retur
 
   const auto schema = Schema::use_random_schema(dbc_handle());
 
-  SQLRETURN ret = SQLExecDirect(stmt_handle(),
-                                reinterpret_cast<SQLCHAR*>(const_cast<char*>(
-                                    "CREATE TABLE test_sc_bestrowid (id INT PRIMARY KEY, name VARCHAR(100))")),
-                                SQL_NTS);
+  SQLRETURN ret = SQLExecDirect(
+      stmt_handle(), sqlchar("CREATE TABLE test_sc_bestrowid (id INT PRIMARY KEY, name VARCHAR(100))"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
   SQLFreeStmt(stmt_handle(), SQL_CLOSE);
 
   const std::string currentDb = get_current_database(dbc_handle());
 
-  ret = SQLSpecialColumns(
-      stmt_handle(), SQL_BEST_ROWID, reinterpret_cast<SQLCHAR*>(const_cast<char*>(currentDb.c_str())), SQL_NTS,
-      reinterpret_cast<SQLCHAR*>(const_cast<char*>(schema.name().c_str())), SQL_NTS,
-      reinterpret_cast<SQLCHAR*>(const_cast<char*>("TEST_SC_BESTROWID")), SQL_NTS, SQL_SCOPE_SESSION, SQL_NULLABLE);
+  ret = SQLSpecialColumns(stmt_handle(), SQL_BEST_ROWID, sqlchar(currentDb.c_str()), SQL_NTS,
+                          sqlchar(schema.name().c_str()), SQL_NTS, sqlchar("TEST_SC_BESTROWID"), SQL_NTS,
+                          SQL_SCOPE_SESSION, SQL_NULLABLE);
   REQUIRE(ret == SQL_SUCCESS);
 
   ret = SQLFetch(stmt_handle());
@@ -120,19 +113,16 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSpecialColumns: SQL_ROWVER returns e
 
   const auto schema = Schema::use_random_schema(dbc_handle());
 
-  SQLRETURN ret = SQLExecDirect(stmt_handle(),
-                                reinterpret_cast<SQLCHAR*>(const_cast<char*>(
-                                    "CREATE TABLE test_sc_rowver (id INT PRIMARY KEY, name VARCHAR(100))")),
-                                SQL_NTS);
+  SQLRETURN ret = SQLExecDirect(
+      stmt_handle(), sqlchar("CREATE TABLE test_sc_rowver (id INT PRIMARY KEY, name VARCHAR(100))"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
   SQLFreeStmt(stmt_handle(), SQL_CLOSE);
 
   const std::string currentDb = get_current_database(dbc_handle());
 
-  ret = SQLSpecialColumns(stmt_handle(), SQL_ROWVER, reinterpret_cast<SQLCHAR*>(const_cast<char*>(currentDb.c_str())),
-                          SQL_NTS, reinterpret_cast<SQLCHAR*>(const_cast<char*>(schema.name().c_str())), SQL_NTS,
-                          reinterpret_cast<SQLCHAR*>(const_cast<char*>("TEST_SC_ROWVER")), SQL_NTS, SQL_SCOPE_SESSION,
-                          SQL_NULLABLE);
+  ret =
+      SQLSpecialColumns(stmt_handle(), SQL_ROWVER, sqlchar(currentDb.c_str()), SQL_NTS, sqlchar(schema.name().c_str()),
+                        SQL_NTS, sqlchar("TEST_SC_ROWVER"), SQL_NTS, SQL_SCOPE_SESSION, SQL_NULLABLE);
   REQUIRE(ret == SQL_SUCCESS);
 
   ret = SQLFetch(stmt_handle());
@@ -143,29 +133,25 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSpecialColumns: Various scope and nu
                  "[odbc-api][catalog][specialcolumns]") {
   const auto schema = Schema::use_random_schema(dbc_handle());
 
-  SQLRETURN ret = SQLExecDirect(
-      stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>("CREATE TABLE test_sc_combos (id INT PRIMARY KEY)")),
-      SQL_NTS);
+  SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("CREATE TABLE test_sc_combos (id INT PRIMARY KEY)"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
   SQLFreeStmt(stmt_handle(), SQL_CLOSE);
 
   const std::string currentDb = get_current_database(dbc_handle());
 
   // SQL_SCOPE_CURROW + SQL_NO_NULLS
-  ret = SQLSpecialColumns(
-      stmt_handle(), SQL_BEST_ROWID, reinterpret_cast<SQLCHAR*>(const_cast<char*>(currentDb.c_str())), SQL_NTS,
-      reinterpret_cast<SQLCHAR*>(const_cast<char*>(schema.name().c_str())), SQL_NTS,
-      reinterpret_cast<SQLCHAR*>(const_cast<char*>("TEST_SC_COMBOS")), SQL_NTS, SQL_SCOPE_CURROW, SQL_NO_NULLS);
+  ret = SQLSpecialColumns(stmt_handle(), SQL_BEST_ROWID, sqlchar(currentDb.c_str()), SQL_NTS,
+                          sqlchar(schema.name().c_str()), SQL_NTS, sqlchar("TEST_SC_COMBOS"), SQL_NTS, SQL_SCOPE_CURROW,
+                          SQL_NO_NULLS);
   REQUIRE(ret == SQL_SUCCESS);
   ret = SQLFetch(stmt_handle());
   REQUIRE(ret == SQL_NO_DATA);
   SQLCloseCursor(stmt_handle());
 
   // SQL_SCOPE_TRANSACTION + SQL_NULLABLE
-  ret = SQLSpecialColumns(
-      stmt_handle(), SQL_BEST_ROWID, reinterpret_cast<SQLCHAR*>(const_cast<char*>(currentDb.c_str())), SQL_NTS,
-      reinterpret_cast<SQLCHAR*>(const_cast<char*>(schema.name().c_str())), SQL_NTS,
-      reinterpret_cast<SQLCHAR*>(const_cast<char*>("TEST_SC_COMBOS")), SQL_NTS, SQL_SCOPE_TRANSACTION, SQL_NULLABLE);
+  ret = SQLSpecialColumns(stmt_handle(), SQL_BEST_ROWID, sqlchar(currentDb.c_str()), SQL_NTS,
+                          sqlchar(schema.name().c_str()), SQL_NTS, sqlchar("TEST_SC_COMBOS"), SQL_NTS,
+                          SQL_SCOPE_TRANSACTION, SQL_NULLABLE);
   REQUIRE(ret == SQL_SUCCESS);
   ret = SQLFetch(stmt_handle());
   REQUIRE(ret == SQL_NO_DATA);
@@ -179,27 +165,23 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSpecialColumns: Can call multiple ti
                  "[odbc-api][catalog][specialcolumns]") {
   const auto schema = Schema::use_random_schema(dbc_handle());
 
-  SQLRETURN ret = SQLExecDirect(
-      stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>("CREATE TABLE test_sc_reuse (id INT PRIMARY KEY)")),
-      SQL_NTS);
+  SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("CREATE TABLE test_sc_reuse (id INT PRIMARY KEY)"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
   SQLFreeStmt(stmt_handle(), SQL_CLOSE);
 
   const std::string currentDb = get_current_database(dbc_handle());
 
-  ret = SQLSpecialColumns(
-      stmt_handle(), SQL_BEST_ROWID, reinterpret_cast<SQLCHAR*>(const_cast<char*>(currentDb.c_str())), SQL_NTS,
-      reinterpret_cast<SQLCHAR*>(const_cast<char*>(schema.name().c_str())), SQL_NTS,
-      reinterpret_cast<SQLCHAR*>(const_cast<char*>("TEST_SC_REUSE")), SQL_NTS, SQL_SCOPE_SESSION, SQL_NULLABLE);
+  ret = SQLSpecialColumns(stmt_handle(), SQL_BEST_ROWID, sqlchar(currentDb.c_str()), SQL_NTS,
+                          sqlchar(schema.name().c_str()), SQL_NTS, sqlchar("TEST_SC_REUSE"), SQL_NTS, SQL_SCOPE_SESSION,
+                          SQL_NULLABLE);
   REQUIRE(ret == SQL_SUCCESS);
   ret = SQLFetch(stmt_handle());
   REQUIRE(ret == SQL_NO_DATA);
   SQLCloseCursor(stmt_handle());
 
-  ret = SQLSpecialColumns(stmt_handle(), SQL_ROWVER, reinterpret_cast<SQLCHAR*>(const_cast<char*>(currentDb.c_str())),
-                          SQL_NTS, reinterpret_cast<SQLCHAR*>(const_cast<char*>(schema.name().c_str())), SQL_NTS,
-                          reinterpret_cast<SQLCHAR*>(const_cast<char*>("TEST_SC_REUSE")), SQL_NTS, SQL_SCOPE_SESSION,
-                          SQL_NULLABLE);
+  ret =
+      SQLSpecialColumns(stmt_handle(), SQL_ROWVER, sqlchar(currentDb.c_str()), SQL_NTS, sqlchar(schema.name().c_str()),
+                        SQL_NTS, sqlchar("TEST_SC_REUSE"), SQL_NTS, SQL_SCOPE_SESSION, SQL_NULLABLE);
   REQUIRE(ret == SQL_SUCCESS);
   ret = SQLFetch(stmt_handle());
   REQUIRE(ret == SQL_NO_DATA);
@@ -209,18 +191,15 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSpecialColumns: SQLRowCount returns 
                  "[odbc-api][catalog][specialcolumns]") {
   const auto schema = Schema::use_random_schema(dbc_handle());
 
-  SQLRETURN ret = SQLExecDirect(
-      stmt_handle(),
-      reinterpret_cast<SQLCHAR*>(const_cast<char*>("CREATE TABLE test_sc_rowcount (id INT PRIMARY KEY)")), SQL_NTS);
+  SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("CREATE TABLE test_sc_rowcount (id INT PRIMARY KEY)"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
   SQLFreeStmt(stmt_handle(), SQL_CLOSE);
 
   const std::string currentDb = get_current_database(dbc_handle());
 
-  ret = SQLSpecialColumns(
-      stmt_handle(), SQL_BEST_ROWID, reinterpret_cast<SQLCHAR*>(const_cast<char*>(currentDb.c_str())), SQL_NTS,
-      reinterpret_cast<SQLCHAR*>(const_cast<char*>(schema.name().c_str())), SQL_NTS,
-      reinterpret_cast<SQLCHAR*>(const_cast<char*>("TEST_SC_ROWCOUNT")), SQL_NTS, SQL_SCOPE_SESSION, SQL_NULLABLE);
+  ret = SQLSpecialColumns(stmt_handle(), SQL_BEST_ROWID, sqlchar(currentDb.c_str()), SQL_NTS,
+                          sqlchar(schema.name().c_str()), SQL_NTS, sqlchar("TEST_SC_ROWCOUNT"), SQL_NTS,
+                          SQL_SCOPE_SESSION, SQL_NULLABLE);
   REQUIRE(ret == SQL_SUCCESS);
 
   SQLLEN rowCount = 0;
@@ -235,17 +214,15 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSpecialColumns: SQLRowCount returns 
 
 TEST_CASE("SQLSpecialColumns: SQL_INVALID_HANDLE for null statement handle",
           "[odbc-api][catalog][specialcolumns][error]") {
-  const SQLRETURN ret =
-      SQLSpecialColumns(SQL_NULL_HSTMT, SQL_BEST_ROWID, nullptr, 0, nullptr, 0,
-                        reinterpret_cast<SQLCHAR*>(const_cast<char*>("T")), SQL_NTS, SQL_SCOPE_SESSION, SQL_NULLABLE);
+  const SQLRETURN ret = SQLSpecialColumns(SQL_NULL_HSTMT, SQL_BEST_ROWID, nullptr, 0, nullptr, 0, sqlchar("T"), SQL_NTS,
+                                          SQL_SCOPE_SESSION, SQL_NULLABLE);
   REQUIRE(ret == SQL_INVALID_HANDLE);
 }
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSpecialColumns: HY090 - Negative TableName length",
                  "[odbc-api][catalog][specialcolumns][error]") {
-  const SQLRETURN ret =
-      SQLSpecialColumns(stmt_handle(), SQL_BEST_ROWID, nullptr, 0, nullptr, 0,
-                        reinterpret_cast<SQLCHAR*>(const_cast<char*>("TABLE")), -999, SQL_SCOPE_SESSION, SQL_NULLABLE);
+  const SQLRETURN ret = SQLSpecialColumns(stmt_handle(), SQL_BEST_ROWID, nullptr, 0, nullptr, 0, sqlchar("TABLE"), -999,
+                                          SQL_SCOPE_SESSION, SQL_NULLABLE);
   REQUIRE_EXPECTED_ERROR(ret, "HY090", stmt_handle(), SQL_HANDLE_STMT);
 }
 
@@ -253,25 +230,21 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSpecialColumns: 24000 - Cursor alrea
                  "[odbc-api][catalog][specialcolumns][error]") {
   const auto schema = Schema::use_random_schema(dbc_handle());
 
-  SQLRETURN ret = SQLExecDirect(
-      stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>("CREATE TABLE test_sc_cursor (id INT PRIMARY KEY)")),
-      SQL_NTS);
+  SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("CREATE TABLE test_sc_cursor (id INT PRIMARY KEY)"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
   SQLFreeStmt(stmt_handle(), SQL_CLOSE);
 
   const std::string currentDb = get_current_database(dbc_handle());
 
-  ret = SQLSpecialColumns(
-      stmt_handle(), SQL_BEST_ROWID, reinterpret_cast<SQLCHAR*>(const_cast<char*>(currentDb.c_str())), SQL_NTS,
-      reinterpret_cast<SQLCHAR*>(const_cast<char*>(schema.name().c_str())), SQL_NTS,
-      reinterpret_cast<SQLCHAR*>(const_cast<char*>("TEST_SC_CURSOR")), SQL_NTS, SQL_SCOPE_SESSION, SQL_NULLABLE);
+  ret = SQLSpecialColumns(stmt_handle(), SQL_BEST_ROWID, sqlchar(currentDb.c_str()), SQL_NTS,
+                          sqlchar(schema.name().c_str()), SQL_NTS, sqlchar("TEST_SC_CURSOR"), SQL_NTS,
+                          SQL_SCOPE_SESSION, SQL_NULLABLE);
   REQUIRE(ret == SQL_SUCCESS);
 
   // Second call without closing cursor
-  ret = SQLSpecialColumns(
-      stmt_handle(), SQL_BEST_ROWID, reinterpret_cast<SQLCHAR*>(const_cast<char*>(currentDb.c_str())), SQL_NTS,
-      reinterpret_cast<SQLCHAR*>(const_cast<char*>(schema.name().c_str())), SQL_NTS,
-      reinterpret_cast<SQLCHAR*>(const_cast<char*>("TEST_SC_CURSOR")), SQL_NTS, SQL_SCOPE_SESSION, SQL_NULLABLE);
+  ret = SQLSpecialColumns(stmt_handle(), SQL_BEST_ROWID, sqlchar(currentDb.c_str()), SQL_NTS,
+                          sqlchar(schema.name().c_str()), SQL_NTS, sqlchar("TEST_SC_CURSOR"), SQL_NTS,
+                          SQL_SCOPE_SESSION, SQL_NULLABLE);
   REQUIRE_EXPECTED_ERROR(ret, "24000", stmt_handle(), SQL_HANDLE_STMT);
 }
 

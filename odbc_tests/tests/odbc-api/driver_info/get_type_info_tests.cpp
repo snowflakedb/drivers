@@ -11,6 +11,7 @@
 #include "ODBCFixtures.hpp"
 #include "compatibility.hpp"
 #include "get_diag_rec.hpp"
+#include "odbc_cast.hpp"
 #include "test_macros.hpp"
 
 // ============================================================================
@@ -872,8 +873,7 @@ TEST_CASE("SQLGetTypeInfo: SQL_INVALID_HANDLE - NULL statement handle", "[odbc-a
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetTypeInfo: SQL_INVALID_HANDLE - Invalid handle type",
                  "[odbc-api][gettypeinfo][driver_info][error]") {
-  SQLRETURN ret = SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(dsn_name().c_str())), SQL_NTS,
-                             nullptr, 0, nullptr, 0);
+  SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
   ret = SQLGetTypeInfo(dbc_handle(), SQL_ALL_TYPES);
@@ -1025,8 +1025,7 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetTypeInfo: Documents all supported 
                  "[odbc-api][gettypeinfo][driver_info]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
-  SQLRETURN ret = SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(dsn_name().c_str())), SQL_NTS,
-                             nullptr, 0, nullptr, 0);
+  SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
   for (const auto& expected : ALL_TYPE_INFO) {

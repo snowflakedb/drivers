@@ -12,6 +12,8 @@
 #include "Schema.hpp"
 #include "compatibility.hpp"
 #include "get_diag_rec.hpp"
+#include "odbc_cast.hpp"
+#include "query_helpers.hpp"
 #include "test_macros.hpp"
 #include "test_setup.hpp"
 
@@ -25,17 +27,14 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLPrimaryKeys: Result set has correct 
 
   const auto schema = Schema::use_random_schema(dbc_handle());
 
-  SQLRETURN ret = SQLExecDirect(
-      stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>("CREATE TABLE test_pk_numcols (id INT PRIMARY KEY)")),
-      SQL_NTS);
+  SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("CREATE TABLE test_pk_numcols (id INT PRIMARY KEY)"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
   SQLFreeStmt(stmt_handle(), SQL_CLOSE);
 
   const std::string currentDb = get_current_database(dbc_handle());
 
-  ret = SQLPrimaryKeys(stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(currentDb.c_str())), SQL_NTS,
-                       reinterpret_cast<SQLCHAR*>(const_cast<char*>(schema.name().c_str())), SQL_NTS,
-                       reinterpret_cast<SQLCHAR*>(const_cast<char*>("TEST_PK_NUMCOLS")), SQL_NTS);
+  ret = SQLPrimaryKeys(stmt_handle(), sqlchar(currentDb.c_str()), SQL_NTS, sqlchar(schema.name().c_str()), SQL_NTS,
+                       sqlchar("TEST_PK_NUMCOLS"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
   SQLSMALLINT numCols = 0;
@@ -51,17 +50,14 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLPrimaryKeys: Result set column names
 
   const auto schema = Schema::use_random_schema(dbc_handle());
 
-  SQLRETURN ret = SQLExecDirect(
-      stmt_handle(),
-      reinterpret_cast<SQLCHAR*>(const_cast<char*>("CREATE TABLE test_pk_colnames (id INT PRIMARY KEY)")), SQL_NTS);
+  SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("CREATE TABLE test_pk_colnames (id INT PRIMARY KEY)"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
   SQLFreeStmt(stmt_handle(), SQL_CLOSE);
 
   const std::string currentDb = get_current_database(dbc_handle());
 
-  ret = SQLPrimaryKeys(stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(currentDb.c_str())), SQL_NTS,
-                       reinterpret_cast<SQLCHAR*>(const_cast<char*>(schema.name().c_str())), SQL_NTS,
-                       reinterpret_cast<SQLCHAR*>(const_cast<char*>("TEST_PK_COLNAMES")), SQL_NTS);
+  ret = SQLPrimaryKeys(stmt_handle(), sqlchar(currentDb.c_str()), SQL_NTS, sqlchar(schema.name().c_str()), SQL_NTS,
+                       sqlchar("TEST_PK_COLNAMES"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
   const char* expectedColNames[] = {"TABLE_CAT", "TABLE_SCHEM", "TABLE_NAME", "COLUMN_NAME", "KEY_SEQ", "PK_NAME"};
@@ -96,17 +92,14 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLPrimaryKeys: Returns primary key for
   const auto schema = Schema::use_random_schema(dbc_handle());
 
   SQLRETURN ret = SQLExecDirect(stmt_handle(),
-                                reinterpret_cast<SQLCHAR*>(const_cast<char*>(
-                                    "CREATE TABLE test_pk_single (id INT PRIMARY KEY, name VARCHAR(50))")),
-                                SQL_NTS);
+                                sqlchar("CREATE TABLE test_pk_single (id INT PRIMARY KEY, name VARCHAR(50))"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
   SQLFreeStmt(stmt_handle(), SQL_CLOSE);
 
   const std::string currentDb = get_current_database(dbc_handle());
 
-  ret = SQLPrimaryKeys(stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(currentDb.c_str())), SQL_NTS,
-                       reinterpret_cast<SQLCHAR*>(const_cast<char*>(schema.name().c_str())), SQL_NTS,
-                       reinterpret_cast<SQLCHAR*>(const_cast<char*>("TEST_PK_SINGLE")), SQL_NTS);
+  ret = SQLPrimaryKeys(stmt_handle(), sqlchar(currentDb.c_str()), SQL_NTS, sqlchar(schema.name().c_str()), SQL_NTS,
+                       sqlchar("TEST_PK_SINGLE"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
   ret = SQLFetch(stmt_handle());
@@ -140,19 +133,17 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLPrimaryKeys: Returns composite prima
 
   const auto schema = Schema::use_random_schema(dbc_handle());
 
-  SQLRETURN ret = SQLExecDirect(
-      stmt_handle(),
-      reinterpret_cast<SQLCHAR*>(const_cast<char*>("CREATE TABLE test_pk_composite (region_id INT, store_id INT, name "
-                                                   "VARCHAR(50), PRIMARY KEY (region_id, store_id))")),
-      SQL_NTS);
+  SQLRETURN ret = SQLExecDirect(stmt_handle(),
+                                sqlchar("CREATE TABLE test_pk_composite (region_id INT, store_id INT, name "
+                                        "VARCHAR(50), PRIMARY KEY (region_id, store_id))"),
+                                SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
   SQLFreeStmt(stmt_handle(), SQL_CLOSE);
 
   const std::string currentDb = get_current_database(dbc_handle());
 
-  ret = SQLPrimaryKeys(stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(currentDb.c_str())), SQL_NTS,
-                       reinterpret_cast<SQLCHAR*>(const_cast<char*>(schema.name().c_str())), SQL_NTS,
-                       reinterpret_cast<SQLCHAR*>(const_cast<char*>("TEST_PK_COMPOSITE")), SQL_NTS);
+  ret = SQLPrimaryKeys(stmt_handle(), sqlchar(currentDb.c_str()), SQL_NTS, sqlchar(schema.name().c_str()), SQL_NTS,
+                       sqlchar("TEST_PK_COMPOSITE"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
   char columnName[256] = {};
@@ -182,17 +173,15 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLPrimaryKeys: Table without primary k
 
   const auto schema = Schema::use_random_schema(dbc_handle());
 
-  SQLRETURN ret = SQLExecDirect(
-      stmt_handle(),
-      reinterpret_cast<SQLCHAR*>(const_cast<char*>("CREATE TABLE test_pk_none (id INT, name VARCHAR(50))")), SQL_NTS);
+  SQLRETURN ret =
+      SQLExecDirect(stmt_handle(), sqlchar("CREATE TABLE test_pk_none (id INT, name VARCHAR(50))"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
   SQLFreeStmt(stmt_handle(), SQL_CLOSE);
 
   const std::string currentDb = get_current_database(dbc_handle());
 
-  ret = SQLPrimaryKeys(stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(currentDb.c_str())), SQL_NTS,
-                       reinterpret_cast<SQLCHAR*>(const_cast<char*>(schema.name().c_str())), SQL_NTS,
-                       reinterpret_cast<SQLCHAR*>(const_cast<char*>("TEST_PK_NONE")), SQL_NTS);
+  ret = SQLPrimaryKeys(stmt_handle(), sqlchar(currentDb.c_str()), SQL_NTS, sqlchar(schema.name().c_str()), SQL_NTS,
+                       sqlchar("TEST_PK_NONE"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
   ret = SQLFetch(stmt_handle());
@@ -207,9 +196,8 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLPrimaryKeys: Non-existent table retu
 
   const std::string currentDb = get_current_database(dbc_handle());
 
-  SQLRETURN ret = SQLPrimaryKeys(stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(currentDb.c_str())),
-                                 SQL_NTS, reinterpret_cast<SQLCHAR*>(const_cast<char*>(schema.name().c_str())), SQL_NTS,
-                                 reinterpret_cast<SQLCHAR*>(const_cast<char*>("NONEXISTENT_TABLE_XYZ_99999")), SQL_NTS);
+  SQLRETURN ret = SQLPrimaryKeys(stmt_handle(), sqlchar(currentDb.c_str()), SQL_NTS, sqlchar(schema.name().c_str()),
+                                 SQL_NTS, sqlchar("NONEXISTENT_TABLE_XYZ_99999"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
   ret = SQLFetch(stmt_handle());
@@ -226,9 +214,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLPrimaryKeys: Various parameter combi
 
   const auto schema = Schema::use_random_schema(dbc_handle());
 
-  SQLRETURN ret = SQLExecDirect(
-      stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>("CREATE TABLE test_pk_params (id INT PRIMARY KEY)")),
-      SQL_NTS);
+  SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("CREATE TABLE test_pk_params (id INT PRIMARY KEY)"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
   SQLFreeStmt(stmt_handle(), SQL_CLOSE);
 
@@ -236,9 +222,8 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLPrimaryKeys: Various parameter combi
   const std::string& schemaName = schema.name();
 
   // Explicit catalog, schema, table with SQL_NTS
-  ret = SQLPrimaryKeys(stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(currentDb.c_str())), SQL_NTS,
-                       reinterpret_cast<SQLCHAR*>(const_cast<char*>(schemaName.c_str())), SQL_NTS,
-                       reinterpret_cast<SQLCHAR*>(const_cast<char*>("TEST_PK_PARAMS")), SQL_NTS);
+  ret = SQLPrimaryKeys(stmt_handle(), sqlchar(currentDb.c_str()), SQL_NTS, sqlchar(schemaName.c_str()), SQL_NTS,
+                       sqlchar("TEST_PK_PARAMS"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
   int count1 = 0;
   while (SQLFetch(stmt_handle()) == SQL_SUCCESS)
@@ -249,11 +234,9 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLPrimaryKeys: Various parameter combi
 
   // Explicit string lengths instead of SQL_NTS
   const std::string table = "TEST_PK_PARAMS";
-  ret = SQLPrimaryKeys(
-      stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(currentDb.c_str())),
-      static_cast<SQLSMALLINT>(currentDb.length()), reinterpret_cast<SQLCHAR*>(const_cast<char*>(schemaName.c_str())),
-      static_cast<SQLSMALLINT>(schemaName.length()), reinterpret_cast<SQLCHAR*>(const_cast<char*>(table.c_str())),
-      static_cast<SQLSMALLINT>(table.length()));
+  ret = SQLPrimaryKeys(stmt_handle(), sqlchar(currentDb.c_str()), static_cast<SQLSMALLINT>(currentDb.length()),
+                       sqlchar(schemaName.c_str()), static_cast<SQLSMALLINT>(schemaName.length()),
+                       sqlchar(table.c_str()), static_cast<SQLSMALLINT>(table.length()));
   REQUIRE(ret == SQL_SUCCESS);
   int count2 = 0;
   while (SQLFetch(stmt_handle()) == SQL_SUCCESS)
@@ -271,17 +254,14 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLPrimaryKeys: Can call multiple times
 
   const auto schema = Schema::use_random_schema(dbc_handle());
 
-  SQLRETURN ret = SQLExecDirect(
-      stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>("CREATE TABLE test_pk_reuse (id INT PRIMARY KEY)")),
-      SQL_NTS);
+  SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("CREATE TABLE test_pk_reuse (id INT PRIMARY KEY)"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
   SQLFreeStmt(stmt_handle(), SQL_CLOSE);
 
   const std::string currentDb = get_current_database(dbc_handle());
 
-  ret = SQLPrimaryKeys(stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(currentDb.c_str())), SQL_NTS,
-                       reinterpret_cast<SQLCHAR*>(const_cast<char*>(schema.name().c_str())), SQL_NTS,
-                       reinterpret_cast<SQLCHAR*>(const_cast<char*>("TEST_PK_REUSE")), SQL_NTS);
+  ret = SQLPrimaryKeys(stmt_handle(), sqlchar(currentDb.c_str()), SQL_NTS, sqlchar(schema.name().c_str()), SQL_NTS,
+                       sqlchar("TEST_PK_REUSE"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
   int count1 = 0;
   while (SQLFetch(stmt_handle()) == SQL_SUCCESS)
@@ -291,9 +271,8 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLPrimaryKeys: Can call multiple times
   ret = SQLCloseCursor(stmt_handle());
   REQUIRE(ret == SQL_SUCCESS);
 
-  ret = SQLPrimaryKeys(stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(currentDb.c_str())), SQL_NTS,
-                       reinterpret_cast<SQLCHAR*>(const_cast<char*>(schema.name().c_str())), SQL_NTS,
-                       reinterpret_cast<SQLCHAR*>(const_cast<char*>("TEST_PK_REUSE")), SQL_NTS);
+  ret = SQLPrimaryKeys(stmt_handle(), sqlchar(currentDb.c_str()), SQL_NTS, sqlchar(schema.name().c_str()), SQL_NTS,
+                       sqlchar("TEST_PK_REUSE"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
   int count2 = 0;
   while (SQLFetch(stmt_handle()) == SQL_SUCCESS)
@@ -307,17 +286,14 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLPrimaryKeys: SQLRowCount after catal
 
   const auto schema = Schema::use_random_schema(dbc_handle());
 
-  SQLRETURN ret = SQLExecDirect(
-      stmt_handle(),
-      reinterpret_cast<SQLCHAR*>(const_cast<char*>("CREATE TABLE test_pk_rowcount (id INT PRIMARY KEY)")), SQL_NTS);
+  SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("CREATE TABLE test_pk_rowcount (id INT PRIMARY KEY)"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
   SQLFreeStmt(stmt_handle(), SQL_CLOSE);
 
   const std::string currentDb = get_current_database(dbc_handle());
 
-  ret = SQLPrimaryKeys(stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(currentDb.c_str())), SQL_NTS,
-                       reinterpret_cast<SQLCHAR*>(const_cast<char*>(schema.name().c_str())), SQL_NTS,
-                       reinterpret_cast<SQLCHAR*>(const_cast<char*>("TEST_PK_ROWCOUNT")), SQL_NTS);
+  ret = SQLPrimaryKeys(stmt_handle(), sqlchar(currentDb.c_str()), SQL_NTS, sqlchar(schema.name().c_str()), SQL_NTS,
+                       sqlchar("TEST_PK_ROWCOUNT"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
   SQLLEN rowCount = 0;
@@ -331,8 +307,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLPrimaryKeys: SQLRowCount after catal
 // ============================================================================
 
 TEST_CASE("SQLPrimaryKeys: SQL_INVALID_HANDLE for null statement handle", "[odbc-api][primarykeys][catalog][error]") {
-  const SQLRETURN ret = SQLPrimaryKeys(SQL_NULL_HSTMT, nullptr, 0, nullptr, 0,
-                                       reinterpret_cast<SQLCHAR*>(const_cast<char*>("TABLE")), SQL_NTS);
+  const SQLRETURN ret = SQLPrimaryKeys(SQL_NULL_HSTMT, nullptr, 0, nullptr, 0, sqlchar("TABLE"), SQL_NTS);
   REQUIRE(ret == SQL_INVALID_HANDLE);
 }
 
@@ -340,8 +315,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLPrimaryKeys: HY090 - Negative Catalo
                  "[odbc-api][primarykeys][catalog][error]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
-  SQLRETURN ret = SQLPrimaryKeys(stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>("SNOWFLAKE")), -999,
-                                 nullptr, 0, reinterpret_cast<SQLCHAR*>(const_cast<char*>("TABLE")), SQL_NTS);
+  SQLRETURN ret = SQLPrimaryKeys(stmt_handle(), sqlchar("SNOWFLAKE"), -999, nullptr, 0, sqlchar("TABLE"), SQL_NTS);
   REQUIRE_EXPECTED_ERROR(ret, "HY090", stmt_handle(), SQL_HANDLE_STMT);
 }
 
@@ -349,8 +323,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLPrimaryKeys: HY090 - Negative Schema
                  "[odbc-api][primarykeys][catalog][error]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
-  SQLRETURN ret = SQLPrimaryKeys(stmt_handle(), nullptr, 0, reinterpret_cast<SQLCHAR*>(const_cast<char*>("SCHEMA")),
-                                 -999, reinterpret_cast<SQLCHAR*>(const_cast<char*>("TABLE")), SQL_NTS);
+  SQLRETURN ret = SQLPrimaryKeys(stmt_handle(), nullptr, 0, sqlchar("SCHEMA"), -999, sqlchar("TABLE"), SQL_NTS);
   REQUIRE_EXPECTED_ERROR(ret, "HY090", stmt_handle(), SQL_HANDLE_STMT);
 }
 
@@ -358,8 +331,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLPrimaryKeys: HY090 - Negative TableN
                  "[odbc-api][primarykeys][catalog][error]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
-  SQLRETURN ret = SQLPrimaryKeys(stmt_handle(), nullptr, 0, nullptr, 0,
-                                 reinterpret_cast<SQLCHAR*>(const_cast<char*>("TABLE")), -999);
+  SQLRETURN ret = SQLPrimaryKeys(stmt_handle(), nullptr, 0, nullptr, 0, sqlchar("TABLE"), -999);
   REQUIRE_EXPECTED_ERROR(ret, "HY090", stmt_handle(), SQL_HANDLE_STMT);
 }
 
@@ -369,23 +341,19 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLPrimaryKeys: 24000 - Cursor already 
 
   const auto schema = Schema::use_random_schema(dbc_handle());
 
-  SQLRETURN ret = SQLExecDirect(
-      stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>("CREATE TABLE test_pk_cursor (id INT PRIMARY KEY)")),
-      SQL_NTS);
+  SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("CREATE TABLE test_pk_cursor (id INT PRIMARY KEY)"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
   SQLFreeStmt(stmt_handle(), SQL_CLOSE);
 
   const std::string currentDb = get_current_database(dbc_handle());
 
-  ret = SQLPrimaryKeys(stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(currentDb.c_str())), SQL_NTS,
-                       reinterpret_cast<SQLCHAR*>(const_cast<char*>(schema.name().c_str())), SQL_NTS,
-                       reinterpret_cast<SQLCHAR*>(const_cast<char*>("TEST_PK_CURSOR")), SQL_NTS);
+  ret = SQLPrimaryKeys(stmt_handle(), sqlchar(currentDb.c_str()), SQL_NTS, sqlchar(schema.name().c_str()), SQL_NTS,
+                       sqlchar("TEST_PK_CURSOR"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
   // Second call without closing cursor
-  ret = SQLPrimaryKeys(stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(currentDb.c_str())), SQL_NTS,
-                       reinterpret_cast<SQLCHAR*>(const_cast<char*>(schema.name().c_str())), SQL_NTS,
-                       reinterpret_cast<SQLCHAR*>(const_cast<char*>("TEST_PK_CURSOR")), SQL_NTS);
+  ret = SQLPrimaryKeys(stmt_handle(), sqlchar(currentDb.c_str()), SQL_NTS, sqlchar(schema.name().c_str()), SQL_NTS,
+                       sqlchar("TEST_PK_CURSOR"), SQL_NTS);
   REQUIRE_EXPECTED_ERROR(ret, "24000", stmt_handle(), SQL_HANDLE_STMT);
 }
 

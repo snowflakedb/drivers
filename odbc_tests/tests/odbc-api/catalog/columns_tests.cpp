@@ -12,6 +12,8 @@
 #include "Schema.hpp"
 #include "compatibility.hpp"
 #include "get_diag_rec.hpp"
+#include "odbc_cast.hpp"
+#include "query_helpers.hpp"
 #include "test_macros.hpp"
 #include "test_setup.hpp"
 
@@ -23,8 +25,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumns: Result set has correct numb
                  "[odbc-api][columns][catalog]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
-  SQLRETURN ret = SQLColumns(stmt_handle(), nullptr, 0, nullptr, 0,
-                             reinterpret_cast<SQLCHAR*>(const_cast<char*>("DATABASES")), SQL_NTS, nullptr, 0);
+  SQLRETURN ret = SQLColumns(stmt_handle(), nullptr, 0, nullptr, 0, sqlchar("DATABASES"), SQL_NTS, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
   // Note: Reference driver returns 19 columns (ODBC 3.x spec defines 18, driver adds 1 extra)
@@ -38,8 +39,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumns: Result set column names mat
                  "[odbc-api][columns][catalog]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
-  SQLRETURN ret = SQLColumns(stmt_handle(), nullptr, 0, nullptr, 0,
-                             reinterpret_cast<SQLCHAR*>(const_cast<char*>("DATABASES")), SQL_NTS, nullptr, 0);
+  SQLRETURN ret = SQLColumns(stmt_handle(), nullptr, 0, nullptr, 0, sqlchar("DATABASES"), SQL_NTS, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
   // Note: Reference driver returns 19 columns
@@ -80,17 +80,15 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumns: Returns correct column meta
 
   SQLRETURN ret = SQLExecDirect(
       stmt_handle(),
-      reinterpret_cast<SQLCHAR*>(const_cast<char*>(
-          "CREATE TABLE test_sqlcolumns_meta (id INTEGER, name VARCHAR(100), price FLOAT, active BOOLEAN)")),
+      sqlchar("CREATE TABLE test_sqlcolumns_meta (id INTEGER, name VARCHAR(100), price FLOAT, active BOOLEAN)"),
       SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
   SQLFreeStmt(stmt_handle(), SQL_CLOSE);
 
   const std::string currentDb = get_current_database(dbc_handle());
 
-  ret = SQLColumns(stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(currentDb.c_str())), SQL_NTS,
-                   reinterpret_cast<SQLCHAR*>(const_cast<char*>(schema.name().c_str())), SQL_NTS,
-                   reinterpret_cast<SQLCHAR*>(const_cast<char*>("TEST_SQLCOLUMNS_META")), SQL_NTS, nullptr, 0);
+  ret = SQLColumns(stmt_handle(), sqlchar(currentDb.c_str()), SQL_NTS, sqlchar(schema.name().c_str()), SQL_NTS,
+                   sqlchar("TEST_SQLCOLUMNS_META"), SQL_NTS, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
   std::vector<std::string> columnNames;
@@ -130,17 +128,14 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumns: Returns correct data types 
   const auto schema = Schema::use_random_schema(dbc_handle());
 
   SQLRETURN ret = SQLExecDirect(stmt_handle(),
-                                reinterpret_cast<SQLCHAR*>(const_cast<char*>(
-                                    "CREATE TABLE test_sqlcolumns_types (id INTEGER, name VARCHAR(100))")),
-                                SQL_NTS);
+                                sqlchar("CREATE TABLE test_sqlcolumns_types (id INTEGER, name VARCHAR(100))"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
   SQLFreeStmt(stmt_handle(), SQL_CLOSE);
 
   const std::string currentDb = get_current_database(dbc_handle());
 
-  ret = SQLColumns(stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(currentDb.c_str())), SQL_NTS,
-                   reinterpret_cast<SQLCHAR*>(const_cast<char*>(schema.name().c_str())), SQL_NTS,
-                   reinterpret_cast<SQLCHAR*>(const_cast<char*>("TEST_SQLCOLUMNS_TYPES")), SQL_NTS, nullptr, 0);
+  ret = SQLColumns(stmt_handle(), sqlchar(currentDb.c_str()), SQL_NTS, sqlchar(schema.name().c_str()), SQL_NTS,
+                   sqlchar("TEST_SQLCOLUMNS_TYPES"), SQL_NTS, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
   int rowCount = 0;
@@ -180,18 +175,15 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumns: ORDINAL_POSITION is sequent
 
   const auto schema = Schema::use_random_schema(dbc_handle());
 
-  SQLRETURN ret = SQLExecDirect(stmt_handle(),
-                                reinterpret_cast<SQLCHAR*>(const_cast<char*>(
-                                    "CREATE TABLE test_sqlcolumns_ord (col_a INT, col_b VARCHAR(50), col_c FLOAT)")),
-                                SQL_NTS);
+  SQLRETURN ret = SQLExecDirect(
+      stmt_handle(), sqlchar("CREATE TABLE test_sqlcolumns_ord (col_a INT, col_b VARCHAR(50), col_c FLOAT)"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
   SQLFreeStmt(stmt_handle(), SQL_CLOSE);
 
   const std::string currentDb = get_current_database(dbc_handle());
 
-  ret = SQLColumns(stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(currentDb.c_str())), SQL_NTS,
-                   reinterpret_cast<SQLCHAR*>(const_cast<char*>(schema.name().c_str())), SQL_NTS,
-                   reinterpret_cast<SQLCHAR*>(const_cast<char*>("TEST_SQLCOLUMNS_ORD")), SQL_NTS, nullptr, 0);
+  ret = SQLColumns(stmt_handle(), sqlchar(currentDb.c_str()), SQL_NTS, sqlchar(schema.name().c_str()), SQL_NTS,
+                   sqlchar("TEST_SQLCOLUMNS_ORD"), SQL_NTS, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
   for (int i = 1; i <= 3; i++) {
@@ -213,18 +205,15 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumns: NULLABLE column reports cor
 
   const auto schema = Schema::use_random_schema(dbc_handle());
 
-  SQLRETURN ret = SQLExecDirect(stmt_handle(),
-                                reinterpret_cast<SQLCHAR*>(const_cast<char*>(
-                                    "CREATE TABLE test_sqlcolumns_null (id INTEGER NOT NULL, name VARCHAR(100))")),
-                                SQL_NTS);
+  SQLRETURN ret = SQLExecDirect(
+      stmt_handle(), sqlchar("CREATE TABLE test_sqlcolumns_null (id INTEGER NOT NULL, name VARCHAR(100))"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
   SQLFreeStmt(stmt_handle(), SQL_CLOSE);
 
   const std::string currentDb = get_current_database(dbc_handle());
 
-  ret = SQLColumns(stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(currentDb.c_str())), SQL_NTS,
-                   reinterpret_cast<SQLCHAR*>(const_cast<char*>(schema.name().c_str())), SQL_NTS,
-                   reinterpret_cast<SQLCHAR*>(const_cast<char*>("TEST_SQLCOLUMNS_NULL")), SQL_NTS, nullptr, 0);
+  ret = SQLColumns(stmt_handle(), sqlchar(currentDb.c_str()), SQL_NTS, sqlchar(schema.name().c_str()), SQL_NTS,
+                   sqlchar("TEST_SQLCOLUMNS_NULL"), SQL_NTS, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
   // id INTEGER NOT NULL
@@ -255,19 +244,15 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumns: ColumnName wildcard % retur
 
   const auto schema = Schema::use_random_schema(dbc_handle());
 
-  SQLRETURN ret = SQLExecDirect(stmt_handle(),
-                                reinterpret_cast<SQLCHAR*>(const_cast<char*>(
-                                    "CREATE TABLE test_sqlcolumns_wild (col_x INT, col_y VARCHAR(50), col_z FLOAT)")),
-                                SQL_NTS);
+  SQLRETURN ret = SQLExecDirect(
+      stmt_handle(), sqlchar("CREATE TABLE test_sqlcolumns_wild (col_x INT, col_y VARCHAR(50), col_z FLOAT)"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
   SQLFreeStmt(stmt_handle(), SQL_CLOSE);
 
   const std::string currentDb = get_current_database(dbc_handle());
 
-  ret = SQLColumns(stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(currentDb.c_str())), SQL_NTS,
-                   reinterpret_cast<SQLCHAR*>(const_cast<char*>(schema.name().c_str())), SQL_NTS,
-                   reinterpret_cast<SQLCHAR*>(const_cast<char*>("TEST_SQLCOLUMNS_WILD")), SQL_NTS,
-                   reinterpret_cast<SQLCHAR*>(const_cast<char*>("%")), SQL_NTS);
+  ret = SQLColumns(stmt_handle(), sqlchar(currentDb.c_str()), SQL_NTS, sqlchar(schema.name().c_str()), SQL_NTS,
+                   sqlchar("TEST_SQLCOLUMNS_WILD"), SQL_NTS, sqlchar("%"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
   int rowCount = 0;
@@ -283,18 +268,15 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumns: NULL ColumnName returns all
 
   const auto schema = Schema::use_random_schema(dbc_handle());
 
-  SQLRETURN ret = SQLExecDirect(stmt_handle(),
-                                reinterpret_cast<SQLCHAR*>(const_cast<char*>(
-                                    "CREATE TABLE test_sqlcolumns_nullcol (col_a INT, col_b VARCHAR(50))")),
-                                SQL_NTS);
+  SQLRETURN ret = SQLExecDirect(
+      stmt_handle(), sqlchar("CREATE TABLE test_sqlcolumns_nullcol (col_a INT, col_b VARCHAR(50))"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
   SQLFreeStmt(stmt_handle(), SQL_CLOSE);
 
   const std::string currentDb = get_current_database(dbc_handle());
 
-  ret = SQLColumns(stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(currentDb.c_str())), SQL_NTS,
-                   reinterpret_cast<SQLCHAR*>(const_cast<char*>(schema.name().c_str())), SQL_NTS,
-                   reinterpret_cast<SQLCHAR*>(const_cast<char*>("TEST_SQLCOLUMNS_NULLCOL")), SQL_NTS, nullptr, 0);
+  ret = SQLColumns(stmt_handle(), sqlchar(currentDb.c_str()), SQL_NTS, sqlchar(schema.name().c_str()), SQL_NTS,
+                   sqlchar("TEST_SQLCOLUMNS_NULLCOL"), SQL_NTS, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
   int rowCount = 0;
@@ -310,19 +292,15 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumns: Specific ColumnName filters
 
   const auto schema = Schema::use_random_schema(dbc_handle());
 
-  SQLRETURN ret = SQLExecDirect(stmt_handle(),
-                                reinterpret_cast<SQLCHAR*>(const_cast<char*>(
-                                    "CREATE TABLE test_sqlcolumns_specific (id INT, name VARCHAR(50), age INT)")),
-                                SQL_NTS);
+  SQLRETURN ret = SQLExecDirect(
+      stmt_handle(), sqlchar("CREATE TABLE test_sqlcolumns_specific (id INT, name VARCHAR(50), age INT)"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
   SQLFreeStmt(stmt_handle(), SQL_CLOSE);
 
   const std::string currentDb = get_current_database(dbc_handle());
 
-  ret = SQLColumns(stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(currentDb.c_str())), SQL_NTS,
-                   reinterpret_cast<SQLCHAR*>(const_cast<char*>(schema.name().c_str())), SQL_NTS,
-                   reinterpret_cast<SQLCHAR*>(const_cast<char*>("TEST_SQLCOLUMNS_SPECIFIC")), SQL_NTS,
-                   reinterpret_cast<SQLCHAR*>(const_cast<char*>("NAME")), SQL_NTS);
+  ret = SQLColumns(stmt_handle(), sqlchar(currentDb.c_str()), SQL_NTS, sqlchar(schema.name().c_str()), SQL_NTS,
+                   sqlchar("TEST_SQLCOLUMNS_SPECIFIC"), SQL_NTS, sqlchar("NAME"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
   ret = SQLFetch(stmt_handle());
@@ -342,19 +320,15 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumns: Underscore _ wildcard match
 
   const auto schema = Schema::use_random_schema(dbc_handle());
 
-  SQLRETURN ret = SQLExecDirect(
-      stmt_handle(),
-      reinterpret_cast<SQLCHAR*>(const_cast<char*>("CREATE TABLE test_sqlcolumns_uscore (ca INT, cb INT, ddd INT)")),
-      SQL_NTS);
+  SQLRETURN ret =
+      SQLExecDirect(stmt_handle(), sqlchar("CREATE TABLE test_sqlcolumns_uscore (ca INT, cb INT, ddd INT)"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
   SQLFreeStmt(stmt_handle(), SQL_CLOSE);
 
   const std::string currentDb = get_current_database(dbc_handle());
 
-  ret = SQLColumns(stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(currentDb.c_str())), SQL_NTS,
-                   reinterpret_cast<SQLCHAR*>(const_cast<char*>(schema.name().c_str())), SQL_NTS,
-                   reinterpret_cast<SQLCHAR*>(const_cast<char*>("TEST_SQLCOLUMNS_USCORE")), SQL_NTS,
-                   reinterpret_cast<SQLCHAR*>(const_cast<char*>("C_")), SQL_NTS);
+  ret = SQLColumns(stmt_handle(), sqlchar(currentDb.c_str()), SQL_NTS, sqlchar(schema.name().c_str()), SQL_NTS,
+                   sqlchar("TEST_SQLCOLUMNS_USCORE"), SQL_NTS, sqlchar("C_"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
   // C_ matches CA and CB but not DDD
@@ -382,10 +356,8 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumns: Non-existent table returns 
 
   const std::string currentDb = get_current_database(dbc_handle());
 
-  SQLRETURN ret =
-      SQLColumns(stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(currentDb.c_str())), SQL_NTS,
-                 reinterpret_cast<SQLCHAR*>(const_cast<char*>(schema.name().c_str())), SQL_NTS,
-                 reinterpret_cast<SQLCHAR*>(const_cast<char*>("NONEXISTENT_TABLE_XYZ_12345")), SQL_NTS, nullptr, 0);
+  SQLRETURN ret = SQLColumns(stmt_handle(), sqlchar(currentDb.c_str()), SQL_NTS, sqlchar(schema.name().c_str()),
+                             SQL_NTS, sqlchar("NONEXISTENT_TABLE_XYZ_12345"), SQL_NTS, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
   ret = SQLFetch(stmt_handle());
@@ -402,10 +374,8 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumns: Various parameter combinati
 
   const auto schema = Schema::use_random_schema(dbc_handle());
 
-  SQLRETURN ret = SQLExecDirect(
-      stmt_handle(),
-      reinterpret_cast<SQLCHAR*>(const_cast<char*>("CREATE TABLE test_sqlcolumns_params (id INT, name VARCHAR(50))")),
-      SQL_NTS);
+  SQLRETURN ret =
+      SQLExecDirect(stmt_handle(), sqlchar("CREATE TABLE test_sqlcolumns_params (id INT, name VARCHAR(50))"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
   SQLFreeStmt(stmt_handle(), SQL_CLOSE);
 
@@ -413,9 +383,8 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumns: Various parameter combinati
   const std::string& schemaName = schema.name();
 
   // Explicit catalog and schema with SQL_NTS
-  ret = SQLColumns(stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(currentDb.c_str())), SQL_NTS,
-                   reinterpret_cast<SQLCHAR*>(const_cast<char*>(schemaName.c_str())), SQL_NTS,
-                   reinterpret_cast<SQLCHAR*>(const_cast<char*>("TEST_SQLCOLUMNS_PARAMS")), SQL_NTS, nullptr, 0);
+  ret = SQLColumns(stmt_handle(), sqlchar(currentDb.c_str()), SQL_NTS, sqlchar(schemaName.c_str()), SQL_NTS,
+                   sqlchar("TEST_SQLCOLUMNS_PARAMS"), SQL_NTS, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
   int count1 = 0;
   while (SQLFetch(stmt_handle()) == SQL_SUCCESS)
@@ -426,11 +395,9 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumns: Various parameter combinati
 
   // Explicit string lengths instead of SQL_NTS
   const std::string table = "TEST_SQLCOLUMNS_PARAMS";
-  ret = SQLColumns(
-      stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(currentDb.c_str())),
-      static_cast<SQLSMALLINT>(currentDb.length()), reinterpret_cast<SQLCHAR*>(const_cast<char*>(schemaName.c_str())),
-      static_cast<SQLSMALLINT>(schemaName.length()), reinterpret_cast<SQLCHAR*>(const_cast<char*>(table.c_str())),
-      static_cast<SQLSMALLINT>(table.length()), nullptr, 0);
+  ret = SQLColumns(stmt_handle(), sqlchar(currentDb.c_str()), static_cast<SQLSMALLINT>(currentDb.length()),
+                   sqlchar(schemaName.c_str()), static_cast<SQLSMALLINT>(schemaName.length()), sqlchar(table.c_str()),
+                   static_cast<SQLSMALLINT>(table.length()), nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
   int count2 = 0;
   while (SQLFetch(stmt_handle()) == SQL_SUCCESS)
@@ -448,17 +415,14 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumns: Can call multiple times on 
 
   const auto schema = Schema::use_random_schema(dbc_handle());
 
-  SQLRETURN ret = SQLExecDirect(
-      stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>("CREATE TABLE test_sqlcolumns_reuse (id INT)")),
-      SQL_NTS);
+  SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("CREATE TABLE test_sqlcolumns_reuse (id INT)"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
   SQLFreeStmt(stmt_handle(), SQL_CLOSE);
 
   const std::string currentDb = get_current_database(dbc_handle());
 
-  ret = SQLColumns(stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(currentDb.c_str())), SQL_NTS,
-                   reinterpret_cast<SQLCHAR*>(const_cast<char*>(schema.name().c_str())), SQL_NTS,
-                   reinterpret_cast<SQLCHAR*>(const_cast<char*>("TEST_SQLCOLUMNS_REUSE")), SQL_NTS, nullptr, 0);
+  ret = SQLColumns(stmt_handle(), sqlchar(currentDb.c_str()), SQL_NTS, sqlchar(schema.name().c_str()), SQL_NTS,
+                   sqlchar("TEST_SQLCOLUMNS_REUSE"), SQL_NTS, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
   int count1 = 0;
@@ -469,9 +433,8 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumns: Can call multiple times on 
   ret = SQLCloseCursor(stmt_handle());
   REQUIRE(ret == SQL_SUCCESS);
 
-  ret = SQLColumns(stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(currentDb.c_str())), SQL_NTS,
-                   reinterpret_cast<SQLCHAR*>(const_cast<char*>(schema.name().c_str())), SQL_NTS,
-                   reinterpret_cast<SQLCHAR*>(const_cast<char*>("TEST_SQLCOLUMNS_REUSE")), SQL_NTS, nullptr, 0);
+  ret = SQLColumns(stmt_handle(), sqlchar(currentDb.c_str()), SQL_NTS, sqlchar(schema.name().c_str()), SQL_NTS,
+                   sqlchar("TEST_SQLCOLUMNS_REUSE"), SQL_NTS, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
   int count2 = 0;
@@ -484,8 +447,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumns: SQLRowCount after catalog f
                  "[odbc-api][columns][catalog]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
-  SQLRETURN ret = SQLColumns(stmt_handle(), nullptr, 0, nullptr, 0,
-                             reinterpret_cast<SQLCHAR*>(const_cast<char*>("DATABASES")), SQL_NTS, nullptr, 0);
+  SQLRETURN ret = SQLColumns(stmt_handle(), nullptr, 0, nullptr, 0, sqlchar("DATABASES"), SQL_NTS, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
   // SQLRowCount is undefined for catalog functions, reference driver returns -1
@@ -500,8 +462,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumns: SQLRowCount after catalog f
 // ============================================================================
 
 TEST_CASE("SQLColumns: SQL_INVALID_HANDLE for null statement handle", "[odbc-api][columns][catalog][error]") {
-  const SQLRETURN ret = SQLColumns(SQL_NULL_HSTMT, nullptr, 0, nullptr, 0,
-                                   reinterpret_cast<SQLCHAR*>(const_cast<char*>("TABLE")), SQL_NTS, nullptr, 0);
+  const SQLRETURN ret = SQLColumns(SQL_NULL_HSTMT, nullptr, 0, nullptr, 0, sqlchar("TABLE"), SQL_NTS, nullptr, 0);
   REQUIRE(ret == SQL_INVALID_HANDLE);
 }
 
@@ -509,8 +470,8 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumns: HY090 - Negative CatalogNam
                  "[odbc-api][columns][catalog][error]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
-  SQLRETURN ret = SQLColumns(stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>("SNOWFLAKE")), -999, nullptr,
-                             0, reinterpret_cast<SQLCHAR*>(const_cast<char*>("TABLE")), SQL_NTS, nullptr, 0);
+  SQLRETURN ret =
+      SQLColumns(stmt_handle(), sqlchar("SNOWFLAKE"), -999, nullptr, 0, sqlchar("TABLE"), SQL_NTS, nullptr, 0);
   REQUIRE_EXPECTED_ERROR(ret, "HY090", stmt_handle(), SQL_HANDLE_STMT);
 }
 
@@ -518,8 +479,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumns: HY090 - Negative SchemaName
                  "[odbc-api][columns][catalog][error]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
-  SQLRETURN ret = SQLColumns(stmt_handle(), nullptr, 0, reinterpret_cast<SQLCHAR*>(const_cast<char*>("SCHEMA")), -999,
-                             reinterpret_cast<SQLCHAR*>(const_cast<char*>("TABLE")), SQL_NTS, nullptr, 0);
+  SQLRETURN ret = SQLColumns(stmt_handle(), nullptr, 0, sqlchar("SCHEMA"), -999, sqlchar("TABLE"), SQL_NTS, nullptr, 0);
   REQUIRE_EXPECTED_ERROR(ret, "HY090", stmt_handle(), SQL_HANDLE_STMT);
 }
 
@@ -527,8 +487,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumns: HY090 - Negative TableName 
                  "[odbc-api][columns][catalog][error]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
-  SQLRETURN ret = SQLColumns(stmt_handle(), nullptr, 0, nullptr, 0,
-                             reinterpret_cast<SQLCHAR*>(const_cast<char*>("TABLE")), -999, nullptr, 0);
+  SQLRETURN ret = SQLColumns(stmt_handle(), nullptr, 0, nullptr, 0, sqlchar("TABLE"), -999, nullptr, 0);
   REQUIRE_EXPECTED_ERROR(ret, "HY090", stmt_handle(), SQL_HANDLE_STMT);
 }
 
@@ -536,9 +495,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumns: HY090 - Negative ColumnName
                  "[odbc-api][columns][catalog][error]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
-  SQLRETURN ret =
-      SQLColumns(stmt_handle(), nullptr, 0, nullptr, 0, reinterpret_cast<SQLCHAR*>(const_cast<char*>("TABLE")), SQL_NTS,
-                 reinterpret_cast<SQLCHAR*>(const_cast<char*>("COLUMN")), -999);
+  SQLRETURN ret = SQLColumns(stmt_handle(), nullptr, 0, nullptr, 0, sqlchar("TABLE"), SQL_NTS, sqlchar("COLUMN"), -999);
   REQUIRE_EXPECTED_ERROR(ret, "HY090", stmt_handle(), SQL_HANDLE_STMT);
 }
 
@@ -546,13 +503,11 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumns: 24000 - Cursor already open
                  "[odbc-api][columns][catalog][error]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
-  SQLRETURN ret = SQLColumns(stmt_handle(), nullptr, 0, nullptr, 0,
-                             reinterpret_cast<SQLCHAR*>(const_cast<char*>("DATABASES")), SQL_NTS, nullptr, 0);
+  SQLRETURN ret = SQLColumns(stmt_handle(), nullptr, 0, nullptr, 0, sqlchar("DATABASES"), SQL_NTS, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
   // Second call without closing cursor
-  ret = SQLColumns(stmt_handle(), nullptr, 0, nullptr, 0, reinterpret_cast<SQLCHAR*>(const_cast<char*>("DATABASES")),
-                   SQL_NTS, nullptr, 0);
+  ret = SQLColumns(stmt_handle(), nullptr, 0, nullptr, 0, sqlchar("DATABASES"), SQL_NTS, nullptr, 0);
   REQUIRE_EXPECTED_ERROR(ret, "24000", stmt_handle(), SQL_HANDLE_STMT);
 }
 

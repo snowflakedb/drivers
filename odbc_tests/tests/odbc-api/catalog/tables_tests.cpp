@@ -11,6 +11,8 @@
 #include "Schema.hpp"
 #include "compatibility.hpp"
 #include "get_diag_rec.hpp"
+#include "odbc_cast.hpp"
+#include "query_helpers.hpp"
 #include "test_macros.hpp"
 #include "test_setup.hpp"
 
@@ -22,18 +24,15 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLTables: Result set has correct numbe
                  "[odbc-api][catalog][tables]") {
   const auto schema = Schema::use_random_schema(dbc_handle());
 
-  SQLRETURN ret = SQLExecDirect(
-      stmt_handle(),
-      reinterpret_cast<SQLCHAR*>(const_cast<char*>("CREATE TABLE test_tbl_numcols (id INT, name VARCHAR(100))")),
-      SQL_NTS);
+  SQLRETURN ret =
+      SQLExecDirect(stmt_handle(), sqlchar("CREATE TABLE test_tbl_numcols (id INT, name VARCHAR(100))"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
   SQLFreeStmt(stmt_handle(), SQL_CLOSE);
 
   const std::string currentDb = get_current_database(dbc_handle());
 
-  ret = SQLTables(stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(currentDb.c_str())), SQL_NTS,
-                  reinterpret_cast<SQLCHAR*>(const_cast<char*>(schema.name().c_str())), SQL_NTS,
-                  reinterpret_cast<SQLCHAR*>(const_cast<char*>("TEST_TBL_NUMCOLS")), SQL_NTS, nullptr, 0);
+  ret = SQLTables(stmt_handle(), sqlchar(currentDb.c_str()), SQL_NTS, sqlchar(schema.name().c_str()), SQL_NTS,
+                  sqlchar("TEST_TBL_NUMCOLS"), SQL_NTS, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
   // ODBC spec defines 5 columns
@@ -47,16 +46,14 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLTables: Result set column names matc
                  "[odbc-api][catalog][tables]") {
   const auto schema = Schema::use_random_schema(dbc_handle());
 
-  SQLRETURN ret = SQLExecDirect(
-      stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>("CREATE TABLE test_tbl_colnames (id INT)")), SQL_NTS);
+  SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("CREATE TABLE test_tbl_colnames (id INT)"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
   SQLFreeStmt(stmt_handle(), SQL_CLOSE);
 
   const std::string currentDb = get_current_database(dbc_handle());
 
-  ret = SQLTables(stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(currentDb.c_str())), SQL_NTS,
-                  reinterpret_cast<SQLCHAR*>(const_cast<char*>(schema.name().c_str())), SQL_NTS,
-                  reinterpret_cast<SQLCHAR*>(const_cast<char*>("TEST_TBL_COLNAMES")), SQL_NTS, nullptr, 0);
+  ret = SQLTables(stmt_handle(), sqlchar(currentDb.c_str()), SQL_NTS, sqlchar(schema.name().c_str()), SQL_NTS,
+                  sqlchar("TEST_TBL_COLNAMES"), SQL_NTS, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
   const char* expectedColNames[] = {"TABLE_CAT", "TABLE_SCHEM", "TABLE_NAME", "TABLE_TYPE", "REMARKS"};
@@ -84,17 +81,15 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLTables: Returns known table with cor
                  "[odbc-api][catalog][tables]") {
   const auto schema = Schema::use_random_schema(dbc_handle());
 
-  SQLRETURN ret = SQLExecDirect(
-      stmt_handle(),
-      reinterpret_cast<SQLCHAR*>(const_cast<char*>("CREATE TABLE test_tbl_meta (id INT, name VARCHAR(100))")), SQL_NTS);
+  SQLRETURN ret =
+      SQLExecDirect(stmt_handle(), sqlchar("CREATE TABLE test_tbl_meta (id INT, name VARCHAR(100))"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
   SQLFreeStmt(stmt_handle(), SQL_CLOSE);
 
   const std::string currentDb = get_current_database(dbc_handle());
 
-  ret = SQLTables(stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(currentDb.c_str())), SQL_NTS,
-                  reinterpret_cast<SQLCHAR*>(const_cast<char*>(schema.name().c_str())), SQL_NTS,
-                  reinterpret_cast<SQLCHAR*>(const_cast<char*>("TEST_TBL_META")), SQL_NTS, nullptr, 0);
+  ret = SQLTables(stmt_handle(), sqlchar(currentDb.c_str()), SQL_NTS, sqlchar(schema.name().c_str()), SQL_NTS,
+                  sqlchar("TEST_TBL_META"), SQL_NTS, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
   ret = SQLFetch(stmt_handle());
@@ -122,23 +117,18 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLTables: Returns known table with cor
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLTables: Returns view with TABLE_TYPE VIEW", "[odbc-api][catalog][tables]") {
   const auto schema = Schema::use_random_schema(dbc_handle());
 
-  SQLRETURN ret = SQLExecDirect(
-      stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>("CREATE TABLE test_tbl_base (id INT)")), SQL_NTS);
+  SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("CREATE TABLE test_tbl_base (id INT)"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
   SQLFreeStmt(stmt_handle(), SQL_CLOSE);
 
-  ret = SQLExecDirect(
-      stmt_handle(),
-      reinterpret_cast<SQLCHAR*>(const_cast<char*>("CREATE VIEW test_tbl_view AS SELECT * FROM test_tbl_base")),
-      SQL_NTS);
+  ret = SQLExecDirect(stmt_handle(), sqlchar("CREATE VIEW test_tbl_view AS SELECT * FROM test_tbl_base"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
   SQLFreeStmt(stmt_handle(), SQL_CLOSE);
 
   const std::string currentDb = get_current_database(dbc_handle());
 
-  ret = SQLTables(stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(currentDb.c_str())), SQL_NTS,
-                  reinterpret_cast<SQLCHAR*>(const_cast<char*>(schema.name().c_str())), SQL_NTS,
-                  reinterpret_cast<SQLCHAR*>(const_cast<char*>("TEST_TBL_VIEW")), SQL_NTS, nullptr, 0);
+  ret = SQLTables(stmt_handle(), sqlchar(currentDb.c_str()), SQL_NTS, sqlchar(schema.name().c_str()), SQL_NTS,
+                  sqlchar("TEST_TBL_VIEW"), SQL_NTS, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
   ret = SQLFetch(stmt_handle());
@@ -157,10 +147,8 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLTables: Non-existent table returns e
   const auto schema = Schema::use_random_schema(dbc_handle());
   const std::string currentDb = get_current_database(dbc_handle());
 
-  SQLRETURN ret =
-      SQLTables(stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(currentDb.c_str())), SQL_NTS,
-                reinterpret_cast<SQLCHAR*>(const_cast<char*>(schema.name().c_str())), SQL_NTS,
-                reinterpret_cast<SQLCHAR*>(const_cast<char*>("NONEXISTENT_TABLE_XYZ_99999")), SQL_NTS, nullptr, 0);
+  SQLRETURN ret = SQLTables(stmt_handle(), sqlchar(currentDb.c_str()), SQL_NTS, sqlchar(schema.name().c_str()), SQL_NTS,
+                            sqlchar("NONEXISTENT_TABLE_XYZ_99999"), SQL_NTS, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
   ret = SQLFetch(stmt_handle());
@@ -172,24 +160,20 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLTables: TABLE_TYPE filter restricts 
   auto schema = Schema::use_random_schema(dbc_handle());
 
   // Create a table and a view with a similar naming pattern
-  SQLRETURN ret = SQLExecDirect(
-      stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>("CREATE TABLE test_tbl_filter_t (id INT)")), SQL_NTS);
+  SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("CREATE TABLE test_tbl_filter_t (id INT)"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
   SQLFreeStmt(stmt_handle(), SQL_CLOSE);
 
-  ret = SQLExecDirect(
-      stmt_handle(),
-      reinterpret_cast<SQLCHAR*>(const_cast<char*>("CREATE VIEW test_tbl_filter_v AS SELECT * FROM test_tbl_filter_t")),
-      SQL_NTS);
+  ret = SQLExecDirect(stmt_handle(), sqlchar("CREATE VIEW test_tbl_filter_v AS SELECT * FROM test_tbl_filter_t"),
+                      SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
   SQLFreeStmt(stmt_handle(), SQL_CLOSE);
 
   const std::string currentDb = get_current_database(dbc_handle());
 
   // No filter - wildcard matches both table and view
-  ret = SQLTables(stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(currentDb.c_str())), SQL_NTS,
-                  reinterpret_cast<SQLCHAR*>(const_cast<char*>(schema.name().c_str())), SQL_NTS,
-                  reinterpret_cast<SQLCHAR*>(const_cast<char*>("TEST_TBL_FILTER%")), SQL_NTS, nullptr, 0);
+  ret = SQLTables(stmt_handle(), sqlchar(currentDb.c_str()), SQL_NTS, sqlchar(schema.name().c_str()), SQL_NTS,
+                  sqlchar("TEST_TBL_FILTER%"), SQL_NTS, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
   int totalCount = 0;
   while (SQLFetch(stmt_handle()) == SQL_SUCCESS)
@@ -198,10 +182,8 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLTables: TABLE_TYPE filter restricts 
   SQLCloseCursor(stmt_handle());
 
   // Filter for TABLE - should return only the table
-  ret = SQLTables(stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(currentDb.c_str())), SQL_NTS,
-                  reinterpret_cast<SQLCHAR*>(const_cast<char*>(schema.name().c_str())), SQL_NTS,
-                  reinterpret_cast<SQLCHAR*>(const_cast<char*>("TEST_TBL_FILTER%")), SQL_NTS,
-                  reinterpret_cast<SQLCHAR*>(const_cast<char*>("TABLE")), SQL_NTS);
+  ret = SQLTables(stmt_handle(), sqlchar(currentDb.c_str()), SQL_NTS, sqlchar(schema.name().c_str()), SQL_NTS,
+                  sqlchar("TEST_TBL_FILTER%"), SQL_NTS, sqlchar("TABLE"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
   ret = SQLFetch(stmt_handle());
@@ -217,10 +199,8 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLTables: TABLE_TYPE filter restricts 
   SQLCloseCursor(stmt_handle());
 
   // Filter for VIEW - should return only the view
-  ret = SQLTables(stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(currentDb.c_str())), SQL_NTS,
-                  reinterpret_cast<SQLCHAR*>(const_cast<char*>(schema.name().c_str())), SQL_NTS,
-                  reinterpret_cast<SQLCHAR*>(const_cast<char*>("TEST_TBL_FILTER%")), SQL_NTS,
-                  reinterpret_cast<SQLCHAR*>(const_cast<char*>("VIEW")), SQL_NTS);
+  ret = SQLTables(stmt_handle(), sqlchar(currentDb.c_str()), SQL_NTS, sqlchar(schema.name().c_str()), SQL_NTS,
+                  sqlchar("TEST_TBL_FILTER%"), SQL_NTS, sqlchar("VIEW"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
   ret = SQLFetch(stmt_handle());
@@ -238,16 +218,14 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLTables: TABLE_TYPE filter restricts 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLTables: Wildcard search finds table", "[odbc-api][catalog][tables]") {
   const auto schema = Schema::use_random_schema(dbc_handle());
 
-  SQLRETURN ret = SQLExecDirect(
-      stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>("CREATE TABLE test_tbl_wild (id INT)")), SQL_NTS);
+  SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("CREATE TABLE test_tbl_wild (id INT)"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
   SQLFreeStmt(stmt_handle(), SQL_CLOSE);
 
   const std::string currentDb = get_current_database(dbc_handle());
 
-  ret = SQLTables(stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(currentDb.c_str())), SQL_NTS,
-                  reinterpret_cast<SQLCHAR*>(const_cast<char*>(schema.name().c_str())), SQL_NTS,
-                  reinterpret_cast<SQLCHAR*>(const_cast<char*>("TEST_TBL_WIL%")), SQL_NTS, nullptr, 0);
+  ret = SQLTables(stmt_handle(), sqlchar(currentDb.c_str()), SQL_NTS, sqlchar(schema.name().c_str()), SQL_NTS,
+                  sqlchar("TEST_TBL_WIL%"), SQL_NTS, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
   ret = SQLFetch(stmt_handle());
@@ -266,8 +244,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLTables: Various parameter combinatio
                  "[odbc-api][catalog][tables]") {
   const auto schema = Schema::use_random_schema(dbc_handle());
 
-  SQLRETURN ret = SQLExecDirect(
-      stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>("CREATE TABLE test_tbl_params (id INT)")), SQL_NTS);
+  SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("CREATE TABLE test_tbl_params (id INT)"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
   SQLFreeStmt(stmt_handle(), SQL_CLOSE);
 
@@ -275,9 +252,8 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLTables: Various parameter combinatio
   const std::string& schemaName = schema.name();
 
   // SQL_NTS lengths
-  ret = SQLTables(stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(currentDb.c_str())), SQL_NTS,
-                  reinterpret_cast<SQLCHAR*>(const_cast<char*>(schemaName.c_str())), SQL_NTS,
-                  reinterpret_cast<SQLCHAR*>(const_cast<char*>("TEST_TBL_PARAMS")), SQL_NTS, nullptr, 0);
+  ret = SQLTables(stmt_handle(), sqlchar(currentDb.c_str()), SQL_NTS, sqlchar(schemaName.c_str()), SQL_NTS,
+                  sqlchar("TEST_TBL_PARAMS"), SQL_NTS, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
   int count1 = 0;
   while (SQLFetch(stmt_handle()) == SQL_SUCCESS)
@@ -287,11 +263,9 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLTables: Various parameter combinatio
 
   // Explicit string lengths
   const std::string tbl = "TEST_TBL_PARAMS";
-  ret = SQLTables(
-      stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(currentDb.c_str())),
-      static_cast<SQLSMALLINT>(currentDb.length()), reinterpret_cast<SQLCHAR*>(const_cast<char*>(schemaName.c_str())),
-      static_cast<SQLSMALLINT>(schemaName.length()), reinterpret_cast<SQLCHAR*>(const_cast<char*>(tbl.c_str())),
-      static_cast<SQLSMALLINT>(tbl.length()), nullptr, 0);
+  ret = SQLTables(stmt_handle(), sqlchar(currentDb.c_str()), static_cast<SQLSMALLINT>(currentDb.length()),
+                  sqlchar(schemaName.c_str()), static_cast<SQLSMALLINT>(schemaName.length()), sqlchar(tbl.c_str()),
+                  static_cast<SQLSMALLINT>(tbl.length()), nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
   int count2 = 0;
   while (SQLFetch(stmt_handle()) == SQL_SUCCESS)
@@ -307,16 +281,14 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLTables: Can call multiple times afte
                  "[odbc-api][catalog][tables]") {
   const auto schema = Schema::use_random_schema(dbc_handle());
 
-  SQLRETURN ret = SQLExecDirect(
-      stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>("CREATE TABLE test_tbl_reuse (id INT)")), SQL_NTS);
+  SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("CREATE TABLE test_tbl_reuse (id INT)"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
   SQLFreeStmt(stmt_handle(), SQL_CLOSE);
 
   const std::string currentDb = get_current_database(dbc_handle());
 
-  ret = SQLTables(stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(currentDb.c_str())), SQL_NTS,
-                  reinterpret_cast<SQLCHAR*>(const_cast<char*>(schema.name().c_str())), SQL_NTS,
-                  reinterpret_cast<SQLCHAR*>(const_cast<char*>("TEST_TBL_REUSE")), SQL_NTS, nullptr, 0);
+  ret = SQLTables(stmt_handle(), sqlchar(currentDb.c_str()), SQL_NTS, sqlchar(schema.name().c_str()), SQL_NTS,
+                  sqlchar("TEST_TBL_REUSE"), SQL_NTS, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
   int count1 = 0;
   while (SQLFetch(stmt_handle()) == SQL_SUCCESS)
@@ -324,9 +296,8 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLTables: Can call multiple times afte
   REQUIRE(count1 == 1);
   SQLCloseCursor(stmt_handle());
 
-  ret = SQLTables(stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(currentDb.c_str())), SQL_NTS,
-                  reinterpret_cast<SQLCHAR*>(const_cast<char*>(schema.name().c_str())), SQL_NTS,
-                  reinterpret_cast<SQLCHAR*>(const_cast<char*>("TEST_TBL_REUSE")), SQL_NTS, nullptr, 0);
+  ret = SQLTables(stmt_handle(), sqlchar(currentDb.c_str()), SQL_NTS, sqlchar(schema.name().c_str()), SQL_NTS,
+                  sqlchar("TEST_TBL_REUSE"), SQL_NTS, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
   int count2 = 0;
   while (SQLFetch(stmt_handle()) == SQL_SUCCESS)
@@ -337,16 +308,14 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLTables: Can call multiple times afte
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLTables: SQLRowCount returns -1", "[odbc-api][catalog][tables]") {
   const auto schema = Schema::use_random_schema(dbc_handle());
 
-  SQLRETURN ret = SQLExecDirect(
-      stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>("CREATE TABLE test_tbl_rowcount (id INT)")), SQL_NTS);
+  SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("CREATE TABLE test_tbl_rowcount (id INT)"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
   SQLFreeStmt(stmt_handle(), SQL_CLOSE);
 
   const std::string currentDb = get_current_database(dbc_handle());
 
-  ret = SQLTables(stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(currentDb.c_str())), SQL_NTS,
-                  reinterpret_cast<SQLCHAR*>(const_cast<char*>(schema.name().c_str())), SQL_NTS,
-                  reinterpret_cast<SQLCHAR*>(const_cast<char*>("TEST_TBL_ROWCOUNT")), SQL_NTS, nullptr, 0);
+  ret = SQLTables(stmt_handle(), sqlchar(currentDb.c_str()), SQL_NTS, sqlchar(schema.name().c_str()), SQL_NTS,
+                  sqlchar("TEST_TBL_ROWCOUNT"), SQL_NTS, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
   SQLLEN rowCount = 0;
@@ -360,29 +329,25 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLTables: SQLRowCount returns -1", "[o
 // ============================================================================
 
 TEST_CASE("SQLTables: SQL_INVALID_HANDLE for null statement handle", "[odbc-api][catalog][tables][error]") {
-  const SQLRETURN ret = SQLTables(SQL_NULL_HSTMT, nullptr, 0, nullptr, 0,
-                                  reinterpret_cast<SQLCHAR*>(const_cast<char*>("T")), SQL_NTS, nullptr, 0);
+  const SQLRETURN ret = SQLTables(SQL_NULL_HSTMT, nullptr, 0, nullptr, 0, sqlchar("T"), SQL_NTS, nullptr, 0);
   REQUIRE(ret == SQL_INVALID_HANDLE);
 }
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLTables: HY090 - Negative CatalogName length",
                  "[odbc-api][catalog][tables][error]") {
-  const SQLRETURN ret = SQLTables(stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>("DB")), -999, nullptr, 0,
-                                  reinterpret_cast<SQLCHAR*>(const_cast<char*>("T")), SQL_NTS, nullptr, 0);
+  const SQLRETURN ret = SQLTables(stmt_handle(), sqlchar("DB"), -999, nullptr, 0, sqlchar("T"), SQL_NTS, nullptr, 0);
   REQUIRE_EXPECTED_ERROR(ret, "HY090", stmt_handle(), SQL_HANDLE_STMT);
 }
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLTables: HY090 - Negative SchemaName length",
                  "[odbc-api][catalog][tables][error]") {
-  const SQLRETURN ret = SQLTables(stmt_handle(), nullptr, 0, reinterpret_cast<SQLCHAR*>(const_cast<char*>("S")), -999,
-                                  reinterpret_cast<SQLCHAR*>(const_cast<char*>("T")), SQL_NTS, nullptr, 0);
+  const SQLRETURN ret = SQLTables(stmt_handle(), nullptr, 0, sqlchar("S"), -999, sqlchar("T"), SQL_NTS, nullptr, 0);
   REQUIRE_EXPECTED_ERROR(ret, "HY090", stmt_handle(), SQL_HANDLE_STMT);
 }
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLTables: HY090 - Negative TableName length",
                  "[odbc-api][catalog][tables][error]") {
-  const SQLRETURN ret = SQLTables(stmt_handle(), nullptr, 0, nullptr, 0,
-                                  reinterpret_cast<SQLCHAR*>(const_cast<char*>("T")), -999, nullptr, 0);
+  const SQLRETURN ret = SQLTables(stmt_handle(), nullptr, 0, nullptr, 0, sqlchar("T"), -999, nullptr, 0);
   REQUIRE_EXPECTED_ERROR(ret, "HY090", stmt_handle(), SQL_HANDLE_STMT);
 }
 
@@ -390,22 +355,19 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLTables: 24000 - Cursor already open"
                  "[odbc-api][catalog][tables][error]") {
   const auto schema = Schema::use_random_schema(dbc_handle());
 
-  SQLRETURN ret = SQLExecDirect(
-      stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>("CREATE TABLE test_tbl_cursor (id INT)")), SQL_NTS);
+  SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("CREATE TABLE test_tbl_cursor (id INT)"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
   SQLFreeStmt(stmt_handle(), SQL_CLOSE);
 
   const std::string currentDb = get_current_database(dbc_handle());
 
-  ret = SQLTables(stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(currentDb.c_str())), SQL_NTS,
-                  reinterpret_cast<SQLCHAR*>(const_cast<char*>(schema.name().c_str())), SQL_NTS,
-                  reinterpret_cast<SQLCHAR*>(const_cast<char*>("TEST_TBL_CURSOR")), SQL_NTS, nullptr, 0);
+  ret = SQLTables(stmt_handle(), sqlchar(currentDb.c_str()), SQL_NTS, sqlchar(schema.name().c_str()), SQL_NTS,
+                  sqlchar("TEST_TBL_CURSOR"), SQL_NTS, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
   // Second call without closing cursor
-  ret = SQLTables(stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(currentDb.c_str())), SQL_NTS,
-                  reinterpret_cast<SQLCHAR*>(const_cast<char*>(schema.name().c_str())), SQL_NTS,
-                  reinterpret_cast<SQLCHAR*>(const_cast<char*>("TEST_TBL_CURSOR")), SQL_NTS, nullptr, 0);
+  ret = SQLTables(stmt_handle(), sqlchar(currentDb.c_str()), SQL_NTS, sqlchar(schema.name().c_str()), SQL_NTS,
+                  sqlchar("TEST_TBL_CURSOR"), SQL_NTS, nullptr, 0);
   REQUIRE_EXPECTED_ERROR(ret, "24000", stmt_handle(), SQL_HANDLE_STMT);
 }
 

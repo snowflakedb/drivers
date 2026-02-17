@@ -14,6 +14,7 @@
 #include "ODBCFixtures.hpp"
 #include "compatibility.hpp"
 #include "get_diag_rec.hpp"
+#include "odbc_cast.hpp"
 #include "test_macros.hpp"
 #include "test_setup.hpp"
 
@@ -29,8 +30,7 @@ std::string build_dsn_connection_string(const std::string& dsn) { return "DSN=" 
 TEST_CASE("SQLDriverConnect: SQL_INVALID_HANDLE - NULL connection handle",
           "[odbc-api][driverconnect][connecting][error]") {
   const SQLRETURN ret =
-      SQLDriverConnect(SQL_NULL_HDBC, nullptr, reinterpret_cast<SQLCHAR*>(const_cast<char*>("DSN=test")), SQL_NTS,
-                       nullptr, 0, nullptr, SQL_DRIVER_NOPROMPT);
+      SQLDriverConnect(SQL_NULL_HDBC, nullptr, sqlchar("DSN=test"), SQL_NTS, nullptr, 0, nullptr, SQL_DRIVER_NOPROMPT);
   REQUIRE(ret == SQL_INVALID_HANDLE);
 }
 
@@ -42,10 +42,9 @@ TEST_CASE_METHOD(DbcFixture, "SQLDriverConnect: HY090 - Negative string length",
                  "[odbc-api][driverconnect][connecting][error]") {
   // Negative StringLength1 (not SQL_NTS) should return HY090
   // Note: DM-dependent - some DMs validate length first (HY090), others pass to DSN lookup (IM002)
-  const SQLRETURN ret =
-      SQLDriverConnect(dbc_handle(), nullptr, reinterpret_cast<SQLCHAR*>(const_cast<char*>("DSN=test")),
-                       -5,  // Invalid negative length
-                       nullptr, 0, nullptr, SQL_DRIVER_NOPROMPT);
+  const SQLRETURN ret = SQLDriverConnect(dbc_handle(), nullptr, sqlchar("DSN=test"),
+                                         -5,  // Invalid negative length
+                                         nullptr, 0, nullptr, SQL_DRIVER_NOPROMPT);
   REQUIRE(ret == SQL_ERROR);
   auto records = get_diag_rec(SQL_HANDLE_DBC, dbc_handle());
   REQUIRE(!records.empty());
@@ -60,10 +59,9 @@ TEST_CASE_METHOD(DbcFixture, "SQLDriverConnect: HY090 - Negative buffer length",
 
   // Negative BufferLength - DM-dependent validation
   // Most DMs will fail with HY090, but some may pass through to DSN lookup (IM002)
-  const SQLRETURN ret =
-      SQLDriverConnect(dbc_handle(), nullptr, reinterpret_cast<SQLCHAR*>(const_cast<char*>("DSN=NonExistentDSN")),
-                       SQL_NTS, outConnStr, -1,  // Invalid negative buffer length
-                       &outConnStrLen, SQL_DRIVER_NOPROMPT);
+  const SQLRETURN ret = SQLDriverConnect(dbc_handle(), nullptr, sqlchar("DSN=NonExistentDSN"), SQL_NTS, outConnStr,
+                                         -1,  // Invalid negative buffer length
+                                         &outConnStrLen, SQL_DRIVER_NOPROMPT);
   REQUIRE(ret == SQL_ERROR);
   auto records = get_diag_rec(SQL_HANDLE_DBC, dbc_handle());
   REQUIRE(!records.empty());
@@ -75,17 +73,15 @@ TEST_CASE_METHOD(DbcFixture, "SQLDriverConnect: HY110 - Invalid DriverCompletion
                  "[odbc-api][driverconnect][connecting][error]") {
   // Invalid DriverCompletion value (not one of the valid constants)
   const SQLRETURN ret =
-      SQLDriverConnect(dbc_handle(), nullptr, reinterpret_cast<SQLCHAR*>(const_cast<char*>("DSN=test")), SQL_NTS,
-                       nullptr, 0, nullptr, 999);  // Invalid value
+      SQLDriverConnect(dbc_handle(), nullptr, sqlchar("DSN=test"), SQL_NTS, nullptr, 0, nullptr, 999);  // Invalid value
   // Should return HY110 (Invalid driver completion)
   REQUIRE_EXPECTED_ERROR(ret, "HY110", dbc_handle(), SQL_HANDLE_DBC);
 }
 
 TEST_CASE_METHOD(DbcFixture, "SQLDriverConnect: IM002 - Data source not found (non-existent DSN)",
                  "[odbc-api][driverconnect][connecting][error]") {
-  const SQLRETURN ret =
-      SQLDriverConnect(dbc_handle(), nullptr, reinterpret_cast<SQLCHAR*>(const_cast<char*>("DSN=NonExistentDSN12345")),
-                       SQL_NTS, nullptr, 0, nullptr, SQL_DRIVER_NOPROMPT);
+  const SQLRETURN ret = SQLDriverConnect(dbc_handle(), nullptr, sqlchar("DSN=NonExistentDSN12345"), SQL_NTS, nullptr, 0,
+                                         nullptr, SQL_DRIVER_NOPROMPT);
   REQUIRE_EXPECTED_ERROR(ret, "IM002", dbc_handle(), SQL_HANDLE_DBC);
 }
 
@@ -93,8 +89,8 @@ TEST_CASE_METHOD(DbcFixture, "SQLDriverConnect: IM007 - No data source or driver
                  "[odbc-api][driverconnect][connecting][error]") {
   // Empty connection string with SQL_DRIVER_NOPROMPT
   // Note: DM-dependent - spec says IM007, but some DMs return IM002
-  const SQLRETURN ret = SQLDriverConnect(dbc_handle(), nullptr, reinterpret_cast<SQLCHAR*>(const_cast<char*>("")),
-                                         SQL_NTS, nullptr, 0, nullptr, SQL_DRIVER_NOPROMPT);
+  const SQLRETURN ret =
+      SQLDriverConnect(dbc_handle(), nullptr, sqlchar(""), SQL_NTS, nullptr, 0, nullptr, SQL_DRIVER_NOPROMPT);
   REQUIRE(ret == SQL_ERROR);
   auto records = get_diag_rec(SQL_HANDLE_DBC, dbc_handle());
   REQUIRE(!records.empty());
@@ -104,8 +100,8 @@ TEST_CASE_METHOD(DbcFixture, "SQLDriverConnect: IM007 - No data source or driver
 
 TEST_CASE_METHOD(DbcFixture, "SQLDriverConnect: Empty connection string",
                  "[odbc-api][driverconnect][connecting][error]") {
-  const SQLRETURN ret = SQLDriverConnect(dbc_handle(), nullptr, reinterpret_cast<SQLCHAR*>(const_cast<char*>("")), 0,
-                                         nullptr, 0, nullptr, SQL_DRIVER_NOPROMPT);
+  const SQLRETURN ret =
+      SQLDriverConnect(dbc_handle(), nullptr, sqlchar(""), 0, nullptr, 0, nullptr, SQL_DRIVER_NOPROMPT);
   REQUIRE(ret == SQL_ERROR);
 }
 
@@ -121,9 +117,8 @@ TEST_CASE_METHOD(DbcFixture, "SQLDriverConnect: NULL connection string",
 TEST_CASE_METHOD(DbcFixture, "SQLDriverConnect: Explicit string length with SQL_NTS",
                  "[odbc-api][driverconnect][connecting]") {
   // Use SQL_NTS for connection string
-  const SQLRETURN ret =
-      SQLDriverConnect(dbc_handle(), nullptr, reinterpret_cast<SQLCHAR*>(const_cast<char*>("DSN=NonExistentDSN")),
-                       SQL_NTS, nullptr, 0, nullptr, SQL_DRIVER_NOPROMPT);
+  const SQLRETURN ret = SQLDriverConnect(dbc_handle(), nullptr, sqlchar("DSN=NonExistentDSN"), SQL_NTS, nullptr, 0,
+                                         nullptr, SQL_DRIVER_NOPROMPT);
   // Should fail with IM002 (data source not found)
   REQUIRE_EXPECTED_ERROR(ret, "IM002", dbc_handle(), SQL_HANDLE_DBC);
 }
@@ -134,18 +129,17 @@ TEST_CASE_METHOD(DbcFixture, "SQLDriverConnect: Explicit byte count for string l
 
   // Use explicit length
   const SQLRETURN ret =
-      SQLDriverConnect(dbc_handle(), nullptr, reinterpret_cast<SQLCHAR*>(const_cast<char*>(connStr.c_str())),
-                       static_cast<SQLSMALLINT>(connStr.length()), nullptr, 0, nullptr, SQL_DRIVER_NOPROMPT);
+      SQLDriverConnect(dbc_handle(), nullptr, sqlchar(connStr.c_str()), static_cast<SQLSMALLINT>(connStr.length()),
+                       nullptr, 0, nullptr, SQL_DRIVER_NOPROMPT);
   REQUIRE_EXPECTED_ERROR(ret, "IM002", dbc_handle(), SQL_HANDLE_DBC);
 }
 
 TEST_CASE_METHOD(DbcFixture, "SQLDriverConnect: Zero string length (empty string)",
                  "[odbc-api][driverconnect][connecting][edge]") {
   // Zero length string
-  const SQLRETURN ret =
-      SQLDriverConnect(dbc_handle(), nullptr, reinterpret_cast<SQLCHAR*>(const_cast<char*>("DSN=test")),
-                       0,  // Zero length - treats as empty
-                       nullptr, 0, nullptr, SQL_DRIVER_NOPROMPT);
+  const SQLRETURN ret = SQLDriverConnect(dbc_handle(), nullptr, sqlchar("DSN=test"),
+                                         0,  // Zero length - treats as empty
+                                         nullptr, 0, nullptr, SQL_DRIVER_NOPROMPT);
   REQUIRE(ret == SQL_ERROR);
 }
 
@@ -156,9 +150,8 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDriverConnect: SQL_DRIVER_NOPROMPT mo
   // SQL_DRIVER_NOPROMPT: Never prompt, fail if info missing
   // With complete DSN (has credentials), should succeed
   std::string connStr = "DSN=" + dsn_name();
-  SQLRETURN ret =
-      SQLDriverConnect(dbc_handle(), nullptr, reinterpret_cast<SQLCHAR*>(const_cast<char*>(connStr.c_str())), SQL_NTS,
-                       nullptr, 0, nullptr, SQL_DRIVER_NOPROMPT);
+  SQLRETURN ret = SQLDriverConnect(dbc_handle(), nullptr, sqlchar(connStr.c_str()), SQL_NTS, nullptr, 0, nullptr,
+                                   SQL_DRIVER_NOPROMPT);
   REQUIRE((ret == SQL_SUCCESS || ret == SQL_SUCCESS_WITH_INFO));
 
   ret = SQLDisconnect(dbc_handle());
@@ -173,9 +166,8 @@ TEST_CASE_METHOD(DbcNoAuthDSNFixture, "SQLDriverConnect: SQL_DRIVER_NOPROMPT mod
   // Note: Snowflake driver returns 28000 for authentication failures.
   // ODBC spec allows 28000, 08001, 08004, or HY000, but Snowflake consistently uses 28000.
   std::string connStr = "DSN=" + dsn_name();
-  const SQLRETURN ret =
-      SQLDriverConnect(dbc_handle(), nullptr, reinterpret_cast<SQLCHAR*>(const_cast<char*>(connStr.c_str())), SQL_NTS,
-                       nullptr, 0, nullptr, SQL_DRIVER_NOPROMPT);
+  const SQLRETURN ret = SQLDriverConnect(dbc_handle(), nullptr, sqlchar(connStr.c_str()), SQL_NTS, nullptr, 0, nullptr,
+                                         SQL_DRIVER_NOPROMPT);
   REQUIRE_EXPECTED_ERROR(ret, "28000", dbc_handle(), SQL_HANDLE_DBC);
 }
 
@@ -186,9 +178,8 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDriverConnect: SQL_DRIVER_COMPLETE mo
   // SQL_DRIVER_COMPLETE: Prompt only if info is missing
   // With complete DSN, no prompting needed, should succeed
   std::string connStr = "DSN=" + dsn_name();
-  SQLRETURN ret =
-      SQLDriverConnect(dbc_handle(), nullptr, reinterpret_cast<SQLCHAR*>(const_cast<char*>(connStr.c_str())), SQL_NTS,
-                       nullptr, 0, nullptr, SQL_DRIVER_COMPLETE);
+  SQLRETURN ret = SQLDriverConnect(dbc_handle(), nullptr, sqlchar(connStr.c_str()), SQL_NTS, nullptr, 0, nullptr,
+                                   SQL_DRIVER_COMPLETE);
   REQUIRE((ret == SQL_SUCCESS || ret == SQL_SUCCESS_WITH_INFO));
 
   ret = SQLDisconnect(dbc_handle());
@@ -204,9 +195,8 @@ TEST_CASE_METHOD(DbcNoAuthDSNFixture, "SQLDriverConnect: SQL_DRIVER_COMPLETE mod
   // Note: Snowflake driver returns 28000 for authentication failures.
   // ODBC spec allows 28000, 08001, 08004, or HY000, but Snowflake consistently uses 28000.
   std::string connStr = "DSN=" + dsn_name();
-  const SQLRETURN ret =
-      SQLDriverConnect(dbc_handle(), nullptr, reinterpret_cast<SQLCHAR*>(const_cast<char*>(connStr.c_str())), SQL_NTS,
-                       nullptr, 0, nullptr, SQL_DRIVER_COMPLETE);
+  const SQLRETURN ret = SQLDriverConnect(dbc_handle(), nullptr, sqlchar(connStr.c_str()), SQL_NTS, nullptr, 0, nullptr,
+                                         SQL_DRIVER_COMPLETE);
   REQUIRE_EXPECTED_ERROR(ret, "28000", dbc_handle(), SQL_HANDLE_DBC);
 }
 
@@ -217,9 +207,8 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDriverConnect: SQL_DRIVER_COMPLETE_RE
   // SQL_DRIVER_COMPLETE_REQUIRED: Only prompt for required info
   // With complete DSN, no prompting needed, should succeed
   std::string connStr = "DSN=" + dsn_name();
-  SQLRETURN ret =
-      SQLDriverConnect(dbc_handle(), nullptr, reinterpret_cast<SQLCHAR*>(const_cast<char*>(connStr.c_str())), SQL_NTS,
-                       nullptr, 0, nullptr, SQL_DRIVER_COMPLETE_REQUIRED);
+  SQLRETURN ret = SQLDriverConnect(dbc_handle(), nullptr, sqlchar(connStr.c_str()), SQL_NTS, nullptr, 0, nullptr,
+                                   SQL_DRIVER_COMPLETE_REQUIRED);
   REQUIRE((ret == SQL_SUCCESS || ret == SQL_SUCCESS_WITH_INFO));
 
   ret = SQLDisconnect(dbc_handle());
@@ -235,9 +224,8 @@ TEST_CASE_METHOD(DbcNoAuthDSNFixture, "SQLDriverConnect: SQL_DRIVER_COMPLETE_REQ
   // Note: Snowflake driver returns 28000 for authentication failures.
   // ODBC spec allows 28000, 08001, 08004, or HY000, but Snowflake consistently uses 28000.
   std::string connStr = "DSN=" + dsn_name();
-  const SQLRETURN ret =
-      SQLDriverConnect(dbc_handle(), nullptr, reinterpret_cast<SQLCHAR*>(const_cast<char*>(connStr.c_str())), SQL_NTS,
-                       nullptr, 0, nullptr, SQL_DRIVER_COMPLETE_REQUIRED);
+  const SQLRETURN ret = SQLDriverConnect(dbc_handle(), nullptr, sqlchar(connStr.c_str()), SQL_NTS, nullptr, 0, nullptr,
+                                         SQL_DRIVER_COMPLETE_REQUIRED);
   REQUIRE_EXPECTED_ERROR(ret, "28000", dbc_handle(), SQL_HANDLE_DBC);
 }
 
@@ -247,9 +235,8 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDriverConnect: SQL_DRIVER_PROMPT mode
   // Per ODBC spec, with NULL window handle should return HY092 or fail
   // Even though DSN is complete, PROMPT mode MUST show dialog
   std::string connStr = "DSN=" + dsn_name();
-  const SQLRETURN ret =
-      SQLDriverConnect(dbc_handle(), nullptr, reinterpret_cast<SQLCHAR*>(const_cast<char*>(connStr.c_str())), SQL_NTS,
-                       nullptr, 0, nullptr, SQL_DRIVER_PROMPT);
+  const SQLRETURN ret = SQLDriverConnect(dbc_handle(), nullptr, sqlchar(connStr.c_str()), SQL_NTS, nullptr, 0, nullptr,
+                                         SQL_DRIVER_PROMPT);
 
   // Per ODBC spec: SQL_DRIVER_PROMPT with NULL window handle returns HY092
   // unixODBC follows spec and returns HY092
@@ -263,14 +250,13 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDriverConnect: 08002 - Connection alr
   const std::string connStr = build_dsn_connection_string(dsn_name());
 
   // First connection
-  SQLRETURN ret =
-      SQLDriverConnect(dbc_handle(), nullptr, reinterpret_cast<SQLCHAR*>(const_cast<char*>(connStr.c_str())), SQL_NTS,
-                       nullptr, 0, nullptr, SQL_DRIVER_NOPROMPT);
+  SQLRETURN ret = SQLDriverConnect(dbc_handle(), nullptr, sqlchar(connStr.c_str()), SQL_NTS, nullptr, 0, nullptr,
+                                   SQL_DRIVER_NOPROMPT);
   REQUIRE((ret == SQL_SUCCESS || ret == SQL_SUCCESS_WITH_INFO));
 
   // Second connection on same handle should fail with 08002
-  ret = SQLDriverConnect(dbc_handle(), nullptr, reinterpret_cast<SQLCHAR*>(const_cast<char*>(connStr.c_str())), SQL_NTS,
-                         nullptr, 0, nullptr, SQL_DRIVER_NOPROMPT);
+  ret = SQLDriverConnect(dbc_handle(), nullptr, sqlchar(connStr.c_str()), SQL_NTS, nullptr, 0, nullptr,
+                         SQL_DRIVER_NOPROMPT);
   REQUIRE_EXPECTED_ERROR(ret, "08002", dbc_handle(), SQL_HANDLE_DBC);
 
   ret = SQLDisconnect(dbc_handle());
@@ -280,9 +266,8 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDriverConnect: 08002 - Connection alr
 TEST_CASE_METHOD(DbcFixture, "SQLDriverConnect: Connection string keyword=value parsing",
                  "[odbc-api][driverconnect][connecting][parsing]") {
   // Valid format but non-existent DSN
-  const SQLRETURN ret = SQLDriverConnect(dbc_handle(), nullptr,
-                                         reinterpret_cast<SQLCHAR*>(const_cast<char*>("DSN=test;UID=user;PWD=pass")),
-                                         SQL_NTS, nullptr, 0, nullptr, SQL_DRIVER_NOPROMPT);
+  const SQLRETURN ret = SQLDriverConnect(dbc_handle(), nullptr, sqlchar("DSN=test;UID=user;PWD=pass"), SQL_NTS, nullptr,
+                                         0, nullptr, SQL_DRIVER_NOPROMPT);
   // Should be IM002 (DSN not found), not a parsing error
   REQUIRE_EXPECTED_ERROR(ret, "IM002", dbc_handle(), SQL_HANDLE_DBC);
 }
@@ -298,9 +283,8 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDriverConnect: OutConnectionString bu
   SQLSMALLINT outConnStrLen = 0;
   std::memset(outConnStr, 0, sizeof(outConnStr));
 
-  SQLRETURN ret =
-      SQLDriverConnect(dbc_handle(), nullptr, reinterpret_cast<SQLCHAR*>(const_cast<char*>(connStr.c_str())), SQL_NTS,
-                       outConnStr, sizeof(outConnStr), &outConnStrLen, SQL_DRIVER_NOPROMPT);
+  SQLRETURN ret = SQLDriverConnect(dbc_handle(), nullptr, sqlchar(connStr.c_str()), SQL_NTS, outConnStr,
+                                   sizeof(outConnStr), &outConnStrLen, SQL_DRIVER_NOPROMPT);
   REQUIRE((ret == SQL_SUCCESS || ret == SQL_SUCCESS_WITH_INFO));
 
   // Output connection string should be populated
@@ -321,9 +305,8 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDriverConnect: OutConnectionString tr
   SQLCHAR outConnStr[10];
   SQLSMALLINT outConnStrLen = 0;
 
-  SQLRETURN ret =
-      SQLDriverConnect(dbc_handle(), nullptr, reinterpret_cast<SQLCHAR*>(const_cast<char*>(connStr.c_str())), SQL_NTS,
-                       outConnStr, sizeof(outConnStr), &outConnStrLen, SQL_DRIVER_NOPROMPT);
+  SQLRETURN ret = SQLDriverConnect(dbc_handle(), nullptr, sqlchar(connStr.c_str()), SQL_NTS, outConnStr,
+                                   sizeof(outConnStr), &outConnStrLen, SQL_DRIVER_NOPROMPT);
   // Should succeed (connection made) but possibly with INFO for truncation
   REQUIRE((ret == SQL_SUCCESS || ret == SQL_SUCCESS_WITH_INFO));
 
@@ -347,9 +330,8 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDriverConnect: NULL OutConnectionStri
   SQLSMALLINT outConnStrLen = 0;
 
   // NULL buffer but valid length pointer - should report required length
-  SQLRETURN ret =
-      SQLDriverConnect(dbc_handle(), nullptr, reinterpret_cast<SQLCHAR*>(const_cast<char*>(connStr.c_str())), SQL_NTS,
-                       nullptr, 0, &outConnStrLen, SQL_DRIVER_NOPROMPT);
+  SQLRETURN ret = SQLDriverConnect(dbc_handle(), nullptr, sqlchar(connStr.c_str()), SQL_NTS, nullptr, 0, &outConnStrLen,
+                                   SQL_DRIVER_NOPROMPT);
   REQUIRE((ret == SQL_SUCCESS || ret == SQL_SUCCESS_WITH_INFO));
 
   // Length should indicate how much space is needed
@@ -367,9 +349,8 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDriverConnect: NULL StringLength2Ptr 
   SQLCHAR outConnStr[1024];
 
   // Valid buffer but NULL length pointer - should still succeed
-  SQLRETURN ret =
-      SQLDriverConnect(dbc_handle(), nullptr, reinterpret_cast<SQLCHAR*>(const_cast<char*>(connStr.c_str())), SQL_NTS,
-                       outConnStr, sizeof(outConnStr), nullptr, SQL_DRIVER_NOPROMPT);
+  SQLRETURN ret = SQLDriverConnect(dbc_handle(), nullptr, sqlchar(connStr.c_str()), SQL_NTS, outConnStr,
+                                   sizeof(outConnStr), nullptr, SQL_DRIVER_NOPROMPT);
   REQUIRE((ret == SQL_SUCCESS || ret == SQL_SUCCESS_WITH_INFO));
 
   // Buffer should still be populated
@@ -386,16 +367,15 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDriverConnect: Both OutConnectionStri
   const std::string connStr = build_dsn_connection_string(dsn_name());
 
   // Both NULL - should still connect, just no output
-  SQLRETURN ret =
-      SQLDriverConnect(dbc_handle(), nullptr, reinterpret_cast<SQLCHAR*>(const_cast<char*>(connStr.c_str())), SQL_NTS,
-                       nullptr, 0, nullptr, SQL_DRIVER_NOPROMPT);
+  SQLRETURN ret = SQLDriverConnect(dbc_handle(), nullptr, sqlchar(connStr.c_str()), SQL_NTS, nullptr, 0, nullptr,
+                                   SQL_DRIVER_NOPROMPT);
   REQUIRE((ret == SQL_SUCCESS || ret == SQL_SUCCESS_WITH_INFO));
 
   // Verify connection works
   SQLHSTMT stmt = SQL_NULL_HSTMT;
   ret = SQLAllocHandle(SQL_HANDLE_STMT, dbc_handle(), &stmt);
   REQUIRE(ret == SQL_SUCCESS);
-  ret = SQLExecDirect(stmt, reinterpret_cast<SQLCHAR*>(const_cast<char*>("SELECT 1")), SQL_NTS);
+  ret = SQLExecDirect(stmt, sqlchar("SELECT 1"), SQL_NTS);
   REQUIRE((ret == SQL_SUCCESS || ret == SQL_SUCCESS_WITH_INFO));
   ret = SQLFreeHandle(SQL_HANDLE_STMT, stmt);
   REQUIRE(ret == SQL_SUCCESS);
@@ -407,9 +387,8 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDriverConnect: Both OutConnectionStri
 TEST_CASE_METHOD(DbcFixture, "SQLDriverConnect: Connection string with special characters",
                  "[odbc-api][driverconnect][connecting][parsing]") {
   // Connection string with braces (should be parsed correctly)
-  const SQLRETURN ret = SQLDriverConnect(dbc_handle(), nullptr,
-                                         reinterpret_cast<SQLCHAR*>(const_cast<char*>("DSN={Test DSN With Spaces}")),
-                                         SQL_NTS, nullptr, 0, nullptr, SQL_DRIVER_NOPROMPT);
+  const SQLRETURN ret = SQLDriverConnect(dbc_handle(), nullptr, sqlchar("DSN={Test DSN With Spaces}"), SQL_NTS, nullptr,
+                                         0, nullptr, SQL_DRIVER_NOPROMPT);
   // Will fail with IM002 but shouldn't crash or have parsing error
   REQUIRE(ret == SQL_ERROR);
 }
@@ -417,9 +396,8 @@ TEST_CASE_METHOD(DbcFixture, "SQLDriverConnect: Connection string with special c
 TEST_CASE_METHOD(DbcFixture, "SQLDriverConnect: Multiple semicolons in connection string",
                  "[odbc-api][driverconnect][connecting][parsing]") {
   // Multiple semicolons should be handled gracefully
-  const SQLRETURN ret =
-      SQLDriverConnect(dbc_handle(), nullptr, reinterpret_cast<SQLCHAR*>(const_cast<char*>("DSN=test;;UID=user;;;")),
-                       SQL_NTS, nullptr, 0, nullptr, SQL_DRIVER_NOPROMPT);
+  const SQLRETURN ret = SQLDriverConnect(dbc_handle(), nullptr, sqlchar("DSN=test;;UID=user;;;"), SQL_NTS, nullptr, 0,
+                                         nullptr, SQL_DRIVER_NOPROMPT);
   // Should parse correctly and fail with IM002
   REQUIRE(ret == SQL_ERROR);
 }
@@ -427,9 +405,8 @@ TEST_CASE_METHOD(DbcFixture, "SQLDriverConnect: Multiple semicolons in connectio
 TEST_CASE_METHOD(DbcFixture, "SQLDriverConnect: Case insensitivity of keywords",
                  "[odbc-api][driverconnect][connecting][parsing]") {
   // Keywords are case-insensitive per ODBC spec
-  const SQLRETURN ret = SQLDriverConnect(dbc_handle(), nullptr,
-                                         reinterpret_cast<SQLCHAR*>(const_cast<char*>("dsn=test;uid=user;pwd=pass")),
-                                         SQL_NTS, nullptr, 0, nullptr, SQL_DRIVER_NOPROMPT);
+  const SQLRETURN ret = SQLDriverConnect(dbc_handle(), nullptr, sqlchar("dsn=test;uid=user;pwd=pass"), SQL_NTS, nullptr,
+                                         0, nullptr, SQL_DRIVER_NOPROMPT);
   // Should parse correctly (same as DSN=test) - DSN not found, not parsing error
   REQUIRE_EXPECTED_ERROR(ret, "IM002", dbc_handle(), SQL_HANDLE_DBC);
 }
@@ -454,9 +431,8 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDriverConnect: Basic DSN connection s
 
   const std::string connStr = build_dsn_connection_string(dsn_name());
 
-  SQLRETURN ret =
-      SQLDriverConnect(dbc_handle(), nullptr, reinterpret_cast<SQLCHAR*>(const_cast<char*>(connStr.c_str())), SQL_NTS,
-                       nullptr, 0, nullptr, SQL_DRIVER_NOPROMPT);
+  SQLRETURN ret = SQLDriverConnect(dbc_handle(), nullptr, sqlchar(connStr.c_str()), SQL_NTS, nullptr, 0, nullptr,
+                                   SQL_DRIVER_NOPROMPT);
   REQUIRE((ret == SQL_SUCCESS || ret == SQL_SUCCESS_WITH_INFO));
 
   // Verify connection by executing a query
@@ -464,7 +440,7 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDriverConnect: Basic DSN connection s
   ret = SQLAllocHandle(SQL_HANDLE_STMT, dbc_handle(), &stmt);
   REQUIRE(ret == SQL_SUCCESS);
 
-  ret = SQLExecDirect(stmt, reinterpret_cast<SQLCHAR*>(const_cast<char*>("SELECT 1")), SQL_NTS);
+  ret = SQLExecDirect(stmt, sqlchar("SELECT 1"), SQL_NTS);
   REQUIRE((ret == SQL_SUCCESS || ret == SQL_SUCCESS_WITH_INFO));
 
   ret = SQLFetch(stmt);
@@ -483,9 +459,8 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDriverConnect: Connection with additi
   // DSN with additional Snowflake-specific parameters
   const std::string connStr = "DSN=" + dsn_name() + ";TRACING=0";
 
-  SQLRETURN ret =
-      SQLDriverConnect(dbc_handle(), nullptr, reinterpret_cast<SQLCHAR*>(const_cast<char*>(connStr.c_str())), SQL_NTS,
-                       nullptr, 0, nullptr, SQL_DRIVER_NOPROMPT);
+  SQLRETURN ret = SQLDriverConnect(dbc_handle(), nullptr, sqlchar(connStr.c_str()), SQL_NTS, nullptr, 0, nullptr,
+                                   SQL_DRIVER_NOPROMPT);
   REQUIRE((ret == SQL_SUCCESS || ret == SQL_SUCCESS_WITH_INFO));
 
   ret = SQLDisconnect(dbc_handle());
@@ -500,9 +475,8 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture,
   // Per ODBC spec, unrecognized keywords return SQL_SUCCESS_WITH_INFO with 01S00
   const std::string connStr = "DSN=" + dsn_name() + ";INVALIDKEY=abc";
 
-  SQLRETURN ret =
-      SQLDriverConnect(dbc_handle(), nullptr, reinterpret_cast<SQLCHAR*>(const_cast<char*>(connStr.c_str())), SQL_NTS,
-                       nullptr, 0, nullptr, SQL_DRIVER_NOPROMPT);
+  SQLRETURN ret = SQLDriverConnect(dbc_handle(), nullptr, sqlchar(connStr.c_str()), SQL_NTS, nullptr, 0, nullptr,
+                                   SQL_DRIVER_NOPROMPT);
   REQUIRE(ret == SQL_SUCCESS_WITH_INFO);
 
   auto records = get_diag_rec(SQL_HANDLE_DBC, dbc_handle());
@@ -522,9 +496,8 @@ TEST_CASE_METHOD(DbcNoAuthDSNFixture, "SQLDriverConnect: 28000 - Invalid authori
   // ODBC spec allows 28000, 08001, 08004, or HY000, but Snowflake consistently uses 28000.
   const std::string connStr = "DSN=" + dsn_name() + ";UID=invalid_user_xyz;PWD=invalid_cred_xyz";
 
-  const SQLRETURN ret =
-      SQLDriverConnect(dbc_handle(), nullptr, reinterpret_cast<SQLCHAR*>(const_cast<char*>(connStr.c_str())), SQL_NTS,
-                       nullptr, 0, nullptr, SQL_DRIVER_NOPROMPT);
+  const SQLRETURN ret = SQLDriverConnect(dbc_handle(), nullptr, sqlchar(connStr.c_str()), SQL_NTS, nullptr, 0, nullptr,
+                                         SQL_DRIVER_NOPROMPT);
   REQUIRE_EXPECTED_ERROR(ret, "28000", dbc_handle(), SQL_HANDLE_DBC);
 }
 
@@ -535,16 +508,15 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDriverConnect: Disconnect and reconne
   const std::string connStr = build_dsn_connection_string(dsn_name());
 
   for (int i = 0; i < 3; i++) {
-    SQLRETURN ret =
-        SQLDriverConnect(dbc_handle(), nullptr, reinterpret_cast<SQLCHAR*>(const_cast<char*>(connStr.c_str())), SQL_NTS,
-                         nullptr, 0, nullptr, SQL_DRIVER_NOPROMPT);
+    SQLRETURN ret = SQLDriverConnect(dbc_handle(), nullptr, sqlchar(connStr.c_str()), SQL_NTS, nullptr, 0, nullptr,
+                                     SQL_DRIVER_NOPROMPT);
     REQUIRE((ret == SQL_SUCCESS || ret == SQL_SUCCESS_WITH_INFO));
 
     // Verify connection with query
     SQLHSTMT stmt = SQL_NULL_HSTMT;
     ret = SQLAllocHandle(SQL_HANDLE_STMT, dbc_handle(), &stmt);
     REQUIRE(ret == SQL_SUCCESS);
-    ret = SQLExecDirect(stmt, reinterpret_cast<SQLCHAR*>(const_cast<char*>("SELECT 1")), SQL_NTS);
+    ret = SQLExecDirect(stmt, sqlchar("SELECT 1"), SQL_NTS);
     REQUIRE((ret == SQL_SUCCESS || ret == SQL_SUCCESS_WITH_INFO));
     ret = SQLFreeHandle(SQL_HANDLE_STMT, stmt);
     REQUIRE(ret == SQL_SUCCESS);
@@ -569,8 +541,8 @@ TEST_CASE_METHOD(EnvDefaultDSNFixture, "SQLDriverConnect: Multiple concurrent co
     SQLRETURN ret = SQLAllocHandle(SQL_HANDLE_DBC, env_handle(), &connection);
     REQUIRE(ret == SQL_SUCCESS);
 
-    ret = SQLDriverConnect(connection, nullptr, reinterpret_cast<SQLCHAR*>(const_cast<char*>(connStr.c_str())), SQL_NTS,
-                           nullptr, 0, nullptr, SQL_DRIVER_NOPROMPT);
+    ret = SQLDriverConnect(connection, nullptr, sqlchar(connStr.c_str()), SQL_NTS, nullptr, 0, nullptr,
+                           SQL_DRIVER_NOPROMPT);
     if (ret == SQL_SUCCESS || ret == SQL_SUCCESS_WITH_INFO) {
       successful_connections++;
     }
@@ -601,9 +573,8 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDriverConnect: Snowflake TRACING para
   // Note: TRACING is a Snowflake-specific parameter that controls logging level (0-6)
   const std::string connStr = "DSN=" + dsn_name() + ";TRACING=0";
 
-  SQLRETURN ret =
-      SQLDriverConnect(dbc_handle(), nullptr, reinterpret_cast<SQLCHAR*>(const_cast<char*>(connStr.c_str())), SQL_NTS,
-                       nullptr, 0, nullptr, SQL_DRIVER_NOPROMPT);
+  SQLRETURN ret = SQLDriverConnect(dbc_handle(), nullptr, sqlchar(connStr.c_str()), SQL_NTS, nullptr, 0, nullptr,
+                                   SQL_DRIVER_NOPROMPT);
   REQUIRE((ret == SQL_SUCCESS || ret == SQL_SUCCESS_WITH_INFO));
 
   ret = SQLDisconnect(dbc_handle());
@@ -617,16 +588,15 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDriverConnect: Snowflake CLIENT_SESSI
   // Note: CLIENT_SESSION_KEEP_ALIVE is a Snowflake-specific parameter that enables heartbeat to keep session alive
   const std::string connStr = "DSN=" + dsn_name() + ";CLIENT_SESSION_KEEP_ALIVE=true";
 
-  SQLRETURN ret =
-      SQLDriverConnect(dbc_handle(), nullptr, reinterpret_cast<SQLCHAR*>(const_cast<char*>(connStr.c_str())), SQL_NTS,
-                       nullptr, 0, nullptr, SQL_DRIVER_NOPROMPT);
+  SQLRETURN ret = SQLDriverConnect(dbc_handle(), nullptr, sqlchar(connStr.c_str()), SQL_NTS, nullptr, 0, nullptr,
+                                   SQL_DRIVER_NOPROMPT);
   REQUIRE((ret == SQL_SUCCESS || ret == SQL_SUCCESS_WITH_INFO));
 
   // Verify connection is usable
   SQLHSTMT stmt = SQL_NULL_HSTMT;
   ret = SQLAllocHandle(SQL_HANDLE_STMT, dbc_handle(), &stmt);
   REQUIRE(ret == SQL_SUCCESS);
-  ret = SQLExecDirect(stmt, reinterpret_cast<SQLCHAR*>(const_cast<char*>("SELECT 1")), SQL_NTS);
+  ret = SQLExecDirect(stmt, sqlchar("SELECT 1"), SQL_NTS);
   REQUIRE((ret == SQL_SUCCESS || ret == SQL_SUCCESS_WITH_INFO));
   ret = SQLFreeHandle(SQL_HANDLE_STMT, stmt);
   REQUIRE(ret == SQL_SUCCESS);
@@ -642,9 +612,8 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDriverConnect: Snowflake LOGIN_TIMEOU
   // LOGIN_TIMEOUT sets connection timeout in seconds
   const std::string connStr = "DSN=" + dsn_name() + ";LOGIN_TIMEOUT=120";
 
-  SQLRETURN ret =
-      SQLDriverConnect(dbc_handle(), nullptr, reinterpret_cast<SQLCHAR*>(const_cast<char*>(connStr.c_str())), SQL_NTS,
-                       nullptr, 0, nullptr, SQL_DRIVER_NOPROMPT);
+  SQLRETURN ret = SQLDriverConnect(dbc_handle(), nullptr, sqlchar(connStr.c_str()), SQL_NTS, nullptr, 0, nullptr,
+                                   SQL_DRIVER_NOPROMPT);
   REQUIRE((ret == SQL_SUCCESS || ret == SQL_SUCCESS_WITH_INFO));
 
   ret = SQLDisconnect(dbc_handle());
@@ -658,16 +627,15 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDriverConnect: Snowflake APPLICATION 
   // APPLICATION parameter sets client application name
   const std::string connStr = "DSN=" + dsn_name() + ";APPLICATION=ODBCTestSuite";
 
-  SQLRETURN ret =
-      SQLDriverConnect(dbc_handle(), nullptr, reinterpret_cast<SQLCHAR*>(const_cast<char*>(connStr.c_str())), SQL_NTS,
-                       nullptr, 0, nullptr, SQL_DRIVER_NOPROMPT);
+  SQLRETURN ret = SQLDriverConnect(dbc_handle(), nullptr, sqlchar(connStr.c_str()), SQL_NTS, nullptr, 0, nullptr,
+                                   SQL_DRIVER_NOPROMPT);
   REQUIRE((ret == SQL_SUCCESS || ret == SQL_SUCCESS_WITH_INFO));
 
   // Verify connection is usable
   SQLHSTMT stmt = SQL_NULL_HSTMT;
   ret = SQLAllocHandle(SQL_HANDLE_STMT, dbc_handle(), &stmt);
   REQUIRE(ret == SQL_SUCCESS);
-  ret = SQLExecDirect(stmt, reinterpret_cast<SQLCHAR*>(const_cast<char*>("SELECT 1")), SQL_NTS);
+  ret = SQLExecDirect(stmt, sqlchar("SELECT 1"), SQL_NTS);
   REQUIRE((ret == SQL_SUCCESS || ret == SQL_SUCCESS_WITH_INFO));
   ret = SQLFreeHandle(SQL_HANDLE_STMT, stmt);
   REQUIRE(ret == SQL_SUCCESS);
@@ -683,9 +651,8 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDriverConnect: Snowflake QUERY_TIMEOU
   // QUERY_TIMEOUT sets query execution timeout (0 = no timeout)
   const std::string connStr = "DSN=" + dsn_name() + ";QUERY_TIMEOUT=0";
 
-  SQLRETURN ret =
-      SQLDriverConnect(dbc_handle(), nullptr, reinterpret_cast<SQLCHAR*>(const_cast<char*>(connStr.c_str())), SQL_NTS,
-                       nullptr, 0, nullptr, SQL_DRIVER_NOPROMPT);
+  SQLRETURN ret = SQLDriverConnect(dbc_handle(), nullptr, sqlchar(connStr.c_str()), SQL_NTS, nullptr, 0, nullptr,
+                                   SQL_DRIVER_NOPROMPT);
   REQUIRE((ret == SQL_SUCCESS || ret == SQL_SUCCESS_WITH_INFO));
 
   ret = SQLDisconnect(dbc_handle());
@@ -699,9 +666,8 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDriverConnect: Snowflake NETWORK_TIME
   // NETWORK_TIMEOUT sets network operation timeout
   const std::string connStr = "DSN=" + dsn_name() + ";NETWORK_TIMEOUT=0";
 
-  SQLRETURN ret =
-      SQLDriverConnect(dbc_handle(), nullptr, reinterpret_cast<SQLCHAR*>(const_cast<char*>(connStr.c_str())), SQL_NTS,
-                       nullptr, 0, nullptr, SQL_DRIVER_NOPROMPT);
+  SQLRETURN ret = SQLDriverConnect(dbc_handle(), nullptr, sqlchar(connStr.c_str()), SQL_NTS, nullptr, 0, nullptr,
+                                   SQL_DRIVER_NOPROMPT);
   REQUIRE((ret == SQL_SUCCESS || ret == SQL_SUCCESS_WITH_INFO));
 
   ret = SQLDisconnect(dbc_handle());
@@ -715,9 +681,8 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDriverConnect: Snowflake DisableOCSPC
   // Note: DisableOCSPCheck is a Snowflake-specific parameter that controls OCSP certificate validation
   const std::string connStr = "DSN=" + dsn_name() + ";DisableOCSPCheck=true";
 
-  SQLRETURN ret =
-      SQLDriverConnect(dbc_handle(), nullptr, reinterpret_cast<SQLCHAR*>(const_cast<char*>(connStr.c_str())), SQL_NTS,
-                       nullptr, 0, nullptr, SQL_DRIVER_NOPROMPT);
+  SQLRETURN ret = SQLDriverConnect(dbc_handle(), nullptr, sqlchar(connStr.c_str()), SQL_NTS, nullptr, 0, nullptr,
+                                   SQL_DRIVER_NOPROMPT);
   REQUIRE((ret == SQL_SUCCESS || ret == SQL_SUCCESS_WITH_INFO));
 
   ret = SQLDisconnect(dbc_handle());
@@ -732,9 +697,8 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDriverConnect: Snowflake DATABASE and
   // Empty values should not break connection
   const std::string connStr = "DSN=" + dsn_name() + ";DATABASE=;SCHEMA=";
 
-  SQLRETURN ret =
-      SQLDriverConnect(dbc_handle(), nullptr, reinterpret_cast<SQLCHAR*>(const_cast<char*>(connStr.c_str())), SQL_NTS,
-                       nullptr, 0, nullptr, SQL_DRIVER_NOPROMPT);
+  SQLRETURN ret = SQLDriverConnect(dbc_handle(), nullptr, sqlchar(connStr.c_str()), SQL_NTS, nullptr, 0, nullptr,
+                                   SQL_DRIVER_NOPROMPT);
   REQUIRE((ret == SQL_SUCCESS || ret == SQL_SUCCESS_WITH_INFO));
 
   ret = SQLDisconnect(dbc_handle());
@@ -748,9 +712,8 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDriverConnect: Snowflake WAREHOUSE pa
   // WAREHOUSE can override default warehouse (empty = use default)
   const std::string connStr = "DSN=" + dsn_name() + ";WAREHOUSE=";
 
-  SQLRETURN ret =
-      SQLDriverConnect(dbc_handle(), nullptr, reinterpret_cast<SQLCHAR*>(const_cast<char*>(connStr.c_str())), SQL_NTS,
-                       nullptr, 0, nullptr, SQL_DRIVER_NOPROMPT);
+  SQLRETURN ret = SQLDriverConnect(dbc_handle(), nullptr, sqlchar(connStr.c_str()), SQL_NTS, nullptr, 0, nullptr,
+                                   SQL_DRIVER_NOPROMPT);
   REQUIRE((ret == SQL_SUCCESS || ret == SQL_SUCCESS_WITH_INFO));
 
   ret = SQLDisconnect(dbc_handle());
@@ -764,9 +727,8 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDriverConnect: Snowflake ROLE paramet
   // ROLE can override default role (empty = use default)
   const std::string connStr = "DSN=" + dsn_name() + ";ROLE=";
 
-  SQLRETURN ret =
-      SQLDriverConnect(dbc_handle(), nullptr, reinterpret_cast<SQLCHAR*>(const_cast<char*>(connStr.c_str())), SQL_NTS,
-                       nullptr, 0, nullptr, SQL_DRIVER_NOPROMPT);
+  SQLRETURN ret = SQLDriverConnect(dbc_handle(), nullptr, sqlchar(connStr.c_str()), SQL_NTS, nullptr, 0, nullptr,
+                                   SQL_DRIVER_NOPROMPT);
   REQUIRE((ret == SQL_SUCCESS || ret == SQL_SUCCESS_WITH_INFO));
 
   ret = SQLDisconnect(dbc_handle());
@@ -786,16 +748,15 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDriverConnect: Snowflake multiple par
                               ";NETWORK_TIMEOUT=0"
                               ";CLIENT_SESSION_KEEP_ALIVE=false";
 
-  SQLRETURN ret =
-      SQLDriverConnect(dbc_handle(), nullptr, reinterpret_cast<SQLCHAR*>(const_cast<char*>(connStr.c_str())), SQL_NTS,
-                       nullptr, 0, nullptr, SQL_DRIVER_NOPROMPT);
+  SQLRETURN ret = SQLDriverConnect(dbc_handle(), nullptr, sqlchar(connStr.c_str()), SQL_NTS, nullptr, 0, nullptr,
+                                   SQL_DRIVER_NOPROMPT);
   REQUIRE((ret == SQL_SUCCESS || ret == SQL_SUCCESS_WITH_INFO));
 
   // Verify connection works
   SQLHSTMT stmt = SQL_NULL_HSTMT;
   ret = SQLAllocHandle(SQL_HANDLE_STMT, dbc_handle(), &stmt);
   REQUIRE(ret == SQL_SUCCESS);
-  ret = SQLExecDirect(stmt, reinterpret_cast<SQLCHAR*>(const_cast<char*>("SELECT CURRENT_TIMESTAMP()")), SQL_NTS);
+  ret = SQLExecDirect(stmt, sqlchar("SELECT CURRENT_TIMESTAMP()"), SQL_NTS);
   REQUIRE((ret == SQL_SUCCESS || ret == SQL_SUCCESS_WITH_INFO));
   ret = SQLFreeHandle(SQL_HANDLE_STMT, stmt);
   REQUIRE(ret == SQL_SUCCESS);
@@ -833,13 +794,12 @@ static void driver_connect_thread(const std::string& connStr, std::atomic<SQLRET
       return;
     }
 
-    ret = SQLDriverConnect(dbc, nullptr, reinterpret_cast<SQLCHAR*>(const_cast<char*>(connStr.c_str())), SQL_NTS,
-                           nullptr, 0, nullptr, SQL_DRIVER_NOPROMPT);
+    ret = SQLDriverConnect(dbc, nullptr, sqlchar(connStr.c_str()), SQL_NTS, nullptr, 0, nullptr, SQL_DRIVER_NOPROMPT);
     if (ret == SQL_SUCCESS || ret == SQL_SUCCESS_WITH_INFO) {
       // Verify with simple query
       SQLHSTMT stmt = SQL_NULL_HSTMT;
       if (SQLAllocHandle(SQL_HANDLE_STMT, dbc, &stmt) == SQL_SUCCESS) {
-        SQLExecDirect(stmt, reinterpret_cast<SQLCHAR*>(const_cast<char*>("SELECT 1")), SQL_NTS);
+        SQLExecDirect(stmt, sqlchar("SELECT 1"), SQL_NTS);
         SQLFreeHandle(SQL_HANDLE_STMT, stmt);
       }
       SQLDisconnect(dbc);
@@ -880,8 +840,7 @@ TEST_CASE("SQLDriverConnect: Threaded concurrent connections",
     ret = SQLAllocHandle(SQL_HANDLE_DBC, env, &dbc);
     REQUIRE(ret == SQL_SUCCESS);
 
-    ret = SQLDriverConnect(dbc, nullptr, reinterpret_cast<SQLCHAR*>(const_cast<char*>(connStr.c_str())), SQL_NTS,
-                           nullptr, 0, nullptr, SQL_DRIVER_NOPROMPT);
+    ret = SQLDriverConnect(dbc, nullptr, sqlchar(connStr.c_str()), SQL_NTS, nullptr, 0, nullptr, SQL_DRIVER_NOPROMPT);
     REQUIRE((ret == SQL_SUCCESS || ret == SQL_SUCCESS_WITH_INFO));
     SQLDisconnect(dbc);
     SQLFreeHandle(SQL_HANDLE_DBC, dbc);

@@ -11,6 +11,8 @@
 #include "Schema.hpp"
 #include "compatibility.hpp"
 #include "get_diag_rec.hpp"
+#include "odbc_cast.hpp"
+#include "query_helpers.hpp"
 #include "test_macros.hpp"
 #include "test_setup.hpp"
 
@@ -26,19 +28,15 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumnPrivileges: Result set has cor
                  "[odbc-api][catalog][columnprivileges]") {
   const auto schema = Schema::use_random_schema(dbc_handle());
 
-  SQLRETURN ret = SQLExecDirect(
-      stmt_handle(),
-      reinterpret_cast<SQLCHAR*>(const_cast<char*>("CREATE TABLE test_cp_numcols (id INT, name VARCHAR(100))")),
-      SQL_NTS);
+  SQLRETURN ret =
+      SQLExecDirect(stmt_handle(), sqlchar("CREATE TABLE test_cp_numcols (id INT, name VARCHAR(100))"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
   SQLFreeStmt(stmt_handle(), SQL_CLOSE);
 
   const std::string currentDb = get_current_database(dbc_handle());
 
-  ret = SQLColumnPrivileges(stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(currentDb.c_str())), SQL_NTS,
-                            reinterpret_cast<SQLCHAR*>(const_cast<char*>(schema.name().c_str())), SQL_NTS,
-                            reinterpret_cast<SQLCHAR*>(const_cast<char*>("TEST_CP_NUMCOLS")), SQL_NTS,
-                            reinterpret_cast<SQLCHAR*>(const_cast<char*>("%")), SQL_NTS);
+  ret = SQLColumnPrivileges(stmt_handle(), sqlchar(currentDb.c_str()), SQL_NTS, sqlchar(schema.name().c_str()), SQL_NTS,
+                            sqlchar("TEST_CP_NUMCOLS"), SQL_NTS, sqlchar("%"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
   SQLSMALLINT numCols = 0;
@@ -51,17 +49,14 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumnPrivileges: Result set column 
                  "[odbc-api][catalog][columnprivileges]") {
   const auto schema = Schema::use_random_schema(dbc_handle());
 
-  SQLRETURN ret = SQLExecDirect(
-      stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>("CREATE TABLE test_cp_colnames (id INT)")), SQL_NTS);
+  SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("CREATE TABLE test_cp_colnames (id INT)"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
   SQLFreeStmt(stmt_handle(), SQL_CLOSE);
 
   const std::string currentDb = get_current_database(dbc_handle());
 
-  ret = SQLColumnPrivileges(stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(currentDb.c_str())), SQL_NTS,
-                            reinterpret_cast<SQLCHAR*>(const_cast<char*>(schema.name().c_str())), SQL_NTS,
-                            reinterpret_cast<SQLCHAR*>(const_cast<char*>("TEST_CP_COLNAMES")), SQL_NTS,
-                            reinterpret_cast<SQLCHAR*>(const_cast<char*>("%")), SQL_NTS);
+  ret = SQLColumnPrivileges(stmt_handle(), sqlchar(currentDb.c_str()), SQL_NTS, sqlchar(schema.name().c_str()), SQL_NTS,
+                            sqlchar("TEST_CP_COLNAMES"), SQL_NTS, sqlchar("%"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
   const char* expectedColNames[] = {"TABLE_CAT", "TABLE_SCHEM", "TABLE_NAME", "COLUMN_NAME",
@@ -93,18 +88,15 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumnPrivileges: Returns empty resu
 
   const auto schema = Schema::use_random_schema(dbc_handle());
 
-  SQLRETURN ret = SQLExecDirect(
-      stmt_handle(),
-      reinterpret_cast<SQLCHAR*>(const_cast<char*>("CREATE TABLE test_cp_empty (id INT, name VARCHAR(100))")), SQL_NTS);
+  SQLRETURN ret =
+      SQLExecDirect(stmt_handle(), sqlchar("CREATE TABLE test_cp_empty (id INT, name VARCHAR(100))"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
   SQLFreeStmt(stmt_handle(), SQL_CLOSE);
 
   const std::string currentDb = get_current_database(dbc_handle());
 
-  ret = SQLColumnPrivileges(stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(currentDb.c_str())), SQL_NTS,
-                            reinterpret_cast<SQLCHAR*>(const_cast<char*>(schema.name().c_str())), SQL_NTS,
-                            reinterpret_cast<SQLCHAR*>(const_cast<char*>("TEST_CP_EMPTY")), SQL_NTS,
-                            reinterpret_cast<SQLCHAR*>(const_cast<char*>("%")), SQL_NTS);
+  ret = SQLColumnPrivileges(stmt_handle(), sqlchar(currentDb.c_str()), SQL_NTS, sqlchar(schema.name().c_str()), SQL_NTS,
+                            sqlchar("TEST_CP_EMPTY"), SQL_NTS, sqlchar("%"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
   ret = SQLFetch(stmt_handle());
@@ -119,10 +111,8 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumnPrivileges: Various parameter 
 
   const auto schema = Schema::use_random_schema(dbc_handle());
 
-  SQLRETURN ret = SQLExecDirect(
-      stmt_handle(),
-      reinterpret_cast<SQLCHAR*>(const_cast<char*>("CREATE TABLE test_cp_params (id INT, name VARCHAR(100))")),
-      SQL_NTS);
+  SQLRETURN ret =
+      SQLExecDirect(stmt_handle(), sqlchar("CREATE TABLE test_cp_params (id INT, name VARCHAR(100))"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
   SQLFreeStmt(stmt_handle(), SQL_CLOSE);
 
@@ -130,19 +120,16 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumnPrivileges: Various parameter 
   const std::string& schemaName = schema.name();
 
   // Wildcard % for ColumnName
-  ret = SQLColumnPrivileges(stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(currentDb.c_str())), SQL_NTS,
-                            reinterpret_cast<SQLCHAR*>(const_cast<char*>(schemaName.c_str())), SQL_NTS,
-                            reinterpret_cast<SQLCHAR*>(const_cast<char*>("TEST_CP_PARAMS")), SQL_NTS,
-                            reinterpret_cast<SQLCHAR*>(const_cast<char*>("%")), SQL_NTS);
+  ret = SQLColumnPrivileges(stmt_handle(), sqlchar(currentDb.c_str()), SQL_NTS, sqlchar(schemaName.c_str()), SQL_NTS,
+                            sqlchar("TEST_CP_PARAMS"), SQL_NTS, sqlchar("%"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
   ret = SQLFetch(stmt_handle());
   REQUIRE(ret == SQL_NO_DATA);
   SQLCloseCursor(stmt_handle());
 
   // NULL ColumnName (treated as wildcard)
-  ret = SQLColumnPrivileges(stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(currentDb.c_str())), SQL_NTS,
-                            reinterpret_cast<SQLCHAR*>(const_cast<char*>(schemaName.c_str())), SQL_NTS,
-                            reinterpret_cast<SQLCHAR*>(const_cast<char*>("TEST_CP_PARAMS")), SQL_NTS, nullptr, 0);
+  ret = SQLColumnPrivileges(stmt_handle(), sqlchar(currentDb.c_str()), SQL_NTS, sqlchar(schemaName.c_str()), SQL_NTS,
+                            sqlchar("TEST_CP_PARAMS"), SQL_NTS, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
   ret = SQLFetch(stmt_handle());
   REQUIRE(ret == SQL_NO_DATA);
@@ -151,12 +138,10 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumnPrivileges: Various parameter 
   // Explicit string lengths instead of SQL_NTS
   const std::string tbl = "TEST_CP_PARAMS";
   const std::string col = "%";
-  ret = SQLColumnPrivileges(
-      stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(currentDb.c_str())),
-      static_cast<SQLSMALLINT>(currentDb.length()), reinterpret_cast<SQLCHAR*>(const_cast<char*>(schemaName.c_str())),
-      static_cast<SQLSMALLINT>(schemaName.length()), reinterpret_cast<SQLCHAR*>(const_cast<char*>(tbl.c_str())),
-      static_cast<SQLSMALLINT>(tbl.length()), reinterpret_cast<SQLCHAR*>(const_cast<char*>(col.c_str())),
-      static_cast<SQLSMALLINT>(col.length()));
+  ret = SQLColumnPrivileges(stmt_handle(), sqlchar(currentDb.c_str()), static_cast<SQLSMALLINT>(currentDb.length()),
+                            sqlchar(schemaName.c_str()), static_cast<SQLSMALLINT>(schemaName.length()),
+                            sqlchar(tbl.c_str()), static_cast<SQLSMALLINT>(tbl.length()), sqlchar(col.c_str()),
+                            static_cast<SQLSMALLINT>(col.length()));
   REQUIRE(ret == SQL_SUCCESS);
   ret = SQLFetch(stmt_handle());
   REQUIRE(ret == SQL_NO_DATA);
@@ -171,10 +156,8 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumnPrivileges: Non-existent table
   const std::string currentDb = get_current_database(dbc_handle());
 
   SQLRETURN ret =
-      SQLColumnPrivileges(stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(currentDb.c_str())), SQL_NTS,
-                          reinterpret_cast<SQLCHAR*>(const_cast<char*>(schema.name().c_str())), SQL_NTS,
-                          reinterpret_cast<SQLCHAR*>(const_cast<char*>("NONEXISTENT_TABLE_XYZ_99999")), SQL_NTS,
-                          reinterpret_cast<SQLCHAR*>(const_cast<char*>("%")), SQL_NTS);
+      SQLColumnPrivileges(stmt_handle(), sqlchar(currentDb.c_str()), SQL_NTS, sqlchar(schema.name().c_str()), SQL_NTS,
+                          sqlchar("NONEXISTENT_TABLE_XYZ_99999"), SQL_NTS, sqlchar("%"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
   ret = SQLFetch(stmt_handle());
@@ -189,26 +172,21 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumnPrivileges: Can call multiple 
                  "[odbc-api][catalog][columnprivileges]") {
   const auto schema = Schema::use_random_schema(dbc_handle());
 
-  SQLRETURN ret = SQLExecDirect(
-      stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>("CREATE TABLE test_cp_reuse (id INT)")), SQL_NTS);
+  SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("CREATE TABLE test_cp_reuse (id INT)"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
   SQLFreeStmt(stmt_handle(), SQL_CLOSE);
 
   const std::string currentDb = get_current_database(dbc_handle());
 
-  ret = SQLColumnPrivileges(stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(currentDb.c_str())), SQL_NTS,
-                            reinterpret_cast<SQLCHAR*>(const_cast<char*>(schema.name().c_str())), SQL_NTS,
-                            reinterpret_cast<SQLCHAR*>(const_cast<char*>("TEST_CP_REUSE")), SQL_NTS,
-                            reinterpret_cast<SQLCHAR*>(const_cast<char*>("%")), SQL_NTS);
+  ret = SQLColumnPrivileges(stmt_handle(), sqlchar(currentDb.c_str()), SQL_NTS, sqlchar(schema.name().c_str()), SQL_NTS,
+                            sqlchar("TEST_CP_REUSE"), SQL_NTS, sqlchar("%"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
   ret = SQLFetch(stmt_handle());
   REQUIRE(ret == SQL_NO_DATA);
   SQLCloseCursor(stmt_handle());
 
-  ret = SQLColumnPrivileges(stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(currentDb.c_str())), SQL_NTS,
-                            reinterpret_cast<SQLCHAR*>(const_cast<char*>(schema.name().c_str())), SQL_NTS,
-                            reinterpret_cast<SQLCHAR*>(const_cast<char*>("TEST_CP_REUSE")), SQL_NTS,
-                            reinterpret_cast<SQLCHAR*>(const_cast<char*>("%")), SQL_NTS);
+  ret = SQLColumnPrivileges(stmt_handle(), sqlchar(currentDb.c_str()), SQL_NTS, sqlchar(schema.name().c_str()), SQL_NTS,
+                            sqlchar("TEST_CP_REUSE"), SQL_NTS, sqlchar("%"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
   ret = SQLFetch(stmt_handle());
   REQUIRE(ret == SQL_NO_DATA);
@@ -218,17 +196,14 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumnPrivileges: SQLRowCount return
                  "[odbc-api][catalog][columnprivileges]") {
   const auto schema = Schema::use_random_schema(dbc_handle());
 
-  SQLRETURN ret = SQLExecDirect(
-      stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>("CREATE TABLE test_cp_rowcount (id INT)")), SQL_NTS);
+  SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("CREATE TABLE test_cp_rowcount (id INT)"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
   SQLFreeStmt(stmt_handle(), SQL_CLOSE);
 
   const std::string currentDb = get_current_database(dbc_handle());
 
-  ret = SQLColumnPrivileges(stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(currentDb.c_str())), SQL_NTS,
-                            reinterpret_cast<SQLCHAR*>(const_cast<char*>(schema.name().c_str())), SQL_NTS,
-                            reinterpret_cast<SQLCHAR*>(const_cast<char*>("TEST_CP_ROWCOUNT")), SQL_NTS,
-                            reinterpret_cast<SQLCHAR*>(const_cast<char*>("%")), SQL_NTS);
+  ret = SQLColumnPrivileges(stmt_handle(), sqlchar(currentDb.c_str()), SQL_NTS, sqlchar(schema.name().c_str()), SQL_NTS,
+                            sqlchar("TEST_CP_ROWCOUNT"), SQL_NTS, sqlchar("%"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
   SQLLEN rowCount = 0;
@@ -243,9 +218,8 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumnPrivileges: SQLRowCount return
 
 TEST_CASE("SQLColumnPrivileges: SQL_INVALID_HANDLE for null statement handle",
           "[odbc-api][catalog][columnprivileges][error]") {
-  const SQLRETURN ret = SQLColumnPrivileges(SQL_NULL_HSTMT, nullptr, 0, nullptr, 0,
-                                            reinterpret_cast<SQLCHAR*>(const_cast<char*>("TABLE")), SQL_NTS,
-                                            reinterpret_cast<SQLCHAR*>(const_cast<char*>("%")), SQL_NTS);
+  const SQLRETURN ret =
+      SQLColumnPrivileges(SQL_NULL_HSTMT, nullptr, 0, nullptr, 0, sqlchar("TABLE"), SQL_NTS, sqlchar("%"), SQL_NTS);
   REQUIRE(ret == SQL_INVALID_HANDLE);
 }
 
@@ -258,31 +232,27 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumnPrivileges: HY009 - NULL Table
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumnPrivileges: HY090 - Negative CatalogName length",
                  "[odbc-api][catalog][columnprivileges][error]") {
   const SQLRETURN ret =
-      SQLColumnPrivileges(stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>("DB")), -999, nullptr, 0,
-                          reinterpret_cast<SQLCHAR*>(const_cast<char*>("TABLE")), SQL_NTS, nullptr, 0);
+      SQLColumnPrivileges(stmt_handle(), sqlchar("DB"), -999, nullptr, 0, sqlchar("TABLE"), SQL_NTS, nullptr, 0);
   REQUIRE_EXPECTED_ERROR(ret, "HY090", stmt_handle(), SQL_HANDLE_STMT);
 }
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumnPrivileges: HY090 - Negative SchemaName length",
                  "[odbc-api][catalog][columnprivileges][error]") {
   const SQLRETURN ret =
-      SQLColumnPrivileges(stmt_handle(), nullptr, 0, reinterpret_cast<SQLCHAR*>(const_cast<char*>("SCHEMA")), -999,
-                          reinterpret_cast<SQLCHAR*>(const_cast<char*>("TABLE")), SQL_NTS, nullptr, 0);
+      SQLColumnPrivileges(stmt_handle(), nullptr, 0, sqlchar("SCHEMA"), -999, sqlchar("TABLE"), SQL_NTS, nullptr, 0);
   REQUIRE_EXPECTED_ERROR(ret, "HY090", stmt_handle(), SQL_HANDLE_STMT);
 }
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumnPrivileges: HY090 - Negative TableName length",
                  "[odbc-api][catalog][columnprivileges][error]") {
-  const SQLRETURN ret = SQLColumnPrivileges(stmt_handle(), nullptr, 0, nullptr, 0,
-                                            reinterpret_cast<SQLCHAR*>(const_cast<char*>("TABLE")), -999, nullptr, 0);
+  const SQLRETURN ret = SQLColumnPrivileges(stmt_handle(), nullptr, 0, nullptr, 0, sqlchar("TABLE"), -999, nullptr, 0);
   REQUIRE_EXPECTED_ERROR(ret, "HY090", stmt_handle(), SQL_HANDLE_STMT);
 }
 
 TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumnPrivileges: HY090 - Negative ColumnName length",
                  "[odbc-api][catalog][columnprivileges][error]") {
   const SQLRETURN ret =
-      SQLColumnPrivileges(stmt_handle(), nullptr, 0, nullptr, 0, reinterpret_cast<SQLCHAR*>(const_cast<char*>("TABLE")),
-                          SQL_NTS, reinterpret_cast<SQLCHAR*>(const_cast<char*>("COLUMN")), -999);
+      SQLColumnPrivileges(stmt_handle(), nullptr, 0, nullptr, 0, sqlchar("TABLE"), SQL_NTS, sqlchar("COLUMN"), -999);
   REQUIRE_EXPECTED_ERROR(ret, "HY090", stmt_handle(), SQL_HANDLE_STMT);
 }
 
@@ -290,24 +260,19 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLColumnPrivileges: 24000 - Cursor alr
                  "[odbc-api][catalog][columnprivileges][error]") {
   const auto schema = Schema::use_random_schema(dbc_handle());
 
-  SQLRETURN ret = SQLExecDirect(
-      stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>("CREATE TABLE test_cp_cursor (id INT)")), SQL_NTS);
+  SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("CREATE TABLE test_cp_cursor (id INT)"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
   SQLFreeStmt(stmt_handle(), SQL_CLOSE);
 
   const std::string currentDb = get_current_database(dbc_handle());
 
-  ret = SQLColumnPrivileges(stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(currentDb.c_str())), SQL_NTS,
-                            reinterpret_cast<SQLCHAR*>(const_cast<char*>(schema.name().c_str())), SQL_NTS,
-                            reinterpret_cast<SQLCHAR*>(const_cast<char*>("TEST_CP_CURSOR")), SQL_NTS,
-                            reinterpret_cast<SQLCHAR*>(const_cast<char*>("%")), SQL_NTS);
+  ret = SQLColumnPrivileges(stmt_handle(), sqlchar(currentDb.c_str()), SQL_NTS, sqlchar(schema.name().c_str()), SQL_NTS,
+                            sqlchar("TEST_CP_CURSOR"), SQL_NTS, sqlchar("%"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
   // Second call without closing cursor
-  ret = SQLColumnPrivileges(stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(currentDb.c_str())), SQL_NTS,
-                            reinterpret_cast<SQLCHAR*>(const_cast<char*>(schema.name().c_str())), SQL_NTS,
-                            reinterpret_cast<SQLCHAR*>(const_cast<char*>("TEST_CP_CURSOR")), SQL_NTS,
-                            reinterpret_cast<SQLCHAR*>(const_cast<char*>("%")), SQL_NTS);
+  ret = SQLColumnPrivileges(stmt_handle(), sqlchar(currentDb.c_str()), SQL_NTS, sqlchar(schema.name().c_str()), SQL_NTS,
+                            sqlchar("TEST_CP_CURSOR"), SQL_NTS, sqlchar("%"), SQL_NTS);
   REQUIRE_EXPECTED_ERROR(ret, "24000", stmt_handle(), SQL_HANDLE_STMT);
 }
 

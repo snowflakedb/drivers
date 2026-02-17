@@ -11,6 +11,7 @@
 #include <string>
 
 #include "Connection.hpp"
+#include "odbc_cast.hpp"
 
 class Schema {
  public:
@@ -72,7 +73,7 @@ class Schema {
       if (!SQL_SUCCEEDED(ret)) {
         throw std::runtime_error("Schema: SQLAllocHandle(SQL_HANDLE_STMT) failed for: " + sql);
       }
-      ret = SQLExecDirect(stmt, reinterpret_cast<SQLCHAR*>(const_cast<char*>(sql.c_str())), SQL_NTS);
+      ret = SQLExecDirect(stmt, sqlchar(sql.c_str()), SQL_NTS);
       if (!SQL_SUCCEEDED(ret)) {
         SQLFreeHandle(SQL_HANDLE_STMT, stmt);
         throw std::runtime_error("Schema: SQLExecDirect failed for: " + sql);
