@@ -546,7 +546,7 @@ async fn should_retry_logout_on_retryable_error_type_for_each_strategy_type() {
         ("best-effort", ErrorStrategy::BestEffort),
     ] {
         // Test HTTP error codes (503, 429)
-        for (error_type, error_response_fn): (&str, fn() -> Vec<u8>) in [
+        for (error_type, error_response_fn) in [
             ("503 Service Unavailable", || {
                 service_unavailable_response(r#"{"success":false}"#, 0)
             }),
@@ -760,15 +760,14 @@ async fn should_honor_provided_retry_config_and_succeed_for_each_strategy_type()
         //And Retry policy configured with <max_attempts> max attempts
         //And Mock server fails <failures> times then returns 200
         let expected_attempts = num_failures + 1;
-        let (addr, attempts, server) =
-            spawn_test_server(expected_attempts, |attempt| async move {
-                if attempt <= num_failures {
-                    service_unavailable_response(r#"{"success":false}"#, 0)
-                } else {
-                    json_response(r#"{"success":true}"#)
-                }
-            })
-            .await;
+        let (addr, attempts, server) = spawn_test_server(expected_attempts, |attempt| async move {
+            if attempt <= num_failures {
+                service_unavailable_response(r#"{"success":false}"#, 0)
+            } else {
+                json_response(r#"{"success":true}"#)
+            }
+        })
+        .await;
 
         let server_url = format!("http://{}", addr);
         let client = reqwest::Client::builder().no_proxy().build().unwrap();
@@ -947,10 +946,13 @@ async fn should_throw_on_non_retryable_error_code_in_strict_strategy() {
         ),
     ] {
         //Given Core logout function called with strict strategy
-        //And Mock server returns <error_code>
+        //And Mock server returns <error_code> error
         let (addr, _, server) =
-            spawn_test_server(1, |_| async move { json_error_response(status, reason, body) })
-                .await;
+            spawn_test_server(
+                1,
+                |_| async move { json_error_response(status, reason, body) },
+            )
+            .await;
 
         let server_url = format!("http://{}", addr);
         let client = reqwest::Client::builder().no_proxy().build().unwrap();
@@ -1013,10 +1015,13 @@ async fn should_log_and_suppress_non_retryable_error_code_in_best_effort_strateg
         ),
     ] {
         //Given Core logout function called with best-effort strategy
-        //And Mock server returns <error_code>
+        //And Mock server returns <error_code> error
         let (addr, _, server) =
-            spawn_test_server(1, |_| async move { json_error_response(status, reason, body) })
-                .await;
+            spawn_test_server(
+                1,
+                |_| async move { json_error_response(status, reason, body) },
+            )
+            .await;
 
         let server_url = format!("http://{}", addr);
         let client = reqwest::Client::builder().no_proxy().build().unwrap();

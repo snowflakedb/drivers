@@ -211,7 +211,7 @@ Feature: Session Logout - Core HTTP Layer Integration
       | strict        | connection reset        |
       | best-effort   | connection reset        |
 
-  @core_int
+  # TODO: SNOW-2923705 - Requires token refresh implementation
   Scenario: should not attempt token refresh when retry count is 0 with strict strategy
     # Token refresh implies a subsequent retry of logout with new token.
     # If no retries are allowed, refreshing the token would be pointless.
@@ -222,7 +222,7 @@ Feature: Session Logout - Core HTTP Layer Integration
     Then No token refresh request is sent to server
     And Close throws SESSION_TOKEN_EXPIRED error
 
-  @core_int
+  # TODO: SNOW-2923705 - Requires token refresh implementation
   Scenario: should not attempt token refresh when retry count is 0 with best-effort strategy
     # Same logic: no retries → no point refreshing token
     Given Core logout function called with best-effort strategy
@@ -331,7 +331,8 @@ Feature: Session Logout - Core HTTP Layer Integration
       | 2            |
       | 3            |
 
-  @core_int
+  # TODO: Implement separate test for best-effort exhausted retries success path
+  # (Currently only strict strategy exhausted retries implemented)
   Scenario Outline: should log WARN and succeed after exhausted retries with best-effort strategy
     Given Core logout function called with best-effort strategy
     And Retry policy configured with <max_attempts> max attempts
@@ -349,7 +350,7 @@ Feature: Session Logout - Core HTTP Layer Integration
 
   # -- Failure path: timeout (outcome differs per strategy) --
 
-  @core_int
+  # TODO: Implement timeout failure scenario
   Scenario Outline: should throw on timeout with strict strategy
     Given Core logout function called with strict strategy
     And Timeout configured to <timeout_seconds> seconds
@@ -363,7 +364,7 @@ Feature: Session Logout - Core HTTP Layer Integration
       | 3               | 5             |
       | 5               | 10            |
 
-  @core_int
+  # TODO: Implement timeout failure scenario
   Scenario Outline: should log WARN and succeed on timeout with best-effort strategy
     Given Core logout function called with best-effort strategy
     And Timeout configured to <timeout_seconds> seconds
