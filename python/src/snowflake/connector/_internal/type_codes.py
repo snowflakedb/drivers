@@ -65,6 +65,27 @@ SNOWFLAKE_TYPE_TO_CODE = {
     "VECTOR": VECTOR,
 }
 
+# Python type name to Snowflake type name mapping.
+# Used by BindingSerializer to infer the Snowflake type from a Python value.
+# Mirrors PYTHON_TO_SNOWFLAKE_TYPE from the reference connector's converter.py.
+PYTHON_TO_SNOWFLAKE_TYPE = {
+    "int": "FIXED",
+    "long": "FIXED",
+    "float": "REAL",
+    "str": "TEXT",
+    "unicode": "TEXT",
+    "bool": "BOOLEAN",
+    "bytes": "BINARY",
+    "bytearray": "BINARY",
+    "datetime": "TIMESTAMP_NTZ",
+    "date": "DATE",
+    "time": "TIME",
+    "decimal": "FIXED",
+    "struct_time": "TIMESTAMP_NTZ",
+    "timedelta": "TIME",
+    "nonetype": "ANY",
+}
+
 
 def get_type_code(snowflake_type: str) -> int:
     """

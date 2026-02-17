@@ -10,7 +10,7 @@ members = [
     "proto_utils",
     "sf_core/tests/common/arrow_deserialize_macro",
 ]
-resolver = "1"
+resolver = "2"
 
 [profile.release]
 strip = true

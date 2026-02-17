@@ -12,14 +12,18 @@ Hierarchy:
 from __future__ import annotations
 
 import abc
+import ctypes
 
 from collections.abc import Iterator, Sequence
 from typing import TYPE_CHECKING, Any, NamedTuple
 
 from ._internal.arrow_context import ArrowConverterContext
 from ._internal.arrow_stream_iterator import ArrowStreamIterator
+from ._internal.binding_serializer import BindingSerializer
 from ._internal.protobuf_gen.database_driver_v1_pb2 import (
+    BinaryDataPtr,
     ExecuteResult,
+    QueryBindings,
     StatementExecuteQueryRequest,
     StatementNewRequest,
     StatementSetSqlQueryRequest,
@@ -107,7 +111,9 @@ class SnowflakeCursorBase(abc.ABC):
         self._current_batch = None
         self._current_row_in_batch = 0
         self.execute_result: ExecuteResult | None = None
-        self._iterator: Iterator[Row] | Iterator[DictRow] | None = None
+        self._iterator: Iterator[Row] | None = None
+        # Query bindings - keep binding data reference to prevent garbage collection while Rust uses it
+        self._binding_data: None | bytes = None
 
     # ------------------------------------------------------------------
     # PEP 249 attributes
@@ -187,13 +193,50 @@ class SnowflakeCursorBase(abc.ABC):
         """Close the cursor now (rather than whenever __del__ is called)."""
         self._closed = True
 
+    def _build_query_bindings(self, parameters: Sequence[Any]) -> QueryBindings | None:
+        """Serialize parameters and build a QueryBindings protobuf message.
+
+        Converts Python parameter values to JSON via BindingSerializer, then
+        wraps the result in a zero-copy BinaryDataPtr so the Rust core can read
+        the JSON directly from Python memory.
+
+        The encoded bytes are stored on ``self._binding_data`` to prevent
+        garbage collection while Rust holds the pointer.
+
+        Returns:
+            QueryBindings with the serialized JSON, or None if parameters
+            serialize to nothing (e.g. empty list).
+        """
+        json_str, length = BindingSerializer.serialize_parameters(parameters)
+        if json_str is None:
+            return None
+
+        # Convert string to bytes and keep a reference to prevent garbage
+        # collection while Rust uses the underlying buffer.
+        json_bytes = json_str.encode("utf-8")
+        self._binding_data = json_bytes
+
+        # Get memory address of the bytes buffer (no-copy scheme)
+        ptr_value = ctypes.cast(ctypes.c_char_p(json_bytes), ctypes.c_void_p).value
+        if ptr_value is None:
+            raise RuntimeError("Failed to obtain memory pointer for binding data")
+
+        # Convert pointer to 8-byte little-endian representation
+        ptr_bytes = ptr_value.to_bytes(8, byteorder="little", signed=False)
+
+        binary_data_ptr = BinaryDataPtr(
+            value=ptr_bytes,  # 8-byte pointer value
+            length=length,
+        )
+        return QueryBindings(json=binary_data_ptr)
+
     def execute(self, operation: str, parameters: Sequence[Any] | dict[str, Any] | None = None) -> SnowflakeCursorBase:
         """
         Execute a database operation (query or command).
 
         Args:
             operation (str): SQL statement to execute
-            parameters (sequence or mapping): Parameters for the operation
+            parameters (sequence): Parameters for the operation
         """
         stmt_handle = self.connection.db_api.statement_new(
             StatementNewRequest(conn_handle=self.connection.conn_handle)
@@ -201,11 +244,17 @@ class SnowflakeCursorBase(abc.ABC):
         self.connection.db_api.statement_set_sql_query(
             StatementSetSqlQueryRequest(stmt_handle=stmt_handle, query=operation)
         )
-        self.execute_result = self.connection.db_api.statement_execute_query(
-            StatementExecuteQueryRequest(stmt_handle=stmt_handle)
-        ).result
+
+        if parameters is not None and not isinstance(parameters, dict):
+            bindings = self._build_query_bindings(parameters)
+        else:
+            bindings = None
+        request = StatementExecuteQueryRequest(stmt_handle=stmt_handle, bindings=bindings)
+
+        self.execute_result = self.connection.db_api.statement_execute_query(request).result
 
         # Reset streaming state for a new result
+        self._binding_data = None
         self._iterator = None
 
         # Populate description and rowcount
@@ -223,14 +272,34 @@ class SnowflakeCursorBase(abc.ABC):
         """
         Execute a database operation repeatedly for each element in seq_of_parameters.
 
+        Uses array binding to execute all parameter sets in a single request.
+
         Args:
-            operation (str): SQL statement to execute
+            operation (str): SQL statement (typically INSERT, UPDATE, or DELETE)
             seq_of_parameters (sequence): Sequence of parameter sequences
 
         Raises:
-            NotSupportedError: If not implemented
+            ProgrammingError: If parameter sequences have inconsistent lengths
         """
-        raise NotSupportedError("executemany is not implemented")
+        if not seq_of_parameters:
+            return  # Empty sequence - no-op per PEP 249
+
+        # Validate all parameter sequences have same length
+        first_len = len(seq_of_parameters[0])
+        for i, params in enumerate(seq_of_parameters):
+            if len(params) != first_len:
+                raise ProgrammingError(
+                    f"Parameter sequence at index {i} has {len(params)} elements, expected {first_len}"
+                )
+
+        # Transpose from row-major to column-major format
+        # Input:  [(row1_col1, row1_col2), (row2_col1, row2_col2), ...]
+        # Output: [[row1_col1, row2_col1, ...], [row1_col2, row2_col2, ...]]
+        num_columns = first_len
+        transposed = [[row[col_idx] for row in seq_of_parameters] for col_idx in range(num_columns)]
+
+        # Execute using array binding (existing path handles list values)
+        self.execute(operation, transposed)
 
     # ------------------------------------------------------------------
     # Arrow stream helpers

@@ -138,7 +138,7 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLBrowseConnect: Zero BufferLength retu
                  "[odbc-api][browse_connect][connecting]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
-  const std::string connStr = "DSN=" + config.value().dsn_name();
+  const std::string connStr = "DSN=" + dsn_name();
   SQLCHAR outConnStr[1024] = {};
   SQLSMALLINT outLen = 0;
 
@@ -168,7 +168,7 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLBrowseConnect: 08002 - Connection alr
   REQUIRE((ret == SQL_SUCCESS || ret == SQL_SUCCESS_WITH_INFO));
 
   // Try to connect again using SQLBrowseConnect
-  const std::string connStr2 = "DSN=" + config.value().dsn_name();
+  const std::string connStr2 = "DSN=" + dsn_name();
   SQLCHAR outConnStr[1024];
   SQLSMALLINT outLen = 0;
 
@@ -190,7 +190,7 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLBrowseConnect: Initial call with DSN"
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   // Initial browse with just DSN
-  const std::string connStr = "DSN=" + config.value().dsn_name();
+  const std::string connStr = "DSN=" + dsn_name();
   SQLCHAR outConnStr[1024] = {};
   SQLSMALLINT outLen = 0;
 
@@ -220,7 +220,7 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLBrowseConnect: Reconnect after discon
                  "[odbc-api][browse_connect][connecting][integration]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
-  const std::string connStr = "DSN=" + config.value().dsn_name();
+  const std::string connStr = "DSN=" + dsn_name();
   SQLCHAR outConnStr[1024] = {};
   SQLSMALLINT outLen = 0;
 
@@ -262,7 +262,7 @@ TEST_CASE_METHOD(DbcNoAuthDSNFixture, "SQLBrowseConnect: 28000 - Invalid credent
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   // Use DSN without auth but provide invalid credentials
-  const std::string connStr = "DSN=" + config.value().dsn_name() + ";UID=invalid_user_xyz;PWD=invalid_cred_xyz";
+  const std::string connStr = "DSN=" + dsn_name() + ";UID=invalid_user_xyz;PWD=invalid_cred_xyz";
   SQLCHAR outConnStr[1024] = {};
   SQLSMALLINT outLen = 0;
 
@@ -281,7 +281,7 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLBrowseConnect: 01004 - OutConnectionS
                  "[odbc-api][browse_connect][connecting]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
-  const std::string connStr = "DSN=" + config.value().dsn_name();
+  const std::string connStr = "DSN=" + dsn_name();
   SQLCHAR outConnStr[10];  // Very small buffer to force truncation
   SQLSMALLINT outLen = 0;
 
@@ -303,7 +303,7 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLBrowseConnect: NULL StringLength2Ptr 
                  "[odbc-api][browse_connect][connecting]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
-  const std::string connStr = "DSN=" + config.value().dsn_name();
+  const std::string connStr = "DSN=" + dsn_name();
   SQLCHAR outConnStr[1024] = {};
 
   // NULL StringLength2Ptr is allowed per ODBC spec - caller doesn't need length
@@ -331,7 +331,7 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLBrowseConnect: Disconnecting after su
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   // Browse and connect
-  const std::string connStr = "DSN=" + config.value().dsn_name();
+  const std::string connStr = "DSN=" + dsn_name();
   SQLCHAR outConnStr[1024];
   SQLSMALLINT outLen = 0;
 
@@ -353,7 +353,7 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLBrowseConnect: Driver support with co
                  "[odbc-api][browse_connect][connecting][integration]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
-  const std::string connStr = "DSN=" + config.value().dsn_name();
+  const std::string connStr = "DSN=" + dsn_name();
   SQLCHAR outConnStr[2048] = {};
   SQLSMALLINT outLen = 0;
 

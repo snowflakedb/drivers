@@ -21,9 +21,8 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDisconnect: Successfully disconnects 
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   // Connect first
-  SQLRETURN ret =
-      SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(config.value().dsn_name().c_str())),
-                 SQL_NTS, nullptr, 0, nullptr, 0);
+  SQLRETURN ret = SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(dsn_name().c_str())), SQL_NTS,
+                             nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
   ret = SQLDisconnect(dbc_handle());
@@ -40,16 +39,15 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDisconnect: Can reconnect after disco
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   // Connect, disconnect, reconnect
-  SQLRETURN ret =
-      SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(config.value().dsn_name().c_str())),
-                 SQL_NTS, nullptr, 0, nullptr, 0);
+  SQLRETURN ret = SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(dsn_name().c_str())), SQL_NTS,
+                             nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
   ret = SQLDisconnect(dbc_handle());
   REQUIRE(ret == SQL_SUCCESS);
 
-  ret = SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(config.value().dsn_name().c_str())),
-                   SQL_NTS, nullptr, 0, nullptr, 0);
+  ret = SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(dsn_name().c_str())), SQL_NTS, nullptr, 0,
+                   nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
   SQLHSTMT stmt = SQL_NULL_HSTMT;
@@ -67,9 +65,8 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDisconnect: Idempotency of multiple d
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   // Connect first
-  SQLRETURN ret =
-      SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(config.value().dsn_name().c_str())),
-                 SQL_NTS, nullptr, 0, nullptr, 0);
+  SQLRETURN ret = SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(dsn_name().c_str())), SQL_NTS,
+                             nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
   // First disconnect
@@ -92,9 +89,8 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDisconnect: Closes open statements au
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   // Connect
-  SQLRETURN ret =
-      SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(config.value().dsn_name().c_str())),
-                 SQL_NTS, nullptr, 0, nullptr, 0);
+  SQLRETURN ret = SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(dsn_name().c_str())), SQL_NTS,
+                             nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
   // Allocate statement
@@ -105,10 +101,14 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDisconnect: Closes open statements au
   ret = SQLDisconnect(dbc_handle());
   REQUIRE(ret == SQL_SUCCESS);
 
-  // Note: Reference driver does not set statement handle variable to null after disconnect
-  // However, the handle becomes invalid and operations on it return SQL_INVALID_HANDLE
-  ret = SQLExecDirect(stmt, reinterpret_cast<SQLCHAR*>(const_cast<char*>("SELECT 1")), SQL_NTS);
-  REQUIRE(ret == SQL_INVALID_HANDLE);
+  // Verify the statement is no longer usable by trying to allocate a new one.
+  // After disconnect, the DBC is in a disconnected state and cannot allocate
+  // new statements (08003: Connection not open).
+  // Note: We do NOT use the old `stmt` handle after disconnect as that is
+  // undefined and segfaults on some platforms.
+  SQLHSTMT new_stmt = SQL_NULL_HSTMT;
+  ret = SQLAllocHandle(SQL_HANDLE_STMT, dbc_handle(), &new_stmt);
+  REQUIRE(ret == SQL_ERROR);
 }
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDisconnect: Handles active transactions",
@@ -116,9 +116,8 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDisconnect: Handles active transactio
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   // Connect with manual commit mode
-  SQLRETURN ret =
-      SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(config.value().dsn_name().c_str())),
-                 SQL_NTS, nullptr, 0, nullptr, 0);
+  SQLRETURN ret = SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(dsn_name().c_str())), SQL_NTS,
+                             nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
   // Set manual commit mode
@@ -151,9 +150,8 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDisconnect: With active result sets",
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   // Connect
-  SQLRETURN ret =
-      SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(config.value().dsn_name().c_str())),
-                 SQL_NTS, nullptr, 0, nullptr, 0);
+  SQLRETURN ret = SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(dsn_name().c_str())), SQL_NTS,
+                             nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
   // Execute query with result set
@@ -226,9 +224,8 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDisconnect: With multiple statement h
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   // Connect
-  SQLRETURN ret =
-      SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(config.value().dsn_name().c_str())),
-                 SQL_NTS, nullptr, 0, nullptr, 0);
+  SQLRETURN ret = SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(dsn_name().c_str())), SQL_NTS,
+                             nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
   // Allocate multiple statements
@@ -258,9 +255,8 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDisconnect: Preserves connection hand
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   // Connect, disconnect, verify handle can be reused
-  SQLRETURN ret =
-      SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(config.value().dsn_name().c_str())),
-                 SQL_NTS, nullptr, 0, nullptr, 0);
+  SQLRETURN ret = SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(dsn_name().c_str())), SQL_NTS,
+                             nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
   ret = SQLDisconnect(dbc_handle());
@@ -284,9 +280,8 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLDisconnect: Clears previous diagnosti
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   // Connect
-  SQLRETURN ret =
-      SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(config.value().dsn_name().c_str())),
-                 SQL_NTS, nullptr, 0, nullptr, 0);
+  SQLRETURN ret = SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(dsn_name().c_str())), SQL_NTS,
+                             nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
   // Cause an error to populate diagnostic records

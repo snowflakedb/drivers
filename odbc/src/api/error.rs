@@ -37,8 +37,21 @@ pub enum OdbcError {
         location: Location,
     },
 
+    #[snafu(display("Invalid use of null pointer"))]
+    NullPointer {
+        #[snafu(implicit)]
+        location: Location,
+    },
+
     #[snafu(display("Invalid record number: {number}"))]
     InvalidRecordNumber {
+        number: sql::SmallInt,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("Invalid descriptor index: {number}"))]
+    InvalidDescriptorIndex {
         number: sql::SmallInt,
         #[snafu(implicit)]
         location: Location,
@@ -275,10 +288,12 @@ impl OdbcError {
         match self {
             OdbcError::Disconnected { .. } => SqlState::ConnectionDoesNotExist,
             OdbcError::InvalidHandle { .. } => SqlState::InvalidConnectionName,
+            OdbcError::NullPointer { .. } => SqlState::InvalidUseOfNullPointer,
             OdbcError::InvalidRecordNumber { .. } => SqlState::InvalidDescriptorIndex,
             OdbcError::InvalidDiagnosticIdentifier { .. } => {
                 SqlState::InvalidDescriptorFieldIdentifier
             }
+            OdbcError::InvalidDescriptorIndex { .. } => SqlState::InvalidDescriptorIndex,
             OdbcError::UnknownAttribute { .. } => SqlState::InvalidAttributeOptionIdentifier,
             OdbcError::UnsupportedAttribute { .. } => SqlState::OptionalFeatureNotImplemented,
             OdbcError::AttributeCannotBeSetNow { .. } => SqlState::AttributeCannotBeSetNow,

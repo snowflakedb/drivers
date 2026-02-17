@@ -3,9 +3,28 @@ use regex::Regex;
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 
+/// All recognized Gherkin scenario keywords (longest prefixes first so that
+/// `Scenario Outline:` and `Scenario Template:` are matched before `Scenario:`).
+const SCENARIO_PREFIXES: &[&str] = &["Scenario Template:", "Scenario Outline:", "Scenario:"];
+
 static TAG_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"@(\w+)").unwrap());
 static STEP_REGEX: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^\s*(Given|When|Then|And|But)\s+(.+)$").unwrap());
+
+/// Check if a trimmed line starts a scenario (any keyword).
+fn is_scenario_start(line: &str) -> bool {
+    SCENARIO_PREFIXES.iter().any(|p| line.starts_with(p))
+}
+
+/// Strip the scenario keyword prefix from a line, returning the scenario name.
+fn strip_scenario_prefix(line: &str) -> &str {
+    for prefix in SCENARIO_PREFIXES {
+        if let Some(rest) = line.strip_prefix(prefix) {
+            return rest.trim();
+        }
+    }
+    line
+}
 
 #[derive(Debug, Clone)]
 pub struct Feature {
@@ -80,7 +99,7 @@ impl Feature {
         while i < lines.len() {
             let line = lines[i].trim();
 
-            if line.starts_with("Scenario:") {
+            if is_scenario_start(line) {
                 let scenario = Self::parse_scenario(&lines, &mut i)?;
                 feature.scenarios.push(scenario);
             } else {
@@ -116,11 +135,7 @@ impl Feature {
 
         // Parse scenario name
         let scenario_line = lines[*i].trim();
-        let scenario_name = scenario_line
-            .strip_prefix("Scenario:")
-            .unwrap_or(scenario_line)
-            .trim()
-            .to_string();
+        let scenario_name = strip_scenario_prefix(scenario_line).to_string();
 
         *i += 1;
 
@@ -134,9 +149,15 @@ impl Feature {
                 continue;
             }
 
-            if line.starts_with("Scenario:") || line.starts_with("Feature:") {
+            if is_scenario_start(line) || line.starts_with("Feature:") {
                 // Next scenario or feature, stop parsing this scenario
                 break;
+            }
+
+            // Skip table rows (Examples tables and step data tables)
+            if line.starts_with("Examples:") || line.starts_with("|") {
+                *i += 1;
+                continue;
             }
 
             if let Some(step) = Self::parse_step(line) {

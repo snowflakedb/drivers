@@ -294,10 +294,10 @@ class TestFloatTable:
         assert_sequential_values(values, LARGE_RESULT_SET_SIZE, transform=float, compare=floats_equal)
 
 
+@pytest.mark.skip_reference
 class TestFloatBinding:
     """Tests for FLOAT type using parameter binding."""
 
-    @pytest.mark.skip("SNOW-3006013 - parameter binding is not yet implemented")
     @float_type_parametrize
     def test_should_select_float_using_parameter_binding_for_float_and_synonyms(self, execute_query, float_type):
         # Given Snowflake client is logged in
@@ -311,12 +311,9 @@ class TestFloatBinding:
         assert_floats_equal(result, [123.456, -789.012, 42.0])
         assert_type(result, float)
 
-        # When Query "SELECT ?::<type>, ?::<type>, ?::<type>" is executed
-        # with bound special values [NaN, inf, -inf]
-        result = execute_query(sql, (nan, inf, -inf), single_row=True)
-
-        # Then Result should contain special values [NaN, inf, -inf]
-        assert_floats_equal(result, [nan, inf, -inf])
+        # Note: NaN, inf, -inf cannot be bound via parameter binding in Snowflake.
+        # Snowflake rejects them with "Invalid bind value (nan) for type (REAL)".
+        # Special float values are tested via literals in TestFloatLiteral instead.
 
         # When Query "SELECT ?::<type>" is executed with bound NULL value
         sql_null = f"SELECT ?::{float_type}"
@@ -325,10 +322,9 @@ class TestFloatBinding:
         # Then Result should contain NULL
         assert_floats_equal(result, [None])
 
-    @pytest.mark.skip("SNOW-3006013 - parameter binding is not yet implemented")
     @float_type_parametrize
     def test_should_insert_float_using_parameter_binding_for_float_and_synonyms(
-        self, execute_query, tmp_schema, float_type
+        self, execute_query, executemany_insert, tmp_schema, float_type
     ):
         # Given Snowflake client is logged in
 
@@ -336,15 +332,18 @@ class TestFloatBinding:
         table_name = f"{tmp_schema}.float_bind_table_{float_type.replace(' ', '_').lower()}"
         execute_query(f"CREATE TABLE {table_name} (col {float_type})")
 
-        # When Float values [0.0, 123.456, -789.012, NaN, inf, -inf, NULL] are inserted using binding
-        test_values = [0.0, 123.456, -789.012, nan, inf, -inf, None]
-        for val in test_values:
-            execute_query(f"INSERT INTO {table_name} VALUES (?)", (val,))
+        # When Float values [0.0, 123.456, -789.012, NULL] are bulk-inserted using multirow binding
 
-        # And Query "SELECT * FROM float_table" is executed
-        rows = execute_query(f"SELECT * FROM {table_name}")
+        # Note: NaN, inf, -inf cannot be bound — Snowflake rejects them as bind values.
+        test_rows = [(0.0,), (123.456,), (-789.012,), (None,)]
+        rows = executemany_insert(table_name, f"INSERT INTO {table_name} VALUES (?)", test_rows)
 
-        # Then Result should contain the same values including special values and NULL
+        # Then Result should contain the same values including NULL
         result = [row[0] for row in rows]
-        assert_floats_equal(result, test_values)
+        assert len(result) == len(test_rows)
         assert_type(result, float, can_be_none=True)
+        # Compare as sets (order depends on ORDER BY in executemany_insert fixture)
+        non_null_result = {v for v in result if v is not None}
+        non_null_expected = {0.0, 123.456, -789.012}
+        assert non_null_result == non_null_expected
+        assert result.count(None) == 1

@@ -16,6 +16,10 @@ CPP_METHOD_PATTERN = re.compile(r'void\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(')
 RUST_FUNCTION_PATTERN = re.compile(r'fn\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(')
 PYTHON_TEST_PATTERN = re.compile(r'def\s+(test_[a-zA-Z_][a-zA-Z0-9_]*)\s*\(')
 
+# All recognized Gherkin scenario keywords (longest prefixes first so that
+# "Scenario Outline:" and "Scenario Template:" are matched before "Scenario:").
+SCENARIO_PREFIXES = ("Scenario Template:", "Scenario Outline:", "Scenario:")
+
 
 class FeatureParser:
     """Parses Gherkin feature files and extracts test information."""
@@ -27,6 +31,19 @@ class FeatureParser:
     def clear_cache(self):
         """Clear the file cache to free memory."""
         self._file_cache.clear()
+    
+    @staticmethod
+    def _is_scenario_start(line: str) -> bool:
+        """Check if a trimmed line starts a scenario (any keyword)."""
+        return any(line.startswith(p) for p in SCENARIO_PREFIXES)
+    
+    @staticmethod
+    def _strip_scenario_prefix(line: str) -> str:
+        """Strip the scenario keyword prefix from a line, returning the scenario name."""
+        for prefix in SCENARIO_PREFIXES:
+            if line.startswith(prefix):
+                return line[len(prefix):].strip()
+        return line
     
     def get_feature_scenarios(self, feature_path: str) -> List[str]:
         """Extract scenario names from a feature file."""
@@ -43,8 +60,8 @@ class FeatureParser:
             scenarios = []
             for line in content.split('\n'):
                 line = line.strip()
-                if line.startswith('Scenario:'):
-                    scenario_name = line.replace('Scenario:', '').strip()
+                if self._is_scenario_start(line):
+                    scenario_name = self._strip_scenario_prefix(line)
                     scenarios.append(scenario_name)
             
             return scenarios
@@ -96,9 +113,9 @@ class FeatureParser:
                     in_feature_header = False
                     continue
                 
-                # Process scenario
-                if line.startswith('Scenario:'):
-                    scenario_name = line.replace('Scenario:', '').strip()
+                # Process scenario (Scenario, Scenario Outline, Scenario Template)
+                if self._is_scenario_start(line):
+                    scenario_name = self._strip_scenario_prefix(line)
                     
                     # Behavior Differences detection is now handled by the Rust validator
                     behavior_difference_info = self._extract_behavior_difference_info(current_tags)
@@ -122,6 +139,12 @@ class FeatureParser:
                     
                     scenarios.append(scenario_info)
                     current_tags = []  # Reset tags after processing scenario
+                    continue
+                
+                # Skip table rows (Examples tables and step data tables).
+                # Clear tags so that tags on Examples: blocks don't leak to the next scenario.
+                if line.startswith('Examples:') or line.startswith('|'):
+                    current_tags = []
                     continue
                 
                 # Reset tags if we hit a non-tag, non-scenario line

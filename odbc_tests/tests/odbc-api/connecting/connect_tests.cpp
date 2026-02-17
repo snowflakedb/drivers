@@ -322,7 +322,7 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLConnect: Basic DSN connection succeed
                  "[odbc-api][connect][dsn][integration]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
-  const std::string dsn = config.value().dsn_name();
+  const std::string dsn = dsn_name();
 
   // Credentials are in odbc.ini, pass NULL for UID/PWD
   SQLRETURN ret = SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(dsn.c_str())), SQL_NTS, nullptr,
@@ -348,7 +348,7 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLConnect: Basic DSN connection succeed
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLConnect: 08002 - Connection already open",
                  "[odbc-api][connect][dsn][integration][error]") {
-  const std::string dsn = config.value().dsn_name();
+  const std::string dsn = dsn_name();
 
   // First connection must succeed
   SQLRETURN ret = SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(dsn.c_str())), SQL_NTS, nullptr,
@@ -373,7 +373,7 @@ TEST_CASE_METHOD(DbcNoAuthDSNFixture, "SQLConnect: 28000 - Invalid authorization
   // Use DSN without credentials and provide invalid ones
   // Note: Snowflake driver returns 28000 for authentication failures.
   // ODBC spec allows 28000, 08001, 08004, or HY000, but Snowflake consistently uses 28000.
-  const std::string dsn = config.value().dsn_name();
+  const std::string dsn = dsn_name();
   const std::string bad_uid = "invalid_user_xyz";
   const std::string bad_pwd = "invalid_cred_xyz";
 
@@ -386,7 +386,7 @@ TEST_CASE_METHOD(DbcNoAuthDSNFixture, "SQLConnect: 28000 - Invalid authorization
 
 TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLConnect: SQL_SUCCESS_WITH_INFO has retrievable diagnostics",
                  "[odbc-api][connect][dsn][integration]") {
-  const std::string dsn = config.value().dsn_name();
+  const std::string dsn = dsn_name();
 
   SQLRETURN ret = SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(dsn.c_str())), SQL_NTS, nullptr,
                              0, nullptr, 0);
@@ -407,7 +407,7 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLConnect: Disconnect and reconnect cyc
                  "[odbc-api][connect][dsn][integration][lifecycle]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
-  const std::string dsn = config.value().dsn_name();
+  const std::string dsn = dsn_name();
 
   constexpr int CYCLES = 3;
   for (int i = 0; i < CYCLES; i++) {
@@ -437,7 +437,7 @@ TEST_CASE_METHOD(EnvDefaultDSNFixture, "SQLConnect: Multiple concurrent connecti
   constexpr int NUM_CONNECTIONS = 3;
   SQLHDBC connections[NUM_CONNECTIONS];
 
-  const std::string dsn = config.value().dsn_name();
+  const std::string dsn = dsn_name();
 
   // Allocate and connect all connections
   for (auto& connection : connections) {

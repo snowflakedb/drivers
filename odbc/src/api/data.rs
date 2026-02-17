@@ -120,10 +120,18 @@ fn execute_bindings(stmt: &mut Statement) -> OdbcResult<Warnings> {
         batch_idx,
     } = &stmt.state.as_ref()
     {
-        for (column_number, binding) in &stmt.column_bindings {
-            let array_ref = record_batch.column((column_number - 1) as usize);
+        for (column_number, binding) in &stmt.ard.bindings {
             let schema = record_batch.schema();
-            let field = schema.field((column_number - 1) as usize);
+            let arrow_column_number = *column_number as usize - 1;
+            if arrow_column_number >= schema.fields().len() {
+                tracing::error!(
+                    "execute_bindings: column_number {} is out of range",
+                    *column_number
+                );
+                continue;
+            }
+            let array_ref = record_batch.column(arrow_column_number);
+            let field = schema.field(arrow_column_number);
             tracing::debug!(
                 "execute_bindings: column_number={}, binding={:?}",
                 column_number,

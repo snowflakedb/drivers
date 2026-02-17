@@ -77,5 +77,5 @@ Feature: BOOLEAN type support
   Scenario: should insert boolean using parameter binding
     Given Snowflake client is logged in
     And Table with BOOLEAN column exists
-    When Boolean values [TRUE, FALSE, NULL] are inserted using binding
+    When Boolean values [TRUE, FALSE, NULL] are bulk-inserted using multirow binding
     Then SELECT should return the same values in any order

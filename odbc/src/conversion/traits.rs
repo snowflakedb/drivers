@@ -4,7 +4,7 @@ use crate::cdata_types::CDataType;
 use crate::conversion::error::{ReadArrowError, WriteOdbcError};
 use crate::conversion::warning::Warnings;
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct Binding {
     pub target_type: CDataType,
     pub target_value_ptr: sql::Pointer,

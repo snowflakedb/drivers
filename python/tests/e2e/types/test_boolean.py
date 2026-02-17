@@ -130,10 +130,10 @@ class TestBooleanTable:
         assert num_true == LARGE_RESULT_SET_SIZE // 2
 
 
+@pytest.mark.skip_reference
 class TestBooleanBinding:
     """Tests for BOOLEAN type using parameter binding."""
 
-    @pytest.mark.skip("SNOW-3006013 - parameter binding is not yet implemented")
     def test_should_select_boolean_using_parameter_binding(self, execute_query):
         # Given Snowflake client is logged in
 
@@ -151,21 +151,18 @@ class TestBooleanBinding:
         # Then Result should contain [NULL]
         assert result == (None,)
 
-    @pytest.mark.skip("SNOW-3006013 - parameter binding is not yet implemented")
-    def test_should_insert_boolean_using_parameter_binding(self, execute_query, tmp_schema):
+    def test_should_insert_boolean_using_parameter_binding(self, execute_query, executemany_insert, tmp_schema):
         # Given Snowflake client is logged in
 
         # And Table with BOOLEAN column exists
         table_name = f"{tmp_schema}.boolean_bind_table"
         execute_query(f"CREATE TABLE {table_name} (col BOOLEAN)")
 
-        # When Boolean values [TRUE, FALSE, NULL] are inserted using binding
-        test_values = [True, False, None]
-        for val in test_values:
-            execute_query(f"INSERT INTO {table_name} VALUES (?)", (val,))
+        # When Boolean values [TRUE, FALSE, NULL] are bulk-inserted using multirow binding
+        test_values = [(True,), (False,), (None,)]
+        rows = executemany_insert(table_name, f"INSERT INTO {table_name} VALUES (?)", test_values)
 
         # Then SELECT should return the same values in any order
-        rows = execute_query(f"SELECT * FROM {table_name}")
         result = [row[0] for row in rows]
-        assert set(result) == set(test_values)
+        assert set(result) == {True, False, None}
         assert_type(result, bool, can_be_none=True)

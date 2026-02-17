@@ -7,8 +7,8 @@ use crate::rest::snowflake::{
     QUERY_REQUEST_PATH, apply_json_content_type, apply_query_headers, query_request, query_response,
 };
 use reqwest::{Method, StatusCode};
+use serde_json::value::RawValue;
 use snafu::Location;
-use std::collections::HashMap;
 use std::panic::Location as StdLocation;
 use std::time::{Duration, Instant};
 use tracing::debug;
@@ -109,8 +109,8 @@ pub struct SubmitOk {
 
 fn build_async_query_request(
     sql: String,
-    parameter_bindings: Option<&HashMap<String, query_request::BindParameter>>,
-) -> query_request::Request {
+    parameter_bindings: Option<&RawValue>,
+) -> query_request::Request<'_> {
     query_request::Request {
         sql_text: sql,
         async_exec: true,
@@ -119,7 +119,7 @@ fn build_async_query_request(
         is_internal: false,
         describe_only: None,
         parameters: None,
-        bindings: parameter_bindings.cloned(),
+        bindings: parameter_bindings,
         bind_stage: None,
         query_context: query_request::QueryContext { entries: None },
     }
@@ -194,7 +194,7 @@ pub async fn submit_statement_async(
     params: &QueryParameters,
     session_token: &str,
     sql: String,
-    parameter_bindings: Option<&HashMap<String, query_request::BindParameter>>,
+    parameter_bindings: Option<&RawValue>,
     request_id: uuid::Uuid,
     policy: &RetryPolicy,
 ) -> Result<SubmitOk, SfError> {
@@ -267,7 +267,7 @@ pub async fn execute_blocking_with_async(
     params: &QueryParameters,
     session_token: &str,
     sql: String,
-    parameter_bindings: Option<HashMap<String, query_request::BindParameter>>,
+    parameter_bindings: Option<&RawValue>,
     request_id: uuid::Uuid,
     policy: &RetryPolicy,
 ) -> Result<query_response::Response, SfError> {
@@ -279,7 +279,7 @@ pub async fn execute_blocking_with_async(
         params,
         session_token,
         sql,
-        parameter_bindings.as_ref(),
+        parameter_bindings,
         request_id,
         policy,
     )

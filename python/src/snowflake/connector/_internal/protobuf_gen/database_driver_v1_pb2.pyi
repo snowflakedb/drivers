@@ -538,6 +538,73 @@ class ArrowArrayPtr(_message.Message):
 Global___ArrowArrayPtr: _TypeAlias = ArrowArrayPtr  # noqa: Y015
 
 @_typing.final
+class BinaryDataPtr(_message.Message):
+    """=============================================================================
+    POINTER TYPES - For passing data references to core
+    =============================================================================
+
+    Pointer to raw binary data in memory with explicit length.
+    Used for passing data from language wrappers without copying.
+
+    Both JSON and CSV use this same pointer type since both point to raw bytes:
+    - JSON: pointer to UTF-8 encoded JSON bytes (e.g., from json_str.encode('utf-8'))
+    - CSV: pointer to raw CSV file bytes
+    """
+
+    DESCRIPTOR: _descriptor.Descriptor
+
+    VALUE_FIELD_NUMBER: _builtins.int
+    LENGTH_FIELD_NUMBER: _builtins.int
+    value: _builtins.bytes
+    """8-byte pointer (encoded as little-endian)"""
+    length: _builtins.int
+    """Length of data in bytes"""
+    def __init__(
+        self,
+        *,
+        value: _builtins.bytes = ...,
+        length: _builtins.int = ...,
+    ) -> None: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["length", b"length", "value", b"value"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
+
+Global___BinaryDataPtr: _TypeAlias = BinaryDataPtr  # noqa: Y015
+
+@_typing.final
+class QueryBindings(_message.Message):
+    """Union of all binding types.
+    Both variants use BinaryDataPtr since both point to raw bytes in memory.
+    """
+
+    DESCRIPTOR: _descriptor.Descriptor
+
+    JSON_FIELD_NUMBER: _builtins.int
+    CSV_FIELD_NUMBER: _builtins.int
+    @_builtins.property
+    def json(self) -> Global___BinaryDataPtr:
+        """Pointer to UTF-8 encoded JSON bytes"""
+
+    @_builtins.property
+    def csv(self) -> Global___BinaryDataPtr:
+        """Pointer to raw CSV bytes"""
+
+    def __init__(
+        self,
+        *,
+        json: Global___BinaryDataPtr | None = ...,
+        csv: Global___BinaryDataPtr | None = ...,
+    ) -> None: ...
+    _HasFieldArgType: _TypeAlias = _typing.Literal["binding_type", b"binding_type", "csv", b"csv", "json", b"json"]  # noqa: Y015
+    def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["binding_type", b"binding_type", "csv", b"csv", "json", b"json"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
+    _WhichOneofReturnType_binding_type: _TypeAlias = _typing.Literal["json", "csv"]  # noqa: Y015
+    _WhichOneofArgType_binding_type: _TypeAlias = _typing.Literal["binding_type", b"binding_type"]  # noqa: Y015
+    def WhichOneof(self, oneof_group: _WhichOneofArgType_binding_type) -> _WhichOneofReturnType_binding_type | None: ...
+
+Global___QueryBindings: _TypeAlias = QueryBindings  # noqa: Y015
+
+@_typing.final
 class DatabaseNewRequest(_message.Message):
     """Database service requests and responses"""
 
@@ -1757,20 +1824,31 @@ Global___StatementBindStreamResponse: _TypeAlias = StatementBindStreamResponse  
 
 @_typing.final
 class StatementExecuteQueryRequest(_message.Message):
+    """Extend current StatementExecute"""
+
     DESCRIPTOR: _descriptor.Descriptor
 
     STMT_HANDLE_FIELD_NUMBER: _builtins.int
+    BINDINGS_FIELD_NUMBER: _builtins.int
     @_builtins.property
     def stmt_handle(self) -> Global___StatementHandle: ...
+    @_builtins.property
+    def bindings(self) -> Global___QueryBindings:
+        """None = no bindings"""
+
     def __init__(
         self,
         *,
         stmt_handle: Global___StatementHandle | None = ...,
+        bindings: Global___QueryBindings | None = ...,
     ) -> None: ...
-    _HasFieldArgType: _TypeAlias = _typing.Literal["stmt_handle", b"stmt_handle"]  # noqa: Y015
+    _HasFieldArgType: _TypeAlias = _typing.Literal["_bindings", b"_bindings", "bindings", b"bindings", "stmt_handle", b"stmt_handle"]  # noqa: Y015
     def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
-    _ClearFieldArgType: _TypeAlias = _typing.Literal["stmt_handle", b"stmt_handle"]  # noqa: Y015
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["_bindings", b"_bindings", "bindings", b"bindings", "stmt_handle", b"stmt_handle"]  # noqa: Y015
     def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
+    _WhichOneofReturnType__bindings: _TypeAlias = _typing.Literal["bindings"]  # noqa: Y015
+    _WhichOneofArgType__bindings: _TypeAlias = _typing.Literal["_bindings", b"_bindings"]  # noqa: Y015
+    def WhichOneof(self, oneof_group: _WhichOneofArgType__bindings) -> _WhichOneofReturnType__bindings | None: ...
 
 Global___StatementExecuteQueryRequest: _TypeAlias = StatementExecuteQueryRequest  # noqa: Y015
 

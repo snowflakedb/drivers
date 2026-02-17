@@ -83,6 +83,27 @@ def execute_query(cursor):
 
 
 @pytest.fixture
+def executemany_insert(cursor):
+    """Fixture for bulk-inserting rows via executemany and reading them back.
+
+    Returns a callable:
+        executemany_insert(table_name, sql, rows) -> list[Row]
+
+    It executes cursor.executemany(sql, rows), then SELECTs all rows
+    from the table ordered by the first column.
+
+    Useful for testing multirow binding.
+    """
+
+    def _executemany_insert(table_name: str, sql: str, rows: list[tuple[Any, ...]]) -> list[tuple[Any, ...]]:
+        cursor.executemany(sql, rows)
+        cursor.execute(f"SELECT * FROM {table_name} ORDER BY 1")
+        return cursor.fetchall()
+
+    return _executemany_insert
+
+
+@pytest.fixture
 def tmp_schema(cursor):
     """Create a temporary schema."""
     import uuid

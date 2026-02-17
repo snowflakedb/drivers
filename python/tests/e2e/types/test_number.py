@@ -455,10 +455,10 @@ class TestNumberTable:
         )
 
 
+@pytest.mark.skip_reference
 class TestNumberBinding:
     """Tests for NUMBER type using parameter binding."""
 
-    @pytest.mark.skip("SNOW-3006013 - parameter binding is not yet implemented")
     @number_type_parametrize
     def test_should_select_number_using_parameter_binding_for_number_and_synonyms(self, execute_query, num_type):
         # Given Snowflake client is logged in
@@ -480,7 +480,6 @@ class TestNumberBinding:
         assert_type(result[:2], int)
         assert_type(result[2:], Decimal, can_be_none=True)
 
-    @pytest.mark.skip("SNOW-3006013 - parameter binding is not yet implemented")
     @number_type_parametrize
     def test_should_select_high_precision_number_using_parameter_binding_for_number_and_synonyms(
         self, execute_query, num_type
@@ -502,10 +501,9 @@ class TestNumberBinding:
         assert_type([result[0]], int)
         assert_type([result[1]], Decimal)
 
-    @pytest.mark.skip("SNOW-3006013 - parameter binding is not yet implemented")
     @number_type_parametrize
     def test_should_insert_number_using_parameter_binding_for_number_and_synonyms(
-        self, execute_query, tmp_schema, num_type
+        self, execute_query, executemany_insert, tmp_schema, num_type
     ):
         # Given Snowflake client is logged in
 
@@ -521,8 +519,7 @@ class TestNumberBinding:
             (999999, Decimal("999.99")),
             (None, None),
         ]
-        for row in test_data:
-            execute_query(f"INSERT INTO {table_name} VALUES (?, ?)", row)
+        executemany_insert(table_name, f"INSERT INTO {table_name} VALUES (?, ?)", test_data)
 
         # Then Result should contain 5 rows with expected values
         rows = execute_query(f"SELECT * FROM {table_name}")
@@ -535,7 +532,6 @@ class TestNumberBinding:
         assert set(col_int_values) == {0, 123, -456, 999999, None}
         assert set(col_dec_values) == {Decimal("0.00"), Decimal("123.45"), Decimal("-67.89"), Decimal("999.99"), None}
 
-    @pytest.mark.skip("SNOW-3006013 - parameter binding is not yet implemented")
     @number_type_parametrize
     def test_should_insert_high_precision_number_using_parameter_binding_for_number_and_synonyms(
         self, execute_query, tmp_schema, num_type

@@ -70,6 +70,7 @@ pub fn exec_direct(statement_handle: sql::Handle, statement_text: &str) -> OdbcR
             let response =
                 DatabaseDriverClient::statement_execute_query(StatementExecuteQueryRequest {
                     stmt_handle: Some(stmt.stmt_handle),
+                    bindings: None,
                 })?;
 
             stmt.state = create_execute_state(response)?.into();
@@ -154,6 +155,7 @@ pub fn execute(statement_handle: sql::Handle) -> OdbcResult<()> {
             let response =
                 DatabaseDriverClient::statement_execute_query(StatementExecuteQueryRequest {
                     stmt_handle: Some(stmt.stmt_handle),
+                    bindings: None,
                 })?;
 
             tracing::info!("execute: Successfully executed statement");
@@ -242,7 +244,7 @@ pub fn free_stmt(statement_handle: sql::Handle, option: sql::FreeStmtOption) -> 
         }
         sql::FreeStmtOption::Unbind => {
             tracing::info!("free_stmt: Unbinding all columns");
-            stmt.column_bindings.clear();
+            stmt.ard.unbind_all();
         }
         sql::FreeStmtOption::ResetParams => {
             tracing::info!("free_stmt: Resetting all parameters");
@@ -271,14 +273,54 @@ pub fn bind_col(
 
     let stmt = stmt_from_handle(statement_handle);
 
-    stmt.column_bindings.insert(
-        column_number,
-        Binding {
-            target_type,
-            target_value_ptr,
-            buffer_length,
-            str_len_or_ind_ptr,
-        },
-    );
+    // Per ODBC specification, if target_value_ptr is null, unbind the column
+    if target_value_ptr.is_null() {
+        tracing::debug!("bind_col: unbinding column {}", column_number);
+        stmt.ard.bindings.remove(&column_number);
+    } else {
+        stmt.ard.bindings.insert(
+            column_number,
+            Binding {
+                target_type,
+                target_value_ptr,
+                buffer_length,
+                str_len_or_ind_ptr,
+            },
+        );
+    }
     Ok(())
+}
+
+/// Get a statement attribute value
+pub fn get_stmt_attr(
+    statement_handle: sql::Handle,
+    attribute: sql::Integer,
+    value_ptr: sql::Pointer,
+    _buffer_length: sql::Integer,
+    _string_length_ptr: *mut sql::Integer,
+) -> OdbcResult<()> {
+    use crate::api::StmtAttr;
+
+    tracing::debug!(
+        "get_stmt_attr: statement_handle={:?}, attribute={}",
+        statement_handle,
+        attribute
+    );
+
+    let attr = StmtAttr::try_from(attribute)?;
+    let stmt = stmt_from_handle(statement_handle);
+
+    match attr {
+        StmtAttr::AppRowDesc => {
+            let ard_ptr = &mut stmt.ard as *mut crate::api::ArdDescriptor as sql::Handle;
+            unsafe {
+                *(value_ptr as *mut sql::Handle) = ard_ptr;
+            }
+            Ok(())
+        }
+        _ => {
+            tracing::warn!("get_stmt_attr: unsupported attribute {:?}", attr);
+            crate::api::error::UnknownAttributeSnafu { attribute }.fail()
+        }
+    }
 }

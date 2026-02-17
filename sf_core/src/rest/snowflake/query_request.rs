@@ -1,8 +1,9 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use serde_json::value::RawValue;
 use std::collections::HashMap;
 
 #[derive(Serialize)]
-pub struct Request {
+pub struct Request<'a> {
     #[serde(rename = "sqlText")]
     pub sql_text: String,
     #[serde(rename = "asyncExec")]
@@ -17,15 +18,20 @@ pub struct Request {
     pub describe_only: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub parameters: Option<HashMap<String, serde_json::Value>>,
+    /// Raw JSON pass-through for parameter bindings.
+    ///
+    /// Points directly into the caller's memory -- zero allocation, zero copy.
+    /// During HTTP serialization, serde writes the raw JSON string verbatim --
+    /// no `Value` tree is ever built.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub bindings: Option<HashMap<String, BindParameter>>,
+    pub bindings: Option<&'a RawValue>,
     #[serde(rename = "bindStage", skip_serializing_if = "Option::is_none")]
     pub bind_stage: Option<String>,
     #[serde(rename = "queryContextDTO")]
     pub query_context: QueryContext,
 }
 
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct BindParameter {
     #[serde(rename = "type")]
     pub type_: String,
@@ -36,7 +42,7 @@ pub struct BindParameter {
     pub schema: Option<BindingSchema>,
 }
 
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct BindingSchema {}
 
 #[derive(Serialize)]

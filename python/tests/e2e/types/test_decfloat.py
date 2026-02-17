@@ -266,10 +266,10 @@ class TestDecfloatTable:
         assert_sequential_values(values, LARGE_RESULT_SET_SIZE, transform=Decimal)
 
 
+@pytest.mark.skip_reference
 class TestDecfloatBinding:
     """Tests for DECFLOAT type using parameter binding."""
 
-    @pytest.mark.skip("SNOW-3006013 - parameter binding is not yet implemented")
     def test_should_select_decfloat_using_parameter_binding(self, execute_query):
         # Given Snowflake client is logged in
 
@@ -291,7 +291,6 @@ class TestDecfloatBinding:
         # Then Result should contain [NULL]
         assert result == (None,)
 
-    @pytest.mark.skip("SNOW-3006013 - parameter binding is not yet implemented")
     def test_should_select_extreme_decfloat_values_using_parameter_binding(self, execute_query):
         # Given Snowflake client is logged in
 
@@ -317,8 +316,7 @@ class TestDecfloatBinding:
         assert result == (DECFLOAT_LARGE_POS_EXPONENT,)
         assert_type(result, Decimal)
 
-    @pytest.mark.skip("SNOW-3006013 - parameter binding is not yet implemented")
-    def test_should_insert_decfloat_using_parameter_binding(self, execute_query, tmp_schema):
+    def test_should_insert_decfloat_using_parameter_binding(self, execute_query, executemany_insert, tmp_schema):
         # Given Snowflake client is logged in
 
         # And Table with DECFLOAT column exists
@@ -326,28 +324,23 @@ class TestDecfloatBinding:
         execute_query(f"CREATE TABLE {table_name} (col DECFLOAT)")
 
         # When DECFLOAT values [0, 123.456, -789.012, NULL] are inserted using explicit binding
-        test_values = [
-            Decimal("0"),
-            Decimal("123.456"),
-            Decimal("-789.012"),
-            None,
+        test_rows = [
+            (("DECFLOAT", Decimal("0")),),
+            (("DECFLOAT", Decimal("123.456")),),
+            (("DECFLOAT", Decimal("-789.012")),),
+            (None,),
         ]
-        for val in test_values:
-            if val is None:
-                execute_query(f"INSERT INTO {table_name} VALUES (?)", (None,))
-            else:
-                execute_query(f"INSERT INTO {table_name} VALUES (?)", (("DECFLOAT", val),))
-
-        # And Query "SELECT * FROM <table>" is executed
-        rows = execute_query(f"SELECT * FROM {table_name}")
+        rows = executemany_insert(table_name, f"INSERT INTO {table_name} VALUES (?)", test_rows)
 
         # Then SELECT should return the same exact values
         result = [row[0] for row in rows]
-        assert result == test_values
+        expected = {Decimal("0"), Decimal("123.456"), Decimal("-789.012"), None}
+        assert set(result) == expected
         assert_type(result, Decimal, can_be_none=True)
 
-    @pytest.mark.skip("SNOW-3006013 - parameter binding is not yet implemented")
-    def test_should_insert_extreme_decfloat_values_using_parameter_binding(self, execute_query, tmp_schema):
+    def test_should_insert_extreme_decfloat_values_using_parameter_binding(
+        self, execute_query, executemany_insert, tmp_schema
+    ):
         # Given Snowflake client is logged in
 
         # And Table with DECFLOAT column exists
@@ -360,13 +353,13 @@ class TestDecfloatBinding:
             DECFLOAT_MIN_EXPONENT,
             DECFLOAT_LARGE_POS_EXPONENT,
         ]
-        for val in extreme_values:
-            execute_query(f"INSERT INTO {table_name} VALUES (?)", (("DECFLOAT", val),))
+        test_rows = [(("DECFLOAT", val),) for val in extreme_values]
+        executemany_insert(table_name, f"INSERT INTO {table_name} VALUES (?)", test_rows)
 
         # And Query "SELECT * FROM <table>" is executed
         rows = execute_query(f"SELECT * FROM {table_name}")
 
         # Then SELECT should return the same exact values
         result = [row[0] for row in rows]
-        assert result == extreme_values
         assert_type(result, Decimal)
+        assert set(result) == set(extreme_values)
