@@ -90,6 +90,12 @@ pub enum NativeOktaError {
         #[snafu(implicit)]
         location: Location,
     },
+    #[snafu(display("Failed to serialize JSON request body"))]
+    JsonSerialize {
+        source: serde_json::Error,
+        #[snafu(implicit)]
+        location: Location,
+    },
     #[snafu(display("Failed to parse JSON response"))]
     JsonParse {
         source: serde_json::Error,
@@ -238,7 +244,7 @@ pub(crate) async fn fetch_native_okta_saml(
         login_parameters.server_url
     );
 
-    let body_string = serde_json::to_string(&authn_req).context(JsonParseSnafu)?;
+    let body_string = serde_json::to_string(&authn_req).context(JsonSerializeSnafu)?;
     let ctx = HttpContext::new(Method::POST, "/session/authenticator-request").allow_post_retry();
     let (status, text) = request_text_with_retry(
         || {
@@ -407,10 +413,15 @@ pub(crate) async fn fetch_native_okta_saml(
             "Step 3 complete: obtained one-time token from Okta"
         );
 
-        // Step 4: fetch SAML HTML form
-        let policy = remaining_policy(base_policy, start, budget)?;
+        // Step 4: fetch SAML HTML form.
+        // Use a single-attempt policy (no internal retries) so that transient errors
+        // (5xx, 429, transport failures) bubble up to this outer loop. This lets us
+        // re-mint the one-time token before retrying, matching the old driver's behavior
+        // where each retry gets a fresh token from Okta.
+        let mut single_attempt_policy = remaining_policy(base_policy, start, budget)?;
+        single_attempt_policy.max_attempts = 1;
         let saml_ctx = HttpContext::new(Method::GET, "okta:saml");
-        let (saml_status, saml_html) = request_text_with_retry(
+        let saml_result = request_text_with_retry(
             || {
                 client.get(sso_url.clone()).query(&[
                     ("RelayState", relay_state.as_str()),
@@ -418,10 +429,23 @@ pub(crate) async fn fetch_native_okta_saml(
                 ])
             },
             &saml_ctx,
-            &policy,
+            &single_attempt_policy,
         )
-        .await
-        .context(RetryExhaustedSnafu)?;
+        .await;
+
+        let (saml_status, saml_html) = match saml_result {
+            Ok(result) => result,
+            Err(e) if saml_attempt < base_policy.max_attempts => {
+                tracing::warn!(
+                    error = %e,
+                    attempt = saml_attempt,
+                    elapsed_ms = start.elapsed().as_millis(),
+                    "SAML fetch failed transiently, re-minting token and retrying"
+                );
+                continue;
+            }
+            Err(e) => return Err(e).context(RetryExhaustedSnafu),
+        };
 
         if !saml_status.is_success() {
             if saml_status == StatusCode::UNAUTHORIZED || saml_status == StatusCode::FORBIDDEN {
@@ -437,7 +461,7 @@ pub(crate) async fn fetch_native_okta_saml(
                 }
                 .fail();
             }
-            // On non-success statuses (e.g., 429/5xx), shared retry policy already applied; treat as transient and retry by re-minting token.
+            // Non-retryable non-success status (e.g., 400, 404). Retry with fresh token.
             if saml_attempt >= base_policy.max_attempts {
                 tracing::error!(
                     status = %saml_status,
@@ -456,7 +480,7 @@ pub(crate) async fn fetch_native_okta_saml(
                 status = %saml_status,
                 attempt = saml_attempt,
                 elapsed_ms = start.elapsed().as_millis(),
-                "SAML fetch failed transiently, re-minting token and retrying"
+                "SAML fetch returned non-success status, re-minting token and retrying"
             );
             continue;
         }

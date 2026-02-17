@@ -35,6 +35,7 @@ pub struct WiremockClient {
     host: String,
     workspace_root: PathBuf,
     stderr_path: PathBuf,
+    keystore_dir: PathBuf,
 }
 
 impl WiremockClient {
@@ -246,6 +247,7 @@ impl WiremockClient {
             host: "localhost".to_string(),
             workspace_root,
             stderr_path,
+            keystore_dir,
         };
 
         client.wait_for_health();
@@ -443,5 +445,7 @@ impl Drop for WiremockClient {
     fn drop(&mut self) {
         self.shutdown();
         let _ = self.process.wait();
+        // Clean up the temp keystore directory to avoid accumulating files.
+        let _ = fs::remove_dir_all(&self.keystore_dir);
     }
 }
