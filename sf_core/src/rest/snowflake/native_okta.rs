@@ -208,7 +208,10 @@ fn remaining_policy(
 }
 
 #[allow(clippy::too_many_arguments)]
-#[tracing::instrument(skip(client, login_parameters, base_policy, password), fields(okta_url, username, disable_saml_url_check))]
+#[tracing::instrument(
+    skip(client, login_parameters, base_policy, password),
+    fields(okta_url, username, disable_saml_url_check)
+)]
 pub(crate) async fn fetch_native_okta_saml(
     client: &reqwest::Client,
     login_parameters: &LoginParameters,
@@ -394,7 +397,10 @@ pub(crate) async fn fetch_native_okta_saml(
             })?;
         // relayState is optional - Okta doesn't always return it
         let relay_state = token_resp.relay_state.unwrap_or_default();
-        tracing::debug!(attempt = saml_attempt, "Step 3 complete: obtained one-time token from Okta");
+        tracing::debug!(
+            attempt = saml_attempt,
+            "Step 3 complete: obtained one-time token from Okta"
+        );
 
         // Step 4: fetch SAML HTML form
         let policy = remaining_policy(base_policy, start, budget)?;
@@ -449,7 +455,10 @@ pub(crate) async fn fetch_native_okta_saml(
             );
             continue;
         }
-        tracing::debug!(attempt = saml_attempt, "Step 4 complete: fetched SAML HTML form from Okta");
+        tracing::debug!(
+            attempt = saml_attempt,
+            "Step 4 complete: fetched SAML HTML form from Okta"
+        );
 
         // Step 4b: destination/postback validation (unless disabled)
         let Some(postback) = extract_form_action(&saml_html) else {
