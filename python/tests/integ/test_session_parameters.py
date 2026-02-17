@@ -137,6 +137,7 @@ class TestSessionParametersIntegration:
             assert conn._get_session_parameter("QUERY_TAG") == "overridden"
 
 
+@pytest.mark.skip("SNOW-2881694: multistatement queries are not yet supported")
 class TestSessionParametersMultistatement:
     """Test session parameters with multistatement queries."""
 
