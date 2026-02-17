@@ -234,16 +234,19 @@ fn update_session_params_cache(
         Err(_) => return Ok(()),
     };
 
-    // 1. ALTER SESSION SET: optimistically apply the parameter the user just set.
-    // This matches Python driver behavior for immediate parameter updates.
+    // 1. ALTER SESSION SET: optimistically apply ALL parameters the user set in the query.
+    // This matches Python driver behavior for immediate parameter updates in multistatement queries.
     // This is necessary as Snowflake returns only system-level parameters in the response.
-    if let Some(alter_param) = alter_session_parser::parse_alter_session(query) {
-        tracing::debug!(
-            param_name = %alter_param.name,
-            param_value = %alter_param.value,
-            "Detected ALTER SESSION SET, updating cache optimistically"
-        );
-        cache.insert(alter_param.name.clone(), alter_param.value.clone());
+    let alter_params = alter_session_parser::parse_all_alter_sessions(query);
+    if !alter_params.is_empty() {
+        for alter_param in alter_params {
+            tracing::debug!(
+                param_name = %alter_param.name,
+                param_value = %alter_param.value,
+                "Detected ALTER SESSION SET, updating cache optimistically"
+            );
+            cache.insert(alter_param.name.clone(), alter_param.value.clone());
+        }
     }
 
     // 2. Response parameters: merge any server-returned session parameters into the cache.

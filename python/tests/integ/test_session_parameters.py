@@ -135,3 +135,81 @@ class TestSessionParametersIntegration:
 
             # Verify new value
             assert conn._get_session_parameter("QUERY_TAG") == "overridden"
+
+
+class TestSessionParametersMultistatement:
+    """Test session parameters with multistatement queries."""
+
+    def test_two_alter_sessions_in_one_query(self, connection):
+        """Test two ALTER SESSION statements separated by semicolon."""
+        cursor = connection.cursor()
+
+        # Execute two ALTER SESSION statements in one query
+        cursor.execute("ALTER SESSION SET QUERY_TAG = 'test'; ALTER SESSION SET TIMEZONE = 'UTC'")
+
+        # Both parameters should be updated
+        assert connection._get_session_parameter("QUERY_TAG") == "test"
+        assert connection._get_session_parameter("TIMEZONE") == "UTC"
+
+    def test_three_alter_sessions_in_one_query(self, connection):
+        """Test three ALTER SESSION statements in one query."""
+        cursor = connection.cursor()
+
+        # Execute three ALTER SESSION statements
+        cursor.execute(
+            "ALTER SESSION SET QUERY_TAG = 'tag1'; "
+            "ALTER SESSION SET TIMEZONE = 'America/Los_Angeles'; "
+            "ALTER SESSION SET TIMESTAMP_OUTPUT_FORMAT = 'YYYY-MM-DD HH24:MI:SS'"
+        )
+
+        # All three parameters should be updated
+        assert connection._get_session_parameter("QUERY_TAG") == "tag1"
+        assert connection._get_session_parameter("TIMEZONE") == "America/Los_Angeles"
+        assert connection._get_session_parameter("TIMESTAMP_OUTPUT_FORMAT") == "YYYY-MM-DD HH24:MI:SS"
+
+    def test_alter_session_mixed_with_select(self, connection):
+        """Test ALTER SESSION statements mixed with SELECT statements."""
+        cursor = connection.cursor()
+
+        # This matches the Python driver test case from test_multi_statement.py
+        sql = (
+            "SELECT 1; "
+            "ALTER SESSION SET AUTOCOMMIT = false; "
+            "SELECT 'a'; "
+            "ALTER SESSION SET JSON_INDENT = 4; "
+            "ALTER SESSION SET CLIENT_TIMESTAMP_TYPE_MAPPING = 'TIMESTAMP_TZ'"
+        )
+        cursor.execute(sql)
+
+        # All ALTER SESSION parameters should be updated
+        assert connection._get_session_parameter("AUTOCOMMIT") == "false"
+        assert connection._get_session_parameter("JSON_INDENT") == "4"
+        assert connection._get_session_parameter("CLIENT_TIMESTAMP_TYPE_MAPPING") == "TIMESTAMP_TZ"
+
+    def test_same_parameter_set_multiple_times(self, connection):
+        """Test that setting the same parameter multiple times keeps the last value."""
+        cursor = connection.cursor()
+
+        # Set QUERY_TAG three times in one query
+        cursor.execute(
+            "ALTER SESSION SET QUERY_TAG = 'first'; "
+            "ALTER SESSION SET QUERY_TAG = 'second'; "
+            "ALTER SESSION SET QUERY_TAG = 'third'"
+        )
+
+        # Should have the last value
+        assert connection._get_session_parameter("QUERY_TAG") == "third"
+
+    def test_multistatement_with_various_value_formats(self, connection):
+        """Test multistatement ALTER SESSION with quoted, unquoted, and special values."""
+        cursor = connection.cursor()
+
+        cursor.execute(
+            "ALTER SESSION SET QUERY_TAG = 'quoted value'; "
+            "ALTER SESSION SET JSON_INDENT = 4; "
+            "ALTER SESSION SET AUTOCOMMIT = true"
+        )
+
+        assert connection._get_session_parameter("QUERY_TAG") == "quoted value"
+        assert connection._get_session_parameter("JSON_INDENT") == "4"
+        assert connection._get_session_parameter("AUTOCOMMIT") in ("true", "True", "TRUE")

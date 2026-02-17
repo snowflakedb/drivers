@@ -71,6 +71,54 @@ pub fn parse_alter_session(sql: &str) -> Option<AlterSessionParameter> {
     })
 }
 
+/// Parse all ALTER SESSION SET statements from a multistatement query.
+///
+/// This function searches the entire SQL string for ALTER SESSION SET statements,
+/// similar to the Python driver's regex `finditer()` behavior. It handles queries like:
+/// - "ALTER SESSION SET QUERY_TAG = 'test'; ALTER SESSION SET TIMEZONE = 'UTC'"
+/// - "SELECT 1; ALTER SESSION SET AUTOCOMMIT = false; SELECT 'a'"
+///
+/// Returns a vector of all ALTER SESSION parameters found in the query, in order.
+pub fn parse_all_alter_sessions(sql: &str) -> Vec<AlterSessionParameter> {
+    let mut results = Vec::new();
+    let mut remaining = sql;
+
+    while !remaining.is_empty() {
+        // Try to find the next ALTER SESSION statement
+        let upper = remaining.to_uppercase();
+        if let Some(alter_pos) = upper.find("ALTER") {
+            // Check if this is actually an ALTER SESSION SET statement
+            let candidate = &remaining[alter_pos..];
+            if let Some(param) = parse_alter_session(candidate) {
+                results.push(param);
+
+                // Move past this ALTER SESSION statement to find the next one
+                // Find the end of this statement (semicolon or end of string)
+                let after_alter = &candidate[5..]; // Skip "ALTER"
+                if let Some(semi_pos) = after_alter.find(';') {
+                    remaining = &after_alter[semi_pos + 1..];
+                } else {
+                    // No semicolon found, but we might have more statements
+                    // Try to find the next ALTER keyword
+                    if let Some(next_alter) = after_alter.to_uppercase().find("ALTER") {
+                        remaining = &after_alter[next_alter..];
+                    } else {
+                        break;
+                    }
+                }
+            } else {
+                // Not an ALTER SESSION SET, skip past this ALTER
+                remaining = &remaining[alter_pos + 5..];
+            }
+        } else {
+            // No more ALTER keywords found
+            break;
+        }
+    }
+
+    results
+}
+
 /// Extract the value from the SQL, handling quoted and unquoted values
 fn extract_value(sql: &str) -> Option<String> {
     if sql.is_empty() {
@@ -363,5 +411,141 @@ mod tests {
         assert_eq!(parse_alter_session("ALTER SESSION SET"), None);
         assert_eq!(parse_alter_session("ALTER SESSION SET ="), None);
         assert_eq!(parse_alter_session("ALTER SESSION SET PARAM"), None);
+    }
+
+    #[test]
+    fn test_multistatement_alter_session_simple() {
+        // Test two ALTER SESSION statements separated by semicolon
+        let sql = "ALTER SESSION SET QUERY_TAG = 'test'; ALTER SESSION SET TIMEZONE = 'UTC'";
+
+        // parse_alter_session should only parse the first statement
+        let result = parse_alter_session(sql);
+        assert_eq!(
+            result,
+            Some(AlterSessionParameter {
+                name: "QUERY_TAG".to_string(),
+                value: "test".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn test_multistatement_with_mixed_queries() {
+        // Test ALTER SESSION mixed with other query types
+        let sql = "SELECT 1; ALTER SESSION SET AUTOCOMMIT = false; SELECT 'a'; ALTER SESSION SET JSON_INDENT = 4";
+
+        // parse_alter_session should return None since first statement is not ALTER SESSION
+        let result = parse_alter_session(sql);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_multistatement_three_alters() {
+        // Test three ALTER SESSION statements
+        let sql = "ALTER SESSION SET QUERY_TAG = 'tag1'; ALTER SESSION SET TIMEZONE = 'America/Los_Angeles'; ALTER SESSION SET TIMESTAMP_OUTPUT_FORMAT = 'YYYY-MM-DD'";
+
+        // Should parse first statement
+        let result = parse_alter_session(sql);
+        assert_eq!(
+            result,
+            Some(AlterSessionParameter {
+                name: "QUERY_TAG".to_string(),
+                value: "tag1".to_string(),
+            })
+        );
+    }
+
+    // Tests for parse_all_alter_sessions
+
+    #[test]
+    fn test_parse_all_single_alter() {
+        let sql = "ALTER SESSION SET QUERY_TAG = 'test'";
+        let results = parse_all_alter_sessions(sql);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].name, "QUERY_TAG");
+        assert_eq!(results[0].value, "test");
+    }
+
+    #[test]
+    fn test_parse_all_two_alters_with_semicolon() {
+        let sql = "ALTER SESSION SET QUERY_TAG = 'test'; ALTER SESSION SET TIMEZONE = 'UTC'";
+        let results = parse_all_alter_sessions(sql);
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].name, "QUERY_TAG");
+        assert_eq!(results[0].value, "test");
+        assert_eq!(results[1].name, "TIMEZONE");
+        assert_eq!(results[1].value, "UTC");
+    }
+
+    #[test]
+    fn test_parse_all_three_alters() {
+        let sql = "ALTER SESSION SET QUERY_TAG = 'tag1'; ALTER SESSION SET TIMEZONE = 'America/Los_Angeles'; ALTER SESSION SET TIMESTAMP_OUTPUT_FORMAT = 'YYYY-MM-DD'";
+        let results = parse_all_alter_sessions(sql);
+        assert_eq!(results.len(), 3);
+        assert_eq!(results[0].name, "QUERY_TAG");
+        assert_eq!(results[0].value, "tag1");
+        assert_eq!(results[1].name, "TIMEZONE");
+        assert_eq!(results[1].value, "America/Los_Angeles");
+        assert_eq!(results[2].name, "TIMESTAMP_OUTPUT_FORMAT");
+        assert_eq!(results[2].value, "YYYY-MM-DD");
+    }
+
+    #[test]
+    fn test_parse_all_mixed_with_select() {
+        // Match Python driver test case
+        let sql = "SELECT 1; ALTER SESSION SET AUTOCOMMIT = false; SELECT 'a'; ALTER SESSION SET JSON_INDENT = 4; ALTER SESSION SET CLIENT_TIMESTAMP_TYPE_MAPPING = 'TIMESTAMP_TZ'";
+        let results = parse_all_alter_sessions(sql);
+        assert_eq!(results.len(), 3);
+        assert_eq!(results[0].name, "AUTOCOMMIT");
+        assert_eq!(results[0].value, "false");
+        assert_eq!(results[1].name, "JSON_INDENT");
+        assert_eq!(results[1].value, "4");
+        assert_eq!(results[2].name, "CLIENT_TIMESTAMP_TYPE_MAPPING");
+        assert_eq!(results[2].value, "TIMESTAMP_TZ");
+    }
+
+    #[test]
+    fn test_parse_all_no_alters() {
+        let sql = "SELECT * FROM table; INSERT INTO table VALUES (1)";
+        let results = parse_all_alter_sessions(sql);
+        assert_eq!(results.len(), 0);
+    }
+
+    #[test]
+    fn test_parse_all_empty_string() {
+        let sql = "";
+        let results = parse_all_alter_sessions(sql);
+        assert_eq!(results.len(), 0);
+    }
+
+    #[test]
+    fn test_parse_all_alter_table_not_session() {
+        let sql = "ALTER TABLE t ADD COLUMN c INT; ALTER SESSION SET QUERY_TAG = 'test'";
+        let results = parse_all_alter_sessions(sql);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].name, "QUERY_TAG");
+        assert_eq!(results[0].value, "test");
+    }
+
+    #[test]
+    fn test_parse_all_with_comments() {
+        let sql = "-- First statement\nALTER SESSION SET QUERY_TAG = 'test';\n/* Block comment */\nALTER SESSION SET TIMEZONE = 'UTC'";
+        let results = parse_all_alter_sessions(sql);
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].name, "QUERY_TAG");
+        assert_eq!(results[0].value, "test");
+        assert_eq!(results[1].name, "TIMEZONE");
+        assert_eq!(results[1].value, "UTC");
+    }
+
+    #[test]
+    fn test_parse_all_same_parameter_multiple_times() {
+        // Test that the last value wins
+        let sql = "ALTER SESSION SET QUERY_TAG = 'first'; ALTER SESSION SET QUERY_TAG = 'second'; ALTER SESSION SET QUERY_TAG = 'third'";
+        let results = parse_all_alter_sessions(sql);
+        assert_eq!(results.len(), 3);
+        assert_eq!(results[0].value, "first");
+        assert_eq!(results[1].value, "second");
+        assert_eq!(results[2].value, "third");
     }
 }
