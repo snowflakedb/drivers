@@ -9,7 +9,6 @@ config:
   themeVariables:
     fontFamily: Trebuchet MS
     fontSize: 16px
-    backround: black
     fontColor: black
     primaryColor: white
     primaryTextColor: black
@@ -29,7 +28,7 @@ graph LR
             RES[ResultSet Service]
             SESSION[Session Management Service]
         end
-        AUTH[Authentications Module] 
+        AUTH[Authentication Module] 
         CFG[Configuration Module]
         TM[Telemetry Module]
         LOG[Logger Module]
@@ -69,7 +68,7 @@ graph LR
         subgraph PY [Python Driver]
             direction LR
             API4[PEP 249 API]
-            TC4[ARROW -> .NET Types Converter]
+            TC4[ARROW -> Python Types Converter]
         end
         subgraph NET [.NET Driver]
             direction LR
@@ -84,12 +83,12 @@ graph LR
         subgraph GO [GO Driver]
             direction LR
             API6[database/sql API]
-            TC6[ARROW -> JS Types Converter]
+            TC6[ARROW -> GO Types Converter]
         end
         subgraph PHP [PHP Driver]
             direction LR
             API7[PDO API]
-            TC7[ARROW -> JS Types Converter]
+            TC7[ARROW -> PHP Types Converter]
         end
     end
     
@@ -112,7 +111,6 @@ config:
     themeVariables:
         fontFamily: Trebuchet MS
         fontSize: 16px
-        backround: black
         fontColor: black
         primaryColor: white
         primaryTextColor: black
@@ -151,14 +149,14 @@ graph LR
     end
     Proxy(Customer Proxy Server)
     
-   ExtIDP<--Authorize-->Driver
-   Driver<--Authorize-->IntIDP
-   Driver<--Access DB-->Backend
+   ExtIDP<--&nbspAuthorize&nbsp-->Driver
+   Driver<--&nbspAuthorize&nbsp-->IntIDP
+   Driver<--&nbspAccess DB&nbsp-->Backend
    WB<--Open to authorize-->Driver
    App<--Execute-->Driver
-   Driver<--Put/Get-->Blob
+   Driver<--&nbspPut/Get&nbsp-->Blob
    Proxy<--Use-->Driver
    KS<--Use-->Driver
-   Driver--Send-->Tel
+   Driver--&nbspSend&nbsp-->Tel
    FS<--Config, results, cache-->Driver
 ```
