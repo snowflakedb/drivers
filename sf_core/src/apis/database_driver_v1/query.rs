@@ -5,6 +5,7 @@ use crate::arrow_utils::{
 use crate::chunks::{ChunkError, ChunkReader};
 use crate::file_manager;
 use crate::file_manager::{DownloadResult, UploadResult, download_files, upload_files};
+use crate::protobuf_gen::database_driver_v1::ColumnMetadata;
 use crate::query_types::RowType;
 use crate::rest;
 use arrow::array::{Array, Int64Array, RecordBatchReader, StringArray};
@@ -17,22 +18,36 @@ use std::sync::Arc;
 const PUT_GET_ROWSET_TEXT_LENGTH: u64 = 10000;
 const PUT_GET_ROWSET_FIXED_LENGTH: u64 = 64;
 
+/// Result of processing a query response, containing the Arrow reader and
+/// optional column metadata for cases where the server does not provide rowtype
+/// (e.g. PUT/GET file transfer commands).
+pub struct QueryResult {
+    pub reader: Box<dyn RecordBatchReader + Send>,
+    pub columns: Option<Vec<ColumnMetadata>>,
+}
+
 pub async fn process_query_response(
     data: &query_response::Data,
     http_client: &Client,
-) -> Result<Box<dyn RecordBatchReader + Send>, QueryResponseProcessingError> {
+) -> Result<QueryResult, QueryResponseProcessingError> {
     match data.command {
         Some(ref command) => perform_put_get(command.clone(), data).await,
-        None => read_batches(data.to_rowset_data(), http_client)
-            .await
-            .context(BatchReadingSnafu),
+        None => {
+            let reader = read_batches(data.to_rowset_data(), http_client)
+                .await
+                .context(BatchReadingSnafu)?;
+            Ok(QueryResult {
+                reader,
+                columns: None,
+            })
+        }
     }
 }
 
 async fn perform_put_get(
     command: String,
     data: &query_response::Data,
-) -> Result<Box<dyn RecordBatchReader + Send>, QueryResponseProcessingError> {
+) -> Result<QueryResult, QueryResponseProcessingError> {
     match command.as_str() {
         "UPLOAD" => {
             let file_upload_data = data
@@ -41,7 +56,12 @@ async fn perform_put_get(
             let upload_results = upload_files(&file_upload_data)
                 .await
                 .context(FileUploadSnafu)?;
-            upload_results_reader(upload_results).context(UploadResultsConversionSnafu)
+            let reader =
+                upload_results_reader(upload_results).context(UploadResultsConversionSnafu)?;
+            Ok(QueryResult {
+                reader,
+                columns: Some(upload_column_metadata()),
+            })
         }
         "DOWNLOAD" => {
             let file_download_data = data
@@ -50,7 +70,12 @@ async fn perform_put_get(
             let download_results = download_files(file_download_data)
                 .await
                 .context(FileDownloadSnafu)?;
-            download_results_reader(download_results).context(DownloadResultsConversionSnafu)
+            let reader = download_results_reader(download_results)
+                .context(DownloadResultsConversionSnafu)?;
+            Ok(QueryResult {
+                reader,
+                columns: Some(download_column_metadata()),
+            })
         }
         _ => UnsupportedCommandSnafu {
             command: command.to_string(),
@@ -197,6 +222,66 @@ fn build_generic_fixed_rowtype(name: &str) -> RowType {
     RowType::fixed_with_scale_zero(name, false, PUT_GET_ROWSET_FIXED_LENGTH)
 }
 
+/// Convert an internal `RowType` to protobuf `ColumnMetadata`.
+fn rowtype_to_column_metadata(rt: &RowType) -> ColumnMetadata {
+    match rt {
+        RowType::Text {
+            name,
+            nullable,
+            length,
+            byte_length,
+        } => ColumnMetadata {
+            name: name.clone(),
+            r#type: "TEXT".to_string(),
+            precision: None,
+            scale: None,
+            length: Some(*length as i64),
+            byte_length: Some(*byte_length as i64),
+            nullable: *nullable,
+        },
+        RowType::Fixed {
+            name,
+            nullable,
+            precision,
+            scale,
+        } => ColumnMetadata {
+            name: name.clone(),
+            r#type: "FIXED".to_string(),
+            precision: Some(*precision as i64),
+            scale: Some(*scale as i64),
+            length: None,
+            byte_length: None,
+            nullable: *nullable,
+        },
+    }
+}
+
+/// Build column metadata for PUT (UPLOAD) results.
+pub fn upload_column_metadata() -> Vec<ColumnMetadata> {
+    let row_types = [
+        build_generic_text_rowtype("source"),
+        build_generic_text_rowtype("target"),
+        build_generic_fixed_rowtype("source_size"),
+        build_generic_fixed_rowtype("target_size"),
+        build_generic_text_rowtype("source_compression"),
+        build_generic_text_rowtype("target_compression"),
+        build_generic_text_rowtype("status"),
+        build_generic_text_rowtype("message"),
+    ];
+    row_types.iter().map(rowtype_to_column_metadata).collect()
+}
+
+/// Build column metadata for GET (DOWNLOAD) results.
+pub fn download_column_metadata() -> Vec<ColumnMetadata> {
+    let row_types = [
+        build_generic_text_rowtype("file"),
+        build_generic_fixed_rowtype("size"),
+        build_generic_text_rowtype("status"),
+        build_generic_text_rowtype("message"),
+    ];
+    row_types.iter().map(rowtype_to_column_metadata).collect()
+}
+
 #[derive(Debug, Snafu, error_trace::ErrorTrace)]
 pub enum QueryResponseProcessingError {
     #[snafu(display("Failed to convert upload results to Arrow format"))]
@@ -283,4 +368,99 @@ pub enum ReadBatchesError {
         #[snafu(implicit)]
         location: Location,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn upload_column_metadata_has_correct_structure() {
+        let columns = upload_column_metadata();
+
+        assert_eq!(columns.len(), 8, "PUT should have 8 columns");
+
+        assert_eq!(columns[0].name, "source");
+        assert_eq!(columns[0].r#type, "TEXT");
+        assert!(!columns[0].nullable);
+
+        assert_eq!(columns[1].name, "target");
+        assert_eq!(columns[1].r#type, "TEXT");
+
+        assert_eq!(columns[2].name, "source_size");
+        assert_eq!(columns[2].r#type, "FIXED");
+        assert_eq!(
+            columns[2].precision,
+            Some(PUT_GET_ROWSET_FIXED_LENGTH as i64)
+        );
+        assert_eq!(columns[2].scale, Some(0));
+
+        assert_eq!(columns[3].name, "target_size");
+        assert_eq!(columns[3].r#type, "FIXED");
+
+        assert_eq!(columns[4].name, "source_compression");
+        assert_eq!(columns[4].r#type, "TEXT");
+
+        assert_eq!(columns[5].name, "target_compression");
+        assert_eq!(columns[5].r#type, "TEXT");
+
+        assert_eq!(columns[6].name, "status");
+        assert_eq!(columns[6].r#type, "TEXT");
+
+        assert_eq!(columns[7].name, "message");
+        assert_eq!(columns[7].r#type, "TEXT");
+    }
+
+    #[test]
+    fn download_column_metadata_has_correct_structure() {
+        let columns = download_column_metadata();
+
+        assert_eq!(columns.len(), 4, "GET should have 4 columns");
+
+        assert_eq!(columns[0].name, "file");
+        assert_eq!(columns[0].r#type, "TEXT");
+        assert!(!columns[0].nullable);
+
+        assert_eq!(columns[1].name, "size");
+        assert_eq!(columns[1].r#type, "FIXED");
+        assert_eq!(
+            columns[1].precision,
+            Some(PUT_GET_ROWSET_FIXED_LENGTH as i64)
+        );
+        assert_eq!(columns[1].scale, Some(0));
+
+        assert_eq!(columns[2].name, "status");
+        assert_eq!(columns[2].r#type, "TEXT");
+
+        assert_eq!(columns[3].name, "message");
+        assert_eq!(columns[3].r#type, "TEXT");
+    }
+
+    #[test]
+    fn text_column_metadata_has_correct_fields() {
+        let rt = build_generic_text_rowtype("test_col");
+        let meta = rowtype_to_column_metadata(&rt);
+
+        assert_eq!(meta.name, "test_col");
+        assert_eq!(meta.r#type, "TEXT");
+        assert_eq!(meta.length, Some(PUT_GET_ROWSET_TEXT_LENGTH as i64));
+        assert_eq!(meta.byte_length, Some(PUT_GET_ROWSET_TEXT_LENGTH as i64));
+        assert_eq!(meta.precision, None);
+        assert_eq!(meta.scale, None);
+        assert!(!meta.nullable);
+    }
+
+    #[test]
+    fn fixed_column_metadata_has_correct_fields() {
+        let rt = build_generic_fixed_rowtype("test_col");
+        let meta = rowtype_to_column_metadata(&rt);
+
+        assert_eq!(meta.name, "test_col");
+        assert_eq!(meta.r#type, "FIXED");
+        assert_eq!(meta.precision, Some(PUT_GET_ROWSET_FIXED_LENGTH as i64));
+        assert_eq!(meta.scale, Some(0));
+        assert_eq!(meta.length, None);
+        assert_eq!(meta.byte_length, None);
+        assert!(!meta.nullable);
+    }
 }

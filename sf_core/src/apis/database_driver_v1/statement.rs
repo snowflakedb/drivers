@@ -363,11 +363,11 @@ pub fn statement_execute_query<'a>(
         conn.update_session_params_cache(&query, response.data.parameters.as_ref());
     }
 
-    let response_reader = rt
+    let query_result = rt
         .block_on(process_query_response(&response.data, &http_client))
         .context(QueryResponseProcessingSnafu)?;
 
-    let rowset_stream = Box::new(FFI_ArrowArrayStream::new(response_reader));
+    let rowset_stream = Box::new(FFI_ArrowArrayStream::new(query_result.reader));
 
     // Extract query_id from response
     let query_id = response.data.query_id.clone().unwrap_or_default();
@@ -379,22 +379,25 @@ pub fn statement_execute_query<'a>(
     let rows_affected = calculate_rows_affected(&response.data);
     let statement_type_id = response.data.statement_type_id;
 
-    // Extract column metadata from rowtype
-    let columns = response
-        .data
-        .row_type
-        .unwrap_or_default()
-        .iter()
-        .map(|rt| ColumnMetadata {
-            name: rt.name.clone(),
-            r#type: rt.type_.clone(),
-            precision: rt.precision.map(|v| v as i64),
-            scale: rt.scale.map(|v| v as i64),
-            length: rt.length.map(|v| v as i64),
-            byte_length: rt.byte_length.map(|v| v as i64),
-            nullable: rt.nullable,
-        })
-        .collect();
+    // Extract column metadata: prefer synthetic metadata from PUT/GET processing,
+    // fall back to server-provided rowtype for regular queries.
+    let columns = query_result.columns.unwrap_or_else(|| {
+        response
+            .data
+            .row_type
+            .unwrap_or_default()
+            .iter()
+            .map(|rt| ColumnMetadata {
+                name: rt.name.clone(),
+                r#type: rt.type_.clone(),
+                precision: rt.precision.map(|v| v as i64),
+                scale: rt.scale.map(|v| v as i64),
+                length: rt.length.map(|v| v as i64),
+                byte_length: rt.byte_length.map(|v| v as i64),
+                nullable: rt.nullable,
+            })
+            .collect()
+    });
 
     // Serialize pointer into integer
     stmt.state = StatementState::Executed;
