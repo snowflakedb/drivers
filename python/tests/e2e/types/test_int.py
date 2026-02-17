@@ -94,43 +94,39 @@ class TestIntTypeCasting:
 class TestIntLiteral:
     """Tests for INT type using SELECT with literals (no tables)."""
 
+    LITERAL_SELECT_TEST_CASES = [
+        ("zero", [0], (0,)),
+        (
+            "tinyint",
+            [INT8_SIGNED_MIN, INT8_SIGNED_MAX, INT8_UNSIGNED_MAX],
+            (INT8_SIGNED_MIN, INT8_SIGNED_MAX, INT8_UNSIGNED_MAX),
+        ),
+        (
+            "smallint",
+            [INT16_SIGNED_MIN, INT16_SIGNED_MAX, INT16_UNSIGNED_MAX],
+            (INT16_SIGNED_MIN, INT16_SIGNED_MAX, INT16_UNSIGNED_MAX),
+        ),
+        (
+            "int",
+            [INT32_SIGNED_MIN, INT32_SIGNED_MAX, INT32_UNSIGNED_MAX],
+            (INT32_SIGNED_MIN, INT32_SIGNED_MAX, INT32_UNSIGNED_MAX),
+        ),
+        ("bigint", [INT64_SIGNED_MIN, INT64_SIGNED_MAX], (INT64_SIGNED_MIN, INT64_SIGNED_MAX)),
+    ]
+
     @int_type_parametrize
-    @pytest.mark.parametrize(
-        "values, query_values, expected_values",
-        [
-            ("zero", [0], (0,)),
-            (
-                "tinyint",
-                [INT8_SIGNED_MIN, INT8_SIGNED_MAX, INT8_UNSIGNED_MAX],
-                (INT8_SIGNED_MIN, INT8_SIGNED_MAX, INT8_UNSIGNED_MAX),
-            ),
-            (
-                "smallint",
-                [INT16_SIGNED_MIN, INT16_SIGNED_MAX, INT16_UNSIGNED_MAX],
-                (INT16_SIGNED_MIN, INT16_SIGNED_MAX, INT16_UNSIGNED_MAX),
-            ),
-            (
-                "int",
-                [INT32_SIGNED_MIN, INT32_SIGNED_MAX, INT32_UNSIGNED_MAX],
-                (INT32_SIGNED_MIN, INT32_SIGNED_MAX, INT32_UNSIGNED_MAX),
-            ),
-            ("bigint", [INT64_SIGNED_MIN, INT64_SIGNED_MAX], (INT64_SIGNED_MIN, INT64_SIGNED_MAX)),
-        ],
-        ids=["zero", "tinyint", "smallint", "int", "bigint"],
-    )
-    def test_should_select_integer_values_for_int_and_synonyms(
-        self, execute_query, int_type, values, query_values, expected_values
-    ):
+    def test_should_select_integer_values_for_int_and_synonyms(self, execute_query, int_type):
         # Given Snowflake client is logged in
         assert_connection_is_open(execute_query)
 
-        # When Query "SELECT <query_values>" is executed
-        select_cols = ", ".join(f"{v}::{int_type}" for v in query_values)
-        result = execute_query(f"SELECT {select_cols}", single_row=True)
+        for _values, query_values, expected_values in self.LITERAL_SELECT_TEST_CASES:
+            # When Query "SELECT <query_values>" is executed
+            select_cols = ", ".join(f"{v}::{int_type}" for v in query_values)
+            result = execute_query(f"SELECT {select_cols}", single_row=True)
 
-        # Then Result should contain integers <expected_values>
-        assert result == expected_values
-        assert_type(result, int)
+            # Then Result should contain integers <expected_values>
+            assert result == expected_values
+            assert_type(result, int)
 
     @int_type_parametrize
     def test_should_handle_large_integer_values_for_int_and_synonyms(self, execute_query, int_type):
@@ -186,70 +182,65 @@ class TestIntLiteral:
 class TestIntTable:
     """Tests for INT type using table operations."""
 
+    TABLE_SELECT_TEST_CASES = [
+        (
+            "positive",
+            [
+                0,
+                1,
+                INT8_SIGNED_MAX,
+                INT8_UNSIGNED_MAX,
+                INT16_SIGNED_MAX,
+                INT16_UNSIGNED_MAX,
+                INT32_SIGNED_MAX,
+                INT32_UNSIGNED_MAX,
+                INT64_SIGNED_MAX,
+            ],
+            [
+                0,
+                1,
+                INT8_SIGNED_MAX,
+                INT8_UNSIGNED_MAX,
+                INT16_SIGNED_MAX,
+                INT16_UNSIGNED_MAX,
+                INT32_SIGNED_MAX,
+                INT32_UNSIGNED_MAX,
+                INT64_SIGNED_MAX,
+            ],
+            False,
+        ),
+        (
+            "negative",
+            [-1, INT8_SIGNED_MIN, INT16_SIGNED_MIN, INT32_SIGNED_MIN, INT64_SIGNED_MIN],
+            [INT64_SIGNED_MIN, INT32_SIGNED_MIN, INT16_SIGNED_MIN, INT8_SIGNED_MIN, -1],
+            False,
+        ),
+        (
+            "null",
+            [0, None, 42],
+            [0, 42, None],
+            True,
+        ),
+    ]
+
     @int_type_parametrize
-    @pytest.mark.parametrize(
-        "values, insert_values, expected_values, can_be_none",
-        [
-            (
-                "positive",
-                [
-                    0,
-                    1,
-                    INT8_SIGNED_MAX,
-                    INT8_UNSIGNED_MAX,
-                    INT16_SIGNED_MAX,
-                    INT16_UNSIGNED_MAX,
-                    INT32_SIGNED_MAX,
-                    INT32_UNSIGNED_MAX,
-                    INT64_SIGNED_MAX,
-                ],
-                [
-                    0,
-                    1,
-                    INT8_SIGNED_MAX,
-                    INT8_UNSIGNED_MAX,
-                    INT16_SIGNED_MAX,
-                    INT16_UNSIGNED_MAX,
-                    INT32_SIGNED_MAX,
-                    INT32_UNSIGNED_MAX,
-                    INT64_SIGNED_MAX,
-                ],
-                False,
-            ),
-            (
-                "negative",
-                [-1, INT8_SIGNED_MIN, INT16_SIGNED_MIN, INT32_SIGNED_MIN, INT64_SIGNED_MIN],
-                [INT64_SIGNED_MIN, INT32_SIGNED_MIN, INT16_SIGNED_MIN, INT8_SIGNED_MIN, -1],
-                False,
-            ),
-            (
-                "null",
-                [0, None, 42],
-                [0, 42, None],
-                True,
-            ),
-        ],
-        ids=["positive", "negative", "null"],
-    )
-    def test_should_select_values_from_table_for_int_and_synonyms(
-        self, execute_query, tmp_schema, int_type, values, insert_values, expected_values, can_be_none
-    ):
+    def test_should_select_values_from_table_for_int_and_synonyms(self, execute_query, tmp_schema, int_type):
         # Given Snowflake client is logged in
         assert_connection_is_open(execute_query)
 
-        # And Table with <type> column exists with values <insert_values>
-        table_name = f"{tmp_schema}.int_table_{int_type.lower()}_{values}"
-        execute_query(f"CREATE TABLE {table_name} (col {int_type})")
-        for val in insert_values:
-            execute_query(f"INSERT INTO {table_name} VALUES ({'NULL' if val is None else val})")
+        for values, insert_values, expected_values, can_be_none in self.TABLE_SELECT_TEST_CASES:
+            # And Table with <type> column exists with values <insert_values>
+            table_name = f"{tmp_schema}.int_table_{int_type.lower()}_{values}"
+            execute_query(f"CREATE TABLE {table_name} (col {int_type})")
+            batch_insert(execute_query, table_name, insert_values)
 
-        # When Query "SELECT * FROM <table> ORDER BY col" is executed
-        rows = execute_query(f"SELECT * FROM {table_name} ORDER BY col")
+            # When Query "SELECT * FROM <table> ORDER BY col" is executed
+            rows = execute_query(f"SELECT * FROM {table_name} ORDER BY col")
+            result = [row[0] for row in rows]
 
-        # Then Result should contain integers <expected_values>
-        result = [row[0] for row in rows]
-        assert result == expected_values
-        assert_type(result, int, can_be_none=can_be_none)
+            # Then Result should contain integers <expected_values>
+            assert result == expected_values
+            assert_type(result, int, can_be_none=can_be_none)
 
     @int_type_parametrize
     def test_should_select_large_integer_values_from_table_for_int_and_synonyms(
@@ -262,15 +253,14 @@ class TestIntTable:
         # [-99999999999999999999999999999999999999, 99999999999999999999999999999999999999]
         table_name = f"{tmp_schema}.int38_table_{int_type.lower()}"
         execute_query(f"CREATE TABLE {table_name} (col {int_type})")
-        execute_query(f"INSERT INTO {table_name} VALUES ({INT38_MIN})")
-        execute_query(f"INSERT INTO {table_name} VALUES ({INT38_MAX})")
+        batch_insert(execute_query, table_name, [INT38_MIN, INT38_MAX])
 
         # When Query "SELECT * FROM <table> ORDER BY col" is executed
         rows = execute_query(f"SELECT * FROM {table_name} ORDER BY col")
+        result = [row[0] for row in rows]
 
         # Then Result should contain integers
         # [-99999999999999999999999999999999999999, 99999999999999999999999999999999999999]
-        result = [row[0] for row in rows]
         assert result == [INT38_MIN, INT38_MAX]
         assert_type(result, int)
 
@@ -352,3 +342,9 @@ class TestIntBinding:
         expected = sorted(test_values)
         assert result == expected
         assert_type(result, int)
+
+
+def batch_insert(execute_query, table_name, values):
+    """Execute a batch INSERT INTO table VALUES (v1), (v2), ... statement."""
+    values_str = ", ".join(f"({'NULL' if v is None else v})" for v in values)
+    execute_query(f"INSERT INTO {table_name} VALUES {values_str}")
