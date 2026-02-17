@@ -64,8 +64,12 @@ impl ClientInfo {
         let crl_config = CrlConfig::from_settings(settings)?;
         let tls_config = TlsConfig::from_settings(settings)?;
 
+        // TODO: ClientInfo should be dynamically created based on the real hardware and
+        // the wrapper client type
         let client_info = ClientInfo {
-            application: "PythonConnector".to_string(),
+            application: settings
+                .get_string("client_app_id")
+                .unwrap_or_else(|| "PythonConnector".to_string()),
             version: "3.15.0".to_string(),
             os: "Darwin".to_string(),
             os_version: "macOS-15.5-arm64-arm-64bit".to_string(),

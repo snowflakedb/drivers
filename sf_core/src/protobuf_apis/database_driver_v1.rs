@@ -778,6 +778,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
                 columns: result.columns,
                 statement_type_id: result.statement_type_id,
                 query: result.query,
+                parameters: result.parameters,
             }),
         })
     }

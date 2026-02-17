@@ -16,7 +16,7 @@ behavior_differences:
   
   6:
     name: "Unsupported compression type returns error instead of being silently ignored"
-  
+
   7:
     name: "ALTER USER ADD PROGRAMMATIC ACCESS TOKEN returns result set with token in new driver, old driver returns invalid cursor state (10510)"
 
@@ -32,3 +32,34 @@ behavior_differences:
     description: |
       The old driver accepted raw EVP_PKEY* pointers via SQLSetConnectAttr.
       Not supported across the Rust FFI boundary — use PRIV_KEY_CONTENT or PRIV_KEY_BASE64 instead.
+
+  11:
+    name: "SQL_C_CHAR with small buffer returns SQL_SUCCESS instead of SQL_SUCCESS_WITH_INFO"
+    description: |
+      OLD driver: When SQLGetData is called with a buffer too small to hold the full
+      character representation of a DECIMAL value, the old driver returns SQL_SUCCESS (0)
+      and silently truncates the data without setting a warning.
+      NEW driver: Returns SQL_SUCCESS_WITH_INFO (1) with truncated data in the buffer,
+      a null terminator, and SQL_NO_TOTAL in the indicator, per the ODBC spec
+      for string data right truncation (SQLSTATE 01004).
+      Impact: Applications that check only for SQL_SUCCESS will now also see
+      SQL_SUCCESS_WITH_INFO. The ODBC specification mandates SQL_SUCCESS_WITH_INFO
+      for string truncation, so this is a spec-compliance improvement.
+      Fix for Old Driver is to be merged with SNOW-3120035
+
+  12:
+    name: "SQL_C_BINARY on DECIMAL/NUMERIC columns returns SQL_NUMERIC_STRUCT instead of raw internal data"
+    description: |
+      OLD driver: When SQLGetData is called with SQL_C_BINARY on a SQL_DECIMAL or
+      SQL_NUMERIC column, the old driver returns 68 bytes of raw internal
+      TDWExactNumericType data (the Simba SDK's internal representation). The indicator
+      is set to 68 and the buffer contents are not interpretable by ODBC-compliant
+      applications.
+      NEW driver: Returns a 19-byte SQL_NUMERIC_STRUCT as required by the ODBC
+      specification, with precision, scale (0 — integer part after truncation),
+      sign (1 positive, 0 negative), and val[16] containing the unsigned magnitude
+      in little-endian 128-bit format. The indicator is set to sizeof(SQL_NUMERIC_STRUCT).
+      Impact: Applications requesting SQL_C_BINARY for numeric columns now receive
+      a standards-compliant SQL_NUMERIC_STRUCT. No correct application could have
+      relied on the old 68-byte internal representation.
+      Fix for Old Driver is to be merged with SNOW-3127864

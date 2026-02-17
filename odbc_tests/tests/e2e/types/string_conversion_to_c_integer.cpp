@@ -25,13 +25,6 @@
 #include "macros.hpp"
 #include "test_setup.hpp"
 
-// Helper to get raw data with error checking for expected failures
-template <typename T>
-static SQLRETURN get_data_raw(const StatementHandleWrapper& stmt, SQLUSMALLINT col, SQLSMALLINT target_type, T* value,
-                              SQLLEN* indicator) {
-  return SQLGetData(stmt.getHandle(), col, target_type, value, sizeof(*value), indicator);
-}
-
 // ============================================================================
 // SUCCESSFUL CONVERSIONS - String to Signed Integer Types
 // ============================================================================

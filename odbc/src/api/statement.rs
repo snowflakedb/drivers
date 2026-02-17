@@ -76,12 +76,45 @@ pub fn exec_direct(statement_handle: sql::Handle, statement_text: &str) -> OdbcR
             tracing::info!("exec_direct: response={:?}", response);
             let response = response?;
 
+            update_numeric_settings_from_response(&response, &mut stmt.conn.numeric_settings);
             stmt.state = create_execute_state(response)?.into();
             Ok(())
         }
         ConnectionState::Disconnected => {
             tracing::error!("exec_direct: connection is disconnected");
             DisconnectedSnafu.fail()
+        }
+    }
+}
+
+use crate::conversion::NumericSettings;
+
+fn update_numeric_settings_from_response(
+    response: &StatementExecuteQueryResponse,
+    settings: &mut NumericSettings,
+) {
+    let Some(result) = &response.result else {
+        return;
+    };
+
+    for (name, value) in &result.parameters {
+        let bool_value = value.eq_ignore_ascii_case("true");
+        match name.as_str() {
+            "ODBC_TREAT_DECIMAL_AS_INT" => {
+                settings.treat_decimal_as_int = bool_value;
+                tracing::info!(
+                    "Server parameter ODBC_TREAT_DECIMAL_AS_INT = {}",
+                    bool_value
+                );
+            }
+            "ODBC_TREAT_BIG_NUMBER_AS_STRING" => {
+                settings.treat_big_number_as_string = bool_value;
+                tracing::info!(
+                    "Server parameter ODBC_TREAT_BIG_NUMBER_AS_STRING = {}",
+                    bool_value
+                );
+            }
+            _ => {}
         }
     }
 }
@@ -162,6 +195,7 @@ pub fn execute(statement_handle: sql::Handle) -> OdbcResult<()> {
                 })?;
 
             tracing::info!("execute: Successfully executed statement");
+            update_numeric_settings_from_response(&response, &mut stmt.conn.numeric_settings);
             stmt.state = create_execute_state(response)?.into();
             Ok(())
         }
@@ -462,5 +496,97 @@ pub fn get_stmt_attr(
             tracing::warn!("get_stmt_attr: unsupported attribute {:?}", attr);
             crate::api::error::UnknownAttributeSnafu { attribute }.fail()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sf_core::protobuf_gen::database_driver_v1::ExecuteResult;
+    use std::collections::BTreeMap;
+
+    fn make_response(params: Vec<(&str, &str)>) -> StatementExecuteQueryResponse {
+        let parameters: BTreeMap<String, String> = params
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        StatementExecuteQueryResponse {
+            result: Some(ExecuteResult {
+                stream: None,
+                rows_affected: None,
+                query_id: String::new(),
+                columns: vec![],
+                statement_type_id: None,
+                query: String::new(),
+                parameters,
+            }),
+        }
+    }
+
+    #[test]
+    fn response_sets_treat_decimal_as_int_true() {
+        let mut s = NumericSettings::default();
+        let resp = make_response(vec![("ODBC_TREAT_DECIMAL_AS_INT", "true")]);
+        update_numeric_settings_from_response(&resp, &mut s);
+        assert!(s.treat_decimal_as_int);
+        assert!(!s.treat_big_number_as_string);
+    }
+
+    #[test]
+    fn response_sets_treat_decimal_as_int_false() {
+        let mut s = NumericSettings {
+            treat_decimal_as_int: true,
+            treat_big_number_as_string: false,
+        };
+        let resp = make_response(vec![("ODBC_TREAT_DECIMAL_AS_INT", "false")]);
+        update_numeric_settings_from_response(&resp, &mut s);
+        assert!(!s.treat_decimal_as_int);
+    }
+
+    #[test]
+    fn response_sets_big_number_as_string_true() {
+        let mut s = NumericSettings::default();
+        let resp = make_response(vec![("ODBC_TREAT_BIG_NUMBER_AS_STRING", "true")]);
+        update_numeric_settings_from_response(&resp, &mut s);
+        assert!(s.treat_big_number_as_string);
+        assert!(!s.treat_decimal_as_int);
+    }
+
+    #[test]
+    fn response_sets_both_parameters() {
+        let mut s = NumericSettings::default();
+        let resp = make_response(vec![
+            ("ODBC_TREAT_DECIMAL_AS_INT", "true"),
+            ("ODBC_TREAT_BIG_NUMBER_AS_STRING", "true"),
+        ]);
+        update_numeric_settings_from_response(&resp, &mut s);
+        assert!(s.treat_decimal_as_int);
+        assert!(s.treat_big_number_as_string);
+    }
+
+    #[test]
+    fn response_unrelated_params_do_not_change_settings() {
+        let mut s = NumericSettings::default();
+        let resp = make_response(vec![("TIMEZONE", "UTC"), ("AUTOCOMMIT", "true")]);
+        update_numeric_settings_from_response(&resp, &mut s);
+        assert!(!s.treat_decimal_as_int);
+        assert!(!s.treat_big_number_as_string);
+    }
+
+    #[test]
+    fn response_empty_params_do_not_change_settings() {
+        let mut s = NumericSettings::default();
+        let resp = make_response(vec![]);
+        update_numeric_settings_from_response(&resp, &mut s);
+        assert!(!s.treat_decimal_as_int);
+        assert!(!s.treat_big_number_as_string);
+    }
+
+    #[test]
+    fn response_case_insensitive_value() {
+        let mut s = NumericSettings::default();
+        let resp = make_response(vec![("ODBC_TREAT_DECIMAL_AS_INT", "True")]);
+        update_numeric_settings_from_response(&resp, &mut s);
+        assert!(s.treat_decimal_as_int);
     }
 }

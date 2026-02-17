@@ -9,7 +9,7 @@ use crate::api::{
 };
 use crate::cdata_types::CDataType;
 use crate::conversion::warning::Warnings;
-use crate::conversion::{Binding, ConversionError, make_converter};
+use crate::conversion::{Binding, ConversionError, NumericSettings, make_converter};
 use arrow::array::Array;
 use arrow::datatypes::Field;
 use odbc_sys as sql;
@@ -21,9 +21,10 @@ fn read_arrow_value(
     array_ref: &dyn Array,
     field: &Field,
     batch_idx: usize,
+    numeric_settings: &NumericSettings,
     get_data_offset: &mut Option<usize>,
 ) -> Result<Warnings, ConversionError> {
-    let converter = make_converter(field, array_ref)?;
+    let converter = make_converter(field, array_ref, numeric_settings)?;
     let warnings = converter.convert_arrow_value(batch_idx, binding, get_data_offset)?;
     Ok(warnings)
 }
@@ -348,8 +349,15 @@ fn execute_bindings_for_row(
             }
             let array_ref = record_batch.column(arrow_col);
             let field = schema.field(arrow_col);
-            let w = read_arrow_value(adjusted, array_ref, field, batch_idx, &mut None)
-                .context(ConversionSnafu)?;
+            let w = read_arrow_value(
+                adjusted,
+                array_ref,
+                field,
+                batch_idx,
+                &stmt.conn.numeric_settings,
+                &mut None,
+            )
+            .context(ConversionSnafu)?;
             warnings.extend(w);
         }
     }
@@ -452,9 +460,15 @@ pub fn get_data(
                 precision: None,
                 scale: None,
             };
-            let conversion_warnings =
-                read_arrow_value(&binding, array_ref, field, *batch_idx, &mut offset)
-                    .context(ConversionSnafu)?;
+            let conversion_warnings = read_arrow_value(
+                &binding,
+                array_ref,
+                field,
+                *batch_idx,
+                &stmt.conn.numeric_settings,
+                &mut offset,
+            )
+            .context(ConversionSnafu)?;
             warnings.extend(conversion_warnings);
 
             // The write method sets offset to Some(n) on truncation, None when complete.
@@ -507,6 +521,22 @@ mod tests {
     use arrow::datatypes::{DataType, Field};
     use std::collections::HashMap;
 
+    fn read_arrow_value_test(
+        binding: &Binding,
+        array_ref: &dyn arrow::array::Array,
+        field: &Field,
+        batch_idx: usize,
+    ) -> Result<Warnings, ConversionError> {
+        read_arrow_value(
+            binding,
+            array_ref,
+            field,
+            batch_idx,
+            &NumericSettings::default(),
+            &mut None,
+        )
+    }
+
     fn field_with_fixed_meta(data_type: DataType, scale: u32, precision: u32) -> Field {
         let mut metadata = HashMap::new();
         metadata.insert("logicalType".to_string(), "FIXED".to_string());
@@ -549,11 +579,12 @@ mod tests {
                 precision: None,
                 scale: None,
             };
-            let result = read_arrow_value(&binding, &array, &field, 0, &mut None);
+            let result = read_arrow_value_test(&binding, &array, &field, 0);
 
             assert!(result.is_ok());
             assert_eq!(str_len, 5);
             assert_eq!(&buffer[..5], b"hello");
+            assert_eq!(buffer[5], 0); // Null terminator
         }
 
         #[test]
@@ -571,11 +602,12 @@ mod tests {
                 precision: None,
                 scale: None,
             };
-            let result = read_arrow_value(&binding, &array, &field, 0, &mut None);
+            let result = read_arrow_value_test(&binding, &array, &field, 0);
 
             assert!(result.is_ok());
             assert_eq!(str_len, 6);
             assert_eq!(&buffer[..6], b"123.45");
+            assert_eq!(buffer[6], 0); // Null terminator
         }
 
         #[test]
@@ -593,7 +625,7 @@ mod tests {
                 precision: None,
                 scale: None,
             };
-            let result = read_arrow_value(&binding, &array, &field, 0, &mut None);
+            let result = read_arrow_value_test(&binding, &array, &field, 0);
 
             assert!(result.is_ok());
             assert_eq!(str_len, sql::NO_TOTAL); // SQL_NO_TOTAL when truncated
@@ -620,7 +652,7 @@ mod tests {
                 precision: None,
                 scale: None,
             };
-            let result = read_arrow_value(&binding, &array, &field, 0, &mut None);
+            let result = read_arrow_value_test(&binding, &array, &field, 0);
 
             assert!(result.is_ok());
             assert_eq!(value, 9876543210u64);
@@ -640,7 +672,7 @@ mod tests {
                 precision: None,
                 scale: None,
             };
-            let result = read_arrow_value(&binding, &array, &field, 0, &mut None);
+            let result = read_arrow_value_test(&binding, &array, &field, 0);
 
             assert!(result.is_ok());
             assert_eq!(value, 123u64);
@@ -662,7 +694,7 @@ mod tests {
                 precision: None,
                 scale: None,
             };
-            let result = read_arrow_value(&binding, &array, &field, 0, &mut None);
+            let result = read_arrow_value_test(&binding, &array, &field, 0);
 
             assert!(result.is_ok());
             assert_eq!(value, 123u64);
@@ -687,7 +719,7 @@ mod tests {
                 precision: None,
                 scale: None,
             };
-            let result = read_arrow_value(&binding, &array, &field, 0, &mut None);
+            let result = read_arrow_value_test(&binding, &array, &field, 0);
 
             assert!(result.is_ok());
             assert_eq!(value, -9876543210i64);
@@ -707,7 +739,7 @@ mod tests {
                 precision: None,
                 scale: None,
             };
-            let result = read_arrow_value(&binding, &array, &field, 0, &mut None);
+            let result = read_arrow_value_test(&binding, &array, &field, 0);
 
             assert!(result.is_ok());
             assert_eq!(value, -123i64);
@@ -732,7 +764,7 @@ mod tests {
                 precision: None,
                 scale: None,
             };
-            let result = read_arrow_value(&binding, &array, &field, 0, &mut None);
+            let result = read_arrow_value_test(&binding, &array, &field, 0);
 
             assert!(result.is_ok());
             assert_eq!(value, 123456);
@@ -752,7 +784,7 @@ mod tests {
                 precision: None,
                 scale: None,
             };
-            let result = read_arrow_value(&binding, &array, &field, 0, &mut None);
+            let result = read_arrow_value_test(&binding, &array, &field, 0);
 
             assert!(result.is_ok());
             assert_eq!(value, -123456);
@@ -777,7 +809,7 @@ mod tests {
                 precision: None,
                 scale: None,
             };
-            let result = read_arrow_value(&binding, &array, &field, 0, &mut None);
+            let result = read_arrow_value_test(&binding, &array, &field, 0);
 
             assert!(result.is_ok());
             assert_eq!(value, 123456);
@@ -802,7 +834,7 @@ mod tests {
                 precision: None,
                 scale: None,
             };
-            let result = read_arrow_value(&binding, &array, &field, 0, &mut None);
+            let result = read_arrow_value_test(&binding, &array, &field, 0);
 
             assert!(result.is_ok());
             assert_eq!(value, 1234);
@@ -822,7 +854,7 @@ mod tests {
                 precision: None,
                 scale: None,
             };
-            let result = read_arrow_value(&binding, &array, &field, 0, &mut None);
+            let result = read_arrow_value_test(&binding, &array, &field, 0);
 
             assert!(result.is_ok());
             assert_eq!(value, -1234);
@@ -847,7 +879,7 @@ mod tests {
                 precision: None,
                 scale: None,
             };
-            let result = read_arrow_value(&binding, &array, &field, 0, &mut None);
+            let result = read_arrow_value_test(&binding, &array, &field, 0);
 
             assert!(result.is_ok());
             assert_eq!(value, 1234);
@@ -872,7 +904,7 @@ mod tests {
                 precision: None,
                 scale: None,
             };
-            let result = read_arrow_value(&binding, &array, &field, 0, &mut None);
+            let result = read_arrow_value_test(&binding, &array, &field, 0);
 
             assert!(result.is_ok());
             assert_eq!(value, 42);
@@ -892,7 +924,7 @@ mod tests {
                 precision: None,
                 scale: None,
             };
-            let result = read_arrow_value(&binding, &array, &field, 0, &mut None);
+            let result = read_arrow_value_test(&binding, &array, &field, 0);
 
             assert!(result.is_ok());
             assert_eq!(value, -42);
@@ -917,7 +949,7 @@ mod tests {
                 precision: None,
                 scale: None,
             };
-            let result = read_arrow_value(&binding, &array, &field, 0, &mut None);
+            let result = read_arrow_value_test(&binding, &array, &field, 0);
 
             assert!(result.is_ok());
             assert_eq!(value, 42);
@@ -942,7 +974,7 @@ mod tests {
                 precision: None,
                 scale: None,
             };
-            let result = read_arrow_value(&binding, &array, &field, 0, &mut None);
+            let result = read_arrow_value_test(&binding, &array, &field, 0);
 
             assert!(result.is_ok());
             assert!((value - 123.45f32).abs() < 0.01);
@@ -967,7 +999,7 @@ mod tests {
                 precision: None,
                 scale: None,
             };
-            let result = read_arrow_value(&binding, &array, &field, 0, &mut None);
+            let result = read_arrow_value_test(&binding, &array, &field, 0);
 
             assert!(result.is_ok());
             assert!((value - 123.45f64).abs() < 0.001);
@@ -989,7 +1021,7 @@ mod tests {
                 precision: None,
                 scale: None,
             };
-            let result = read_arrow_value(&binding, &array, &field, 0, &mut None);
+            let result = read_arrow_value_test(&binding, &array, &field, 0);
 
             assert!(result.is_ok());
             assert!((value - 123.45f64).abs() < 0.001);
@@ -1007,14 +1039,14 @@ mod tests {
             let mut value: i64 = 0;
 
             let binding = Binding {
-                target_type: CDataType::Binary, // Unsupported
+                target_type: CDataType::TypeDate, // Unsupported for FIXED
                 target_value_ptr: &mut value as *mut i64 as sql::Pointer,
                 buffer_length: 0,
                 str_len_or_ind_ptr: std::ptr::null_mut(),
                 precision: None,
                 scale: None,
             };
-            let result = read_arrow_value(&binding, &array, &field, 0, &mut None);
+            let result = read_arrow_value_test(&binding, &array, &field, 0);
 
             assert!(matches!(
                 result,
@@ -1037,7 +1069,7 @@ mod tests {
                 precision: None,
                 scale: None,
             };
-            let result = read_arrow_value(&binding, &array, &field, 0, &mut None);
+            let result = read_arrow_value_test(&binding, &array, &field, 0);
 
             assert!(result.is_ok());
             assert_eq!(str_len, 10); // "hello" is 5 UTF-16 code units = 10 bytes
@@ -1075,7 +1107,7 @@ mod tests {
                     precision: None,
                     scale: None,
                 };
-                let result = read_arrow_value(&binding, &array, &field, idx, &mut None);
+                let result = read_arrow_value_test(&binding, &array, &field, idx);
 
                 assert!(result.is_ok());
                 assert_eq!(value, expected);
@@ -1099,12 +1131,254 @@ mod tests {
                     precision: None,
                     scale: None,
                 };
-                let result = read_arrow_value(&binding, &array, &field, idx, &mut None);
+                let result = read_arrow_value_test(&binding, &array, &field, idx);
 
                 assert!(result.is_ok());
                 assert_eq!(str_len, expected.len() as sql::Len);
                 assert_eq!(&buffer[..expected.len()], expected.as_bytes());
             }
+        }
+    }
+
+    // Tests for CDataType::Default (SQL_C_DEFAULT)
+    // Per ODBC spec, SQL_DECIMAL/SQL_NUMERIC default C type is SQL_C_CHAR.
+    mod read_to_default {
+        use super::*;
+
+        #[test]
+        fn default_reads_int64_as_char_for_fixed_type() {
+            let array = Int64Array::from(vec![123i64]);
+            let field = field_with_fixed_meta(DataType::Int64, 0, 10);
+            let mut buffer = vec![0u8; 32];
+            let mut str_len: sql::Len = 0;
+
+            let binding = Binding {
+                target_type: CDataType::Default,
+                target_value_ptr: buffer.as_mut_ptr() as sql::Pointer,
+                buffer_length: buffer.len() as sql::Len,
+                str_len_or_ind_ptr: &mut str_len,
+                precision: None,
+                scale: None,
+            };
+            let result = read_arrow_value_test(&binding, &array, &field, 0);
+
+            assert!(result.is_ok());
+            assert_eq!(str_len, 3);
+            assert_eq!(&buffer[..3], b"123");
+        }
+
+        #[test]
+        fn default_reads_int64_with_scale_as_char() {
+            let array = Int64Array::from(vec![12345i64]); // 123.45 with scale 2
+            let field = field_with_fixed_meta(DataType::Int64, 2, 10);
+            let mut buffer = vec![0u8; 32];
+            let mut str_len: sql::Len = 0;
+
+            let binding = Binding {
+                target_type: CDataType::Default,
+                target_value_ptr: buffer.as_mut_ptr() as sql::Pointer,
+                buffer_length: buffer.len() as sql::Len,
+                str_len_or_ind_ptr: &mut str_len,
+                precision: None,
+                scale: None,
+            };
+            let result = read_arrow_value_test(&binding, &array, &field, 0);
+
+            assert!(result.is_ok());
+            assert_eq!(str_len, 6);
+            assert_eq!(&buffer[..6], b"123.45");
+        }
+
+        #[test]
+        fn default_reads_negative_int64_with_scale_as_char() {
+            let array = Int64Array::from(vec![-12345i64]); // -123.45 with scale 2
+            let field = field_with_fixed_meta(DataType::Int64, 2, 10);
+            let mut buffer = vec![0u8; 32];
+            let mut str_len: sql::Len = 0;
+
+            let binding = Binding {
+                target_type: CDataType::Default,
+                target_value_ptr: buffer.as_mut_ptr() as sql::Pointer,
+                buffer_length: buffer.len() as sql::Len,
+                str_len_or_ind_ptr: &mut str_len,
+                precision: None,
+                scale: None,
+            };
+            let result = read_arrow_value_test(&binding, &array, &field, 0);
+
+            assert!(result.is_ok());
+            assert_eq!(str_len, 7);
+            assert_eq!(&buffer[..7], b"-123.45");
+        }
+
+        #[test]
+        fn default_reads_decimal128_as_char() {
+            let array = Decimal128Array::from(vec![12345i128])
+                .with_precision_and_scale(10, 2)
+                .unwrap();
+            let field = decimal128_field(10, 2);
+            let mut buffer = vec![0u8; 32];
+            let mut str_len: sql::Len = 0;
+
+            let binding = Binding {
+                target_type: CDataType::Default,
+                target_value_ptr: buffer.as_mut_ptr() as sql::Pointer,
+                buffer_length: buffer.len() as sql::Len,
+                str_len_or_ind_ptr: &mut str_len,
+                precision: None,
+                scale: None,
+            };
+            let result = read_arrow_value_test(&binding, &array, &field, 0);
+
+            assert!(result.is_ok());
+            assert_eq!(str_len, 6);
+            assert_eq!(&buffer[..6], b"123.45");
+        }
+
+        #[test]
+        fn default_reads_small_value_with_large_scale() {
+            let array = Int64Array::from(vec![5i64]); // 0.05 with scale 2
+            let field = field_with_fixed_meta(DataType::Int64, 2, 10);
+            let mut buffer = vec![0u8; 32];
+            let mut str_len: sql::Len = 0;
+
+            let binding = Binding {
+                target_type: CDataType::Default,
+                target_value_ptr: buffer.as_mut_ptr() as sql::Pointer,
+                buffer_length: buffer.len() as sql::Len,
+                str_len_or_ind_ptr: &mut str_len,
+                precision: None,
+                scale: None,
+            };
+            let result = read_arrow_value_test(&binding, &array, &field, 0);
+
+            assert!(result.is_ok());
+            assert_eq!(str_len, 4);
+            assert_eq!(&buffer[..4], b"0.05");
+        }
+
+        #[test]
+        fn default_reads_zero_as_char() {
+            let array = Int64Array::from(vec![0i64]);
+            let field = field_with_fixed_meta(DataType::Int64, 0, 10);
+            let mut buffer = vec![0u8; 32];
+            let mut str_len: sql::Len = 0;
+
+            let binding = Binding {
+                target_type: CDataType::Default,
+                target_value_ptr: buffer.as_mut_ptr() as sql::Pointer,
+                buffer_length: buffer.len() as sql::Len,
+                str_len_or_ind_ptr: &mut str_len,
+                precision: None,
+                scale: None,
+            };
+            let result = read_arrow_value_test(&binding, &array, &field, 0);
+
+            assert!(result.is_ok());
+            assert_eq!(str_len, 1);
+            assert_eq!(&buffer[..1], b"0");
+        }
+
+        #[test]
+        fn default_reads_zero_with_scale_as_char() {
+            let array = Int64Array::from(vec![0i64]);
+            let field = field_with_fixed_meta(DataType::Int64, 3, 10);
+            let mut buffer = vec![0u8; 32];
+            let mut str_len: sql::Len = 0;
+
+            let binding = Binding {
+                target_type: CDataType::Default,
+                target_value_ptr: buffer.as_mut_ptr() as sql::Pointer,
+                buffer_length: buffer.len() as sql::Len,
+                str_len_or_ind_ptr: &mut str_len,
+                precision: None,
+                scale: None,
+            };
+            let result = read_arrow_value_test(&binding, &array, &field, 0);
+
+            assert!(result.is_ok());
+            assert_eq!(str_len, 5);
+            assert_eq!(&buffer[..5], b"0.000");
+        }
+
+        #[test]
+        fn default_reads_large_decimal128_as_char() {
+            let large_value: i128 = 99999999999999999999999999999999999999;
+            let array = Decimal128Array::from(vec![large_value])
+                .with_precision_and_scale(38, 0)
+                .unwrap();
+            let field = decimal128_field(38, 0);
+            let mut buffer = vec![0u8; 64];
+            let mut str_len: sql::Len = 0;
+
+            let binding = Binding {
+                target_type: CDataType::Default,
+                target_value_ptr: buffer.as_mut_ptr() as sql::Pointer,
+                buffer_length: buffer.len() as sql::Len,
+                str_len_or_ind_ptr: &mut str_len,
+                precision: None,
+                scale: None,
+            };
+            let result = read_arrow_value_test(&binding, &array, &field, 0);
+
+            assert!(result.is_ok());
+            let expected = b"99999999999999999999999999999999999999";
+            assert_eq!(str_len, expected.len() as sql::Len);
+            assert_eq!(&buffer[..expected.len()], expected);
+        }
+
+        #[test]
+        fn default_reads_large_negative_decimal128_as_char() {
+            let large_value: i128 = -99999999999999999999999999999999999999;
+            let array = Decimal128Array::from(vec![large_value])
+                .with_precision_and_scale(38, 0)
+                .unwrap();
+            let field = decimal128_field(38, 0);
+            let mut buffer = vec![0u8; 64];
+            let mut str_len: sql::Len = 0;
+
+            let binding = Binding {
+                target_type: CDataType::Default,
+                target_value_ptr: buffer.as_mut_ptr() as sql::Pointer,
+                buffer_length: buffer.len() as sql::Len,
+                str_len_or_ind_ptr: &mut str_len,
+                precision: None,
+                scale: None,
+            };
+            let result = read_arrow_value_test(&binding, &array, &field, 0);
+
+            assert!(result.is_ok());
+            let expected = b"-99999999999999999999999999999999999999";
+            assert_eq!(str_len, expected.len() as sql::Len);
+            assert_eq!(&buffer[..expected.len()], expected);
+        }
+
+        #[test]
+        fn default_reads_decimal128_with_high_scale_as_char() {
+            // NUMBER(38,37): value 1.2345678901234567890123456789012345678
+            // Arrow stores as 12345678901234567890123456789012345678 with scale 37
+            let value: i128 = 12345678901234567890123456789012345678;
+            let array = Decimal128Array::from(vec![value])
+                .with_precision_and_scale(38, 37)
+                .unwrap();
+            let field = decimal128_field(38, 37);
+            let mut buffer = vec![0u8; 64];
+            let mut str_len: sql::Len = 0;
+
+            let binding = Binding {
+                target_type: CDataType::Default,
+                target_value_ptr: buffer.as_mut_ptr() as sql::Pointer,
+                buffer_length: buffer.len() as sql::Len,
+                str_len_or_ind_ptr: &mut str_len,
+                precision: None,
+                scale: None,
+            };
+            let result = read_arrow_value_test(&binding, &array, &field, 0);
+
+            assert!(result.is_ok());
+            let expected = b"1.2345678901234567890123456789012345678";
+            assert_eq!(str_len, expected.len() as sql::Len);
+            assert_eq!(&buffer[..expected.len()], expected);
         }
     }
 
@@ -1122,11 +1396,11 @@ mod tests {
                 target_type: CDataType::UBigInt,
                 target_value_ptr: &mut value as *mut UBigInt as sql::Pointer,
                 buffer_length: 0,
-                str_len_or_ind_ptr: std::ptr::null_mut(), // null indicator
+                str_len_or_ind_ptr: std::ptr::null_mut(),
                 precision: None,
                 scale: None,
             };
-            let result = read_arrow_value(&binding, &array, &field, 0, &mut None);
+            let result = read_arrow_value_test(&binding, &array, &field, 0);
 
             assert!(result.is_ok());
             assert_eq!(value, 42u64);
@@ -1142,14 +1416,15 @@ mod tests {
                 target_type: CDataType::Char,
                 target_value_ptr: buffer.as_mut_ptr() as sql::Pointer,
                 buffer_length: buffer.len() as sql::Len,
-                str_len_or_ind_ptr: std::ptr::null_mut(), // null indicator
+                str_len_or_ind_ptr: std::ptr::null_mut(),
                 precision: None,
                 scale: None,
             };
-            let result = read_arrow_value(&binding, &array, &field, 0, &mut None);
+            let result = read_arrow_value_test(&binding, &array, &field, 0);
 
             assert!(result.is_ok());
             assert_eq!(&buffer[..5], b"hello");
+            assert_eq!(buffer[5], 0); // Null terminator
         }
     }
 
@@ -1176,7 +1451,7 @@ mod tests {
                 scale: Some(2),
             };
 
-            let result = read_arrow_value(&binding, &array, &field, 0, &mut None);
+            let result = read_arrow_value_test(&binding, &array, &field, 0);
 
             assert!(result.is_ok());
             assert_eq!(numeric.sign, 1); // positive
@@ -1206,7 +1481,7 @@ mod tests {
                 scale: Some(0),
             };
 
-            let result = read_arrow_value(&binding, &array, &field, 0, &mut None);
+            let result = read_arrow_value_test(&binding, &array, &field, 0);
 
             assert!(result.is_ok());
             assert_eq!(numeric.sign, 0); // negative
@@ -1239,7 +1514,7 @@ mod tests {
                 scale: Some(4),
             };
 
-            let result = read_arrow_value(&binding, &array, &field, 0, &mut None);
+            let result = read_arrow_value_test(&binding, &array, &field, 0);
 
             assert!(result.is_ok());
             assert_eq!(numeric.sign, 1);
@@ -1269,7 +1544,7 @@ mod tests {
                 scale: Some(0),
             };
 
-            let result = read_arrow_value(&binding, &array, &field, 0, &mut None);
+            let result = read_arrow_value_test(&binding, &array, &field, 0);
             assert!(result.is_err());
         }
     }

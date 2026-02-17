@@ -260,6 +260,7 @@ pub struct ExecuteResult {
     pub columns: Vec<ColumnMetadata>,
     pub statement_type_id: Option<i64>,
     pub query: String,
+    pub parameters: std::collections::BTreeMap<String, String>,
 }
 
 pub fn statement_execute_query<'a>(
@@ -396,7 +397,23 @@ pub fn statement_execute_query<'a>(
         })
         .collect();
 
-    // Serialize pointer into integer
+    let parameters: std::collections::BTreeMap<String, String> = response
+        .data
+        .parameters
+        .as_ref()
+        .map(|params| {
+            params
+                .iter()
+                .map(|p| {
+                    let value_str = match &p.value {
+                        serde_json::Value::String(s) => s.clone(),
+                        other => other.to_string(),
+                    };
+                    (p.name.clone(), value_str)
+                })
+                .collect()
+        })
+        .unwrap_or_default();
     stmt.state = StatementState::Executed;
     Ok(ExecuteResult {
         stream: rowset_stream,
@@ -405,6 +422,7 @@ pub fn statement_execute_query<'a>(
         columns,
         statement_type_id,
         query,
+        parameters,
     })
 }
 

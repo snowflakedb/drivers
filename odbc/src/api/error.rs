@@ -388,7 +388,8 @@ impl OdbcError {
                     WriteOdbcError::NumericValueOutOfRange { .. } => {
                         SqlState::NumericValueOutOfRange
                     }
-                    WriteOdbcError::IndicatorRequired { .. } => {
+                    WriteOdbcError::IndicatorRequired { .. }
+                    | WriteOdbcError::IndicatorVariableRequired { .. } => {
                         SqlState::IndicatorVariableRequiredButNotSupplied
                     }
                     WriteOdbcError::UnsupportedOdbcType { .. } => {
