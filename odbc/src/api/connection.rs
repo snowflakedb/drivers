@@ -283,6 +283,12 @@ pub fn driver_connect(
     // Apply SQLSetConnectAttr values (override connection string parameters).
     apply_pre_connection_attrs(connection, conn_handle)?;
 
+    DatabaseDriverClient::connection_set_option_string(ConnectionSetOptionStringRequest {
+        conn_handle: Some(conn_handle),
+        key: "client_app_id".to_owned(),
+        value: "ODBC".to_owned(),
+    })?;
+
     DatabaseDriverClient::connection_init(ConnectionInitRequest {
         conn_handle: Some(conn_handle),
         db_handle: Some(db_handle),

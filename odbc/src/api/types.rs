@@ -3,6 +3,7 @@ use crate::api::error::InvalidDescriptorKindSnafu;
 use crate::api::{OdbcError, diagnostic::DiagnosticInfo};
 use crate::cdata_types::CDataType;
 use crate::conversion::Binding;
+use crate::conversion::NumericSettings;
 use crate::conversion::warning::Warnings;
 use arrow::{array::RecordBatch, ffi_stream::ArrowArrayStreamReader};
 use odbc_sys as sql;
@@ -475,6 +476,7 @@ pub struct Connection {
     pub diagnostic_info: DiagnosticInfo,
     /// Attributes set via SQLSetConnectAttr before the connection is established
     pub pre_connection_attrs: PreConnectionAttributes,
+    pub numeric_settings: NumericSettings,
 }
 
 #[derive(Debug, Clone)]

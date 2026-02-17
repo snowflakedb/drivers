@@ -44,6 +44,12 @@ pub enum WriteOdbcError {
         #[snafu(implicit)]
         location: Location,
     },
+    #[snafu(display("Indicator variable required but not supplied"))]
+    IndicatorVariableRequired {
+        #[snafu(implicit)]
+        location: Location,
+    },
+
     /// The target ODBC type is not supported for the given Snowflake/Arrow source type.
     #[snafu(display("Target ODBC type '{target_type:?}' is not supported for this conversion"))]
     UnsupportedOdbcType {

@@ -12,8 +12,9 @@ use arrow::ffi_stream::{ArrowArrayStreamReader, FFI_ArrowArrayStream};
 use odbc_sys as sql;
 use sf_core::protobuf_apis::database_driver_v1::DatabaseDriverClient;
 use sf_core::protobuf_gen::database_driver_v1::{
-    ArrowArrayPtr, ArrowSchemaPtr, StatementBindRequest, StatementExecuteQueryRequest,
-    StatementExecuteQueryResponse, StatementPrepareRequest, StatementSetSqlQueryRequest,
+    ArrowArrayPtr, ArrowSchemaPtr, ConnectionGetParameterRequest, ConnectionHandle,
+    StatementBindRequest, StatementExecuteQueryRequest, StatementExecuteQueryResponse,
+    StatementPrepareRequest, StatementSetSqlQueryRequest,
 };
 use snafu::ResultExt;
 use tracing;
@@ -60,7 +61,7 @@ pub fn exec_direct(statement_handle: sql::Handle, statement_text: &str) -> OdbcR
     match &mut stmt.conn.state {
         ConnectionState::Connected {
             db_handle: _,
-            conn_handle: _,
+            conn_handle,
         } => {
             DatabaseDriverClient::statement_set_sql_query(StatementSetSqlQueryRequest {
                 stmt_handle: Some(stmt.stmt_handle),
@@ -76,6 +77,7 @@ pub fn exec_direct(statement_handle: sql::Handle, statement_text: &str) -> OdbcR
             tracing::info!("exec_direct: response={:?}", response);
             let response = response?;
 
+            update_numeric_settings(conn_handle, &mut stmt.conn.numeric_settings);
             stmt.state = create_execute_state(response)?.into();
             Ok(())
         }
@@ -83,6 +85,40 @@ pub fn exec_direct(statement_handle: sql::Handle, statement_text: &str) -> OdbcR
             tracing::error!("exec_direct: connection is disconnected");
             DisconnectedSnafu.fail()
         }
+    }
+}
+
+use crate::conversion::NumericSettings;
+
+fn update_numeric_settings(conn_handle: &ConnectionHandle, settings: &mut NumericSettings) {
+    if let Ok(resp) =
+        DatabaseDriverClient::connection_get_parameter(ConnectionGetParameterRequest {
+            conn_handle: Some(*conn_handle),
+            key: "ODBC_TREAT_DECIMAL_AS_INT".to_string(),
+        })
+        && let Some(value) = resp.value
+    {
+        let bool_value = value.eq_ignore_ascii_case("true");
+        settings.treat_decimal_as_int = bool_value;
+        tracing::info!(
+            "Server parameter ODBC_TREAT_DECIMAL_AS_INT = {}",
+            bool_value
+        );
+    }
+
+    if let Ok(resp) =
+        DatabaseDriverClient::connection_get_parameter(ConnectionGetParameterRequest {
+            conn_handle: Some(*conn_handle),
+            key: "ODBC_TREAT_BIG_NUMBER_AS_STRING".to_string(),
+        })
+        && let Some(value) = resp.value
+    {
+        let bool_value = value.eq_ignore_ascii_case("true");
+        settings.treat_big_number_as_string = bool_value;
+        tracing::info!(
+            "Server parameter ODBC_TREAT_BIG_NUMBER_AS_STRING = {}",
+            bool_value
+        );
     }
 }
 
@@ -132,7 +168,7 @@ pub fn execute(statement_handle: sql::Handle) -> OdbcResult<()> {
     match &mut stmt.conn.state {
         ConnectionState::Connected {
             db_handle: _,
-            conn_handle: _,
+            conn_handle,
         } => {
             // If there are bound parameters, we should bind them to the statement
             if !stmt.parameter_bindings.is_empty() {
@@ -162,6 +198,7 @@ pub fn execute(statement_handle: sql::Handle) -> OdbcResult<()> {
                 })?;
 
             tracing::info!("execute: Successfully executed statement");
+            update_numeric_settings(conn_handle, &mut stmt.conn.numeric_settings);
             stmt.state = create_execute_state(response)?.into();
             Ok(())
         }

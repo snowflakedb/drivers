@@ -26,6 +26,7 @@ pub fn alloc_connection() -> OdbcResult<*mut Connection> {
         state: ConnectionState::Disconnected,
         diagnostic_info: DiagnosticInfo::default(),
         pre_connection_attrs: Default::default(),
+        numeric_settings: Default::default(),
     });
     Ok(Box::into_raw(dbc))
 }

@@ -93,7 +93,8 @@ pub fn col_attribute(
 
     match desc_field {
         DescField::Type | DescField::ConciseType => {
-            let sql_type = sql_type_from_field(field).context(ConversionSnafu)?;
+            let sql_type =
+                sql_type_from_field(field, &stmt.conn.numeric_settings).context(ConversionSnafu)?;
             if !numeric_attribute_ptr.is_null() {
                 unsafe {
                     std::ptr::write(numeric_attribute_ptr, sql_type.0 as sql::Len);

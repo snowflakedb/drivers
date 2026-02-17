@@ -399,7 +399,6 @@ pub fn statement_execute_query<'a>(
             .collect()
     });
 
-    // Serialize pointer into integer
     stmt.state = StatementState::Executed;
     Ok(ExecuteResult {
         stream: rowset_stream,

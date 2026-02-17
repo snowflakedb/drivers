@@ -9,6 +9,8 @@ mod boolean;
 mod date;
 mod nullable;
 mod number;
+#[cfg(test)]
+mod number_tests;
 mod timestamp;
 mod varchar;
 
@@ -22,6 +24,7 @@ pub use traits::{Binding, LengthOrNull, ReadArrowType, SnowflakeType, WriteODBCT
 pub use error::{
     ArrowArrayDowncastSnafu, ConversionError, FieldMetadataParsingSnafu, MissingFieldMetadataSnafu,
 };
+pub use number::NumericSettings;
 
 use crate::conversion::error::{
     IncompatibleFieldMetadataSnafu, ReadArrowValueSnafu, UnsupportedArrowDataTypeSnafu,
@@ -43,7 +46,7 @@ struct GenericConverter<'a, ArrowArrayType, T> {
     arrow_array: &'a ArrowArrayType,
 }
 
-impl<'a, ArrowArrayType, T: SnowflakeType + WriteODBCType + ReadArrowType<ArrowArrayType>>
+impl<'a, ArrowArrayType: Array, T: SnowflakeType + WriteODBCType + ReadArrowType<ArrowArrayType>>
     Converter<'a> for GenericConverter<'a, ArrowArrayType, T>
 {
     fn convert_arrow_value(
@@ -135,7 +138,10 @@ enum SnowflakeFieldType {
 }
 
 impl SnowflakeFieldType {
-    fn from_field(field: &Field) -> Result<Self, ConversionError> {
+    fn from_field(
+        field: &Field,
+        numeric_settings: &NumericSettings,
+    ) -> Result<Self, ConversionError> {
         let logical_type = field
             .metadata()
             .get("logicalType")
@@ -149,7 +155,16 @@ impl SnowflakeFieldType {
             "FIXED" => {
                 let scale = get_field_metadata(field, "scale")?;
                 let precision = get_field_metadata(field, "precision")?;
-                Ok(Self::Number(number::SnowflakeNumber { scale, precision }))
+                let sql_type = number::NumericSqlType::from_scale_and_precision(
+                    scale,
+                    precision,
+                    numeric_settings,
+                );
+                Ok(Self::Number(number::SnowflakeNumber {
+                    scale,
+                    precision,
+                    sql_type,
+                }))
             }
             "DATE" => Ok(Self::Date(date::SnowflakeDate)),
             "TIMESTAMP_NTZ" => Ok(Self::TimestampNtz(timestamp::SnowflakeTimestampNtz)),
@@ -178,8 +193,9 @@ impl SnowflakeFieldType {
 pub fn make_converter<'a>(
     field: &Field,
     arrow_array: &'a dyn Array,
+    numeric_settings: &NumericSettings,
 ) -> Result<Box<dyn Converter<'a> + 'a>, ConversionError> {
-    let field_type = SnowflakeFieldType::from_field(field)?;
+    let field_type = SnowflakeFieldType::from_field(field, numeric_settings)?;
     let nullable = field.is_nullable();
     match field_type {
         SnowflakeFieldType::Varchar(snowflake_type) => {
@@ -247,6 +263,9 @@ pub fn make_converter<'a>(
 }
 
 /// Map a Snowflake Arrow field to the corresponding SQL data type.
-pub fn sql_type_from_field(field: &Field) -> Result<odbc_sys::SqlDataType, ConversionError> {
-    SnowflakeFieldType::from_field(field).map(|ft| ft.sql_type())
+pub fn sql_type_from_field(
+    field: &Field,
+    numeric_settings: &NumericSettings,
+) -> Result<odbc_sys::SqlDataType, ConversionError> {
+    SnowflakeFieldType::from_field(field, numeric_settings).map(|ft| ft.sql_type())
 }

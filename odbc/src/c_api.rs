@@ -2,6 +2,8 @@
 //!
 //! This module provides the C API interface for ODBC functions.
 
+#![allow(non_snake_case)]
+
 use crate::api::{self, ToSqlReturn};
 use crate::cdata_types::CDataType;
 use odbc_sys as sql;
