@@ -1,3 +1,4 @@
+use crate::api::bitmask::Bitmask;
 use crate::api::{OdbcError, diagnostic::DiagnosticInfo};
 use crate::cdata_types::CDataType;
 use crate::conversion::Binding;
@@ -73,6 +74,55 @@ impl ConnectionAttribute {
             Self::PrivKeyPassword => SQL_SF_CONN_ATTR_BASE + 4,
             Self::PrivKeyBase64 => SQL_SF_CONN_ATTR_BASE + 5,
         }
+    }
+}
+
+/// ODBC information type identifiers for `SQLGetInfo`
+/// (matching `SQL_*` constants from `sql.h` / `sqlext.h`).
+#[repr(u16)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum InfoType {
+    /// `SQL_GETDATA_EXTENSIONS` (81) — bitmask of supported GetData extensions.
+    GetDataExtensions = 81,
+}
+
+impl TryFrom<u16> for InfoType {
+    type Error = OdbcError;
+
+    fn try_from(value: u16) -> Result<Self, Self::Error> {
+        match value {
+            81 => Ok(InfoType::GetDataExtensions),
+            _ => {
+                tracing::warn!("Unsupported info type: {value}");
+                Err(OdbcError::UnknownInfoType {
+                    info_type: value,
+                    location: snafu::location!(),
+                })
+            }
+        }
+    }
+}
+
+/// SQL_GETDATA_EXTENSIONS bitmask values.
+#[repr(u32)]
+#[derive(Debug, Clone, Copy)]
+#[allow(dead_code)]
+pub enum GetDataExtensions {
+    /// SQL_GD_ANY_COLUMN - SQLGetData can be called for any column
+    AnyColumn = 0x0000_0001,
+    /// SQL_GD_ANY_ORDER - SQLGetData can be called for columns in any order
+    AnyOrder = 0x0000_0002,
+    /// SQL_GD_BLOCK - SQLGetData can be called for block data
+    Block = 0x0000_0004,
+    /// SQL_GD_BOUND - SQLGetData can be called for bound columns
+    Bound = 0x0000_0008,
+    /// SQL_GD_OUTPUT_PARAMS - SQLGetData can be called for output parameters
+    OutputParams = 0x0000_0010,
+}
+
+impl Bitmask for GetDataExtensions {
+    fn bitmask(&self) -> u32 {
+        *self as u32
     }
 }
 
@@ -281,8 +331,9 @@ pub enum StatementState {
     Created,
     Executed {
         reader: ArrowArrayStreamReader,
-        rows_affected: i64,
+        rows_affected: Option<i64>,
     },
+    NoResultSet,
     Fetching {
         reader: ArrowArrayStreamReader,
         record_batch: RecordBatch,

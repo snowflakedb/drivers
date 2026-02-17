@@ -308,7 +308,7 @@ class SnowflakeCursorBase(abc.ABC):
         return self
 
     def _populate_rowcount(self) -> None:
-        if self.execute_result:
+        if self.execute_result and self.execute_result.HasField("rows_affected"):
             self._rowcount = self.execute_result.rows_affected
         else:
             self._rowcount = None

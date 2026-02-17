@@ -964,7 +964,6 @@ TEST_CASE("SQLFetch ignores SQL_ATTR_MAX_LENGTH on statement handle.", "[query]"
 // =============================================================================
 
 TEST_CASE("SQLFetch returns 22002 when NULL data fetched without indicator pointer.", "[query]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
@@ -985,7 +984,6 @@ TEST_CASE("SQLFetch returns 22002 when NULL data fetched without indicator point
 }
 
 TEST_CASE("SQLFetch returns 22018 when invalid date string is bound to SQL_C_TYPE_DATE.", "[query]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
@@ -1005,9 +1003,7 @@ TEST_CASE("SQLFetch returns 22018 when invalid date string is bound to SQL_C_TYP
   REQUIRE(ret == SQL_ERROR);
   CHECK(get_sqlstate(stmt) == "22018");
 }
-
 TEST_CASE("SQLFetch returns 24000 when no result set exists.", "[query]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
@@ -1023,8 +1019,21 @@ TEST_CASE("SQLFetch returns 24000 when no result set exists.", "[query]") {
   CHECK(get_sqlstate(stmt) == "24000");
 }
 
+TEST_CASE("SQLFetch returns SQL_NO_DATA when result set is empty.", "[query]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+  auto stmt = conn.createStatement();
+
+  // When a SELECT statement is executed that returns no rows
+  SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT 1 WHERE true=false", SQL_NTS);
+  CHECK_ODBC(ret, stmt);
+
+  // Then SQLFetch should return SQL_NO_DATA (no rows to fetch)
+  ret = SQLFetch(stmt.getHandle());
+  REQUIRE(ret == SQL_NO_DATA);
+}
+
 TEST_CASE("SQLFetch returns HY010 when called without executing statement.", "[query]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
@@ -1038,7 +1047,6 @@ TEST_CASE("SQLFetch returns HY010 when called without executing statement.", "[q
 }
 
 TEST_CASE("SQLFetch moves cursor forward when no columns are bound.", "[query]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();

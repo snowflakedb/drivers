@@ -64,9 +64,6 @@ pub enum BindingType<'a> {
     Csv(DataPtr<'a>),
 }
 
-/// Sentinel returned when the server does not report a row count.
-const ROWCOUNT_UNKNOWN: i64 = -1;
-
 /// Column names whose values are summed to compute DML rows-affected (exact match).
 const DML_AFFECTED_ROWS_COLUMNS: &[&str] = &[
     "number of rows updated",
@@ -102,11 +99,27 @@ fn is_dml_statement(statement_type_id: Option<i64>) -> bool {
     }
 }
 
-/// Calculate rows affected based on statement type
+/// Check if a statement type ID represents a DDL or administrative operation
+/// (CREATE, ALTER, DROP, USE, etc.) that does not produce a fetchable result set.
+/// These statement types have IDs >= 0x4000.
+fn is_ddl_statement(statement_type_id: Option<i64>) -> bool {
+    if let Some(type_id) = statement_type_id {
+        type_id >= 0x4000
+    } else {
+        false
+    }
+}
+
+/// Calculate rows affected based on statement type.
+///
+/// Returns `Some(count)` when rows affected is known, `None` when it is not
+/// (e.g. DDL statements, or when the statement type is unknown).
+///
 /// - For DML: Parse rowset columns to sum affected rows
-/// - For SELECT and DDL: Use total field
-/// - For unknown: Return ROWCOUNT_UNKNOWN (-1)
-fn calculate_rows_affected(data: &Data) -> i64 {
+/// - For DDL: Return None since DDL has no result set
+/// - For SELECT and other queries: Use total field
+/// - For unknown: Return None
+fn calculate_rows_affected(data: &Data) -> Option<i64> {
     // Check if this is a DML statement
     if is_dml_statement(data.statement_type_id) {
         // For DML, parse the rowset to get affected rows
@@ -131,15 +144,20 @@ fn calculate_rows_affected(data: &Data) -> i64 {
                 }
             }
 
-            return affected_rows;
+            return Some(affected_rows);
         }
         // DML with no affected rows
-        return 0;
+        return Some(0);
     }
 
-    // For SELECT and other queries, use total
-    // Return ROWCOUNT_UNKNOWN if total is not available
-    data.total.unwrap_or(ROWCOUNT_UNKNOWN)
+    // DDL statements (CREATE, ALTER, DROP, etc.) do not produce a fetchable result set
+    if is_ddl_statement(data.statement_type_id) {
+        return None;
+    }
+
+    // For SELECT and other queries, use total field.
+    // Return None if total is not available.
+    data.total
 }
 
 pub fn statement_new(conn_handle: Handle) -> Result<Handle, ApiError> {
@@ -254,9 +272,10 @@ pub unsafe fn statement_bind(
 
 pub struct ExecuteResult {
     pub stream: Box<FFI_ArrowArrayStream>,
-    pub rows_affected: i64,
+    pub rows_affected: Option<i64>,
     pub query_id: String,
     pub columns: Vec<ColumnMetadata>,
+    pub statement_type_id: Option<i64>,
 }
 
 pub fn statement_execute_query<'a>(
@@ -372,8 +391,9 @@ pub fn statement_execute_query<'a>(
     // Calculate rows_affected based on statement type
     // For DML: Sum of affected rows from rowset columns
     // For SELECT: Total rows in result set
-    // For DDL/Unknown: -1
+    // For DDL/Unknown: None
     let rows_affected = calculate_rows_affected(&response.data);
+    let statement_type_id = response.data.statement_type_id;
 
     // Extract column metadata from rowtype
     let columns = response
@@ -399,6 +419,7 @@ pub fn statement_execute_query<'a>(
         rows_affected,
         query_id,
         columns,
+        statement_type_id,
     })
 }
 

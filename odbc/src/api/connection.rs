@@ -1,6 +1,8 @@
+use crate::api::InfoType;
+use crate::api::bitmask::Bitmask;
 use crate::api::error::Required;
 use crate::api::{
-    ConnectionState, OdbcResult, api_utils, conn_from_handle,
+    ConnectionState, GetDataExtensions, OdbcResult, api_utils, conn_from_handle,
     error::{
         AttributeCannotBeSetNowSnafu, InvalidPortSnafu, UnknownAttributeSnafu,
         UnsupportedAttributeSnafu,
@@ -496,5 +498,42 @@ pub fn get_connect_attr(
             attribute: attr.as_raw(),
         }
         .fail(),
+    }
+}
+
+/// Retrieve general information about the driver and data source (SQLGetInfo).
+pub fn get_info(
+    connection_handle: sql::Handle,
+    info_type: sql::USmallInt,
+    info_value_ptr: sql::Pointer,
+    _buffer_length: sql::SmallInt,
+    string_length_ptr: *mut sql::SmallInt,
+) -> OdbcResult<()> {
+    tracing::debug!("get_info: connection_handle={connection_handle:?}, info_type={info_type}");
+
+    let _conn = conn_from_handle(connection_handle);
+
+    let info_type = InfoType::try_from(info_type)?;
+
+    match info_type {
+        InfoType::GetDataExtensions => {
+            let extensions = [
+                GetDataExtensions::AnyColumn,
+                GetDataExtensions::AnyOrder,
+                GetDataExtensions::Bound,
+            ];
+            if !info_value_ptr.is_null() {
+                unsafe {
+                    *(info_value_ptr as *mut u32) = extensions.bitmask();
+                }
+            }
+            if !string_length_ptr.is_null() {
+                unsafe {
+                    *string_length_ptr = std::mem::size_of::<u32>() as sql::SmallInt;
+                }
+            }
+
+            Ok(())
+        }
     }
 }

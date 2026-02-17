@@ -102,6 +102,10 @@ pub enum SqlState {
     /// 22018 - Invalid character value for cast
     InvalidCharacterValueForCast,
 
+    // Invalid cursor state class (24)
+    /// 24000 - Invalid cursor state
+    InvalidCursorState,
+
     // Invalid transaction state class (25)
     /// 25000 - Invalid transaction state
     InvalidTransactionState,
@@ -111,7 +115,6 @@ pub enum SqlState {
     TransactionIsStillActive,
     /// 25S03 - Transaction is rolled back
     TransactionIsRolledBack,
-
     // Invalid SQL statement name class (26)
     /// 26000 - Invalid SQL statement name
     InvalidSqlStatementName,
@@ -343,6 +346,7 @@ impl SqlState {
             SqlState::IndicatorVariableRequiredButNotSupplied => "22002",
             SqlState::NumericValueOutOfRange => "22003",
             SqlState::InvalidCharacterValueForCast => "22018",
+            SqlState::InvalidCursorState => "24000",
             SqlState::InvalidTransactionState => "25000",
             SqlState::TransactionStateUnknown => "25S01",
             SqlState::TransactionIsStillActive => "25S02",
@@ -515,6 +519,7 @@ impl FromStr for SqlState {
             "22002" => SqlState::IndicatorVariableRequiredButNotSupplied,
             "22003" => SqlState::NumericValueOutOfRange,
             "22018" => SqlState::InvalidCharacterValueForCast,
+            "24000" => SqlState::InvalidCursorState,
             "25000" => SqlState::InvalidTransactionState,
             "25S01" => SqlState::TransactionStateUnknown,
             "25S02" => SqlState::TransactionIsStillActive,

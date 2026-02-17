@@ -1,10 +1,11 @@
 use std::collections::{HashMap, VecDeque};
 use std::io;
 use std::str::FromStr;
+use std::sync::Arc;
 
 use crate::compression::{CompressionError, decompress_data};
 use arrow::array::{RecordBatch, RecordBatchReader};
-use arrow::datatypes::SchemaRef;
+use arrow::datatypes::{Fields, Schema, SchemaRef};
 use arrow::error::ArrowError;
 use arrow_ipc::reader::StreamReader;
 use reqwest::Client;
@@ -64,6 +65,15 @@ impl ChunkReader {
             current_stream: Some(reader),
             client: None,
         })
+    }
+
+    pub fn empty() -> Self {
+        Self {
+            rest: VecDeque::new(),
+            schema: Arc::new(Schema::new(Fields::empty())),
+            current_stream: None,
+            client: None,
+        }
     }
 }
 

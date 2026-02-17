@@ -6,7 +6,7 @@ use std::{
 };
 
 use crate::{
-    api::{SqlState, diagnostic::DiagnosticRecord},
+    api::{InfoType, SqlState, diagnostic::DiagnosticRecord},
     conversion::{ConversionError, error::WriteOdbcError},
     write_arrow::ArrowBindingError,
 };
@@ -98,6 +98,20 @@ pub enum OdbcError {
         location: Location,
     },
 
+    #[snafu(display("Unsupported info type: {:?}", info_type))]
+    UnsupportedInfoType {
+        info_type: InfoType,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("Unknown info type: {info_type}"))]
+    UnknownInfoType {
+        info_type: u16,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
     #[snafu(display("Attribute cannot be set now: {attribute}"))]
     AttributeCannotBeSetNow {
         attribute: i32,
@@ -113,6 +127,12 @@ pub enum OdbcError {
 
     #[snafu(display("Statement not executed"))]
     StatementNotExecuted {
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("Invalid cursor state: no result set associated with the statement"))]
+    InvalidCursorState {
         #[snafu(implicit)]
         location: Location,
     },
@@ -321,9 +341,12 @@ impl OdbcError {
             OdbcError::InvalidPrecisionOrScale { .. } => SqlState::InvalidPrecisionOrScaleValue,
             OdbcError::UnknownAttribute { .. } => SqlState::InvalidAttributeOptionIdentifier,
             OdbcError::UnsupportedAttribute { .. } => SqlState::OptionalFeatureNotImplemented,
+            OdbcError::UnsupportedInfoType { .. } => SqlState::OptionalFeatureNotImplemented,
+            OdbcError::UnknownInfoType { .. } => SqlState::OptionalFeatureNotImplemented,
             OdbcError::AttributeCannotBeSetNow { .. } => SqlState::AttributeCannotBeSetNow,
             OdbcError::InvalidParameterNumber { .. } => SqlState::WrongNumberOfParameters,
             OdbcError::StatementNotExecuted { .. } => SqlState::FunctionSequenceError,
+            OdbcError::InvalidCursorState { .. } => SqlState::InvalidCursorState,
             OdbcError::DataNotFetched { .. } => SqlState::FunctionSequenceError,
             OdbcError::ExecutionDone { .. } => SqlState::FunctionSequenceError,
             OdbcError::NoMoreData { .. } => SqlState::NoDataFound,

@@ -654,7 +654,6 @@ TEST_CASE("SQLGetData returns SQL_NO_DATA for fixed-length data after first succ
 // =============================================================================
 
 TEST_CASE("SQLGetData can be called on unbound columns after bound columns.", "[query][get_data]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "It is possible to bind some columns in a row and call SQLGetData for
   //       others, although this is subject to some restrictions."
   // Doc: "If the driver does not support extensions to SQLGetData, the function
@@ -695,7 +694,6 @@ TEST_CASE("SQLGetData can be called on unbound columns after bound columns.", "[
 // =============================================================================
 
 TEST_CASE("SQLGetData retrieves data in increasing column number order.", "[query][get_data]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "Furthermore, within a row of data, the value of the Col_or_Param_Num
   //       argument in each call to SQLGetData must be greater than or equal to
   //       the value of Col_or_Param_Num in the previous call; that is, data must
@@ -728,7 +726,6 @@ TEST_CASE("SQLGetData retrieves data in increasing column number order.", "[quer
 // =============================================================================
 
 TEST_CASE("SQLGetInfo returns SQL_GETDATA_EXTENSIONS bitmask.", "[query][get_data]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "To determine what restrictions a driver relaxes, an application calls
   //       SQLGetInfo with any of the following SQL_GETDATA_EXTENSIONS options:
   //       SQL_GD_OUTPUT_PARAMS, SQL_GD_ANY_COLUMN, SQL_GD_ANY_ORDER, SQL_GD_BLOCK,
@@ -762,7 +759,6 @@ TEST_CASE("SQLGetInfo returns SQL_GETDATA_EXTENSIONS bitmask.", "[query][get_dat
 // =============================================================================
 
 TEST_CASE("SQLGetData for a different column resets prior column offset.", "[query][get_data]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "Successive calls to SQLGetData will retrieve data from the last column
   //       requested; prior offsets become invalid. For example, when the following
   //       sequence is performed:
@@ -1482,7 +1478,6 @@ TEST_CASE("SQLGetData returns SQL_NULL_DATA for NULL value regardless of TargetT
 // =============================================================================
 
 TEST_CASE("SQLGetData retrieves same data for same column on same row with SQL_GD_ANY_ORDER.", "[query][get_data]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "SQL_GD_ANY_ORDER. If this option is returned, SQLGetData can be called
   //       for unbound columns in any order."
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlgetdata-function#using-sqlgetdata
@@ -1519,7 +1514,6 @@ TEST_CASE("SQLGetData retrieves same data for same column on same row with SQL_G
 // =============================================================================
 
 TEST_CASE("SQLGetData on a bound column when SQL_GD_BOUND is supported.", "[query][get_data]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "SQL_GD_BOUND. If this option is returned, SQLGetData can be called for
   //       bound columns as well as unbound columns."
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlgetdata-function#using-sqlgetdata

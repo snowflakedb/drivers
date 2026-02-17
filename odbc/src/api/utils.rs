@@ -22,15 +22,16 @@ pub fn num_result_cols(
 pub fn row_count(statement_handle: sql::Handle, row_count_ptr: *mut sql::Len) -> OdbcResult<()> {
     tracing::debug!("row_count called");
     let stmt = stmt_from_handle(statement_handle);
-    let row_count_ptr = row_count_ptr as *mut i32;
+    let row_count_ptr = row_count_ptr as *mut sql::Len;
 
     match stmt.state.as_ref() {
         StatementState::Executed { rows_affected, .. } => unsafe {
-            std::ptr::write(row_count_ptr, *rows_affected as i32);
+            std::ptr::write(row_count_ptr, rows_affected.unwrap_or(0) as sql::Len);
         },
-        _ => unsafe {
+        StatementState::NoResultSet => unsafe {
             std::ptr::write(row_count_ptr, -1);
         },
+        _ => return StatementNotExecutedSnafu.fail(),
     }
     Ok(())
 }

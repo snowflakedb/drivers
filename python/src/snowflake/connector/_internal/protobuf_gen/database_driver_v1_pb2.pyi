@@ -374,8 +374,10 @@ class ExecuteResult(_message.Message):
     ROWS_AFFECTED_FIELD_NUMBER: _builtins.int
     QUERY_ID_FIELD_NUMBER: _builtins.int
     COLUMNS_FIELD_NUMBER: _builtins.int
+    STATEMENT_TYPE_ID_FIELD_NUMBER: _builtins.int
     rows_affected: _builtins.int
     query_id: _builtins.str
+    statement_type_id: _builtins.int
     @_builtins.property
     def stream(self) -> Global___ArrowArrayStreamPtr: ...
     @_builtins.property
@@ -384,14 +386,23 @@ class ExecuteResult(_message.Message):
         self,
         *,
         stream: Global___ArrowArrayStreamPtr | None = ...,
-        rows_affected: _builtins.int = ...,
+        rows_affected: _builtins.int | None = ...,
         query_id: _builtins.str = ...,
         columns: _abc.Iterable[Global___ColumnMetadata] | None = ...,
+        statement_type_id: _builtins.int | None = ...,
     ) -> None: ...
-    _HasFieldArgType: _TypeAlias = _typing.Literal["stream", b"stream"]  # noqa: Y015
+    _HasFieldArgType: _TypeAlias = _typing.Literal["_rows_affected", b"_rows_affected", "_statement_type_id", b"_statement_type_id", "rows_affected", b"rows_affected", "statement_type_id", b"statement_type_id", "stream", b"stream"]  # noqa: Y015
     def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
-    _ClearFieldArgType: _TypeAlias = _typing.Literal["columns", b"columns", "query_id", b"query_id", "rows_affected", b"rows_affected", "stream", b"stream"]  # noqa: Y015
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["_rows_affected", b"_rows_affected", "_statement_type_id", b"_statement_type_id", "columns", b"columns", "query_id", b"query_id", "rows_affected", b"rows_affected", "statement_type_id", b"statement_type_id", "stream", b"stream"]  # noqa: Y015
     def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
+    _WhichOneofReturnType__rows_affected: _TypeAlias = _typing.Literal["rows_affected"]  # noqa: Y015
+    _WhichOneofArgType__rows_affected: _TypeAlias = _typing.Literal["_rows_affected", b"_rows_affected"]  # noqa: Y015
+    _WhichOneofReturnType__statement_type_id: _TypeAlias = _typing.Literal["statement_type_id"]  # noqa: Y015
+    _WhichOneofArgType__statement_type_id: _TypeAlias = _typing.Literal["_statement_type_id", b"_statement_type_id"]  # noqa: Y015
+    @_typing.overload
+    def WhichOneof(self, oneof_group: _WhichOneofArgType__rows_affected) -> _WhichOneofReturnType__rows_affected | None: ...
+    @_typing.overload
+    def WhichOneof(self, oneof_group: _WhichOneofArgType__statement_type_id) -> _WhichOneofReturnType__statement_type_id | None: ...
 
 Global___ExecuteResult: _TypeAlias = ExecuteResult  # noqa: Y015
 
@@ -413,10 +424,15 @@ class PartitionedResult(_message.Message):
         *,
         schema: _builtins.int = ...,
         partitions: _abc.Iterable[_builtins.bytes] | None = ...,
-        rows_affected: _builtins.int = ...,
+        rows_affected: _builtins.int | None = ...,
     ) -> None: ...
-    _ClearFieldArgType: _TypeAlias = _typing.Literal["partitions", b"partitions", "rows_affected", b"rows_affected", "schema", b"schema"]  # noqa: Y015
+    _HasFieldArgType: _TypeAlias = _typing.Literal["_rows_affected", b"_rows_affected", "rows_affected", b"rows_affected"]  # noqa: Y015
+    def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["_rows_affected", b"_rows_affected", "partitions", b"partitions", "rows_affected", b"rows_affected", "schema", b"schema"]  # noqa: Y015
     def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
+    _WhichOneofReturnType__rows_affected: _TypeAlias = _typing.Literal["rows_affected"]  # noqa: Y015
+    _WhichOneofArgType__rows_affected: _TypeAlias = _typing.Literal["_rows_affected", b"_rows_affected"]  # noqa: Y015
+    def WhichOneof(self, oneof_group: _WhichOneofArgType__rows_affected) -> _WhichOneofReturnType__rows_affected | None: ...
 
 Global___PartitionedResult: _TypeAlias = PartitionedResult  # noqa: Y015
 

@@ -1,6 +1,7 @@
 use crate::api::error::{
     ConversionSnafu, DataNotFetchedSnafu, ExecutionDoneSnafu, FetchDataSnafu,
-    InvalidBufferLengthSnafu, InvalidDescriptorIndexSnafu, NoMoreDataSnafu, NullPointerSnafu,
+    InvalidBufferLengthSnafu, InvalidCursorStateSnafu, InvalidDescriptorIndexSnafu,
+    NoMoreDataSnafu, NullPointerSnafu,
     StatementErrorStateSnafu, StatementNotExecutedSnafu,
 };
 use crate::api::{
@@ -33,6 +34,12 @@ pub fn fetch(statement_handle: sql::Handle, warnings: &mut Warnings) -> OdbcResu
     let stmt = stmt_from_handle(statement_handle);
     stmt.get_data_state = None;
     stmt.state.transition_or_err(|state| match state {
+        StatementState::NoResultSet => {
+            tracing::error!("fetch: no result set associated with the statement");
+            InvalidCursorStateSnafu
+                .fail()
+                .with_state(StatementState::NoResultSet)
+        }
         StatementState::Executed { mut reader, .. } => match reader.next() {
             Some(record_batch_result) => {
                 let record_batch = record_batch_result
@@ -258,6 +265,10 @@ pub fn get_data(
             }
 
             Ok(())
+        }
+        StatementState::NoResultSet => {
+            tracing::error!("get_data: no result set associated with the statement");
+            NoMoreDataSnafu.fail()
         }
         StatementState::Done => {
             tracing::debug!("get_data: statement execution is done");

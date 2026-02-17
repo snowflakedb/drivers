@@ -64,7 +64,9 @@ async fn read_batches(
     data: &query_response::Data,
     http_client: &Client,
 ) -> Result<Box<dyn RecordBatchReader + Send>, ReadBatchesError> {
-    if let Some(rowset_base64) = &data.rowset_base64 {
+    if let Some(rowset_base64) = &data.rowset_base64
+        && !rowset_base64.is_empty()
+    {
         let rowset_bytes = BASE64.decode(rowset_base64).context(Base64DecodingSnafu)?;
 
         let reader_result = if let Some(chunk_download_data) = data.to_chunk_download_data() {
@@ -79,8 +81,10 @@ async fn read_batches(
         }
         .context(ChunkReadingSnafu)?;
 
-        Ok(Box::new(reader_result))
-    } else if let (Some(rowset), Some(rowtype)) = (&data.rowset, &data.row_type) {
+        return Ok(Box::new(reader_result));
+    }
+
+    if let (Some(rowset), Some(rowtype)) = (&data.rowset, &data.row_type) {
         let row_types = rowtype
             .iter()
             .map(|rt| rt.try_into())
@@ -99,10 +103,13 @@ async fn read_batches(
                 .fail();
             }
         }
-        convert_string_rowset_to_arrow_reader(rowset, &row_types).context(RowsetConversionSnafu)
-    } else {
-        MissingRowsetOrRowtypeSnafu.fail()
+        return convert_string_rowset_to_arrow_reader(rowset, &row_types)
+            .context(RowsetConversionSnafu);
     }
+
+    // No rowset or rowtype found, return empty reader
+    let reader = ChunkReader::empty();
+    Ok(Box::new(reader))
 }
 
 /// Helper macro to create string arrays from field accessors

@@ -134,6 +134,28 @@ pub unsafe extern "C" fn SQLGetEnvAttr(
 /// # Safety
 /// This function is called by the ODBC driver manager.
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn SQLGetInfo(
+    connection_handle: sql::Handle,
+    info_type: sql::USmallInt,
+    info_value_ptr: sql::Pointer,
+    buffer_length: sql::SmallInt,
+    string_length_ptr: *mut sql::SmallInt,
+) -> sql::RetCode {
+    api::diagnostic::clear_diag_info(sql::HandleType::Dbc, connection_handle);
+    let result = api::connection::get_info(
+        connection_handle,
+        info_type,
+        info_value_ptr,
+        buffer_length,
+        string_length_ptr,
+    );
+    api::diagnostic::set_diag_info_from_result(sql::HandleType::Dbc, connection_handle, &result);
+    result.to_sql_code()
+}
+
+/// # Safety
+/// This function is called by the ODBC driver manager.
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn SQLSetConnectAttr(
     connection_handle: sql::Handle,
     attribute: sql::Integer,

@@ -102,12 +102,14 @@ pub struct ColumnMetadata {
 pub struct ExecuteResult {
     #[prost(message, optional, tag = "1")]
     pub stream: ::core::option::Option<ArrowArrayStreamPtr>,
-    #[prost(int64, tag = "2")]
-    pub rows_affected: i64,
+    #[prost(int64, optional, tag = "2")]
+    pub rows_affected: ::core::option::Option<i64>,
     #[prost(string, tag = "3")]
     pub query_id: ::prost::alloc::string::String,
     #[prost(message, repeated, tag = "4")]
     pub columns: ::prost::alloc::vec::Vec<ColumnMetadata>,
+    #[prost(int64, optional, tag = "5")]
+    pub statement_type_id: ::core::option::Option<i64>,
 }
 /// Partitioned result
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
@@ -116,8 +118,8 @@ pub struct PartitionedResult {
     pub schema: i64,
     #[prost(bytes = "vec", repeated, tag = "2")]
     pub partitions: ::prost::alloc::vec::Vec<::prost::alloc::vec::Vec<u8>>,
-    #[prost(int64, tag = "3")]
-    pub rows_affected: i64,
+    #[prost(int64, optional, tag = "3")]
+    pub rows_affected: ::core::option::Option<i64>,
 }
 /// Database handle
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]

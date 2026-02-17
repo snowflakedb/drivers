@@ -71,7 +71,10 @@ pub fn exec_direct(statement_handle: sql::Handle, statement_text: &str) -> OdbcR
                 DatabaseDriverClient::statement_execute_query(StatementExecuteQueryRequest {
                     stmt_handle: Some(stmt.stmt_handle),
                     bindings: None,
-                })?;
+                });
+
+            tracing::info!("exec_direct: response={:?}", response);
+            let response = response?;
 
             stmt.state = create_execute_state(response)?.into();
             Ok(())
@@ -169,7 +172,12 @@ pub fn execute(statement_handle: sql::Handle) -> OdbcResult<()> {
     }
 }
 
+fn is_ddl_statement(statement_type_id: i64) -> bool {
+    statement_type_id >= 0x4000
+}
+
 fn create_execute_state(response: StatementExecuteQueryResponse) -> OdbcResult<StatementState> {
+    tracing::debug!("create_execute_state: response={:?}", response);
     let result = response.result.required("Execute result is required")?;
     let stream_ptr: *mut FFI_ArrowArrayStream =
         result.stream.required("Stream is required")?.into();
@@ -177,6 +185,11 @@ fn create_execute_state(response: StatementExecuteQueryResponse) -> OdbcResult<S
     let reader =
         ArrowArrayStreamReader::try_new(stream).context(ArrowArrayStreamReaderCreationSnafu {})?;
     let rows_affected = result.rows_affected;
+    if let Some(statement_type_id) = result.statement_type_id
+        && is_ddl_statement(statement_type_id)
+    {
+        return Ok(StatementState::NoResultSet);
+    }
     Ok(StatementState::Executed {
         reader,
         rows_affected,

@@ -531,7 +531,6 @@ TEST_CASE("SQLBindCol ignores BufferLength for fixed-length data types.", "[quer
 }
 
 TEST_CASE("SQLBindCol returns HY090 when BufferLength is less than 0.", "[query][bind_col]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "SQLBindCol returns SQLSTATE HY090 (Invalid string or buffer length)
   //       when BufferLength is less than 0 but not when BufferLength is 0."
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlbindcol-function#arguments
@@ -551,7 +550,6 @@ TEST_CASE("SQLBindCol returns HY090 when BufferLength is less than 0.", "[query]
 }
 
 TEST_CASE("SQLBindCol does not return error when BufferLength is 0 for non-character type.", "[query][bind_col]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "SQLBindCol returns SQLSTATE HY090 (Invalid string or buffer length)
   //       when BufferLength is less than 0 but not when BufferLength is 0."
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlbindcol-function#arguments
@@ -684,7 +682,6 @@ TEST_CASE("SQLBindCol converts data to the specified TargetType.", "[query][bind
 }
 
 TEST_CASE("SQLBindCol returns HY003 for invalid TargetType.", "[query][bind_col]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "HY003 - Invalid application buffer type: The argument TargetType was
   //       neither a valid data type nor SQL_C_DEFAULT."
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlbindcol-function#diagnostics
@@ -704,7 +701,6 @@ TEST_CASE("SQLBindCol returns HY003 for invalid TargetType.", "[query][bind_col]
 }
 
 TEST_CASE("SQLBindCol supports SQL_C_DEFAULT as TargetType.", "[query][bind_col]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "When the application specifies a TargetType of SQL_DEFAULT, SQLBindCol
   //       can be applied to a column of a different data type from the one
   //       intended by the application."
@@ -1443,7 +1439,6 @@ TEST_CASE("SQLBindCol binds arrays when SQL_ATTR_ROW_ARRAY_SIZE > 1.", "[query][
 // =============================================================================
 
 TEST_CASE("SQLBindCol returns 07009 when ColumnNumber exceeds max columns.", "[query][bind_col]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "07009 - Invalid descriptor index: The value specified for the argument
   //       ColumnNumber exceeded the maximum number of columns in the result set."
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlbindcol-function#diagnostics

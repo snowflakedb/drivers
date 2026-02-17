@@ -122,16 +122,17 @@ message ColumnMetadata {
 // Execute result
 message ExecuteResult {
   ArrowArrayStreamPtr stream = 1;
-  int64 rows_affected = 2;
+  optional int64 rows_affected = 2;
   string query_id = 3;
   repeated ColumnMetadata columns = 4;
+  optional int64 statement_type_id = 5;
 }
 
 // Partitioned result
 message PartitionedResult {
   int64 schema = 1;
   repeated bytes partitions = 2;
-  int64 rows_affected = 3;
+  optional int64 rows_affected = 3;
 }
 
 // Database handle

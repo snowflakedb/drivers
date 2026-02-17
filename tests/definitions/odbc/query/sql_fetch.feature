@@ -238,6 +238,12 @@ Feature: ODBC SQLFetch function behavior
     Then SQLFetch should return SQL_ERROR with SQLSTATE 24000 (Invalid cursor state)
 
   @odbc_e2e
+  Scenario: SQLFetch returns SQL_NO_DATA when result set is empty.
+    Given Snowflake client is logged in
+    When a SELECT statement is executed that returns no rows
+    Then SQLFetch should return SQL_NO_DATA (no rows to fetch)
+
+  @odbc_e2e
   Scenario: SQLFetch returns HY010 when called without executing statement.
     Given Snowflake client is logged in
     When SQLFetch is called without executing any statement first
