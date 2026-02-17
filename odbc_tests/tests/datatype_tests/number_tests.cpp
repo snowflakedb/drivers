@@ -412,3 +412,333 @@ TEST_CASE("SQL_DECIMAL SQL_C_CHAR and SQL_C_DEFAULT - negative small fractional 
   CHECK(get_data_default_as_string(stmt, 2) == "-0.001");
   CHECK(get_data_default_as_string(stmt, 3) == "-0.5");
 }
+
+// ============================================================================
+// NULL handling tests
+// ============================================================================
+
+TEST_CASE("NUMBER NULL values - indicator returns SQL_NULL_DATA", "[datatype][number][null]") {
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  auto stmt = conn.execute_fetch("SELECT NULL::NUMBER(10,0), NULL::DECIMAL(10,2), NULL::NUMERIC(20,5)");
+
+  for (int i = 1; i <= 3; ++i) {
+    SQLINTEGER value = 0;
+    SQLLEN indicator = 0;
+    SQLRETURN ret = SQLGetData(stmt.getHandle(), i, SQL_C_LONG, &value, sizeof(value), &indicator);
+    CHECK_ODBC(ret, stmt);
+    INFO("Column " << i << " should be NULL");
+    CHECK(indicator == SQL_NULL_DATA);
+  }
+}
+
+TEST_CASE("NUMBER NULL mixed with non-NULL in multiple rows", "[datatype][number][null]") {
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  conn.execute("DROP TABLE IF EXISTS test_number_null");
+  conn.execute("CREATE TABLE test_number_null (val NUMBER(10,0))");
+  conn.execute("INSERT INTO test_number_null VALUES (42), (NULL), (-7), (NULL), (0)");
+
+  auto stmt = conn.execute_fetch("SELECT * FROM test_number_null");
+
+  // Row 1: 42
+  SQLINTEGER value = 0;
+  SQLLEN indicator = 0;
+  SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_LONG, &value, sizeof(value), &indicator);
+  CHECK_ODBC(ret, stmt);
+  CHECK(indicator != SQL_NULL_DATA);
+  CHECK(value == 42);
+
+  // Row 2: NULL
+  ret = SQLFetch(stmt.getHandle());
+  CHECK_ODBC(ret, stmt);
+  ret = SQLGetData(stmt.getHandle(), 1, SQL_C_LONG, &value, sizeof(value), &indicator);
+  CHECK_ODBC(ret, stmt);
+  CHECK(indicator == SQL_NULL_DATA);
+
+  // Row 3: -7
+  ret = SQLFetch(stmt.getHandle());
+  CHECK_ODBC(ret, stmt);
+  ret = SQLGetData(stmt.getHandle(), 1, SQL_C_LONG, &value, sizeof(value), &indicator);
+  CHECK_ODBC(ret, stmt);
+  CHECK(indicator != SQL_NULL_DATA);
+  CHECK(value == -7);
+
+  // Row 4: NULL
+  ret = SQLFetch(stmt.getHandle());
+  CHECK_ODBC(ret, stmt);
+  ret = SQLGetData(stmt.getHandle(), 1, SQL_C_LONG, &value, sizeof(value), &indicator);
+  CHECK_ODBC(ret, stmt);
+  CHECK(indicator == SQL_NULL_DATA);
+
+  // Row 5: 0
+  ret = SQLFetch(stmt.getHandle());
+  CHECK_ODBC(ret, stmt);
+  ret = SQLGetData(stmt.getHandle(), 1, SQL_C_LONG, &value, sizeof(value), &indicator);
+  CHECK_ODBC(ret, stmt);
+  CHECK(indicator != SQL_NULL_DATA);
+  CHECK(value == 0);
+}
+
+TEST_CASE("NUMBER NULL with SQL_C_CHAR returns SQL_NULL_DATA", "[datatype][number][null]") {
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  auto stmt = conn.execute_fetch("SELECT NULL::DECIMAL(20,5)");
+
+  char buffer[100];
+  SQLLEN indicator = 0;
+  SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_CHAR, buffer, sizeof(buffer), &indicator);
+  CHECK_ODBC(ret, stmt);
+  CHECK(indicator == SQL_NULL_DATA);
+}
+
+TEST_CASE("NUMBER NULL with SQL_C_DEFAULT returns SQL_NULL_DATA", "[datatype][number][null]") {
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  auto stmt = conn.execute_fetch("SELECT NULL::DECIMAL(10,2)");
+
+  char buffer[100];
+  SQLLEN indicator = 0;
+  SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_DEFAULT, buffer, sizeof(buffer), &indicator);
+  CHECK_ODBC(ret, stmt);
+  CHECK(indicator == SQL_NULL_DATA);
+}
+
+// ============================================================================
+// SQL_C_BIT conversion tests
+// ============================================================================
+
+TEST_CASE("SQL_DECIMAL to SQL_C_BIT - nonzero becomes 1, zero becomes 0", "[datatype][number][bit]") {
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  auto stmt = conn.execute_fetch(
+      "SELECT 0::NUMBER(10,0), 1::NUMBER(10,0), -1::NUMBER(10,0), "
+      "42::NUMBER(10,0), 0.00::NUMBER(10,2)");
+
+  CHECK(get_data<SQL_C_BIT>(stmt, 1) == 0);
+  CHECK(get_data<SQL_C_BIT>(stmt, 2) == 1);
+  CHECK(get_data<SQL_C_BIT>(stmt, 3) == 1);
+  CHECK(get_data<SQL_C_BIT>(stmt, 4) == 1);
+  CHECK(get_data<SQL_C_BIT>(stmt, 5) == 0);
+}
+
+// ============================================================================
+// Integer truncation toward zero tests
+// ============================================================================
+
+TEST_CASE("SQL_DECIMAL fractional truncation toward zero", "[datatype][number][truncation]") {
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  // Values less than 1 in magnitude should all truncate to 0
+  auto stmt = conn.execute_fetch(
+      "SELECT 0.9::DECIMAL(3,1), -0.9::DECIMAL(3,1), "
+      "0.1::DECIMAL(3,1), -0.1::DECIMAL(3,1), "
+      "0.5::DECIMAL(3,1), -0.5::DECIMAL(3,1)");
+
+  // All should truncate to 0 (truncation toward zero, not rounding)
+  CHECK(get_data<SQL_C_LONG>(stmt, 1) == 0);
+  CHECK(get_data<SQL_C_LONG>(stmt, 2) == 0);
+  CHECK(get_data<SQL_C_LONG>(stmt, 3) == 0);
+  CHECK(get_data<SQL_C_LONG>(stmt, 4) == 0);
+  CHECK(get_data<SQL_C_LONG>(stmt, 5) == 0);
+  CHECK(get_data<SQL_C_LONG>(stmt, 6) == 0);
+}
+
+TEST_CASE("SQL_DECIMAL fractional truncation - values just below boundary", "[datatype][number][truncation]") {
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  auto stmt = conn.execute_fetch(
+      "SELECT 1.99::DECIMAL(5,2), -1.99::DECIMAL(5,2), "
+      "127.99::DECIMAL(5,2), -128.99::DECIMAL(6,2)");
+
+  CHECK(get_data<SQL_C_LONG>(stmt, 1) == 1);
+  CHECK(get_data<SQL_C_LONG>(stmt, 2) == -1);
+  CHECK(get_data<SQL_C_STINYINT>(stmt, 3) == 127);
+  CHECK(get_data<SQL_C_STINYINT>(stmt, 4) == -128);
+}
+
+// ============================================================================
+// Scale=0 pure integer tests
+// ============================================================================
+
+TEST_CASE("NUMBER scale=0 - INT and INTEGER types", "[datatype][number][integer]") {
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  conn.execute("DROP TABLE IF EXISTS test_int_types");
+  conn.execute("CREATE TABLE test_int_types (a INT, b INTEGER, c BIGINT, d SMALLINT, e TINYINT)");
+  conn.execute("INSERT INTO test_int_types VALUES (100, -200, 9223372036854775807, -32000, 120)");
+
+  auto stmt = conn.execute_fetch("SELECT * FROM test_int_types");
+
+  CHECK(get_data<SQL_C_LONG>(stmt, 1) == 100);
+  CHECK(get_data<SQL_C_LONG>(stmt, 2) == -200);
+  CHECK(get_data<SQL_C_SBIGINT>(stmt, 3) == 9223372036854775807LL);
+  CHECK(get_data<SQL_C_SHORT>(stmt, 4) == -32000);
+  CHECK(get_data<SQL_C_TINYINT>(stmt, 5) == 120);
+
+  // Also verify SQL_C_CHAR representations for scale=0
+  CHECK(get_data<SQL_C_CHAR>(stmt, 1) == "100");
+  CHECK(get_data<SQL_C_CHAR>(stmt, 2) == "-200");
+  CHECK(get_data<SQL_C_CHAR>(stmt, 3) == "9223372036854775807");
+  CHECK(get_data<SQL_C_CHAR>(stmt, 4) == "-32000");
+  CHECK(get_data<SQL_C_CHAR>(stmt, 5) == "120");
+}
+
+// ============================================================================
+// SQL_C_CHAR buffer truncation tests
+// ============================================================================
+
+TEST_CASE("SQL_DECIMAL SQL_C_CHAR with small buffer", "[datatype][number][char][buffer]") {
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  auto stmt = conn.execute_fetch("SELECT 123456::NUMBER(10,0)");
+
+  // Buffer of size 4 should only get "123" + null terminator
+  char small_buffer[4];
+  SQLLEN indicator = 0;
+  SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_CHAR, small_buffer, sizeof(small_buffer), &indicator);
+  // Should return SQL_SUCCESS_WITH_INFO indicating data truncation
+  CHECK(ret == SQL_SUCCESS_WITH_INFO);
+  // indicator should report the full length
+  CHECK(indicator == 6);
+  // Buffer should have first 3 chars + null terminator
+  CHECK(std::string(small_buffer) == "123");
+}
+
+TEST_CASE("SQL_DECIMAL SQL_C_CHAR with exact buffer", "[datatype][number][char][buffer]") {
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  auto stmt = conn.execute_fetch("SELECT 42::NUMBER(10,0)");
+
+  // Buffer of size 3: "42" + null terminator
+  char exact_buffer[3];
+  SQLLEN indicator = 0;
+  SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_CHAR, exact_buffer, sizeof(exact_buffer), &indicator);
+  CHECK_ODBC(ret, stmt);
+  CHECK(indicator == 2);
+  CHECK(std::string(exact_buffer) == "42");
+}
+
+// ============================================================================
+// Multiple rows with varying scales and mixed positive/negative
+// ============================================================================
+
+TEST_CASE("DECIMAL multiple rows with various values", "[datatype][number][multirow]") {
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  conn.execute("DROP TABLE IF EXISTS test_number_multi");
+  conn.execute("CREATE TABLE test_number_multi (val DECIMAL(10,2))");
+  conn.execute(
+      "INSERT INTO test_number_multi VALUES "
+      "(0.00), (1.00), (-1.00), (999.99), (-999.99), (0.01), (-0.01)");
+
+  auto stmt = conn.execute_fetch("SELECT * FROM test_number_multi");
+
+  std::vector<std::string> expected = {"0.00", "1.00", "-1.00", "999.99", "-999.99", "0.01", "-0.01"};
+
+  for (size_t row = 0; row < expected.size(); ++row) {
+    if (row > 0) {
+      SQLRETURN ret = SQLFetch(stmt.getHandle());
+      CHECK_ODBC(ret, stmt);
+    }
+    INFO("Row " << row << " expected: " << expected[row]);
+    CHECK(get_data<SQL_C_CHAR>(stmt, 1) == expected[row]);
+  }
+}
+
+TEST_CASE("DECIMAL multiple rows fetched as SQL_C_DOUBLE", "[datatype][number][multirow]") {
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  conn.execute("DROP TABLE IF EXISTS test_number_double_multi");
+  conn.execute("CREATE TABLE test_number_double_multi (val DECIMAL(10,3))");
+  conn.execute(
+      "INSERT INTO test_number_double_multi VALUES "
+      "(0.000), (1.500), (-2.750), (100.125)");
+
+  auto stmt = conn.execute_fetch("SELECT * FROM test_number_double_multi");
+
+  // These values are exactly representable in f64 (powers of 2 denominators)
+  std::vector<double> expected = {0.0, 1.5, -2.75, 100.125};
+
+  for (size_t row = 0; row < expected.size(); ++row) {
+    if (row > 0) {
+      SQLRETURN ret = SQLFetch(stmt.getHandle());
+      CHECK_ODBC(ret, stmt);
+    }
+    INFO("Row " << row << " expected double: " << expected[row]);
+    CHECK(get_data<SQL_C_DOUBLE>(stmt, 1) == expected[row]);
+  }
+}
+
+// ============================================================================
+// Exact scale conversion tests (scale divides evenly)
+// ============================================================================
+
+TEST_CASE("DECIMAL exact scale division - no fractional remainder", "[datatype][number][scale]") {
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  // 100.00 with scale=2 stored as 10000 in i128, divides by 100 evenly
+  auto stmt = conn.execute_fetch(
+      "SELECT 100.00::DECIMAL(10,2), 0.50::DECIMAL(10,2), "
+      "-25.00::DECIMAL(10,2), 1.00::DECIMAL(10,2)");
+
+  CHECK(get_data<SQL_C_LONG>(stmt, 1) == 100);
+  CHECK(get_data<SQL_C_LONG>(stmt, 2) == 0);  // 0.50 truncates to 0
+  CHECK(get_data<SQL_C_LONG>(stmt, 3) == -25);
+  CHECK(get_data<SQL_C_LONG>(stmt, 4) == 1);
+}
+
+// ============================================================================
+// Numeric type to SQL_C_DOUBLE/SQL_C_FLOAT precision checks
+// ============================================================================
+
+TEST_CASE("DECIMAL to SQL_C_DOUBLE - precision for large values", "[datatype][number][precision]") {
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  // Value with 15 significant digits (within f64 precision)
+  auto stmt = conn.execute_fetch("SELECT 123456789012345::NUMBER(15,0)");
+
+  double val = get_data<SQL_C_DOUBLE>(stmt, 1);
+  // f64 has ~15-16 significant digits, this should be exact
+  CHECK(val == 123456789012345.0);
+}
+
+TEST_CASE("DECIMAL to SQL_C_FLOAT - limited precision", "[datatype][number][precision]") {
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  auto stmt = conn.execute_fetch("SELECT 123456::NUMBER(10,0)");
+
+  float val = get_data<SQL_C_FLOAT>(stmt, 1);
+  CHECK(val == 123456.0f);
+}
+
+// ============================================================================
+// SQL_C_DEFAULT for various column definitions
+// ============================================================================
+
+TEST_CASE("SQL_C_DEFAULT for INT column resolves to SQL_C_CHAR", "[datatype][number][default]") {
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  // INT is NUMBER(38,0) under the hood - SQL type is SQL_DECIMAL
+  auto stmt = conn.execute_fetch("SELECT 42::INT, -7::INTEGER, 0::BIGINT");
+
+  CHECK(get_data_default_as_string(stmt, 1) == "42");
+  CHECK(get_data_default_as_string(stmt, 2) == "-7");
+  CHECK(get_data_default_as_string(stmt, 3) == "0");
+}
