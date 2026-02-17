@@ -208,6 +208,7 @@ fn remaining_policy(
 }
 
 #[allow(clippy::too_many_arguments)]
+#[tracing::instrument(skip(client, login_parameters, base_policy, password), fields(okta_url, username, disable_saml_url_check))]
 pub(crate) async fn fetch_native_okta_saml(
     client: &reqwest::Client,
     login_parameters: &LoginParameters,
@@ -218,6 +219,7 @@ pub(crate) async fn fetch_native_okta_saml(
     disable_saml_url_check: bool,
     authentication_timeout_secs: u64,
 ) -> Result<String, NativeOktaError> {
+    tracing::info!("Starting native Okta authentication");
     let budget = Duration::from_secs(authentication_timeout_secs);
     let start = Instant::now();
 
@@ -253,6 +255,11 @@ pub(crate) async fn fetch_native_okta_saml(
     .context(RetryExhaustedSnafu)?;
 
     if !status.is_success() {
+        tracing::error!(
+            status = %status,
+            elapsed_ms = start.elapsed().as_millis(),
+            "Snowflake authenticator-request failed"
+        );
         return HttpStatusSnafu {
             context: "Snowflake authenticator-request",
             status,
@@ -264,6 +271,11 @@ pub(crate) async fn fetch_native_okta_saml(
     let idp: AuthenticatorRequestResponse = serde_json::from_str(&text).context(JsonParseSnafu)?;
     if !idp.success {
         let msg = idp.message.unwrap_or_else(|| "Unknown error".to_string());
+        tracing::error!(
+            message = %msg,
+            elapsed_ms = start.elapsed().as_millis(),
+            "Snowflake authenticator-request returned logical failure"
+        );
         return HttpStatusSnafu {
             context: "Snowflake authenticator-request (logical failure)",
             status: StatusCode::BAD_REQUEST,
@@ -275,6 +287,7 @@ pub(crate) async fn fetch_native_okta_saml(
         field: "data",
         location: Location::new(file!(), line!(), column!()),
     })?;
+    tracing::debug!("Step 1 complete: received IdP endpoints from Snowflake");
 
     // Step 2: IdP URL safety validation
     let configured = Url::parse(okta_url).context(UrlParseSnafu { url: okta_url })?;
@@ -285,6 +298,12 @@ pub(crate) async fn fetch_native_okta_saml(
         url: idp_data.sso_url.clone(),
     })?;
     if !url_origin_matches(&configured, &token_url) {
+        tracing::error!(
+            configured = %okta_url,
+            returned = %idp_data.token_url,
+            elapsed_ms = start.elapsed().as_millis(),
+            "IdP tokenUrl does not match configured Okta URL"
+        );
         return IdpUrlMismatchSnafu {
             configured: okta_url.to_string(),
             returned: idp_data.token_url,
@@ -292,12 +311,19 @@ pub(crate) async fn fetch_native_okta_saml(
         .fail();
     }
     if !url_origin_matches(&configured, &sso_url) {
+        tracing::error!(
+            configured = %okta_url,
+            returned = %idp_data.sso_url,
+            elapsed_ms = start.elapsed().as_millis(),
+            "IdP ssoUrl does not match configured Okta URL"
+        );
         return IdpUrlMismatchSnafu {
             configured: okta_url.to_string(),
             returned: idp_data.sso_url,
         }
         .fail();
     }
+    tracing::debug!("Step 2 complete: IdP URL safety validation passed");
 
     // Step 3+4: mint one-time token, fetch SAML form. If SAML fetch fails transiently, re-mint token and retry.
     let mut saml_attempt: u32 = 0;
@@ -327,12 +353,22 @@ pub(crate) async fn fetch_native_okta_saml(
         .context(RetryExhaustedSnafu)?;
 
         if token_status == StatusCode::UNAUTHORIZED || token_status == StatusCode::FORBIDDEN {
+            tracing::error!(
+                status = %token_status,
+                elapsed_ms = start.elapsed().as_millis(),
+                "Okta rejected credentials"
+            );
             return BadCredentialsSnafu {
                 status: token_status,
             }
             .fail();
         }
         if !token_status.is_success() {
+            tracing::error!(
+                status = %token_status,
+                elapsed_ms = start.elapsed().as_millis(),
+                "Okta token request failed"
+            );
             return HttpStatusSnafu {
                 context: "Okta token request",
                 status: token_status,
@@ -344,6 +380,10 @@ pub(crate) async fn fetch_native_okta_saml(
         let token_resp: OktaTokenResponse =
             serde_json::from_str(&token_text).context(JsonParseSnafu)?;
         if token_resp.status.as_deref() == Some("MFA_REQUIRED") {
+            tracing::error!(
+                elapsed_ms = start.elapsed().as_millis(),
+                "Okta returned MFA_REQUIRED - unsupported in native Okta flow"
+            );
             return MfaRequiredSnafu.fail();
         }
         let one_time = token_resp
@@ -354,6 +394,7 @@ pub(crate) async fn fetch_native_okta_saml(
             })?;
         // relayState is optional - Okta doesn't always return it
         let relay_state = token_resp.relay_state.unwrap_or_default();
+        tracing::debug!(attempt = saml_attempt, "Step 3 complete: obtained one-time token from Okta");
 
         // Step 4: fetch SAML HTML form
         let policy = remaining_policy(base_policy, start, budget)?;
@@ -373,6 +414,11 @@ pub(crate) async fn fetch_native_okta_saml(
 
         if !saml_status.is_success() {
             if saml_status == StatusCode::UNAUTHORIZED || saml_status == StatusCode::FORBIDDEN {
+                tracing::error!(
+                    status = %saml_status,
+                    elapsed_ms = start.elapsed().as_millis(),
+                    "Okta SAML fetch rejected (unauthorized)"
+                );
                 return HttpStatusSnafu {
                     context: "Okta SAML fetch (unauthorized)",
                     status: saml_status,
@@ -382,6 +428,12 @@ pub(crate) async fn fetch_native_okta_saml(
             }
             // On non-success statuses (e.g., 429/5xx), shared retry policy already applied; treat as transient and retry by re-minting token.
             if saml_attempt >= base_policy.max_attempts {
+                tracing::error!(
+                    status = %saml_status,
+                    attempt = saml_attempt,
+                    elapsed_ms = start.elapsed().as_millis(),
+                    "Okta SAML fetch failed after max attempts"
+                );
                 return HttpStatusSnafu {
                     context: "Okta SAML fetch",
                     status: saml_status,
@@ -389,17 +441,34 @@ pub(crate) async fn fetch_native_okta_saml(
                 }
                 .fail();
             }
+            tracing::warn!(
+                status = %saml_status,
+                attempt = saml_attempt,
+                elapsed_ms = start.elapsed().as_millis(),
+                "SAML fetch failed transiently, re-minting token and retrying"
+            );
             continue;
         }
+        tracing::debug!(attempt = saml_attempt, "Step 4 complete: fetched SAML HTML form from Okta");
 
         // Step 4b: destination/postback validation (unless disabled)
         let Some(postback) = extract_form_action(&saml_html) else {
-            // Some drivers treat “postback not found” as retryable by re-minting the token.
+            // Some drivers treat "postback not found" as retryable by re-minting the token.
             if saml_attempt < base_policy.max_attempts {
+                tracing::warn!(
+                    attempt = saml_attempt,
+                    elapsed_ms = start.elapsed().as_millis(),
+                    "SAML HTML missing form action, re-minting token and retrying"
+                );
                 continue;
             }
+            tracing::error!(
+                elapsed_ms = start.elapsed().as_millis(),
+                "Failed to extract form action from SAML HTML after max attempts"
+            );
             return MissingSamlPostbackSnafu.fail();
         };
+        tracing::debug!(postback = %postback, "Extracted SAML postback URL from HTML");
 
         if !disable_saml_url_check {
             let server = Url::parse(&login_parameters.server_url).context(UrlParseSnafu {
@@ -409,14 +478,27 @@ pub(crate) async fn fetch_native_okta_saml(
                 url: postback.clone(),
             })?;
             if !url_origin_matches(&server, &postback_url) {
+                tracing::error!(
+                    server = %login_parameters.server_url,
+                    postback = %postback,
+                    elapsed_ms = start.elapsed().as_millis(),
+                    "SAML postback destination does not match Snowflake server"
+                );
                 return SamlDestinationMismatchSnafu {
                     server: login_parameters.server_url.clone(),
                     postback,
                 }
                 .fail();
             }
+            tracing::debug!("SAML postback destination validation passed");
+        } else {
+            tracing::debug!("SAML postback destination validation skipped (disabled)");
         }
 
+        tracing::info!(
+            elapsed_ms = start.elapsed().as_millis(),
+            "Native Okta authentication completed successfully"
+        );
         return Ok(saml_html);
     }
 }
