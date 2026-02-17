@@ -271,6 +271,7 @@ mod tests {
             assert!(result.is_ok());
             assert_eq!(str_len, 5);
             assert_eq!(&buffer[..5], b"hello");
+            assert_eq!(buffer[5], 0); // Null terminator
         }
 
         #[test]
@@ -293,6 +294,7 @@ mod tests {
             assert!(result.is_ok());
             assert_eq!(str_len, 6);
             assert_eq!(&buffer[..6], b"123.45");
+            assert_eq!(buffer[6], 0); // Null terminator
         }
 
         #[test]
@@ -825,6 +827,249 @@ mod tests {
         }
     }
 
+    // Tests for CDataType::Default (SQL_C_DEFAULT)
+    // Per ODBC spec, SQL_DECIMAL/SQL_NUMERIC default C type is SQL_C_CHAR.
+    mod read_to_default {
+        use super::*;
+
+        #[test]
+        fn default_reads_int64_as_char_for_fixed_type() {
+            let array = Int64Array::from(vec![123i64]);
+            let field = field_with_fixed_meta(DataType::Int64, 0, 10);
+            let mut buffer = vec![0u8; 32];
+            let mut str_len: sql::Len = 0;
+
+            let result = read_arrow_value(
+                CDataType::Default,
+                buffer.as_mut_ptr() as sql::Pointer,
+                buffer.len() as sql::Len,
+                &mut str_len,
+                &array,
+                &field,
+                0,
+            );
+
+            assert!(result.is_ok());
+            assert_eq!(str_len, 3);
+            assert_eq!(&buffer[..3], b"123");
+        }
+
+        #[test]
+        fn default_reads_int64_with_scale_as_char() {
+            let array = Int64Array::from(vec![12345i64]); // 123.45 with scale 2
+            let field = field_with_fixed_meta(DataType::Int64, 2, 10);
+            let mut buffer = vec![0u8; 32];
+            let mut str_len: sql::Len = 0;
+
+            let result = read_arrow_value(
+                CDataType::Default,
+                buffer.as_mut_ptr() as sql::Pointer,
+                buffer.len() as sql::Len,
+                &mut str_len,
+                &array,
+                &field,
+                0,
+            );
+
+            assert!(result.is_ok());
+            assert_eq!(str_len, 6);
+            assert_eq!(&buffer[..6], b"123.45");
+        }
+
+        #[test]
+        fn default_reads_negative_int64_with_scale_as_char() {
+            let array = Int64Array::from(vec![-12345i64]); // -123.45 with scale 2
+            let field = field_with_fixed_meta(DataType::Int64, 2, 10);
+            let mut buffer = vec![0u8; 32];
+            let mut str_len: sql::Len = 0;
+
+            let result = read_arrow_value(
+                CDataType::Default,
+                buffer.as_mut_ptr() as sql::Pointer,
+                buffer.len() as sql::Len,
+                &mut str_len,
+                &array,
+                &field,
+                0,
+            );
+
+            assert!(result.is_ok());
+            assert_eq!(str_len, 7);
+            assert_eq!(&buffer[..7], b"-123.45");
+        }
+
+        #[test]
+        fn default_reads_decimal128_as_char() {
+            let array = Decimal128Array::from(vec![12345i128])
+                .with_precision_and_scale(10, 2)
+                .unwrap();
+            let field = decimal128_field(10, 2);
+            let mut buffer = vec![0u8; 32];
+            let mut str_len: sql::Len = 0;
+
+            let result = read_arrow_value(
+                CDataType::Default,
+                buffer.as_mut_ptr() as sql::Pointer,
+                buffer.len() as sql::Len,
+                &mut str_len,
+                &array,
+                &field,
+                0,
+            );
+
+            assert!(result.is_ok());
+            assert_eq!(str_len, 6);
+            assert_eq!(&buffer[..6], b"123.45");
+        }
+
+        #[test]
+        fn default_reads_small_value_with_large_scale() {
+            let array = Int64Array::from(vec![5i64]); // 0.05 with scale 2
+            let field = field_with_fixed_meta(DataType::Int64, 2, 10);
+            let mut buffer = vec![0u8; 32];
+            let mut str_len: sql::Len = 0;
+
+            let result = read_arrow_value(
+                CDataType::Default,
+                buffer.as_mut_ptr() as sql::Pointer,
+                buffer.len() as sql::Len,
+                &mut str_len,
+                &array,
+                &field,
+                0,
+            );
+
+            assert!(result.is_ok());
+            assert_eq!(str_len, 4);
+            assert_eq!(&buffer[..4], b"0.05");
+        }
+
+        #[test]
+        fn default_reads_zero_as_char() {
+            let array = Int64Array::from(vec![0i64]);
+            let field = field_with_fixed_meta(DataType::Int64, 0, 10);
+            let mut buffer = vec![0u8; 32];
+            let mut str_len: sql::Len = 0;
+
+            let result = read_arrow_value(
+                CDataType::Default,
+                buffer.as_mut_ptr() as sql::Pointer,
+                buffer.len() as sql::Len,
+                &mut str_len,
+                &array,
+                &field,
+                0,
+            );
+
+            assert!(result.is_ok());
+            assert_eq!(str_len, 1);
+            assert_eq!(&buffer[..1], b"0");
+        }
+
+        #[test]
+        fn default_reads_zero_with_scale_as_char() {
+            let array = Int64Array::from(vec![0i64]);
+            let field = field_with_fixed_meta(DataType::Int64, 3, 10);
+            let mut buffer = vec![0u8; 32];
+            let mut str_len: sql::Len = 0;
+
+            let result = read_arrow_value(
+                CDataType::Default,
+                buffer.as_mut_ptr() as sql::Pointer,
+                buffer.len() as sql::Len,
+                &mut str_len,
+                &array,
+                &field,
+                0,
+            );
+
+            assert!(result.is_ok());
+            assert_eq!(str_len, 5);
+            assert_eq!(&buffer[..5], b"0.000");
+        }
+
+        #[test]
+        fn default_reads_large_decimal128_as_char() {
+            // Test with a large value representative of NUMBER(38,0)
+            let large_value: i128 = 99999999999999999999999999999999999999;
+            let array = Decimal128Array::from(vec![large_value])
+                .with_precision_and_scale(38, 0)
+                .unwrap();
+            let field = decimal128_field(38, 0);
+            let mut buffer = vec![0u8; 64];
+            let mut str_len: sql::Len = 0;
+
+            let result = read_arrow_value(
+                CDataType::Default,
+                buffer.as_mut_ptr() as sql::Pointer,
+                buffer.len() as sql::Len,
+                &mut str_len,
+                &array,
+                &field,
+                0,
+            );
+
+            assert!(result.is_ok());
+            let expected = b"99999999999999999999999999999999999999";
+            assert_eq!(str_len, expected.len() as sql::Len);
+            assert_eq!(&buffer[..expected.len()], expected);
+        }
+
+        #[test]
+        fn default_reads_large_negative_decimal128_as_char() {
+            let large_value: i128 = -99999999999999999999999999999999999999;
+            let array = Decimal128Array::from(vec![large_value])
+                .with_precision_and_scale(38, 0)
+                .unwrap();
+            let field = decimal128_field(38, 0);
+            let mut buffer = vec![0u8; 64];
+            let mut str_len: sql::Len = 0;
+
+            let result = read_arrow_value(
+                CDataType::Default,
+                buffer.as_mut_ptr() as sql::Pointer,
+                buffer.len() as sql::Len,
+                &mut str_len,
+                &array,
+                &field,
+                0,
+            );
+
+            assert!(result.is_ok());
+            let expected = b"-99999999999999999999999999999999999999";
+            assert_eq!(str_len, expected.len() as sql::Len);
+            assert_eq!(&buffer[..expected.len()], expected);
+        }
+
+        #[test]
+        fn default_reads_decimal128_with_high_scale_as_char() {
+            // NUMBER(38,37): value 1.2345678901234567890123456789012345678
+            // Arrow stores as 12345678901234567890123456789012345678 with scale 37
+            let value: i128 = 12345678901234567890123456789012345678;
+            let array = Decimal128Array::from(vec![value])
+                .with_precision_and_scale(38, 37)
+                .unwrap();
+            let field = decimal128_field(38, 37);
+            let mut buffer = vec![0u8; 64];
+            let mut str_len: sql::Len = 0;
+
+            let result = read_arrow_value(
+                CDataType::Default,
+                buffer.as_mut_ptr() as sql::Pointer,
+                buffer.len() as sql::Len,
+                &mut str_len,
+                &array,
+                &field,
+                0,
+            );
+
+            assert!(result.is_ok());
+            let expected = b"1.2345678901234567890123456789012345678";
+            assert_eq!(str_len, expected.len() as sql::Len);
+            assert_eq!(&buffer[..expected.len()], expected);
+        }
+    }
+
     // Tests for null str_len_or_ind_ptr
     mod null_indicator_tests {
         use super::*;
@@ -867,6 +1112,7 @@ mod tests {
 
             assert!(result.is_ok());
             assert_eq!(&buffer[..5], b"hello");
+            assert_eq!(buffer[5], 0); // Null terminator
         }
     }
 }

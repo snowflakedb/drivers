@@ -16,7 +16,7 @@ behavior_differences:
   
   6:
     name: "Unsupported compression type returns error instead of being silently ignored"
-  
+
   7:
     name: "ALTER USER ADD PROGRAMMATIC ACCESS TOKEN returns result set with token in new driver, old driver returns invalid cursor state (10510)"
 
@@ -32,3 +32,24 @@ behavior_differences:
     description: |
       The old driver accepted raw EVP_PKEY* pointers via SQLSetConnectAttr.
       Not supported across the Rust FFI boundary — use PRIV_KEY_CONTENT or PRIV_KEY_BASE64 instead.
+
+  11:
+    name: "FIXED type with scale=0 is always reported as SQL_DECIMAL"
+    description: |
+      OLD driver: When treatDecimalWithZeroScaleAsInt is enabled (connection parameter),
+      FIXED columns with scale=0 are reported as SQL_BIGINT. The default C type for
+      SQL_BIGINT is SQL_C_SBIGINT.
+      NEW driver: FIXED columns are always reported as SQL_DECIMAL regardless of scale.
+      The default C type for SQL_DECIMAL is SQL_C_CHAR.
+      Impact: Applications using SQL_C_DEFAULT with zero-scale numeric columns may receive
+      data in a different C type (SQL_C_CHAR instead of SQL_C_SBIGINT).
+
+  12:
+    name: "Large precision FIXED numbers are not remapped to SQL_VARCHAR"
+    description: |
+      OLD driver: When treatBigNumberAsString is enabled (connection parameter) and
+      precision > 18, FIXED columns are reported as SQL_VARCHAR instead of SQL_DECIMAL.
+      NEW driver: FIXED columns are always reported as SQL_DECIMAL regardless of precision.
+      Impact: Column metadata (SQL type, column size, byte length) may differ for
+      high-precision numeric columns. Data retrieval is unaffected when using SQL_C_CHAR
+      since both SQL_DECIMAL and SQL_VARCHAR default to SQL_C_CHAR.

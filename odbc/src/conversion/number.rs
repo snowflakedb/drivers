@@ -7,10 +7,28 @@ use crate::conversion::traits::Binding;
 use crate::conversion::warning::Warnings;
 use crate::conversion::{ReadArrowType, SnowflakeType, WriteODBCType};
 
+/// Represents the SQL numeric data types as defined by the ODBC specification.
+/// Each SQL type has a different default C type used when the application
+/// specifies `SQL_C_DEFAULT`.
+/// Reference: https://learn.microsoft.com/en-us/sql/odbc/reference/appendixes/sql-to-c-numeric
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum NumericSqlType {
+    Decimal,
+}
+
+impl NumericSqlType {
+    pub(crate) fn default_c_type(&self) -> CDataType {
+        match self {
+            Self::Decimal => CDataType::Char,
+        }
+    }
+}
+
 pub(crate) struct SnowflakeNumber {
     pub(crate) scale: u32,
     #[allow(dead_code)]
     pub(crate) precision: u32,
+    pub(crate) sql_type: NumericSqlType,
 }
 
 impl SnowflakeType for SnowflakeNumber {
@@ -42,6 +60,10 @@ impl WriteODBCType for SnowflakeNumber {
         snowflake_value: Self::Representation<'_>,
         binding: &Binding,
     ) -> Result<Warnings, WriteOdbcError> {
+        let target_type = match binding.target_type {
+            CDataType::Default => self.sql_type.default_c_type(),
+            other => other,
+        };
         match binding.target_type {
             CDataType::Double => {
                 let double_value: f64 = snowflake_value as f64 / 10f64.powi(self.scale as i32);
@@ -73,6 +95,14 @@ impl WriteODBCType for SnowflakeNumber {
                 binding.write_fixed(int_value);
                 Ok(vec![])
             }
+            CDataType::Bit => {
+                let int_value = (snowflake_value as i64) / 10i64.pow(self.scale);
+                let bit_value: u8 = if int_value != 0 { 1 } else { 0 };
+                unsafe {
+                    std::ptr::write(binding.value as *mut u8, bit_value);
+                }
+                Ok(())
+            }
             CDataType::Char => {
                 let num_str = if self.scale > 0 {
                     let mut s = snowflake_value.to_string();
@@ -101,12 +131,17 @@ impl WriteODBCType for SnowflakeNumber {
                 if !binding.str_len_or_ind_ptr.is_null() {
                     unsafe { std::ptr::write(binding.str_len_or_ind_ptr, bytes.len() as Len) };
                 }
-                unsafe {
-                    std::ptr::copy_nonoverlapping(
-                        bytes.as_ptr(),
-                        binding.target_value_ptr as *mut u8,
-                        std::cmp::min(binding.buffer_length as usize, bytes.len()),
-                    );
+                if binding.buffer_length > 0 {
+                    let copy_len = std::cmp::min((binding.buffer_length - 1) as usize, bytes.len());
+                    unsafe {
+                        std::ptr::copy_nonoverlapping(
+                            bytes.as_ptr(),
+                            binding.target_value_ptr as *mut u8,
+                            copy_len,
+                        );
+                        // Null-terminate per ODBC spec
+                        std::ptr::write((binding.value as *mut u8).add(copy_len), 0u8);
+                    }
                 }
                 Ok(vec![])
             }

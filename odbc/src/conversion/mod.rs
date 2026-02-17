@@ -6,6 +6,7 @@ pub mod warning;
 
 mod nullable;
 mod number;
+mod number_tests;
 mod varchar;
 
 use arrow::array::Array;
@@ -142,7 +143,11 @@ pub fn make_converter<'a>(
         ("FIXED", _) => {
             let scale = get_field_metadata(field, "scale")?;
             let precision = get_field_metadata(field, "precision")?;
-            let snowflake_type = number::SnowflakeNumber { scale, precision };
+            let snowflake_type = number::SnowflakeNumber {
+                scale,
+                precision,
+                sql_type: number::NumericSqlType::Decimal,
+            };
             match field.data_type() {
                 DataType::Int8 => {
                     make_number_converter!(Int8Type, snowflake_type, arrow_array, nullable)
