@@ -85,7 +85,15 @@ Feature: INT type support
   # =========================================================================== #
 
   @python_e2e
-  Scenario: should insert and select integers from table using parameter binding for int and synonyms
+  Scenario: should insert integer using parameter binding for int and synonyms
+    Given Snowflake client is logged in
+    And Table with <type> column exists
+    When Integer values [0, -2147483648, 2147483647, 9223372036854775807] are inserted using binding
+    And Query "SELECT * FROM <table>" is executed
+    Then Result should contain integers [0, -2147483648, 2147483647, 9223372036854775807]
+
+  @python_e2e
+  Scenario: should insert and select integers from table using batch parameter binding for int and synonyms
     Given Snowflake client is logged in
     And Table with <type> column exists
     When Integer values [0, 42, -2147483648, 2147483647, 9223372036854775807] are inserted using binding
