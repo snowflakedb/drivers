@@ -44,6 +44,45 @@ Implemented comprehensive logout functionality for the Universal Driver Core (Ru
   - SNOW-2912513 (Telemetry)
   - SNOW-2923705 (Fire-and-forget, query execution concurrency)
 
+## Validator Status
+
+### ✅ Fixed Scenarios (Passing Validation)
+1. `should_construct_logout_request_with_correct_http_method_url_headers_and_body`
+2. `should_not_send_logout_when_connection_was_never_established`
+3. `should_ignore_session_gone_390111_for_each_strategy_type` (parametrized Scenario Outline)
+
+### ⚠️ Remaining Work: Parametrize 9 Scenario Outlines
+
+Currently implemented as separate test methods (functional but not validator-compliant):
+
+1. **should_retry_logout_on_retryable_<error_type>_for_each_<strategy_type>**
+   - Currently: 6 separate methods (503×2, 429×2, connection_reset×2)
+   - Need: 1 parametrized method looping over (error_type, strategy_type)
+
+2. **should_attempt_token_refresh_on_390112_when_retries_allowed_for_each_<strategy_type>**
+   - Currently: 2 separate methods (strict, best-effort)
+   - Need: 1 parametrized method looping over strategy_type
+
+3. **should_honor_provided_retry_config_and_succeed_for_each_<strategy_type>**
+   - Currently: 2 separate methods with different retry counts
+   - Need: 1 parametrized method looping over (strategy_type, max_attempts)
+
+4. **should_honor_provided_timeout_config_and_succeed_for_each_<strategy_type>**
+   - Currently: 1 method for strict only
+   - Need: 1 parametrized method looping over (strategy_type, timeout)
+
+5. **should_log_WARN_and_succeed_after_exhausted_retries_with_best_effort_strategy**
+   - Currently: Missing (only strict version exists)
+   - Need: Implement or mark as separate scenario
+
+6-7. **Timeout scenarios** (strict throws, best-effort logs)
+   - Currently: Missing separate implementations
+   - Need: Check if these exist and parametrize or implement
+
+8-9. **Non-retryable error scenarios** (strict throws, best-effort suppresses)
+   - Currently: 2 separate methods for 400 error
+   - Need: 1 parametrized method looping over (error_code, strategy_type)
+
 ## Known Issues & TODOs
 
 ### 🐛 Validator Display Bug
