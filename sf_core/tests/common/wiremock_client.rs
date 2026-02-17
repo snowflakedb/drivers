@@ -1,3 +1,15 @@
+//! Java WireMock standalone helper for tests that require HTTPS.
+//!
+//! The Rust `wiremock` crate (used elsewhere via the `mocks` module) does not support
+//! HTTPS/TLS. Native Okta integration tests need HTTPS because:
+//!   - The authenticator URL must be `https://` (production security requirement).
+//!   - `url_origin_matches` validates that returned `tokenUrl`/`ssoUrl` share the same
+//!     scheme, host, and port as the configured Okta endpoint.
+//!
+//! The Java WireMock standalone JAR provides HTTPS with a self-signed keystore,
+//! which lets us test the full Okta SAML flow end-to-end without relaxing any
+//! security checks in production code.
+
 use rand::random;
 use std::env;
 use std::fs;
