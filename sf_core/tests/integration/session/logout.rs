@@ -535,366 +535,196 @@ async fn should_ignore_session_gone_390111_for_each_strategy_type() {
 }
 
 #[tokio::test]
-async fn should_retry_logout_on_retryable_503_for_strict_strategy() {
-    //Given Core logout function called with strict strategy
-    //And Mock server returns 503 on attempt 1
-    //And Mock server returns 200 on attempt 2
-    let (addr, attempts, server) = spawn_test_server(2, |attempt| async move {
-        if attempt == 1 {
-            service_unavailable_response(r#"{"success":false}"#, 0)
-        } else {
-            json_response(r#"{"success":true}"#)
-        }
-    })
-    .await;
+async fn should_retry_logout_on_retryable_error_type_for_each_strategy_type() {
+    // Scenario Outline: Examples (error_type, strategy_type)
+    // 503 Service Unavailable × (strict, best-effort)
+    // 429 Too Many Requests × (strict, best-effort)
+    // connection reset × (strict, best-effort)
 
-    let server_url = format!("http://{}", addr);
-    let client = reqwest::Client::builder().no_proxy().build().unwrap();
-    let client_info = test_client_info();
+    for (strategy_name, error_strategy) in [
+        ("strict", ErrorStrategy::Strict),
+        ("best-effort", ErrorStrategy::BestEffort),
+    ] {
+        // Test HTTP error codes (503, 429)
+        for (error_type, error_response_fn): (&str, fn() -> Vec<u8>) in [
+            ("503 Service Unavailable", || {
+                service_unavailable_response(r#"{"success":false}"#, 0)
+            }),
+            ("429 Too Many Requests", || {
+                json_error_response(
+                    429,
+                    "Too Many Requests",
+                    r#"{"success":false,"message":"Rate limited"}"#,
+                )
+            }),
+        ] {
+            //Given Core logout function called with <strategy_type> strategy
+            //And Mock server returns <error_type> on attempt 1
+            //And Mock server returns 200 on attempt 2
+            let (addr, attempts, server) = spawn_test_server(2, |attempt| {
+                let error_fn = error_response_fn;
+                async move {
+                    if attempt == 1 {
+                        error_fn()
+                    } else {
+                        json_response(r#"{"success":true}"#)
+                    }
+                }
+            })
+            .await;
 
-    let config = LogoutConfig {
-        error_strategy: ErrorStrategy::Strict,
-        ..Default::default()
-    };
+            let server_url = format!("http://{}", addr);
+            let client = reqwest::Client::builder().no_proxy().build().unwrap();
+            let client_info = test_client_info();
 
-    //When Logout is executed
-    let result = logout_session(
-        &client,
-        &server_url,
-        "test_token",
-        &client_info,
-        config.timeout,
-        &RetryPolicy::default(),
-    )
-    .await;
+            let config = LogoutConfig {
+                error_strategy,
+                ..Default::default()
+            };
 
-    //Then Logout is retried
-    assert_eq!(attempts.load(Ordering::SeqCst), 2, "Should retry on 503");
-
-    //And Close succeeds
-    assert!(result.is_ok(), "Should succeed after retry");
-
-    server.await.unwrap();
-}
-
-#[tokio::test]
-async fn should_retry_logout_on_retryable_503_for_best_effort_strategy() {
-    //Given Core logout function called with best-effort strategy
-    //And Mock server returns 503 on attempt 1
-    //And Mock server returns 200 on attempt 2
-    let (addr, attempts, server) = spawn_test_server(2, |attempt| async move {
-        if attempt == 1 {
-            service_unavailable_response(r#"{"success":false}"#, 0)
-        } else {
-            json_response(r#"{"success":true}"#)
-        }
-    })
-    .await;
-
-    let server_url = format!("http://{}", addr);
-    let client = reqwest::Client::builder().no_proxy().build().unwrap();
-    let client_info = test_client_info();
-
-    let config = LogoutConfig {
-        error_strategy: ErrorStrategy::BestEffort,
-        ..Default::default()
-    };
-
-    //When Logout is executed
-    let result = logout_session(
-        &client,
-        &server_url,
-        "test_token",
-        &client_info,
-        config.timeout,
-        &RetryPolicy::default(),
-    )
-    .await;
-
-    //Then Logout is retried
-    assert_eq!(attempts.load(Ordering::SeqCst), 2, "Should retry on 503");
-
-    //And Close succeeds
-    assert!(result.is_ok(), "Should succeed after retry");
-
-    server.await.unwrap();
-}
-
-#[tokio::test]
-async fn should_retry_logout_on_retryable_429_for_strict_strategy() {
-    //Given Core logout function called with strict strategy
-    //And Mock server returns 429 on attempt 1
-    //And Mock server returns 200 on attempt 2
-    let (addr, attempts, server) = spawn_test_server(2, |attempt| async move {
-        if attempt == 1 {
-            json_error_response(
-                429,
-                "Too Many Requests",
-                r#"{"success":false,"message":"Rate limited"}"#,
+            //When Logout is executed
+            let result = logout_session(
+                &client,
+                &server_url,
+                "test_token",
+                &client_info,
+                config.timeout,
+                &RetryPolicy::default(),
             )
-        } else {
-            json_response(r#"{"success":true}"#)
+            .await;
+
+            //Then Logout is retried
+            assert_eq!(
+                attempts.load(Ordering::SeqCst),
+                2,
+                "Should retry on {} for {}",
+                error_type,
+                strategy_name
+            );
+
+            //And Close succeeds
+            assert!(
+                result.is_ok(),
+                "Should succeed after retry on {} for {}",
+                error_type,
+                strategy_name
+            );
+
+            server.await.unwrap();
         }
-    })
-    .await;
 
-    let server_url = format!("http://{}", addr);
-    let client = reqwest::Client::builder().no_proxy().build().unwrap();
-    let client_info = test_client_info();
+        // Test connection reset (requires different server setup)
+        {
+            let error_type = "connection reset";
+            //Given Core logout function called with <strategy_type> strategy
+            //And Mock server resets connection on first attempt
+            //And Mock server succeeds on second attempt
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let addr = listener.local_addr().unwrap();
+            let attempts = Arc::new(AtomicUsize::new(0));
+            let attempts_clone = attempts.clone();
 
-    let config = LogoutConfig {
-        error_strategy: ErrorStrategy::Strict,
-        ..Default::default()
-    };
+            let server = tokio::spawn(async move {
+                loop {
+                    let (mut stream, _) = listener.accept().await.unwrap();
+                    let attempt = attempts_clone.fetch_add(1, Ordering::SeqCst) + 1;
 
-    //When Logout is executed
-    let result = logout_session(
-        &client,
-        &server_url,
-        "test_token",
-        &client_info,
-        config.timeout,
-        &RetryPolicy::default(),
-    )
-    .await;
+                    if attempt == 1 {
+                        drop(stream); // Reset connection
+                    } else {
+                        let mut buf = vec![0u8; 4096];
+                        let _ = stream.read(&mut buf).await;
+                        let response = json_response(r#"{"success":true}"#);
+                        stream.write_all(&response).await.unwrap();
+                        let _ = stream.shutdown().await;
+                        break;
+                    }
+                }
+            });
 
-    //Then Logout is retried
-    assert_eq!(attempts.load(Ordering::SeqCst), 2, "Should retry on 429");
+            let server_url = format!("http://{}", addr);
+            let client = reqwest::Client::builder().no_proxy().build().unwrap();
+            let client_info = test_client_info();
 
-    //And Close succeeds
-    assert!(result.is_ok(), "Should succeed after retry");
+            let config = LogoutConfig {
+                error_strategy,
+                ..Default::default()
+            };
 
-    server.await.unwrap();
-}
-
-#[tokio::test]
-async fn should_retry_logout_on_retryable_429_for_best_effort_strategy() {
-    //Given Core logout function called with best-effort strategy
-    //And Mock server returns 429 on attempt 1
-    //And Mock server returns 200 on attempt 2
-    let (addr, attempts, server) = spawn_test_server(2, |attempt| async move {
-        if attempt == 1 {
-            json_error_response(
-                429,
-                "Too Many Requests",
-                r#"{"success":false,"message":"Rate limited"}"#,
+            //When Logout is executed
+            let result = logout_session(
+                &client,
+                &server_url,
+                "test_token",
+                &client_info,
+                config.timeout,
+                &RetryPolicy::default(),
             )
-        } else {
-            json_response(r#"{"success":true}"#)
+            .await;
+
+            //Then Logout is retried
+            assert_eq!(
+                attempts.load(Ordering::SeqCst),
+                2,
+                "Should retry on {} for {}",
+                error_type,
+                strategy_name
+            );
+
+            //And Close succeeds
+            assert!(
+                result.is_ok(),
+                "Should succeed after retry on {} for {}",
+                error_type,
+                strategy_name
+            );
+
+            server.await.unwrap();
         }
-    })
-    .await;
-
-    let server_url = format!("http://{}", addr);
-    let client = reqwest::Client::builder().no_proxy().build().unwrap();
-    let client_info = test_client_info();
-
-    let config = LogoutConfig {
-        error_strategy: ErrorStrategy::BestEffort,
-        ..Default::default()
-    };
-
-    //When Logout is executed
-    let result = logout_session(
-        &client,
-        &server_url,
-        "test_token",
-        &client_info,
-        config.timeout,
-        &RetryPolicy::default(),
-    )
-    .await;
-
-    //Then Logout is retried
-    assert_eq!(attempts.load(Ordering::SeqCst), 2, "Should retry on 429");
-
-    //And Close succeeds
-    assert!(result.is_ok(), "Should succeed after retry");
-
-    server.await.unwrap();
-}
-
-#[tokio::test]
-async fn should_retry_logout_on_connection_reset_for_strict_strategy() {
-    //Given Core logout function called with strict strategy
-    //And Mock server resets connection on first attempt
-    //And Mock server succeeds on second attempt
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    let attempts = Arc::new(AtomicUsize::new(0));
-    let attempts_clone = attempts.clone();
-
-    let server = tokio::spawn(async move {
-        loop {
-            let (mut stream, _) = listener.accept().await.unwrap();
-            let attempt = attempts_clone.fetch_add(1, Ordering::SeqCst) + 1;
-
-            if attempt == 1 {
-                // First attempt: reset connection
-                drop(stream);
-            } else {
-                // Second attempt: success
-                let mut buf = vec![0u8; 4096];
-                let _ = stream.read(&mut buf).await;
-                let response = json_response(r#"{"success":true}"#);
-                stream.write_all(&response).await.unwrap();
-                let _ = stream.shutdown().await;
-                break;
-            }
-        }
-    });
-
-    let server_url = format!("http://{}", addr);
-    let client = reqwest::Client::builder().no_proxy().build().unwrap();
-    let client_info = test_client_info();
-
-    let config = LogoutConfig {
-        error_strategy: ErrorStrategy::Strict,
-        ..Default::default()
-    };
-
-    //When Logout is executed
-    let result = logout_session(
-        &client,
-        &server_url,
-        "test_token",
-        &client_info,
-        config.timeout,
-        &RetryPolicy::default(),
-    )
-    .await;
-
-    //Then Logout is retried
-    assert_eq!(
-        attempts.load(Ordering::SeqCst),
-        2,
-        "Should retry on connection reset"
-    );
-
-    //And Close succeeds
-    assert!(result.is_ok(), "Should succeed after retry");
-
-    server.await.unwrap();
-}
-
-#[tokio::test]
-async fn should_retry_logout_on_connection_reset_for_best_effort_strategy() {
-    //Given Core logout function called with best-effort strategy
-    //And Mock server resets connection on first attempt
-    //And Mock server succeeds on second attempt
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    let attempts = Arc::new(AtomicUsize::new(0));
-    let attempts_clone = attempts.clone();
-
-    let server = tokio::spawn(async move {
-        loop {
-            let (mut stream, _) = listener.accept().await.unwrap();
-            let attempt = attempts_clone.fetch_add(1, Ordering::SeqCst) + 1;
-
-            if attempt == 1 {
-                // First attempt: reset connection
-                drop(stream);
-            } else {
-                // Second attempt: success
-                let mut buf = vec![0u8; 4096];
-                let _ = stream.read(&mut buf).await;
-                let response = json_response(r#"{"success":true}"#);
-                stream.write_all(&response).await.unwrap();
-                let _ = stream.shutdown().await;
-                break;
-            }
-        }
-    });
-
-    let server_url = format!("http://{}", addr);
-    let client = reqwest::Client::builder().no_proxy().build().unwrap();
-    let client_info = test_client_info();
-
-    let config = LogoutConfig {
-        error_strategy: ErrorStrategy::BestEffort,
-        ..Default::default()
-    };
-
-    //When Logout is executed
-    let result = logout_session(
-        &client,
-        &server_url,
-        "test_token",
-        &client_info,
-        config.timeout,
-        &RetryPolicy::default(),
-    )
-    .await;
-
-    //Then Logout is retried
-    assert_eq!(
-        attempts.load(Ordering::SeqCst),
-        2,
-        "Should retry on connection reset"
-    );
-
-    //And Close succeeds
-    assert!(result.is_ok(), "Should succeed after retry");
-
-    server.await.unwrap();
+    }
 }
 
 #[tokio::test]
 #[ignore = "TODO: Requires token refresh implementation - SNOW-2923705"]
-async fn should_not_attempt_token_refresh_when_retry_count_is_0_with_strict_strategy() {
-    //Given Core logout function called with strict strategy
-    //And Mock server returns SESSION_TOKEN_EXPIRED 390112
-    //And Retry policy allows 0 retries
-    //When Logout is executed
-    //Then No token refresh request is sent to server
-    //And Close throws SESSION_TOKEN_EXPIRED error
+async fn should_attempt_token_refresh_on_390112_when_retries_allowed_for_each_strategy_type() {
+    // Scenario Outline: Examples (strategy_type)
+    // strict, best-effort
+    for (_strategy_name, _error_strategy) in [
+        ("strict", ErrorStrategy::Strict),
+        ("best-effort", ErrorStrategy::BestEffort),
+    ] {
+        //Given Core logout function called with <strategy_type> strategy
+        //And Mock server returns SESSION_TOKEN_EXPIRED 390112 on first attempt
+        //And Mock server returns 200 after token refresh
+        //And Retry policy allows 1 retry
+        //When Logout is executed
+        //Then Token refresh request is sent to server
+        //And Logout is retried with new session token
+        //And Close succeeds
 
-    // TODO: SNOW-2923705 - Requires token refresh during logout
+        // TODO: SNOW-2923705 - Requires token refresh during logout
+    }
 }
 
 #[tokio::test]
 #[ignore = "TODO: Requires token refresh implementation - SNOW-2923705"]
-async fn should_not_attempt_token_refresh_when_retry_count_is_0_with_best_effort_strategy() {
-    //Given Core logout function called with best-effort strategy
-    //And Mock server returns SESSION_TOKEN_EXPIRED 390112
-    //And Retry policy allows 0 retries
-    //When Logout is executed
-    //Then No token refresh request is sent to server
-    //And SESSION_TOKEN_EXPIRED is logged as WARN
-    //And Close succeeds
+async fn should_not_attempt_token_refresh_when_retry_count_is_0_for_each_strategy_type() {
+    // Scenario Outline: Examples (strategy_type)
+    // strict, best-effort
+    for (_strategy_name, _error_strategy) in [
+        ("strict", ErrorStrategy::Strict),
+        ("best-effort", ErrorStrategy::BestEffort),
+    ] {
+        //Given Core logout function called with <strategy_type> strategy
+        //And Mock server returns SESSION_TOKEN_EXPIRED 390112
+        //And Retry policy allows 0 retries
+        //When Logout is executed
+        //Then No token refresh request is sent to server
+        // (For strict: Close throws SESSION_TOKEN_EXPIRED error)
+        // (For best-effort: SESSION_TOKEN_EXPIRED is logged as WARN and Close succeeds)
 
-    // TODO: SNOW-2923705 - Requires token refresh during logout
-}
-
-#[tokio::test]
-#[ignore = "TODO: Requires token refresh implementation - SNOW-2923705"]
-async fn should_attempt_token_refresh_on_390112_when_retries_allowed_for_strict_strategy() {
-    //Given Core logout function called with strict strategy
-    //And Mock server returns SESSION_TOKEN_EXPIRED 390112 on first attempt
-    //And Mock server returns 200 after token refresh
-    //And Retry policy allows 1 retry
-    //When Logout is executed
-    //Then Token refresh request is sent to server
-    //And Logout is retried with new session token
-    //And Close succeeds
-
-    // TODO: SNOW-2923705 - Requires token refresh during logout
-}
-
-#[tokio::test]
-#[ignore = "TODO: Requires token refresh implementation - SNOW-2923705"]
-async fn should_attempt_token_refresh_on_390112_when_retries_allowed_for_best_effort_strategy() {
-    //Given Core logout function called with best-effort strategy
-    //And Mock server returns SESSION_TOKEN_EXPIRED 390112 on first attempt
-    //And Mock server returns 200 after token refresh
-    //And Retry policy allows 1 retry
-    //When Logout is executed
-    //Then Token refresh request is sent to server
-    //And Logout is retried with new session token
-    //And Close succeeds
-
-    // TODO: SNOW-2923705 - Requires token refresh during logout
+        // TODO: SNOW-2923705 - Requires token refresh during logout
+    }
 }
 
 #[tokio::test]
@@ -919,130 +749,124 @@ async fn should_include_token_refresh_time_in_total_logout_timeout_budget() {
 // ===========================================================================
 
 #[tokio::test]
-async fn should_honor_provided_retry_config_and_succeed_for_strict_strategy_1_attempt() {
-    //Given Core logout function called with strict strategy
-    //And Retry policy configured with 1 max attempts
-    //And Mock server fails 0 times then returns 200
-    let (addr, attempts, server) =
-        spawn_test_server(1, |_| async move { json_response(r#"{"success":true}"#) }).await;
+async fn should_honor_provided_retry_config_and_succeed_for_each_strategy_type() {
+    // Scenario Outline: Examples (strategy_type, max_attempts, failures)
+    // strict + 1, best-effort + 3
+    for (strategy_name, error_strategy, max_attempts, num_failures) in [
+        ("strict", ErrorStrategy::Strict, 1, 0),
+        ("best-effort", ErrorStrategy::BestEffort, 3, 1),
+    ] {
+        //Given Core logout function called with <strategy_type> strategy
+        //And Retry policy configured with <max_attempts> max attempts
+        //And Mock server fails <failures> times then returns 200
+        let expected_attempts = num_failures + 1;
+        let (addr, attempts, server) =
+            spawn_test_server(expected_attempts, |attempt| async move {
+                if attempt <= num_failures {
+                    service_unavailable_response(r#"{"success":false}"#, 0)
+                } else {
+                    json_response(r#"{"success":true}"#)
+                }
+            })
+            .await;
 
-    let server_url = format!("http://{}", addr);
-    let client = reqwest::Client::builder().no_proxy().build().unwrap();
-    let client_info = test_client_info();
+        let server_url = format!("http://{}", addr);
+        let client = reqwest::Client::builder().no_proxy().build().unwrap();
+        let client_info = test_client_info();
 
-    let config = LogoutConfig {
-        error_strategy: ErrorStrategy::Strict,
-        ..Default::default()
-    };
+        let config = LogoutConfig {
+            error_strategy,
+            ..Default::default()
+        };
 
-    //When Logout is executed
-    let result = logout_session(
-        &client,
-        &server_url,
-        "test_token",
-        &client_info,
-        config.timeout,
-        &RetryPolicy::default(),
-    )
-    .await;
+        //When Logout is executed
+        let result = logout_session(
+            &client,
+            &server_url,
+            "test_token",
+            &client_info,
+            config.timeout,
+            &RetryPolicy::default(),
+        )
+        .await;
 
-    //Then Exactly 1 attempts are made
-    assert_eq!(attempts.load(Ordering::SeqCst), 1);
+        //Then Exactly <expected_attempts> attempts are made
+        assert_eq!(
+            attempts.load(Ordering::SeqCst),
+            expected_attempts,
+            "Expected {} attempts for {}",
+            expected_attempts,
+            strategy_name
+        );
 
-    //And Close succeeds
-    assert!(result.is_ok());
+        //And Close succeeds
+        assert!(result.is_ok(), "Should succeed for {}", strategy_name);
 
-    server.await.unwrap();
+        server.await.unwrap();
+    }
 }
 
 #[tokio::test]
-async fn should_honor_provided_retry_config_and_succeed_for_best_effort_strategy_3_attempts() {
-    //Given Core logout function called with best-effort strategy
-    //And Retry policy configured with 3 max attempts
-    //And Mock server fails 1 times then returns 200
-    let (addr, attempts, server) = spawn_test_server(2, |attempt| async move {
-        if attempt == 1 {
-            service_unavailable_response(r#"{"success":false}"#, 0)
-        } else {
-            json_response(r#"{"success":true}"#)
-        }
-    })
-    .await;
+async fn should_honor_provided_timeout_config_and_succeed_for_each_strategy_type() {
+    // Scenario Outline: Examples (strategy_type, timeout_seconds, delay_seconds)
+    for (strategy_name, error_strategy, timeout_seconds, delay_seconds) in [
+        ("strict", ErrorStrategy::Strict, 5, 3),
+        ("best-effort", ErrorStrategy::BestEffort, 5, 3),
+        ("strict", ErrorStrategy::Strict, 10, 5),
+        ("best-effort", ErrorStrategy::BestEffort, 10, 5),
+    ] {
+        //Given Core logout function called with <strategy_type> strategy
+        //And Timeout configured to <timeout_seconds> seconds
+        //And Mock server delays response by <delay_seconds> seconds then returns 200
+        let (addr, _, server) = spawn_test_server(1, |_| {
+            let delay = delay_seconds;
+            async move {
+                sleep(Duration::from_secs(delay)).await;
+                json_response(r#"{"success":true}"#)
+            }
+        })
+        .await;
 
-    let server_url = format!("http://{}", addr);
-    let client = reqwest::Client::builder().no_proxy().build().unwrap();
-    let client_info = test_client_info();
+        let server_url = format!("http://{}", addr);
+        let client = reqwest::Client::builder().no_proxy().build().unwrap();
+        let client_info = test_client_info();
 
-    let config = LogoutConfig {
-        error_strategy: ErrorStrategy::BestEffort,
-        ..Default::default()
-    };
+        let config = LogoutConfig {
+            error_strategy,
+            timeout: Duration::from_secs(timeout_seconds),
+            ..Default::default()
+        };
 
-    //When Logout is executed
-    let result = logout_session(
-        &client,
-        &server_url,
-        "test_token",
-        &client_info,
-        config.timeout,
-        &RetryPolicy::default(),
-    )
-    .await;
+        //When Logout is executed
+        let start = Instant::now();
+        let result = logout_session(
+            &client,
+            &server_url,
+            "test_token",
+            &client_info,
+            config.timeout,
+            &RetryPolicy::default(),
+        )
+        .await;
+        let elapsed = start.elapsed();
 
-    //Then Exactly 2 attempts are made
-    assert_eq!(attempts.load(Ordering::SeqCst), 2);
+        //Then Request completes within <timeout_seconds> seconds
+        assert!(
+            elapsed < Duration::from_secs(timeout_seconds + 2), // +2 buffer
+            "Should complete within timeout for {}",
+            strategy_name
+        );
 
-    //And Close succeeds
-    assert!(result.is_ok());
+        //And Close succeeds
+        assert!(result.is_ok(), "Should succeed for {}", strategy_name);
 
-    server.await.unwrap();
+        server.await.unwrap();
+    }
 }
 
-#[tokio::test]
-async fn should_honor_provided_timeout_config_and_succeed_for_strict_strategy() {
-    //Given Core logout function called with strict strategy
-    //And Timeout configured to 5 seconds
-    //And Mock server delays response by 3 seconds then returns 200
-    let (addr, _, server) = spawn_test_server(1, |_| async move {
-        sleep(Duration::from_secs(3)).await;
-        json_response(r#"{"success":true}"#)
-    })
-    .await;
-
-    let server_url = format!("http://{}", addr);
-    let client = reqwest::Client::builder().no_proxy().build().unwrap();
-    let client_info = test_client_info();
-
-    let config = LogoutConfig {
-        error_strategy: ErrorStrategy::Strict,
-        timeout: Duration::from_secs(5),
-        ..Default::default()
-    };
-
-    //When Logout is executed
-    let start = Instant::now();
-    let result = logout_session(
-        &client,
-        &server_url,
-        "test_token",
-        &client_info,
-        config.timeout,
-        &RetryPolicy::default(),
-    )
-    .await;
-    let elapsed = start.elapsed();
-
-    //Then Request completes within 5 seconds
-    assert!(
-        elapsed < Duration::from_secs(5),
-        "Should complete within timeout"
-    );
-
-    //And Close succeeds
-    assert!(result.is_ok());
-
-    server.await.unwrap();
-}
+// TODO: Implement timeout failure scenarios
+// Scenario Outline: should_throw_on_timeout_with_strict_strategy
+// Scenario Outline: should_log_WARN_and_succeed_on_timeout_with_best_effort_strategy
 
 #[tokio::test]
 async fn should_throw_after_exhausted_retries_with_strict_strategy() {
@@ -1093,97 +917,139 @@ async fn should_throw_after_exhausted_retries_with_strict_strategy() {
 // Continuation: Non-retryable errors and telemetry
 
 #[tokio::test]
-async fn should_throw_on_non_retryable_400_in_strict_strategy() {
-    //Given Core logout function called with strict strategy
-    //And Mock server returns 400 error
-    let (addr, _, server) = spawn_test_server(1, |_| async move {
-        json_error_response(
+async fn should_throw_on_non_retryable_error_code_in_strict_strategy() {
+    // Scenario Outline: Examples (error_code)
+    // 400 Bad Request, 403 Forbidden, 404 Not Found, MASTER_TOKEN_EXPIRED 390114
+    for (error_code, status, reason, body) in [
+        (
+            "400 Bad Request",
             400,
             "Bad Request",
             r#"{"success":false,"message":"Bad request"}"#,
+        ),
+        (
+            "403 Forbidden",
+            403,
+            "Forbidden",
+            r#"{"success":false,"message":"Forbidden"}"#,
+        ),
+        (
+            "404 Not Found",
+            404,
+            "Not Found",
+            r#"{"success":false,"message":"Not found"}"#,
+        ),
+        (
+            "MASTER_TOKEN_EXPIRED 390114",
+            401,
+            "Unauthorized",
+            r#"{"success":false,"message":"Master token expired","code":"390114"}"#,
+        ),
+    ] {
+        //Given Core logout function called with strict strategy
+        //And Mock server returns <error_code>
+        let (addr, _, server) =
+            spawn_test_server(1, |_| async move { json_error_response(status, reason, body) })
+                .await;
+
+        let server_url = format!("http://{}", addr);
+        let client = reqwest::Client::builder().no_proxy().build().unwrap();
+        let client_info = test_client_info();
+
+        let config = LogoutConfig {
+            error_strategy: ErrorStrategy::Strict,
+            ..Default::default()
+        };
+
+        //When Logout is executed
+        let result = logout_session(
+            &client,
+            &server_url,
+            "test_token",
+            &client_info,
+            config.timeout,
+            &RetryPolicy::default(),
         )
-    })
-    .await;
+        .await;
 
-    let server_url = format!("http://{}", addr);
-    let client = reqwest::Client::builder().no_proxy().build().unwrap();
-    let client_info = test_client_info();
+        //Then Close throws error immediately
+        assert!(result.is_err(), "Should throw on {}", error_code);
 
-    let config = LogoutConfig {
-        error_strategy: ErrorStrategy::Strict,
-        ..Default::default()
-    };
+        //And Error is surfaced to caller
+        //And No retries are attempted
 
-    //When Logout is executed
-    let result = logout_session(
-        &client,
-        &server_url,
-        "test_token",
-        &client_info,
-        config.timeout,
-        &RetryPolicy::default(),
-    )
-    .await;
-
-    //Then Close throws error immediately
-    assert!(result.is_err(), "Should throw on 400");
-
-    //And Error is surfaced to caller
-    let err_msg = format!("{:?}", result.unwrap_err());
-    assert!(
-        err_msg.contains("400") || err_msg.contains("Bad"),
-        "Error should mention 400 or Bad Request"
-    );
-
-    //And No retries are attempted
-    // (Only 1 request to server, verified by spawn_test_server(1, ...))
-
-    server.await.unwrap();
+        server.await.unwrap();
+    }
 }
 
 #[tokio::test]
-async fn should_log_and_suppress_non_retryable_400_in_best_effort_strategy() {
-    //Given Core logout function called with best-effort strategy
-    //And Mock server returns 400 error
-    let (addr, _, server) = spawn_test_server(1, |_| async move {
-        json_error_response(
+async fn should_log_and_suppress_non_retryable_error_code_in_best_effort_strategy() {
+    // Scenario Outline: Examples (error_code)
+    // 400 Bad Request, 403 Forbidden, 404 Not Found, MASTER_TOKEN_EXPIRED 390114
+    for (error_code, status, reason, body) in [
+        (
+            "400 Bad Request",
             400,
             "Bad Request",
             r#"{"success":false,"message":"Bad request"}"#,
+        ),
+        (
+            "403 Forbidden",
+            403,
+            "Forbidden",
+            r#"{"success":false,"message":"Forbidden"}"#,
+        ),
+        (
+            "404 Not Found",
+            404,
+            "Not Found",
+            r#"{"success":false,"message":"Not found"}"#,
+        ),
+        (
+            "MASTER_TOKEN_EXPIRED 390114",
+            401,
+            "Unauthorized",
+            r#"{"success":false,"message":"Master token expired","code":"390114"}"#,
+        ),
+    ] {
+        //Given Core logout function called with best-effort strategy
+        //And Mock server returns <error_code>
+        let (addr, _, server) =
+            spawn_test_server(1, |_| async move { json_error_response(status, reason, body) })
+                .await;
+
+        let server_url = format!("http://{}", addr);
+        let client = reqwest::Client::builder().no_proxy().build().unwrap();
+        let client_info = test_client_info();
+
+        let config = LogoutConfig {
+            error_strategy: ErrorStrategy::BestEffort,
+            ..Default::default()
+        };
+
+        //When Logout is executed
+        let result = logout_session(
+            &client,
+            &server_url,
+            "test_token",
+            &client_info,
+            config.timeout,
+            &RetryPolicy::default(),
         )
-    })
-    .await;
+        .await;
 
-    let server_url = format!("http://{}", addr);
-    let client = reqwest::Client::builder().no_proxy().build().unwrap();
-    let client_info = test_client_info();
+        //Then Error is logged as WARN
+        //And Close succeeds without throwing
+        assert!(
+            result.is_ok(),
+            "BestEffort should succeed despite {} error",
+            error_code
+        );
 
-    let config = LogoutConfig {
-        error_strategy: ErrorStrategy::BestEffort,
-        ..Default::default()
-    };
+        //And No retries are attempted
 
-    //When Logout is executed
-    let result = logout_session(
-        &client,
-        &server_url,
-        "test_token",
-        &client_info,
-        config.timeout,
-        &RetryPolicy::default(),
-    )
-    .await;
-
-    //Then Error is logged as WARN
-    // (Can't verify logs in this test, but strategy logs it)
-
-    //And Close succeeds without throwing
-    assert!(result.is_ok(), "BestEffort should succeed despite error");
-
-    //And No retries are attempted
-    // (Only 1 request, verified by spawn_test_server(1, ...))
-
-    server.await.unwrap();
+        server.await.unwrap();
+    }
 }
 
 #[tokio::test]
