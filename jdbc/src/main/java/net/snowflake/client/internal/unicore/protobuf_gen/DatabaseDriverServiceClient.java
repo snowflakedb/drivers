@@ -1276,4 +1276,38 @@ public class DatabaseDriverServiceClient implements DatabaseDriverService {
         }
     }
     
+    /**
+     * Method: configLoadAllSections
+     */
+    public DatabaseDriverV1.ConfigLoadAllSectionsResponse configLoadAllSections(DatabaseDriverV1.ConfigLoadAllSectionsRequest request) throws ServiceException, TransportException {
+        TransportResponse response = transport.handleMessage(
+            "DatabaseDriver",
+            "config_load_all_sections",
+            request.toByteArray()
+        );
+        
+        int code = response.getCode();
+        byte[] responseBytes = response.getResponseBytes();
+        
+        if (code == CoreTransport.CODE_SUCCESS) {
+            try {
+                return DatabaseDriverV1.ConfigLoadAllSectionsResponse.parseFrom(responseBytes);
+            } catch (InvalidProtocolBufferException e) {
+                throw new TransportException("Invalid protocol buffer exception: " + e.getMessage());
+            }
+        } else if (code == CoreTransport.CODE_APPLICATION_ERROR) {
+            try {
+                DatabaseDriverV1.DriverException error = DatabaseDriverV1.DriverException.parseFrom(responseBytes);
+                throw new ServiceException(error);
+            } catch (InvalidProtocolBufferException e) {
+                throw new TransportException("Invalid protocol buffer exception: " + e.getMessage());
+            }
+        } else if (code == CoreTransport.CODE_TRANSPORT_ERROR) {
+            String errorMessage = new String(responseBytes);
+            throw new TransportException(errorMessage);
+        } else {
+            throw new TransportException("Unknown error code: " + code);
+        }
+    }
+    
 }

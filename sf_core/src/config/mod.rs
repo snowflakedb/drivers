@@ -39,7 +39,8 @@ pub enum ConfigError {
     #[snafu(display("Failed to parse TOML from {path}: {source}"))]
     TomlParse {
         path: String,
-        source: toml::de::Error,
+        #[snafu(source(from(toml::de::Error, Box::new)))]
+        source: Box<toml::de::Error>,
         #[snafu(implicit)]
         location: Location,
     },

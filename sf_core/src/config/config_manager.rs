@@ -15,15 +15,14 @@ pub fn load_connection_config(
     let config_toml = load_toml_file(&paths.config_file)?;
 
     // Check for [connections.connection_name] section in config.toml
-    if let Some(connections_section) = config_toml.get("connections").and_then(|v| v.as_table()) {
-        if let Some(conn_config) = connections_section
+    if let Some(connections_section) = config_toml.get("connections").and_then(|v| v.as_table())
+        && let Some(conn_config) = connections_section
             .get(connection_name)
             .and_then(|v| v.as_table())
-        {
-            for (key, value) in conn_config {
-                if let Some(setting) = toml_value_to_setting(value) {
-                    settings.insert(key.clone(), setting);
-                }
+    {
+        for (key, value) in conn_config {
+            if let Some(setting) = toml_value_to_setting(value) {
+                settings.insert(key.clone(), setting);
             }
         }
     }
@@ -249,7 +248,7 @@ mod tests {
             Some(Setting::Int(42))
         ));
 
-        let float_val = toml::Value::Float(3.14);
+        let float_val = toml::Value::Float(1.23);
         assert!(matches!(
             toml_value_to_setting(&float_val),
             Some(Setting::Double(_))

@@ -302,7 +302,7 @@ account = "myaccount"
     let result = load_all_config_sections();
     assert!(result.is_ok());
 
-    // Then All sections should be returned (including connections as connections.<name>)
+    // Then All sections should be returned including connections
     let sections = result.unwrap();
     assert_eq!(sections.len(), 4); // log, proxy, retry, connections.testconn
     assert!(sections.contains_key("log"));
