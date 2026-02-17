@@ -11,12 +11,16 @@ mod nullable;
 mod number;
 #[cfg(test)]
 mod number_tests;
+mod real;
+#[cfg(test)]
+mod real_tests;
 mod timestamp;
 mod varchar;
 
 use arrow::array::Array;
 use arrow::datatypes::{
-    DataType, Date32Type, Decimal128Type, Field, Int8Type, Int16Type, Int32Type, Int64Type,
+    DataType, Date32Type, Decimal128Type, Field, Float64Type, Int8Type, Int16Type, Int32Type,
+    Int64Type,
 };
 use snafu::ResultExt;
 pub use traits::{Binding, ReadArrowType, SnowflakeType, WriteODBCType};
@@ -135,6 +139,7 @@ enum SnowflakeFieldType {
     TimestampNtz(timestamp::SnowflakeTimestampNtz),
     Boolean(boolean::SnowflakeBoolean),
     Binary(binary::SnowflakeBinary),
+    Real(real::SnowflakeReal),
 }
 
 impl SnowflakeFieldType {
@@ -170,6 +175,7 @@ impl SnowflakeFieldType {
             "TIMESTAMP_NTZ" => Ok(Self::TimestampNtz(timestamp::SnowflakeTimestampNtz)),
             "BOOLEAN" => Ok(Self::Boolean(boolean::SnowflakeBoolean)),
             "BINARY" => Ok(Self::Binary(binary::SnowflakeBinary)),
+            "REAL" => Ok(Self::Real(real::SnowflakeReal)),
             lt => IncompatibleFieldMetadataSnafu {
                 logical_type: lt.to_string(),
                 data_type: field.data_type().clone(),
@@ -186,6 +192,7 @@ impl SnowflakeFieldType {
             Self::TimestampNtz(t) => t.sql_type(),
             Self::Boolean(t) => t.sql_type(),
             Self::Binary(t) => t.sql_type(),
+            Self::Real(t) => t.sql_type(),
         }
     }
 }
@@ -258,6 +265,9 @@ pub fn make_converter<'a>(
                 arrow_array,
                 nullable
             )
+        }
+        SnowflakeFieldType::Real(snowflake_type) => {
+            make_primitive_data_converter!(Float64Type, snowflake_type, arrow_array, nullable)
         }
     }
 }

@@ -517,7 +517,7 @@ mod tests {
     use super::*;
     use crate::cdata_types::{Double, Real, SBigInt, UBigInt};
     use arrow::array::{
-        Decimal128Array, Int8Array, Int16Array, Int32Array, Int64Array, StringArray,
+        Decimal128Array, Float64Array, Int8Array, Int16Array, Int32Array, Int64Array, StringArray,
     };
     use arrow::datatypes::{DataType, Field};
     use std::collections::HashMap;
@@ -559,6 +559,12 @@ mod tests {
         metadata.insert("scale".to_string(), scale.to_string());
         metadata.insert("precision".to_string(), precision.to_string());
         Field::new("test", DataType::Decimal128(precision, scale), false).with_metadata(metadata)
+    }
+
+    fn field_with_real_meta() -> Field {
+        let mut metadata = HashMap::new();
+        metadata.insert("logicalType".to_string(), "REAL".to_string());
+        Field::new("test", DataType::Float64, false).with_metadata(metadata)
     }
 
     // Tests for CDataType::Char
@@ -1380,6 +1386,73 @@ mod tests {
             let expected = b"1.2345678901234567890123456789012345678";
             assert_eq!(str_len, expected.len() as sql::Len);
             assert_eq!(&buffer[..expected.len()], expected);
+        }
+    }
+
+    mod read_real_to_default {
+        use super::*;
+
+        #[test]
+        fn default_reads_float64_as_double() {
+            let array = Float64Array::from(vec![3.125]);
+            let field = field_with_real_meta();
+            let mut value: Double = 0.0;
+            let mut str_len: sql::Len = 0;
+
+            let binding = Binding {
+                target_type: CDataType::Default,
+                target_value_ptr: &mut value as *mut Double as sql::Pointer,
+                buffer_length: 0,
+                str_len_or_ind_ptr: &mut str_len,
+                precision: None,
+                scale: None,
+            };
+            let result = read_arrow_value_test(&binding, &array, &field, 0);
+
+            assert!(result.is_ok());
+            assert!((value - 3.125).abs() < f64::EPSILON);
+        }
+
+        #[test]
+        fn default_reads_negative_float64() {
+            let array = Float64Array::from(vec![-99.5]);
+            let field = field_with_real_meta();
+            let mut value: Double = 0.0;
+            let mut str_len: sql::Len = 0;
+
+            let binding = Binding {
+                target_type: CDataType::Default,
+                target_value_ptr: &mut value as *mut Double as sql::Pointer,
+                buffer_length: 0,
+                str_len_or_ind_ptr: &mut str_len,
+                precision: None,
+                scale: None,
+            };
+            let result = read_arrow_value_test(&binding, &array, &field, 0);
+
+            assert!(result.is_ok());
+            assert!((value - (-99.5)).abs() < f64::EPSILON);
+        }
+
+        #[test]
+        fn default_reads_zero_float64() {
+            let array = Float64Array::from(vec![0.0]);
+            let field = field_with_real_meta();
+            let mut value: Double = 1.0;
+            let mut str_len: sql::Len = 0;
+
+            let binding = Binding {
+                target_type: CDataType::Default,
+                target_value_ptr: &mut value as *mut Double as sql::Pointer,
+                buffer_length: 0,
+                str_len_or_ind_ptr: &mut str_len,
+                precision: None,
+                scale: None,
+            };
+            let result = read_arrow_value_test(&binding, &array, &field, 0);
+
+            assert!(result.is_ok());
+            assert!((value - 0.0).abs() < f64::EPSILON);
         }
     }
 
