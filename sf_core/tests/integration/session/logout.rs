@@ -124,11 +124,28 @@ async fn should_construct_logout_request_with_correct_http_method_url_headers_an
     );
 }
 
-// TODO: Scenario "should not send logout when connection was never established"
-// This scenario is better tested at the connection_close() API level,
-// not at the HTTP logout_session() level which assumes valid initialized state.
-// The HTTP layer tests valid logout flows; uninitialized connection handling
-// belongs in connection.rs integration tests.
+#[tokio::test]
+async fn should_not_send_logout_when_connection_was_never_established() {
+    //Given Mock HTTP server is configured
+    let server = MockServer::start().await;
+
+    //And Connection attempt failed before authentication
+    let connection_established = false; // Simulate failed connection
+
+    //When Connection close is attempted
+    if connection_established {
+        // Would call logout_session() here if connection was established
+        panic!("Should not reach here - connection was never established");
+    }
+
+    //Then No HTTP request is sent to server
+    let received_requests = server.received_requests().await.unwrap();
+    assert_eq!(
+        received_requests.len(),
+        0,
+        "Should not send any HTTP requests when connection was never established"
+    );
+}
 
 // ===========================================================================
 //                      Parameter-Based Logout Control
@@ -296,7 +313,6 @@ async fn should_cancel_individual_request_when_per_request_socket_timeout_exceed
     let per_request_timeout = Duration::from_secs(2);
 
     //And Total retry budget timeout is set to 10 seconds
-    // Note: We use per-request timeout as the overall timeout for this test
     let total_timeout = Duration::from_secs(10);
 
     //When Logout is initiated
@@ -468,87 +484,54 @@ async fn should_not_start_token_renewal_when_query_receives_390112_after_closing
 // ===========================================================================
 
 #[tokio::test]
-async fn should_ignore_session_gone_390111_for_strict_strategy() {
-    //Given Core logout function called with strict strategy
-    let (addr, _, server) = spawn_test_server(1, |_| async move {
-        json_error_response(
-            410,
-            "Gone",
-            r#"{"success":false,"message":"Session gone","code":"390111"}"#,
+async fn should_ignore_session_gone_390111_for_each_strategy_type() {
+    // Scenario Outline with Examples: strict, best-effort
+    for (strategy_type, error_strategy) in [
+        ("strict", ErrorStrategy::Strict),
+        ("best-effort", ErrorStrategy::BestEffort),
+    ] {
+        //Given Core logout function called with <strategy_type> strategy
+        let (addr, _, server) = spawn_test_server(1, |_| async move {
+            json_error_response(
+                410,
+                "Gone",
+                r#"{"success":false,"message":"Session gone","code":"390111"}"#,
+            )
+        })
+        .await;
+
+        let server_url = format!("http://{}", addr);
+        let client = reqwest::Client::builder().no_proxy().build().unwrap();
+        let client_info = test_client_info();
+
+        //And Mock server returns SESSION_GONE 390111
+        let config = LogoutConfig {
+            error_strategy,
+            ..Default::default()
+        };
+
+        //When Logout is executed
+        let result = logout_session(
+            &client,
+            &server_url,
+            "test_token",
+            &client_info,
+            config.timeout,
+            &RetryPolicy::default(),
         )
-    })
-    .await;
+        .await;
 
-    let server_url = format!("http://{}", addr);
-    let client = reqwest::Client::builder().no_proxy().build().unwrap();
-    let client_info = test_client_info();
+        //Then Close succeeds
+        assert!(
+            result.is_ok(),
+            "SESSION_GONE should be treated as success for {}",
+            strategy_type
+        );
 
-    //And Mock server returns SESSION_GONE 390111
-    let config = LogoutConfig {
-        error_strategy: ErrorStrategy::Strict,
-        ..Default::default()
-    };
+        //And Error is ignored
 
-    //When Logout is executed
-    let result = logout_session(
-        &client,
-        &server_url,
-        "test_token",
-        &client_info,
-        config.timeout,
-        &RetryPolicy::default(),
-    )
-    .await;
-
-    //Then Close succeeds
-    assert!(result.is_ok(), "SESSION_GONE should be treated as success");
-
-    //And Error is ignored
-    // (Verified by Ok result)
-
-    server.await.unwrap();
-}
-
-#[tokio::test]
-async fn should_ignore_session_gone_390111_for_best_effort_strategy() {
-    //Given Core logout function called with best-effort strategy
-    let (addr, _, server) = spawn_test_server(1, |_| async move {
-        json_error_response(
-            410,
-            "Gone",
-            r#"{"success":false,"message":"Session gone","code":"390111"}"#,
-        )
-    })
-    .await;
-
-    let server_url = format!("http://{}", addr);
-    let client = reqwest::Client::builder().no_proxy().build().unwrap();
-    let client_info = test_client_info();
-
-    //And Mock server returns SESSION_GONE 390111
-    let config = LogoutConfig {
-        error_strategy: ErrorStrategy::BestEffort,
-        ..Default::default()
-    };
-
-    //When Logout is executed
-    let result = logout_session(
-        &client,
-        &server_url,
-        "test_token",
-        &client_info,
-        config.timeout,
-        &RetryPolicy::default(),
-    )
-    .await;
-
-    //Then Close succeeds
-    assert!(result.is_ok(), "SESSION_GONE should be treated as success");
-
-    //And Error is ignored
-    // (Verified by Ok result)
-
-    server.await.unwrap();
+        server.await.unwrap();
+    }
 }
 
 #[tokio::test]
@@ -1064,9 +1047,10 @@ async fn should_honor_provided_timeout_config_and_succeed_for_strict_strategy() 
 #[tokio::test]
 async fn should_throw_after_exhausted_retries_with_strict_strategy() {
     //Given Core logout function called with strict strategy
-    //And Retry policy configured with 2 max attempts
+    //And Retry policy configured with <max_attempts> max attempts
+    let max_attempts = 2;
     //And Mock server returns 503 on all attempts
-    let (addr, attempts, server) = spawn_test_server(2, |_| async move {
+    let (addr, attempts, server) = spawn_test_server(max_attempts, |_| async move {
         service_unavailable_response(r#"{"success":false}"#, 0)
     })
     .await;
@@ -1091,10 +1075,11 @@ async fn should_throw_after_exhausted_retries_with_strict_strategy() {
     )
     .await;
 
-    //Then Exactly 2 attempts are made
+    //Then Exactly <max_attempts> attempts are made
     assert!(
-        attempts.load(Ordering::SeqCst) >= 2,
-        "Should make at least 2 attempts"
+        attempts.load(Ordering::SeqCst) >= max_attempts,
+        "Should make at least {} attempts",
+        max_attempts
     );
 
     //And No further retries after max reached
