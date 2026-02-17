@@ -123,8 +123,12 @@ pub enum LoginMethod {
         password: String,
     },
     NativeOkta {
-        /// Snowflake user / IdP login name (UD currently uses a single username for both).
+        /// Snowflake user name (used in authenticator-request to Snowflake).
         username: String,
+        /// Optional override for the Okta login name. When set, this is sent to
+        /// Okta's `/api/v1/authn` instead of `username`. Matches JDBC's `oktausername`
+        /// property — useful when the Okta email differs from the Snowflake user.
+        okta_username: Option<String>,
         /// IdP password (native Okta SSO).
         password: String,
         /// Okta authenticator URL endpoint (native Okta SSO).
@@ -303,6 +307,7 @@ impl LoginMethod {
                 let username = settings
                     .get_string("user")
                     .context(MissingParameterSnafu { parameter: "user" })?;
+                let okta_username = settings.get_string("okta_username");
                 let password = settings
                     .get_string("password")
                     .context(MissingParameterSnafu {
@@ -320,6 +325,7 @@ impl LoginMethod {
 
                 Ok(Self::NativeOkta {
                     username,
+                    okta_username,
                     password,
                     okta_url: authenticator,
                     disable_saml_url_check,

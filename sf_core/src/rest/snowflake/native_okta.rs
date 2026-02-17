@@ -210,7 +210,7 @@ fn remaining_policy(
 #[allow(clippy::too_many_arguments)]
 #[tracing::instrument(
     skip(client, login_parameters, base_policy, password),
-    fields(okta_url, username, disable_saml_url_check)
+    fields(okta_url, username, okta_username, disable_saml_url_check)
 )]
 pub(crate) async fn fetch_native_okta_saml(
     client: &reqwest::Client,
@@ -218,6 +218,7 @@ pub(crate) async fn fetch_native_okta_saml(
     base_policy: &RetryPolicy,
     okta_url: &str,
     username: &str,
+    okta_username: Option<&str>,
     password: &str,
     disable_saml_url_check: bool,
     authentication_timeout_secs: u64,
@@ -335,9 +336,13 @@ pub(crate) async fn fetch_native_okta_saml(
         let policy = remaining_policy(base_policy, start, budget)?;
 
         // Step 3: token
+        // Use okta_username if provided, otherwise fall back to Snowflake username.
+        // Matches JDBC's `oktausername` property for cases where the Okta login
+        // (e.g. email) differs from the Snowflake user name.
+        let idp_login = okta_username.unwrap_or(username);
         let token_ctx = HttpContext::new(Method::POST, "okta:token").allow_post_retry();
         let token_body = serde_json::json!({
-            "username": username,
+            "username": idp_login,
             "password": password,
         });
         let token_body_string = token_body.to_string();

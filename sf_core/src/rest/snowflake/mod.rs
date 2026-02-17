@@ -159,6 +159,7 @@ pub async fn auth_request_data(
     match &login_parameters.login_method {
         LoginMethod::NativeOkta {
             username,
+            okta_username,
             password,
             okta_url,
             disable_saml_url_check,
@@ -171,6 +172,7 @@ pub async fn auth_request_data(
                 &retry_policy,
                 okta_url,
                 username,
+                okta_username.as_deref(),
                 password,
                 *disable_saml_url_check,
                 *authentication_timeout_secs,
