@@ -7,6 +7,8 @@ import java.sql.DriverPropertyInfo;
 import java.sql.SQLException;
 import java.util.Properties;
 import java.util.logging.Logger;
+import net.snowflake.client.api.exception.SnowflakeSQLException;
+import net.snowflake.client.internal.api.implementation.connection.ConnectionString;
 import net.snowflake.client.internal.api.implementation.connection.SnowflakeConnectionImpl;
 
 /**
@@ -21,6 +23,7 @@ public class SnowflakeDriver implements Driver {
   private static final String DRIVER_VERSION = "4.0.0";
   private static final int MAJOR_VERSION = 4;
   private static final int MINOR_VERSION = 0;
+  public static final Properties EMPTY_PROPERTIES = new Properties();
 
   public static void empty() {}
 
@@ -38,19 +41,19 @@ public class SnowflakeDriver implements Driver {
 
   @Override
   public Connection connect(String url, Properties info) throws SQLException {
-    if (!acceptsURL(url)) {
+    if (ConnectionString.hasSupportedPrefix(url)) {
       return null;
     }
-
+    ConnectionString parsed = ConnectionString.parse(url, info);
+    if (!parsed.isValid()) {
+      throw new SnowflakeSQLException("Connection string is invalid. Unable to parse.");
+    }
     return new SnowflakeConnectionImpl(url, info);
   }
 
   @Override
   public boolean acceptsURL(String url) throws SQLException {
-    if (url == null) {
-      return false;
-    }
-    return url.startsWith("jdbc:snowflake:");
+    return ConnectionString.parse(url, EMPTY_PROPERTIES).isValid();
   }
 
   @Override
