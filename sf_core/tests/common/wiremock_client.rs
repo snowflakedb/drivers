@@ -226,6 +226,8 @@ impl WiremockClient {
                 last_err = Some(format!(
                     "Wiremock exited immediately (status {status}); stderr:\n{stderr}"
                 ));
+                // Ensure the child process is fully reaped before trying the next attempt.
+                let _ = child.wait();
                 continue;
             }
 
