@@ -60,11 +60,6 @@ pub enum NativeOktaError {
         #[snafu(implicit)]
         location: Location,
     },
-    #[snafu(display("Okta token response missing relay state"))]
-    MissingRelayState {
-        #[snafu(implicit)]
-        location: Location,
-    },
     #[snafu(display("Failed to extract SAML postback (form action) from HTML"))]
     MissingSamlPostback {
         #[snafu(implicit)]
