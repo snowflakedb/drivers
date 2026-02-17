@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from .utils import assert_type
 
 
@@ -128,6 +130,7 @@ class TestBooleanTable:
         assert num_true == LARGE_RESULT_SET_SIZE // 2
 
 
+@pytest.mark.skip_reference
 class TestBooleanBinding:
     """Tests for BOOLEAN type using parameter binding."""
 

@@ -455,6 +455,7 @@ class TestNumberTable:
         )
 
 
+@pytest.mark.skip_reference
 class TestNumberBinding:
     """Tests for NUMBER type using parameter binding."""
 

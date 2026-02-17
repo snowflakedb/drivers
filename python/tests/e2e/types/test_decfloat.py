@@ -13,6 +13,8 @@ from __future__ import annotations
 
 from decimal import Decimal
 
+import pytest
+
 from .utils import assert_sequential_values, assert_type
 
 
@@ -264,6 +266,7 @@ class TestDecfloatTable:
         assert_sequential_values(values, LARGE_RESULT_SET_SIZE, transform=Decimal)
 
 
+@pytest.mark.skip_reference
 class TestDecfloatBinding:
     """Tests for DECFLOAT type using parameter binding."""
 

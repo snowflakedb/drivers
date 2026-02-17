@@ -219,6 +219,7 @@ class TestBinaryTable:
         assert bin_default == b"Hello"
 
 
+@pytest.mark.skip_reference
 class TestBinaryBinding:
     """Tests for BINARY type using parameter binding."""
 

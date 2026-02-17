@@ -294,6 +294,7 @@ class TestFloatTable:
         assert_sequential_values(values, LARGE_RESULT_SET_SIZE, transform=float, compare=floats_equal)
 
 
+@pytest.mark.skip_reference
 class TestFloatBinding:
     """Tests for FLOAT type using parameter binding."""
 

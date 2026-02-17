@@ -171,6 +171,7 @@ class TestStringTable:
         assert set(result) == set(expected)
 
 
+@pytest.mark.skip_reference
 class TestStringBinding:
     """Tests for STRING type using parameter binding."""
 
