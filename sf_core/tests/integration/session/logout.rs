@@ -6,8 +6,8 @@
 use crate::common::mocks::auth::mount_jwt_login_success;
 use crate::common::snowflake_test_client::SnowflakeTestClient;
 use crate::common::test_server::{
-    extract_query_param, json_error_response, json_response, service_unavailable_response,
-    spawn_capture_server, spawn_test_server,
+    json_error_response, json_response, service_unavailable_response, spawn_capture_server,
+    spawn_test_server,
 };
 use sf_core::config::logout::{ErrorStrategy, LogoutConfig};
 use sf_core::config::rest_parameters::ClientInfo;
@@ -124,29 +124,6 @@ async fn should_construct_logout_request_with_correct_http_method_url_headers_an
     );
 }
 
-#[tokio::test]
-async fn should_not_send_logout_when_connection_was_never_established() {
-    //Given Mock HTTP server is configured
-    let server = MockServer::start().await;
-
-    //And Connection attempt failed before authentication
-    let connection_established = false; // Simulate failed connection
-
-    //When Connection close is attempted
-    if connection_established {
-        // Would call logout_session() here if connection was established
-        panic!("Should not reach here - connection was never established");
-    }
-
-    //Then No HTTP request is sent to server
-    let received_requests = server.received_requests().await.unwrap();
-    assert_eq!(
-        received_requests.len(),
-        0,
-        "Should not send any HTTP requests when connection was never established"
-    );
-}
-
 // ===========================================================================
 //                      Parameter-Based Logout Control
 // ===========================================================================
@@ -158,22 +135,51 @@ async fn should_not_send_logout_when_server_session_keep_alive_is_explicitly_tru
     mount_jwt_login_success(&server).await;
 
     //And UD Core connection is logged in with server_session_keep_alive set to true
-    let client = SnowflakeTestClient::connect_integration_test(Some(&server.uri()));
+    let server_uri = server.uri();
+    let client = tokio::task::spawn_blocking(move || {
+        SnowflakeTestClient::connect_integration_test(Some(&server_uri))
+    })
+    .await
+    .unwrap();
 
     //When Connection is closed
-    let result = DatabaseDriverClient::connection_close(ConnectionCloseRequest {
-        conn_handle: Some(client.conn_handle),
-        server_session_keep_alive: Some(true),
-        enable_auto_detection: None,
-        error_strategy: None,
-        timeout_seconds: None,
-    });
+    let conn_handle = client.conn_handle;
+    let result = tokio::task::spawn_blocking(move || {
+        DatabaseDriverClient::connection_close(ConnectionCloseRequest {
+            conn_handle: Some(conn_handle),
+            server_session_keep_alive: Some(true),
+            enable_auto_detection: None,
+            error_strategy: None,
+            timeout_seconds: None,
+        })
+    })
+    .await
+    .unwrap();
 
     //Then No logout HTTP request is sent to server
     assert!(result.is_ok(), "Close should succeed");
 
     // Verify no logout request was made by checking server received requests
-    // (We didn't mount any /session endpoint, so any logout attempt would fail)
+    let received_requests = server.received_requests().await.unwrap();
+    assert_eq!(
+        received_requests.len(),
+        1,
+        "Should have received exactly 1 request (login only)"
+    );
+
+    // Verify the single request was a login request, not a logout request
+    let request = &received_requests[0];
+    let url = request.url.to_string();
+    assert!(
+        url.contains("/session/v1/login-request"),
+        "Request should be to login endpoint, not logout. URL: {}",
+        url
+    );
+    assert!(
+        !url.contains("delete=true"),
+        "Request should not have delete=true query parameter (logout). URL: {}",
+        url
+    );
 }
 
 #[tokio::test]
@@ -259,9 +265,9 @@ async fn should_timeout_after_5_seconds_by_default_when_server_does_not_respond(
     assert!(result.is_err(), "Should timeout");
 
     //And Close throws timeout error
+    let error_msg = format!("{:?}", result.unwrap_err());
     assert!(
-        format!("{:?}", result.unwrap_err()).contains("timeout")
-            || format!("{:?}", result.unwrap_err()).contains("Timeout"),
+        error_msg.contains("timeout") || error_msg.contains("Timeout"),
         "Error should be timeout-related"
     );
 
@@ -313,7 +319,7 @@ async fn should_cancel_individual_request_when_per_request_socket_timeout_exceed
     let per_request_timeout = Duration::from_secs(2);
 
     //And Total retry budget timeout is set to 10 seconds
-    let total_timeout = Duration::from_secs(10);
+    let _total_timeout = Duration::from_secs(10);
 
     //When Logout is initiated
     let start = Instant::now();
@@ -547,21 +553,25 @@ async fn should_retry_logout_on_retryable_error_type_for_each_strategy_type() {
     ] {
         // Test HTTP error codes (503, 429)
         for (error_type, error_response_fn) in [
-            ("503 Service Unavailable", || {
-                service_unavailable_response(r#"{"success":false}"#, 0)
-            }),
-            ("429 Too Many Requests", || {
-                json_error_response(
-                    429,
-                    "Too Many Requests",
-                    r#"{"success":false,"message":"Rate limited"}"#,
-                )
-            }),
+            (
+                "503 Service Unavailable",
+                (|| service_unavailable_response(r#"{"success":false}"#, 0)) as fn() -> Vec<u8>,
+            ),
+            (
+                "429 Too Many Requests",
+                (|| {
+                    json_error_response(
+                        429,
+                        "Too Many Requests",
+                        r#"{"success":false,"message":"Rate limited"}"#,
+                    )
+                }) as fn() -> Vec<u8>,
+            ),
         ] {
             //Given Core logout function called with <strategy_type> strategy
             //And Mock server returns <error_type> on attempt 1
             //And Mock server returns 200 on attempt 2
-            let (addr, attempts, server) = spawn_test_server(2, |attempt| {
+            let (addr, attempts, server) = spawn_test_server(2, move |attempt| {
                 let error_fn = error_response_fn;
                 async move {
                     if attempt == 1 {
@@ -752,7 +762,7 @@ async fn should_include_token_refresh_time_in_total_logout_timeout_budget() {
 async fn should_honor_provided_retry_config_and_succeed_for_each_strategy_type() {
     // Scenario Outline: Examples (strategy_type, max_attempts, failures)
     // strict + 1, best-effort + 3
-    for (strategy_name, error_strategy, max_attempts, num_failures) in [
+    for (strategy_name, error_strategy, _max_attempts, num_failures) in [
         ("strict", ErrorStrategy::Strict, 1, 0),
         ("best-effort", ErrorStrategy::BestEffort, 3, 1),
     ] {
@@ -760,14 +770,15 @@ async fn should_honor_provided_retry_config_and_succeed_for_each_strategy_type()
         //And Retry policy configured with <max_attempts> max attempts
         //And Mock server fails <failures> times then returns 200
         let expected_attempts = num_failures + 1;
-        let (addr, attempts, server) = spawn_test_server(expected_attempts, |attempt| async move {
-            if attempt <= num_failures {
-                service_unavailable_response(r#"{"success":false}"#, 0)
-            } else {
-                json_response(r#"{"success":true}"#)
-            }
-        })
-        .await;
+        let (addr, attempts, server) =
+            spawn_test_server(expected_attempts, move |attempt| async move {
+                if attempt <= num_failures {
+                    service_unavailable_response(r#"{"success":false}"#, 0)
+                } else {
+                    json_response(r#"{"success":true}"#)
+                }
+            })
+            .await;
 
         let server_url = format!("http://{}", addr);
         let client = reqwest::Client::builder().no_proxy().build().unwrap();
@@ -817,7 +828,7 @@ async fn should_honor_provided_timeout_config_and_succeed_for_each_strategy_type
         //Given Core logout function called with <strategy_type> strategy
         //And Timeout configured to <timeout_seconds> seconds
         //And Mock server delays response by <delay_seconds> seconds then returns 200
-        let (addr, _, server) = spawn_test_server(1, |_| {
+        let (addr, _, server) = spawn_test_server(1, move |_| {
             let delay = delay_seconds;
             async move {
                 sleep(Duration::from_secs(delay)).await;
@@ -947,12 +958,10 @@ async fn should_throw_on_non_retryable_error_code_in_strict_strategy() {
     ] {
         //Given Core logout function called with strict strategy
         //And Mock server returns <error_code> error
-        let (addr, _, server) =
-            spawn_test_server(
-                1,
-                |_| async move { json_error_response(status, reason, body) },
-            )
-            .await;
+        let (addr, _, server) = spawn_test_server(1, move |_| async move {
+            json_error_response(status, reason, body)
+        })
+        .await;
 
         let server_url = format!("http://{}", addr);
         let client = reqwest::Client::builder().no_proxy().build().unwrap();
@@ -1016,12 +1025,10 @@ async fn should_log_and_suppress_non_retryable_error_code_in_best_effort_strateg
     ] {
         //Given Core logout function called with best-effort strategy
         //And Mock server returns <error_code> error
-        let (addr, _, server) =
-            spawn_test_server(
-                1,
-                |_| async move { json_error_response(status, reason, body) },
-            )
-            .await;
+        let (addr, _, server) = spawn_test_server(1, move |_| async move {
+            json_error_response(status, reason, body)
+        })
+        .await;
 
         let server_url = format!("http://{}", addr);
         let client = reqwest::Client::builder().no_proxy().build().unwrap();

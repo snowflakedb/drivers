@@ -24,7 +24,8 @@ Feature: Session Logout - Core HTTP Layer Integration
     And User-Agent header contains UD version and Rust version
     And Request body is exactly empty JSON object {}
 
-  @core_int
+  # TODO: SNOW-2872349 - Removed fake test that didn't call real logout code.
+  # This scenario needs proper implementation that tests actual connection state handling.
   Scenario: should not send logout when connection was never established
     Given Mock HTTP server is configured
     And Connection attempt failed before authentication
