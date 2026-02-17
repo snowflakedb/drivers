@@ -57,7 +57,7 @@ async fn should_construct_logout_request_with_correct_http_method_url_headers_an
     // Wait for server to capture the request
     let captured = server.await.unwrap();
 
-    //And HTTP method is POST
+    //Then HTTP method is POST
     assert!(captured.starts_with(b"POST"), "Should be POST request");
 
     //And Request URL path is /session
@@ -124,26 +124,11 @@ async fn should_construct_logout_request_with_correct_http_method_url_headers_an
     );
 }
 
-#[tokio::test]
-async fn should_not_send_logout_when_connection_was_never_established() {
-    //Given Mock HTTP server is configured
-    let server = MockServer::start().await;
-
-    //And Connection attempt failed before authentication
-    // Note: We don't call mount_jwt_login_success, so login will fail
-    // But we'll create a Connection object without initializing it
-
-    //When Connection close is attempted
-    // This test verifies that close() works even when connection was never established
-    // In practice, this means the connection has no tokens/http_client
-
-    //Then No HTTP request is sent to server
-    // The test passes because logout is skipped when connection is not initialized
-
-    // Note: This is better tested at a higher level where we can verify
-    // that uninitialized connections skip logout. The HTTP layer assumes
-    // valid inputs, so this test is more relevant for connection_close().
-}
+// TODO: Scenario "should not send logout when connection was never established"
+// This scenario is better tested at the connection_close() API level,
+// not at the HTTP logout_session() level which assumes valid initialized state.
+// The HTTP layer tests valid logout flows; uninitialized connection handling
+// belongs in connection.rs integration tests.
 
 // ===========================================================================
 //                      Parameter-Based Logout Control
