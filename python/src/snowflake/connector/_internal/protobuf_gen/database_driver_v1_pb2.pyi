@@ -1075,11 +1075,14 @@ class ConnectionCloseRequest(_message.Message):
     ENABLE_AUTO_DETECTION_FIELD_NUMBER: _builtins.int
     ERROR_STRATEGY_FIELD_NUMBER: _builtins.int
     TIMEOUT_SECONDS_FIELD_NUMBER: _builtins.int
+    MAX_RETRY_ATTEMPTS_FIELD_NUMBER: _builtins.int
     server_session_keep_alive: _builtins.bool
     enable_auto_detection: _builtins.bool
     error_strategy: _builtins.str
     """"Strict" or "BestEffort" """
     timeout_seconds: _builtins.int
+    max_retry_attempts: _builtins.int
+    """Maximum number of retry attempts (0 = no retries, 1 attempt only)"""
     @_builtins.property
     def conn_handle(self) -> Global___ConnectionHandle: ...
     def __init__(
@@ -1090,15 +1093,18 @@ class ConnectionCloseRequest(_message.Message):
         enable_auto_detection: _builtins.bool | None = ...,
         error_strategy: _builtins.str | None = ...,
         timeout_seconds: _builtins.int | None = ...,
+        max_retry_attempts: _builtins.int | None = ...,
     ) -> None: ...
-    _HasFieldArgType: _TypeAlias = _typing.Literal["_enable_auto_detection", b"_enable_auto_detection", "_error_strategy", b"_error_strategy", "_server_session_keep_alive", b"_server_session_keep_alive", "_timeout_seconds", b"_timeout_seconds", "conn_handle", b"conn_handle", "enable_auto_detection", b"enable_auto_detection", "error_strategy", b"error_strategy", "server_session_keep_alive", b"server_session_keep_alive", "timeout_seconds", b"timeout_seconds"]  # noqa: Y015
+    _HasFieldArgType: _TypeAlias = _typing.Literal["_enable_auto_detection", b"_enable_auto_detection", "_error_strategy", b"_error_strategy", "_max_retry_attempts", b"_max_retry_attempts", "_server_session_keep_alive", b"_server_session_keep_alive", "_timeout_seconds", b"_timeout_seconds", "conn_handle", b"conn_handle", "enable_auto_detection", b"enable_auto_detection", "error_strategy", b"error_strategy", "max_retry_attempts", b"max_retry_attempts", "server_session_keep_alive", b"server_session_keep_alive", "timeout_seconds", b"timeout_seconds"]  # noqa: Y015
     def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
-    _ClearFieldArgType: _TypeAlias = _typing.Literal["_enable_auto_detection", b"_enable_auto_detection", "_error_strategy", b"_error_strategy", "_server_session_keep_alive", b"_server_session_keep_alive", "_timeout_seconds", b"_timeout_seconds", "conn_handle", b"conn_handle", "enable_auto_detection", b"enable_auto_detection", "error_strategy", b"error_strategy", "server_session_keep_alive", b"server_session_keep_alive", "timeout_seconds", b"timeout_seconds"]  # noqa: Y015
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["_enable_auto_detection", b"_enable_auto_detection", "_error_strategy", b"_error_strategy", "_max_retry_attempts", b"_max_retry_attempts", "_server_session_keep_alive", b"_server_session_keep_alive", "_timeout_seconds", b"_timeout_seconds", "conn_handle", b"conn_handle", "enable_auto_detection", b"enable_auto_detection", "error_strategy", b"error_strategy", "max_retry_attempts", b"max_retry_attempts", "server_session_keep_alive", b"server_session_keep_alive", "timeout_seconds", b"timeout_seconds"]  # noqa: Y015
     def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
     _WhichOneofReturnType__enable_auto_detection: _TypeAlias = _typing.Literal["enable_auto_detection"]  # noqa: Y015
     _WhichOneofArgType__enable_auto_detection: _TypeAlias = _typing.Literal["_enable_auto_detection", b"_enable_auto_detection"]  # noqa: Y015
     _WhichOneofReturnType__error_strategy: _TypeAlias = _typing.Literal["error_strategy"]  # noqa: Y015
     _WhichOneofArgType__error_strategy: _TypeAlias = _typing.Literal["_error_strategy", b"_error_strategy"]  # noqa: Y015
+    _WhichOneofReturnType__max_retry_attempts: _TypeAlias = _typing.Literal["max_retry_attempts"]  # noqa: Y015
+    _WhichOneofArgType__max_retry_attempts: _TypeAlias = _typing.Literal["_max_retry_attempts", b"_max_retry_attempts"]  # noqa: Y015
     _WhichOneofReturnType__server_session_keep_alive: _TypeAlias = _typing.Literal["server_session_keep_alive"]  # noqa: Y015
     _WhichOneofArgType__server_session_keep_alive: _TypeAlias = _typing.Literal["_server_session_keep_alive", b"_server_session_keep_alive"]  # noqa: Y015
     _WhichOneofReturnType__timeout_seconds: _TypeAlias = _typing.Literal["timeout_seconds"]  # noqa: Y015
@@ -1107,6 +1113,8 @@ class ConnectionCloseRequest(_message.Message):
     def WhichOneof(self, oneof_group: _WhichOneofArgType__enable_auto_detection) -> _WhichOneofReturnType__enable_auto_detection | None: ...
     @_typing.overload
     def WhichOneof(self, oneof_group: _WhichOneofArgType__error_strategy) -> _WhichOneofReturnType__error_strategy | None: ...
+    @_typing.overload
+    def WhichOneof(self, oneof_group: _WhichOneofArgType__max_retry_attempts) -> _WhichOneofReturnType__max_retry_attempts | None: ...
     @_typing.overload
     def WhichOneof(self, oneof_group: _WhichOneofArgType__server_session_keep_alive) -> _WhichOneofReturnType__server_session_keep_alive | None: ...
     @_typing.overload

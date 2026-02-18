@@ -340,6 +340,9 @@ pub struct ConnectionCloseRequest {
     pub error_strategy: ::core::option::Option<::prost::alloc::string::String>,
     #[prost(int64, optional, tag = "5")]
     pub timeout_seconds: ::core::option::Option<i64>,
+    /// Maximum number of retry attempts (0 = no retries, 1 attempt only)
+    #[prost(uint32, optional, tag = "6")]
+    pub max_retry_attempts: ::core::option::Option<u32>,
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ConnectionCloseResponse {}

@@ -424,11 +424,19 @@ pub fn connection_close(conn_handle: Handle, config: LogoutConfig) -> Result<(),
             // Create runtime for async logout
             let rt = tokio::runtime::Runtime::new().context(RuntimeCreationSnafu)?;
 
-            // Adjust retry policy to respect user's timeout expectation
-            // User expects timeout to be a total budget, not per-request timeout
-            // Old driver: 3 retries * 5s timeout = ~15s max total
-            // UD: Use timeout * max_attempts as upper bound for total operation
+            // Adjust retry policy to respect user's configuration
+            // 1. max_retry_attempts: Override default retry count if specified
+            // 2. timeout: Set total budget = timeout × max_attempts
             let mut logout_retry_policy = conn.retry_policy.clone();
+
+            // Override max_attempts if specified (e.g., retry=False → max_attempts=1)
+            if let Some(max_attempts) = config.max_retry_attempts {
+                logout_retry_policy.max_attempts = max_attempts;
+            }
+
+            // Set total budget based on timeout and max_attempts
+            // Old driver: retry=True → 3 retries × 5s = ~15s, retry=False → 1 × 5s = ~5s
+            // UD: timeout × max_attempts = total budget
             logout_retry_policy.max_elapsed = config.timeout * logout_retry_policy.max_attempts;
 
             let result = rt.block_on(async {

@@ -151,6 +151,8 @@ async fn should_not_send_logout_when_server_session_keep_alive_is_explicitly_tru
             enable_auto_detection: None,
             error_strategy: None,
             timeout_seconds: None,
+
+            max_retry_attempts: None,
         })
     })
     .await
@@ -1105,6 +1107,8 @@ async fn should_reject_queries_client_side_after_connection_is_closed() {
         enable_auto_detection: None,
         error_strategy: None,
         timeout_seconds: None,
+
+        max_retry_attempts: None,
     });
     assert!(close_result.is_ok(), "Connection close should succeed");
 

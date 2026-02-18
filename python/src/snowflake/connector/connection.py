@@ -116,8 +116,9 @@ class Connection:
         Sends logout request to server based on configuration, then cleans up resources.
 
         Args:
-            retry: Whether to retry failed logout (Note: retry parameter kept for compatibility,
-                   but retry behavior is now controlled by Core's retry policy)
+            retry: Whether to retry failed logout requests (backward compatible with old driver).
+                   - True (default): Allow retries (Core default: up to 6 attempts with exponential backoff)
+                   - False: No retries, single attempt only (matches old driver behavior)
 
         Behavior (Phase 2 - Backward Compatible, SNOW-2314152):
             - Auto-detection enabled by default (legacy Python behavior for backward compatibility)
@@ -161,6 +162,16 @@ class Connection:
             # This makes Core check the registry (legacy Python behavior)
             core_keep_alive = None
 
+        # Handle retry parameter (backward compatibility with old driver)
+        # Old driver: retry=True → 3 attempts, retry=False → 1 attempt
+        # UD: Pass max_retry_attempts to Core to control retry count
+        if retry:
+            # Allow retries: Use Core default (typically 6 attempts)
+            max_retry_attempts = None
+        else:
+            # No retries: Single attempt only (matches old driver retry=False)
+            max_retry_attempts = 1
+
         # Call Core connection_close with mapped configuration
         # Core will set is_closed flag atomically
         self.db_api.connection_close(
@@ -170,6 +181,7 @@ class Connection:
                 enable_auto_detection=effective_enable_auto,
                 error_strategy="BestEffort",  # Python default
                 timeout_seconds=5,  # 5 second default
+                max_retry_attempts=max_retry_attempts,
             )
         )
 

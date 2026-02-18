@@ -316,6 +316,7 @@ message ConnectionCloseRequest {
   optional bool enable_auto_detection = 3;
   optional string error_strategy = 4;  // "Strict" or "BestEffort"
   optional int64 timeout_seconds = 5;
+  optional uint32 max_retry_attempts = 6;  // Maximum number of retry attempts (0 = no retries, 1 attempt only)
 }
 
 message ConnectionCloseResponse {

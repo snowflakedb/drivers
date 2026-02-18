@@ -37,6 +37,8 @@ fn test_connection_is_closed_after_close() {
         enable_auto_detection: None,
         error_strategy: sf_core::config::logout::ErrorStrategy::BestEffort,
         timeout: Duration::from_secs(5),
+
+        max_retry_attempts: None,
     };
     connection_close(conn_handle, config).unwrap();
 
@@ -65,6 +67,8 @@ fn test_connection_is_closed_idempotent() {
         enable_auto_detection: None,
         error_strategy: sf_core::config::logout::ErrorStrategy::BestEffort,
         timeout: Duration::from_secs(5),
+
+        max_retry_attempts: None,
     };
     connection_close(conn_handle, config.clone()).unwrap();
 

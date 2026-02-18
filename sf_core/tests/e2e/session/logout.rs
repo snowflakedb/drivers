@@ -27,6 +27,8 @@ fn should_cleanup_all_tokens_on_close_regardless_of_whether_logout_was_sent() {
             enable_auto_detection: None,
             error_strategy: None,
             timeout_seconds: None,
+
+            max_retry_attempts: None,
         });
 
         //Then Session token in Connection.tokens is null
@@ -51,6 +53,8 @@ fn should_be_idempotent_when_close_called_multiple_times() {
         enable_auto_detection: None,
         error_strategy: None,
         timeout_seconds: None,
+
+        max_retry_attempts: None,
     });
 
     //And Connection is closed again
@@ -60,6 +64,8 @@ fn should_be_idempotent_when_close_called_multiple_times() {
         enable_auto_detection: None,
         error_strategy: None,
         timeout_seconds: None,
+
+        max_retry_attempts: None,
     });
 
     //And Connection is closed a third time
@@ -69,6 +75,8 @@ fn should_be_idempotent_when_close_called_multiple_times() {
         enable_auto_detection: None,
         error_strategy: None,
         timeout_seconds: None,
+
+        max_retry_attempts: None,
     });
 
     //Then Only one logout request is sent
@@ -101,6 +109,8 @@ fn should_handle_concurrent_close_calls_safely() {
                     enable_auto_detection: None,
                     error_strategy: None,
                     timeout_seconds: None,
+
+                    max_retry_attempts: None,
                 })
             })
         })
@@ -137,6 +147,8 @@ fn should_reject_queries_client_side_after_connection_is_closed() {
         enable_auto_detection: None,
         error_strategy: None,
         timeout_seconds: None,
+
+        max_retry_attempts: None,
     });
     assert!(close_result.is_ok(), "Close should succeed");
 
