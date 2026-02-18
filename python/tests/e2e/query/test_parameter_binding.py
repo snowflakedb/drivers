@@ -12,8 +12,6 @@ from __future__ import annotations
 
 import pytest
 
-from snowflake.connector import ProgrammingError
-
 from ...conftest import with_paramstyle
 
 
