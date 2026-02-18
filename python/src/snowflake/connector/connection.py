@@ -107,7 +107,7 @@ class Connection:
 
         # Register atexit handler if auto_cleanup is enabled
         if self.auto_cleanup:
-            atexit.register(self._close_at_exit)
+            atexit.register(self._close_at_process_exit)
 
     def close(self, retry: bool = True) -> None:
         """
@@ -128,7 +128,7 @@ class Connection:
         # Unregister atexit handler to prevent it from running at process exit
         # after explicit close(). This prevents double cleanup and false warnings.
         # atexit.unregister() is idempotent, safe to call multiple times.
-        atexit.unregister(self._close_at_exit)
+        atexit.unregister(self._close_at_process_exit)
 
         if self.is_closed():
             return  # Already closed, idempotent
@@ -152,7 +152,7 @@ class Connection:
             )
         )
 
-    def _close_at_exit(self) -> None:
+    def _close_at_process_exit(self) -> None:
         """
         Cleanup handler called by atexit when process exits.
 
