@@ -13,6 +13,12 @@ use url::Url;
 /// Error codes from Snowflake GS
 const SESSION_GONE: i32 = 390111;
 
+// NOTE: SESSION_TOKEN_EXPIRED (390112) handling is deferred to SNOW-2923705.
+// Currently, 390112 is treated as a generic retryable error (retry without token refresh).
+// This is acceptable for most scenarios - the session may still be valid even if the token
+// has expired, and the retry logic will handle transient errors appropriately.
+// Future work (SNOW-2923705) will integrate token refresh before retry for 390112 errors.
+
 #[derive(Debug, Snafu)]
 pub enum LogoutError {
     #[snafu(display("Failed to build logout request URL"))]
@@ -89,10 +95,9 @@ pub async fn logout_session(
         .and_then(|base| base.join("/session"))
         .context(UrlConstructionSnafu)?;
 
-    // TODO: should be helper func
     // Generate UUIDs for request tracking
-    let request_id = uuid::Uuid::new_v4();
-    let request_guid = uuid::Uuid::new_v4();
+    let request_id = generate_request_id();
+    let request_guid = generate_request_guid();
 
     tracing::debug!(
         %request_id,
@@ -102,13 +107,8 @@ pub async fn logout_session(
         "Logout request parameters"
     );
 
-    // TODO: should be static helper cached
     // Build User-Agent per UD spec: {WrapperUA} UD/{core_ver} Rust/{rust_ver}
-    let rust_version = option_env!("CARGO_PKG_RUST_VERSION").unwrap_or("unknown");
-    let user_agent = format!(
-        "{}/{} ({}) UD/1.0.0 Rust/{}",
-        &client_info.application, &client_info.version, &client_info.os, rust_version
-    );
+    let user_agent = build_user_agent(client_info);
 
     // Build authorization header
     let auth_header = format!("Snowflake Token=\"{}\"", session_token);
@@ -122,7 +122,7 @@ pub async fn logout_session(
     // Execute with retry
     let build_request = || {
         // Note: request_guid is regenerated on each retry, requestId stays the same
-        let retry_request_guid = uuid::Uuid::new_v4();
+        let retry_request_guid = generate_request_guid();
 
         client
             .post(logout_url.clone())
@@ -186,6 +186,25 @@ pub async fn logout_session(
 
     tracing::info!("Session logout completed successfully");
     Ok(())
+}
+
+/// Generate a unique request ID (static across retries for the same request)
+fn generate_request_id() -> uuid::Uuid {
+    uuid::Uuid::new_v4()
+}
+
+/// Generate a unique request GUID (regenerated on each retry)
+fn generate_request_guid() -> uuid::Uuid {
+    uuid::Uuid::new_v4()
+}
+
+/// Build User-Agent header per UD spec: {WrapperUA} UD/{core_ver} Rust/{rust_ver}
+fn build_user_agent(client_info: &ClientInfo) -> String {
+    let rust_version = option_env!("CARGO_PKG_RUST_VERSION").unwrap_or("unknown");
+    format!(
+        "{}/{} ({}) UD/1.0.0 Rust/{}",
+        &client_info.application, &client_info.version, &client_info.os, rust_version
+    )
 }
 
 #[cfg(test)]

@@ -30,7 +30,10 @@ impl AsyncQueryRegistry {
     ///
     /// Called when a query is executed with asyncExec=true
     pub fn register(&self, query_id: String) {
-        let mut queries = self.queries.lock().unwrap();
+        let mut queries = self
+            .queries
+            .lock()
+            .expect("AsyncQueryRegistry mutex poisoned - cannot register query");
         queries.insert(query_id.clone());
         tracing::debug!(query_id, "Registered async query");
     }
@@ -39,7 +42,10 @@ impl AsyncQueryRegistry {
     ///
     /// Called when a query completes or is cancelled
     pub fn unregister(&self, query_id: &str) {
-        let mut queries = self.queries.lock().unwrap();
+        let mut queries = self
+            .queries
+            .lock()
+            .expect("AsyncQueryRegistry mutex poisoned - cannot unregister query");
         let removed = queries.remove(query_id);
         if removed {
             tracing::debug!(query_id, "Unregistered async query");
@@ -58,7 +64,10 @@ impl AsyncQueryRegistry {
     /// * `true` - At least one async query is registered (still running)
     /// * `false` - No async queries registered (all finished or none started)
     pub fn has_running_queries(&self) -> bool {
-        let queries = self.queries.lock().unwrap();
+        let queries = self
+            .queries
+            .lock()
+            .expect("AsyncQueryRegistry mutex poisoned - cannot check running queries");
         let has_queries = !queries.is_empty();
 
         if has_queries {
@@ -75,14 +84,20 @@ impl AsyncQueryRegistry {
 
     /// Get count of registered queries (for testing/debugging)
     pub fn count(&self) -> usize {
-        let queries = self.queries.lock().unwrap();
+        let queries = self
+            .queries
+            .lock()
+            .expect("AsyncQueryRegistry mutex poisoned - cannot get count");
         queries.len()
     }
 
     /// Clear all registered queries (for testing)
     #[cfg(test)]
     pub fn clear(&self) {
-        let mut queries = self.queries.lock().unwrap();
+        let mut queries = self
+            .queries
+            .lock()
+            .expect("AsyncQueryRegistry mutex poisoned - cannot clear");
         queries.clear();
     }
 }

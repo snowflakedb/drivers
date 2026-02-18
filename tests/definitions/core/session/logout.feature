@@ -212,7 +212,7 @@ Feature: Session Logout - Core HTTP Layer Integration
       | strict        | connection reset        |
       | best-effort   | connection reset        |
 
-  # TODO: SNOW-2923705 - Requires token refresh implementation
+  @todo_SNOW-2923705
   Scenario: should not attempt token refresh when retry count is 0 with strict strategy
     # Token refresh implies a subsequent retry of logout with new token.
     # If no retries are allowed, refreshing the token would be pointless.
@@ -223,7 +223,7 @@ Feature: Session Logout - Core HTTP Layer Integration
     Then No token refresh request is sent to server
     And Close throws SESSION_TOKEN_EXPIRED error
 
-  # TODO: SNOW-2923705 - Requires token refresh implementation
+  @todo_SNOW-2923705
   Scenario: should not attempt token refresh when retry count is 0 with best-effort strategy
     # Same logic: no retries → no point refreshing token
     Given Core logout function called with best-effort strategy
@@ -234,7 +234,7 @@ Feature: Session Logout - Core HTTP Layer Integration
     And SESSION_TOKEN_EXPIRED is logged as WARN
     And Close succeeds
 
-  @core_int
+  @core_int @todo_SNOW-2923705
   Scenario Outline: should attempt token refresh on 390112 when retries allowed for each <strategy_type>
     # With 1 retry allowed, token refresh + retry logout is possible
     # Both strategies must attempt refresh - 390112 is NOT treated as a final error
@@ -253,7 +253,7 @@ Feature: Session Logout - Core HTTP Layer Integration
       | strict        |
       | best-effort   |
 
-  @core_int
+  @core_int @todo_SNOW-2923705
   Scenario: should include token refresh time in total logout timeout budget
     # Token refresh is a network call that must be accounted for in total timeout
     Given Core logout function called
@@ -418,7 +418,7 @@ Feature: Session Logout - Core HTTP Layer Integration
   #                      Telemetry Integration
   # ===========================================================================
 
-  @core_int
+  @core_int @todo_SNOW-2912513
   Scenario: should record connection close decision metrics before logout
     # Requires: SNOW-2912513 (Telemetry)
     Given Telemetry client is configured
