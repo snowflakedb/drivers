@@ -44,6 +44,15 @@ pub struct SessionTokens {
     pub master_expires_at: Option<std::time::Instant>,
 }
 
+/// Result of a successful login to Snowflake
+#[derive(Debug)]
+pub struct LoginResult {
+    /// Session tokens for authentication and refresh
+    pub tokens: SessionTokens,
+    /// Session parameters returned by the server
+    pub session_parameters: Option<HashMap<String, String>>,
+}
+
 impl SessionTokens {
     /// Check if the master token is expired or about to expire
     pub fn is_master_expired(&self) -> bool {
@@ -112,7 +121,10 @@ pub fn user_agent(client_info: &ClientInfo) -> String {
     )
 }
 
-pub fn auth_request_data(login_parameters: &LoginParameters) -> Result<AuthRequestData, RestError> {
+pub fn auth_request_data(
+    login_parameters: &LoginParameters,
+    session_parameters: Option<&HashMap<String, String>>,
+) -> Result<AuthRequestData, RestError> {
     let mut data = AuthRequestData {
         account_name: login_parameters.account_name.clone(),
         client_app_id: login_parameters.client_info.application.clone(),
@@ -130,7 +142,7 @@ pub fn auth_request_data(login_parameters: &LoginParameters) -> Result<AuthReque
     };
 
     // Convert session_parameters to JSON values for the auth request
-    if let Some(params) = &login_parameters.session_parameters {
+    if let Some(params) = session_parameters {
         let json_params = params
             .iter()
             .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
@@ -158,28 +170,27 @@ pub fn auth_request_data(login_parameters: &LoginParameters) -> Result<AuthReque
     Ok(data)
 }
 
-#[tracing::instrument(skip(login_parameters), fields(account_name, login_name))]
+#[tracing::instrument(
+    skip(login_parameters, session_parameters),
+    fields(account_name, login_name)
+)]
 pub async fn snowflake_login(
     login_parameters: &LoginParameters,
-) -> Result<SessionTokens, RestError> {
+    session_parameters: Option<&HashMap<String, String>>,
+) -> Result<LoginResult, RestError> {
     let client = build_tls_http_client(&login_parameters.client_info)?;
-    snowflake_login_with_client(&client, login_parameters).await
+    snowflake_login_with_client(&client, login_parameters, session_parameters).await
 }
 
-#[tracing::instrument(skip(client, login_parameters), fields(account_name, login_name))]
+#[tracing::instrument(
+    skip(client, login_parameters, session_parameters),
+    fields(account_name, login_name)
+)]
 pub async fn snowflake_login_with_client(
     client: &reqwest::Client,
     login_parameters: &LoginParameters,
-) -> Result<SessionTokens, RestError> {
-    let (tokens, _) = snowflake_login_with_client_and_params(client, login_parameters).await?;
-    Ok(tokens)
-}
-
-#[tracing::instrument(skip(client, login_parameters), fields(account_name, login_name))]
-pub async fn snowflake_login_with_client_and_params(
-    client: &reqwest::Client,
-    login_parameters: &LoginParameters,
-) -> Result<(SessionTokens, Option<HashMap<String, String>>), RestError> {
+    session_parameters: Option<&HashMap<String, String>>,
+) -> Result<LoginResult, RestError> {
     tracing::info!("Starting Snowflake login process");
 
     // Record key fields in the span
@@ -196,7 +207,7 @@ pub async fn snowflake_login_with_client_and_params(
     );
 
     // Build the login request
-    let auth_request_data = auth_request_data(login_parameters)?;
+    let auth_request_data = auth_request_data(login_parameters, session_parameters)?;
     tracing::Span::current().record("login_name", &auth_request_data.login_name);
     let login_request = AuthRequest {
         data: auth_request_data,
@@ -303,7 +314,14 @@ pub async fn snowflake_login_with_client_and_params(
                     serde_json::Value::Number(n) => Some(n.to_string()),
                     serde_json::Value::Bool(b) => Some(b.to_string()),
                     serde_json::Value::Null => None,
-                    _ => Some(param._value.to_string()),
+                    other => {
+                        tracing::debug!(
+                            param_name = %param._name,
+                            param_value = ?other,
+                            "Unexpected JSON type for session parameter, skipping"
+                        );
+                        None
+                    }
                 };
 
                 value_str.map(|v| (param._name.to_uppercase(), v))
@@ -318,16 +336,16 @@ pub async fn snowflake_login_with_client_and_params(
         session_params_count = session_params.as_ref().map(|p| p.len()),
         "Snowflake login completed successfully"
     );
-    Ok((
-        SessionTokens {
+    Ok(LoginResult {
+        tokens: SessionTokens {
             session_token,
             master_token,
             session_id,
             session_expires_at,
             master_expires_at,
         },
-        session_params,
-    ))
+        session_parameters: session_params,
+    })
 }
 
 /// Refresh an expired session token using the master token.

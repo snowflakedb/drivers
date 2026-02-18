@@ -2,13 +2,12 @@ use snafu::{OptionExt, ResultExt};
 use std::sync::{Mutex, MutexGuard};
 
 use super::Handle;
-use super::alter_session_parser;
 use super::connection::RefreshContext;
 use super::error::*;
 use super::global_state::{CONN_HANDLE_MANAGER, STMT_HANDLE_MANAGER};
 use crate::apis::database_driver_v1::query::process_query_response;
 use crate::protobuf_gen::database_driver_v1::ColumnMetadata;
-use crate::rest::snowflake::{query_response, query_response::Data};
+use crate::rest::snowflake::query_response::Data;
 use crate::{
     config::{rest_parameters::QueryParameters, settings::Setting},
     rest::snowflake::{self, QueryExecutionMode, snowflake_query_with_client},
@@ -260,49 +259,6 @@ pub struct ExecuteResult {
     pub columns: Vec<ColumnMetadata>,
 }
 
-/// Update the session parameters cache after a successful query.
-fn update_session_params_cache(
-    conn: &Arc<Mutex<Connection>>,
-    query: &str,
-    response_parameters: Option<&Vec<query_response::NameValueParameter>>,
-) -> Result<(), ApiError> {
-    let conn = conn.lock().map_err(|_| ConnectionLockingSnafu.build())?;
-    let mut cache = match conn.session_parameters.write() {
-        Ok(cache) => cache,
-        Err(_) => return Ok(()),
-    };
-
-    // 1. ALTER SESSION SET detection: optimistically update the cache based on user's query.
-    // This is necessary as Snowflake returns only part of session parameters in response.
-    // Details: SNOW-3104303
-    let alter_params = alter_session_parser::parse_all_alter_sessions(query);
-    if !alter_params.is_empty() {
-        for alter_param in alter_params {
-            tracing::debug!(
-                param_name = %alter_param.name,
-                param_value = %alter_param.value,
-                "Detected ALTER SESSION SET, updating cache optimistically"
-            );
-            cache.insert(alter_param.name.clone(), alter_param.value.clone());
-        }
-    }
-
-    // 2. Response parameters: merge any server-returned session parameters into the cache.
-    if let Some(parameters) = response_parameters {
-        for param in parameters {
-            let value_str = match &param.value {
-                serde_json::Value::String(s) => s.clone(),
-                serde_json::Value::Number(n) => n.to_string(),
-                serde_json::Value::Bool(b) => b.to_string(),
-                other => other.to_string(),
-            };
-            cache.insert(param.name.to_uppercase(), value_str);
-        }
-    }
-
-    Ok(())
-}
-
 pub fn statement_execute_query<'a>(
     stmt_handle: Handle,
     bindings: Option<BindingType<'a>>,
@@ -397,7 +353,11 @@ pub fn statement_execute_query<'a>(
     })?;
 
     if response.success {
-        update_session_params_cache(&stmt.conn, &query, response.data.parameters.as_ref())?;
+        let conn = stmt
+            .conn
+            .lock()
+            .map_err(|_| ConnectionLockingSnafu.build())?;
+        conn.update_session_params_cache(&query, response.data.parameters.as_ref());
     }
 
     let response_reader = rt

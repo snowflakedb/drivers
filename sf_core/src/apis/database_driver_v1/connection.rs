@@ -21,26 +21,21 @@ pub fn connection_init(conn_handle: Handle, _db_handle: Handle) -> Result<(), Ap
             let settings_guard = conn_ptr
                 .lock()
                 .map_err(|_| ConnectionLockingSnafu {}.build())?;
-            let mut login_parameters = LoginParameters::from_settings(&settings_guard.settings)
+            let login_parameters = LoginParameters::from_settings(&settings_guard.settings)
                 .context(ConfigurationSnafu)?;
-            // Use init_session_parameters if set
             let init_params = settings_guard.init_session_parameters.clone();
             drop(settings_guard);
-
-            // Set session parameters for login if provided
-            if let Some(params) = init_params {
-                login_parameters.session_parameters = Some(params);
-            }
 
             let http_client =
                 create_tls_client_with_config(login_parameters.client_info.tls_config.clone())
                     .context(TlsClientCreationSnafu)?;
 
-            let (tokens, session_params) = rt
+            let login_result = rt
                 .block_on(async {
-                    crate::rest::snowflake::snowflake_login_with_client_and_params(
+                    crate::rest::snowflake::snowflake_login_with_client(
                         &http_client,
                         &login_parameters,
+                        init_params.as_ref(),
                     )
                     .await
                 })
@@ -50,18 +45,14 @@ pub fn connection_init(conn_handle: Handle, _db_handle: Handle) -> Result<(), Ap
             // The server returns system-level parameters but may not echo back
             // user-set parameters (e.g. QUERY_TAG), so we merge in the
             // init_session_parameters the caller explicitly requested.
-            let mut merged_params = session_params.unwrap_or_default();
-            if let Some(init) = login_parameters.session_parameters {
-                for (k, v) in init {
-                    merged_params.insert(k.to_uppercase(), v);
-                }
-            }
+            let mut merged_params = init_params.unwrap_or_default();
+            merged_params.extend(login_result.session_parameters.unwrap_or_default());
 
             conn_ptr
                 .lock()
                 .map_err(|_| ConnectionLockingSnafu {}.build())?
                 .initialize(
-                    tokens,
+                    login_result.tokens,
                     http_client,
                     login_parameters.server_url.clone(),
                     login_parameters.client_info.clone(),
@@ -178,6 +169,61 @@ impl Connection {
         // Populate session parameters cache (assume login always returns parameters)
         if let Ok(mut cache) = self.session_parameters.write() {
             *cache = session_params;
+        }
+    }
+
+    /// Update the session parameters cache after a successful query.
+    pub fn update_session_params_cache(
+        &self,
+        query: &str,
+        response_parameters: Option<
+            &Vec<crate::rest::snowflake::query_response::NameValueParameter>,
+        >,
+    ) {
+        let mut cache = match self.session_parameters.write() {
+            Ok(cache) => cache,
+            Err(_) => return,
+        };
+
+        // 1. ALTER SESSION SET detection: optimistically update the cache based on user's query.
+        // This is necessary as Snowflake returns only part of session parameters in response.
+        // Details: SNOW-3104303
+        cache.extend(
+            super::alter_session_parser::parse_all_alter_sessions(query)
+                .into_iter()
+                .map(|p| {
+                    tracing::debug!(
+                        param_name = %p.name,
+                        param_value = %p.value,
+                        "Detected ALTER SESSION SET, updating cache optimistically"
+                    );
+                    (p.name.clone(), p.value.clone())
+                }),
+        );
+
+        // 2. Response parameters: merge any server-returned session parameters into the cache.
+        if let Some(parameters) = response_parameters {
+            cache.extend(
+                parameters
+                    .iter()
+                    .map(|param| {
+                        let value_str = match &param.value {
+                            serde_json::Value::String(s) => s.clone(),
+                            serde_json::Value::Number(n) => n.to_string(),
+                            serde_json::Value::Bool(b) => b.to_string(),
+                            other => {
+                                tracing::debug!(
+                                    param_name = %param.name,
+                                    param_value = ?other,
+                                    "Unexpected JSON type for session parameter, skipping"
+                                );
+                                return (String::new(), String::new());
+                            }
+                        };
+                        (param.name.to_uppercase(), value_str)
+                    })
+                    .filter(|(k, _)| !k.is_empty()),
+            );
         }
     }
 }
