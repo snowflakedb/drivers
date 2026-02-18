@@ -10,6 +10,7 @@
 #include "ODBCFixtures.hpp"
 #include "compatibility.hpp"
 #include "get_diag_rec.hpp"
+#include "odbc_cast.hpp"
 #include "test_macros.hpp"
 #include "test_setup.hpp"
 
@@ -21,10 +22,10 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetCursorName: Renaming cursor repla
                  "[odbc-api][cursorname][preparing]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
-  SQLRETURN ret = SQLSetCursorName(stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>("CursorA")), SQL_NTS);
+  SQLRETURN ret = SQLSetCursorName(stmt_handle(), sqlchar("CursorA"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
-  ret = SQLSetCursorName(stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>("CursorB")), SQL_NTS);
+  ret = SQLSetCursorName(stmt_handle(), sqlchar("CursorB"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
   SQLCHAR cursor_name[128] = {};
@@ -39,10 +40,10 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetCursorName: Can rename in prepare
                  "[odbc-api][cursorname][preparing]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
-  SQLRETURN ret = SQLPrepare(stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>("SELECT 1")), SQL_NTS);
+  SQLRETURN ret = SQLPrepare(stmt_handle(), sqlchar("SELECT 1"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
-  ret = SQLSetCursorName(stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>("PreparedCur")), SQL_NTS);
+  ret = SQLSetCursorName(stmt_handle(), sqlchar("PreparedCur"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
   SQLCHAR cursor_name[128] = {};
@@ -57,13 +58,13 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetCursorName: Can set after SQLClos
                  "[odbc-api][cursorname][preparing]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
-  SQLRETURN ret = SQLExecDirect(stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>("SELECT 1")), SQL_NTS);
+  SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT 1"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
   ret = SQLCloseCursor(stmt_handle());
   REQUIRE(ret == SQL_SUCCESS);
 
-  ret = SQLSetCursorName(stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>("AfterClose")), SQL_NTS);
+  ret = SQLSetCursorName(stmt_handle(), sqlchar("AfterClose"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
   SQLCHAR cursor_name[128] = {};
@@ -78,7 +79,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetCursorName: With explicit name le
                  "[odbc-api][cursorname][preparing]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
-  SQLRETURN ret = SQLSetCursorName(stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>("ExplicitLen")), 11);
+  SQLRETURN ret = SQLSetCursorName(stmt_handle(), sqlchar("ExplicitLen"), 11);
   REQUIRE(ret == SQL_SUCCESS);
 
   SQLCHAR cursor_name[128] = {};
@@ -94,7 +95,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetCursorName: Explicit length short
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   // Pass length 4 for "LongName" -> should only use "Long"
-  SQLRETURN ret = SQLSetCursorName(stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>("LongName")), 4);
+  SQLRETURN ret = SQLSetCursorName(stmt_handle(), sqlchar("LongName"), 4);
   REQUIRE(ret == SQL_SUCCESS);
 
   SQLCHAR cursor_name[128] = {};
@@ -110,7 +111,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetCursorName: Empty cursor name suc
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   // Reference driver accepts empty cursor name
-  SQLRETURN ret = SQLSetCursorName(stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>("")), SQL_NTS);
+  SQLRETURN ret = SQLSetCursorName(stmt_handle(), sqlchar(""), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
   SQLCHAR cursor_name[128] = {};
@@ -129,8 +130,7 @@ TEST_CASE("SQLSetCursorName: SQL_INVALID_HANDLE for null statement handle",
           "[odbc-api][cursorname][preparing][error]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
-  const SQLRETURN ret =
-      SQLSetCursorName(SQL_NULL_HSTMT, reinterpret_cast<SQLCHAR*>(const_cast<char*>("Test")), SQL_NTS);
+  const SQLRETURN ret = SQLSetCursorName(SQL_NULL_HSTMT, sqlchar("Test"), SQL_NTS);
   REQUIRE(ret == SQL_INVALID_HANDLE);
 }
 
@@ -138,8 +138,7 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLSetCursorName: 3C000 for duplicate cu
                  "[odbc-api][cursorname][preparing][error]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
-  SQLRETURN ret = SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(dsn_name().c_str())), SQL_NTS,
-                             nullptr, 0, nullptr, 0);
+  SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
   SQLHSTMT stmt1 = SQL_NULL_HSTMT, stmt2 = SQL_NULL_HSTMT;
@@ -148,11 +147,11 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLSetCursorName: 3C000 for duplicate cu
   ret = SQLAllocHandle(SQL_HANDLE_STMT, dbc_handle(), &stmt2);
   REQUIRE(ret == SQL_SUCCESS);
 
-  ret = SQLSetCursorName(stmt1, reinterpret_cast<SQLCHAR*>(const_cast<char*>("DupCursor")), SQL_NTS);
+  ret = SQLSetCursorName(stmt1, sqlchar("DupCursor"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
   // 3C000: Duplicate cursor name
-  ret = SQLSetCursorName(stmt2, reinterpret_cast<SQLCHAR*>(const_cast<char*>("DupCursor")), SQL_NTS);
+  ret = SQLSetCursorName(stmt2, sqlchar("DupCursor"), SQL_NTS);
   REQUIRE_EXPECTED_ERROR(ret, "3C000", stmt2, SQL_HANDLE_STMT);
 
   SQLFreeHandle(SQL_HANDLE_STMT, stmt1);
@@ -165,8 +164,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetCursorName: 34000 for cursor name
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   // 34000: Invalid cursor name (starting with reserved prefix "SQL_CUR")
-  SQLRETURN ret =
-      SQLSetCursorName(stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>("SQL_CUR_TEST")), SQL_NTS);
+  SQLRETURN ret = SQLSetCursorName(stmt_handle(), sqlchar("SQL_CUR_TEST"), SQL_NTS);
   REQUIRE_EXPECTED_ERROR(ret, "34000", stmt_handle(), SQL_HANDLE_STMT);
 }
 
@@ -175,8 +173,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetCursorName: 34000 for cursor name
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   // 34000: Invalid cursor name ("SQLCUR" prefix is also reserved)
-  SQLRETURN ret =
-      SQLSetCursorName(stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>("SQLCUR_TEST")), SQL_NTS);
+  SQLRETURN ret = SQLSetCursorName(stmt_handle(), sqlchar("SQLCUR_TEST"), SQL_NTS);
   REQUIRE_EXPECTED_ERROR(ret, "34000", stmt_handle(), SQL_HANDLE_STMT);
 }
 
@@ -194,7 +191,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetCursorName: HY009 for negative Na
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   // Note: Reference driver returns HY009 instead of ODBC spec-defined HY090 for negative NameLength
-  SQLRETURN ret = SQLSetCursorName(stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>("Test")), -5);
+  SQLRETURN ret = SQLSetCursorName(stmt_handle(), sqlchar("Test"), -5);
   REQUIRE_EXPECTED_ERROR(ret, "HY009", stmt_handle(), SQL_HANDLE_STMT);
 }
 
@@ -202,10 +199,10 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLSetCursorName: 24000 when cursor is 
                  "[odbc-api][cursorname][preparing][error]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
-  SQLRETURN ret = SQLExecDirect(stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>("SELECT 1")), SQL_NTS);
+  SQLRETURN ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT 1"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
   // 24000: Invalid cursor state (cursor is open)
-  ret = SQLSetCursorName(stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>("AfterExec")), SQL_NTS);
+  ret = SQLSetCursorName(stmt_handle(), sqlchar("AfterExec"), SQL_NTS);
   REQUIRE_EXPECTED_ERROR(ret, "24000", stmt_handle(), SQL_HANDLE_STMT);
 }

@@ -147,10 +147,16 @@ fn execute_bindings(stmt: &mut Statement) -> OdbcResult<Warnings> {
                 *batch_idx,
             )
             .context(ConversionSnafu)?;
+            tracing::debug!(
+                "execute_bindings: column_number={}, binding={:?}, conversion_warnings={:?}",
+                column_number,
+                binding,
+                conversion_warnings
+            );
             warnings.extend(conversion_warnings);
         }
     }
-    Ok(vec![])
+    Ok(warnings)
 }
 
 /// Get data from a specific column

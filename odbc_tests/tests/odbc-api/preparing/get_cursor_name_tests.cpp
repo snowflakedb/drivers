@@ -10,6 +10,7 @@
 #include "ODBCFixtures.hpp"
 #include "compatibility.hpp"
 #include "get_diag_rec.hpp"
+#include "odbc_cast.hpp"
 #include "test_macros.hpp"
 #include "test_setup.hpp"
 
@@ -36,8 +37,7 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetCursorName: Different statements h
                  "[odbc-api][cursorname][preparing]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
-  SQLRETURN ret = SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(dsn_name().c_str())), SQL_NTS,
-                             nullptr, 0, nullptr, 0);
+  SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
   SQLHSTMT stmt1 = SQL_NULL_HSTMT, stmt2 = SQL_NULL_HSTMT;
@@ -71,7 +71,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetCursorName: Returns exact name se
                  "[odbc-api][cursorname][preparing]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
-  SQLRETURN ret = SQLSetCursorName(stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>("MyCursor")), SQL_NTS);
+  SQLRETURN ret = SQLSetCursorName(stmt_handle(), sqlchar("MyCursor"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
   SQLCHAR cursor_name[128] = {};
@@ -86,10 +86,10 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetCursorName: Cursor name persists 
                  "[odbc-api][cursorname][preparing]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
-  SQLRETURN ret = SQLSetCursorName(stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>("PrepCursor")), SQL_NTS);
+  SQLRETURN ret = SQLSetCursorName(stmt_handle(), sqlchar("PrepCursor"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
-  ret = SQLPrepare(stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>("SELECT 1")), SQL_NTS);
+  ret = SQLPrepare(stmt_handle(), sqlchar("SELECT 1"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
   SQLCHAR cursor_name[128] = {};
@@ -104,11 +104,10 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetCursorName: Cursor name persists 
                  "[odbc-api][cursorname][preparing]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
-  SQLRETURN ret =
-      SQLSetCursorName(stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>("CloseCursor")), SQL_NTS);
+  SQLRETURN ret = SQLSetCursorName(stmt_handle(), sqlchar("CloseCursor"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
-  ret = SQLExecDirect(stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>("SELECT 1")), SQL_NTS);
+  ret = SQLExecDirect(stmt_handle(), sqlchar("SELECT 1"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
   ret = SQLCloseCursor(stmt_handle());
@@ -127,8 +126,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture,
                  "[odbc-api][cursorname][preparing]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
-  SQLRETURN ret =
-      SQLSetCursorName(stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>("LongCursorName")), SQL_NTS);
+  SQLRETURN ret = SQLSetCursorName(stmt_handle(), sqlchar("LongCursorName"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
   // Buffer of 5 bytes = 4 chars + null terminator
@@ -146,7 +144,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture,
                  "[odbc-api][cursorname][preparing]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
-  SQLRETURN ret = SQLSetCursorName(stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>("TestName")), SQL_NTS);
+  SQLRETURN ret = SQLSetCursorName(stmt_handle(), sqlchar("TestName"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
   // BufferLength of 1 = only null terminator fits, truncation occurs
@@ -163,8 +161,7 @@ TEST_CASE_METHOD(StmtDefaultDSNFixture, "SQLGetCursorName: NULL CursorName buffe
                  "[odbc-api][cursorname][preparing]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
-  SQLRETURN ret =
-      SQLSetCursorName(stmt_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>("NullBufTest")), SQL_NTS);
+  SQLRETURN ret = SQLSetCursorName(stmt_handle(), sqlchar("NullBufTest"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
   // Per spec: "If CursorName is NULL, NameLengthPtr will still return the total number of characters"
@@ -178,8 +175,7 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetCursorName: 01004 with BufferLengt
                  "[odbc-api][cursorname][preparing]") {
   SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
-  SQLRETURN ret = SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(dsn_name().c_str())), SQL_NTS,
-                             nullptr, 0, nullptr, 0);
+  SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn_name().c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
   REQUIRE(ret == SQL_SUCCESS);
 
   SQLHSTMT stmt = SQL_NULL_HSTMT;
@@ -192,7 +188,7 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLGetCursorName: 01004 with BufferLengt
   // driver's SQLGetCursorNameW, and the driver reads from the buffer despite
   // BufferLength=0. Using a name >= 10 chars avoids the bug.
   // See: https://github.com/snowflakedb/snowflake-sdks-drivers-issues-teamwork/issues/1371
-  ret = SQLSetCursorName(stmt, reinterpret_cast<SQLCHAR*>(const_cast<char*>("ZeroBufCursor")), SQL_NTS);
+  ret = SQLSetCursorName(stmt, sqlchar("ZeroBufCursor"), SQL_NTS);
   REQUIRE(ret == SQL_SUCCESS);
 
   SQLCHAR cursor_name[128] = {};

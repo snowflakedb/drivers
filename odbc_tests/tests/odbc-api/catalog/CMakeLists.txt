@@ -1,0 +1,12 @@
+cmake_minimum_required(VERSION 4.0)
+
+add_odbc_test(odbc_api_column_privileges_tests column_privileges_tests.cpp)
+add_odbc_test(odbc_api_columns_tests columns_tests.cpp)
+add_odbc_test(odbc_api_primary_keys_tests primary_keys_tests.cpp)
+add_odbc_test(odbc_api_foreign_keys_tests foreign_keys_tests.cpp)
+add_odbc_test(odbc_api_procedure_columns_tests procedure_columns_tests.cpp)
+add_odbc_test(odbc_api_procedures_tests procedures_tests.cpp)
+add_odbc_test(odbc_api_special_columns_tests special_columns_tests.cpp)
+add_odbc_test(odbc_api_statistics_tests statistics_tests.cpp)
+add_odbc_test(odbc_api_table_privileges_tests table_privileges_tests.cpp)
+add_odbc_test(odbc_api_tables_tests tables_tests.cpp)

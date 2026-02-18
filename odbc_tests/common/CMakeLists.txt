@@ -7,6 +7,7 @@ add_library(common STATIC
     src/test_setup.cpp
     src/compatibility.cpp
     src/get_diag_rec.cpp
+    src/query_helpers.cpp
     src/ODBCConfig.cpp
     src/DataSourceConfig.cpp
     src/ConfigInstallation.cpp
@@ -17,6 +18,7 @@ add_library(common STATIC
     include/get_data.hpp
     include/MetaOfSqlCTypes.hpp
     include/get_diag_rec.hpp
+    include/query_helpers.hpp
     include/compatibility.hpp
     include/ODBCConfig.hpp
     include/ODBCFixtures.hpp

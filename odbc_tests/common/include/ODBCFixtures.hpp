@@ -13,6 +13,7 @@
 #include "HandleWrapper.hpp"
 #include "ODBCConfig.hpp"
 #include "compatibility.hpp"
+#include "odbc_cast.hpp"
 
 // ============================================================================
 // Base Fixtures (Parameterized via Constructor)
@@ -109,8 +110,7 @@ class StmtFixture : public DbcFixture {
     SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
     const std::string dsn = dsn_name();
-    SQLRETURN ret = SQLConnect(dbc_handle(), reinterpret_cast<SQLCHAR*>(const_cast<char*>(dsn.c_str())), SQL_NTS,
-                               nullptr, 0, nullptr, 0);
+    SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn.c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
     REQUIRE(ret == SQL_SUCCESS);
 
     ret = SQLAllocHandle(SQL_HANDLE_STMT, dbc_handle(), &stmt);
