@@ -29,3 +29,5 @@ tests/wiremock/__files/*
 # AI agent configuration and rules
 .ai/
 .cursor/
+LOGOUT_IMPLEMENTATION_LESSONS_LEARNED.md
+PR_SUMMARY.md
