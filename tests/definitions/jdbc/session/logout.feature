@@ -7,7 +7,7 @@ Feature: Session Logout - JDBC-specific behavior
 
   Scenario: should use JDBC default 300 second timeout
     # JDBC historically uses 300s (loginTimeout) for logout
-    Given JDBC connection is created with default timeout configuration
+    Given Snowflake JDBC connection is created with default timeout configuration
     When Connection is closed
     Then Logout timeout of 300 seconds is passed to Core
     And Logout request uses 300 second timeout
@@ -20,10 +20,9 @@ Feature: Session Logout - JDBC-specific behavior
     And Error handling strategy is strict by default
 
   # ===========================================================================
-  #                   Phase 2 Defaults and Truth Table
+  #                   Session Lifecycle Parameters
   # ===========================================================================
-  # "Phase 2" refers to the UD migration phase from SNOW-2314152 design doc.
-  # Phase 2: UD mirrors old JDBC behavior (auto-detection enabled by default).
+  # Phase 2 (doc for: SNOW-2314152): UD mirrors old JDBC behavior (auto-detection enabled by default).
   # Phase 3: All drivers converge on unified model (auto-detection disabled by default).
 
   Scenario: should have auto_detection enabled and server_session_keep_alive null by default
@@ -39,8 +38,9 @@ Feature: Session Logout - JDBC-specific behavior
     Then Deprecation warning is logged
     And Warning states that auto_detection will be disabled by default in the future
 
-  Scenario: should skip logout when server_session_keep_alive is true
+  Scenario: should forward server_session_keep_alive true to Core when explicitly set
     # Phase 2 (doc for: SNOW-2314152) truth table: true + any → No logout, No deprecation
+    # Full logout-skip behavior tested in Core; this freezes the JDBC default to prevent BCRs
     Given Snowflake JDBC connection is created with server_session_keep_alive set to true
     When Connection is closed
     Then server_session_keep_alive true is passed to Core
@@ -49,7 +49,7 @@ Feature: Session Logout - JDBC-specific behavior
     # E2E sanity check: Verifies JDBC wrapper + Core integration works end-to-end
     # Phase 2 (doc for: SNOW-2314152) truth table: false + any → Always logout, ignore auto-detect
     Given Snowflake JDBC connection is created with server_session_keep_alive set to false
-    And Long-running async query is executed using SYSTEM$SLEEP(300)
+    And Long-running async query is executed using SYSTEM$SLEEP(10)
     When Connection is closed
     Then Auto-detection is not performed
     And Logout request is sent

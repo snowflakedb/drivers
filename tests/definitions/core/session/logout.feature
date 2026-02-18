@@ -2,7 +2,7 @@
 Feature: Session Logout - Core HTTP Layer Integration
 
   # Low-level HTTP protocol validation and core integration tests.
-  # These test UD Core implementation details not exposed to wrappers.
+  # These tests UD Core implementation details not exposed to wrappers.
 
   # ===========================================================================
   #                      HTTP Request Construction

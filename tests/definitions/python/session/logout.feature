@@ -7,33 +7,33 @@ Feature: Session Logout - Python-specific behavior
 
   Scenario: should use Python default 5 second timeout
     # Python historically uses 5s timeout for logout
-    Given Python connection is created with default timeout configuration
+    Given Snowflake Python client is created with default timeout configuration
     When Connection is closed
     Then Logout timeout of 5 seconds is passed to Core
     And Logout request completes within 5 seconds
 
   # ===========================================================================
-  #                   Phase 2 Backward Compatibility Logic
+  #                   Session Lifecycle Parameters
   # ===========================================================================
   # Phase 2 (doc for: SNOW-2314152) behavior: Python defaults to auto-detection enabled
-  # when server_session_keep_alive is null. This will change in Phase 3 to
+  # when server_session_keep_alive is none. This will change in Phase 3 to
   # always logout by default. ODBC already implements Phase 3 behavior.
   # Auto-detection logic scenarios moved to fire-and-forget ticket (SNOW-2923705)
 
-  Scenario: should have auto_detection enabled and server_session_keep_alive null by default
+  Scenario: should have auto_detection enabled and server_session_keep_alive none by default
     # Phase 2 (doc for: SNOW-2314152) defaults for backward compatibility. Will change in Phase 3.
-    # Python Phase 2 defaults: server_session_keep_alive=null (actually False in old driver),
+    # Python Phase 2 defaults: server_session_keep_alive=none (actually False in old driver),
     # enable_server_session_keep_alive_auto_detection=true
     # NOTE: Per design doc, Python defaults do NOT emit deprecation warning.
     # Deprecation only happens when server_session_keep_alive is explicitly set to False.
     Given Snowflake Python client is created with default parameters
     When Connection configuration is checked
-    Then server_session_keep_alive defaults to null
+    Then server_session_keep_alive defaults to none
     And enable_server_session_keep_alive_auto_detection defaults to true
     And No deprecation warning is emitted for default configuration
 
   # ===========================================================================
-  #                   Phase 2 Truth Table - Explicit Tests
+  #                   Parameter Passing Verification
   # ===========================================================================
 
   Scenario: should pass correct parameters when server_session_keep_alive is none and auto_detection true
@@ -68,7 +68,7 @@ Feature: Session Logout - Python-specific behavior
     And Warning mentions that false will force logout in Phase 3
 
   # ===========================================================================
-  #                     Python-Specific Defaults
+  #                     Wrapper Defaults
   # ===========================================================================
 
   Scenario Outline: should skip logout when server_session_keep_alive is true regardless of auto_detection

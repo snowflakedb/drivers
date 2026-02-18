@@ -1,4 +1,3 @@
-@core @python
 Feature: Session Logout
 
   # Core-level HTTP protocol details are in core/session/logout.feature
@@ -10,7 +9,7 @@ Feature: Session Logout
   # ===========================================================================
 
   @core_e2e @python_e2e
-  Scenario: should cleanup all tokens on close regardless of whether logout was sent
+  Scenario Outline: should cleanup all tokens on close regardless of whether logout was sent
     # Tests that tokens are cleared regardless of logout decision
     Given Snowflake client is logged in
     And <server_session_keep_alive> is set to any value
@@ -52,13 +51,13 @@ Feature: Session Logout
 
   @core_e2e
   Scenario: should allow process to exit cleanly when session kept alive
-    # Requires: SNOW-2881763 (Heartbeat)
+    # Requires: SNOW-2881763 (Heartbeat), SNOW-2912513 (Telemetry)
     Given Connection with heartbeat enabled
-    And Telemetry is active
+    And Telemetry cache is active
     And server_session_keep_alive is set to true
     When Connection is closed
-    Then All background threads are stopped
-    And Heartbeat thread is terminated
+    Then Heartbeat is stopped
+    And Telemetry cache is flushed
     And Process can exit immediately without hanging
 
 
