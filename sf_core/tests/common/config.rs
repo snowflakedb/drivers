@@ -8,7 +8,7 @@ pub struct ParametersFile {
     pub testconnection: Parameters,
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Default, Deserialize, Serialize)]
 pub struct Parameters {
     #[serde(rename = "SNOWFLAKE_TEST_ACCOUNT")]
     pub account_name: Option<String>,

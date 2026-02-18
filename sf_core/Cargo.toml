@@ -88,6 +88,8 @@ zstd = "0.13.3"
 test-case = "3.3.1"
 reqwest = { version = "0.12.23", features = ["blocking"] }
 wiremock = "0.6"
+rcgen = "0.13"
+tokio-rustls = "0.26"
 
 [[test]]
 name = "integration_tests"

@@ -132,7 +132,7 @@ pub enum LoginMethod {
         /// IdP password (native Okta SSO).
         password: String,
         /// Okta authenticator URL endpoint (native Okta SSO).
-        okta_url: String,
+        okta_url: Url,
         /// Disable SAML destination/postback validation (default false; discouraged).
         disable_saml_url_check: bool,
         /// End-to-end auth budget for the Okta flow, mapped onto retry max_elapsed.
@@ -295,14 +295,14 @@ impl LoginMethod {
                 // Native Okta SSO is configured by passing the Okta URL endpoint as `authenticator`.
                 // This is intentionally broad (vanity domains may not contain "okta").
                 // Validate the URL is well-formed early to provide a clear error message.
-                if Url::parse(&authenticator).is_err() {
-                    return InvalidParameterValueSnafu {
+                let okta_url = Url::parse(&authenticator).map_err(|_| {
+                    InvalidParameterValueSnafu {
                         parameter: "authenticator",
                         value: authenticator,
                         explanation: "The authenticator URL is not a valid URL",
                     }
-                    .fail();
-                }
+                    .build()
+                })?;
 
                 let username = settings
                     .get_string("user")
@@ -327,7 +327,7 @@ impl LoginMethod {
                     username,
                     okta_username,
                     password,
-                    okta_url: authenticator,
+                    okta_url,
                     disable_saml_url_check,
                     authentication_timeout_secs,
                 })

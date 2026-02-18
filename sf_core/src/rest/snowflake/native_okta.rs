@@ -208,31 +208,70 @@ fn remaining_policy(
     Ok(p)
 }
 
-#[allow(clippy::too_many_arguments)]
+pub(crate) struct NativeOktaConfig<'a> {
+    pub okta_url: &'a Url,
+    pub username: &'a str,
+    pub okta_username: Option<&'a str>,
+    pub password: &'a str,
+    pub disable_saml_url_check: bool,
+    pub authentication_timeout_secs: u64,
+}
+
 #[tracing::instrument(
-    skip(client, login_parameters, base_policy, password),
-    fields(okta_url, username, okta_username, disable_saml_url_check)
+    skip(client, login_parameters, base_policy, config),
+    fields(authentication_timeout_secs = config.authentication_timeout_secs)
 )]
 pub(crate) async fn fetch_native_okta_saml(
     client: &reqwest::Client,
     login_parameters: &LoginParameters,
     base_policy: &RetryPolicy,
-    okta_url: &str,
-    username: &str,
-    okta_username: Option<&str>,
-    password: &str,
-    disable_saml_url_check: bool,
-    authentication_timeout_secs: u64,
+    config: &NativeOktaConfig<'_>,
 ) -> Result<String, NativeOktaError> {
     tracing::info!("Starting native Okta authentication");
-    let budget = Duration::from_secs(authentication_timeout_secs);
+    let budget = Duration::from_secs(config.authentication_timeout_secs);
     let start = Instant::now();
 
-    // Step 1: authenticator-request (get tokenUrl + ssoUrl)
+    // Step 1: ask Snowflake for the IdP endpoints (tokenUrl + ssoUrl).
+    let idp_data = request_authenticator_endpoints(
+        client,
+        login_parameters,
+        base_policy,
+        config,
+        start,
+        budget,
+    )
+    .await?;
+
+    // Step 2: verify that Snowflake-returned IdP URLs match the configured Okta URL.
+    let (token_url, sso_url) = validate_idp_urls(config.okta_url, &idp_data, start)?;
+
+    // Steps 3+4: mint one-time token, fetch SAML form, validate.
+    // Re-mints the token and retries on transient failures.
+    fetch_saml_with_retries(
+        client,
+        login_parameters,
+        base_policy,
+        config,
+        &token_url,
+        &sso_url,
+        start,
+    )
+    .await
+}
+
+/// Step 1: POST /session/authenticator-request to get tokenUrl + ssoUrl.
+async fn request_authenticator_endpoints(
+    client: &reqwest::Client,
+    login_parameters: &LoginParameters,
+    base_policy: &RetryPolicy,
+    config: &NativeOktaConfig<'_>,
+    start: Instant,
+    budget: Duration,
+) -> Result<AuthenticatorRequestData, NativeOktaError> {
     let policy = remaining_policy(base_policy, start, budget)?;
     let mut data: AuthRequestData = super::base_auth_request_data(login_parameters);
-    data.login_name = Some(username.to_string());
-    data.authenticator = Some(okta_url.to_string());
+    data.login_name = Some(config.username.to_string());
+    data.authenticator = Some(config.okta_url.as_str().to_string());
     let authn_req = AuthRequest { data };
     let authn_url = format!(
         "{}/session/authenticator-request",
@@ -288,21 +327,28 @@ pub(crate) async fn fetch_native_okta_saml(
         }
         .fail();
     }
-    let idp_data = idp.data.ok_or_else(|| NativeOktaError::MissingField {
+    let data = idp.data.ok_or_else(|| NativeOktaError::MissingField {
         field: "data",
         location: Location::new(file!(), line!(), column!()),
     })?;
-    tracing::debug!("Step 1 complete: received IdP endpoints from Snowflake");
+    tracing::debug!("Received IdP endpoints from Snowflake");
+    Ok(data)
+}
 
-    // Step 2: IdP URL safety validation
-    let configured = Url::parse(okta_url).context(UrlParseSnafu { url: okta_url })?;
+/// Step 2: validate that the returned tokenUrl and ssoUrl share the same origin
+/// as the configured Okta URL.
+fn validate_idp_urls(
+    okta_url: &Url,
+    idp_data: &AuthenticatorRequestData,
+    start: Instant,
+) -> Result<(Url, Url), NativeOktaError> {
     let token_url = Url::parse(&idp_data.token_url).context(UrlParseSnafu {
         url: idp_data.token_url.clone(),
     })?;
     let sso_url = Url::parse(&idp_data.sso_url).context(UrlParseSnafu {
         url: idp_data.sso_url.clone(),
     })?;
-    if !url_origin_matches(&configured, &token_url) {
+    if !url_origin_matches(okta_url, &token_url) {
         tracing::error!(
             configured = %okta_url,
             returned = %idp_data.token_url,
@@ -311,11 +357,11 @@ pub(crate) async fn fetch_native_okta_saml(
         );
         return IdpUrlMismatchSnafu {
             configured: okta_url.to_string(),
-            returned: idp_data.token_url,
+            returned: idp_data.token_url.clone(),
         }
         .fail();
     }
-    if !url_origin_matches(&configured, &sso_url) {
+    if !url_origin_matches(okta_url, &sso_url) {
         tracing::error!(
             configured = %okta_url,
             returned = %idp_data.sso_url,
@@ -324,95 +370,48 @@ pub(crate) async fn fetch_native_okta_saml(
         );
         return IdpUrlMismatchSnafu {
             configured: okta_url.to_string(),
-            returned: idp_data.sso_url,
+            returned: idp_data.sso_url.clone(),
         }
         .fail();
     }
-    tracing::debug!("Step 2 complete: IdP URL safety validation passed");
+    tracing::debug!("IdP URL safety validation passed");
+    Ok((token_url, sso_url))
+}
 
-    // Step 3+4: mint one-time token, fetch SAML form. If SAML fetch fails transiently, re-mint token and retry.
+/// Steps 3+4: mint a one-time token from Okta, fetch the SAML HTML, and
+/// validate the postback URL.  Re-mints the token on transient failures.
+async fn fetch_saml_with_retries(
+    client: &reqwest::Client,
+    login_parameters: &LoginParameters,
+    base_policy: &RetryPolicy,
+    config: &NativeOktaConfig<'_>,
+    token_url: &Url,
+    sso_url: &Url,
+    start: Instant,
+) -> Result<String, NativeOktaError> {
+    let budget = Duration::from_secs(config.authentication_timeout_secs);
+    let idp_login = config.okta_username.unwrap_or(config.username);
+
     let mut saml_attempt: u32 = 0;
     loop {
         saml_attempt += 1;
         let policy = remaining_policy(base_policy, start, budget)?;
 
-        // Step 3: token
-        // Use okta_username if provided, otherwise fall back to Snowflake username.
-        // Matches JDBC's `oktausername` property for cases where the Okta login
-        // (e.g. email) differs from the Snowflake user name.
-        let idp_login = okta_username.unwrap_or(username);
-        let token_ctx = HttpContext::new(Method::POST, "okta:token").allow_post_retry();
-        let token_body = serde_json::json!({
-            "username": idp_login,
-            "password": password,
-        });
-        let token_body_string = token_body.to_string();
-        let (token_status, token_text) = request_text_with_retry(
-            || {
-                client
-                    .post(token_url.clone())
-                    .header(header::CONTENT_TYPE, "application/json")
-                    .header(header::ACCEPT, "application/json")
-                    .body(token_body_string.clone())
-            },
-            &token_ctx,
+        // Step 3: request a one-time token from Okta.
+        let (one_time, relay_state) = request_okta_token(
+            client,
+            token_url,
+            idp_login,
+            config.password,
             &policy,
+            start,
         )
-        .await
-        .context(RetryExhaustedSnafu)?;
-
-        if token_status == StatusCode::UNAUTHORIZED || token_status == StatusCode::FORBIDDEN {
-            tracing::error!(
-                status = %token_status,
-                elapsed_ms = start.elapsed().as_millis(),
-                "Okta rejected credentials"
-            );
-            return BadCredentialsSnafu {
-                status: token_status,
-            }
-            .fail();
-        }
-        if !token_status.is_success() {
-            tracing::error!(
-                status = %token_status,
-                elapsed_ms = start.elapsed().as_millis(),
-                "Okta token request failed"
-            );
-            return HttpStatusSnafu {
-                context: "Okta token request",
-                status: token_status,
-                body: enrich_okta_error_body(&token_text),
-            }
-            .fail();
-        }
-
-        let token_resp: OktaTokenResponse =
-            serde_json::from_str(&token_text).context(JsonParseSnafu)?;
-        if token_resp.status.as_deref() == Some("MFA_REQUIRED") {
-            tracing::error!(
-                elapsed_ms = start.elapsed().as_millis(),
-                "Okta returned MFA_REQUIRED - unsupported in native Okta flow"
-            );
-            return MfaRequiredSnafu.fail();
-        }
-        let one_time = token_resp
-            .session_token
-            .or(token_resp.cookie_token)
-            .ok_or_else(|| NativeOktaError::MissingOneTimeToken {
-                location: Location::new(file!(), line!(), column!()),
-            })?;
-        // relayState is optional - Okta doesn't always return it
-        let relay_state = token_resp.relay_state.unwrap_or_default();
-        tracing::debug!(
-            attempt = saml_attempt,
-            "Step 3 complete: obtained one-time token from Okta"
-        );
+        .await?;
+        tracing::debug!(attempt = saml_attempt, "Obtained one-time token from Okta");
 
         // Step 4: fetch SAML HTML form.
-        // Use a single-attempt policy (no internal retries) so that transient errors
-        // (5xx, 429, transport failures) bubble up to this outer loop. This lets us
-        // re-mint the one-time token before retrying, matching the old driver's behavior
-        // where each retry gets a fresh token from Okta.
+        // Use a single-attempt policy so transient errors bubble up to this
+        // outer loop, allowing us to re-mint the one-time token before retrying.
         let mut single_attempt_policy = remaining_policy(base_policy, start, budget)?;
         single_attempt_policy.max_attempts = 1;
         let saml_ctx = HttpContext::new(Method::GET, "okta:saml");
@@ -444,11 +443,6 @@ pub(crate) async fn fetch_native_okta_saml(
 
         if !saml_status.is_success() {
             if saml_status == StatusCode::UNAUTHORIZED || saml_status == StatusCode::FORBIDDEN {
-                tracing::error!(
-                    status = %saml_status,
-                    elapsed_ms = start.elapsed().as_millis(),
-                    "Okta SAML fetch rejected (unauthorized)"
-                );
                 return HttpStatusSnafu {
                     context: "Okta SAML fetch (unauthorized)",
                     status: saml_status,
@@ -456,14 +450,7 @@ pub(crate) async fn fetch_native_okta_saml(
                 }
                 .fail();
             }
-            // Non-retryable non-success status (e.g., 400, 404). Retry with fresh token.
             if saml_attempt >= base_policy.max_attempts {
-                tracing::error!(
-                    status = %saml_status,
-                    attempt = saml_attempt,
-                    elapsed_ms = start.elapsed().as_millis(),
-                    "Okta SAML fetch failed after max attempts"
-                );
                 return HttpStatusSnafu {
                     context: "Okta SAML fetch",
                     status: saml_status,
@@ -479,14 +466,9 @@ pub(crate) async fn fetch_native_okta_saml(
             );
             continue;
         }
-        tracing::debug!(
-            attempt = saml_attempt,
-            "Step 4 complete: fetched SAML HTML form from Okta"
-        );
 
-        // Step 4b: destination/postback validation (unless disabled)
+        // Step 4b: destination/postback validation (unless disabled).
         let Some(postback) = extract_form_action(&saml_html) else {
-            // Some drivers treat "postback not found" as retryable by re-minting the token.
             if saml_attempt < base_policy.max_attempts {
                 tracing::warn!(
                     attempt = saml_attempt,
@@ -501,31 +483,9 @@ pub(crate) async fn fetch_native_okta_saml(
             );
             return MissingSamlPostbackSnafu.fail();
         };
-        tracing::debug!(postback = %postback, "Extracted SAML postback URL from HTML");
 
-        if !disable_saml_url_check {
-            let server = Url::parse(&login_parameters.server_url).context(UrlParseSnafu {
-                url: login_parameters.server_url.clone(),
-            })?;
-            let postback_url = Url::parse(&postback).context(UrlParseSnafu {
-                url: postback.clone(),
-            })?;
-            if !url_origin_matches(&server, &postback_url) {
-                tracing::error!(
-                    server = %login_parameters.server_url,
-                    postback = %postback,
-                    elapsed_ms = start.elapsed().as_millis(),
-                    "SAML postback destination does not match Snowflake server"
-                );
-                return SamlDestinationMismatchSnafu {
-                    server: login_parameters.server_url.clone(),
-                    postback,
-                }
-                .fail();
-            }
-            tracing::debug!("SAML postback destination validation passed");
-        } else {
-            tracing::debug!("SAML postback destination validation skipped (disabled)");
+        if !config.disable_saml_url_check {
+            validate_saml_postback(login_parameters, &postback, start)?;
         }
 
         tracing::info!(
@@ -534,6 +494,103 @@ pub(crate) async fn fetch_native_okta_saml(
         );
         return Ok(saml_html);
     }
+}
+
+/// Step 3: POST to Okta's `/api/v1/authn` to get a one-time session token.
+async fn request_okta_token(
+    client: &reqwest::Client,
+    token_url: &Url,
+    username: &str,
+    password: &str,
+    policy: &RetryPolicy,
+    start: Instant,
+) -> Result<(String, String), NativeOktaError> {
+    let token_ctx = HttpContext::new(Method::POST, "okta:token").allow_post_retry();
+    let token_body = serde_json::json!({
+        "username": username,
+        "password": password,
+    });
+    let token_body_string = token_body.to_string();
+    let (status, text) = request_text_with_retry(
+        || {
+            client
+                .post(token_url.clone())
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(header::ACCEPT, "application/json")
+                .body(token_body_string.clone())
+        },
+        &token_ctx,
+        policy,
+    )
+    .await
+    .context(RetryExhaustedSnafu)?;
+
+    if status == StatusCode::UNAUTHORIZED || status == StatusCode::FORBIDDEN {
+        tracing::error!(
+            status = %status,
+            elapsed_ms = start.elapsed().as_millis(),
+            "Okta rejected credentials"
+        );
+        return BadCredentialsSnafu { status }.fail();
+    }
+    if !status.is_success() {
+        tracing::error!(
+            status = %status,
+            elapsed_ms = start.elapsed().as_millis(),
+            "Okta token request failed"
+        );
+        return HttpStatusSnafu {
+            context: "Okta token request",
+            status,
+            body: enrich_okta_error_body(&text),
+        }
+        .fail();
+    }
+
+    let resp: OktaTokenResponse = serde_json::from_str(&text).context(JsonParseSnafu)?;
+    if resp.status.as_deref() == Some("MFA_REQUIRED") {
+        tracing::error!(
+            elapsed_ms = start.elapsed().as_millis(),
+            "Okta returned MFA_REQUIRED - unsupported in native Okta flow"
+        );
+        return MfaRequiredSnafu.fail();
+    }
+    let one_time = resp.session_token.or(resp.cookie_token).ok_or_else(|| {
+        NativeOktaError::MissingOneTimeToken {
+            location: Location::new(file!(), line!(), column!()),
+        }
+    })?;
+    let relay_state = resp.relay_state.unwrap_or_default();
+    Ok((one_time, relay_state))
+}
+
+/// Step 4b: verify the SAML postback URL matches the Snowflake server origin.
+fn validate_saml_postback(
+    login_parameters: &LoginParameters,
+    postback: &str,
+    start: Instant,
+) -> Result<(), NativeOktaError> {
+    let server = Url::parse(&login_parameters.server_url).context(UrlParseSnafu {
+        url: login_parameters.server_url.clone(),
+    })?;
+    let postback_url = Url::parse(postback).context(UrlParseSnafu {
+        url: postback.to_string(),
+    })?;
+    if !url_origin_matches(&server, &postback_url) {
+        tracing::error!(
+            server = %login_parameters.server_url,
+            postback = %postback,
+            elapsed_ms = start.elapsed().as_millis(),
+            "SAML postback destination does not match Snowflake server"
+        );
+        return SamlDestinationMismatchSnafu {
+            server: login_parameters.server_url.clone(),
+            postback: postback.to_string(),
+        }
+        .fail();
+    }
+    tracing::debug!("SAML postback destination validation passed");
+    Ok(())
 }
 
 #[cfg(test)]
