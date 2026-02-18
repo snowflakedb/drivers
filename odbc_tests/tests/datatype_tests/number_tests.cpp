@@ -20,7 +20,9 @@
 #include "Connection.hpp"
 #include "HandleWrapper.hpp"
 #include "Schema.hpp"
+#include "compatibility.hpp"
 #include "get_data.hpp"
+#include "get_diag_rec.hpp"
 #include "macros.hpp"
 #include "test_setup.hpp"
 
@@ -362,20 +364,20 @@ TEST_CASE("SQL_DECIMAL explicit conversions - integers truncate fractional part"
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
 
-  // 123.789 should truncate to 123 when fetched as integer types
-  auto stmt = conn.execute_fetch("SELECT 123.789::DECIMAL(10,3)");
+  const std::string query = "SELECT 123.789::DECIMAL(10,3)";
 
-  CHECK(get_data<SQL_C_LONG>(stmt, 1) == 123);
-  CHECK(get_data<SQL_C_SLONG>(stmt, 1) == 123);
-  CHECK(get_data<SQL_C_ULONG>(stmt, 1) == 123);
-  CHECK(get_data<SQL_C_SHORT>(stmt, 1) == 123);
-  CHECK(get_data<SQL_C_SSHORT>(stmt, 1) == 123);
-  CHECK(get_data<SQL_C_USHORT>(stmt, 1) == 123);
-  CHECK(get_data<SQL_C_TINYINT>(stmt, 1) == 123);
-  CHECK(get_data<SQL_C_STINYINT>(stmt, 1) == 123);
-  CHECK(get_data<SQL_C_UTINYINT>(stmt, 1) == 123);
-  CHECK(get_data<SQL_C_SBIGINT>(stmt, 1) == 123);
-  CHECK(get_data<SQL_C_UBIGINT>(stmt, 1) == 123);
+  // Each type needs its own query execution because SQLGetData consumes the column.
+  CHECK(get_data<SQL_C_LONG>(conn.execute_fetch(query), 1) == 123);
+  CHECK(get_data<SQL_C_SLONG>(conn.execute_fetch(query), 1) == 123);
+  CHECK(get_data<SQL_C_ULONG>(conn.execute_fetch(query), 1) == 123);
+  CHECK(get_data<SQL_C_SHORT>(conn.execute_fetch(query), 1) == 123);
+  CHECK(get_data<SQL_C_SSHORT>(conn.execute_fetch(query), 1) == 123);
+  CHECK(get_data<SQL_C_USHORT>(conn.execute_fetch(query), 1) == 123);
+  CHECK(get_data<SQL_C_TINYINT>(conn.execute_fetch(query), 1) == 123);
+  CHECK(get_data<SQL_C_STINYINT>(conn.execute_fetch(query), 1) == 123);
+  CHECK(get_data<SQL_C_UTINYINT>(conn.execute_fetch(query), 1) == 123);
+  CHECK(get_data<SQL_C_SBIGINT>(conn.execute_fetch(query), 1) == 123);
+  CHECK(get_data<SQL_C_UBIGINT>(conn.execute_fetch(query), 1) == 123);
 }
 
 TEST_CASE("SQL_DECIMAL explicit conversions - floating point preserves fractional part",
@@ -383,14 +385,14 @@ TEST_CASE("SQL_DECIMAL explicit conversions - floating point preserves fractiona
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
 
-  auto stmt = conn.execute_fetch("SELECT 123.789::DECIMAL(10,3)");
+  const std::string query = "SELECT 123.789::DECIMAL(10,3)";
 
-  // Floating point types should preserve the fractional part
-  float float_val = get_data<SQL_C_FLOAT>(stmt, 1);
+  // Each type needs its own query execution because SQLGetData consumes the column.
+  float float_val = get_data<SQL_C_FLOAT>(conn.execute_fetch(query), 1);
   CHECK(float_val > 123.78f);
   CHECK(float_val < 123.80f);
 
-  double double_val = get_data<SQL_C_DOUBLE>(stmt, 1);
+  double double_val = get_data<SQL_C_DOUBLE>(conn.execute_fetch(query), 1);
   CHECK(double_val > 123.788);
   CHECK(double_val < 123.790);
 }
@@ -512,19 +514,30 @@ TEST_CASE("NUMBER NULL with SQL_C_DEFAULT returns SQL_NULL_DATA", "[datatype][nu
 // SQL_C_BIT conversion tests
 // ============================================================================
 
-TEST_CASE("SQL_DECIMAL to SQL_C_BIT - nonzero becomes 1, zero becomes 0", "[datatype][number][bit]") {
+TEST_CASE("SQL_DECIMAL to SQL_C_BIT - 0 and 1", "[datatype][number][bit]") {
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
 
-  auto stmt = conn.execute_fetch(
-      "SELECT 0::NUMBER(10,0), 1::NUMBER(10,0), -1::NUMBER(10,0), "
-      "42::NUMBER(10,0), 0.00::NUMBER(10,2)");
+  auto stmt = conn.execute_fetch("SELECT 0::NUMBER(10,0), 1::NUMBER(10,0), 0.00::NUMBER(10,2)");
 
   CHECK(get_data<SQL_C_BIT>(stmt, 1) == 0);
   CHECK(get_data<SQL_C_BIT>(stmt, 2) == 1);
-  CHECK(get_data<SQL_C_BIT>(stmt, 3) == 1);
-  CHECK(get_data<SQL_C_BIT>(stmt, 4) == 1);
-  CHECK(get_data<SQL_C_BIT>(stmt, 5) == 0);
+  CHECK(get_data<SQL_C_BIT>(stmt, 3) == 0);
+}
+
+TEST_CASE("SQL_DECIMAL to SQL_C_BIT - negative value is out of range", "[datatype][number][bit]") {
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  auto stmt = conn.execute_fetch("SELECT -1::NUMBER(10,0)");
+
+  unsigned char bit_val = 0xFF;
+  SQLLEN indicator = 0;
+  SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_BIT, &bit_val, sizeof(bit_val), &indicator);
+  CHECK(ret == SQL_ERROR);
+  auto diags = get_diag_rec(stmt);
+  REQUIRE(!diags.empty());
+  CHECK(diags[0].sqlState == "22003");
 }
 
 // ============================================================================
@@ -602,16 +615,17 @@ TEST_CASE("SQL_DECIMAL SQL_C_CHAR with small buffer", "[datatype][number][char][
 
   auto stmt = conn.execute_fetch("SELECT 123456::NUMBER(10,0)");
 
-  // Buffer of size 4 should only get "123" + null terminator
   char small_buffer[4];
   SQLLEN indicator = 0;
   SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_CHAR, small_buffer, sizeof(small_buffer), &indicator);
-  // Should return SQL_SUCCESS_WITH_INFO indicating data truncation
-  CHECK(ret == SQL_SUCCESS_WITH_INFO);
-  // indicator should report the full length
-  CHECK(indicator == 6);
-  // Buffer should have first 3 chars + null terminator
-  CHECK(std::string(small_buffer) == "123");
+
+  OLD_DRIVER_ONLY("BD#9") { CHECK(ret == SQL_ERROR); }
+
+  NEW_DRIVER_ONLY("BD#9") {
+    CHECK(ret == SQL_SUCCESS_WITH_INFO);
+    CHECK(indicator == 6);
+    CHECK(std::string(small_buffer) == "123");
+  }
 }
 
 TEST_CASE("SQL_DECIMAL SQL_C_CHAR with exact buffer", "[datatype][number][char][buffer]") {

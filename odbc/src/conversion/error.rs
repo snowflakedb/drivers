@@ -125,4 +125,19 @@ pub enum ConversionError {
         #[snafu(implicit)]
         location: Location,
     },
+
+    /// Numeric value is out of the valid range for the target ODBC C type.
+    #[snafu(display("Numeric value out of range for target type '{target_type:?}'"))]
+    NumericValueOutOfRange {
+        target_type: CDataType,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    /// String data was right-truncated because the buffer was too small.
+    #[snafu(display("String data right truncated"))]
+    DataTruncated {
+        #[snafu(implicit)]
+        location: Location,
+    },
 }

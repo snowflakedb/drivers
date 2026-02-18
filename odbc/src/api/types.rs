@@ -2,6 +2,7 @@ use crate::api::{OdbcError, diagnostic::DiagnosticInfo};
 use crate::cdata_types::CDataType;
 use crate::conversion::Binding;
 use crate::conversion::warning::Warnings;
+use crate::conversion::ConversionError;
 use arrow::{array::RecordBatch, ffi_stream::ArrowArrayStreamReader};
 use odbc_sys as sql;
 use sf_core::protobuf_gen::database_driver_v1::{
@@ -228,6 +229,11 @@ impl ToSqlReturn for OdbcResult<()> {
             }
             Err(OdbcError::NoMoreData { .. }) => sql::SqlReturn::NO_DATA,
             Err(OdbcError::InvalidHandle { .. }) => sql::SqlReturn::INVALID_HANDLE,
+            Err(OdbcError::ArrowRead { ref source, .. })
+                if matches!(source.as_ref(), ConversionError::DataTruncated { .. }) =>
+            {
+                sql::SqlReturn::SUCCESS_WITH_INFO
+            }
             Err(_) => sql::SqlReturn::ERROR,
         }
     }

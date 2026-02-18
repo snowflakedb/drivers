@@ -509,6 +509,8 @@ impl FromStr for SqlState {
             "08S01" => SqlState::CommunicationLinkFailure,
             "09000" => SqlState::TriggeredActionException,
             "0A000" => SqlState::FeatureNotSupported,
+            "22003" => SqlState::NumericValueOutOfRange,
+            "22018" => SqlState::InvalidCharacterValueForCast,
             "25000" => SqlState::InvalidTransactionState,
             "25S01" => SqlState::TransactionStateUnknown,
             "25S02" => SqlState::TransactionIsStillActive,

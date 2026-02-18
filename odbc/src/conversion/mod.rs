@@ -39,7 +39,7 @@ struct GenericConverter<'a, ArrowArrayType, T> {
     arrow_array: &'a ArrowArrayType,
 }
 
-impl<'a, ArrowArrayType, T: SnowflakeType + WriteODBCType + ReadArrowType<ArrowArrayType>>
+impl<'a, ArrowArrayType: Array, T: SnowflakeType + WriteODBCType + ReadArrowType<ArrowArrayType>>
     Converter<'a> for GenericConverter<'a, ArrowArrayType, T>
 {
     fn convert_arrow_value(
