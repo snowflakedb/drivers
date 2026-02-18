@@ -1324,7 +1324,12 @@ tests:
   - test_name: testParseAccountName
     ud_tests:
     - jdbc/src/test/java/net/snowflake/client/internal/api/implementation/connection/ConnectionOptionsResolverTest.java#buildConnectionOptionsUsesParsedParamsAndDerivesAccount
-    - jdbc/src/test/java/net/snowflake/client/internal/api/implementation/connection/ConnectionOptionsResolverTest.java#parseConnectStringPrefersPropertiesOverUrlOnConflicts
+    - jdbc/src/test/java/net/snowflake/client/internal/api/implementation/connection/ConnectionOptionsResolverTest.java#parseConnectStringKeepsSchemeWhenSslOnOverridesUrlSslOffForJdbcCompatibility
+    - jdbc/src/test/java/net/snowflake/client/internal/api/implementation/connection/ConnectionOptionsResolverTest.java#parseConnectionStringDecodesEscapedValuesAndForcesHttpWhenSslOff
+    - jdbc/src/test/java/net/snowflake/client/internal/api/implementation/connection/ConnectionOptionsResolverTest.java#parseConnectionStringInterpretsBooleanSslByValue
+    - jdbc/src/test/java/net/snowflake/client/internal/api/implementation/connection/ConnectionOptionsResolverTest.java#parseConnectionStringRetainsValueSuffixAndKeepsLegacyInvalidPairBehavior
+    - jdbc/src/test/java/net/snowflake/client/internal/api/implementation/connection/ConnectionOptionsResolverTest.java#resolveDoesNotOverrideTypedValuesWhenKeyAlreadyExists
+    - jdbc/src/test/java/net/snowflake/client/internal/api/implementation/connection/ConnectionOptionsResolverTest.java#resolveSkipsBlankQueryParameterKeys
   - test_name: testParseWithIllegalUriCharacters
     ud_tests:
     - jdbc/src/test/java/net/snowflake/client/api/driver/SnowflakeDriverTest.java#testConnectRejectsMalformedSnowflakeUrl
@@ -2531,8 +2536,10 @@ tests:
   jdbc.SnowflakeConnectionV1Test.java:
   - test_name: testMergeProperties
     ud_tests:
-    - jdbc/src/test/java/net/snowflake/client/internal/api/implementation/connection/ConnectionOptionsResolverTest.java#parseConnectStringPrefersPropertiesOverUrlOnConflicts
+    - jdbc/src/test/java/net/snowflake/client/internal/api/implementation/connection/ConnectionOptionsResolverTest.java#parseConnectStringKeepsSchemeWhenSslOnOverridesUrlSslOffForJdbcCompatibility
     - jdbc/src/test/java/net/snowflake/client/internal/api/implementation/connection/ConnectionOptionsResolverTest.java#buildConnectionOptionsUsesParsedParamsAndDerivesAccount
+    - jdbc/src/test/java/net/snowflake/client/internal/api/implementation/connection/ConnectionOptionsResolverTest.java#resolveDoesNotOverrideTypedValuesWhenKeyAlreadyExists
+    - jdbc/src/test/java/net/snowflake/client/internal/api/implementation/connection/ConnectionOptionsResolverTest.java#resolveSkipsBlankQueryParameterKeys
   jdbc.SnowflakeDriverIT.java:
   - test_name: testAutocommit
     ud_tests: []

@@ -23,7 +23,6 @@ public class SnowflakeDriver implements Driver {
   private static final String DRIVER_VERSION = "4.0.0";
   private static final int MAJOR_VERSION = 4;
   private static final int MINOR_VERSION = 0;
-  public static final Properties EMPTY_PROPERTIES = new Properties();
 
   public static void empty() {}
 
@@ -41,7 +40,7 @@ public class SnowflakeDriver implements Driver {
 
   @Override
   public Connection connect(String url, Properties info) throws SQLException {
-    if (ConnectionString.hasSupportedPrefix(url)) {
+    if (ConnectionString.hasUnsupportedPrefix(url)) {
       return null;
     }
     ConnectionString parsed = ConnectionString.parse(url, info);
@@ -53,7 +52,7 @@ public class SnowflakeDriver implements Driver {
 
   @Override
   public boolean acceptsURL(String url) throws SQLException {
-    return ConnectionString.parse(url, EMPTY_PROPERTIES).isValid();
+    return ConnectionString.parse(url).isValid();
   }
 
   @Override

@@ -34,12 +34,16 @@ public class ConnectionString implements Serializable {
     this.account = account;
   }
 
-  public static boolean hasSupportedPrefix(String url) {
+  public static boolean hasUnsupportedPrefix(String url) {
     return url == null || !url.startsWith(PREFIX);
   }
 
+  public static ConnectionString parse(String url) {
+    return parse(url, new Properties());
+  }
+
   public static ConnectionString parse(String url, Properties info) {
-    if (hasSupportedPrefix(url)) {
+    if (hasUnsupportedPrefix(url)) {
       return INVALID_CONNECT_STRING;
     }
 
@@ -77,7 +81,7 @@ public class ConnectionString implements Serializable {
   }
 
   public Map<String, Object> getParameters() {
-    return parameters;
+    return Collections.unmodifiableMap(parameters);
   }
 
   public String getAccount() {
@@ -92,9 +96,9 @@ public class ConnectionString implements Serializable {
     return value == null ? null : value.toString();
   }
 
-  private static boolean getBooleanTrueByDefault(Object value) {
+  private static boolean isSslDisabled(Object value) {
     if (value instanceof Boolean) {
-      return (Boolean) value;
+      return !((Boolean) value);
     }
     String vs = String.valueOf(value);
     return "off".equalsIgnoreCase(vs) || "false".equalsIgnoreCase(vs);
@@ -164,8 +168,8 @@ public class ConnectionString implements Serializable {
       }
       String[] params = queryData.split("&");
       for (String param : params) {
-        String[] keyVals = param.split("=");
-        if (keyVals.length != 2) {
+        String[] keyVals = param.split("=", 2);
+        if (keyVals.length != 2 || keyVals[1].isEmpty()) {
           continue;
         }
         String key;
@@ -195,7 +199,7 @@ public class ConnectionString implements Serializable {
       for (Map.Entry<Object, Object> entry : info.entrySet()) {
         String key = entry.getKey().toString();
         Object value = entry.getValue();
-        if ("ssl".equalsIgnoreCase(key) && getBooleanTrueByDefault(value)) {
+        if ("ssl".equalsIgnoreCase(key) && isSslDisabled(value)) {
           scheme = "http";
         } else if ("account".equalsIgnoreCase(key) && value != null) {
           account = value.toString();
@@ -241,12 +245,12 @@ public class ConnectionString implements Serializable {
     }
 
     private void applyParameter(String key, String value) {
-      if ("ssl".equalsIgnoreCase(key) && getBooleanTrueByDefault(value)) {
+      if ("ssl".equalsIgnoreCase(key) && isSslDisabled(value)) {
         scheme = "http";
       } else if ("account".equalsIgnoreCase(key)) {
         account = value;
       }
-      parameters.put(key.toUpperCase(), value);
+      parameters.put(key.toUpperCase(Locale.US), value);
     }
   }
 }

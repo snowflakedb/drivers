@@ -1,11 +1,14 @@
 package net.snowflake.client.internal.api.implementation.connection;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.Map;
 import java.util.Properties;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 
 public class ConnectionOptionsResolverTest {
 
@@ -23,6 +26,31 @@ public class ConnectionOptionsResolverTest {
     assertEquals("globalaccount", resolved.get("account"));
     assertEquals("TEST_WH", resolved.get("warehouse"));
     assertEquals("PUBLIC", resolved.get("schema"));
+  }
+
+  @Test
+  public void resolveDoesNotOverrideTypedValuesWhenKeyAlreadyExists() {
+    Properties input = new Properties();
+    input.put("port", 9999);
+    input.put("ssl", Boolean.TRUE);
+
+    Properties resolved =
+        ConnectionOptionsResolver.resolve(
+            "jdbc:snowflake://typed.snowflakecomputing.com:443?ssl=off", input);
+
+    assertEquals(9999, resolved.get("port"));
+    assertEquals(Boolean.TRUE, resolved.get("ssl"));
+  }
+
+  @Test
+  public void resolveSkipsBlankQueryParameterKeys() {
+    Properties resolved =
+        ConnectionOptionsResolver.resolve(
+            "jdbc:snowflake://testaccount.snowflakecomputing.com?=blankkey&warehouse=WH",
+            new Properties());
+
+    assertFalse(resolved.containsKey(""));
+    assertEquals("WH", resolved.get("warehouse"));
   }
 
   @Test
@@ -45,7 +73,7 @@ public class ConnectionOptionsResolverTest {
   }
 
   @Test
-  public void parseConnectStringPrefersPropertiesOverUrlOnConflicts() {
+  public void parseConnectStringKeepsSchemeWhenSslOnOverridesUrlSslOffForJdbcCompatibility() {
     Properties input = new Properties();
     input.setProperty("warehouse", "FROM_PROPERTIES");
     input.setProperty("ssl", "on");
@@ -62,5 +90,34 @@ public class ConnectionOptionsResolverTest {
     assertEquals("FROM_PROPERTIES", parsed.getParameters().get("WAREHOUSE"));
     assertEquals("on", parsed.getParameters().get("SSL"));
     assertEquals("from_properties_account", parsed.getParameters().get("ACCOUNT"));
+  }
+
+  @ParameterizedTest
+  @CsvSource({"false,http", "true,https"})
+  public void parseConnectionStringInterpretsBooleanSslByValue(
+      boolean sslValue, String expectedScheme) {
+    Properties input = new Properties();
+    input.put("ssl", sslValue);
+
+    ConnectionString parsed =
+        ConnectionString.parse("jdbc:snowflake://testaccount.snowflakecomputing.com", input);
+
+    assertTrue(parsed.isValid());
+    assertEquals(expectedScheme, parsed.getScheme());
+    assertEquals(sslValue, parsed.getParameters().get("SSL"));
+  }
+
+  @Test
+  public void parseConnectionStringRetainsValueSuffixAndKeepsLegacyInvalidPairBehavior() {
+    ConnectionString parsed =
+        ConnectionString.parse(
+            "jdbc:snowflake://testaccount.snowflakecomputing.com?token=abc==&empty=&novalue&=blankkey",
+            new Properties());
+
+    assertTrue(parsed.isValid());
+    assertEquals("abc==", parsed.getParameters().get("TOKEN"));
+    assertFalse(parsed.getParameters().containsKey("EMPTY"));
+    assertFalse(parsed.getParameters().containsKey("NOVALUE"));
+    assertEquals("blankkey", parsed.getParameters().get(""));
   }
 }

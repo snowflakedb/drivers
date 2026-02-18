@@ -38,6 +38,9 @@ final class ConnectionOptionsResolver {
 
     for (Map.Entry<String, Object> entry : parsed.getParameters().entrySet()) {
       String normalizedKey = entry.getKey().toLowerCase(Locale.ROOT);
+      if (normalizedKey.trim().isEmpty()) {
+        continue;
+      }
       Object value = entry.getValue();
       if (value == null) {
         continue;
@@ -47,7 +50,7 @@ final class ConnectionOptionsResolver {
   }
 
   private static void setIfAbsent(Properties resolved, String key, String value) {
-    if (value != null && !value.isEmpty() && resolved.getProperty(key) == null) {
+    if (value != null && !value.isEmpty() && !resolved.containsKey(key)) {
       resolved.setProperty(key, value);
     }
   }
