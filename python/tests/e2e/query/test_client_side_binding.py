@@ -383,3 +383,154 @@ class TestFormatBinding:
         cursor.execute("SELECT %s", ("it's a 'test'",))
         result = cursor.fetchone()
         assert result == ("it's a 'test'",)
+
+
+@with_paramstyle("pyformat")
+class TestClientSideBindingErrors:
+    """Tests for error handling in client-side binding."""
+
+    def test_should_raise_error_for_too_many_positional_parameters(self, cursor):
+        """Test that too many positional parameters raises TypeError."""
+        with pytest.raises(TypeError, match="not all arguments converted"):
+            cursor.execute("SELECT %s, %s", (1, 2, 3))
+
+    def test_should_raise_error_for_not_enough_positional_parameters(self, cursor):
+        """Test that not enough positional parameters raises TypeError."""
+        with pytest.raises(TypeError, match="not enough arguments"):
+            cursor.execute("SELECT %s, %s, %s", (1, 2))
+
+    def test_should_raise_error_for_missing_named_parameter(self, cursor):
+        """Test that missing named parameter raises KeyError."""
+        with pytest.raises(KeyError):
+            cursor.execute("SELECT %(name)s, %(age)s", {"name": "Alice"})
+
+    def test_should_ignore_extra_named_parameters(self, cursor):
+        """Test that extra named parameters are silently ignored (Python behavior)."""
+        cursor.execute("SELECT %(name)s", {"name": "Alice", "extra": "ignored"})
+        result = cursor.fetchone()
+        assert result == ("Alice",)
+
+
+class TestInvalidParamstyle:
+    """Tests for invalid paramstyle handling."""
+
+    def test_should_raise_error_for_invalid_paramstyle(self, connection_factory):
+        """Test that invalid paramstyle raises ProgrammingError."""
+        from snowflake.connector import ProgrammingError
+
+        with pytest.raises(ProgrammingError, match="Invalid paramstyle"):
+            connection_factory(paramstyle="invalid")
+
+
+@with_paramstyle("pyformat")
+class TestDecimalBinding:
+    """Tests for Decimal type binding."""
+
+    def test_should_bind_decimal_value(self, cursor):
+        """Test that Decimal values are properly handled."""
+        from decimal import Decimal
+
+        cursor.execute("SELECT %s", (Decimal("123.456"),))
+        result = cursor.fetchone()
+        # Snowflake returns Decimal for numeric types
+        assert abs(float(result[0]) - 123.456) < 0.001
+
+    def test_should_bind_decimal_with_high_precision(self, cursor):
+        """Test Decimal with high precision."""
+        from decimal import Decimal
+
+        value = Decimal("12345678901234567890.123456789012345678")
+        cursor.execute("SELECT %s::NUMBER(38,18)", (value,))
+        result = cursor.fetchone()
+        # Compare as strings to preserve precision
+        assert str(result[0]) == str(value)
+
+
+@with_paramstyle("pyformat")
+class TestLiteralPercentInQuery:
+    """Tests for queries containing literal percent signs."""
+
+    def test_should_handle_like_with_percent_wildcard(self, cursor, tmp_schema):
+        """Test LIKE queries with %% escaped percent signs."""
+        table_name = f"{tmp_schema}.test_like_percent"
+        cursor.execute(f"CREATE TABLE {table_name} (name VARCHAR)")
+        cursor.execute(f"INSERT INTO {table_name} VALUES (%s)", ("Alice",))
+        cursor.execute(f"INSERT INTO {table_name} VALUES (%s)", ("Bob",))
+        cursor.execute(f"INSERT INTO {table_name} VALUES (%s)", ("Charlie",))
+
+        # Use %% to escape literal percent in LIKE pattern
+        cursor.execute(f"SELECT name FROM {table_name} WHERE name LIKE '%%li%%' ORDER BY name")
+        result = cursor.fetchall()
+
+        assert len(result) == 2
+        assert result[0][0] == "Alice"
+        assert result[1][0] == "Charlie"
+
+    def test_should_handle_like_with_param_and_percent(self, cursor, tmp_schema):
+        """Test LIKE with both parameter and literal percent."""
+        table_name = f"{tmp_schema}.test_like_mixed"
+        cursor.execute(f"CREATE TABLE {table_name} (name VARCHAR)")
+        cursor.execute(f"INSERT INTO {table_name} VALUES (%s)", ("Alice",))
+        cursor.execute(f"INSERT INTO {table_name} VALUES (%s)", ("Bob",))
+
+        # Mix parameter binding with escaped percent
+        cursor.execute(
+            f"SELECT name FROM {table_name} WHERE name LIKE %s",
+            ("%li%",),  # The percent is part of the parameter value
+        )
+        result = cursor.fetchall()
+        assert len(result) == 1
+        assert result[0][0] == "Alice"
+
+
+@with_paramstyle("pyformat")
+class TestListBindingWithSpecialChars:
+    """Tests for list binding with special characters (escaping)."""
+
+    def test_should_bind_list_with_special_chars_in_strings(self, cursor, tmp_schema):
+        """Test list binding where strings contain special characters."""
+        table_name = f"{tmp_schema}.test_list_special"
+        cursor.execute(f"CREATE TABLE {table_name} (name VARCHAR)")
+        cursor.execute(f"INSERT INTO {table_name} VALUES (%s)", ("it's Alice",))
+        cursor.execute(f"INSERT INTO {table_name} VALUES (%s)", ("Bob\\n",))
+        cursor.execute(f"INSERT INTO {table_name} VALUES (%s)", ("Charlie",))
+
+        # Query with list containing special characters
+        cursor.execute(
+            f"SELECT name FROM {table_name} WHERE name IN (%s) ORDER BY name",
+            (["it's Alice", "Bob\\n"],),
+        )
+        result = cursor.fetchall()
+
+        assert len(result) == 2
+        assert result[0][0] == "Bob\\n"
+        assert result[1][0] == "it's Alice"
+
+
+@with_paramstyle("format")
+class TestFormatParamstyleErrors:
+    """Tests for error handling with format paramstyle."""
+
+    @pytest.mark.skip_reference(reason="Universal driver has stricter format paramstyle validation")
+    def test_should_reject_dict_params_with_format_paramstyle(self, cursor):
+        """Test that dict parameters raise ProgrammingError with format paramstyle."""
+        from snowflake.connector import ProgrammingError
+
+        with pytest.raises(ProgrammingError, match="Dict parameters not supported"):
+            cursor.execute("SELECT %(name)s", {"name": "Alice"})
+
+
+@with_paramstyle("pyformat")
+class TestExecutemanyRowcount:
+    """Tests for executemany rowcount accumulation."""
+
+    def test_should_accumulate_rowcount_in_executemany(self, cursor, tmp_schema):
+        """Test that executemany accumulates rowcount across iterations."""
+        table_name = f"{tmp_schema}.test_executemany_rowcount"
+        cursor.execute(f"CREATE TABLE {table_name} (id NUMBER, name VARCHAR)")
+
+        rows = [(1, "Alice"), (2, "Bob"), (3, "Charlie")]
+        cursor.executemany(f"INSERT INTO {table_name} VALUES (%s, %s)", rows)
+
+        # Rowcount should be total rows inserted (3), not just the last one (1)
+        assert cursor.rowcount == 3

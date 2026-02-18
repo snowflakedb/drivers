@@ -19,7 +19,11 @@ from typing import TYPE_CHECKING, Any, NamedTuple
 
 from ._internal.arrow_context import ArrowConverterContext
 from ._internal.arrow_stream_iterator import ArrowStreamIterator
-from ._internal.binding_serializer import BindingSerializer, ClientSideBindingConverter
+from ._internal.binding_serializer import (
+    BindingSerializer,
+    ClientSideBindingConverter,
+    ParamStyle,
+)
 from ._internal.protobuf_gen.database_driver_v1_pb2 import (
     BinaryDataPtr,
     ExecuteResult,
@@ -230,6 +234,46 @@ class SnowflakeCursorBase(abc.ABC):
         )
         return QueryBindings(json=binary_data_ptr)
 
+    def _prepare_query(
+        self, operation: str, parameters: Sequence[Any] | dict[str, Any] | None
+    ) -> tuple[str, QueryBindings | None]:
+        """Prepare query and bindings based on paramstyle.
+
+        Args:
+            operation: SQL statement
+            parameters: Parameters to bind (sequence or dict)
+
+        Returns:
+            Tuple of (query string, QueryBindings or None)
+
+        Raises:
+            ProgrammingError: If dict parameters used with server-side binding
+        """
+        if parameters is None:
+            return operation, None
+
+        paramstyle = self.connection.paramstyle  # Always returns ParamStyle enum
+
+        if paramstyle.is_client_side():
+            # format paramstyle only supports positional params (%s), not named params
+            if paramstyle == ParamStyle.FORMAT and isinstance(parameters, dict):
+                raise ProgrammingError(
+                    "Dict parameters not supported with format paramstyle. "
+                    "Use pyformat paramstyle for named parameters, or use a sequence."
+                )
+            # Client-side binding: interpolate parameters into SQL string
+            query = ClientSideBindingConverter.interpolate_query(operation, parameters)
+            return query, None
+        else:
+            # Server-side binding: qmark or numeric
+            if isinstance(parameters, dict):
+                raise ProgrammingError(
+                    "Named parameters (dict) not supported with qmark/numeric paramstyle. "
+                    "Use pyformat paramstyle for named parameters."
+                )
+            bindings = self._build_query_bindings(parameters)
+            return operation, bindings
+
     def execute(self, operation: str, parameters: Sequence[Any] | dict[str, Any] | None = None) -> SnowflakeCursorBase:
         """
         Execute a database operation (query or command).
@@ -241,27 +285,7 @@ class SnowflakeCursorBase(abc.ABC):
                 For pyformat paramstyle: sequence (%s) or dict (%(name)s)
                 For format paramstyle: sequence (%s)
         """
-        # Determine the query and bindings based on paramstyle
-        query = operation
-        bindings = None
-
-        if parameters is not None:
-            paramstyle = self.connection._paramstyle
-
-            if paramstyle is None:
-                raise ProgrammingError(
-                    "Binding parameters requires paramstyle to be set. "
-                    "Pass paramstyle='qmark', 'numeric', 'pyformat', or 'format' to connect()."
-                )
-
-            if paramstyle in ("pyformat", "format"):
-                # Client-side binding: interpolate parameters into SQL
-                query = ClientSideBindingConverter.interpolate_query(operation, parameters)
-                # No bindings sent to server - parameters are in the SQL string
-            elif not isinstance(parameters, dict):
-                # Server-side binding: qmark or numeric
-                bindings = self._build_query_bindings(parameters)
-            # If parameters is a dict with server-side paramstyle, ignore it (no named binding support)
+        query, bindings = self._prepare_query(operation, parameters)
 
         stmt_handle = self.connection.db_api.statement_new(
             StatementNewRequest(conn_handle=self.connection.conn_handle)
@@ -309,15 +333,24 @@ class SnowflakeCursorBase(abc.ABC):
         if not seq_of_parameters:
             return  # Empty sequence - no-op per PEP 249
 
-        paramstyle = self.connection._paramstyle
+        paramstyle = self.connection.paramstyle
         first_params = seq_of_parameters[0]
 
         # Execute individually for:
         # - Client-side binding (pyformat/format)
         # - Dict parameters (server-side doesn't support named binding)
-        if paramstyle in ("pyformat", "format") or isinstance(first_params, dict):
+        if paramstyle.is_client_side() or isinstance(first_params, dict):
+            total_rowcount = 0
+            unknown_rowcount = False
             for params in seq_of_parameters:
                 self.execute(operation, params)
+                rc = self._rowcount
+                if rc is None or rc == -1:
+                    unknown_rowcount = True
+                elif not unknown_rowcount:
+                    total_rowcount += rc
+            # Per PEP 249, -1 indicates that the number of rows is unknown
+            self._rowcount = -1 if unknown_rowcount else total_rowcount
             return
 
         # Server-side binding: validate and use array binding

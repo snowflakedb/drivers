@@ -39,10 +39,10 @@ from .types import (
 from .version import __version__
 
 
-# Module Interface Constants
+# PEP 249 Module Interface Constants
 apilevel = "2.0"
 threadsafety = 1  # Threads may share the module, but not connections
-paramstyle = "format"  # Python extended format codes, e.g. ...WHERE name=%s
+paramstyle = "pyformat"  # Default: %(name)s and %s placeholders (client-side interpolation)
 
 register_default_logger_callback()
 

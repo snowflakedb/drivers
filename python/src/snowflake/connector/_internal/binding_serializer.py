@@ -16,15 +16,62 @@ from __future__ import annotations
 
 import binascii
 import json
-import re
 import time as time_module
 
 from collections.abc import Mapping, Sequence
 from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
+from enum import Enum
 from typing import Any
 
+from ..errors import ProgrammingError
 from .type_codes import PYTHON_TO_SNOWFLAKE_TYPE
+
+
+class ParamStyle(Enum):
+    """PEP 249 parameter binding style enumeration.
+
+    Supports parsing from string and provides methods to determine
+    whether the style requires client-side or server-side binding.
+    """
+
+    QMARK = "qmark"  # Server-side: ? placeholders
+    NUMERIC = "numeric"  # Server-side: :1, :2 placeholders
+    FORMAT = "format"  # Client-side: %s interpolation
+    PYFORMAT = "pyformat"  # Client-side: %(name)s interpolation
+
+    def __str__(self) -> str:
+        return self.value
+
+    @classmethod
+    def from_string(cls, value: str) -> "ParamStyle":
+        """Parse ParamStyle from string value, with normalization.
+
+        Args:
+            value: Paramstyle string (case-insensitive, whitespace-trimmed)
+
+        Returns:
+            Matching ParamStyle enum value
+
+        Raises:
+            ProgrammingError: If value is not a valid paramstyle
+        """
+        normalized = value.strip().lower()
+        for style in cls:
+            if style.value == normalized:
+                return style
+        available = [s.value for s in cls]
+        raise ProgrammingError(
+            f"Invalid paramstyle: {value!r}. Supported: {', '.join(sorted(available))}"
+        )
+
+    def is_client_side(self) -> bool:
+        """Check if this style uses client-side SQL interpolation."""
+        return self in (ParamStyle.FORMAT, ParamStyle.PYFORMAT)
+
+    def is_server_side(self) -> bool:
+        """Check if this style uses server-side binding."""
+        return self in (ParamStyle.QMARK, ParamStyle.NUMERIC)
 
 
 # Numeric types for IS_NUMERIC check (mirrors reference connector's compat.py)
@@ -307,13 +354,14 @@ class ClientSideBindingConverter:
         """
         if isinstance(value, list):
             # Quote each item in the list and join with commas
-            return ",".join(cls.quote(item) for item in value)
+            # Apply escape() to each item since to_snowflake() already converted them
+            return ",".join(cls.quote(cls.escape(item)) for item in value)
         if value is None:
             return "NULL"
         elif isinstance(value, bool):
             return "TRUE" if value else "FALSE"
         elif _is_numeric(value):
-            return str(repr(value))
+            return str(value)
         elif _is_binary(value):
             # Binary literal syntax: X'hex_value'
             return "X'{}'".format(binascii.hexlify(value).decode("ascii"))

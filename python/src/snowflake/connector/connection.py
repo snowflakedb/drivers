@@ -23,43 +23,9 @@ from snowflake.connector._internal.protobuf_gen.database_driver_v1_services impo
 
 from ._internal._private_key_helper import normalize_private_key
 from ._internal.api_client.client_api import database_driver_client
+from ._internal.binding_serializer import ParamStyle
 from .cursor import SnowflakeCursor, SnowflakeCursorBase
-from .errors import InterfaceError, NotSupportedError, ProgrammingError
-
-
-# Paramstyles that enable server-side binding in the universal driver.
-_SERVER_SIDE_PARAMSTYLES = {"qmark", "numeric"}
-
-# Paramstyles that enable client-side binding (SQL interpolation).
-_CLIENT_SIDE_PARAMSTYLES = {"format", "pyformat"}
-
-# All supported paramstyles
-_SUPPORTED_PARAMSTYLES = _SERVER_SIDE_PARAMSTYLES | _CLIENT_SIDE_PARAMSTYLES
-
-
-def _resolve_paramstyle(value: str | None) -> str | None:
-    """Validate a *paramstyle* value.
-
-    Returns the canonical lower-case paramstyle string when it names a
-    supported binding style, or ``None`` when no paramstyle is specified.
-    Raises :class:`ProgrammingError` for invalid paramstyle values.
-    """
-    if value is None:
-        return None
-
-    normalised = value.strip().lower()
-
-    if normalised in _SUPPORTED_PARAMSTYLES:
-        return normalised
-
-    raise ProgrammingError(
-        f"Invalid paramstyle is specified: {value!r}. Supported values: {', '.join(sorted(_SUPPORTED_PARAMSTYLES))}"
-    )
-
-
-def _is_client_side_paramstyle(paramstyle: str | None) -> bool:
-    """Check if the paramstyle requires client-side binding."""
-    return paramstyle in _CLIENT_SIDE_PARAMSTYLES
+from .errors import InterfaceError, NotSupportedError
 
 
 class Connection:
@@ -71,8 +37,6 @@ class Connection:
 
         Args:
             paramstyle: Binding style – ``"qmark"``, ``"numeric"``, ``"pyformat"``, or ``"format"``.
-                        ``qmark``/``numeric`` use server-side binding with ? or :N placeholders.
-                        ``pyformat``/``format`` use client-side interpolation with %s or %(name)s.
             database: Database name
             user: Username
             password: Password
@@ -82,7 +46,9 @@ class Connection:
             session_parameters: Optional dict of session parameters to set at connection time
             **kwargs: Additional connection parameters
         """
-        self._paramstyle = _resolve_paramstyle(paramstyle)
+        # paramstyle
+        from snowflake.connector import paramstyle as default_paramstyle
+        self._paramstyle = ParamStyle.from_string(paramstyle or default_paramstyle)
 
         self.db_api = database_driver_client()
         self.db_handle = self.db_api.database_new(DatabaseNewRequest()).db_handle
@@ -288,3 +254,12 @@ class Connection:
         request = ConnectionGetParameterRequest(conn_handle=self.conn_handle, key=name)
         response = self.db_api.connection_get_parameter(request)
         return response.value if response.value else None
+
+    @property
+    def paramstyle(self) -> ParamStyle:
+        """Get the paramstyle for this connection.
+
+        Returns:
+            ParamStyle: The paramstyle enum value
+        """
+        return self._paramstyle
