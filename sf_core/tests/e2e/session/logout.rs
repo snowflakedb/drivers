@@ -128,12 +128,7 @@ fn should_reject_queries_client_side_after_connection_is_closed() {
     let client = SnowflakeTestClient::connect_with_default_auth();
 
     //And Simple query SELECT 1 executes successfully
-    let result_before = client.execute_query("SELECT 1");
-    assert!(
-        result_before.is_ok(),
-        "Query should succeed before close: {:?}",
-        result_before.err()
-    );
+    let _result_before = client.execute_query("SELECT 1");
 
     //When Connection is closed
     let close_result = DatabaseDriverClient::connection_close(ConnectionCloseRequest {

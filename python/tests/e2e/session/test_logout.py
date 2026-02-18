@@ -280,8 +280,8 @@ class TestLogoutResourceCleanup:
         # When Connection is closed
         conn.close()
 
-        # Then Session token is cleared
-        # And Master token is cleared
+        # Then Session token in Connection.tokens is null
+        # And Master token in Connection.tokens is null
         assert conn.is_closed(), f"Close should succeed with server_session_keep_alive={keep_alive}"
 
     # TODO: Uncomment when scenario gets language-level tag
@@ -592,46 +592,16 @@ class TestLogoutEdgeCases:
 class TestLogoutPythonPhase2:
     """Python-specific Phase 2 behavior tests from python/session/logout.feature."""
 
-    def test_should_skip_logout_when_server_session_keep_alive_is_none_and_auto_detection_true_and_async_queries_found(
-        self, connection_factory
-    ):
-        # Given Snowflake Python client is created with server_session_keep_alive set to none
-        # And enable_server_session_keep_alive_auto_detection is set to true
-        conn = connection_factory(server_session_keep_alive=None, enable_server_session_keep_alive_auto_detection=True)
-
-        # And Long-running async query is executed using SYSTEM$SLEEP(300)
-
-        # TODO: SNOW-2314152 - Execute async query when API available
-
-        # When Client closes connection
-        conn.close()
-
-        # Then Auto-detection finds running query
-        # And No logout request is sent
-        # And Connection close metrics are recorded in telemetry
-        # And No deprecation warning is emitted
-        assert conn.is_closed()
-
-        # And Test cleans up the running query after assertions complete
-
-        # TODO: SNOW-2314152 - Cancel SYSTEM$SLEEP query
-
-    def test_should_send_logout_when_server_session_keep_alive_is_none_and_auto_detection_true_and_no_async_queries_found(  # noqa: E501
-        self, connection_factory
-    ):
-        # Given Snowflake Python client is created with server_session_keep_alive set to none
-        # And enable_server_session_keep_alive_auto_detection is set to true
-        conn = connection_factory(server_session_keep_alive=None, enable_server_session_keep_alive_auto_detection=True)
-
-        # And No async queries are running
-        # When Client closes connection
-        conn.close()
-
-        # Then Auto-detection finds no running queries
-        # And Logout request is sent
-        # And Connection close metrics are recorded in telemetry
-        # And No deprecation warning is emitted
-        assert conn.is_closed()
+    # TODO: SNOW-2923705 - Auto-detection tests removed until async query implementation
+    # - test_should_skip_logout_when_server_session_keep_alive_is_none_and_auto_detection_true
+    #   _and_async_queries_found
+    # - test_should_send_logout_when_server_session_keep_alive_is_none_and_auto_detection_true
+    #   _and_no_async_queries_found
+    # - test_should_skip_logout_when_server_session_keep_alive_is_false_and_auto_detection_true
+    #   _and_async_queries_found
+    # - test_should_send_logout_when_server_session_keep_alive_is_false_and_auto_detection_true
+    #   _and_no_async_queries_found
+    # - test_should_send_logout_when_server_session_keep_alive_is_false_and_auto_detection_false
 
     def test_should_send_logout_when_server_session_keep_alive_is_none_and_auto_detection_false(
         self, connection_factory
@@ -649,98 +619,12 @@ class TestLogoutPythonPhase2:
         # And No deprecation warning is emitted
         assert conn.is_closed()
 
-    @pytest.mark.skip(reason="TODO: SNOW-2872349")
-    def test_should_skip_logout_when_server_session_keep_alive_is_false_and_auto_detection_true_and_async_queries_found(
-        self, conn
-    ):
-        # Given Snowflake Python client is created with server_session_keep_alive set to false
-        # And enable_server_session_keep_alive_auto_detection is set to true
-        # And Long-running async query is executed using SYSTEM$SLEEP(300)
-        # When Client closes connection
-        # Then Auto-detection finds running query
-        # And No logout request is sent
-        # And Connection close metrics are recorded in telemetry
-        # And Deprecation warning is emitted
-        # And Warning mentions that false will force logout in Phase 3
-        # And Test cleans up the running query after assertions complete
-        pytest.fail("TODO: SNOW-2872349")
-
-    @pytest.mark.skip(reason="TODO: SNOW-2872349")
-    def test_should_send_logout_when_server_session_keep_alive_is_false_and_auto_detection_true_and_no_async_queries_found(  # noqa: E501
-        self, conn
-    ):
-        # Given Snowflake Python client is created with server_session_keep_alive set to false
-        # And enable_server_session_keep_alive_auto_detection is set to true
-        # And No async queries are running
-        # When Client closes connection
-        # Then Auto-detection finds no running queries
-        # And Logout request is sent
-        # And Connection close metrics are recorded in telemetry
-        # And Deprecation warning is emitted
-        # And Warning mentions that false will force logout in Phase 3
-        pytest.fail("TODO: SNOW-2872349")
-
-    @pytest.mark.skip(reason="TODO: SNOW-2872349")
-    def test_should_send_logout_when_server_session_keep_alive_is_false_and_auto_detection_false(self, conn):
-        # Given Snowflake Python client is created with server_session_keep_alive set to false
-        # And enable_server_session_keep_alive_auto_detection is set to false
-        # When Client closes connection
-        # Then Auto-detection is not performed
-        # And Logout request is sent
-        # And Connection close metrics are recorded in telemetry
-        # And Deprecation warning is emitted
-        # And Warning mentions that false will force logout in Phase 3
-        pytest.fail("TODO: SNOW-2872349")
-
-    @pytest.mark.skip(reason="TODO: SNOW-2872349")
-    def test_should_have_enable_server_session_keep_alive_auto_detection_default_to_true(self):
-        # Given Snowflake Python client is created without enable_server_session_keep_alive_auto_detection parameter
-        # When Connection configuration is checked
-        # Then enable_server_session_keep_alive_auto_detection defaults to true
-        # And Auto-detection is enabled by default
-        pytest.fail("TODO: SNOW-2872349")
-
-    @pytest.mark.skip(reason="TODO: SNOW-2872349")
-    def test_should_use_best_effort_error_handling_strategy_by_default(self, conn):
-        # Given Snowflake Python client is created with default parameters
-        # And Server will return 500 Internal Server Error on logout
-        # When Connection is closed
-        # Then Error is logged as WARN
-        # And close() method does not raise exception
-        # And Connection cleanup succeeds
-        # And Error handling strategy is best-effort by default
-        pytest.fail("TODO: SNOW-2872349")
-
 
 class TestLogoutAutoCleanup:
     """Auto-cleanup deprecation tests from python/session/logout.feature."""
 
-    @pytest.mark.skip(reason="TODO: SNOW-2872349")
-    def test_should_emit_deprecation_warning_on_first_auto_cleanup_run_per_process(self):
-        # Given Snowflake Python client is created with auto_cleanup enabled
-        # And No auto-cleanup has run yet in this process
-        # When Process exits without explicit close
-        # Then atexit handler runs
-        # And Deprecation warning is emitted once
-        # When Another connection is created and process exits
-        # Then No additional deprecation warning is emitted
-        pytest.fail("TODO: SNOW-2872349")
-
-    @pytest.mark.skip(reason="TODO: SNOW-2872349")
-    def test_should_not_register_atexit_handler_when_auto_cleanup_explicitly_disabled(self):
-        # Given Snowflake Python client is created with auto_cleanup disabled
-        # When Client connects
-        # Then No atexit handler is registered
-        # When Process exits without explicit close
-        # Then No automatic close is performed
-        pytest.fail("TODO: SNOW-2872349")
-
-    @pytest.mark.skip(reason="TODO: SNOW-2872349")
-    def test_should_emit_telemetry_and_warn_when_connection_leaked_at_process_exit(self):
-        # Given Snowflake Python client is logged in
-        # And Connection is not explicitly closed
-        # When Process exit is detected
-        # Then Leak detection emits WARN log
-        # And Telemetry event is sent with leak information
-        # And Connection details are included for debugging
-        pytest.fail("TODO: SNOW-2872349")
+    # TODO: SNOW-2872349 - Auto-cleanup tests removed until implementation complete
+    # - test_should_emit_deprecation_warning_on_first_auto_cleanup_run_per_process
+    # - test_should_not_register_atexit_handler_when_auto_cleanup_explicitly_disabled
+    # - test_should_emit_telemetry_and_warn_when_connection_leaked_at_process_exit
+    pass

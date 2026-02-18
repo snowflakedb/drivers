@@ -37,7 +37,7 @@ Feature: Session Logout
   #                    Post-Logout Session Invalidation
   # ===========================================================================
 
-  @core_e2e @python_e2e
+  @core_e2e
   Scenario: should reject queries client-side after connection is closed
     Given Snowflake client is logged in
     And Simple query SELECT 1 executes successfully
@@ -50,7 +50,7 @@ Feature: Session Logout
   #                        Process Exit and Thread Management
   # ===========================================================================
 
-  @core_e2e @python_e2e
+  @core_e2e
   Scenario: should allow process to exit cleanly when session kept alive
     # Requires: SNOW-2881763 (Heartbeat)
     Given Connection with heartbeat enabled
