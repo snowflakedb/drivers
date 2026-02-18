@@ -42,9 +42,6 @@ final class ConnectionOptionsResolver {
         continue;
       }
       Object value = entry.getValue();
-      if (value == null) {
-        continue;
-      }
       setIfAbsent(resolved, normalizedKey, value.toString());
     }
   }

@@ -1,18 +1,21 @@
 package net.snowflake.client.internal.api.implementation.connection;
 
-import java.io.Serializable;
+import static net.snowflake.client.internal.util.SnowflakeUtil.isNullOrEmpty;
+
 import java.io.UnsupportedEncodingException;
 import java.net.URI;
+import java.net.URISyntaxException;
 import java.net.URLDecoder;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Properties;
+import net.snowflake.client.internal.log.SFLogger;
+import net.snowflake.client.internal.log.SFLoggerFactory;
 
-public class ConnectionString implements Serializable {
-  private static final long serialVersionUID = 1L;
-
+public class ConnectionString {
+  private static final SFLogger logger = SFLoggerFactory.getLogger(ConnectionString.class);
   private static final String PREFIX = "jdbc:snowflake://";
   private static final String ALLOW_UNDERSCORES_IN_HOST = "ALLOWUNDERSCORESINHOST";
 
@@ -44,6 +47,7 @@ public class ConnectionString implements Serializable {
 
   public static ConnectionString parse(String url, Properties info) {
     if (hasUnsupportedPrefix(url)) {
+      logger.debug("Connect strings must start with jdbc:snowflake://");
       return INVALID_CONNECT_STRING;
     }
 
@@ -51,7 +55,7 @@ public class ConnectionString implements Serializable {
       return new ConnectionStringBuilder(url, info)
           .parseUri()
           .extractHostAndPort()
-          .validateSchemeHostAndPath()
+          .ensureSupportedSchemeHostPathAndDefaultPort()
           .applyQueryParameters()
           .normalizeScheme()
           .applyInfoOverrides()
@@ -59,7 +63,13 @@ public class ConnectionString implements Serializable {
           .ensureAccountPresent()
           .normalizeHostForUnderscoreAccount()
           .build();
+    } catch (URISyntaxException uriEx) {
+      logger.warn(
+          "Exception thrown while parsing Snowflake connect string. Illegal character in url.",
+          uriEx);
+      return INVALID_CONNECT_STRING;
     } catch (Exception ex) {
+      logger.warn("Exception thrown while parsing Snowflake connect string", ex);
       return INVALID_CONNECT_STRING;
     }
   }
@@ -86,14 +96,6 @@ public class ConnectionString implements Serializable {
 
   public String getAccount() {
     return account;
-  }
-
-  private static boolean isNullOrEmpty(String value) {
-    return value == null || value.isEmpty();
-  }
-
-  private static String stringValue(Object value) {
-    return value == null ? null : value.toString();
   }
 
   private static boolean isSslDisabled(Object value) {
@@ -132,7 +134,7 @@ public class ConnectionString implements Serializable {
     ConnectionStringBuilder extractHostAndPort() {
       String authority = uri.getRawAuthority();
       if (authority == null) {
-        throw new IllegalArgumentException("Missing authority");
+        throw new IllegalArgumentException("Missing URI authority");
       }
       String[] hostAndPort = authority.split(":");
       if (hostAndPort.length == 2) {
@@ -144,11 +146,13 @@ public class ConnectionString implements Serializable {
       return this;
     }
 
-    ConnectionStringBuilder validateSchemeHostAndPath() {
+    ConnectionStringBuilder ensureSupportedSchemeHostPathAndDefaultPort() {
       if (!"snowflake".equals(scheme) && !"http".equals(scheme) && !"https".equals(scheme)) {
+        logger.debug("Connect strings must have a valid scheme: 'snowflake' or 'http' or 'https'");
         throw new IllegalArgumentException("Unsupported scheme");
       }
       if (isNullOrEmpty(host)) {
+        logger.debug("Connect strings must have a valid host: found null or empty host");
         throw new IllegalArgumentException("Missing host");
       }
       if (port == -1) {
@@ -156,6 +160,7 @@ public class ConnectionString implements Serializable {
       }
       String path = uri.getPath();
       if (!isNullOrEmpty(path) && !"/".equals(path)) {
+        logger.debug("Connect strings must have no path: expecting empty or null or '/'");
         throw new IllegalArgumentException("Invalid path");
       }
       return this;
@@ -172,15 +177,13 @@ public class ConnectionString implements Serializable {
         if (keyVals.length != 2 || keyVals[1].isEmpty()) {
           continue;
         }
-        String key;
-        String value;
         try {
-          key = URLDecoder.decode(keyVals[0], "UTF-8");
-          value = URLDecoder.decode(keyVals[1], "UTF-8");
+          String key = URLDecoder.decode(keyVals[0], "UTF-8");
+          String value = URLDecoder.decode(keyVals[1], "UTF-8");
+          applyParameter(key, value);
         } catch (UnsupportedEncodingException ex) {
-          continue;
+          logger.warn("Failed to decode a parameter {}. Ignored.", param);
         }
-        applyParameter(key, value);
       }
       return this;
     }
@@ -201,7 +204,7 @@ public class ConnectionString implements Serializable {
         Object value = entry.getValue();
         if ("ssl".equalsIgnoreCase(key) && isSslDisabled(value)) {
           scheme = "http";
-        } else if ("account".equalsIgnoreCase(key) && value != null) {
+        } else if ("account".equalsIgnoreCase(key)) {
           account = value.toString();
         }
         parameters.put(key.toUpperCase(Locale.US), value);
@@ -226,6 +229,7 @@ public class ConnectionString implements Serializable {
 
     ConnectionStringBuilder ensureAccountPresent() {
       if (isNullOrEmpty(account)) {
+        logger.debug("Connect strings must contain account identifier");
         throw new IllegalArgumentException("Missing account");
       }
       return this;
@@ -233,7 +237,7 @@ public class ConnectionString implements Serializable {
 
     ConnectionStringBuilder normalizeHostForUnderscoreAccount() {
       boolean allowUnderscoresInHost =
-          "true".equalsIgnoreCase(stringValue(parameters.get(ALLOW_UNDERSCORES_IN_HOST)));
+          Boolean.parseBoolean(String.valueOf(parameters.get(ALLOW_UNDERSCORES_IN_HOST)));
       if (account.contains("_") && !allowUnderscoresInHost && host.startsWith(account)) {
         host = host.replaceFirst(account, account.replace("_", "-"));
       }
