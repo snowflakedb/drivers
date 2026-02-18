@@ -1,3 +1,4 @@
+@core @python
 Feature: Session Logout
 
   # Core-level HTTP protocol details are in core/session/logout.feature

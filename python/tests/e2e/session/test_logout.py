@@ -10,11 +10,11 @@ Additional test coverage for the following features is deferred:
 These deferred tests will be added as the underlying features are implemented.
 """
 
-import pytest
-
-import requests
 import threading
 import warnings
+
+import pytest
+import requests
 
 from tests.wiremock_client import WiremockClient
 
@@ -29,8 +29,7 @@ def get_wiremock_requests(wiremock_base_url: str) -> list:
 
 def filter_logout_requests(all_requests: list) -> list:
     """Filter requests to find logout requests (POST /session?delete=true)."""
-    return [r for r in all_requests
-            if "delete=true" in r.get("request", {}).get("url", "")]
+    return [r for r in all_requests if "delete=true" in r.get("request", {}).get("url", "")]
 
 
 def assert_logout_request_format(logout_request: dict):
@@ -39,8 +38,9 @@ def assert_logout_request_format(logout_request: dict):
     assert req["method"] == "POST", "Logout should use POST method"
     assert "delete=true" in req["url"], "Logout should have delete=true query param"
     assert "Authorization" in req.get("headers", {}), "Logout should have Authorization header"
-    assert "Snowflake Token" in req.get("headers", {}).get("Authorization", [""])[0], \
+    assert "Snowflake Token" in req.get("headers", {}).get("Authorization", [""])[0], (
         "Authorization should contain 'Snowflake Token'"
+    )
 
 
 class TestLogoutResourceCleanup:
@@ -112,8 +112,9 @@ class TestLogoutEdgeCases:
             all_requests = get_wiremock_requests(wiremock.http_url())
             logout_requests = filter_logout_requests(all_requests)
 
-            assert len(logout_requests) == 1, \
+            assert len(logout_requests) == 1, (
                 f"Should send exactly 1 logout request despite 3 close() calls, got {len(logout_requests)}"
+            )
 
             # And No errors are thrown
             assert conn.is_closed()
@@ -150,8 +151,9 @@ class TestLogoutEdgeCases:
             all_requests = get_wiremock_requests(wiremock.http_url())
             logout_requests = filter_logout_requests(all_requests)
 
-            assert len(logout_requests) == 1, \
+            assert len(logout_requests) == 1, (
                 f"Should send exactly 1 logout request despite concurrent close() calls, got {len(logout_requests)}"
+            )
 
             # And All close calls return successfully
             assert len(exceptions) == 0, f"Expected no exceptions, got: {exceptions}"
@@ -187,7 +189,7 @@ class TestLogoutPythonWrapper:
                 conn = int_test_connection_factory(
                     server_url=wiremock.http_url(),
                     server_session_keep_alive=None,
-                    enable_server_session_keep_alive_auto_detection=False
+                    enable_server_session_keep_alive_auto_detection=False,
                 )
 
                 # When Client closes connection
@@ -198,8 +200,9 @@ class TestLogoutPythonWrapper:
             all_requests = get_wiremock_requests(wiremock.http_url())
             logout_requests = filter_logout_requests(all_requests)
 
-            assert len(logout_requests) == 1, \
+            assert len(logout_requests) == 1, (
                 f"Should send logout request with auto_detection=False, got {len(logout_requests)} requests"
+            )
 
             logout_req = logout_requests[0]["request"]
             assert logout_req["method"] == "POST", "Logout should use POST method"
@@ -207,9 +210,11 @@ class TestLogoutPythonWrapper:
 
             # And Connection close metrics are recorded in telemetry
             # And No deprecation warning is emitted
-            deprecation_warnings = [w for w in captured_warnings
-                                   if issubclass(w.category, (FutureWarning, DeprecationWarning))]
-            assert len(deprecation_warnings) == 0, \
+            deprecation_warnings = [
+                w for w in captured_warnings if issubclass(w.category, (FutureWarning, DeprecationWarning))
+            ]
+            assert len(deprecation_warnings) == 0, (
                 f"Should not emit deprecation warning, got: {[str(w.message) for w in deprecation_warnings]}"
+            )
 
             assert conn.is_closed()

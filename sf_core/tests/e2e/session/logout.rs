@@ -169,13 +169,13 @@ fn should_reject_queries_client_side_after_connection_is_closed() {
 #[ignore = "Requires SNOW-2881763 (Heartbeat)"]
 fn should_allow_process_to_exit_cleanly_when_session_kept_alive() {
     // Scenario: should allow process to exit cleanly when session kept alive
-    // Requires: SNOW-2881763 (Heartbeat)
+    // Requires: SNOW-2881763 (Heartbeat), SNOW-2912513 (Telemetry)
     //Given Connection with heartbeat enabled
-    //And Telemetry is active
+    //And Telemetry cache is active
     //And server_session_keep_alive is set to true
     //When Connection is closed
-    //Then All background threads are stopped
-    //And Heartbeat thread is terminated
+    //Then Heartbeat is stopped
+    //And Telemetry cache is flushed
     //And Process can exit immediately without hanging
 
     // TODO: Implement once heartbeat thread exists
