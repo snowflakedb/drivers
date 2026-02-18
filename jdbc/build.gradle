@@ -7,6 +7,7 @@ plugins {
     id 'jacoco'
     id 'checkstyle'
     id 'com.diffplug.spotless' version '6.13.0' // latest version supporting Java 8
+    id 'com.adarshr.test-logger' version '4.0.0'
 }
 
 // ====================
@@ -148,15 +149,6 @@ def configureCommonTestTask = { t ->
     }
 
     t.outputs.upToDateWhen { false }
-    t.testLogging {
-        showStandardStreams = true
-        showExceptions true
-        showCauses true
-        showStackTraces true
-    }
-    t.afterTest { desc, result ->
-        println "TEST ${desc.className}.${desc.name}: ${result.resultType}"
-    }
 
     def libPath = file('../target/debug').exists() ? '../target/debug' : '../target/release'
     def libName = System.getProperty('os.name').toLowerCase().contains('mac') ? 'libjdbc_bridge.dylib' :
