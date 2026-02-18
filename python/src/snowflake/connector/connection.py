@@ -119,7 +119,7 @@ class Connection:
             retry: Whether to retry failed logout (Note: retry parameter kept for compatibility,
                    but retry behavior is now controlled by Core's retry policy)
 
-        Behavior (Phase 2 - Backward Compatible):
+        Behavior (Phase 2 - Backward Compatible, SNOW-2314152):
             - Auto-detection enabled by default (legacy Python behavior for backward compatibility)
             - server_session_keep_alive=False still respects auto-detection
             - server_session_keep_alive=True never sends logout (Fire & Forget)
@@ -127,7 +127,7 @@ class Connection:
 
         Note: Phase 2 behavior is achieved by mapping Python parameters to Core's Phase 3
         semantics. In Phase 3, Python will pass parameters directly to Core without mapping.
-        See .ai/docs/UD_Design_Doc_Fire_Forget.md for Phase 2/3 migration plan.
+        See .ai/docs/UD_Design_Doc_Fire_Forget.md and SNOW-2314152 for Phase 2/3 migration plan.
         """
         # Unregister atexit handler to prevent it from running at process exit
         # after explicit close(). This prevents double cleanup and false warnings.
@@ -144,7 +144,7 @@ class Connection:
             else True
         )
 
-        # Phase 2 Parameter Mapping: Map Python Phase 2 semantics to Core's Phase 3 semantics
+        # Phase 2 Parameter Mapping (SNOW-2314152): Map Python Phase 2 semantics to Core's Phase 3 semantics
         # Python Phase 2: server_session_keep_alive=False respects auto-detection when enabled
         # Core Phase 3: Some(false) = always logout, ignores auto-detection
         #
@@ -154,10 +154,10 @@ class Connection:
         # - Python: True → Core: True (never logout)
         # - Python: None → Core: None (delegate to auto-detection)
         #
-        # TODO(SNOW-XXXXX): Remove this mapping in Phase 3 and pass parameters directly
+        # TODO(SNOW-2314152): Remove this mapping in Phase 3 and pass parameters directly
         core_keep_alive = self.server_session_keep_alive
         if self.server_session_keep_alive is False and effective_enable_auto:
-            # Phase 2 compat: False with auto-detection enabled → map to None
+            # Phase 2 compat (SNOW-2314152): False with auto-detection enabled → map to None
             # This makes Core check the registry (legacy Python behavior)
             core_keep_alive = None
 
@@ -195,7 +195,7 @@ class Connection:
         if _first_auto_cleanup_in_process:
             warnings.warn(
                 "Connection was not explicitly closed before process exit. "
-                "Auto-cleanup at exit will be disabled by default in Phase 3. "
+                "Auto-cleanup at exit will be disabled by default in Phase 3 (SNOW-2314152). "
                 "Please explicitly call connection.close() or use context manager.",
                 FutureWarning,
                 stacklevel=2,
