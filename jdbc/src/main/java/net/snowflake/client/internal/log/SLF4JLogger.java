@@ -10,7 +10,7 @@ import org.slf4j.helpers.MessageFormatter;
 import org.slf4j.spi.LocationAwareLogger;
 
 public class SLF4JLogger implements SFLogger {
-  private static final String fqcn = SLF4JLogger.class.getName();
+  private static final String FQCN = SLF4JLogger.class.getName();
 
   private final Logger slf4jLogger;
   private final boolean isLocationAwareLogger;
@@ -28,82 +28,102 @@ public class SLF4JLogger implements SFLogger {
     this.isLocationAwareLogger = this.slf4jLogger instanceof LocationAwareLogger;
   }
 
+  @Override
   public boolean isDebugEnabled() {
     return this.slf4jLogger.isDebugEnabled();
   }
 
+  @Override
   public boolean isErrorEnabled() {
     return this.slf4jLogger.isErrorEnabled();
   }
 
+  @Override
   public boolean isInfoEnabled() {
     return this.slf4jLogger.isInfoEnabled();
   }
 
+  @Override
   public boolean isTraceEnabled() {
     return this.slf4jLogger.isTraceEnabled();
   }
 
+  @Override
   public boolean isWarnEnabled() {
     return this.slf4jLogger.isWarnEnabled();
   }
 
+  @Override
   public void debug(String msg, boolean isMasked) {
     logMessage(LogLevel.DEBUG, msg, isMasked);
   }
 
+  @Override
   public void debug(String msg, Object... arguments) {
     logFormat(LogLevel.DEBUG, msg, arguments);
   }
 
+  @Override
   public void debug(String msg, Throwable t) {
     logThrowable(LogLevel.DEBUG, msg, t);
   }
 
+  @Override
   public void error(String msg, boolean isMasked) {
     logMessage(LogLevel.ERROR, msg, isMasked);
   }
 
+  @Override
   public void error(String msg, Object... arguments) {
     logFormat(LogLevel.ERROR, msg, arguments);
   }
 
+  @Override
   public void error(String msg, Throwable t) {
     logThrowable(LogLevel.ERROR, msg, t);
   }
 
+  @Override
   public void info(String msg, boolean isMasked) {
     logMessage(LogLevel.INFO, msg, isMasked);
   }
 
+  @Override
   public void info(String msg, Object... arguments) {
     logFormat(LogLevel.INFO, msg, arguments);
   }
 
+  @Override
   public void info(String msg, Throwable t) {
     logThrowable(LogLevel.INFO, msg, t);
   }
 
+  @Override
   public void trace(String msg, boolean isMasked) {
     logMessage(LogLevel.TRACE, msg, isMasked);
   }
 
+  @Override
   public void trace(String msg, Object... arguments) {
     logFormat(LogLevel.TRACE, msg, arguments);
   }
 
+  @Override
   public void trace(String msg, Throwable t) {
     logThrowable(LogLevel.TRACE, msg, t);
   }
 
+  @Override
   public void warn(String msg, boolean isMasked) {
     logMessage(LogLevel.WARN, msg, isMasked);
   }
 
+  @Override
   public void warn(String msg, Object... arguments) {
     logFormat(LogLevel.WARN, msg, arguments);
   }
 
+  @Override
   public void warn(String msg, Throwable t) {
     logThrowable(LogLevel.WARN, msg, t);
   }
@@ -175,7 +195,7 @@ public class SLF4JLogger implements SFLogger {
 
     if (isLocationAwareLogger) {
       ((LocationAwareLogger) slf4jLogger)
-          .log(null, fqcn, toLocationAwareLevel(level), message, null, throwable);
+          .log(null, FQCN, toLocationAwareLevel(level), message, null, throwable);
       return;
     }
     switch (level) {

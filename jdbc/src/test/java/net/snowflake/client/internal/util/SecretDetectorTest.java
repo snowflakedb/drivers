@@ -99,7 +99,7 @@ public class SecretDetectorTest {
     assertEquals(
         maskedAzureSasToken + maskedAzureSasToken,
         SecretDetector.maskSecrets(azureSasToken + azureSasToken),
-        "Text with 2 S3 SAS tokens is not masked");
+        "Text with 2 Azure SAS tokens is not masked");
 
     assertEquals(
         maskedAzureSasToken + maskedS3SasToken,
@@ -135,8 +135,6 @@ public class SecretDetectorTest {
             + "sig=****')";
 
     String masked = SecretDetector.maskSecrets(sqlText);
-    System.out.println(masked);
-    System.out.println(maskedSqlText);
     assertEquals(maskedSqlText, masked, "Text with AWS secret and Azure SAS token is not masked");
 
     String randomString = randomAlphaNumeric(500);
