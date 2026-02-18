@@ -121,6 +121,11 @@ class Connection:
             - server_session_keep_alive=True never sends logout (Fire & Forget)
             - server_session_keep_alive=None delegates to auto-detection setting
         """
+        # Unregister atexit handler to prevent it from running at process exit
+        # after explicit close(). This prevents double cleanup and false warnings.
+        # atexit.unregister() is idempotent, safe to call multiple times.
+        atexit.unregister(self._close_at_exit)
+
         if self.is_closed():
             return  # Already closed, idempotent
 
