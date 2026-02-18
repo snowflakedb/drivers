@@ -1,4 +1,4 @@
-use super::path_resolver::get_config_paths;
+use super::path_resolver::{ConfigPaths, get_config_paths};
 use super::settings::Setting;
 use super::toml_loader::load_toml_file;
 use super::{ConfigError, ConnectionNotFoundSnafu};
@@ -9,12 +9,18 @@ pub fn load_connection_config(
     connection_name: &str,
 ) -> Result<HashMap<String, Setting>, ConfigError> {
     let paths = get_config_paths()?;
+    load_connection_config_with_paths(connection_name, &paths)
+}
+
+/// Load configuration for a specific connection using explicit config paths
+pub fn load_connection_config_with_paths(
+    connection_name: &str,
+    paths: &ConfigPaths,
+) -> Result<HashMap<String, Setting>, ConfigError> {
     let mut settings = HashMap::new();
 
-    // Load config.toml first (lower precedence)
     let config_toml = load_toml_file(&paths.config_file)?;
 
-    // Check for [connections.connection_name] section in config.toml
     if let Some(connections_section) = config_toml.get("connections").and_then(|v| v.as_table())
         && let Some(conn_config) = connections_section
             .get(connection_name)
@@ -27,7 +33,6 @@ pub fn load_connection_config(
         }
     }
 
-    // Load connections.toml (higher precedence - overrides config.toml)
     let connections_toml = load_toml_file(&paths.connections_file)?;
 
     if let Some(conn_config) = connections_toml
@@ -41,7 +46,6 @@ pub fn load_connection_config(
         }
     }
 
-    // If no configuration was found, return error
     if settings.is_empty() {
         return ConnectionNotFoundSnafu {
             name: connection_name,
@@ -55,9 +59,15 @@ pub fn load_connection_config(
 /// Load all connections from config files
 pub fn load_all_connections() -> Result<HashMap<String, HashMap<String, Setting>>, ConfigError> {
     let paths = get_config_paths()?;
+    load_all_connections_with_paths(&paths)
+}
+
+/// Load all connections using explicit config paths
+pub fn load_all_connections_with_paths(
+    paths: &ConfigPaths,
+) -> Result<HashMap<String, HashMap<String, Setting>>, ConfigError> {
     let mut all_connections = HashMap::new();
 
-    // Load from config.toml
     let config_toml = load_toml_file(&paths.config_file)?;
     if let Some(connections_section) = config_toml.get("connections").and_then(|v| v.as_table()) {
         for (conn_name, conn_config) in connections_section {
@@ -73,7 +83,6 @@ pub fn load_all_connections() -> Result<HashMap<String, HashMap<String, Setting>
         }
     }
 
-    // Load from connections.toml (higher precedence - merges into config.toml settings)
     let connections_toml = load_toml_file(&paths.connections_file)?;
     if let Some(table) = connections_toml.as_table() {
         for (conn_name, conn_config) in table {
@@ -115,26 +124,30 @@ pub fn load_config_section(
     section_name: &str,
 ) -> Result<Option<HashMap<String, Setting>>, ConfigError> {
     let paths = get_config_paths()?;
+    load_config_section_with_paths(section_name, &paths)
+}
+
+/// Load a specific section from config.toml using explicit config paths
+pub fn load_config_section_with_paths(
+    section_name: &str,
+    paths: &ConfigPaths,
+) -> Result<Option<HashMap<String, Setting>>, ConfigError> {
     let config_toml = load_toml_file(&paths.config_file)?;
 
-    // Block access to connections section (and nested connections sections)
     if section_name == "connections" || section_name.starts_with("connections.") {
-        // Connections should be loaded via load_connection_config or load_all_connections
         return Ok(None);
     }
 
-    // Navigate to the nested section by splitting on '.'
     let path_parts: Vec<&str> = section_name.split('.').collect();
     let mut current_value = &config_toml;
 
     for part in path_parts {
         match current_value.get(part) {
             Some(value) => current_value = value,
-            None => return Ok(None), // Section doesn't exist
+            None => return Ok(None),
         }
     }
 
-    // Convert the final table to settings
     if let Some(section_table) = current_value.as_table() {
         let mut settings = HashMap::new();
         for (key, value) in section_table {
@@ -145,7 +158,6 @@ pub fn load_config_section(
         return Ok(Some(settings));
     }
 
-    // Not a table, can't convert to settings
     Ok(None)
 }
 
@@ -156,12 +168,18 @@ pub fn load_config_section(
 pub fn load_all_config_sections() -> Result<HashMap<String, HashMap<String, Setting>>, ConfigError>
 {
     let paths = get_config_paths()?;
+    load_all_config_sections_with_paths(&paths)
+}
+
+/// Load all sections from config files using explicit config paths
+pub fn load_all_config_sections_with_paths(
+    paths: &ConfigPaths,
+) -> Result<HashMap<String, HashMap<String, Setting>>, ConfigError> {
     let config_toml = load_toml_file(&paths.config_file)?;
     let mut all_sections = HashMap::new();
 
     if let Some(table) = config_toml.as_table() {
         for (section_name, section_value) in table {
-            // Handle connections section specially - flatten to "connections.<name>"
             if section_name == "connections" {
                 if let Some(connections_table) = section_value.as_table() {
                     for (conn_name, conn_value) in connections_table {
@@ -172,7 +190,7 @@ pub fn load_all_config_sections() -> Result<HashMap<String, HashMap<String, Sett
                                     settings.insert(key.clone(), setting);
                                 }
                             }
-                            all_sections.insert(format!("connections.{}", conn_name), settings);
+                            all_sections.insert(format!("connections.{conn_name}"), settings);
                         }
                     }
                 }
@@ -191,13 +209,11 @@ pub fn load_all_config_sections() -> Result<HashMap<String, HashMap<String, Sett
         }
     }
 
-    // Also load connections from connections.toml (higher precedence)
     let connections_toml = load_toml_file(&paths.connections_file)?;
     if let Some(table) = connections_toml.as_table() {
         for (conn_name, conn_config) in table {
             if let Some(config_table) = conn_config.as_table() {
-                let key = format!("connections.{}", conn_name);
-                // Get existing settings or create new
+                let key = format!("connections.{conn_name}");
                 let settings = all_sections.entry(key).or_insert_with(HashMap::new);
                 for (k, value) in config_table {
                     if let Some(setting) = toml_value_to_setting(value) {
@@ -214,24 +230,25 @@ pub fn load_all_config_sections() -> Result<HashMap<String, HashMap<String, Sett
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::env;
+    use crate::config::path_resolver::ConfigPaths;
     use std::fs;
     use tempfile::TempDir;
 
-    /// Helper to set environment variables in tests.
-    /// SAFETY: Tests using env vars must not run in parallel (use serial_test if needed).
-    fn set_env(key: &str, value: &str) {
-        // SAFETY: We accept the risk of data races for testing purposes.
-        // These tests should not be run in parallel with each other.
-        unsafe { env::set_var(key, value) }
+    fn make_paths(dir: &TempDir) -> ConfigPaths {
+        ConfigPaths {
+            config_file: dir.path().join("config.toml"),
+            connections_file: dir.path().join("connections.toml"),
+        }
     }
 
-    /// Helper to remove environment variables in tests.
-    /// SAFETY: Tests using env vars must not run in parallel (use serial_test if needed).
-    fn remove_env(key: &str) {
-        // SAFETY: We accept the risk of data races for testing purposes.
-        // These tests should not be run in parallel with each other.
-        unsafe { env::remove_var(key) }
+    fn write_config(dir: &TempDir, filename: &str, content: &str) {
+        let path = dir.path().join(filename);
+        fs::write(&path, content).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+        }
     }
 
     #[test]
@@ -265,73 +282,59 @@ mod tests {
     #[test]
     fn test_load_connection_config() {
         let temp_dir = TempDir::new().unwrap();
-        set_env("SNOWFLAKE_HOME", temp_dir.path().to_str().unwrap());
-
-        let connections_file = temp_dir.path().join("connections.toml");
-        let content = r#"
+        let paths = make_paths(&temp_dir);
+        write_config(
+            &temp_dir,
+            "connections.toml",
+            r#"
 [testconn]
 account = "myaccount"
 user = "myuser"
 password = "mypass"
-"#;
-        fs::write(&connections_file, content).unwrap();
+"#,
+        );
 
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(&connections_file, fs::Permissions::from_mode(0o600)).unwrap();
-        }
-
-        let result = load_connection_config("testconn");
+        let result = load_connection_config_with_paths("testconn", &paths);
         assert!(result.is_ok());
 
         let settings = result.unwrap();
         assert!(matches!(settings.get("account"), Some(Setting::String(_))));
         assert!(matches!(settings.get("user"), Some(Setting::String(_))));
-
-        remove_env("SNOWFLAKE_HOME");
     }
 
     #[test]
     fn test_connection_not_found() {
         let temp_dir = TempDir::new().unwrap();
-        set_env("SNOWFLAKE_HOME", temp_dir.path().to_str().unwrap());
+        let paths = make_paths(&temp_dir);
 
-        let result = load_connection_config("nonexistent");
+        let result = load_connection_config_with_paths("nonexistent", &paths);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("not found"));
-
-        remove_env("SNOWFLAKE_HOME");
     }
 
     #[test]
     fn test_connections_toml_overrides_config_toml() {
         let temp_dir = TempDir::new().unwrap();
-        set_env("SNOWFLAKE_HOME", temp_dir.path().to_str().unwrap());
-
-        let config_file = temp_dir.path().join("config.toml");
-        let config_content = r#"
+        let paths = make_paths(&temp_dir);
+        write_config(
+            &temp_dir,
+            "config.toml",
+            r#"
 [connections.testconn]
 account = "config_account"
 user = "config_user"
-"#;
-        fs::write(&config_file, config_content).unwrap();
-
-        let connections_file = temp_dir.path().join("connections.toml");
-        let connections_content = r#"
+"#,
+        );
+        write_config(
+            &temp_dir,
+            "connections.toml",
+            r#"
 [testconn]
 account = "connections_account"
-"#;
-        fs::write(&connections_file, connections_content).unwrap();
+"#,
+        );
 
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(&config_file, fs::Permissions::from_mode(0o600)).unwrap();
-            fs::set_permissions(&connections_file, fs::Permissions::from_mode(0o600)).unwrap();
-        }
-
-        let result = load_connection_config("testconn");
+        let result = load_connection_config_with_paths("testconn", &paths);
         assert!(result.is_ok());
 
         let settings = result.unwrap();
@@ -346,66 +349,51 @@ account = "connections_account"
         } else {
             panic!("Expected user setting");
         }
-
-        remove_env("SNOWFLAKE_HOME");
     }
 
     #[test]
     fn test_load_all_connections() {
         let temp_dir = TempDir::new().unwrap();
-        set_env("SNOWFLAKE_HOME", temp_dir.path().to_str().unwrap());
-
-        let connections_file = temp_dir.path().join("connections.toml");
-        let content = r#"
+        let paths = make_paths(&temp_dir);
+        write_config(
+            &temp_dir,
+            "connections.toml",
+            r#"
 [conn1]
 account = "account1"
 
 [conn2]
 account = "account2"
-"#;
-        fs::write(&connections_file, content).unwrap();
+"#,
+        );
 
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(&connections_file, fs::Permissions::from_mode(0o600)).unwrap();
-        }
-
-        let result = load_all_connections();
+        let result = load_all_connections_with_paths(&paths);
         assert!(result.is_ok());
 
         let all_conns = result.unwrap();
         assert_eq!(all_conns.len(), 2);
         assert!(all_conns.contains_key("conn1"));
         assert!(all_conns.contains_key("conn2"));
-
-        remove_env("SNOWFLAKE_HOME");
     }
 
     #[test]
     fn test_load_config_section() {
         let temp_dir = TempDir::new().unwrap();
-        set_env("SNOWFLAKE_HOME", temp_dir.path().to_str().unwrap());
-
-        let config_file = temp_dir.path().join("config.toml");
-        let content = r#"
+        let paths = make_paths(&temp_dir);
+        write_config(
+            &temp_dir,
+            "config.toml",
+            r#"
 [log]
 level = "debug"
 file = "/var/log/snowflake.log"
 
 [connections.testconn]
 account = "myaccount"
-"#;
-        fs::write(&config_file, content).unwrap();
+"#,
+        );
 
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(&config_file, fs::Permissions::from_mode(0o600)).unwrap();
-        }
-
-        // Load log section
-        let result = load_config_section("log");
+        let result = load_config_section_with_paths("log", &paths);
         assert!(result.is_ok());
         let log_section = result.unwrap();
         assert!(log_section.is_some());
@@ -413,70 +401,53 @@ account = "myaccount"
         let settings = log_section.unwrap();
         assert!(matches!(settings.get("level"), Some(Setting::String(_))));
         assert!(matches!(settings.get("file"), Some(Setting::String(_))));
-
-        remove_env("SNOWFLAKE_HOME");
     }
 
     #[test]
     fn test_load_config_section_nonexistent() {
         let temp_dir = TempDir::new().unwrap();
-        set_env("SNOWFLAKE_HOME", temp_dir.path().to_str().unwrap());
-
-        let config_file = temp_dir.path().join("config.toml");
-        let content = r#"
+        let paths = make_paths(&temp_dir);
+        write_config(
+            &temp_dir,
+            "config.toml",
+            r#"
 [log]
 level = "info"
-"#;
-        fs::write(&config_file, content).unwrap();
+"#,
+        );
 
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(&config_file, fs::Permissions::from_mode(0o600)).unwrap();
-        }
-
-        // Try to load non-existent section
-        let result = load_config_section("nonexistent");
+        let result = load_config_section_with_paths("nonexistent", &paths);
         assert!(result.is_ok());
         let section = result.unwrap();
         assert!(section.is_none());
-
-        remove_env("SNOWFLAKE_HOME");
     }
 
     #[test]
     fn test_load_config_section_excludes_connections() {
         let temp_dir = TempDir::new().unwrap();
-        set_env("SNOWFLAKE_HOME", temp_dir.path().to_str().unwrap());
-
-        let config_file = temp_dir.path().join("config.toml");
-        let content = r#"
+        let paths = make_paths(&temp_dir);
+        write_config(
+            &temp_dir,
+            "config.toml",
+            r#"
 [connections.testconn]
 account = "myaccount"
-"#;
-        fs::write(&config_file, content).unwrap();
+"#,
+        );
 
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(&config_file, fs::Permissions::from_mode(0o600)).unwrap();
-        }
-
-        // Should return None for connections section
-        let result = load_config_section("connections");
+        let result = load_config_section_with_paths("connections", &paths);
         assert!(result.is_ok());
         assert!(result.unwrap().is_none());
-
-        remove_env("SNOWFLAKE_HOME");
     }
 
     #[test]
     fn test_load_all_config_sections() {
         let temp_dir = TempDir::new().unwrap();
-        set_env("SNOWFLAKE_HOME", temp_dir.path().to_str().unwrap());
-
-        let config_file = temp_dir.path().join("config.toml");
-        let content = r#"
+        let paths = make_paths(&temp_dir);
+        write_config(
+            &temp_dir,
+            "config.toml",
+            r#"
 [log]
 level = "debug"
 file = "/var/log/snowflake.log"
@@ -487,56 +458,45 @@ port = 8080
 
 [connections.testconn]
 account = "myaccount"
-"#;
-        fs::write(&config_file, content).unwrap();
+"#,
+        );
 
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(&config_file, fs::Permissions::from_mode(0o600)).unwrap();
-        }
-
-        let result = load_all_config_sections();
+        let result = load_all_config_sections_with_paths(&paths);
         assert!(result.is_ok());
 
         let sections = result.unwrap();
-        // Should have log, proxy, and connections.testconn
         assert_eq!(sections.len(), 3);
         assert!(sections.contains_key("log"));
         assert!(sections.contains_key("proxy"));
         assert!(sections.contains_key("connections.testconn"));
 
-        // Verify log section content
         let log_settings = sections.get("log").unwrap();
         assert!(matches!(
             log_settings.get("level"),
             Some(Setting::String(_))
         ));
 
-        // Verify proxy section content
         let proxy_settings = sections.get("proxy").unwrap();
         assert!(matches!(
             proxy_settings.get("host"),
             Some(Setting::String(_))
         ));
 
-        // Verify connection section content
         let conn_settings = sections.get("connections.testconn").unwrap();
         assert!(matches!(
             conn_settings.get("account"),
             Some(Setting::String(_))
         ));
-
-        remove_env("SNOWFLAKE_HOME");
     }
 
     #[test]
     fn test_load_nested_section() {
         let temp_dir = TempDir::new().unwrap();
-        set_env("SNOWFLAKE_HOME", temp_dir.path().to_str().unwrap());
-
-        let config_file = temp_dir.path().join("config.toml");
-        let content = r#"
+        let paths = make_paths(&temp_dir);
+        write_config(
+            &temp_dir,
+            "config.toml",
+            r#"
 [database.connection]
 timeout = 30
 retry_count = 3
@@ -544,17 +504,10 @@ retry_count = 3
 [database.pool]
 max_size = 10
 min_size = 2
-"#;
-        fs::write(&config_file, content).unwrap();
+"#,
+        );
 
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(&config_file, fs::Permissions::from_mode(0o600)).unwrap();
-        }
-
-        // Load nested section using dotted path
-        let result = load_config_section("database.connection");
+        let result = load_config_section_with_paths("database.connection", &paths);
         assert!(result.is_ok());
         let section = result.unwrap();
         assert!(section.is_some());
@@ -563,8 +516,7 @@ min_size = 2
         assert!(matches!(settings.get("timeout"), Some(Setting::Int(30))));
         assert!(matches!(settings.get("retry_count"), Some(Setting::Int(3))));
 
-        // Load another nested section
-        let result2 = load_config_section("database.pool");
+        let result2 = load_config_section_with_paths("database.pool", &paths);
         assert!(result2.is_ok());
         let section2 = result2.unwrap();
         assert!(section2.is_some());
@@ -572,31 +524,23 @@ min_size = 2
         let settings2 = section2.unwrap();
         assert!(matches!(settings2.get("max_size"), Some(Setting::Int(10))));
         assert!(matches!(settings2.get("min_size"), Some(Setting::Int(2))));
-
-        remove_env("SNOWFLAKE_HOME");
     }
 
     #[test]
     fn test_load_deeply_nested_section() {
         let temp_dir = TempDir::new().unwrap();
-        set_env("SNOWFLAKE_HOME", temp_dir.path().to_str().unwrap());
-
-        let config_file = temp_dir.path().join("config.toml");
-        let content = r#"
+        let paths = make_paths(&temp_dir);
+        write_config(
+            &temp_dir,
+            "config.toml",
+            r#"
 [app.server.tls]
 enabled = true
 cert_path = "/etc/certs/server.crt"
-"#;
-        fs::write(&config_file, content).unwrap();
+"#,
+        );
 
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(&config_file, fs::Permissions::from_mode(0o600)).unwrap();
-        }
-
-        // Load deeply nested section
-        let result = load_config_section("app.server.tls");
+        let result = load_config_section_with_paths("app.server.tls", &paths);
         assert!(result.is_ok());
         let section = result.unwrap();
         assert!(section.is_some());
@@ -607,115 +551,85 @@ cert_path = "/etc/certs/server.crt"
         } else {
             panic!("Expected enabled setting");
         }
-
-        remove_env("SNOWFLAKE_HOME");
     }
 
     #[test]
     fn test_load_nonexistent_nested_section() {
         let temp_dir = TempDir::new().unwrap();
-        set_env("SNOWFLAKE_HOME", temp_dir.path().to_str().unwrap());
-
-        let config_file = temp_dir.path().join("config.toml");
-        let content = r#"
+        let paths = make_paths(&temp_dir);
+        write_config(
+            &temp_dir,
+            "config.toml",
+            r#"
 [database.connection]
 timeout = 30
-"#;
-        fs::write(&config_file, content).unwrap();
+"#,
+        );
 
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(&config_file, fs::Permissions::from_mode(0o600)).unwrap();
-        }
-
-        // Try to load non-existent nested section
-        let result = load_config_section("database.pool");
+        let result = load_config_section_with_paths("database.pool", &paths);
         assert!(result.is_ok());
         assert!(result.unwrap().is_none());
 
-        // Try to load with wrong parent
-        let result2 = load_config_section("other.connection");
+        let result2 = load_config_section_with_paths("other.connection", &paths);
         assert!(result2.is_ok());
         assert!(result2.unwrap().is_none());
-
-        remove_env("SNOWFLAKE_HOME");
     }
 
     #[test]
     fn test_cannot_load_nested_connections_section() {
         let temp_dir = TempDir::new().unwrap();
-        set_env("SNOWFLAKE_HOME", temp_dir.path().to_str().unwrap());
-
-        let config_file = temp_dir.path().join("config.toml");
-        let content = r#"
+        let paths = make_paths(&temp_dir);
+        write_config(
+            &temp_dir,
+            "config.toml",
+            r#"
 [connections.testconn]
 account = "myaccount"
-"#;
-        fs::write(&config_file, content).unwrap();
+"#,
+        );
 
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(&config_file, fs::Permissions::from_mode(0o600)).unwrap();
-        }
-
-        // Should return None for nested connections path
-        let result = load_config_section("connections.testconn");
+        let result = load_config_section_with_paths("connections.testconn", &paths);
         assert!(result.is_ok());
         assert!(result.unwrap().is_none());
-
-        remove_env("SNOWFLAKE_HOME");
     }
 
     #[test]
     fn test_connections_toml_does_not_affect_other_sections() {
         let temp_dir = TempDir::new().unwrap();
-        set_env("SNOWFLAKE_HOME", temp_dir.path().to_str().unwrap());
-
-        // Create config.toml with log section
-        let config_file = temp_dir.path().join("config.toml");
-        let config_content = r#"
+        let paths = make_paths(&temp_dir);
+        write_config(
+            &temp_dir,
+            "config.toml",
+            r#"
 [log]
 level = "info"
 
 [connections.testconn]
 account = "config_account"
-"#;
-        fs::write(&config_file, config_content).unwrap();
-
-        // Create connections.toml - should NOT affect log section
-        let connections_file = temp_dir.path().join("connections.toml");
-        let connections_content = r#"
+"#,
+        );
+        write_config(
+            &temp_dir,
+            "connections.toml",
+            r#"
 [testconn]
 account = "connections_account"
 
 [log]
 level = "debug"
-"#;
-        fs::write(&connections_file, connections_content).unwrap();
+"#,
+        );
 
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(&config_file, fs::Permissions::from_mode(0o600)).unwrap();
-            fs::set_permissions(&connections_file, fs::Permissions::from_mode(0o600)).unwrap();
-        }
-
-        // Load log section - should come from config.toml only
-        let result = load_config_section("log");
+        let result = load_config_section_with_paths("log", &paths);
         assert!(result.is_ok());
         let log_section = result.unwrap();
         assert!(log_section.is_some());
 
         let settings = log_section.unwrap();
         if let Some(Setting::String(level)) = settings.get("level") {
-            // Should be "info" from config.toml, not "debug" from connections.toml
             assert_eq!(level, "info");
         } else {
             panic!("Expected level setting");
         }
-
-        remove_env("SNOWFLAKE_HOME");
     }
 }

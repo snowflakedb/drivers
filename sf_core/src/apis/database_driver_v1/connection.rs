@@ -8,6 +8,7 @@ use super::Setting;
 use super::error::*;
 use super::global_state::CONN_HANDLE_MANAGER;
 use crate::config::config_manager;
+use crate::config::path_resolver::ConfigPaths;
 use crate::config::rest_parameters::{ClientInfo, LoginParameters};
 use crate::config::retry::RetryPolicy;
 use crate::rest::snowflake::{self, RestError, SessionTokens, SnowflakeResponseError};
@@ -24,6 +25,21 @@ pub fn connection_load_from_config(
 ) -> Result<(), ApiError> {
     let config_settings =
         config_manager::load_connection_config(connection_name).context(ConfigurationSnafu)?;
+
+    for (key, value) in config_settings {
+        conn.settings.entry(key).or_insert(value);
+    }
+    Ok(())
+}
+
+/// Load configuration from TOML files using explicit config paths.
+pub fn connection_load_from_config_with_paths(
+    conn: &mut Connection,
+    connection_name: &str,
+    paths: &ConfigPaths,
+) -> Result<(), ApiError> {
+    let config_settings = config_manager::load_connection_config_with_paths(connection_name, paths)
+        .context(ConfigurationSnafu)?;
 
     for (key, value) in config_settings {
         conn.settings.entry(key).or_insert(value);

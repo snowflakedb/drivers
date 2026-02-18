@@ -11,23 +11,26 @@ pub struct ConfigPaths {
 
 /// Get the Snowflake home directory from SNOWFLAKE_HOME environment variable
 pub fn get_snowflake_home() -> Option<PathBuf> {
-    env::var("SNOWFLAKE_HOME")
-        .ok()
-        .map(PathBuf::from)
-        .filter(|path| path.exists())
+    resolve_snowflake_home(env::var("SNOWFLAKE_HOME").ok())
+}
+
+fn resolve_snowflake_home(env_value: Option<String>) -> Option<PathBuf> {
+    env_value.map(PathBuf::from).filter(|path| path.exists())
 }
 
 /// Get the configuration file paths based on platform and environment
 pub fn get_config_paths() -> Result<ConfigPaths, ConfigError> {
-    // First, check if SNOWFLAKE_HOME is set
-    if let Some(snowflake_home) = get_snowflake_home() {
+    resolve_config_paths(get_snowflake_home())
+}
+
+fn resolve_config_paths(snowflake_home: Option<PathBuf>) -> Result<ConfigPaths, ConfigError> {
+    if let Some(snowflake_home) = snowflake_home {
         return Ok(ConfigPaths {
             connections_file: snowflake_home.join("connections.toml"),
             config_file: snowflake_home.join("config.toml"),
         });
     }
 
-    // Otherwise, use platform-specific defaults
     let config_dir = dirs::config_dir()
         .ok_or_else(|| ConfigDirNotFoundSnafu.build())?
         .join("snowflake");
@@ -41,27 +44,12 @@ pub fn get_config_paths() -> Result<ConfigPaths, ConfigError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::env;
     use tempfile::TempDir;
 
-    fn set_env(key: &str, value: &str) {
-        unsafe { env::set_var(key, value) }
-    }
-
-    fn remove_env(key: &str) {
-        unsafe { env::remove_var(key) }
-    }
-
     #[test]
-    fn test_get_config_paths_default() {
-        // Remove SNOWFLAKE_HOME if set
-        let _guard = env::var("SNOWFLAKE_HOME")
-            .ok()
-            .map(|_| remove_env("SNOWFLAKE_HOME"));
+    fn test_resolve_config_paths_default() {
+        let paths = resolve_config_paths(None).unwrap();
 
-        let paths = get_config_paths().unwrap();
-
-        // Should contain 'snowflake' in the path
         assert!(
             paths
                 .connections_file
@@ -69,8 +57,6 @@ mod tests {
                 .contains("snowflake")
         );
         assert!(paths.config_file.to_string_lossy().contains("snowflake"));
-
-        // Should end with the correct file names
         assert!(
             paths
                 .connections_file
@@ -81,16 +67,14 @@ mod tests {
     }
 
     #[test]
-    fn test_snowflake_home_override() {
+    fn test_resolve_config_paths_with_snowflake_home() {
         let temp_dir = TempDir::new().unwrap();
-        let temp_path = temp_dir.path().to_str().unwrap();
+        let temp_path = temp_dir.path().to_path_buf();
 
-        set_env("SNOWFLAKE_HOME", temp_path);
+        let paths = resolve_config_paths(Some(temp_path.clone())).unwrap();
 
-        let paths = get_config_paths().unwrap();
-
-        assert!(paths.connections_file.starts_with(temp_path));
-        assert!(paths.config_file.starts_with(temp_path));
+        assert!(paths.connections_file.starts_with(&temp_path));
+        assert!(paths.config_file.starts_with(&temp_path));
         assert!(
             paths
                 .connections_file
@@ -98,56 +82,28 @@ mod tests {
                 .ends_with("connections.toml")
         );
         assert!(paths.config_file.to_string_lossy().ends_with("config.toml"));
-
-        // Clean up
-        remove_env("SNOWFLAKE_HOME");
     }
 
     #[test]
-    fn test_snowflake_home_nonexistent() {
-        set_env("SNOWFLAKE_HOME", "/nonexistent/path/that/does/not/exist");
-
-        let snowflake_home = get_snowflake_home();
-
-        // Should return None since path doesn't exist
-        assert!(snowflake_home.is_none());
-
-        // get_config_paths should fall back to default
-        let paths = get_config_paths().unwrap();
-        assert!(
-            paths
-                .connections_file
-                .to_string_lossy()
-                .contains("snowflake")
-        );
-
-        // Clean up
-        remove_env("SNOWFLAKE_HOME");
+    fn test_resolve_snowflake_home_nonexistent() {
+        let result =
+            resolve_snowflake_home(Some("/nonexistent/path/that/does/not/exist".to_string()));
+        assert!(result.is_none());
     }
 
     #[test]
-    fn test_get_snowflake_home_set() {
+    fn test_resolve_snowflake_home_existing() {
         let temp_dir = TempDir::new().unwrap();
-        let temp_path = temp_dir.path().to_str().unwrap();
+        let temp_path = temp_dir.path().to_str().unwrap().to_string();
 
-        set_env("SNOWFLAKE_HOME", temp_path);
-
-        let snowflake_home = get_snowflake_home();
-        assert!(snowflake_home.is_some());
-        assert_eq!(snowflake_home.unwrap().to_str().unwrap(), temp_path);
-
-        // Clean up
-        remove_env("SNOWFLAKE_HOME");
+        let result = resolve_snowflake_home(Some(temp_path.clone()));
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().to_str().unwrap(), temp_path);
     }
 
     #[test]
-    fn test_get_snowflake_home_not_set() {
-        // Ensure SNOWFLAKE_HOME is not set
-        let _guard = env::var("SNOWFLAKE_HOME")
-            .ok()
-            .map(|_| remove_env("SNOWFLAKE_HOME"));
-
-        let snowflake_home = get_snowflake_home();
-        assert!(snowflake_home.is_none());
+    fn test_resolve_snowflake_home_not_set() {
+        let result = resolve_snowflake_home(None);
+        assert!(result.is_none());
     }
 }
