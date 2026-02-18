@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Any, NamedTuple
 
 from ._internal.arrow_context import ArrowConverterContext
 from ._internal.arrow_stream_iterator import ArrowStreamIterator
-from ._internal.binding_serializer import BindingSerializer
+from ._internal.binding_serializer import BindingSerializer, ClientSideBindingConverter
 from ._internal.protobuf_gen.database_driver_v1_pb2 import (
     BinaryDataPtr,
     ExecuteResult,
@@ -236,24 +236,40 @@ class SnowflakeCursorBase(abc.ABC):
 
         Args:
             operation (str): SQL statement to execute
-            parameters (sequence): Parameters for the operation
+            parameters (sequence or dict): Parameters for the operation.
+                For qmark/numeric paramstyle: sequence of values
+                For pyformat paramstyle: sequence (%s) or dict (%(name)s)
+                For format paramstyle: sequence (%s)
         """
+        # Determine the query and bindings based on paramstyle
+        query = operation
+        bindings = None
+
+        if parameters is not None:
+            paramstyle = self.connection._paramstyle
+
+            if paramstyle is None:
+                raise ProgrammingError(
+                    "Binding parameters requires paramstyle to be set. "
+                    "Pass paramstyle='qmark', 'numeric', 'pyformat', or 'format' to connect()."
+                )
+
+            if paramstyle in ("pyformat", "format"):
+                # Client-side binding: interpolate parameters into SQL
+                query = ClientSideBindingConverter.interpolate_query(operation, parameters)
+                # No bindings sent to server - parameters are in the SQL string
+            elif not isinstance(parameters, dict):
+                # Server-side binding: qmark or numeric
+                bindings = self._build_query_bindings(parameters)
+            # If parameters is a dict with server-side paramstyle, ignore it (no named binding support)
+
         stmt_handle = self.connection.db_api.statement_new(
             StatementNewRequest(conn_handle=self.connection.conn_handle)
         ).stmt_handle
         self.connection.db_api.statement_set_sql_query(
-            StatementSetSqlQueryRequest(stmt_handle=stmt_handle, query=operation)
+            StatementSetSqlQueryRequest(stmt_handle=stmt_handle, query=query)
         )
 
-        if parameters is not None and not isinstance(parameters, dict):
-            if self.connection._paramstyle is None:
-                raise ProgrammingError(
-                    "Binding parameters requires paramstyle to be set. "
-                    "Pass paramstyle='qmark' or paramstyle='numeric' to connect()."
-                )
-            bindings = self._build_query_bindings(parameters)
-        else:
-            bindings = None
         request = StatementExecuteQueryRequest(stmt_handle=stmt_handle, bindings=bindings)
 
         self.execute_result = self.connection.db_api.statement_execute_query(request).result
@@ -273,15 +289,19 @@ class SnowflakeCursorBase(abc.ABC):
         else:
             self._rowcount = None
 
-    def executemany(self, operation: str, seq_of_parameters: Sequence[Sequence[Any]]) -> None:
+    def executemany(
+        self, operation: str, seq_of_parameters: Sequence[Sequence[Any] | dict[str, Any]]
+    ) -> None:
         """
         Execute a database operation repeatedly for each element in seq_of_parameters.
 
-        Uses array binding to execute all parameter sets in a single request.
+        For qmark/numeric paramstyles, uses array binding to execute all parameter
+        sets in a single request. For pyformat/format paramstyles, executes each
+        row individually with client-side interpolation.
 
         Args:
             operation (str): SQL statement (typically INSERT, UPDATE, or DELETE)
-            seq_of_parameters (sequence): Sequence of parameter sequences
+            seq_of_parameters (sequence): Sequence of parameter sequences or dicts
 
         Raises:
             ProgrammingError: If parameter sequences have inconsistent lengths
@@ -289,9 +309,20 @@ class SnowflakeCursorBase(abc.ABC):
         if not seq_of_parameters:
             return  # Empty sequence - no-op per PEP 249
 
-        # Validate all parameter sequences have same length
+        paramstyle = self.connection._paramstyle
+        first_params = seq_of_parameters[0]
+
+        # Execute individually for:
+        # - Client-side binding (pyformat/format)
+        # - Dict parameters (server-side doesn't support named binding)
+        if paramstyle in ("pyformat", "format") or isinstance(first_params, dict):
+            for params in seq_of_parameters:
+                self.execute(operation, params)
+            return
+
+        # Server-side binding: validate and use array binding
         # Error code 251007 (ER_INVALID_VALUE) matches reference driver behavior
-        first_len = len(seq_of_parameters[0])
+        first_len = len(first_params)
         for params in seq_of_parameters:
             if len(params) != first_len:
                 raise InterfaceError(

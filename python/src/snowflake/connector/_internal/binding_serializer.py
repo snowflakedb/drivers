@@ -4,6 +4,10 @@ Parameter binding serialization for Snowflake universal driver.
 This module handles serialization of Python parameter bindings to JSON format
 for transmission to the Rust core, following the design specified in bindingsdesign.md.
 
+It also provides client-side binding support for pyformat/format paramstyles,
+implementing escape(), quote(), and to_snowflake() functions that mirror
+the reference snowflake-connector-python's SnowflakeConverter.
+
 Conversion logic mirrors the reference snowflake-connector-python's
 SnowflakeConverter.to_snowflake_bindings and Connection._process_params_qmarks.
 """
@@ -12,14 +16,50 @@ from __future__ import annotations
 
 import binascii
 import json
+import re
 import time as time_module
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 from typing import Any
 
 from .type_codes import PYTHON_TO_SNOWFLAKE_TYPE
+
+
+# Numeric types for IS_NUMERIC check (mirrors reference connector's compat.py)
+_NUM_DATA_TYPES: tuple[type, ...] = (int, float, Decimal)
+
+# Try to include numpy types if available
+try:
+    import numpy
+
+    _NUM_DATA_TYPES = _NUM_DATA_TYPES + (
+        numpy.int8,
+        numpy.int16,
+        numpy.int32,
+        numpy.int64,
+        numpy.float16,
+        numpy.float32,
+        numpy.float64,
+        numpy.uint8,
+        numpy.uint16,
+        numpy.uint32,
+        numpy.uint64,
+        numpy.bool_,
+    )
+except (ImportError, AttributeError):
+    pass
+
+
+def _is_numeric(value: Any) -> bool:
+    """Check if value is a numeric type."""
+    return isinstance(value, _NUM_DATA_TYPES)
+
+
+def _is_binary(value: Any) -> bool:
+    """Check if value is a binary type."""
+    return isinstance(value, (bytes, bytearray))
 
 
 # Epoch constants (timezone-independent)
@@ -233,3 +273,202 @@ class BindingSerializer:
     # TODO: Implement stage binding decision logic in follow-up
     # When data size exceeds CLIENT_STAGE_ARRAY_BINDING_THRESHOLD (default 65280),
     # should serialize to CSV and upload to stage instead of using JSON binding.
+
+
+class ClientSideBindingConverter:
+    """Converts Python values for client-side SQL interpolation (pyformat/format styles).
+
+    This class mirrors the reference snowflake-connector-python's SnowflakeConverter
+    for client-side binding, implementing escape(), quote(), and to_snowflake() methods.
+    """
+
+    @staticmethod
+    def escape(value: Any) -> Any:
+        """Escape special characters in string values for SQL interpolation.
+
+        Mirrors reference connector's SnowflakeConverter.escape() method.
+        """
+        if isinstance(value, list):
+            return value
+        if value is None or _is_numeric(value) or _is_binary(value):
+            return value
+        res = value
+        res = res.replace("\\", "\\\\")
+        res = res.replace("\n", "\\n")
+        res = res.replace("\r", "\\r")
+        res = res.replace("\047", "\134\047")  # single quotes: ' -> \'
+        return res
+
+    @classmethod
+    def quote(cls, value: Any) -> str:
+        """Quote a value for SQL interpolation.
+
+        Mirrors reference connector's SnowflakeConverter.quote() method.
+        """
+        if isinstance(value, list):
+            # Quote each item in the list and join with commas
+            return ",".join(cls.quote(item) for item in value)
+        if value is None:
+            return "NULL"
+        elif isinstance(value, bool):
+            return "TRUE" if value else "FALSE"
+        elif _is_numeric(value):
+            return str(repr(value))
+        elif _is_binary(value):
+            # Binary literal syntax: X'hex_value'
+            return "X'{}'".format(binascii.hexlify(value).decode("ascii"))
+        return f"'{value}'"
+
+    @classmethod
+    def to_snowflake(cls, value: Any) -> Any:
+        """Convert Python value to Snowflake-compatible format for client-side binding.
+
+        Mirrors reference connector's SnowflakeConverter.to_snowflake() method.
+        """
+        if value is None:
+            return None
+        elif isinstance(value, bool):
+            return value
+        elif isinstance(value, int):
+            return value
+        elif isinstance(value, float):
+            return value
+        elif isinstance(value, str):
+            return value
+        elif isinstance(value, Decimal):
+            return value
+        elif isinstance(value, (bytes, bytearray)):
+            # Binary data stays as bytes for quote() to handle
+            return value
+        elif isinstance(value, datetime):
+            return cls._datetime_to_snowflake(value)
+        elif isinstance(value, date):
+            return cls._date_to_snowflake(value)
+        elif isinstance(value, time):
+            return cls._time_to_snowflake(value)
+        elif isinstance(value, timedelta):
+            return cls._timedelta_to_snowflake(value)
+        elif isinstance(value, time_module.struct_time):
+            return cls._struct_time_to_snowflake(value)
+        elif isinstance(value, list):
+            # List for IN clause - convert each element
+            return [cls.to_snowflake(v) for v in value]
+        else:
+            # For other types, convert to string
+            return str(value)
+
+    @staticmethod
+    def _datetime_to_snowflake(value: datetime) -> str:
+        """Convert datetime to Snowflake string format."""
+        tzinfo_value = value.tzinfo
+        if tzinfo_value:
+            # Get UTC offset
+            td = tzinfo_value.utcoffset(value)
+            if td is None:
+                td = timedelta(0)
+            sign = "+" if td >= timedelta(0) else "-"
+            td_secs = int(td.total_seconds())
+            h, m = divmod(abs(td_secs // 60), 60)
+            if value.microsecond:
+                return (
+                    f"{value.year:d}-{value.month:02d}-{value.day:02d} "
+                    f"{value.hour:02d}:{value.minute:02d}:{value.second:02d}."
+                    f"{value.microsecond:06d}{sign}{h:02d}:{m:02d}"
+                )
+            return (
+                f"{value.year:d}-{value.month:02d}-{value.day:02d} "
+                f"{value.hour:02d}:{value.minute:02d}:{value.second:02d}"
+                f"{sign}{h:02d}:{m:02d}"
+            )
+        else:
+            if value.microsecond:
+                return (
+                    f"{value.year:d}-{value.month:02d}-{value.day:02d} "
+                    f"{value.hour:02d}:{value.minute:02d}:{value.second:02d}."
+                    f"{value.microsecond:06d}"
+                )
+            return (
+                f"{value.year:d}-{value.month:02d}-{value.day:02d} "
+                f"{value.hour:02d}:{value.minute:02d}:{value.second:02d}"
+            )
+
+    @staticmethod
+    def _date_to_snowflake(value: date) -> str:
+        """Convert date to Snowflake string format."""
+        return f"{value.year:d}-{value.month:02d}-{value.day:02d}"
+
+    @staticmethod
+    def _time_to_snowflake(value: time) -> str:
+        """Convert time to Snowflake string format."""
+        if value.microsecond:
+            return f"{value.hour:02d}:{value.minute:02d}:{value.second:02d}.{value.microsecond:06d}"
+        return f"{value.hour:02d}:{value.minute:02d}:{value.second:02d}"
+
+    @staticmethod
+    def _timedelta_to_snowflake(value: timedelta) -> str:
+        """Convert timedelta to Snowflake string format."""
+        hours, remainder = divmod(value.seconds, 3600)
+        mins, secs = divmod(remainder, 60)
+        hours += value.days * 24
+        if value.microseconds:
+            return f"{hours:02d}:{mins:02d}:{secs:02d}.{value.microseconds:06d}"
+        return f"{hours:02d}:{mins:02d}:{secs:02d}"
+
+    @staticmethod
+    def _struct_time_to_snowflake(value: time_module.struct_time) -> str:
+        """Convert struct_time to Snowflake string format."""
+        return (
+            f"{value.tm_year:d}-{value.tm_mon:02d}-{value.tm_mday:02d} "
+            f"{value.tm_hour:02d}:{value.tm_min:02d}:{value.tm_sec:02d}"
+        )
+
+    @classmethod
+    def process_single_param(cls, param: Any) -> Any:
+        """Process a single parameter for client-side binding.
+
+        Applies to_snowflake -> escape -> quote transformation.
+        """
+        return cls.quote(cls.escape(cls.to_snowflake(param)))
+
+    @classmethod
+    def process_params_pyformat(cls, params: Sequence[Any] | Mapping[str, Any] | None) -> dict[str, Any] | tuple[Any, ...]:
+        """Process parameters for pyformat/format style binding.
+
+        Args:
+            params: Parameters as sequence (for %s) or mapping (for %(name)s)
+
+        Returns:
+            Processed parameters ready for % string interpolation
+        """
+        if params is None:
+            return ()
+
+        if isinstance(params, Mapping):
+            # Named parameters: %(name)s
+            return {key: cls.process_single_param(value) for key, value in params.items()}
+        else:
+            # Positional parameters: %s
+            return tuple(cls.process_single_param(param) for param in params)
+
+    @classmethod
+    def interpolate_query(cls, query: str, params: Sequence[Any] | Mapping[str, Any] | None) -> str:
+        """Interpolate parameters into query using Python % formatting.
+
+        This is the main entry point for client-side binding, mirroring
+        the reference connector's _preprocess_pyformat_query method.
+
+        Args:
+            query: SQL query with %s or %(name)s placeholders
+            params: Parameters to interpolate
+
+        Returns:
+            Query string with parameters interpolated
+        """
+        if params is None or (not isinstance(params, Mapping) and len(params) == 0):
+            return query
+
+        processed_params = cls.process_params_pyformat(params)
+
+        if processed_params:
+            return query % processed_params
+        return query

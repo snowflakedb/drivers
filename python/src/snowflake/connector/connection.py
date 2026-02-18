@@ -28,19 +28,21 @@ from .errors import InterfaceError, NotSupportedError, ProgrammingError
 
 
 # Paramstyles that enable server-side binding in the universal driver.
-_SUPPORTED_PARAMSTYLES = {"qmark", "numeric"}
+_SERVER_SIDE_PARAMSTYLES = {"qmark", "numeric"}
 
-# TODO: to be added in follow-up PR
+# Paramstyles that enable client-side binding (SQL interpolation).
 _CLIENT_SIDE_PARAMSTYLES = {"format", "pyformat"}
+
+# All supported paramstyles
+_SUPPORTED_PARAMSTYLES = _SERVER_SIDE_PARAMSTYLES | _CLIENT_SIDE_PARAMSTYLES
 
 
 def _resolve_paramstyle(value: str | None) -> str | None:
     """Validate a *paramstyle* value.
 
     Returns the canonical lower-case paramstyle string when it names a
-    server-side binding style supported by the universal driver, ``None``
-    when it names a client-side style that we tolerate but don't support,
-    and raises :class:`ProgrammingError` for anything else.
+    supported binding style, or ``None`` when no paramstyle is specified.
+    Raises :class:`ProgrammingError` for invalid paramstyle values.
     """
     if value is None:
         return None
@@ -50,13 +52,14 @@ def _resolve_paramstyle(value: str | None) -> str | None:
     if normalised in _SUPPORTED_PARAMSTYLES:
         return normalised
 
-    # TODO: remove in follow-up PR
-    if normalised in _CLIENT_SIDE_PARAMSTYLES:
-        return None
-
     raise ProgrammingError(
         f"Invalid paramstyle is specified: {value!r}. Supported values: {', '.join(sorted(_SUPPORTED_PARAMSTYLES))}"
     )
+
+
+def _is_client_side_paramstyle(paramstyle: str | None) -> bool:
+    """Check if the paramstyle requires client-side binding."""
+    return paramstyle in _CLIENT_SIDE_PARAMSTYLES
 
 
 class Connection:
@@ -67,7 +70,9 @@ class Connection:
         Initialize a new connection object.
 
         Args:
-            paramstyle: Binding style – ``"qmark"`` or ``"numeric"``.
+            paramstyle: Binding style – ``"qmark"``, ``"numeric"``, ``"pyformat"``, or ``"format"``.
+                        ``qmark``/``numeric`` use server-side binding with ? or :N placeholders.
+                        ``pyformat``/``format`` use client-side interpolation with %s or %(name)s.
             database: Database name
             user: Username
             password: Password
