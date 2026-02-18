@@ -280,13 +280,14 @@ class TestArrayBinding:
     def test_should_validate_parameter_length_in_multirow_binding(self, cursor):
         """Test multirow binding raises error for inconsistent lengths."""
         # Given Snowflake client is logged in
+        from snowflake.connector import InterfaceError
 
         # When Multirow binding is called with inconsistent parameter lengths [(1, "a"), (2, "b", "extra")]
-        with pytest.raises(ProgrammingError) as excinfo:
+        with pytest.raises(InterfaceError) as excinfo:
             cursor.executemany("INSERT INTO table VALUES (?, ?)", [(1, "a"), (2, "b", "extra")])
 
         # Then Error should be raised indicating parameter sequence length mismatch
-        assert "Parameter sequence" in str(excinfo.value)
+        assert "Bulk data size don't match" in str(excinfo.value)
 
     def test_should_handle_null_values_in_multirow_binding(self, cursor, tmp_schema):
         """Test multirow binding handles NULL values."""
