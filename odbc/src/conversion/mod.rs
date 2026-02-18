@@ -6,6 +6,7 @@ pub mod warning;
 
 mod nullable;
 mod number;
+#[cfg(test)]
 mod number_tests;
 mod varchar;
 

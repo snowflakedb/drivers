@@ -54,15 +54,15 @@ behavior_differences:
       high-precision numeric columns. Data retrieval is unaffected when using SQL_C_CHAR
       since both SQL_DECIMAL and SQL_VARCHAR default to SQL_C_CHAR.
 
-  9:
-    name: "SQL_C_CHAR with small buffer returns SQL_SUCCESS_WITH_INFO instead of SQL_ERROR"
+  13:
+    name: "SQL_C_CHAR with small buffer returns SQL_SUCCESS_WITH_INFO instead of SQL_SUCCESS"
     description: |
       OLD driver: When SQLGetData is called with a buffer too small to hold the full
-      character representation of a DECIMAL value, the old driver returns SQL_ERROR (-1)
-      and does not populate the buffer or the indicator.
+      character representation of a DECIMAL value, the old driver returns SQL_SUCCESS (0)
+      and silently truncates the data without setting a warning.
       NEW driver: Returns SQL_SUCCESS_WITH_INFO (1) with truncated data in the buffer,
-      a null terminator, and the full data length in the indicator, per the ODBC spec
+      a null terminator, and SQL_NO_TOTAL in the indicator, per the ODBC spec
       for string data right truncation (SQLSTATE 01004).
-      Impact: Applications that check for SQL_ERROR on small buffers will see
-      SQL_SUCCESS_WITH_INFO instead. The ODBC specification mandates SQL_SUCCESS_WITH_INFO
+      Impact: Applications that check only for SQL_SUCCESS will now also see
+      SQL_SUCCESS_WITH_INFO. The ODBC specification mandates SQL_SUCCESS_WITH_INFO
       for string truncation, so this is a spec-compliance improvement.

@@ -619,11 +619,11 @@ TEST_CASE("SQL_DECIMAL SQL_C_CHAR with small buffer", "[datatype][number][char][
   SQLLEN indicator = 0;
   SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_CHAR, small_buffer, sizeof(small_buffer), &indicator);
 
-  OLD_DRIVER_ONLY("BD#9") { CHECK(ret == SQL_ERROR); }
+  OLD_DRIVER_ONLY("BD#13") { CHECK(ret == SQL_SUCCESS); }
 
-  NEW_DRIVER_ONLY("BD#9") {
+  NEW_DRIVER_ONLY("BD#13") {
     CHECK(ret == SQL_SUCCESS_WITH_INFO);
-    CHECK(indicator == 6);
+    CHECK(indicator == SQL_NO_TOTAL);
     CHECK(std::string(small_buffer) == "123");
   }
 }
