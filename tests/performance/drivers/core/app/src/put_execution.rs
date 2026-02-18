@@ -100,6 +100,7 @@ fn execute_put_get_iteration(stmt_handle: StatementHandle, sql: &str) -> Result<
     let start_query = Instant::now();
     DatabaseDriver::statement_execute_query(StatementExecuteQueryRequest {
         stmt_handle: Some(stmt_handle),
+        bindings: None,
     })
     .map_err(|e| format!("PUT/GET execution failed: {:?}", e))?;
     let query_time = start_query.elapsed().as_secs_f64();

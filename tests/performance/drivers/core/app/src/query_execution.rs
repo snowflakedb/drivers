@@ -135,6 +135,7 @@ fn execute_iteration(stmt_handle: StatementHandle) -> Result<(f64, f64, usize)> 
     let start_query = Instant::now();
     let response = DatabaseDriver::statement_execute_query(StatementExecuteQueryRequest {
         stmt_handle: Some(stmt_handle),
+        bindings: None,
     })
     .map_err(|e| format!("Query execution failed: {:?}", e))?;
     let query_time = start_query.elapsed().as_secs_f64();
