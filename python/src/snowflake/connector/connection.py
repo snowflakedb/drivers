@@ -7,6 +7,7 @@ This module defines the Connection class as specified in PEP 249.
 from __future__ import annotations
 
 import atexit
+import logging
 import warnings
 
 from typing import Any
@@ -29,6 +30,9 @@ from ._internal.api_client.client_api import database_driver_client
 from .cursor import SnowflakeCursor, SnowflakeCursorBase
 from .errors import InterfaceError, NotSupportedError
 
+
+# Module-level logger
+logger = logging.getLogger(__name__)
 
 # Global flag to track if first auto-cleanup warning has been emitted in this process
 _first_auto_cleanup_in_process = True
@@ -152,10 +156,21 @@ class Connection:
         """
         Cleanup handler called by atexit when process exits.
 
-        Emits deprecation warning on first call per process.
+        If close() was called successfully, this handler should have been unregistered
+        and should NOT run. If it runs for an already-closed connection, that indicates
+        a potential bug (unregister failed, race condition, or multiple registrations).
         """
         global _first_auto_cleanup_in_process
 
+        if self.is_closed():
+            # This shouldn't happen! If close() succeeded, handler should be unregistered.
+            logger.debug(
+                "atexit handler ran for already-closed connection. "
+                "This may indicate atexit.unregister() failed or a race condition occurred."
+            )
+            return
+
+        # Connection is leaked (not explicitly closed) - emit deprecation warning
         if _first_auto_cleanup_in_process:
             warnings.warn(
                 "Connection was not explicitly closed before process exit. "
@@ -166,16 +181,15 @@ class Connection:
             )
             _first_auto_cleanup_in_process = False
 
-        # Close without retry on exit
-        if not self.is_closed():
-            try:
-                # Temporarily disable auto_cleanup flag to avoid atexit recursion
-                saved_auto_cleanup = self.auto_cleanup
-                self.auto_cleanup = False
-                self.close(retry=False)
-                self.auto_cleanup = saved_auto_cleanup
-            except Exception:
-                pass  # Suppress errors during exit cleanup
+        # Attempt cleanup for leaked connection
+        try:
+            # Temporarily disable auto_cleanup flag to avoid atexit recursion
+            saved_auto_cleanup = self.auto_cleanup
+            self.auto_cleanup = False
+            self.close(retry=False)
+            self.auto_cleanup = saved_auto_cleanup
+        except Exception:
+            pass  # Suppress errors during exit cleanup
 
     def commit(self) -> None:
         """
