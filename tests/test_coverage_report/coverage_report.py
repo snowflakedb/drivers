@@ -1389,13 +1389,11 @@ class CoverageReportGenerator:
                         category_rows.append(examples_html)
             
             # Add all category rows with proper data attributes
-            import re as _re
             for row in category_rows:
                 if 'feature-row' in row:
                     rows.append(row.replace('<tr class="feature-row">', f'<tr class="feature-row" data-category="{folder_id}">'))
                 else:
-                    # Only add data-category to the opening <tr> tag, not inner elements
-                    rows.append(_re.sub(r'<tr\b', f'<tr data-category="{folder_id}"', row, count=1))
+                    rows.append(re.sub(r'<tr\b', f'<tr data-category="{folder_id}"', row, count=1))
         
         rows_html = '\n'.join(f'                    {row}' for row in rows)
         

@@ -53,9 +53,13 @@ class FeatureParser:
     @staticmethod
     def _parse_table_row(line: str) -> List[str]:
         """Parse a Gherkin table row '| a | b | c |' into a list of cell values."""
-        cells = line.split('|')
-        # Strip outer empty strings and whitespace from each cell
-        return [cell.strip() for cell in cells if cell.strip()]
+        trimmed = line.strip()
+        if trimmed.startswith('|'):
+            trimmed = trimmed[1:]
+        if trimmed.endswith('|'):
+            trimmed = trimmed[:-1]
+        cells = trimmed.split('|')
+        return [cell.strip() for cell in cells]
     
     def get_feature_scenarios(self, feature_path: str) -> List[str]:
         """Extract scenario names from a feature file."""
