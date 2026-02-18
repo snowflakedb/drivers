@@ -200,10 +200,11 @@ fn generate_request_guid() -> uuid::Uuid {
 
 /// Build User-Agent header per UD spec: {WrapperUA} UD/{core_ver} Rust/{rust_ver}
 fn build_user_agent(client_info: &ClientInfo) -> String {
+    let ud_version = env!("CARGO_PKG_VERSION");
     let rust_version = option_env!("CARGO_PKG_RUST_VERSION").unwrap_or("unknown");
     format!(
-        "{}/{} ({}) UD/1.0.0 Rust/{}",
-        &client_info.application, &client_info.version, &client_info.os, rust_version
+        "{}/{} ({}) UD/{} Rust/{}",
+        &client_info.application, &client_info.version, &client_info.os, ud_version, rust_version
     )
 }
 
