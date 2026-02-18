@@ -119,11 +119,15 @@ class Connection:
             retry: Whether to retry failed logout (Note: retry parameter kept for compatibility,
                    but retry behavior is now controlled by Core's retry policy)
 
-        Behavior:
+        Behavior (Phase 2 - Backward Compatible):
             - Auto-detection enabled by default (legacy Python behavior for backward compatibility)
             - server_session_keep_alive=False still respects auto-detection
             - server_session_keep_alive=True never sends logout (Fire & Forget)
             - server_session_keep_alive=None delegates to auto-detection setting
+
+        Note: Phase 2 behavior is achieved by mapping Python parameters to Core's Phase 3
+        semantics. In Phase 3, Python will pass parameters directly to Core without mapping.
+        See .ai/docs/UD_Design_Doc_Fire_Forget.md for Phase 2/3 migration plan.
         """
         # Unregister atexit handler to prevent it from running at process exit
         # after explicit close(). This prevents double cleanup and false warnings.
@@ -140,12 +144,29 @@ class Connection:
             else True
         )
 
-        # Call Core connection_close with configuration
+        # Phase 2 Parameter Mapping: Map Python Phase 2 semantics to Core's Phase 3 semantics
+        # Python Phase 2: server_session_keep_alive=False respects auto-detection when enabled
+        # Core Phase 3: Some(false) = always logout, ignores auto-detection
+        #
+        # Mapping:
+        # - Python: False + auto-detection enabled → Core: None (respects auto-detection)
+        # - Python: False + auto-detection disabled → Core: False (force logout)
+        # - Python: True → Core: True (never logout)
+        # - Python: None → Core: None (delegate to auto-detection)
+        #
+        # TODO(SNOW-XXXXX): Remove this mapping in Phase 3 and pass parameters directly
+        core_keep_alive = self.server_session_keep_alive
+        if self.server_session_keep_alive is False and effective_enable_auto:
+            # Phase 2 compat: False with auto-detection enabled → map to None
+            # This makes Core check the registry (legacy Python behavior)
+            core_keep_alive = None
+
+        # Call Core connection_close with mapped configuration
         # Core will set is_closed flag atomically
         self.db_api.connection_close(
             ConnectionCloseRequest(
                 conn_handle=self.conn_handle,
-                server_session_keep_alive=self.server_session_keep_alive,
+                server_session_keep_alive=core_keep_alive,  # Mapped parameter
                 enable_auto_detection=effective_enable_auto,
                 error_strategy="BestEffort",  # Python default
                 timeout_seconds=5,  # 5 second default
