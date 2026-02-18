@@ -50,7 +50,7 @@ Feature: Session Logout
   #                        Process Exit and Thread Management
   # ===========================================================================
 
-  @core_e2e @todo_SNOW-2881763
+  @core_e2e
   Scenario: should allow process to exit cleanly when session kept alive
     # Requires: SNOW-2881763 (Heartbeat)
     Given Connection with heartbeat enabled
