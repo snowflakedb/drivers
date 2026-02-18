@@ -8,7 +8,7 @@ cmake-build*
 __pycache__/
 build/reports
 jdbc/.gradle
-jdbc/buildin
+jdbc/build
 odbc_tests/cmake-build
 parameters.json
 **/rsa_key.p8
@@ -25,9 +25,3 @@ sf_core/src/bin
 tests/wiremock/__files/*
 
 .DS_Store
-
-# AI agent configuration and rules
-.ai/
-.cursor/
-LOGOUT_IMPLEMENTATION_LESSONS_LEARNED.md
-PR_SUMMARY.md
