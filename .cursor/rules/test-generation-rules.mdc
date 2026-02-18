@@ -1,0 +1,68 @@
+---
+description: rules for generating integration/E2E tests
+alwaysApply: false
+---
+
+# E2E/integration Test Generation Guidelines
+
+## Analyze tests/definitions/README.md and follow described approach.
+
+- Analyze tests in core and wrappers specific directories to learn the structure and conventions
+- Never leave empty Gherkin comments, each comment should be followed by relevant code.
+
+## Follow DRY principles
+- Check existing helper methods and reuse/extend when applicable.
+- If code is repeating in one test file, extract helper method in that test file.
+- If code is repeating over multiple test files, extract to separate util or add/reuse existing one.
+- When testing errors/exceptions, compare how it's done in existing tests
+
+## Structure
+- all test are always on the top, all helper methods at the bottom in test files
+- imports are on the top of the file
+
+## Verify test
+
+### Setup (all tests)
+- define environment variable PARAMETER_PATH=/[project_location]/parameters.json before running tests
+- read Readme in relevant test directories to understand how to run tests
+
+### Core Tests Flow
+1. Write the test implementation
+2. Run the test and verify there are no test errors
+3. When test fails with error unrelated to testing changes (like lack of parameters), fix the error and continue
+4. Validate assertions catch failures (temporarily break test to ensure it's not a false positive)
+5. If test is correct but functionality is not working, describe the error as the last step
+
+### Wrapper Tests Flow
+For wrapper tests, follow this strict order:
+
+1. **Test Against OLD Driver FIRST**
+   - Write the test implementation based on expected behavior
+   - Run tests against OLD driver (e.g., `DRIVER_TYPE=OLD` for ODBC)
+   - Fix any test issues until tests pass against the old driver
+   - When test fails with error unrelated to testing changes (like lack of parameters), fix the error and continue
+   - Tests MUST pass here before proceeding
+
+2. **Test Against NEW Driver**
+   - Once old driver tests pass, run the same tests against NEW driver
+   - Document any failures or differences observed
+   - Analyze if differences are expected or there are bugs in new driver
+
+3. **Handle Behavior Differences** (if needed)
+   - If behavior legitimately differs between drivers, use the BehaviorDifferences system:
+     - Check if difference is already documented in `BehaviorDifferences.yaml` for that driver
+     - If not documented, add new entry with:
+       - Sequential number (next available ID)
+       - Descriptive name
+      - Update test code to use driver-specific assertions i.e.:
+        - Python: `OLD_DRIVER_ONLY("BD#N")` and `NEW_DRIVER_ONLY("BD#N")`
+      - Ensure both code paths have appropriate assertions for their respective drivers
+
+4. **Validate Assertions** (for both OLD and NEW drivers)
+   - Ensure test can catch failures (temporarily break assertions to confirm they work correctly)
+   
+5. **Final Verification**
+   - If test is correct but functionality is not working, describe the error as the last step
+
+## Validate format 
+At the end always run tests/tests_format_validator to validate the created tests format.
