@@ -1,4 +1,4 @@
-use crate::config::rest_parameters::LoginParameters;
+use crate::config::rest_parameters::{LoginParameters, NativeOktaConfig};
 use crate::config::retry::RetryPolicy;
 use crate::http::retry::{HttpContext, HttpError, execute_with_retry};
 use crate::rest::snowflake::auth::{AuthRequest, AuthRequestData};
@@ -208,15 +208,6 @@ fn remaining_policy(
     Ok(p)
 }
 
-pub(crate) struct NativeOktaConfig<'a> {
-    pub okta_url: &'a Url,
-    pub username: &'a str,
-    pub okta_username: Option<&'a str>,
-    pub password: &'a str,
-    pub disable_saml_url_check: bool,
-    pub authentication_timeout_secs: u64,
-}
-
 #[tracing::instrument(
     skip(client, login_parameters, base_policy, config),
     fields(authentication_timeout_secs = config.authentication_timeout_secs)
@@ -225,7 +216,7 @@ pub(crate) async fn fetch_native_okta_saml(
     client: &reqwest::Client,
     login_parameters: &LoginParameters,
     base_policy: &RetryPolicy,
-    config: &NativeOktaConfig<'_>,
+    config: &NativeOktaConfig,
 ) -> Result<String, NativeOktaError> {
     tracing::info!("Starting native Okta authentication");
     let budget = Duration::from_secs(config.authentication_timeout_secs);
@@ -243,7 +234,7 @@ pub(crate) async fn fetch_native_okta_saml(
     .await?;
 
     // Step 2: verify that Snowflake-returned IdP URLs match the configured Okta URL.
-    let (token_url, sso_url) = validate_idp_urls(config.okta_url, &idp_data, start)?;
+    let (token_url, sso_url) = validate_idp_urls(&config.okta_url, &idp_data, start)?;
 
     // Steps 3+4: mint one-time token, fetch SAML form, validate.
     // Re-mints the token and retries on transient failures.
@@ -264,7 +255,7 @@ async fn request_authenticator_endpoints(
     client: &reqwest::Client,
     login_parameters: &LoginParameters,
     base_policy: &RetryPolicy,
-    config: &NativeOktaConfig<'_>,
+    config: &NativeOktaConfig,
     start: Instant,
     budget: Duration,
 ) -> Result<AuthenticatorRequestData, NativeOktaError> {
@@ -384,13 +375,13 @@ async fn fetch_saml_with_retries(
     client: &reqwest::Client,
     login_parameters: &LoginParameters,
     base_policy: &RetryPolicy,
-    config: &NativeOktaConfig<'_>,
+    config: &NativeOktaConfig,
     token_url: &Url,
     sso_url: &Url,
     start: Instant,
 ) -> Result<String, NativeOktaError> {
     let budget = Duration::from_secs(config.authentication_timeout_secs);
-    let idp_login = config.okta_username.unwrap_or(config.username);
+    let idp_login = config.okta_username.as_deref().unwrap_or(&config.username);
 
     let mut saml_attempt: u32 = 0;
     loop {
@@ -402,7 +393,7 @@ async fn fetch_saml_with_retries(
             client,
             token_url,
             idp_login,
-            config.password,
+            &config.password,
             &policy,
             start,
         )

@@ -117,27 +117,30 @@ impl LoginParameters {
 }
 
 #[derive(Debug)]
+pub struct NativeOktaConfig {
+    /// Snowflake user name (used in authenticator-request to Snowflake).
+    pub username: String,
+    /// Optional override for the Okta login name. When set, this is sent to
+    /// Okta's `/api/v1/authn` instead of `username`. Matches JDBC's `oktausername`
+    /// property — useful when the Okta email differs from the Snowflake user.
+    pub okta_username: Option<String>,
+    /// IdP password (native Okta SSO).
+    pub password: String,
+    /// Okta authenticator URL endpoint (native Okta SSO).
+    pub okta_url: Url,
+    /// Disable SAML destination/postback validation (default false; discouraged).
+    pub disable_saml_url_check: bool,
+    /// End-to-end auth budget for the Okta flow, mapped onto retry max_elapsed.
+    pub authentication_timeout_secs: u64,
+}
+
+#[derive(Debug)]
 pub enum LoginMethod {
     Password {
         username: String,
         password: String,
     },
-    NativeOkta {
-        /// Snowflake user name (used in authenticator-request to Snowflake).
-        username: String,
-        /// Optional override for the Okta login name. When set, this is sent to
-        /// Okta's `/api/v1/authn` instead of `username`. Matches JDBC's `oktausername`
-        /// property — useful when the Okta email differs from the Snowflake user.
-        okta_username: Option<String>,
-        /// IdP password (native Okta SSO).
-        password: String,
-        /// Okta authenticator URL endpoint (native Okta SSO).
-        okta_url: Url,
-        /// Disable SAML destination/postback validation (default false; discouraged).
-        disable_saml_url_check: bool,
-        /// End-to-end auth budget for the Okta flow, mapped onto retry max_elapsed.
-        authentication_timeout_secs: u64,
-    },
+    NativeOkta(NativeOktaConfig),
     PrivateKey {
         username: String,
         private_key: String,
@@ -323,14 +326,14 @@ impl LoginMethod {
                 let authentication_timeout_secs =
                     settings.get_u64("authentication_timeout").unwrap_or(120);
 
-                Ok(Self::NativeOkta {
+                Ok(Self::NativeOkta(NativeOktaConfig {
                     username,
                     okta_username,
                     password,
                     okta_url,
                     disable_saml_url_check,
                     authentication_timeout_secs,
-                })
+                }))
             }
             _ => InvalidParameterValueSnafu {
                 parameter: "authenticator",

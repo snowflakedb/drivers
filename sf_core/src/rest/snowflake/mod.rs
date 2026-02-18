@@ -16,7 +16,7 @@ use crate::rest::snowflake::auth::{
     AuthRequest, AuthRequestClientEnvironment, AuthRequestData, AuthResponse,
 };
 use crate::rest::snowflake::error::SfError;
-use crate::rest::snowflake::native_okta::{NativeOktaConfig, fetch_native_okta_saml};
+use crate::rest::snowflake::native_okta::fetch_native_okta_saml;
 use crate::tls::client::create_tls_client_with_config;
 use crate::tls::error::TlsError;
 use reqwest::{self, header};
@@ -157,30 +157,15 @@ pub async fn auth_request_data(
     }
 
     match &login_parameters.login_method {
-        LoginMethod::NativeOkta {
-            username,
-            okta_username,
-            password,
-            okta_url,
-            disable_saml_url_check,
-            authentication_timeout_secs,
-        } => {
+        LoginMethod::NativeOkta(okta_config) => {
             let retry_policy = RetryPolicy::default();
-            let okta_config = NativeOktaConfig {
-                okta_url,
-                username,
-                okta_username: okta_username.as_deref(),
-                password,
-                disable_saml_url_check: *disable_saml_url_check,
-                authentication_timeout_secs: *authentication_timeout_secs,
-            };
             let saml_html =
-                fetch_native_okta_saml(client, login_parameters, &retry_policy, &okta_config)
+                fetch_native_okta_saml(client, login_parameters, &retry_policy, okta_config)
                     .await
                     .context(NativeOktaSnafu)?;
 
-            data.login_name = Some(username.clone());
-            data.authenticator = Some(okta_url.to_string());
+            data.login_name = Some(okta_config.username.clone());
+            data.authenticator = Some(okta_config.okta_url.to_string());
             data.raw_saml_response = Some(saml_html);
         }
         _ => match create_credentials(login_parameters).context(AuthenticationSnafu)? {

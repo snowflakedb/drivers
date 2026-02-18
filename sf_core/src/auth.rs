@@ -114,7 +114,7 @@ pub fn create_credentials(login_parameters: &LoginParameters) -> Result<Credenti
         // NativeOkta performs its own multi-step SAML flow in auth_request_data()
         // and never reaches create_credentials(). Return an error rather than panicking
         // to avoid a footgun if a future caller invokes this function directly.
-        LoginMethod::NativeOkta { .. } => UnsupportedLoginMethodSnafu {
+        LoginMethod::NativeOkta(_) => UnsupportedLoginMethodSnafu {
             method: "NativeOkta",
         }
         .fail(),
