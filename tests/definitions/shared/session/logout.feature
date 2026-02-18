@@ -43,7 +43,7 @@ Feature: Session Logout
     When Connection is closed
     And Query is attempted on closed connection
     Then Query throws ConnectionClosedException
-    And Error message contains "Connection is closed"
+    And Error message indicates connection is unusable
 
   # ===========================================================================
   #                        Process Exit and Thread Management
