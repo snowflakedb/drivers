@@ -50,15 +50,12 @@ class Connection:
             private_key: Private key in bytes, str (base64), or RSAPrivateKey format
             server_session_keep_alive: Optional[bool] - Control server session lifecycle
                 - True: Never send logout (Fire & Forget)
-                - False: [Phase 2] Respects auto-detection if enabled
-                         [Phase 3] Always logout (ignore auto-detection)
+                - False: Respects auto-detection if enabled
                 - None: Delegate to auto-detection setting
             enable_server_session_keep_alive_auto_detection: Optional[bool]
                 - True: Check async query registry before logout
-                - False/None: Don't check registry
-            ALLOW_BREAKING_CHANGE_SERVER_SESSION_KEEP_ALIVE_AUTO_DETECTION: bool
-                - False (default): Phase 2 behavior (auto-detect enabled by default)
-                - True: Phase 3 behavior (auto-detect disabled by default)
+                - False: Don't check registry
+                - None: Defaults to True (auto-detection enabled for backward compatibility)
             auto_cleanup: bool - Enable atexit handler for automatic connection cleanup
             **kwargs: Additional connection parameters
         """
@@ -75,9 +72,6 @@ class Connection:
         self.server_session_keep_alive: bool | None = kwargs.pop("server_session_keep_alive", None)
         self.enable_server_session_keep_alive_auto_detection: bool | None = kwargs.pop(
             "enable_server_session_keep_alive_auto_detection", None
-        )
-        self.ALLOW_BREAKING_CHANGE_SERVER_SESSION_KEEP_ALIVE_AUTO_DETECTION: bool = kwargs.pop(
-            "ALLOW_BREAKING_CHANGE_SERVER_SESSION_KEEP_ALIVE_AUTO_DETECTION", False
         )
         self.auto_cleanup: bool = kwargs.pop("auto_cleanup", True)
 
@@ -121,46 +115,21 @@ class Connection:
             retry: Whether to retry failed logout (Note: retry parameter kept for compatibility,
                    but retry behavior is now controlled by Core's retry policy)
 
-        Phase 2 vs Phase 3 Behavior:
-
-        When ALLOW_BREAKING_CHANGE_SERVER_SESSION_KEEP_ALIVE_AUTO_DETECTION = False (Phase 2 default):
-            - Auto-detection enabled by default (legacy Python behavior)
+        Behavior:
+            - Auto-detection enabled by default (legacy Python behavior for backward compatibility)
             - server_session_keep_alive=False still respects auto-detection
-            - Emits deprecation warning when server_session_keep_alive=False
-
-        When ALLOW_BREAKING_CHANGE_SERVER_SESSION_KEEP_ALIVE_AUTO_DETECTION = True (Phase 3 opt-in):
-            - Auto-detection disabled by default (unified model)
-            - server_session_keep_alive=False forces logout
-            - No deprecation warnings
+            - server_session_keep_alive=True never sends logout (Fire & Forget)
+            - server_session_keep_alive=None delegates to auto-detection setting
         """
         if self.is_closed():
             return  # Already closed, idempotent
 
-        # Determine effective auto-detection setting based on phase
-        if self.ALLOW_BREAKING_CHANGE_SERVER_SESSION_KEEP_ALIVE_AUTO_DETECTION:
-            # Phase 3: Default to None (auto-detection disabled)
-            effective_enable_auto = self.enable_server_session_keep_alive_auto_detection
-        else:
-            # Phase 2: Default to True (auto-detection enabled for backward compatibility)
-            effective_enable_auto = (
-                self.enable_server_session_keep_alive_auto_detection
-                if self.enable_server_session_keep_alive_auto_detection is not None
-                else True
-            )
-
-        # Emit deprecation warning for Phase 2 when server_session_keep_alive=False
-        if (
-            self.server_session_keep_alive is False
-            and not self.ALLOW_BREAKING_CHANGE_SERVER_SESSION_KEEP_ALIVE_AUTO_DETECTION
-        ):
-            warnings.warn(
-                "server_session_keep_alive=False currently still respects auto-detection "
-                "(Phase 2 behavior). In Phase 3, False will force logout regardless of async queries. "
-                "To opt into Phase 3 behavior now, set "
-                "ALLOW_BREAKING_CHANGE_SERVER_SESSION_KEEP_ALIVE_AUTO_DETECTION=True",
-                FutureWarning,
-                stacklevel=2,
-            )
+        # Default to True (auto-detection enabled for backward compatibility)
+        effective_enable_auto = (
+            self.enable_server_session_keep_alive_auto_detection
+            if self.enable_server_session_keep_alive_auto_detection is not None
+            else True
+        )
 
         # Call Core connection_close with configuration
         # Core will set is_closed flag atomically
