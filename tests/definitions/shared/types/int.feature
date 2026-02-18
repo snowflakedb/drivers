@@ -80,6 +80,13 @@ Feature: INT type support
     When Query "SELECT * FROM <table> ORDER BY col" is executed
     Then Result should contain 50000 sequentially numbered rows from 0 to 49999
 
+  @python_e2e @odbc_e2e
+  Scenario: should manage different column sizes between batches
+    Given Snowflake client is logged in
+    And Table with <type> column exists with 49990 4-bit values and 10 64-bit values
+    When Query "SELECT * FROM <table> ORDER BY col" is executed
+    Then Result should contain expected values
+
   # =========================================================================== #
   #                            Parameter binding                                #
   # =========================================================================== #

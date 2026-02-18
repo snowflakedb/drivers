@@ -169,3 +169,51 @@ TEST_CASE("should select large result set from table for int and synonyms", "[in
 
   REQUIRE(row_count == 50000);
 }
+
+TEST_CASE("should manage different column sizes between batches", "[int]") {
+  constexpr int total_rows = 50000;
+  constexpr int small_value_count = total_rows - 10;
+  constexpr int64_t small_value = 15;
+  constexpr int64_t large_value = 9223372036854775807LL;
+
+  // Given Snowflake client is logged in
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  // And Table with <type> column exists with 49990 4-bit values and 10 64-bit values
+  conn.execute("CREATE TABLE int_different_batches (col BIGINT)");
+  conn.execute(
+      "INSERT INTO int_different_batches "
+      "SELECT 15::BIGINT FROM TABLE(GENERATOR(ROWCOUNT => " +
+      std::to_string(small_value_count) + "))");
+  conn.execute(
+      "INSERT INTO int_different_batches "
+      "SELECT 9223372036854775807::BIGINT FROM TABLE(GENERATOR(ROWCOUNT => 10))");
+
+  // When Query "SELECT * FROM <table> ORDER BY col" is executed
+  auto stmt = conn.createStatement();
+  const auto sql = "SELECT * FROM int_different_batches ORDER BY col";
+  SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)sql, SQL_NTS);
+  CHECK_ODBC(ret, stmt);
+
+  // Then Result should contain expected values
+  int row_count = 0;
+
+  while (true) {
+    ret = SQLFetch(stmt.getHandle());
+    if (ret == SQL_NO_DATA) {
+      break;
+    }
+    CHECK_ODBC(ret, stmt);
+
+    SQLBIGINT result = 0;
+    ret = SQLGetData(stmt.getHandle(), 1, SQL_C_SBIGINT, &result, sizeof(result), NULL);
+    CHECK_ODBC(ret, stmt);
+
+    int64_t expected = (row_count < small_value_count) ? small_value : large_value;
+    REQUIRE(result == expected);
+    row_count++;
+  }
+
+  REQUIRE(row_count == total_rows);
+}

@@ -289,9 +289,9 @@ class TestIntTable:
         values = [row[0] for row in rows]
         assert_type(values, int)
         assert_sequential_values(values, LARGE_RESULT_SET_SIZE)
-    
+
     @int_type_parametrize
-    def test_should_manage_different_column_sizes_in_batches(self, execute_query, tmp_schema, int_type):
+    def test_should_manage_different_column_sizes_between_batches(self, execute_query, tmp_schema, int_type):
         # Given Snowflake client is logged in
         assert_connection_is_open(execute_query)
 
@@ -305,9 +305,7 @@ class TestIntTable:
             f"FROM TABLE(GENERATOR(ROWCOUNT => {LARGE_RESULT_SET_SIZE - 10}))"
         )
         execute_query(
-            f"INSERT INTO {table_name} "
-            f"SELECT {INT64_SIGNED_MAX}::{int_type} "
-            f"FROM TABLE(GENERATOR(ROWCOUNT => {10}))"
+            f"INSERT INTO {table_name} SELECT {INT64_SIGNED_MAX}::{int_type} FROM TABLE(GENERATOR(ROWCOUNT => {10}))"
         )
 
         # When Query "SELECT * FROM <table> ORDER BY col" is executed
@@ -316,7 +314,12 @@ class TestIntTable:
         # Then Result should contain expected values
         values = [row[0] for row in rows]
         assert_type(values, int)
-        assert_sequential_values(values, [15] * (LARGE_RESULT_SET_SIZE - 10) + [INT64_SIGNED_MAX] * 10)
+        assert_sequential_values(
+            values,
+            LARGE_RESULT_SET_SIZE,
+            transform=lambda i: 15 if i < LARGE_RESULT_SET_SIZE - 10 else INT64_SIGNED_MAX,
+        )
+
 
 @with_paramstyle("qmark")
 class TestIntBinding:
