@@ -11,7 +11,7 @@ Feature: Session Logout - Core HTTP Layer Integration
   @core_int
   Scenario: should construct logout request with correct HTTP method URL headers and body
     Given Mock HTTP server is configured to capture requests
-    And UD Core client is logged in
+    And UD Core connection is logged in
     When Logout is initiated
     Then HTTP method is POST
     And Request URL path is /session
@@ -117,7 +117,7 @@ Feature: Session Logout - Core HTTP Layer Integration
     When Connection close is initiated on a separate thread
     And Query SELECT 1 is submitted while logout is still in-flight
     Then Query SELECT 1 fails with connection closed error
-    And Mock server did not receive any query request
+    And Mock HTTP server did not receive any query request
     And Close completes successfully after logout response arrives
 
   @core_int
@@ -132,9 +132,9 @@ Feature: Session Logout - Core HTTP Layer Integration
     And Query is submitted and server has not responded yet
     When Connection close is initiated
     And Server returns query response after closing process started
-    Then Mock server successfully completed query response delivery
+    Then Mock HTTP server successfully completed query response delivery
     And Query caller receives connection closed error
-    And Mock server received POST /session?delete=true logout request
+    And Mock HTTP server received POST /session?delete=true logout request
     And Close completes successfully
 
   # ===========================================================================
@@ -152,7 +152,7 @@ Feature: Session Logout - Core HTTP Layer Integration
     And UD Core connection is logged in
     And Token refresh is already in-flight
     When Connection close is requested while refresh is still in-flight
-    Then Mock server received token refresh request before logout request
+    Then Mock HTTP server received token refresh request before logout request
     And Logout request Authorization header contains the refreshed session token
     And Close completes successfully
 
@@ -167,7 +167,7 @@ Feature: Session Logout - Core HTTP Layer Integration
     And Query is submitted and waiting for server response
     When Connection close is initiated
     And Server responds 390112 SESSION_TOKEN_EXPIRED to the in-flight query
-    Then Mock server did not receive any token refresh request
+    Then Mock HTTP server did not receive any token refresh request
     And Query caller receives connection closed error
     And Close completes successfully
 
@@ -184,7 +184,7 @@ Feature: Session Logout - Core HTTP Layer Integration
   @core_int
   Scenario Outline: should ignore SESSION_GONE 390111 for each <strategy_type>
     Given Core logout function called with <strategy_type> strategy
-    And Mock server returns SESSION_GONE 390111
+    And Mock HTTP server returns SESSION_GONE 390111
     When Logout is executed
     Then Close succeeds
     And Error is ignored
@@ -197,8 +197,8 @@ Feature: Session Logout - Core HTTP Layer Integration
   @core_int
   Scenario Outline: should retry logout on retryable <error_type> for each <strategy_type>
     Given Core logout function called with <strategy_type> strategy
-    And Mock server returns <error_type> on attempt 1
-    And Mock server returns 200 on attempt 2
+    And Mock HTTP server returns <error_type> on attempt 1
+    And Mock HTTP server returns 200 on attempt 2
     When Logout is executed
     Then Logout is retried
     And Close succeeds
@@ -217,7 +217,7 @@ Feature: Session Logout - Core HTTP Layer Integration
     # Token refresh implies a subsequent retry of logout with new token.
     # If no retries are allowed, refreshing the token would be pointless.
     Given Core logout function called with strict strategy
-    And Mock server returns SESSION_TOKEN_EXPIRED 390112
+    And Mock HTTP server returns SESSION_TOKEN_EXPIRED 390112
     And Retry policy allows 0 retries
     When Logout is executed
     Then No token refresh request is sent to server
@@ -227,7 +227,7 @@ Feature: Session Logout - Core HTTP Layer Integration
   Scenario: should not attempt token refresh when retry count is 0 with best-effort strategy
     # Same logic: no retries → no point refreshing token
     Given Core logout function called with best-effort strategy
-    And Mock server returns SESSION_TOKEN_EXPIRED 390112
+    And Mock HTTP server returns SESSION_TOKEN_EXPIRED 390112
     And Retry policy allows 0 retries
     When Logout is executed
     Then No token refresh request is sent to server
@@ -239,8 +239,8 @@ Feature: Session Logout - Core HTTP Layer Integration
     # With 1 retry allowed, token refresh + retry logout is possible
     # Both strategies must attempt refresh - 390112 is NOT treated as a final error
     Given Core logout function called with <strategy_type> strategy
-    And Mock server returns SESSION_TOKEN_EXPIRED 390112 on first attempt
-    And Mock server returns 200 after token refresh
+    And Mock HTTP server returns SESSION_TOKEN_EXPIRED 390112 on first attempt
+    And Mock HTTP server returns 200 after token refresh
     And Retry policy allows 1 retry
     When Logout is executed
     Then Token refresh request is sent to server
@@ -257,9 +257,9 @@ Feature: Session Logout - Core HTTP Layer Integration
   Scenario: should include token refresh time in total logout timeout budget
     # Token refresh is a network call that must be accounted for in total timeout
     Given Core logout function called
-    And Mock server returns SESSION_TOKEN_EXPIRED 390112 on first attempt
+    And Mock HTTP server returns SESSION_TOKEN_EXPIRED 390112 on first attempt
     And Token refresh endpoint delays response by 3 seconds
-    And Mock server returns 200 after token refresh
+    And Mock HTTP server returns 200 after token refresh
     And Total retry budget timeout is set to 5 seconds
     When Logout is executed
     Then Token refresh is attempted
@@ -280,7 +280,7 @@ Feature: Session Logout - Core HTTP Layer Integration
   Scenario Outline: should honor provided retry config and succeed for each <strategy_type>
     Given Core logout function called with <strategy_type> strategy
     And Retry policy configured with <max_attempts> max attempts
-    And Mock server fails <failures> times then returns 200
+    And Mock HTTP server fails <failures> times then returns 200
     When Logout is executed
     Then Exactly <expected_attempts> attempts are made
     And Close succeeds
@@ -300,7 +300,7 @@ Feature: Session Logout - Core HTTP Layer Integration
     # Note: Failure path scenarios (timeout exceeded) are below, split by strategy
     Given Core logout function called with <strategy_type> strategy
     And Timeout configured to <timeout_seconds> seconds
-    And Mock server delays response by <delay_seconds> seconds then returns 200
+    And Mock HTTP server delays response by <delay_seconds> seconds then returns 200
     When Logout is executed
     Then Request completes within <timeout_seconds> seconds
     And Close succeeds
@@ -320,7 +320,7 @@ Feature: Session Logout - Core HTTP Layer Integration
   Scenario Outline: should throw after exhausted retries with strict strategy
     Given Core logout function called with strict strategy
     And Retry policy configured with <max_attempts> max attempts
-    And Mock server returns 503 on all attempts
+    And Mock HTTP server returns 503 on all attempts
     When Logout is executed
     Then Exactly <max_attempts> attempts are made
     And No further retries after max reached
@@ -337,7 +337,7 @@ Feature: Session Logout - Core HTTP Layer Integration
   Scenario Outline: should log WARN and succeed after exhausted retries with best-effort strategy
     Given Core logout function called with best-effort strategy
     And Retry policy configured with <max_attempts> max attempts
-    And Mock server returns 503 on all attempts
+    And Mock HTTP server returns 503 on all attempts
     When Logout is executed
     Then Exactly <max_attempts> attempts are made
     And No further retries after max reached
@@ -355,7 +355,7 @@ Feature: Session Logout - Core HTTP Layer Integration
   Scenario Outline: should throw on timeout with strict strategy
     Given Core logout function called with strict strategy
     And Timeout configured to <timeout_seconds> seconds
-    And Mock server delays response by <delay_seconds> seconds
+    And Mock HTTP server delays response by <delay_seconds> seconds
     When Logout is executed
     Then Request times out after <timeout_seconds> seconds
     And Close throws timeout error
@@ -369,7 +369,7 @@ Feature: Session Logout - Core HTTP Layer Integration
   Scenario Outline: should log WARN and succeed on timeout with best-effort strategy
     Given Core logout function called with best-effort strategy
     And Timeout configured to <timeout_seconds> seconds
-    And Mock server delays response by <delay_seconds> seconds
+    And Mock HTTP server delays response by <delay_seconds> seconds
     When Logout is executed
     Then Request times out after <timeout_seconds> seconds
     And Timeout is logged as WARN
@@ -385,7 +385,7 @@ Feature: Session Logout - Core HTTP Layer Integration
   @core_int
   Scenario Outline: should throw on non-retryable <error_code> in strict strategy
     Given Core logout function called with strict strategy
-    And Mock server returns <error_code> error
+    And Mock HTTP server returns <error_code> error
     When Logout is executed
     Then Close throws error immediately
     And Error is surfaced to caller
@@ -401,7 +401,7 @@ Feature: Session Logout - Core HTTP Layer Integration
   @core_int
   Scenario Outline: should log and suppress non-retryable <error_code> in best-effort strategy
     Given Core logout function called with best-effort strategy
-    And Mock server returns <error_code> error
+    And Mock HTTP server returns <error_code> error
     When Logout is executed
     Then Error is logged as WARN
     And Close succeeds without throwing
@@ -422,7 +422,7 @@ Feature: Session Logout - Core HTTP Layer Integration
   Scenario: should record connection close decision metrics before logout
     # Requires: SNOW-2912513 (Telemetry)
     Given Telemetry client is configured
-    And UD Core client is logged in
+    And UD Core connection is logged in
     When Connection close is initiated
     Then Pre-logout metrics are recorded in telemetry batch
     And Metrics include whether auto-detection was performed

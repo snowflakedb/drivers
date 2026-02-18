@@ -30,7 +30,7 @@ use wiremock::MockServer;
 #[tokio::test]
 async fn should_construct_logout_request_with_correct_http_method_url_headers_and_body() {
     //Given Mock HTTP server is configured to capture requests
-    //And UD Core client is logged in
+    //And UD Core connection is logged in
     let (addr, _request_data, server) = spawn_capture_server().await;
     let server_url = format!("http://{}", addr);
     let session_token = "test_session_token_12345";
@@ -425,7 +425,7 @@ async fn should_reject_new_query_with_connection_closed_error_when_submitted_aft
     //When Connection close is initiated on a separate thread
     //And Query SELECT 1 is submitted while logout is still in-flight
     //Then Query SELECT 1 fails with connection closed error
-    //And Mock server did not receive any query request
+    //And Mock HTTP server did not receive any query request
     //And Close completes successfully after logout response arrives
 
     // TODO: SNOW-2923705 - Implement after query execution is available
@@ -441,9 +441,9 @@ async fn should_fail_in_flight_query_when_server_response_arrives_after_closing_
     //And Query is submitted and server has not responded yet
     //When Connection close is initiated
     //And Server returns query response after closing process started
-    //Then Mock server successfully completed query response delivery
+    //Then Mock HTTP server successfully completed query response delivery
     //And Query caller receives connection closed error
-    //And Mock server received POST /session?delete=true logout request
+    //And Mock HTTP server received POST /session?delete=true logout request
     //And Close completes successfully
 
     // TODO: SNOW-2923705 - Implement after query execution is available
@@ -461,7 +461,7 @@ async fn should_wait_for_in_flight_token_renewal_to_complete_then_logout_with_re
     //And UD Core connection is logged in
     //And Token refresh is already in-flight
     //When Connection close is requested while refresh is still in-flight
-    //Then Mock server received token refresh request before logout request
+    //Then Mock HTTP server received token refresh request before logout request
     //And Logout request Authorization header contains the refreshed session token
     //And Close completes successfully
 
@@ -478,7 +478,7 @@ async fn should_not_start_token_renewal_when_query_receives_390112_after_closing
     //And Query is submitted and waiting for server response
     //When Connection close is initiated
     //And Server responds 390112 SESSION_TOKEN_EXPIRED to the in-flight query
-    //Then Mock server did not receive any token refresh request
+    //Then Mock HTTP server did not receive any token refresh request
     //And Query caller receives connection closed error
     //And Close completes successfully
 
@@ -510,7 +510,7 @@ async fn should_ignore_session_gone_390111_for_each_strategy_type() {
         let client = reqwest::Client::builder().no_proxy().build().unwrap();
         let client_info = test_client_info();
 
-        //And Mock server returns SESSION_GONE 390111
+        //And Mock HTTP server returns SESSION_GONE 390111
         let config = LogoutConfig {
             error_strategy,
             ..Default::default()
@@ -569,8 +569,8 @@ async fn should_retry_logout_on_retryable_error_type_for_each_strategy_type() {
             ),
         ] {
             //Given Core logout function called with <strategy_type> strategy
-            //And Mock server returns <error_type> on attempt 1
-            //And Mock server returns 200 on attempt 2
+            //And Mock HTTP server returns <error_type> on attempt 1
+            //And Mock HTTP server returns 200 on attempt 2
             let (addr, attempts, server) = spawn_test_server(2, move |attempt| {
                 let error_fn = error_response_fn;
                 async move {
@@ -627,8 +627,8 @@ async fn should_retry_logout_on_retryable_error_type_for_each_strategy_type() {
         {
             let error_type = "connection reset";
             //Given Core logout function called with <strategy_type> strategy
-            //And Mock server resets connection on first attempt
-            //And Mock server succeeds on second attempt
+            //And Mock HTTP server resets connection on first attempt
+            //And Mock HTTP server succeeds on second attempt
             let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
             let addr = listener.local_addr().unwrap();
             let attempts = Arc::new(AtomicUsize::new(0));
@@ -704,8 +704,8 @@ async fn should_attempt_token_refresh_on_390112_when_retries_allowed_for_each_st
         ("best-effort", ErrorStrategy::BestEffort),
     ] {
         //Given Core logout function called with <strategy_type> strategy
-        //And Mock server returns SESSION_TOKEN_EXPIRED 390112 on first attempt
-        //And Mock server returns 200 after token refresh
+        //And Mock HTTP server returns SESSION_TOKEN_EXPIRED 390112 on first attempt
+        //And Mock HTTP server returns 200 after token refresh
         //And Retry policy allows 1 retry
         //When Logout is executed
         //Then Token refresh request is sent to server
@@ -726,7 +726,7 @@ async fn should_not_attempt_token_refresh_when_retry_count_is_0_for_each_strateg
         ("best-effort", ErrorStrategy::BestEffort),
     ] {
         //Given Core logout function called with <strategy_type> strategy
-        //And Mock server returns SESSION_TOKEN_EXPIRED 390112
+        //And Mock HTTP server returns SESSION_TOKEN_EXPIRED 390112
         //And Retry policy allows 0 retries
         //When Logout is executed
         //Then No token refresh request is sent to server
@@ -741,9 +741,9 @@ async fn should_not_attempt_token_refresh_when_retry_count_is_0_for_each_strateg
 #[ignore = "TODO: Requires token refresh implementation - SNOW-2923705"]
 async fn should_include_token_refresh_time_in_total_logout_timeout_budget() {
     //Given Core logout function called
-    //And Mock server returns SESSION_TOKEN_EXPIRED 390112 on first attempt
+    //And Mock HTTP server returns SESSION_TOKEN_EXPIRED 390112 on first attempt
     //And Token refresh endpoint delays response by 3 seconds
-    //And Mock server returns 200 after token refresh
+    //And Mock HTTP server returns 200 after token refresh
     //And Total retry budget timeout is set to 5 seconds
     //When Logout is executed
     //Then Token refresh is attempted
@@ -768,7 +768,7 @@ async fn should_honor_provided_retry_config_and_succeed_for_each_strategy_type()
     ] {
         //Given Core logout function called with <strategy_type> strategy
         //And Retry policy configured with <max_attempts> max attempts
-        //And Mock server fails <failures> times then returns 200
+        //And Mock HTTP server fails <failures> times then returns 200
         let expected_attempts = num_failures + 1;
         let (addr, attempts, server) =
             spawn_test_server(expected_attempts, move |attempt| async move {
@@ -827,7 +827,7 @@ async fn should_honor_provided_timeout_config_and_succeed_for_each_strategy_type
     ] {
         //Given Core logout function called with <strategy_type> strategy
         //And Timeout configured to <timeout_seconds> seconds
-        //And Mock server delays response by <delay_seconds> seconds then returns 200
+        //And Mock HTTP server delays response by <delay_seconds> seconds then returns 200
         let (addr, _, server) = spawn_test_server(1, move |_| {
             let delay = delay_seconds;
             async move {
@@ -883,7 +883,7 @@ async fn should_throw_after_exhausted_retries_with_strict_strategy() {
     //Given Core logout function called with strict strategy
     //And Retry policy configured with <max_attempts> max attempts
     let max_attempts = 2;
-    //And Mock server returns 503 on all attempts
+    //And Mock HTTP server returns 503 on all attempts
     let (addr, attempts, server) = spawn_test_server(max_attempts, |_| async move {
         service_unavailable_response(r#"{"success":false}"#, 0)
     })
@@ -957,7 +957,7 @@ async fn should_throw_on_non_retryable_error_code_in_strict_strategy() {
         ),
     ] {
         //Given Core logout function called with strict strategy
-        //And Mock server returns <error_code> error
+        //And Mock HTTP server returns <error_code> error
         let (addr, _, server) = spawn_test_server(1, move |_| async move {
             json_error_response(status, reason, body)
         })
@@ -1024,7 +1024,7 @@ async fn should_log_and_suppress_non_retryable_error_code_in_best_effort_strateg
         ),
     ] {
         //Given Core logout function called with best-effort strategy
-        //And Mock server returns <error_code> error
+        //And Mock HTTP server returns <error_code> error
         let (addr, _, server) = spawn_test_server(1, move |_| async move {
             json_error_response(status, reason, body)
         })
@@ -1068,7 +1068,7 @@ async fn should_log_and_suppress_non_retryable_error_code_in_best_effort_strateg
 #[ignore = "TODO: Telemetry required - SNOW-2912513"]
 async fn should_record_connection_close_decision_metrics_before_logout() {
     //Given Telemetry client is configured
-    //And UD Core client is logged in
+    //And UD Core connection is logged in
     //When Connection close is initiated
     //Then Pre-logout metrics are recorded in telemetry batch
     //And Metrics include whether auto-detection was performed
