@@ -15,13 +15,13 @@ import abc
 import ctypes
 
 from collections.abc import Iterator, Sequence
-from typing import TYPE_CHECKING, Any, NamedTuple
+from typing import TYPE_CHECKING, Any, NamedTuple, cast
 
 from ._internal.arrow_context import ArrowConverterContext
 from ._internal.arrow_stream_iterator import ArrowStreamIterator
-from ._internal.binding_serializer import (
-    BindingSerializer,
+from ._internal.binding_converters import (
     ClientSideBindingConverter,
+    JsonBindingConverter,
     ParamStyle,
 )
 from ._internal.protobuf_gen.database_driver_v1_pb2 import (
@@ -200,7 +200,7 @@ class SnowflakeCursorBase(abc.ABC):
     def _build_query_bindings(self, parameters: Sequence[Any]) -> QueryBindings | None:
         """Serialize parameters and build a QueryBindings protobuf message.
 
-        Converts Python parameter values to JSON via BindingSerializer, then
+        Converts Python parameter values to JSON via JsonBindingConverter, then
         wraps the result in a zero-copy BinaryDataPtr so the Rust core can read
         the JSON directly from Python memory.
 
@@ -211,7 +211,7 @@ class SnowflakeCursorBase(abc.ABC):
             QueryBindings with the serialized JSON, or None if parameters
             serialize to nothing (e.g. empty list).
         """
-        json_str, length = BindingSerializer.serialize_parameters(parameters)
+        json_str, length = JsonBindingConverter.serialize_parameters(parameters)
         if json_str is None:
             return None
 
@@ -313,9 +313,7 @@ class SnowflakeCursorBase(abc.ABC):
         else:
             self._rowcount = None
 
-    def executemany(
-        self, operation: str, seq_of_parameters: Sequence[Sequence[Any] | dict[str, Any]]
-    ) -> None:
+    def executemany(self, operation: str, seq_of_parameters: Sequence[Sequence[Any] | dict[str, Any]]) -> None:
         """
         Execute a database operation repeatedly for each element in seq_of_parameters.
 
@@ -354,9 +352,12 @@ class SnowflakeCursorBase(abc.ABC):
             return
 
         # Server-side binding: validate and use array binding
+        # Dict params were handled above; only sequences reach here.
+        rows = cast(Sequence[Sequence[Any]], seq_of_parameters)
+
         # Error code 251007 (ER_INVALID_VALUE) matches reference driver behavior
         first_len = len(first_params)
-        for params in seq_of_parameters:
+        for params in rows:
             if len(params) != first_len:
                 raise InterfaceError(
                     f"251007: Bulk data size don't match. expected: {first_len}, "
@@ -367,7 +368,7 @@ class SnowflakeCursorBase(abc.ABC):
         # Input:  [(row1_col1, row1_col2), (row2_col1, row2_col2), ...]
         # Output: [[row1_col1, row2_col1, ...], [row1_col2, row2_col2, ...]]
         num_columns = first_len
-        transposed = [[row[col_idx] for row in seq_of_parameters] for col_idx in range(num_columns)]
+        transposed = [[row[col_idx] for row in rows] for col_idx in range(num_columns)]
 
         # Execute using array binding (existing path handles list values)
         self.execute(operation, transposed)

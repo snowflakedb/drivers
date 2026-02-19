@@ -44,7 +44,7 @@ class ParamStyle(Enum):
         return self.value
 
     @classmethod
-    def from_string(cls, value: str) -> "ParamStyle":
+    def from_string(cls, value: str) -> ParamStyle:
         """Parse ParamStyle from string value, with normalization.
 
         Args:
@@ -61,9 +61,7 @@ class ParamStyle(Enum):
             if style.value == normalized:
                 return style
         available = [s.value for s in cls]
-        raise ProgrammingError(
-            f"Invalid paramstyle: {value!r}. Supported: {', '.join(sorted(available))}"
-        )
+        raise ProgrammingError(f"Invalid paramstyle: {value!r}. Supported: {', '.join(sorted(available))}")
 
     def is_client_side(self) -> bool:
         """Check if this style uses client-side SQL interpolation."""
@@ -76,10 +74,11 @@ class ParamStyle(Enum):
 
 # Numeric types for IS_NUMERIC check (mirrors reference connector's compat.py)
 _NUM_DATA_TYPES: tuple[type, ...] = (int, float, Decimal)
+_NUMPY_BOOL_TYPES: tuple[type, ...] = ()
+_NUMPY_FLOAT_TYPES: tuple[type, ...] = ()
 
-# Try to include numpy types if available
 try:
-    import numpy
+    import numpy  # type: ignore[import-not-found]
 
     _NUM_DATA_TYPES = _NUM_DATA_TYPES + (
         numpy.int8,
@@ -95,6 +94,8 @@ try:
         numpy.uint64,
         numpy.bool_,
     )
+    _NUMPY_BOOL_TYPES = (numpy.bool_,)
+    _NUMPY_FLOAT_TYPES = (numpy.float16, numpy.float32, numpy.float64)
 except (ImportError, AttributeError):
     pass
 
@@ -114,8 +115,8 @@ _ZERO_EPOCH_DATE = date(1970, 1, 1)
 _ZERO_EPOCH = datetime.fromtimestamp(0, timezone.utc).replace(tzinfo=None)
 
 
-class BindingSerializer:
-    """Serializes Python parameters to Snowflake binding JSON format."""
+class JsonBindingConverter:
+    """Converts Python parameters to Snowflake binding JSON format for server-side binding."""
 
     @staticmethod
     def _convert_datetime_to_epoch_nanoseconds(dt: datetime) -> str:
@@ -244,40 +245,43 @@ class BindingSerializer:
             return "ANY", None
 
         type_name = value.__class__.__name__.lower()
-        snowflake_type = PYTHON_TO_SNOWFLAKE_TYPE.get(type_name, "TEXT")
+        snowflake_type = PYTHON_TO_SNOWFLAKE_TYPE.get(type_name)
+        if snowflake_type is None:
+            if isinstance(value, _NUMPY_BOOL_TYPES):
+                snowflake_type = "BOOLEAN"
+            elif isinstance(value, _NUMPY_FLOAT_TYPES):
+                snowflake_type = "REAL"
+            elif _is_numeric(value):
+                snowflake_type = "FIXED"
+            elif _is_binary(value):
+                snowflake_type = "BINARY"
+            else:
+                snowflake_type = "TEXT"
 
-        # Convert value to string representation for JSON
-        # Order matters: bool before int (bool is subclass of int),
-        # datetime before date (datetime is subclass of date)
-        if isinstance(value, bool):
+        # Convert value to string representation for JSON.
+        # Order matters: bool/numpy.bool_ before _is_numeric (bool is subclass
+        # of int and numpy.bool_ is in _NUM_DATA_TYPES),
+        # datetime before date (datetime is subclass of date).
+        if isinstance(value, bool) or isinstance(value, _NUMPY_BOOL_TYPES):
             converted = str(value).lower()
         elif isinstance(value, datetime):
-            # Datetime to epoch nanoseconds (must be before date check)
             converted = cls._convert_datetime_to_epoch_nanoseconds(value)
         elif isinstance(value, date):
-            # Date to epoch milliseconds
             converted = cls._convert_date_to_epoch_milliseconds(value)
         elif isinstance(value, time):
-            # Time to nanoseconds since midnight
             converted = cls._convert_time_to_nanoseconds(value)
         elif isinstance(value, timedelta):
-            # Timedelta to nanoseconds (for TIME type)
             converted = cls._convert_timedelta_to_nanoseconds(value)
         elif isinstance(value, time_module.struct_time):
-            # struct_time -> convert to datetime, then to epoch nanoseconds
             dt = datetime.fromtimestamp(time_module.mktime(value))
             converted = cls._convert_datetime_to_epoch_nanoseconds(dt)
-        elif isinstance(value, (int, float)):
-            converted = str(value)
-        elif isinstance(value, Decimal):
+        elif _is_numeric(value):
             converted = str(value)
         elif isinstance(value, str):
             converted = value
-        elif isinstance(value, (bytes, bytearray)):
-            # Binary data - hex encode
+        elif _is_binary(value):
             converted = binascii.hexlify(value).decode("utf-8")
         else:
-            # For other types use string representation
             converted = str(value)
 
         return snowflake_type, converted
@@ -377,16 +381,11 @@ class ClientSideBindingConverter:
             return None
         elif isinstance(value, bool):
             return value
-        elif isinstance(value, int):
-            return value
-        elif isinstance(value, float):
+        elif _is_numeric(value):
             return value
         elif isinstance(value, str):
             return value
-        elif isinstance(value, Decimal):
-            return value
-        elif isinstance(value, (bytes, bytearray)):
-            # Binary data stays as bytes for quote() to handle
+        elif _is_binary(value):
             return value
         elif isinstance(value, datetime):
             return cls._datetime_to_snowflake(value)
@@ -479,7 +478,9 @@ class ClientSideBindingConverter:
         return cls.quote(cls.escape(cls.to_snowflake(param)))
 
     @classmethod
-    def process_params_pyformat(cls, params: Sequence[Any] | Mapping[str, Any] | None) -> dict[str, Any] | tuple[Any, ...]:
+    def process_params_pyformat(
+        cls, params: Sequence[Any] | Mapping[str, Any] | None
+    ) -> dict[str, Any] | tuple[Any, ...]:
         """Process parameters for pyformat/format style binding.
 
         Args:

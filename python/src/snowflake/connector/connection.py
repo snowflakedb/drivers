@@ -23,7 +23,7 @@ from snowflake.connector._internal.protobuf_gen.database_driver_v1_services impo
 
 from ._internal._private_key_helper import normalize_private_key
 from ._internal.api_client.client_api import database_driver_client
-from ._internal.binding_serializer import ParamStyle
+from ._internal.binding_converters import ParamStyle
 from .cursor import SnowflakeCursor, SnowflakeCursorBase
 from .errors import InterfaceError, NotSupportedError
 
@@ -36,7 +36,7 @@ class Connection:
         Initialize a new connection object.
 
         Args:
-            paramstyle: Binding style – ``"qmark"``, ``"numeric"``, ``"pyformat"``, or ``"format"``.
+            paramstyle: Binding style – ``"pyformat"`` (default), ``"format"``, ``"qmark"`` or ``"numeric"``
             database: Database name
             user: Username
             password: Password
@@ -48,6 +48,7 @@ class Connection:
         """
         # paramstyle
         from snowflake.connector import paramstyle as default_paramstyle
+
         self._paramstyle = ParamStyle.from_string(paramstyle or default_paramstyle)
 
         self.db_api = database_driver_client()
