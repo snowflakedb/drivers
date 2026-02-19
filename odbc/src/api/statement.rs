@@ -173,7 +173,8 @@ pub fn execute(statement_handle: sql::Handle) -> OdbcResult<()> {
 }
 
 fn is_ddl_statement(statement_type_id: i64) -> bool {
-    statement_type_id >= 0x4000
+    tracing::debug!("is_ddl_statement: statement_type_id={}", statement_type_id);
+    (0x6000..0x7000).contains(&statement_type_id)
 }
 
 fn create_execute_state(response: StatementExecuteQueryResponse) -> OdbcResult<StatementState> {

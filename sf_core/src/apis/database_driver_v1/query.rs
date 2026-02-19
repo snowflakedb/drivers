@@ -9,7 +9,6 @@ use crate::query_types::RowType;
 use crate::rest;
 use arrow::array::{Array, Int64Array, RecordBatchReader, StringArray};
 use arrow::error::ArrowError;
-use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
 use reqwest::Client;
 use rest::snowflake::query_response::{self, QueryResponseError};
 use snafu::{Location, ResultExt, Snafu};
@@ -24,7 +23,7 @@ pub async fn process_query_response(
 ) -> Result<Box<dyn RecordBatchReader + Send>, QueryResponseProcessingError> {
     match data.command {
         Some(ref command) => perform_put_get(command.clone(), data).await,
-        None => read_batches(data, http_client)
+        None => read_batches(data.to_rowset_data(), http_client)
             .await
             .context(BatchReadingSnafu),
     }
@@ -60,56 +59,59 @@ async fn perform_put_get(
     }
 }
 
-async fn read_batches(
-    data: &query_response::Data,
+async fn read_batches<'a>(
+    data: query_response::RowsetData<'a>,
     http_client: &Client,
 ) -> Result<Box<dyn RecordBatchReader + Send>, ReadBatchesError> {
-    if let Some(rowset_base64) = &data.rowset_base64
-        && !rowset_base64.is_empty()
-    {
-        let rowset_bytes = BASE64.decode(rowset_base64).context(Base64DecodingSnafu)?;
+    match data {
+        query_response::RowsetData::ArrowSingleChunk { chunk_base64 } => {
+            let reader_result =
+                ChunkReader::single_chunk(chunk_base64).context(ChunkReadingSnafu)?;
 
-        let reader_result = if let Some(chunk_download_data) = data.to_chunk_download_data() {
-            ChunkReader::multi_chunk(
-                rowset_bytes,
+            Ok(Box::new(reader_result))
+        }
+        query_response::RowsetData::ArrowMultiChunk {
+            initial_base64_opt,
+            chunk_download_data,
+        } => {
+            // Handle chunk download case without base64 data
+            let reader_result = ChunkReader::multi_chunk(
+                initial_base64_opt,
                 chunk_download_data.into(),
                 http_client.clone(),
             )
             .await
-        } else {
-            ChunkReader::single_chunk(rowset_bytes)
+            .context(ChunkReadingSnafu)?;
+
+            Ok(Box::new(reader_result))
         }
-        .context(ChunkReadingSnafu)?;
+        query_response::RowsetData::JsonRowset { rowset, rowtype } => {
+            let row_types = rowtype
+                .iter()
+                .map(|rt| rt.try_into())
+                .collect::<Result<Vec<_>, _>>()
+                .context(RowTypeParsingSnafu)?;
 
-        return Ok(Box::new(reader_result));
-    }
-
-    if let (Some(rowset), Some(rowtype)) = (&data.rowset, &data.row_type) {
-        let row_types = rowtype
-            .iter()
-            .map(|rt| rt.try_into())
-            .collect::<Result<Vec<_>, _>>()
-            .context(RowTypeParsingSnafu)?;
-
-        // Validate column counts before converting
-        if !rowset.is_empty() {
-            let num_columns_rowset = rowset.first().unwrap().len();
-            let num_columns_rowtype = row_types.len();
-            if num_columns_rowset != num_columns_rowtype {
-                return ColumnCountMismatchSnafu {
-                    rowtype_count: num_columns_rowtype,
-                    rowset_count: num_columns_rowset,
+            // Validate column counts before converting
+            if !rowset.is_empty() {
+                let num_columns_rowset = rowset.first().unwrap().len();
+                let num_columns_rowtype = row_types.len();
+                if num_columns_rowset != num_columns_rowtype {
+                    return ColumnCountMismatchSnafu {
+                        rowtype_count: num_columns_rowtype,
+                        rowset_count: num_columns_rowset,
+                    }
+                    .fail();
                 }
-                .fail();
             }
+            convert_string_rowset_to_arrow_reader(rowset, &row_types).context(RowsetConversionSnafu)
         }
-        return convert_string_rowset_to_arrow_reader(rowset, &row_types)
-            .context(RowsetConversionSnafu);
+        query_response::RowsetData::NoData => {
+            // No rowset or rowtype found, return empty reader
+            let reader = ChunkReader::empty();
+            Ok(Box::new(reader))
+        }
     }
-
-    // No rowset or rowtype found, return empty reader
-    let reader = ChunkReader::empty();
-    Ok(Box::new(reader))
 }
 
 /// Helper macro to create string arrays from field accessors

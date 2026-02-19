@@ -425,16 +425,82 @@ impl Data {
         })
     }
 
-    pub fn to_chunk_download_data(&self) -> Option<Vec<ChunkDownloadData>> {
-        let chunks = self.chunks.as_ref()?;
-        let chunk_headers = self.chunk_headers.as_ref()?;
-        let chunk_download_data = chunks
-            .iter()
-            .map(|chunk| ChunkDownloadData::new(&chunk.url, chunk_headers))
-            .collect();
+    pub fn to_rowset_data<'a>(&'a self) -> RowsetData<'a> {
+        match (self.to_initial_base64_opt(), self.to_chunk_download_data()) {
+            (initial_base64_opt, Some(chunk_download_data)) => {
+                return RowsetData::ArrowMultiChunk {
+                    initial_base64_opt,
+                    chunk_download_data,
+                };
+            }
+            (Some(chunk_base64), None) => {
+                return RowsetData::ArrowSingleChunk { chunk_base64 };
+            }
+            _ => (),
+        }
 
-        Some(chunk_download_data)
+        if let Some((rowset, rowtype)) = self.to_json_rowset() {
+            return RowsetData::JsonRowset { rowset, rowtype };
+        }
+
+        RowsetData::NoData
     }
+
+    pub fn to_chunk_download_data(&self) -> Option<Vec<ChunkDownloadData>> {
+        match (self.chunks.as_ref(), self.chunk_headers.as_ref()) {
+            (Some(chunks), Some(chunk_headers)) => {
+                let chunk_download_data = chunks
+                    .iter()
+                    .map(|chunk| ChunkDownloadData::new(&chunk.url, chunk_headers))
+                    .collect();
+                Some(chunk_download_data)
+            }
+            (None, Some(_)) => {
+                tracing::error!("Chunk headers found but chunks are missing");
+                None
+            }
+            (Some(_), None) => {
+                tracing::error!("Chunks found but chunk headers are missing");
+                None
+            }
+            _ => None,
+        }
+    }
+
+    pub fn to_initial_base64_opt(&self) -> Option<&str> {
+        let value = self.rowset_base64.as_deref()?;
+        if value.is_empty() { None } else { Some(value) }
+    }
+
+    pub fn to_json_rowset(&self) -> Option<(&Vec<Vec<String>>, &Vec<RowType>)> {
+        match (self.rowset.as_ref(), self.row_type.as_ref()) {
+            (Some(rowset), Some(row_type)) => Some((rowset, row_type)),
+            (Some(_), None) => {
+                tracing::error!("Rowset found but rowtype is missing");
+                None
+            }
+            (None, Some(_)) => {
+                tracing::error!("Rowtype found but rowset is missing");
+                None
+            }
+            _ => None,
+        }
+    }
+}
+
+pub enum RowsetData<'a> {
+    ArrowMultiChunk {
+        initial_base64_opt: Option<&'a str>,
+        chunk_download_data: Vec<ChunkDownloadData>,
+    },
+    ArrowSingleChunk {
+        chunk_base64: &'a str,
+    },
+    JsonRowset {
+        rowset: &'a Vec<Vec<String>>,
+        rowtype: &'a Vec<RowType>,
+    },
+    NoData,
 }
 
 impl TryFrom<&RowType> for query_types::RowType {
