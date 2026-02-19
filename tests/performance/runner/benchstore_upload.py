@@ -29,7 +29,7 @@ from runner.utils import perf_tests_root
 logger = logging.getLogger(__name__)
 
 PROJECT_NAME = "SnowDrivers"
-BENCHMARK_NAME = "POC_Universal_Driver"
+BENCHMARK_NAME = "Universal_Driver"
 PERFORMANCE_TESTS_DIR = perf_tests_root()
 
 
