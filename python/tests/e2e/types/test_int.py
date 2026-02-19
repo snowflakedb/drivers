@@ -291,7 +291,9 @@ class TestIntTable:
         assert_sequential_values(values, LARGE_RESULT_SET_SIZE)
 
     @int_type_parametrize
-    def test_should_manage_different_column_sizes_between_batches_for_int_and_synonyms(self, execute_query, tmp_schema, int_type):
+    def test_should_manage_different_column_sizes_between_batches_for_int_and_synonyms(
+        self, execute_query, tmp_schema, int_type
+    ):
         # Given Snowflake client is logged in
         assert_connection_is_open(execute_query)
 
@@ -306,7 +308,8 @@ class TestIntTable:
             f"FROM TABLE(GENERATOR(ROWCOUNT => {LARGE_RESULT_SET_SIZE - LARGE_VALUE_COUNT}))"
         )
         execute_query(
-            f"INSERT INTO {table_name} SELECT {INT64_SIGNED_MAX}::{int_type} FROM TABLE(GENERATOR(ROWCOUNT => {LARGE_VALUE_COUNT}))"
+            f"INSERT INTO {table_name} SELECT {INT64_SIGNED_MAX}::{int_type} "
+            f"FROM TABLE(GENERATOR(ROWCOUNT => {LARGE_VALUE_COUNT}))"
         )
 
         # When Query "SELECT * FROM <table> ORDER BY col" is executed
