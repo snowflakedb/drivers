@@ -541,6 +541,29 @@ TEST_CASE("SQL_DECIMAL to SQL_C_BIT - negative value is out of range", "[datatyp
 }
 
 // ============================================================================
+// High scale zero conversion (regression: 10^scale overflow in i32 arithmetic)
+// ============================================================================
+
+TEST_CASE("SQL_DECIMAL zero with high scale to SQL_C_LONG", "[datatype][number][truncation]") {
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  auto stmt = conn.execute_fetch("SELECT 0::NUMBER(38,10), 0::NUMBER(38,37), 0::NUMBER(20,15)");
+
+  CHECK(get_data<SQL_C_LONG>(stmt, 1) == 0);
+  CHECK(get_data<SQL_C_LONG>(stmt, 2) == 0);
+  CHECK(get_data<SQL_C_LONG>(stmt, 3) == 0);
+}
+
+TEST_CASE("SQL_DECIMAL nonzero with high scale to SQL_C_LONG", "[datatype][number][truncation]") {
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  CHECK(get_data<SQL_C_LONG>(conn.execute_fetch("SELECT 5.0000000000::NUMBER(38,10)"), 1) == 5);
+  CHECK(get_data<SQL_C_LONG>(conn.execute_fetch("SELECT -3.0000000000::NUMBER(38,10)"), 1) == -3);
+}
+
+// ============================================================================
 // Integer truncation toward zero tests
 // ============================================================================
 
@@ -755,4 +778,232 @@ TEST_CASE("SQL_C_DEFAULT for INT column resolves to SQL_C_CHAR", "[datatype][num
   CHECK(get_data_default_as_string(stmt, 1) == "42");
   CHECK(get_data_default_as_string(stmt, 2) == "-7");
   CHECK(get_data_default_as_string(stmt, 3) == "0");
+}
+
+// ============================================================================
+// SQL_C_WCHAR (wide character) conversion tests
+// ============================================================================
+
+inline std::u16string get_wchar_data(const StatementHandleWrapper& stmt, SQLUSMALLINT col) {
+  char16_t buffer[1000];
+  SQLLEN indicator;
+  SQLRETURN ret = SQLGetData(stmt.getHandle(), col, SQL_C_WCHAR, buffer, sizeof(buffer), &indicator);
+  CHECK_ODBC(ret, stmt);
+  return std::u16string(buffer, indicator / sizeof(char16_t));
+}
+
+TEST_CASE("SQL_DECIMAL to SQL_C_WCHAR - basic values", "[datatype][number][wchar]") {
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  auto stmt = conn.execute_fetch(
+      "SELECT 42::NUMBER(10,0), -7::NUMBER(10,0), 0::NUMBER(10,0), "
+      "123.45::NUMBER(10,2), -0.05::NUMBER(10,2)");
+
+  CHECK(get_wchar_data(stmt, 1) == u"42");
+  CHECK(get_wchar_data(stmt, 2) == u"-7");
+  CHECK(get_wchar_data(stmt, 3) == u"0");
+  CHECK(get_wchar_data(stmt, 4) == u"123.45");
+  CHECK(get_wchar_data(stmt, 5) == u"-0.05");
+}
+
+TEST_CASE("SQL_DECIMAL to SQL_C_WCHAR - large precision values", "[datatype][number][wchar]") {
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  auto stmt = conn.execute_fetch("SELECT 99999999999999999999999999999999999999::NUMBER(38,0)");
+  CHECK(get_wchar_data(stmt, 1) == u"99999999999999999999999999999999999999");
+}
+
+TEST_CASE("SQL_DECIMAL to SQL_C_WCHAR - NULL returns SQL_NULL_DATA", "[datatype][number][wchar][null]") {
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  auto stmt = conn.execute_fetch("SELECT NULL::NUMBER(10,0)");
+
+  char16_t buffer[100];
+  SQLLEN indicator = 0;
+  SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_WCHAR, buffer, sizeof(buffer), &indicator);
+  CHECK_ODBC(ret, stmt);
+  CHECK(indicator == SQL_NULL_DATA);
+}
+
+TEST_CASE("SQL_DECIMAL to SQL_C_WCHAR matches SQL_C_CHAR", "[datatype][number][wchar]") {
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  const std::string query = "SELECT 123.456::DECIMAL(10,3)";
+  auto char_str = get_data<SQL_C_CHAR>(conn.execute_fetch(query), 1);
+  auto wchar_str = get_wchar_data(conn.execute_fetch(query), 1);
+
+  std::u16string expected_wchar(char_str.begin(), char_str.end());
+  CHECK(wchar_str == expected_wchar);
+}
+
+// ============================================================================
+// SQL_C_NUMERIC (SQL_NUMERIC_STRUCT) conversion tests
+// ============================================================================
+
+TEST_CASE("SQL_DECIMAL to SQL_C_NUMERIC - positive integer", "[datatype][number][numeric]") {
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  auto stmt = conn.execute_fetch("SELECT 42::NUMBER(10,0)");
+
+  SQL_NUMERIC_STRUCT numeric = {};
+  SQLLEN indicator = 0;
+  SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_NUMERIC, &numeric, sizeof(numeric), &indicator);
+  CHECK_ODBC(ret, stmt);
+  CHECK(indicator != SQL_NULL_DATA);
+  CHECK(numeric.sign == 1);
+  // val is little-endian 128-bit unsigned: 42 = 0x2A
+  CHECK(numeric.val[0] == 42);
+  for (int i = 1; i < 16; ++i) {
+    CHECK(numeric.val[i] == 0);
+  }
+}
+
+TEST_CASE("SQL_DECIMAL to SQL_C_NUMERIC - negative value", "[datatype][number][numeric]") {
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  auto stmt = conn.execute_fetch("SELECT -123::NUMBER(10,0)");
+
+  SQL_NUMERIC_STRUCT numeric = {};
+  SQLLEN indicator = 0;
+  SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_NUMERIC, &numeric, sizeof(numeric), &indicator);
+  CHECK_ODBC(ret, stmt);
+  CHECK(indicator != SQL_NULL_DATA);
+  CHECK(numeric.sign == 0);
+  CHECK(numeric.val[0] == 123);
+  for (int i = 1; i < 16; ++i) {
+    CHECK(numeric.val[i] == 0);
+  }
+}
+
+TEST_CASE("SQL_DECIMAL to SQL_C_NUMERIC - zero", "[datatype][number][numeric]") {
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  auto stmt = conn.execute_fetch("SELECT 0::NUMBER(10,0)");
+
+  SQL_NUMERIC_STRUCT numeric = {};
+  numeric.sign = 0xFF;
+  SQLLEN indicator = 0;
+  SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_NUMERIC, &numeric, sizeof(numeric), &indicator);
+  CHECK_ODBC(ret, stmt);
+  CHECK(numeric.sign == 1);
+  for (int i = 0; i < 16; ++i) {
+    CHECK(numeric.val[i] == 0);
+  }
+}
+
+TEST_CASE("SQL_DECIMAL to SQL_C_NUMERIC - with scale", "[datatype][number][numeric]") {
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  auto stmt = conn.execute_fetch("SELECT 123.45::NUMBER(10,2)");
+
+  SQL_NUMERIC_STRUCT numeric = {};
+  SQLLEN indicator = 0;
+  SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_NUMERIC, &numeric, sizeof(numeric), &indicator);
+  CHECK_ODBC(ret, stmt);
+  CHECK(numeric.sign == 1);
+
+  unsigned long long stored = 0;
+  for (int i = 7; i >= 0; --i) {
+    stored = (stored << 8) | numeric.val[i];
+  }
+  CHECK(stored == 123);
+}
+
+TEST_CASE("SQL_DECIMAL to SQL_C_NUMERIC - NULL returns SQL_NULL_DATA", "[datatype][number][numeric][null]") {
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  auto stmt = conn.execute_fetch("SELECT NULL::NUMBER(10,2)");
+
+  SQL_NUMERIC_STRUCT numeric = {};
+  SQLLEN indicator = 0;
+  SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_NUMERIC, &numeric, sizeof(numeric), &indicator);
+  CHECK_ODBC(ret, stmt);
+  CHECK(indicator == SQL_NULL_DATA);
+}
+
+// ============================================================================
+// SQL_C_BINARY conversion tests
+// ============================================================================
+
+TEST_CASE("SQL_DECIMAL to SQL_C_BINARY - integer value", "[datatype][number][binary]") {
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  auto stmt = conn.execute_fetch("SELECT 42::NUMBER(10,0)");
+
+  char buffer[100] = {};
+  SQLLEN indicator = 0;
+  SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_BINARY, buffer, sizeof(buffer), &indicator);
+  CHECK_ODBC(ret, stmt);
+
+  CHECK(indicator == sizeof(SQL_NUMERIC_STRUCT));
+  // Interpret as SQL_NUMERIC_STRUCT
+  auto* num = reinterpret_cast<SQL_NUMERIC_STRUCT*>(buffer);
+  CHECK(num->sign == 1);
+  CHECK(num->val[0] == 42);
+  for (int i = 1; i < 16; ++i) {
+    CHECK(num->val[i] == 0);
+  }
+}
+
+TEST_CASE("SQL_DECIMAL to SQL_C_BINARY - scaled value", "[datatype][number][binary]") {
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  auto stmt = conn.execute_fetch("SELECT 123.45::NUMBER(10,2)");
+
+  char buffer[100] = {};
+  SQLLEN indicator = 0;
+  SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_BINARY, buffer, sizeof(buffer), &indicator);
+  CHECK_ODBC(ret, stmt);
+  CHECK(indicator == sizeof(SQL_NUMERIC_STRUCT));
+  auto* num = reinterpret_cast<SQL_NUMERIC_STRUCT*>(buffer);
+  CHECK(num->sign == 1);
+  CHECK(num->scale == 0);
+  // 123.45 with scale=2 => integer part 123
+  CHECK(num->val[0] == 123);
+  for (int i = 1; i < 16; ++i) {
+    CHECK(num->val[i] == 0);
+  }
+}
+
+TEST_CASE("SQL_DECIMAL to SQL_C_BINARY - negative value", "[datatype][number][binary]") {
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  auto stmt = conn.execute_fetch("SELECT -7::NUMBER(10,0)");
+
+  char buffer[100] = {};
+  SQLLEN indicator = 0;
+  SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_BINARY, buffer, sizeof(buffer), &indicator);
+  CHECK_ODBC(ret, stmt);
+  CHECK(indicator == sizeof(SQL_NUMERIC_STRUCT));
+  auto* num = reinterpret_cast<SQL_NUMERIC_STRUCT*>(buffer);
+  CHECK(num->sign == 0);
+  CHECK(num->val[0] == 7);
+  for (int i = 1; i < 16; ++i) {
+    CHECK(num->val[i] == 0);
+  }
+}
+
+TEST_CASE("SQL_DECIMAL to SQL_C_BINARY - NULL returns SQL_NULL_DATA", "[datatype][number][binary][null]") {
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  auto stmt = conn.execute_fetch("SELECT NULL::NUMBER(10,0)");
+
+  char buffer[100] = {};
+  SQLLEN indicator = 0;
+  SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_BINARY, buffer, sizeof(buffer), &indicator);
+  CHECK_ODBC(ret, stmt);
+  CHECK(indicator == SQL_NULL_DATA);
 }

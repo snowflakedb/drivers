@@ -1,4 +1,5 @@
 use arrow::array::{Array, ArrowPrimitiveType, PrimitiveArray};
+use odbc_sys as sql;
 
 use crate::cdata_types::CDataType;
 use crate::conversion::error::{
@@ -55,6 +56,29 @@ where
     }
 }
 
+impl SnowflakeNumber {
+    fn format_decimal(value: i128, scale: u32) -> String {
+        if scale > 0 {
+            let mut s = value.to_string();
+            let is_negative = s.starts_with('-');
+            if is_negative {
+                s.remove(0);
+            }
+            while s.len() <= scale as usize {
+                s.insert(0, '0');
+            }
+            let decimal_pos = s.len() - scale as usize;
+            s.insert(decimal_pos, '.');
+            if is_negative {
+                s.insert(0, '-');
+            }
+            s
+        } else {
+            value.to_string()
+        }
+    }
+}
+
 impl WriteODBCType for SnowflakeNumber {
     fn write_odbc_type(
         &self,
@@ -77,27 +101,27 @@ impl WriteODBCType for SnowflakeNumber {
                 Ok(vec![])
             }
             CDataType::Short | CDataType::SShort | CDataType::UShort => {
-                let short_value = (snowflake_value as i64) / 10i64.pow(self.scale);
+                let short_value = snowflake_value / 10i128.pow(self.scale);
                 binding.write_fixed(short_value as u16);
                 Ok(vec![])
             }
             CDataType::TinyInt | CDataType::STinyInt | CDataType::UTinyInt => {
-                let tinyint_value = (snowflake_value as i64) / 10i64.pow(self.scale);
+                let tinyint_value = snowflake_value / 10i128.pow(self.scale);
                 binding.write_fixed(tinyint_value as u8);
                 Ok(vec![])
             }
             CDataType::Long | CDataType::SLong | CDataType::ULong => {
-                let long_value = (snowflake_value as i32) / 10i32.pow(self.scale);
-                binding.write_fixed(long_value);
+                let long_value = snowflake_value / 10i128.pow(self.scale);
+                binding.write_fixed(long_value as i32);
                 Ok(vec![])
             }
             CDataType::SBigInt | CDataType::UBigInt => {
-                let int_value = (snowflake_value as i64) / 10i64.pow(self.scale);
-                binding.write_fixed(int_value);
+                let int_value = snowflake_value / 10i128.pow(self.scale);
+                binding.write_fixed(int_value as i64);
                 Ok(vec![])
             }
             CDataType::Bit => {
-                let int_value = (snowflake_value as i64) / 10i64.pow(self.scale);
+                let int_value = snowflake_value / 10i128.pow(self.scale);
                 if !(0..=1).contains(&int_value) {
                     return NumericValueOutOfRangeSnafu {
                         reason: format!(
@@ -111,29 +135,61 @@ impl WriteODBCType for SnowflakeNumber {
                 Ok(vec![])
             }
             CDataType::Char => {
-                let num_str = if self.scale > 0 {
-                    let mut s = snowflake_value.to_string();
-                    let is_negative = s.starts_with('-');
-                    if is_negative {
-                        s.remove(0);
-                    }
-
-                    while s.len() <= self.scale as usize {
-                        s.insert(0, '0');
-                    }
-
-                    let decimal_pos = s.len() - self.scale as usize;
-                    s.insert(decimal_pos, '.');
-
-                    if is_negative {
-                        s.insert(0, '-');
-                    }
-                    s
-                } else {
-                    snowflake_value.to_string()
-                };
+                let num_str = Self::format_decimal(snowflake_value, self.scale);
                 let warnings = binding.write_char_string(&num_str);
                 Ok(warnings)
+            }
+            CDataType::WChar => {
+                let num_str = Self::format_decimal(snowflake_value, self.scale);
+                let warnings = binding.write_wchar_string(&num_str);
+                Ok(warnings)
+            }
+            CDataType::Numeric => {
+                let int_value = snowflake_value / 10i128.pow(self.scale);
+                let abs_value = int_value.unsigned_abs();
+                let sign: u8 = if int_value >= 0 { 1 } else { 0 };
+                let numeric = sql::Numeric {
+                    precision: self.precision as u8,
+                    scale: 0,
+                    sign,
+                    val: abs_value.to_le_bytes(),
+                };
+                binding.write_fixed(numeric);
+                Ok(vec![])
+            }
+            CDataType::Binary => {
+                let int_value = snowflake_value / 10i128.pow(self.scale);
+                let abs_value = int_value.unsigned_abs();
+                let sign: u8 = if int_value >= 0 { 1 } else { 0 };
+                let numeric = sql::Numeric {
+                    precision: self.precision as u8,
+                    scale: 0,
+                    sign,
+                    val: abs_value.to_le_bytes(),
+                };
+                let numeric_bytes: &[u8] = unsafe {
+                    std::slice::from_raw_parts(
+                        &numeric as *const sql::Numeric as *const u8,
+                        std::mem::size_of::<sql::Numeric>(),
+                    )
+                };
+                let copy_len = std::cmp::min(numeric_bytes.len(), binding.buffer_length as usize);
+                unsafe {
+                    std::ptr::copy_nonoverlapping(
+                        numeric_bytes.as_ptr(),
+                        binding.target_value_ptr as *mut u8,
+                        copy_len,
+                    );
+                }
+                if !binding.str_len_or_ind_ptr.is_null() {
+                    unsafe {
+                        std::ptr::write(
+                            binding.str_len_or_ind_ptr,
+                            std::mem::size_of::<sql::Numeric>() as sql::Len,
+                        )
+                    };
+                }
+                Ok(vec![])
             }
             _ => UnsupportedOdbcTypeSnafu { target_type }.fail(),
         }
