@@ -72,64 +72,64 @@ mod tests {
 
     integer_conversion_tests! {
         // Basic values — no truncation
-        slong_integer:                          CDataType::SLong,    i32, 0,  10, 42i128                              => 42,    truncated=false;
-        sbigint_integer:                        CDataType::SBigInt,  i64, 0,  10, 123456789i128                       => 123456789, truncated=false;
-        short_integer:                          CDataType::Short,    i16, 0,  5,  300i128                              => 300,   truncated=false;
-        tinyint_integer:                        CDataType::TinyInt,  i8,  0,  3,  123i128                              => 123,   truncated=false;
+        slong_integer:                          CDataType::SLong,    i32, 0,  10, 42i128                         => 42,                            truncated=false;
+        sbigint_integer:                        CDataType::SBigInt,  i64, 0,  10, 123456789i128                  => 123456789,                     truncated=false;
+        short_integer:                          CDataType::Short,    i16, 0,  5,  300i128                        => 300,                           truncated=false;
+        tinyint_integer:                        CDataType::TinyInt,  i8,  0,  3,  123i128                        => 123,                           truncated=false;
 
         // Zero across all types
-        slong_zero:                             CDataType::SLong,    i32, 0,  10, 0i128                                => 0,     truncated=false;
-        sbigint_zero:                           CDataType::SBigInt,  i64, 0,  10, 0i128                                => 0,     truncated=false;
-        short_zero:                             CDataType::Short,    i16, 0,  5,  0i128                                => 0,     truncated=false;
-        tinyint_zero:                           CDataType::TinyInt,  i8,  0,  3,  0i128                                => 0,     truncated=false;
+        slong_zero:                             CDataType::SLong,    i32, 0,  10, 0i128                          => 0,                             truncated=false;
+        sbigint_zero:                           CDataType::SBigInt,  i64, 0,  10, 0i128                          => 0,                             truncated=false;
+        short_zero:                             CDataType::Short,    i16, 0,  5,  0i128                          => 0,                             truncated=false;
+        tinyint_zero:                           CDataType::TinyInt,  i8,  0,  3,  0i128                          => 0,                             truncated=false;
 
         // One and negative one
-        slong_one:                              CDataType::SLong,    i32, 0,  10, 1i128                                => 1,     truncated=false;
-        slong_neg_one:                          CDataType::SLong,    i32, 0,  10, -1i128                               => -1,    truncated=false;
+        slong_one:                              CDataType::SLong,    i32, 0,  10, 1i128                          => 1,                             truncated=false;
+        slong_neg_one:                          CDataType::SLong,    i32, 0,  10, -1i128                         => -1,                            truncated=false;
 
         // Negative values
-        slong_negative:                         CDataType::SLong,    i32, 0,  10, -42i128                              => -42,   truncated=false;
-        sbigint_negative:                       CDataType::SBigInt,  i64, 0,  10, -123456789i128                       => -123456789, truncated=false;
+        slong_negative:                         CDataType::SLong,    i32, 0,  10, -42i128                        => -42,                           truncated=false;
+        sbigint_negative:                       CDataType::SBigInt,  i64, 0,  10, -123456789i128                 => -123456789,                    truncated=false;
 
         // Boundary values — no truncation
-        slong_i32_max:                          CDataType::SLong,    i32, 0,  10, 2_147_483_647i128                    => 2_147_483_647, truncated=false;
-        slong_i32_min:                          CDataType::SLong,    i32, 0,  10, -2_147_483_648i128                   => -2_147_483_648, truncated=false;
-        sbigint_i64_max:                        CDataType::SBigInt,  i64, 0,  19, 9_223_372_036_854_775_807i128        => 9_223_372_036_854_775_807i64, truncated=false;
-        sbigint_i64_min:                        CDataType::SBigInt,  i64, 0,  19, -9_223_372_036_854_775_808i128       => -9_223_372_036_854_775_808i64, truncated=false;
-        short_i16_max:                          CDataType::Short,    i16, 0,  5,  32767i128                            => 32767,  truncated=false;
-        short_i16_min:                          CDataType::Short,    i16, 0,  5,  -32768i128                           => -32768, truncated=false;
-        ushort_u16_max:                         CDataType::UShort,   u16, 0,  5,  65535i128                            => 65535,  truncated=false;
-        tinyint_i8_max:                         CDataType::TinyInt,  i8,  0,  3,  127i128                              => 127,   truncated=false;
-        tinyint_i8_min:                         CDataType::TinyInt,  i8,  0,  3,  -128i128                             => -128,  truncated=false;
-        utinyint_u8_max:                        CDataType::UTinyInt, u8,  0,  3,  255i128                              => 255,   truncated=false;
+        slong_i32_max:                          CDataType::SLong,    i32, 0,  10, 2_147_483_647i128              => 2_147_483_647,                 truncated=false;
+        slong_i32_min:                          CDataType::SLong,    i32, 0,  10, -2_147_483_648i128             => -2_147_483_648,                truncated=false;
+        sbigint_i64_max:                        CDataType::SBigInt,  i64, 0,  19, 9_223_372_036_854_775_807i128  => 9_223_372_036_854_775_807i64,  truncated=false;
+        sbigint_i64_min:                        CDataType::SBigInt,  i64, 0,  19, -9_223_372_036_854_775_808i128 => -9_223_372_036_854_775_808i64, truncated=false;
+        short_i16_max:                          CDataType::Short,    i16, 0,  5,  32767i128                      => 32767,                         truncated=false;
+        short_i16_min:                          CDataType::Short,    i16, 0,  5,  -32768i128                     => -32768,                        truncated=false;
+        ushort_u16_max:                         CDataType::UShort,   u16, 0,  5,  65535i128                      => 65535,                         truncated=false;
+        tinyint_i8_max:                         CDataType::TinyInt,  i8,  0,  3,  127i128                        => 127,                           truncated=false;
+        tinyint_i8_min:                         CDataType::TinyInt,  i8,  0,  3,  -128i128                       => -128,                          truncated=false;
+        utinyint_u8_max:                        CDataType::UTinyInt, u8,  0,  3,  255i128                        => 255,                           truncated=false;
 
         // Fractional truncation — should produce 01S07 warning
-        slong_truncates_positive_frac:          CDataType::SLong,    i32, 2,  10, 999i128                              => 9,     truncated=true;
-        slong_truncates_negative_frac:          CDataType::SLong,    i32, 2,  10, -999i128                             => -9,    truncated=true;
-        slong_frac_below_one_to_zero:           CDataType::SLong,    i32, 1,  10, 9i128                               => 0,     truncated=true;
-        slong_neg_frac_below_one_to_zero:       CDataType::SLong,    i32, 1,  10, -9i128                              => 0,     truncated=true;
-        sbigint_truncates_frac:                 CDataType::SBigInt,  i64, 3,  10, 12345i128                            => 12,    truncated=true;
-        short_truncates_frac:                   CDataType::Short,    i16, 1,  5,  255i128                              => 25,    truncated=true;
-        tinyint_truncates_frac:                 CDataType::TinyInt,  i8,  1,  3,  99i128                               => 9,     truncated=true;
+        slong_truncates_positive_frac:          CDataType::SLong,    i32, 2,  10, 999i128                        => 9,                             truncated=true;
+        slong_truncates_negative_frac:          CDataType::SLong,    i32, 2,  10, -999i128                       => -9,                            truncated=true;
+        slong_frac_below_one_to_zero:           CDataType::SLong,    i32, 1,  10, 9i128                          => 0,                             truncated=true;
+        slong_neg_frac_below_one_to_zero:       CDataType::SLong,    i32, 1,  10, -9i128                         => 0,                             truncated=true;
+        sbigint_truncates_frac:                 CDataType::SBigInt,  i64, 3,  10, 12345i128                      => 12,                            truncated=true;
+        short_truncates_frac:                   CDataType::Short,    i16, 1,  5,  255i128                        => 25,                            truncated=true;
+        tinyint_truncates_frac:                 CDataType::TinyInt,  i8,  1,  3,  99i128                         => 9,                             truncated=true;
 
         // High scale
-        slong_zero_scale_10:                    CDataType::SLong,    i32, 10, 38, 0i128                                => 0,     truncated=false;
-        slong_zero_scale_37:                    CDataType::SLong,    i32, 37, 38, 0i128                                => 0,     truncated=false;
-        slong_positive_scale_10:                CDataType::SLong,    i32, 10, 38, 50_000_000_000i128                   => 5,     truncated=false;
-        slong_negative_scale_10:                CDataType::SLong,    i32, 10, 38, -30_000_000_000i128                  => -3,    truncated=false;
-        long_zero_scale_15:                     CDataType::Long,     i32, 15, 20, 0i128                                => 0,     truncated=false;
-        ulong_zero_scale_10:                    CDataType::ULong,    u32, 10, 38, 0i128                                => 0,     truncated=false;
-        sbigint_zero_scale_20:                  CDataType::SBigInt,  i64, 20, 38, 0i128                                => 0,     truncated=false;
-        short_zero_scale_10:                    CDataType::Short,    i16, 10, 38, 0i128                                => 0,     truncated=false;
-        tinyint_zero_scale_10:                  CDataType::TinyInt,  i8,  10, 38, 0i128                                => 0,     truncated=false;
+        slong_zero_scale_10:                    CDataType::SLong,    i32, 10, 38, 0i128                          => 0,                             truncated=false;
+        slong_zero_scale_37:                    CDataType::SLong,    i32, 37, 38, 0i128                          => 0,                             truncated=false;
+        slong_positive_scale_10:                CDataType::SLong,    i32, 10, 38, 50_000_000_000i128             => 5,                             truncated=false;
+        slong_negative_scale_10:                CDataType::SLong,    i32, 10, 38, -30_000_000_000i128            => -3,                            truncated=false;
+        long_zero_scale_15:                     CDataType::Long,     i32, 15, 20, 0i128                          => 0,                             truncated=false;
+        ulong_zero_scale_10:                    CDataType::ULong,    u32, 10, 38, 0i128                          => 0,                             truncated=false;
+        sbigint_zero_scale_20:                  CDataType::SBigInt,  i64, 20, 38, 0i128                          => 0,                             truncated=false;
+        short_zero_scale_10:                    CDataType::Short,    i16, 10, 38, 0i128                          => 0,                             truncated=false;
+        tinyint_zero_scale_10:                  CDataType::TinyInt,  i8,  10, 38, 0i128                          => 0,                             truncated=false;
 
         // Type aliases
-        sshort_integer:                         CDataType::SShort,   i16, 0,  5,  300i128                              => 300,   truncated=false;
-        ushort_integer:                         CDataType::UShort,   u16, 0,  5,  300i128                              => 300,   truncated=false;
-        stinyint_integer:                       CDataType::STinyInt, i8,  0,  3,  100i128                              => 100,   truncated=false;
-        utinyint_integer:                       CDataType::UTinyInt, u8,  0,  3,  200i128                              => 200,   truncated=false;
-        ubigint_integer:                        CDataType::UBigInt,  u64, 0,  10, 999i128                              => 999,   truncated=false;
-        ubigint_u64_max:                        CDataType::UBigInt,  u64, 0,  20, 18_446_744_073_709_551_615i128       => 18_446_744_073_709_551_615u64, truncated=false;
+        sshort_integer:                         CDataType::SShort,   i16, 0,  5,  300i128                        => 300,                           truncated=false;
+        ushort_integer:                         CDataType::UShort,   u16, 0,  5,  300i128                        => 300,                           truncated=false;
+        stinyint_integer:                       CDataType::STinyInt, i8,  0,  3,  100i128                        => 100,                           truncated=false;
+        utinyint_integer:                       CDataType::UTinyInt, u8,  0,  3,  200i128                        => 200,                           truncated=false;
+        ubigint_integer:                        CDataType::UBigInt,  u64, 0,  10, 999i128                        => 999,                           truncated=false;
+        ubigint_u64_max:                        CDataType::UBigInt,  u64, 0,  20, 18_446_744_073_709_551_615i128 => 18_446_744_073_709_551_615u64, truncated=false;
     }
 
     // ========================================================================
@@ -213,39 +213,39 @@ mod tests {
 
     char_conversion_tests! {
         // Default type (maps to Char)
-        default_integer_as_char:                CDataType::Default, 0,  10, 42i128                  => "42";
-        default_scaled_as_char:                 CDataType::Default, 2,  10, 12345i128               => "123.45";
-        default_negative_scaled_as_char:        CDataType::Default, 3,  10, -50i128                 => "-0.050";
-        default_zero_as_char:                   CDataType::Default, 0,  10, 0i128                   => "0";
+        default_integer_as_char:                CDataType::Default, 0, 10, 42i128               => "42";
+        default_scaled_as_char:                 CDataType::Default, 2, 10, 12345i128            => "123.45";
+        default_negative_scaled_as_char:        CDataType::Default, 3, 10, -50i128              => "-0.050";
+        default_zero_as_char:                   CDataType::Default, 0, 10, 0i128                => "0";
 
         // Explicit Char type
-        char_integer:                           CDataType::Char,    0,  10, 42i128                  => "42";
-        char_negative_integer:                  CDataType::Char,    0,  10, -42i128                 => "-42";
-        char_one:                               CDataType::Char,    0,  10, 1i128                   => "1";
-        char_negative_one:                      CDataType::Char,    0,  10, -1i128                  => "-1";
-        char_single_digit:                      CDataType::Char,    0,  1,  5i128                   => "5";
+        char_integer:                           CDataType::Char,    0, 10, 42i128               => "42";
+        char_negative_integer:                  CDataType::Char,    0, 10, -42i128              => "-42";
+        char_one:                               CDataType::Char,    0, 10, 1i128                => "1";
+        char_negative_one:                      CDataType::Char,    0, 10, -1i128               => "-1";
+        char_single_digit:                      CDataType::Char,    0, 1,  5i128                => "5";
 
         // Leading zeros in fractional part
-        char_leading_zeros_3:                   CDataType::Char,    3,  10, 1i128                   => "0.001";
-        char_leading_zeros_3_neg:               CDataType::Char,    3,  10, -1i128                  => "-0.001";
-        char_leading_zeros_5:                   CDataType::Char,    5,  10, 1i128                   => "0.00001";
-        char_leading_zeros_5_neg:               CDataType::Char,    5,  10, -1i128                  => "-0.00001";
+        char_leading_zeros_3:                   CDataType::Char,    3, 10, 1i128                => "0.001";
+        char_leading_zeros_3_neg:               CDataType::Char,    3, 10, -1i128               => "-0.001";
+        char_leading_zeros_5:                   CDataType::Char,    5, 10, 1i128                => "0.00001";
+        char_leading_zeros_5_neg:               CDataType::Char,    5, 10, -1i128               => "-0.00001";
 
         // Zero with various scales
-        char_zero_scale_1:                      CDataType::Char,    1,  10, 0i128                   => "0.0";
-        char_zero_scale_3:                      CDataType::Char,    3,  10, 0i128                   => "0.000";
-        char_zero_scale_5:                      CDataType::Char,    5,  10, 0i128                   => "0.00000";
+        char_zero_scale_1:                      CDataType::Char,    1, 10, 0i128                => "0.0";
+        char_zero_scale_3:                      CDataType::Char,    3, 10, 0i128                => "0.000";
+        char_zero_scale_5:                      CDataType::Char,    5, 10, 0i128                => "0.00000";
 
         // Scale boundary: value digits == scale (entire value is fractional)
-        char_scale_equals_digits:               CDataType::Char,    2,  10, 99i128                  => "0.99";
-        char_scale_equals_digits_neg:           CDataType::Char,    2,  10, -99i128                 => "-0.99";
-        char_scale_exactly_at_boundary:         CDataType::Char,    2,  10, 100i128                 => "1.00";
-        char_trailing_zeros_preserved:          CDataType::Char,    3,  10, 1000i128                => "1.000";
+        char_scale_equals_digits:               CDataType::Char,    2, 10, 99i128               => "0.99";
+        char_scale_equals_digits_neg:           CDataType::Char,    2, 10, -99i128              => "-0.99";
+        char_scale_exactly_at_boundary:         CDataType::Char,    2, 10, 100i128              => "1.00";
+        char_trailing_zeros_preserved:          CDataType::Char,    3, 10, 1000i128             => "1.000";
 
         // Large numbers
-        char_large_integer:                     CDataType::Char,    0,  38, 99999999999999i128       => "99999999999999";
-        char_large_negative:                    CDataType::Char,    0,  38, -99999999999999i128      => "-99999999999999";
-        char_large_with_scale:                  CDataType::Char,    2,  38, 9999999999999900i128     => "99999999999999.00";
+        char_large_integer:                     CDataType::Char,    0, 38, 99999999999999i128   => "99999999999999";
+        char_large_negative:                    CDataType::Char,    0, 38, -99999999999999i128  => "-99999999999999";
+        char_large_with_scale:                  CDataType::Char,    2, 38, 9999999999999900i128 => "99999999999999.00";
     }
 
     // ========================================================================
@@ -278,14 +278,14 @@ mod tests {
     }
 
     wchar_conversion_tests! {
-        wchar_integer:              0, 10, 42i128       => "42";
-        wchar_scaled:               2, 10, 12345i128    => "123.45";
-        wchar_zero:                 0, 10, 0i128        => "0";
-        wchar_negative:             0, 10, -42i128      => "-42";
-        wchar_negative_scaled:      2, 10, -12345i128   => "-123.45";
-        wchar_leading_zeros:        3, 10, 1i128        => "0.001";
-        wchar_zero_with_scale:      2, 10, 0i128        => "0.00";
-        wchar_large:                0, 38, 999999i128   => "999999";
+        wchar_integer:              0, 10, 42i128     => "42";
+        wchar_scaled:               2, 10, 12345i128  => "123.45";
+        wchar_zero:                 0, 10, 0i128      => "0";
+        wchar_negative:             0, 10, -42i128    => "-42";
+        wchar_negative_scaled:      2, 10, -12345i128 => "-123.45";
+        wchar_leading_zeros:        3, 10, 1i128      => "0.001";
+        wchar_zero_with_scale:      2, 10, 0i128      => "0.00";
+        wchar_large:                0, 38, 999999i128 => "999999";
     }
 
     // ========================================================================
@@ -313,22 +313,22 @@ mod tests {
 
     float_conversion_tests! {
         // f64
-        double_integer:             CDataType::Double, f64, 0, 10, 42i128               => approx 42.0,       tol f64::EPSILON;
-        double_zero:                CDataType::Double, f64, 0, 10, 0i128                => approx 0.0,        tol f64::EPSILON;
-        double_negative:            CDataType::Double, f64, 0, 10, -42i128              => approx -42.0,      tol f64::EPSILON;
-        double_one:                 CDataType::Double, f64, 0, 10, 1i128                => approx 1.0,        tol f64::EPSILON;
-        double_neg_one:             CDataType::Double, f64, 0, 10, -1i128               => approx -1.0,       tol f64::EPSILON;
-        double_scaled:              CDataType::Double, f64, 2, 10, 12345i128            => approx 123.45,     tol 0.001;
-        double_negative_scaled:     CDataType::Double, f64, 3, 10, -50i128              => approx -0.05,      tol 0.001;
-        double_large:               CDataType::Double, f64, 0, 15, 1_000_000_000i128    => approx 1e9,        tol 1.0;
-        double_small_fraction:      CDataType::Double, f64, 5, 10, 1i128                => approx 0.00001,    tol 1e-8;
+        double_integer:             CDataType::Double, f64, 0, 10, 42i128            => approx 42.0,    tol f64::EPSILON;
+        double_zero:                CDataType::Double, f64, 0, 10, 0i128             => approx 0.0,     tol f64::EPSILON;
+        double_negative:            CDataType::Double, f64, 0, 10, -42i128           => approx -42.0,   tol f64::EPSILON;
+        double_one:                 CDataType::Double, f64, 0, 10, 1i128             => approx 1.0,     tol f64::EPSILON;
+        double_neg_one:             CDataType::Double, f64, 0, 10, -1i128            => approx -1.0,    tol f64::EPSILON;
+        double_scaled:              CDataType::Double, f64, 2, 10, 12345i128         => approx 123.45,  tol 0.001;
+        double_negative_scaled:     CDataType::Double, f64, 3, 10, -50i128           => approx -0.05,   tol 0.001;
+        double_large:               CDataType::Double, f64, 0, 15, 1_000_000_000i128 => approx 1e9,     tol 1.0;
+        double_small_fraction:      CDataType::Double, f64, 5, 10, 1i128             => approx 0.00001, tol 1e-8;
 
         // f32
-        float_scaled:               CDataType::Float,  f32, 3, 10, 123789i128           => approx 123.789,    tol 0.01;
-        float_zero:                 CDataType::Float,  f32, 0, 10, 0i128                => approx 0.0,        tol f32::EPSILON;
-        float_negative:             CDataType::Float,  f32, 0, 10, -100i128             => approx -100.0,     tol 0.01;
-        float_small_fraction:       CDataType::Float,  f32, 2, 10, 1i128                => approx 0.01,       tol 0.001;
-        float_one:                  CDataType::Float,  f32, 0, 10, 1i128                => approx 1.0,        tol f32::EPSILON;
+        float_scaled:               CDataType::Float,  f32, 3, 10, 123789i128        => approx 123.789, tol 0.01;
+        float_zero:                 CDataType::Float,  f32, 0, 10, 0i128             => approx 0.0,     tol f32::EPSILON;
+        float_negative:             CDataType::Float,  f32, 0, 10, -100i128          => approx -100.0,  tol 0.01;
+        float_small_fraction:       CDataType::Float,  f32, 2, 10, 1i128             => approx 0.01,    tol 0.001;
+        float_one:                  CDataType::Float,  f32, 0, 10, 1i128             => approx 1.0,     tol f32::EPSILON;
     }
 
     // ========================================================================
@@ -364,29 +364,29 @@ mod tests {
     }
 
     numeric_struct_tests! {
-        numeric_positive_with_scale:    2,  10, 12345i128                   => sign=1, val=123,        truncated=true;
-        numeric_negative:               0,  10, -42i128                     => sign=0, val=42,         truncated=false;
-        numeric_zero:                   0,  10, 0i128                       => sign=1, val=0,          truncated=false;
-        numeric_one:                    0,  10, 1i128                       => sign=1, val=1,          truncated=false;
-        numeric_negative_one:           0,  10, -1i128                      => sign=0, val=1,          truncated=false;
+        numeric_positive_with_scale:    2,  10, 12345i128           => sign=1, val=123,        truncated=true;
+        numeric_negative:               0,  10, -42i128             => sign=0, val=42,         truncated=false;
+        numeric_zero:                   0,  10, 0i128               => sign=1, val=0,          truncated=false;
+        numeric_one:                    0,  10, 1i128               => sign=1, val=1,          truncated=false;
+        numeric_negative_one:           0,  10, -1i128              => sign=0, val=1,          truncated=false;
 
         // LE byte boundary values
-        numeric_255:                    0,  10, 255i128                     => sign=1, val=255,        truncated=false;
-        numeric_256:                    0,  10, 256i128                     => sign=1, val=256,        truncated=false;
-        numeric_65535:                  0,  10, 65535i128                   => sign=1, val=65535,      truncated=false;
-        numeric_65536:                  0,  10, 65536i128                   => sign=1, val=65536,      truncated=false;
-        numeric_1_000_000:              0,  10, 1_000_000i128              => sign=1, val=1_000_000,  truncated=false;
+        numeric_255:                    0,  10, 255i128             => sign=1, val=255,        truncated=false;
+        numeric_256:                    0,  10, 256i128             => sign=1, val=256,        truncated=false;
+        numeric_65535:                  0,  10, 65535i128           => sign=1, val=65535,      truncated=false;
+        numeric_65536:                  0,  10, 65536i128           => sign=1, val=65536,      truncated=false;
+        numeric_1_000_000:              0,  10, 1_000_000i128       => sign=1, val=1_000_000,  truncated=false;
 
         // Scale truncation
-        numeric_scale_truncates_frac:   2,  10, 999i128                    => sign=1, val=9,          truncated=true;
-        numeric_scale_neg_truncates:    2,  10, -999i128                   => sign=0, val=9,          truncated=true;
-        numeric_zero_with_scale:        5,  10, 0i128                      => sign=1, val=0,          truncated=false;
+        numeric_scale_truncates_frac:   2,  10, 999i128             => sign=1, val=9,          truncated=true;
+        numeric_scale_neg_truncates:    2,  10, -999i128            => sign=0, val=9,          truncated=true;
+        numeric_zero_with_scale:        5,  10, 0i128               => sign=1, val=0,          truncated=false;
 
         // High scale
-        numeric_high_scale_zero:        10, 38, 0i128                      => sign=1, val=0,          truncated=false;
-        numeric_high_scale_positive:    10, 38, 50_000_000_000i128         => sign=1, val=5,          truncated=false;
-        numeric_high_scale_negative:    10, 38, -30_000_000_000i128        => sign=0, val=3,          truncated=false;
-        numeric_scale_37_zero:          37, 38, 0i128                      => sign=1, val=0,          truncated=false;
+        numeric_high_scale_zero:        10, 38, 0i128               => sign=1, val=0,          truncated=false;
+        numeric_high_scale_positive:    10, 38, 50_000_000_000i128  => sign=1, val=5,          truncated=false;
+        numeric_high_scale_negative:    10, 38, -30_000_000_000i128 => sign=0, val=3,          truncated=false;
+        numeric_scale_37_zero:          37, 38, 0i128               => sign=1, val=0,          truncated=false;
     }
 
     // ========================================================================
@@ -413,14 +413,14 @@ mod tests {
     }
 
     binary_struct_tests! {
-        binary_integer:             0,  10, 42i128      => sign=1, first_val_byte=42;
-        binary_with_scale:          2,  10, 12345i128   => sign=1, first_val_byte=123;
-        binary_zero:                0,  10, 0i128       => sign=1, first_val_byte=0;
-        binary_one:                 0,  10, 1i128       => sign=1, first_val_byte=1;
-        binary_negative:            0,  10, -42i128     => sign=0, first_val_byte=42;
-        binary_255:                 0,  10, 255i128     => sign=1, first_val_byte=255;
-        binary_256_le_low_byte:     0,  10, 256i128     => sign=1, first_val_byte=0;
-        binary_high_scale_zero:     10, 38, 0i128       => sign=1, first_val_byte=0;
+        binary_integer:             0,  10, 42i128             => sign=1, first_val_byte=42;
+        binary_with_scale:          2,  10, 12345i128          => sign=1, first_val_byte=123;
+        binary_zero:                0,  10, 0i128              => sign=1, first_val_byte=0;
+        binary_one:                 0,  10, 1i128              => sign=1, first_val_byte=1;
+        binary_negative:            0,  10, -42i128            => sign=0, first_val_byte=42;
+        binary_255:                 0,  10, 255i128            => sign=1, first_val_byte=255;
+        binary_256_le_low_byte:     0,  10, 256i128            => sign=1, first_val_byte=0;
+        binary_high_scale_zero:     10, 38, 0i128              => sign=1, first_val_byte=0;
         binary_high_scale_positive: 10, 38, 50_000_000_000i128 => sign=1, first_val_byte=5;
     }
 
@@ -481,13 +481,13 @@ mod tests {
 
     bit_error_tests! {
         // value >= 2
-        bit_rejects_two:                    0,  10, 2i128;
-        bit_rejects_large_positive:         0,  10, 100i128;
-        bit_rejects_frac_truncates_to_2:    1,  10, 25i128;
+        bit_rejects_two:                 0, 10, 2i128;
+        bit_rejects_large_positive:      0, 10, 100i128;
+        bit_rejects_frac_truncates_to_2: 1, 10, 25i128;
 
         // value < 0 (checked on original snowflake_value, not truncated)
-        bit_rejects_negative_one:           0,  10, -1i128;
-        bit_rejects_large_negative:         0,  10, -100i128;
-        bit_rejects_neg_frac:               1,  10, -5i128;
+        bit_rejects_negative_one:        0, 10, -1i128;
+        bit_rejects_large_negative:      0, 10, -100i128;
+        bit_rejects_neg_frac:            1, 10, -5i128;
     }
 }
