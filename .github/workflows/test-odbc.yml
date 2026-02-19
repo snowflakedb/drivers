@@ -120,8 +120,7 @@ jobs:
       - name: Decode secrets (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
-        run: |
-          gpg --batch --yes --passphrase $env:PARAMETERS_SECRET --decrypt --output parameters.json .github/secrets/parameters_aws.json.gpg
+        run: ./scripts/decode_secrets.ps1
         env:
           PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
 
