@@ -490,4 +490,74 @@ mod tests {
         bit_rejects_large_negative:      0, 10, -100i128;
         bit_rejects_neg_frac:            1, 10, -5i128;
     }
+
+    // ========================================================================
+    // Nullable NULL handling (SQLSTATE 22002)
+    // When the value is SQL NULL and no indicator pointer is provided,
+    // the driver must return an IndicatorVariableRequired error.
+    // ========================================================================
+
+    mod nullable_null_tests {
+        use super::*;
+        use crate::cdata_types::SQL_NULL_DATA;
+        use crate::conversion::WriteODBCType;
+        use crate::conversion::error::WriteOdbcError;
+        use crate::conversion::nullable::Nullable;
+
+        #[test]
+        fn null_with_indicator_writes_sql_null_data() {
+            let nullable = Nullable {
+                value: make_decimal(0, 10),
+            };
+            let mut value: i32 = 42;
+            let mut str_len: sql::Len = 0;
+            let binding = binding_for_value(CDataType::SLong, &mut value, &mut str_len);
+
+            let warnings = nullable.write_odbc_type(None::<i128>, &binding).unwrap();
+
+            assert!(warnings.is_empty());
+            assert_eq!(str_len, SQL_NULL_DATA);
+        }
+
+        #[test]
+        fn null_without_indicator_returns_error() {
+            let nullable = Nullable {
+                value: make_decimal(0, 10),
+            };
+            let mut value: i32 = 42;
+            let binding = Binding {
+                target_type: CDataType::SLong,
+                target_value_ptr: &mut value as *mut i32 as sql::Pointer,
+                buffer_length: 0,
+                str_len_or_ind_ptr: std::ptr::null_mut(),
+            };
+
+            let result = nullable.write_odbc_type(None::<i128>, &binding);
+
+            assert!(result.is_err());
+            assert!(matches!(
+                result.unwrap_err(),
+                WriteOdbcError::IndicatorVariableRequired { .. }
+            ));
+        }
+
+        #[test]
+        fn non_null_with_null_indicator_still_writes_value() {
+            let nullable = Nullable {
+                value: make_decimal(0, 10),
+            };
+            let mut value: i32 = 0;
+            let binding = Binding {
+                target_type: CDataType::SLong,
+                target_value_ptr: &mut value as *mut i32 as sql::Pointer,
+                buffer_length: 0,
+                str_len_or_ind_ptr: std::ptr::null_mut(),
+            };
+
+            let warnings = nullable.write_odbc_type(Some(42i128), &binding).unwrap();
+
+            assert!(warnings.is_empty());
+            assert_eq!(value, 42);
+        }
+    }
 }
