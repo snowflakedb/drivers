@@ -318,6 +318,9 @@ impl OdbcError {
                     WriteOdbcError::NumericValueOutOfRange { .. } => {
                         SqlState::NumericValueOutOfRange
                     }
+                    WriteOdbcError::IndicatorVariableRequired { .. } => {
+                        SqlState::IndicatorVariableRequired
+                    }
                     _ => SqlState::GeneralError,
                 },
                 ConversionError::ReadArrowValue { .. } => SqlState::GeneralError,

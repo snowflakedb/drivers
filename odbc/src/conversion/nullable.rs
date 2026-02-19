@@ -2,10 +2,11 @@ use crate::{
     cdata_types::SQL_NULL_DATA,
     conversion::{
         Binding, ReadArrowType, SnowflakeType, WriteODBCType,
-        error::{ReadArrowError, WriteOdbcError},
+        error::{IndicatorVariableRequiredSnafu, ReadArrowError, WriteOdbcError},
         warning::Warnings,
     },
 };
+use snafu::ensure;
 
 pub(crate) struct Nullable<T> {
     pub value: T,
@@ -39,6 +40,10 @@ impl<T: WriteODBCType> WriteODBCType for Nullable<T> {
         match snowflake_value {
             Some(value) => self.value.write_odbc_type(value, binding),
             None => {
+                ensure!(
+                    !binding.str_len_or_ind_ptr.is_null(),
+                    IndicatorVariableRequiredSnafu
+                );
                 unsafe {
                     std::ptr::write(binding.str_len_or_ind_ptr, SQL_NULL_DATA);
                 }

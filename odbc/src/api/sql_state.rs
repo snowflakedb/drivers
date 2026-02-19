@@ -95,6 +95,8 @@ pub enum SqlState {
     FeatureNotSupported,
 
     // Cast error class (22)
+    /// 22002 - Indicator variable required but not supplied
+    IndicatorVariableRequired,
     /// 22003 - Numeric value out of range
     NumericValueOutOfRange,
     /// 22018 - Invalid character value for cast
@@ -338,6 +340,7 @@ impl SqlState {
             SqlState::CommunicationLinkFailure => "08S01",
             SqlState::TriggeredActionException => "09000",
             SqlState::FeatureNotSupported => "0A000",
+            SqlState::IndicatorVariableRequired => "22002",
             SqlState::NumericValueOutOfRange => "22003",
             SqlState::InvalidCharacterValueForCast => "22018",
             SqlState::InvalidTransactionState => "25000",
@@ -509,6 +512,7 @@ impl FromStr for SqlState {
             "08S01" => SqlState::CommunicationLinkFailure,
             "09000" => SqlState::TriggeredActionException,
             "0A000" => SqlState::FeatureNotSupported,
+            "22002" => SqlState::IndicatorVariableRequired,
             "22003" => SqlState::NumericValueOutOfRange,
             "22018" => SqlState::InvalidCharacterValueForCast,
             "25000" => SqlState::InvalidTransactionState,

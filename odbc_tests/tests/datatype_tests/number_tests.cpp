@@ -822,3 +822,15 @@ TEST_CASE("SQL_C_BIT spec compliance", "[datatype][number][bit]") {
     CHECK(value == 1);
   }
 }
+
+TEST_CASE("SQL_DECIMAL SQLGetData NULL without indicator returns 22002", "[datatype][number][null]") {
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  auto stmt = conn.execute_fetch("SELECT NULL::DECIMAL(10,2)");
+
+  SQLINTEGER value = 0;
+  SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_LONG, &value, sizeof(value), nullptr);
+  CHECK(ret == SQL_ERROR);
+  CHECK(get_sqlstate(stmt) == "22002");
+}
