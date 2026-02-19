@@ -76,6 +76,137 @@ impl ConnectionAttribute {
     }
 }
 
+/// ODBC statement attribute identifiers (matching `SQL_ATTR_*` constants from `sql.h`).
+#[repr(i32)]
+#[allow(clippy::enum_variant_names)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum StmtAttr {
+    /// `SQL_ATTR_APP_ROW_DESC` - handle to the Application Row Descriptor.
+    AppRowDesc = 10010,
+    /// `SQL_ATTR_APP_PARAM_DESC` - handle to the Application Parameter Descriptor.
+    AppParamDesc = 10011,
+    /// `SQL_ATTR_IMP_ROW_DESC` - handle to the Implementation Row Descriptor.
+    ImpRowDesc = 10012,
+    /// `SQL_ATTR_IMP_PARAM_DESC` - handle to the Implementation Parameter Descriptor.
+    ImpParamDesc = 10013,
+}
+
+impl TryFrom<i32> for StmtAttr {
+    type Error = OdbcError;
+
+    fn try_from(value: i32) -> Result<Self, Self::Error> {
+        match value {
+            10010 => Ok(StmtAttr::AppRowDesc),
+            10011 => Ok(StmtAttr::AppParamDesc),
+            10012 => Ok(StmtAttr::ImpRowDesc),
+            10013 => Ok(StmtAttr::ImpParamDesc),
+            _ => {
+                tracing::warn!("Unknown statement attribute: {}", value);
+                Err(OdbcError::UnknownAttribute {
+                    attribute: value,
+                    location: snafu::location!(),
+                })
+            }
+        }
+    }
+}
+
+/// ODBC descriptor field identifiers (matching `SQL_DESC_*` constants from `sql.h`).
+#[repr(i16)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum DescField {
+    /// `SQL_DESC_CONCISE_TYPE` - concise data type of the column.
+    ConciseType = 2,
+    /// `SQL_DESC_COUNT` - number of bound columns (header field, record 0).
+    Count = 1001,
+    /// `SQL_DESC_TYPE` - verbose data type of the column.
+    Type = 1002,
+    /// `SQL_DESC_OCTET_LENGTH_PTR` - pointer to the octet-length buffer.
+    OctetLengthPtr = 1004,
+    /// `SQL_DESC_PRECISION` - numeric precision.
+    Precision = 1005,
+    /// `SQL_DESC_SCALE` - numeric scale.
+    Scale = 1006,
+    /// `SQL_DESC_INDICATOR_PTR` - pointer to the indicator buffer.
+    IndicatorPtr = 1009,
+    /// `SQL_DESC_DATA_PTR` - pointer to the data buffer.
+    DataPtr = 1010,
+    /// `SQL_DESC_OCTET_LENGTH` - length in bytes of the data buffer.
+    OctetLength = 1013,
+}
+
+impl TryFrom<i16> for DescField {
+    type Error = OdbcError;
+
+    fn try_from(value: i16) -> Result<Self, Self::Error> {
+        match value {
+            2 => Ok(DescField::ConciseType),
+            1001 => Ok(DescField::Count),
+            1002 => Ok(DescField::Type),
+            1004 => Ok(DescField::OctetLengthPtr),
+            1005 => Ok(DescField::Precision),
+            1006 => Ok(DescField::Scale),
+            1009 => Ok(DescField::IndicatorPtr),
+            1010 => Ok(DescField::DataPtr),
+            1013 => Ok(DescField::OctetLength),
+            _ => {
+                tracing::warn!("Unknown descriptor field identifier: {}", value);
+                Err(OdbcError::UnknownAttribute {
+                    attribute: value as i32,
+                    location: snafu::location!(),
+                })
+            }
+        }
+    }
+}
+
+/// Application Row Descriptor (ARD).
+///
+/// Stores column binding information. This struct is embedded in `Statement`
+/// and a pointer to it is returned as the descriptor handle via `SQLGetStmtAttr`.
+#[derive(Default)]
+pub struct ArdDescriptor {
+    pub bindings: HashMap<u16, Binding>,
+}
+
+impl ArdDescriptor {
+    pub fn new() -> Self {
+        Self {
+            bindings: HashMap::new(),
+        }
+    }
+
+    /// Returns the highest bound column number, or 0 if no columns are bound.
+    pub fn desc_count(&self) -> u16 {
+        self.bindings.keys().copied().max().unwrap_or(0)
+    }
+
+    /// Unbind all columns.
+    pub fn unbind_all(&mut self) {
+        self.bindings.clear();
+    }
+
+    pub fn set_desc_count(&mut self, count: sql::SmallInt) {
+        self.bindings.retain(|&col, _| col <= count as u16);
+        for col in 1..=count {
+            self.bindings.entry(col as u16).or_default();
+        }
+    }
+}
+
+/// Convert a descriptor handle (returned by SQLGetStmtAttr) back to a `&mut ArdDescriptor`.
+pub fn desc_from_handle<'a>(handle: sql::Handle) -> OdbcResult<&'a mut ArdDescriptor> {
+    let desc_ptr = handle as *mut ArdDescriptor;
+    if desc_ptr.is_null() {
+        return Err(OdbcError::InvalidHandle {
+            location: snafu::location!(),
+        });
+    }
+    // SAFETY: We have checked that `desc_ptr` is not null. The caller is responsible
+    // for ensuring that `handle` actually points to a valid `ArdDescriptor`.
+    unsafe { Ok(&mut *desc_ptr) }
+}
+
 /// Result type for ODBC operations
 pub type OdbcResult<T> = Result<T, OdbcError>;
 
@@ -224,7 +355,7 @@ pub struct Statement<'a> {
     pub stmt_handle: StatementHandle,
     pub state: State<StatementState>,
     pub parameter_bindings: HashMap<u16, ParameterBinding>,
-    pub column_bindings: HashMap<u16, Binding>,
+    pub ard: ArdDescriptor,
     pub diagnostic_info: DiagnosticInfo,
 }
 

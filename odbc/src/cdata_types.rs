@@ -32,7 +32,7 @@ pub const C_TYPES_EXTENDED: i16 = 0x04000;
 pub const SQL_NULL_DATA: sql::Len = -1;
 
 #[repr(i16)]
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, Default, PartialEq, Eq, Clone, Copy)]
 pub enum CDataType {
     /// SQL_ARD_TYPE
     Ard = -99,
@@ -87,6 +87,7 @@ pub enum CDataType {
     // #[cfg(feature = "odbc_version_4")]
     TypeTimestampWithTimezone = 95,
 
+    #[default]
     Default = 99,
 
     IntervalYear = 101,

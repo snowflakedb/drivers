@@ -1,4 +1,5 @@
 #![allow(clippy::result_large_err)]
+mod alter_session_parser;
 pub mod async_query_registry;
 mod connection;
 mod database;
@@ -6,6 +7,7 @@ pub(crate) mod error;
 mod global_state;
 pub mod logout_decision;
 mod query;
+mod session_parameters;
 mod statement;
 
 pub use crate::config::settings::Setting;
@@ -19,12 +21,14 @@ pub use connection::connection_is_closed;
 pub use connection::connection_new;
 pub use connection::connection_release;
 pub use connection::connection_set_option;
+pub use connection::connection_set_session_parameters;
 pub use connection::with_valid_session;
 pub use database::database_init;
 pub use database::database_new;
 pub use database::database_release;
 pub use database::database_set_option;
 pub use error::ApiError;
+pub use session_parameters::connection_get_parameter;
 pub use statement::statement_bind;
 pub use statement::statement_execute_query;
 pub use statement::statement_new;

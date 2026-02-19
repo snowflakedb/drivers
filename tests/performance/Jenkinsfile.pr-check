@@ -1,0 +1,137 @@
+#!/usr/bin/env groovy
+
+pipeline {
+    agent {
+        label 'regular-memory-node-snowos'
+    }
+
+    options {
+        timestamps()
+        disableResume()
+        buildDiscarder(logRotator(daysToKeepStr: '5', numToKeepStr: '50'))
+        timeout(time: 20, unit: 'MINUTES')
+    }
+
+    environment {
+        DOCKER_BUILDKIT = '1'
+        BUILDKIT_PROGRESS = 'plain'
+        BUILDPLATFORM = 'linux/amd64'
+        PYTHONUNBUFFERED = '1'
+    }
+
+    stages {
+        stage('Install Dependencies') {
+            steps {
+                dir('tests/performance') {
+                    sh '''
+                        python3.11 --version
+                        python3.11 -m venv .venv
+                        source .venv/bin/activate
+                        python -m pip install --upgrade pip setuptools wheel
+                        python -m pip install hatch
+                    '''
+                }
+            }
+        }
+
+        stage('Build Docker Images') {
+            parallel {
+                stage('Core + WireMock') {
+                    steps {
+                        withCredentials([
+                            usernamePassword(
+                                credentialsId: '063fc85b-62a6-4181-9d72-873b43488411',
+                                usernameVariable: 'AWS_ACCESS_KEY_ID',
+                                passwordVariable: 'AWS_SECRET_ACCESS_KEY'
+                            )
+                        ]) {
+                            sh 'tests/performance/drivers/core/build.sh'
+                            sh 'tests/performance/wiremock/build.sh'
+                        }
+                    }
+                }
+                stage('Python + ODBC') {
+                    steps {
+                        withCredentials([
+                            usernamePassword(
+                                credentialsId: '063fc85b-62a6-4181-9d72-873b43488411',
+                                usernameVariable: 'AWS_ACCESS_KEY_ID',
+                                passwordVariable: 'AWS_SECRET_ACCESS_KEY'
+                            )
+                        ]) {
+                            sh 'tests/performance/drivers/python/build.sh'
+                            sh 'tests/performance/drivers/odbc/build.sh'
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('Decrypt Secrets') {
+            steps {
+                withCredentials([
+                    string(credentialsId: 'sfctest0-parameters-secret', variable: 'PARAMETERS_SECRET')
+                ]) {
+                    sh './scripts/decode_secrets.sh'
+                }
+            }
+        }
+
+        stage('Smoke Test - Core') {
+            steps {
+                dir('tests/performance') {
+                    withCredentials([
+                        file(credentialsId: '22401612-0c52-4682-8d00-fb9ee98927ac', variable: 'SF_PERF_CONFIG')
+                    ]) {
+                        sh '''
+                            source .venv/bin/activate
+                            export CLOUD=aws
+                            python -m hatch run -- python -m pytest tests/test_select_1M.py::test_select_string_1M_arrow --driver=core --iterations=1 --warmup-iterations=0 -s -v
+                        '''
+                    }
+                }
+            }
+        }
+
+        stage('Smoke Test - Python (both)') {
+            steps {
+                dir('tests/performance') {
+                    withCredentials([
+                        file(credentialsId: '22401612-0c52-4682-8d00-fb9ee98927ac', variable: 'SF_PERF_CONFIG')
+                    ]) {
+                        sh '''
+                            source .venv/bin/activate
+                            export CLOUD=aws
+                            python -m hatch run -- python -m pytest tests/test_select_1M.py::test_select_string_1M_arrow --driver=python --driver-type=both --iterations=1 --warmup-iterations=0 -s -v
+                        '''
+                    }
+                }
+            }
+        }
+
+        stage('Smoke Test - ODBC (both)') {
+            steps {
+                dir('tests/performance') {
+                    withCredentials([
+                        file(credentialsId: '22401612-0c52-4682-8d00-fb9ee98927ac', variable: 'SF_PERF_CONFIG')
+                    ]) {
+                        sh '''
+                            source .venv/bin/activate
+                            export CLOUD=aws
+                            python -m hatch run -- python -m pytest tests/test_select_1M.py::test_select_string_1M_arrow --driver=odbc --driver-type=both --iterations=1 --warmup-iterations=0 -s -v
+                        '''
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            echo 'PR check passed: all driver images built and 1M tests passed'
+        }
+        failure {
+            echo 'PR check failed'
+        }
+    }
+}

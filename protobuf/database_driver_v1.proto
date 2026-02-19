@@ -386,6 +386,23 @@ message ConnectionRollbackRequest {
 message ConnectionRollbackResponse {
 }
 
+message ConnectionSetSessionParametersRequest {
+  ConnectionHandle conn_handle = 1;
+  map<string, string> parameters = 2;
+}
+
+message ConnectionSetSessionParametersResponse {
+}
+
+message ConnectionGetParameterRequest {
+  ConnectionHandle conn_handle = 1;
+  string key = 2;
+}
+
+message ConnectionGetParameterResponse {
+  optional string value = 1;
+}
+
 // Statement service requests and responses
 
 message StatementNewRequest {
@@ -542,6 +559,12 @@ service DatabaseDriver {
   rpc ConnectionGetTableTypes(ConnectionGetTableTypesRequest) returns (ConnectionGetTableTypesResponse);
   rpc ConnectionCommit(ConnectionCommitRequest) returns (ConnectionCommitResponse);
   rpc ConnectionRollback(ConnectionRollbackRequest) returns (ConnectionRollbackResponse);
+  // sets initial session parameters connection should be initialized with
+  // call before opening the connection
+  rpc ConnectionSetSessionParameters(ConnectionSetSessionParametersRequest) returns (ConnectionSetSessionParametersResponse);
+  // gets cached session parameter. Cache is updated with subset of connection parameters
+  // (chosen by server, included in HTTP response) after each query
+  rpc ConnectionGetParameter(ConnectionGetParameterRequest) returns (ConnectionGetParameterResponse);
 
   // Statement operations
   rpc StatementNew(StatementNewRequest) returns (StatementNewResponse);

@@ -99,22 +99,27 @@ fn should_refresh_session_proactively() {
             warehouse: parameters.warehouse.clone(),
             role: parameters.role.clone(),
             client_info: client_info.clone(),
+            session_parameters: None,
         };
 
         let http_client = create_tls_client_with_config(TlsConfig::insecure())
             .expect("Failed to create HTTP client");
 
         // When we login and immediately call refresh
-        let initial_tokens = snowflake_login_with_client(&http_client, &login_parameters)
+        let login_result = snowflake_login_with_client(&http_client, &login_parameters, None)
             .await
             .expect("Login should succeed");
 
-        let original_session_token = initial_tokens.session_token.clone();
+        let original_session_token = login_result.tokens.session_token.clone();
 
-        let refreshed_tokens =
-            refresh_session(&http_client, &server_url, &client_info, &initial_tokens)
-                .await
-                .expect("Proactive refresh should succeed");
+        let refreshed_tokens = refresh_session(
+            &http_client,
+            &server_url,
+            &client_info,
+            &login_result.tokens,
+        )
+        .await
+        .expect("Proactive refresh should succeed");
 
         // Then we should get new tokens that differ from the original
         assert_ne!(

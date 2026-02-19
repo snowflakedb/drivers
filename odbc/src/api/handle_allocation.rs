@@ -1,5 +1,5 @@
 use crate::api::{
-    Connection, ConnectionState, Environment, OdbcResult, Statement, StatementState,
+    ArdDescriptor, Connection, ConnectionState, Environment, OdbcResult, Statement, StatementState,
     conn_from_handle,
     diagnostic::DiagnosticInfo,
     error::{DisconnectedSnafu, InvalidHandleSnafu, Required},
@@ -51,7 +51,7 @@ pub fn alloc_statement(input_handle: sql::Handle) -> OdbcResult<*mut Statement<'
                 stmt_handle,
                 state: StatementState::Created.into(),
                 parameter_bindings: std::collections::HashMap::new(),
-                column_bindings: std::collections::HashMap::new(),
+                ard: ArdDescriptor::new(),
                 diagnostic_info: DiagnosticInfo::default(),
             });
             Ok(Box::into_raw(stmt))

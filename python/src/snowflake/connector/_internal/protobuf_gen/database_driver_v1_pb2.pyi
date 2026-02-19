@@ -1422,6 +1422,99 @@ class ConnectionRollbackResponse(_message.Message):
 Global___ConnectionRollbackResponse: _TypeAlias = ConnectionRollbackResponse  # noqa: Y015
 
 @_typing.final
+class ConnectionSetSessionParametersRequest(_message.Message):
+    DESCRIPTOR: _descriptor.Descriptor
+
+    @_typing.final
+    class ParametersEntry(_message.Message):
+        DESCRIPTOR: _descriptor.Descriptor
+
+        KEY_FIELD_NUMBER: _builtins.int
+        VALUE_FIELD_NUMBER: _builtins.int
+        key: _builtins.str
+        value: _builtins.str
+        def __init__(
+            self,
+            *,
+            key: _builtins.str = ...,
+            value: _builtins.str = ...,
+        ) -> None: ...
+        _ClearFieldArgType: _TypeAlias = _typing.Literal["key", b"key", "value", b"value"]  # noqa: Y015
+        def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
+
+    CONN_HANDLE_FIELD_NUMBER: _builtins.int
+    PARAMETERS_FIELD_NUMBER: _builtins.int
+    @_builtins.property
+    def conn_handle(self) -> Global___ConnectionHandle: ...
+    @_builtins.property
+    def parameters(self) -> _containers.ScalarMap[_builtins.str, _builtins.str]: ...
+    def __init__(
+        self,
+        *,
+        conn_handle: Global___ConnectionHandle | None = ...,
+        parameters: _abc.Mapping[_builtins.str, _builtins.str] | None = ...,
+    ) -> None: ...
+    _HasFieldArgType: _TypeAlias = _typing.Literal["conn_handle", b"conn_handle"]  # noqa: Y015
+    def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["conn_handle", b"conn_handle", "parameters", b"parameters"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
+
+Global___ConnectionSetSessionParametersRequest: _TypeAlias = ConnectionSetSessionParametersRequest  # noqa: Y015
+
+@_typing.final
+class ConnectionSetSessionParametersResponse(_message.Message):
+    DESCRIPTOR: _descriptor.Descriptor
+
+    def __init__(
+        self,
+    ) -> None: ...
+
+Global___ConnectionSetSessionParametersResponse: _TypeAlias = ConnectionSetSessionParametersResponse  # noqa: Y015
+
+@_typing.final
+class ConnectionGetParameterRequest(_message.Message):
+    DESCRIPTOR: _descriptor.Descriptor
+
+    CONN_HANDLE_FIELD_NUMBER: _builtins.int
+    KEY_FIELD_NUMBER: _builtins.int
+    key: _builtins.str
+    @_builtins.property
+    def conn_handle(self) -> Global___ConnectionHandle: ...
+    def __init__(
+        self,
+        *,
+        conn_handle: Global___ConnectionHandle | None = ...,
+        key: _builtins.str = ...,
+    ) -> None: ...
+    _HasFieldArgType: _TypeAlias = _typing.Literal["conn_handle", b"conn_handle"]  # noqa: Y015
+    def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["conn_handle", b"conn_handle", "key", b"key"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
+
+Global___ConnectionGetParameterRequest: _TypeAlias = ConnectionGetParameterRequest  # noqa: Y015
+
+@_typing.final
+class ConnectionGetParameterResponse(_message.Message):
+    DESCRIPTOR: _descriptor.Descriptor
+
+    VALUE_FIELD_NUMBER: _builtins.int
+    value: _builtins.str
+    def __init__(
+        self,
+        *,
+        value: _builtins.str | None = ...,
+    ) -> None: ...
+    _HasFieldArgType: _TypeAlias = _typing.Literal["_value", b"_value", "value", b"value"]  # noqa: Y015
+    def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["_value", b"_value", "value", b"value"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
+    _WhichOneofReturnType__value: _TypeAlias = _typing.Literal["value"]  # noqa: Y015
+    _WhichOneofArgType__value: _TypeAlias = _typing.Literal["_value", b"_value"]  # noqa: Y015
+    def WhichOneof(self, oneof_group: _WhichOneofArgType__value) -> _WhichOneofReturnType__value | None: ...
+
+Global___ConnectionGetParameterResponse: _TypeAlias = ConnectionGetParameterResponse  # noqa: Y015
+
+@_typing.final
 class StatementNewRequest(_message.Message):
     """Statement service requests and responses"""
 

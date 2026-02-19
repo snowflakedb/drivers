@@ -178,68 +178,6 @@ fn is_valid_time_format(s: &str) -> bool {
         && bytes[7].is_ascii_digit()
 }
 
-fn write_wchar_string(src: &str, binding: &Binding) -> Warnings {
-    let max_len = (binding.buffer_length / 2) as usize;
-    let value_ptr = binding.target_value_ptr as *mut u16;
-    let mut dst_idx = 0;
-    for c in src.encode_utf16() {
-        if dst_idx == max_len - 1 {
-            unsafe {
-                std::ptr::write(value_ptr.add(max_len - 1), 0);
-                if !binding.str_len_or_ind_ptr.is_null() {
-                    std::ptr::write(binding.str_len_or_ind_ptr, sql::NO_TOTAL);
-                }
-            }
-            return vec![Warning::StringDataTruncated];
-        }
-        unsafe {
-            std::ptr::write(value_ptr.add(dst_idx), c);
-        }
-        dst_idx += 1;
-    }
-    unsafe {
-        std::ptr::write(value_ptr.add(dst_idx), 0);
-        if !binding.str_len_or_ind_ptr.is_null() {
-            // COMPATIBILITY: ODBC 3.80 specification says that the string length should be the number of characters, not the number of bytes.
-            // However, older versions of Snowflake ODBC driver returns the number of bytes.
-            // So we need to convert the number of characters to the number of bytes.
-            let num_characters = dst_idx as sql::Len;
-            let num_bytes = num_characters * 2;
-            std::ptr::write(binding.str_len_or_ind_ptr, num_bytes);
-        }
-    }
-    vec![]
-}
-
-fn write_char_string(src: &str, binding: &Binding) -> Warnings {
-    let max_len = binding.buffer_length as usize;
-    let mut dst_idx = 0;
-    let value_ptr = binding.target_value_ptr as *mut u8;
-    for c in src.chars() {
-        if dst_idx == max_len - 1 {
-            unsafe {
-                std::ptr::write(value_ptr.add(max_len - 1), 0);
-                if !binding.str_len_or_ind_ptr.is_null() {
-                    std::ptr::write(binding.str_len_or_ind_ptr, sql::NO_TOTAL);
-                }
-            }
-            return vec![Warning::StringDataTruncated];
-        }
-        let byte = if c.is_ascii() { c as u8 } else { 0x1a };
-        unsafe {
-            std::ptr::write(value_ptr.add(dst_idx), byte);
-        }
-        dst_idx += 1;
-    }
-    unsafe {
-        std::ptr::write(value_ptr.add(dst_idx), 0);
-        if !binding.str_len_or_ind_ptr.is_null() {
-            std::ptr::write(binding.str_len_or_ind_ptr, dst_idx as sql::Len);
-        }
-    }
-    vec![]
-}
-
 impl WriteODBCType for SnowflakeVarchar {
     fn write_odbc_type(
         &self,
@@ -247,8 +185,8 @@ impl WriteODBCType for SnowflakeVarchar {
         binding: &Binding,
     ) -> Result<Warnings, WriteOdbcError> {
         match binding.target_type {
-            CDataType::Char => Ok(write_char_string(snowflake_value, binding)),
-            CDataType::WChar => Ok(write_wchar_string(snowflake_value, binding)),
+            CDataType::Char => Ok(binding.write_char_string(snowflake_value)),
+            CDataType::WChar => Ok(binding.write_wchar_string(snowflake_value)),
             CDataType::SBigInt => write_i_number!(snowflake_value, i64, binding),
             CDataType::UBigInt => write_u_number!(snowflake_value, u64, binding),
             CDataType::Long | CDataType::SLong => write_i_number!(snowflake_value, i32, binding),

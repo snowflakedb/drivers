@@ -18,22 +18,18 @@ Feature: INT type support
   # =========================================================================== #
 
   @python_e2e @odbc_e2e
-  Scenario: should select integer literals for int and synonyms
+  Scenario Outline: should select integer <values> for int and synonyms
     Given Snowflake client is logged in
-    When Query "SELECT 0::<type>, 1::<type>, -1::<type>, 42::<type>" is executed
-    Then Result should contain integers [0, 1, -1, 42]
+    When Query "SELECT <query_values>" is executed
+    Then Result should contain integers <expected_values>
 
-  @python_e2e @odbc_e2e
-  Scenario: should handle integer boundary values for int and synonyms
-    Given Snowflake client is logged in
-    When Query "SELECT -128::<type>, 127::<type>, 255::<type>" is executed
-    Then Result should contain integers [-128, 127, 255]
-    When Query "SELECT -32768::<type>, 32767::<type>, 65535::<type>" is executed
-    Then Result should contain integers [-32768, 32767, 65535]
-    When Query "SELECT -2147483648::<type>, 2147483647::<type>, 4294967295::<type>" is executed
-    Then Result should contain integers [-2147483648, 2147483647, 4294967295]
-    When Query "SELECT -9223372036854775808::<type>, 9223372036854775807::<type>" is executed
-    Then Result should contain integers [-9223372036854775808, 9223372036854775807]
+    Examples:
+      | values     | query_values                                                        | expected_values                              |
+      | zero       | 0::<type>                                                           | 0                                            |
+      | tinyint    | -128::<type>, 127::<type>, 255::<type>                              | -128, 127, 255                               |
+      | smallint   | -32768::<type>, 32767::<type>, 65535::<type>                        | -32768, 32767, 65535                         |
+      | int        | -2147483648::<type>, 2147483647::<type>, 4294967295::<type>         | -2147483648, 2147483647, 4294967295          |
+      | bigint     | -9223372036854775808::<type>, 9223372036854775807::<type>           | -9223372036854775808, 9223372036854775807    |
 
   @python_e2e
   Scenario: should handle large integer values for int and synonyms
@@ -58,21 +54,24 @@ Feature: INT type support
   # =========================================================================== #
 
   @python_e2e @odbc_e2e
-  Scenario: should select integers from table for int and synonyms
+  Scenario Outline: should select <values> from table for int and synonyms
     Given Snowflake client is logged in
-    And Table with <type> column exists with values [0, 1, -1, 100]
-    When Query "SELECT * FROM int_table ORDER BY col" is executed
-    Then Result should contain integers [-1, 0, 1, 100]
+    And Table with <type> column exists with values <insert_values>
+    When Query "SELECT * FROM <table> ORDER BY col" is executed
+    Then Result should contain integers <expected_values>
+
+    Examples:
+      | values      | insert_values                                                             | expected_values                                                               |
+      | positive    | 0, 1, 127, 255, 32767, 65535, 2147483647, 4294967295, 9223372036854775807 | 0, 1, 127, 255, 32767, 65535, 2147483647, 4294967295, 9223372036854775807     |
+      | negative    | -1, -128, -32768, -2147483648, -9223372036854775808                       | -9223372036854775808, -2147483648, -32768, -128, -1                           |
+      | null        | 0, NULL, 42                                                               | 0, 42, NULL                                                                   |
 
   @python_e2e
-  Scenario: should select corner case values from table for int and synonyms
+  Scenario: should select large integer values from table for int and synonyms
     Given Snowflake client is logged in
-    And Table with columns (tinyint_col TINYINT, byteint_col BYTEINT, smallint_col SMALLINT, int_col INT, integer_col INTEGER, bigint_col BIGINT, int38_col INT) exists
-    And Row with positive values (127, 255, 32767, 2147483647, 2147483647, 9223372036854775807, 99999999999999999999999999999999999999) is inserted
-    And Row with negative values (-128, -1, -32768, -2147483648, -2147483648, -9223372036854775808, -99999999999999999999999999999999999999) is inserted
-    And Row with zeroes and nulls (0, NULL, 0, NULL, 0, NULL, 0) is inserted
-    When Query "SELECT * FROM corner_case_table" is executed
-    Then Result should contain 3 rows with expected corner case values for all int type synonyms
+    And Table with <type> column exists with values [-99999999999999999999999999999999999999, 99999999999999999999999999999999999999]
+    When Query "SELECT * FROM <table> ORDER BY col" is executed
+    Then Result should contain integers [-99999999999999999999999999999999999999, 99999999999999999999999999999999999999]
 
   @python_e2e @odbc_e2e
   Scenario: should select large result set from table for int and synonyms
@@ -94,9 +93,9 @@ Feature: INT type support
     Then Result should contain integers [0, -2147483648, 2147483647, 9223372036854775807]
 
   @python_e2e
-  Scenario: should insert and select integers from table using parameter binding for int and synonyms
+  Scenario: should insert and select integers from table using batch parameter binding for int and synonyms
     Given Snowflake client is logged in
     And Table with <type> column exists
-    When Integer values [0, 42, -2147483648, 9223372036854775807] are inserted using binding
+    When Integer values [0, 42, -2147483648, 2147483647, 9223372036854775807] are inserted using binding
     And Query "SELECT * FROM <table>" is executed
-    Then Result should contain integers [0, 42, -2147483648, 9223372036854775807]
+    Then Result should contain integers [0, 42, -2147483648, 2147483647, 9223372036854775807]

@@ -1,9 +1,12 @@
 #ifndef TEST_MACROS_HPP
 #define TEST_MACROS_HPP
 
-#include <catch2/catch_test_macros.hpp>
+#include <sql.h>
+#include <sqlext.h>
 
-#include "get_diag_rec.hpp"
+#include <string>
+
+#include <catch2/catch_test_macros.hpp>
 
 // Helper macro to check for expected ODBC error with specific SQLSTATE
 #define REQUIRE_EXPECTED_ERROR(ret, expectedState, handle, handleType)                \

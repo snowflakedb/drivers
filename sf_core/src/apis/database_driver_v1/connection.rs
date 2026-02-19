@@ -1,7 +1,7 @@
 use snafu::{OptionExt, ResultExt};
 use std::future::Future;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::{collections::HashMap, sync::Arc, sync::Mutex};
+use std::{collections::HashMap, sync::Arc, sync::Mutex, sync::RwLock};
 use tokio::sync::RwLock as AsyncRwLock;
 
 use super::Handle;
@@ -28,30 +28,40 @@ pub fn connection_init(conn_handle: Handle, _db_handle: Handle) -> Result<(), Ap
                 .map_err(|_| ConnectionLockingSnafu {}.build())?;
             let login_parameters = LoginParameters::from_settings(&settings_guard.settings)
                 .context(ConfigurationSnafu)?;
+            let init_params = settings_guard.init_session_parameters.clone();
             drop(settings_guard);
 
             let http_client =
                 create_tls_client_with_config(login_parameters.client_info.tls_config.clone())
                     .context(TlsClientCreationSnafu)?;
 
-            let tokens = rt
+            let login_result = rt
                 .block_on(async {
                     crate::rest::snowflake::snowflake_login_with_client(
                         &http_client,
                         &login_parameters,
+                        init_params.as_ref(),
                     )
                     .await
                 })
                 .context(LoginSnafu)?;
 
+            // Initialize connection with session parameters from login response.
+            // The server returns system-level parameters but may not echo back
+            // user-set parameters (e.g. QUERY_TAG), so we merge in the
+            // init_session_parameters the caller explicitly requested.
+            let mut merged_params = init_params.unwrap_or_default();
+            merged_params.extend(login_result.session_parameters.unwrap_or_default());
+
             conn_ptr
                 .lock()
                 .map_err(|_| ConnectionLockingSnafu {}.build())?
                 .initialize(
-                    tokens,
+                    login_result.tokens,
                     http_client,
                     login_parameters.server_url.clone(),
                     login_parameters.client_info.clone(),
+                    merged_params,
                 );
             Ok(())
         }
@@ -69,6 +79,25 @@ pub fn connection_set_option(handle: Handle, key: String, value: Setting) -> Res
                 .lock()
                 .map_err(|_| ConnectionLockingSnafu {}.build())?;
             conn.settings.insert(key, value);
+            Ok(())
+        }
+        None => InvalidArgumentSnafu {
+            argument: "Connection handle not found".to_string(),
+        }
+        .fail(),
+    }
+}
+
+pub fn connection_set_session_parameters(
+    handle: Handle,
+    parameters: HashMap<String, String>,
+) -> Result<(), ApiError> {
+    match CONN_HANDLE_MANAGER.get_obj(handle) {
+        Some(conn_ptr) => {
+            let mut conn = conn_ptr
+                .lock()
+                .map_err(|_| ConnectionLockingSnafu {}.build())?;
+            conn.init_session_parameters = Some(parameters);
             Ok(())
         }
         None => InvalidArgumentSnafu {
@@ -102,6 +131,10 @@ pub struct Connection {
     pub server_url: Option<String>,
     /// Client info for refresh requests
     pub client_info: Option<ClientInfo>,
+    /// Session parameters cache (populated after login)
+    pub session_parameters: Arc<RwLock<HashMap<String, String>>>,
+    /// Session parameters to send during initialization (set before connection_init)
+    pub init_session_parameters: Option<HashMap<String, String>>,
     /// Registry for tracking async queries (for Fire & Forget auto-detection)
     pub async_query_registry: AsyncQueryRegistry,
     /// Flag indicating if connection has been closed
@@ -123,6 +156,8 @@ impl Connection {
             retry_policy: RetryPolicy::default(),
             server_url: None,
             client_info: None,
+            session_parameters: Arc::new(RwLock::new(HashMap::new())),
+            init_session_parameters: None,
             async_query_registry: AsyncQueryRegistry::new(),
             is_closed: Arc::new(AtomicBool::new(false)),
         }
@@ -134,17 +169,76 @@ impl Connection {
         http_client: reqwest::Client,
         server_url: String,
         client_info: ClientInfo,
+        session_params: HashMap<String, String>,
     ) {
         // Use blocking_write since we're in a sync context during connection_init
         *self.tokens.blocking_write() = Some(tokens);
         self.http_client = Some(http_client);
         self.server_url = Some(server_url);
         self.client_info = Some(client_info);
+
+        // Populate session parameters cache (assume login always returns parameters)
+        if let Ok(mut cache) = self.session_parameters.write() {
+            *cache = session_params;
+        }
+    }
+
+    /// Update the session parameters cache after a successful query.
+    pub fn update_session_params_cache(
+        &self,
+        query: &str,
+        response_parameters: Option<
+            &Vec<crate::rest::snowflake::query_response::NameValueParameter>,
+        >,
+    ) {
+        let mut cache = match self.session_parameters.write() {
+            Ok(cache) => cache,
+            Err(_) => return,
+        };
+
+        // 1. ALTER SESSION SET detection: optimistically update the cache based on user's query.
+        // This is necessary as Snowflake returns only part of session parameters in response.
+        // Details: SNOW-3104303
+        cache.extend(
+            super::alter_session_parser::parse_all_alter_sessions(query)
+                .into_iter()
+                .map(|p| {
+                    tracing::debug!(
+                        param_name = %p.name,
+                        param_value = %p.value,
+                        "Detected ALTER SESSION SET, updating cache optimistically"
+                    );
+                    (p.name.clone(), p.value.clone())
+                }),
+        );
+
+        // 2. Response parameters: merge any server-returned session parameters into the cache.
+        if let Some(parameters) = response_parameters {
+            cache.extend(
+                parameters
+                    .iter()
+                    .map(|param| {
+                        let value_str = match &param.value {
+                            serde_json::Value::String(s) => s.clone(),
+                            serde_json::Value::Number(n) => n.to_string(),
+                            serde_json::Value::Bool(b) => b.to_string(),
+                            other => {
+                                tracing::debug!(
+                                    param_name = %param.name,
+                                    param_value = ?other,
+                                    "Unexpected JSON type for session parameter, skipping"
+                                );
+                                return (String::new(), String::new());
+                            }
+                        };
+                        (param.name.to_uppercase(), value_str)
+                    })
+                    .filter(|(k, _)| !k.is_empty()),
+            );
+        }
     }
 }
 
-/// Execute an operation with automatic session refresh on 401.
-///
 /// This function:
 /// 1. Reads the session token (allows concurrent readers)
 /// 2. Runs the provided function with that token

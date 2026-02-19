@@ -11,6 +11,11 @@ from math import isinf, isnan
 FLOAT_MIN_NORMAL = 2.2250738585072014e-308
 
 
+def assert_connection_is_open(execute_query) -> None:
+    """Assert the connection is open by executing a simple query."""
+    assert execute_query("SELECT 1", single_row=True) == (1,), "Connection should be open"
+
+
 def assert_type(values: Iterable, expected_type: type, can_be_none: bool = False) -> None:
     """Assert all values in an iterable are of the expected type.
 

@@ -188,9 +188,7 @@ pipeline {
             }
             
             post {
-                success {
-                    echo '✓ Performance tests completed successfully'
-                    
+                always {
                     script {
                         def urlMap = parseBenchDashUrls()
                         
@@ -203,6 +201,9 @@ pipeline {
                             echo "Found ${urlMap.size()} BenchDash URL(s) with labels and added to build description"
                         }
                     }
+                }
+                success {
+                    echo '✓ Performance tests completed successfully'
                 }
                 failure {
                     echo '✗ Performance tests failed'

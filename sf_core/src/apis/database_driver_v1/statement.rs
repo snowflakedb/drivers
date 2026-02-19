@@ -352,6 +352,14 @@ pub fn statement_execute_query<'a>(
         }
     })?;
 
+    if response.success {
+        let conn = stmt
+            .conn
+            .lock()
+            .map_err(|_| ConnectionLockingSnafu.build())?;
+        conn.update_session_params_cache(&query, response.data.parameters.as_ref());
+    }
+
     let response_reader = rt
         .block_on(process_query_response(&response.data, &http_client))
         .context(QueryResponseProcessingSnafu)?;

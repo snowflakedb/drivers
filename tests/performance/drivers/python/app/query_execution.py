@@ -3,6 +3,8 @@ import os
 import time
 from common import run_warmup, run_test_iterations, print_timing_stats
 
+_FETCH_BATCH_SIZE = 1024
+
 
 def execute_fetch_test(cursor, sql_command, warmup_iterations, iterations):
     """
@@ -89,11 +91,13 @@ def _execute_query(cursor, sql):
     cursor.execute(sql)
     query_time = time.time() - query_start
     
-    # TODO SNOW-2876245: fetchmany is not implemented yet. Currently using iterator (row-by-row).
     fetch_start = time.time()
     row_count = 0
-    for _ in cursor:
-        row_count += 1
+    while True:
+        rows = cursor.fetchmany(_FETCH_BATCH_SIZE)
+        if not rows:
+            break
+        row_count += len(rows)
     fetch_time = time.time() - fetch_start
 
     timestamp = int(time.time())

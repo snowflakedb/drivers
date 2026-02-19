@@ -449,11 +449,10 @@ class TestCursorMethods:
         assert "callproc is not implemented" in str(excinfo.value)
 
     @pytest.mark.skip_reference
-    def test_executemany_not_implemented(self, cursor):
-        """Test that executemany raises NotSupportedError."""
-        with pytest.raises(NotSupportedError) as excinfo:
-            cursor.executemany("INSERT INTO test VALUES (?)", [(1,), (2,)])
-        assert "executemany is not implemented" in str(excinfo.value)
+    def test_executemany_is_callable(self, cursor):
+        """Test that executemany is callable (basic smoke test)."""
+        # Just verify it's callable and accepts empty sequence without error
+        cursor.executemany("INSERT INTO test VALUES (?)", [])
 
     @pytest.mark.skip_reference
     def test_nextset_not_implemented(self, cursor):

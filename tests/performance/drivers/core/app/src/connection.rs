@@ -116,6 +116,7 @@ pub fn get_server_version(conn_handle: ConnectionHandle) -> Result<String> {
     let version_stmt = create_statement(conn_handle, "SELECT CURRENT_VERSION() AS VERSION", None)?;
     let response = DatabaseDriver::statement_execute_query(StatementExecuteQueryRequest {
         stmt_handle: Some(version_stmt),
+        bindings: None,
     })
     .map_err(|e| format!("Query execution failed: {:?}", e))?;
 
@@ -170,6 +171,7 @@ pub fn execute_setup_queries(
 
         DatabaseDriver::statement_execute_query(StatementExecuteQueryRequest {
             stmt_handle: Some(stmt_handle),
+            bindings: None,
         })
         .map_err(|e| format!("Setup query execution failed: {:?}", e))?;
 

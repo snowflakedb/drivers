@@ -430,6 +430,28 @@ pub struct ConnectionRollbackRequest {
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ConnectionRollbackResponse {}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ConnectionSetSessionParametersRequest {
+    #[prost(message, optional, tag = "1")]
+    pub conn_handle: ::core::option::Option<ConnectionHandle>,
+    #[prost(map = "string, string", tag = "2")]
+    pub parameters:
+        ::std::collections::HashMap<::prost::alloc::string::String, ::prost::alloc::string::String>,
+}
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ConnectionSetSessionParametersResponse {}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ConnectionGetParameterRequest {
+    #[prost(message, optional, tag = "1")]
+    pub conn_handle: ::core::option::Option<ConnectionHandle>,
+    #[prost(string, tag = "2")]
+    pub key: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ConnectionGetParameterResponse {
+    #[prost(string, optional, tag = "1")]
+    pub value: ::core::option::Option<::prost::alloc::string::String>,
+}
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct StatementNewRequest {
     #[prost(message, optional, tag = "1")]
@@ -780,6 +802,12 @@ pub trait DatabaseDriver {
     fn connection_rollback(
         input: ConnectionRollbackRequest,
     ) -> Result<ConnectionRollbackResponse, DriverException>;
+    fn connection_set_session_parameters(
+        input: ConnectionSetSessionParametersRequest,
+    ) -> Result<ConnectionSetSessionParametersResponse, DriverException>;
+    fn connection_get_parameter(
+        input: ConnectionGetParameterRequest,
+    ) -> Result<ConnectionGetParameterResponse, DriverException>;
     fn statement_new(input: StatementNewRequest) -> Result<StatementNewResponse, DriverException>;
     fn statement_release(
         input: StatementReleaseRequest,
@@ -1065,6 +1093,28 @@ pub trait DatabaseDriverServer: DatabaseDriver {
                     Err(e) => return Err(ProtoError::Transport(e.to_string())),
                 };
                 let result = Self::connection_rollback(input);
+                match result {
+                    Ok(output) => Ok(output.encode_to_vec()),
+                    Err(e) => Err(ProtoError::Application(e.encode_to_vec())),
+                }
+            }
+            "connection_set_session_parameters" => {
+                let input = match ConnectionSetSessionParametersRequest::decode(&message[..]) {
+                    Ok(input) => input,
+                    Err(e) => return Err(ProtoError::Transport(e.to_string())),
+                };
+                let result = Self::connection_set_session_parameters(input);
+                match result {
+                    Ok(output) => Ok(output.encode_to_vec()),
+                    Err(e) => Err(ProtoError::Application(e.encode_to_vec())),
+                }
+            }
+            "connection_get_parameter" => {
+                let input = match ConnectionGetParameterRequest::decode(&message[..]) {
+                    Ok(input) => input,
+                    Err(e) => return Err(ProtoError::Transport(e.to_string())),
+                };
+                let result = Self::connection_get_parameter(input);
                 match result {
                     Ok(output) => Ok(output.encode_to_vec()),
                     Err(e) => Err(ProtoError::Application(e.encode_to_vec())),
@@ -1794,6 +1844,60 @@ impl<T: Transport> DatabaseDriverClient<T> {
         match result {
             Ok(output) => {
                 let output = ConnectionRollbackResponse::decode(&output[..]);
+                match output {
+                    Ok(output) => Ok(output),
+                    Err(e) => Err(ProtoError::Transport(e.to_string())),
+                }
+            }
+            Err(ProtoError::Application(e)) => {
+                let output = DriverException::decode(&e[..]);
+                match output {
+                    Ok(output) => Err(ProtoError::Application(output)),
+                    Err(e) => Err(ProtoError::Transport(e.to_string())),
+                }
+            }
+            Err(ProtoError::Transport(e)) => Err(ProtoError::Transport(e)),
+        }
+    }
+
+    pub fn connection_set_session_parameters(
+        input: ConnectionSetSessionParametersRequest,
+    ) -> Result<ConnectionSetSessionParametersResponse, ProtoError<DriverException>> {
+        let result = T::handle_message(
+            "DatabaseDriver",
+            "connection_set_session_parameters",
+            input.encode_to_vec(),
+        );
+        match result {
+            Ok(output) => {
+                let output = ConnectionSetSessionParametersResponse::decode(&output[..]);
+                match output {
+                    Ok(output) => Ok(output),
+                    Err(e) => Err(ProtoError::Transport(e.to_string())),
+                }
+            }
+            Err(ProtoError::Application(e)) => {
+                let output = DriverException::decode(&e[..]);
+                match output {
+                    Ok(output) => Err(ProtoError::Application(output)),
+                    Err(e) => Err(ProtoError::Transport(e.to_string())),
+                }
+            }
+            Err(ProtoError::Transport(e)) => Err(ProtoError::Transport(e)),
+        }
+    }
+
+    pub fn connection_get_parameter(
+        input: ConnectionGetParameterRequest,
+    ) -> Result<ConnectionGetParameterResponse, ProtoError<DriverException>> {
+        let result = T::handle_message(
+            "DatabaseDriver",
+            "connection_get_parameter",
+            input.encode_to_vec(),
+        );
+        match result {
+            Ok(output) => {
+                let output = ConnectionGetParameterResponse::decode(&output[..]);
                 match output {
                     Ok(output) => Ok(output),
                     Err(e) => Err(ProtoError::Transport(e.to_string())),
