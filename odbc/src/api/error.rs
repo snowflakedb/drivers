@@ -57,6 +57,13 @@ pub enum OdbcError {
         location: Location,
     },
 
+    #[snafu(display("Invalid precision or scale value: {reason}"))]
+    InvalidPrecisionOrScale {
+        reason: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
     #[snafu(display("Invalid diagnostic identifier: {identifier}"))]
     InvalidDiagnosticIdentifier {
         identifier: sql::SmallInt,
@@ -294,6 +301,7 @@ impl OdbcError {
                 SqlState::InvalidDescriptorFieldIdentifier
             }
             OdbcError::InvalidDescriptorIndex { .. } => SqlState::InvalidDescriptorIndex,
+            OdbcError::InvalidPrecisionOrScale { .. } => SqlState::InvalidPrecisionOrScaleValue,
             OdbcError::UnknownAttribute { .. } => SqlState::InvalidAttributeOptionIdentifier,
             OdbcError::UnsupportedAttribute { .. } => SqlState::OptionalFeatureNotImplemented,
             OdbcError::AttributeCannotBeSetNow { .. } => SqlState::AttributeCannotBeSetNow,

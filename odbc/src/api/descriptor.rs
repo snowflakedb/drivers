@@ -160,6 +160,17 @@ pub fn set_desc_field(
         match field {
             DescField::Precision => {
                 let precision = value_ptr as i16;
+                if !(0..=38).contains(&precision) {
+                    tracing::error!(
+                        "set_desc_field: precision {precision} out of valid range 0..=38"
+                    );
+                    return crate::api::error::InvalidPrecisionOrScaleSnafu {
+                        reason: format!(
+                            "SQL_DESC_PRECISION value {precision} is out of valid range (0-38)"
+                        ),
+                    }
+                    .fail();
+                }
                 tracing::debug!(
                     "set_desc_field: setting precision={precision} on record {column_number}"
                 );
@@ -174,6 +185,17 @@ pub fn set_desc_field(
             }
             DescField::Scale => {
                 let scale = value_ptr as i16;
+                if scale < i8::MIN as i16 || scale > i8::MAX as i16 {
+                    tracing::error!("set_desc_field: scale {scale} out of valid range for i8");
+                    return crate::api::error::InvalidPrecisionOrScaleSnafu {
+                        reason: format!(
+                            "SQL_DESC_SCALE value {scale} is out of valid range ({min}..={max})",
+                            min = i8::MIN,
+                            max = i8::MAX,
+                        ),
+                    }
+                    .fail();
+                }
                 tracing::debug!("set_desc_field: setting scale={scale} on record {column_number}");
                 if let Some(binding) = desc.bindings.get_mut(&column_number) {
                     binding.scale = Some(scale);
