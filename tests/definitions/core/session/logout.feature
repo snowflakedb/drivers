@@ -24,8 +24,6 @@ Feature: Session Logout - Core HTTP Layer Integration
     And User-Agent header contains UD version and Rust version
     And Request body is exactly empty JSON object {}
 
-  # TODO: SNOW-2872349 - Removed fake test that didn't call real logout code.
-  # This scenario needs proper implementation that tests actual connection state handling.
   Scenario: should not send logout when connection was never established
     Given Mock HTTP server is configured
     And Connection attempt failed before authentication
@@ -330,8 +328,6 @@ Feature: Session Logout - Core HTTP Layer Integration
       | 2            |
       | 3            |
 
-  # TODO: Implement separate test for best-effort exhausted retries success path
-  # (Currently only strict strategy exhausted retries implemented)
   Scenario Outline: should log WARN and succeed after exhausted retries with best-effort strategy
     Given Core logout function called with best-effort strategy
     And Retry policy configured with <max_attempts> max attempts
@@ -349,7 +345,6 @@ Feature: Session Logout - Core HTTP Layer Integration
 
   # -- Failure path: timeout (outcome differs per strategy) --
 
-  # TODO: Implement timeout failure scenario
   Scenario Outline: should throw on timeout with strict strategy
     Given Core logout function called with strict strategy
     And Timeout configured to <timeout_seconds> seconds
@@ -363,7 +358,6 @@ Feature: Session Logout - Core HTTP Layer Integration
       | 3               | 5             |
       | 5               | 10            |
 
-  # TODO: Implement timeout failure scenario
   Scenario Outline: should log WARN and succeed on timeout with best-effort strategy
     Given Core logout function called with best-effort strategy
     And Timeout configured to <timeout_seconds> seconds

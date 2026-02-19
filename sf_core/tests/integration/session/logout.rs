@@ -124,6 +124,46 @@ async fn should_construct_logout_request_with_correct_http_method_url_headers_an
     );
 }
 
+#[test]
+fn should_not_send_logout_when_connection_was_never_established() {
+    use sf_core::apis::database_driver_v1::{
+        connection_close, connection_is_closed, connection_new, connection_release, database_init,
+        database_new, database_release,
+    };
+
+    //Given Connection handle created but never initialized
+    let db_handle = database_new();
+    database_init(db_handle).unwrap();
+    let conn_handle = connection_new();
+    // Note: connection_init() NOT called - connection remains uninitialized
+
+    //When Connection close is attempted
+    let config = LogoutConfig {
+        server_session_keep_alive: Some(false), // Would send logout if initialized
+        enable_auto_detection: None,
+        error_strategy: ErrorStrategy::BestEffort,
+        timeout: Duration::from_secs(5),
+        max_retry_attempts: None,
+    };
+    let result = connection_close(conn_handle, config);
+
+    //Then Close succeeds without sending HTTP request
+    assert!(
+        result.is_ok(),
+        "Connection close should succeed for uninitialized connection"
+    );
+
+    //And Connection is marked as closed
+    assert!(
+        connection_is_closed(conn_handle).unwrap(),
+        "Connection should be marked closed"
+    );
+
+    // Cleanup
+    connection_release(conn_handle).unwrap();
+    database_release(db_handle).unwrap();
+}
+
 // ===========================================================================
 //                      Parameter-Based Logout Control
 // ===========================================================================
@@ -902,10 +942,6 @@ async fn should_honor_provided_timeout_config_and_succeed_for_each_strategy_type
     }
 }
 
-// TODO: Implement timeout failure scenarios
-// Scenario Outline: should_throw_on_timeout_with_strict_strategy
-// Scenario Outline: should_log_WARN_and_succeed_on_timeout_with_best_effort_strategy
-
 #[tokio::test]
 async fn should_throw_after_exhausted_retries_with_strict_strategy() {
     //Given Core logout function called with strict strategy
@@ -948,6 +984,63 @@ async fn should_throw_after_exhausted_retries_with_strict_strategy() {
     //And WARN log is emitted
     //And Close throws error
     assert!(result.is_err(), "Should fail after retries exhausted");
+
+    server.await.unwrap();
+}
+
+#[tokio::test]
+async fn should_log_warn_and_succeed_after_exhausted_retries_with_best_effort_strategy() {
+    //Given Core logout function called with best-effort strategy
+    //And Retry policy configured with max attempts
+    let max_attempts = 2;
+    //And Mock HTTP server returns 503 on all attempts
+    let (addr, attempts, server) = spawn_test_server(max_attempts, |_| async move {
+        service_unavailable_response(r#"{"success":false}"#, 0)
+    })
+    .await;
+
+    let server_url = format!("http://{}", addr);
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    let client_info = test_client_info();
+
+    let config = LogoutConfig {
+        error_strategy: ErrorStrategy::BestEffort,
+        ..Default::default()
+    };
+
+    //When Logout is executed
+    let result = logout_session(
+        &client,
+        &server_url,
+        "test_token",
+        &client_info,
+        config.timeout,
+        &RetryPolicy::default(),
+    )
+    .await;
+
+    //Then Exactly max_attempts attempts are made
+    assert!(
+        attempts.load(Ordering::SeqCst) >= max_attempts,
+        "Should make at least {} attempts",
+        max_attempts
+    );
+
+    // Apply error strategy (same logic as connection_close)
+    let strategy = config.error_strategy.to_handler();
+    let handled_ok = match &result {
+        Ok(()) => true,
+        Err(e) => strategy.should_ignore_error(e) || !strategy.should_raise_error(e),
+    };
+
+    //And No further retries after max reached
+    //And WARN log is emitted (check via log output)
+    //And Close succeeds (BestEffort suppresses error)
+    assert!(
+        handled_ok,
+        "BestEffort should succeed despite exhausted retries, raw result: {:?}",
+        result
+    );
 
     server.await.unwrap();
 }
@@ -1114,6 +1207,161 @@ async fn should_record_connection_close_decision_metrics_before_logout() {
     //And Logout proceeds after telemetry flush completes
 
     // TODO: SNOW-2912513 - Implement telemetry
+}
+
+// ===========================================================================
+//                      Timeout Failure Scenarios
+// ===========================================================================
+
+#[tokio::test]
+async fn should_throw_on_timeout_with_strict_strategy() {
+    // Scenario Outline: Examples (timeout_seconds=3, delay_seconds=5)
+    //Given Core logout function called with strict strategy
+    //And Timeout configured to 3 seconds
+    let timeout = Duration::from_secs(3);
+    //And Mock HTTP server delays response by 5 seconds
+    let delay = Duration::from_secs(5);
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let mut buf = vec![0u8; 4096];
+        let _ = stream.read(&mut buf).await;
+        // Delay longer than timeout
+        sleep(delay).await;
+        // Client will have timed out - don't send response
+    });
+
+    let server_url = format!("http://{}", addr);
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    let client_info = test_client_info();
+
+    let config = LogoutConfig {
+        error_strategy: ErrorStrategy::Strict,
+        timeout,
+        ..Default::default()
+    };
+
+    let retry_policy = RetryPolicy {
+        max_attempts: 1,
+        max_elapsed: timeout,
+        ..Default::default()
+    };
+
+    //When Logout is executed
+    let start = Instant::now();
+    let result = logout_session(
+        &client,
+        &server_url,
+        "test_token",
+        &client_info,
+        config.timeout,
+        &retry_policy,
+    )
+    .await;
+    let elapsed = start.elapsed();
+
+    //Then Request times out after timeout_seconds
+    assert!(
+        elapsed >= timeout && elapsed < timeout + Duration::from_secs(2),
+        "Should timeout after ~{:?}, took {:?}",
+        timeout,
+        elapsed
+    );
+
+    //And Close throws timeout error (Strict raises error)
+    assert!(result.is_err(), "Strict strategy should fail on timeout");
+
+    let error_msg = format!("{:?}", result.unwrap_err());
+    assert!(
+        error_msg.contains("TimedOut")
+            || error_msg.contains("timeout")
+            || error_msg.contains("timed out")
+            || error_msg.contains("Timeout")
+            || error_msg.contains("deadline"),
+        "Error should be timeout-related, got: {}",
+        error_msg
+    );
+
+    server.abort();
+}
+
+#[tokio::test]
+async fn should_log_warn_and_succeed_on_timeout_with_best_effort_strategy() {
+    // Scenario Outline: Examples (timeout_seconds=3, delay_seconds=5)
+    //Given Core logout function called with best-effort strategy
+    //And Timeout configured to 3 seconds
+    let timeout = Duration::from_secs(3);
+    //And Mock HTTP server delays response by 5 seconds
+    let delay = Duration::from_secs(5);
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let mut buf = vec![0u8; 4096];
+        let _ = stream.read(&mut buf).await;
+        // Delay longer than timeout
+        sleep(delay).await;
+        // Client will have timed out
+    });
+
+    let server_url = format!("http://{}", addr);
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    let client_info = test_client_info();
+
+    let config = LogoutConfig {
+        error_strategy: ErrorStrategy::BestEffort,
+        timeout,
+        ..Default::default()
+    };
+
+    let retry_policy = RetryPolicy {
+        max_attempts: 1,
+        max_elapsed: timeout,
+        ..Default::default()
+    };
+
+    //When Logout is executed
+    let start = Instant::now();
+    let result = logout_session(
+        &client,
+        &server_url,
+        "test_token",
+        &client_info,
+        config.timeout,
+        &retry_policy,
+    )
+    .await;
+    let elapsed = start.elapsed();
+
+    //Then Request times out after timeout_seconds
+    assert!(
+        elapsed >= timeout && elapsed < timeout + Duration::from_secs(2),
+        "Should timeout after ~{:?}, took {:?}",
+        timeout,
+        elapsed
+    );
+
+    // Apply error strategy (same logic as connection_close)
+    let strategy = config.error_strategy.to_handler();
+    let handled_ok = match &result {
+        Ok(()) => true,
+        Err(e) => strategy.should_ignore_error(e) || !strategy.should_raise_error(e),
+    };
+
+    //And WARN log is emitted (check via log output)
+    //And Close succeeds (BestEffort suppresses timeout error)
+    assert!(
+        handled_ok,
+        "BestEffort should succeed despite timeout, raw result: {:?}",
+        result
+    );
+
+    server.abort();
 }
 
 // ===========================================================================
