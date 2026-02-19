@@ -71,7 +71,7 @@ pub fn connection_init(conn_handle: Handle, _db_handle: Handle) -> Result<(), Ap
 
             let login_parameters =
                 LoginParameters::from_settings(&conn.settings).context(ConfigurationSnafu)?;
-            let init_params = settings_guard.init_session_parameters.clone();
+            let init_params = conn.init_session_parameters.clone();
             drop(conn);
 
             let http_client =
