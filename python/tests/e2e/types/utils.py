@@ -44,9 +44,7 @@ def assert_datetime_type(values: Iterable, can_be_none: bool = False, require_tz
     for i, value in enumerate(values):
         if can_be_none and value is None:
             continue
-        assert isinstance(value, datetime), (
-            f"Value at index {i} should be datetime, got {type(value).__name__}"
-        )
+        assert isinstance(value, datetime), f"Value at index {i} should be datetime, got {type(value).__name__}"
         if require_tzinfo:
             assert value.tzinfo is not None, f"Value at index {i} should have timezone info (tzinfo is None)"
 
