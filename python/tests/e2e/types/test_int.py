@@ -8,7 +8,7 @@ parameter binding, large result sets, and type casting.
 import pytest
 
 from ...conftest import with_paramstyle
-from .utils import assert_connection_is_open, assert_sequential_values, assert_type
+from .utils import assert_connection_is_open, assert_sequential_values, assert_type, batch_insert
 
 
 # =============================================================================
@@ -343,9 +343,3 @@ class TestIntBinding:
         expected = sorted(test_values)
         assert result == expected
         assert_type(result, int)
-
-
-def batch_insert(execute_query, table_name, values):
-    """Execute a batch INSERT INTO table VALUES (v1), (v2), ... statement."""
-    values_str = ", ".join(f"({'NULL' if v is None else v})" for v in values)
-    execute_query(f"INSERT INTO {table_name} VALUES {values_str}")
