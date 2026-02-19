@@ -486,6 +486,7 @@ TEST_CASE("SQL_DECIMAL SQL_C_CHAR buffer handling", "[datatype][number][char][bu
     SQLLEN indicator = 0;
     SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_CHAR, small_buffer, sizeof(small_buffer), &indicator);
 
+    // TODO: Old driver fix for the bug is awaiting release
     OLD_DRIVER_ONLY("BD#13") { CHECK(ret == SQL_SUCCESS); }
 
     NEW_DRIVER_ONLY("BD#13") {
