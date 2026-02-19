@@ -46,11 +46,13 @@ mod tests {
     }
 
     // ========================================================================
-    // Integer conversions (SQL_C_LONG, SQL_C_SHORT, SQL_C_TINYINT, SQL_C_SBIGINT, etc.)
+    // Integer conversions — success cases
+    // (SQL_C_LONG, SQL_C_SHORT, SQL_C_TINYINT, SQL_C_SBIGINT, etc.)
+    // Per ODBC spec: exact conversion → no warning; fractional truncation → 01S07
     // ========================================================================
 
     macro_rules! integer_conversion_tests {
-        ($($name:ident: $c_type:expr, $rust_type:ty, $scale:expr, $precision:expr, $input:expr => $expected:expr;)*) => {
+        ($($name:ident: $c_type:expr, $rust_type:ty, $scale:expr, $precision:expr, $input:expr => $expected:expr, truncated=$trunc:expr;)*) => {
             $(
                 #[test]
                 fn $name() {
@@ -58,72 +60,132 @@ mod tests {
                     let mut value: $rust_type = 0 as $rust_type;
                     let mut str_len: sql::Len = 0;
                     let binding = binding_for_value($c_type, &mut value, &mut str_len);
-                    sn.write_odbc_type($input, &binding).unwrap();
+                    let warnings = sn.write_odbc_type($input, &binding).unwrap();
                     assert_eq!(value, $expected as $rust_type);
+                    assert_eq!(!warnings.is_empty(), $trunc,
+                        "truncation warning mismatch: expected truncated={}, got warnings={:?}",
+                        $trunc, warnings);
                 }
             )*
         };
     }
 
     integer_conversion_tests! {
-        // Basic values
-        slong_integer:                          CDataType::SLong,    i32, 0,  10, 42i128                              => 42;
-        sbigint_integer:                        CDataType::SBigInt,  i64, 0,  10, 123456789i128                       => 123456789;
-        short_integer:                          CDataType::Short,    u16, 0,  5,  300i128                              => 300;
-        tinyint_integer:                        CDataType::TinyInt,  u8,  0,  3,  123i128                              => 123;
+        // Basic values — no truncation
+        slong_integer:                          CDataType::SLong,    i32, 0,  10, 42i128                              => 42,    truncated=false;
+        sbigint_integer:                        CDataType::SBigInt,  i64, 0,  10, 123456789i128                       => 123456789, truncated=false;
+        short_integer:                          CDataType::Short,    i16, 0,  5,  300i128                              => 300,   truncated=false;
+        tinyint_integer:                        CDataType::TinyInt,  i8,  0,  3,  123i128                              => 123,   truncated=false;
 
         // Zero across all types
-        slong_zero:                             CDataType::SLong,    i32, 0,  10, 0i128                                => 0;
-        sbigint_zero:                           CDataType::SBigInt,  i64, 0,  10, 0i128                                => 0;
-        short_zero:                             CDataType::Short,    u16, 0,  5,  0i128                                => 0;
-        tinyint_zero:                           CDataType::TinyInt,  u8,  0,  3,  0i128                                => 0;
+        slong_zero:                             CDataType::SLong,    i32, 0,  10, 0i128                                => 0,     truncated=false;
+        sbigint_zero:                           CDataType::SBigInt,  i64, 0,  10, 0i128                                => 0,     truncated=false;
+        short_zero:                             CDataType::Short,    i16, 0,  5,  0i128                                => 0,     truncated=false;
+        tinyint_zero:                           CDataType::TinyInt,  i8,  0,  3,  0i128                                => 0,     truncated=false;
 
         // One and negative one
-        slong_one:                              CDataType::SLong,    i32, 0,  10, 1i128                                => 1;
-        slong_neg_one:                          CDataType::SLong,    i32, 0,  10, -1i128                               => -1;
+        slong_one:                              CDataType::SLong,    i32, 0,  10, 1i128                                => 1,     truncated=false;
+        slong_neg_one:                          CDataType::SLong,    i32, 0,  10, -1i128                               => -1,    truncated=false;
 
         // Negative values
-        slong_negative:                         CDataType::SLong,    i32, 0,  10, -42i128                              => -42;
-        sbigint_negative:                       CDataType::SBigInt,  i64, 0,  10, -123456789i128                       => -123456789;
+        slong_negative:                         CDataType::SLong,    i32, 0,  10, -42i128                              => -42,   truncated=false;
+        sbigint_negative:                       CDataType::SBigInt,  i64, 0,  10, -123456789i128                       => -123456789, truncated=false;
 
-        // i32 boundary values
-        slong_i32_max:                          CDataType::SLong,    i32, 0,  10, 2_147_483_647i128                    => 2_147_483_647;
-        slong_i32_min:                          CDataType::SLong,    i32, 0,  10, -2_147_483_648i128                   => -2_147_483_648;
+        // Boundary values — no truncation
+        slong_i32_max:                          CDataType::SLong,    i32, 0,  10, 2_147_483_647i128                    => 2_147_483_647, truncated=false;
+        slong_i32_min:                          CDataType::SLong,    i32, 0,  10, -2_147_483_648i128                   => -2_147_483_648, truncated=false;
+        sbigint_i64_max:                        CDataType::SBigInt,  i64, 0,  19, 9_223_372_036_854_775_807i128        => 9_223_372_036_854_775_807i64, truncated=false;
+        sbigint_i64_min:                        CDataType::SBigInt,  i64, 0,  19, -9_223_372_036_854_775_808i128       => -9_223_372_036_854_775_808i64, truncated=false;
+        short_i16_max:                          CDataType::Short,    i16, 0,  5,  32767i128                            => 32767,  truncated=false;
+        short_i16_min:                          CDataType::Short,    i16, 0,  5,  -32768i128                           => -32768, truncated=false;
+        ushort_u16_max:                         CDataType::UShort,   u16, 0,  5,  65535i128                            => 65535,  truncated=false;
+        tinyint_i8_max:                         CDataType::TinyInt,  i8,  0,  3,  127i128                              => 127,   truncated=false;
+        tinyint_i8_min:                         CDataType::TinyInt,  i8,  0,  3,  -128i128                             => -128,  truncated=false;
+        utinyint_u8_max:                        CDataType::UTinyInt, u8,  0,  3,  255i128                              => 255,   truncated=false;
 
-        // i64 boundary values
-        sbigint_i64_max:                        CDataType::SBigInt,  i64, 0,  19, 9_223_372_036_854_775_807i128        => 9_223_372_036_854_775_807i64;
-        sbigint_i64_min:                        CDataType::SBigInt,  i64, 0,  19, -9_223_372_036_854_775_808i128       => -9_223_372_036_854_775_808i64;
-
-        // u16 / u8 boundary values
-        short_u16_max:                          CDataType::Short,    u16, 0,  5,  65535i128                            => 65535;
-        tinyint_u8_max:                         CDataType::TinyInt,  u8,  0,  3,  255i128                              => 255;
-
-        // Fractional truncation toward zero
-        slong_truncates_positive_frac:          CDataType::SLong,    i32, 2,  10, 999i128                              => 9;
-        slong_truncates_negative_frac:          CDataType::SLong,    i32, 2,  10, -999i128                             => -9;
-        slong_frac_below_one_to_zero:           CDataType::SLong,    i32, 1,  10, 9i128                               => 0;
-        slong_neg_frac_below_one_to_zero:       CDataType::SLong,    i32, 1,  10, -9i128                              => 0;
-        sbigint_truncates_frac:                 CDataType::SBigInt,  i64, 3,  10, 12345i128                            => 12;
-        short_truncates_frac:                   CDataType::Short,    u16, 1,  5,  255i128                              => 25;
-        tinyint_truncates_frac:                 CDataType::TinyInt,  u8,  1,  3,  99i128                               => 9;
+        // Fractional truncation — should produce 01S07 warning
+        slong_truncates_positive_frac:          CDataType::SLong,    i32, 2,  10, 999i128                              => 9,     truncated=true;
+        slong_truncates_negative_frac:          CDataType::SLong,    i32, 2,  10, -999i128                             => -9,    truncated=true;
+        slong_frac_below_one_to_zero:           CDataType::SLong,    i32, 1,  10, 9i128                               => 0,     truncated=true;
+        slong_neg_frac_below_one_to_zero:       CDataType::SLong,    i32, 1,  10, -9i128                              => 0,     truncated=true;
+        sbigint_truncates_frac:                 CDataType::SBigInt,  i64, 3,  10, 12345i128                            => 12,    truncated=true;
+        short_truncates_frac:                   CDataType::Short,    i16, 1,  5,  255i128                              => 25,    truncated=true;
+        tinyint_truncates_frac:                 CDataType::TinyInt,  i8,  1,  3,  99i128                               => 9,     truncated=true;
 
         // High scale
-        slong_zero_scale_10:                    CDataType::SLong,    i32, 10, 38, 0i128                                => 0;
-        slong_zero_scale_37:                    CDataType::SLong,    i32, 37, 38, 0i128                                => 0;
-        slong_positive_scale_10:                CDataType::SLong,    i32, 10, 38, 50_000_000_000i128                   => 5;
-        slong_negative_scale_10:                CDataType::SLong,    i32, 10, 38, -30_000_000_000i128                  => -3;
-        long_zero_scale_15:                     CDataType::Long,     i32, 15, 20, 0i128                                => 0;
-        ulong_zero_scale_10:                    CDataType::ULong,    i32, 10, 38, 0i128                                => 0;
-        sbigint_zero_scale_20:                  CDataType::SBigInt,  i64, 20, 38, 0i128                                => 0;
-        short_zero_scale_10:                    CDataType::Short,    u16, 10, 38, 0i128                                => 0;
-        tinyint_zero_scale_10:                  CDataType::TinyInt,  u8,  10, 38, 0i128                                => 0;
+        slong_zero_scale_10:                    CDataType::SLong,    i32, 10, 38, 0i128                                => 0,     truncated=false;
+        slong_zero_scale_37:                    CDataType::SLong,    i32, 37, 38, 0i128                                => 0,     truncated=false;
+        slong_positive_scale_10:                CDataType::SLong,    i32, 10, 38, 50_000_000_000i128                   => 5,     truncated=false;
+        slong_negative_scale_10:                CDataType::SLong,    i32, 10, 38, -30_000_000_000i128                  => -3,    truncated=false;
+        long_zero_scale_15:                     CDataType::Long,     i32, 15, 20, 0i128                                => 0,     truncated=false;
+        ulong_zero_scale_10:                    CDataType::ULong,    u32, 10, 38, 0i128                                => 0,     truncated=false;
+        sbigint_zero_scale_20:                  CDataType::SBigInt,  i64, 20, 38, 0i128                                => 0,     truncated=false;
+        short_zero_scale_10:                    CDataType::Short,    i16, 10, 38, 0i128                                => 0,     truncated=false;
+        tinyint_zero_scale_10:                  CDataType::TinyInt,  i8,  10, 38, 0i128                                => 0,     truncated=false;
 
-        // Type aliases (SShort, UShort, STinyInt, UTinyInt, UBigInt)
-        sshort_integer:                         CDataType::SShort,   u16, 0,  5,  300i128                              => 300;
-        ushort_integer:                         CDataType::UShort,   u16, 0,  5,  300i128                              => 300;
-        stinyint_integer:                       CDataType::STinyInt, u8,  0,  3,  100i128                              => 100;
-        utinyint_integer:                       CDataType::UTinyInt, u8,  0,  3,  200i128                              => 200;
-        ubigint_integer:                        CDataType::UBigInt,  i64, 0,  10, 999i128                              => 999;
+        // Type aliases
+        sshort_integer:                         CDataType::SShort,   i16, 0,  5,  300i128                              => 300,   truncated=false;
+        ushort_integer:                         CDataType::UShort,   u16, 0,  5,  300i128                              => 300,   truncated=false;
+        stinyint_integer:                       CDataType::STinyInt, i8,  0,  3,  100i128                              => 100,   truncated=false;
+        utinyint_integer:                       CDataType::UTinyInt, u8,  0,  3,  200i128                              => 200,   truncated=false;
+        ubigint_integer:                        CDataType::UBigInt,  u64, 0,  10, 999i128                              => 999,   truncated=false;
+        ubigint_u64_max:                        CDataType::UBigInt,  u64, 0,  20, 18_446_744_073_709_551_615i128       => 18_446_744_073_709_551_615u64, truncated=false;
+    }
+
+    // ========================================================================
+    // Integer conversions — overflow error cases (SQLSTATE 22003)
+    // ========================================================================
+
+    macro_rules! integer_overflow_tests {
+        ($($name:ident: $c_type:expr, $rust_type:ty, $scale:expr, $precision:expr, $input:expr;)*) => {
+            $(
+                #[test]
+                fn $name() {
+                    let sn = make_decimal($scale, $precision);
+                    let mut value: $rust_type = 0 as $rust_type;
+                    let mut str_len: sql::Len = 0;
+                    let binding = binding_for_value($c_type, &mut value, &mut str_len);
+                    assert!(sn.write_odbc_type($input, &binding).is_err());
+                }
+            )*
+        };
+    }
+
+    integer_overflow_tests! {
+        // i32 overflow
+        slong_overflow_above:               CDataType::SLong,    i32, 0, 10, 2_147_483_648i128;
+        slong_overflow_below:               CDataType::SLong,    i32, 0, 10, -2_147_483_649i128;
+
+        // u32 overflow (ULong)
+        ulong_overflow_above:               CDataType::ULong,    u32, 0, 10, 4_294_967_296i128;
+        ulong_overflow_negative:            CDataType::ULong,    u32, 0, 10, -1i128;
+
+        // i16 overflow
+        short_overflow_above:               CDataType::Short,    i16, 0, 5,  32768i128;
+        short_overflow_below:               CDataType::Short,    i16, 0, 5,  -32769i128;
+
+        // u16 overflow (UShort)
+        ushort_overflow_above:              CDataType::UShort,   u16, 0, 5,  65536i128;
+        ushort_overflow_negative:           CDataType::UShort,   u16, 0, 5,  -1i128;
+
+        // i8 overflow
+        tinyint_overflow_above:             CDataType::TinyInt,  i8,  0, 3,  128i128;
+        tinyint_overflow_below:             CDataType::TinyInt,  i8,  0, 3,  -129i128;
+
+        // u8 overflow (UTinyInt)
+        utinyint_overflow_above:            CDataType::UTinyInt, u8,  0, 3,  256i128;
+        utinyint_overflow_negative:         CDataType::UTinyInt, u8,  0, 3,  -1i128;
+
+        // i64 overflow
+        sbigint_overflow_above:             CDataType::SBigInt,  i64, 0, 20, 9_223_372_036_854_775_808i128;
+        sbigint_overflow_below:             CDataType::SBigInt,  i64, 0, 20, -9_223_372_036_854_775_809i128;
+
+        // u64 overflow (UBigInt)
+        ubigint_overflow_above:             CDataType::UBigInt,  u64, 0, 20, 18_446_744_073_709_551_616i128;
+        ubigint_overflow_negative:          CDataType::UBigInt,  u64, 0, 20, -1i128;
+
+        // Overflow after scale division (value fits in i128 but not in target after division)
+        slong_overflow_after_scale:         CDataType::SLong,    i32, 1, 10, 21_474_836_480i128;
     }
 
     // ========================================================================
@@ -271,10 +333,11 @@ mod tests {
 
     // ========================================================================
     // SQL_C_NUMERIC struct conversions
+    // Per ODBC spec: fractional truncation → 01S07
     // ========================================================================
 
     macro_rules! numeric_struct_tests {
-        ($($name:ident: $scale:expr, $precision:expr, $input:expr => sign=$sign:expr, val=$val:expr;)*) => {
+        ($($name:ident: $scale:expr, $precision:expr, $input:expr => sign=$sign:expr, val=$val:expr, truncated=$trunc:expr;)*) => {
             $(
                 #[test]
                 fn $name() {
@@ -287,40 +350,43 @@ mod tests {
                     };
                     let mut str_len: sql::Len = 0;
                     let binding = binding_for_value(CDataType::Numeric, &mut value, &mut str_len);
-                    sn.write_odbc_type($input, &binding).unwrap();
+                    let warnings = sn.write_odbc_type($input, &binding).unwrap();
                     assert_eq!(value.precision, $precision as u8);
                     assert_eq!(value.scale, 0);
                     assert_eq!(value.sign, $sign);
                     assert_eq!(u128::from_le_bytes(value.val), $val as u128);
+                    assert_eq!(!warnings.is_empty(), $trunc,
+                        "truncation warning mismatch: expected truncated={}, got warnings={:?}",
+                        $trunc, warnings);
                 }
             )*
         };
     }
 
     numeric_struct_tests! {
-        numeric_positive_with_scale:    2,  10, 12345i128                   => sign=1, val=123;
-        numeric_negative:               0,  10, -42i128                     => sign=0, val=42;
-        numeric_zero:                   0,  10, 0i128                       => sign=1, val=0;
-        numeric_one:                    0,  10, 1i128                       => sign=1, val=1;
-        numeric_negative_one:           0,  10, -1i128                      => sign=0, val=1;
+        numeric_positive_with_scale:    2,  10, 12345i128                   => sign=1, val=123,        truncated=true;
+        numeric_negative:               0,  10, -42i128                     => sign=0, val=42,         truncated=false;
+        numeric_zero:                   0,  10, 0i128                       => sign=1, val=0,          truncated=false;
+        numeric_one:                    0,  10, 1i128                       => sign=1, val=1,          truncated=false;
+        numeric_negative_one:           0,  10, -1i128                      => sign=0, val=1,          truncated=false;
 
         // LE byte boundary values
-        numeric_255:                    0,  10, 255i128                     => sign=1, val=255;
-        numeric_256:                    0,  10, 256i128                     => sign=1, val=256;
-        numeric_65535:                  0,  10, 65535i128                   => sign=1, val=65535;
-        numeric_65536:                  0,  10, 65536i128                   => sign=1, val=65536;
-        numeric_1_000_000:              0,  10, 1_000_000i128              => sign=1, val=1_000_000;
+        numeric_255:                    0,  10, 255i128                     => sign=1, val=255,        truncated=false;
+        numeric_256:                    0,  10, 256i128                     => sign=1, val=256,        truncated=false;
+        numeric_65535:                  0,  10, 65535i128                   => sign=1, val=65535,      truncated=false;
+        numeric_65536:                  0,  10, 65536i128                   => sign=1, val=65536,      truncated=false;
+        numeric_1_000_000:              0,  10, 1_000_000i128              => sign=1, val=1_000_000,  truncated=false;
 
         // Scale truncation
-        numeric_scale_truncates_frac:   2,  10, 999i128                    => sign=1, val=9;
-        numeric_scale_neg_truncates:    2,  10, -999i128                   => sign=0, val=9;
-        numeric_zero_with_scale:        5,  10, 0i128                      => sign=1, val=0;
+        numeric_scale_truncates_frac:   2,  10, 999i128                    => sign=1, val=9,          truncated=true;
+        numeric_scale_neg_truncates:    2,  10, -999i128                   => sign=0, val=9,          truncated=true;
+        numeric_zero_with_scale:        5,  10, 0i128                      => sign=1, val=0,          truncated=false;
 
         // High scale
-        numeric_high_scale_zero:        10, 38, 0i128                      => sign=1, val=0;
-        numeric_high_scale_positive:    10, 38, 50_000_000_000i128         => sign=1, val=5;
-        numeric_high_scale_negative:    10, 38, -30_000_000_000i128        => sign=0, val=3;
-        numeric_scale_37_zero:          37, 38, 0i128                      => sign=1, val=0;
+        numeric_high_scale_zero:        10, 38, 0i128                      => sign=1, val=0,          truncated=false;
+        numeric_high_scale_positive:    10, 38, 50_000_000_000i128         => sign=1, val=5,          truncated=false;
+        numeric_high_scale_negative:    10, 38, -30_000_000_000i128        => sign=0, val=3,          truncated=false;
+        numeric_scale_37_zero:          37, 38, 0i128                      => sign=1, val=0,          truncated=false;
     }
 
     // ========================================================================
@@ -359,11 +425,14 @@ mod tests {
     }
 
     // ========================================================================
-    // SQL_C_BIT conversions
+    // SQL_C_BIT conversions (per ODBC spec)
+    //   Exact 0 or 1       → ok, no warning
+    //   0 < value < 2, ≠ 1 → truncate, 01S07
+    //   value < 0 or ≥ 2   → 22003 error
     // ========================================================================
 
     macro_rules! bit_ok_tests {
-        ($($name:ident: $scale:expr, $precision:expr, $input:expr => $expected:expr;)*) => {
+        ($($name:ident: $scale:expr, $precision:expr, $input:expr => $expected:expr, truncated=$trunc:expr;)*) => {
             $(
                 #[test]
                 fn $name() {
@@ -371,20 +440,28 @@ mod tests {
                     let mut value: u8 = 0xFF;
                     let mut str_len: sql::Len = 0;
                     let binding = binding_for_value(CDataType::Bit, &mut value, &mut str_len);
-                    sn.write_odbc_type($input, &binding).unwrap();
+                    let warnings = sn.write_odbc_type($input, &binding).unwrap();
                     assert_eq!(value, $expected);
+                    assert_eq!(!warnings.is_empty(), $trunc,
+                        "truncation warning mismatch: expected truncated={}, got warnings={:?}",
+                        $trunc, warnings);
                 }
             )*
         };
     }
 
     bit_ok_tests! {
-        bit_zero:                       0,  10, 0i128   => 0;
-        bit_one:                        0,  10, 1i128   => 1;
-        bit_frac_truncates_to_zero:     1,  10, 9i128   => 0;
-        bit_frac_truncates_to_one:      1,  10, 15i128  => 1;
-        bit_zero_with_high_scale:       10, 38, 0i128   => 0;
-        bit_one_with_scale:             2,  10, 100i128 => 1;
+        // Exact values — no warning
+        bit_exact_zero:                     0,  10, 0i128   => 0, truncated=false;
+        bit_exact_one:                      0,  10, 1i128   => 1, truncated=false;
+        bit_exact_one_via_scale:            2,  10, 100i128 => 1, truncated=false;
+        bit_exact_zero_high_scale:          10, 38, 0i128   => 0, truncated=false;
+
+        // Fractional truncation → 01S07
+        bit_frac_truncates_to_zero:         1,  10, 9i128   => 0, truncated=true;
+        bit_frac_truncates_to_one:          1,  10, 15i128  => 1, truncated=true;
+        bit_frac_099_truncates_to_zero:     2,  10, 99i128  => 0, truncated=true;
+        bit_frac_150_truncates_to_one:      2,  10, 150i128 => 1, truncated=true;
     }
 
     macro_rules! bit_error_tests {
@@ -403,10 +480,14 @@ mod tests {
     }
 
     bit_error_tests! {
-        bit_rejects_two:                0,  10, 2i128;
-        bit_rejects_negative_one:       0,  10, -1i128;
-        bit_rejects_large_positive:     0,  10, 100i128;
-        bit_rejects_large_negative:     0,  10, -100i128;
-        bit_rejects_frac_truncates_2:   1,  10, 25i128;
+        // value >= 2
+        bit_rejects_two:                    0,  10, 2i128;
+        bit_rejects_large_positive:         0,  10, 100i128;
+        bit_rejects_frac_truncates_to_2:    1,  10, 25i128;
+
+        // value < 0 (checked on original snowflake_value, not truncated)
+        bit_rejects_negative_one:           0,  10, -1i128;
+        bit_rejects_large_negative:         0,  10, -100i128;
+        bit_rejects_neg_frac:               1,  10, -5i128;
     }
 }

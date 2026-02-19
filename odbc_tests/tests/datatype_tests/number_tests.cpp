@@ -1007,3 +1007,311 @@ TEST_CASE("SQL_DECIMAL to SQL_C_BINARY - NULL returns SQL_NULL_DATA", "[datatype
   CHECK_ODBC(ret, stmt);
   CHECK(indicator == SQL_NULL_DATA);
 }
+
+// ============================================================================
+// ODBC Spec: SQLSTATE 01S07 — Fractional truncation warning
+// Per ODBC spec, converting a numeric SQL value with fractional digits to an
+// integer C type should return SQL_SUCCESS_WITH_INFO with SQLSTATE 01S07.
+// ============================================================================
+
+TEST_CASE("SQL_DECIMAL fractional truncation returns 01S07 for SQL_C_LONG", "[datatype][number][01S07]") {
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  auto stmt = conn.execute_fetch("SELECT 123.45::DECIMAL(10,2)");
+
+  SQLINTEGER value = 0;
+  SQLLEN indicator = 0;
+  SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_LONG, &value, sizeof(value), &indicator);
+  CHECK(ret == SQL_SUCCESS_WITH_INFO);
+  CHECK(value == 123);
+  auto diags = get_diag_rec(stmt);
+  REQUIRE(!diags.empty());
+  CHECK(diags[0].sqlState == "01S07");
+}
+
+TEST_CASE("SQL_DECIMAL fractional truncation returns 01S07 for SQL_C_SHORT", "[datatype][number][01S07]") {
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  auto stmt = conn.execute_fetch("SELECT 9.99::DECIMAL(5,2)");
+
+  SQLSMALLINT value = 0;
+  SQLLEN indicator = 0;
+  SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_SHORT, &value, sizeof(value), &indicator);
+  CHECK(ret == SQL_SUCCESS_WITH_INFO);
+  CHECK(value == 9);
+  auto diags = get_diag_rec(stmt);
+  REQUIRE(!diags.empty());
+  CHECK(diags[0].sqlState == "01S07");
+}
+
+TEST_CASE("SQL_DECIMAL fractional truncation returns 01S07 for SQL_C_TINYINT", "[datatype][number][01S07]") {
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  auto stmt = conn.execute_fetch("SELECT 1.5::DECIMAL(3,1)");
+
+  SQLSCHAR value = 0;
+  SQLLEN indicator = 0;
+  SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_STINYINT, &value, sizeof(value), &indicator);
+  CHECK(ret == SQL_SUCCESS_WITH_INFO);
+  CHECK(value == 1);
+  auto diags = get_diag_rec(stmt);
+  REQUIRE(!diags.empty());
+  CHECK(diags[0].sqlState == "01S07");
+}
+
+TEST_CASE("SQL_DECIMAL fractional truncation returns 01S07 for SQL_C_SBIGINT", "[datatype][number][01S07]") {
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  auto stmt = conn.execute_fetch("SELECT 999.001::DECIMAL(10,3)");
+
+  SQLBIGINT value = 0;
+  SQLLEN indicator = 0;
+  SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_SBIGINT, &value, sizeof(value), &indicator);
+  CHECK(ret == SQL_SUCCESS_WITH_INFO);
+  CHECK(value == 999);
+  auto diags = get_diag_rec(stmt);
+  REQUIRE(!diags.empty());
+  CHECK(diags[0].sqlState == "01S07");
+}
+
+TEST_CASE("SQL_DECIMAL exact integer does NOT produce 01S07", "[datatype][number][01S07]") {
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  auto stmt = conn.execute_fetch("SELECT 100.00::DECIMAL(10,2)");
+
+  SQLINTEGER value = 0;
+  SQLLEN indicator = 0;
+  SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_LONG, &value, sizeof(value), &indicator);
+  CHECK(ret == SQL_SUCCESS);
+  CHECK(value == 100);
+}
+
+// ============================================================================
+// ODBC Spec: SQLSTATE 22003 — Numeric value out of range (integer overflow)
+// Per ODBC spec, when conversion would result in loss of whole (not fractional)
+// digits, the driver should return SQL_ERROR with SQLSTATE 22003.
+// ============================================================================
+
+TEST_CASE("SQL_DECIMAL overflow SQL_C_LONG - above i32 max", "[datatype][number][22003]") {
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  auto stmt = conn.execute_fetch("SELECT 2147483648::NUMBER(10,0)");
+
+  SQLINTEGER value = 0;
+  SQLLEN indicator = 0;
+  SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_LONG, &value, sizeof(value), &indicator);
+  CHECK(ret == SQL_ERROR);
+  auto diags = get_diag_rec(stmt);
+  REQUIRE(!diags.empty());
+  CHECK(diags[0].sqlState == "22003");
+}
+
+TEST_CASE("SQL_DECIMAL overflow SQL_C_LONG - below i32 min", "[datatype][number][22003]") {
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  auto stmt = conn.execute_fetch("SELECT -2147483649::NUMBER(10,0)");
+
+  SQLINTEGER value = 0;
+  SQLLEN indicator = 0;
+  SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_LONG, &value, sizeof(value), &indicator);
+  CHECK(ret == SQL_ERROR);
+  auto diags = get_diag_rec(stmt);
+  REQUIRE(!diags.empty());
+  CHECK(diags[0].sqlState == "22003");
+}
+
+TEST_CASE("SQL_DECIMAL overflow SQL_C_SHORT - above i16 max", "[datatype][number][22003]") {
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  auto stmt = conn.execute_fetch("SELECT 32768::NUMBER(5,0)");
+
+  SQLSMALLINT value = 0;
+  SQLLEN indicator = 0;
+  SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_SHORT, &value, sizeof(value), &indicator);
+  CHECK(ret == SQL_ERROR);
+  auto diags = get_diag_rec(stmt);
+  REQUIRE(!diags.empty());
+  CHECK(diags[0].sqlState == "22003");
+}
+
+TEST_CASE("SQL_DECIMAL overflow SQL_C_STINYINT - above i8 max", "[datatype][number][22003]") {
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  auto stmt = conn.execute_fetch("SELECT 128::NUMBER(3,0)");
+
+  SQLSCHAR value = 0;
+  SQLLEN indicator = 0;
+  SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_STINYINT, &value, sizeof(value), &indicator);
+  CHECK(ret == SQL_ERROR);
+  auto diags = get_diag_rec(stmt);
+  REQUIRE(!diags.empty());
+  CHECK(diags[0].sqlState == "22003");
+}
+
+TEST_CASE("SQL_DECIMAL overflow SQL_C_STINYINT - below i8 min", "[datatype][number][22003]") {
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  auto stmt = conn.execute_fetch("SELECT -129::NUMBER(3,0)");
+
+  SQLSCHAR value = 0;
+  SQLLEN indicator = 0;
+  SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_STINYINT, &value, sizeof(value), &indicator);
+  CHECK(ret == SQL_ERROR);
+  auto diags = get_diag_rec(stmt);
+  REQUIRE(!diags.empty());
+  CHECK(diags[0].sqlState == "22003");
+}
+
+TEST_CASE("SQL_DECIMAL overflow SQL_C_UTINYINT - negative", "[datatype][number][22003]") {
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  auto stmt = conn.execute_fetch("SELECT -1::NUMBER(1,0)");
+
+  SQLCHAR value = 0;
+  SQLLEN indicator = 0;
+  SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_UTINYINT, &value, sizeof(value), &indicator);
+  CHECK(ret == SQL_ERROR);
+  auto diags = get_diag_rec(stmt);
+  REQUIRE(!diags.empty());
+  CHECK(diags[0].sqlState == "22003");
+}
+
+TEST_CASE("SQL_DECIMAL overflow SQL_C_UTINYINT - above u8 max", "[datatype][number][22003]") {
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  auto stmt = conn.execute_fetch("SELECT 256::NUMBER(3,0)");
+
+  SQLCHAR value = 0;
+  SQLLEN indicator = 0;
+  SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_UTINYINT, &value, sizeof(value), &indicator);
+  CHECK(ret == SQL_ERROR);
+  auto diags = get_diag_rec(stmt);
+  REQUIRE(!diags.empty());
+  CHECK(diags[0].sqlState == "22003");
+}
+
+TEST_CASE("SQL_DECIMAL overflow SQL_C_USHORT - negative", "[datatype][number][22003]") {
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  auto stmt = conn.execute_fetch("SELECT -1::NUMBER(1,0)");
+
+  SQLUSMALLINT value = 0;
+  SQLLEN indicator = 0;
+  SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_USHORT, &value, sizeof(value), &indicator);
+  CHECK(ret == SQL_ERROR);
+  auto diags = get_diag_rec(stmt);
+  REQUIRE(!diags.empty());
+  CHECK(diags[0].sqlState == "22003");
+}
+
+TEST_CASE("SQL_DECIMAL overflow SQL_C_ULONG - negative", "[datatype][number][22003]") {
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  auto stmt = conn.execute_fetch("SELECT -1::NUMBER(1,0)");
+
+  SQLUINTEGER value = 0;
+  SQLLEN indicator = 0;
+  SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_ULONG, &value, sizeof(value), &indicator);
+  CHECK(ret == SQL_ERROR);
+  auto diags = get_diag_rec(stmt);
+  REQUIRE(!diags.empty());
+  CHECK(diags[0].sqlState == "22003");
+}
+
+// ============================================================================
+// ODBC Spec: SQL_C_BIT — spec-compliant behavior
+// Per ODBC spec for SQL_C_BIT:
+//   Exact 0 or 1                    → SQL_SUCCESS
+//   Value > 0, < 2, ≠ 1 (fraction) → SQL_SUCCESS_WITH_INFO, 01S07
+//   Value < 0 or ≥ 2               → SQL_ERROR, 22003
+// ============================================================================
+
+TEST_CASE("SQL_C_BIT - value 2 returns 22003", "[datatype][number][bit][22003]") {
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  auto stmt = conn.execute_fetch("SELECT 2::NUMBER(1,0)");
+
+  unsigned char value = 0xFF;
+  SQLLEN indicator = 0;
+  SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_BIT, &value, sizeof(value), &indicator);
+  CHECK(ret == SQL_ERROR);
+  auto diags = get_diag_rec(stmt);
+  REQUIRE(!diags.empty());
+  CHECK(diags[0].sqlState == "22003");
+}
+
+TEST_CASE("SQL_C_BIT - negative fractional value returns 22003", "[datatype][number][bit][22003]") {
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  // -0.5 is less than 0 per spec → should be 22003
+  auto stmt = conn.execute_fetch("SELECT -0.5::DECIMAL(3,1)");
+
+  unsigned char value = 0xFF;
+  SQLLEN indicator = 0;
+  SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_BIT, &value, sizeof(value), &indicator);
+  CHECK(ret == SQL_ERROR);
+  auto diags = get_diag_rec(stmt);
+  REQUIRE(!diags.empty());
+  CHECK(diags[0].sqlState == "22003");
+}
+
+TEST_CASE("SQL_C_BIT - fractional 0.5 truncates to 0 with 01S07", "[datatype][number][bit][01S07]") {
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  auto stmt = conn.execute_fetch("SELECT 0.5::DECIMAL(3,1)");
+
+  unsigned char value = 0xFF;
+  SQLLEN indicator = 0;
+  SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_BIT, &value, sizeof(value), &indicator);
+  CHECK(ret == SQL_SUCCESS_WITH_INFO);
+  CHECK(value == 0);
+  auto diags = get_diag_rec(stmt);
+  REQUIRE(!diags.empty());
+  CHECK(diags[0].sqlState == "01S07");
+}
+
+TEST_CASE("SQL_C_BIT - fractional 1.5 truncates to 1 with 01S07", "[datatype][number][bit][01S07]") {
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  auto stmt = conn.execute_fetch("SELECT 1.5::DECIMAL(3,1)");
+
+  unsigned char value = 0xFF;
+  SQLLEN indicator = 0;
+  SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_BIT, &value, sizeof(value), &indicator);
+  CHECK(ret == SQL_SUCCESS_WITH_INFO);
+  CHECK(value == 1);
+  auto diags = get_diag_rec(stmt);
+  REQUIRE(!diags.empty());
+  CHECK(diags[0].sqlState == "01S07");
+}
+
+TEST_CASE("SQL_C_BIT - exact 1.0 does NOT produce warning", "[datatype][number][bit]") {
+  Connection conn;
+  auto random_schema = Schema::use_random_schema(conn);
+
+  auto stmt = conn.execute_fetch("SELECT 1.00::DECIMAL(5,2)");
+
+  unsigned char value = 0xFF;
+  SQLLEN indicator = 0;
+  SQLRETURN ret = SQLGetData(stmt.getHandle(), 1, SQL_C_BIT, &value, sizeof(value), &indicator);
+  CHECK(ret == SQL_SUCCESS);
+  CHECK(value == 1);
+}
