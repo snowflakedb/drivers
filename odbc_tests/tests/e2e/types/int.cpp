@@ -170,7 +170,7 @@ TEST_CASE("should select large result set from table for int and synonyms", "[in
   REQUIRE(row_count == 50000);
 }
 
-TEST_CASE("should manage different column sizes between batches", "[int]") {
+TEST_CASE("should manage different column sizes between batches for int and synonyms", "[int]") {
   constexpr int total_rows = 50000;
   constexpr int small_value_count = total_rows - 10;
   constexpr int64_t small_value = 15;
@@ -184,11 +184,14 @@ TEST_CASE("should manage different column sizes between batches", "[int]") {
   conn.execute("CREATE TABLE int_different_batches (col BIGINT)");
   conn.execute(
       "INSERT INTO int_different_batches "
-      "SELECT 15::BIGINT FROM TABLE(GENERATOR(ROWCOUNT => " +
-      std::to_string(small_value_count) + "))");
+      "SELECT " +
+      std::to_string(small_value) + "::BIGINT FROM TABLE(GENERATOR(ROWCOUNT => " + std::to_string(small_value_count) +
+      "))");
   conn.execute(
       "INSERT INTO int_different_batches "
-      "SELECT 9223372036854775807::BIGINT FROM TABLE(GENERATOR(ROWCOUNT => 10))");
+      "SELECT " +
+      std::to_string(large_value) + "::BIGINT FROM TABLE(GENERATOR(ROWCOUNT => " +
+      std::to_string(total_rows - small_value_count) + "))");
 
   // When Query "SELECT * FROM <table> ORDER BY col" is executed
   auto stmt = conn.createStatement();

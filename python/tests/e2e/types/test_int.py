@@ -291,21 +291,22 @@ class TestIntTable:
         assert_sequential_values(values, LARGE_RESULT_SET_SIZE)
 
     @int_type_parametrize
-    def test_should_manage_different_column_sizes_between_batches(self, execute_query, tmp_schema, int_type):
+    def test_should_manage_different_column_sizes_between_batches_for_int_and_synonyms(self, execute_query, tmp_schema, int_type):
         # Given Snowflake client is logged in
         assert_connection_is_open(execute_query)
 
         # And Table with <type> column exists with 49990 4-bit values and 10 64-bit values
+        LARGE_VALUE_COUNT = 10
 
         table_name = f"{tmp_schema}.different_batches_int_table_{int_type.lower()}"
         execute_query(f"CREATE TABLE {table_name} (col {int_type})")
         execute_query(
             f"INSERT INTO {table_name} "
             f"SELECT 15::{int_type} "
-            f"FROM TABLE(GENERATOR(ROWCOUNT => {LARGE_RESULT_SET_SIZE - 10}))"
+            f"FROM TABLE(GENERATOR(ROWCOUNT => {LARGE_RESULT_SET_SIZE - LARGE_VALUE_COUNT}))"
         )
         execute_query(
-            f"INSERT INTO {table_name} SELECT {INT64_SIGNED_MAX}::{int_type} FROM TABLE(GENERATOR(ROWCOUNT => {10}))"
+            f"INSERT INTO {table_name} SELECT {INT64_SIGNED_MAX}::{int_type} FROM TABLE(GENERATOR(ROWCOUNT => {LARGE_VALUE_COUNT}))"
         )
 
         # When Query "SELECT * FROM <table> ORDER BY col" is executed
@@ -317,7 +318,7 @@ class TestIntTable:
         assert_sequential_values(
             values,
             LARGE_RESULT_SET_SIZE,
-            transform=lambda i: 15 if i < LARGE_RESULT_SET_SIZE - 10 else INT64_SIGNED_MAX,
+            transform=lambda i: 15 if i < LARGE_RESULT_SET_SIZE - LARGE_VALUE_COUNT else INT64_SIGNED_MAX,
         )
 
 
