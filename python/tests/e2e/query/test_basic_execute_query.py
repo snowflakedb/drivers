@@ -24,7 +24,7 @@ from ...compatibility import IS_UNIVERSAL_DRIVER
 class TestSelectQueries:
     """Tests for basic SELECT query execution."""
 
-    def test_should_execute_simple_SELECT_returning_single_value(self, cursor):
+    def test_should_execute_simple_select_returning_single_value(self, cursor):
         """Test simple SELECT returning single value."""
         # Given Snowflake client is logged in
 
@@ -36,7 +36,7 @@ class TestSelectQueries:
         assert result is not None
         assert result[0] == 1
 
-    def test_should_execute_SELECT_returning_multiple_columns(self, cursor):
+    def test_should_execute_select_returning_multiple_columns(self, cursor):
         """Test SELECT returning multiple columns."""
         # Given Snowflake client is logged in
 
@@ -53,7 +53,7 @@ class TestSelectQueries:
         assert result[1] == "hello"
         assert result[2] == "3.14"
 
-    def test_should_execute_SELECT_returning_multiple_rows(self, cursor):
+    def test_should_execute_select_returning_multiple_rows(self, cursor):
         """Test SELECT returning multiple rows using GENERATOR."""
         # Given Snowflake client is logged in
 
@@ -67,7 +67,7 @@ class TestSelectQueries:
         assert_sequential_values(values, 5)
 
     @pytest.mark.skip_universal(reason="Known issue SNOW-2997744: Empty result set handling")
-    def test_should_execute_SELECT_returning_empty_result_set(self, cursor):
+    def test_should_execute_select_returning_empty_result_set(self, cursor):
         """Test SELECT returning empty result set."""
         # Given Snowflake client is logged in
 
@@ -78,7 +78,7 @@ class TestSelectQueries:
         # Then the result set should be empty
         assert result == []
 
-    def test_should_execute_SELECT_returning_NULL_values(self, cursor):
+    def test_should_execute_select_returning_null_values(self, cursor):
         """Test SELECT returning NULL values."""
         # Given Snowflake client is logged in
 
@@ -96,7 +96,7 @@ class TestSelectQueries:
 class TestDDLStatements:
     """Tests for DDL (Data Definition Language) statements."""
 
-    def test_should_execute_CREATE_and_DROP_TABLE_statements(self, cursor, tmp_schema):
+    def test_should_execute_create_and_drop_table_statements(self, cursor, tmp_schema):
         """Test CREATE and DROP TABLE statements."""
         # Given Snowflake client is logged in
         table_name = f"{tmp_schema}.test_basic_ddl"
@@ -129,7 +129,7 @@ class TestDDLStatements:
 class TestDMLStatements:
     """Tests for DML (Data Manipulation Language) statements."""
 
-    def test_should_execute_INSERT_and_retrieve_inserted_data(self, cursor, tmp_schema):
+    def test_should_execute_insert_and_retrieve_inserted_data(self, cursor, tmp_schema):
         """Test INSERT and retrieve inserted data."""
         # Given Snowflake client is logged in
 
@@ -156,7 +156,7 @@ class TestDMLStatements:
 class TestErrorHandling:
     """Tests for error handling."""
 
-    def test_should_return_error_for_invalid_SQL_syntax(self, cursor):
+    def test_should_return_error_for_invalid_sql_syntax(self, cursor):
         """Test error handling for invalid SQL syntax."""
         # Given Snowflake client is logged in
 
