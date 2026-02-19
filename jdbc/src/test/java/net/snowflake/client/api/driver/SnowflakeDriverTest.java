@@ -38,10 +38,10 @@ public class SnowflakeDriverTest {
   }
 
   @ParameterizedTest
-  @MethodSource("invalidUrls")
-  public void testAcceptsInvalidURL(String url) throws SQLException {
+  @MethodSource("nonSnowflakeUrls")
+  public void testRejectsNonSnowflakeURL(String url) throws SQLException {
     SnowflakeDriver driver = new SnowflakeDriver();
-    assertFalse(driver.acceptsURL(url), "Expected invalid URL to be rejected: " + url);
+    assertFalse(driver.acceptsURL(url), "Expected non-Snowflake URL to be rejected: " + url);
   }
 
   @Test
@@ -105,18 +105,8 @@ public class SnowflakeDriverTest {
         "jdbc:snowflake://globalaccount-12345.global.snowflakecomputing.com");
   }
 
-  private static Stream<String> invalidUrls() {
+  private static Stream<String> nonSnowflakeUrls() {
     return Stream.of(
-        null,
-        "jdbc:",
-        "jdbc:snowflake://",
-        "jdbc:snowflake://:",
-        "jdbc:snowflake://:8080",
-        "jdbc:snowflake://localhost:xyz",
-        "jdbc:snowflak://localhost:8080",
-        "jdbc:snowflake://localhost:8080/a=b",
-        "jdbc:snowflake://testaccount.com?proxyHost=%%",
-        "jdbc:snowflake://abc-test.us-east-1.snowflakecomputing.com/?private_key_file=C:\\temp\\rsa_key.p8&user=test_user",
-        "jdbc:nonsnowflake://localhost:3306/test");
+        "jdbc:", "jdbc:snowflak://localhost:8080", "jdbc:nonsnowflake://localhost:3306/test");
   }
 }

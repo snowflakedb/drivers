@@ -15,8 +15,4 @@ public class SnowflakeUtil {
   public static final String BYTES_STR = "byte array";
 
   private SnowflakeUtil() {}
-
-  public static boolean isNullOrEmpty(String value) {
-    return value == null || value.isEmpty();
-  }
 }

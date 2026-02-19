@@ -1,6 +1,6 @@
 package net.snowflake.client.internal.api.implementation.connection;
 
-import static net.snowflake.client.internal.util.SnowflakeUtil.isNullOrEmpty;
+import static net.snowflake.client.internal.util.StringUtil.isNullOrEmpty;
 
 import java.io.UnsupportedEncodingException;
 import java.net.URI;
@@ -62,6 +62,7 @@ public class ConnectionString {
           .deriveAccountFromHostIfMissing()
           .ensureAccountPresent()
           .normalizeHostForUnderscoreAccount()
+          .applyDefaultPortForEffectiveScheme()
           .build();
     } catch (URISyntaxException uriEx) {
       logger.warn(
@@ -155,9 +156,6 @@ public class ConnectionString {
         logger.debug("Connect strings must have a valid host: found null or empty host");
         throw new IllegalArgumentException("Missing host");
       }
-      if (port == -1) {
-        port = 443;
-      }
       String path = uri.getPath();
       if (!isNullOrEmpty(path) && !"/".equals(path)) {
         logger.debug("Connect strings must have no path: expecting empty or null or '/'");
@@ -241,6 +239,14 @@ public class ConnectionString {
       if (account.contains("_") && !allowUnderscoresInHost && host.startsWith(account)) {
         host = host.replaceFirst(account, account.replace("_", "-"));
       }
+      return this;
+    }
+
+    ConnectionStringBuilder applyDefaultPortForEffectiveScheme() {
+      if (port != -1) {
+        return this;
+      }
+      port = "http".equals(scheme) ? 80 : 443;
       return this;
     }
 

@@ -72,6 +72,31 @@ public class ConnectionOptionsResolverTest {
     assertEquals("testaccount", params.get("ACCOUNT"));
   }
 
+  @ParameterizedTest
+  @CsvSource({
+    "jdbc:snowflake://testaccount.com, https, 443",
+    "jdbc:snowflake://testaccount.com?ssl=off, http, 80",
+    "jdbc:snowflake://http://testaccount.localhost, http, 80"
+  })
+  public void parseConnectionStringUsesExpectedDefaultPortForEffectiveScheme(
+      String url, String expectedScheme, int expectedPort) {
+    ConnectionString parsed = ConnectionString.parse(url, new Properties());
+
+    assertTrue(parsed.isValid());
+    assertEquals(expectedScheme, parsed.getScheme());
+    assertEquals(expectedPort, parsed.getPort());
+  }
+
+  @Test
+  public void resolveUsesHttpDefaultPortWhenSslOffAndNoPortProvided() {
+    Properties resolved =
+        ConnectionOptionsResolver.resolve(
+            "jdbc:snowflake://testaccount.snowflakecomputing.com?ssl=off", new Properties());
+
+    assertEquals("http", resolved.get("protocol"));
+    assertEquals("80", resolved.get("port"));
+  }
+
   @Test
   public void parseConnectStringKeepsSchemeWhenSslOnOverridesUrlSslOffForJdbcCompatibility() {
     Properties input = new Properties();

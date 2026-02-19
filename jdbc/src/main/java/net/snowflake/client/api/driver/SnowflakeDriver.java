@@ -12,7 +12,6 @@ import net.snowflake.client.internal.api.implementation.connection.ConnectionStr
 import net.snowflake.client.internal.api.implementation.connection.SnowflakeConnectionImpl;
 import net.snowflake.client.internal.log.SFLogger;
 import net.snowflake.client.internal.log.SFLoggerFactory;
-import org.slf4j.LoggerFactory;
 
 /**
  * Snowflake JDBC Driver implementation
@@ -26,7 +25,6 @@ public class SnowflakeDriver implements Driver {
   private static final String DRIVER_VERSION = "4.0.0";
   private static final int MAJOR_VERSION = 4;
   private static final int MINOR_VERSION = 0;
-  private static final org.slf4j.Logger log = LoggerFactory.getLogger(SnowflakeDriver.class);
 
   public static void empty() {}
 
@@ -57,7 +55,10 @@ public class SnowflakeDriver implements Driver {
 
   @Override
   public boolean acceptsURL(String url) throws SQLException {
-    return ConnectionString.parse(url).isValid();
+    if (url == null) {
+      throw new SQLException("URL must not be null");
+    }
+    return url.startsWith("jdbc:snowflake:");
   }
 
   @Override
