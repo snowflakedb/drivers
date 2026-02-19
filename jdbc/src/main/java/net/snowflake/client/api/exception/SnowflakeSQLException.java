@@ -8,4 +8,8 @@ public class SnowflakeSQLException extends SQLException {
   public SnowflakeSQLException(String message) {
     super(message);
   }
+
+  public SnowflakeSQLException(String message, Throwable cause) {
+    super(message, cause);
+  }
 }

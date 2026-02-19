@@ -84,7 +84,7 @@ Feature: INT type support
   #                            Parameter binding                                #
   # =========================================================================== #
 
-  @python_e2e
+  @python_e2e @jdbc_e2e
   Scenario: should insert integer using parameter binding for int and synonyms
     Given Snowflake client is logged in
     And Table with <type> column exists

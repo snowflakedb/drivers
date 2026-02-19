@@ -15,19 +15,16 @@ public class SnowflakeStatementTest extends SnowflakeIntegrationTestBase {
 
   @Test
   public void testSimpleSelect() throws Exception {
-    try (Connection conn = openConnection()) {
-      // Create and execute statement
-      Statement stmt = conn.createStatement();
-      ResultSet rs = stmt.executeQuery("SELECT 1");
+    Connection conn = getDefaultConnection();
+    // Create and execute statement
+    try (Statement stmt = conn.createStatement()) {
+      try (ResultSet rs = stmt.executeQuery("SELECT 1")) {
 
-      // Verify result
-      assertNotNull(rs, "ResultSet should not be null");
-      assertTrue(rs.next(), "ResultSet should have one row");
-      assertEquals(1, rs.getInt(1), "Result should be 1");
-
-      // Clean up
-      rs.close();
-      stmt.close();
+        // Verify result
+        assertNotNull(rs, "ResultSet should not be null");
+        assertTrue(rs.next(), "ResultSet should have one row");
+        assertEquals(1, rs.getInt(1), "Result should be 1");
+      }
     }
   }
 }

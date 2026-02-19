@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.math.BigDecimal;
 import java.sql.Connection;
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
@@ -234,6 +235,35 @@ public class IntTests extends SnowflakeIntegrationTestBase {
       }
       assertEquals(LARGE_RESULT_SET_SIZE, expected, "Unexpected row count for " + INT_TYPE);
     }
+  }
+
+  @Test
+  public void shouldInsertIntegerUsingParameterBindingForIntAndSynonyms() throws Exception {
+    // Given Snowflake client is logged in
+    // And Table with <type> column exists
+    // When Integer values [0, -2147483648, 2147483647, 9223372036854775807] are inserted using
+    // binding
+    // And Query "SELECT * FROM <table>" is executed
+    // Then Result should contain integers [0, -2147483648, 2147483647, 9223372036854775807]
+    Connection connection = getDefaultConnection();
+    String tableName = createTempTable(connection, "col " + INT_TYPE);
+
+    try (PreparedStatement preparedStatement =
+        connection.prepareStatement("INSERT INTO " + tableName + " VALUES (?)")) {
+      preparedStatement.setLong(1, 0L);
+      preparedStatement.execute();
+      preparedStatement.setLong(1, Integer.MIN_VALUE);
+      preparedStatement.execute();
+      preparedStatement.setLong(1, Integer.MAX_VALUE);
+      preparedStatement.execute();
+      preparedStatement.setLong(1, Long.MAX_VALUE);
+      preparedStatement.execute();
+    }
+
+    assertSingleColumnRows(
+        connection,
+        tableName,
+        Arrays.asList((long) Integer.MIN_VALUE, 0L, (long) Integer.MAX_VALUE, Long.MAX_VALUE));
   }
 
   private static void assertSingleRow(Connection connection, String sql, List<Long> expected)
