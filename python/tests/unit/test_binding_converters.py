@@ -548,33 +548,24 @@ class TestSerializeParameters:
 
 
 class TestReferenceConnectorParity:
-    """Tests verifying parity with reference snowflake-connector-python.
+    """Regression tests for bugs fixed during initial development.
 
-    Each test documents a specific difference found during code comparison
-    and asserts the corrected behavior matches the reference connector.
+    Each test guards against a specific bug that was found and fixed
+    to achieve parity with the reference snowflake-connector-python.
     """
 
-    # --- Difference #1: date conversion must be timezone-independent ---
-    # Old JsonBindingConverter used datetime.combine(d, min.time()).timestamp()
-    # which applies the local timezone offset. The reference connector uses
-    # (d - date(1970,1,1)).total_seconds() which is timezone-independent.
+    # --- Regression #1: date conversion is timezone-independent ---
+    # Fixed: now uses (d - date(1970,1,1)).total_seconds(), matching
+    # the reference connector's timezone-independent approach.
 
     def test_date_epoch_is_timezone_independent(self):
-        """date(1970, 1, 1) must always produce 0 regardless of local timezone.
-
-        Previously used datetime.timestamp() which would produce e.g. -28800000
-        on a UTC-8 machine.
-        """
+        """date(1970, 1, 1) produces 0 regardless of local timezone."""
         d = date(1970, 1, 1)
         _, value = JsonBindingConverter._convert_value(d)
         assert int(value) == 0
 
     def test_date_known_value_is_timezone_independent(self):
-        """date(2024, 1, 15) must produce the same milliseconds everywhere.
-
-        Reference connector: (date(2024,1,15) - date(1970,1,1)).total_seconds() * 1000
-        = 19737 days * 86400 * 1000 = 1705276800000
-        """
+        """date(2024, 1, 15) produces the same milliseconds everywhere."""
         d = date(2024, 1, 15)
         _, value = JsonBindingConverter._convert_value(d)
         expected_days = (date(2024, 1, 15) - date(1970, 1, 1)).days
@@ -582,27 +573,23 @@ class TestReferenceConnectorParity:
         assert int(value) == expected_ms
 
     def test_date_before_epoch_is_negative(self):
-        """Dates before 1970-01-01 must produce negative millisecond values."""
+        """Dates before 1970-01-01 produce negative millisecond values."""
         d = date(1969, 12, 31)
         _, value = JsonBindingConverter._convert_value(d)
         assert int(value) == -86400000
 
-    # --- Difference #2: datetime conversion must be timezone-independent ---
-    # Old JsonBindingConverter used dt.timestamp() which depends on local timezone.
-    # The reference connector uses (dt - ZERO_EPOCH).total_seconds().
+    # --- Regression #2: datetime conversion is timezone-independent ---
+    # Fixed: now uses (dt - ZERO_EPOCH).total_seconds(), matching
+    # the reference connector.
 
     def test_datetime_epoch_is_timezone_independent(self):
-        """datetime(1970, 1, 1) must always produce 0 nanoseconds.
-
-        Previously used dt.timestamp() which produces different values
-        depending on local timezone.
-        """
+        """datetime(1970, 1, 1) produces 0 nanoseconds."""
         dt = datetime(1970, 1, 1, 0, 0, 0)
         _, value = JsonBindingConverter._convert_value(dt)
         assert int(value) == 0
 
     def test_datetime_known_value_is_timezone_independent(self):
-        """Two datetimes exactly 1 hour apart must differ by exactly 3600 * 10^9 ns."""
+        """Two datetimes exactly 1 hour apart differ by exactly 3600 * 10^9 ns."""
         dt1 = datetime(2024, 6, 15, 10, 0, 0)
         dt2 = datetime(2024, 6, 15, 11, 0, 0)
         _, v1 = JsonBindingConverter._convert_value(dt1)
@@ -610,11 +597,7 @@ class TestReferenceConnectorParity:
         assert int(v2) - int(v1) == 3600 * 1_000_000_000
 
     def test_datetime_tz_aware_normalizes_to_utc(self):
-        """Timezone-aware datetimes must be converted to UTC before serialization.
-
-        Reference connector: astimezone(pytz.UTC).replace(tzinfo=None), then
-        compute epoch from the naive UTC datetime.
-        """
+        """Timezone-aware datetimes are converted to UTC before serialization."""
         # 2024-01-01 05:00:00 UTC+5 == 2024-01-01 00:00:00 UTC
         naive_utc = datetime(2024, 1, 1, 0, 0, 0)
         tz_plus5 = timezone(timedelta(hours=5))
@@ -625,7 +608,7 @@ class TestReferenceConnectorParity:
         assert naive_value == aware_value
 
     def test_datetime_tz_negative_offset(self):
-        """UTC-8 datetime should also normalize correctly."""
+        """UTC-8 datetime also normalizes correctly."""
         naive_utc = datetime(2024, 1, 1, 8, 0, 0)
         tz_minus8 = timezone(timedelta(hours=-8))
         aware = datetime(2024, 1, 1, 0, 0, 0, tzinfo=tz_minus8)
@@ -634,100 +617,74 @@ class TestReferenceConnectorParity:
         _, aware_value = JsonBindingConverter._convert_value(aware)
         assert naive_value == aware_value
 
-    # --- Difference #3: NoneType must map to "ANY", not "TEXT" ---
-    # Reference connector: PYTHON_TO_SNOWFLAKE_TYPE["nonetype"] = "ANY"
+    # --- Regression #3: NoneType maps to "ANY" ---
+    # Fixed: matches reference connector's PYTHON_TO_SNOWFLAKE_TYPE["nonetype"] = "ANY".
 
     def test_none_type_is_any_not_text(self):
-        """None must map to type ANY, matching the reference connector.
-
-        Previously mapped to TEXT which could affect server-side schema inference.
-        """
+        """None maps to type ANY, matching the reference connector."""
         snowflake_type, value = JsonBindingConverter._convert_value(None)
         assert snowflake_type == "ANY"
         assert value is None
 
-    # --- Difference #4: bytearray must be supported ---
-    # Reference connector: _bytearray_to_snowflake_bindings = _bytes_to_snowflake_bindings
-    # Previously missing, would fall through to str(value) producing wrong output.
+    # --- Regression #4: bytearray is hex-encoded ---
+    # Fixed: handled via _is_binary(), matching reference connector's
+    # _bytearray_to_snowflake_bindings = _bytes_to_snowflake_bindings.
 
     def test_bytearray_produces_hex_not_str_repr(self):
-        """bytearray must hex-encode, not produce str(bytearray(...)).
-
-        Previously fell through to str(value) which would produce something like
-        "bytearray(b'\\xab\\xcd')" instead of proper hex encoding.
-        """
+        """bytearray is hex-encoded, not converted via str()."""
         ba = bytearray(b"\xab\xcd")
         snowflake_type, value = JsonBindingConverter._convert_value(ba)
         assert snowflake_type == "BINARY"
         assert value == "abcd"
-        # Must NOT be the string representation
         assert "bytearray" not in value
 
-    # --- Difference #5: timedelta must be supported (maps to TIME) ---
-    # Reference connector: _timedelta_to_snowflake_bindings converts to nanoseconds.
-    # Previously missing, would fall through to str(value).
+    # --- Regression #5: timedelta converts to nanoseconds (TIME type) ---
+    # Fixed: matches reference connector's _timedelta_to_snowflake_bindings.
 
     def test_timedelta_produces_nanoseconds_not_str_repr(self):
-        """timedelta must convert to nanoseconds, not produce str(timedelta(...)).
-
-        Previously fell through to str(value) which would produce something like
-        "1:02:03.000456" instead of nanosecond format.
-        """
+        """timedelta converts to nanoseconds, not str(timedelta(...))."""
         td = timedelta(hours=1, minutes=2, seconds=3, microseconds=456)
         snowflake_type, value = JsonBindingConverter._convert_value(td)
         assert snowflake_type == "TIME"
         assert value == "3723000456000"
-        # Must NOT contain colons (the str(timedelta) format)
         assert ":" not in value
 
     def test_timedelta_with_days_converts_days_to_hours(self):
-        """Reference connector multiplies days * 24 and adds to hours.
-
-        timedelta(days=2, hours=3) = (2*24 + 3) * 3600 = 183600 seconds
-        """
+        """Days are folded into hours: timedelta(days=2, hours=3) = 51h."""
         td = timedelta(days=2, hours=3)
         _, value = JsonBindingConverter._convert_value(td)
         expected_seconds = (2 * 24 + 3) * 3600
         assert value == f"{expected_seconds}000000000"
 
-    # --- Difference #6: struct_time must be supported ---
-    # Reference connector: _struct_time_to_snowflake_bindings converts via
-    # datetime.fromtimestamp(time.mktime(value)), then serializes as datetime.
-    # Previously missing, would fall through to str(value).
+    # --- Regression #6: struct_time converts to epoch nanoseconds ---
+    # Fixed: converts via datetime.fromtimestamp(time.mktime(value)),
+    # matching reference connector's _struct_time_to_snowflake_bindings.
 
     def test_struct_time_produces_nanoseconds_not_str_repr(self):
-        """struct_time must convert to epoch nanoseconds, not produce str repr.
-
-        Previously fell through to str(value) producing something like
-        "time.struct_time(tm_year=2024, ...)" instead of nanoseconds.
-        """
+        """struct_time converts to epoch nanoseconds, not str repr."""
         st = time_module.strptime("2024-06-15 10:30:00", "%Y-%m-%d %H:%M:%S")
         snowflake_type, value = JsonBindingConverter._convert_value(st)
         assert snowflake_type == "TIMESTAMP_NTZ"
-        # Must be a pure numeric nanosecond string
         assert value.lstrip("-").isdigit()
-        # Must NOT contain struct_time string representation
         assert "struct_time" not in value
 
-    # --- Difference #7: time formatting must use string concatenation ---
-    # Reference connector: str(seconds) + f"{microsecond:06d}" + "000"
-    # This produces left-padded microseconds (e.g., "000456") which is critical
-    # for Snowflake server-side parsing.
+    # --- Regression #7: time microseconds are zero-padded ---
+    # Fixed: uses str(seconds) + f"{microsecond:06d}" + "000", matching
+    # the reference connector's string concatenation format.
 
     def test_time_microsecond_zero_padding(self):
-        """Microseconds must be zero-padded to 6 digits in the nanosecond string.
+        """Microseconds are zero-padded to 6 digits in the nanosecond string.
 
         time(0, 0, 1, 1) -> "1" + "000001" + "000" = "1000001000"
-        Without zero-padding this would incorrectly become "1" + "1" + "000" = "11000"
         """
         t = time(0, 0, 1, 1)
         _, value = JsonBindingConverter._convert_value(t)
         assert value == "1000001000"
 
     def test_time_format_trailing_zeros(self):
-        """Time format must include trailing '000' for nanosecond precision.
+        """Time format includes trailing '000' for nanosecond precision.
 
-        Even for zero microseconds: time(0, 0, 1) -> "1" + "000000" + "000"
+        time(0, 0, 1) -> "1" + "000000" + "000" = "1000000000"
         """
         t = time(0, 0, 1, 0)
         _, value = JsonBindingConverter._convert_value(t)
