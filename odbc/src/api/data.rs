@@ -1,8 +1,7 @@
 use crate::api::error::{
     ConversionSnafu, DataNotFetchedSnafu, ExecutionDoneSnafu, FetchDataSnafu,
     InvalidBufferLengthSnafu, InvalidCursorStateSnafu, InvalidDescriptorIndexSnafu,
-    NoMoreDataSnafu, NullPointerSnafu,
-    StatementErrorStateSnafu, StatementNotExecutedSnafu,
+    NoMoreDataSnafu, NullPointerSnafu, StatementErrorStateSnafu, StatementNotExecutedSnafu,
 };
 use crate::api::{
     GetDataState, OdbcResult, Statement, StatementState, WithState, stmt_from_handle,

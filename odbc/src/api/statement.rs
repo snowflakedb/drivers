@@ -172,9 +172,22 @@ pub fn execute(statement_handle: sql::Handle) -> OdbcResult<()> {
     }
 }
 
+const STATEMENT_TYPE_ID_MANAGE_PATS: i64 = 0x6244;
+
+fn is_pat_statement(statement_type_id: i64) -> bool {
+    statement_type_id == STATEMENT_TYPE_ID_MANAGE_PATS
+}
+
 fn is_ddl_statement(statement_type_id: i64) -> bool {
     tracing::debug!("is_ddl_statement: statement_type_id={}", statement_type_id);
+    if statement_type_id == STATEMENT_TYPE_ID_MANAGE_PATS {
+        return false;
+    }
     (0x6000..0x7000).contains(&statement_type_id)
+}
+
+fn has_result_set(statement_type_id: i64) -> bool {
+    is_ddl_statement(statement_type_id) && !is_pat_statement(statement_type_id)
 }
 
 fn create_execute_state(response: StatementExecuteQueryResponse) -> OdbcResult<StatementState> {
@@ -187,7 +200,7 @@ fn create_execute_state(response: StatementExecuteQueryResponse) -> OdbcResult<S
         ArrowArrayStreamReader::try_new(stream).context(ArrowArrayStreamReaderCreationSnafu {})?;
     let rows_affected = result.rows_affected;
     if let Some(statement_type_id) = result.statement_type_id
-        && is_ddl_statement(statement_type_id)
+        && has_result_set(statement_type_id)
     {
         return Ok(StatementState::NoResultSet);
     }

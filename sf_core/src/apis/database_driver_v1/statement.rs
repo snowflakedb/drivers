@@ -99,24 +99,12 @@ fn is_dml_statement(statement_type_id: Option<i64>) -> bool {
     }
 }
 
-/// Check if a statement type ID represents a DDL or administrative operation
-/// (CREATE, ALTER, DROP, USE, etc.) that does not produce a fetchable result set.
-/// These statement types have IDs >= 0x4000.
-fn is_ddl_statement(statement_type_id: Option<i64>) -> bool {
-    if let Some(type_id) = statement_type_id {
-        type_id >= 0x4000
-    } else {
-        false
-    }
-}
-
 /// Calculate rows affected based on statement type.
 ///
 /// Returns `Some(count)` when rows affected is known, `None` when it is not
-/// (e.g. DDL statements, or when the statement type is unknown).
+/// (when the statement type is unknown).
 ///
 /// - For DML: Parse rowset columns to sum affected rows
-/// - For DDL: Return None since DDL has no result set
 /// - For SELECT and other queries: Use total field
 /// - For unknown: Return None
 fn calculate_rows_affected(data: &Data) -> Option<i64> {
@@ -148,11 +136,6 @@ fn calculate_rows_affected(data: &Data) -> Option<i64> {
         }
         // DML with no affected rows
         return Some(0);
-    }
-
-    // DDL statements (CREATE, ALTER, DROP, etc.) do not produce a fetchable result set
-    if is_ddl_statement(data.statement_type_id) {
-        return None;
     }
 
     // For SELECT and other queries, use total field.

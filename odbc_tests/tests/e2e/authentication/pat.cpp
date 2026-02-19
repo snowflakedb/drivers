@@ -183,7 +183,7 @@ TEST_CASE("should authenticate using PAT as password", "[pat]") {
   }
 
   NEW_DRIVER_ONLY("BD#7") {
-    CHECK(pat.fetch_ret == SQL_SUCCESS);
+    REQUIRE(pat.fetch_ret == SQL_SUCCESS);
 
     auto env = setup_pat_environment();
     auto dbc = get_pat_connection_handle(env);
@@ -214,7 +214,7 @@ TEST_CASE("should authenticate using PAT as token", "[pat]") {
   }
 
   NEW_DRIVER_ONLY("BD#7") {
-    CHECK(pat.fetch_ret == SQL_SUCCESS);
+    REQUIRE(pat.fetch_ret == SQL_SUCCESS);
 
     auto env = setup_pat_environment();
     auto dbc = get_pat_connection_handle(env);
