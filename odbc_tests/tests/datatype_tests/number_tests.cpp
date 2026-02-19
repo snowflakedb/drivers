@@ -541,7 +541,7 @@ TEST_CASE("SQL_DECIMAL to SQL_C_BIT - negative value is out of range", "[datatyp
 }
 
 // ============================================================================
-// High scale zero conversion (regression: 10^scale overflow in i32 arithmetic)
+// High scale zero conversion
 // ============================================================================
 
 TEST_CASE("SQL_DECIMAL zero with high scale to SQL_C_LONG", "[datatype][number][truncation]") {
