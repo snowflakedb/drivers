@@ -114,6 +114,7 @@ class TestDDLStatements:
 
         # Verify table no longer exists by attempting to query it
         if IS_UNIVERSAL_DRIVER:
+            # TODO: this is not a desired state. Error type should match after error unification PR.
             from snowflake.connector._internal.protobuf_gen.proto_exception import ProtoApplicationException
 
             expected_error = ProtoApplicationException
@@ -163,6 +164,7 @@ class TestErrorHandling:
         # When Invalid SQL "SELCT INVALID SYNTAX" is executed
         # Then An error should be returned
         if IS_UNIVERSAL_DRIVER:
+            # TODO: this is not a desired state. Error type should match after error unification PR.
             from snowflake.connector._internal.protobuf_gen.proto_exception import ProtoApplicationException
 
             expected_error = ProtoApplicationException
