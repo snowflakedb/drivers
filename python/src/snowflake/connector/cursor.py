@@ -30,6 +30,7 @@ from ._internal.protobuf_gen.database_driver_v1_pb2 import (
     ExecuteResult,
     QueryBindings,
     StatementExecuteQueryRequest,
+    StatementHandle,
     StatementNewRequest,
     StatementReleaseRequest,
     StatementSetSqlQueryRequest,
@@ -116,7 +117,7 @@ class SnowflakeCursorBase(abc.ABC):
         self._current_row_in_batch = 0
         self.execute_result: ExecuteResult | None = None
         self._iterator: Iterator[Row] | None = None
-        self._stmt_handle = None
+        self._stmt_handle: StatementHandle | None = None
         # Query bindings - keep binding data reference to prevent garbage collection while Rust uses it
         self._binding_data: None | bytes = None
         self._messages: list[tuple[type[Exception], dict[str, str | bool]]] = []
@@ -253,9 +254,7 @@ class SnowflakeCursorBase(abc.ABC):
         """
         if self._stmt_handle is not None:
             try:
-                self.connection.db_api.statement_release(
-                    StatementReleaseRequest(stmt_handle=self._stmt_handle)
-                )
+                self.connection.db_api.statement_release(StatementReleaseRequest(stmt_handle=self._stmt_handle))
             except Exception:
                 # Best-effort cleanup: if release fails, we still clear the handle
                 # to avoid re-releasing it. The Rust core will eventually clean up
