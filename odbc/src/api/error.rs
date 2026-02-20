@@ -9,6 +9,7 @@ use crate::{
     api::{InfoType, SqlState, diagnostic::DiagnosticRecord},
     conversion::{ConversionError, error::WriteOdbcError},
     write_arrow::ArrowBindingError,
+    write_json::JsonBindingError,
 };
 use arrow::error::ArrowError;
 use odbc_sys as sql;
@@ -252,6 +253,13 @@ pub enum OdbcError {
         location: Location,
     },
 
+    #[snafu(display("Error binding JSON parameters: {source:?}"))]
+    JsonBinding {
+        source: JsonBindingError,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
     #[snafu(display("Error binding parameters: {parameters}"))]
     ParameterBinding {
         parameters: String,
@@ -421,6 +429,7 @@ impl OdbcError {
             OdbcError::TextConversionFromUtf8 { .. } => SqlState::StringDataRightTruncated,
             OdbcError::TextConversionFromUtf16 { .. } => SqlState::StringDataRightTruncated,
             OdbcError::ArrowBinding { .. } => SqlState::GeneralError,
+            OdbcError::JsonBinding { .. } => SqlState::GeneralError,
             OdbcError::CoreError {
                 source: CoreProtobufError::Application { error, message, .. },
                 ..
