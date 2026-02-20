@@ -290,18 +290,13 @@ class TestIntTable:
         assert_type(values, int)
         assert_sequential_values(values, LARGE_RESULT_SET_SIZE)
 
-    def test_should_handle_server_side_arrow_memory_optimization_for_int_columns(
-        self, execute_query, tmp_schema
-    ):
+    def test_should_handle_server_side_arrow_memory_optimization_for_int_columns(self, execute_query, tmp_schema):
         # Given Snowflake client is logged in
         assert_connection_is_open(execute_query)
 
         # And Table with four INT columns exists
         table_name = f"{tmp_schema}.different_int_column_sizes"
-        execute_query(
-            f"CREATE TABLE {table_name} "
-            "(col_int8 INT, col_int16 INT, col_int32 INT, col_int64 INT)"
-        )
+        execute_query(f"CREATE TABLE {table_name} (col_int8 INT, col_int16 INT, col_int32 INT, col_int64 INT)")
 
         # And Each column contains values of different magnitudes
 
