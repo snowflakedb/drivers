@@ -1,7 +1,7 @@
 use crate::api::error::{
     ConversionSnafu, DataNotFetchedSnafu, ExecutionDoneSnafu, FetchDataSnafu,
-    InvalidDescriptorIndexSnafu, NoMoreDataSnafu, StatementErrorStateSnafu,
-    StatementNotExecutedSnafu,
+    InvalidBufferLengthSnafu, InvalidDescriptorIndexSnafu, NoMoreDataSnafu, NullPointerSnafu,
+    StatementErrorStateSnafu, StatementNotExecutedSnafu,
 };
 use crate::api::{
     GetDataState, OdbcResult, Statement, StatementState, WithState, stmt_from_handle,
@@ -157,6 +157,18 @@ pub fn get_data(
     warnings: &mut Warnings,
 ) -> OdbcResult<()> {
     tracing::debug!("get_data: statement_handle={:?}", statement_handle);
+
+    if target_value_ptr.is_null() {
+        return NullPointerSnafu.fail();
+    }
+
+    if buffer_length < 0 {
+        return InvalidBufferLengthSnafu {
+            length: buffer_length as i64,
+        }
+        .fail();
+    }
+
     let stmt = stmt_from_handle(statement_handle);
 
     // Column 0 is reserved for bookmarks; reject it when bookmarks are off

@@ -108,6 +108,61 @@ pub enum CDataType {
     SsTimestampOffset = C_TYPES_EXTENDED + 1,
 }
 
+impl TryFrom<i16> for CDataType {
+    type Error = i16;
+
+    fn try_from(value: i16) -> Result<Self, Self::Error> {
+        match value {
+            -100 => Ok(CDataType::Apd),
+            -99 => Ok(CDataType::Ard),
+            -28 => Ok(CDataType::UTinyInt),
+            -27 => Ok(CDataType::UBigInt),
+            -26 => Ok(CDataType::STinyInt),
+            -25 => Ok(CDataType::SBigInt),
+            -18 => Ok(CDataType::ULong),
+            -17 => Ok(CDataType::UShort),
+            -16 => Ok(CDataType::SLong),
+            -15 => Ok(CDataType::SShort),
+            -11 => Ok(CDataType::Guid),
+            -8 => Ok(CDataType::WChar),
+            -7 => Ok(CDataType::Bit),
+            -6 => Ok(CDataType::TinyInt),
+            -2 => Ok(CDataType::Binary),
+            1 => Ok(CDataType::Char),
+            2 => Ok(CDataType::Numeric),
+            4 => Ok(CDataType::Long),
+            5 => Ok(CDataType::Short),
+            7 => Ok(CDataType::Float),
+            8 => Ok(CDataType::Double),
+            9 => Ok(CDataType::Date),
+            10 => Ok(CDataType::Time),
+            11 => Ok(CDataType::TimeStamp),
+            91 => Ok(CDataType::TypeDate),
+            92 => Ok(CDataType::TypeTime),
+            93 => Ok(CDataType::TypeTimestamp),
+            94 => Ok(CDataType::TypeTimeWithTimezone),
+            95 => Ok(CDataType::TypeTimestampWithTimezone),
+            99 => Ok(CDataType::Default),
+            101 => Ok(CDataType::IntervalYear),
+            102 => Ok(CDataType::IntervalMonth),
+            103 => Ok(CDataType::IntervalDay),
+            104 => Ok(CDataType::IntervalHour),
+            105 => Ok(CDataType::IntervalMinute),
+            106 => Ok(CDataType::IntervalSecond),
+            107 => Ok(CDataType::IntervalYearToMonth),
+            108 => Ok(CDataType::IntervalDayToHour),
+            109 => Ok(CDataType::IntervalDayToMinute),
+            110 => Ok(CDataType::IntervalDayToSecond),
+            111 => Ok(CDataType::IntervalHourToMinute),
+            112 => Ok(CDataType::IntervalHourToSecond),
+            113 => Ok(CDataType::IntervalMinuteToSecond),
+            x if x == C_TYPES_EXTENDED => Ok(CDataType::SsTime2),
+            x if x == C_TYPES_EXTENDED + 1 => Ok(CDataType::SsTimestampOffset),
+            other => Err(other),
+        }
+    }
+}
+
 #[allow(dead_code)]
 pub type UBigInt = u64;
 #[allow(dead_code)]

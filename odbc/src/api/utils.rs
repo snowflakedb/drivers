@@ -58,7 +58,22 @@ pub fn col_attribute(
         _ => return StatementNotExecutedSnafu.fail(),
     };
 
-    let field = schema.field((column_number - 1) as usize);
+    // ODBC column numbers are 1-based; validate before indexing into the schema
+    if column_number == 0 {
+        tracing::warn!("col_attribute: invalid column_number=0");
+        return StatementNotExecutedSnafu.fail();
+    }
+    let column_index = (column_number - 1) as usize;
+    if column_index >= schema.fields().len() {
+        tracing::warn!(
+            "col_attribute: column_number={} out of range (num_fields={})",
+            column_number,
+            schema.fields().len()
+        );
+        return StatementNotExecutedSnafu.fail();
+    }
+
+    let field = schema.field(column_index);
     let desc_field = DescField::try_from(field_identifier as i16)?;
 
     match desc_field {

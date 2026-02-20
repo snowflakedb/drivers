@@ -43,6 +43,19 @@ pub enum OdbcError {
         location: Location,
     },
 
+    #[snafu(display("Invalid string or buffer length: {length}"))]
+    InvalidBufferLength {
+        length: i64,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("Invalid application buffer type"))]
+    InvalidApplicationBufferType {
+        #[snafu(implicit)]
+        location: Location,
+    },
+
     #[snafu(display("Invalid record number: {number}"))]
     InvalidRecordNumber {
         number: sql::SmallInt,
@@ -296,6 +309,10 @@ impl OdbcError {
             OdbcError::Disconnected { .. } => SqlState::ConnectionDoesNotExist,
             OdbcError::InvalidHandle { .. } => SqlState::InvalidConnectionName,
             OdbcError::NullPointer { .. } => SqlState::InvalidUseOfNullPointer,
+            OdbcError::InvalidBufferLength { .. } => SqlState::InvalidStringOrBufferLength,
+            OdbcError::InvalidApplicationBufferType { .. } => {
+                SqlState::InvalidApplicationBufferType
+            }
             OdbcError::InvalidRecordNumber { .. } => SqlState::InvalidDescriptorIndex,
             OdbcError::InvalidDiagnosticIdentifier { .. } => {
                 SqlState::InvalidDescriptorFieldIdentifier

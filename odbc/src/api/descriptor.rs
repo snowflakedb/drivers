@@ -160,10 +160,15 @@ pub fn set_desc_field(
 
         match field {
             DescField::Type | DescField::ConciseType => {
-                let c_type: CDataType = unsafe { std::mem::transmute(value_ptr as i16) };
+                let raw = value_ptr as i16;
+                let c_type = CDataType::try_from(raw).map_err(|unknown| {
+                    tracing::error!("set_desc_field: unknown C data type discriminant {unknown}");
+                    crate::api::error::OdbcError::InvalidApplicationBufferType {
+                        location: snafu::location!(),
+                    }
+                })?;
                 tracing::debug!(
-                    "set_desc_field: setting target_type={:?} on record {column_number}",
-                    c_type
+                    "set_desc_field: setting target_type={c_type:?} on record {column_number}",
                 );
                 let binding = desc.bindings.entry(column_number).or_default();
                 binding.target_type = c_type;
