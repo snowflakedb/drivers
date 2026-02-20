@@ -64,6 +64,23 @@ async fn read_batches(
     data: &query_response::Data,
     http_client: &Client,
 ) -> Result<Box<dyn RecordBatchReader + Send>, ReadBatchesError> {
+    // Handle empty result sets early (SNOW-2997744).
+    // Snowflake sends empty rowset_base64 for zero-row results. The Rust arrow-ipc crate
+    // fails on empty streams ("Expected schema message"), unlike nanoarrow (used by Python
+    // driver) which handles this gracefully. We detect empty results via `returned == 0`
+    // and build the schema from `row_type` metadata instead.
+    if data.returned == Some(0) {
+        if let Some(rowtype) = &data.row_type {
+            let row_types = rowtype
+                .iter()
+                .map(|rt| rt.try_into())
+                .collect::<Result<Vec<_>, _>>()
+                .context(RowTypeParsingSnafu)?;
+            let schema = create_schema(&row_types).context(SchemaCreationSnafu)?;
+            return boxed_arrow_reader(schema, vec![]).context(EmptyResultCreationSnafu);
+        }
+    }
+
     if let Some(rowset_base64) = &data.rowset_base64 {
         let rowset_bytes = BASE64.decode(rowset_base64).context(Base64DecodingSnafu)?;
 
@@ -76,35 +93,10 @@ async fn read_batches(
             .await
         } else {
             ChunkReader::single_chunk(rowset_bytes)
-        };
-
-        // Handle empty result sets - when the Arrow IPC stream doesn't have a valid
-        // schema message (SNOW-2997744), fall back to creating an empty reader
-        // using the schema from row_type
-        match reader_result {
-            Ok(reader) => Ok(Box::new(reader)),
-            Err(e) => {
-                // Check if this is an empty stream error and we have row_type to create schema
-                let error_msg = format!("{:?}", e);
-                let is_empty_stream = error_msg.contains("empty stream")
-                    || error_msg.contains("Expected schema message");
-
-                if is_empty_stream {
-                    if let Some(rowtype) = &data.row_type {
-                        let row_types = rowtype
-                            .iter()
-                            .map(|rt| rt.try_into())
-                            .collect::<Result<Vec<_>, _>>()
-                            .context(RowTypeParsingSnafu)?;
-                        let schema = create_schema(&row_types).context(SchemaCreationSnafu)?;
-                        return boxed_arrow_reader(schema, vec![])
-                            .context(EmptyResultCreationSnafu);
-                    }
-                }
-                // Not an empty stream error or no row_type - return original error
-                Err(e).context(ChunkReadingSnafu)
-            }
         }
+        .context(ChunkReadingSnafu)?;
+
+        Ok(Box::new(reader_result))
     } else if let (Some(rowset), Some(rowtype)) = (&data.rowset, &data.row_type) {
         let row_types = rowtype
             .iter()
