@@ -135,6 +135,7 @@ message ExecuteResult {
   repeated ColumnMetadata columns = 4;
   optional int64 statement_type_id = 5;
   string query = 6;
+  optional string sql_state = 7;
 }
 
 // Partitioned result

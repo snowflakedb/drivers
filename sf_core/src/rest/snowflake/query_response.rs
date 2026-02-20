@@ -61,7 +61,7 @@ pub struct Data {
     #[serde(rename = "queryId")]
     pub query_id: Option<String>,
     #[serde(rename = "sqlState")]
-    _sql_state: Option<String>,
+    pub sql_state: Option<String>,
     #[serde(rename = "databaseProvider")]
     _database_provider: Option<String>,
     #[serde(rename = "finalDatabaseName")]

@@ -860,6 +860,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
                     .collect(),
                 statement_type_id: result.statement_type_id,
                 query: result.query,
+                sql_state: result.sql_state,
             }),
         })
     }

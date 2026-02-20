@@ -274,6 +274,7 @@ pub struct ExecuteResult {
     pub columns: Vec<ColumnMetadata>,
     pub statement_type_id: Option<i64>,
     pub query: String,
+    pub sql_state: Option<String>,
 }
 
 pub fn statement_execute_query<'a>(
@@ -425,6 +426,9 @@ fn execute_query_internal<'a>(
             .collect()
     });
 
+    // Extract sql_state from response
+    let sql_state = response.data.sql_state;
+
     let result = ExecuteResult {
         stream: rowset_stream,
         rows_affected,
@@ -432,6 +436,7 @@ fn execute_query_internal<'a>(
         columns,
         statement_type_id,
         query: query.to_string(),
+        sql_state,
     };
     stmt.state = StatementState::Executed;
     Ok(result)

@@ -11,6 +11,8 @@ from snowflake.connector.errors import NotSupportedError, ProgrammingError
 from tests.e2e.types.utils import assert_sequential_values
 
 
+
+
 class TestCursorSfqid:
     """Integration tests for Cursor.sfqid property."""
 
@@ -562,6 +564,237 @@ class TestCursorRowcount:
 
         # Then rowcount should be 1
         assert cursor.rowcount == 1
+
+
+class TestCursorRownumber:
+    """Integration tests for Cursor.rownumber property."""
+
+    def test_rownumber_is_none_before_fetch(self, cursor):
+        """Test that rownumber is None after execute but before any fetch."""
+        # Given a cursor that executes a query
+        cursor.execute("SELECT * FROM VALUES (1), (2)")
+
+        # When accessing rownumber before fetching
+        result = cursor.rownumber
+
+        # Then it should be None (no rows fetched yet)
+        assert result is None
+
+    def test_rownumber_starts_at_zero_after_first_fetch(self, cursor):
+        """Test that rownumber is 0 after the first fetchone."""
+        # Given a cursor that executes a query
+        cursor.execute("SELECT * FROM VALUES (1), (2)")
+
+        # When fetching the first row
+        cursor.fetchone()
+
+        # Then rownumber should be 0 (0-based index)
+        assert cursor.rownumber == 0
+
+    def test_rownumber_increments_with_fetchone(self, cursor):
+        """Test that rownumber increments with each fetchone call."""
+        # Given a cursor that executes a query with multiple rows
+        cursor.execute("SELECT * FROM VALUES (1), (2), (3)")
+
+        # When fetching rows one by one
+        cursor.fetchone()
+        assert cursor.rownumber == 0
+
+        cursor.fetchone()
+        assert cursor.rownumber == 1
+
+        cursor.fetchone()
+        assert cursor.rownumber == 2
+
+    def test_rownumber_does_not_increment_past_end(self, cursor):
+        """Test that rownumber does not increment when fetchone returns None."""
+        # Given a cursor with a single row
+        cursor.execute("SELECT 1")
+        cursor.fetchone()
+        assert cursor.rownumber == 0
+
+        # When fetching past the end
+        cursor.fetchone()
+
+        # Then rownumber should stay at last value
+        assert cursor.rownumber == 0
+
+    def test_rownumber_resets_with_new_execute(self, cursor):
+        """Test that rownumber resets when a new query is executed."""
+        # Given a cursor that has fetched rows
+        cursor.execute("SELECT * FROM VALUES (1), (2), (3)")
+        cursor.fetchone()
+        cursor.fetchone()
+        assert cursor.rownumber == 1
+
+        # When executing a new query
+        cursor.execute("SELECT * FROM VALUES (10), (20)")
+
+        # Then rownumber should be reset to None (no rows fetched yet)
+        assert cursor.rownumber is None
+
+    def test_rownumber_increments_with_fetchmany(self, cursor):
+        """Test that rownumber increments correctly with fetchmany."""
+        # Given a cursor with multiple rows
+        cursor.execute(
+            """
+            SELECT ROW_NUMBER() OVER (ORDER BY seq4()) - 1 AS n
+            FROM TABLE(GENERATOR(ROWCOUNT => 5))
+            ORDER BY 1
+            """
+        )
+
+        # When fetching multiple rows at once
+        cursor.fetchmany(3)
+
+        # Then rownumber should reflect the last row fetched (0-based)
+        assert cursor.rownumber == 2
+
+
+class TestCursorSqlstate:
+    """Integration tests for Cursor.sqlstate property."""
+
+    def test_sqlstate_is_none_before_execute(self, connection):
+        """Test that sqlstate returns None before any query is executed."""
+        # Given a new cursor
+        cursor = connection.cursor()
+
+        # When accessing sqlstate before execute
+        result = cursor.sqlstate
+
+        # Then it should be None
+        assert result is None
+
+    def test_sqlstate_after_successful_execute(self, cursor):
+        """Test that sqlstate is accessible after a successful query."""
+        # Given a cursor that executes a successful query
+        cursor.execute("SELECT 1")
+
+        # When accessing sqlstate
+        result = cursor.sqlstate
+
+        # Then it should be None or a valid SQL state string
+        assert result is None or isinstance(result, str)
+
+    def test_sqlstate_persists_after_fetchall(self, cursor):
+        """Test that sqlstate persists after fetching all results."""
+        # Given a cursor that executes a query
+        cursor.execute("SELECT 1, 2, 3")
+        sqlstate_before = cursor.sqlstate
+
+        # When fetching all results
+        cursor.fetchall()
+
+        # Then sqlstate should still be the same
+        assert cursor.sqlstate == sqlstate_before
+
+    def test_sqlstate_persists_after_fetchone(self, cursor):
+        """Test that sqlstate persists after fetching one result."""
+        # Given a cursor that executes a query
+        cursor.execute("SELECT 1")
+        sqlstate_before = cursor.sqlstate
+
+        # When fetching one result
+        cursor.fetchone()
+
+        # Then sqlstate should still be the same
+        assert cursor.sqlstate == sqlstate_before
+
+
+class TestCursorStatementLifecycle:
+    """Integration tests for statement handle lifecycle (create/release)."""
+
+    def test_sequential_executes_do_not_leak(self, cursor):
+        """Test that many sequential execute calls work without resource exhaustion."""
+        # Given a cursor that executes many queries in sequence
+        for i in range(50):
+            cursor.execute(f"SELECT {i}")
+            row = cursor.fetchone()
+            assert row[0] == i
+
+    def test_cursor_context_manager_cleanup(self, connection):
+        """Test that cursor context manager properly cleans up resources."""
+        # Given a cursor used as a context manager
+        with connection.cursor() as cur:
+            cur.execute("SELECT 1")
+            result = cur.fetchone()
+            assert result == (1,)
+
+        # When the context manager exits, the cursor should be closed
+        assert cur.is_closed()
+
+    def test_cursor_usable_after_close_and_reopen(self, connection):
+        """Test that closing a cursor and creating a new one works."""
+        # Given a cursor that executes and is then closed
+        cursor1 = connection.cursor()
+        cursor1.execute("SELECT 1")
+        cursor1.fetchone()
+        cursor1.close()
+        assert cursor1.is_closed()
+
+        # When creating a new cursor
+        cursor2 = connection.cursor()
+        cursor2.execute("SELECT 2")
+        result = cursor2.fetchone()
+
+        # Then the new cursor should work normally
+        assert result == (2,)
+        cursor2.close()
+
+    def test_execute_after_previous_execute(self, cursor):
+        """Test that a second execute properly replaces the first result."""
+        # Given a cursor that executes a query
+        cursor.execute("SELECT 'first'")
+        assert cursor.fetchone()[0] == "first"
+
+        # When executing a second query on the same cursor
+        cursor.execute("SELECT 'second'")
+
+        # Then the second result should be available
+        assert cursor.fetchone()[0] == "second"
+
+    def test_multiple_cursors_independent(self, connection):
+        """Test that multiple cursors operate independently."""
+        cursor1 = connection.cursor()
+        cursor2 = connection.cursor()
+
+        cursor1.execute("SELECT 1")
+        cursor2.execute("SELECT 2")
+
+        assert cursor1.fetchone() == (1,)
+        assert cursor2.fetchone() == (2,)
+
+        cursor1.close()
+        cursor2.close()
+
+    def test_close_is_idempotent(self, cursor):
+        """Test that calling close() multiple times is safe."""
+        cursor.execute("SELECT 1")
+        cursor.fetchone()
+
+        # First close
+        cursor.close()
+        assert cursor.is_closed()
+
+        # Second close should not raise an error
+        cursor.close()
+        assert cursor.is_closed()
+
+    def test_statement_cleanup_on_execute_failure(self, cursor):
+        """Test that statement handles are cleaned up even if execute fails."""
+        # Execute a successful query first
+        cursor.execute("SELECT 1")
+        assert cursor.fetchone() == (1,)
+
+        # Try to execute an invalid query
+        try:
+            cursor.execute("SELECT * FROM nonexistent_table_xyz")
+        except Exception:
+            pass  # Expected to fail
+
+        # Should be able to execute a new valid query after failure
+        cursor.execute("SELECT 2")
+        assert cursor.fetchone() == (2,)
 
 
 class TestCursorMethods:
