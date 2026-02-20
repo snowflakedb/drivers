@@ -182,11 +182,6 @@ message ArrowSchemaPtr {
   bytes value = 1;
 }
 
-// Arrow array pointer
-message ArrowArrayPtr {
-  bytes value = 1;
-}
-
 // =============================================================================
 // POINTER TYPES - For passing data references to core
 // =============================================================================
@@ -497,23 +492,6 @@ message StatementGetParameterSchemaResponse {
   ArrowSchemaPtr schema = 1;
 }
 
-message StatementBindRequest {
-  StatementHandle stmt_handle = 1;
-  ArrowSchemaPtr schema = 2;
-  ArrowArrayPtr array = 3;
-}
-
-message StatementBindResponse {
-}
-
-message StatementBindStreamRequest {
-  StatementHandle stmt_handle = 1;
-  bytes stream = 2;
-}
-
-message StatementBindStreamResponse {
-}
-
 // Extend current StatementExecute
 message StatementExecuteQueryRequest {
   StatementHandle stmt_handle = 1;
@@ -620,8 +598,6 @@ service DatabaseDriver {
   rpc StatementSetOptionInt(StatementSetOptionIntRequest) returns (StatementSetOptionIntResponse);
   rpc StatementSetOptionDouble(StatementSetOptionDoubleRequest) returns (StatementSetOptionDoubleResponse);
   rpc StatementGetParameterSchema(StatementGetParameterSchemaRequest) returns (StatementGetParameterSchemaResponse);
-  rpc StatementBind(StatementBindRequest) returns (StatementBindResponse);
-  rpc StatementBindStream(StatementBindStreamRequest) returns (StatementBindStreamResponse);
   rpc StatementExecuteQuery(StatementExecuteQueryRequest) returns (StatementExecuteQueryResponse);
   rpc StatementExecutePartitions(StatementExecutePartitionsRequest) returns (StatementExecutePartitionsResponse);
   rpc StatementReadPartition(StatementReadPartitionRequest) returns (StatementReadPartitionResponse);
