@@ -182,8 +182,7 @@ class Connection:
         # atexit.unregister() is idempotent, safe to call multiple times.
         atexit.unregister(self._close_at_process_exit)
 
-        if self.is_closed():
-            return  # Already closed, idempotent
+        # Note: Idempotence is handled atomically in Core (connection_close)
 
         # Default to True (auto-detection enabled for backward compatibility)
         effective_enable_auto = (
