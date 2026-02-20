@@ -80,17 +80,16 @@ Feature: INT type support
     When Query "SELECT * FROM <table> ORDER BY col" is executed
     Then Result should contain 50000 sequentially numbered rows from 0 to 49999
 
-  @python_e2e @odbc_e2e
-  Scenario: should handle server-side Arrow memory optimization for int columns
+  @python_e2e @odbc_e2e @jdbc_e2e
+  Scenario: should handle server-side Arrow memory optimization for int columns on multiple chunks
     Given Snowflake client is logged in
     And Table with four INT columns exists
-    And Each column contains values of different magnitudes:
+    And Each column contains values of different magnitudes (50000 rows to span multiple Arrow chunks)
       | Column    | Values          | Arrow Type |
       | col_int8  | -128 to 127     | Int8       |
       | col_int16 | -32768 to 32767 | Int16      |
       | col_int32 | -2B to 2B       | Int32      |
       | col_int64 | -9Q to 9Q       | Int64      |
-    And Table contains 50000 rows to span multiple Arrow chunks
     When Query "SELECT * FROM <table>" is executed
     Then Result should contain 50000 rows
     And All values should be equal to expected data
