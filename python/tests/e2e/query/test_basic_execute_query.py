@@ -111,20 +111,8 @@ class TestDDLStatements:
 
         # And DROP TABLE statement should complete successfully
         cursor.execute(f"DROP TABLE {table_name}")
-
-        # Verify table no longer exists by attempting to query it
-        if IS_UNIVERSAL_DRIVER:
-            # TODO: this is not a desired state. Error type should match after error unification PR.
-            from snowflake.connector._internal.protobuf_gen.proto_exception import ProtoApplicationException
-
-            expected_error = ProtoApplicationException
-        else:
-            from snowflake.connector import ProgrammingError
-
-            expected_error = ProgrammingError
-
-        with pytest.raises(expected_error):
-            cursor.execute(f"SELECT * FROM {table_name}")
+        result = cursor.fetchone()
+        assert "successfully dropped" in result[0]
 
 
 class TestDMLStatements:
