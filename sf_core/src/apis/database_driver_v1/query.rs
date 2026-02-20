@@ -76,10 +76,35 @@ async fn read_batches(
             .await
         } else {
             ChunkReader::single_chunk(rowset_bytes)
-        }
-        .context(ChunkReadingSnafu)?;
+        };
 
-        Ok(Box::new(reader_result))
+        // Handle empty result sets - when the Arrow IPC stream doesn't have a valid
+        // schema message (SNOW-2997744), fall back to creating an empty reader
+        // using the schema from row_type
+        match reader_result {
+            Ok(reader) => Ok(Box::new(reader)),
+            Err(e) => {
+                // Check if this is an empty stream error and we have row_type to create schema
+                let error_msg = format!("{:?}", e);
+                let is_empty_stream = error_msg.contains("empty stream")
+                    || error_msg.contains("Expected schema message");
+
+                if is_empty_stream {
+                    if let Some(rowtype) = &data.row_type {
+                        let row_types = rowtype
+                            .iter()
+                            .map(|rt| rt.try_into())
+                            .collect::<Result<Vec<_>, _>>()
+                            .context(RowTypeParsingSnafu)?;
+                        let schema = create_schema(&row_types).context(SchemaCreationSnafu)?;
+                        return boxed_arrow_reader(schema, vec![])
+                            .context(EmptyResultCreationSnafu);
+                    }
+                }
+                // Not an empty stream error or no row_type - return original error
+                Err(e).context(ChunkReadingSnafu)
+            }
+        }
     } else if let (Some(rowset), Some(rowtype)) = (&data.rowset, &data.row_type) {
         let row_types = rowtype
             .iter()
@@ -271,6 +296,18 @@ pub enum ReadBatchesError {
     #[snafu(display("Failed to convert rowset to Arrow format"))]
     RowsetConversion {
         source: ArrowUtilsError,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Failed to create schema for empty result set"))]
+    SchemaCreation {
+        source: ArrowUtilsError,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Failed to create empty result reader"))]
+    EmptyResultCreation {
+        source: ArrowError,
         #[snafu(implicit)]
         location: Location,
     },

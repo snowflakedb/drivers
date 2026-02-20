@@ -115,6 +115,13 @@ pub fn boxed_arrow_reader(
     schema: Arc<Schema>,
     columns: Vec<Arc<dyn Array>>,
 ) -> Result<Box<dyn arrow::record_batch::RecordBatchReader + Send>, ArrowError> {
+    // Handle empty result sets - create iterator with no batches but valid schema
+    if columns.is_empty() && !schema.fields().is_empty() {
+        return Ok(Box::new(arrow::record_batch::RecordBatchIterator::new(
+            vec![],
+            schema,
+        )));
+    }
     let batch = RecordBatch::try_new(schema.clone(), columns)?;
     Ok(Box::new(arrow::record_batch::RecordBatchIterator::new(
         vec![Ok(batch)],
