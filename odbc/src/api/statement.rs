@@ -312,7 +312,8 @@ pub fn bind_col(
                 target_type,
                 target_value_ptr,
                 buffer_length,
-                str_len_or_ind_ptr,
+                octet_length_ptr: str_len_or_ind_ptr,
+                indicator_ptr: str_len_or_ind_ptr,
                 precision: None,
                 scale: None,
             },
@@ -327,8 +328,10 @@ pub fn set_stmt_attr(
     attribute: sql::Integer,
     value_ptr: sql::Pointer,
     _string_length: sql::Integer,
+    warnings: &mut crate::conversion::warning::Warnings,
 ) -> OdbcResult<()> {
-    use crate::api::StmtAttr;
+    use crate::api::{CursorType, StmtAttr};
+    use crate::conversion::warning::Warning;
 
     tracing::debug!(
         "set_stmt_attr: statement_handle={:?}, attribute={}, value_ptr={:?}",
@@ -341,6 +344,24 @@ pub fn set_stmt_attr(
     let stmt = stmt_from_handle(statement_handle);
 
     match attr {
+        StmtAttr::CursorType => {
+            let raw = value_ptr as sql::ULen;
+            let requested = CursorType::try_from(raw)?;
+            tracing::debug!("set_stmt_attr: CursorType requested = {requested:?}");
+            if requested != CursorType::ForwardOnly {
+                stmt.cursor_type = CursorType::ForwardOnly;
+                warnings.push(Warning::OptionValueChanged);
+            } else {
+                stmt.cursor_type = CursorType::ForwardOnly;
+            }
+            Ok(())
+        }
+        StmtAttr::MaxLength => {
+            let length = value_ptr as sql::ULen;
+            tracing::debug!("set_stmt_attr: MaxLength = {}", length);
+            stmt.max_length = length;
+            Ok(())
+        }
         StmtAttr::UseBookmarks => {
             tracing::debug!("set_stmt_attr: UseBookmarks (ignored, bookmarks not supported)");
             Ok(())
@@ -408,6 +429,30 @@ pub fn get_stmt_attr(
     let stmt = stmt_from_handle(statement_handle);
 
     match attr {
+        StmtAttr::CursorType => {
+            unsafe {
+                std::ptr::write_unaligned(
+                    value_ptr as *mut sql::ULen,
+                    stmt.cursor_type as sql::ULen,
+                );
+                if !string_length_ptr.is_null() {
+                    std::ptr::write_unaligned(
+                        string_length_ptr,
+                        std::mem::size_of::<sql::ULen>() as sql::Integer,
+                    );
+                }
+            }
+            Ok(())
+        }
+        StmtAttr::MaxLength => {
+            unsafe {
+                *(value_ptr as *mut sql::ULen) = stmt.max_length;
+                if !string_length_ptr.is_null() {
+                    *string_length_ptr = std::mem::size_of::<sql::ULen>() as sql::Integer;
+                }
+            }
+            Ok(())
+        }
         StmtAttr::AppRowDesc => {
             let ard_ptr = &mut stmt.ard as *mut crate::api::ArdDescriptor as sql::Handle;
             unsafe {

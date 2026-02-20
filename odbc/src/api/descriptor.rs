@@ -129,11 +129,20 @@ fn get_ard_field(
                 }
                 Ok(())
             }
-            DescField::IndicatorPtr | DescField::OctetLengthPtr => {
+            DescField::IndicatorPtr => {
                 unsafe {
                     std::ptr::write_unaligned(
                         value_ptr as *mut *mut sql::Len,
-                        binding.str_len_or_ind_ptr,
+                        binding.indicator_ptr,
+                    );
+                }
+                Ok(())
+            }
+            DescField::OctetLengthPtr => {
+                unsafe {
+                    std::ptr::write_unaligned(
+                        value_ptr as *mut *mut sql::Len,
+                        binding.octet_length_ptr,
                     );
                 }
                 Ok(())
@@ -344,7 +353,7 @@ fn set_ard_field(
                 let ptr = value_ptr as *mut sql::Len;
                 tracing::debug!("set_desc_field: setting indicator_ptr on record {column_number}");
                 let binding = desc.bindings.entry(column_number).or_default();
-                binding.str_len_or_ind_ptr = ptr;
+                binding.indicator_ptr = ptr;
                 Ok(())
             }
             DescField::OctetLengthPtr => {
@@ -353,7 +362,7 @@ fn set_ard_field(
                     "set_desc_field: setting octet_length_ptr on record {column_number}"
                 );
                 let binding = desc.bindings.entry(column_number).or_default();
-                binding.str_len_or_ind_ptr = ptr;
+                binding.octet_length_ptr = ptr;
                 Ok(())
             }
             _ => {

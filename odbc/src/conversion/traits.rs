@@ -1,15 +1,27 @@
 use odbc_sys as sql;
 
 use crate::cdata_types::CDataType;
-use crate::conversion::error::{ReadArrowError, WriteOdbcError};
+use crate::conversion::error::{IndicatorRequiredSnafu, ReadArrowError, WriteOdbcError};
 use crate::conversion::warning::{Warning, Warnings};
+
+pub enum LengthOrNull {
+    Null,
+    Length(sql::Len),
+}
 
 #[derive(Debug, Default)]
 pub struct Binding {
     pub target_type: CDataType,
     pub target_value_ptr: sql::Pointer,
     pub buffer_length: sql::Len,
-    pub str_len_or_ind_ptr: *mut sql::Len,
+    /// Octet-length pointer — receives the byte length of the data after fetch.
+    /// Set by `SQLBindCol` (combined StrLen/Ind role) or `SQL_DESC_OCTET_LENGTH_PTR`.
+    pub octet_length_ptr: *mut sql::Len,
+    /// Indicator (StrLen_or_Ind) pointer.
+    /// When `SQLBindCol` is used with a combined StrLen/Ind buffer, this is the same
+    /// pointer as `octet_length_ptr`. When separate descriptor fields are used, this
+    /// may be distinct from `octet_length_ptr` or null if no indicator is bound.
+    pub indicator_ptr: *mut sql::Len,
     /// Numeric precision, set via SQLSetDescField(SQL_DESC_PRECISION) on the ARD.
     /// Used for SQL_C_NUMERIC conversions.
     pub precision: Option<i16>,
@@ -19,22 +31,50 @@ pub struct Binding {
 }
 
 impl Binding {
+    pub fn write_length_or_null(&self, length_or_null: LengthOrNull) -> Result<(), WriteOdbcError> {
+        match length_or_null {
+            LengthOrNull::Null => {
+                if self.indicator_ptr.is_null() {
+                    return IndicatorRequiredSnafu.fail();
+                }
+                unsafe {
+                    std::ptr::write(self.indicator_ptr, crate::cdata_types::SQL_NULL_DATA);
+                }
+                Ok(())
+            }
+            LengthOrNull::Length(length) => {
+                if !self.octet_length_ptr.is_null() {
+                    if !self.indicator_ptr.is_null() {
+                        unsafe { std::ptr::write(self.indicator_ptr, 0) };
+                    }
+                    unsafe { std::ptr::write(self.octet_length_ptr, length) };
+                } else if !self.indicator_ptr.is_null() {
+                    unsafe { std::ptr::write(self.indicator_ptr, length as sql::Len) };
+                }
+                Ok(())
+            }
+        }
+    }
+
     pub fn write_fixed<T>(&self, value: T) {
         unsafe {
             if !self.target_value_ptr.is_null() {
                 std::ptr::write(self.target_value_ptr as *mut T, value);
             }
-            if !self.str_len_or_ind_ptr.is_null() {
-                std::ptr::write(
-                    self.str_len_or_ind_ptr,
-                    std::mem::size_of::<T>() as sql::Len,
-                );
-            }
         }
+        let _ =
+            self.write_length_or_null(LengthOrNull::Length(std::mem::size_of::<T>() as sql::Len));
     }
 
     pub fn write_char_string(&self, src: &str, get_data_offset: &mut Option<usize>) -> Warnings {
+        if self.target_value_ptr.is_null() || self.buffer_length <= 0 {
+            let total_chars = src.chars().count() as sql::Len;
+            let _ = self.write_length_or_null(LengthOrNull::Length(total_chars));
+            return vec![Warning::StringDataTruncated];
+        }
+
         let offset = get_data_offset.unwrap_or(0);
+        let total_chars = src.chars().count();
         let max_len = self.buffer_length as usize;
         let mut dst_idx = 0;
         let value_ptr = self.target_value_ptr as *mut u8;
@@ -42,10 +82,9 @@ impl Binding {
             if dst_idx == max_len - 1 {
                 unsafe {
                     std::ptr::write(value_ptr.add(max_len - 1), 0);
-                    if !self.str_len_or_ind_ptr.is_null() {
-                        std::ptr::write(self.str_len_or_ind_ptr, sql::NO_TOTAL);
-                    }
                 }
+                let remaining = (total_chars - offset) as sql::Len;
+                let _ = self.write_length_or_null(LengthOrNull::Length(remaining));
                 *get_data_offset = Some(offset + dst_idx);
                 return vec![Warning::StringDataTruncated];
             }
@@ -57,10 +96,8 @@ impl Binding {
         }
         unsafe {
             std::ptr::write(value_ptr.add(dst_idx), 0);
-            if !self.str_len_or_ind_ptr.is_null() {
-                std::ptr::write(self.str_len_or_ind_ptr, dst_idx as sql::Len);
-            }
         }
+        let _ = self.write_length_or_null(LengthOrNull::Length(dst_idx as sql::Len));
         *get_data_offset = None;
         vec![]
     }
@@ -79,11 +116,7 @@ impl Binding {
             );
         }
 
-        if !self.str_len_or_ind_ptr.is_null() {
-            unsafe {
-                std::ptr::write(self.str_len_or_ind_ptr, remaining.len() as sql::Len);
-            }
-        }
+        let _ = self.write_length_or_null(LengthOrNull::Length(remaining.len() as sql::Len));
 
         if remaining.len() > buffer_length {
             *get_data_offset = Some(offset + copy_len);
@@ -95,7 +128,14 @@ impl Binding {
     }
 
     pub fn write_wchar_string(&self, src: &str, get_data_offset: &mut Option<usize>) -> Warnings {
+        if self.target_value_ptr.is_null() || self.buffer_length < 2 {
+            let total_bytes = (src.encode_utf16().count() * 2) as sql::Len;
+            let _ = self.write_length_or_null(LengthOrNull::Length(total_bytes));
+            return vec![Warning::StringDataTruncated];
+        }
+
         let offset = get_data_offset.unwrap_or(0);
+        let total_units = src.encode_utf16().count();
         let max_len = (self.buffer_length / 2) as usize;
         let value_ptr = self.target_value_ptr as *mut u16;
         let mut dst_idx = 0;
@@ -103,10 +143,9 @@ impl Binding {
             if dst_idx == max_len - 1 {
                 unsafe {
                     std::ptr::write(value_ptr.add(max_len - 1), 0);
-                    if !self.str_len_or_ind_ptr.is_null() {
-                        std::ptr::write(self.str_len_or_ind_ptr, sql::NO_TOTAL);
-                    }
                 }
+                let remaining_bytes = ((total_units - offset) * 2) as sql::Len;
+                let _ = self.write_length_or_null(LengthOrNull::Length(remaining_bytes));
                 *get_data_offset = Some(offset + dst_idx);
                 return vec![Warning::StringDataTruncated];
             }
@@ -117,15 +156,11 @@ impl Binding {
         }
         unsafe {
             std::ptr::write(value_ptr.add(dst_idx), 0);
-            if !self.str_len_or_ind_ptr.is_null() {
-                // COMPATIBILITY: ODBC 3.80 specification says that the string length should be the number of characters, not the number of bytes.
-                // However, older versions of Snowflake ODBC driver returns the number of bytes.
-                // So we need to convert the number of characters to the number of bytes.
-                let num_characters = dst_idx as sql::Len;
-                let num_bytes = num_characters * 2;
-                std::ptr::write(self.str_len_or_ind_ptr, num_bytes);
-            }
         }
+        // COMPATIBILITY: ODBC 3.80 specification says that the string length should be the number of characters, not the number of bytes.
+        // However, older versions of Snowflake ODBC driver returns the number of bytes.
+        let num_bytes = (dst_idx as sql::Len) * 2;
+        let _ = self.write_length_or_null(LengthOrNull::Length(num_bytes));
         *get_data_offset = None;
         vec![]
     }

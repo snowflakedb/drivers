@@ -17,7 +17,7 @@ use arrow::datatypes::{
     DataType, Date32Type, Decimal128Type, Field, Int8Type, Int16Type, Int32Type, Int64Type,
 };
 use snafu::ResultExt;
-pub use traits::{Binding, ReadArrowType, SnowflakeType, WriteODBCType};
+pub use traits::{Binding, LengthOrNull, ReadArrowType, SnowflakeType, WriteODBCType};
 
 pub use error::{
     ArrowArrayDowncastSnafu, ConversionError, FieldMetadataParsingSnafu, MissingFieldMetadataSnafu,

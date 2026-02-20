@@ -8,12 +8,26 @@ use tracing;
 
 /// Get the number of result columns
 pub fn num_result_cols(
-    _statement_handle: sql::Handle,
+    statement_handle: sql::Handle,
     column_count_ptr: *mut sql::SmallInt,
 ) -> OdbcResult<()> {
     tracing::debug!("num_result_cols called");
+    let stmt = stmt_from_handle(statement_handle);
+
+    let schema = match stmt.state.as_ref() {
+        StatementState::Executed { reader, .. } => reader.schema(),
+        StatementState::Fetching { record_batch, .. } => record_batch.schema(),
+        _ => return StatementNotExecutedSnafu.fail(),
+    };
+
+    let num_cols = schema.fields().len() as sql::SmallInt;
+
+    if column_count_ptr.is_null() {
+        tracing::warn!("num_result_cols: null column_count_ptr");
+        return crate::api::error::NullPointerSnafu.fail();
+    }
     unsafe {
-        std::ptr::write(column_count_ptr, 1);
+        std::ptr::write(column_count_ptr, num_cols);
     }
     Ok(())
 }

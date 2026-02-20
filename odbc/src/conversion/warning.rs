@@ -5,4 +5,5 @@ pub enum Warning {
     StringDataTruncated,
     NumericValueTruncated,
     RowError,
+    OptionValueChanged,
 }

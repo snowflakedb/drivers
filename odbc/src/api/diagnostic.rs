@@ -225,11 +225,13 @@ pub fn from_warning(warning: &Warning) -> DiagnosticRecord {
         Warning::StringDataTruncated => "String data truncated",
         Warning::NumericValueTruncated => "Numeric value truncated",
         Warning::RowError => "Error in row",
+        Warning::OptionValueChanged => "Option value changed",
     };
     let sql_state = match warning {
         Warning::StringDataTruncated => SqlState::StringDataRightTruncated,
         Warning::NumericValueTruncated => SqlState::FractionalTruncation,
         Warning::RowError => SqlState::ErrorInRow,
+        Warning::OptionValueChanged => SqlState::OptionValueChanged,
     };
     DiagnosticRecord {
         native_error: 0,

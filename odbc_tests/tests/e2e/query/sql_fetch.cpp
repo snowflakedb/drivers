@@ -48,7 +48,6 @@ TEST_CASE("SQLFetch returns data about number of rows affected.") {
 }
 
 TEST_CASE("SQLSetStmtAttr sets supported cursor types.") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
@@ -524,7 +523,6 @@ TEST_CASE("SQLFetch respects SQL_DESC_BIND_TYPE set on ARD for row-wise binding.
 }
 
 TEST_CASE("SQLFetch respects SQL_DESC_COUNT set on ARD.") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
@@ -568,7 +566,6 @@ TEST_CASE("SQLFetch respects SQL_DESC_COUNT set on ARD.") {
 }
 
 TEST_CASE("SQLFetch respects SQL_DESC_DATA_PTR set on ARD.") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
@@ -603,7 +600,6 @@ TEST_CASE("SQLFetch respects SQL_DESC_DATA_PTR set on ARD.") {
 }
 
 TEST_CASE("SQLFetch respects SQL_DESC_INDICATOR_PTR set on ARD.") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
@@ -638,7 +634,6 @@ TEST_CASE("SQLFetch respects SQL_DESC_INDICATOR_PTR set on ARD.") {
 }
 
 TEST_CASE("SQLFetch respects SQL_DESC_OCTET_LENGTH set on ARD.") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
@@ -676,7 +671,6 @@ TEST_CASE("SQLFetch respects SQL_DESC_OCTET_LENGTH set on ARD.") {
 }
 
 TEST_CASE("SQLFetch respects SQL_DESC_OCTET_LENGTH_PTR set on ARD.") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
@@ -750,7 +744,6 @@ TEST_CASE("SQLFetch respects SQL_DESC_ROWS_PROCESSED_PTR set on IRD.") {
 }
 
 TEST_CASE("SQLFetch respects SQL_DESC_TYPE set on ARD.") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
@@ -907,7 +900,6 @@ TEST_CASE("SQLFetch respects both ARD and IRD descriptor fields.") {
 // Note: This is old driver behavior - not the specification.
 // Specifically, the specification says that the data should be truncated to the SQL_ATTR_MAX_LENGTH characters
 TEST_CASE("SQLFetch ignores SQL_ATTR_MAX_LENGTH on statement handle.", "[query]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
@@ -1091,7 +1083,6 @@ TEST_CASE("SQLFetch moves cursor forward when no columns are bound.", "[query]")
 }
 
 TEST_CASE("SQLFetch supports separate length and indicator buffers via descriptor.", "[query]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
@@ -1149,7 +1140,6 @@ TEST_CASE("SQLFetch supports separate length and indicator buffers via descripto
 }
 
 TEST_CASE("SQLFetch cannot be called after SQLExtendedFetch without SQLFreeStmt.", "[query]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();

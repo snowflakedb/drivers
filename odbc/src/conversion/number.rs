@@ -1,6 +1,5 @@
 use arrow::array::{Array, ArrowPrimitiveType, PrimitiveArray};
 use odbc_sys as sql;
-use odbc_sys::Len;
 
 use crate::cdata_types::CDataType;
 use crate::conversion::error::{
@@ -49,7 +48,7 @@ impl WriteODBCType for SnowflakeNumber {
         &self,
         snowflake_value: Self::Representation<'_>,
         binding: &Binding,
-        _get_data_offset: &mut Option<usize>,
+        get_data_offset: &mut Option<usize>,
     ) -> Result<Warnings, WriteOdbcError> {
         match binding.target_type {
             CDataType::Double => {
@@ -210,18 +209,7 @@ impl WriteODBCType for SnowflakeNumber {
                 } else {
                     snowflake_value.to_string()
                 };
-                let bytes = num_str.as_bytes();
-                if !binding.str_len_or_ind_ptr.is_null() {
-                    unsafe { std::ptr::write(binding.str_len_or_ind_ptr, bytes.len() as Len) };
-                }
-                unsafe {
-                    std::ptr::copy_nonoverlapping(
-                        bytes.as_ptr(),
-                        binding.target_value_ptr as *mut u8,
-                        std::cmp::min(binding.buffer_length as usize, bytes.len()),
-                    );
-                }
-                Ok(vec![])
+                Ok(binding.write_char_string(&num_str, get_data_offset))
             }
             _ => UnsupportedOdbcTypeSnafu {
                 target_type: binding.target_type,

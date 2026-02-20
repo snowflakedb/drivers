@@ -127,13 +127,51 @@ impl Bitmask for GetDataExtensions {
     }
 }
 
+/// ODBC cursor type values (matching `SQL_CURSOR_*` constants from `sql.h`).
+#[repr(u64)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum CursorType {
+    /// `SQL_CURSOR_FORWARD_ONLY` (0) — sequential access only.
+    ForwardOnly = 0,
+    /// `SQL_CURSOR_KEYSET_DRIVEN` (1) — keyset-driven cursor.
+    KeysetDriven = 1,
+    /// `SQL_CURSOR_DYNAMIC` (2) — dynamic cursor.
+    Dynamic = 2,
+    /// `SQL_CURSOR_STATIC` (3) — static cursor.
+    Static = 3,
+}
+
+impl TryFrom<sql::ULen> for CursorType {
+    type Error = OdbcError;
+
+    fn try_from(value: sql::ULen) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(CursorType::ForwardOnly),
+            1 => Ok(CursorType::KeysetDriven),
+            2 => Ok(CursorType::Dynamic),
+            3 => Ok(CursorType::Static),
+            _ => {
+                tracing::warn!("Unsupported cursor type: {}", value);
+                Err(OdbcError::UnknownAttribute {
+                    attribute: value as i32,
+                    location: snafu::location!(),
+                })
+            }
+        }
+    }
+}
+
 /// ODBC statement attribute identifiers (matching `SQL_ATTR_*` constants from `sql.h`).
 #[repr(i32)]
 #[allow(clippy::enum_variant_names)]
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum StmtAttr {
+    /// `SQL_ATTR_MAX_LENGTH` (3) — maximum amount of data returned from character/binary columns.
+    MaxLength = 3,
     /// `SQL_ATTR_ROW_BIND_TYPE` (5) — row-wise vs column-wise binding.
     RowBindType = 5,
+    /// `SQL_ATTR_CURSOR_TYPE` (6) — type of cursor.
+    CursorType = 6,
     /// `SQL_ATTR_USE_BOOKMARKS` (12) — whether bookmarks are used.
     UseBookmarks = 12,
     /// `SQL_ATTR_ROW_BIND_OFFSET_PTR` (23) — binding offset pointer.
@@ -159,7 +197,9 @@ impl TryFrom<i32> for StmtAttr {
 
     fn try_from(value: i32) -> Result<Self, Self::Error> {
         match value {
+            3 => Ok(StmtAttr::MaxLength),
             5 => Ok(StmtAttr::RowBindType),
+            6 => Ok(StmtAttr::CursorType),
             12 => Ok(StmtAttr::UseBookmarks),
             23 => Ok(StmtAttr::RowBindOffsetPtr),
             25 => Ok(StmtAttr::RowStatusPtr),
@@ -549,6 +589,10 @@ pub struct Statement<'a> {
     pub ird: IrdDescriptor,
     pub diagnostic_info: DiagnosticInfo,
     pub get_data_state: Option<GetDataState>,
+    /// `SQL_ATTR_CURSOR_TYPE` — default `ForwardOnly`.
+    pub cursor_type: CursorType,
+    /// `SQL_ATTR_MAX_LENGTH` — default 0 (no limit). Stored but not enforced.
+    pub max_length: sql::ULen,
 }
 
 // Helper functions for handle conversion

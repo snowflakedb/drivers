@@ -48,7 +48,10 @@ pub unsafe extern "C" fn SQLExecDirect(
     statement_text: *const sql::Char,
     text_length: sql::Integer,
 ) -> sql::RetCode {
-    api::statement::exec_direct_n(statement_handle, statement_text, text_length).to_sql_code()
+    api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
+    let result = api::statement::exec_direct_n(statement_handle, statement_text, text_length);
+    api::diagnostic::set_diag_info_from_result(sql::HandleType::Stmt, statement_handle, &result);
+    result.to_sql_code()
 }
 
 /// # Safety
@@ -59,7 +62,10 @@ pub unsafe extern "C" fn SQLExecDirectW(
     statement_text: *const sql::WChar,
     text_length: sql::Integer,
 ) -> sql::RetCode {
-    api::statement::exec_direct_w(statement_handle, statement_text, text_length).to_sql_code()
+    api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
+    let result = api::statement::exec_direct_w(statement_handle, statement_text, text_length);
+    api::diagnostic::set_diag_info_from_result(sql::HandleType::Stmt, statement_handle, &result);
+    result.to_sql_code()
 }
 
 /// # Safety
@@ -468,8 +474,22 @@ pub unsafe extern "C" fn SQLSetStmtAttr(
     value_ptr: sql::Pointer,
     string_length: sql::Integer,
 ) -> sql::RetCode {
-    api::statement::set_stmt_attr(statement_handle, attribute, value_ptr, string_length)
-        .to_sql_code()
+    api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
+    let mut warnings = vec![];
+    let result = api::statement::set_stmt_attr(
+        statement_handle,
+        attribute,
+        value_ptr,
+        string_length,
+        &mut warnings,
+    );
+    api::diagnostic::set_diag_info_from_warnings(
+        sql::HandleType::Stmt,
+        statement_handle,
+        &warnings,
+    );
+    api::diagnostic::set_diag_info_from_result(sql::HandleType::Stmt, statement_handle, &result);
+    result.to_sql_code_with_warnings(&warnings)
 }
 
 /// # Safety
