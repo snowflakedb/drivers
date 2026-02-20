@@ -784,11 +784,32 @@ impl DatabaseDriver for DatabaseDriverImpl {
         ))
     }
 
-    #[instrument(name = "DatabaseDriverV1::config_load_all_sections", skip(_input))]
+    #[instrument(name = "DatabaseDriverV1::config_load_all_sections", skip(input))]
     fn config_load_all_sections(
-        _input: ConfigLoadAllSectionsRequest,
+        input: ConfigLoadAllSectionsRequest,
     ) -> Result<ConfigLoadAllSectionsResponse, DriverException> {
-        let all_sections = config_manager::load_all_config_sections().map_err(|e| {
+        let all_sections = if input.config_file.is_some() || input.connections_file.is_some() {
+            let default_paths = path_resolver::get_config_paths().map_err(|e| {
+                to_driver_exception(ApiError::Configuration {
+                    source: e,
+                    location: snafu::Location::new(file!(), line!(), 0),
+                })
+            })?;
+            let paths = path_resolver::ConfigPaths {
+                config_file: input
+                    .config_file
+                    .map(std::path::PathBuf::from)
+                    .unwrap_or(default_paths.config_file),
+                connections_file: input
+                    .connections_file
+                    .map(std::path::PathBuf::from)
+                    .unwrap_or(default_paths.connections_file),
+            };
+            config_manager::load_all_config_sections_with_paths(&paths)
+        } else {
+            config_manager::load_all_config_sections()
+        }
+        .map_err(|e| {
             to_driver_exception(ApiError::Configuration {
                 source: e,
                 location: snafu::Location::new(file!(), line!(), 0),
@@ -813,6 +834,9 @@ impl DatabaseDriver for DatabaseDriverImpl {
                             },
                             Setting::Bytes(b) => ConfigSetting {
                                 value: Some(config_setting::Value::BytesValue(b)),
+                            },
+                            Setting::Bool(b) => ConfigSetting {
+                                value: Some(config_setting::Value::BoolValue(b)),
                             },
                         };
                         (key, proto_value)

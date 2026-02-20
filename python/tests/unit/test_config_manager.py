@@ -1,8 +1,12 @@
 """Unit tests for the ConfigManager implementation."""
 
+import os
+
+from unittest import mock
+
 import pytest
 
-from snowflake.connector.config_manager import ConfigManager, ConfigOption
+from snowflake.connector.config_manager import CONFIG_MANAGER, ConfigManager, ConfigOption
 from tests.compatibility import IS_UNIVERSAL_DRIVER
 
 
@@ -65,3 +69,8 @@ class TestParseConfigSetting:
         bytes_value = b"test bytes"
         setting = ConfigSetting(bytes_value=bytes_value)
         assert _parse_config_setting(setting) == bytes_value
+
+    @mock.patch.dict(os.environ, {"SNOWFLAKE_DEFAULT_CONNECTION_NAME": "test"})
+    def test_get_default_connection_name_from_env(self):
+        value = CONFIG_MANAGER["default_connection_name"]
+        assert value == "test"

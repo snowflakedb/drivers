@@ -6,10 +6,16 @@ use std::path::Path;
 
 /// Load a TOML file from disk and parse it
 pub fn load_toml_file(path: &Path) -> Result<toml::Value, ConfigError> {
-    // Check if file exists
-    if !path.exists() {
-        // Return an empty table if file doesn't exist
-        return Ok(toml::Value::Table(toml::map::Map::new()));
+    match path.try_exists() {
+        Ok(false) => return Ok(toml::Value::Table(toml::map::Map::new())),
+        Err(e) => {
+            return Err(ConfigError::ConfigFileRead {
+                path: path.display().to_string(),
+                source: e,
+                location: snafu::Location::new(file!(), line!(), 0),
+            });
+        }
+        Ok(true) => {}
     }
 
     // Check file permissions before reading

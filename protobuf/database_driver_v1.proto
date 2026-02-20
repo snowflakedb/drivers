@@ -523,6 +523,7 @@ message ConfigSetting {
     int64 int_value = 2;
     double double_value = 3;
     bytes bytes_value = 4;
+    bool bool_value = 5;
   }
 }
 
@@ -534,6 +535,8 @@ message ConfigSection {
 // Config service requests and responses
 
 message ConfigLoadAllSectionsRequest {
+  optional string config_file = 1;
+  optional string connections_file = 2;
 }
 
 message ConfigLoadAllSectionsResponse {

@@ -57451,6 +57451,17 @@ java.lang.String defaultValue) {
      */
     com.google.protobuf.ByteString getBytesValue();
 
+    /**
+     * <code>bool bool_value = 5;</code>
+     * @return Whether the boolValue field is set.
+     */
+    boolean hasBoolValue();
+    /**
+     * <code>bool bool_value = 5;</code>
+     * @return The boolValue.
+     */
+    boolean getBoolValue();
+
     net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSetting.ValueCase getValueCase();
   }
   /**
@@ -57504,6 +57515,7 @@ java.lang.String defaultValue) {
       INT_VALUE(2),
       DOUBLE_VALUE(3),
       BYTES_VALUE(4),
+      BOOL_VALUE(5),
       VALUE_NOT_SET(0);
       private final int value;
       private ValueCase(int value) {
@@ -57525,6 +57537,7 @@ java.lang.String defaultValue) {
           case 2: return INT_VALUE;
           case 3: return DOUBLE_VALUE;
           case 4: return BYTES_VALUE;
+          case 5: return BOOL_VALUE;
           case 0: return VALUE_NOT_SET;
           default: return null;
         }
@@ -57655,6 +57668,27 @@ java.lang.String defaultValue) {
       return com.google.protobuf.ByteString.EMPTY;
     }
 
+    public static final int BOOL_VALUE_FIELD_NUMBER = 5;
+    /**
+     * <code>bool bool_value = 5;</code>
+     * @return Whether the boolValue field is set.
+     */
+    @java.lang.Override
+    public boolean hasBoolValue() {
+      return valueCase_ == 5;
+    }
+    /**
+     * <code>bool bool_value = 5;</code>
+     * @return The boolValue.
+     */
+    @java.lang.Override
+    public boolean getBoolValue() {
+      if (valueCase_ == 5) {
+        return (java.lang.Boolean) value_;
+      }
+      return false;
+    }
+
     private byte memoizedIsInitialized = -1;
     @java.lang.Override
     public final boolean isInitialized() {
@@ -57684,6 +57718,10 @@ java.lang.String defaultValue) {
         output.writeBytes(
             4, (com.google.protobuf.ByteString) value_);
       }
+      if (valueCase_ == 5) {
+        output.writeBool(
+            5, (boolean)((java.lang.Boolean) value_));
+      }
       getUnknownFields().writeTo(output);
     }
 
@@ -57710,6 +57748,11 @@ java.lang.String defaultValue) {
         size += com.google.protobuf.CodedOutputStream
           .computeBytesSize(
               4, (com.google.protobuf.ByteString) value_);
+      }
+      if (valueCase_ == 5) {
+        size += com.google.protobuf.CodedOutputStream
+          .computeBoolSize(
+              5, (boolean)((java.lang.Boolean) value_));
       }
       size += getUnknownFields().getSerializedSize();
       memoizedSize = size;
@@ -57745,6 +57788,10 @@ java.lang.String defaultValue) {
           if (!getBytesValue()
               .equals(other.getBytesValue())) return false;
           break;
+        case 5:
+          if (getBoolValue()
+              != other.getBoolValue()) return false;
+          break;
         case 0:
         default:
       }
@@ -57777,6 +57824,11 @@ java.lang.String defaultValue) {
         case 4:
           hash = (37 * hash) + BYTES_VALUE_FIELD_NUMBER;
           hash = (53 * hash) + getBytesValue().hashCode();
+          break;
+        case 5:
+          hash = (37 * hash) + BOOL_VALUE_FIELD_NUMBER;
+          hash = (53 * hash) + com.google.protobuf.Internal.hashBoolean(
+              getBoolValue());
           break;
         case 0:
         default:
@@ -57990,6 +58042,10 @@ java.lang.String defaultValue) {
             setBytesValue(other.getBytesValue());
             break;
           }
+          case BOOL_VALUE: {
+            setBoolValue(other.getBoolValue());
+            break;
+          }
           case VALUE_NOT_SET: {
             break;
           }
@@ -58041,6 +58097,11 @@ java.lang.String defaultValue) {
                 valueCase_ = 4;
                 break;
               } // case 34
+              case 40: {
+                value_ = input.readBool();
+                valueCase_ = 5;
+                break;
+              } // case 40
               default: {
                 if (!super.parseUnknownField(input, extensionRegistry, tag)) {
                   done = true; // was an endgroup tag
@@ -58285,6 +58346,48 @@ java.lang.String defaultValue) {
        */
       public Builder clearBytesValue() {
         if (valueCase_ == 4) {
+          valueCase_ = 0;
+          value_ = null;
+          onChanged();
+        }
+        return this;
+      }
+
+      /**
+       * <code>bool bool_value = 5;</code>
+       * @return Whether the boolValue field is set.
+       */
+      public boolean hasBoolValue() {
+        return valueCase_ == 5;
+      }
+      /**
+       * <code>bool bool_value = 5;</code>
+       * @return The boolValue.
+       */
+      public boolean getBoolValue() {
+        if (valueCase_ == 5) {
+          return (java.lang.Boolean) value_;
+        }
+        return false;
+      }
+      /**
+       * <code>bool bool_value = 5;</code>
+       * @param value The boolValue to set.
+       * @return This builder for chaining.
+       */
+      public Builder setBoolValue(boolean value) {
+
+        valueCase_ = 5;
+        value_ = value;
+        onChanged();
+        return this;
+      }
+      /**
+       * <code>bool bool_value = 5;</code>
+       * @return This builder for chaining.
+       */
+      public Builder clearBoolValue() {
+        if (valueCase_ == 5) {
           valueCase_ = 0;
           value_ = null;
           onChanged();
@@ -59056,6 +59159,40 @@ net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSettin
   public interface ConfigLoadAllSectionsRequestOrBuilder extends
       // @@protoc_insertion_point(interface_extends:database_driver_v1.ConfigLoadAllSectionsRequest)
       com.google.protobuf.MessageOrBuilder {
+
+    /**
+     * <code>optional string config_file = 1;</code>
+     * @return Whether the configFile field is set.
+     */
+    boolean hasConfigFile();
+    /**
+     * <code>optional string config_file = 1;</code>
+     * @return The configFile.
+     */
+    java.lang.String getConfigFile();
+    /**
+     * <code>optional string config_file = 1;</code>
+     * @return The bytes for configFile.
+     */
+    com.google.protobuf.ByteString
+        getConfigFileBytes();
+
+    /**
+     * <code>optional string connections_file = 2;</code>
+     * @return Whether the connectionsFile field is set.
+     */
+    boolean hasConnectionsFile();
+    /**
+     * <code>optional string connections_file = 2;</code>
+     * @return The connectionsFile.
+     */
+    java.lang.String getConnectionsFile();
+    /**
+     * <code>optional string connections_file = 2;</code>
+     * @return The bytes for connectionsFile.
+     */
+    com.google.protobuf.ByteString
+        getConnectionsFileBytes();
   }
   /**
    * Protobuf type {@code database_driver_v1.ConfigLoadAllSectionsRequest}
@@ -59079,6 +59216,8 @@ net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSettin
       super(builder);
     }
     private ConfigLoadAllSectionsRequest() {
+      configFile_ = "";
+      connectionsFile_ = "";
     }
 
     public static final com.google.protobuf.Descriptors.Descriptor
@@ -59092,6 +59231,101 @@ net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSettin
       return net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.internal_static_database_driver_v1_ConfigLoadAllSectionsRequest_fieldAccessorTable
           .ensureFieldAccessorsInitialized(
               net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigLoadAllSectionsRequest.class, net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigLoadAllSectionsRequest.Builder.class);
+    }
+
+    private int bitField0_;
+    public static final int CONFIG_FILE_FIELD_NUMBER = 1;
+    @SuppressWarnings("serial")
+    private volatile java.lang.Object configFile_ = "";
+    /**
+     * <code>optional string config_file = 1;</code>
+     * @return Whether the configFile field is set.
+     */
+    @java.lang.Override
+    public boolean hasConfigFile() {
+      return ((bitField0_ & 0x00000001) != 0);
+    }
+    /**
+     * <code>optional string config_file = 1;</code>
+     * @return The configFile.
+     */
+    @java.lang.Override
+    public java.lang.String getConfigFile() {
+      java.lang.Object ref = configFile_;
+      if (ref instanceof java.lang.String) {
+        return (java.lang.String) ref;
+      } else {
+        com.google.protobuf.ByteString bs = 
+            (com.google.protobuf.ByteString) ref;
+        java.lang.String s = bs.toStringUtf8();
+        configFile_ = s;
+        return s;
+      }
+    }
+    /**
+     * <code>optional string config_file = 1;</code>
+     * @return The bytes for configFile.
+     */
+    @java.lang.Override
+    public com.google.protobuf.ByteString
+        getConfigFileBytes() {
+      java.lang.Object ref = configFile_;
+      if (ref instanceof java.lang.String) {
+        com.google.protobuf.ByteString b = 
+            com.google.protobuf.ByteString.copyFromUtf8(
+                (java.lang.String) ref);
+        configFile_ = b;
+        return b;
+      } else {
+        return (com.google.protobuf.ByteString) ref;
+      }
+    }
+
+    public static final int CONNECTIONS_FILE_FIELD_NUMBER = 2;
+    @SuppressWarnings("serial")
+    private volatile java.lang.Object connectionsFile_ = "";
+    /**
+     * <code>optional string connections_file = 2;</code>
+     * @return Whether the connectionsFile field is set.
+     */
+    @java.lang.Override
+    public boolean hasConnectionsFile() {
+      return ((bitField0_ & 0x00000002) != 0);
+    }
+    /**
+     * <code>optional string connections_file = 2;</code>
+     * @return The connectionsFile.
+     */
+    @java.lang.Override
+    public java.lang.String getConnectionsFile() {
+      java.lang.Object ref = connectionsFile_;
+      if (ref instanceof java.lang.String) {
+        return (java.lang.String) ref;
+      } else {
+        com.google.protobuf.ByteString bs = 
+            (com.google.protobuf.ByteString) ref;
+        java.lang.String s = bs.toStringUtf8();
+        connectionsFile_ = s;
+        return s;
+      }
+    }
+    /**
+     * <code>optional string connections_file = 2;</code>
+     * @return The bytes for connectionsFile.
+     */
+    @java.lang.Override
+    public com.google.protobuf.ByteString
+        getConnectionsFileBytes() {
+      java.lang.Object ref = connectionsFile_;
+      if (ref instanceof java.lang.String) {
+        com.google.protobuf.ByteString b = 
+            com.google.protobuf.ByteString.copyFromUtf8(
+                (java.lang.String) ref);
+        connectionsFile_ = b;
+        return b;
+      } else {
+        return (com.google.protobuf.ByteString) ref;
+      }
     }
 
     private byte memoizedIsInitialized = -1;
@@ -59108,6 +59342,12 @@ net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSettin
     @java.lang.Override
     public void writeTo(com.google.protobuf.CodedOutputStream output)
                         throws java.io.IOException {
+      if (((bitField0_ & 0x00000001) != 0)) {
+        com.google.protobuf.GeneratedMessage.writeString(output, 1, configFile_);
+      }
+      if (((bitField0_ & 0x00000002) != 0)) {
+        com.google.protobuf.GeneratedMessage.writeString(output, 2, connectionsFile_);
+      }
       getUnknownFields().writeTo(output);
     }
 
@@ -59117,6 +59357,12 @@ net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSettin
       if (size != -1) return size;
 
       size = 0;
+      if (((bitField0_ & 0x00000001) != 0)) {
+        size += com.google.protobuf.GeneratedMessage.computeStringSize(1, configFile_);
+      }
+      if (((bitField0_ & 0x00000002) != 0)) {
+        size += com.google.protobuf.GeneratedMessage.computeStringSize(2, connectionsFile_);
+      }
       size += getUnknownFields().getSerializedSize();
       memoizedSize = size;
       return size;
@@ -59132,6 +59378,16 @@ net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSettin
       }
       net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigLoadAllSectionsRequest other = (net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigLoadAllSectionsRequest) obj;
 
+      if (hasConfigFile() != other.hasConfigFile()) return false;
+      if (hasConfigFile()) {
+        if (!getConfigFile()
+            .equals(other.getConfigFile())) return false;
+      }
+      if (hasConnectionsFile() != other.hasConnectionsFile()) return false;
+      if (hasConnectionsFile()) {
+        if (!getConnectionsFile()
+            .equals(other.getConnectionsFile())) return false;
+      }
       if (!getUnknownFields().equals(other.getUnknownFields())) return false;
       return true;
     }
@@ -59143,6 +59399,14 @@ net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSettin
       }
       int hash = 41;
       hash = (19 * hash) + getDescriptor().hashCode();
+      if (hasConfigFile()) {
+        hash = (37 * hash) + CONFIG_FILE_FIELD_NUMBER;
+        hash = (53 * hash) + getConfigFile().hashCode();
+      }
+      if (hasConnectionsFile()) {
+        hash = (37 * hash) + CONNECTIONS_FILE_FIELD_NUMBER;
+        hash = (53 * hash) + getConnectionsFile().hashCode();
+      }
       hash = (29 * hash) + getUnknownFields().hashCode();
       memoizedHashCode = hash;
       return hash;
@@ -59273,6 +59537,9 @@ net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSettin
       @java.lang.Override
       public Builder clear() {
         super.clear();
+        bitField0_ = 0;
+        configFile_ = "";
+        connectionsFile_ = "";
         return this;
       }
 
@@ -59299,8 +59566,23 @@ net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSettin
       @java.lang.Override
       public net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigLoadAllSectionsRequest buildPartial() {
         net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigLoadAllSectionsRequest result = new net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigLoadAllSectionsRequest(this);
+        if (bitField0_ != 0) { buildPartial0(result); }
         onBuilt();
         return result;
+      }
+
+      private void buildPartial0(net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigLoadAllSectionsRequest result) {
+        int from_bitField0_ = bitField0_;
+        int to_bitField0_ = 0;
+        if (((from_bitField0_ & 0x00000001) != 0)) {
+          result.configFile_ = configFile_;
+          to_bitField0_ |= 0x00000001;
+        }
+        if (((from_bitField0_ & 0x00000002) != 0)) {
+          result.connectionsFile_ = connectionsFile_;
+          to_bitField0_ |= 0x00000002;
+        }
+        result.bitField0_ |= to_bitField0_;
       }
 
       @java.lang.Override
@@ -59315,6 +59597,16 @@ net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSettin
 
       public Builder mergeFrom(net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigLoadAllSectionsRequest other) {
         if (other == net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigLoadAllSectionsRequest.getDefaultInstance()) return this;
+        if (other.hasConfigFile()) {
+          configFile_ = other.configFile_;
+          bitField0_ |= 0x00000001;
+          onChanged();
+        }
+        if (other.hasConnectionsFile()) {
+          connectionsFile_ = other.connectionsFile_;
+          bitField0_ |= 0x00000002;
+          onChanged();
+        }
         this.mergeUnknownFields(other.getUnknownFields());
         onChanged();
         return this;
@@ -59341,6 +59633,16 @@ net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSettin
               case 0:
                 done = true;
                 break;
+              case 10: {
+                configFile_ = input.readStringRequireUtf8();
+                bitField0_ |= 0x00000001;
+                break;
+              } // case 10
+              case 18: {
+                connectionsFile_ = input.readStringRequireUtf8();
+                bitField0_ |= 0x00000002;
+                break;
+              } // case 18
               default: {
                 if (!super.parseUnknownField(input, extensionRegistry, tag)) {
                   done = true; // was an endgroup tag
@@ -59354,6 +59656,165 @@ net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSettin
         } finally {
           onChanged();
         } // finally
+        return this;
+      }
+      private int bitField0_;
+
+      private java.lang.Object configFile_ = "";
+      /**
+       * <code>optional string config_file = 1;</code>
+       * @return Whether the configFile field is set.
+       */
+      public boolean hasConfigFile() {
+        return ((bitField0_ & 0x00000001) != 0);
+      }
+      /**
+       * <code>optional string config_file = 1;</code>
+       * @return The configFile.
+       */
+      public java.lang.String getConfigFile() {
+        java.lang.Object ref = configFile_;
+        if (!(ref instanceof java.lang.String)) {
+          com.google.protobuf.ByteString bs =
+              (com.google.protobuf.ByteString) ref;
+          java.lang.String s = bs.toStringUtf8();
+          configFile_ = s;
+          return s;
+        } else {
+          return (java.lang.String) ref;
+        }
+      }
+      /**
+       * <code>optional string config_file = 1;</code>
+       * @return The bytes for configFile.
+       */
+      public com.google.protobuf.ByteString
+          getConfigFileBytes() {
+        java.lang.Object ref = configFile_;
+        if (ref instanceof String) {
+          com.google.protobuf.ByteString b = 
+              com.google.protobuf.ByteString.copyFromUtf8(
+                  (java.lang.String) ref);
+          configFile_ = b;
+          return b;
+        } else {
+          return (com.google.protobuf.ByteString) ref;
+        }
+      }
+      /**
+       * <code>optional string config_file = 1;</code>
+       * @param value The configFile to set.
+       * @return This builder for chaining.
+       */
+      public Builder setConfigFile(
+          java.lang.String value) {
+        if (value == null) { throw new NullPointerException(); }
+        configFile_ = value;
+        bitField0_ |= 0x00000001;
+        onChanged();
+        return this;
+      }
+      /**
+       * <code>optional string config_file = 1;</code>
+       * @return This builder for chaining.
+       */
+      public Builder clearConfigFile() {
+        configFile_ = getDefaultInstance().getConfigFile();
+        bitField0_ = (bitField0_ & ~0x00000001);
+        onChanged();
+        return this;
+      }
+      /**
+       * <code>optional string config_file = 1;</code>
+       * @param value The bytes for configFile to set.
+       * @return This builder for chaining.
+       */
+      public Builder setConfigFileBytes(
+          com.google.protobuf.ByteString value) {
+        if (value == null) { throw new NullPointerException(); }
+        checkByteStringIsUtf8(value);
+        configFile_ = value;
+        bitField0_ |= 0x00000001;
+        onChanged();
+        return this;
+      }
+
+      private java.lang.Object connectionsFile_ = "";
+      /**
+       * <code>optional string connections_file = 2;</code>
+       * @return Whether the connectionsFile field is set.
+       */
+      public boolean hasConnectionsFile() {
+        return ((bitField0_ & 0x00000002) != 0);
+      }
+      /**
+       * <code>optional string connections_file = 2;</code>
+       * @return The connectionsFile.
+       */
+      public java.lang.String getConnectionsFile() {
+        java.lang.Object ref = connectionsFile_;
+        if (!(ref instanceof java.lang.String)) {
+          com.google.protobuf.ByteString bs =
+              (com.google.protobuf.ByteString) ref;
+          java.lang.String s = bs.toStringUtf8();
+          connectionsFile_ = s;
+          return s;
+        } else {
+          return (java.lang.String) ref;
+        }
+      }
+      /**
+       * <code>optional string connections_file = 2;</code>
+       * @return The bytes for connectionsFile.
+       */
+      public com.google.protobuf.ByteString
+          getConnectionsFileBytes() {
+        java.lang.Object ref = connectionsFile_;
+        if (ref instanceof String) {
+          com.google.protobuf.ByteString b = 
+              com.google.protobuf.ByteString.copyFromUtf8(
+                  (java.lang.String) ref);
+          connectionsFile_ = b;
+          return b;
+        } else {
+          return (com.google.protobuf.ByteString) ref;
+        }
+      }
+      /**
+       * <code>optional string connections_file = 2;</code>
+       * @param value The connectionsFile to set.
+       * @return This builder for chaining.
+       */
+      public Builder setConnectionsFile(
+          java.lang.String value) {
+        if (value == null) { throw new NullPointerException(); }
+        connectionsFile_ = value;
+        bitField0_ |= 0x00000002;
+        onChanged();
+        return this;
+      }
+      /**
+       * <code>optional string connections_file = 2;</code>
+       * @return This builder for chaining.
+       */
+      public Builder clearConnectionsFile() {
+        connectionsFile_ = getDefaultInstance().getConnectionsFile();
+        bitField0_ = (bitField0_ & ~0x00000002);
+        onChanged();
+        return this;
+      }
+      /**
+       * <code>optional string connections_file = 2;</code>
+       * @param value The bytes for connectionsFile to set.
+       * @return This builder for chaining.
+       */
+      public Builder setConnectionsFileBytes(
+          com.google.protobuf.ByteString value) {
+        if (value == null) { throw new NullPointerException(); }
+        checkByteStringIsUtf8(value);
+        connectionsFile_ = value;
+        bitField0_ |= 0x00000002;
+        onChanged();
         return this;
       }
 
@@ -60110,6 +60571,1019 @@ net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSectio
 
   }
 
+  public interface ConfigGetPathsRequestOrBuilder extends
+      // @@protoc_insertion_point(interface_extends:database_driver_v1.ConfigGetPathsRequest)
+      com.google.protobuf.MessageOrBuilder {
+  }
+  /**
+   * Protobuf type {@code database_driver_v1.ConfigGetPathsRequest}
+   */
+  public static final class ConfigGetPathsRequest extends
+      com.google.protobuf.GeneratedMessage implements
+      // @@protoc_insertion_point(message_implements:database_driver_v1.ConfigGetPathsRequest)
+      ConfigGetPathsRequestOrBuilder {
+  private static final long serialVersionUID = 0L;
+    static {
+      com.google.protobuf.RuntimeVersion.validateProtobufGencodeVersion(
+        com.google.protobuf.RuntimeVersion.RuntimeDomain.PUBLIC,
+        /* major= */ 4,
+        /* minor= */ 32,
+        /* patch= */ 1,
+        /* suffix= */ "",
+        ConfigGetPathsRequest.class.getName());
+    }
+    // Use ConfigGetPathsRequest.newBuilder() to construct.
+    private ConfigGetPathsRequest(com.google.protobuf.GeneratedMessage.Builder<?> builder) {
+      super(builder);
+    }
+    private ConfigGetPathsRequest() {
+    }
+
+    public static final com.google.protobuf.Descriptors.Descriptor
+        getDescriptor() {
+      return net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.internal_static_database_driver_v1_ConfigGetPathsRequest_descriptor;
+    }
+
+    @java.lang.Override
+    protected com.google.protobuf.GeneratedMessage.FieldAccessorTable
+        internalGetFieldAccessorTable() {
+      return net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.internal_static_database_driver_v1_ConfigGetPathsRequest_fieldAccessorTable
+          .ensureFieldAccessorsInitialized(
+              net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigGetPathsRequest.class, net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigGetPathsRequest.Builder.class);
+    }
+
+    private byte memoizedIsInitialized = -1;
+    @java.lang.Override
+    public final boolean isInitialized() {
+      byte isInitialized = memoizedIsInitialized;
+      if (isInitialized == 1) return true;
+      if (isInitialized == 0) return false;
+
+      memoizedIsInitialized = 1;
+      return true;
+    }
+
+    @java.lang.Override
+    public void writeTo(com.google.protobuf.CodedOutputStream output)
+                        throws java.io.IOException {
+      getUnknownFields().writeTo(output);
+    }
+
+    @java.lang.Override
+    public int getSerializedSize() {
+      int size = memoizedSize;
+      if (size != -1) return size;
+
+      size = 0;
+      size += getUnknownFields().getSerializedSize();
+      memoizedSize = size;
+      return size;
+    }
+
+    @java.lang.Override
+    public boolean equals(final java.lang.Object obj) {
+      if (obj == this) {
+       return true;
+      }
+      if (!(obj instanceof net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigGetPathsRequest)) {
+        return super.equals(obj);
+      }
+      net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigGetPathsRequest other = (net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigGetPathsRequest) obj;
+
+      if (!getUnknownFields().equals(other.getUnknownFields())) return false;
+      return true;
+    }
+
+    @java.lang.Override
+    public int hashCode() {
+      if (memoizedHashCode != 0) {
+        return memoizedHashCode;
+      }
+      int hash = 41;
+      hash = (19 * hash) + getDescriptor().hashCode();
+      hash = (29 * hash) + getUnknownFields().hashCode();
+      memoizedHashCode = hash;
+      return hash;
+    }
+
+    public static net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigGetPathsRequest parseFrom(
+        java.nio.ByteBuffer data)
+        throws com.google.protobuf.InvalidProtocolBufferException {
+      return PARSER.parseFrom(data);
+    }
+    public static net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigGetPathsRequest parseFrom(
+        java.nio.ByteBuffer data,
+        com.google.protobuf.ExtensionRegistryLite extensionRegistry)
+        throws com.google.protobuf.InvalidProtocolBufferException {
+      return PARSER.parseFrom(data, extensionRegistry);
+    }
+    public static net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigGetPathsRequest parseFrom(
+        com.google.protobuf.ByteString data)
+        throws com.google.protobuf.InvalidProtocolBufferException {
+      return PARSER.parseFrom(data);
+    }
+    public static net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigGetPathsRequest parseFrom(
+        com.google.protobuf.ByteString data,
+        com.google.protobuf.ExtensionRegistryLite extensionRegistry)
+        throws com.google.protobuf.InvalidProtocolBufferException {
+      return PARSER.parseFrom(data, extensionRegistry);
+    }
+    public static net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigGetPathsRequest parseFrom(byte[] data)
+        throws com.google.protobuf.InvalidProtocolBufferException {
+      return PARSER.parseFrom(data);
+    }
+    public static net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigGetPathsRequest parseFrom(
+        byte[] data,
+        com.google.protobuf.ExtensionRegistryLite extensionRegistry)
+        throws com.google.protobuf.InvalidProtocolBufferException {
+      return PARSER.parseFrom(data, extensionRegistry);
+    }
+    public static net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigGetPathsRequest parseFrom(java.io.InputStream input)
+        throws java.io.IOException {
+      return com.google.protobuf.GeneratedMessage
+          .parseWithIOException(PARSER, input);
+    }
+    public static net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigGetPathsRequest parseFrom(
+        java.io.InputStream input,
+        com.google.protobuf.ExtensionRegistryLite extensionRegistry)
+        throws java.io.IOException {
+      return com.google.protobuf.GeneratedMessage
+          .parseWithIOException(PARSER, input, extensionRegistry);
+    }
+
+    public static net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigGetPathsRequest parseDelimitedFrom(java.io.InputStream input)
+        throws java.io.IOException {
+      return com.google.protobuf.GeneratedMessage
+          .parseDelimitedWithIOException(PARSER, input);
+    }
+
+    public static net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigGetPathsRequest parseDelimitedFrom(
+        java.io.InputStream input,
+        com.google.protobuf.ExtensionRegistryLite extensionRegistry)
+        throws java.io.IOException {
+      return com.google.protobuf.GeneratedMessage
+          .parseDelimitedWithIOException(PARSER, input, extensionRegistry);
+    }
+    public static net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigGetPathsRequest parseFrom(
+        com.google.protobuf.CodedInputStream input)
+        throws java.io.IOException {
+      return com.google.protobuf.GeneratedMessage
+          .parseWithIOException(PARSER, input);
+    }
+    public static net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigGetPathsRequest parseFrom(
+        com.google.protobuf.CodedInputStream input,
+        com.google.protobuf.ExtensionRegistryLite extensionRegistry)
+        throws java.io.IOException {
+      return com.google.protobuf.GeneratedMessage
+          .parseWithIOException(PARSER, input, extensionRegistry);
+    }
+
+    @java.lang.Override
+    public Builder newBuilderForType() { return newBuilder(); }
+    public static Builder newBuilder() {
+      return DEFAULT_INSTANCE.toBuilder();
+    }
+    public static Builder newBuilder(net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigGetPathsRequest prototype) {
+      return DEFAULT_INSTANCE.toBuilder().mergeFrom(prototype);
+    }
+    @java.lang.Override
+    public Builder toBuilder() {
+      return this == DEFAULT_INSTANCE
+          ? new Builder() : new Builder().mergeFrom(this);
+    }
+
+    @java.lang.Override
+    protected Builder newBuilderForType(
+        com.google.protobuf.GeneratedMessage.BuilderParent parent) {
+      Builder builder = new Builder(parent);
+      return builder;
+    }
+    /**
+     * Protobuf type {@code database_driver_v1.ConfigGetPathsRequest}
+     */
+    public static final class Builder extends
+        com.google.protobuf.GeneratedMessage.Builder<Builder> implements
+        // @@protoc_insertion_point(builder_implements:database_driver_v1.ConfigGetPathsRequest)
+        net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigGetPathsRequestOrBuilder {
+      public static final com.google.protobuf.Descriptors.Descriptor
+          getDescriptor() {
+        return net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.internal_static_database_driver_v1_ConfigGetPathsRequest_descriptor;
+      }
+
+      @java.lang.Override
+      protected com.google.protobuf.GeneratedMessage.FieldAccessorTable
+          internalGetFieldAccessorTable() {
+        return net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.internal_static_database_driver_v1_ConfigGetPathsRequest_fieldAccessorTable
+            .ensureFieldAccessorsInitialized(
+                net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigGetPathsRequest.class, net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigGetPathsRequest.Builder.class);
+      }
+
+      // Construct using net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigGetPathsRequest.newBuilder()
+      private Builder() {
+
+      }
+
+      private Builder(
+          com.google.protobuf.GeneratedMessage.BuilderParent parent) {
+        super(parent);
+
+      }
+      @java.lang.Override
+      public Builder clear() {
+        super.clear();
+        return this;
+      }
+
+      @java.lang.Override
+      public com.google.protobuf.Descriptors.Descriptor
+          getDescriptorForType() {
+        return net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.internal_static_database_driver_v1_ConfigGetPathsRequest_descriptor;
+      }
+
+      @java.lang.Override
+      public net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigGetPathsRequest getDefaultInstanceForType() {
+        return net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigGetPathsRequest.getDefaultInstance();
+      }
+
+      @java.lang.Override
+      public net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigGetPathsRequest build() {
+        net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigGetPathsRequest result = buildPartial();
+        if (!result.isInitialized()) {
+          throw newUninitializedMessageException(result);
+        }
+        return result;
+      }
+
+      @java.lang.Override
+      public net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigGetPathsRequest buildPartial() {
+        net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigGetPathsRequest result = new net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigGetPathsRequest(this);
+        onBuilt();
+        return result;
+      }
+
+      @java.lang.Override
+      public Builder mergeFrom(com.google.protobuf.Message other) {
+        if (other instanceof net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigGetPathsRequest) {
+          return mergeFrom((net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigGetPathsRequest)other);
+        } else {
+          super.mergeFrom(other);
+          return this;
+        }
+      }
+
+      public Builder mergeFrom(net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigGetPathsRequest other) {
+        if (other == net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigGetPathsRequest.getDefaultInstance()) return this;
+        this.mergeUnknownFields(other.getUnknownFields());
+        onChanged();
+        return this;
+      }
+
+      @java.lang.Override
+      public final boolean isInitialized() {
+        return true;
+      }
+
+      @java.lang.Override
+      public Builder mergeFrom(
+          com.google.protobuf.CodedInputStream input,
+          com.google.protobuf.ExtensionRegistryLite extensionRegistry)
+          throws java.io.IOException {
+        if (extensionRegistry == null) {
+          throw new java.lang.NullPointerException();
+        }
+        try {
+          boolean done = false;
+          while (!done) {
+            int tag = input.readTag();
+            switch (tag) {
+              case 0:
+                done = true;
+                break;
+              default: {
+                if (!super.parseUnknownField(input, extensionRegistry, tag)) {
+                  done = true; // was an endgroup tag
+                }
+                break;
+              } // default:
+            } // switch (tag)
+          } // while (!done)
+        } catch (com.google.protobuf.InvalidProtocolBufferException e) {
+          throw e.unwrapIOException();
+        } finally {
+          onChanged();
+        } // finally
+        return this;
+      }
+
+      // @@protoc_insertion_point(builder_scope:database_driver_v1.ConfigGetPathsRequest)
+    }
+
+    // @@protoc_insertion_point(class_scope:database_driver_v1.ConfigGetPathsRequest)
+    private static final net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigGetPathsRequest DEFAULT_INSTANCE;
+    static {
+      DEFAULT_INSTANCE = new net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigGetPathsRequest();
+    }
+
+    public static net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigGetPathsRequest getDefaultInstance() {
+      return DEFAULT_INSTANCE;
+    }
+
+    private static final com.google.protobuf.Parser<ConfigGetPathsRequest>
+        PARSER = new com.google.protobuf.AbstractParser<ConfigGetPathsRequest>() {
+      @java.lang.Override
+      public ConfigGetPathsRequest parsePartialFrom(
+          com.google.protobuf.CodedInputStream input,
+          com.google.protobuf.ExtensionRegistryLite extensionRegistry)
+          throws com.google.protobuf.InvalidProtocolBufferException {
+        Builder builder = newBuilder();
+        try {
+          builder.mergeFrom(input, extensionRegistry);
+        } catch (com.google.protobuf.InvalidProtocolBufferException e) {
+          throw e.setUnfinishedMessage(builder.buildPartial());
+        } catch (com.google.protobuf.UninitializedMessageException e) {
+          throw e.asInvalidProtocolBufferException().setUnfinishedMessage(builder.buildPartial());
+        } catch (java.io.IOException e) {
+          throw new com.google.protobuf.InvalidProtocolBufferException(e)
+              .setUnfinishedMessage(builder.buildPartial());
+        }
+        return builder.buildPartial();
+      }
+    };
+
+    public static com.google.protobuf.Parser<ConfigGetPathsRequest> parser() {
+      return PARSER;
+    }
+
+    @java.lang.Override
+    public com.google.protobuf.Parser<ConfigGetPathsRequest> getParserForType() {
+      return PARSER;
+    }
+
+    @java.lang.Override
+    public net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigGetPathsRequest getDefaultInstanceForType() {
+      return DEFAULT_INSTANCE;
+    }
+
+  }
+
+  public interface ConfigGetPathsResponseOrBuilder extends
+      // @@protoc_insertion_point(interface_extends:database_driver_v1.ConfigGetPathsResponse)
+      com.google.protobuf.MessageOrBuilder {
+
+    /**
+     * <code>string config_file = 1;</code>
+     * @return The configFile.
+     */
+    java.lang.String getConfigFile();
+    /**
+     * <code>string config_file = 1;</code>
+     * @return The bytes for configFile.
+     */
+    com.google.protobuf.ByteString
+        getConfigFileBytes();
+
+    /**
+     * <code>string connections_file = 2;</code>
+     * @return The connectionsFile.
+     */
+    java.lang.String getConnectionsFile();
+    /**
+     * <code>string connections_file = 2;</code>
+     * @return The bytes for connectionsFile.
+     */
+    com.google.protobuf.ByteString
+        getConnectionsFileBytes();
+  }
+  /**
+   * Protobuf type {@code database_driver_v1.ConfigGetPathsResponse}
+   */
+  public static final class ConfigGetPathsResponse extends
+      com.google.protobuf.GeneratedMessage implements
+      // @@protoc_insertion_point(message_implements:database_driver_v1.ConfigGetPathsResponse)
+      ConfigGetPathsResponseOrBuilder {
+  private static final long serialVersionUID = 0L;
+    static {
+      com.google.protobuf.RuntimeVersion.validateProtobufGencodeVersion(
+        com.google.protobuf.RuntimeVersion.RuntimeDomain.PUBLIC,
+        /* major= */ 4,
+        /* minor= */ 32,
+        /* patch= */ 1,
+        /* suffix= */ "",
+        ConfigGetPathsResponse.class.getName());
+    }
+    // Use ConfigGetPathsResponse.newBuilder() to construct.
+    private ConfigGetPathsResponse(com.google.protobuf.GeneratedMessage.Builder<?> builder) {
+      super(builder);
+    }
+    private ConfigGetPathsResponse() {
+      configFile_ = "";
+      connectionsFile_ = "";
+    }
+
+    public static final com.google.protobuf.Descriptors.Descriptor
+        getDescriptor() {
+      return net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.internal_static_database_driver_v1_ConfigGetPathsResponse_descriptor;
+    }
+
+    @java.lang.Override
+    protected com.google.protobuf.GeneratedMessage.FieldAccessorTable
+        internalGetFieldAccessorTable() {
+      return net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.internal_static_database_driver_v1_ConfigGetPathsResponse_fieldAccessorTable
+          .ensureFieldAccessorsInitialized(
+              net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigGetPathsResponse.class, net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigGetPathsResponse.Builder.class);
+    }
+
+    public static final int CONFIG_FILE_FIELD_NUMBER = 1;
+    @SuppressWarnings("serial")
+    private volatile java.lang.Object configFile_ = "";
+    /**
+     * <code>string config_file = 1;</code>
+     * @return The configFile.
+     */
+    @java.lang.Override
+    public java.lang.String getConfigFile() {
+      java.lang.Object ref = configFile_;
+      if (ref instanceof java.lang.String) {
+        return (java.lang.String) ref;
+      } else {
+        com.google.protobuf.ByteString bs = 
+            (com.google.protobuf.ByteString) ref;
+        java.lang.String s = bs.toStringUtf8();
+        configFile_ = s;
+        return s;
+      }
+    }
+    /**
+     * <code>string config_file = 1;</code>
+     * @return The bytes for configFile.
+     */
+    @java.lang.Override
+    public com.google.protobuf.ByteString
+        getConfigFileBytes() {
+      java.lang.Object ref = configFile_;
+      if (ref instanceof java.lang.String) {
+        com.google.protobuf.ByteString b = 
+            com.google.protobuf.ByteString.copyFromUtf8(
+                (java.lang.String) ref);
+        configFile_ = b;
+        return b;
+      } else {
+        return (com.google.protobuf.ByteString) ref;
+      }
+    }
+
+    public static final int CONNECTIONS_FILE_FIELD_NUMBER = 2;
+    @SuppressWarnings("serial")
+    private volatile java.lang.Object connectionsFile_ = "";
+    /**
+     * <code>string connections_file = 2;</code>
+     * @return The connectionsFile.
+     */
+    @java.lang.Override
+    public java.lang.String getConnectionsFile() {
+      java.lang.Object ref = connectionsFile_;
+      if (ref instanceof java.lang.String) {
+        return (java.lang.String) ref;
+      } else {
+        com.google.protobuf.ByteString bs = 
+            (com.google.protobuf.ByteString) ref;
+        java.lang.String s = bs.toStringUtf8();
+        connectionsFile_ = s;
+        return s;
+      }
+    }
+    /**
+     * <code>string connections_file = 2;</code>
+     * @return The bytes for connectionsFile.
+     */
+    @java.lang.Override
+    public com.google.protobuf.ByteString
+        getConnectionsFileBytes() {
+      java.lang.Object ref = connectionsFile_;
+      if (ref instanceof java.lang.String) {
+        com.google.protobuf.ByteString b = 
+            com.google.protobuf.ByteString.copyFromUtf8(
+                (java.lang.String) ref);
+        connectionsFile_ = b;
+        return b;
+      } else {
+        return (com.google.protobuf.ByteString) ref;
+      }
+    }
+
+    private byte memoizedIsInitialized = -1;
+    @java.lang.Override
+    public final boolean isInitialized() {
+      byte isInitialized = memoizedIsInitialized;
+      if (isInitialized == 1) return true;
+      if (isInitialized == 0) return false;
+
+      memoizedIsInitialized = 1;
+      return true;
+    }
+
+    @java.lang.Override
+    public void writeTo(com.google.protobuf.CodedOutputStream output)
+                        throws java.io.IOException {
+      if (!com.google.protobuf.GeneratedMessage.isStringEmpty(configFile_)) {
+        com.google.protobuf.GeneratedMessage.writeString(output, 1, configFile_);
+      }
+      if (!com.google.protobuf.GeneratedMessage.isStringEmpty(connectionsFile_)) {
+        com.google.protobuf.GeneratedMessage.writeString(output, 2, connectionsFile_);
+      }
+      getUnknownFields().writeTo(output);
+    }
+
+    @java.lang.Override
+    public int getSerializedSize() {
+      int size = memoizedSize;
+      if (size != -1) return size;
+
+      size = 0;
+      if (!com.google.protobuf.GeneratedMessage.isStringEmpty(configFile_)) {
+        size += com.google.protobuf.GeneratedMessage.computeStringSize(1, configFile_);
+      }
+      if (!com.google.protobuf.GeneratedMessage.isStringEmpty(connectionsFile_)) {
+        size += com.google.protobuf.GeneratedMessage.computeStringSize(2, connectionsFile_);
+      }
+      size += getUnknownFields().getSerializedSize();
+      memoizedSize = size;
+      return size;
+    }
+
+    @java.lang.Override
+    public boolean equals(final java.lang.Object obj) {
+      if (obj == this) {
+       return true;
+      }
+      if (!(obj instanceof net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigGetPathsResponse)) {
+        return super.equals(obj);
+      }
+      net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigGetPathsResponse other = (net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigGetPathsResponse) obj;
+
+      if (!getConfigFile()
+          .equals(other.getConfigFile())) return false;
+      if (!getConnectionsFile()
+          .equals(other.getConnectionsFile())) return false;
+      if (!getUnknownFields().equals(other.getUnknownFields())) return false;
+      return true;
+    }
+
+    @java.lang.Override
+    public int hashCode() {
+      if (memoizedHashCode != 0) {
+        return memoizedHashCode;
+      }
+      int hash = 41;
+      hash = (19 * hash) + getDescriptor().hashCode();
+      hash = (37 * hash) + CONFIG_FILE_FIELD_NUMBER;
+      hash = (53 * hash) + getConfigFile().hashCode();
+      hash = (37 * hash) + CONNECTIONS_FILE_FIELD_NUMBER;
+      hash = (53 * hash) + getConnectionsFile().hashCode();
+      hash = (29 * hash) + getUnknownFields().hashCode();
+      memoizedHashCode = hash;
+      return hash;
+    }
+
+    public static net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigGetPathsResponse parseFrom(
+        java.nio.ByteBuffer data)
+        throws com.google.protobuf.InvalidProtocolBufferException {
+      return PARSER.parseFrom(data);
+    }
+    public static net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigGetPathsResponse parseFrom(
+        java.nio.ByteBuffer data,
+        com.google.protobuf.ExtensionRegistryLite extensionRegistry)
+        throws com.google.protobuf.InvalidProtocolBufferException {
+      return PARSER.parseFrom(data, extensionRegistry);
+    }
+    public static net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigGetPathsResponse parseFrom(
+        com.google.protobuf.ByteString data)
+        throws com.google.protobuf.InvalidProtocolBufferException {
+      return PARSER.parseFrom(data);
+    }
+    public static net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigGetPathsResponse parseFrom(
+        com.google.protobuf.ByteString data,
+        com.google.protobuf.ExtensionRegistryLite extensionRegistry)
+        throws com.google.protobuf.InvalidProtocolBufferException {
+      return PARSER.parseFrom(data, extensionRegistry);
+    }
+    public static net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigGetPathsResponse parseFrom(byte[] data)
+        throws com.google.protobuf.InvalidProtocolBufferException {
+      return PARSER.parseFrom(data);
+    }
+    public static net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigGetPathsResponse parseFrom(
+        byte[] data,
+        com.google.protobuf.ExtensionRegistryLite extensionRegistry)
+        throws com.google.protobuf.InvalidProtocolBufferException {
+      return PARSER.parseFrom(data, extensionRegistry);
+    }
+    public static net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigGetPathsResponse parseFrom(java.io.InputStream input)
+        throws java.io.IOException {
+      return com.google.protobuf.GeneratedMessage
+          .parseWithIOException(PARSER, input);
+    }
+    public static net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigGetPathsResponse parseFrom(
+        java.io.InputStream input,
+        com.google.protobuf.ExtensionRegistryLite extensionRegistry)
+        throws java.io.IOException {
+      return com.google.protobuf.GeneratedMessage
+          .parseWithIOException(PARSER, input, extensionRegistry);
+    }
+
+    public static net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigGetPathsResponse parseDelimitedFrom(java.io.InputStream input)
+        throws java.io.IOException {
+      return com.google.protobuf.GeneratedMessage
+          .parseDelimitedWithIOException(PARSER, input);
+    }
+
+    public static net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigGetPathsResponse parseDelimitedFrom(
+        java.io.InputStream input,
+        com.google.protobuf.ExtensionRegistryLite extensionRegistry)
+        throws java.io.IOException {
+      return com.google.protobuf.GeneratedMessage
+          .parseDelimitedWithIOException(PARSER, input, extensionRegistry);
+    }
+    public static net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigGetPathsResponse parseFrom(
+        com.google.protobuf.CodedInputStream input)
+        throws java.io.IOException {
+      return com.google.protobuf.GeneratedMessage
+          .parseWithIOException(PARSER, input);
+    }
+    public static net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigGetPathsResponse parseFrom(
+        com.google.protobuf.CodedInputStream input,
+        com.google.protobuf.ExtensionRegistryLite extensionRegistry)
+        throws java.io.IOException {
+      return com.google.protobuf.GeneratedMessage
+          .parseWithIOException(PARSER, input, extensionRegistry);
+    }
+
+    @java.lang.Override
+    public Builder newBuilderForType() { return newBuilder(); }
+    public static Builder newBuilder() {
+      return DEFAULT_INSTANCE.toBuilder();
+    }
+    public static Builder newBuilder(net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigGetPathsResponse prototype) {
+      return DEFAULT_INSTANCE.toBuilder().mergeFrom(prototype);
+    }
+    @java.lang.Override
+    public Builder toBuilder() {
+      return this == DEFAULT_INSTANCE
+          ? new Builder() : new Builder().mergeFrom(this);
+    }
+
+    @java.lang.Override
+    protected Builder newBuilderForType(
+        com.google.protobuf.GeneratedMessage.BuilderParent parent) {
+      Builder builder = new Builder(parent);
+      return builder;
+    }
+    /**
+     * Protobuf type {@code database_driver_v1.ConfigGetPathsResponse}
+     */
+    public static final class Builder extends
+        com.google.protobuf.GeneratedMessage.Builder<Builder> implements
+        // @@protoc_insertion_point(builder_implements:database_driver_v1.ConfigGetPathsResponse)
+        net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigGetPathsResponseOrBuilder {
+      public static final com.google.protobuf.Descriptors.Descriptor
+          getDescriptor() {
+        return net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.internal_static_database_driver_v1_ConfigGetPathsResponse_descriptor;
+      }
+
+      @java.lang.Override
+      protected com.google.protobuf.GeneratedMessage.FieldAccessorTable
+          internalGetFieldAccessorTable() {
+        return net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.internal_static_database_driver_v1_ConfigGetPathsResponse_fieldAccessorTable
+            .ensureFieldAccessorsInitialized(
+                net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigGetPathsResponse.class, net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigGetPathsResponse.Builder.class);
+      }
+
+      // Construct using net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigGetPathsResponse.newBuilder()
+      private Builder() {
+
+      }
+
+      private Builder(
+          com.google.protobuf.GeneratedMessage.BuilderParent parent) {
+        super(parent);
+
+      }
+      @java.lang.Override
+      public Builder clear() {
+        super.clear();
+        bitField0_ = 0;
+        configFile_ = "";
+        connectionsFile_ = "";
+        return this;
+      }
+
+      @java.lang.Override
+      public com.google.protobuf.Descriptors.Descriptor
+          getDescriptorForType() {
+        return net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.internal_static_database_driver_v1_ConfigGetPathsResponse_descriptor;
+      }
+
+      @java.lang.Override
+      public net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigGetPathsResponse getDefaultInstanceForType() {
+        return net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigGetPathsResponse.getDefaultInstance();
+      }
+
+      @java.lang.Override
+      public net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigGetPathsResponse build() {
+        net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigGetPathsResponse result = buildPartial();
+        if (!result.isInitialized()) {
+          throw newUninitializedMessageException(result);
+        }
+        return result;
+      }
+
+      @java.lang.Override
+      public net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigGetPathsResponse buildPartial() {
+        net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigGetPathsResponse result = new net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigGetPathsResponse(this);
+        if (bitField0_ != 0) { buildPartial0(result); }
+        onBuilt();
+        return result;
+      }
+
+      private void buildPartial0(net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigGetPathsResponse result) {
+        int from_bitField0_ = bitField0_;
+        if (((from_bitField0_ & 0x00000001) != 0)) {
+          result.configFile_ = configFile_;
+        }
+        if (((from_bitField0_ & 0x00000002) != 0)) {
+          result.connectionsFile_ = connectionsFile_;
+        }
+      }
+
+      @java.lang.Override
+      public Builder mergeFrom(com.google.protobuf.Message other) {
+        if (other instanceof net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigGetPathsResponse) {
+          return mergeFrom((net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigGetPathsResponse)other);
+        } else {
+          super.mergeFrom(other);
+          return this;
+        }
+      }
+
+      public Builder mergeFrom(net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigGetPathsResponse other) {
+        if (other == net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigGetPathsResponse.getDefaultInstance()) return this;
+        if (!other.getConfigFile().isEmpty()) {
+          configFile_ = other.configFile_;
+          bitField0_ |= 0x00000001;
+          onChanged();
+        }
+        if (!other.getConnectionsFile().isEmpty()) {
+          connectionsFile_ = other.connectionsFile_;
+          bitField0_ |= 0x00000002;
+          onChanged();
+        }
+        this.mergeUnknownFields(other.getUnknownFields());
+        onChanged();
+        return this;
+      }
+
+      @java.lang.Override
+      public final boolean isInitialized() {
+        return true;
+      }
+
+      @java.lang.Override
+      public Builder mergeFrom(
+          com.google.protobuf.CodedInputStream input,
+          com.google.protobuf.ExtensionRegistryLite extensionRegistry)
+          throws java.io.IOException {
+        if (extensionRegistry == null) {
+          throw new java.lang.NullPointerException();
+        }
+        try {
+          boolean done = false;
+          while (!done) {
+            int tag = input.readTag();
+            switch (tag) {
+              case 0:
+                done = true;
+                break;
+              case 10: {
+                configFile_ = input.readStringRequireUtf8();
+                bitField0_ |= 0x00000001;
+                break;
+              } // case 10
+              case 18: {
+                connectionsFile_ = input.readStringRequireUtf8();
+                bitField0_ |= 0x00000002;
+                break;
+              } // case 18
+              default: {
+                if (!super.parseUnknownField(input, extensionRegistry, tag)) {
+                  done = true; // was an endgroup tag
+                }
+                break;
+              } // default:
+            } // switch (tag)
+          } // while (!done)
+        } catch (com.google.protobuf.InvalidProtocolBufferException e) {
+          throw e.unwrapIOException();
+        } finally {
+          onChanged();
+        } // finally
+        return this;
+      }
+      private int bitField0_;
+
+      private java.lang.Object configFile_ = "";
+      /**
+       * <code>string config_file = 1;</code>
+       * @return The configFile.
+       */
+      public java.lang.String getConfigFile() {
+        java.lang.Object ref = configFile_;
+        if (!(ref instanceof java.lang.String)) {
+          com.google.protobuf.ByteString bs =
+              (com.google.protobuf.ByteString) ref;
+          java.lang.String s = bs.toStringUtf8();
+          configFile_ = s;
+          return s;
+        } else {
+          return (java.lang.String) ref;
+        }
+      }
+      /**
+       * <code>string config_file = 1;</code>
+       * @return The bytes for configFile.
+       */
+      public com.google.protobuf.ByteString
+          getConfigFileBytes() {
+        java.lang.Object ref = configFile_;
+        if (ref instanceof String) {
+          com.google.protobuf.ByteString b = 
+              com.google.protobuf.ByteString.copyFromUtf8(
+                  (java.lang.String) ref);
+          configFile_ = b;
+          return b;
+        } else {
+          return (com.google.protobuf.ByteString) ref;
+        }
+      }
+      /**
+       * <code>string config_file = 1;</code>
+       * @param value The configFile to set.
+       * @return This builder for chaining.
+       */
+      public Builder setConfigFile(
+          java.lang.String value) {
+        if (value == null) { throw new NullPointerException(); }
+        configFile_ = value;
+        bitField0_ |= 0x00000001;
+        onChanged();
+        return this;
+      }
+      /**
+       * <code>string config_file = 1;</code>
+       * @return This builder for chaining.
+       */
+      public Builder clearConfigFile() {
+        configFile_ = getDefaultInstance().getConfigFile();
+        bitField0_ = (bitField0_ & ~0x00000001);
+        onChanged();
+        return this;
+      }
+      /**
+       * <code>string config_file = 1;</code>
+       * @param value The bytes for configFile to set.
+       * @return This builder for chaining.
+       */
+      public Builder setConfigFileBytes(
+          com.google.protobuf.ByteString value) {
+        if (value == null) { throw new NullPointerException(); }
+        checkByteStringIsUtf8(value);
+        configFile_ = value;
+        bitField0_ |= 0x00000001;
+        onChanged();
+        return this;
+      }
+
+      private java.lang.Object connectionsFile_ = "";
+      /**
+       * <code>string connections_file = 2;</code>
+       * @return The connectionsFile.
+       */
+      public java.lang.String getConnectionsFile() {
+        java.lang.Object ref = connectionsFile_;
+        if (!(ref instanceof java.lang.String)) {
+          com.google.protobuf.ByteString bs =
+              (com.google.protobuf.ByteString) ref;
+          java.lang.String s = bs.toStringUtf8();
+          connectionsFile_ = s;
+          return s;
+        } else {
+          return (java.lang.String) ref;
+        }
+      }
+      /**
+       * <code>string connections_file = 2;</code>
+       * @return The bytes for connectionsFile.
+       */
+      public com.google.protobuf.ByteString
+          getConnectionsFileBytes() {
+        java.lang.Object ref = connectionsFile_;
+        if (ref instanceof String) {
+          com.google.protobuf.ByteString b = 
+              com.google.protobuf.ByteString.copyFromUtf8(
+                  (java.lang.String) ref);
+          connectionsFile_ = b;
+          return b;
+        } else {
+          return (com.google.protobuf.ByteString) ref;
+        }
+      }
+      /**
+       * <code>string connections_file = 2;</code>
+       * @param value The connectionsFile to set.
+       * @return This builder for chaining.
+       */
+      public Builder setConnectionsFile(
+          java.lang.String value) {
+        if (value == null) { throw new NullPointerException(); }
+        connectionsFile_ = value;
+        bitField0_ |= 0x00000002;
+        onChanged();
+        return this;
+      }
+      /**
+       * <code>string connections_file = 2;</code>
+       * @return This builder for chaining.
+       */
+      public Builder clearConnectionsFile() {
+        connectionsFile_ = getDefaultInstance().getConnectionsFile();
+        bitField0_ = (bitField0_ & ~0x00000002);
+        onChanged();
+        return this;
+      }
+      /**
+       * <code>string connections_file = 2;</code>
+       * @param value The bytes for connectionsFile to set.
+       * @return This builder for chaining.
+       */
+      public Builder setConnectionsFileBytes(
+          com.google.protobuf.ByteString value) {
+        if (value == null) { throw new NullPointerException(); }
+        checkByteStringIsUtf8(value);
+        connectionsFile_ = value;
+        bitField0_ |= 0x00000002;
+        onChanged();
+        return this;
+      }
+
+      // @@protoc_insertion_point(builder_scope:database_driver_v1.ConfigGetPathsResponse)
+    }
+
+    // @@protoc_insertion_point(class_scope:database_driver_v1.ConfigGetPathsResponse)
+    private static final net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigGetPathsResponse DEFAULT_INSTANCE;
+    static {
+      DEFAULT_INSTANCE = new net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigGetPathsResponse();
+    }
+
+    public static net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigGetPathsResponse getDefaultInstance() {
+      return DEFAULT_INSTANCE;
+    }
+
+    private static final com.google.protobuf.Parser<ConfigGetPathsResponse>
+        PARSER = new com.google.protobuf.AbstractParser<ConfigGetPathsResponse>() {
+      @java.lang.Override
+      public ConfigGetPathsResponse parsePartialFrom(
+          com.google.protobuf.CodedInputStream input,
+          com.google.protobuf.ExtensionRegistryLite extensionRegistry)
+          throws com.google.protobuf.InvalidProtocolBufferException {
+        Builder builder = newBuilder();
+        try {
+          builder.mergeFrom(input, extensionRegistry);
+        } catch (com.google.protobuf.InvalidProtocolBufferException e) {
+          throw e.setUnfinishedMessage(builder.buildPartial());
+        } catch (com.google.protobuf.UninitializedMessageException e) {
+          throw e.asInvalidProtocolBufferException().setUnfinishedMessage(builder.buildPartial());
+        } catch (java.io.IOException e) {
+          throw new com.google.protobuf.InvalidProtocolBufferException(e)
+              .setUnfinishedMessage(builder.buildPartial());
+        }
+        return builder.buildPartial();
+      }
+    };
+
+    public static com.google.protobuf.Parser<ConfigGetPathsResponse> parser() {
+      return PARSER;
+    }
+
+    @java.lang.Override
+    public com.google.protobuf.Parser<ConfigGetPathsResponse> getParserForType() {
+      return PARSER;
+    }
+
+    @java.lang.Override
+    public net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigGetPathsResponse getDefaultInstanceForType() {
+      return DEFAULT_INSTANCE;
+    }
+
+  }
+
   public static final int SERVICE_ERROR_FIELD_NUMBER = 412312;
   /**
    * <code>extend .google.protobuf.ServiceOptions { ... }</code>
@@ -60637,6 +62111,16 @@ net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSectio
   private static final 
     com.google.protobuf.GeneratedMessage.FieldAccessorTable
       internal_static_database_driver_v1_ConfigLoadAllSectionsResponse_SectionsEntry_fieldAccessorTable;
+  private static final com.google.protobuf.Descriptors.Descriptor
+    internal_static_database_driver_v1_ConfigGetPathsRequest_descriptor;
+  private static final 
+    com.google.protobuf.GeneratedMessage.FieldAccessorTable
+      internal_static_database_driver_v1_ConfigGetPathsRequest_fieldAccessorTable;
+  private static final com.google.protobuf.Descriptors.Descriptor
+    internal_static_database_driver_v1_ConfigGetPathsResponse_descriptor;
+  private static final 
+    com.google.protobuf.GeneratedMessage.FieldAccessorTable
+      internal_static_database_driver_v1_ConfigGetPathsResponse_fieldAccessorTable;
 
   public static com.google.protobuf.Descriptors.FileDescriptor
       getDescriptor() {
@@ -60845,162 +62329,170 @@ net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSectio
       "stmt_handle\030\001 \001(\0132#.database_driver_v1.S" +
       "tatementHandle\022\034\n\024partition_descriptor\030\002" +
       " \001(\014\":\n\036StatementReadPartitionResponse\022\030" +
-      "\n\020partition_stream\030\001 \001(\003\"t\n\rConfigSettin" +
-      "g\022\026\n\014string_value\030\001 \001(\tH\000\022\023\n\tint_value\030\002" +
-      " \001(\003H\000\022\026\n\014double_value\030\003 \001(\001H\000\022\025\n\013bytes_" +
-      "value\030\004 \001(\014H\000B\007\n\005value\"\246\001\n\rConfigSection" +
-      "\022A\n\010settings\030\001 \003(\0132/.database_driver_v1." +
-      "ConfigSection.SettingsEntry\032R\n\rSettingsE" +
-      "ntry\022\013\n\003key\030\001 \001(\t\0220\n\005value\030\002 \001(\0132!.datab" +
-      "ase_driver_v1.ConfigSetting:\0028\001\"\036\n\034Confi" +
-      "gLoadAllSectionsRequest\"\306\001\n\035ConfigLoadAl" +
-      "lSectionsResponse\022Q\n\010sections\030\001 \003(\0132?.da" +
-      "tabase_driver_v1.ConfigLoadAllSectionsRe" +
-      "sponse.SectionsEntry\032R\n\rSectionsEntry\022\013\n" +
-      "\003key\030\001 \001(\t\0220\n\005value\030\002 \001(\0132!.database_dri" +
-      "ver_v1.ConfigSection:\0028\001*\264\004\n\nStatusCode\022" +
-      "\033\n\027STATUS_CODE_UNSPECIFIED\020\000\022\022\n\016STATUS_C" +
-      "ODE_OK\020\001\022$\n STATUS_CODE_AUTHENTICATION_E" +
-      "RROR\020\002\022\037\n\033STATUS_CODE_NOT_IMPLEMENTED\020\003\022" +
-      "\031\n\025STATUS_CODE_NOT_FOUND\020\004\022\036\n\032STATUS_COD" +
-      "E_ALREADY_EXISTS\020\005\022 \n\034STATUS_CODE_INVALI" +
-      "D_ARGUMENT\020\006\022\035\n\031STATUS_CODE_INVALID_STAT" +
-      "E\020\007\022\034\n\030STATUS_CODE_INVALID_DATA\020\010\022\022\n\016STA" +
-      "TUS_CODE_IO\020\t\022\031\n\025STATUS_CODE_CANCELLED\020\n" +
-      "\022\037\n\033STATUS_CODE_UNAUTHENTICATED\020\013\022\034\n\030STA" +
-      "TUS_CODE_UNAUTHORIZED\020\014\022\035\n\031STATUS_CODE_G" +
-      "ENERIC_ERROR\020\r\022\036\n\032STATUS_CODE_INTERNAL_E" +
-      "RROR\020\016\022!\n\035STATUS_CODE_MISSING_PARAMETER\020" +
-      "\017\022\'\n#STATUS_CODE_INVALID_PARAMETER_VALUE" +
-      "\020\020\022\033\n\027STATUS_CODE_LOGIN_ERROR\020\021*\230\003\n\010Info" +
-      "Code\022\031\n\025INFO_CODE_UNSPECIFIED\020\000\022\031\n\025INFO_" +
-      "CODE_VENDOR_NAME\020\001\022\034\n\030INFO_CODE_VENDOR_V" +
-      "ERSION\020\002\022\"\n\036INFO_CODE_VENDOR_ARROW_VERSI" +
-      "ON\020\003\022\030\n\024INFO_CODE_VENDOR_SQL\020e\022\036\n\032INFO_C" +
-      "ODE_VENDOR_SUBSTRAIT\020f\022*\n&INFO_CODE_VEND" +
-      "OR_SUBSTRAIT_MIN_VERSION\020g\022*\n&INFO_CODE_" +
-      "VENDOR_SUBSTRAIT_MAX_VERSION\020h\022\032\n\025INFO_C" +
-      "ODE_DRIVER_NAME\020\311\001\022\035\n\030INFO_CODE_DRIVER_V" +
-      "ERSION\020\312\001\022#\n\036INFO_CODE_DRIVER_ARROW_VERS" +
-      "ION\020\313\001\022\"\n\035INFO_CODE_DRIVER_ADBC_VERSION\020" +
-      "\314\0012\210%\n\016DatabaseDriver\022^\n\013DatabaseNew\022&.d" +
-      "atabase_driver_v1.DatabaseNewRequest\032\'.d" +
-      "atabase_driver_v1.DatabaseNewResponse\022\202\001" +
-      "\n\027DatabaseSetOptionString\0222.database_dri" +
-      "ver_v1.DatabaseSetOptionStringRequest\0323." +
-      "database_driver_v1.DatabaseSetOptionStri" +
-      "ngResponse\022\177\n\026DatabaseSetOptionBytes\0221.d" +
-      "atabase_driver_v1.DatabaseSetOptionBytes" +
-      "Request\0322.database_driver_v1.DatabaseSet" +
-      "OptionBytesResponse\022y\n\024DatabaseSetOption" +
-      "Int\022/.database_driver_v1.DatabaseSetOpti" +
-      "onIntRequest\0320.database_driver_v1.Databa" +
-      "seSetOptionIntResponse\022\202\001\n\027DatabaseSetOp" +
-      "tionDouble\0222.database_driver_v1.Database" +
-      "SetOptionDoubleRequest\0323.database_driver" +
-      "_v1.DatabaseSetOptionDoubleResponse\022a\n\014D" +
-      "atabaseInit\022\'.database_driver_v1.Databas" +
-      "eInitRequest\032(.database_driver_v1.Databa" +
-      "seInitResponse\022j\n\017DatabaseRelease\022*.data" +
-      "base_driver_v1.DatabaseReleaseRequest\032+." +
-      "database_driver_v1.DatabaseReleaseRespon" +
-      "se\022d\n\rConnectionNew\022(.database_driver_v1" +
-      ".ConnectionNewRequest\032).database_driver_" +
-      "v1.ConnectionNewResponse\022\210\001\n\031ConnectionS" +
-      "etOptionString\0224.database_driver_v1.Conn" +
-      "ectionSetOptionStringRequest\0325.database_" +
-      "driver_v1.ConnectionSetOptionStringRespo" +
-      "nse\022\205\001\n\030ConnectionSetOptionBytes\0223.datab" +
-      "ase_driver_v1.ConnectionSetOptionBytesRe" +
-      "quest\0324.database_driver_v1.ConnectionSet" +
-      "OptionBytesResponse\022\177\n\026ConnectionSetOpti" +
-      "onInt\0221.database_driver_v1.ConnectionSet" +
-      "OptionIntRequest\0322.database_driver_v1.Co" +
-      "nnectionSetOptionIntResponse\022\210\001\n\031Connect" +
-      "ionSetOptionDouble\0224.database_driver_v1." +
-      "ConnectionSetOptionDoubleRequest\0325.datab" +
-      "ase_driver_v1.ConnectionSetOptionDoubleR" +
-      "esponse\022g\n\016ConnectionInit\022).database_dri" +
-      "ver_v1.ConnectionInitRequest\032*.database_" +
-      "driver_v1.ConnectionInitResponse\022p\n\021Conn" +
-      "ectionRelease\022,.database_driver_v1.Conne" +
-      "ctionReleaseRequest\032-.database_driver_v1" +
-      ".ConnectionReleaseResponse\022p\n\021Connection" +
-      "GetInfo\022,.database_driver_v1.ConnectionG" +
-      "etInfoRequest\032-.database_driver_v1.Conne" +
-      "ctionGetInfoResponse\022y\n\024ConnectionGetObj" +
-      "ects\022/.database_driver_v1.ConnectionGetO" +
-      "bjectsRequest\0320.database_driver_v1.Conne" +
-      "ctionGetObjectsResponse\022\205\001\n\030ConnectionGe" +
-      "tTableSchema\0223.database_driver_v1.Connec" +
-      "tionGetTableSchemaRequest\0324.database_dri" +
-      "ver_v1.ConnectionGetTableSchemaResponse\022" +
-      "\202\001\n\027ConnectionGetTableTypes\0222.database_d" +
-      "river_v1.ConnectionGetTableTypesRequest\032" +
-      "3.database_driver_v1.ConnectionGetTableT" +
-      "ypesResponse\022m\n\020ConnectionCommit\022+.datab" +
-      "ase_driver_v1.ConnectionCommitRequest\032,." +
-      "database_driver_v1.ConnectionCommitRespo" +
-      "nse\022s\n\022ConnectionRollback\022-.database_dri" +
-      "ver_v1.ConnectionRollbackRequest\032..datab" +
-      "ase_driver_v1.ConnectionRollbackResponse" +
-      "\022\227\001\n\036ConnectionSetSessionParameters\0229.da" +
-      "tabase_driver_v1.ConnectionSetSessionPar" +
-      "ametersRequest\032:.database_driver_v1.Conn" +
-      "ectionSetSessionParametersResponse\022\177\n\026Co" +
-      "nnectionGetParameter\0221.database_driver_v" +
-      "1.ConnectionGetParameterRequest\0322.databa" +
-      "se_driver_v1.ConnectionGetParameterRespo" +
-      "nse\022a\n\014StatementNew\022\'.database_driver_v1" +
-      ".StatementNewRequest\032(.database_driver_v" +
-      "1.StatementNewResponse\022m\n\020StatementRelea" +
-      "se\022+.database_driver_v1.StatementRelease" +
-      "Request\032,.database_driver_v1.StatementRe" +
-      "leaseResponse\022y\n\024StatementSetSqlQuery\022/." +
-      "database_driver_v1.StatementSetSqlQueryR" +
-      "equest\0320.database_driver_v1.StatementSet" +
-      "SqlQueryResponse\022\210\001\n\031StatementSetSubstra" +
-      "itPlan\0224.database_driver_v1.StatementSet" +
-      "SubstraitPlanRequest\0325.database_driver_v" +
-      "1.StatementSetSubstraitPlanResponse\022m\n\020S" +
-      "tatementPrepare\022+.database_driver_v1.Sta" +
-      "tementPrepareRequest\032,.database_driver_v" +
-      "1.StatementPrepareResponse\022\205\001\n\030Statement" +
-      "SetOptionString\0223.database_driver_v1.Sta" +
-      "tementSetOptionStringRequest\0324.database_" +
-      "driver_v1.StatementSetOptionStringRespon" +
-      "se\022\202\001\n\027StatementSetOptionBytes\0222.databas" +
-      "e_driver_v1.StatementSetOptionBytesReque" +
-      "st\0323.database_driver_v1.StatementSetOpti" +
-      "onBytesResponse\022|\n\025StatementSetOptionInt" +
-      "\0220.database_driver_v1.StatementSetOption" +
-      "IntRequest\0321.database_driver_v1.Statemen" +
-      "tSetOptionIntResponse\022\205\001\n\030StatementSetOp" +
-      "tionDouble\0223.database_driver_v1.Statemen" +
-      "tSetOptionDoubleRequest\0324.database_drive" +
-      "r_v1.StatementSetOptionDoubleResponse\022\216\001" +
-      "\n\033StatementGetParameterSchema\0226.database" +
-      "_driver_v1.StatementGetParameterSchemaRe" +
-      "quest\0327.database_driver_v1.StatementGetP" +
-      "arameterSchemaResponse\022d\n\rStatementBind\022" +
-      "(.database_driver_v1.StatementBindReques" +
-      "t\032).database_driver_v1.StatementBindResp" +
-      "onse\022v\n\023StatementBindStream\022..database_d" +
-      "river_v1.StatementBindStreamRequest\032/.da" +
-      "tabase_driver_v1.StatementBindStreamResp" +
-      "onse\022|\n\025StatementExecuteQuery\0220.database" +
-      "_driver_v1.StatementExecuteQueryRequest\032" +
-      "1.database_driver_v1.StatementExecuteQue" +
-      "ryResponse\022\213\001\n\032StatementExecutePartition" +
-      "s\0225.database_driver_v1.StatementExecuteP" +
-      "artitionsRequest\0326.database_driver_v1.St" +
-      "atementExecutePartitionsResponse\022\177\n\026Stat" +
-      "ementReadPartition\0221.database_driver_v1." +
-      "StatementReadPartitionRequest\0322.database" +
-      "_driver_v1.StatementReadPartitionRespons" +
-      "e\022|\n\025ConfigLoadAllSections\0220.database_dr" +
-      "iver_v1.ConfigLoadAllSectionsRequest\0321.d" +
-      "atabase_driver_v1.ConfigLoadAllSectionsR" +
+      "\n\020partition_stream\030\001 \001(\003\"\212\001\n\rConfigSetti" +
+      "ng\022\026\n\014string_value\030\001 \001(\tH\000\022\023\n\tint_value\030" +
+      "\002 \001(\003H\000\022\026\n\014double_value\030\003 \001(\001H\000\022\025\n\013bytes" +
+      "_value\030\004 \001(\014H\000\022\024\n\nbool_value\030\005 \001(\010H\000B\007\n\005" +
+      "value\"\246\001\n\rConfigSection\022A\n\010settings\030\001 \003(" +
+      "\0132/.database_driver_v1.ConfigSection.Set" +
+      "tingsEntry\032R\n\rSettingsEntry\022\013\n\003key\030\001 \001(\t" +
+      "\0220\n\005value\030\002 \001(\0132!.database_driver_v1.Con" +
+      "figSetting:\0028\001\"|\n\034ConfigLoadAllSectionsR" +
+      "equest\022\030\n\013config_file\030\001 \001(\tH\000\210\001\001\022\035\n\020conn" +
+      "ections_file\030\002 \001(\tH\001\210\001\001B\016\n\014_config_fileB" +
+      "\023\n\021_connections_file\"\306\001\n\035ConfigLoadAllSe" +
+      "ctionsResponse\022Q\n\010sections\030\001 \003(\0132?.datab" +
+      "ase_driver_v1.ConfigLoadAllSectionsRespo" +
+      "nse.SectionsEntry\032R\n\rSectionsEntry\022\013\n\003ke" +
+      "y\030\001 \001(\t\0220\n\005value\030\002 \001(\0132!.database_driver" +
+      "_v1.ConfigSection:\0028\001\"\027\n\025ConfigGetPathsR" +
+      "equest\"G\n\026ConfigGetPathsResponse\022\023\n\013conf" +
+      "ig_file\030\001 \001(\t\022\030\n\020connections_file\030\002 \001(\t*" +
+      "\264\004\n\nStatusCode\022\033\n\027STATUS_CODE_UNSPECIFIE" +
+      "D\020\000\022\022\n\016STATUS_CODE_OK\020\001\022$\n STATUS_CODE_A" +
+      "UTHENTICATION_ERROR\020\002\022\037\n\033STATUS_CODE_NOT" +
+      "_IMPLEMENTED\020\003\022\031\n\025STATUS_CODE_NOT_FOUND\020" +
+      "\004\022\036\n\032STATUS_CODE_ALREADY_EXISTS\020\005\022 \n\034STA" +
+      "TUS_CODE_INVALID_ARGUMENT\020\006\022\035\n\031STATUS_CO" +
+      "DE_INVALID_STATE\020\007\022\034\n\030STATUS_CODE_INVALI" +
+      "D_DATA\020\010\022\022\n\016STATUS_CODE_IO\020\t\022\031\n\025STATUS_C" +
+      "ODE_CANCELLED\020\n\022\037\n\033STATUS_CODE_UNAUTHENT" +
+      "ICATED\020\013\022\034\n\030STATUS_CODE_UNAUTHORIZED\020\014\022\035" +
+      "\n\031STATUS_CODE_GENERIC_ERROR\020\r\022\036\n\032STATUS_" +
+      "CODE_INTERNAL_ERROR\020\016\022!\n\035STATUS_CODE_MIS" +
+      "SING_PARAMETER\020\017\022\'\n#STATUS_CODE_INVALID_" +
+      "PARAMETER_VALUE\020\020\022\033\n\027STATUS_CODE_LOGIN_E" +
+      "RROR\020\021*\230\003\n\010InfoCode\022\031\n\025INFO_CODE_UNSPECI" +
+      "FIED\020\000\022\031\n\025INFO_CODE_VENDOR_NAME\020\001\022\034\n\030INF" +
+      "O_CODE_VENDOR_VERSION\020\002\022\"\n\036INFO_CODE_VEN" +
+      "DOR_ARROW_VERSION\020\003\022\030\n\024INFO_CODE_VENDOR_" +
+      "SQL\020e\022\036\n\032INFO_CODE_VENDOR_SUBSTRAIT\020f\022*\n" +
+      "&INFO_CODE_VENDOR_SUBSTRAIT_MIN_VERSION\020" +
+      "g\022*\n&INFO_CODE_VENDOR_SUBSTRAIT_MAX_VERS" +
+      "ION\020h\022\032\n\025INFO_CODE_DRIVER_NAME\020\311\001\022\035\n\030INF" +
+      "O_CODE_DRIVER_VERSION\020\312\001\022#\n\036INFO_CODE_DR" +
+      "IVER_ARROW_VERSION\020\313\001\022\"\n\035INFO_CODE_DRIVE" +
+      "R_ADBC_VERSION\020\314\0012\361%\n\016DatabaseDriver\022^\n\013" +
+      "DatabaseNew\022&.database_driver_v1.Databas" +
+      "eNewRequest\032\'.database_driver_v1.Databas" +
+      "eNewResponse\022\202\001\n\027DatabaseSetOptionString" +
+      "\0222.database_driver_v1.DatabaseSetOptionS" +
+      "tringRequest\0323.database_driver_v1.Databa" +
+      "seSetOptionStringResponse\022\177\n\026DatabaseSet" +
+      "OptionBytes\0221.database_driver_v1.Databas" +
+      "eSetOptionBytesRequest\0322.database_driver" +
+      "_v1.DatabaseSetOptionBytesResponse\022y\n\024Da" +
+      "tabaseSetOptionInt\022/.database_driver_v1." +
+      "DatabaseSetOptionIntRequest\0320.database_d" +
+      "river_v1.DatabaseSetOptionIntResponse\022\202\001" +
+      "\n\027DatabaseSetOptionDouble\0222.database_dri" +
+      "ver_v1.DatabaseSetOptionDoubleRequest\0323." +
+      "database_driver_v1.DatabaseSetOptionDoub" +
+      "leResponse\022a\n\014DatabaseInit\022\'.database_dr" +
+      "iver_v1.DatabaseInitRequest\032(.database_d" +
+      "river_v1.DatabaseInitResponse\022j\n\017Databas" +
+      "eRelease\022*.database_driver_v1.DatabaseRe" +
+      "leaseRequest\032+.database_driver_v1.Databa" +
+      "seReleaseResponse\022d\n\rConnectionNew\022(.dat" +
+      "abase_driver_v1.ConnectionNewRequest\032).d" +
+      "atabase_driver_v1.ConnectionNewResponse\022" +
+      "\210\001\n\031ConnectionSetOptionString\0224.database" +
+      "_driver_v1.ConnectionSetOptionStringRequ" +
+      "est\0325.database_driver_v1.ConnectionSetOp" +
+      "tionStringResponse\022\205\001\n\030ConnectionSetOpti" +
+      "onBytes\0223.database_driver_v1.ConnectionS" +
+      "etOptionBytesRequest\0324.database_driver_v" +
+      "1.ConnectionSetOptionBytesResponse\022\177\n\026Co" +
+      "nnectionSetOptionInt\0221.database_driver_v" +
+      "1.ConnectionSetOptionIntRequest\0322.databa" +
+      "se_driver_v1.ConnectionSetOptionIntRespo" +
+      "nse\022\210\001\n\031ConnectionSetOptionDouble\0224.data" +
+      "base_driver_v1.ConnectionSetOptionDouble" +
+      "Request\0325.database_driver_v1.ConnectionS" +
+      "etOptionDoubleResponse\022g\n\016ConnectionInit" +
+      "\022).database_driver_v1.ConnectionInitRequ" +
+      "est\032*.database_driver_v1.ConnectionInitR" +
+      "esponse\022p\n\021ConnectionRelease\022,.database_" +
+      "driver_v1.ConnectionReleaseRequest\032-.dat" +
+      "abase_driver_v1.ConnectionReleaseRespons" +
+      "e\022p\n\021ConnectionGetInfo\022,.database_driver" +
+      "_v1.ConnectionGetInfoRequest\032-.database_" +
+      "driver_v1.ConnectionGetInfoResponse\022y\n\024C" +
+      "onnectionGetObjects\022/.database_driver_v1" +
+      ".ConnectionGetObjectsRequest\0320.database_" +
+      "driver_v1.ConnectionGetObjectsResponse\022\205" +
+      "\001\n\030ConnectionGetTableSchema\0223.database_d" +
+      "river_v1.ConnectionGetTableSchemaRequest" +
+      "\0324.database_driver_v1.ConnectionGetTable" +
+      "SchemaResponse\022\202\001\n\027ConnectionGetTableTyp" +
+      "es\0222.database_driver_v1.ConnectionGetTab" +
+      "leTypesRequest\0323.database_driver_v1.Conn" +
+      "ectionGetTableTypesResponse\022m\n\020Connectio" +
+      "nCommit\022+.database_driver_v1.ConnectionC" +
+      "ommitRequest\032,.database_driver_v1.Connec" +
+      "tionCommitResponse\022s\n\022ConnectionRollback" +
+      "\022-.database_driver_v1.ConnectionRollback" +
+      "Request\032..database_driver_v1.ConnectionR" +
+      "ollbackResponse\022\227\001\n\036ConnectionSetSession" +
+      "Parameters\0229.database_driver_v1.Connecti" +
+      "onSetSessionParametersRequest\032:.database" +
+      "_driver_v1.ConnectionSetSessionParameter" +
+      "sResponse\022\177\n\026ConnectionGetParameter\0221.da" +
+      "tabase_driver_v1.ConnectionGetParameterR" +
+      "equest\0322.database_driver_v1.ConnectionGe" +
+      "tParameterResponse\022a\n\014StatementNew\022\'.dat" +
+      "abase_driver_v1.StatementNewRequest\032(.da" +
+      "tabase_driver_v1.StatementNewResponse\022m\n" +
+      "\020StatementRelease\022+.database_driver_v1.S" +
+      "tatementReleaseRequest\032,.database_driver" +
+      "_v1.StatementReleaseResponse\022y\n\024Statemen" +
+      "tSetSqlQuery\022/.database_driver_v1.Statem" +
+      "entSetSqlQueryRequest\0320.database_driver_" +
+      "v1.StatementSetSqlQueryResponse\022\210\001\n\031Stat" +
+      "ementSetSubstraitPlan\0224.database_driver_" +
+      "v1.StatementSetSubstraitPlanRequest\0325.da" +
+      "tabase_driver_v1.StatementSetSubstraitPl" +
+      "anResponse\022m\n\020StatementPrepare\022+.databas" +
+      "e_driver_v1.StatementPrepareRequest\032,.da" +
+      "tabase_driver_v1.StatementPrepareRespons" +
+      "e\022\205\001\n\030StatementSetOptionString\0223.databas" +
+      "e_driver_v1.StatementSetOptionStringRequ" +
+      "est\0324.database_driver_v1.StatementSetOpt" +
+      "ionStringResponse\022\202\001\n\027StatementSetOption" +
+      "Bytes\0222.database_driver_v1.StatementSetO" +
+      "ptionBytesRequest\0323.database_driver_v1.S" +
+      "tatementSetOptionBytesResponse\022|\n\025Statem" +
+      "entSetOptionInt\0220.database_driver_v1.Sta" +
+      "tementSetOptionIntRequest\0321.database_dri" +
+      "ver_v1.StatementSetOptionIntResponse\022\205\001\n" +
+      "\030StatementSetOptionDouble\0223.database_dri" +
+      "ver_v1.StatementSetOptionDoubleRequest\0324" +
+      ".database_driver_v1.StatementSetOptionDo" +
+      "ubleResponse\022\216\001\n\033StatementGetParameterSc" +
+      "hema\0226.database_driver_v1.StatementGetPa" +
+      "rameterSchemaRequest\0327.database_driver_v" +
+      "1.StatementGetParameterSchemaResponse\022d\n" +
+      "\rStatementBind\022(.database_driver_v1.Stat" +
+      "ementBindRequest\032).database_driver_v1.St" +
+      "atementBindResponse\022v\n\023StatementBindStre" +
+      "am\022..database_driver_v1.StatementBindStr" +
+      "eamRequest\032/.database_driver_v1.Statemen" +
+      "tBindStreamResponse\022|\n\025StatementExecuteQ" +
+      "uery\0220.database_driver_v1.StatementExecu" +
+      "teQueryRequest\0321.database_driver_v1.Stat" +
+      "ementExecuteQueryResponse\022\213\001\n\032StatementE" +
+      "xecutePartitions\0225.database_driver_v1.St" +
+      "atementExecutePartitionsRequest\0326.databa" +
+      "se_driver_v1.StatementExecutePartitionsR" +
+      "esponse\022\177\n\026StatementReadPartition\0221.data" +
+      "base_driver_v1.StatementReadPartitionReq" +
+      "uest\0322.database_driver_v1.StatementReadP" +
+      "artitionResponse\022|\n\025ConfigLoadAllSection" +
+      "s\0220.database_driver_v1.ConfigLoadAllSect" +
+      "ionsRequest\0321.database_driver_v1.ConfigL" +
+      "oadAllSectionsResponse\022g\n\016ConfigGetPaths" +
+      "\022).database_driver_v1.ConfigGetPathsRequ" +
+      "est\032*.database_driver_v1.ConfigGetPathsR" +
       "esponse\032\024\302\251\311\001\017DriverException:;\n\rservice" +
       "_error\022\037.google.protobuf.ServiceOptions\030" +
       "\230\225\031 \001(\t\210\001\001:9\n\014method_error\022\036.google.prot" +
@@ -61588,7 +63080,7 @@ net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSectio
     internal_static_database_driver_v1_ConfigSetting_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_database_driver_v1_ConfigSetting_descriptor,
-        new java.lang.String[] { "StringValue", "IntValue", "DoubleValue", "BytesValue", "Value", });
+        new java.lang.String[] { "StringValue", "IntValue", "DoubleValue", "BytesValue", "BoolValue", "Value", });
     internal_static_database_driver_v1_ConfigSection_descriptor =
       getDescriptor().getMessageTypes().get(95);
     internal_static_database_driver_v1_ConfigSection_fieldAccessorTable = new
@@ -61606,7 +63098,7 @@ net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSectio
     internal_static_database_driver_v1_ConfigLoadAllSectionsRequest_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_database_driver_v1_ConfigLoadAllSectionsRequest_descriptor,
-        new java.lang.String[] { });
+        new java.lang.String[] { "ConfigFile", "ConnectionsFile", });
     internal_static_database_driver_v1_ConfigLoadAllSectionsResponse_descriptor =
       getDescriptor().getMessageTypes().get(97);
     internal_static_database_driver_v1_ConfigLoadAllSectionsResponse_fieldAccessorTable = new
@@ -61619,6 +63111,18 @@ net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSectio
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_database_driver_v1_ConfigLoadAllSectionsResponse_SectionsEntry_descriptor,
         new java.lang.String[] { "Key", "Value", });
+    internal_static_database_driver_v1_ConfigGetPathsRequest_descriptor =
+      getDescriptor().getMessageTypes().get(98);
+    internal_static_database_driver_v1_ConfigGetPathsRequest_fieldAccessorTable = new
+      com.google.protobuf.GeneratedMessage.FieldAccessorTable(
+        internal_static_database_driver_v1_ConfigGetPathsRequest_descriptor,
+        new java.lang.String[] { });
+    internal_static_database_driver_v1_ConfigGetPathsResponse_descriptor =
+      getDescriptor().getMessageTypes().get(99);
+    internal_static_database_driver_v1_ConfigGetPathsResponse_fieldAccessorTable = new
+      com.google.protobuf.GeneratedMessage.FieldAccessorTable(
+        internal_static_database_driver_v1_ConfigGetPathsResponse_descriptor,
+        new java.lang.String[] { "ConfigFile", "ConnectionsFile", });
     serviceError.internalInit(descriptor.getExtensions().get(0));
     methodError.internalInit(descriptor.getExtensions().get(1));
     descriptor.resolveAllFeaturesImmutable();

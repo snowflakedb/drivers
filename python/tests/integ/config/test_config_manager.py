@@ -119,6 +119,7 @@ mykey = "file_value"
 
         # When ConfigManager retrieves the option
         root_manager = ConfigManager(name="test_root", file_path=config_env["config_file"])
+        root_manager.read_config(skip_file_permissions_check=True)
         option = ConfigOption(
             name="mykey",
             _root_manager=root_manager,
@@ -186,12 +187,7 @@ class TestDefaultEnvName:
             default="unused",
         )
 
-        # When Accessing the default_env_name property
-        # Then It should return SNOWFLAKE_MYOPTION
-        if NEW_DRIVER_ONLY("BD#9"):
-            assert option.default_env_name == "SNOWFLAKE_MYOPTION"
-        else:
-            assert not hasattr(option, "default_env_name") or True
+        assert option.default_env_name == "SNOWFLAKE_MYOPTION"
 
     def test_default_env_name_multi_part(self, config_env):
         """Test default_env_name with a multi-level nest path."""
@@ -204,12 +200,7 @@ class TestDefaultEnvName:
             default="unused",
         )
 
-        # When Accessing the default_env_name property
-        # Then It should return SNOWFLAKE_SECTION_SUBSECTION_KEY
-        if NEW_DRIVER_ONLY("BD#9"):
-            assert option.default_env_name == "SNOWFLAKE_SECTION_SUBSECTION_KEY"
-        else:
-            assert not hasattr(option, "default_env_name") or True
+        assert option.default_env_name == "SNOWFLAKE_SECTION_SUBSECTION_KEY"
 
     def test_value_uses_default_env_var(self, config_env):
         """Test that value() picks up SNOWFLAKE_<PATH> env var without explicit env_name."""
@@ -226,12 +217,7 @@ class TestDefaultEnvName:
             default="default_val",
         )
 
-        # When Retrieving the option value
-        # Then The default env var value should be returned
-        if NEW_DRIVER_ONLY("BD#9"):
-            assert option.value() == "from_default_env"
-        else:
-            assert option.value() == "default_val"
+        assert option.value() == "from_default_env"
 
     def test_explicit_env_name_takes_priority_over_default(self, config_env):
         """Test that explicit env_name is checked instead of default_env_name."""
@@ -272,12 +258,7 @@ mykey = "file_value"
             default="default_value",
         )
 
-        # When Retrieving the option value
-        # Then The env var value should take priority over the config file value
-        if NEW_DRIVER_ONLY("BD#9"):
-            assert option.value() == "env_value"
-        else:
-            assert option.value() == "default_value"
+        assert option.value() == "env_value"
 
     def test_default_env_var_with_parse_str(self, config_env):
         """Test that parse_str is applied to values from default env var."""
@@ -295,13 +276,8 @@ mykey = "file_value"
             default=0,
         )
 
-        # When Retrieving the option value
-        # Then The parsed integer value should be returned
-        if NEW_DRIVER_ONLY("BD#9"):
-            assert option.value() == 42
-            assert isinstance(option.value(), int)
-        else:
-            assert option.value() == 0
+        assert option.value() == 42
+        assert isinstance(option.value(), int)
 
 
 class TestConfigManager:
@@ -363,26 +339,17 @@ class TestConfigManager:
         # Then The default value should be returned
         assert value == "default_value"
 
+    @pytest.mark.skip_reference
     def test_clear_cache(self):
         """Test that clear_cache resets caches."""
         # Given A ConfigManager with cached config
         manager = ConfigManager(name="test_manager")
 
+        manager.conf_file_cache = {"test": "value"}
         # When clear_cache is called
+        manager.clear_cache()
         # Then Cache should be None
-        if NEW_DRIVER_ONLY("BD#10"):
-            # New driver has clear_cache and cache attributes
-            manager.conf_file_cache = {"test": "value"}
-
-            manager.clear_cache()
-
-            assert manager.conf_file_cache is None
-        else:
-            # Old driver has different caching mechanism
-            if hasattr(manager, "clear_cache"):
-                manager.clear_cache()
-            # Just verify the manager is functional
-            assert manager.name == "test_manager"
+        assert manager.conf_file_cache is None
 
 
 class TestBackwardCompatibility:

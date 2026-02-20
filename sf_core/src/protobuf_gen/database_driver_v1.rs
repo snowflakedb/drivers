@@ -588,7 +588,7 @@ pub struct StatementReadPartitionResponse {
 /// Config setting value (union type)
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ConfigSetting {
-    #[prost(oneof = "config_setting::Value", tags = "1, 2, 3, 4")]
+    #[prost(oneof = "config_setting::Value", tags = "1, 2, 3, 4, 5")]
     pub value: ::core::option::Option<config_setting::Value>,
 }
 /// Nested message and enum types in `ConfigSetting`.
@@ -603,6 +603,8 @@ pub mod config_setting {
         DoubleValue(f64),
         #[prost(bytes, tag = "4")]
         BytesValue(::prost::alloc::vec::Vec<u8>),
+        #[prost(bool, tag = "5")]
+        BoolValue(bool),
     }
 }
 /// A config section containing key-value settings
@@ -611,8 +613,13 @@ pub struct ConfigSection {
     #[prost(map = "string, message", tag = "1")]
     pub settings: ::std::collections::HashMap<::prost::alloc::string::String, ConfigSetting>,
 }
-#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct ConfigLoadAllSectionsRequest {}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ConfigLoadAllSectionsRequest {
+    #[prost(string, optional, tag = "1")]
+    pub config_file: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "2")]
+    pub connections_file: ::core::option::Option<::prost::alloc::string::String>,
+}
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ConfigLoadAllSectionsResponse {
     #[prost(map = "string, message", tag = "1")]

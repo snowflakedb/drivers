@@ -1994,10 +1994,12 @@ class ConfigSetting(_message.Message):
     INT_VALUE_FIELD_NUMBER: _builtins.int
     DOUBLE_VALUE_FIELD_NUMBER: _builtins.int
     BYTES_VALUE_FIELD_NUMBER: _builtins.int
+    BOOL_VALUE_FIELD_NUMBER: _builtins.int
     string_value: _builtins.str
     int_value: _builtins.int
     double_value: _builtins.float
     bytes_value: _builtins.bytes
+    bool_value: _builtins.bool
     def __init__(
         self,
         *,
@@ -2005,12 +2007,13 @@ class ConfigSetting(_message.Message):
         int_value: _builtins.int = ...,
         double_value: _builtins.float = ...,
         bytes_value: _builtins.bytes = ...,
+        bool_value: _builtins.bool = ...,
     ) -> None: ...
-    _HasFieldArgType: _TypeAlias = _typing.Literal["bytes_value", b"bytes_value", "double_value", b"double_value", "int_value", b"int_value", "string_value", b"string_value", "value", b"value"]  # noqa: Y015
+    _HasFieldArgType: _TypeAlias = _typing.Literal["bool_value", b"bool_value", "bytes_value", b"bytes_value", "double_value", b"double_value", "int_value", b"int_value", "string_value", b"string_value", "value", b"value"]  # noqa: Y015
     def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
-    _ClearFieldArgType: _TypeAlias = _typing.Literal["bytes_value", b"bytes_value", "double_value", b"double_value", "int_value", b"int_value", "string_value", b"string_value", "value", b"value"]  # noqa: Y015
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["bool_value", b"bool_value", "bytes_value", b"bytes_value", "double_value", b"double_value", "int_value", b"int_value", "string_value", b"string_value", "value", b"value"]  # noqa: Y015
     def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
-    _WhichOneofReturnType_value: _TypeAlias = _typing.Literal["string_value", "int_value", "double_value", "bytes_value"]  # noqa: Y015
+    _WhichOneofReturnType_value: _TypeAlias = _typing.Literal["string_value", "int_value", "double_value", "bytes_value", "bool_value"]  # noqa: Y015
     _WhichOneofArgType_value: _TypeAlias = _typing.Literal["value", b"value"]  # noqa: Y015
     def WhichOneof(self, oneof_group: _WhichOneofArgType_value) -> _WhichOneofReturnType_value | None: ...
 
@@ -2061,9 +2064,28 @@ class ConfigLoadAllSectionsRequest(_message.Message):
 
     DESCRIPTOR: _descriptor.Descriptor
 
+    CONFIG_FILE_FIELD_NUMBER: _builtins.int
+    CONNECTIONS_FILE_FIELD_NUMBER: _builtins.int
+    config_file: _builtins.str
+    connections_file: _builtins.str
     def __init__(
         self,
+        *,
+        config_file: _builtins.str | None = ...,
+        connections_file: _builtins.str | None = ...,
     ) -> None: ...
+    _HasFieldArgType: _TypeAlias = _typing.Literal["_config_file", b"_config_file", "_connections_file", b"_connections_file", "config_file", b"config_file", "connections_file", b"connections_file"]  # noqa: Y015
+    def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["_config_file", b"_config_file", "_connections_file", b"_connections_file", "config_file", b"config_file", "connections_file", b"connections_file"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
+    _WhichOneofReturnType__config_file: _TypeAlias = _typing.Literal["config_file"]  # noqa: Y015
+    _WhichOneofArgType__config_file: _TypeAlias = _typing.Literal["_config_file", b"_config_file"]  # noqa: Y015
+    _WhichOneofReturnType__connections_file: _TypeAlias = _typing.Literal["connections_file"]  # noqa: Y015
+    _WhichOneofArgType__connections_file: _TypeAlias = _typing.Literal["_connections_file", b"_connections_file"]  # noqa: Y015
+    @_typing.overload
+    def WhichOneof(self, oneof_group: _WhichOneofArgType__config_file) -> _WhichOneofReturnType__config_file | None: ...
+    @_typing.overload
+    def WhichOneof(self, oneof_group: _WhichOneofArgType__connections_file) -> _WhichOneofReturnType__connections_file | None: ...
 
 Global___ConfigLoadAllSectionsRequest: _TypeAlias = ConfigLoadAllSectionsRequest  # noqa: Y015
 

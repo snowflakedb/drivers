@@ -60,9 +60,3 @@ Feature: ConfigManager Python Wrapper
     Given A ConfigManager with an option having a default value
     When Accessing the option via bracket notation
     Then The default value should be returned
-
-  @python_int
-  Scenario: clear cache
-    Given A ConfigManager with cached config
-    When clear_cache is called
-    Then Cache should be None

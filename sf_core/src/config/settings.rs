@@ -6,6 +6,7 @@ pub enum Setting {
     Bytes(Vec<u8>),
     Int(i64),
     Double(f64),
+    Bool(bool),
 }
 
 impl Setting {

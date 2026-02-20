@@ -98,7 +98,7 @@ class ConfigSourceError(ConfigManagerError):
     pass
 
 
-class MissingConfigOptionError(ConfigManagerError):
+class MissingConfigOptionError(ConfigSourceError):
     """Exception raised when a required configuration option is missing."""
 
     pass

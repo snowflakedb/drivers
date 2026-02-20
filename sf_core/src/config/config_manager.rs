@@ -108,7 +108,7 @@ fn toml_value_to_setting(value: &toml::Value) -> Option<Setting> {
         toml::Value::String(s) => Some(Setting::String(s.clone())),
         toml::Value::Integer(i) => Some(Setting::Int(*i)),
         toml::Value::Float(f) => Some(Setting::Double(*f)),
-        toml::Value::Boolean(b) => Some(Setting::String(b.to_string())),
+        toml::Value::Boolean(b) => Some(Setting::Bool(*b)),
         _ => None,
     }
 }
@@ -205,6 +205,11 @@ pub fn load_all_config_sections_with_paths(
                     }
                 }
                 all_sections.insert(section_name.clone(), settings);
+            } else if let Some(setting) = toml_value_to_setting(section_value) {
+                all_sections
+                    .entry("_root".to_string())
+                    .or_insert_with(HashMap::new)
+                    .insert(section_name.clone(), setting);
             }
         }
     }
@@ -272,11 +277,10 @@ mod tests {
         ));
 
         let bool_val = toml::Value::Boolean(true);
-        if let Some(Setting::String(s)) = toml_value_to_setting(&bool_val) {
-            assert_eq!(s, "true");
-        } else {
-            panic!("Expected String setting");
-        }
+        assert!(matches!(
+            toml_value_to_setting(&bool_val),
+            Some(Setting::Bool(true))
+        ));
     }
 
     #[test]
