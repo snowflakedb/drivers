@@ -1,4 +1,5 @@
 use crate::api::bitmask::Bitmask;
+use crate::api::error::InvalidDescriptorKindSnafu;
 use crate::api::{OdbcError, diagnostic::DiagnosticInfo};
 use crate::cdata_types::CDataType;
 use crate::conversion::Binding;
@@ -131,15 +132,25 @@ impl Bitmask for GetDataExtensions {
 #[allow(clippy::enum_variant_names)]
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum StmtAttr {
-    /// `SQL_ATTR_USE_BOOKMARKS` (12) - whether bookmarks are used.
+    /// `SQL_ATTR_ROW_BIND_TYPE` (5) — row-wise vs column-wise binding.
+    RowBindType = 5,
+    /// `SQL_ATTR_USE_BOOKMARKS` (12) — whether bookmarks are used.
     UseBookmarks = 12,
-    /// `SQL_ATTR_APP_ROW_DESC` - handle to the Application Row Descriptor.
+    /// `SQL_ATTR_ROW_BIND_OFFSET_PTR` (23) — binding offset pointer.
+    RowBindOffsetPtr = 23,
+    /// `SQL_ATTR_ROW_STATUS_PTR` (25) — pointer to per-row status array.
+    RowStatusPtr = 25,
+    /// `SQL_ATTR_ROWS_FETCHED_PTR` (26) — pointer to count of rows fetched.
+    RowsFetchedPtr = 26,
+    /// `SQL_ATTR_ROW_ARRAY_SIZE` (27) — number of rows per fetch.
+    RowArraySize = 27,
+    /// `SQL_ATTR_APP_ROW_DESC` — handle to the Application Row Descriptor.
     AppRowDesc = 10010,
-    /// `SQL_ATTR_APP_PARAM_DESC` - handle to the Application Parameter Descriptor.
+    /// `SQL_ATTR_APP_PARAM_DESC` — handle to the Application Parameter Descriptor.
     AppParamDesc = 10011,
-    /// `SQL_ATTR_IMP_ROW_DESC` - handle to the Implementation Row Descriptor.
+    /// `SQL_ATTR_IMP_ROW_DESC` — handle to the Implementation Row Descriptor.
     ImpRowDesc = 10012,
-    /// `SQL_ATTR_IMP_PARAM_DESC` - handle to the Implementation Parameter Descriptor.
+    /// `SQL_ATTR_IMP_PARAM_DESC` — handle to the Implementation Parameter Descriptor.
     ImpParamDesc = 10013,
 }
 
@@ -148,7 +159,12 @@ impl TryFrom<i32> for StmtAttr {
 
     fn try_from(value: i32) -> Result<Self, Self::Error> {
         match value {
+            5 => Ok(StmtAttr::RowBindType),
             12 => Ok(StmtAttr::UseBookmarks),
+            23 => Ok(StmtAttr::RowBindOffsetPtr),
+            25 => Ok(StmtAttr::RowStatusPtr),
+            26 => Ok(StmtAttr::RowsFetchedPtr),
+            27 => Ok(StmtAttr::RowArraySize),
             10010 => Ok(StmtAttr::AppRowDesc),
             10011 => Ok(StmtAttr::AppParamDesc),
             10012 => Ok(StmtAttr::ImpRowDesc),
@@ -164,27 +180,37 @@ impl TryFrom<i32> for StmtAttr {
     }
 }
 
-/// ODBC descriptor field identifiers (matching `SQL_DESC_*` constants from `sql.h`).
+/// ODBC descriptor field identifiers (matching `SQL_DESC_*` constants from `sql.h` / `sqlext.h`).
 #[repr(i16)]
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum DescField {
-    /// `SQL_DESC_CONCISE_TYPE` - concise data type of the column.
+    /// `SQL_DESC_CONCISE_TYPE` (2) — concise data type of the column.
     ConciseType = 2,
-    /// `SQL_DESC_COUNT` - number of bound columns (header field, record 0).
+    /// `SQL_DESC_ARRAY_SIZE` (20) — header: number of rows in the rowset.
+    ArraySize = 20,
+    /// `SQL_DESC_ARRAY_STATUS_PTR` (21) — header: pointer to row status array.
+    ArrayStatusPtr = 21,
+    /// `SQL_DESC_BIND_OFFSET_PTR` (24) — header: binding offset pointer.
+    BindOffsetPtr = 24,
+    /// `SQL_DESC_BIND_TYPE` (25) — header: row-wise vs column-wise binding.
+    BindType = 25,
+    /// `SQL_DESC_ROWS_PROCESSED_PTR` (34) — header: pointer to rows-processed count.
+    RowsProcessedPtr = 34,
+    /// `SQL_DESC_COUNT` (1001) — number of bound columns (header field, record 0).
     Count = 1001,
-    /// `SQL_DESC_TYPE` - verbose data type of the column.
+    /// `SQL_DESC_TYPE` (1002) — verbose data type of the column.
     Type = 1002,
-    /// `SQL_DESC_OCTET_LENGTH_PTR` - pointer to the octet-length buffer.
+    /// `SQL_DESC_OCTET_LENGTH_PTR` (1004) — pointer to the octet-length buffer.
     OctetLengthPtr = 1004,
-    /// `SQL_DESC_PRECISION` - numeric precision.
+    /// `SQL_DESC_PRECISION` (1005) — numeric precision.
     Precision = 1005,
-    /// `SQL_DESC_SCALE` - numeric scale.
+    /// `SQL_DESC_SCALE` (1006) — numeric scale.
     Scale = 1006,
-    /// `SQL_DESC_INDICATOR_PTR` - pointer to the indicator buffer.
+    /// `SQL_DESC_INDICATOR_PTR` (1009) — pointer to the indicator buffer.
     IndicatorPtr = 1009,
-    /// `SQL_DESC_DATA_PTR` - pointer to the data buffer.
+    /// `SQL_DESC_DATA_PTR` (1010) — pointer to the data buffer.
     DataPtr = 1010,
-    /// `SQL_DESC_OCTET_LENGTH` - length in bytes of the data buffer.
+    /// `SQL_DESC_OCTET_LENGTH` (1013) — length in bytes of the data buffer.
     OctetLength = 1013,
 }
 
@@ -194,6 +220,11 @@ impl TryFrom<i16> for DescField {
     fn try_from(value: i16) -> Result<Self, Self::Error> {
         match value {
             2 => Ok(DescField::ConciseType),
+            20 => Ok(DescField::ArraySize),
+            21 => Ok(DescField::ArrayStatusPtr),
+            24 => Ok(DescField::BindOffsetPtr),
+            25 => Ok(DescField::BindType),
+            34 => Ok(DescField::RowsProcessedPtr),
             1001 => Ok(DescField::Count),
             1002 => Ok(DescField::Type),
             1004 => Ok(DescField::OctetLengthPtr),
@@ -213,19 +244,60 @@ impl TryFrom<i16> for DescField {
     }
 }
 
+/// Discriminant tag placed at offset 0 in both `ArdDescriptor` and `IrdDescriptor`
+/// so that `desc_ref_from_handle` can determine the descriptor type from a raw handle.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DescriptorKind {
+    Ard = 1,
+    Ird = 2,
+}
+
+impl TryFrom<u8> for DescriptorKind {
+    type Error = OdbcError;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            1 => Ok(DescriptorKind::Ard),
+            2 => Ok(DescriptorKind::Ird),
+            _ => {
+                tracing::error!("Invalid descriptor kind: {}", value);
+                InvalidDescriptorKindSnafu { kind: value }.fail()
+            }
+        }
+    }
+}
 /// Application Row Descriptor (ARD).
 ///
-/// Stores column binding information. This struct is embedded in `Statement`
-/// and a pointer to it is returned as the descriptor handle via `SQLGetStmtAttr`.
-#[derive(Default)]
+/// Stores column binding information and block-cursor header fields.
+/// A pointer to this struct is returned as the descriptor handle via
+/// `SQLGetStmtAttr(SQL_ATTR_APP_ROW_DESC)`.
+#[repr(C)]
 pub struct ArdDescriptor {
+    kind: DescriptorKind,
     pub bindings: HashMap<u16, Binding>,
+    /// `SQL_DESC_ARRAY_SIZE` / `SQL_ATTR_ROW_ARRAY_SIZE` — default 1.
+    pub array_size: usize,
+    /// `SQL_DESC_BIND_TYPE` / `SQL_ATTR_ROW_BIND_TYPE` — 0 = column-wise (default).
+    pub bind_type: usize,
+    /// `SQL_DESC_BIND_OFFSET_PTR` / `SQL_ATTR_ROW_BIND_OFFSET_PTR` — default null.
+    pub bind_offset_ptr: *mut sql::Len,
+}
+
+impl Default for ArdDescriptor {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ArdDescriptor {
     pub fn new() -> Self {
         Self {
+            kind: DescriptorKind::Ard,
             bindings: HashMap::new(),
+            array_size: 1,
+            bind_type: 0,
+            bind_offset_ptr: std::ptr::null_mut(),
         }
     }
 
@@ -247,17 +319,73 @@ impl ArdDescriptor {
     }
 }
 
-/// Convert a descriptor handle (returned by SQLGetStmtAttr) back to a `&mut ArdDescriptor`.
-pub fn desc_from_handle<'a>(handle: sql::Handle) -> OdbcResult<&'a mut ArdDescriptor> {
-    let desc_ptr = handle as *mut ArdDescriptor;
-    if desc_ptr.is_null() {
+/// Implementation Row Descriptor (IRD).
+///
+/// Stores per-fetch status information written by the driver.
+/// A pointer to this struct is returned as the descriptor handle via
+/// `SQLGetStmtAttr(SQL_ATTR_IMP_ROW_DESC)`.
+#[repr(C)]
+pub struct IrdDescriptor {
+    kind: DescriptorKind,
+    /// `SQL_DESC_ARRAY_STATUS_PTR` / `SQL_ATTR_ROW_STATUS_PTR` — default null.
+    pub array_status_ptr: *mut u16,
+    /// `SQL_DESC_ROWS_PROCESSED_PTR` / `SQL_ATTR_ROWS_FETCHED_PTR` — default null.
+    pub rows_processed_ptr: *mut sql::ULen,
+}
+
+impl Default for IrdDescriptor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl IrdDescriptor {
+    pub fn new() -> Self {
+        Self {
+            kind: DescriptorKind::Ird,
+            array_status_ptr: std::ptr::null_mut(),
+            rows_processed_ptr: std::ptr::null_mut(),
+        }
+    }
+}
+
+/// A resolved descriptor reference returned by `desc_ref_from_handle`.
+pub enum DescriptorRef<'a> {
+    Ard(&'a mut ArdDescriptor),
+    Ird(&'a mut IrdDescriptor),
+}
+
+/// Convert a descriptor handle (returned by `SQLGetStmtAttr`) back to a
+/// typed `DescriptorRef` by reading the `DescriptorKind` tag at offset 0.
+pub fn desc_ref_from_handle<'a>(handle: sql::Handle) -> OdbcResult<DescriptorRef<'a>> {
+    if handle.is_null() {
         return Err(OdbcError::InvalidHandle {
             location: snafu::location!(),
         });
     }
-    // SAFETY: We have checked that `desc_ptr` is not null. The caller is responsible
-    // for ensuring that `handle` actually points to a valid `ArdDescriptor`.
-    unsafe { Ok(&mut *desc_ptr) }
+    // Read the raw discriminant byte at offset 0 and validate before
+    // interpreting it as a DescriptorKind enum to avoid UB on corrupt handles.
+    let raw_kind = unsafe { *(handle as *const u8) };
+    let kind = DescriptorKind::try_from(raw_kind)?;
+    match raw_kind {
+        1 => {
+            let desc = unsafe { &mut *(handle as *mut ArdDescriptor) };
+            Ok(DescriptorRef::Ard(desc))
+        }
+        2 => {
+            let desc = unsafe { &mut *(handle as *mut IrdDescriptor) };
+            Ok(DescriptorRef::Ird(desc))
+        }
+        _ => {
+            tracing::error!(
+                "desc_ref_from_handle: invalid descriptor kind tag {}",
+                raw_kind
+            );
+            Err(OdbcError::InvalidHandle {
+                location: snafu::location!(),
+            })
+        }
+    }
 }
 
 /// Result type for ODBC operations
@@ -427,6 +555,7 @@ pub struct Statement<'a> {
     pub state: State<StatementState>,
     pub parameter_bindings: HashMap<u16, ParameterBinding>,
     pub ard: ArdDescriptor,
+    pub ird: IrdDescriptor,
     pub diagnostic_info: DiagnosticInfo,
     pub get_data_state: Option<GetDataState>,
 }

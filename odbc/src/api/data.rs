@@ -1,7 +1,8 @@
 use crate::api::error::{
     ConversionSnafu, DataNotFetchedSnafu, ExecutionDoneSnafu, FetchDataSnafu,
-    InvalidBufferLengthSnafu, InvalidCursorStateSnafu, InvalidDescriptorIndexSnafu,
-    NoMoreDataSnafu, NullPointerSnafu, StatementErrorStateSnafu, StatementNotExecutedSnafu,
+    InvalidBufferLengthSnafu, InvalidCursorPositionSnafu, InvalidCursorStateSnafu,
+    InvalidDescriptorIndexSnafu, NoMoreDataSnafu, NullPointerSnafu, StatementErrorStateSnafu,
+    StatementNotExecutedSnafu, UnsupportedFeatureSnafu,
 };
 use crate::api::{
     GetDataState, OdbcResult, Statement, StatementState, WithState, stmt_from_handle,
@@ -27,126 +28,329 @@ fn read_arrow_value(
     Ok(warnings)
 }
 
-/// Fetch the next row of data
-pub fn fetch(statement_handle: sql::Handle, warnings: &mut Warnings) -> OdbcResult<()> {
-    tracing::debug!("fetch called");
-    let stmt = stmt_from_handle(statement_handle);
-    stmt.get_data_state = None;
-    stmt.state.transition_or_err(|state| match state {
-        StatementState::NoResultSet => {
-            tracing::error!("fetch: no result set associated with the statement");
-            InvalidCursorStateSnafu
-                .fail()
-                .with_state(StatementState::NoResultSet)
-        }
+const SQL_FETCH_NEXT: sql::SmallInt = 1;
+
+#[repr(u16)]
+#[derive(Debug, Clone, Copy)]
+enum RowStatus {
+    Success = 0,
+    NoRow = 3,
+    Error = 5,
+    SuccessWithInfo = 6,
+}
+
+/// Advance the cursor by one row. Handles state transitions from
+/// `Executed` → `Fetching` and from one batch to the next.
+fn advance_cursor(state: &mut crate::api::State<StatementState>) -> OdbcResult<()> {
+    state.transition_or_err(|s| match s {
+        StatementState::NoResultSet => InvalidCursorStateSnafu
+            .fail()
+            .with_state(StatementState::NoResultSet),
         StatementState::Executed { mut reader, .. } => match reader.next() {
-            Some(record_batch_result) => {
-                let record_batch = record_batch_result
+            Some(rb) => {
+                let record_batch = rb
                     .context(FetchDataSnafu)
                     .with_state(StatementState::Error)?;
-                tracing::debug!(
-                    "fetch: fetched record_batch with {} rows",
-                    record_batch.num_rows()
-                );
-                let next_state = StatementState::Fetching {
-                    reader,
-                    record_batch,
-                    batch_idx: 0,
-                };
-                Ok((next_state, ()))
+                Ok((
+                    StatementState::Fetching {
+                        reader,
+                        record_batch,
+                        batch_idx: 0,
+                    },
+                    (),
+                ))
             }
-            None => {
-                tracing::debug!("fetch: no more data available");
-                NoMoreDataSnafu.fail().with_state(StatementState::Done)
-            }
+            None => NoMoreDataSnafu.fail().with_state(StatementState::Done),
         },
         StatementState::Fetching {
             mut reader,
             record_batch,
             batch_idx,
         } => {
-            let new_batch_idx = batch_idx + 1;
-            if new_batch_idx < record_batch.num_rows() {
+            let new_idx = batch_idx + 1;
+            if new_idx < record_batch.num_rows() {
                 Ok((
                     StatementState::Fetching {
                         reader,
                         record_batch,
-                        batch_idx: new_batch_idx,
+                        batch_idx: new_idx,
                     },
                     (),
                 ))
             } else {
                 match reader.next() {
-                    Some(new_record_batch_result) => {
-                        let new_record_batch = new_record_batch_result
+                    Some(rb) => {
+                        let new_batch = rb
                             .context(FetchDataSnafu)
                             .with_state(StatementState::Error)?;
-                        let next_state = StatementState::Fetching {
-                            reader,
-                            record_batch: new_record_batch,
-                            batch_idx: 0,
-                        };
-                        Ok((next_state, ()))
+                        Ok((
+                            StatementState::Fetching {
+                                reader,
+                                record_batch: new_batch,
+                                batch_idx: 0,
+                            },
+                            (),
+                        ))
                     }
-                    None => {
-                        tracing::debug!("fetch: no more data available");
-                        NoMoreDataSnafu.fail().with_state(StatementState::Done)
-                    }
+                    None => NoMoreDataSnafu.fail().with_state(StatementState::Done),
                 }
             }
         }
-        state @ StatementState::Error => {
-            tracing::error!("fetch: statement error");
-            StatementErrorStateSnafu.fail().with_state(state)
+        state @ StatementState::Error => StatementErrorStateSnafu.fail().with_state(state),
+        state @ StatementState::Done => ExecutionDoneSnafu.fail().with_state(state),
+        state @ StatementState::Created => StatementNotExecutedSnafu.fail().with_state(state),
+    })
+}
+
+/// Fetch the next rowset of data (block cursor aware).
+pub fn fetch(statement_handle: sql::Handle, warnings: &mut Warnings) -> OdbcResult<()> {
+    tracing::debug!("fetch called");
+    let stmt = stmt_from_handle(statement_handle);
+    stmt.get_data_state = None;
+
+    let array_size = stmt.ard.array_size.max(1);
+    let bind_type = stmt.ard.bind_type;
+    let bind_offset_ptr = stmt.ard.bind_offset_ptr;
+    let row_status_ptr = stmt.ird.array_status_ptr;
+    let rows_fetched_ptr = stmt.ird.rows_processed_ptr;
+
+    if array_size == 1 && bind_offset_ptr.is_null() {
+        advance_cursor(&mut stmt.state)?;
+        if !rows_fetched_ptr.is_null() {
+            unsafe { *rows_fetched_ptr = 1 };
         }
-        state @ StatementState::Done => {
-            tracing::debug!("fetch: statement execution is done");
-            ExecutionDoneSnafu.fail().with_state(state)
+        match execute_bindings_for_row(stmt, 0, 0, 0) {
+            Ok(row_warnings) => {
+                let status = if row_warnings.is_empty() {
+                    RowStatus::Success
+                } else {
+                    RowStatus::SuccessWithInfo
+                };
+                write_row_status(row_status_ptr, 0, status);
+                warnings.extend(row_warnings);
+            }
+            Err(e) => {
+                write_row_status(row_status_ptr, 0, RowStatus::Error);
+                return Err(e);
+            }
         }
-        state @ StatementState::Created => {
-            tracing::error!("fetch: statement not executed");
-            StatementNotExecutedSnafu.fail().with_state(state)
+        return Ok(());
+    }
+
+    let bind_offset = if !bind_offset_ptr.is_null() {
+        unsafe { *bind_offset_ptr }
+    } else {
+        0
+    };
+
+    let mut rows_fetched: usize = 0;
+    let mut has_error = false;
+
+    for row_idx in 0..array_size {
+        match advance_cursor(&mut stmt.state) {
+            Ok(()) => {
+                rows_fetched += 1;
+                match execute_bindings_for_row(stmt, row_idx, bind_type, bind_offset) {
+                    Ok(w) => {
+                        let status = if w.is_empty() {
+                            RowStatus::Success
+                        } else {
+                            RowStatus::SuccessWithInfo
+                        };
+                        write_row_status(row_status_ptr, row_idx, status);
+                        warnings.extend(w);
+                    }
+                    Err(_) => {
+                        write_row_status(row_status_ptr, row_idx, RowStatus::Error);
+                        has_error = true;
+                    }
+                }
+            }
+            Err(crate::api::OdbcError::NoMoreData { .. })
+            | Err(crate::api::OdbcError::ExecutionDone { .. }) => {
+                for remaining in row_idx..array_size {
+                    write_row_status(row_status_ptr, remaining, RowStatus::NoRow);
+                }
+                break;
+            }
+            Err(e) => {
+                if rows_fetched == 0 {
+                    return Err(e);
+                }
+                write_row_status(row_status_ptr, row_idx, RowStatus::Error);
+                has_error = true;
+                for remaining in (row_idx + 1)..array_size {
+                    write_row_status(row_status_ptr, remaining, RowStatus::NoRow);
+                }
+                break;
+            }
         }
-    })?;
-    warnings.extend(execute_bindings(stmt)?);
+    }
+
+    if !rows_fetched_ptr.is_null() {
+        unsafe { *rows_fetched_ptr = rows_fetched as sql::ULen };
+    }
+
+    if rows_fetched == 0 {
+        return NoMoreDataSnafu.fail();
+    }
+
+    if has_error {
+        warnings.push(crate::conversion::warning::Warning::RowError);
+    }
+
     Ok(())
 }
 
-fn execute_bindings(stmt: &mut Statement) -> OdbcResult<Warnings> {
+/// `SQLFetchScroll` — currently only `SQL_FETCH_NEXT` is supported.
+pub fn fetch_scroll(
+    statement_handle: sql::Handle,
+    fetch_orientation: sql::SmallInt,
+    warnings: &mut Warnings,
+) -> OdbcResult<()> {
+    if fetch_orientation != SQL_FETCH_NEXT {
+        tracing::warn!(
+            "fetch_scroll: unsupported orientation {}",
+            fetch_orientation
+        );
+        return UnsupportedFeatureSnafu.fail();
+    }
+    fetch(statement_handle, warnings)
+}
+
+fn write_row_status(row_status_ptr: *mut u16, row_idx: usize, status: RowStatus) {
+    if !row_status_ptr.is_null() {
+        unsafe { *row_status_ptr.add(row_idx) = status as u16 };
+    }
+}
+
+/// Compute the data stride (in bytes) between successive rows for a column
+/// when using column-wise binding.
+fn column_wise_data_stride(binding: &Binding) -> usize {
+    if binding.buffer_length > 0 {
+        binding.buffer_length as usize
+    } else {
+        binding.target_type.fixed_size().unwrap_or(8)
+    }
+}
+
+/// Create an adjusted `Binding` whose pointers target `row_idx` within the
+/// bound arrays, taking into account column-wise vs row-wise binding and an
+/// optional bind offset.
+fn adjust_binding_for_row(
+    binding: &Binding,
+    row_idx: usize,
+    bind_type: usize,
+    bind_offset: isize,
+) -> Binding {
+    if row_idx == 0 && bind_offset == 0 {
+        return Binding {
+            target_type: binding.target_type,
+            target_value_ptr: binding.target_value_ptr,
+            buffer_length: binding.buffer_length,
+            str_len_or_ind_ptr: binding.str_len_or_ind_ptr,
+            precision: binding.precision,
+            scale: binding.scale,
+        };
+    }
+
+    let (data_ptr, ind_ptr) = if bind_type == 0 {
+        let stride = column_wise_data_stride(binding);
+        let row_offset = row_idx
+            .checked_mul(stride)
+            .expect("row index and stride multiplication overflowed");
+        let data_ptr = unsafe {
+            (binding.target_value_ptr as *mut u8)
+                .offset(bind_offset)
+                .add(row_offset) as sql::Pointer
+        };
+        let ind_ptr = if !binding.str_len_or_ind_ptr.is_null() {
+            let ind_stride = std::mem::size_of::<sql::Len>();
+            let ind_offset = row_idx
+                .checked_mul(ind_stride)
+                .expect("row index and indicator stride multiplication overflowed");
+            unsafe {
+                (binding.str_len_or_ind_ptr as *mut u8)
+                    .offset(bind_offset)
+                    .add(ind_offset) as *mut sql::Len
+            }
+        } else {
+            std::ptr::null_mut()
+        };
+        (data_ptr, ind_ptr)
+    } else {
+        let row_byte_offset = row_idx
+            .checked_mul(bind_type)
+            .expect("row index and bind type multiplication overflowed");
+        let data_ptr = unsafe {
+            (binding.target_value_ptr as *mut u8)
+                .offset(bind_offset)
+                .add(row_byte_offset) as sql::Pointer
+        };
+        let ind_ptr = if !binding.str_len_or_ind_ptr.is_null() {
+            unsafe {
+                (binding.str_len_or_ind_ptr as *mut u8)
+                    .offset(bind_offset)
+                    .add(row_byte_offset) as *mut sql::Len
+            }
+        } else {
+            std::ptr::null_mut()
+        };
+        (data_ptr, ind_ptr)
+    };
+
+    Binding {
+        target_type: binding.target_type,
+        target_value_ptr: data_ptr,
+        buffer_length: binding.buffer_length,
+        str_len_or_ind_ptr: ind_ptr,
+        precision: binding.precision,
+        scale: binding.scale,
+    }
+}
+
+/// Execute column bindings for a single row within a block-cursor fetch.
+fn execute_bindings_for_row(
+    stmt: &mut Statement,
+    row_idx: usize,
+    bind_type: usize,
+    bind_offset: isize,
+) -> OdbcResult<Warnings> {
     let mut warnings = vec![];
     if let StatementState::Fetching {
-        reader: _,
         record_batch,
         batch_idx,
-    } = &stmt.state.as_ref()
+        ..
+    } = stmt.state.as_ref()
     {
-        for (column_number, binding) in &stmt.ard.bindings {
-            let schema = record_batch.schema();
-            let arrow_column_number = *column_number as usize - 1;
-            if arrow_column_number >= schema.fields().len() {
+        let batch_idx = *batch_idx;
+        let schema = record_batch.schema();
+        let bindings: Vec<(u16, Binding)> = stmt
+            .ard
+            .bindings
+            .iter()
+            .map(|(&col, b)| {
+                (
+                    col,
+                    adjust_binding_for_row(b, row_idx, bind_type, bind_offset),
+                )
+            })
+            .collect();
+
+        for (column_number, adjusted) in &bindings {
+            let arrow_col = *column_number as usize - 1;
+            if arrow_col >= schema.fields().len() {
                 tracing::error!(
-                    "execute_bindings: column_number {} is out of range",
-                    *column_number
+                    "execute_bindings_for_row: column_number {} is out of range",
+                    column_number
                 );
                 continue;
             }
-            let array_ref = record_batch.column(arrow_column_number);
-            let field = schema.field(arrow_column_number);
-            tracing::debug!(
-                "execute_bindings: column_number={}, binding={:?}",
-                column_number,
-                binding
-            );
-            let conversion_warnings =
-                read_arrow_value(binding, array_ref, field, *batch_idx, &mut None)
-                    .context(ConversionSnafu)?;
-            tracing::debug!(
-                "execute_bindings: column_number={}, binding={:?}, conversion_warnings={:?}",
-                column_number,
-                binding,
-                conversion_warnings
-            );
-            warnings.extend(conversion_warnings);
+            let array_ref = record_batch.column(arrow_col);
+            let field = schema.field(arrow_col);
+            let w = read_arrow_value(adjusted, array_ref, field, batch_idx, &mut None)
+                .context(ConversionSnafu)?;
+            warnings.extend(w);
         }
     }
     Ok(warnings)
@@ -176,6 +380,11 @@ pub fn get_data(
     }
 
     let stmt = stmt_from_handle(statement_handle);
+
+    if stmt.ard.array_size > 1 {
+        tracing::warn!("get_data: cannot use SQLGetData with row_array_size > 1");
+        return InvalidCursorPositionSnafu.fail();
+    }
 
     // Column 0 is reserved for bookmarks; reject it when bookmarks are off
     if col_or_param_num == 0 {

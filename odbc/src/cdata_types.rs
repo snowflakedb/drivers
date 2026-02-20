@@ -108,6 +108,42 @@ pub enum CDataType {
     SsTimestampOffset = C_TYPES_EXTENDED + 1,
 }
 
+impl CDataType {
+    /// Returns the byte size of fixed-length C data types, or `None` for
+    /// variable-length types (CHAR, WCHAR, BINARY).
+    pub fn fixed_size(&self) -> Option<usize> {
+        match self {
+            CDataType::Bit | CDataType::TinyInt | CDataType::STinyInt | CDataType::UTinyInt => {
+                Some(1)
+            }
+            CDataType::Short | CDataType::SShort | CDataType::UShort => Some(2),
+            CDataType::Long | CDataType::SLong | CDataType::ULong | CDataType::Float => Some(4),
+            CDataType::Double | CDataType::SBigInt | CDataType::UBigInt => Some(8),
+            CDataType::Numeric => Some(std::mem::size_of::<sql::Numeric>()),
+            CDataType::TypeDate | CDataType::Date => Some(std::mem::size_of::<sql::Date>()),
+            CDataType::TypeTimestamp | CDataType::TimeStamp => {
+                Some(std::mem::size_of::<sql::Timestamp>())
+            }
+            CDataType::TypeTime | CDataType::Time => Some(std::mem::size_of::<sql::Time>()),
+            CDataType::Guid => Some(16),
+            CDataType::IntervalYear
+            | CDataType::IntervalMonth
+            | CDataType::IntervalDay
+            | CDataType::IntervalHour
+            | CDataType::IntervalMinute
+            | CDataType::IntervalSecond
+            | CDataType::IntervalYearToMonth
+            | CDataType::IntervalDayToHour
+            | CDataType::IntervalDayToMinute
+            | CDataType::IntervalDayToSecond
+            | CDataType::IntervalHourToMinute
+            | CDataType::IntervalHourToSecond
+            | CDataType::IntervalMinuteToSecond => Some(std::mem::size_of::<sql::IntervalStruct>()),
+            _ => None,
+        }
+    }
+}
+
 impl TryFrom<i16> for CDataType {
     type Error = i16;
 

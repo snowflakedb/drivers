@@ -107,7 +107,6 @@ TEST_CASE("SQLGetData can only be called after rows have been fetched.", "[query
 }
 
 TEST_CASE("SQLGetData can retrieve data after SQLFetchScroll.", "[query][get_data]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "SQLGetData can be called only after one or more rows have been fetched from
   //       the result set by SQLFetch, SQLFetchScroll, or SQLExtendedFetch."
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlgetdata-function#comments
@@ -1210,7 +1209,6 @@ TEST_CASE("SQLGetData returns SQL_SUCCESS on the last part of truncated data.", 
 // =============================================================================
 
 TEST_CASE("SQLGetData cannot be called when SQL_ATTR_ROW_ARRAY_SIZE is set and SQL_GD_BLOCK is not supported.") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "If no extensions are supported, SQLGetData cannot be called if the
   //       rowset size is greater than 1."
   // Doc: "SQL_GD_BLOCK. If this option is returned by SQLGetInfo for the
@@ -1559,7 +1557,6 @@ TEST_CASE("SQLGetData on a bound column when SQL_GD_BOUND is supported.", "[quer
 // =============================================================================
 
 TEST_CASE("SQLGetData can be mixed with SQLFetch and SQLFetchScroll calls.", "[query][get_data]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "SQLGetData can be called only after one or more rows have been fetched
   //       from the result set by SQLFetch, SQLFetchScroll, or SQLExtendedFetch."
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlgetdata-function#comments

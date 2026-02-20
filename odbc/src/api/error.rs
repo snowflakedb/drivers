@@ -37,6 +37,13 @@ pub enum OdbcError {
         location: Location,
     },
 
+    #[snafu(display("Invalid descriptor kind: {kind}"))]
+    InvalidDescriptorKind {
+        kind: u16,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
     #[snafu(display("Invalid use of null pointer"))]
     NullPointer {
         #[snafu(implicit)]
@@ -157,6 +164,18 @@ pub enum OdbcError {
 
     #[snafu(display("No more data available"))]
     NoMoreData {
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("Invalid cursor position"))]
+    InvalidCursorPosition {
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("Optional feature not implemented"))]
+    UnsupportedFeature {
         #[snafu(implicit)]
         location: Location,
     },
@@ -329,6 +348,7 @@ impl OdbcError {
             OdbcError::Disconnected { .. } => SqlState::ConnectionDoesNotExist,
             OdbcError::InvalidHandle { .. } => SqlState::InvalidConnectionName,
             OdbcError::NullPointer { .. } => SqlState::InvalidUseOfNullPointer,
+            OdbcError::InvalidDescriptorKind { .. } => SqlState::GeneralError,
             OdbcError::InvalidBufferLength { .. } => SqlState::InvalidStringOrBufferLength,
             OdbcError::InvalidApplicationBufferType { .. } => {
                 SqlState::InvalidApplicationBufferType
@@ -350,6 +370,8 @@ impl OdbcError {
             OdbcError::DataNotFetched { .. } => SqlState::FunctionSequenceError,
             OdbcError::ExecutionDone { .. } => SqlState::FunctionSequenceError,
             OdbcError::NoMoreData { .. } => SqlState::NoDataFound,
+            OdbcError::InvalidCursorPosition { .. } => SqlState::InvalidCursorPosition,
+            OdbcError::UnsupportedFeature { .. } => SqlState::OptionalFeatureNotImplemented,
             OdbcError::InvalidPort { .. } => SqlState::InvalidConnectionStringAttribute,
             OdbcError::SetSqlQuery { .. } => SqlState::SyntaxErrorOrAccessRuleViolation,
             OdbcError::PrepareStatement { .. } => SqlState::SyntaxErrorOrAccessRuleViolation,

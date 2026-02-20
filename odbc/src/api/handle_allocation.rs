@@ -1,6 +1,6 @@
 use crate::api::{
-    ArdDescriptor, Connection, ConnectionState, Environment, OdbcResult, Statement, StatementState,
-    conn_from_handle,
+    ArdDescriptor, Connection, ConnectionState, Environment, IrdDescriptor, OdbcResult, Statement,
+    StatementState, conn_from_handle,
     diagnostic::DiagnosticInfo,
     error::{DisconnectedSnafu, InvalidHandleSnafu, Required},
 };
@@ -52,6 +52,7 @@ pub fn alloc_statement(input_handle: sql::Handle) -> OdbcResult<*mut Statement<'
                 state: StatementState::Created.into(),
                 parameter_bindings: std::collections::HashMap::new(),
                 ard: ArdDescriptor::new(),
+                ird: IrdDescriptor::new(),
                 diagnostic_info: DiagnosticInfo::default(),
                 get_data_state: None,
             });

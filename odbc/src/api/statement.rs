@@ -325,23 +325,68 @@ pub fn bind_col(
 pub fn set_stmt_attr(
     statement_handle: sql::Handle,
     attribute: sql::Integer,
-    _value_ptr: sql::Pointer,
+    value_ptr: sql::Pointer,
     _string_length: sql::Integer,
 ) -> OdbcResult<()> {
     use crate::api::StmtAttr;
 
     tracing::debug!(
-        "set_stmt_attr: statement_handle={:?}, attribute={}",
+        "set_stmt_attr: statement_handle={:?}, attribute={}, value_ptr={:?}",
         statement_handle,
-        attribute
+        attribute,
+        value_ptr
     );
 
     let attr = StmtAttr::try_from(attribute)?;
-    let _stmt = stmt_from_handle(statement_handle);
+    let stmt = stmt_from_handle(statement_handle);
 
     match attr {
         StmtAttr::UseBookmarks => {
             tracing::debug!("set_stmt_attr: UseBookmarks (ignored, bookmarks not supported)");
+            Ok(())
+        }
+        StmtAttr::RowArraySize => {
+            let size = value_ptr as usize;
+            tracing::debug!("set_stmt_attr: RowArraySize = {}", size);
+            let effective_size = if size == 0 {
+                tracing::warn!("set_stmt_attr: RowArraySize value 0 is invalid; coercing to 1");
+                1
+            } else {
+                size
+            };
+            stmt.ard.array_size = effective_size;
+            Ok(())
+        }
+        StmtAttr::RowStatusPtr => {
+            let ptr = value_ptr as *mut u16;
+            tracing::debug!("set_stmt_attr: RowStatusPtr = {:?}", ptr);
+            stmt.ird.array_status_ptr = ptr;
+            Ok(())
+        }
+        StmtAttr::RowsFetchedPtr => {
+            let ptr = value_ptr as *mut sql::ULen;
+            tracing::debug!("set_stmt_attr: RowsFetchedPtr = {:?}", ptr);
+            stmt.ird.rows_processed_ptr = ptr;
+            Ok(())
+        }
+        StmtAttr::RowBindType => {
+            let raw_bind_type = value_ptr as isize;
+            tracing::debug!("set_stmt_attr: RowBindType (raw) = {}", raw_bind_type);
+            if raw_bind_type < 0 {
+                tracing::warn!(
+                    "set_stmt_attr: RowBindType is negative ({}); ignoring invalid value",
+                    raw_bind_type
+                );
+                return Ok(());
+            }
+            let bind_type = raw_bind_type as usize;
+            stmt.ard.bind_type = bind_type;
+            Ok(())
+        }
+        StmtAttr::RowBindOffsetPtr => {
+            let ptr = value_ptr as *mut sql::Len;
+            tracing::debug!("set_stmt_attr: RowBindOffsetPtr = {:?}", ptr);
+            stmt.ard.bind_offset_ptr = ptr;
             Ok(())
         }
         _ => {
@@ -357,7 +402,7 @@ pub fn get_stmt_attr(
     attribute: sql::Integer,
     value_ptr: sql::Pointer,
     _buffer_length: sql::Integer,
-    _string_length_ptr: *mut sql::Integer,
+    string_length_ptr: *mut sql::Integer,
 ) -> OdbcResult<()> {
     use crate::api::StmtAttr;
 
@@ -375,6 +420,49 @@ pub fn get_stmt_attr(
             let ard_ptr = &mut stmt.ard as *mut crate::api::ArdDescriptor as sql::Handle;
             unsafe {
                 *(value_ptr as *mut sql::Handle) = ard_ptr;
+            }
+            Ok(())
+        }
+        StmtAttr::ImpRowDesc => {
+            let ird_ptr = &mut stmt.ird as *mut crate::api::IrdDescriptor as sql::Handle;
+            unsafe {
+                *(value_ptr as *mut sql::Handle) = ird_ptr;
+            }
+            Ok(())
+        }
+        StmtAttr::RowArraySize => {
+            unsafe {
+                *(value_ptr as *mut sql::ULen) = stmt.ard.array_size as sql::ULen;
+                if !string_length_ptr.is_null() {
+                    *string_length_ptr = std::mem::size_of::<sql::ULen>() as sql::Integer;
+                }
+            }
+            Ok(())
+        }
+        StmtAttr::RowStatusPtr => {
+            unsafe {
+                *(value_ptr as *mut *mut u16) = stmt.ird.array_status_ptr;
+            }
+            Ok(())
+        }
+        StmtAttr::RowsFetchedPtr => {
+            unsafe {
+                *(value_ptr as *mut *mut sql::ULen) = stmt.ird.rows_processed_ptr;
+            }
+            Ok(())
+        }
+        StmtAttr::RowBindType => {
+            unsafe {
+                *(value_ptr as *mut sql::ULen) = stmt.ard.bind_type as sql::ULen;
+                if !string_length_ptr.is_null() {
+                    *string_length_ptr = std::mem::size_of::<sql::ULen>() as sql::Integer;
+                }
+            }
+            Ok(())
+        }
+        StmtAttr::RowBindOffsetPtr => {
+            unsafe {
+                *(value_ptr as *mut *mut sql::Len) = stmt.ard.bind_offset_ptr;
             }
             Ok(())
         }

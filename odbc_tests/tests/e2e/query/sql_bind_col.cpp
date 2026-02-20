@@ -1203,7 +1203,6 @@ TEST_CASE("SQLBindCol sets ARD descriptor fields for multiple columns.", "[query
 // =============================================================================
 
 TEST_CASE("SQLBindCol supports column-wise binding with arrays.", "[query][bind_col]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "In column-wise binding, the application binds separate data and
   //       length/indicator arrays to each column."
   // Doc: "To use column-wise binding, the application first sets the
@@ -1249,7 +1248,6 @@ TEST_CASE("SQLBindCol supports column-wise binding with arrays.", "[query][bind_
 // =============================================================================
 
 TEST_CASE("SQLBindCol supports row-wise binding.", "[query][bind_col]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "In row-wise binding, the application defines a structure that contains
   //       data and length/indicator buffers for each column to be bound."
   // Doc: "Sets the SQL_ATTR_ROW_BIND_TYPE statement attribute to the size of the
@@ -1307,7 +1305,6 @@ TEST_CASE("SQLBindCol supports row-wise binding.", "[query][bind_col]") {
 // =============================================================================
 
 TEST_CASE("SQLBindCol supports binding offsets via SQL_ATTR_ROW_BIND_OFFSET_PTR.", "[query][bind_col]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "Using a binding offset has basically the same effect as rebinding a
   //       column by calling SQLBindCol. The difference is that a new call to
   //       SQLBindCol specifies new addresses for the data buffer and
@@ -1358,7 +1355,6 @@ TEST_CASE("SQLBindCol supports binding offsets via SQL_ATTR_ROW_BIND_OFFSET_PTR.
 }
 
 TEST_CASE("SQLBindCol binding offset of 0 uses originally bound addresses.", "[query][bind_col]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "In particular, if the offset is set to 0 or if the statement attribute
   //       is set to a null pointer, the driver uses the originally bound
   //       addresses."
@@ -1395,7 +1391,6 @@ TEST_CASE("SQLBindCol binding offset of 0 uses originally bound addresses.", "[q
 // =============================================================================
 
 TEST_CASE("SQLBindCol binds arrays when SQL_ATTR_ROW_ARRAY_SIZE > 1.", "[query][bind_col]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "If the rowset size (the value of the SQL_ATTR_ROW_ARRAY_SIZE statement
   //       attribute) is greater than 1, the application binds arrays of buffers
   //       instead of single buffers."
@@ -2117,7 +2112,6 @@ TEST_CASE("SQLBindCol supports SQL_C_NUMERIC binding.", "[query][bind_col]") {
 // =============================================================================
 
 TEST_CASE("SQLBindCol works with SQLFetchScroll.", "[query][bind_col]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "SQLBindCol is used to associate, or bind, columns in the result set
   //       to data buffers and length/indicator buffers in the application.
   //       When the application calls SQLFetch, SQLFetchScroll, or SQLSetPos to
