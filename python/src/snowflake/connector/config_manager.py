@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import logging
 import os
-import warnings
 
 from collections.abc import Iterable
 from pathlib import Path
@@ -19,6 +18,7 @@ from snowflake.connector._internal.api_client.client_api import (
     database_driver_client,
 )
 from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
+    ConfigGetPathsRequest,
     ConfigLoadAllSectionsRequest,
 )
 from snowflake.connector._internal.protobuf_gen.proto_exception import (
@@ -114,11 +114,13 @@ class ConfigOption:
         value = None
 
         # Check for custom environment variable (Python-specific feature)
-        if self.env_name is not False and self.env_name is not None:
-            env_var = os.environ.get(self.env_name)
-            if env_var is not None:
-                source = "environment variable"
-                value = self.parse_str(env_var) if self.parse_str else env_var
+        if self.env_name is not False:
+            env_name = self.env_name or self.default_env_name
+            if env_name:
+                env_var = os.environ.get(env_name)
+                if env_var is not None:
+                    source = "environment variable"
+                    value = self.parse_str(env_var) if self.parse_str else env_var
 
         if value is None:
             try:
@@ -312,25 +314,6 @@ class ConfigManager:
 
         _root_setter_helper(new_child)
 
-    def add_subparser(self, new_child: ConfigManager) -> None:
-        """Add a sub-manager (deprecated, use add_submanager instead)."""
-        warnings.warn(
-            "add_subparser is deprecated, use add_submanager instead",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        self.add_submanager(new_child)
-
-    @property
-    def _sub_parsers(self) -> dict[str, ConfigManager]:
-        """Deprecated: Use _sub_managers instead."""
-        warnings.warn(
-            "_sub_parsers is deprecated, use _sub_managers instead",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return self._sub_managers
-
     def __getitem__(self, name: str) -> ConfigOption | ConfigManager | Any:
         """Get either sub-manager, or option in this manager with name."""
         if name in self._options:
@@ -352,9 +335,18 @@ class ConfigManager:
         return self._sub_managers[name]
 
 
-# Default configuration paths (backward compatibility)
-CONFIG_FILE = Path.home() / ".snowflake" / "config.toml"
-CONNECTIONS_FILE = Path.home() / ".snowflake" / "connections.toml"
+def _get_config_paths_from_core() -> tuple[Path, Path]:
+    """Retrieve config file paths from sf_core via protobuf.
+
+    Returns:
+        Tuple of (config_file, connections_file) as Path objects.
+    """
+    client = database_driver_client()
+    response = client.config_get_paths(ConfigGetPathsRequest())
+    return Path(response.config_file), Path(response.connections_file)
+
+
+CONFIG_FILE, CONNECTIONS_FILE = _get_config_paths_from_core()
 
 # Create the root CONFIG_MANAGER (backward compatibility)
 CONFIG_MANAGER = ConfigManager(
@@ -397,18 +389,6 @@ def _get_default_connection_params() -> dict[str, Any]:
 
     # Connection settings are already parsed from protobuf
     return dict(connections[def_connection_name])
-
-
-# Deprecated alias for backward compatibility
-def __getattr__(name: str) -> Any:
-    if name == "CONFIG_PARSER":
-        warnings.warn(
-            "CONFIG_PARSER is deprecated, use CONFIG_MANAGER instead",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return CONFIG_MANAGER
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 # Export public API

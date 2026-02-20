@@ -2104,6 +2104,35 @@ class ConfigLoadAllSectionsResponse(_message.Message):
 
 Global___ConfigLoadAllSectionsResponse: _TypeAlias = ConfigLoadAllSectionsResponse  # noqa: Y015
 
+@_typing.final
+class ConfigGetPathsRequest(_message.Message):
+    DESCRIPTOR: _descriptor.Descriptor
+
+    def __init__(
+        self,
+    ) -> None: ...
+
+Global___ConfigGetPathsRequest: _TypeAlias = ConfigGetPathsRequest  # noqa: Y015
+
+@_typing.final
+class ConfigGetPathsResponse(_message.Message):
+    DESCRIPTOR: _descriptor.Descriptor
+
+    CONFIG_FILE_FIELD_NUMBER: _builtins.int
+    CONNECTIONS_FILE_FIELD_NUMBER: _builtins.int
+    config_file: _builtins.str
+    connections_file: _builtins.str
+    def __init__(
+        self,
+        *,
+        config_file: _builtins.str = ...,
+        connections_file: _builtins.str = ...,
+    ) -> None: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["config_file", b"config_file", "connections_file", b"connections_file"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
+
+Global___ConfigGetPathsResponse: _TypeAlias = ConfigGetPathsResponse  # noqa: Y015
+
 SERVICE_ERROR_FIELD_NUMBER: _builtins.int
 METHOD_ERROR_FIELD_NUMBER: _builtins.int
 service_error: _extension_dict._ExtensionFieldDescriptor[_descriptor_pb2.ServiceOptions, _builtins.str]

@@ -17,6 +17,7 @@ use crate::apis::database_driver_v1::{
     statement_set_option, statement_set_sql_query,
 };
 use crate::config::config_manager;
+use crate::config::path_resolver;
 use crate::protobuf_gen::database_driver_v1::*;
 use arrow::ffi::FFI_ArrowArray;
 use arrow::ffi::FFI_ArrowSchema;
@@ -827,6 +828,23 @@ impl DatabaseDriver for DatabaseDriverImpl {
             .collect();
 
         Ok(ConfigLoadAllSectionsResponse { sections })
+    }
+
+    #[instrument(name = "DatabaseDriverV1::config_get_paths", skip(_input))]
+    fn config_get_paths(
+        _input: ConfigGetPathsRequest,
+    ) -> Result<ConfigGetPathsResponse, DriverException> {
+        let paths = path_resolver::get_config_paths().map_err(|e| {
+            to_driver_exception(ApiError::Configuration {
+                source: e,
+                location: snafu::Location::new(file!(), line!(), 0),
+            })
+        })?;
+
+        Ok(ConfigGetPathsResponse {
+            config_file: paths.config_file.to_string_lossy().into_owned(),
+            connections_file: paths.connections_file.to_string_lossy().into_owned(),
+        })
     }
 }
 

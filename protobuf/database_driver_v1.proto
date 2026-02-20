@@ -540,6 +540,14 @@ message ConfigLoadAllSectionsResponse {
   map<string, ConfigSection> sections = 1;
 }
 
+message ConfigGetPathsRequest {
+}
+
+message ConfigGetPathsResponse {
+  string config_file = 1;
+  string connections_file = 2;
+}
+
 // Database Driver service definition
 service DatabaseDriver {
   option (service_error) = "DriverException";
@@ -592,4 +600,5 @@ service DatabaseDriver {
 
   // Config operations
   rpc ConfigLoadAllSections(ConfigLoadAllSectionsRequest) returns (ConfigLoadAllSectionsResponse);
+  rpc ConfigGetPaths(ConfigGetPathsRequest) returns (ConfigGetPathsResponse);
 }

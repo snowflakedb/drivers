@@ -34,3 +34,15 @@ behavior_differences:
     description: |
       NEW driver: Has clear_cache() and conf_file_cache attributes.
       OLD driver: Uses different caching mechanism.
+
+  11:
+    name: "CONFIG_PARSER deprecated alias removed"
+    description: |
+      NEW driver: CONFIG_PARSER module attribute no longer exists; accessing it raises AttributeError.
+      OLD driver: CONFIG_PARSER is a deprecated alias for CONFIG_MANAGER that emits DeprecationWarning.
+
+  12:
+    name: "Deprecated add_subparser method and _sub_parsers property removed"
+    description: |
+      NEW driver: add_subparser() and _sub_parsers are removed; accessing them raises AttributeError.
+      OLD driver: add_subparser() and _sub_parsers are deprecated aliases that emit DeprecationWarning.

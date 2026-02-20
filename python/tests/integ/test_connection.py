@@ -54,48 +54,44 @@ class TestConnectionOptionalMethods:
         assert "ping is not implemented" in str(excinfo.value)
 
     @pytest.mark.skip_reference
-    def test_set_autocommit_not_implemented(self, connection):
-        """Test that set_autocommit raises NotSupportedError."""
-        with pytest.raises(NotSupportedError) as excinfo:
-            connection.set_autocommit(True)
-        assert "set_autocommit is not implemented" in str(excinfo.value)
+    def test_set_autocommit(self, connection):
+        """Test that set_autocommit sets the internal flag."""
+        assert connection._autocommit is False
+        connection.set_autocommit(True)
+        assert connection._autocommit is True
 
     @pytest.mark.skip_reference
-    def test_get_autocommit_not_implemented(self, connection):
-        """Test that get_autocommit raises NotSupportedError."""
-        with pytest.raises(NotSupportedError) as excinfo:
-            connection.get_autocommit()
-        assert "get_autocommit is not implemented" in str(excinfo.value)
-
-
-class TestConnectionAutocommitProperty:
-    """Test Connection autocommit property."""
-
-    @pytest.mark.skip_reference
-    def test_autocommit_property_get(self, connection):
-        """Test getting autocommit property."""
-        assert connection.autocommit is False
-
+    def test_get_autocommit(self, connection):
+        """Test that get_autocommit returns the current setting."""
+        assert connection.get_autocommit() is False
         connection._autocommit = True
-        assert connection.autocommit is True
+        assert connection.get_autocommit() is True
+
+
+class TestConnectionAutocommitMethod:
+    """Test Connection autocommit method."""
 
     @pytest.mark.skip_reference
-    def test_autocommit_property_set(self, connection, monkeypatch):
-        """Test setting autocommit property."""
-        # Mock set_autocommit to track calls
+    def test_autocommit_sets_flag_and_calls_set_autocommit(self, connection, monkeypatch):
+        """Test that autocommit() sets _autocommit and delegates to set_autocommit."""
         mock_set_autocommit = Mock()
         monkeypatch.setattr(connection, "set_autocommit", mock_set_autocommit)
 
-        connection.autocommit = True
+        connection.autocommit(True)
 
         assert connection._autocommit is True
         mock_set_autocommit.assert_called_once_with(True)
 
     @pytest.mark.skip_reference
-    def test_autocommit_property_set_handles_not_supported(self, connection):
-        """Test setting autocommit property handles NotSupportedError."""
-        # Default set_autocommit raises NotSupportedError
-        connection.autocommit = True
+    def test_autocommit_default_is_false(self, connection):
+        """Test that autocommit defaults to False."""
+        assert connection._autocommit is False
 
-        # Should set internal flag despite NotSupportedError
-        assert connection._autocommit is True
+    @pytest.mark.skip_reference
+    def test_autocommit_roundtrip(self, connection):
+        """Test setting autocommit via autocommit() and reading via get_autocommit()."""
+        connection.autocommit(True)
+        assert connection.get_autocommit() is True
+
+        connection.autocommit(False)
+        assert connection.get_autocommit() is False

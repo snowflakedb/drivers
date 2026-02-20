@@ -618,6 +618,15 @@ pub struct ConfigLoadAllSectionsResponse {
     #[prost(map = "string, message", tag = "1")]
     pub sections: ::std::collections::HashMap<::prost::alloc::string::String, ConfigSection>,
 }
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ConfigGetPathsRequest {}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ConfigGetPathsResponse {
+    #[prost(string, tag = "1")]
+    pub config_file: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub connections_file: ::prost::alloc::string::String,
+}
 /// Status codes corresponding to Thrift StatusCode enum
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
@@ -862,6 +871,9 @@ pub trait DatabaseDriver {
     fn config_load_all_sections(
         input: ConfigLoadAllSectionsRequest,
     ) -> Result<ConfigLoadAllSectionsResponse, DriverException>;
+    fn config_get_paths(
+        input: ConfigGetPathsRequest,
+    ) -> Result<ConfigGetPathsResponse, DriverException>;
 }
 
 pub trait DatabaseDriverServer: DatabaseDriver {
@@ -1280,6 +1292,17 @@ pub trait DatabaseDriverServer: DatabaseDriver {
                     Err(e) => return Err(ProtoError::Transport(e.to_string())),
                 };
                 let result = Self::config_load_all_sections(input);
+                match result {
+                    Ok(output) => Ok(output.encode_to_vec()),
+                    Err(e) => Err(ProtoError::Application(e.encode_to_vec())),
+                }
+            }
+            "config_get_paths" => {
+                let input = match ConfigGetPathsRequest::decode(&message[..]) {
+                    Ok(input) => input,
+                    Err(e) => return Err(ProtoError::Transport(e.to_string())),
+                };
+                let result = Self::config_get_paths(input);
                 match result {
                     Ok(output) => Ok(output.encode_to_vec()),
                     Err(e) => Err(ProtoError::Application(e.encode_to_vec())),
@@ -2266,6 +2289,29 @@ impl<T: Transport> DatabaseDriverClient<T> {
         match result {
             Ok(output) => {
                 let output = ConfigLoadAllSectionsResponse::decode(&output[..]);
+                match output {
+                    Ok(output) => Ok(output),
+                    Err(e) => Err(ProtoError::Transport(e.to_string())),
+                }
+            }
+            Err(ProtoError::Application(e)) => {
+                let output = DriverException::decode(&e[..]);
+                match output {
+                    Ok(output) => Err(ProtoError::Application(output)),
+                    Err(e) => Err(ProtoError::Transport(e.to_string())),
+                }
+            }
+            Err(ProtoError::Transport(e)) => Err(ProtoError::Transport(e)),
+        }
+    }
+
+    pub fn config_get_paths(
+        input: ConfigGetPathsRequest,
+    ) -> Result<ConfigGetPathsResponse, ProtoError<DriverException>> {
+        let result = T::handle_message("DatabaseDriver", "config_get_paths", input.encode_to_vec());
+        match result {
+            Ok(output) => {
+                let output = ConfigGetPathsResponse::decode(&output[..]);
                 match output {
                     Ok(output) => Ok(output),
                     Err(e) => Err(ProtoError::Transport(e.to_string())),
