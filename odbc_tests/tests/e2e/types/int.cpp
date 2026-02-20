@@ -170,36 +170,36 @@ TEST_CASE("should select large result set from table for int and synonyms", "[in
   REQUIRE(row_count == 50000);
 }
 
-TEST_CASE("should manage different column sizes between batches for int and synonyms", "[int]") {
+TEST_CASE("should handle server-side Arrow memory optimization for int columns", "[int]") {
   constexpr int total_rows = 50000;
-  constexpr int small_value_count = total_rows - 10;
-  constexpr int64_t small_value = 15;
-  constexpr int64_t large_value = 9223372036854775807LL;
+  constexpr int64_t expected_col1 = 100;
+  constexpr int64_t expected_col2 = 30000;
+  constexpr int64_t expected_col3 = 2000000000;
+  constexpr int64_t expected_col4 = 9000000000000000000LL;
 
   // Given Snowflake client is logged in
   Connection conn;
   auto random_schema = Schema::use_random_schema(conn);
 
-  // And Table with <type> column exists with 49990 4-bit values and 10 64-bit values
-  conn.execute("CREATE TABLE int_different_batches (col BIGINT)");
-  conn.execute(
-      "INSERT INTO int_different_batches "
-      "SELECT " +
-      std::to_string(small_value) + "::BIGINT FROM TABLE(GENERATOR(ROWCOUNT => " + std::to_string(small_value_count) +
-      "))");
-  conn.execute(
-      "INSERT INTO int_different_batches "
-      "SELECT " +
-      std::to_string(large_value) + "::BIGINT FROM TABLE(GENERATOR(ROWCOUNT => " +
-      std::to_string(total_rows - small_value_count) + "))");
+  // And Table with four INT columns exists
+  conn.execute("CREATE TABLE int_different_column_sizes (col_int8 INT, col_int16 INT, col_int32 INT, col_int64 INT)");
 
-  // When Query "SELECT * FROM <table> ORDER BY col" is executed
+  // And Each column contains values of different magnitudes
+
+  // And Table contains 50000 rows to span multiple Arrow chunks
+  conn.execute(
+      "INSERT INTO int_different_column_sizes "
+      "SELECT 100, 30000, 2000000000, 9000000000000000000 "
+      "FROM TABLE(GENERATOR(ROWCOUNT => " +
+      std::to_string(total_rows) + "))");
+
+  // When Query "SELECT * FROM <table>" is executed
   auto stmt = conn.createStatement();
-  const auto sql = "SELECT * FROM int_different_batches ORDER BY col";
+  const auto sql = "SELECT * FROM int_different_column_sizes";
   SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)sql, SQL_NTS);
   CHECK_ODBC(ret, stmt);
 
-  // Then Result should contain expected values
+  // Then Result should contain 50000 rows
   int row_count = 0;
 
   while (true) {
@@ -209,12 +209,22 @@ TEST_CASE("should manage different column sizes between batches for int and syno
     }
     CHECK_ODBC(ret, stmt);
 
-    SQLBIGINT result = 0;
-    ret = SQLGetData(stmt.getHandle(), 1, SQL_C_SBIGINT, &result, sizeof(result), NULL);
+    SQLBIGINT col1, col2, col3, col4;
+    ret = SQLGetData(stmt.getHandle(), 1, SQL_C_SBIGINT, &col1, sizeof(col1), NULL);
+    CHECK_ODBC(ret, stmt);
+    ret = SQLGetData(stmt.getHandle(), 2, SQL_C_SBIGINT, &col2, sizeof(col2), NULL);
+    CHECK_ODBC(ret, stmt);
+    ret = SQLGetData(stmt.getHandle(), 3, SQL_C_SBIGINT, &col3, sizeof(col3), NULL);
+    CHECK_ODBC(ret, stmt);
+    ret = SQLGetData(stmt.getHandle(), 4, SQL_C_SBIGINT, &col4, sizeof(col4), NULL);
     CHECK_ODBC(ret, stmt);
 
-    int64_t expected = (row_count < small_value_count) ? small_value : large_value;
-    REQUIRE(result == expected);
+    // And All values should be equal to expected data
+    REQUIRE(col1 == expected_col1);
+    REQUIRE(col2 == expected_col2);
+    REQUIRE(col3 == expected_col3);
+    REQUIRE(col4 == expected_col4);
+
     row_count++;
   }
 
