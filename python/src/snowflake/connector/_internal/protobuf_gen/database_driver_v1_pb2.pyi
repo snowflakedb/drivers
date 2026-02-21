@@ -105,6 +105,46 @@ INFO_CODE_DRIVER_ARROW_VERSION: InfoCode.ValueType  # 203
 INFO_CODE_DRIVER_ADBC_VERSION: InfoCode.ValueType  # 204
 Global___InfoCode: _TypeAlias = InfoCode  # noqa: Y015
 
+class _ValidationSeverity:
+    ValueType = _typing.NewType("ValueType", _builtins.int)
+    V: _TypeAlias = ValueType  # noqa: Y015
+
+class _ValidationSeverityEnumTypeWrapper(_enum_type_wrapper._EnumTypeWrapper[_ValidationSeverity.ValueType], _builtins.type):
+    DESCRIPTOR: _descriptor.EnumDescriptor
+    VALIDATION_SEVERITY_ERROR: _ValidationSeverity.ValueType  # 0
+    VALIDATION_SEVERITY_WARNING: _ValidationSeverity.ValueType  # 1
+
+class ValidationSeverity(_ValidationSeverity, metaclass=_ValidationSeverityEnumTypeWrapper): ...
+
+VALIDATION_SEVERITY_ERROR: ValidationSeverity.ValueType  # 0
+VALIDATION_SEVERITY_WARNING: ValidationSeverity.ValueType  # 1
+Global___ValidationSeverity: _TypeAlias = ValidationSeverity  # noqa: Y015
+
+class _ValidationCode:
+    ValueType = _typing.NewType("ValueType", _builtins.int)
+    V: _TypeAlias = ValueType  # noqa: Y015
+
+class _ValidationCodeEnumTypeWrapper(_enum_type_wrapper._EnumTypeWrapper[_ValidationCode.ValueType], _builtins.type):
+    DESCRIPTOR: _descriptor.EnumDescriptor
+    VALIDATION_CODE_UNSPECIFIED: _ValidationCode.ValueType  # 0
+    VALIDATION_CODE_MISSING_REQUIRED: _ValidationCode.ValueType  # 1
+    VALIDATION_CODE_INVALID_TYPE: _ValidationCode.ValueType  # 2
+    VALIDATION_CODE_INVALID_VALUE: _ValidationCode.ValueType  # 3
+    VALIDATION_CODE_UNKNOWN_PARAMETER: _ValidationCode.ValueType  # 4
+    VALIDATION_CODE_DEPRECATED_PARAMETER: _ValidationCode.ValueType  # 5
+    VALIDATION_CODE_CONFLICTING_PARAMETERS: _ValidationCode.ValueType  # 6
+
+class ValidationCode(_ValidationCode, metaclass=_ValidationCodeEnumTypeWrapper): ...
+
+VALIDATION_CODE_UNSPECIFIED: ValidationCode.ValueType  # 0
+VALIDATION_CODE_MISSING_REQUIRED: ValidationCode.ValueType  # 1
+VALIDATION_CODE_INVALID_TYPE: ValidationCode.ValueType  # 2
+VALIDATION_CODE_INVALID_VALUE: ValidationCode.ValueType  # 3
+VALIDATION_CODE_UNKNOWN_PARAMETER: ValidationCode.ValueType  # 4
+VALIDATION_CODE_DEPRECATED_PARAMETER: ValidationCode.ValueType  # 5
+VALIDATION_CODE_CONFLICTING_PARAMETERS: ValidationCode.ValueType  # 6
+Global___ValidationCode: _TypeAlias = ValidationCode  # noqa: Y015
+
 @_typing.final
 class ErrorDetail(_message.Message):
     """Error detail message"""
@@ -1565,6 +1605,42 @@ class ConnectionGetParameterResponse(_message.Message):
 Global___ConnectionGetParameterResponse: _TypeAlias = ConnectionGetParameterResponse  # noqa: Y015
 
 @_typing.final
+class ConnectionValidateOptionsRequest(_message.Message):
+    DESCRIPTOR: _descriptor.Descriptor
+
+    CONN_HANDLE_FIELD_NUMBER: _builtins.int
+    @_builtins.property
+    def conn_handle(self) -> Global___ConnectionHandle: ...
+    def __init__(
+        self,
+        *,
+        conn_handle: Global___ConnectionHandle | None = ...,
+    ) -> None: ...
+    _HasFieldArgType: _TypeAlias = _typing.Literal["conn_handle", b"conn_handle"]  # noqa: Y015
+    def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["conn_handle", b"conn_handle"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
+
+Global___ConnectionValidateOptionsRequest: _TypeAlias = ConnectionValidateOptionsRequest  # noqa: Y015
+
+@_typing.final
+class ConnectionValidateOptionsResponse(_message.Message):
+    DESCRIPTOR: _descriptor.Descriptor
+
+    ISSUES_FIELD_NUMBER: _builtins.int
+    @_builtins.property
+    def issues(self) -> _containers.RepeatedCompositeFieldContainer[Global___ValidationIssue]: ...
+    def __init__(
+        self,
+        *,
+        issues: _abc.Iterable[Global___ValidationIssue] | None = ...,
+    ) -> None: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["issues", b"issues"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
+
+Global___ConnectionValidateOptionsResponse: _TypeAlias = ConnectionValidateOptionsResponse  # noqa: Y015
+
+@_typing.final
 class StatementNewRequest(_message.Message):
     """Statement service requests and responses"""
 
@@ -2134,6 +2210,33 @@ class StatementReadPartitionResponse(_message.Message):
 Global___StatementReadPartitionResponse: _TypeAlias = StatementReadPartitionResponse  # noqa: Y015
 
 @_typing.final
+class ValidationIssue(_message.Message):
+    """Validation issue reported during set or validate operations."""
+
+    DESCRIPTOR: _descriptor.Descriptor
+
+    SEVERITY_FIELD_NUMBER: _builtins.int
+    PARAMETER_FIELD_NUMBER: _builtins.int
+    MESSAGE_FIELD_NUMBER: _builtins.int
+    CODE_FIELD_NUMBER: _builtins.int
+    severity: Global___ValidationSeverity.ValueType
+    parameter: _builtins.str
+    message: _builtins.str
+    code: Global___ValidationCode.ValueType
+    def __init__(
+        self,
+        *,
+        severity: Global___ValidationSeverity.ValueType = ...,
+        parameter: _builtins.str = ...,
+        message: _builtins.str = ...,
+        code: Global___ValidationCode.ValueType = ...,
+    ) -> None: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["code", b"code", "message", b"message", "parameter", b"parameter", "severity", b"severity"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
+
+Global___ValidationIssue: _TypeAlias = ValidationIssue  # noqa: Y015
+
+@_typing.final
 class ConfigSetting(_message.Message):
     """Config setting value (union type)"""
 
@@ -2206,6 +2309,188 @@ class ConfigSection(_message.Message):
     def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
 
 Global___ConfigSection: _TypeAlias = ConfigSection  # noqa: Y015
+
+@_typing.final
+class ConnectionSetOptionsRequest(_message.Message):
+    """Batch set options"""
+
+    DESCRIPTOR: _descriptor.Descriptor
+
+    @_typing.final
+    class OptionsEntry(_message.Message):
+        DESCRIPTOR: _descriptor.Descriptor
+
+        KEY_FIELD_NUMBER: _builtins.int
+        VALUE_FIELD_NUMBER: _builtins.int
+        key: _builtins.str
+        @_builtins.property
+        def value(self) -> Global___ConfigSetting: ...
+        def __init__(
+            self,
+            *,
+            key: _builtins.str = ...,
+            value: Global___ConfigSetting | None = ...,
+        ) -> None: ...
+        _HasFieldArgType: _TypeAlias = _typing.Literal["value", b"value"]  # noqa: Y015
+        def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
+        _ClearFieldArgType: _TypeAlias = _typing.Literal["key", b"key", "value", b"value"]  # noqa: Y015
+        def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
+
+    CONN_HANDLE_FIELD_NUMBER: _builtins.int
+    OPTIONS_FIELD_NUMBER: _builtins.int
+    @_builtins.property
+    def conn_handle(self) -> Global___ConnectionHandle: ...
+    @_builtins.property
+    def options(self) -> _containers.MessageMap[_builtins.str, Global___ConfigSetting]: ...
+    def __init__(
+        self,
+        *,
+        conn_handle: Global___ConnectionHandle | None = ...,
+        options: _abc.Mapping[_builtins.str, Global___ConfigSetting] | None = ...,
+    ) -> None: ...
+    _HasFieldArgType: _TypeAlias = _typing.Literal["conn_handle", b"conn_handle"]  # noqa: Y015
+    def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["conn_handle", b"conn_handle", "options", b"options"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
+
+Global___ConnectionSetOptionsRequest: _TypeAlias = ConnectionSetOptionsRequest  # noqa: Y015
+
+@_typing.final
+class ConnectionSetOptionsResponse(_message.Message):
+    DESCRIPTOR: _descriptor.Descriptor
+
+    WARNINGS_FIELD_NUMBER: _builtins.int
+    @_builtins.property
+    def warnings(self) -> _containers.RepeatedCompositeFieldContainer[Global___ValidationIssue]: ...
+    def __init__(
+        self,
+        *,
+        warnings: _abc.Iterable[Global___ValidationIssue] | None = ...,
+    ) -> None: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["warnings", b"warnings"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
+
+Global___ConnectionSetOptionsResponse: _TypeAlias = ConnectionSetOptionsResponse  # noqa: Y015
+
+@_typing.final
+class DatabaseSetOptionsRequest(_message.Message):
+    DESCRIPTOR: _descriptor.Descriptor
+
+    @_typing.final
+    class OptionsEntry(_message.Message):
+        DESCRIPTOR: _descriptor.Descriptor
+
+        KEY_FIELD_NUMBER: _builtins.int
+        VALUE_FIELD_NUMBER: _builtins.int
+        key: _builtins.str
+        @_builtins.property
+        def value(self) -> Global___ConfigSetting: ...
+        def __init__(
+            self,
+            *,
+            key: _builtins.str = ...,
+            value: Global___ConfigSetting | None = ...,
+        ) -> None: ...
+        _HasFieldArgType: _TypeAlias = _typing.Literal["value", b"value"]  # noqa: Y015
+        def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
+        _ClearFieldArgType: _TypeAlias = _typing.Literal["key", b"key", "value", b"value"]  # noqa: Y015
+        def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
+
+    DB_HANDLE_FIELD_NUMBER: _builtins.int
+    OPTIONS_FIELD_NUMBER: _builtins.int
+    @_builtins.property
+    def db_handle(self) -> Global___DatabaseHandle: ...
+    @_builtins.property
+    def options(self) -> _containers.MessageMap[_builtins.str, Global___ConfigSetting]: ...
+    def __init__(
+        self,
+        *,
+        db_handle: Global___DatabaseHandle | None = ...,
+        options: _abc.Mapping[_builtins.str, Global___ConfigSetting] | None = ...,
+    ) -> None: ...
+    _HasFieldArgType: _TypeAlias = _typing.Literal["db_handle", b"db_handle"]  # noqa: Y015
+    def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["db_handle", b"db_handle", "options", b"options"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
+
+Global___DatabaseSetOptionsRequest: _TypeAlias = DatabaseSetOptionsRequest  # noqa: Y015
+
+@_typing.final
+class DatabaseSetOptionsResponse(_message.Message):
+    DESCRIPTOR: _descriptor.Descriptor
+
+    WARNINGS_FIELD_NUMBER: _builtins.int
+    @_builtins.property
+    def warnings(self) -> _containers.RepeatedCompositeFieldContainer[Global___ValidationIssue]: ...
+    def __init__(
+        self,
+        *,
+        warnings: _abc.Iterable[Global___ValidationIssue] | None = ...,
+    ) -> None: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["warnings", b"warnings"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
+
+Global___DatabaseSetOptionsResponse: _TypeAlias = DatabaseSetOptionsResponse  # noqa: Y015
+
+@_typing.final
+class StatementSetOptionsRequest(_message.Message):
+    DESCRIPTOR: _descriptor.Descriptor
+
+    @_typing.final
+    class OptionsEntry(_message.Message):
+        DESCRIPTOR: _descriptor.Descriptor
+
+        KEY_FIELD_NUMBER: _builtins.int
+        VALUE_FIELD_NUMBER: _builtins.int
+        key: _builtins.str
+        @_builtins.property
+        def value(self) -> Global___ConfigSetting: ...
+        def __init__(
+            self,
+            *,
+            key: _builtins.str = ...,
+            value: Global___ConfigSetting | None = ...,
+        ) -> None: ...
+        _HasFieldArgType: _TypeAlias = _typing.Literal["value", b"value"]  # noqa: Y015
+        def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
+        _ClearFieldArgType: _TypeAlias = _typing.Literal["key", b"key", "value", b"value"]  # noqa: Y015
+        def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
+
+    STMT_HANDLE_FIELD_NUMBER: _builtins.int
+    OPTIONS_FIELD_NUMBER: _builtins.int
+    @_builtins.property
+    def stmt_handle(self) -> Global___StatementHandle: ...
+    @_builtins.property
+    def options(self) -> _containers.MessageMap[_builtins.str, Global___ConfigSetting]: ...
+    def __init__(
+        self,
+        *,
+        stmt_handle: Global___StatementHandle | None = ...,
+        options: _abc.Mapping[_builtins.str, Global___ConfigSetting] | None = ...,
+    ) -> None: ...
+    _HasFieldArgType: _TypeAlias = _typing.Literal["stmt_handle", b"stmt_handle"]  # noqa: Y015
+    def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["options", b"options", "stmt_handle", b"stmt_handle"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
+
+Global___StatementSetOptionsRequest: _TypeAlias = StatementSetOptionsRequest  # noqa: Y015
+
+@_typing.final
+class StatementSetOptionsResponse(_message.Message):
+    DESCRIPTOR: _descriptor.Descriptor
+
+    WARNINGS_FIELD_NUMBER: _builtins.int
+    @_builtins.property
+    def warnings(self) -> _containers.RepeatedCompositeFieldContainer[Global___ValidationIssue]: ...
+    def __init__(
+        self,
+        *,
+        warnings: _abc.Iterable[Global___ValidationIssue] | None = ...,
+    ) -> None: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["warnings", b"warnings"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
+
+Global___StatementSetOptionsResponse: _TypeAlias = StatementSetOptionsResponse  # noqa: Y015
 
 @_typing.final
 class ConfigLoadAllSectionsRequest(_message.Message):
