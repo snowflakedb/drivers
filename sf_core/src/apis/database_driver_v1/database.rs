@@ -4,6 +4,7 @@ use super::Handle;
 use super::Setting;
 use super::error::*;
 use super::global_state::DB_HANDLE_MANAGER;
+use super::validation::{ValidationIssue, resolve_and_apply_options};
 
 pub fn database_new() -> Handle {
     DB_HANDLE_MANAGER.add_handle(Mutex::new(Database::new()))
@@ -16,6 +17,22 @@ pub fn database_set_option(db_handle: Handle, key: String, value: Setting) -> Re
             let mut db = db_ptr.lock().map_err(|_| DatabaseLockingSnafu {}.build())?;
             db.settings.insert(key, value);
             Ok(())
+        }
+        None => InvalidArgumentSnafu {
+            argument: "Database handle not found".to_string(),
+        }
+        .fail(),
+    }
+}
+
+pub fn database_set_options(
+    db_handle: Handle,
+    options: HashMap<String, Setting>,
+) -> Result<Vec<ValidationIssue>, ApiError> {
+    match DB_HANDLE_MANAGER.get_obj(db_handle) {
+        Some(db_ptr) => {
+            let mut db = db_ptr.lock().map_err(|_| DatabaseLockingSnafu {}.build())?;
+            resolve_and_apply_options(&mut db.settings, options)
         }
         None => InvalidArgumentSnafu {
             argument: "Database handle not found".to_string(),

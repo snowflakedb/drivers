@@ -5,6 +5,7 @@ use super::Handle;
 use super::connection::RefreshContext;
 use super::error::*;
 use super::global_state::{CONN_HANDLE_MANAGER, STMT_HANDLE_MANAGER};
+use super::validation::{ValidationIssue, resolve_and_apply_options};
 use crate::apis::database_driver_v1::query::process_query_response;
 use crate::protobuf_gen::database_driver_v1::ColumnMetadata;
 use crate::rest::snowflake::query_response::Data;
@@ -174,6 +175,22 @@ pub fn statement_set_option(handle: Handle, key: String, value: Setting) -> Resu
             let mut stmt = stmt_ptr.lock().map_err(|_| StatementLockingSnafu.build())?;
             stmt.settings.insert(key, value);
             Ok(())
+        }
+        None => InvalidArgumentSnafu {
+            argument: "Statement handle not found".to_string(),
+        }
+        .fail(),
+    }
+}
+
+pub fn statement_set_options(
+    handle: Handle,
+    options: HashMap<String, Setting>,
+) -> Result<Vec<ValidationIssue>, ApiError> {
+    match STMT_HANDLE_MANAGER.get_obj(handle) {
+        Some(stmt_ptr) => {
+            let mut stmt = stmt_ptr.lock().map_err(|_| StatementLockingSnafu.build())?;
+            resolve_and_apply_options(&mut stmt.settings, options)
         }
         None => InvalidArgumentSnafu {
             argument: "Statement handle not found".to_string(),

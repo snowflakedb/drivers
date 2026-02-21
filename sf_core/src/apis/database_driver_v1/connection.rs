@@ -7,6 +7,7 @@ use super::Handle;
 use super::Setting;
 use super::error::*;
 use super::global_state::CONN_HANDLE_MANAGER;
+use super::validation::{ValidationIssue, resolve_and_apply_options};
 use crate::config::config_manager;
 use crate::config::path_resolver::ConfigPaths;
 use crate::config::rest_parameters::{ClientInfo, LoginParameters};
@@ -123,6 +124,24 @@ pub fn connection_set_option(handle: Handle, key: String, value: Setting) -> Res
                 .map_err(|_| ConnectionLockingSnafu {}.build())?;
             conn.settings.insert(key, value);
             Ok(())
+        }
+        None => InvalidArgumentSnafu {
+            argument: "Connection handle not found".to_string(),
+        }
+        .fail(),
+    }
+}
+
+pub fn connection_set_options(
+    handle: Handle,
+    options: HashMap<String, Setting>,
+) -> Result<Vec<ValidationIssue>, ApiError> {
+    match CONN_HANDLE_MANAGER.get_obj(handle) {
+        Some(conn_ptr) => {
+            let mut conn = conn_ptr
+                .lock()
+                .map_err(|_| ConnectionLockingSnafu {}.build())?;
+            resolve_and_apply_options(&mut conn.settings, options)
         }
         None => InvalidArgumentSnafu {
             argument: "Connection handle not found".to_string(),
