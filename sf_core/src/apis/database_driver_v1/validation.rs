@@ -1,44 +1,10 @@
 use std::collections::HashMap;
-use std::fmt;
 
 use super::error::{ApiError, InvalidArgumentSnafu};
 use crate::config::param_registry::{self, ValueType};
 use crate::config::settings::Setting;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ValidationSeverity {
-    Error,
-    Warning,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ValidationCode {
-    Unspecified,
-    MissingRequired,
-    InvalidType,
-    InvalidValue,
-    UnknownParameter,
-    DeprecatedParameter,
-    ConflictingParameters,
-}
-
-#[derive(Debug, Clone)]
-pub struct ValidationIssue {
-    pub severity: ValidationSeverity,
-    pub parameter: String,
-    pub message: String,
-    pub code: ValidationCode,
-}
-
-impl fmt::Display for ValidationIssue {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "[{:?}] {}: {}",
-            self.severity, self.parameter, self.message
-        )
-    }
-}
+pub use crate::config::connection_config::{ValidationCode, ValidationIssue, ValidationSeverity};
 
 fn setting_matches_value_type(setting: &Setting, expected: ValueType) -> bool {
     matches!(

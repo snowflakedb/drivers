@@ -8,8 +8,10 @@ use super::Setting;
 use super::error::*;
 use super::global_state::CONN_HANDLE_MANAGER;
 use super::validation::{ValidationIssue, resolve_and_apply_options};
+use crate::config::connection_config::{AuthConfig, ConnectionConfig};
+use crate::config::param_names;
 use crate::config::resolver::ConfigResolver;
-use crate::config::rest_parameters::{ClientInfo, LoginParameters};
+use crate::config::rest_parameters::{ClientInfo, LoginMethod, LoginParameters};
 use crate::config::retry::RetryPolicy;
 use crate::rest::snowflake::{self, RestError, SessionTokens, SnowflakeResponseError};
 use crate::tls::client::create_tls_client_with_config;
@@ -27,14 +29,16 @@ pub fn connection_init(conn_handle: Handle, _db_handle: Handle) -> Result<(), Ap
 
             let rt = crate::async_bridge::runtime().context(RuntimeCreationSnafu)?;
 
-            let login_parameters =
-                LoginParameters::from_settings(&resolved).context(ConfigurationSnafu)?;
+            let config = ConnectionConfig::build(&resolved)
+                .context(ConfigurationSnafu)?;
             let init_params = conn.init_session_parameters.clone();
             drop(conn);
 
-            let http_client =
-                create_tls_client_with_config(login_parameters.client_info.tls_config.clone())
-                    .context(TlsClientCreationSnafu)?;
+            let http_client = create_tls_client_with_config(config.tls.clone())
+                .context(TlsClientCreationSnafu)?;
+
+            // Transitional: map ConnectionConfig → LoginParameters for existing login API
+            let login_parameters = login_parameters_from_config(&config);
 
             let login_result = rt
                 .block_on(async {
@@ -70,6 +74,52 @@ pub fn connection_init(conn_handle: Handle, _db_handle: Handle) -> Result<(), Ap
             argument: "Connection handle not found".to_string(),
         }
         .fail(),
+    }
+}
+
+/// Transitional bridge: map `ConnectionConfig` fields into the existing
+/// `LoginParameters` struct so the REST login layer can remain unchanged.
+fn login_parameters_from_config(config: &ConnectionConfig) -> LoginParameters {
+    let login_method = match &config.auth {
+        AuthConfig::Password { user, password } => LoginMethod::Password {
+            username: user.clone(),
+            password: password.clone(),
+        },
+        AuthConfig::Jwt {
+            user,
+            private_key_pem,
+            passphrase,
+        } => LoginMethod::PrivateKey {
+            username: user.clone(),
+            private_key: private_key_pem.clone(),
+            passphrase: passphrase.clone(),
+        },
+        AuthConfig::Pat { user, token } => LoginMethod::Pat {
+            username: user.clone(),
+            token: token.clone(),
+        },
+    };
+
+    let client_info = ClientInfo {
+        application: "PythonConnector".to_string(),
+        version: "3.15.0".to_string(),
+        os: "Darwin".to_string(),
+        os_version: "macOS-15.5-arm64-arm-64bit".to_string(),
+        ocsp_mode: Some("FAIL_OPEN".to_string()),
+        crl_config: config.tls.crl_config.clone(),
+        tls_config: config.tls.clone(),
+    };
+
+    LoginParameters {
+        account_name: config.server.account.clone(),
+        login_method,
+        server_url: config.server.server_url.clone(),
+        database: config.session.database.clone(),
+        schema: config.session.schema.clone(),
+        warehouse: config.session.warehouse.clone(),
+        role: config.session.role.clone(),
+        client_info,
+        session_parameters: None,
     }
 }
 
@@ -118,6 +168,25 @@ pub fn connection_set_session_parameters(
                 .map_err(|_| ConnectionLockingSnafu {}.build())?;
             conn.init_session_parameters = Some(parameters);
             Ok(())
+        }
+        None => InvalidArgumentSnafu {
+            argument: "Connection handle not found".to_string(),
+        }
+        .fail(),
+    }
+}
+
+pub fn connection_validate_options(
+    conn_handle: Handle,
+) -> Result<Vec<ValidationIssue>, ApiError> {
+    match CONN_HANDLE_MANAGER.get_obj(conn_handle) {
+        Some(conn_ptr) => {
+            let conn = conn_ptr
+                .lock()
+                .map_err(|_| ConnectionLockingSnafu {}.build())?;
+            let resolved =
+                ConfigResolver::resolve(&conn.settings).context(ConfigurationSnafu)?;
+            Ok(crate::config::connection_config::validate_settings(&resolved))
         }
         None => InvalidArgumentSnafu {
             argument: "Connection handle not found".to_string(),
@@ -457,7 +526,7 @@ pub fn connection_get_info(conn_handle: Handle) -> Result<ConnectionInfo, ApiErr
                 .map_err(|_| ConnectionLockingSnafu {}.build())?;
 
             // Extract host and port from settings
-            let host = conn.settings.get("host").and_then(|s| {
+            let host = conn.settings.get(param_names::HOST).and_then(|s| {
                 if let Setting::String(v) = s {
                     Some(v.clone())
                 } else {
@@ -465,7 +534,7 @@ pub fn connection_get_info(conn_handle: Handle) -> Result<ConnectionInfo, ApiErr
                 }
             });
 
-            let port = conn.settings.get("port").and_then(|s| {
+            let port = conn.settings.get(param_names::PORT).and_then(|s| {
                 if let Setting::Int(v) = s {
                     Some(*v)
                 } else {

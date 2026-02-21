@@ -13,7 +13,7 @@ use crate::apis::database_driver_v1::{
 use crate::apis::database_driver_v1::{
     connection_get_info, connection_get_parameter, connection_init, connection_new,
     connection_release, connection_set_option, connection_set_options,
-    connection_set_session_parameters,
+    connection_set_session_parameters, connection_validate_options,
 };
 use crate::apis::database_driver_v1::{
     database_init, database_new, database_release, database_set_option, database_set_options,
@@ -284,6 +284,28 @@ fn to_driver_error(error: &ApiError) -> DriverError {
                 },
             )),
         },
+        ApiError::Configuration {
+            source: ConfigError::ValidationFailed { issues, .. },
+            ..
+        } => {
+            let summary = issues
+                .iter()
+                .map(|i| format!("{}: {}", i.parameter, i.message))
+                .collect::<Vec<_>>()
+                .join("; ");
+            DriverError {
+                error_type: Some(driver_error::ErrorType::InvalidParameterValue(
+                    InvalidParameterValue {
+                        parameter: issues
+                            .first()
+                            .map(|i| i.parameter.clone())
+                            .unwrap_or_default(),
+                        value: String::new(),
+                        explanation: Some(summary),
+                    },
+                )),
+            }
+        }
     }
 }
 
@@ -323,6 +345,10 @@ fn to_driver_exception(error: ApiError) -> DriverException {
             source: ConfigError::ConnectionNotFound { .. },
             ..
         } => StatusCode::MissingParameter,
+        ApiError::Configuration {
+            source: ConfigError::ValidationFailed { .. },
+            ..
+        } => StatusCode::InvalidParameterValue,
         ApiError::InvalidArgument { .. } => StatusCode::InvalidArgument,
         ApiError::Login {
             source: RestError::LoginError { .. },
@@ -727,6 +753,22 @@ impl DatabaseDriver for DatabaseDriverImpl {
         let value = connection_get_parameter(conn_handle.into(), input.key).to_protobuf()?;
 
         Ok(ConnectionGetParameterResponse { value })
+    }
+
+    #[instrument(name = "DatabaseDriverV1::connection_validate_options", skip(input))]
+    fn connection_validate_options(
+        input: ConnectionValidateOptionsRequest,
+    ) -> Result<ConnectionValidateOptionsResponse, DriverException> {
+        let conn_handle = required(input.conn_handle, "Connection handle is required")?;
+
+        let issues = connection_validate_options(conn_handle.into()).to_protobuf()?;
+
+        Ok(ConnectionValidateOptionsResponse {
+            issues: issues
+                .into_iter()
+                .map(core_validation_issue_to_proto)
+                .collect(),
+        })
     }
 
     #[instrument(name = "DatabaseDriverV1::statement_new", skip(input))]
