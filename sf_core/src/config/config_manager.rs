@@ -108,7 +108,7 @@ fn toml_value_to_setting(value: &toml::Value) -> Option<Setting> {
         toml::Value::String(s) => Some(Setting::String(s.clone())),
         toml::Value::Integer(i) => Some(Setting::Int(*i)),
         toml::Value::Float(f) => Some(Setting::Double(*f)),
-        toml::Value::Boolean(b) => Some(Setting::String(b.to_string())),
+        toml::Value::Boolean(b) => Some(Setting::Bool(*b)),
         _ => None,
     }
 }
@@ -272,11 +272,10 @@ mod tests {
         ));
 
         let bool_val = toml::Value::Boolean(true);
-        if let Some(Setting::String(s)) = toml_value_to_setting(&bool_val) {
-            assert_eq!(s, "true");
-        } else {
-            panic!("Expected String setting");
-        }
+        assert!(matches!(
+            toml_value_to_setting(&bool_val),
+            Some(Setting::Bool(true))
+        ));
     }
 
     #[test]
@@ -546,11 +545,7 @@ cert_path = "/etc/certs/server.crt"
         assert!(section.is_some());
 
         let settings = section.unwrap();
-        if let Some(Setting::String(enabled)) = settings.get("enabled") {
-            assert_eq!(enabled, "true");
-        } else {
-            panic!("Expected enabled setting");
-        }
+        assert!(matches!(settings.get("enabled"), Some(Setting::Bool(true))));
     }
 
     #[test]

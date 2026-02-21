@@ -823,6 +823,41 @@ class DatabaseSetOptionDoubleResponse(_message.Message):
 Global___DatabaseSetOptionDoubleResponse: _TypeAlias = DatabaseSetOptionDoubleResponse  # noqa: Y015
 
 @_typing.final
+class DatabaseSetOptionBoolRequest(_message.Message):
+    DESCRIPTOR: _descriptor.Descriptor
+
+    DB_HANDLE_FIELD_NUMBER: _builtins.int
+    KEY_FIELD_NUMBER: _builtins.int
+    VALUE_FIELD_NUMBER: _builtins.int
+    key: _builtins.str
+    value: _builtins.bool
+    @_builtins.property
+    def db_handle(self) -> Global___DatabaseHandle: ...
+    def __init__(
+        self,
+        *,
+        db_handle: Global___DatabaseHandle | None = ...,
+        key: _builtins.str = ...,
+        value: _builtins.bool = ...,
+    ) -> None: ...
+    _HasFieldArgType: _TypeAlias = _typing.Literal["db_handle", b"db_handle"]  # noqa: Y015
+    def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["db_handle", b"db_handle", "key", b"key", "value", b"value"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
+
+Global___DatabaseSetOptionBoolRequest: _TypeAlias = DatabaseSetOptionBoolRequest  # noqa: Y015
+
+@_typing.final
+class DatabaseSetOptionBoolResponse(_message.Message):
+    DESCRIPTOR: _descriptor.Descriptor
+
+    def __init__(
+        self,
+    ) -> None: ...
+
+Global___DatabaseSetOptionBoolResponse: _TypeAlias = DatabaseSetOptionBoolResponse  # noqa: Y015
+
+@_typing.final
 class DatabaseInitRequest(_message.Message):
     DESCRIPTOR: _descriptor.Descriptor
 
@@ -1050,6 +1085,41 @@ class ConnectionSetOptionDoubleResponse(_message.Message):
     ) -> None: ...
 
 Global___ConnectionSetOptionDoubleResponse: _TypeAlias = ConnectionSetOptionDoubleResponse  # noqa: Y015
+
+@_typing.final
+class ConnectionSetOptionBoolRequest(_message.Message):
+    DESCRIPTOR: _descriptor.Descriptor
+
+    CONN_HANDLE_FIELD_NUMBER: _builtins.int
+    KEY_FIELD_NUMBER: _builtins.int
+    VALUE_FIELD_NUMBER: _builtins.int
+    key: _builtins.str
+    value: _builtins.bool
+    @_builtins.property
+    def conn_handle(self) -> Global___ConnectionHandle: ...
+    def __init__(
+        self,
+        *,
+        conn_handle: Global___ConnectionHandle | None = ...,
+        key: _builtins.str = ...,
+        value: _builtins.bool = ...,
+    ) -> None: ...
+    _HasFieldArgType: _TypeAlias = _typing.Literal["conn_handle", b"conn_handle"]  # noqa: Y015
+    def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["conn_handle", b"conn_handle", "key", b"key", "value", b"value"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
+
+Global___ConnectionSetOptionBoolRequest: _TypeAlias = ConnectionSetOptionBoolRequest  # noqa: Y015
+
+@_typing.final
+class ConnectionSetOptionBoolResponse(_message.Message):
+    DESCRIPTOR: _descriptor.Descriptor
+
+    def __init__(
+        self,
+    ) -> None: ...
+
+Global___ConnectionSetOptionBoolResponse: _TypeAlias = ConnectionSetOptionBoolResponse  # noqa: Y015
 
 @_typing.final
 class ConnectionInitRequest(_message.Message):
@@ -1797,6 +1867,41 @@ class StatementSetOptionDoubleResponse(_message.Message):
 Global___StatementSetOptionDoubleResponse: _TypeAlias = StatementSetOptionDoubleResponse  # noqa: Y015
 
 @_typing.final
+class StatementSetOptionBoolRequest(_message.Message):
+    DESCRIPTOR: _descriptor.Descriptor
+
+    STMT_HANDLE_FIELD_NUMBER: _builtins.int
+    KEY_FIELD_NUMBER: _builtins.int
+    VALUE_FIELD_NUMBER: _builtins.int
+    key: _builtins.str
+    value: _builtins.bool
+    @_builtins.property
+    def stmt_handle(self) -> Global___StatementHandle: ...
+    def __init__(
+        self,
+        *,
+        stmt_handle: Global___StatementHandle | None = ...,
+        key: _builtins.str = ...,
+        value: _builtins.bool = ...,
+    ) -> None: ...
+    _HasFieldArgType: _TypeAlias = _typing.Literal["stmt_handle", b"stmt_handle"]  # noqa: Y015
+    def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["key", b"key", "stmt_handle", b"stmt_handle", "value", b"value"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
+
+Global___StatementSetOptionBoolRequest: _TypeAlias = StatementSetOptionBoolRequest  # noqa: Y015
+
+@_typing.final
+class StatementSetOptionBoolResponse(_message.Message):
+    DESCRIPTOR: _descriptor.Descriptor
+
+    def __init__(
+        self,
+    ) -> None: ...
+
+Global___StatementSetOptionBoolResponse: _TypeAlias = StatementSetOptionBoolResponse  # noqa: Y015
+
+@_typing.final
 class StatementGetParameterSchemaRequest(_message.Message):
     DESCRIPTOR: _descriptor.Descriptor
 
@@ -2038,10 +2143,12 @@ class ConfigSetting(_message.Message):
     INT_VALUE_FIELD_NUMBER: _builtins.int
     DOUBLE_VALUE_FIELD_NUMBER: _builtins.int
     BYTES_VALUE_FIELD_NUMBER: _builtins.int
+    BOOL_VALUE_FIELD_NUMBER: _builtins.int
     string_value: _builtins.str
     int_value: _builtins.int
     double_value: _builtins.float
     bytes_value: _builtins.bytes
+    bool_value: _builtins.bool
     def __init__(
         self,
         *,
@@ -2049,12 +2156,13 @@ class ConfigSetting(_message.Message):
         int_value: _builtins.int = ...,
         double_value: _builtins.float = ...,
         bytes_value: _builtins.bytes = ...,
+        bool_value: _builtins.bool = ...,
     ) -> None: ...
-    _HasFieldArgType: _TypeAlias = _typing.Literal["bytes_value", b"bytes_value", "double_value", b"double_value", "int_value", b"int_value", "string_value", b"string_value", "value", b"value"]  # noqa: Y015
+    _HasFieldArgType: _TypeAlias = _typing.Literal["bool_value", b"bool_value", "bytes_value", b"bytes_value", "double_value", b"double_value", "int_value", b"int_value", "string_value", b"string_value", "value", b"value"]  # noqa: Y015
     def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
-    _ClearFieldArgType: _TypeAlias = _typing.Literal["bytes_value", b"bytes_value", "double_value", b"double_value", "int_value", b"int_value", "string_value", b"string_value", "value", b"value"]  # noqa: Y015
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["bool_value", b"bool_value", "bytes_value", b"bytes_value", "double_value", b"double_value", "int_value", b"int_value", "string_value", b"string_value", "value", b"value"]  # noqa: Y015
     def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
-    _WhichOneofReturnType_value: _TypeAlias = _typing.Literal["string_value", "int_value", "double_value", "bytes_value"]  # noqa: Y015
+    _WhichOneofReturnType_value: _TypeAlias = _typing.Literal["string_value", "int_value", "double_value", "bytes_value", "bool_value"]  # noqa: Y015
     _WhichOneofArgType_value: _TypeAlias = _typing.Literal["value", b"value"]  # noqa: Y015
     def WhichOneof(self, oneof_group: _WhichOneofArgType_value) -> _WhichOneofReturnType_value | None: ...
 
