@@ -55,6 +55,7 @@ dev = [
     "mypy",
     "hatchling",
     "types-pytz",
+    "types-protobuf",
 ]
 
 [tool.hatch.version]
@@ -189,7 +190,7 @@ installer = "uv"
 check = [
     'ruff format --check {args:src/snowflake tests}',
     'ruff check {args:src/snowflake tests}',
-    'mypy --install-types --non-interactive -p snowflake.connector',
+    'mypy -p snowflake.connector',
 ]
 fix = [
     'ruff format src/snowflake tests',
