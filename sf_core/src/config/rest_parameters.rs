@@ -44,6 +44,10 @@ pub struct QueryParameters {
 }
 
 impl QueryParameters {
+    /// Build transport parameters from an arbitrary settings bag (e.g. tests, pre-connect paths).
+    ///
+    /// After login, prefer `Connection::query_transport_parameters` (transport snapshot)
+    /// instead of re-reading merged settings.
     pub fn from_settings(settings: &dyn Settings) -> Result<Self, ConfigError> {
         Ok(Self {
             server_url: get_server_url(settings)?,
@@ -97,6 +101,10 @@ pub struct LoginParameters {
 }
 
 impl LoginParameters {
+    /// Build login request fields from a resolved settings map (defaults + files + connection seed).
+    ///
+    /// Session defaults (`database`, `schema`, etc.) are included only when they are part of the
+    /// resolved connect seed (`used_at_connect` session fields in the registry).
     pub fn from_settings(settings: &dyn Settings) -> Result<Self, ConfigError> {
         Ok(Self {
             account_name: {

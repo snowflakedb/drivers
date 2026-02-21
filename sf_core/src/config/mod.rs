@@ -1,10 +1,13 @@
 pub mod config_manager;
+pub mod connection_config;
 pub mod param_registry;
 pub mod param_store;
 pub use param_registry::ParamKey;
+pub use param_registry::ParamScope;
 pub use param_registry::param_names;
 pub use param_store::ParamStore;
 pub mod path_resolver;
+pub mod resolver;
 pub mod rest_parameters;
 pub mod retry;
 pub mod settings;
@@ -67,6 +70,19 @@ pub enum ConfigError {
         "Could not determine platform config directory. Set SNOWFLAKE_HOME environment variable to specify the configuration directory."
     ))]
     ConfigDirNotFound {
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display(
+        "Configuration validation failed ({} issue(s)): {}",
+        issues.len(),
+        issues
+            .first()
+            .map(|i| format!("{}: {}", i.parameter, i.message))
+            .unwrap_or_default()
+    ))]
+    ValidationFailed {
+        issues: Vec<crate::config::connection_config::ValidationIssue>,
         #[snafu(implicit)]
         location: Location,
     },

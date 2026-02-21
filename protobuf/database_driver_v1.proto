@@ -426,6 +426,14 @@ message ConnectionGetParameterResponse {
   optional string value = 1;
 }
 
+message ConnectionValidateOptionsRequest {
+  ConnectionHandle conn_handle = 1;
+}
+
+message ConnectionValidateOptionsResponse {
+  repeated ValidationIssue issues = 1;
+}
+
 // Statement service requests and responses
 
 message StatementNewRequest {
@@ -721,6 +729,8 @@ service DatabaseDriver {
   // gets cached session parameter. Cache is updated with subset of connection parameters
   // (chosen by server, included in HTTP response) after each query
   rpc ConnectionGetParameter(ConnectionGetParameterRequest) returns (ConnectionGetParameterResponse);
+  // pre-flight validation of connection options - reports all issues at once
+  rpc ConnectionValidateOptions(ConnectionValidateOptionsRequest) returns (ConnectionValidateOptionsResponse);
 
   // Statement operations
   rpc StatementNew(StatementNewRequest) returns (StatementNewResponse);

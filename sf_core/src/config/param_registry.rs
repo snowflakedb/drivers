@@ -58,6 +58,10 @@ pub mod param_names {
     pub const PRIVATE_KEY_FILE: ParamKey = ParamKey("private_key_file");
     pub const PRIVATE_KEY_PASSWORD: ParamKey = ParamKey("private_key_password");
     pub const TOKEN: ParamKey = ParamKey("token");
+    pub const PASSCODE: ParamKey = ParamKey("passcode");
+    pub const PASSCODE_IN_PASSWORD: ParamKey = ParamKey("passcodeInPassword");
+    pub const CLIENT_STORE_TEMPORARY_CREDENTIAL: ParamKey =
+        ParamKey("client_store_temporary_credential");
     pub const DATABASE: ParamKey = ParamKey("database");
     pub const SCHEMA: ParamKey = ParamKey("schema");
     pub const WAREHOUSE: ParamKey = ParamKey("warehouse");
@@ -76,6 +80,17 @@ pub mod param_names {
     pub const CRL_HTTP_TIMEOUT: ParamKey = ParamKey("crl_http_timeout");
     pub const CRL_CONNECTION_TIMEOUT: ParamKey = ParamKey("crl_connection_timeout");
     pub const ASYNC_EXECUTION: ParamKey = ParamKey("async_execution");
+    pub const AUTHENTICATION_TIMEOUT: ParamKey = ParamKey("authentication_timeout");
+    pub const OKTA_USERNAME: ParamKey = ParamKey("okta_username");
+    pub const DISABLE_SAML_URL_CHECK: ParamKey = ParamKey("disable_saml_url_check");
+}
+
+/// Which API layer owns writes for a parameter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ParamScope {
+    Connection,
+    Session,
+    Statement,
 }
 
 /// Defines a single supported configuration parameter.
@@ -106,6 +121,15 @@ pub struct ParamDef {
 
     /// If deprecated, the canonical name of the replacement parameter.
     pub deprecated_by: Option<&'static str>,
+
+    /// Which API layer owns writes for this parameter.
+    pub scope: ParamScope,
+
+    /// When true, the resolved connection-seed value participates in login / new session.
+    pub used_at_connect: bool,
+
+    /// When false, connection-level setters must reject changes once connected.
+    pub mutable_after_connect: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -141,6 +165,9 @@ static PARAM_DEFS: &[ParamDef] = &[
         sensitive: false,
         description: "Snowflake account identifier",
         deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
     },
     ParamDef {
         canonical_name: param_names::HOST.as_str(),
@@ -151,6 +178,9 @@ static PARAM_DEFS: &[ParamDef] = &[
         sensitive: false,
         description: "Snowflake server hostname",
         deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
     },
     ParamDef {
         canonical_name: param_names::PORT.as_str(),
@@ -161,6 +191,9 @@ static PARAM_DEFS: &[ParamDef] = &[
         sensitive: false,
         description: "Server port number",
         deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
     },
     ParamDef {
         canonical_name: param_names::PROTOCOL.as_str(),
@@ -171,6 +204,9 @@ static PARAM_DEFS: &[ParamDef] = &[
         sensitive: false,
         description: "Connection protocol (http or https)",
         deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
     },
     ParamDef {
         canonical_name: param_names::SERVER_URL.as_str(),
@@ -181,6 +217,9 @@ static PARAM_DEFS: &[ParamDef] = &[
         sensitive: false,
         description: "Full server URL (alternative to host/port/protocol)",
         deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
     },
     ParamDef {
         canonical_name: param_names::PRESERVE_UNDERSCORES_IN_HOSTNAME.as_str(),
@@ -191,6 +230,9 @@ static PARAM_DEFS: &[ParamDef] = &[
         sensitive: false,
         description: "Preserve underscores in the hostname derived from the account name",
         deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
     },
     // ── Auth ────────────────────────────────────────────────────────────
     ParamDef {
@@ -202,6 +244,9 @@ static PARAM_DEFS: &[ParamDef] = &[
         sensitive: false,
         description: "Login username",
         deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
     },
     ParamDef {
         canonical_name: param_names::PASSWORD.as_str(),
@@ -212,6 +257,9 @@ static PARAM_DEFS: &[ParamDef] = &[
         sensitive: true,
         description: "Login password",
         deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
     },
     ParamDef {
         canonical_name: param_names::AUTHENTICATOR.as_str(),
@@ -220,8 +268,11 @@ static PARAM_DEFS: &[ParamDef] = &[
         required: Required::Never,
         default: None,
         sensitive: false,
-        description: "Authentication method (SNOWFLAKE_PASSWORD, SNOWFLAKE_JWT, PROGRAMMATIC_ACCESS_TOKEN)",
+        description: "Authentication method (SNOWFLAKE_PASSWORD, SNOWFLAKE_JWT, PROGRAMMATIC_ACCESS_TOKEN, USERNAME_PASSWORD_MFA)",
         deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
     },
     ParamDef {
         canonical_name: param_names::PRIVATE_KEY.as_str(),
@@ -232,6 +283,9 @@ static PARAM_DEFS: &[ParamDef] = &[
         sensitive: true,
         description: "Private key for key-pair authentication (base64-encoded or PEM)",
         deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
     },
     ParamDef {
         canonical_name: param_names::PRIVATE_KEY_FILE.as_str(),
@@ -242,6 +296,9 @@ static PARAM_DEFS: &[ParamDef] = &[
         sensitive: false,
         description: "Path to private key file for key-pair authentication",
         deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
     },
     ParamDef {
         canonical_name: param_names::PRIVATE_KEY_PASSWORD.as_str(),
@@ -252,6 +309,9 @@ static PARAM_DEFS: &[ParamDef] = &[
         sensitive: true,
         description: "Passphrase for encrypted private key",
         deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
     },
     ParamDef {
         canonical_name: param_names::TOKEN.as_str(),
@@ -262,6 +322,87 @@ static PARAM_DEFS: &[ParamDef] = &[
         sensitive: true,
         description: "Programmatic access token",
         deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
+    },
+    ParamDef {
+        canonical_name: param_names::PASSCODE.as_str(),
+        aliases: &["PASSCODE"],
+        value_type: ValueType::String,
+        required: Required::Never,
+        default: None,
+        sensitive: true,
+        description: "MFA passcode for USERNAME_PASSWORD_MFA authentication",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
+    },
+    ParamDef {
+        canonical_name: param_names::PASSCODE_IN_PASSWORD.as_str(),
+        aliases: &["PASSCODE_IN_PASSWORD"],
+        value_type: ValueType::Bool,
+        required: Required::Never,
+        default: Some(|| Setting::Bool(false)),
+        sensitive: false,
+        description: "Whether the MFA passcode is appended to the password",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
+    },
+    ParamDef {
+        canonical_name: param_names::CLIENT_STORE_TEMPORARY_CREDENTIAL.as_str(),
+        aliases: &["clientStoreTemporaryCredential"],
+        value_type: ValueType::Bool,
+        required: Required::Never,
+        default: Some(|| Setting::Bool(false)),
+        sensitive: false,
+        description: "Enable MFA token caching for USERNAME_PASSWORD_MFA authentication",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
+    },
+    ParamDef {
+        canonical_name: param_names::AUTHENTICATION_TIMEOUT.as_str(),
+        aliases: &[],
+        value_type: ValueType::Int,
+        required: Required::Never,
+        default: Some(|| Setting::Int(120)),
+        sensitive: false,
+        description: "Timeout in seconds for native Okta SSO authentication",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
+    },
+    ParamDef {
+        canonical_name: param_names::OKTA_USERNAME.as_str(),
+        aliases: &[],
+        value_type: ValueType::String,
+        required: Required::Never,
+        default: None,
+        sensitive: false,
+        description: "Okta username (defaults to the Snowflake user if omitted)",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
+    },
+    ParamDef {
+        canonical_name: param_names::DISABLE_SAML_URL_CHECK.as_str(),
+        aliases: &[],
+        value_type: ValueType::Bool,
+        required: Required::Never,
+        default: Some(|| Setting::Bool(false)),
+        sensitive: false,
+        description: "Skip the Okta SAML URL host-match safety check",
+        deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
     },
     // ── Session ─────────────────────────────────────────────────────────
     ParamDef {
@@ -273,6 +414,9 @@ static PARAM_DEFS: &[ParamDef] = &[
         sensitive: false,
         description: "Default database to use",
         deprecated_by: None,
+        scope: ParamScope::Session,
+        used_at_connect: true,
+        mutable_after_connect: true,
     },
     ParamDef {
         canonical_name: param_names::SCHEMA.as_str(),
@@ -283,6 +427,9 @@ static PARAM_DEFS: &[ParamDef] = &[
         sensitive: false,
         description: "Default schema to use",
         deprecated_by: None,
+        scope: ParamScope::Session,
+        used_at_connect: true,
+        mutable_after_connect: true,
     },
     ParamDef {
         canonical_name: param_names::WAREHOUSE.as_str(),
@@ -293,6 +440,9 @@ static PARAM_DEFS: &[ParamDef] = &[
         sensitive: false,
         description: "Default warehouse to use",
         deprecated_by: None,
+        scope: ParamScope::Session,
+        used_at_connect: true,
+        mutable_after_connect: true,
     },
     ParamDef {
         canonical_name: param_names::ROLE.as_str(),
@@ -303,6 +453,9 @@ static PARAM_DEFS: &[ParamDef] = &[
         sensitive: false,
         description: "Default role to use",
         deprecated_by: None,
+        scope: ParamScope::Session,
+        used_at_connect: true,
+        mutable_after_connect: true,
     },
     // ── TLS ─────────────────────────────────────────────────────────────
     ParamDef {
@@ -314,6 +467,9 @@ static PARAM_DEFS: &[ParamDef] = &[
         sensitive: false,
         description: "Path to custom root certificate store",
         deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
     },
     ParamDef {
         canonical_name: param_names::VERIFY_HOSTNAME.as_str(),
@@ -324,6 +480,9 @@ static PARAM_DEFS: &[ParamDef] = &[
         sensitive: false,
         description: "Whether to verify the server hostname in TLS",
         deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
     },
     ParamDef {
         canonical_name: param_names::VERIFY_CERTIFICATES.as_str(),
@@ -334,6 +493,9 @@ static PARAM_DEFS: &[ParamDef] = &[
         sensitive: false,
         description: "Whether to verify TLS certificates",
         deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
     },
     // ── CRL ─────────────────────────────────────────────────────────────
     ParamDef {
@@ -345,6 +507,9 @@ static PARAM_DEFS: &[ParamDef] = &[
         sensitive: false,
         description: "Certificate revocation check mode (DISABLED, ENABLED, ADVISORY)",
         deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
     },
     ParamDef {
         canonical_name: param_names::CRL_ENABLE_DISK_CACHING.as_str(),
@@ -355,6 +520,9 @@ static PARAM_DEFS: &[ParamDef] = &[
         sensitive: false,
         description: "Enable disk caching for CRL responses",
         deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
     },
     ParamDef {
         canonical_name: param_names::CRL_ENABLE_MEMORY_CACHING.as_str(),
@@ -365,6 +533,9 @@ static PARAM_DEFS: &[ParamDef] = &[
         sensitive: false,
         description: "Enable in-memory caching for CRL responses",
         deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
     },
     ParamDef {
         canonical_name: param_names::CRL_CACHE_DIR.as_str(),
@@ -375,6 +546,9 @@ static PARAM_DEFS: &[ParamDef] = &[
         sensitive: false,
         description: "Directory for CRL cache files",
         deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
     },
     ParamDef {
         canonical_name: param_names::CRL_VALIDITY_TIME.as_str(),
@@ -385,6 +559,9 @@ static PARAM_DEFS: &[ParamDef] = &[
         sensitive: false,
         description: "CRL cache validity time in days",
         deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
     },
     ParamDef {
         canonical_name: param_names::CRL_ALLOW_CERTIFICATES_WITHOUT_CRL_URL.as_str(),
@@ -395,6 +572,9 @@ static PARAM_DEFS: &[ParamDef] = &[
         sensitive: false,
         description: "Allow certificates that do not include a CRL distribution URL",
         deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
     },
     ParamDef {
         canonical_name: param_names::CRL_HTTP_TIMEOUT.as_str(),
@@ -405,6 +585,9 @@ static PARAM_DEFS: &[ParamDef] = &[
         sensitive: false,
         description: "HTTP timeout in seconds for CRL endpoint requests",
         deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
     },
     ParamDef {
         canonical_name: param_names::CRL_CONNECTION_TIMEOUT.as_str(),
@@ -415,6 +598,9 @@ static PARAM_DEFS: &[ParamDef] = &[
         sensitive: false,
         description: "Connection timeout in seconds for CRL endpoints",
         deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: true,
+        mutable_after_connect: false,
     },
     // ── Client ──────────────────────────────────────────────────────────
     ParamDef {
@@ -426,6 +612,9 @@ static PARAM_DEFS: &[ParamDef] = &[
         sensitive: false,
         description: "Named connection to load from TOML configuration files",
         deprecated_by: None,
+        scope: ParamScope::Connection,
+        used_at_connect: false,
+        mutable_after_connect: false,
     },
     // ── Statement ──────────────────────────────────────────────────────
     ParamDef {
@@ -437,8 +626,25 @@ static PARAM_DEFS: &[ParamDef] = &[
         sensitive: false,
         description: "Execute queries asynchronously",
         deprecated_by: None,
+        scope: ParamScope::Statement,
+        used_at_connect: false,
+        mutable_after_connect: true,
     },
 ];
+
+impl ParamDef {
+    /// Whether the resolved value may participate in login / new session creation.
+    ///
+    /// [`ParamScope::Statement`] parameters are never consumed at connect regardless
+    /// of stored metadata.
+    #[inline]
+    pub fn effective_used_at_connect(&self) -> bool {
+        if self.scope == ParamScope::Statement {
+            return false;
+        }
+        self.used_at_connect
+    }
+}
 
 /// The registry singleton. Built once at startup, immutable thereafter.
 pub struct ParamRegistry {
@@ -516,6 +722,12 @@ mod tests {
             ("PRIV_KEY_FILE_PWD", "private_key_password"),
             ("PRIV_KEY_PWD", "private_key_password"),
             ("TOKEN", "token"),
+            ("PASSCODE", "passcode"),
+            ("PASSCODE_IN_PASSWORD", "passcodeInPassword"),
+            (
+                "clientStoreTemporaryCredential",
+                "client_store_temporary_credential",
+            ),
             ("TLS_CUSTOM_ROOT_STORE_PATH", "custom_root_store_path"),
             ("TLS_VERIFY_HOSTNAME", "verify_hostname"),
             ("TLS_VERIFY_CERTIFICATES", "verify_certificates"),
@@ -609,5 +821,33 @@ mod tests {
         assert!(r.is_known("SERVER"));
         assert!(r.is_known("host"));
         assert!(!r.is_known("unknown_key"));
+    }
+
+    #[test]
+    fn statement_scope_params_are_never_used_at_connect() {
+        let r = registry();
+        for p in r.all_params() {
+            if p.scope == ParamScope::Statement {
+                assert!(
+                    !p.used_at_connect,
+                    "expected used_at_connect == false for {}",
+                    p.canonical_name
+                );
+                assert!(!p.effective_used_at_connect());
+            }
+        }
+    }
+
+    #[test]
+    fn session_context_params_are_session_scoped_and_mutable_after_connect() {
+        let r = registry();
+        for key in ["database", "schema", "warehouse", "role"] {
+            let d = r
+                .resolve(key)
+                .unwrap_or_else(|| panic!("expected registry entry for {key}"));
+            assert_eq!(d.scope, ParamScope::Session, "key {key}");
+            assert!(d.used_at_connect, "key {key}");
+            assert!(d.mutable_after_connect, "key {key}");
+        }
     }
 }

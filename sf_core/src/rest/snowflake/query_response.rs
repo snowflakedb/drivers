@@ -475,7 +475,12 @@ impl Data {
 
     pub fn to_chunk_download_data(&self) -> Option<Vec<ChunkDownloadData>> {
         match (self.chunks.as_ref(), self.chunk_headers.as_ref()) {
-            (Some(chunks), Some(chunk_headers)) => {
+            (Some(chunks), chunk_headers_opt) => {
+                let empty_headers = HashMap::new();
+                let chunk_headers = chunk_headers_opt.unwrap_or(&empty_headers);
+                if chunk_headers_opt.is_none() {
+                    tracing::warn!("Chunks found without chunk headers; using empty headers");
+                }
                 let chunk_download_data = chunks
                     .iter()
                     .map(|chunk| ChunkDownloadData::new(&chunk.url, chunk_headers))
@@ -484,10 +489,6 @@ impl Data {
             }
             (None, Some(_)) => {
                 tracing::error!("Chunk headers found but chunks are missing");
-                None
-            }
-            (Some(_), None) => {
-                tracing::error!("Chunks found but chunk headers are missing");
                 None
             }
             _ => None,
@@ -883,6 +884,76 @@ mod tests {
         let (rowset, row_types) = response.data.to_json_rowset().unwrap();
         assert_eq!(rowset.len(), 2);
         assert_eq!(row_types.len(), 2);
+    }
+
+    #[test]
+    fn test_arrow_chunks_without_headers_still_build_chunk_download_data() {
+        let json = r#"{
+            "data": {
+                "queryResultFormat": "arrow",
+                "chunks": [
+                    {
+                        "url": "https://example.com/chunk-1",
+                        "rowCount": 1,
+                        "uncompressedSize": 16,
+                        "compressedSize": 16
+                    }
+                ],
+                "rowtype": [
+                    {
+                        "name": "c1",
+                        "type": "TEXT",
+                        "nullable": true,
+                        "scale": null,
+                        "byteLength": 64,
+                        "length": 16,
+                        "precision": null
+                    }
+                ]
+            },
+            "success": true
+        }"#;
+
+        let response: Response = serde_json::from_str(json).unwrap();
+        let chunk_download_data = response.data.to_chunk_download_data().unwrap();
+
+        assert_eq!(chunk_download_data.len(), 1);
+    }
+
+    #[test]
+    fn test_arrow_chunks_without_headers_use_multi_chunk_rowset_data() {
+        let json = r#"{
+            "data": {
+                "queryResultFormat": "arrow",
+                "chunks": [
+                    {
+                        "url": "https://example.com/chunk-1",
+                        "rowCount": 1,
+                        "uncompressedSize": 16,
+                        "compressedSize": 16
+                    }
+                ],
+                "rowtype": [
+                    {
+                        "name": "c1",
+                        "type": "TEXT",
+                        "nullable": true,
+                        "scale": null,
+                        "byteLength": 64,
+                        "length": 16,
+                        "precision": null
+                    }
+                ]
+            },
+            "success": true
+        }"#;
+
+        let response: Response = serde_json::from_str(json).unwrap();
+
+        assert!(matches!(
+            response.data.to_rowset_data(),
+            RowsetData::ArrowMultiChunk { .. }
+        ));
     }
 
     #[test]

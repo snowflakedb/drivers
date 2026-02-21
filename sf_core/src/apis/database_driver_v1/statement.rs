@@ -5,11 +5,13 @@ use super::connection::{Connection, RefreshContext};
 use super::error::*;
 use super::global_state::DatabaseDriverV1;
 use super::query::process_query_response;
-use super::validation::{ValidationIssue, resolve_and_apply_options};
+use super::validation::{
+    ValidationIssue, ValidationSeverity, canonicalize_setting_key, resolve_options,
+    validate_statement_option_write,
+};
 use crate::chunks::ChunkDownloadData;
 use crate::config::ParamStore;
 use crate::config::param_registry::param_names;
-use crate::config::rest_parameters::QueryParameters;
 use crate::config::settings::Setting;
 use crate::handle_manager::Handle;
 use crate::rest::snowflake::query_response::Data;
@@ -183,7 +185,9 @@ impl DatabaseDriverV1 {
         match self.statements.get_obj(handle) {
             Some(stmt_ptr) => {
                 let mut stmt = stmt_ptr.lock().await;
-                stmt.settings.insert(key, value);
+                let (canonical, def) = canonicalize_setting_key(&key);
+                validate_statement_option_write(def)?;
+                stmt.settings.insert(canonical, value);
                 Ok(())
             }
             None => InvalidArgumentSnafu {
@@ -201,7 +205,29 @@ impl DatabaseDriverV1 {
         match self.statements.get_obj(handle) {
             Some(stmt_ptr) => {
                 let mut stmt = stmt_ptr.lock().await;
-                resolve_and_apply_options(&mut stmt.settings, options)
+                let (resolved, issues) = resolve_options(options);
+                let error_messages: Vec<String> = issues
+                    .iter()
+                    .filter(|i| i.severity == ValidationSeverity::Error)
+                    .map(|i| i.to_string())
+                    .collect();
+                if !error_messages.is_empty() {
+                    return InvalidArgumentSnafu {
+                        argument: error_messages.join("; "),
+                    }
+                    .fail();
+                }
+                for key in resolved.keys() {
+                    let def = crate::config::param_registry::registry().resolve(key.as_str());
+                    validate_statement_option_write(def)?;
+                }
+                for (key, value) in resolved {
+                    stmt.settings.insert(key, value);
+                }
+                Ok(issues
+                    .into_iter()
+                    .filter(|i| i.severity == ValidationSeverity::Warning)
+                    .collect())
             }
             None => InvalidArgumentSnafu {
                 argument: "Statement handle not found".to_string(),
@@ -301,7 +327,7 @@ impl DatabaseDriverV1 {
         let (query_parameters, http_client, retry_policy) = {
             let conn = stmt.conn.lock().await;
             (
-                QueryParameters::from_settings(&conn.settings).context(ConfigurationSnafu)?,
+                conn.query_transport_parameters()?,
                 conn.http_client
                     .clone()
                     .context(ConnectionNotInitializedSnafu)?,
@@ -659,6 +685,23 @@ mod tests {
             stmt.execution_mode(Some("SELECT 1")),
             QueryExecutionMode::Async
         );
+    }
+
+    #[tokio::test]
+    async fn statement_rejects_connection_scoped_param() {
+        let ds = DatabaseDriverV1::new();
+        let ch = ds.connection_new();
+        let sh = ds.statement_new(ch).unwrap();
+        let err = ds
+            .statement_set_option(sh, "host".into(), Setting::String("h".into()))
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("not statement-scoped"),
+            "unexpected: {err}"
+        );
+        ds.statement_release(sh).unwrap();
+        ds.connection_release(ch).unwrap();
     }
 
     #[test]

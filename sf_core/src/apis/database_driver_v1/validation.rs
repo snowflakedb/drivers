@@ -1,45 +1,11 @@
 use std::collections::HashMap;
-use std::fmt;
 
 use super::error::{ApiError, InvalidArgumentSnafu};
 use crate::config::ParamStore;
-use crate::config::param_registry::{self, ValueType, param_names};
+use crate::config::param_registry::{self, ParamScope, ValueType, param_names};
 use crate::config::settings::{Setting, Settings};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ValidationSeverity {
-    Error,
-    Warning,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ValidationCode {
-    Unspecified,
-    MissingRequired,
-    InvalidType,
-    InvalidValue,
-    UnknownParameter,
-    DeprecatedParameter,
-    ConflictingParameters,
-}
-
-#[derive(Debug, Clone)]
-pub struct ValidationIssue {
-    pub severity: ValidationSeverity,
-    pub parameter: String,
-    pub message: String,
-    pub code: ValidationCode,
-}
-
-impl fmt::Display for ValidationIssue {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "[{:?}] {}: {}",
-            self.severity, self.parameter, self.message
-        )
-    }
-}
+pub use crate::config::connection_config::{ValidationCode, ValidationIssue, ValidationSeverity};
 
 fn setting_matches_value_type(setting: &Setting, expected: ValueType) -> bool {
     matches!(
@@ -291,6 +257,100 @@ pub fn resolve_and_apply_options(
         .into_iter()
         .filter(|i| i.severity == ValidationSeverity::Warning)
         .collect())
+}
+
+pub(crate) fn canonicalize_setting_key(
+    key: &str,
+) -> (String, Option<&'static param_registry::ParamDef>) {
+    let reg = param_registry::registry();
+    match reg.resolve(key) {
+        Some(d) => (d.canonical_name.to_string(), Some(d)),
+        None => (key.to_string(), None),
+    }
+}
+
+pub(crate) fn validate_connection_seed_write(
+    post_connect: bool,
+    def: Option<&param_registry::ParamDef>,
+) -> Result<(), ApiError> {
+    let Some(d) = def else {
+        return Ok(());
+    };
+    if d.scope == ParamScope::Statement {
+        return InvalidArgumentSnafu {
+            argument: format!(
+                "Parameter '{}' is statement-scoped; set it on a statement handle",
+                d.canonical_name
+            ),
+        }
+        .fail();
+    }
+    if post_connect {
+        if d.scope == ParamScope::Session {
+            return InvalidArgumentSnafu {
+                argument: format!(
+                    "Parameter '{}' is session-scoped; use connection_set_session_option after connect",
+                    d.canonical_name
+                ),
+            }
+            .fail();
+        }
+        if !d.mutable_after_connect {
+            return InvalidArgumentSnafu {
+                argument: format!(
+                    "Parameter '{}' cannot be changed after connect",
+                    d.canonical_name
+                ),
+            }
+            .fail();
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_session_override_write(
+    def: Option<&param_registry::ParamDef>,
+) -> Result<(), ApiError> {
+    let Some(d) = def else {
+        return Ok(());
+    };
+    if d.scope == ParamScope::Statement {
+        return InvalidArgumentSnafu {
+            argument: format!(
+                "Parameter '{}' is statement-scoped; set it on a statement handle",
+                d.canonical_name
+            ),
+        }
+        .fail();
+    }
+    if d.scope == ParamScope::Connection {
+        return InvalidArgumentSnafu {
+            argument: format!(
+                "Parameter '{}' is connection-scoped; set it via connection options before connect",
+                d.canonical_name
+            ),
+        }
+        .fail();
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_statement_option_write(
+    def: Option<&param_registry::ParamDef>,
+) -> Result<(), ApiError> {
+    let Some(d) = def else {
+        return Ok(());
+    };
+    if d.scope != ParamScope::Statement {
+        return InvalidArgumentSnafu {
+            argument: format!(
+                "Parameter '{}' is not statement-scoped; set it on the connection or session",
+                d.canonical_name
+            ),
+        }
+        .fail();
+    }
+    Ok(())
 }
 
 #[cfg(test)]
