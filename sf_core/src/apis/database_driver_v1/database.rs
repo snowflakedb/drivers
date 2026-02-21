@@ -3,6 +3,8 @@ use std::sync::Mutex;
 
 use super::error::*;
 use super::global_state::DatabaseDriverV1;
+use super::validation::{ValidationIssue, resolve_and_apply_options};
+use crate::config::ParamStore;
 use crate::config::settings::Setting;
 use crate::handle_manager::Handle;
 
@@ -22,6 +24,23 @@ impl DatabaseDriverV1 {
                 let mut db = db_ptr.lock().map_err(|_| DatabaseLockingSnafu {}.build())?;
                 db.settings.insert(key, value);
                 Ok(())
+            }
+            None => InvalidArgumentSnafu {
+                argument: "Database handle not found".to_string(),
+            }
+            .fail(),
+        }
+    }
+
+    pub fn database_set_options(
+        &self,
+        db_handle: Handle,
+        options: HashMap<String, Setting>,
+    ) -> Result<Vec<ValidationIssue>, ApiError> {
+        match self.databases.get_obj(db_handle) {
+            Some(db_ptr) => {
+                let mut db = db_ptr.lock().map_err(|_| DatabaseLockingSnafu {}.build())?;
+                resolve_and_apply_options(&mut db.settings, options)
             }
             None => InvalidArgumentSnafu {
                 argument: "Database handle not found".to_string(),
@@ -52,7 +71,7 @@ impl DatabaseDriverV1 {
 }
 
 pub struct Database {
-    pub settings: HashMap<String, Setting>,
+    pub(crate) settings: ParamStore,
 }
 
 impl Default for Database {
@@ -64,7 +83,7 @@ impl Default for Database {
 impl Database {
     pub fn new() -> Self {
         Database {
-            settings: HashMap::new(),
+            settings: ParamStore::new(),
         }
     }
 }

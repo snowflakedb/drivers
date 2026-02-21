@@ -67,7 +67,7 @@ user = "config_user"
 
     // And An explicit account setting on the connection
     let mut conn = Connection::new();
-    conn.settings.insert(
+    conn.set_option(
         "account".to_string(),
         Setting::String("explicit_account".to_string()),
     );

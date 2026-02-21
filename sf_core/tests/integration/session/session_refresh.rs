@@ -7,7 +7,6 @@ use sf_core::crl::config::CrlConfig;
 use sf_core::rest::snowflake::SessionTokens;
 use sf_core::sensitive::SensitiveString;
 use sf_core::tls::config::TlsConfig;
-use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -94,16 +93,13 @@ async fn should_only_refresh_once_with_concurrent_401_errors() {
         master_expires_at: None,
     };
 
-    let conn = Arc::new(Mutex::new(Connection {
-        settings: HashMap::new(),
-        tokens: Arc::new(AsyncRwLock::new(Some(tokens))),
-        http_client: Some(reqwest::Client::new()),
-        retry_policy: RetryPolicy::default(),
-        server_url: Some(format!("http://{}", addr)),
-        client_info: Some(test_client_info()),
-        init_session_parameters: None,
-        session_parameters: Arc::new(std::sync::RwLock::new(HashMap::new())),
-    }));
+    let mut connection = Connection::new();
+    connection.tokens = Arc::new(AsyncRwLock::new(Some(tokens)));
+    connection.http_client = Some(reqwest::Client::new());
+    connection.retry_policy = RetryPolicy::default();
+    connection.server_url = Some(format!("http://{}", addr));
+    connection.client_info = Some(test_client_info());
+    let conn = Arc::new(Mutex::new(connection));
 
     // When multiple concurrent requests receive 401 errors
     let mut handles = vec![];

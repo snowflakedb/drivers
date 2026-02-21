@@ -546,6 +546,29 @@ message StatementReadPartitionResponse {
   int64 partition_stream = 1;
 }
 
+// Validation issue reported during set or validate operations.
+message ValidationIssue {
+  ValidationSeverity severity = 1;
+  string parameter = 2;
+  string message = 3;
+  ValidationCode code = 4;
+}
+
+enum ValidationSeverity {
+  VALIDATION_SEVERITY_ERROR = 0;
+  VALIDATION_SEVERITY_WARNING = 1;
+}
+
+enum ValidationCode {
+  VALIDATION_CODE_UNSPECIFIED = 0;
+  VALIDATION_CODE_MISSING_REQUIRED = 1;
+  VALIDATION_CODE_INVALID_TYPE = 2;
+  VALIDATION_CODE_INVALID_VALUE = 3;
+  VALIDATION_CODE_UNKNOWN_PARAMETER = 4;
+  VALIDATION_CODE_DEPRECATED_PARAMETER = 5;
+  VALIDATION_CODE_CONFLICTING_PARAMETERS = 6;
+}
+
 // Config setting value (union type)
 message ConfigSetting {
   oneof value {
@@ -560,6 +583,34 @@ message ConfigSetting {
 // A config section containing key-value settings
 message ConfigSection {
   map<string, ConfigSetting> settings = 1;
+}
+
+// Batch set options
+message ConnectionSetOptionsRequest {
+  ConnectionHandle conn_handle = 1;
+  map<string, ConfigSetting> options = 2;
+}
+
+message ConnectionSetOptionsResponse {
+  repeated ValidationIssue warnings = 1;
+}
+
+message DatabaseSetOptionsRequest {
+  DatabaseHandle db_handle = 1;
+  map<string, ConfigSetting> options = 2;
+}
+
+message DatabaseSetOptionsResponse {
+  repeated ValidationIssue warnings = 1;
+}
+
+message StatementSetOptionsRequest {
+  StatementHandle stmt_handle = 1;
+  map<string, ConfigSetting> options = 2;
+}
+
+message StatementSetOptionsResponse {
+  repeated ValidationIssue warnings = 1;
 }
 
 // Config service requests and responses
@@ -591,6 +642,7 @@ service DatabaseDriver {
   rpc DatabaseSetOptionInt(DatabaseSetOptionIntRequest) returns (DatabaseSetOptionIntResponse);
   rpc DatabaseSetOptionDouble(DatabaseSetOptionDoubleRequest) returns (DatabaseSetOptionDoubleResponse);
   rpc DatabaseSetOptionBool(DatabaseSetOptionBoolRequest) returns (DatabaseSetOptionBoolResponse);
+  rpc DatabaseSetOptions(DatabaseSetOptionsRequest) returns (DatabaseSetOptionsResponse);
   rpc DatabaseInit(DatabaseInitRequest) returns (DatabaseInitResponse);
   rpc DatabaseRelease(DatabaseReleaseRequest) returns (DatabaseReleaseResponse);
 
@@ -601,6 +653,7 @@ service DatabaseDriver {
   rpc ConnectionSetOptionInt(ConnectionSetOptionIntRequest) returns (ConnectionSetOptionIntResponse);
   rpc ConnectionSetOptionDouble(ConnectionSetOptionDoubleRequest) returns (ConnectionSetOptionDoubleResponse);
   rpc ConnectionSetOptionBool(ConnectionSetOptionBoolRequest) returns (ConnectionSetOptionBoolResponse);
+  rpc ConnectionSetOptions(ConnectionSetOptionsRequest) returns (ConnectionSetOptionsResponse);
   rpc ConnectionInit(ConnectionInitRequest) returns (ConnectionInitResponse);
   rpc ConnectionRelease(ConnectionReleaseRequest) returns (ConnectionReleaseResponse);
   rpc ConnectionGetInfo(ConnectionGetInfoRequest) returns (ConnectionGetInfoResponse);
@@ -627,6 +680,7 @@ service DatabaseDriver {
   rpc StatementSetOptionInt(StatementSetOptionIntRequest) returns (StatementSetOptionIntResponse);
   rpc StatementSetOptionDouble(StatementSetOptionDoubleRequest) returns (StatementSetOptionDoubleResponse);
   rpc StatementSetOptionBool(StatementSetOptionBoolRequest) returns (StatementSetOptionBoolResponse);
+  rpc StatementSetOptions(StatementSetOptionsRequest) returns (StatementSetOptionsResponse);
   rpc StatementGetParameterSchema(StatementGetParameterSchemaRequest) returns (StatementGetParameterSchemaResponse);
   rpc StatementExecuteQuery(StatementExecuteQueryRequest) returns (StatementExecuteQueryResponse);
   rpc StatementExecutePartitions(StatementExecutePartitionsRequest) returns (StatementExecutePartitionsResponse);
