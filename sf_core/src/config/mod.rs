@@ -1,4 +1,9 @@
 pub mod config_manager;
+pub mod param_registry;
+pub mod param_store;
+pub use param_registry::ParamKey;
+pub use param_registry::param_names;
+pub use param_store::ParamStore;
 pub mod path_resolver;
 pub mod rest_parameters;
 pub mod retry;
