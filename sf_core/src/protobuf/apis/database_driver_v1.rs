@@ -8,15 +8,20 @@ use crate::apis::database_driver_v1::error::ConfigurationSnafu;
 use crate::apis::database_driver_v1::error::RestError;
 use crate::apis::database_driver_v1::{BindingType, DataPtr};
 use crate::apis::database_driver_v1::{
-    connection_get_info, connection_get_parameter, connection_init, connection_new,
-    connection_release, connection_set_option, connection_set_session_parameters,
+    ValidationCode as CoreValidationCode, ValidationIssue as CoreValidationIssue,
+    ValidationSeverity as CoreValidationSeverity,
 };
 use crate::apis::database_driver_v1::{
-    database_init, database_new, database_release, database_set_option,
+    connection_get_info, connection_get_parameter, connection_init, connection_new,
+    connection_release, connection_set_option, connection_set_options,
+    connection_set_session_parameters,
+};
+use crate::apis::database_driver_v1::{
+    database_init, database_new, database_release, database_set_option, database_set_options,
 };
 use crate::apis::database_driver_v1::{
     statement_execute_query, statement_new, statement_prepare, statement_release,
-    statement_set_option, statement_set_sql_query,
+    statement_set_option, statement_set_options, statement_set_sql_query,
 };
 use crate::config::config_manager;
 use crate::config::path_resolver;
@@ -499,6 +504,47 @@ impl<T> ToProtobuf<T> for Result<T, ApiError> {
     }
 }
 
+fn config_setting_to_setting(cs: ConfigSetting) -> Option<Setting> {
+    match cs.value? {
+        config_setting::Value::StringValue(s) => Some(Setting::String(s)),
+        config_setting::Value::IntValue(i) => Some(Setting::Int(i)),
+        config_setting::Value::DoubleValue(d) => Some(Setting::Double(d)),
+        config_setting::Value::BytesValue(b) => Some(Setting::Bytes(b)),
+        config_setting::Value::BoolValue(b) => Some(Setting::Bool(b)),
+    }
+}
+
+fn proto_options_to_hashmap(
+    options: std::collections::HashMap<String, ConfigSetting>,
+) -> std::collections::HashMap<String, Setting> {
+    options
+        .into_iter()
+        .filter_map(|(k, v)| config_setting_to_setting(v).map(|s| (k, s)))
+        .collect()
+}
+
+fn core_validation_issue_to_proto(issue: CoreValidationIssue) -> ValidationIssue {
+    let severity = match issue.severity {
+        CoreValidationSeverity::Error => ValidationSeverity::Error as i32,
+        CoreValidationSeverity::Warning => ValidationSeverity::Warning as i32,
+    };
+    let code = match issue.code {
+        CoreValidationCode::Unspecified => ValidationCode::Unspecified as i32,
+        CoreValidationCode::MissingRequired => ValidationCode::MissingRequired as i32,
+        CoreValidationCode::InvalidType => ValidationCode::InvalidType as i32,
+        CoreValidationCode::InvalidValue => ValidationCode::InvalidValue as i32,
+        CoreValidationCode::UnknownParameter => ValidationCode::UnknownParameter as i32,
+        CoreValidationCode::DeprecatedParameter => ValidationCode::DeprecatedParameter as i32,
+        CoreValidationCode::ConflictingParameters => ValidationCode::ConflictingParameters as i32,
+    };
+    ValidationIssue {
+        severity,
+        parameter: issue.parameter,
+        message: issue.message,
+        code,
+    }
+}
+
 pub struct DatabaseDriverImpl {}
 
 impl DatabaseDriver for DatabaseDriverImpl {
@@ -568,6 +614,23 @@ impl DatabaseDriver for DatabaseDriverImpl {
             .to_protobuf()?;
 
         Ok(DatabaseSetOptionBoolResponse {})
+    }
+
+    #[instrument(name = "DatabaseDriverV1::database_set_options", skip(input))]
+    fn database_set_options(
+        input: DatabaseSetOptionsRequest,
+    ) -> Result<DatabaseSetOptionsResponse, DriverException> {
+        let db_handle = required(input.db_handle, "Database handle is required")?;
+        let options = proto_options_to_hashmap(input.options);
+
+        let warnings = database_set_options(db_handle.into(), options).to_protobuf()?;
+
+        Ok(DatabaseSetOptionsResponse {
+            warnings: warnings
+                .into_iter()
+                .map(core_validation_issue_to_proto)
+                .collect(),
+        })
     }
 
     #[instrument(name = "DatabaseDriverV1::database_init", skip(input))]
@@ -656,6 +719,23 @@ impl DatabaseDriver for DatabaseDriverImpl {
             .to_protobuf()?;
 
         Ok(ConnectionSetOptionBoolResponse {})
+    }
+
+    #[instrument(name = "DatabaseDriverV1::connection_set_options", skip(input))]
+    fn connection_set_options(
+        input: ConnectionSetOptionsRequest,
+    ) -> Result<ConnectionSetOptionsResponse, DriverException> {
+        let conn_handle = required(input.conn_handle, "Connection handle is required")?;
+        let options = proto_options_to_hashmap(input.options);
+
+        let warnings = connection_set_options(conn_handle.into(), options).to_protobuf()?;
+
+        Ok(ConnectionSetOptionsResponse {
+            warnings: warnings
+                .into_iter()
+                .map(core_validation_issue_to_proto)
+                .collect(),
+        })
     }
 
     #[instrument(name = "DatabaseDriverV1::connection_init", skip(input))]
@@ -872,6 +952,23 @@ impl DatabaseDriver for DatabaseDriverImpl {
             .to_protobuf()?;
 
         Ok(StatementSetOptionBoolResponse {})
+    }
+
+    #[instrument(name = "DatabaseDriverV1::statement_set_options", skip(input))]
+    fn statement_set_options(
+        input: StatementSetOptionsRequest,
+    ) -> Result<StatementSetOptionsResponse, DriverException> {
+        let stmt_handle = required(input.stmt_handle, "Statement handle is required")?;
+        let options = proto_options_to_hashmap(input.options);
+
+        let warnings = statement_set_options(stmt_handle.into(), options).to_protobuf()?;
+
+        Ok(StatementSetOptionsResponse {
+            warnings: warnings
+                .into_iter()
+                .map(core_validation_issue_to_proto)
+                .collect(),
+        })
     }
 
     #[instrument(

@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use super::param_registry::ParamKey;
-use super::settings::Setting;
+use super::settings::{Setting, Settings};
 
 #[derive(Debug)]
 pub struct ParamStore {
@@ -40,5 +40,15 @@ impl ParamStore {
 impl Default for ParamStore {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl Settings for ParamStore {
+    fn get(&self, key: &str) -> Option<Setting> {
+        self.inner.get(key).cloned()
+    }
+
+    fn set(&mut self, key: &str, value: Setting) {
+        self.inner.insert(key.to_string(), value);
     }
 }

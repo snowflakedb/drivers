@@ -5,7 +5,10 @@ use super::Handle;
 use super::connection::RefreshContext;
 use super::error::*;
 use super::global_state::{CONN_HANDLE_MANAGER, STMT_HANDLE_MANAGER};
+use super::validation::{ValidationIssue, resolve_and_apply_options};
 use crate::apis::database_driver_v1::query::process_query_response;
+use crate::config::param_registry::param_names;
+use crate::config::ParamStore;
 use crate::rest::snowflake::query_response::Data;
 use crate::{
     config::{rest_parameters::QueryParameters, settings::Setting},
@@ -168,6 +171,22 @@ pub fn statement_set_option(handle: Handle, key: String, value: Setting) -> Resu
             let mut stmt = stmt_ptr.lock().map_err(|_| StatementLockingSnafu.build())?;
             stmt.settings.insert(key, value);
             Ok(())
+        }
+        None => InvalidArgumentSnafu {
+            argument: "Statement handle not found".to_string(),
+        }
+        .fail(),
+    }
+}
+
+pub fn statement_set_options(
+    handle: Handle,
+    options: HashMap<String, Setting>,
+) -> Result<Vec<ValidationIssue>, ApiError> {
+    match STMT_HANDLE_MANAGER.get_obj(handle) {
+        Some(stmt_ptr) => {
+            let mut stmt = stmt_ptr.lock().map_err(|_| StatementLockingSnafu.build())?;
+            resolve_and_apply_options(&mut stmt.settings, options)
         }
         None => InvalidArgumentSnafu {
             argument: "Statement handle not found".to_string(),
@@ -381,7 +400,7 @@ fn execute_query_internal<'a>(
 
 pub struct Statement {
     pub state: StatementState,
-    pub settings: HashMap<String, Setting>,
+    pub(crate) settings: ParamStore,
     pub query: Option<String>,
     pub conn: Arc<Mutex<Connection>>,
 }
@@ -395,7 +414,7 @@ pub enum StatementState {
 impl Statement {
     pub fn new(conn: Arc<Mutex<Connection>>) -> Self {
         Statement {
-            settings: HashMap::new(),
+            settings: ParamStore::new(),
             state: StatementState::Initialized,
             query: None,
             conn,
@@ -405,7 +424,7 @@ impl Statement {
     fn execution_mode(&self, query: Option<&str>) -> QueryExecutionMode {
         let async_requested = self
             .settings
-            .get(snowflake::STATEMENT_ASYNC_EXECUTION_OPTION)
+            .get(param_names::ASYNC_EXECUTION)
             .and_then(parse_bool_setting)
             .unwrap_or(false);
 

@@ -7,6 +7,9 @@ use super::Handle;
 use super::Setting;
 use super::error::*;
 use super::global_state::CONN_HANDLE_MANAGER;
+use super::validation::{ValidationIssue, resolve_and_apply_options};
+use crate::config::param_registry::param_names;
+use crate::config::ParamStore;
 use crate::config::config_manager;
 use crate::config::path_resolver::ConfigPaths;
 use crate::config::rest_parameters::{ClientInfo, LoginParameters};
@@ -28,7 +31,7 @@ pub fn connection_load_from_config(
         config_manager::load_connection_config(connection_name).context(ConfigurationSnafu)?;
 
     for (key, value) in config_settings {
-        conn.settings.entry(key).or_insert(value);
+        conn.settings.insert_if_absent(key, value);
     }
     Ok(())
 }
@@ -43,7 +46,7 @@ pub fn connection_load_from_config_with_paths(
         .context(ConfigurationSnafu)?;
 
     for (key, value) in config_settings {
-        conn.settings.entry(key).or_insert(value);
+        conn.settings.insert_if_absent(key, value);
     }
     Ok(())
 }
@@ -56,7 +59,7 @@ pub fn connection_init(conn_handle: Handle, _db_handle: Handle) -> Result<(), Ap
                 .map_err(|_| ConnectionLockingSnafu {}.build())?;
 
             // Check if connection_name is set and load from config if present
-            let connection_name = conn.settings.get("connection_name").and_then(|s| {
+            let connection_name = conn.settings.get(param_names::CONNECTION_NAME).and_then(|s| {
                 if let Setting::String(name) = s {
                     Some(name.clone())
                 } else {
@@ -132,6 +135,24 @@ pub fn connection_set_option(handle: Handle, key: String, value: Setting) -> Res
     }
 }
 
+pub fn connection_set_options(
+    handle: Handle,
+    options: HashMap<String, Setting>,
+) -> Result<Vec<ValidationIssue>, ApiError> {
+    match CONN_HANDLE_MANAGER.get_obj(handle) {
+        Some(conn_ptr) => {
+            let mut conn = conn_ptr
+                .lock()
+                .map_err(|_| ConnectionLockingSnafu {}.build())?;
+            resolve_and_apply_options(&mut conn.settings, options)
+        }
+        None => InvalidArgumentSnafu {
+            argument: "Connection handle not found".to_string(),
+        }
+        .fail(),
+    }
+}
+
 pub fn connection_set_session_parameters(
     handle: Handle,
     parameters: HashMap<String, String>,
@@ -166,7 +187,7 @@ pub fn connection_release(conn_handle: Handle) -> Result<(), ApiError> {
 }
 
 pub struct Connection {
-    pub settings: HashMap<String, Setting>,
+    pub(crate) settings: ParamStore,
     /// Session tokens - RwLock allows concurrent reads, exclusive writes for refresh
     pub tokens: Arc<AsyncRwLock<Option<SessionTokens>>>,
     pub http_client: Option<reqwest::Client>,
@@ -190,7 +211,7 @@ impl Default for Connection {
 impl Connection {
     pub fn new() -> Self {
         Connection {
-            settings: HashMap::new(),
+            settings: ParamStore::new(),
             tokens: Arc::new(AsyncRwLock::new(None)),
             http_client: None,
             retry_policy: RetryPolicy::default(),
@@ -199,6 +220,14 @@ impl Connection {
             session_parameters: Arc::new(RwLock::new(HashMap::new())),
             init_session_parameters: None,
         }
+    }
+
+    /// Set a single option on this connection by canonical key name.
+    /// Wraps `settings.insert`; useful for test setup and wrapper layers that
+    /// hold a `Connection` reference directly rather than going through the
+    /// handle manager.
+    pub fn set_option(&mut self, key: String, value: Setting) {
+        self.settings.insert(key, value);
     }
 
     fn initialize(
@@ -482,7 +511,7 @@ pub fn connection_get_info(conn_handle: Handle) -> Result<ConnectionInfo, ApiErr
                 .map_err(|_| ConnectionLockingSnafu {}.build())?;
 
             // Extract host and port from settings
-            let host = conn.settings.get("host").and_then(|s| {
+            let host = conn.settings.get(param_names::HOST).and_then(|s| {
                 if let Setting::String(v) = s {
                     Some(v.clone())
                 } else {
@@ -490,7 +519,7 @@ pub fn connection_get_info(conn_handle: Handle) -> Result<ConnectionInfo, ApiErr
                 }
             });
 
-            let port = conn.settings.get("port").and_then(|s| {
+            let port = conn.settings.get(param_names::PORT).and_then(|s| {
                 if let Setting::Int(v) = s {
                     Some(*v)
                 } else {
