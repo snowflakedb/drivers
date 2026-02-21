@@ -36,6 +36,10 @@ class DatabaseDriver(ABC):
         pass
 
     @abstractmethod
+    def database_set_options(self, request: DatabaseSetOptionsRequest) -> DatabaseSetOptionsResponse:
+        pass
+
+    @abstractmethod
     def database_init(self, request: DatabaseInitRequest) -> DatabaseInitResponse:
         pass
 
@@ -65,6 +69,10 @@ class DatabaseDriver(ABC):
 
     @abstractmethod
     def connection_set_option_bool(self, request: ConnectionSetOptionBoolRequest) -> ConnectionSetOptionBoolResponse:
+        pass
+
+    @abstractmethod
+    def connection_set_options(self, request: ConnectionSetOptionsRequest) -> ConnectionSetOptionsResponse:
         pass
 
     @abstractmethod
@@ -108,6 +116,10 @@ class DatabaseDriver(ABC):
         pass
 
     @abstractmethod
+    def connection_validate_options(self, request: ConnectionValidateOptionsRequest) -> ConnectionValidateOptionsResponse:
+        pass
+
+    @abstractmethod
     def statement_new(self, request: StatementNewRequest) -> StatementNewResponse:
         pass
 
@@ -145,6 +157,10 @@ class DatabaseDriver(ABC):
 
     @abstractmethod
     def statement_set_option_bool(self, request: StatementSetOptionBoolRequest) -> StatementSetOptionBoolResponse:
+        pass
+
+    @abstractmethod
+    def statement_set_options(self, request: StatementSetOptionsRequest) -> StatementSetOptionsResponse:
         pass
 
     @abstractmethod
@@ -188,6 +204,7 @@ class DatabaseDriverServer(DatabaseDriver):
                 'database_set_option_int': (self.database_set_option_int, DatabaseSetOptionIntRequest),
                 'database_set_option_double': (self.database_set_option_double, DatabaseSetOptionDoubleRequest),
                 'database_set_option_bool': (self.database_set_option_bool, DatabaseSetOptionBoolRequest),
+                'database_set_options': (self.database_set_options, DatabaseSetOptionsRequest),
                 'database_init': (self.database_init, DatabaseInitRequest),
                 'database_release': (self.database_release, DatabaseReleaseRequest),
                 'connection_new': (self.connection_new, ConnectionNewRequest),
@@ -196,6 +213,7 @@ class DatabaseDriverServer(DatabaseDriver):
                 'connection_set_option_int': (self.connection_set_option_int, ConnectionSetOptionIntRequest),
                 'connection_set_option_double': (self.connection_set_option_double, ConnectionSetOptionDoubleRequest),
                 'connection_set_option_bool': (self.connection_set_option_bool, ConnectionSetOptionBoolRequest),
+                'connection_set_options': (self.connection_set_options, ConnectionSetOptionsRequest),
                 'connection_init': (self.connection_init, ConnectionInitRequest),
                 'connection_release': (self.connection_release, ConnectionReleaseRequest),
                 'connection_get_info': (self.connection_get_info, ConnectionGetInfoRequest),
@@ -206,6 +224,7 @@ class DatabaseDriverServer(DatabaseDriver):
                 'connection_rollback': (self.connection_rollback, ConnectionRollbackRequest),
                 'connection_set_session_parameters': (self.connection_set_session_parameters, ConnectionSetSessionParametersRequest),
                 'connection_get_parameter': (self.connection_get_parameter, ConnectionGetParameterRequest),
+                'connection_validate_options': (self.connection_validate_options, ConnectionValidateOptionsRequest),
                 'statement_new': (self.statement_new, StatementNewRequest),
                 'statement_release': (self.statement_release, StatementReleaseRequest),
                 'statement_set_sql_query': (self.statement_set_sql_query, StatementSetSqlQueryRequest),
@@ -216,6 +235,7 @@ class DatabaseDriverServer(DatabaseDriver):
                 'statement_set_option_int': (self.statement_set_option_int, StatementSetOptionIntRequest),
                 'statement_set_option_double': (self.statement_set_option_double, StatementSetOptionDoubleRequest),
                 'statement_set_option_bool': (self.statement_set_option_bool, StatementSetOptionBoolRequest),
+                'statement_set_options': (self.statement_set_options, StatementSetOptionsRequest),
                 'statement_get_parameter_schema': (self.statement_get_parameter_schema, StatementGetParameterSchemaRequest),
                 'statement_bind': (self.statement_bind, StatementBindRequest),
                 'statement_bind_stream': (self.statement_bind_stream, StatementBindStreamRequest),
@@ -353,6 +373,25 @@ class DatabaseDriverClient:
             raise ProtoTransportException(f"Unknown error code: %s", code)
 
         response.ParseFromString(self._transport.handle_message('DatabaseDriver', 'database_set_option_bool', request.SerializeToString()))
+        return response
+
+    def database_set_options(self, request: DatabaseSetOptionsRequest) -> DatabaseSetOptionsResponse:
+        (code, response_bytes) = self._transport.handle_message('DatabaseDriver', 'database_set_options', request.SerializeToString())
+        if code == 0:
+            response = DatabaseSetOptionsResponse()
+            response.ParseFromString(response_bytes)
+            return response
+        elif code == 1:
+            error = DriverException()
+            error.ParseFromString(response_bytes)
+            raise ProtoApplicationException(error)
+        elif code == 2:
+            error = str(response_bytes)
+            raise ProtoTransportException(response_bytes)
+        else:
+            raise ProtoTransportException(f"Unknown error code: %s", code)
+
+        response.ParseFromString(self._transport.handle_message('DatabaseDriver', 'database_set_options', request.SerializeToString()))
         return response
 
     def database_init(self, request: DatabaseInitRequest) -> DatabaseInitResponse:
@@ -505,6 +544,25 @@ class DatabaseDriverClient:
             raise ProtoTransportException(f"Unknown error code: %s", code)
 
         response.ParseFromString(self._transport.handle_message('DatabaseDriver', 'connection_set_option_bool', request.SerializeToString()))
+        return response
+
+    def connection_set_options(self, request: ConnectionSetOptionsRequest) -> ConnectionSetOptionsResponse:
+        (code, response_bytes) = self._transport.handle_message('DatabaseDriver', 'connection_set_options', request.SerializeToString())
+        if code == 0:
+            response = ConnectionSetOptionsResponse()
+            response.ParseFromString(response_bytes)
+            return response
+        elif code == 1:
+            error = DriverException()
+            error.ParseFromString(response_bytes)
+            raise ProtoApplicationException(error)
+        elif code == 2:
+            error = str(response_bytes)
+            raise ProtoTransportException(response_bytes)
+        else:
+            raise ProtoTransportException(f"Unknown error code: %s", code)
+
+        response.ParseFromString(self._transport.handle_message('DatabaseDriver', 'connection_set_options', request.SerializeToString()))
         return response
 
     def connection_init(self, request: ConnectionInitRequest) -> ConnectionInitResponse:
@@ -697,6 +755,25 @@ class DatabaseDriverClient:
         response.ParseFromString(self._transport.handle_message('DatabaseDriver', 'connection_get_parameter', request.SerializeToString()))
         return response
 
+    def connection_validate_options(self, request: ConnectionValidateOptionsRequest) -> ConnectionValidateOptionsResponse:
+        (code, response_bytes) = self._transport.handle_message('DatabaseDriver', 'connection_validate_options', request.SerializeToString())
+        if code == 0:
+            response = ConnectionValidateOptionsResponse()
+            response.ParseFromString(response_bytes)
+            return response
+        elif code == 1:
+            error = DriverException()
+            error.ParseFromString(response_bytes)
+            raise ProtoApplicationException(error)
+        elif code == 2:
+            error = str(response_bytes)
+            raise ProtoTransportException(response_bytes)
+        else:
+            raise ProtoTransportException(f"Unknown error code: %s", code)
+
+        response.ParseFromString(self._transport.handle_message('DatabaseDriver', 'connection_validate_options', request.SerializeToString()))
+        return response
+
     def statement_new(self, request: StatementNewRequest) -> StatementNewResponse:
         (code, response_bytes) = self._transport.handle_message('DatabaseDriver', 'statement_new', request.SerializeToString())
         if code == 0:
@@ -885,6 +962,25 @@ class DatabaseDriverClient:
             raise ProtoTransportException(f"Unknown error code: %s", code)
 
         response.ParseFromString(self._transport.handle_message('DatabaseDriver', 'statement_set_option_bool', request.SerializeToString()))
+        return response
+
+    def statement_set_options(self, request: StatementSetOptionsRequest) -> StatementSetOptionsResponse:
+        (code, response_bytes) = self._transport.handle_message('DatabaseDriver', 'statement_set_options', request.SerializeToString())
+        if code == 0:
+            response = StatementSetOptionsResponse()
+            response.ParseFromString(response_bytes)
+            return response
+        elif code == 1:
+            error = DriverException()
+            error.ParseFromString(response_bytes)
+            raise ProtoApplicationException(error)
+        elif code == 2:
+            error = str(response_bytes)
+            raise ProtoTransportException(response_bytes)
+        else:
+            raise ProtoTransportException(f"Unknown error code: %s", code)
+
+        response.ParseFromString(self._transport.handle_message('DatabaseDriver', 'statement_set_options', request.SerializeToString()))
         return response
 
     def statement_get_parameter_schema(self, request: StatementGetParameterSchemaRequest) -> StatementGetParameterSchemaResponse:
