@@ -1,6 +1,7 @@
 pub mod config_manager;
 pub mod param_registry;
 pub mod path_resolver;
+pub mod resolver;
 pub mod rest_parameters;
 pub mod retry;
 pub mod settings;
