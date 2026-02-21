@@ -1,7 +1,7 @@
-use std::collections::HashMap;
-
 use super::param_registry::ParamKey;
 use super::settings::{Setting, Settings};
+use crate::sensitive::SensitiveString;
+use std::collections::HashMap;
 
 #[derive(Debug)]
 pub struct ParamStore {
@@ -19,21 +19,90 @@ impl ParamStore {
         self.inner.get(key.as_str())
     }
 
+    /// Extract a string value for `key`, returning `None` if absent or not a string.
+    pub fn get_string(&self, key: ParamKey) -> Option<String> {
+        match self.get(key)? {
+            Setting::String(s) => Some(s.clone()),
+            _ => None,
+        }
+    }
+
+    /// Extract an integer value for `key`, returning `None` if absent or not an integer.
+    pub fn get_int(&self, key: ParamKey) -> Option<i64> {
+        match self.get(key)? {
+            Setting::Int(i) => Some(*i),
+            _ => None,
+        }
+    }
+
+    /// Extract a string value for `key` and wrap it in [`SensitiveString`],
+    /// returning `None` if absent or not a string. Use for credential fields
+    /// that must never appear in debug output.
+    pub fn get_sensitive_string(&self, key: ParamKey) -> Option<SensitiveString> {
+        match self.get(key)? {
+            Setting::String(s) => Some(SensitiveString::from(s.clone())),
+            _ => None,
+        }
+    }
+
+    /// Extract a boolean value for `key`.
+    ///
+    /// Checks `Setting::Bool` first, then falls back to `Setting::String` with
+    /// `"true"` / `"false"` parsing for backward compatibility with TOML-loaded
+    /// values. Unrecognised strings return `None`.
+    pub fn get_bool(&self, key: ParamKey) -> Option<bool> {
+        match self.get(key)? {
+            Setting::Bool(b) => Some(*b),
+            Setting::String(s) => match s.to_lowercase().as_str() {
+                "true" => Some(true),
+                "false" => Some(false),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// Create a `ParamStore` pre-populated with all registry defaults.
+    ///
+    /// Use this in tests that call `ConnectionConfig::build()` directly,
+    /// bypassing `resolver::resolve`. This ensures every param that has a
+    /// registry default behaves as if `resolve` had been called, so the
+    /// production code path, which assumes defaults are present, does not
+    /// need defensive `.unwrap_or(literal)` fallbacks.
+    ///
+    /// **Do not** use this for `Connection.settings` on a live connection:
+    /// pre-populating defaults there would override TOML file settings in
+    /// `resolver::resolve_with_paths` because explicit settings are applied
+    /// last (Layer 1) and would overwrite file settings (Layer 3/2).
+    #[cfg(test)]
+    pub(crate) fn with_registry_defaults() -> Self {
+        let mut store = Self::new();
+        for param in super::param_registry::registry().all_params() {
+            if let Some(f) = param.default {
+                store.insert(param.canonical_name.to_owned(), f());
+            }
+        }
+        store
+    }
+
+    /// Insert or overwrite a setting by its canonical string key.
     pub fn insert(&mut self, key: String, value: Setting) {
         self.inner.insert(key, value);
     }
 
-    pub(crate) fn insert_if_absent(&mut self, key: String, value: Setting) {
-        self.inner.entry(key).or_insert(value);
-    }
-
     /// Copy all entries from `other` into `self`, overwriting any existing
-    /// values for the same key. Used by `resolver::merge_with_paths` to
+    /// values for the same key. Used by `resolver::resolve_with_paths` to
     /// apply each successive config layer onto the merged result.
     pub(crate) fn extend_from(&mut self, other: &ParamStore) {
         for (k, v) in &other.inner {
             self.inner.insert(k.clone(), v.clone());
         }
+    }
+
+    /// Iterate over all canonical key names. Used by `validate_settings` to
+    /// check for unknown parameters.
+    pub(crate) fn keys(&self) -> impl Iterator<Item = &String> {
+        self.inner.keys()
     }
 }
 

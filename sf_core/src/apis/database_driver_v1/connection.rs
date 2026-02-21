@@ -10,8 +10,7 @@ use super::global_state::CONN_HANDLE_MANAGER;
 use super::validation::{ValidationIssue, resolve_and_apply_options};
 use crate::config::param_registry::param_names;
 use crate::config::ParamStore;
-use crate::config::config_manager;
-use crate::config::path_resolver::ConfigPaths;
+use crate::config::resolver;
 use crate::config::rest_parameters::{ClientInfo, LoginParameters};
 use crate::config::retry::RetryPolicy;
 use crate::rest::snowflake::{self, RestError, SessionTokens, SnowflakeResponseError};
@@ -19,62 +18,19 @@ use crate::sensitive::SensitiveString;
 use crate::tls::client::create_tls_client_with_config;
 use reqwest;
 
-/// Load configuration from TOML files for a named connection.
-///
-/// Takes a mutable reference to the connection to avoid double-locking.
-/// Only sets config values for keys not already present (explicit settings win).
-pub fn connection_load_from_config(
-    conn: &mut Connection,
-    connection_name: &str,
-) -> Result<(), ApiError> {
-    let config_settings =
-        config_manager::load_connection_config(connection_name).context(ConfigurationSnafu)?;
-
-    for (key, value) in config_settings {
-        conn.settings.insert_if_absent(key, value);
-    }
-    Ok(())
-}
-
-/// Load configuration from TOML files using explicit config paths.
-pub fn connection_load_from_config_with_paths(
-    conn: &mut Connection,
-    connection_name: &str,
-    paths: &ConfigPaths,
-) -> Result<(), ApiError> {
-    let config_settings = config_manager::load_connection_config_with_paths(connection_name, paths)
-        .context(ConfigurationSnafu)?;
-
-    for (key, value) in config_settings {
-        conn.settings.insert_if_absent(key, value);
-    }
-    Ok(())
-}
-
 pub fn connection_init(conn_handle: Handle, _db_handle: Handle) -> Result<(), ApiError> {
     match CONN_HANDLE_MANAGER.get_obj(conn_handle) {
         Some(conn_ptr) => {
-            let mut conn = conn_ptr
+            let conn = conn_ptr
                 .lock()
                 .map_err(|_| ConnectionLockingSnafu {}.build())?;
 
-            // Check if connection_name is set and load from config if present
-            let connection_name = conn.settings.get(param_names::CONNECTION_NAME).and_then(|s| {
-                if let Setting::String(name) = s {
-                    Some(name.clone())
-                } else {
-                    None
-                }
-            });
-
-            if let Some(name) = connection_name {
-                connection_load_from_config(&mut conn, &name)?;
-            }
+            let resolved = conn.resolved_settings().context(ConfigurationSnafu)?;
 
             let rt = crate::async_bridge::runtime().context(RuntimeCreationSnafu)?;
 
             let login_parameters =
-                LoginParameters::from_settings(&conn.settings).context(ConfigurationSnafu)?;
+                LoginParameters::from_settings(&resolved).context(ConfigurationSnafu)?;
             let init_params = conn.init_session_parameters.clone();
             drop(conn);
 
@@ -228,6 +184,12 @@ impl Connection {
     /// handle manager.
     pub fn set_option(&mut self, key: String, value: Setting) {
         self.settings.insert(key, value);
+    }
+
+    fn resolved_settings(
+        &self,
+    ) -> Result<crate::config::ParamStore, crate::config::ConfigError> {
+        resolver::resolve(&self.settings)
     }
 
     fn initialize(
