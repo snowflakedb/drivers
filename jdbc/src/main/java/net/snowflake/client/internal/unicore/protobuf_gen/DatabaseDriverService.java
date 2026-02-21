@@ -139,6 +139,11 @@ public interface DatabaseDriverService {
     DatabaseDriverV1.ConnectionGetParameterResponse connectionGetParameter(DatabaseDriverV1.ConnectionGetParameterRequest request) throws ServiceException, TransportException;
 
     /**
+     * Method: connectionValidateOptions
+     */
+    DatabaseDriverV1.ConnectionValidateOptionsResponse connectionValidateOptions(DatabaseDriverV1.ConnectionValidateOptionsRequest request) throws ServiceException, TransportException;
+
+    /**
      * Method: statementNew
      */
     DatabaseDriverV1.StatementNewResponse statementNew(DatabaseDriverV1.StatementNewRequest request) throws ServiceException, TransportException;

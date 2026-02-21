@@ -21,6 +21,7 @@ pub use connection::connection_release;
 pub use connection::connection_set_option;
 pub use connection::connection_set_options;
 pub use connection::connection_set_session_parameters;
+pub use connection::connection_validate_options;
 pub use connection::with_valid_session;
 pub use database::database_init;
 pub use database::database_new;

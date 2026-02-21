@@ -8,10 +8,11 @@ use super::Setting;
 use super::error::*;
 use super::global_state::CONN_HANDLE_MANAGER;
 use super::validation::{ValidationIssue, resolve_and_apply_options};
-use crate::config::param_registry::param_names;
 use crate::config::ParamStore;
+use crate::config::connection_config::{AuthConfig, ConnectionConfig};
+use crate::config::param_names;
 use crate::config::resolver;
-use crate::config::rest_parameters::{ClientInfo, LoginParameters};
+use crate::config::rest_parameters::{ClientInfo, LoginMethod, LoginParameters};
 use crate::config::retry::RetryPolicy;
 use crate::rest::snowflake::{self, RestError, SessionTokens, SnowflakeResponseError};
 use crate::sensitive::SensitiveString;
@@ -29,14 +30,17 @@ pub fn connection_init(conn_handle: Handle, _db_handle: Handle) -> Result<(), Ap
 
             let rt = crate::async_bridge::runtime().context(RuntimeCreationSnafu)?;
 
-            let login_parameters =
-                LoginParameters::from_settings(&resolved).context(ConfigurationSnafu)?;
+            let config = ConnectionConfig::build(&resolved).context(ConfigurationSnafu)?;
+            let host = setting_string(&resolved, param_names::HOST);
+            let port = setting_int(&resolved, param_names::PORT);
             let init_params = conn.init_session_parameters.clone();
             drop(conn);
 
-            let http_client =
-                create_tls_client_with_config(login_parameters.client_info.tls_config.clone())
-                    .context(TlsClientCreationSnafu)?;
+            let http_client = create_tls_client_with_config(config.tls.clone())
+                .context(TlsClientCreationSnafu)?;
+
+            // Transitional: map ConnectionConfig → LoginParameters for existing login API
+            let login_parameters = login_parameters_from_config(&config);
 
             let login_result = rt
                 .block_on(async {
@@ -62,6 +66,8 @@ pub fn connection_init(conn_handle: Handle, _db_handle: Handle) -> Result<(), Ap
                 .initialize(
                     login_result.tokens,
                     http_client,
+                    host,
+                    port,
                     login_parameters.server_url.clone(),
                     login_parameters.client_info.clone(),
                     merged_params,
@@ -72,6 +78,52 @@ pub fn connection_init(conn_handle: Handle, _db_handle: Handle) -> Result<(), Ap
             argument: "Connection handle not found".to_string(),
         }
         .fail(),
+    }
+}
+
+/// Transitional bridge: map `ConnectionConfig` fields into the existing
+/// `LoginParameters` struct so the REST login layer can remain unchanged.
+fn login_parameters_from_config(config: &ConnectionConfig) -> LoginParameters {
+    let login_method = match &config.auth {
+        AuthConfig::Password { user, password } => LoginMethod::Password {
+            username: user.clone(),
+            password: password.clone(),
+        },
+        AuthConfig::Jwt {
+            user,
+            private_key_pem,
+            passphrase,
+        } => LoginMethod::PrivateKey {
+            username: user.clone(),
+            private_key: private_key_pem.clone(),
+            passphrase: passphrase.clone(),
+        },
+        AuthConfig::Pat { user, token } => LoginMethod::Pat {
+            username: user.clone(),
+            token: token.clone(),
+        },
+    };
+
+    let client_info = ClientInfo {
+        application: "PythonConnector".to_string(),
+        version: "3.15.0".to_string(),
+        os: "Darwin".to_string(),
+        os_version: "macOS-15.5-arm64-arm-64bit".to_string(),
+        ocsp_mode: Some("FAIL_OPEN".to_string()),
+        crl_config: config.tls.crl_config.clone(),
+        tls_config: config.tls.clone(),
+    };
+
+    LoginParameters {
+        account_name: config.server.account.clone(),
+        login_method,
+        server_url: config.server.server_url.clone(),
+        database: config.session.database.clone(),
+        schema: config.session.schema.clone(),
+        warehouse: config.session.warehouse.clone(),
+        role: config.session.role.clone(),
+        client_info,
+        session_parameters: None,
     }
 }
 
@@ -128,6 +180,24 @@ pub fn connection_set_session_parameters(
     }
 }
 
+pub fn connection_validate_options(
+    conn_handle: Handle,
+) -> Result<Vec<ValidationIssue>, ApiError> {
+    match CONN_HANDLE_MANAGER.get_obj(conn_handle) {
+        Some(conn_ptr) => {
+            let conn = conn_ptr
+                .lock()
+                .map_err(|_| ConnectionLockingSnafu {}.build())?;
+            let resolved = conn.resolved_settings().context(ConfigurationSnafu)?;
+            Ok(crate::config::connection_config::validate_settings(&resolved))
+        }
+        None => InvalidArgumentSnafu {
+            argument: "Connection handle not found".to_string(),
+        }
+        .fail(),
+    }
+}
+
 pub fn connection_new() -> Handle {
     CONN_HANDLE_MANAGER.add_handle(Mutex::new(Connection::new()))
 }
@@ -148,6 +218,10 @@ pub struct Connection {
     pub tokens: Arc<AsyncRwLock<Option<SessionTokens>>>,
     pub http_client: Option<reqwest::Client>,
     pub retry_policy: RetryPolicy,
+    /// Effective host used by the successful initialization snapshot.
+    pub host: Option<String>,
+    /// Effective port used by the successful initialization snapshot.
+    pub port: Option<i64>,
     /// Server URL for refresh requests
     pub server_url: Option<String>,
     /// Client info for refresh requests
@@ -171,6 +245,8 @@ impl Connection {
             tokens: Arc::new(AsyncRwLock::new(None)),
             http_client: None,
             retry_policy: RetryPolicy::default(),
+            host: None,
+            port: None,
             server_url: None,
             client_info: None,
             session_parameters: Arc::new(RwLock::new(HashMap::new())),
@@ -196,6 +272,8 @@ impl Connection {
         &mut self,
         tokens: SessionTokens,
         http_client: reqwest::Client,
+        host: Option<String>,
+        port: Option<i64>,
         server_url: String,
         client_info: ClientInfo,
         session_params: HashMap<String, String>,
@@ -203,6 +281,8 @@ impl Connection {
         // Use blocking_write since we're in a sync context during connection_init
         *self.tokens.blocking_write() = Some(tokens);
         self.http_client = Some(http_client);
+        self.host = host;
+        self.port = port;
         self.server_url = Some(server_url);
         self.client_info = Some(client_info);
 
@@ -473,20 +553,24 @@ pub fn connection_get_info(conn_handle: Handle) -> Result<ConnectionInfo, ApiErr
                 .map_err(|_| ConnectionLockingSnafu {}.build())?;
 
             // Extract host and port from settings
-            let host = conn.settings.get(param_names::HOST).and_then(|s| {
-                if let Setting::String(v) = s {
-                    Some(v.clone())
-                } else {
-                    None
-                }
+            let host = conn.host.clone().or_else(|| {
+                conn.settings.get(param_names::HOST).and_then(|s| {
+                    if let Setting::String(v) = s {
+                        Some(v.clone())
+                    } else {
+                        None
+                    }
+                })
             });
 
-            let port = conn.settings.get(param_names::PORT).and_then(|s| {
-                if let Setting::Int(v) = s {
-                    Some(*v)
-                } else {
-                    None
-                }
+            let port = conn.port.or_else(|| {
+                conn.settings.get(param_names::PORT).and_then(|s| {
+                    if let Setting::Int(v) = s {
+                        Some(*v)
+                    } else {
+                        None
+                    }
+                })
             });
 
             // Get server_url
@@ -513,5 +597,93 @@ pub fn connection_get_info(conn_handle: Handle) -> Result<ConnectionInfo, ApiErr
             argument: "Connection handle not found".to_string(),
         }
         .fail(),
+    }
+}
+
+fn setting_string(settings: &ParamStore, key: crate::config::ParamKey) -> Option<String> {
+    settings.get_string(key)
+}
+
+fn setting_int(settings: &ParamStore, key: crate::config::ParamKey) -> Option<i64> {
+    settings.get_int(key)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::crl::config::CrlConfig;
+    use crate::tls::config::TlsConfig;
+
+    fn test_client_info() -> ClientInfo {
+        ClientInfo {
+            application: "PythonConnector".to_string(),
+            version: "3.15.0".to_string(),
+            os: "Darwin".to_string(),
+            os_version: "macOS-15.5-arm64-arm-64bit".to_string(),
+            ocsp_mode: Some("FAIL_OPEN".to_string()),
+            crl_config: CrlConfig::default(),
+            tls_config: TlsConfig::default(),
+        }
+    }
+
+    fn test_tokens() -> SessionTokens {
+        SessionTokens {
+            session_token: SensitiveString::from("session-token"),
+            master_token: SensitiveString::from("master-token"),
+            session_id: 42,
+            session_expires_at: None,
+            master_expires_at: None,
+        }
+    }
+
+    #[test]
+    fn connection_get_info_uses_explicit_settings_before_initialize() {
+        let handle = connection_new();
+        connection_set_option(
+            handle,
+            param_names::HOST.as_str().to_string(),
+            Setting::String("explicit-host".to_string()),
+        )
+        .expect("set host");
+        connection_set_option(handle, param_names::PORT.as_str().to_string(), Setting::Int(443))
+            .expect("set port");
+
+        let info = connection_get_info(handle).expect("connection_get_info should succeed");
+
+        assert_eq!(info.host.as_deref(), Some("explicit-host"));
+        assert_eq!(info.port, Some(443));
+        assert!(info.server_url.is_none());
+
+        connection_release(handle).expect("connection_release should succeed");
+    }
+
+    #[test]
+    fn connection_get_info_uses_init_snapshot_after_initialize() {
+        let handle = connection_new();
+        let conn_ptr = CONN_HANDLE_MANAGER
+            .get_obj(handle)
+            .expect("connection handle should exist");
+
+        conn_ptr
+            .lock()
+            .expect("connection lock")
+            .initialize(
+                test_tokens(),
+                reqwest::Client::new(),
+                Some("config-host".to_string()),
+                Some(8443),
+                "https://config-host:8443".to_string(),
+                test_client_info(),
+                HashMap::new(),
+            );
+
+        let info = connection_get_info(handle).expect("connection_get_info should succeed");
+
+        assert_eq!(info.host.as_deref(), Some("config-host"));
+        assert_eq!(info.port, Some(8443));
+        assert_eq!(info.server_url.as_deref(), Some("https://config-host:8443"));
+        assert_eq!(info.session_id, Some(42));
+
+        connection_release(handle).expect("connection_release should succeed");
     }
 }
