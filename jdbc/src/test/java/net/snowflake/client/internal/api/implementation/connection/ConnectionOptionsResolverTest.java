@@ -21,7 +21,7 @@ public class ConnectionOptionsResolverTest {
             input);
 
     assertEquals("globalaccount-12345.global.snowflakecomputing.com", resolved.get("host"));
-    assertEquals("443", resolved.get("port"));
+    assertEquals(443, resolved.get("port"));
     assertEquals("https", resolved.get("protocol"));
     assertEquals("globalaccount", resolved.get("account"));
     assertEquals("TEST_WH", resolved.get("warehouse"));
@@ -94,7 +94,7 @@ public class ConnectionOptionsResolverTest {
             "jdbc:snowflake://testaccount.snowflakecomputing.com?ssl=off", new Properties());
 
     assertEquals("http", resolved.get("protocol"));
-    assertEquals("80", resolved.get("port"));
+    assertEquals(80, resolved.get("port"));
   }
 
   @Test
