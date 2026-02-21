@@ -75,6 +75,7 @@ fn next_non_empty_batch(
 
 /// Advance the cursor by one row. Handles state transitions from
 /// `Executed` → `Fetching` and from one batch to the next.
+#[allow(clippy::result_large_err)]
 fn advance_cursor(state: &mut crate::api::State<StatementState>) -> OdbcResult<()> {
     state.transition_or_err(|s| match s {
         StatementState::NoResultSet => InvalidCursorStateSnafu

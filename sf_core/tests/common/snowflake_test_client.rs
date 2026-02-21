@@ -283,10 +283,10 @@ impl SnowflakeTestClient {
     }
 
     pub fn set_statement_async_execution(&self, stmt: &StatementHandle, enabled: bool) {
-        DatabaseDriverClient::statement_set_option_string(StatementSetOptionStringRequest {
+        DatabaseDriverClient::statement_set_option_bool(StatementSetOptionBoolRequest {
             stmt_handle: Some(*stmt),
             key: STATEMENT_ASYNC_EXECUTION_OPTION.to_string(),
-            value: if enabled { "true" } else { "false" }.to_string(),
+            value: enabled,
         })
         .unwrap();
     }

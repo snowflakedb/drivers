@@ -558,6 +558,19 @@ impl DatabaseDriver for DatabaseDriverImpl {
         Ok(DatabaseSetOptionDoubleResponse {})
     }
 
+    #[instrument(name = "DatabaseDriverV1::database_set_option_bool", skip(input))]
+    fn database_set_option_bool(
+        input: DatabaseSetOptionBoolRequest,
+    ) -> Result<DatabaseSetOptionBoolResponse, DriverException> {
+        let db_handle = required(input.db_handle, "Database handle is required")?;
+
+        Self::state()
+            .database_set_option(db_handle.into(), input.key, Setting::Bool(input.value))
+            .to_protobuf()?;
+
+        Ok(DatabaseSetOptionBoolResponse {})
+    }
+
     #[instrument(name = "DatabaseDriverV1::database_init", skip(input))]
     fn database_init(input: DatabaseInitRequest) -> Result<DatabaseInitResponse, DriverException> {
         let db_handle = required(input.db_handle, "Database handle is required")?;
@@ -640,6 +653,19 @@ impl DatabaseDriver for DatabaseDriverImpl {
             .to_protobuf()?;
 
         Ok(ConnectionSetOptionDoubleResponse {})
+    }
+
+    #[instrument(name = "DatabaseDriverV1::connection_set_option_bool", skip(input))]
+    fn connection_set_option_bool(
+        input: ConnectionSetOptionBoolRequest,
+    ) -> Result<ConnectionSetOptionBoolResponse, DriverException> {
+        let conn_handle = required(input.conn_handle, "Connection handle is required")?;
+
+        Self::state()
+            .connection_set_option(conn_handle.into(), input.key, Setting::Bool(input.value))
+            .to_protobuf()?;
+
+        Ok(ConnectionSetOptionBoolResponse {})
     }
 
     #[instrument(name = "DatabaseDriverV1::connection_init", skip(input))]
@@ -866,6 +892,19 @@ impl DatabaseDriver for DatabaseDriverImpl {
             .to_protobuf()?;
 
         Ok(StatementSetOptionDoubleResponse {})
+    }
+
+    #[instrument(name = "DatabaseDriverV1::statement_set_option_bool", skip(input))]
+    fn statement_set_option_bool(
+        input: StatementSetOptionBoolRequest,
+    ) -> Result<StatementSetOptionBoolResponse, DriverException> {
+        let stmt_handle = required(input.stmt_handle, "Statement handle is required")?;
+
+        Self::state()
+            .statement_set_option(stmt_handle.into(), input.key, Setting::Bool(input.value))
+            .to_protobuf()?;
+
+        Ok(StatementSetOptionBoolResponse {})
     }
 
     #[instrument(
