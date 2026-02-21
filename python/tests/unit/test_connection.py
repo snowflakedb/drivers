@@ -7,9 +7,12 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
+    ConfigSetting,
     ConnectionGetInfoResponse,
     ConnectionHandle,
+    ConnectionSetOptionsResponse,
     DatabaseHandle,
+    ValidationIssue,
 )
 from snowflake.connector.constants import QueryStatus
 from snowflake.connector.errors import InterfaceError, ProgrammingError
@@ -188,6 +191,106 @@ class TestAutocommitKwargUnit:
             params = call_args[0][0].parameters
             assert "AUTOCOMMIT" not in params
         # If connection_set_session_parameters was not called at all, that's also correct
+
+
+class TestConnectionSetOptions:
+    """Unit tests for the batched connection_set_options RPC during __init__."""
+
+    def test_string_options_use_string_value(self, mock_db_api):
+        """String kwargs should be sent as ConfigSetting(string_value=...)."""
+        from snowflake.connector.connection import Connection
+
+        with patch("snowflake.connector.connection.database_driver_client", return_value=mock_db_api):
+            Connection(user="alice", account="acme")
+
+        request = mock_db_api.connection_set_options.call_args[0][0]
+        assert request.options["user"] == ConfigSetting(string_value="alice")
+        assert request.options["account"] == ConfigSetting(string_value="acme")
+
+    def test_int_options_use_int_value(self, mock_db_api):
+        """Integer kwargs should be sent as ConfigSetting(int_value=...)."""
+        from snowflake.connector.connection import Connection
+
+        with patch("snowflake.connector.connection.database_driver_client", return_value=mock_db_api):
+            Connection(user="u", account="a", port=8080)
+
+        request = mock_db_api.connection_set_options.call_args[0][0]
+        assert request.options["port"] == ConfigSetting(int_value=8080)
+
+    def test_bool_options_use_bool_value_not_int(self, mock_db_api):
+        """Bool kwargs should use bool_value, not int_value (bool is a subclass of int in Python)."""
+        from snowflake.connector.connection import Connection
+
+        with patch("snowflake.connector.connection.database_driver_client", return_value=mock_db_api):
+            Connection(user="u", account="a", insecure_mode=True)
+
+        request = mock_db_api.connection_set_options.call_args[0][0]
+        setting = request.options["insecure_mode"]
+        assert setting == ConfigSetting(bool_value=True)
+        assert setting.WhichOneof("value") == "bool_value"
+
+    def test_float_options_use_double_value(self, mock_db_api):
+        """Float kwargs should be sent as ConfigSetting(double_value=...)."""
+        from snowflake.connector.connection import Connection
+
+        with patch("snowflake.connector.connection.database_driver_client", return_value=mock_db_api):
+            Connection(user="u", account="a", timeout=30.5)
+
+        request = mock_db_api.connection_set_options.call_args[0][0]
+        assert request.options["timeout"] == ConfigSetting(double_value=30.5)
+
+    def test_bytes_options_use_bytes_value(self, mock_db_api):
+        """Bytes kwargs should be sent as ConfigSetting(bytes_value=...)."""
+        from snowflake.connector.connection import Connection
+
+        token = b"\x01\x02\x03"
+        with patch("snowflake.connector.connection.database_driver_client", return_value=mock_db_api):
+            Connection(user="u", account="a", token=token)
+
+        request = mock_db_api.connection_set_options.call_args[0][0]
+        assert request.options["token"] == ConfigSetting(bytes_value=token)
+
+    def test_all_options_batched_into_single_rpc(self, mock_db_api):
+        """All typed options should be submitted in one connection_set_options call."""
+        from snowflake.connector.connection import Connection
+
+        with patch("snowflake.connector.connection.database_driver_client", return_value=mock_db_api):
+            Connection(user="u", account="a", port=443, insecure_mode=False, timeout=1.5)
+
+        assert mock_db_api.connection_set_options.call_count == 1
+        request = mock_db_api.connection_set_options.call_args[0][0]
+        assert set(request.options.keys()) == {"user", "account", "port", "insecure_mode", "timeout"}
+
+    def test_validation_warnings_forwarded_via_warnings_warn(self, mock_db_api):
+        """ValidationIssue warnings from the response should be surfaced via warnings.warn."""
+        import warnings
+
+        from snowflake.connector.connection import Connection
+
+        mock_db_api.connection_set_options.return_value = ConnectionSetOptionsResponse(
+            warnings=[
+                ValidationIssue(message="param 'x' is deprecated"),
+                ValidationIssue(message="param 'y' has no effect"),
+            ]
+        )
+
+        with patch("snowflake.connector.connection.database_driver_client", return_value=mock_db_api):
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always")
+                Connection(user="u", account="a")
+
+        assert len(caught) == 2
+        assert "param 'x' is deprecated" in str(caught[0].message)
+        assert "param 'y' has no effect" in str(caught[1].message)
+
+    def test_no_options_skips_rpc(self, mock_db_api):
+        """When there are no typed kwargs, connection_set_options should not be called."""
+        from snowflake.connector.connection import Connection
+
+        with patch("snowflake.connector.connection.database_driver_client", return_value=mock_db_api):
+            Connection(session_parameters={"AUTOCOMMIT": "true"})
+
+        mock_db_api.connection_set_options.assert_not_called()
 
 
 class TestContextManagerUnit:

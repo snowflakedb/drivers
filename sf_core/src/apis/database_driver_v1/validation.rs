@@ -18,6 +18,15 @@ fn setting_matches_value_type(setting: &Setting, expected: ValueType) -> bool {
     )
 }
 
+fn setting_matches_expected_types(
+    setting: &Setting,
+    primary: ValueType,
+    additional: Option<ValueType>,
+) -> bool {
+    setting_matches_value_type(setting, primary)
+        || additional.is_some_and(|value_type| setting_matches_value_type(setting, value_type))
+}
+
 fn value_type_name(vt: ValueType) -> &'static str {
     match vt {
         ValueType::String => "String",
@@ -25,6 +34,35 @@ fn value_type_name(vt: ValueType) -> &'static str {
         ValueType::Double => "Double",
         ValueType::Bytes => "Bytes",
         ValueType::Bool => "Bool",
+    }
+}
+
+fn value_type_names(primary: ValueType, additional: Option<ValueType>) -> String {
+    match additional {
+        Some(value_type) => format!(
+            "{} or {}",
+            value_type_name(primary),
+            value_type_name(value_type)
+        ),
+        None => value_type_name(primary).to_string(),
+    }
+}
+
+fn try_coerce_to_value_type(setting: &Setting, expected: ValueType) -> Option<Setting> {
+    let s = match setting {
+        Setting::String(s) => s,
+        _ => return None,
+    };
+
+    match expected {
+        ValueType::Int => s.parse::<i64>().ok().map(Setting::Int),
+        ValueType::Double => s.parse::<f64>().ok().map(Setting::Double),
+        ValueType::Bool => match s.to_lowercase().as_str() {
+            "true" => Some(Setting::Bool(true)),
+            "false" => Some(Setting::Bool(false)),
+            _ => None,
+        },
+        ValueType::String | ValueType::Bytes => None,
     }
 }
 
@@ -38,28 +76,20 @@ fn setting_type_name(setting: &Setting) -> &'static str {
     }
 }
 
-/// Attempt to coerce a `Setting::String` to the expected `ValueType`.
+/// Attempt to coerce a `Setting::String` to the primary or additional `ValueType`.
 ///
 /// Connection strings (ODBC, JDBC, TOML files) are inherently stringly-typed,
 /// so values like `"443"` (port) or `"true"` (verify_hostname) arrive as
 /// strings even when the registry expects Int or Bool.  This function
 /// converts them when the parse is unambiguous, returning `None` if the
 /// string cannot be parsed.
-fn try_coerce_setting(setting: &Setting, expected: ValueType) -> Option<Setting> {
-    let s = match setting {
-        Setting::String(s) => s,
-        _ => return None,
-    };
-    match expected {
-        ValueType::Int => s.parse::<i64>().ok().map(Setting::Int),
-        ValueType::Double => s.parse::<f64>().ok().map(Setting::Double),
-        ValueType::Bool => match s.to_lowercase().as_str() {
-            "true" => Some(Setting::Bool(true)),
-            "false" => Some(Setting::Bool(false)),
-            _ => None,
-        },
-        _ => None,
-    }
+fn try_coerce_setting(
+    setting: &Setting,
+    primary: ValueType,
+    additional: Option<ValueType>,
+) -> Option<Setting> {
+    try_coerce_to_value_type(setting, primary)
+        .or_else(|| additional.and_then(|value_type| try_coerce_to_value_type(setting, value_type)))
 }
 
 /// Validate and resolve a batch of options through the `ParamRegistry`.
@@ -103,9 +133,17 @@ pub fn resolve_options(
                     });
                 }
 
-                let final_value = if setting_matches_value_type(&value, param_def.value_type) {
+                let final_value = if setting_matches_expected_types(
+                    &value,
+                    param_def.value_type,
+                    param_def.additional_value_type,
+                ) {
                     value
-                } else if let Some(coerced) = try_coerce_setting(&value, param_def.value_type) {
+                } else if let Some(coerced) = try_coerce_setting(
+                    &value,
+                    param_def.value_type,
+                    param_def.additional_value_type,
+                ) {
                     coerced
                 } else {
                     issues.push(ValidationIssue {
@@ -113,7 +151,7 @@ pub fn resolve_options(
                         parameter: key.clone(),
                         message: format!(
                             "Expected type {} for parameter '{}', got {}",
-                            value_type_name(param_def.value_type),
+                            value_type_names(param_def.value_type, param_def.additional_value_type),
                             param_def.canonical_name,
                             setting_type_name(&value),
                         ),
@@ -552,6 +590,65 @@ mod tests {
         assert_eq!(issues[0].severity, ValidationSeverity::Error);
         assert_eq!(issues[0].code, ValidationCode::InvalidType);
         assert!(!resolved.contains_key("verify_hostname"));
+    }
+
+    #[test]
+    fn private_key_string_is_accepted() {
+        let mut options = HashMap::new();
+        options.insert(
+            "private_key".to_string(),
+            Setting::String("base64-encoded-key".to_string()),
+        );
+
+        let (resolved, issues) = resolve_options(options);
+
+        let errors: Vec<_> = issues
+            .iter()
+            .filter(|i| i.severity == ValidationSeverity::Error)
+            .collect();
+        assert!(errors.is_empty(), "unexpected errors: {errors:?}");
+        assert_eq!(
+            resolved.get("private_key"),
+            Some(&Setting::String("base64-encoded-key".to_string()))
+        );
+    }
+
+    #[test]
+    fn private_key_bytes_are_accepted() {
+        let mut options = HashMap::new();
+        options.insert(
+            "private_key".to_string(),
+            Setting::Bytes(vec![0x01, 0x02, 0x03]),
+        );
+
+        let (resolved, issues) = resolve_options(options);
+
+        let errors: Vec<_> = issues
+            .iter()
+            .filter(|i| i.severity == ValidationSeverity::Error)
+            .collect();
+        assert!(errors.is_empty(), "unexpected errors: {errors:?}");
+        assert_eq!(
+            resolved.get("private_key"),
+            Some(&Setting::Bytes(vec![0x01, 0x02, 0x03]))
+        );
+    }
+
+    #[test]
+    fn private_key_invalid_type_lists_all_supported_types() {
+        let mut options = HashMap::new();
+        options.insert("private_key".to_string(), Setting::Int(7));
+
+        let (resolved, issues) = resolve_options(options);
+
+        assert_eq!(issues.len(), 1);
+        assert_eq!(issues[0].severity, ValidationSeverity::Error);
+        assert_eq!(issues[0].code, ValidationCode::InvalidType);
+        assert_eq!(
+            issues[0].message,
+            "Expected type String or Bytes for parameter 'private_key', got Int"
+        );
+        assert!(!resolved.contains_key("private_key"));
     }
 
     #[test]

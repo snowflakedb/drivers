@@ -21,7 +21,7 @@ class TestPrivateKeyAuthentication:
 
         if NEW_DRIVER_ONLY("BD#4"):
             assert isinstance(exception, ProgrammingError)
-            assert "Missing required parameter: private_key or private_key_file" in str(exception)
+            assert "Missing required parameter: 'private_key' or 'private_key_file'" in str(exception)
         elif OLD_DRIVER_ONLY("BD#4"):
             assert isinstance(exception, TypeError)
             assert "Expected bytes or RSAPrivateKey" in str(exception)

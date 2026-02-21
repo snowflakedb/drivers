@@ -13,16 +13,16 @@ from io import StringIO
 from typing import Any, Callable, Union
 
 from snowflake.connector._internal.errorcode import ER_CONNECTION_IS_CLOSED
+from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
+    ConfigSetting,
+)
 from snowflake.connector._internal.protobuf_gen.database_driver_v1_services import (
     ConnectionGetInfoRequest,
     ConnectionGetInfoResponse,
     ConnectionGetParameterRequest,
     ConnectionInitRequest,
     ConnectionNewRequest,
-    ConnectionSetOptionBytesRequest,
-    ConnectionSetOptionDoubleRequest,
-    ConnectionSetOptionIntRequest,
-    ConnectionSetOptionStringRequest,
+    ConnectionSetOptionsRequest,
     ConnectionSetSessionParametersRequest,
     DatabaseInitRequest,
     DatabaseNewRequest,
@@ -100,32 +100,30 @@ class Connection:
         if "private_key" in kwargs:
             kwargs["private_key"] = normalize_private_key(kwargs["private_key"])
 
+        options = {}
         for key, value in kwargs.items():
-            # bool check must come before int because bool is a subclass of int in Python
             if isinstance(value, bool):
-                self.db_api.connection_set_option_int(
-                    ConnectionSetOptionIntRequest(conn_handle=self.conn_handle, key=key, value=int(value))
-                )
-
+                options[key] = ConfigSetting(bool_value=value)
             elif isinstance(value, int):
-                self.db_api.connection_set_option_int(
-                    ConnectionSetOptionIntRequest(conn_handle=self.conn_handle, key=key, value=value)
-                )
-
+                options[key] = ConfigSetting(int_value=value)
             elif isinstance(value, str):
-                self.db_api.connection_set_option_string(
-                    ConnectionSetOptionStringRequest(conn_handle=self.conn_handle, key=key, value=value)
-                )
-
+                options[key] = ConfigSetting(string_value=value)
             elif isinstance(value, float):
-                self.db_api.connection_set_option_double(
-                    ConnectionSetOptionDoubleRequest(conn_handle=self.conn_handle, key=key, value=value)
-                )
-
+                options[key] = ConfigSetting(double_value=value)
             elif isinstance(value, bytes):
-                self.db_api.connection_set_option_bytes(
-                    ConnectionSetOptionBytesRequest(conn_handle=self.conn_handle, key=key, value=value)
+                options[key] = ConfigSetting(bytes_value=value)
+
+        if options:
+            import warnings as py_warnings
+
+            response = self.db_api.connection_set_options(
+                ConnectionSetOptionsRequest(
+                    conn_handle=self.conn_handle,
+                    options=options,
                 )
+            )
+            for warning in response.warnings:
+                py_warnings.warn(warning.message, stacklevel=2)
 
         # Set session parameters if provided (before connection_init)
         if session_params:
