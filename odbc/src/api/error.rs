@@ -174,6 +174,14 @@ pub enum OdbcError {
         location: Location,
     },
 
+    #[snafu(display(
+        "SQLFetch cannot be called after SQLExtendedFetch without closing the cursor"
+    ))]
+    MixedCursorFunctions {
+        #[snafu(implicit)]
+        location: Location,
+    },
+
     #[snafu(display("Optional feature not implemented"))]
     UnsupportedFeature {
         #[snafu(implicit)]
@@ -377,6 +385,7 @@ impl OdbcError {
             OdbcError::ExecutionDone { .. } => SqlState::FunctionSequenceError,
             OdbcError::NoMoreData { .. } => SqlState::NoDataFound,
             OdbcError::InvalidCursorPosition { .. } => SqlState::InvalidCursorPosition,
+            OdbcError::MixedCursorFunctions { .. } => SqlState::FunctionSequenceError,
             OdbcError::UnsupportedFeature { .. } => SqlState::OptionalFeatureNotImplemented,
             OdbcError::ExtendedFetchUsed { .. } => SqlState::FunctionSequenceError,
             OdbcError::InvalidPort { .. } => SqlState::InvalidConnectionStringAttribute,

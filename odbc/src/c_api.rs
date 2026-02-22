@@ -274,7 +274,7 @@ pub unsafe extern "C" fn SQLFetchScroll(
 pub unsafe extern "C" fn SQLExtendedFetch(
     statement_handle: sql::Handle,
     fetch_orientation: sql::SmallInt,
-    _fetch_offset: sql::Len,
+    fetch_offset: sql::Len,
     row_count_ptr: *mut sql::ULen,
     row_status_ptr: *mut sql::USmallInt,
 ) -> sql::RetCode {
@@ -283,6 +283,7 @@ pub unsafe extern "C" fn SQLExtendedFetch(
     let result = api::data::extended_fetch(
         statement_handle,
         fetch_orientation,
+        fetch_offset,
         row_count_ptr,
         row_status_ptr,
         &mut warnings,

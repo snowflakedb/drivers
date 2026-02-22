@@ -319,7 +319,7 @@ pub fn free_stmt(statement_handle: sql::Handle, option: sql::FreeStmtOption) -> 
             tracing::info!("free_stmt: Closing cursor");
             stmt.state = StatementState::Created.into();
             stmt.get_data_state = None;
-            stmt.extended_fetch_used = false;
+            stmt.used_extended_fetch = false;
         }
         sql::FreeStmtOption::Unbind => {
             tracing::info!("free_stmt: Unbinding all columns");
