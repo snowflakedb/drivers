@@ -368,6 +368,8 @@ impl ArdDescriptor {
 #[repr(C)]
 pub struct IrdDescriptor {
     kind: DescriptorKind,
+    /// `SQL_DESC_COUNT` — number of columns in the result set.
+    pub desc_count: sql::SmallInt,
     /// `SQL_DESC_ARRAY_STATUS_PTR` / `SQL_ATTR_ROW_STATUS_PTR` — default null.
     pub array_status_ptr: *mut u16,
     /// `SQL_DESC_ROWS_PROCESSED_PTR` / `SQL_ATTR_ROWS_FETCHED_PTR` — default null.
@@ -384,6 +386,7 @@ impl IrdDescriptor {
     pub fn new() -> Self {
         Self {
             kind: DescriptorKind::Ird,
+            desc_count: 0,
             array_status_ptr: std::ptr::null_mut(),
             rows_processed_ptr: std::ptr::null_mut(),
         }
@@ -499,6 +502,7 @@ pub enum StatementState {
         reader: ArrowArrayStreamReader,
         record_batch: RecordBatch,
         batch_idx: usize,
+        rows_affected: Option<i64>,
     },
     Done,
     Error,

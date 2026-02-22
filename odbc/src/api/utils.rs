@@ -14,13 +14,14 @@ pub fn num_result_cols(
     tracing::debug!("num_result_cols called");
     let stmt = stmt_from_handle(statement_handle);
 
-    let schema = match stmt.state.as_ref() {
-        StatementState::Executed { reader, .. } => reader.schema(),
-        StatementState::Fetching { record_batch, .. } => record_batch.schema(),
+    let num_cols = match stmt.state.as_ref() {
+        StatementState::Executed { reader, .. } => reader.schema().fields().len() as sql::SmallInt,
+        StatementState::Fetching { record_batch, .. } => {
+            record_batch.schema().fields().len() as sql::SmallInt
+        }
+        StatementState::NoResultSet => 0,
         _ => return StatementNotExecutedSnafu.fail(),
     };
-
-    let num_cols = schema.fields().len() as sql::SmallInt;
 
     if column_count_ptr.is_null() {
         tracing::warn!("num_result_cols: null column_count_ptr");
@@ -36,16 +37,19 @@ pub fn num_result_cols(
 pub fn row_count(statement_handle: sql::Handle, row_count_ptr: *mut sql::Len) -> OdbcResult<()> {
     tracing::debug!("row_count called");
     let stmt = stmt_from_handle(statement_handle);
-    let row_count_ptr = row_count_ptr as *mut sql::Len;
-
-    match stmt.state.as_ref() {
-        StatementState::Executed { rows_affected, .. } => unsafe {
-            std::ptr::write(row_count_ptr, rows_affected.unwrap_or(0) as sql::Len);
-        },
-        StatementState::NoResultSet => unsafe {
-            std::ptr::write(row_count_ptr, -1);
-        },
+    let row_count = match stmt.state.as_ref() {
+        StatementState::Executed { rows_affected, .. }
+        | StatementState::Fetching { rows_affected, .. } => rows_affected.unwrap_or(0) as sql::Len,
+        StatementState::NoResultSet => -1,
         _ => return StatementNotExecutedSnafu.fail(),
+    };
+
+    if row_count_ptr.is_null() {
+        tracing::warn!("row_count: null row_count_ptr");
+        return crate::api::error::NullPointerSnafu.fail();
+    }
+    unsafe {
+        std::ptr::write(row_count_ptr, row_count);
     }
     Ok(())
 }

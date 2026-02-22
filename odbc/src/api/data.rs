@@ -47,7 +47,10 @@ fn advance_cursor(state: &mut crate::api::State<StatementState>) -> OdbcResult<(
         StatementState::NoResultSet => InvalidCursorStateSnafu
             .fail()
             .with_state(StatementState::NoResultSet),
-        StatementState::Executed { mut reader, .. } => match reader.next() {
+        StatementState::Executed {
+            mut reader,
+            rows_affected,
+        } => match reader.next() {
             Some(rb) => {
                 let record_batch = rb
                     .context(FetchDataSnafu)
@@ -57,6 +60,7 @@ fn advance_cursor(state: &mut crate::api::State<StatementState>) -> OdbcResult<(
                         reader,
                         record_batch,
                         batch_idx: 0,
+                        rows_affected,
                     },
                     (),
                 ))
@@ -67,6 +71,7 @@ fn advance_cursor(state: &mut crate::api::State<StatementState>) -> OdbcResult<(
             mut reader,
             record_batch,
             batch_idx,
+            rows_affected,
         } => {
             let new_idx = batch_idx + 1;
             if new_idx < record_batch.num_rows() {
@@ -75,6 +80,7 @@ fn advance_cursor(state: &mut crate::api::State<StatementState>) -> OdbcResult<(
                         reader,
                         record_batch,
                         batch_idx: new_idx,
+                        rows_affected,
                     },
                     (),
                 ))
@@ -89,6 +95,7 @@ fn advance_cursor(state: &mut crate::api::State<StatementState>) -> OdbcResult<(
                                 reader,
                                 record_batch: new_batch,
                                 batch_idx: 0,
+                                rows_affected,
                             },
                             (),
                         ))
@@ -472,9 +479,9 @@ pub fn get_data(
 
     match stmt.state.as_ref() {
         StatementState::Fetching {
-            reader: _,
             record_batch,
             batch_idx,
+            ..
         } => {
             let col_idx = (col_or_param_num - 1) as usize;
             if col_idx >= record_batch.num_columns() {

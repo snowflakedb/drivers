@@ -23,6 +23,10 @@ pub enum RowType {
         length: u64,
         byte_length: u64,
     },
+    Boolean {
+        name: String,
+        nullable: bool,
+    },
 }
 
 impl RowType {
@@ -60,6 +64,13 @@ impl RowType {
             nullable,
             length,
             byte_length,
+        }
+    }
+
+    pub fn boolean(name: &str, nullable: bool) -> Self {
+        RowType::Boolean {
+            name: name.to_string(),
+            nullable,
         }
     }
 }

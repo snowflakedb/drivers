@@ -7,6 +7,7 @@ use crate::api::{ConnectionState, OdbcResult, ParameterBinding, StatementState, 
 use crate::cdata_types::CDataType;
 use crate::conversion::Binding;
 use crate::write_arrow::odbc_bindings_to_arrow_bindings;
+use arrow::array::RecordBatchReader;
 use arrow::ffi::{FFI_ArrowArray, FFI_ArrowSchema};
 use arrow::ffi_stream::{ArrowArrayStreamReader, FFI_ArrowArrayStream};
 use odbc_sys as sql;
@@ -79,6 +80,12 @@ pub fn exec_direct(statement_handle: sql::Handle, statement_text: &str) -> OdbcR
 
             update_numeric_settings(conn_handle, &mut stmt.conn.numeric_settings);
             stmt.state = create_execute_state(response)?.into();
+            stmt.ird.desc_count = match stmt.state.as_ref() {
+                StatementState::Executed { reader, .. } => {
+                    reader.schema().fields().len() as sql::SmallInt
+                }
+                _ => 0,
+            };
             Ok(())
         }
         ConnectionState::Disconnected => {
@@ -200,6 +207,12 @@ pub fn execute(statement_handle: sql::Handle) -> OdbcResult<()> {
             tracing::info!("execute: Successfully executed statement");
             update_numeric_settings(conn_handle, &mut stmt.conn.numeric_settings);
             stmt.state = create_execute_state(response)?.into();
+            stmt.ird.desc_count = match stmt.state.as_ref() {
+                StatementState::Executed { reader, .. } => {
+                    reader.schema().fields().len() as sql::SmallInt
+                }
+                _ => 0,
+            };
             Ok(())
         }
         ConnectionState::Disconnected => {

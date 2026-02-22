@@ -1,4 +1,4 @@
-use arrow::array::{Array, Int64Array, StringArray};
+use arrow::array::{Array, BooleanArray, Int64Array, StringArray};
 use arrow::datatypes::{DataType, Field, Schema};
 use arrow::error::ArrowError;
 use arrow::record_batch::RecordBatch;
@@ -42,6 +42,11 @@ pub fn create_field(row_type: &RowType) -> Field {
             );
             Field::new(name, arrow_type, *nullable).with_metadata(metadata)
         }
+        RowType::Boolean { name, nullable } => {
+            let mut metadata = HashMap::new();
+            metadata.insert("logicalType".to_string(), "BOOLEAN".to_string());
+            Field::new(name, DataType::Boolean, *nullable).with_metadata(metadata)
+        }
     }
 }
 
@@ -63,6 +68,20 @@ fn create_column_array(
                 })
                 .collect();
             Ok(Arc::new(Int64Array::from(int_values?)))
+        }
+        RowType::Boolean { .. } => {
+            let bool_values: Result<Vec<bool>, ArrowUtilsError> = values
+                .into_iter()
+                .map(|v| match v {
+                    "true" | "TRUE" | "1" => Ok(true),
+                    "false" | "FALSE" | "0" => Ok(false),
+                    other => BooleanParsingSnafu {
+                        value: other.to_string(),
+                    }
+                    .fail(),
+                })
+                .collect();
+            Ok(Arc::new(BooleanArray::from(bool_values?)))
         }
     }
 }
@@ -134,6 +153,12 @@ pub enum ArrowUtilsError {
     IntegerParsing {
         value: String,
         source: std::num::ParseIntError,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Failed to parse boolean value: {value}"))]
+    BooleanParsing {
+        value: String,
         #[snafu(implicit)]
         location: Location,
     },

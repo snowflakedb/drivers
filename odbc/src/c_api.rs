@@ -360,7 +360,10 @@ pub unsafe extern "C" fn SQLNumResultCols(
     statement_handle: sql::Handle,
     column_count_ptr: *mut sql::SmallInt,
 ) -> sql::RetCode {
-    api::utils::num_result_cols(statement_handle, column_count_ptr).to_sql_code()
+    api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
+    let result = api::utils::num_result_cols(statement_handle, column_count_ptr);
+    api::diagnostic::set_diag_info_from_result(sql::HandleType::Stmt, statement_handle, &result);
+    result.to_sql_code()
 }
 
 /// # Safety
@@ -370,7 +373,10 @@ pub unsafe extern "C" fn SQLRowCount(
     statement_handle: sql::Handle,
     row_count_ptr: *mut sql::Len,
 ) -> sql::RetCode {
-    api::utils::row_count(statement_handle, row_count_ptr).to_sql_code()
+    api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
+    let result = api::utils::row_count(statement_handle, row_count_ptr);
+    api::diagnostic::set_diag_info_from_result(sql::HandleType::Stmt, statement_handle, &result);
+    result.to_sql_code()
 }
 
 /// # Safety
