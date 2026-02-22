@@ -279,7 +279,7 @@ pub struct ArdDescriptor {
     /// `SQL_DESC_ARRAY_SIZE` / `SQL_ATTR_ROW_ARRAY_SIZE` — default 1.
     pub array_size: usize,
     /// `SQL_DESC_BIND_TYPE` / `SQL_ATTR_ROW_BIND_TYPE` — 0 = column-wise (default).
-    pub bind_type: usize,
+    pub bind_type: sql::ULen,
     /// `SQL_DESC_BIND_OFFSET_PTR` / `SQL_ATTR_ROW_BIND_OFFSET_PTR` — default null.
     pub bind_offset_ptr: *mut sql::Len,
 }
@@ -367,23 +367,14 @@ pub fn desc_ref_from_handle<'a>(handle: sql::Handle) -> OdbcResult<DescriptorRef
     // interpreting it as a DescriptorKind enum to avoid UB on corrupt handles.
     let raw_kind = unsafe { *(handle as *const u8) };
     let kind = DescriptorKind::try_from(raw_kind)?;
-    match raw_kind {
-        1 => {
+    match kind {
+        DescriptorKind::Ard => {
             let desc = unsafe { &mut *(handle as *mut ArdDescriptor) };
             Ok(DescriptorRef::Ard(desc))
         }
-        2 => {
+        DescriptorKind::Ird => {
             let desc = unsafe { &mut *(handle as *mut IrdDescriptor) };
             Ok(DescriptorRef::Ird(desc))
-        }
-        _ => {
-            tracing::error!(
-                "desc_ref_from_handle: invalid descriptor kind tag {}",
-                raw_kind
-            );
-            Err(OdbcError::InvalidHandle {
-                location: snafu::location!(),
-            })
         }
     }
 }

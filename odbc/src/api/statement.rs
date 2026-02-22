@@ -370,17 +370,9 @@ pub fn set_stmt_attr(
             Ok(())
         }
         StmtAttr::RowBindType => {
-            let raw_bind_type = value_ptr as isize;
+            let raw_bind_type = value_ptr as sql::ULen;
             tracing::debug!("set_stmt_attr: RowBindType (raw) = {}", raw_bind_type);
-            if raw_bind_type < 0 {
-                tracing::warn!(
-                    "set_stmt_attr: RowBindType is negative ({}); ignoring invalid value",
-                    raw_bind_type
-                );
-                return Ok(());
-            }
-            let bind_type = raw_bind_type as usize;
-            stmt.ard.bind_type = bind_type;
+            stmt.ard.bind_type = raw_bind_type;
             Ok(())
         }
         StmtAttr::RowBindOffsetPtr => {
@@ -453,7 +445,7 @@ pub fn get_stmt_attr(
         }
         StmtAttr::RowBindType => {
             unsafe {
-                *(value_ptr as *mut sql::ULen) = stmt.ard.bind_type as sql::ULen;
+                *(value_ptr as *mut sql::ULen) = stmt.ard.bind_type;
                 if !string_length_ptr.is_null() {
                     *string_length_ptr = std::mem::size_of::<sql::ULen>() as sql::Integer;
                 }
