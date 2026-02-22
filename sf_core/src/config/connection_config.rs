@@ -731,7 +731,7 @@ mod tests {
     use super::*;
 
     fn settings_from(pairs: &[(&str, Setting)]) -> ParamStore {
-        let mut settings = ParamStore::new();
+        let mut settings = ParamStore::with_registry_defaults();
         for (key, value) in pairs {
             settings.insert((*key).to_string(), value.clone());
         }
@@ -1204,7 +1204,7 @@ mod tests {
 
     #[test]
     fn validate_returns_all_issues_not_just_first() {
-        let settings = ParamStore::new();
+        let settings = ParamStore::with_registry_defaults();
         let issues = validate_settings(&settings);
         let error_count = issues
             .iter()
