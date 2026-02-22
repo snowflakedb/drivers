@@ -567,15 +567,15 @@ impl TryFrom<&RowType> for query_types::RowType {
                     ),
                 })?;
 
-                let row_type = query_types::RowType::fixed(&name, nullable, precision, scale)
-                    .map_err(|e| {
-                        InvalidFormatSnafu {
-                            message: format!("Invalid type for column '{name}': {e}"),
-                        }
-                        .build()
-                    })?;
-
-                Ok(row_type)
+                Ok(query_types::RowType::fixed(
+                    &name, nullable, precision, scale,
+                ))
+            }
+            "REAL" => Ok(query_types::RowType::real(&name, nullable)),
+            "DATE" => Ok(query_types::RowType::date(&name, nullable)),
+            "TIMESTAMP_NTZ" => {
+                let scale = value.scale.unwrap_or(9);
+                Ok(query_types::RowType::timestamp_ntz(&name, nullable, scale))
             }
             "BOOLEAN" => Ok(query_types::RowType::boolean(&name, nullable)),
             other => InvalidFormatSnafu {

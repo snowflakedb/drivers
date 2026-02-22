@@ -183,6 +183,14 @@ impl WriteODBCType for SnowflakeVarchar {
         sql::SqlDataType::VARCHAR
     }
 
+    fn column_size(&self) -> sql::ULen {
+        self.len as sql::ULen
+    }
+
+    fn decimal_digits(&self) -> sql::SmallInt {
+        0
+    }
+
     fn write_odbc_type(
         &self,
         snowflake_value: Self::Representation<'_>,

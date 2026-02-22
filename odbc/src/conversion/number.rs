@@ -145,6 +145,14 @@ impl WriteODBCType for SnowflakeNumber {
         sql::SqlDataType::DECIMAL
     }
 
+    fn column_size(&self) -> sql::ULen {
+        self.precision as sql::ULen
+    }
+
+    fn decimal_digits(&self) -> sql::SmallInt {
+        self.scale as sql::SmallInt
+    }
+
     fn write_odbc_type(
         &self,
         snowflake_value: Self::Representation<'_>,

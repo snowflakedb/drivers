@@ -42,6 +42,14 @@ impl WriteODBCType for SnowflakeDate {
         sql::SqlDataType::DATE
     }
 
+    fn column_size(&self) -> sql::ULen {
+        10
+    }
+
+    fn decimal_digits(&self) -> sql::SmallInt {
+        0
+    }
+
     fn write_odbc_type(
         &self,
         snowflake_value: Self::Representation<'_>,

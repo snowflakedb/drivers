@@ -34,6 +34,14 @@ impl<T: WriteODBCType> WriteODBCType for Nullable<T> {
         self.value.sql_type()
     }
 
+    fn column_size(&self) -> sql::ULen {
+        self.value.column_size()
+    }
+
+    fn decimal_digits(&self) -> sql::SmallInt {
+        self.value.decimal_digits()
+    }
+
     fn write_odbc_type(
         &self,
         snowflake_value: Self::Representation<'_>,

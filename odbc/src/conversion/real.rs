@@ -1,23 +1,22 @@
-use arrow::array::{Array, GenericByteArray};
-use arrow::datatypes::GenericBinaryType;
+use arrow::array::{Array, Float64Array};
+use odbc_sys as sql;
 
 use crate::cdata_types::CDataType;
 use crate::conversion::error::{ReadArrowError, UnsupportedOdbcTypeSnafu, WriteOdbcError};
 use crate::conversion::traits::Binding;
 use crate::conversion::warning::Warnings;
 use crate::conversion::{ReadArrowType, SnowflakeType, WriteODBCType};
-use odbc_sys as sql;
 
-pub(crate) struct SnowflakeBinary;
+pub(crate) struct SnowflakeReal;
 
-impl SnowflakeType for SnowflakeBinary {
-    type Representation<'a> = &'a [u8];
+impl SnowflakeType for SnowflakeReal {
+    type Representation<'a> = f64;
 }
 
-impl ReadArrowType<GenericByteArray<GenericBinaryType<i32>>> for SnowflakeBinary {
+impl ReadArrowType<Float64Array> for SnowflakeReal {
     fn read_arrow_type<'a>(
         &self,
-        array: &'a GenericByteArray<GenericBinaryType<i32>>,
+        array: &'a Float64Array,
         row_idx: usize,
     ) -> Result<Self::Representation<'a>, ReadArrowError> {
         if array.is_null(row_idx) {
@@ -29,13 +28,13 @@ impl ReadArrowType<GenericByteArray<GenericBinaryType<i32>>> for SnowflakeBinary
     }
 }
 
-impl WriteODBCType for SnowflakeBinary {
+impl WriteODBCType for SnowflakeReal {
     fn sql_type(&self) -> sql::SqlDataType {
-        odbc_sys::SqlDataType::EXT_VAR_BINARY
+        sql::SqlDataType::DOUBLE
     }
 
     fn column_size(&self) -> sql::ULen {
-        8_388_608
+        15
     }
 
     fn decimal_digits(&self) -> sql::SmallInt {
@@ -46,11 +45,16 @@ impl WriteODBCType for SnowflakeBinary {
         &self,
         snowflake_value: Self::Representation<'_>,
         binding: &Binding,
-        get_data_offset: &mut Option<usize>,
+        _get_data_offset: &mut Option<usize>,
     ) -> Result<Warnings, WriteOdbcError> {
         match binding.target_type {
-            CDataType::Default | CDataType::Binary => {
-                Ok(binding.write_binary(snowflake_value, get_data_offset))
+            CDataType::Default | CDataType::Double => {
+                binding.write_fixed(snowflake_value);
+                Ok(vec![])
+            }
+            CDataType::Float => {
+                binding.write_fixed(snowflake_value as f32);
+                Ok(vec![])
             }
             _ => UnsupportedOdbcTypeSnafu {
                 target_type: binding.target_type,

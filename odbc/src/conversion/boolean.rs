@@ -32,6 +32,14 @@ impl WriteODBCType for SnowflakeBoolean {
         odbc_sys::SqlDataType::EXT_BIT
     }
 
+    fn column_size(&self) -> odbc_sys::ULen {
+        1
+    }
+
+    fn decimal_digits(&self) -> odbc_sys::SmallInt {
+        0
+    }
+
     fn write_odbc_type(
         &self,
         snowflake_value: Self::Representation<'_>,

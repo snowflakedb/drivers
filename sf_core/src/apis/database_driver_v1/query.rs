@@ -271,6 +271,7 @@ fn rowtype_to_column_metadata(rt: &RowType) -> ColumnMetadata {
             byte_length: None,
             nullable: *nullable,
         },
+        _ => todo!(),
     }
 }
 
