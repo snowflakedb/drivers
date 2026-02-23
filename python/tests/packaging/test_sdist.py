@@ -190,6 +190,10 @@ class TestSdistPackaging:
                 "sf_core/src/c_api.rs",
                 "proto_utils/Cargo.toml",
                 "proto_utils/src/lib.rs",
+                "error_trace/Cargo.toml",
+                "error_trace/src/lib.rs",
+                "error_trace_derive/Cargo.toml",
+                "error_trace_derive/src/lib.rs",
             ]
 
             for pattern in required_patterns:
@@ -198,15 +202,21 @@ class TestSdistPackaging:
 
             # Verify Cargo.toml is the minimal version (not full workspace)
             cargo_toml_entry = next(
-                n for n in names if n.endswith("/Cargo.toml") and "sf_core" not in n and "proto_utils" not in n
+                n
+                for n in names
+                if n.endswith("/Cargo.toml")
+                and "sf_core" not in n
+                and "proto_utils" not in n
+                and "error_trace" not in n
             )
             cargo_content = tar.extractfile(cargo_toml_entry)
             assert cargo_content is not None
             content = cargo_content.read().decode("utf-8")
 
-            # Should only have sf_core and proto_utils as members
             assert "sf_core" in content
             assert "proto_utils" in content
+            assert "error_trace" in content
+            assert "error_trace_derive" in content
             # Should NOT have other workspace members
             assert "odbc" not in content
             assert "jdbc_bridge" not in content
