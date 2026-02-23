@@ -42,6 +42,7 @@ RUN apt-get update && apt-get install -y \
     cmake \
     golang-go \
     clang \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 # TODO SNOW-2705435: Use Clang for aws-lc-fips-sys to avoid GCC >= 14 incompatibility

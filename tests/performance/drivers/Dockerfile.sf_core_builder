@@ -10,6 +10,7 @@ RUN apt-get update && apt-get install -y \
     golang-go \
     unixodbc-dev \
     clang \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /workdir
