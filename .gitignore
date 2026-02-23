@@ -24,4 +24,7 @@ sf_core/src/bin
 .vscode
 tests/wiremock/__files/*
 
+# Generated protobuf Rust code (built on the fly via build.rs)
+sf_core/src/protobuf_gen/database_driver_v1.rs
+
 .DS_Store

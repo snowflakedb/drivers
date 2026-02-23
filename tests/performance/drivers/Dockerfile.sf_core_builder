@@ -1,6 +1,6 @@
 ARG BUILDPLATFORM=linux/amd64
 
-FROM --platform=${BUILDPLATFORM} artifactory.ci1.us-west-2.aws-dev.app.snowflake.com/development-docker-virtual/rust:slim AS chef
+FROM --platform=${BUILDPLATFORM} artifactory.ci1.us-west-2.aws-dev.app.snowflake.com/development-docker-virtual/rust:slim AS builder
 
 # Install build dependencies for Rust and ODBC
 RUN apt-get update && apt-get install -y \
@@ -18,15 +18,11 @@ WORKDIR /workdir
 COPY rust-toolchain.toml ./rust-toolchain.toml
 RUN rustup show
 
-# Install cargo-chef
-RUN cargo install cargo-chef
-
 # TODO SNOW-2705435: Use Clang for aws-lc-fips-sys to avoid GCC >= 14 incompatibility
 # See: https://github.com/aws/aws-lc-rs/issues/569
 ENV AWS_LC_FIPS_SYS_CC=clang
 
-FROM chef AS planner
-# Copy all workspace files - cargo-chef needs the full structure
+# Copy workspace files
 COPY build_common.rs ./build_common.rs
 COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
 COPY sf_core/ ./sf_core/

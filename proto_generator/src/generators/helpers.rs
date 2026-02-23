@@ -1,5 +1,3 @@
-use std::path::PathBuf;
-
 use prost::Message;
 use snafu::{Whatever, prelude::*};
 
@@ -60,7 +58,8 @@ pub(super) fn snake_to_pascal_case(name: &str) -> String {
         .collect()
 }
 
-pub(super) fn run_protoc(input_file: PathBuf) -> Result<FileDescriptorSet, Whatever> {
+pub(super) fn run_protoc(context: &crate::GeneratorContext) -> Result<FileDescriptorSet, Whatever> {
+    let input_file = &context.proto_file;
     let output_dir = tempfile::tempdir().whatever_context("Failed to create temp directory")?;
     let input_filename = input_file
         .file_name()
@@ -70,7 +69,11 @@ pub(super) fn run_protoc(input_file: PathBuf) -> Result<FileDescriptorSet, Whate
     let output_path = output_dir
         .path()
         .join(format!("{}.compiled", input_filename));
-    let output = std::process::Command::new("protoc")
+    let proto_dir = input_file
+        .parent()
+        .with_whatever_context(|| "Failed to get proto file parent directory")?;
+    let output = std::process::Command::new(&context.protoc_path)
+        .arg(format!("--proto_path={}", proto_dir.display()))
         .arg(input_file.to_str().unwrap())
         .arg("-o")
         .arg(output_path.clone())

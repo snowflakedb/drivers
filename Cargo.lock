@@ -3845,6 +3845,7 @@ dependencies = [
  "opentelemetry_sdk",
  "pkcs1",
  "prost 0.14.1",
+ "proto_generator",
  "proto_utils",
  "rand",
  "reqwest",

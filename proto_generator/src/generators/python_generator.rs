@@ -24,8 +24,10 @@ impl PythonGenerator {
         let proto_file = context.proto_file.to_str().unwrap();
         let include_dir = context.proto_file.parent().unwrap().display();
 
+        let protoc = &context.protoc_path;
+
         // Run protoc with Python output
-        std::process::Command::new("protoc")
+        std::process::Command::new(protoc)
             .arg(format!("--python_out={out_dir}"))
             .arg(proto_file)
             .arg(format!("-I={include_dir}"))
@@ -37,7 +39,7 @@ impl PythonGenerator {
         // correctly handle proto3 optional fields, HasField overloads, etc.
         // Fall back to protoc's built-in --pyi_out if mypy-protobuf is not
         // installed.
-        let mypy_status = std::process::Command::new("protoc")
+        let mypy_status = std::process::Command::new(protoc)
             .arg(format!("--mypy_out={out_dir}"))
             .arg(proto_file)
             .arg(format!("-I={include_dir}"))
@@ -51,7 +53,7 @@ impl PythonGenerator {
             }
             _ => {
                 info!("mypy-protobuf not available, falling back to protoc --pyi_out");
-                std::process::Command::new("protoc")
+                std::process::Command::new(protoc)
                     .arg(format!("--pyi_out={out_dir}"))
                     .arg(proto_file)
                     .arg(format!("-I={include_dir}"))
@@ -89,7 +91,7 @@ impl PythonGenerator {
         &self,
         context: &GeneratorContext,
     ) -> Result<GenerationResult, Whatever> {
-        let descriptor_set = run_protoc(context.proto_file.clone())?;
+        let descriptor_set = run_protoc(context)?;
         let mut result = GenerationResult::new();
 
         for file in descriptor_set.file {

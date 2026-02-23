@@ -74,6 +74,9 @@ der = "0.7"
 pkcs1 = "0.7"
 num-traits = "0.2.19"
 
+[build-dependencies]
+proto_generator = { path = "../proto_generator" }
+
 [dev-dependencies]
 tempfile = "3.21.0"
 arrow_deserialize_macro = { path = "tests/common/arrow_deserialize_macro" }

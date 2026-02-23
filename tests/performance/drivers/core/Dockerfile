@@ -44,9 +44,6 @@ RUN apt-get update && apt-get install -y \
     clang \
     && rm -rf /var/lib/apt/lists/*
 
-# Install cargo-chef
-RUN cargo install cargo-chef
-
 # TODO SNOW-2705435: Use Clang for aws-lc-fips-sys to avoid GCC >= 14 incompatibility
 # See: https://github.com/aws/aws-lc-rs/issues/569
 ENV AWS_LC_FIPS_SYS_CC=clang
@@ -57,10 +54,8 @@ WORKDIR /workdir
 COPY rust-toolchain.toml ./rust-toolchain.toml
 RUN rustup show
 
-# Copy build_common.rs (needed by sf_core build)
+# Copy workspace files
 COPY build_common.rs ./build_common.rs
-
-# Copy sf_core and proto_utils source (needed for path dependencies)
 COPY sf_core/ ./sf_core/
 COPY proto_utils/ ./proto_utils/
 COPY error_trace/ ./error_trace/
@@ -70,16 +65,6 @@ COPY error_trace_derive/ ./error_trace_derive/
 RUN sed -i 's/crate-type = \["dylib", "rlib"\]/crate-type = ["rlib"]/' ./sf_core/Cargo.toml
 
 WORKDIR /workdir/tests/performance/drivers/core/app
-
-# Build dependencies - this layer will be cached unless dependencies change
-COPY --from=planner /workdir/tests/performance/drivers/core/app/recipe.json recipe.json
-# Copy Cargo.lock to ensure cargo-chef uses pinned dependency versions
-# (without this, cargo resolves the latest versions which may require a newer rustc)
-COPY tests/performance/drivers/core/app/Cargo.lock Cargo.lock
-RUN cargo chef cook --release --recipe-path recipe.json
-
-# Copy application source and build only the app (sf_core already compiled)
-COPY tests/performance/drivers/core/app/ ./
 
 RUN cargo build --release --bin core-perf-driver
 
