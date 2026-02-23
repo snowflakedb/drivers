@@ -11,22 +11,38 @@ use syn::{Data, DeriveInput, Fields, Ident, parse_macro_input};
 #[proc_macro_derive(ErrorTrace)]
 pub fn error_trace_derive(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
+    match error_trace_derive_inner(&input) {
+        Ok(tokens) => tokens,
+        Err(err) => err.to_compile_error().into(),
+    }
+}
+
+fn error_trace_derive_inner(input: &DeriveInput) -> syn::Result<TokenStream> {
     let enum_name = &input.ident;
 
     let variants = match &input.data {
         Data::Enum(data_enum) => &data_enum.variants,
-        _ => panic!("ErrorTrace can only be derived for enums"),
+        _ => {
+            return Err(syn::Error::new_spanned(
+                enum_name,
+                "ErrorTrace can only be derived for enums",
+            ));
+        }
     };
 
-    let match_arms = variants.iter().map(|variant| {
+    let mut match_arms = Vec::new();
+
+    for variant in variants {
         let variant_name = &variant.ident;
 
         let fields = match &variant.fields {
             Fields::Named(named) => &named.named,
-            _ => panic!(
-                "ErrorTrace: variant `{}` must have named fields",
-                variant_name
-            ),
+            _ => {
+                return Err(syn::Error::new_spanned(
+                    variant_name,
+                    format!("ErrorTrace: variant `{variant_name}` must have named fields"),
+                ));
+            }
         };
 
         let has_location = fields
@@ -39,13 +55,13 @@ pub fn error_trace_derive(input: TokenStream) -> TokenStream {
         });
 
         if !has_location {
-            panic!(
-                "ErrorTrace: variant `{}` is missing a `location` field",
-                variant_name
-            );
+            return Err(syn::Error::new_spanned(
+                variant_name,
+                format!("ErrorTrace: variant `{variant_name}` is missing a `location` field"),
+            ));
         }
 
-        if let Some(_source_ident) = source_field {
+        let arm = if source_field.is_some() {
             quote! {
                 Self::#variant_name { location, source, .. } => {
                     let mut trace = ::std::vec![::error_trace::ErrorTraceEntry {
@@ -67,8 +83,9 @@ pub fn error_trace_derive(input: TokenStream) -> TokenStream {
                     }]
                 }
             }
-        }
-    });
+        };
+        match_arms.push(arm);
+    }
 
     let expanded = quote! {
         impl ::error_trace::ErrorTrace for #enum_name {
@@ -81,5 +98,5 @@ pub fn error_trace_derive(input: TokenStream) -> TokenStream {
         }
     };
 
-    TokenStream::from(expanded)
+    Ok(TokenStream::from(expanded))
 }
