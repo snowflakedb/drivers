@@ -105,6 +105,29 @@ INFO_CODE_DRIVER_ARROW_VERSION: InfoCode.ValueType  # 203
 INFO_CODE_DRIVER_ADBC_VERSION: InfoCode.ValueType  # 204
 Global___InfoCode: _TypeAlias = InfoCode  # noqa: Y015
 
+class _ErrorStrategy:
+    ValueType = _typing.NewType("ValueType", _builtins.int)
+    V: _TypeAlias = ValueType  # noqa: Y015
+
+class _ErrorStrategyEnumTypeWrapper(_enum_type_wrapper._EnumTypeWrapper[_ErrorStrategy.ValueType], _builtins.type):
+    DESCRIPTOR: _descriptor.EnumDescriptor
+    ERROR_STRATEGY_UNSPECIFIED: _ErrorStrategy.ValueType  # 0
+    """Defaults to BEST_EFFORT"""
+    ERROR_STRATEGY_BEST_EFFORT: _ErrorStrategy.ValueType  # 1
+    """Log errors, always succeed"""
+    ERROR_STRATEGY_STRICT: _ErrorStrategy.ValueType  # 2
+    """Raise errors (except SESSION_GONE)"""
+
+class ErrorStrategy(_ErrorStrategy, metaclass=_ErrorStrategyEnumTypeWrapper): ...
+
+ERROR_STRATEGY_UNSPECIFIED: ErrorStrategy.ValueType  # 0
+"""Defaults to BEST_EFFORT"""
+ERROR_STRATEGY_BEST_EFFORT: ErrorStrategy.ValueType  # 1
+"""Log errors, always succeed"""
+ERROR_STRATEGY_STRICT: ErrorStrategy.ValueType  # 2
+"""Raise errors (except SESSION_GONE)"""
+Global___ErrorStrategy: _TypeAlias = ErrorStrategy  # noqa: Y015
+
 @_typing.final
 class ErrorDetail(_message.Message):
     """Error detail message"""
@@ -1078,8 +1101,7 @@ class ConnectionCloseRequest(_message.Message):
     MAX_RETRY_ATTEMPTS_FIELD_NUMBER: _builtins.int
     server_session_keep_alive: _builtins.bool
     enable_auto_detection: _builtins.bool
-    error_strategy: _builtins.str
-    """"Strict" or "BestEffort" """
+    error_strategy: Global___ErrorStrategy.ValueType
     timeout_seconds: _builtins.int
     max_retry_attempts: _builtins.int
     """Maximum number of retry attempts (0 = no retries, 1 attempt only)"""
@@ -1091,7 +1113,7 @@ class ConnectionCloseRequest(_message.Message):
         conn_handle: Global___ConnectionHandle | None = ...,
         server_session_keep_alive: _builtins.bool | None = ...,
         enable_auto_detection: _builtins.bool | None = ...,
-        error_strategy: _builtins.str | None = ...,
+        error_strategy: Global___ErrorStrategy.ValueType | None = ...,
         timeout_seconds: _builtins.int | None = ...,
         max_retry_attempts: _builtins.int | None = ...,
     ) -> None: ...

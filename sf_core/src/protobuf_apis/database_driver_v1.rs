@@ -484,23 +484,23 @@ impl DatabaseDriver for DatabaseDriverImpl {
         input: ConnectionCloseRequest,
     ) -> Result<ConnectionCloseResponse, DriverException> {
         use crate::config::logout::{ErrorStrategy, LogoutConfig};
+        use crate::protobuf_gen::database_driver_v1::ErrorStrategy as ProtoErrorStrategy;
         use std::time::Duration;
 
         let conn_handle = required(input.conn_handle, "Connection handle is required")?;
 
-        // Parse error strategy
-        let error_strategy = match input.error_strategy.as_deref() {
-            Some("Strict") => ErrorStrategy::Strict,
-            Some("BestEffort") | None => ErrorStrategy::BestEffort,
-            Some(other) => {
+        // Parse error strategy from proto enum
+        let error_strategy = match input.error_strategy {
+            Some(v) if v == ProtoErrorStrategy::Strict as i32 => ErrorStrategy::Strict,
+            Some(v) if v == ProtoErrorStrategy::BestEffort as i32 => ErrorStrategy::BestEffort,
+            Some(v) if v == ProtoErrorStrategy::Unspecified as i32 => ErrorStrategy::BestEffort,
+            None => ErrorStrategy::BestEffort,
+            Some(v) => {
                 return Err(DriverException {
-                    message: format!(
-                        "Invalid error_strategy: {}. Must be 'Strict' or 'BestEffort'",
-                        other
-                    ),
+                    message: format!("Invalid error_strategy value: {}", v),
                     status_code: StatusCode::InvalidArgument as i32,
                     error: None,
-                    report: format!("Invalid error_strategy: {}", other),
+                    report: format!("Invalid error_strategy value: {}", v),
                 });
             }
         };

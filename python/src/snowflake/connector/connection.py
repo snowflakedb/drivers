@@ -10,6 +10,7 @@ import atexit
 import logging
 import warnings
 
+from dataclasses import dataclass
 from typing import Any
 
 from snowflake.connector._internal.protobuf_gen.database_driver_v1_services import (
@@ -26,6 +27,7 @@ from snowflake.connector._internal.protobuf_gen.database_driver_v1_services impo
     DatabaseInitRequest,
     DatabaseNewRequest,
 )
+from snowflake.connector._internal.protobuf_gen import database_driver_v1_pb2
 
 from ._internal._private_key_helper import normalize_private_key
 from ._internal.api_client.client_api import database_driver_client
@@ -68,12 +70,41 @@ def _resolve_paramstyle(value: str | None) -> str | None:
 # Module-level logger
 logger = logging.getLogger(__name__)
 
-# Global flag to track if first auto-cleanup warning has been emitted in this process
-_first_auto_cleanup_in_process = True
+
+@dataclass
+class ConnectionClassConfig:
+    """Static configuration flags for Connection class behavior.
+
+    Immutable configuration that controls Connection behavior across all instances.
+    """
+
+    # Internal flag for logout semantics migration (SNOW-2314152)
+    # False (default): Phase 2 - server_session_keep_alive=False respects auto-detection
+    # True: Phase 3 - Pass parameters directly to Core without mapping
+    # WARNING: Phase 3 will become default in future release (Breaking Change)
+    USE_PHASE3_LOGOUT_SEMANTICS: bool = False
+
+
+@dataclass
+class ConnectionClassState:
+    """Mutable class-level state shared across all Connection instances in the process.
+
+    This is static/class-level state, NOT instance state.
+    """
+
+    # Track if first auto-cleanup warning has been emitted in this process
+    # False = warning already emitted, True = warning not yet emitted
+    first_auto_cleanup_warning_pending: bool = True
 
 
 class Connection:
     """Connection objects represent a database connection."""
+
+    # Private static configuration (immutable class-level settings, name-mangled)
+    __class_config = ConnectionClassConfig()
+
+    # Private static state (mutable class-level state, shared across all instances, name-mangled)
+    __class_state = ConnectionClassState()
 
     def __init__(self, *, paramstyle: str | None = None, **kwargs: Any) -> None:
         """
@@ -148,7 +179,6 @@ class Connection:
             )
 
         self.db_api.connection_init(ConnectionInitRequest(conn_handle=self.conn_handle, db_handle=self.db_handle))
-        self.kwargs = kwargs
         self._closed = False
         self._autocommit = False
 
@@ -191,22 +221,25 @@ class Connection:
             else True
         )
 
-        # Phase 2 Parameter Mapping (SNOW-2314152): Map Python Phase 2 semantics to Core's Phase 3 semantics
-        # Python Phase 2: server_session_keep_alive=False respects auto-detection when enabled
-        # Core Phase 3: Some(false) = always logout, ignores auto-detection
-        #
-        # Mapping:
-        # - Python: False + auto-detection enabled → Core: None (respects auto-detection)
-        # - Python: False + auto-detection disabled → Core: False (force logout)
-        # - Python: True → Core: True (never logout)
-        # - Python: None → Core: None (delegate to auto-detection)
-        #
-        # TODO(SNOW-2314152): Remove this mapping in Phase 3 and pass parameters directly
-        core_keep_alive = self.server_session_keep_alive
-        if self.server_session_keep_alive is False and effective_enable_auto:
-            # Phase 2 compat (SNOW-2314152): False with auto-detection enabled → map to None
-            # This makes Core check the registry (legacy Python behavior)
-            core_keep_alive = None
+        # Phase 2/3 Parameter Mapping (SNOW-2314152)
+        if Connection.__class_config.USE_PHASE3_LOGOUT_SEMANTICS:
+            # Phase 3: Pass parameters directly to Core without mapping
+            core_keep_alive = self.server_session_keep_alive
+        else:
+            # Phase 2 (default): Map Python Phase 2 semantics to Core's Phase 3 semantics
+            # Python Phase 2: server_session_keep_alive=False respects auto-detection when enabled
+            # Core Phase 3: Some(false) = always logout, ignores auto-detection
+            #
+            # Mapping:
+            # - Python: False + auto-detection enabled → Core: None (respects auto-detection)
+            # - Python: False + auto-detection disabled → Core: False (force logout)
+            # - Python: True → Core: True (never logout)
+            # - Python: None → Core: None (delegate to auto-detection)
+            core_keep_alive = self.server_session_keep_alive
+            if self.server_session_keep_alive is False and effective_enable_auto:
+                # Phase 2 compat: False with auto-detection enabled → map to None
+                # This makes Core check the registry (legacy Python behavior)
+                core_keep_alive = None
 
         # Handle retry parameter (backward compatibility with old driver)
         # Old driver: retry=True → 3 attempts, retry=False → 1 attempt
@@ -225,7 +258,7 @@ class Connection:
                 conn_handle=self.conn_handle,
                 server_session_keep_alive=core_keep_alive,  # Mapped parameter
                 enable_auto_detection=effective_enable_auto,
-                error_strategy="BestEffort",  # Python default
+                error_strategy=database_driver_v1_pb2.ERROR_STRATEGY_BEST_EFFORT,  # Python default
                 timeout_seconds=5,  # 5 second default
                 max_retry_attempts=max_retry_attempts,
             )
@@ -239,8 +272,6 @@ class Connection:
         and should NOT run. If it runs for an already-closed connection, that indicates
         a potential bug (unregister failed, race condition, or multiple registrations).
         """
-        global _first_auto_cleanup_in_process
-
         if self.is_closed():
             # This shouldn't happen! If close() succeeded, handler should be unregistered.
             logger.debug(
@@ -250,7 +281,7 @@ class Connection:
             return
 
         # Connection is leaked (not explicitly closed) - emit deprecation warning
-        if _first_auto_cleanup_in_process:
+        if Connection.__class_state.first_auto_cleanup_warning_pending:
             warnings.warn(
                 "Connection was not explicitly closed before process exit. "
                 "Auto-cleanup at exit will be disabled by default in Phase 3 (SNOW-2314152). "
@@ -258,7 +289,7 @@ class Connection:
                 FutureWarning,
                 stacklevel=2,
             )
-            _first_auto_cleanup_in_process = False
+            Connection.__class_state.first_auto_cleanup_warning_pending = False
 
         # Attempt cleanup for leaked connection
         try:

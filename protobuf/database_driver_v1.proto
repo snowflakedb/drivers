@@ -51,6 +51,12 @@ enum InfoCode {
   INFO_CODE_DRIVER_ADBC_VERSION = 204;
 }
 
+enum ErrorStrategy {
+  ERROR_STRATEGY_UNSPECIFIED = 0;  // Defaults to BEST_EFFORT
+  ERROR_STRATEGY_BEST_EFFORT = 1;  // Log errors, always succeed
+  ERROR_STRATEGY_STRICT = 2;       // Raise errors (except SESSION_GONE)
+}
+
 // Error detail message
 message ErrorDetail {
   string key = 1;
@@ -314,7 +320,7 @@ message ConnectionCloseRequest {
   ConnectionHandle conn_handle = 1;
   optional bool server_session_keep_alive = 2;
   optional bool enable_auto_detection = 3;
-  optional string error_strategy = 4;  // "Strict" or "BestEffort"
+  optional ErrorStrategy error_strategy = 4;
   optional int64 timeout_seconds = 5;
   optional uint32 max_retry_attempts = 6;  // Maximum number of retry attempts (0 = no retries, 1 attempt only)
 }
