@@ -220,7 +220,7 @@ class TestLogoutPhase2Phase3Migration:
         """
         from snowflake.connector.connection import Connection
 
-        assert Connection._Connection__class_config.USE_PHASE3_LOGOUT_SEMANTICS is False, (
+        assert Connection._class_config.USE_PHASE3_LOGOUT_SEMANTICS is False, (
             "USE_PHASE3_LOGOUT_SEMANTICS must be False (Phase 2). "
             "Changing to True is a BREAKING CHANGE. "
             "If intentional, update/delete this test. "

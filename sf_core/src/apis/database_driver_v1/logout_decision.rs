@@ -52,15 +52,30 @@ pub fn should_send_logout(
         Some(true) => {
             // Auto-detection enabled - check registry
             if let Some(reg) = registry {
-                if reg.has_running_queries() {
-                    tracing::info!("Skipping logout: auto-detection found running async queries");
-                    (
-                        false,
-                        Some("auto_detection_found_running_queries".to_string()),
-                    )
-                } else {
-                    tracing::info!("Sending logout: auto-detection found no running async queries");
-                    (true, None)
+                match reg.has_running_queries() {
+                    Ok(true) => {
+                        tracing::info!(
+                            "Skipping logout: auto-detection found running async queries"
+                        );
+                        (
+                            false,
+                            Some("auto_detection_found_running_queries".to_string()),
+                        )
+                    }
+                    Ok(false) => {
+                        tracing::info!(
+                            "Sending logout: auto-detection found no running async queries"
+                        );
+                        (true, None)
+                    }
+                    Err(e) => {
+                        // Registry lock error - default to logout (safer behavior)
+                        tracing::error!(
+                            error = %e,
+                            "Failed to check running queries, defaulting to logout"
+                        );
+                        (true, None)
+                    }
                 }
             } else {
                 // Registry not available - default to logout
@@ -112,7 +127,7 @@ mod tests {
             ..Default::default()
         };
         let registry = AsyncQueryRegistry::new();
-        registry.register("query1".to_string()); // Should be ignored
+        registry.register("query1".to_string()).unwrap(); // Should be ignored
 
         // When checking decision
         let (send, reason) = should_send_logout(&config, Some(&registry));
@@ -131,7 +146,7 @@ mod tests {
             ..Default::default()
         };
         let registry = AsyncQueryRegistry::new();
-        registry.register("query1".to_string());
+        registry.register("query1".to_string()).unwrap();
 
         // When checking decision
         let (send, reason) = should_send_logout(&config, Some(&registry));
@@ -169,7 +184,7 @@ mod tests {
             ..Default::default()
         };
         let registry = AsyncQueryRegistry::new();
-        registry.register("query1".to_string()); // Should be ignored
+        registry.register("query1".to_string()).unwrap(); // Should be ignored
 
         // When checking decision
         let (send, reason) = should_send_logout(&config, Some(&registry));
@@ -184,7 +199,7 @@ mod tests {
         // Given default config (Phase 3: both None - SNOW-2314152)
         let config = LogoutConfig::default();
         let registry = AsyncQueryRegistry::new();
-        registry.register("query1".to_string()); // Should be ignored
+        registry.register("query1".to_string()).unwrap(); // Should be ignored
 
         // When checking decision
         let (send, reason) = should_send_logout(&config, Some(&registry));

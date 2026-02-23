@@ -3,8 +3,20 @@
 //! Used by auto-detection logic to determine if logout should be skipped
 //! to preserve running async queries (Fire & Forget semantics).
 
+use snafu::{Location, Snafu};
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
+
+/// Error type for AsyncQueryRegistry operations
+#[derive(Debug, Snafu)]
+#[snafu(visibility(pub))]
+pub enum AsyncQueryRegistryError {
+    #[snafu(display("Failed to acquire registry lock: mutex poisoned"))]
+    RegistryLockPoisoned {
+        #[snafu(implicit)]
+        location: Location,
+    },
+}
 
 /// Registry for tracking active async query IDs
 #[derive(Debug, Clone)]
@@ -29,29 +41,39 @@ impl AsyncQueryRegistry {
     /// Register an async query ID
     ///
     /// Called when a query is executed with asyncExec=true
-    pub fn register(&self, query_id: String) {
+    ///
+    /// # Errors
+    ///
+    /// Returns `AsyncQueryRegistryError::RegistryLockPoisoned` if the mutex is poisoned
+    pub fn register(&self, query_id: String) -> Result<(), AsyncQueryRegistryError> {
         let mut queries = self
             .queries
             .lock()
-            .expect("AsyncQueryRegistry mutex poisoned - cannot register query");
-        queries.insert(query_id.clone());
-        tracing::debug!(query_id, "Registered async query");
+            .map_err(|_| RegistryLockPoisonedSnafu.build())?;
+        tracing::debug!(query_id = %query_id, "Registered async query");
+        queries.insert(query_id);
+        Ok(())
     }
 
     /// Unregister an async query ID
     ///
     /// Called when a query completes or is cancelled
-    pub fn unregister(&self, query_id: &str) {
+    ///
+    /// # Errors
+    ///
+    /// Returns `AsyncQueryRegistryError::RegistryLockPoisoned` if the mutex is poisoned
+    pub fn unregister(&self, query_id: &str) -> Result<(), AsyncQueryRegistryError> {
         let mut queries = self
             .queries
             .lock()
-            .expect("AsyncQueryRegistry mutex poisoned - cannot unregister query");
+            .map_err(|_| RegistryLockPoisonedSnafu.build())?;
         let removed = queries.remove(query_id);
         if removed {
             tracing::debug!(query_id, "Unregistered async query");
         } else {
             tracing::warn!(query_id, "Attempted to unregister unknown async query");
         }
+        Ok(())
     }
 
     /// Check if there are any running async queries
@@ -61,13 +83,17 @@ impl AsyncQueryRegistry {
     ///
     /// # Returns
     ///
-    /// * `true` - At least one async query is registered (still running)
-    /// * `false` - No async queries registered (all finished or none started)
-    pub fn has_running_queries(&self) -> bool {
+    /// * `Ok(true)` - At least one async query is registered (still running)
+    /// * `Ok(false)` - No async queries registered (all finished or none started)
+    ///
+    /// # Errors
+    ///
+    /// Returns `AsyncQueryRegistryError::RegistryLockPoisoned` if the mutex is poisoned
+    pub fn has_running_queries(&self) -> Result<bool, AsyncQueryRegistryError> {
         let queries = self
             .queries
             .lock()
-            .expect("AsyncQueryRegistry mutex poisoned - cannot check running queries");
+            .map_err(|_| RegistryLockPoisonedSnafu.build())?;
         let has_queries = !queries.is_empty();
 
         if has_queries {
@@ -79,26 +105,35 @@ impl AsyncQueryRegistry {
             tracing::debug!("Auto-detection found no running async queries");
         }
 
-        has_queries
+        Ok(has_queries)
     }
 
     /// Get count of registered queries (for testing/debugging)
-    pub fn count(&self) -> usize {
+    ///
+    /// # Errors
+    ///
+    /// Returns `AsyncQueryRegistryError::RegistryLockPoisoned` if the mutex is poisoned
+    pub fn count(&self) -> Result<usize, AsyncQueryRegistryError> {
         let queries = self
             .queries
             .lock()
-            .expect("AsyncQueryRegistry mutex poisoned - cannot get count");
-        queries.len()
+            .map_err(|_| RegistryLockPoisonedSnafu.build())?;
+        Ok(queries.len())
     }
 
     /// Clear all registered queries (for testing)
+    ///
+    /// # Errors
+    ///
+    /// Returns `AsyncQueryRegistryError::RegistryLockPoisoned` if the mutex is poisoned
     #[cfg(test)]
-    pub fn clear(&self) {
+    pub fn clear(&self) -> Result<(), AsyncQueryRegistryError> {
         let mut queries = self
             .queries
             .lock()
-            .expect("AsyncQueryRegistry mutex poisoned - cannot clear");
+            .map_err(|_| RegistryLockPoisonedSnafu.build())?;
         queries.clear();
+        Ok(())
     }
 }
 
@@ -109,58 +144,64 @@ mod tests {
     #[test]
     fn test_register_and_has_running() {
         let registry = AsyncQueryRegistry::new();
-        assert!(!registry.has_running_queries(), "Should start empty");
-
-        registry.register("query1".to_string());
         assert!(
-            registry.has_running_queries(),
+            !registry.has_running_queries().unwrap(),
+            "Should start empty"
+        );
+
+        registry.register("query1".to_string()).unwrap();
+        assert!(
+            registry.has_running_queries().unwrap(),
             "Should have running queries after register"
         );
-        assert_eq!(registry.count(), 1);
+        assert_eq!(registry.count().unwrap(), 1);
     }
 
     #[test]
     fn test_unregister() {
         let registry = AsyncQueryRegistry::new();
-        registry.register("query1".to_string());
-        registry.register("query2".to_string());
-        assert_eq!(registry.count(), 2);
+        registry.register("query1".to_string()).unwrap();
+        registry.register("query2".to_string()).unwrap();
+        assert_eq!(registry.count().unwrap(), 2);
 
-        registry.unregister("query1");
-        assert_eq!(registry.count(), 1);
-        assert!(registry.has_running_queries(), "Should still have query2");
+        registry.unregister("query1").unwrap();
+        assert_eq!(registry.count().unwrap(), 1);
+        assert!(
+            registry.has_running_queries().unwrap(),
+            "Should still have query2"
+        );
 
-        registry.unregister("query2");
-        assert_eq!(registry.count(), 0);
-        assert!(!registry.has_running_queries(), "Should be empty");
+        registry.unregister("query2").unwrap();
+        assert_eq!(registry.count().unwrap(), 0);
+        assert!(!registry.has_running_queries().unwrap(), "Should be empty");
     }
 
     #[test]
     fn test_unregister_unknown() {
         let registry = AsyncQueryRegistry::new();
-        registry.unregister("nonexistent"); // Should not panic
-        assert_eq!(registry.count(), 0);
+        registry.unregister("nonexistent").unwrap(); // Should not panic
+        assert_eq!(registry.count().unwrap(), 0);
     }
 
     #[test]
     fn test_early_return_optimization() {
         let registry = AsyncQueryRegistry::new();
-        registry.register("query1".to_string());
-        registry.register("query2".to_string());
-        registry.register("query3".to_string());
+        registry.register("query1".to_string()).unwrap();
+        registry.register("query2".to_string()).unwrap();
+        registry.register("query3".to_string()).unwrap();
 
         // has_running_queries should return true immediately without checking all
         // (We can't directly test early return, but we verify the behavior)
-        assert!(registry.has_running_queries());
+        assert!(registry.has_running_queries().unwrap());
     }
 
     #[test]
     fn test_multiple_registers_same_id() {
         let registry = AsyncQueryRegistry::new();
-        registry.register("query1".to_string());
-        registry.register("query1".to_string()); // Duplicate
+        registry.register("query1".to_string()).unwrap();
+        registry.register("query1".to_string()).unwrap(); // Duplicate
 
         // HashSet deduplicates
-        assert_eq!(registry.count(), 1);
+        assert_eq!(registry.count().unwrap(), 1);
     }
 }

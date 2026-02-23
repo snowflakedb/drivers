@@ -105,11 +105,11 @@ class ConnectionClassState:
 class Connection:
     """Connection objects represent a database connection."""
 
-    # Private static configuration (immutable class-level settings, name-mangled)
-    __class_config = ConnectionClassConfig()
+    # Protected static configuration (immutable class-level settings)
+    _class_config = ConnectionClassConfig()
 
-    # Private static state (mutable class-level state, shared across all instances, name-mangled)
-    __class_state = ConnectionClassState()
+    # Protected static state (mutable class-level state, shared across all instances)
+    _class_state = ConnectionClassState()
 
     @classmethod
     def _get_logout_params_mapping_strategy(cls) -> LogoutParamsMappingStrategy:
@@ -118,7 +118,7 @@ class Connection:
         Returns:
             Phase2 or Phase3 strategy based on USE_PHASE3_LOGOUT_SEMANTICS flag
         """
-        if cls.__class_config.USE_PHASE3_LOGOUT_SEMANTICS:
+        if cls._class_config.USE_PHASE3_LOGOUT_SEMANTICS:
             return Phase3LogoutParamsMappingStrategy()
         return Phase2LogoutParamsMappingStrategy()
 
@@ -281,7 +281,7 @@ class Connection:
             return
 
         # Connection is leaked (not explicitly closed) - emit deprecation warning
-        if Connection.__class_state.first_auto_cleanup_warning_pending:
+        if self.__class__._class_state.first_auto_cleanup_warning_pending:
             warnings.warn(
                 "Connection was not explicitly closed before process exit. "
                 "Auto-cleanup at exit will be disabled by default in Phase 3 (SNOW-2314152). "
@@ -289,7 +289,7 @@ class Connection:
                 FutureWarning,
                 stacklevel=2,
             )
-            Connection.__class_state.first_auto_cleanup_warning_pending = False
+            self.__class__._class_state.first_auto_cleanup_warning_pending = False
 
         # Attempt cleanup for leaked connection
         try:
