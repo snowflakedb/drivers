@@ -61,6 +61,12 @@ impl KeyringTokenCache {
     }
 }
 
+impl Default for KeyringTokenCache {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TokenCache for KeyringTokenCache {
     fn add_token(
         &self,
