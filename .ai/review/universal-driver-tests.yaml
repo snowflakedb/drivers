@@ -1,0 +1,317 @@
+id: universal-driver-tests-rules
+friendly_name: "Universal Driver Test Rules"
+status: shadow
+percentage_of_prs_reviewed: 100
+allowed_folders:
+  - "tests/definitions"
+  - "sf_core/tests"
+  - "jdbc/src/test/java"
+  - "odbc_tests"
+  - "python/tests"
+excluded_folders:
+  - "odbc_tests/build"
+  - "odbc_tests/cmake-build"
+  - "odbc_tests/cmake-build-reference"
+  - "python/tests/__pycache__"
+llm_model: "claude-sonnet-4-5"
+allowed_file_extensions:
+  - ".rs"
+  - ".py"
+  - ".java"
+  - ".cpp"
+  - ".hpp"
+  - ".h"
+  - ".feature"
+  - ".toml"
+  - ".txt"
+rules:
+  - id: scenario-name-must-start-with-should
+    rule: |
+      **OBJECTIVE**: Enforce consistent scenario naming across all Gherkin feature files.
+
+      **REQUIREMENT**: Every Gherkin `Scenario:` and `Scenario Outline:` name MUST start with the word "should". This convention makes test intent immediately clear and reads naturally as a behavioral specification (e.g., "should authenticate using JWT"). Do not use imperative phrasing, bare descriptions, or titles that omit "should".
+
+      ❌ **BAD:**
+      ```gherkin
+      Scenario: Handshake with default roots
+
+      Scenario: execute simple SELECT returning single value
+
+      Scenario: Upload file to stage
+      ```
+
+      ✅ **GOOD:**
+      ```gherkin
+      Scenario: should complete handshake with default roots
+
+      Scenario: should execute simple SELECT returning single value
+
+      Scenario: should upload file to stage
+      ```
+
+  - id: one-when-per-scenario
+    rule: |
+      **OBJECTIVE**: Each scenario should test one specific action, making failures easy to diagnose and keeping tests focused.
+
+      **REQUIREMENT**: Prefer a single `When` step per scenario. If a scenario has multiple `When` blocks (not counting `And` continuations of the same action), it likely tests multiple behaviors and should be split into separate scenarios. Multiple `Then` assertions after one `When` are fine — they verify different aspects of the same action. The exception is when a second `When` is truly a continuation of a multi-step workflow that cannot be meaningfully separated.
+
+      ❌ **BAD:**
+      ```gherkin
+      Scenario: should handle extreme exponent values from literals
+        Given Snowflake client is logged in
+        When Query "SELECT '1E+16384'::DECFLOAT, '1E-16383'::DECFLOAT" is executed
+        Then Result should contain [1E+16384, 1E-16383]
+        When Query "SELECT '-1.234E+8000'::DECFLOAT, '9.876E-8000'::DECFLOAT" is executed
+        Then Result should contain [-1.234E+8000, 9.876E-8000]
+      ```
+
+      ✅ **GOOD:**
+      ```gherkin
+      Scenario: should handle max positive and min positive exponent values
+        Given Snowflake client is logged in
+        When Query "SELECT '1E+16384'::DECFLOAT, '1E-16383'::DECFLOAT" is executed
+        Then Result should contain [1E+16384, 1E-16383]
+
+      Scenario: should handle large negative and small positive exponent values
+        Given Snowflake client is logged in
+        When Query "SELECT '-1.234E+8000'::DECFLOAT, '9.876E-8000'::DECFLOAT" is executed
+        Then Result should contain [-1.234E+8000, 9.876E-8000]
+      ```
+
+  - id: use-scenario-outline-for-parametrized-tests
+    rule: |
+      **OBJECTIVE**: Use Gherkin's built-in parameterization mechanism instead of manual repetition for test variations.
+
+      **REQUIREMENT**: When the same test structure is repeated with different input values or type synonyms, use `Scenario Outline:` with an `Examples:` table instead of separate scenarios or repeated When/Then blocks. This dramatically improves readability, reduces duplication, and makes it trivial to add new test cases.
+
+      ❌ **BAD:**
+      ```gherkin
+      Scenario: should select integer literals for INT
+        When Query "SELECT 0::INT, 1::INT" is executed
+        Then Result should contain [0, 1]
+
+      Scenario: should select integer literals for BIGINT
+        When Query "SELECT 0::BIGINT, 1::BIGINT" is executed
+        Then Result should contain [0, 1]
+
+      Scenario: should select integer literals for SMALLINT
+        When Query "SELECT 0::SMALLINT, 1::SMALLINT" is executed
+        Then Result should contain [0, 1]
+      ```
+
+      ✅ **GOOD:**
+      ```gherkin
+      Scenario Outline: should select integer literals for <type>
+        When Query "SELECT 0::<type>, 1::<type>" is executed
+        Then Result should contain [0, 1]
+
+        Examples:
+          | type     |
+          | INT      |
+          | BIGINT   |
+          | SMALLINT |
+      ```
+
+  - id: no-repeated-when-then-for-parameterization
+    rule: |
+      **OBJECTIVE**: Prevent low-readability patterns where repeated When/Then/And blocks are used as manual parameterization within a single scenario.
+
+      **REQUIREMENT**: Do not repeat sequences of `When`/`Then`/`And` blocks within a single scenario as a way to test multiple inputs or variations. This includes patterns like multiple `And` steps that each test a different value, or repeated `When`→`Then` pairs for different inputs. These patterns are hard to read, hard to maintain, and obscure which variation failed. Instead, use `Scenario Outline` with `Examples` table for input variations, or split into separate focused scenarios.
+
+      ❌ **BAD:**
+      ```gherkin
+      Scenario: should select integer boundary values for int and synonyms
+        Given Snowflake client is logged in
+        When Query "SELECT -128::INT, 127::INT, 255::INT" is executed
+        Then Result should contain integers [-128, 127, 255]
+        When Query "SELECT -32768::INT, 32767::INT, 65535::INT" is executed
+        Then Result should contain integers [-32768, 32767, 65535]
+        When Query "SELECT -2147483648::INT, 2147483647::INT" is executed
+        Then Result should contain integers [-2147483648, 2147483647]
+      ```
+      ```gherkin
+      Scenario: should select values from table for int and synonyms
+        Given Snowflake client is logged in
+        And Table with positive values [0, 1, 127, 255] exists
+        And Table with negative values [-1, -128, -32768] exists
+        And Table with null values [0, NULL, 42] exists
+      ```
+
+      ✅ **GOOD:**
+      ```gherkin
+      Scenario Outline: should select <boundary_name> boundary values
+        Given Snowflake client is logged in
+        When Query "SELECT <query_values>" is executed
+        Then Result should contain integers [<expected>]
+
+        Examples:
+          | boundary_name | query_values                       | expected              |
+          | tinyint       | -128::INT, 127::INT, 255::INT      | -128, 127, 255        |
+          | smallint      | -32768::INT, 32767::INT, 65535::INT| -32768, 32767, 65535  |
+          | int           | -2147483648::INT, 2147483647::INT  | -2147483648, 2147483647 |
+      ```
+      ```gherkin
+      Scenario Outline: should select <case> values from table for int and synonyms
+        Given Snowflake client is logged in
+        And Table with <case> values <insert_values> exists
+        When Query "SELECT * FROM table ORDER BY col" is executed
+        Then Result should contain <expected>
+
+        Examples:
+          | case     | insert_values          | expected               |
+          | positive | [0, 1, 127, 255]       | [0, 1, 127, 255]       |
+          | negative | [-1, -128, -32768]     | [-32768, -128, -1]     |
+          | null     | [0, NULL, 42]          | [0, 42, NULL]          |
+      ```
+
+  - id: no-empty-gherkin-step-implementations
+    rule: |
+      **OBJECTIVE**: Every Gherkin step comment in a test implementation must have actual test logic beneath it — not just the comment with no code.
+
+      **REQUIREMENT**: When implementing a Gherkin scenario in any language, each step comment (`// Given ...`, `// When ...`, `// Then ...`, `# And ...`) MUST have corresponding executable test code directly following it. The validator checks that the step comments exist, but it cannot verify that real logic follows each one. An empty step — where the comment is present but no code implements it — silently skips validation and hides missing coverage. If a step genuinely requires no action in a particular language, add an explicit comment explaining why (e.g., `// No-op: connection is implicit in this driver`).
+
+      ❌ **BAD:**
+      ```rust
+      #[test]
+      fn should_select_data_from_table() {
+          // Given Snowflake client is logged in
+          let client = SnowflakeTestClient::connect_with_default_auth();
+
+          // When Query "SELECT * FROM table" is executed
+          let result = client.execute_query("SELECT * FROM table");
+
+          // Then Result should contain expected values
+
+          // And Column metadata should be correct
+      }
+      ```
+      ```python
+      def test_should_select_data_from_table(self, cursor):
+          # Given Snowflake client is logged in
+
+          # When Query "SELECT * FROM table" is executed
+          cursor.execute("SELECT * FROM table")
+
+          # Then Result should contain expected values
+          # And Column metadata should be correct
+      ```
+
+      ✅ **GOOD:**
+      ```rust
+      #[test]
+      fn should_select_data_from_table() {
+          // Given Snowflake client is logged in
+          let client = SnowflakeTestClient::connect_with_default_auth();
+
+          // When Query "SELECT * FROM table" is executed
+          let result = client.execute_query("SELECT * FROM table");
+
+          // Then Result should contain expected values
+          assert_eq!(result.rows(), expected_rows);
+
+          // And Column metadata should be correct
+          assert_eq!(result.column_name(0), "id");
+      }
+      ```
+      ```python
+      def test_should_select_data_from_table(self, cursor):
+          # Given Snowflake client is logged in
+          assert not cursor.connection.is_closed()
+
+          # When Query "SELECT * FROM table" is executed
+          cursor.execute("SELECT * FROM table")
+
+          # Then Result should contain expected values
+          result = cursor.fetchone()
+          assert result is not None
+
+          # And Column metadata should be correct
+          assert cursor.description[0][0] == "id"
+      ```
+
+  - id: scenario-description-accuracy
+    rule: |
+      **OBJECTIVE**: Ensure scenario names and step descriptions accurately describe the tested behavior, without typos or misleading wording.
+
+      **REQUIREMENT**:
+      1. Scenario names MUST accurately describe what the test validates.
+      2. Step text and feature descriptions MUST be free of spelling errors.
+      3. Scenario step wording MUST match the actual test behavior.
+
+      ❌ **BAD:**
+      ```gherkin
+      Scenario: should insert and select integers from table using parameter binding
+        # Actually uses executemany (batch binding), not single-row parameter binding
+        When Integer values are inserted using parameter binding
+      ```
+
+      ✅ **GOOD:**
+      ```gherkin
+      Scenario: should insert and select integers from table using batch parameter binding
+        When Integer values are inserted using batch parameter binding
+      ```
+
+  - id: consistent-given-usage
+    rule: |
+      **OBJECTIVE**: Maintain structural consistency in how scenario preconditions are expressed within a feature.
+
+      **REQUIREMENT**: Within a single feature file, the `Given Snowflake client is logged in` step (or similar connection preconditions) MUST be used consistently — either include it in all scenarios or omit it from all scenarios. Mixing scenarios that have it with scenarios that don't within the same feature is confusing. Additionally, when a scenario has equivalent setup steps for different result types (e.g., PUT rowset vs PUT column metadata), both should use the same Given/When structure.
+
+      ❌ **BAD:**
+      ```gherkin
+      Feature: PUT/GET basic operations
+
+        Scenario: should return correct rowset for PUT
+          When File is uploaded to stage
+          Then Rowset for PUT command should be correct
+
+        Scenario: should return correct column metadata for PUT
+          Given Snowflake client is logged in
+          When File is uploaded to stage
+          Then Column metadata for PUT command should be correct
+      ```
+
+      ✅ **GOOD:**
+      ```gherkin
+      Feature: PUT/GET basic operations
+
+        Scenario: should return correct rowset for PUT
+          When File is uploaded to stage
+          Then Rowset for PUT command should be correct
+
+        Scenario: should return correct column metadata for PUT
+          When File is uploaded to stage
+          Then Column metadata for PUT command should be correct
+      ```
+
+  - id: document-missing-test-coverage-gaps
+    rule: |
+      **OBJECTIVE**: Feature files should explicitly document which test scenarios are still needed, especially for edge cases and error paths.
+
+      **REQUIREMENT**: When a feature file covers happy-path scenarios but obviously lacks error-path, edge-case, or additional HTTP method coverage, add TODO comments or pending scenarios listing what's missing. Proactively identify and document gaps rather than waiting for review feedback.
+
+      ❌ **BAD:**
+      ```gherkin
+      Feature: HTTP retry helper
+
+        Scenario: should retry GET after transient failure
+          Given a server that fails once then succeeds
+          When the helper executes the request
+          Then it should have retried once and returned the successful body
+      # Missing: POST/PUT retries, max attempts exhaustion, different status codes
+      ```
+
+      ✅ **GOOD:**
+      ```gherkin
+      Feature: HTTP retry helper
+
+        Scenario: should retry GET after transient failure
+          Given a server that fails once then succeeds
+          When the helper executes the request
+          Then it should have retried once and returned the successful body
+
+        # TODO: Add scenarios for:
+        # - POST/PUT retry behavior
+        # - Max retry attempts reached
+        # - Different transient error status codes (429, 503, 504)
+      ```
