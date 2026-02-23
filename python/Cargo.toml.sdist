@@ -5,6 +5,7 @@ members = [
     "proto_utils",
     "error_trace",
     "error_trace_derive",
+    "proto_generator",
     # Required because sf_core/Cargo.toml has a dev-dependency with path reference:
     # arrow_deserialize_macro = { path = "tests/common/arrow_deserialize_macro" }
     # Cargo validates all path dependencies even for release builds.

@@ -1,6 +1,6 @@
 ARG BUILDPLATFORM=linux/amd64
 
-FROM --platform=${BUILDPLATFORM} artifactory.ci1.us-west-2.aws-dev.app.snowflake.com/development-docker-virtual/rust:slim AS builder
+FROM --platform=${BUILDPLATFORM} artifactory.ci1.us-west-2.aws-dev.app.snowflake.com/development-docker-virtual/rust:slim AS chef
 
 # Install build dependencies for Rust and ODBC
 RUN apt-get update && apt-get install -y \
@@ -19,11 +19,15 @@ WORKDIR /workdir
 COPY rust-toolchain.toml ./rust-toolchain.toml
 RUN rustup show
 
+# Install cargo-chef
+RUN cargo install cargo-chef
+
 # TODO SNOW-2705435: Use Clang for aws-lc-fips-sys to avoid GCC >= 14 incompatibility
 # See: https://github.com/aws/aws-lc-rs/issues/569
 ENV AWS_LC_FIPS_SYS_CC=clang
 
-# Copy workspace files
+FROM chef AS planner
+# Copy all workspace files - cargo-chef needs the full structure
 COPY build_common.rs ./build_common.rs
 COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
 COPY sf_core/ ./sf_core/
@@ -37,6 +41,7 @@ COPY protobuf/ ./protobuf/
 COPY thrift/ ./thrift/
 COPY error_trace/ ./error_trace/
 COPY error_trace_derive/ ./error_trace_derive/
+COPY proto_generator/ ./proto_generator/
 RUN cargo chef prepare --recipe-path recipe.json
 
 # Stage 3: Build sf_core and ODBC
@@ -50,6 +55,7 @@ COPY protobuf/ ./protobuf/
 COPY thrift/ ./thrift/
 COPY error_trace/ ./error_trace/
 COPY error_trace_derive/ ./error_trace_derive/
+COPY proto_generator/ ./proto_generator/
 
 # Build dependencies - this is the caching layer
 # Compiles ALL external crates (AWS SDK, tokio, etc.)
