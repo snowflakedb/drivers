@@ -13,9 +13,112 @@ from tests.e2e.types.utils import assert_sequential_values
 
 if IS_UNIVERSAL_DRIVER:
     from snowflake.connector import SnowflakeCursor
-    from snowflake.connector.cursor import SnowflakeCursorBase
 else:
-    from snowflake.connector.cursor import SnowflakeCursor, SnowflakeCursorBase
+    from snowflake.connector.cursor import SnowflakeCursor
+
+
+class TestCursorQuery:
+    """Integration tests for Cursor.query property."""
+
+    def test_query_is_none_before_execute(self, connection):
+        """Test that query returns None before any query is executed."""
+        # Given a new cursor
+        cursor = connection.cursor()
+
+        # When accessing query before execute
+        result = cursor.query
+
+        # Then it should be None
+        assert result is None
+
+    def test_query_returns_sql_after_execute(self, cursor):
+        """Test that query returns the executed SQL string."""
+        # Given a cursor that executes a query
+        sql = "SELECT 1"
+        cursor.execute(sql)
+
+        # When accessing query
+        result = cursor.query
+
+        # Then it should return the SQL text
+        assert result is not None
+        assert result == sql
+
+    def test_query_updates_with_each_execute(self, cursor):
+        """Test that query updates with each executed statement."""
+        # Given a cursor that executes multiple queries
+        cursor.execute("SELECT 1")
+        first_query = cursor.query
+
+        cursor.execute("SELECT 2, 3")
+        second_query = cursor.query
+
+        # Then each should reflect the last executed SQL
+        assert first_query == "SELECT 1"
+        assert second_query == "SELECT 2, 3"
+
+    def test_query_persists_after_fetchall(self, cursor):
+        """Test that query remains accessible after fetching all results."""
+        # Given a cursor that executes a query
+        sql = "SELECT 1, 2, 3"
+        cursor.execute(sql)
+
+        # When fetching all results
+        cursor.fetchall()
+
+        # Then query should still be the same
+        assert cursor.query == sql
+
+    def test_query_persists_after_fetchone(self, cursor):
+        """Test that query remains accessible after fetching one result."""
+        # Given a cursor that executes a query
+        sql = "SELECT 1"
+        cursor.execute(sql)
+
+        # When fetching one result
+        cursor.fetchone()
+
+        # Then query should still be the same
+        assert cursor.query == sql
+
+    def test_query_with_multiline_sql(self, cursor):
+        """Test that query preserves multiline SQL text."""
+        # Given a multiline SQL statement
+        sql = """SELECT
+    1 AS col1,
+    2 AS col2"""
+        cursor.execute(sql)
+
+        # When accessing query
+        result = cursor.query
+
+        # Then it should match the original SQL
+        assert result == sql
+
+    def test_query_with_ddl_statement(self, cursor, tmp_schema):
+        """Test that query works with DDL statements."""
+        # Given a DDL statement
+        sql = f"CREATE TABLE {tmp_schema}.test_query_prop (id INTEGER)"
+        cursor.execute(sql)
+
+        # When accessing query
+        result = cursor.query
+
+        # Then it should return the DDL SQL
+        assert result == sql
+
+    def test_query_with_dml_statement(self, cursor, tmp_schema):
+        """Test that query works with DML statements."""
+        # Given a table and an INSERT statement
+        cursor.execute(f"CREATE TABLE {tmp_schema}.test_query_dml (id INTEGER)")
+        insert_sql = f"INSERT INTO {tmp_schema}.test_query_dml VALUES (1)"
+        cursor.execute(insert_sql)
+
+        # When accessing query
+        result = cursor.query
+
+        # Then it should return the INSERT SQL
+        assert result == insert_sql
 
 
 class TestCursorSfqid:
@@ -1069,10 +1172,7 @@ class TestDictCursorCreation:
 
     def test_dict_cursor_is_base_cursor_subclass(self):
         """Test that DictCursor is a subclass of BaseCursor."""
-        if IS_UNIVERSAL_DRIVER:
-            from snowflake.connector import DictCursor
-        else:
-            from snowflake.connector.cursor import DictCursor
+        from snowflake.connector.cursor import DictCursor, SnowflakeCursorBase
 
         assert issubclass(DictCursor, SnowflakeCursorBase)
 
