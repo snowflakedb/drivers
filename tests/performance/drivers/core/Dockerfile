@@ -19,6 +19,8 @@ COPY rust-toolchain.toml ./rust-toolchain.toml
 COPY build_common.rs ./build_common.rs
 COPY sf_core/ ./sf_core/
 COPY proto_utils/ ./proto_utils/
+COPY error_trace/ ./error_trace/
+COPY error_trace_derive/ ./error_trace_derive/
 COPY tests/performance/drivers/core/app/ ./tests/performance/drivers/core/app/
 
 # Modify sf_core/Cargo.toml to only build rlib (not dylib) to avoid linker issues
@@ -61,6 +63,8 @@ COPY build_common.rs ./build_common.rs
 # Copy sf_core and proto_utils source (needed for path dependencies)
 COPY sf_core/ ./sf_core/
 COPY proto_utils/ ./proto_utils/
+COPY error_trace/ ./error_trace/
+COPY error_trace_derive/ ./error_trace_derive/
 
 # Modify sf_core/Cargo.toml to only build rlib (not dylib) to avoid linker issues
 RUN sed -i 's/crate-type = \["dylib", "rlib"\]/crate-type = ["rlib"]/' ./sf_core/Cargo.toml
