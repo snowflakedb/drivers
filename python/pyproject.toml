@@ -69,6 +69,8 @@ include = [
     # Rust sources (directory symlinks dereferenced during sdist build)
     "sf_core/",
     "proto_utils/",
+    "proto_generator/",
+    "protobuf/",
     "error_trace/",
     "error_trace_derive/",
 ]

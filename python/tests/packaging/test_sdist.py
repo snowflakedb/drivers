@@ -190,6 +190,9 @@ class TestSdistPackaging:
                 "sf_core/src/c_api.rs",
                 "proto_utils/Cargo.toml",
                 "proto_utils/src/lib.rs",
+                "proto_generator/Cargo.toml",
+                "proto_generator/src/main.rs",
+                "protobuf/database_driver_v1.proto",
                 "error_trace/Cargo.toml",
                 "error_trace/src/lib.rs",
                 "error_trace_derive/Cargo.toml",
@@ -207,6 +210,7 @@ class TestSdistPackaging:
                 if n.endswith("/Cargo.toml")
                 and "sf_core" not in n
                 and "proto_utils" not in n
+                and "proto_generator" not in n
                 and "error_trace" not in n
             )
             cargo_content = tar.extractfile(cargo_toml_entry)
