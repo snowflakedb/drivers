@@ -13,6 +13,11 @@ import warnings
 from dataclasses import dataclass
 from typing import Any
 
+from snowflake.connector.logout_params_mapping_strategy import (
+    LogoutParamsMappingStrategy,
+    Phase2LogoutParamsMappingStrategy,
+    Phase3LogoutParamsMappingStrategy,
+)
 from snowflake.connector._internal.protobuf_gen.database_driver_v1_services import (
     ConnectionCloseRequest,
     ConnectionGetParameterRequest,
@@ -105,6 +110,17 @@ class Connection:
 
     # Private static state (mutable class-level state, shared across all instances, name-mangled)
     __class_state = ConnectionClassState()
+
+    @classmethod
+    def _get_logout_params_mapping_strategy(cls) -> LogoutParamsMappingStrategy:
+        """Factory method for logout parameter mapping strategy.
+
+        Returns:
+            Phase2 or Phase3 strategy based on USE_PHASE3_LOGOUT_SEMANTICS flag
+        """
+        if cls.__class_config.USE_PHASE3_LOGOUT_SEMANTICS:
+            return Phase3LogoutParamsMappingStrategy()
+        return Phase2LogoutParamsMappingStrategy()
 
     def __init__(self, *, paramstyle: str | None = None, **kwargs: Any) -> None:
         """
@@ -214,32 +230,16 @@ class Connection:
 
         # Note: Idempotence is handled atomically in Core (connection_close)
 
-        # Default to True (auto-detection enabled for backward compatibility)
+        # Map Python parameters to Core parameters using strategy pattern (SNOW-2314152)
+        strategy = self._get_logout_params_mapping_strategy()
+        core_keep_alive = strategy.map_server_session_keep_alive(self)
+
+        # Default auto-detection setting for Core (used when core_keep_alive is None)
         effective_enable_auto = (
             self.enable_server_session_keep_alive_auto_detection
             if self.enable_server_session_keep_alive_auto_detection is not None
             else True
         )
-
-        # Phase 2/3 Parameter Mapping (SNOW-2314152)
-        if Connection.__class_config.USE_PHASE3_LOGOUT_SEMANTICS:
-            # Phase 3: Pass parameters directly to Core without mapping
-            core_keep_alive = self.server_session_keep_alive
-        else:
-            # Phase 2 (default): Map Python Phase 2 semantics to Core's Phase 3 semantics
-            # Python Phase 2: server_session_keep_alive=False respects auto-detection when enabled
-            # Core Phase 3: Some(false) = always logout, ignores auto-detection
-            #
-            # Mapping:
-            # - Python: False + auto-detection enabled → Core: None (respects auto-detection)
-            # - Python: False + auto-detection disabled → Core: False (force logout)
-            # - Python: True → Core: True (never logout)
-            # - Python: None → Core: None (delegate to auto-detection)
-            core_keep_alive = self.server_session_keep_alive
-            if self.server_session_keep_alive is False and effective_enable_auto:
-                # Phase 2 compat: False with auto-detection enabled → map to None
-                # This makes Core check the registry (legacy Python behavior)
-                core_keep_alive = None
 
         # Handle retry parameter (backward compatibility with old driver)
         # Old driver: retry=True → 3 attempts, retry=False → 1 attempt
