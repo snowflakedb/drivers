@@ -80,6 +80,9 @@ num-traits = "0.2.19"
 [build-dependencies]
 proto_generator = { path = "../proto_generator" }
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [dev-dependencies]
 tempfile = "3.21.0"
 arrow_deserialize_macro = { path = "tests/common/arrow_deserialize_macro" }

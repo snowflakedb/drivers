@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 use snafu::{Location, Snafu};
 
-pub use file_cache::FileTokenCache;
+pub use file_cache::{FileCredentialBuilder, FileTokenCache, install_file_credential_fallback};
 pub use keyring_cache::KeyringTokenCache;
 
 /// Represents the type of token stored in the keystore.
@@ -28,6 +28,17 @@ impl TokenType {
             TokenType::OAuthRefreshToken => "OAUTH_REFRESH_TOKEN",
             TokenType::DpopBundledAccessToken => "DPOP_BUNDLED_ACCESS_TOKEN",
         }
+    }
+
+    /// Returns all token types.
+    pub fn all() -> &'static [TokenType] {
+        &[
+            TokenType::IdToken,
+            TokenType::MfaToken,
+            TokenType::OAuthAccessToken,
+            TokenType::OAuthRefreshToken,
+            TokenType::DpopBundledAccessToken,
+        ]
     }
 }
 
@@ -109,13 +120,13 @@ pub fn build_cache_key(host: &str, username: &str, token_type: TokenType) -> Str
 
 /// Validates that host and username are non-empty.
 pub(super) fn validate_key_components(host: &str, username: &str) -> Result<(), TokenCacheError> {
-    if host.is_empty() {
+    if host.is_empty() || host.contains(':') {
         return Err(TokenCacheError::InvalidKeyFormat {
             key: format!("{};{}", host, username),
             location: Location::new(file!(), line!(), 0),
         });
     }
-    if username.is_empty() {
+    if username.is_empty() || username.contains(':') {
         return Err(TokenCacheError::InvalidKeyFormat {
             key: format!("{};{}", host, username),
             location: Location::new(file!(), line!(), 0),
@@ -186,6 +197,18 @@ pub enum TokenCacheError {
         #[snafu(implicit)]
         location: Location,
     },
+
+    #[snafu(display(
+        "Cache file is not owned by the current user: {} (file uid: {file_uid}, current uid: {current_uid})",
+        path.display()
+    ))]
+    FileNotOwnedByCurrentUser {
+        path: PathBuf,
+        file_uid: u32,
+        current_uid: u32,
+        #[snafu(implicit)]
+        location: Location,
+    },
 }
 
 #[cfg(test)]
@@ -206,26 +229,12 @@ mod tests {
             let host = "host.example.com";
             let user = "user1";
 
-            assert_eq!(
-                build_cache_key(host, user, TokenType::IdToken),
-                "host.example.com;user1;ID_TOKEN"
-            );
-            assert_eq!(
-                build_cache_key(host, user, TokenType::MfaToken),
-                "host.example.com;user1;MFA_TOKEN"
-            );
-            assert_eq!(
-                build_cache_key(host, user, TokenType::OAuthAccessToken),
-                "host.example.com;user1;OAUTH_ACCESS_TOKEN"
-            );
-            assert_eq!(
-                build_cache_key(host, user, TokenType::OAuthRefreshToken),
-                "host.example.com;user1;OAUTH_REFRESH_TOKEN"
-            );
-            assert_eq!(
-                build_cache_key(host, user, TokenType::DpopBundledAccessToken),
-                "host.example.com;user1;DPOP_BUNDLED_ACCESS_TOKEN"
-            );
+            for &token_type in TokenType::all() {
+                assert_eq!(
+                    build_cache_key(host, user, token_type),
+                    format!("{host};{user};{}", token_type.as_str())
+                );
+            }
         }
     }
 
@@ -248,6 +257,18 @@ mod tests {
         fn display_matches_as_str() {
             assert_eq!(format!("{}", TokenType::IdToken), "ID_TOKEN");
             assert_eq!(format!("{}", TokenType::MfaToken), "MFA_TOKEN");
+            assert_eq!(
+                format!("{}", TokenType::OAuthAccessToken),
+                "OAUTH_ACCESS_TOKEN"
+            );
+            assert_eq!(
+                format!("{}", TokenType::OAuthRefreshToken),
+                "OAUTH_REFRESH_TOKEN"
+            );
+            assert_eq!(
+                format!("{}", TokenType::DpopBundledAccessToken),
+                "DPOP_BUNDLED_ACCESS_TOKEN"
+            );
         }
     }
 
@@ -280,6 +301,18 @@ mod tests {
         fn validate_key_components_accepts_valid_inputs() {
             let result = validate_key_components("host.example.com", "testuser");
             assert!(result.is_ok());
+        }
+
+        #[test]
+        fn validate_key_components_disallows_invalid_host() {
+            let result = validate_key_components("host.example.com:123", "testuser");
+            assert!(result.is_err());
+        }
+
+        #[test]
+        fn validate_key_components_disallows_invalid_user() {
+            let result = validate_key_components("host.example.com", "test:user");
+            assert!(result.is_err());
         }
     }
 }
