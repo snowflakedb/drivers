@@ -107,13 +107,13 @@ fn validate_key_components(host: &str, username: &str) -> Result<(), TokenCacheE
     if host.is_empty() {
         return Err(TokenCacheError::InvalidKeyFormat {
             key: format!("{};{}", host, username),
-            location: Location::default(),
+            location: Location::new(file!(), line!(), 0),
         });
     }
     if username.is_empty() {
         return Err(TokenCacheError::InvalidKeyFormat {
             key: format!("{};{}", host, username),
-            location: Location::default(),
+            location: Location::new(file!(), line!(), 0),
         });
     }
     Ok(())
