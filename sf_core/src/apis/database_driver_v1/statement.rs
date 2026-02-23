@@ -260,7 +260,7 @@ pub struct ExecuteResult {
     pub columns: Vec<ColumnMetadata>,
     pub statement_type_id: Option<i64>,
     pub query: String,
-    pub parameters: std::collections::BTreeMap<String, String>,
+    pub parameters: std::collections::HashMap<String, String>,
 }
 
 pub fn statement_execute_query<'a>(
@@ -397,7 +397,7 @@ pub fn statement_execute_query<'a>(
         })
         .collect();
 
-    let parameters: std::collections::BTreeMap<String, String> = response
+    let parameters: std::collections::HashMap<String, String> = response
         .data
         .parameters
         .as_ref()

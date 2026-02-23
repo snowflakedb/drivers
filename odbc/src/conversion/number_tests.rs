@@ -725,7 +725,9 @@ mod tests {
             let mut str_len: sql::Len = 0;
             let binding = binding_for_value(CDataType::SLong, &mut value, &mut str_len);
 
-            let warnings = nullable.write_odbc_type(None::<i128>, &binding, &mut None).unwrap();
+            let warnings = nullable
+                .write_odbc_type(None::<i128>, &binding, &mut None)
+                .unwrap();
 
             assert!(warnings.is_empty());
             assert_eq!(str_len, SQL_NULL_DATA);
@@ -770,7 +772,9 @@ mod tests {
                 scale: None,
             };
 
-            let warnings = nullable.write_odbc_type(Some(42i128), &binding, &mut None).unwrap();
+            let warnings = nullable
+                .write_odbc_type(Some(42i128), &binding, &mut None)
+                .unwrap();
 
             assert!(warnings.is_empty());
             assert_eq!(value, 42);

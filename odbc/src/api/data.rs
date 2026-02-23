@@ -452,13 +452,14 @@ pub fn get_data(
             let schema = record_batch.schema();
             let field = schema.field(col_idx);
 
+            let ard_binding = stmt.ard.bindings.get(&col_or_param_num);
             let binding = Binding {
                 target_type,
                 target_value_ptr,
                 buffer_length,
                 str_len_or_ind_ptr,
-                precision: None,
-                scale: None,
+                precision: ard_binding.and_then(|b| b.precision),
+                scale: ard_binding.and_then(|b| b.scale),
             };
             let conversion_warnings = read_arrow_value(
                 &binding,
@@ -1530,7 +1531,7 @@ mod tests {
         }
 
         #[test]
-        fn returns_error_without_precision() {
+        fn defaults_precision_and_scale_when_not_set() {
             let array = Int64Array::from(vec![42i64]);
             let field = field_with_fixed_meta(DataType::Int64, 0, 10);
             let mut numeric = sql::Numeric::default();
@@ -1540,12 +1541,16 @@ mod tests {
                 target_value_ptr: &mut numeric as *mut sql::Numeric as sql::Pointer,
                 buffer_length: std::mem::size_of::<sql::Numeric>() as sql::Len,
                 str_len_or_ind_ptr: std::ptr::null_mut(),
-                precision: None, // not set
-                scale: Some(0),
+                precision: None,
+                scale: None,
             };
 
             let result = read_arrow_value_test(&binding, &array, &field, 0);
-            assert!(result.is_err());
+            assert!(result.is_ok());
+            assert_eq!(numeric.precision, 10);
+            assert_eq!(numeric.scale, 0);
+            assert_eq!(numeric.sign, 1);
+            assert_eq!(u128::from_le_bytes(numeric.val), 42);
         }
     }
 }

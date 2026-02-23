@@ -124,11 +124,9 @@ pub struct ExecuteResult {
     pub statement_type_id: ::core::option::Option<i64>,
     #[prost(string, tag = "6")]
     pub query: ::prost::alloc::string::String,
-    #[prost(btree_map = "string, string", tag = "7")]
-    pub parameters: ::prost::alloc::collections::BTreeMap<
-        ::prost::alloc::string::String,
-        ::prost::alloc::string::String,
-    >,
+    #[prost(map = "string, string", tag = "7")]
+    pub parameters:
+        ::std::collections::HashMap<::prost::alloc::string::String, ::prost::alloc::string::String>,
 }
 /// Partitioned result
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]

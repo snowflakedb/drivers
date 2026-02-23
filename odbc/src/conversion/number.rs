@@ -3,8 +3,7 @@ use odbc_sys as sql;
 
 use crate::cdata_types::CDataType;
 use crate::conversion::error::{
-    InvalidValueSnafu, NumericValueOutOfRangeSnafu, ReadArrowError, UnsupportedOdbcTypeSnafu,
-    WriteOdbcError,
+    NumericValueOutOfRangeSnafu, ReadArrowError, UnsupportedOdbcTypeSnafu, WriteOdbcError,
 };
 use crate::conversion::traits::Binding;
 use crate::conversion::warning::{Warning, Warnings};
@@ -241,21 +240,8 @@ impl WriteODBCType for SnowflakeNumber {
                 Ok(warnings)
             }
             CDataType::Numeric => {
-                let target_precision = binding.precision.ok_or_else(|| {
-                    InvalidValueSnafu {
-                        reason:
-                            "SQL_DESC_PRECISION must be set on the ARD for SQL_C_NUMERIC bindings"
-                                .to_string(),
-                    }
-                    .build()
-                })?;
-                let target_scale = binding.scale.ok_or_else(|| {
-                    InvalidValueSnafu {
-                        reason: "SQL_DESC_SCALE must be set on the ARD for SQL_C_NUMERIC bindings"
-                            .to_string(),
-                    }
-                    .build()
-                })?;
+                let target_precision = binding.precision.unwrap_or(self.precision as i16);
+                let target_scale = binding.scale.unwrap_or(0);
 
                 let is_negative = snowflake_value < 0;
                 let abs_value = snowflake_value.unsigned_abs();

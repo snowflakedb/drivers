@@ -503,10 +503,10 @@ pub fn get_stmt_attr(
 mod tests {
     use super::*;
     use sf_core::protobuf_gen::database_driver_v1::ExecuteResult;
-    use std::collections::BTreeMap;
+    use std::collections::HashMap;
 
     fn make_response(params: Vec<(&str, &str)>) -> StatementExecuteQueryResponse {
-        let parameters: BTreeMap<String, String> = params
+        let parameters: HashMap<String, String> = params
             .into_iter()
             .map(|(k, v)| (k.to_string(), v.to_string()))
             .collect();
