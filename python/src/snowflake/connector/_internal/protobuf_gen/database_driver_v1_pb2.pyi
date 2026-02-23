@@ -398,12 +398,30 @@ class ExecuteResult(_message.Message):
 
     DESCRIPTOR: _descriptor.Descriptor
 
+    @_typing.final
+    class ParametersEntry(_message.Message):
+        DESCRIPTOR: _descriptor.Descriptor
+
+        KEY_FIELD_NUMBER: _builtins.int
+        VALUE_FIELD_NUMBER: _builtins.int
+        key: _builtins.str
+        value: _builtins.str
+        def __init__(
+            self,
+            *,
+            key: _builtins.str = ...,
+            value: _builtins.str = ...,
+        ) -> None: ...
+        _ClearFieldArgType: _TypeAlias = _typing.Literal["key", b"key", "value", b"value"]  # noqa: Y015
+        def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
+
     STREAM_FIELD_NUMBER: _builtins.int
     ROWS_AFFECTED_FIELD_NUMBER: _builtins.int
     QUERY_ID_FIELD_NUMBER: _builtins.int
     COLUMNS_FIELD_NUMBER: _builtins.int
     STATEMENT_TYPE_ID_FIELD_NUMBER: _builtins.int
     QUERY_FIELD_NUMBER: _builtins.int
+    PARAMETERS_FIELD_NUMBER: _builtins.int
     rows_affected: _builtins.int
     query_id: _builtins.str
     statement_type_id: _builtins.int
@@ -412,6 +430,8 @@ class ExecuteResult(_message.Message):
     def stream(self) -> Global___ArrowArrayStreamPtr: ...
     @_builtins.property
     def columns(self) -> _containers.RepeatedCompositeFieldContainer[Global___ColumnMetadata]: ...
+    @_builtins.property
+    def parameters(self) -> _containers.ScalarMap[_builtins.str, _builtins.str]: ...
     def __init__(
         self,
         *,
@@ -421,10 +441,11 @@ class ExecuteResult(_message.Message):
         columns: _abc.Iterable[Global___ColumnMetadata] | None = ...,
         statement_type_id: _builtins.int | None = ...,
         query: _builtins.str = ...,
+        parameters: _abc.Mapping[_builtins.str, _builtins.str] | None = ...,
     ) -> None: ...
     _HasFieldArgType: _TypeAlias = _typing.Literal["_rows_affected", b"_rows_affected", "_statement_type_id", b"_statement_type_id", "rows_affected", b"rows_affected", "statement_type_id", b"statement_type_id", "stream", b"stream"]  # noqa: Y015
     def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
-    _ClearFieldArgType: _TypeAlias = _typing.Literal["_rows_affected", b"_rows_affected", "_statement_type_id", b"_statement_type_id", "columns", b"columns", "query", b"query", "query_id", b"query_id", "rows_affected", b"rows_affected", "statement_type_id", b"statement_type_id", "stream", b"stream"]  # noqa: Y015
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["_rows_affected", b"_rows_affected", "_statement_type_id", b"_statement_type_id", "columns", b"columns", "parameters", b"parameters", "query", b"query", "query_id", b"query_id", "rows_affected", b"rows_affected", "statement_type_id", b"statement_type_id", "stream", b"stream"]  # noqa: Y015
     def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
     _WhichOneofReturnType__rows_affected: _TypeAlias = _typing.Literal["rows_affected"]  # noqa: Y015
     _WhichOneofArgType__rows_affected: _TypeAlias = _typing.Literal["_rows_affected", b"_rows_affected"]  # noqa: Y015
