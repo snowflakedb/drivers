@@ -203,56 +203,26 @@ class TestLogoutPhase5Optimization:
 class TestLogoutPhase2Phase3Migration:
     """Tests for Phase 2/3 migration flag (SNOW-2314152)."""
 
-    def test_phase2_is_default_and_phase3_can_be_enabled(self, int_test_connection_factory):
-        """Verify Phase 2 is default and Phase 3 can be toggled via internal flag.
+    def test_use_phase3_logout_semantics_must_be_false_to_prevent_breaking_change(self):
+        """GUARD TEST: Prevents accidental Phase 3 migration (BREAKING CHANGE).
 
-        This test verifies:
-        1. Default behavior is Phase 2 (USE_PHASE3_LOGOUT_SEMANTICS=False)
-        2. Both Phase 2 and Phase 3 code paths are implemented
-        3. Flag can be toggled to switch between phases
+        This test will FAIL if someone accidentally enables Phase 3 semantics.
+        Phase 3 changes logout behavior: server_session_keep_alive=False will
+        force logout regardless of auto-detection (unlike Phase 2 which respects
+        auto-detection when enabled).
 
-        NOTE: This test will be removed when Phase 3 migration is complete (SNOW-2314152).
-        WARNING: When Phase 3 becomes default, this will be a BREAKING CHANGE.
+        When ready to migrate to Phase 3:
+        1. Plan the breaking change rollout
+        2. Update this test or delete it
+        3. Change the default to True
+
+        Related: SNOW-2314152
         """
         from snowflake.connector.connection import Connection
 
-        # Save original value to restore after test
-        original_flag = Connection._Connection__class_config.USE_PHASE3_LOGOUT_SEMANTICS
-
-        try:
-            with WiremockClient().start() as wiremock:
-                # Setup Wiremock mappings
-                wiremock.add_mapping("auth/login_success_jwt.json")
-                wiremock.add_mapping("session/logout_success.json")
-
-                # Test 1: Verify default is Phase 2
-                assert Connection._Connection__class_config.USE_PHASE3_LOGOUT_SEMANTICS is False, (
-                    "Default should be Phase 2 (USE_PHASE3_LOGOUT_SEMANTICS=False)"
-                )
-
-                # Test 2: Phase 2 behavior (default)
-                conn_phase2 = int_test_connection_factory(
-                    server_url=wiremock.http_url(),
-                    server_session_keep_alive=False,
-                    enable_server_session_keep_alive_auto_detection=True,
-                )
-                conn_phase2.close()
-                assert conn_phase2.is_closed()
-
-                # Test 3: Phase 3 behavior (enable flag)
-                Connection._Connection__class_config.USE_PHASE3_LOGOUT_SEMANTICS = True
-
-                conn_phase3 = int_test_connection_factory(
-                    server_url=wiremock.http_url(),
-                    server_session_keep_alive=False,
-                    enable_server_session_keep_alive_auto_detection=True,
-                )
-                conn_phase3.close()
-                assert conn_phase3.is_closed()
-
-                # Verify flag was applied
-                assert Connection._Connection__class_config.USE_PHASE3_LOGOUT_SEMANTICS is True
-
-        finally:
-            # Restore original flag value
-            Connection._Connection__class_config.USE_PHASE3_LOGOUT_SEMANTICS = original_flag
+        assert Connection._Connection__class_config.USE_PHASE3_LOGOUT_SEMANTICS is False, (
+            "USE_PHASE3_LOGOUT_SEMANTICS must be False (Phase 2). "
+            "Changing to True is a BREAKING CHANGE. "
+            "If intentional, update/delete this test. "
+            "(SNOW-2314152)"
+        )
