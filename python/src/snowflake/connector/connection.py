@@ -281,10 +281,11 @@ class Connection:
             return
 
         # Connection is leaked (not explicitly closed) - emit deprecation warning
+        # Phase 3 (SNOW-2314152): Auto-cleanup will be disabled by default
         if self.__class__._class_state.first_auto_cleanup_warning_pending:
             warnings.warn(
                 "Connection was not explicitly closed before process exit. "
-                "Auto-cleanup at exit will be disabled by default in Phase 3 (SNOW-2314152). "
+                "Auto-cleanup at exit will be disabled by default in a future version. "
                 "Please explicitly call connection.close() or use context manager.",
                 FutureWarning,
                 stacklevel=2,

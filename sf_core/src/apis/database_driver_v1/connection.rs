@@ -602,11 +602,11 @@ pub fn connection_close(conn_handle: Handle, config: LogoutConfig) -> Result<(),
     }
 
     // TODO: SNOW-2881763 - Stop heartbeat thread
-    tracing::debug!("TODO: SNOW-2881763 - Stop heartbeat");
+    tracing::debug!("Heartbeat cleanup deferred");
     // TODO: SNOW-2912513 - Flush telemetry cache
-    tracing::debug!("TODO: SNOW-2912513 - Flush telemetry");
+    tracing::debug!("Telemetry flush deferred");
     // TODO: Implement QCC (query result cache) clearing
-    tracing::debug!("TODO: Clear query result cache");
+    tracing::debug!("Query result cache cleanup deferred");
 
     // Return logout result
     match logout_result {
