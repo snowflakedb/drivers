@@ -14,8 +14,7 @@ use arrow::error::ArrowError;
 use odbc_sys as sql;
 use proto_utils::ProtoError;
 use sf_core::protobuf_gen::database_driver_v1::{
-    DriverError, ErrorTraceEntry, GenericError,
-    InvalidParameterValue as ProtoInvalidParameterValue, LoginError as ProtoLoginError,
+    ErrorTraceEntry, GenericError, InvalidParameterValue as ProtoInvalidParameterValue,
     MissingParameter as ProtoMissingParameter, driver_error::ErrorType,
 };
 
@@ -323,21 +322,6 @@ static AUTHENTICATOR_PARAMETERS: LazyLock<HashSet<String>> = LazyLock::new(|| {
     set.insert("PASSWORD".to_string());
     set
 });
-
-fn format_proto_error_trace(trace: &[ErrorTraceEntry]) -> String {
-    let mut buf = String::new();
-    for (i, entry) in trace.iter().enumerate() {
-        if i > 0 {
-            buf.push('\n');
-        }
-        buf.push_str(&format!("  {i}: {}", entry.message));
-        buf.push_str(&format!(
-            "\n      at {}:{}:{}",
-            entry.file, entry.line, entry.column
-        ));
-    }
-    buf
-}
 
 impl OdbcError {
     pub fn message_text(&self) -> String {
