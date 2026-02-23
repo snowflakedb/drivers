@@ -233,12 +233,20 @@ mod tests {
     mod build_cache_key_tests {
         use super::*;
 
+        // Scenario: Should build correct key format
+        //   Given a host, username, and token type
+        //   When we build a cache key
+        //   Then the key should follow the format "host;username;TOKEN_TYPE"
         #[test]
         fn builds_correct_key_format() {
             let key = build_cache_key("myhost.snowflake.com", "testuser", TokenType::IdToken);
             assert_eq!(key, "myhost.snowflake.com;testuser;ID_TOKEN");
         }
 
+        // Scenario: Should build key for all token types
+        //   Given a host and username
+        //   When we build cache keys for every token type
+        //   Then each key should contain the correct token type suffix
         #[test]
         fn builds_key_for_all_token_types() {
             let host = "host.example.com";
@@ -256,6 +264,10 @@ mod tests {
     mod token_type_tests {
         use super::*;
 
+        // Scenario: Should return correct values from token type as str
+        //   Given all token type variants
+        //   When we call as_str on each
+        //   Then each should return the expected string representation
         #[test]
         fn as_str_returns_correct_values() {
             assert_eq!(TokenType::IdToken.as_str(), "ID_TOKEN");
@@ -268,6 +280,10 @@ mod tests {
             );
         }
 
+        // Scenario: Should match display output with as str
+        //   Given a token type
+        //   When we format it with Display
+        //   Then the output should match as_str
         #[test]
         fn display_matches_as_str() {
             assert_eq!(format!("{}", TokenType::IdToken), "ID_TOKEN");
@@ -290,6 +306,10 @@ mod tests {
     mod validation_tests {
         use super::*;
 
+        // Scenario: Should reject empty host when validating key components
+        //   Given an empty host string
+        //   When we validate key components
+        //   Then an InvalidKeyFormat error should be returned
         #[test]
         fn validate_key_components_rejects_empty_values() {
             for (host, username, token_key_component_name) in [
@@ -308,18 +328,30 @@ mod tests {
             }
         }
 
+        // Scenario: Should accept valid inputs when validating key components
+        //   Given a valid host and username
+        //   When we validate key components
+        //   Then validation should succeed
         #[test]
         fn validate_key_components_accepts_valid_inputs() {
             let result = validate_key_components("host.example.com", "testuser");
             assert!(result.is_ok());
         }
 
+        // Scenario: Should disallow invalid host when validating key components
+        //   Given a host containing invalid characters
+        //   When we validate key components
+        //   Then an InvalidKeyFormat error should be returned
         #[test]
         fn validate_key_components_disallows_invalid_host() {
             let result = validate_key_components("host.example.com;", "testuser");
             assert!(result.is_err());
         }
 
+        // Scenario: Should disallow invalid user when validating key components
+        //   Given a username containing invalid characters
+        //   When we validate key components
+        //   Then an InvalidKeyFormat error should be returned
         #[test]
         fn validate_key_components_disallows_invalid_user() {
             let result = validate_key_components("host.example.com", "test;user");

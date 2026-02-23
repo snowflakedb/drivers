@@ -628,6 +628,10 @@ mod tests {
     mod hash_cache_key_tests {
         use super::*;
 
+        // Scenario: Should produce deterministic SHA256
+        //   Given a cache key string
+        //   When we hash it multiple times
+        //   Then each result should be identical and 64 hex characters long
         #[test]
         fn produces_deterministic_sha256() {
             let key = "myhost.snowflake.com;testuser;ID_TOKEN";
@@ -637,6 +641,10 @@ mod tests {
             assert_eq!(hash1.len(), 64);
         }
 
+        // Scenario: Should produce different hashes for different keys
+        //   Given two distinct cache key strings
+        //   When we hash each
+        //   Then the hashes should differ
         #[test]
         fn different_keys_produce_different_hashes() {
             let hash1 = hash_cache_key("host1;user1;ID_TOKEN");
@@ -654,6 +662,10 @@ mod tests {
             (dir, cache)
         }
 
+        // Scenario: Should set and get secret
+        //   Given a file-based credential store
+        //   When we set a secret for a key
+        //   Then we should be able to retrieve the same secret
         #[test]
         fn set_and_get_secret() {
             let (_dir, cache) = create_temp_cache();
@@ -665,6 +677,10 @@ mod tests {
             assert_eq!(result, Some(b"my_secret".to_vec()));
         }
 
+        // Scenario: Should return none for missing key
+        //   Given a file-based credential store with no entries
+        //   When we get a secret for a nonexistent key
+        //   Then None should be returned
         #[test]
         fn get_missing_key_returns_none() {
             let (_dir, cache) = create_temp_cache();
@@ -674,6 +690,10 @@ mod tests {
             assert_eq!(result, None);
         }
 
+        // Scenario: Should delete existing credential
+        //   Given a file-based credential store with a stored secret
+        //   When we delete the credential
+        //   Then the key should no longer exist
         #[test]
         fn delete_existing_credential() {
             let (_dir, cache) = create_temp_cache();
@@ -690,6 +710,10 @@ mod tests {
             assert_eq!(result, None);
         }
 
+        // Scenario: Should return false when deleting nonexistent key
+        //   Given a file-based credential store with no entries
+        //   When we delete a nonexistent key
+        //   Then the result should indicate the key did not exist
         #[test]
         fn delete_nonexistent_returns_false() {
             let (_dir, cache) = create_temp_cache();
@@ -699,6 +723,10 @@ mod tests {
             assert!(!existed);
         }
 
+        // Scenario: Should overwrite secret
+        //   Given a file-based credential store with a stored secret
+        //   When we set a new secret for the same key
+        //   Then the new secret should replace the old one
         #[test]
         fn overwrite_secret() {
             let (_dir, cache) = create_temp_cache();
@@ -713,6 +741,10 @@ mod tests {
             assert_eq!(result, Some(b"new".to_vec()));
         }
 
+        // Scenario: Should store different keys separately
+        //   Given a file-based credential store
+        //   When we set secrets for two different keys
+        //   Then each key should return its own secret independently
         #[test]
         fn different_keys_stored_separately() {
             let (_dir, cache) = create_temp_cache();
@@ -723,6 +755,10 @@ mod tests {
             assert_eq!(cache.get_secret("key_b").unwrap(), Some(b"val_b".to_vec()));
         }
 
+        // Scenario: Should use correct cache file name
+        //   Given a file-based credential store
+        //   When a secret is stored
+        //   Then the backing file should be named credential_cache_v2.json
         #[test]
         fn cache_file_uses_correct_name() {
             let (_dir, cache) = create_temp_cache();
@@ -734,6 +770,10 @@ mod tests {
             assert!(cache.cache_file_path.exists());
         }
 
+        // Scenario: Should contain valid JSON in cache file
+        //   Given a file-based credential store with a stored secret
+        //   When we read the backing file
+        //   Then it should contain valid JSON with a "tokens" key
         #[test]
         fn cache_file_contains_valid_json() {
             let (_dir, cache) = create_temp_cache();
@@ -747,6 +787,10 @@ mod tests {
             assert!(parsed.get("tokens").is_some());
         }
 
+        // Scenario: Should SHA256 hash keys in file
+        //   Given a file-based credential store with a stored secret
+        //   When we inspect the backing JSON file
+        //   Then the key should be the SHA-256 hash of the original key
         #[test]
         fn keys_are_sha256_hashed_in_file() {
             let (_dir, cache) = create_temp_cache();
@@ -763,6 +807,10 @@ mod tests {
             assert_eq!(parsed.tokens.get(&expected_key).unwrap(), "val");
         }
 
+        // Scenario: Should set cache file mode to 600
+        //   Given a file-based credential store on a Unix system
+        //   When a secret is stored
+        //   Then the cache file permissions should be 0600
         #[cfg(unix)]
         #[test]
         fn cache_file_has_mode_600() {
@@ -778,6 +826,10 @@ mod tests {
             assert_eq!(mode, 0o600);
         }
 
+        // Scenario: Should reject file with wrong permissions
+        //   Given a cache file with permissions other than 0600
+        //   When we attempt to read a secret
+        //   Then an InsufficientPermissions error should be returned
         #[cfg(unix)]
         #[test]
         fn remediates_file_with_wrong_permissions() {
@@ -801,6 +853,10 @@ mod tests {
             assert_eq!(mode, 0o600, "Permissions should be remediated to 0o600");
         }
 
+        // Scenario: Should accept file owned by current user
+        //   Given a cache file created by the current user
+        //   When we read a secret
+        //   Then the ownership check should pass
         #[cfg(unix)]
         #[test]
         fn accepts_file_owned_by_current_user() {
@@ -816,6 +872,10 @@ mod tests {
             );
         }
 
+        // Scenario: Should reject file not owned by current user
+        //   Given a cache file owned by a different user
+        //   When we attempt to read a secret
+        //   Then a FileNotOwnedByCurrentUser error should be returned
         #[cfg(unix)]
         #[test]
         fn rejects_file_not_owned_by_current_user() {
@@ -835,6 +895,10 @@ mod tests {
             );
         }
 
+        // Scenario: Should remove lock file after operation
+        //   Given a file-based credential store
+        //   When an operation completes
+        //   Then the .lck file should not exist
         #[test]
         fn lock_file_removed_after_operation() {
             let (_dir, cache) = create_temp_cache();
@@ -849,6 +913,10 @@ mod tests {
             );
         }
 
+        // Scenario: Should break stale lock
+        //   Given a stale lock file older than the configured timeout
+        //   When we perform an operation on the cache
+        //   Then the stale lock should be broken and the operation should succeed
         #[test]
         fn stale_lock_is_broken() {
             let dir = tempfile::tempdir().expect("Failed to create temp dir");
@@ -868,6 +936,9 @@ mod tests {
             assert_eq!(result, Some(b"val".to_vec()));
         }
 
+        // Scenario: Should support configurable retry parameters
+        //   Given a file-based credential store with custom retry settings
+        //   Then the retry count, delay, and stale lock timeout should match
         #[test]
         fn configurable_retry_parameters() {
             let dir = tempfile::tempdir().expect("Failed to create temp dir");
@@ -890,6 +961,10 @@ mod tests {
             FileCredentialBuilder::new(cache)
         }
 
+        // Scenario: Should set and get password via credential adapter
+        //   Given a FileCredentialBuilder and a credential
+        //   When we set a password and then get it
+        //   Then the retrieved password should match
         #[test]
         fn set_and_get_password() {
             let dir = tempfile::tempdir().unwrap();
@@ -903,6 +978,10 @@ mod tests {
             assert_eq!(password, "secret123");
         }
 
+        // Scenario: Should return no entry for missing credential adapter password
+        //   Given a FileCredentialBuilder and a credential with no stored value
+        //   When we get the password
+        //   Then a NoEntry error should be returned
         #[test]
         fn get_missing_entry_returns_no_entry() {
             let dir = tempfile::tempdir().unwrap();
@@ -915,6 +994,10 @@ mod tests {
             assert!(matches!(err, keyring::Error::NoEntry));
         }
 
+        // Scenario: Should delete existing credential via adapter
+        //   Given a credential with a stored password
+        //   When we delete the credential
+        //   Then getting the password should return NoEntry
         #[test]
         fn delete_existing_credential() {
             let dir = tempfile::tempdir().unwrap();
@@ -930,6 +1013,10 @@ mod tests {
             assert!(matches!(err, keyring::Error::NoEntry));
         }
 
+        // Scenario: Should return no entry when deleting missing credential via adapter
+        //   Given a credential with no stored value
+        //   When we delete the credential
+        //   Then a NoEntry error should be returned
         #[test]
         fn delete_missing_credential_returns_no_entry() {
             let dir = tempfile::tempdir().unwrap();
@@ -942,6 +1029,10 @@ mod tests {
             assert!(matches!(err, keyring::Error::NoEntry));
         }
 
+        // Scenario: credential adapter overwrite_password
+        //   Given a credential with a stored password
+        //   When we set a new password
+        //   Then the new password should replace the old one
         #[test]
         fn overwrite_password() {
             let dir = tempfile::tempdir().unwrap();
@@ -955,6 +1046,10 @@ mod tests {
             assert_eq!(cred.get_password().unwrap(), "second");
         }
 
+        // Scenario: credential adapter separate_credentials_are_independent
+        //   Given two credentials with different keys from the same builder
+        //   When we set different passwords on each
+        //   Then each credential should return its own password
         #[test]
         fn separate_credentials_are_independent() {
             let dir = tempfile::tempdir().unwrap();
@@ -973,6 +1068,9 @@ mod tests {
             assert_eq!(cred2.get_password().unwrap(), "mfa_val");
         }
 
+        // Scenario: credential adapter persistence_is_until_delete
+        //   Given a FileCredentialBuilder
+        //   Then its persistence should be UntilDelete
         #[test]
         fn persistence_is_until_delete() {
             let dir = tempfile::tempdir().unwrap();
@@ -983,6 +1081,10 @@ mod tests {
             ));
         }
 
+        // Scenario: credential adapter credentials_share_same_backing_file
+        //   Given two credential instances for the same key
+        //   When one sets a password
+        //   Then the other should be able to read it
         #[test]
         fn credentials_share_same_backing_file() {
             let dir = tempfile::tempdir().unwrap();

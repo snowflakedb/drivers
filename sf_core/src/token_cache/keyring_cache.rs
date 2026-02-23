@@ -140,6 +140,10 @@ mod tests {
         }
     }
 
+    // Scenario: keyring add_and_get_token_succeeds
+    //   Given a keyring-based token cache
+    //   When we add a token and then retrieve it
+    //   Then the retrieved token should match
     #[test]
     fn add_and_get_token_succeeds() {
         let cache = KeyringTokenCache::new().expect("Failed to create cache");
@@ -167,6 +171,10 @@ mod tests {
         cleanup_test_token(&cache, &host, &username);
     }
 
+    // Scenario: keyring get_nonexistent_token_returns_none
+    //   Given a keyring-based token cache with no stored token
+    //   When we get a token
+    //   Then None should be returned
     #[test]
     fn get_nonexistent_token_returns_none() {
         let cache = KeyringTokenCache::new().expect("Failed to create cache");
@@ -180,6 +188,10 @@ mod tests {
         assert_eq!(result.unwrap(), None);
     }
 
+    // Scenario: keyring remove_existing_token_succeeds
+    //   Given a keyring-based token cache with a stored token
+    //   When we remove the token
+    //   Then getting it should return None
     #[test]
     fn remove_existing_token_succeeds() {
         let cache = KeyringTokenCache::new().expect("Failed to create cache");
@@ -208,6 +220,10 @@ mod tests {
         cleanup_test_token(&cache, &host, &username);
     }
 
+    // Scenario: keyring remove_nonexistent_token_succeeds
+    //   Given a keyring-based token cache with no stored token
+    //   When we remove a token
+    //   Then the operation should succeed
     #[test]
     fn remove_nonexistent_token_succeeds() {
         let cache = KeyringTokenCache::new().expect("Failed to create cache");
@@ -224,6 +240,10 @@ mod tests {
         );
     }
 
+    // Scenario: keyring overwrite_token_succeeds
+    //   Given a keyring-based token cache with a stored token
+    //   When we add a new value for the same key
+    //   Then the new value should replace the old one
     #[test]
     fn overwrite_token_succeeds() {
         let cache = KeyringTokenCache::new().expect("Failed to create cache");
@@ -264,6 +284,10 @@ mod tests {
         cleanup_test_token(&cache, &host, &username);
     }
 
+    // Scenario: keyring different_token_types_stored_separately
+    //   Given a keyring-based token cache
+    //   When we store tokens of different types for the same host and user
+    //   Then each type should return its own value
     #[test]
     fn different_token_types_stored_separately() {
         let cache = KeyringTokenCache::new().expect("Failed to create cache");
@@ -290,6 +314,10 @@ mod tests {
         cleanup_test_token(&cache, &host, &username);
     }
 
+    // Scenario: keyring add_token_with_empty_host_fails
+    //   Given a keyring-based token cache
+    //   When we add a token with an empty host
+    //   Then an InvalidKeyFormat error should be returned
     #[test]
     fn add_token_with_empty_host_fails() {
         let cache = KeyringTokenCache::new().expect("Failed to create cache");
@@ -302,6 +330,10 @@ mod tests {
         ));
     }
 
+    // Scenario: keyring add_token_with_empty_username_fails
+    //   Given a keyring-based token cache
+    //   When we add a token with an empty username
+    //   Then an InvalidKeyFormat error should be returned
     #[test]
     fn add_token_with_empty_username_fails() {
         let cache = KeyringTokenCache::new().expect("Failed to create cache");
@@ -314,6 +346,10 @@ mod tests {
         ));
     }
 
+    // Scenario: keyring get_token_with_empty_host_fails
+    //   Given a keyring-based token cache
+    //   When we get a token with an empty host
+    //   Then an InvalidKeyFormat error should be returned
     #[test]
     fn get_token_with_empty_host_fails() {
         let cache = KeyringTokenCache::new().expect("Failed to create cache");
@@ -326,6 +362,10 @@ mod tests {
         ));
     }
 
+    // Scenario: keyring get_token_with_empty_username_fails
+    //   Given a keyring-based token cache
+    //   When we get a token with an empty username
+    //   Then an InvalidKeyFormat error should be returned
     #[test]
     fn get_token_with_empty_username_fails() {
         let cache = KeyringTokenCache::new().expect("Failed to create cache");
@@ -338,6 +378,10 @@ mod tests {
         ));
     }
 
+    // Scenario: keyring remove_token_with_empty_host_fails
+    //   Given a keyring-based token cache
+    //   When we remove a token with an empty host
+    //   Then an InvalidKeyFormat error should be returned
     #[test]
     fn remove_token_with_empty_host_fails() {
         let cache = KeyringTokenCache::new().expect("Failed to create cache");
@@ -350,6 +394,10 @@ mod tests {
         ));
     }
 
+    // Scenario: keyring remove_token_with_empty_username_fails
+    //   Given a keyring-based token cache
+    //   When we remove a token with an empty username
+    //   Then an InvalidKeyFormat error should be returned
     #[test]
     fn remove_token_with_empty_username_fails() {
         let cache = KeyringTokenCache::new().expect("Failed to create cache");
