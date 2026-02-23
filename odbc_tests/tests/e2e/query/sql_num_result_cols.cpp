@@ -150,8 +150,6 @@ TEST_CASE("SQLNumResultCols returns column count after SQLPrepare.", "[query]") 
   // Doc: "SQLNumResultCols can be called successfully only when the statement is
   //       in the prepared, executed, or positioned state."
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlnumresultcols-function#comments
-  // SQLPrepare not implemented in the new driver
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
 
   // Given Snowflake client is logged in
   Connection conn;

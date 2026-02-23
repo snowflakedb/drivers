@@ -146,16 +146,34 @@ pub fn prepare(
             let query = cstr_to_string(statement_text, text_length)?;
             tracing::debug!("prepare: query = {}", query);
 
-            // Set the SQL query for the statement
             DatabaseDriverClient::statement_set_sql_query(StatementSetSqlQueryRequest {
                 stmt_handle: Some(stmt.stmt_handle),
                 query,
             })?;
 
-            // Call the prepare method on the statement
             DatabaseDriverClient::statement_prepare(StatementPrepareRequest {
                 stmt_handle: Some(stmt.stmt_handle),
             })?;
+
+            let response =
+                DatabaseDriverClient::statement_execute_query(StatementExecuteQueryRequest {
+                    stmt_handle: Some(stmt.stmt_handle),
+                    bindings: None,
+                })?;
+
+            let execute_state = create_execute_state(response)?;
+            let prepared_state = match execute_state {
+                StatementState::Executed { reader, .. } => StatementState::Prepared { reader },
+                other => other,
+            };
+
+            stmt.state = prepared_state.into();
+            stmt.ird.desc_count = match stmt.state.as_ref() {
+                StatementState::Prepared { reader } => {
+                    reader.schema().fields().len() as sql::SmallInt
+                }
+                _ => 0,
+            };
 
             tracing::info!("prepare: Successfully prepared statement");
             Ok(())

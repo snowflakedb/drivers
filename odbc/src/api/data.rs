@@ -107,7 +107,9 @@ fn advance_cursor(state: &mut crate::api::State<StatementState>) -> OdbcResult<(
         }
         state @ StatementState::Error => StatementErrorStateSnafu.fail().with_state(state),
         state @ StatementState::Done => ExecutionDoneSnafu.fail().with_state(state),
-        state @ StatementState::Created => StatementNotExecutedSnafu.fail().with_state(state),
+        state @ StatementState::Created | state @ StatementState::Prepared { .. } => {
+            StatementNotExecutedSnafu.fail().with_state(state)
+        }
     })
 }
 
@@ -531,7 +533,7 @@ pub fn get_data(
             tracing::debug!("get_data: statement execution is done");
             ExecutionDoneSnafu.fail()
         }
-        StatementState::Created => {
+        StatementState::Created | StatementState::Prepared { .. } => {
             tracing::error!("get_data: data not fetched yet");
             DataNotFetchedSnafu.fail()
         }

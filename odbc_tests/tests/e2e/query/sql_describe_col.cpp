@@ -72,8 +72,6 @@ TEST_CASE("SQLDescribeCol returns empty string for expression column.", "[query]
 // =============================================================================
 
 TEST_CASE("SQLDescribeCol returns 01004 when column name is truncated.", "[query]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   // Doc: "01004 - String data, right truncated: The buffer *ColumnName was not
   //       large enough to return the entire column name, so the column name was
   //       truncated. The length of the untruncated column name is returned in
@@ -556,8 +554,6 @@ TEST_CASE("SQLDescribeCol returns 07009 for out-of-range column number.", "[quer
 // =============================================================================
 
 TEST_CASE("SQLDescribeCol returns HY090 when BufferLength is less than 0.", "[query]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   // Doc: "HY090 - Invalid string or buffer length: (DM) The value specified for
   //       argument BufferLength was less than 0."
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqldescribecol-function#diagnostics
@@ -615,8 +611,6 @@ TEST_CASE("SQLDescribeCol returns HY010 when called before prepare or execute.",
 // =============================================================================
 
 TEST_CASE("SQLDescribeCol with NULL ColumnName still returns NameLengthPtr.", "[query]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   // Doc: "If ColumnName is NULL, NameLengthPtr will still return the total number
   //       of characters (excluding the null-termination character for character
   //       data) available to return in the buffer pointed to by ColumnName."
@@ -644,8 +638,6 @@ TEST_CASE("SQLDescribeCol with NULL ColumnName still returns NameLengthPtr.", "[
 }
 
 TEST_CASE("SQLDescribeCol succeeds when all output pointers are NULL.", "[query]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   // Doc: "SQLDescribeCol returns the result descriptor - column name, type,
   //       column size, decimal digits, and nullability - for one column in the
   //       result set."
@@ -667,8 +659,6 @@ TEST_CASE("SQLDescribeCol succeeds when all output pointers are NULL.", "[query]
 // =============================================================================
 
 TEST_CASE("SQLDescribeCol returns metadata after SQLPrepare.", "[query]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
-
   // Doc: "An application typically calls SQLDescribeCol after a call to SQLPrepare
   //       and before or after the associated call to SQLExecute."
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqldescribecol-function#comments
