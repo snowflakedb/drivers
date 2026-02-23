@@ -46,10 +46,14 @@ class TestConfig:
         # First check if private key file path is provided
         private_key_file = conn_params.get("SNOWFLAKE_TEST_PRIVATE_KEY_FILE")
 
+        # If a file path is provided, ensure it exists to avoid confusing auth errors later
+        if private_key_file and not Path(private_key_file).is_file():
+            print(f"ERROR: Private key file '{private_key_file}' does not exist")
+            sys.exit(1)
+
         # If no file path, parse private key contents (array of strings) and write to temporary file
         if not private_key_file:
             private_key_contents = conn_params.get("SNOWFLAKE_TEST_PRIVATE_KEY_CONTENTS", [])
-
             if private_key_contents:
                 # Write private key to a temporary file for authentication (OS-agnostic)
                 temp_dir = Path(tempfile.gettempdir())
