@@ -1,7 +1,9 @@
 use crate::api::api_utils::{cstr_to_string, utf16_to_string};
 use crate::api::error::{
     ArrowArrayStreamReaderCreationSnafu, ArrowBindingSnafu, DisconnectedSnafu,
-    InvalidParameterNumberSnafu, Required,
+    InvalidBufferLengthSnafu, InvalidCursorStateSnafu, InvalidHandleSnafu,
+    InvalidParameterNumberSnafu, NoMoreDataSnafu, NullPointerSnafu, Required,
+    StatementNotExecutedSnafu,
 };
 use crate::api::{ConnectionState, OdbcResult, ParameterBinding, StatementState, stmt_from_handle};
 use crate::cdata_types::CDataType;
@@ -69,6 +71,24 @@ pub fn exec_direct(statement_handle: sql::Handle, statement_text: &str) -> OdbcR
                 query: statement_text.to_string(),
             })?;
 
+            if !stmt.parameter_bindings.is_empty() {
+                tracing::info!(
+                    "exec_direct: Found {} bound parameters",
+                    stmt.parameter_bindings.len()
+                );
+
+                let (schema, array) = odbc_bindings_to_arrow_bindings(&stmt.parameter_bindings)
+                    .context(ArrowBindingSnafu {})?;
+
+                DatabaseDriverClient::statement_bind(StatementBindRequest {
+                    stmt_handle: Some(stmt.stmt_handle),
+                    schema: Some(protobuf_from_ffi_arrow_schema(Box::into_raw(schema))),
+                    array: Some(protobuf_from_ffi_arrow_array(Box::into_raw(array))),
+                })?;
+
+                tracing::info!("exec_direct: Successfully bound parameters");
+            }
+
             let response =
                 DatabaseDriverClient::statement_execute_query(StatementExecuteQueryRequest {
                     stmt_handle: Some(stmt.stmt_handle),
@@ -126,33 +146,130 @@ fn update_numeric_settings(conn_handle: &ConnectionHandle, settings: &mut Numeri
     }
 }
 
-/// Prepare a SQL statement
-pub fn prepare(
+pub fn prepare_n(
     statement_handle: sql::Handle,
     statement_text: *const sql::Char,
     text_length: sql::Integer,
 ) -> OdbcResult<()> {
+    if statement_handle.is_null() {
+        return InvalidHandleSnafu.fail();
+    }
+    if statement_text.is_null() {
+        return NullPointerSnafu.fail();
+    }
+    if text_length != sql::NTS as i32 && text_length <= 0 {
+        return InvalidBufferLengthSnafu {
+            length: text_length as i64,
+        }
+        .fail();
+    }
+    let query = cstr_to_string(statement_text, text_length)?;
+    if query.is_empty() {
+        return InvalidBufferLengthSnafu { length: 0i64 }.fail();
+    }
+    prepare(statement_handle, &query)
+}
+
+pub fn prepare_w(
+    statement_handle: sql::Handle,
+    statement_text: *const sql::WChar,
+    text_length: sql::Integer,
+) -> OdbcResult<()> {
+    if statement_handle.is_null() {
+        return InvalidHandleSnafu.fail();
+    }
+    if statement_text.is_null() {
+        return NullPointerSnafu.fail();
+    }
+    if text_length != sql::NTS as i32 && text_length <= 0 {
+        return InvalidBufferLengthSnafu {
+            length: text_length as i64,
+        }
+        .fail();
+    }
+    let query = utf16_to_string(statement_text, text_length)?;
+    if query.is_empty() {
+        return InvalidBufferLengthSnafu { length: 0i64 }.fail();
+    }
+    prepare(statement_handle, &query)
+}
+
+/// Prepare a SQL statement
+pub fn prepare(statement_handle: sql::Handle, query: &str) -> OdbcResult<()> {
     tracing::debug!("prepare: statement_handle={:?}", statement_handle);
     let stmt = stmt_from_handle(statement_handle);
+
+    match stmt.state.as_ref() {
+        StatementState::Executed { .. } | StatementState::Fetching { .. } => {
+            return InvalidCursorStateSnafu.fail();
+        }
+        _ => {}
+    }
 
     match &mut stmt.conn.state {
         ConnectionState::Connected {
             db_handle: _,
             conn_handle: _,
         } => {
-            let query = cstr_to_string(statement_text, text_length)?;
-            tracing::debug!("prepare: query = {}", query);
+            tracing::debug!("prepare: query = {query}");
+
             DatabaseDriverClient::statement_set_sql_query(StatementSetSqlQueryRequest {
                 stmt_handle: Some(stmt.stmt_handle),
-                query,
+                query: query.to_string(),
             })?;
 
-            DatabaseDriverClient::statement_prepare(StatementPrepareRequest {
+            let prepare_result = DatabaseDriverClient::statement_prepare(StatementPrepareRequest {
                 stmt_handle: Some(stmt.stmt_handle),
-            })?;
+            });
 
-            stmt.state.set(StatementState::Prepared);
-            stmt.ird.desc_count = 0;
+            match prepare_result {
+                Ok(_) => {
+                    let execute_result = DatabaseDriverClient::statement_execute_query(
+                        StatementExecuteQueryRequest {
+                            stmt_handle: Some(stmt.stmt_handle),
+                            bindings: None,
+                        },
+                    );
+
+                    match execute_result {
+                        Ok(response) => {
+                            let execute_state = create_execute_state(response)?;
+                            let prepared_state = match execute_state {
+                                StatementState::Executed { reader, .. } => {
+                                    StatementState::Prepared { reader }
+                                }
+                                other => other,
+                            };
+
+                            stmt.state = prepared_state.into();
+                            stmt.ird.desc_count = match stmt.state.as_ref() {
+                                StatementState::Prepared { reader } => {
+                                    reader.schema().fields().len() as sql::SmallInt
+                                }
+                                _ => 0,
+                            };
+                        }
+                        Err(e) => {
+                            tracing::info!(
+                                "prepare: statement_execute_query failed (parameterized DML?), \
+                                 deferring execution: {e:?}"
+                            );
+                            stmt.state = StatementState::Created.into();
+                            stmt.ird.desc_count = 0;
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::info!(
+                        "prepare: statement_prepare failed (DDL?), deferring execution: {e:?}"
+                    );
+                    stmt.state = StatementState::Created.into();
+                    stmt.ird.desc_count = 0;
+                }
+            }
+
+            stmt.is_prepared = true;
+            tracing::info!("prepare: Successfully prepared statement");
             Ok(())
         }
         ConnectionState::Disconnected => {
@@ -166,6 +283,17 @@ pub fn prepare(
 pub fn execute(statement_handle: sql::Handle) -> OdbcResult<()> {
     tracing::debug!("execute: statement_handle={:?}", statement_handle);
     let stmt = stmt_from_handle(statement_handle);
+
+    if !stmt.is_prepared {
+        return StatementNotExecutedSnafu.fail();
+    }
+
+    match stmt.state.as_ref() {
+        StatementState::Executed { .. } | StatementState::Fetching { .. } => {
+            return InvalidCursorStateSnafu.fail();
+        }
+        _ => {}
+    }
 
     match &mut stmt.conn.state {
         ConnectionState::Connected {
@@ -201,7 +329,26 @@ pub fn execute(statement_handle: sql::Handle) -> OdbcResult<()> {
 
             tracing::info!("execute: Successfully executed statement");
             update_numeric_settings(conn_handle, &mut stmt.conn.numeric_settings);
-            stmt.state = create_execute_state(response)?.into();
+            let execute_state = create_execute_state(response)?;
+
+            // DML that affected 0 rows returns SQL_NO_DATA per ODBC spec.
+            // DML results have no result-set columns (empty schema), while
+            // SELECT results always have columns.
+            let is_dml_no_data = matches!(
+                &execute_state,
+                StatementState::Executed {
+                    rows_affected: Some(0),
+                    reader
+                } if reader.schema().fields().is_empty()
+            );
+
+            if is_dml_no_data {
+                stmt.state = StatementState::NoResultSet.into();
+                stmt.ird.desc_count = 0;
+                return NoMoreDataSnafu.fail();
+            }
+
+            stmt.state = execute_state.into();
             if let StatementState::Executed { reader, .. } = stmt.state.as_ref() {
                 stmt.ird.desc_count = reader.schema().fields().len() as sql::SmallInt;
             }

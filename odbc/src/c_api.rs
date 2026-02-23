@@ -456,7 +456,21 @@ pub unsafe extern "C" fn SQLPrepare(
     text_length: sql::Integer,
 ) -> sql::RetCode {
     api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
-    let result = api::statement::prepare(statement_handle, statement_text, text_length);
+    let result = api::statement::prepare_n(statement_handle, statement_text, text_length);
+    api::diagnostic::set_diag_info_from_result(sql::HandleType::Stmt, statement_handle, &result);
+    result.to_sql_code()
+}
+
+/// # Safety
+/// This function is called by the ODBC driver manager.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn SQLPrepareW(
+    statement_handle: sql::Handle,
+    statement_text: *const sql::WChar,
+    text_length: sql::Integer,
+) -> sql::RetCode {
+    api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
+    let result = api::statement::prepare_w(statement_handle, statement_text, text_length);
     api::diagnostic::set_diag_info_from_result(sql::HandleType::Stmt, statement_handle, &result);
     result.to_sql_code()
 }
@@ -465,7 +479,10 @@ pub unsafe extern "C" fn SQLPrepare(
 /// This function is called by the ODBC driver manager.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn SQLExecute(statement_handle: sql::Handle) -> sql::RetCode {
-    api::statement::execute(statement_handle).to_sql_code()
+    api::diagnostic::clear_diag_info(sql::HandleType::Stmt, statement_handle);
+    let result = api::statement::execute(statement_handle);
+    api::diagnostic::set_diag_info_from_result(sql::HandleType::Stmt, statement_handle, &result);
+    result.to_sql_code()
 }
 
 /// # Safety
