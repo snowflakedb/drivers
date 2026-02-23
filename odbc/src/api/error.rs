@@ -442,7 +442,10 @@ impl OdbcError {
     pub fn to_native_error(&self) -> sql::Integer {
         match self {
             OdbcError::CoreError { source, .. } => match source {
-                CoreProtobufError::Application { status_code, .. } => *status_code,
+                CoreProtobufError::Application { error, .. } => match error.as_ref() {
+                    ErrorType::LoginError(login_error) => login_error.code,
+                    _ => 0,
+                },
                 CoreProtobufError::Transport { .. } => 0,
             },
             _ => 0,
@@ -499,17 +502,31 @@ pub enum CoreProtobufError {
 impl ErrorTrace for CoreProtobufError {
     fn error_trace(&self) -> Vec<error_trace::ErrorTraceEntry> {
         match self {
-            CoreProtobufError::Application { error_trace, .. } => error_trace
-                .iter()
-                .map(|entry| error_trace::ErrorTraceEntry {
-                    location: error_trace::Location::new(
-                        entry.file.clone(),
-                        entry.line,
-                        entry.column,
-                    ),
-                    message: entry.message.clone(),
-                })
-                .collect(),
+            CoreProtobufError::Application {
+                error_trace,
+                message,
+                location,
+                ..
+            } => {
+                let mut trace: Vec<error_trace::ErrorTraceEntry> = error_trace
+                    .iter()
+                    .map(|entry| error_trace::ErrorTraceEntry {
+                        location: error_trace::Location::new(
+                            entry.file.clone(),
+                            entry.line,
+                            entry.column,
+                        ),
+                        message: entry.message.clone(),
+                    })
+                    .collect();
+                if trace.is_empty() {
+                    trace.push(error_trace::ErrorTraceEntry {
+                        location: error_trace::Location::from(*location),
+                        message: message.clone(),
+                    });
+                }
+                trace
+            }
             CoreProtobufError::Transport { message, location } => {
                 vec![error_trace::ErrorTraceEntry {
                     location: error_trace::Location::from(*location),
