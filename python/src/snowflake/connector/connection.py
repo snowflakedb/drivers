@@ -9,6 +9,8 @@ from __future__ import annotations
 from typing import Any
 
 from snowflake.connector._internal.protobuf_gen.database_driver_v1_services import (
+    ConnectionGetInfoRequest,
+    ConnectionGetInfoResponse,
     ConnectionGetParameterRequest,
     ConnectionInitRequest,
     ConnectionNewRequest,
@@ -91,6 +93,10 @@ class Connection:
             )
 
         self.db_api.connection_init(ConnectionInitRequest(conn_handle=self.conn_handle, db_handle=self.db_handle))
+        self._connection_info: ConnectionGetInfoResponse = self.db_api.connection_get_info(
+            ConnectionGetInfoRequest(conn_handle=self.conn_handle)
+        )
+        self.kwargs = kwargs
         self._closed = False
         self._autocommit = False
 

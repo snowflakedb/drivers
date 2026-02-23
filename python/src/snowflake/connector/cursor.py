@@ -166,6 +166,18 @@ class SnowflakeCursorBase(abc.ABC):
     # ------------------------------------------------------------------
 
     @property
+    def query(self) -> str | None:
+        """
+        Read-only attribute containing the SQL text of the last executed query.
+
+        Returns:
+            str | None: The SQL query string, or None if no query has been executed
+        """
+        if self.execute_result is None:
+            return None
+        return self.execute_result.query if self.execute_result.query else None
+
+    @property
     def sfqid(self) -> str | None:
         """
         Read-only attribute containing the Snowflake Query ID for the last executed query.

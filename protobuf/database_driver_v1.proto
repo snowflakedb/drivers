@@ -126,6 +126,7 @@ message ExecuteResult {
   string query_id = 3;
   repeated ColumnMetadata columns = 4;
   optional int64 statement_type_id = 5;
+  string query = 6;
 }
 
 // Partitioned result
@@ -317,7 +318,11 @@ message ConnectionGetInfoRequest {
 }
 
 message ConnectionGetInfoResponse {
-  bytes info_data = 1;
+  optional string host = 1;
+  optional int64 port = 2;
+  optional string server_url = 3;
+  optional string session_token = 4;
+  optional int64 session_id = 5;
 }
 
 message ConnectionGetObjectsRequest {

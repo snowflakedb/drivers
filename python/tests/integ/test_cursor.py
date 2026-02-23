@@ -88,6 +88,145 @@ class TestCursorSfqid:
         assert cursor.sfqid == sfqid_before
 
 
+class TestCursorQuery:
+    """Integration tests for Cursor.query property."""
+
+    def test_query_is_none_before_execute(self, connection):
+        """Test that query returns None before any query is executed."""
+        # Given a new cursor
+        cursor = connection.cursor()
+
+        # When accessing query before execute
+        result = cursor.query
+
+        # Then it should be None
+        assert result is None
+
+    def test_query_returns_sql_text_after_execute(self, cursor):
+        """Test that query returns the SQL text after execute."""
+        # Given a cursor that executes a query
+        cursor.execute("SELECT 1")
+
+        # When accessing query
+        result = cursor.query
+
+        # Then it should return a non-empty string
+        assert result is not None
+        assert isinstance(result, str)
+        assert len(result) > 0
+
+    def test_query_contains_executed_sql(self, cursor):
+        """Test that query contains the SQL that was executed."""
+        # Given a specific SQL statement
+        sql = "SELECT 42 AS answer"
+
+        # When executing the SQL
+        cursor.execute(sql)
+
+        # Then query should contain the executed SQL
+        assert cursor.query is not None
+        assert "42" in cursor.query
+
+    def test_query_changes_with_each_query(self, cursor):
+        """Test that query changes with each executed query."""
+        # Given a cursor that executes multiple queries
+        cursor.execute("SELECT 1")
+        first_query = cursor.query
+
+        cursor.execute("SELECT 'hello'")
+        second_query = cursor.query
+
+        cursor.execute("SELECT 1, 2, 3")
+        third_query = cursor.query
+
+        # Then each query should have a different query text
+        assert first_query is not None
+        assert second_query is not None
+        assert third_query is not None
+        assert first_query != second_query
+        assert second_query != third_query
+
+    def test_query_persists_after_fetchall(self, cursor):
+        """Test that query remains accessible after fetching all results."""
+        # Given a cursor that executes a query
+        cursor.execute("SELECT 1, 2, 3")
+        query_before = cursor.query
+
+        # When fetching all results
+        cursor.fetchall()
+
+        # Then query should still be the same
+        assert cursor.query == query_before
+
+    def test_query_persists_after_fetchone(self, cursor):
+        """Test that query remains accessible after fetching one result."""
+        # Given a cursor that executes a query
+        cursor.execute("SELECT 1")
+        query_before = cursor.query
+
+        # When fetching one result
+        cursor.fetchone()
+
+        # Then query should still be the same
+        assert cursor.query == query_before
+
+    def test_query_with_ddl_statement(self, cursor, tmp_schema):
+        """Test that query works with DDL statements."""
+        # Given a DDL statement
+        sql = f"CREATE TABLE {tmp_schema}.test_query_ddl (id INTEGER)"
+
+        # When executing the DDL
+        cursor.execute(sql)
+
+        # Then query should return the DDL text
+        assert cursor.query is not None
+        assert "CREATE TABLE" in cursor.query.upper()
+
+    def test_query_with_dml_statement(self, cursor, tmp_schema):
+        """Test that query works with DML statements."""
+        # Given a table with data
+        cursor.execute(f"CREATE TABLE {tmp_schema}.test_query_dml (id INTEGER)")
+        cursor.execute(f"INSERT INTO {tmp_schema}.test_query_dml VALUES (1)")
+
+        # When accessing query after the INSERT
+        result = cursor.query
+
+        # Then it should reflect the INSERT statement
+        assert result is not None
+        assert "INSERT" in result.upper()
+
+    def test_query_updates_after_new_execute(self, cursor):
+        """Test that query updates to reflect the most recent execute."""
+        # Given a cursor that executes a SELECT
+        cursor.execute("SELECT 1 AS first")
+        first_query = cursor.query
+
+        # When executing a different query
+        cursor.execute("SELECT 2 AS second")
+
+        # Then query should reflect the new SQL
+        assert cursor.query is not None
+        assert cursor.query != first_query
+
+    def test_query_with_multiline_sql(self, cursor):
+        """Test that query works with multiline SQL statements."""
+        # Given a multiline SQL statement
+        sql = """
+            SELECT
+                1 AS col1,
+                2 AS col2,
+                3 AS col3
+        """
+
+        # When executing the multiline SQL
+        cursor.execute(sql)
+
+        # Then query should return the SQL text
+        assert cursor.query is not None
+        assert isinstance(cursor.query, str)
+        assert len(cursor.query) > 0
+
+
 class TestCursorDescription:
     """Integration tests for Cursor.description property."""
 

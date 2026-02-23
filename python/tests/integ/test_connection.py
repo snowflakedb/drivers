@@ -9,6 +9,67 @@ import pytest
 from snowflake.connector.errors import NotSupportedError
 
 
+class TestConnectionInfo:
+    """Integration tests for Connection._connection_info property."""
+
+    @pytest.mark.skip_reference
+    def test_connection_info_is_set_after_connect(self, connection):
+        """Test that _connection_info is populated after connection is established."""
+        # Given an established connection
+        # When accessing _connection_info
+        info = connection._connection_info
+
+        # Then it should not be None
+        assert info is not None
+
+    @pytest.mark.skip_reference
+    def test_connection_info_has_host(self, connection):
+        """Test that _connection_info contains a host value."""
+        # Given an established connection
+        info = connection._connection_info
+
+        # When checking the host field
+        # Then host should be set and non-empty
+        assert info.HasField("host")
+        assert isinstance(info.host, str)
+        assert len(info.host) > 0
+
+    @pytest.mark.skip_reference
+    def test_connection_info_has_port(self, connection):
+        """Test that _connection_info contains a port value."""
+        # Given an established connection
+        info = connection._connection_info
+
+        # When checking the port field
+        # Then port should be set and positive
+        assert info.HasField("port")
+        assert isinstance(info.port, int)
+        assert info.port > 0
+
+    @pytest.mark.skip_reference
+    def test_connection_info_has_session_token(self, connection):
+        """Test that _connection_info contains a session token after login."""
+        # Given an established connection
+        info = connection._connection_info
+
+        # When checking the session_token field
+        # Then session_token should be set and non-empty
+        assert info.HasField("session_token")
+        assert isinstance(info.session_token, str)
+        assert len(info.session_token) > 0
+
+    @pytest.mark.skip_reference
+    def test_connection_info_has_session_id(self, connection):
+        """Test that _connection_info contains a session ID after login."""
+        # Given an established connection
+        info = connection._connection_info
+
+        # When checking the session_id field
+        # Then session_id should be set
+        assert info.HasField("session_id")
+        assert isinstance(info.session_id, int)
+
+
 class TestConnectionMethods:
     """Test Connection object methods."""
 

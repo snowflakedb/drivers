@@ -456,3 +456,70 @@ impl RefreshContext {
         }
     }
 }
+
+/// Connection information returned by connection_get_info
+#[derive(Debug, Clone)]
+pub struct ConnectionInfo {
+    /// The host name of the Snowflake server
+    pub host: Option<String>,
+    /// The port number (if explicitly configured)
+    pub port: Option<i64>,
+    /// The full server URL
+    pub server_url: Option<String>,
+    /// The session token for authentication
+    pub session_token: Option<String>,
+    /// The server-assigned session ID
+    pub session_id: Option<i64>,
+}
+
+/// Get connection information for the given connection handle
+pub fn connection_get_info(conn_handle: Handle) -> Result<ConnectionInfo, ApiError> {
+    match CONN_HANDLE_MANAGER.get_obj(conn_handle) {
+        Some(conn_ptr) => {
+            let conn = conn_ptr
+                .lock()
+                .map_err(|_| ConnectionLockingSnafu {}.build())?;
+
+            // Extract host and port from settings
+            let host = conn.settings.get("host").and_then(|s| {
+                if let Setting::String(v) = s {
+                    Some(v.clone())
+                } else {
+                    None
+                }
+            });
+
+            let port = conn.settings.get("port").and_then(|s| {
+                if let Setting::Int(v) = s {
+                    Some(*v)
+                } else {
+                    None
+                }
+            });
+
+            // Get server_url
+            let server_url = conn.server_url.clone();
+
+            // Get session token and session ID from tokens
+            let (session_token, session_id) = {
+                let tokens_guard = conn.tokens.blocking_read();
+                match tokens_guard.as_ref() {
+                    Some(tokens) => (Some(tokens.session_token.clone()), Some(tokens.session_id)),
+                    None => (None, None),
+                }
+            };
+
+            Ok(ConnectionInfo {
+                host,
+                port,
+                server_url,
+                session_token,
+                session_id,
+            })
+        }
+        None => InvalidArgumentSnafu {
+            argument: "Connection handle not found".to_string(),
+        }
+        .fail(),
+    }
+}
