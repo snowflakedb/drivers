@@ -10,8 +10,10 @@ pub struct TestConnectionParams {
     pub host: String,
     #[serde(rename = "SNOWFLAKE_TEST_USER")]
     pub user: String,
+    #[serde(rename = "SNOWFLAKE_TEST_PRIVATE_KEY_FILE")]
+    pub private_key_file: Option<String>,
     #[serde(rename = "SNOWFLAKE_TEST_PRIVATE_KEY_CONTENTS")]
-    pub private_key_contents: Vec<String>,
+    pub private_key_contents: Option<Vec<String>>,
     #[serde(rename = "SNOWFLAKE_TEST_PRIVATE_KEY_PASSWORD")]
     pub private_key_password: Option<String>,
     #[serde(rename = "SNOWFLAKE_TEST_DATABASE")]

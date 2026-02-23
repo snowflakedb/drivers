@@ -9,14 +9,14 @@ use std::mem::size_of;
 use std::sync::Arc;
 
 use super::config::{Parameters, get_parameters, setup_logging};
-use super::private_key_helper::{self, TempPrivateKeyFile};
+use super::private_key_helper::{self, PrivateKeyFile};
 
 /// Creates a connected Snowflake client with database and connection initialized
 pub struct SnowflakeTestClient {
     pub conn_handle: ConnectionHandle,
     pub db_handle: DatabaseHandle,
     pub parameters: Parameters,
-    temp_key_file: Option<TempPrivateKeyFile>,
+    private_key_file: Option<PrivateKeyFile>,
 }
 
 impl SnowflakeTestClient {
@@ -40,7 +40,7 @@ impl SnowflakeTestClient {
             conn_handle,
             db_handle,
             parameters,
-            temp_key_file: None,
+            private_key_file: None,
         };
 
         client.set_options_from_parameters();
@@ -53,7 +53,7 @@ impl SnowflakeTestClient {
         let mut client = Self::with_default_params();
 
         let temp_key_file = client.setup_jwt_auth();
-        client.temp_key_file = Some(temp_key_file);
+        client.private_key_file = Some(temp_key_file);
         client
     }
 
@@ -69,7 +69,7 @@ impl SnowflakeTestClient {
         })
         .unwrap();
 
-        client.temp_key_file = Some(temp_key_file);
+        client.private_key_file = Some(temp_key_file);
         client
     }
 
@@ -107,7 +107,7 @@ impl SnowflakeTestClient {
             conn_handle,
             db_handle,
             parameters: test_parameters,
-            temp_key_file: None,
+            private_key_file: None,
         };
 
         client.set_options_from_parameters();
@@ -128,7 +128,7 @@ impl SnowflakeTestClient {
         })
         .unwrap();
 
-        client.temp_key_file = Some(temp_key_file);
+        client.private_key_file = Some(temp_key_file);
         client
     }
 
@@ -279,8 +279,8 @@ impl SnowflakeTestClient {
     }
 
     /// Stores a temporary private key file to keep it alive for the duration of the test.
-    pub fn set_temp_key_file(&mut self, temp_key_file: TempPrivateKeyFile) {
-        self.temp_key_file = Some(temp_key_file);
+    pub fn set_temp_key_file(&mut self, temp_key_file: PrivateKeyFile) {
+        self.private_key_file = Some(temp_key_file);
     }
 
     pub fn verify_simple_query(&self, connection_result: Result<(), String>) {
@@ -318,7 +318,7 @@ impl SnowflakeTestClient {
     }
 
     /// Sets up JWT authentication configuration and returns a private key file
-    fn setup_jwt_auth(&mut self) -> TempPrivateKeyFile {
+    fn setup_jwt_auth(&mut self) -> PrivateKeyFile {
         self.set_connection_option("authenticator", "SNOWFLAKE_JWT");
         let temp_key_file = private_key_helper::get_private_key_from_parameters(&self.parameters)
             .expect("Failed to create private key file");
