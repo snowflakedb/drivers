@@ -137,7 +137,8 @@ mod tests {
         let mut str_len: sql::Len = 0;
         let binding = binding_for_value(CDataType::SBigInt, &mut value, &mut str_len);
 
-        sr.write_odbc_type(123456789.9, &binding, &mut None).unwrap();
+        sr.write_odbc_type(123456789.9, &binding, &mut None)
+            .unwrap();
 
         assert_eq!(value, 123456789i64);
     }
