@@ -58,6 +58,11 @@ COPY error_trace_derive/ ./error_trace_derive/
 # Compiles ALL external crates (AWS SDK, tokio, etc.)
 RUN cargo chef cook --release --recipe-path recipe.json --package sf_core --package odbc
 
+# Re-copy Cargo.toml files that cargo-chef may have overwritten from the recipe,
+# which can strip the [lib] section (e.g. proc-macro = true).
+COPY error_trace/Cargo.toml ./error_trace/Cargo.toml
+COPY error_trace_derive/Cargo.toml ./error_trace_derive/Cargo.toml
+
 # Copy source files
 COPY sf_core/src/ ./sf_core/src/
 COPY sf_core/build.rs ./sf_core/build.rs
