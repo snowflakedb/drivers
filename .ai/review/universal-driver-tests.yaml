@@ -1,6 +1,6 @@
 id: universal-driver-tests-rules
 friendly_name: "Universal Driver Test Rules"
-status: shadow
+status: enabled
 percentage_of_prs_reviewed: 100
 allowed_folders:
   - "tests/definitions"
@@ -25,17 +25,17 @@ allowed_file_extensions:
   - ".toml"
   - ".txt"
 rules:
-  - id: scenario-name-must-start-with-should
+  - id: ud-scenario-name-must-start-with-should
     rule: |
       **OBJECTIVE**: Enforce consistent scenario naming across all Gherkin feature files.
 
-      **REQUIREMENT**: Every Gherkin `Scenario:` and `Scenario Outline:` name MUST start with the word "should". This convention makes test intent immediately clear and reads naturally as a behavioral specification (e.g., "should authenticate using JWT"). Do not use imperative phrasing, bare descriptions, or titles that omit "should".
+      **REQUIREMENT**: Every Gherkin `Scenario:` and `Scenario Outline:` name MUST start with the lowercase word "should". This convention makes test intent immediately clear and reads naturally as a behavioral specification (e.g., "should authenticate using JWT"). Do not use imperative phrasing, bare descriptions, titles that omit "should", or capitalized "Should".
 
       ❌ **BAD:**
       ```gherkin
       Scenario: Handshake with default roots
 
-      Scenario: execute simple SELECT returning single value
+      Scenario: Should execute simple SELECT returning single value
 
       Scenario: Upload file to stage
       ```
@@ -49,11 +49,13 @@ rules:
       Scenario: should upload file to stage
       ```
 
-  - id: one-when-per-scenario
+  - id: ud-one-when-per-scenario
     rule: |
       **OBJECTIVE**: Each scenario should test one specific action, making failures easy to diagnose and keeping tests focused.
 
       **REQUIREMENT**: Prefer a single `When` step per scenario. If a scenario has multiple `When` blocks (not counting `And` continuations of the same action), it likely tests multiple behaviors and should be split into separate scenarios. Multiple `Then` assertions after one `When` are fine — they verify different aspects of the same action. The exception is when a second `When` is truly a continuation of a multi-step workflow that cannot be meaningfully separated.
+
+      **NOTE**: Do NOT flag scenarios where repeated `When`/`Then` blocks are used to test different input values or variations — those are covered by the `ud-no-repeated-when-then-for-parameterization` rule instead. This rule applies when multiple `When` steps represent genuinely different actions (e.g., insert then update then delete), not different inputs to the same action.
 
       ❌ **BAD:**
       ```gherkin
@@ -78,7 +80,7 @@ rules:
         Then Result should contain [-1.234E+8000, 9.876E-8000]
       ```
 
-  - id: use-scenario-outline-for-parametrized-tests
+  - id: ud-use-scenario-outline-for-parametrized-tests
     rule: |
       **OBJECTIVE**: Use Gherkin's built-in parameterization mechanism instead of manual repetition for test variations.
 
@@ -112,7 +114,7 @@ rules:
           | SMALLINT |
       ```
 
-  - id: no-repeated-when-then-for-parameterization
+  - id: ud-no-repeated-when-then-for-parameterization
     rule: |
       **OBJECTIVE**: Prevent low-readability patterns where repeated When/Then/And blocks are used as manual parameterization within a single scenario.
 
@@ -164,11 +166,13 @@ rules:
           | null     | [0, NULL, 42]          | [0, 42, NULL]          |
       ```
 
-  - id: no-empty-gherkin-step-implementations
+  - id: ud-no-empty-gherkin-step-implementations
     rule: |
       **OBJECTIVE**: Every Gherkin step comment in a test implementation must have actual test logic beneath it — not just the comment with no code.
 
-      **REQUIREMENT**: When implementing a Gherkin scenario in any language, each step comment (`// Given ...`, `// When ...`, `// Then ...`, `# And ...`) MUST have corresponding executable test code directly following it. The validator checks that the step comments exist, but it cannot verify that real logic follows each one. An empty step — where the comment is present but no code implements it — silently skips validation and hides missing coverage. If a step genuinely requires no action in a particular language, add an explicit comment explaining why (e.g., `// No-op: connection is implicit in this driver`).
+      **REQUIREMENT**: When implementing a Gherkin scenario in any language, each step comment (`// Given ...`, `// When ...`, `// Then ...`, `# And ...`) MUST either:
+      1. Have corresponding executable test code directly following it, OR
+      2. Be removed/refactored out of the test if it serves no purpose.
 
       ❌ **BAD:**
       ```rust
@@ -229,7 +233,7 @@ rules:
           assert cursor.description[0][0] == "id"
       ```
 
-  - id: scenario-description-accuracy
+  - id: ud-scenario-description-accuracy
     rule: |
       **OBJECTIVE**: Ensure scenario names and step descriptions accurately describe the tested behavior, without typos or misleading wording.
 
@@ -251,7 +255,7 @@ rules:
         When Integer values are inserted using batch parameter binding
       ```
 
-  - id: consistent-given-usage
+  - id: ud-consistent-given-usage
     rule: |
       **OBJECTIVE**: Maintain structural consistency in how scenario preconditions are expressed within a feature.
 
@@ -284,34 +288,40 @@ rules:
           Then Column metadata for PUT command should be correct
       ```
 
-  - id: document-missing-test-coverage-gaps
+  - id: ud-document-missing-test-coverage-gaps
     rule: |
       **OBJECTIVE**: Feature files should explicitly document which test scenarios are still needed, especially for edge cases and error paths.
 
-      **REQUIREMENT**: When a feature file covers happy-path scenarios but obviously lacks error-path, edge-case, or additional HTTP method coverage, add TODO comments or pending scenarios listing what's missing. Proactively identify and document gaps rather than waiting for review feedback.
+      **REQUIREMENT**: When a feature file covers only happy-path scenarios, flag the absence of error-path and edge-case coverage. Specifically look for:
+      - Features that test a success path but have no scenarios for failure/error conditions
+      - Features that test one operation (e.g., upload) but don't cover related operations (e.g., download, overwrite, error on invalid input)
+      - Features that test one HTTP method or API call but omit other relevant methods
+      - Standalone scenarios that test a single aspect of a broader feature without any TODO or comment acknowledging what's missing
 
-      ❌ **BAD:**
+      The fix is to add `# TODO:` comments listing the missing scenarios, or add pending scenario stubs.
+
+      ❌ **BAD** (upload feature with no error paths, no download, no TODOs):
       ```gherkin
-      Feature: HTTP retry helper
+      Feature: PUT/GET file operations
 
-        Scenario: should retry GET after transient failure
-          Given a server that fails once then succeeds
-          When the helper executes the request
-          Then it should have retried once and returned the successful body
-      # Missing: POST/PUT retries, max attempts exhaustion, different status codes
+        Scenario: should upload file to stage
+          Given Snowflake client is logged in
+          When File "data.csv" is uploaded to stage "@mystage"
+          Then Upload should succeed
       ```
 
       ✅ **GOOD:**
       ```gherkin
-      Feature: HTTP retry helper
+      Feature: PUT/GET file operations
 
-        Scenario: should retry GET after transient failure
-          Given a server that fails once then succeeds
-          When the helper executes the request
-          Then it should have retried once and returned the successful body
+        Scenario: should upload file to stage
+          Given Snowflake client is logged in
+          When File "data.csv" is uploaded to stage "@mystage"
+          Then Upload should succeed
 
         # TODO: Add scenarios for:
-        # - POST/PUT retry behavior
-        # - Max retry attempts reached
-        # - Different transient error status codes (429, 503, 504)
+        # - Upload with invalid stage name (error path)
+        # - Upload with unsupported file format
+        # - Download file from stage (GET operation)
+        # - Overwrite existing file behavior
       ```
