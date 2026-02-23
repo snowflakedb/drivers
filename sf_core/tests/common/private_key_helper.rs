@@ -37,7 +37,7 @@ impl PrivateKeyFile {
 }
 
 pub fn get_private_key_from_parameters(parameters: &Parameters) -> Result<PrivateKeyFile, String> {
-    if let Some(path) = parameters.private_key_path.as_ref() {
+    if let Some(path) = parameters.private_key_file.as_ref() {
         return Path::new(path)
             .exists()
             .then_some(Ok(PrivateKeyFile::Existing(PathBuf::from(path))))
