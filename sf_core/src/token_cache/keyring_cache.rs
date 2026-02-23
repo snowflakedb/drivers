@@ -1,8 +1,14 @@
+use std::sync::OnceLock;
+
 use snafu::Location;
 
+use super::file_cache::install_file_credential_fallback;
 use super::{TokenCache, TokenCacheError, TokenType, build_cache_key, validate_key_components};
 
 const KEYRING_SERVICE_NAME: &str = "snowflake_credential_cache";
+
+/// Result of the one-time fallback installation attempt.
+static FALLBACK_INIT: OnceLock<Result<(), String>> = OnceLock::new();
 
 /// A token cache implementation using the system keyring.
 ///
@@ -11,12 +17,28 @@ const KEYRING_SERVICE_NAME: &str = "snowflake_credential_cache";
 /// - macOS: Keychain
 /// - Windows: Credential Manager
 /// - Linux: Secret Service (via D-Bus) or kernel keyutils
+///
+/// On platforms where the keyring does not provide persistent storage,
+/// a file-based credential backend is automatically installed as a
+/// fallback on first instantiation.
 pub struct KeyringTokenCache;
 
 impl KeyringTokenCache {
     /// Creates a new keyring-based token cache.
-    pub fn new() -> Self {
-        Self
+    ///
+    /// On the first call, this checks whether the platform keyring provides
+    /// persistent storage. If not, the file-based credential backend is
+    /// installed as a transparent fallback so that all subsequent
+    /// `keyring::Entry` operations are backed by the local cache file.
+    pub fn new() -> Result<Self, TokenCacheError> {
+        let result = FALLBACK_INIT
+            .get_or_init(|| install_file_credential_fallback().map_err(|e| format!("{e}")));
+        if result.is_err() {
+            return Err(TokenCacheError::CacheDirectoryResolution {
+                location: Location::default(),
+            });
+        }
+        Ok(Self)
     }
 
     /// Creates a keyring entry for the given key components.
@@ -33,12 +55,6 @@ impl KeyringTokenCache {
                 location: Location::default(),
             }
         })
-    }
-}
-
-impl Default for KeyringTokenCache {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -129,7 +145,7 @@ mod tests {
 
     #[test]
     fn add_and_get_token_succeeds() {
-        let cache = KeyringTokenCache::new();
+        let cache = KeyringTokenCache::new().expect("Failed to create cache");
         let host = unique_test_key("test_host");
         let username = unique_test_key("test_user");
         let token_value = "test_token_value_12345";
@@ -156,7 +172,7 @@ mod tests {
 
     #[test]
     fn get_nonexistent_token_returns_none() {
-        let cache = KeyringTokenCache::new();
+        let cache = KeyringTokenCache::new().expect("Failed to create cache");
         let host = unique_test_key("nonexistent_host");
         let username = unique_test_key("nonexistent_user");
 
@@ -169,7 +185,7 @@ mod tests {
 
     #[test]
     fn remove_existing_token_succeeds() {
-        let cache = KeyringTokenCache::new();
+        let cache = KeyringTokenCache::new().expect("Failed to create cache");
         let host = unique_test_key("remove_test_host");
         let username = unique_test_key("remove_test_user");
         let token_value = "token_to_be_removed";
@@ -197,7 +213,7 @@ mod tests {
 
     #[test]
     fn remove_nonexistent_token_succeeds() {
-        let cache = KeyringTokenCache::new();
+        let cache = KeyringTokenCache::new().expect("Failed to create cache");
         let host = unique_test_key("remove_nonexistent_host");
         let username = unique_test_key("remove_nonexistent_user");
 
@@ -213,7 +229,7 @@ mod tests {
 
     #[test]
     fn overwrite_token_succeeds() {
-        let cache = KeyringTokenCache::new();
+        let cache = KeyringTokenCache::new().expect("Failed to create cache");
         let host = unique_test_key("overwrite_test_host");
         let username = unique_test_key("overwrite_test_user");
         let original_token = "original_token_value";
@@ -253,7 +269,7 @@ mod tests {
 
     #[test]
     fn different_token_types_stored_separately() {
-        let cache = KeyringTokenCache::new();
+        let cache = KeyringTokenCache::new().expect("Failed to create cache");
         let host = unique_test_key("multi_type_host");
         let username = unique_test_key("multi_type_user");
         let id_token = "id_token_value";
@@ -279,7 +295,7 @@ mod tests {
 
     #[test]
     fn add_token_with_empty_host_fails() {
-        let cache = KeyringTokenCache::new();
+        let cache = KeyringTokenCache::new().expect("Failed to create cache");
 
         let result = cache.add_token("", "username", TokenType::IdToken, "token_value");
         assert!(result.is_err());
@@ -291,7 +307,7 @@ mod tests {
 
     #[test]
     fn add_token_with_empty_username_fails() {
-        let cache = KeyringTokenCache::new();
+        let cache = KeyringTokenCache::new().expect("Failed to create cache");
 
         let result = cache.add_token("host.example.com", "", TokenType::IdToken, "token_value");
         assert!(result.is_err());
@@ -303,7 +319,7 @@ mod tests {
 
     #[test]
     fn get_token_with_empty_host_fails() {
-        let cache = KeyringTokenCache::new();
+        let cache = KeyringTokenCache::new().expect("Failed to create cache");
 
         let result = cache.get_token("", "username", TokenType::IdToken);
         assert!(result.is_err());
@@ -315,7 +331,7 @@ mod tests {
 
     #[test]
     fn get_token_with_empty_username_fails() {
-        let cache = KeyringTokenCache::new();
+        let cache = KeyringTokenCache::new().expect("Failed to create cache");
 
         let result = cache.get_token("host.example.com", "", TokenType::IdToken);
         assert!(result.is_err());
@@ -327,7 +343,7 @@ mod tests {
 
     #[test]
     fn remove_token_with_empty_host_fails() {
-        let cache = KeyringTokenCache::new();
+        let cache = KeyringTokenCache::new().expect("Failed to create cache");
 
         let result = cache.remove_token("", "username", TokenType::IdToken);
         assert!(result.is_err());
@@ -339,7 +355,7 @@ mod tests {
 
     #[test]
     fn remove_token_with_empty_username_fails() {
-        let cache = KeyringTokenCache::new();
+        let cache = KeyringTokenCache::new().expect("Failed to create cache");
 
         let result = cache.remove_token("host.example.com", "", TokenType::IdToken);
         assert!(result.is_err());
