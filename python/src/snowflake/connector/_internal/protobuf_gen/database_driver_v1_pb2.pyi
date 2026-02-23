@@ -281,6 +281,33 @@ class DriverError(_message.Message):
 Global___DriverError: _TypeAlias = DriverError  # noqa: Y015
 
 @_typing.final
+class ErrorTraceEntry(_message.Message):
+    """Single entry in an error trace (analogous to a stack-trace frame)"""
+
+    DESCRIPTOR: _descriptor.Descriptor
+
+    FILE_FIELD_NUMBER: _builtins.int
+    LINE_FIELD_NUMBER: _builtins.int
+    COLUMN_FIELD_NUMBER: _builtins.int
+    MESSAGE_FIELD_NUMBER: _builtins.int
+    file: _builtins.str
+    line: _builtins.int
+    column: _builtins.int
+    message: _builtins.str
+    def __init__(
+        self,
+        *,
+        file: _builtins.str = ...,
+        line: _builtins.int = ...,
+        column: _builtins.int = ...,
+        message: _builtins.str = ...,
+    ) -> None: ...
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["column", b"column", "file", b"file", "line", b"line", "message", b"message"]  # noqa: Y015
+    def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
+
+Global___ErrorTraceEntry: _TypeAlias = ErrorTraceEntry  # noqa: Y015
+
+@_typing.final
 class DriverException(_message.Message):
     """Driver exception"""
 
@@ -289,23 +316,24 @@ class DriverException(_message.Message):
     MESSAGE_FIELD_NUMBER: _builtins.int
     STATUS_CODE_FIELD_NUMBER: _builtins.int
     ERROR_FIELD_NUMBER: _builtins.int
-    REPORT_FIELD_NUMBER: _builtins.int
+    ERROR_TRACE_FIELD_NUMBER: _builtins.int
     message: _builtins.str
     status_code: Global___StatusCode.ValueType
-    report: _builtins.str
     @_builtins.property
     def error(self) -> Global___DriverError: ...
+    @_builtins.property
+    def error_trace(self) -> _containers.RepeatedCompositeFieldContainer[Global___ErrorTraceEntry]: ...
     def __init__(
         self,
         *,
         message: _builtins.str = ...,
         status_code: Global___StatusCode.ValueType = ...,
         error: Global___DriverError | None = ...,
-        report: _builtins.str = ...,
+        error_trace: _abc.Iterable[Global___ErrorTraceEntry] | None = ...,
     ) -> None: ...
     _HasFieldArgType: _TypeAlias = _typing.Literal["error", b"error"]  # noqa: Y015
     def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
-    _ClearFieldArgType: _TypeAlias = _typing.Literal["error", b"error", "message", b"message", "report", b"report", "status_code", b"status_code"]  # noqa: Y015
+    _ClearFieldArgType: _TypeAlias = _typing.Literal["error", b"error", "error_trace", b"error_trace", "message", b"message", "status_code", b"status_code"]  # noqa: Y015
     def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
 
 Global___DriverException: _TypeAlias = DriverException  # noqa: Y015

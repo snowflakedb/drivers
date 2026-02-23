@@ -100,12 +100,20 @@ message DriverError {
   }
 }
 
+// Single entry in an error trace (analogous to a stack-trace frame)
+message ErrorTraceEntry {
+  string file = 1;
+  uint32 line = 2;
+  uint32 column = 3;
+  string message = 4;
+}
+
 // Driver exception
 message DriverException {
   string message = 1;
   StatusCode status_code = 2;
   DriverError error = 3;
-  string report = 4;
+  repeated ErrorTraceEntry error_trace = 4;
 }
 
 // Column metadata for description

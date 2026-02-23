@@ -1,11 +1,12 @@
 use arrow::datatypes::DataType;
+use error_trace::ErrorTrace;
 use snafu::{Location, Snafu};
 
 use crate::{
     cdata_types::CDataType, conversion::parsers::numeric_literal_parser::NumericParsingError,
 };
 
-#[derive(Snafu, Debug)]
+#[derive(Snafu, Debug, ErrorTrace)]
 #[snafu(visibility(pub))]
 pub enum ReadArrowError {
     #[snafu(display("Value is null"))]
@@ -15,7 +16,7 @@ pub enum ReadArrowError {
     },
 }
 
-#[derive(Snafu, Debug)]
+#[derive(Snafu, Debug, ErrorTrace)]
 #[snafu(visibility(pub))]
 pub enum WriteOdbcError {
     InvalidValue {
@@ -61,7 +62,7 @@ pub enum WriteOdbcError {
 }
 
 /// Error type for data conversion operations between Arrow, Snowflake, and ODBC types.
-#[derive(Snafu, Debug)]
+#[derive(Snafu, Debug, ErrorTrace)]
 #[snafu(visibility(pub))]
 pub enum ConversionError {
     #[snafu(display("Failed to read arrow value"))]

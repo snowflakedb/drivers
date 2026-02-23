@@ -14,15 +14,16 @@ use arrow::error::ArrowError;
 use odbc_sys as sql;
 use proto_utils::ProtoError;
 use sf_core::protobuf_gen::database_driver_v1::{
-    GenericError, InvalidParameterValue as ProtoInvalidParameterValue,
-    LoginError as ProtoLoginError, MissingParameter as ProtoMissingParameter,
-    driver_error::ErrorType,
+    DriverError, ErrorTraceEntry, GenericError,
+    InvalidParameterValue as ProtoInvalidParameterValue, LoginError as ProtoLoginError,
+    MissingParameter as ProtoMissingParameter, driver_error::ErrorType,
 };
 
+use error_trace::{ErrorTrace, format_error_trace};
 use sf_core::protobuf_gen::database_driver_v1::DriverException as ProtoDriverException;
 use snafu::{Location, Snafu, location};
 
-#[derive(Snafu, Debug)]
+#[derive(Snafu, Debug, ErrorTrace)]
 #[snafu(visibility(pub))]
 pub enum OdbcError {
     #[snafu(display("Connection is disconnected"))]
@@ -278,19 +279,9 @@ pub enum OdbcError {
         location: Location,
     },
 
-    #[snafu(display("[Core] {message}\n report: {report}"))]
-    ProtoDriverException {
-        message: String,
-        report: String,
-        status_code: i32,
-        error: Box<ErrorType>,
-        #[snafu(implicit)]
-        location: Location,
-    },
-
-    #[snafu(display("[Core] Protocol transport error: {message}"))]
-    ProtoTransport {
-        message: String,
+    #[snafu(display("Received core protobuf error"))]
+    CoreError {
+        source: CoreProtobufError,
         #[snafu(implicit)]
         location: Location,
     },
@@ -333,10 +324,35 @@ static AUTHENTICATOR_PARAMETERS: LazyLock<HashSet<String>> = LazyLock::new(|| {
     set
 });
 
+fn format_proto_error_trace(trace: &[ErrorTraceEntry]) -> String {
+    let mut buf = String::new();
+    for (i, entry) in trace.iter().enumerate() {
+        if i > 0 {
+            buf.push('\n');
+        }
+        buf.push_str(&format!("  {i}: {}", entry.message));
+        buf.push_str(&format!(
+            "\n      at {}:{}:{}",
+            entry.file, entry.line, entry.column
+        ));
+    }
+    buf
+}
+
 impl OdbcError {
+    pub fn message_text(&self) -> String {
+        let trace = self.error_trace();
+        let error_message = trace
+            .last()
+            .map(|entry| entry.message.clone())
+            .unwrap_or_default();
+        let trace_text = format_error_trace(&trace);
+        format!("{}\nTrace:\n{}", error_message, trace_text)
+    }
+
     pub fn to_diagnostic_record(&self) -> DiagnosticRecord {
         DiagnosticRecord {
-            message_text: self.to_string(),
+            message_text: self.message_text(),
             sql_state: self.to_sql_state(),
             native_error: self.to_native_error(),
             ..Default::default()
@@ -404,7 +420,10 @@ impl OdbcError {
             OdbcError::TextConversionFromUtf8 { .. } => SqlState::StringDataRightTruncated,
             OdbcError::TextConversionFromUtf16 { .. } => SqlState::StringDataRightTruncated,
             OdbcError::ArrowBinding { .. } => SqlState::GeneralError,
-            OdbcError::ProtoDriverException { error, .. } => match *error.clone() {
+            OdbcError::CoreError {
+                source: CoreProtobufError::Application { error, .. },
+                ..
+            } => match error.as_ref() {
                 ErrorType::AuthError(_) => SqlState::InvalidAuthorizationSpecification,
                 ErrorType::GenericError(_) => SqlState::GeneralError,
                 ErrorType::InvalidParameterValue(ProtoInvalidParameterValue {
@@ -426,7 +445,10 @@ impl OdbcError {
                 ErrorType::InternalError(_) => SqlState::GeneralError,
                 ErrorType::LoginError(_) => SqlState::InvalidAuthorizationSpecification,
             },
-            OdbcError::ProtoTransport { .. } => SqlState::ClientUnableToEstablishConnection,
+            OdbcError::CoreError { source, .. } => match source {
+                CoreProtobufError::Transport { .. } => SqlState::ClientUnableToEstablishConnection,
+                CoreProtobufError::Application { .. } => SqlState::GeneralError,
+            },
             OdbcError::ProtoRequiredFieldMissing { .. } => SqlState::GeneralError,
             OdbcError::ArrowArrayStreamReaderCreation { .. } => SqlState::GeneralError,
             OdbcError::StatementErrorState { .. } => SqlState::GeneralError,
@@ -435,9 +457,9 @@ impl OdbcError {
 
     pub fn to_native_error(&self) -> sql::Integer {
         match self {
-            OdbcError::ProtoDriverException { error, .. } => match *error.clone() {
-                ErrorType::LoginError(ProtoLoginError { code, .. }) => code,
-                _ => 0,
+            OdbcError::CoreError { source, .. } => match source {
+                CoreProtobufError::Application { status_code, .. } => *status_code,
+                CoreProtobufError::Transport { .. } => 0,
             },
             _ => 0,
         }
@@ -445,21 +467,26 @@ impl OdbcError {
 
     #[track_caller]
     pub fn from_protobuf_error(error: ProtoError<ProtoDriverException>) -> OdbcError {
-        let location = location!();
-        match error {
-            ProtoError::Application(driver_exception) => OdbcError::ProtoDriverException {
-                message: driver_exception.message,
-                status_code: driver_exception.status_code,
+        let loc = std::panic::Location::caller();
+        let location = Location::new(loc.file(), loc.line(), loc.column());
+        let core_error = match error {
+            ProtoError::Application(driver_exception) => CoreProtobufError::Application {
                 error: Box::new(
                     driver_exception
                         .error
                         .and_then(|error| error.error_type)
                         .unwrap_or(ErrorType::GenericError(GenericError {})),
                 ),
+                message: driver_exception.message,
+                status_code: driver_exception.status_code,
+                error_trace: driver_exception.error_trace,
                 location,
-                report: driver_exception.report,
             },
-            ProtoError::Transport(message) => OdbcError::ProtoTransport { message, location },
+            ProtoError::Transport(message) => CoreProtobufError::Transport { message, location },
+        };
+        OdbcError::CoreError {
+            source: core_error,
+            location,
         }
     }
 }
@@ -468,5 +495,43 @@ impl From<ProtoError<ProtoDriverException>> for OdbcError {
     #[track_caller]
     fn from(error: ProtoError<ProtoDriverException>) -> Self {
         OdbcError::from_protobuf_error(error)
+    }
+}
+
+#[derive(Debug, Snafu)]
+pub enum CoreProtobufError {
+    #[snafu(display("Application error: {message}"))]
+    Application {
+        error: Box<ErrorType>,
+        message: String,
+        status_code: i32,
+        error_trace: Vec<ErrorTraceEntry>,
+        location: Location,
+    },
+    #[snafu(display("Transport error: {message}"))]
+    Transport { message: String, location: Location },
+}
+
+impl ErrorTrace for CoreProtobufError {
+    fn error_trace(&self) -> Vec<error_trace::ErrorTraceEntry> {
+        match self {
+            CoreProtobufError::Application { error_trace, .. } => error_trace
+                .iter()
+                .map(|entry| error_trace::ErrorTraceEntry {
+                    location: error_trace::Location::new(
+                        entry.file.clone(),
+                        entry.line,
+                        entry.column,
+                    ),
+                    message: entry.message.clone(),
+                })
+                .collect(),
+            CoreProtobufError::Transport { message, location } => {
+                vec![error_trace::ErrorTraceEntry {
+                    location: error_trace::Location::from(*location),
+                    message: message.clone(),
+                }]
+            }
+        }
     }
 }

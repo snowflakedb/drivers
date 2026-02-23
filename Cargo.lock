@@ -1561,6 +1561,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "error_trace"
+version = "0.1.0"
+dependencies = [
+ "error_trace_derive",
+ "snafu 0.8.9",
+]
+
+[[package]]
+name = "error_trace_derive"
+version = "0.1.0"
+dependencies = [
+ "quote",
+ "syn 2.0.106",
+]
+
+[[package]]
 name = "fastrand"
 version = "2.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2774,6 +2790,7 @@ dependencies = [
  "arrow",
  "base64 0.22.1",
  "chrono",
+ "error_trace",
  "odbc-sys",
  "proto_utils",
  "sf_core",
@@ -3812,6 +3829,7 @@ dependencies = [
  "der 0.7.10",
  "der-parser",
  "dirs",
+ "error_trace",
  "flate2",
  "glob",
  "hex",

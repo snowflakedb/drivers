@@ -1,3 +1,4 @@
+use error_trace::ErrorTrace;
 use snafu::{Location, Snafu};
 
 pub use crate::apis::database_driver_v1::query::QueryResponseProcessingError;
@@ -6,7 +7,7 @@ pub use crate::config::ConfigError;
 pub use crate::rest::snowflake::RestError;
 use crate::tls::error::TlsError;
 
-#[derive(Debug, Snafu)]
+#[derive(Debug, Snafu, ErrorTrace)]
 #[snafu(visibility(pub(super)))]
 pub enum ApiError {
     #[snafu(display("Generic error"))]
@@ -32,7 +33,7 @@ pub enum ApiError {
         #[snafu(implicit)]
         location: Location,
     },
-    #[snafu(display("Failed to login: {source}"))]
+    #[snafu(display("Failed to login"))]
     Login {
         #[snafu(implicit)]
         location: Location,

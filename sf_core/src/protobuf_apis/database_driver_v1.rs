@@ -22,7 +22,7 @@ use crate::protobuf_gen::database_driver_v1::*;
 use arrow::ffi::FFI_ArrowArray;
 use arrow::ffi::FFI_ArrowSchema;
 use arrow::ffi_stream::FFI_ArrowArrayStream;
-use snafu::Report;
+use error_trace::ErrorTrace;
 use tracing::instrument;
 
 impl From<ArrowArrayStreamPtr> for *mut FFI_ArrowArrayStream {
@@ -339,12 +339,21 @@ fn to_driver_exception(error: ApiError) -> DriverException {
 
     let message = error.to_string();
     let driver_error = to_driver_error(&error);
-    let report = Report::from_error(error).to_string();
+    let error_trace = error
+        .error_trace()
+        .into_iter()
+        .map(|entry| ErrorTraceEntry {
+            file: entry.location.file,
+            line: entry.location.line,
+            column: entry.location.column,
+            message: entry.message,
+        })
+        .collect();
     DriverException {
         message,
         status_code: status_code as i32,
         error: Some(driver_error),
-        report,
+        error_trace,
     }
 }
 
@@ -354,7 +363,7 @@ fn required<T>(value: Option<T>, message: &str) -> Result<T, DriverException> {
         message: message.to_string(),
         status_code: StatusCode::InvalidArgument as i32,
         error: None,
-        report: message.to_string(),
+        error_trace: vec![],
     })
 }
 
@@ -363,7 +372,7 @@ fn not_implemented(message: &str) -> DriverException {
         message: message.to_string(),
         status_code: StatusCode::NotImplemented as i32,
         error: None,
-        report: message.to_string(),
+        error_trace: vec![],
     }
 }
 
@@ -839,6 +848,18 @@ impl DatabaseDriver for DatabaseDriverImpl {
 }
 
 impl DatabaseDriverServer for DatabaseDriverImpl {}
+
+impl ErrorTrace for DriverException {
+    fn error_trace(&self) -> Vec<error_trace::ErrorTraceEntry> {
+        self.error_trace
+            .iter()
+            .map(|entry| error_trace::ErrorTraceEntry {
+                location: error_trace::Location::new(entry.file.clone(), entry.line, entry.column),
+                message: entry.message.clone(),
+            })
+            .collect()
+    }
+}
 
 pub type DatabaseDriverClient = crate::protobuf_gen::database_driver_v1::DatabaseDriverClient<
     crate::protobuf_apis::RustTransport,

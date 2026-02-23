@@ -18,6 +18,7 @@ chrono = "0.4.43"
 base64 = "0.22.1"
 
 proto_utils = { path = "../proto_utils" }
+error_trace = { path = "../error_trace" }
 
 [[test]]
 name = "odbc_api_tests"

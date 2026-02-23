@@ -615,7 +615,7 @@ fn skip_leading_whitespace_and_comments(s: &str) -> &str {
     s
 }
 
-#[derive(Snafu, Debug)]
+#[derive(Snafu, Debug, error_trace::ErrorTrace)]
 pub enum StatementError {
     #[snafu(display("Unsupported bind parameter type: {type_}"))]
     UnsupportedBindParameterType {

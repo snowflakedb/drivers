@@ -233,7 +233,7 @@ fn decode_chunk_body(body: Vec<u8>, encoding: Option<&HeaderValue>) -> Result<Ve
     Ok(data)
 }
 
-#[derive(Snafu, Debug)]
+#[derive(Snafu, Debug, error_trace::ErrorTrace)]
 pub enum ChunkError {
     #[snafu(display("Failed to create runtime"))]
     RuntimeCreation {

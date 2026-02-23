@@ -122,7 +122,7 @@ pub fn boxed_arrow_reader(
     )))
 }
 
-#[derive(Snafu, Debug)]
+#[derive(Snafu, Debug, error_trace::ErrorTrace)]
 pub enum ArrowUtilsError {
     #[snafu(display("Arrow operation failed"))]
     Arrow {

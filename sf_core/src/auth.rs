@@ -134,7 +134,7 @@ pub fn create_credentials(login_parameters: &LoginParameters) -> Result<Credenti
     }
 }
 
-#[derive(Debug, Snafu)]
+#[derive(Debug, Snafu, error_trace::ErrorTrace)]
 pub enum AuthError {
     #[snafu(display("Invalid private key format"))]
     InvalidPrivateKeyFormat {

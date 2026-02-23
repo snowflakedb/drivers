@@ -677,7 +677,7 @@ impl<T> OneOrMany<T> {
     }
 }
 
-#[derive(Snafu, Debug)]
+#[derive(Snafu, Debug, error_trace::ErrorTrace)]
 pub enum QueryResponseError {
     #[snafu(display("Missing parameter in Snowflake response: {parameter}"))]
     MissingParameter {

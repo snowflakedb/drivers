@@ -9,6 +9,8 @@ members = [
     "proto_generator",
     "proto_utils",
     "sf_core/tests/common/arrow_deserialize_macro",
+    "error_trace",
+    "error_trace_derive",
 ]
 resolver = "2"
 

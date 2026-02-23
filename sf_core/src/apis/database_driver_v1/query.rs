@@ -197,7 +197,7 @@ fn build_generic_fixed_rowtype(name: &str) -> RowType {
     RowType::fixed_with_scale_zero(name, false, PUT_GET_ROWSET_FIXED_LENGTH)
 }
 
-#[derive(Debug, Snafu)]
+#[derive(Debug, Snafu, error_trace::ErrorTrace)]
 pub enum QueryResponseProcessingError {
     #[snafu(display("Failed to convert upload results to Arrow format"))]
     UploadResultsConversion {
@@ -243,7 +243,7 @@ pub enum QueryResponseProcessingError {
     },
 }
 
-#[derive(Debug, Snafu)]
+#[derive(Debug, Snafu, error_trace::ErrorTrace)]
 pub enum ReadBatchesError {
     #[snafu(display(
         "Column count mismatch: rowtype has {rowtype_count} columns, but rowset has {rowset_count} columns"

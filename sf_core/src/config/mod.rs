@@ -5,9 +5,10 @@ pub mod retry;
 pub mod settings;
 pub mod toml_loader;
 
+use error_trace::ErrorTrace;
 use snafu::{Location, Snafu};
 
-#[derive(Debug, Snafu)]
+#[derive(Debug, Snafu, ErrorTrace)]
 pub enum ConfigError {
     #[snafu(display("Missing required parameter: {parameter}"))]
     MissingParameter {
