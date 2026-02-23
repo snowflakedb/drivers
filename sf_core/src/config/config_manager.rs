@@ -18,8 +18,12 @@ pub fn load_connection_config_with_paths(
     paths: &ConfigPaths,
 ) -> Result<HashMap<String, Setting>, ConfigError> {
     let mut settings = HashMap::new();
+    let empty_toml = toml::Value::Table(toml::map::Map::new());
 
-    let config_toml = load_toml_file(&paths.config_file)?;
+    let config_toml = match &paths.config_file {
+        Some(p) => load_toml_file(p)?,
+        None => empty_toml.clone(),
+    };
 
     if let Some(connections_section) = config_toml.get("connections").and_then(|v| v.as_table())
         && let Some(conn_config) = connections_section
@@ -33,7 +37,10 @@ pub fn load_connection_config_with_paths(
         }
     }
 
-    let connections_toml = load_toml_file(&paths.connections_file)?;
+    let connections_toml = match &paths.connections_file {
+        Some(p) => load_toml_file(p)?,
+        None => empty_toml,
+    };
 
     if let Some(conn_config) = connections_toml
         .get(connection_name)
@@ -67,8 +74,12 @@ pub fn load_all_connections_with_paths(
     paths: &ConfigPaths,
 ) -> Result<HashMap<String, HashMap<String, Setting>>, ConfigError> {
     let mut all_connections = HashMap::new();
+    let empty_toml = toml::Value::Table(toml::map::Map::new());
 
-    let config_toml = load_toml_file(&paths.config_file)?;
+    let config_toml = match &paths.config_file {
+        Some(p) => load_toml_file(p)?,
+        None => empty_toml.clone(),
+    };
     if let Some(connections_section) = config_toml.get("connections").and_then(|v| v.as_table()) {
         for (conn_name, conn_config) in connections_section {
             if let Some(table) = conn_config.as_table() {
@@ -83,7 +94,10 @@ pub fn load_all_connections_with_paths(
         }
     }
 
-    let connections_toml = load_toml_file(&paths.connections_file)?;
+    let connections_toml = match &paths.connections_file {
+        Some(p) => load_toml_file(p)?,
+        None => empty_toml,
+    };
     if let Some(table) = connections_toml.as_table() {
         for (conn_name, conn_config) in table {
             if let Some(config_table) = conn_config.as_table() {
@@ -108,7 +122,7 @@ fn toml_value_to_setting(value: &toml::Value) -> Option<Setting> {
         toml::Value::String(s) => Some(Setting::String(s.clone())),
         toml::Value::Integer(i) => Some(Setting::Int(*i)),
         toml::Value::Float(f) => Some(Setting::Double(*f)),
-        toml::Value::Boolean(b) => Some(Setting::String(b.to_string())),
+        toml::Value::Boolean(b) => Some(Setting::Bool(*b)),
         _ => None,
     }
 }
@@ -132,7 +146,10 @@ pub fn load_config_section_with_paths(
     section_name: &str,
     paths: &ConfigPaths,
 ) -> Result<Option<HashMap<String, Setting>>, ConfigError> {
-    let config_toml = load_toml_file(&paths.config_file)?;
+    let config_toml = match &paths.config_file {
+        Some(p) => load_toml_file(p)?,
+        None => return Ok(None),
+    };
 
     if section_name == "connections" || section_name.starts_with("connections.") {
         return Ok(None);
@@ -171,11 +188,18 @@ pub fn load_all_config_sections() -> Result<HashMap<String, HashMap<String, Sett
     load_all_config_sections_with_paths(&paths)
 }
 
-/// Load all sections from config files using explicit config paths
+/// Load all sections from config files using explicit config paths.
+///
+/// Only reads files for which a path is provided (`Some`). When a path is
+/// `None`, that file is skipped entirely — no fallback to platform defaults.
 pub fn load_all_config_sections_with_paths(
     paths: &ConfigPaths,
 ) -> Result<HashMap<String, HashMap<String, Setting>>, ConfigError> {
-    let config_toml = load_toml_file(&paths.config_file)?;
+    let empty_toml = toml::Value::Table(toml::map::Map::new());
+    let config_toml = match &paths.config_file {
+        Some(p) => load_toml_file(p)?,
+        None => empty_toml.clone(),
+    };
     let mut all_sections = HashMap::new();
 
     if let Some(table) = config_toml.as_table() {
@@ -205,11 +229,19 @@ pub fn load_all_config_sections_with_paths(
                     }
                 }
                 all_sections.insert(section_name.clone(), settings);
+            } else if let Some(setting) = toml_value_to_setting(section_value) {
+                all_sections
+                    .entry("_root".to_string())
+                    .or_insert_with(HashMap::new)
+                    .insert(section_name.clone(), setting);
             }
         }
     }
 
-    let connections_toml = load_toml_file(&paths.connections_file)?;
+    let connections_toml = match &paths.connections_file {
+        Some(p) => load_toml_file(p)?,
+        None => empty_toml,
+    };
     if let Some(table) = connections_toml.as_table() {
         for (conn_name, conn_config) in table {
             if let Some(config_table) = conn_config.as_table() {
@@ -236,8 +268,8 @@ mod tests {
 
     fn make_paths(dir: &TempDir) -> ConfigPaths {
         ConfigPaths {
-            config_file: dir.path().join("config.toml"),
-            connections_file: dir.path().join("connections.toml"),
+            config_file: Some(dir.path().join("config.toml")),
+            connections_file: Some(dir.path().join("connections.toml")),
         }
     }
 
@@ -272,11 +304,10 @@ mod tests {
         ));
 
         let bool_val = toml::Value::Boolean(true);
-        if let Some(Setting::String(s)) = toml_value_to_setting(&bool_val) {
-            assert_eq!(s, "true");
-        } else {
-            panic!("Expected String setting");
-        }
+        assert!(matches!(
+            toml_value_to_setting(&bool_val),
+            Some(Setting::Bool(true))
+        ));
     }
 
     #[test]
@@ -546,11 +577,11 @@ cert_path = "/etc/certs/server.crt"
         assert!(section.is_some());
 
         let settings = section.unwrap();
-        if let Some(Setting::String(enabled)) = settings.get("enabled") {
-            assert_eq!(enabled, "true");
-        } else {
-            panic!("Expected enabled setting");
-        }
+        assert!(
+            matches!(settings.get("enabled"), Some(Setting::Bool(true))),
+            "Expected Setting::Bool(true) for TOML boolean, got {:?}",
+            settings.get("enabled")
+        );
     }
 
     #[test]

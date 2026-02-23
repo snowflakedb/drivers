@@ -11,8 +11,8 @@ use tempfile::TempDir;
 
 fn make_paths(dir: &TempDir) -> ConfigPaths {
     ConfigPaths {
-        config_file: dir.path().join("config.toml"),
-        connections_file: dir.path().join("connections.toml"),
+        config_file: Some(dir.path().join("config.toml")),
+        connections_file: Some(dir.path().join("connections.toml")),
     }
 }
 

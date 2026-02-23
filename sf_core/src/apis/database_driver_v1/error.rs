@@ -8,7 +8,7 @@ pub use crate::rest::snowflake::RestError;
 use crate::tls::error::TlsError;
 
 #[derive(Debug, Snafu, ErrorTrace)]
-#[snafu(visibility(pub(super)))]
+#[snafu(visibility(pub(crate)))]
 pub enum ApiError {
     #[snafu(display("Generic error"))]
     GenericError {

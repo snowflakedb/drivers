@@ -8,7 +8,7 @@ from snowflake.connector.config_manager import (
     ConfigManager,
     ConfigOption,
 )
-from tests.compatibility import NEW_DRIVER_ONLY
+from tests.compatibility import NEW_DRIVER_ONLY, OLD_DRIVER_ONLY
 
 
 @pytest.fixture
@@ -33,7 +33,12 @@ def config_env(tmp_path):
             del os.environ["SNOWFLAKE_HOME"]
 
         for key in list(os.environ.keys()):
-            if key.startswith("SNOWFLAKE_TEST_") or key.startswith("SNOWFLAKE_SECTION_") or key == "CUSTOM_ENV_VAR":
+            if (
+                key.startswith("SNOWFLAKE_TEST_")
+                or key.startswith("SNOWFLAKE_SECTION_")
+                or key.startswith("SNOWFLAKE_MY")
+                or key == "CUSTOM_ENV_VAR"
+            ):
                 del os.environ[key]
 
 
@@ -114,6 +119,7 @@ mykey = "file_value"
 
         # When ConfigManager retrieves the option
         root_manager = ConfigManager(name="test_root", file_path=config_env["config_file"])
+        root_manager.read_config(skip_file_permissions_check=True)
         option = ConfigOption(
             name="mykey",
             _root_manager=root_manager,
@@ -164,6 +170,113 @@ mykey = "file_value"
         # When ConfigManager retrieves option with parse_str set to int
         # Then The parsed integer value should be returned
         assert option.value() == 123
+        assert isinstance(option.value(), int)
+
+
+class TestDefaultEnvName:
+    """Tests for the default_env_name property and auto env var resolution."""
+
+    def test_default_env_name_single_part(self, config_env):
+        """Test default_env_name with a single-level nest path."""
+        # Given A ConfigOption with nest_path ["root", "myoption"]
+        root_manager = ConfigManager(name="root", file_path=config_env["config_file"])
+        option = ConfigOption(
+            name="myoption",
+            _root_manager=root_manager,
+            _nest_path=["root"],
+            default="unused",
+        )
+
+        assert option.default_env_name == "SNOWFLAKE_MYOPTION"
+
+    def test_default_env_name_multi_part(self, config_env):
+        """Test default_env_name with a multi-level nest path."""
+        # Given A ConfigOption with nest_path ["root", "section", "subsection", "key"]
+        root_manager = ConfigManager(name="root", file_path=config_env["config_file"])
+        option = ConfigOption(
+            name="key",
+            _root_manager=root_manager,
+            _nest_path=["root", "section", "subsection"],
+            default="unused",
+        )
+
+        assert option.default_env_name == "SNOWFLAKE_SECTION_SUBSECTION_KEY"
+
+    def test_value_uses_default_env_var(self, config_env):
+        """Test that value() picks up SNOWFLAKE_<PATH> env var without explicit env_name."""
+        # Given A ConfigOption without explicit env_name and SNOWFLAKE_MYOPTION env var set
+        config_env["config_file"].write_text("")
+
+        os.environ["SNOWFLAKE_MYOPTION"] = "from_default_env"
+
+        root_manager = ConfigManager(name="root", file_path=config_env["config_file"])
+        option = ConfigOption(
+            name="myoption",
+            _root_manager=root_manager,
+            _nest_path=["root"],
+            default="default_val",
+        )
+
+        assert option.value() == "from_default_env"
+
+    def test_explicit_env_name_takes_priority_over_default(self, config_env):
+        """Test that explicit env_name is checked instead of default_env_name."""
+        # Given Both CUSTOM_ENV_VAR and SNOWFLAKE_MYOPTION are set
+        config_env["config_file"].write_text("")
+
+        os.environ["CUSTOM_ENV_VAR"] = "from_explicit"
+        os.environ["SNOWFLAKE_MYOPTION"] = "from_default"
+
+        root_manager = ConfigManager(name="root", file_path=config_env["config_file"])
+        option = ConfigOption(
+            name="myoption",
+            _root_manager=root_manager,
+            _nest_path=["root"],
+            env_name="CUSTOM_ENV_VAR",
+            default="default_val",
+        )
+
+        # When Retrieving the option value
+        # Then The explicit env var value should be returned
+        assert option.value() == "from_explicit"
+
+    def test_default_env_var_priority_over_config_file(self, config_env):
+        """Test that default env var takes priority over config file value."""
+        # Given A config file with a value and the matching SNOWFLAKE_<PATH> env var set
+        config_env["config_file"].write_text("""
+[section]
+mykey = "file_value"
+""")
+
+        os.environ["SNOWFLAKE_MYKEY"] = "env_value"
+
+        root_manager = ConfigManager(name="test_root", file_path=config_env["config_file"])
+        option = ConfigOption(
+            name="mykey",
+            _root_manager=root_manager,
+            _nest_path=["section"],
+            default="default_value",
+        )
+
+        assert option.value() == "env_value"
+
+    def test_default_env_var_with_parse_str(self, config_env):
+        """Test that parse_str is applied to values from default env var."""
+        # Given SNOWFLAKE_MYOPTION set to a numeric string and parse_str=int
+        config_env["config_file"].write_text("")
+
+        os.environ["SNOWFLAKE_MYOPTION"] = "42"
+
+        root_manager = ConfigManager(name="root", file_path=config_env["config_file"])
+        option = ConfigOption(
+            name="myoption",
+            _root_manager=root_manager,
+            _nest_path=["root"],
+            parse_str=int,
+            default=0,
+        )
+
+        assert option.value() == 42
         assert isinstance(option.value(), int)
 
 
@@ -226,26 +339,17 @@ class TestConfigManager:
         # Then The default value should be returned
         assert value == "default_value"
 
+    @pytest.mark.skip_reference
     def test_clear_cache(self):
         """Test that clear_cache resets caches."""
         # Given A ConfigManager with cached config
         manager = ConfigManager(name="test_manager")
 
+        manager.conf_file_cache = {"test": "value"}
         # When clear_cache is called
+        manager.clear_cache()
         # Then Cache should be None
-        if NEW_DRIVER_ONLY("BD#10"):
-            # New driver has clear_cache and cache attributes
-            manager.conf_file_cache = {"test": "value"}
-
-            manager.clear_cache()
-
-            assert manager.conf_file_cache is None
-        else:
-            # Old driver has different caching mechanism
-            if hasattr(manager, "clear_cache"):
-                manager.clear_cache()
-            # Just verify the manager is functional
-            assert manager.name == "test_manager"
+        assert manager.conf_file_cache is None
 
 
 class TestBackwardCompatibility:
@@ -257,20 +361,26 @@ class TestBackwardCompatibility:
 
         import snowflake.connector.config_manager as cm
 
-        # When Importing CONFIG_PARSER from config_manager
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            _ = cm.CONFIG_MANAGER
-            assert len(w) == 0
-            config_parser = cm.CONFIG_PARSER
+        if OLD_DRIVER_ONLY("BD#11"):
+            # When Importing CONFIG_PARSER from config_manager (old driver)
+            with warnings.catch_warnings(record=True) as w:
+                warnings.simplefilter("always")
+                _ = cm.CONFIG_MANAGER
+                assert len(w) == 0
+                config_parser = cm.CONFIG_PARSER
 
-        # Then DeprecationWarning should be raised
-        assert len(w) == 1
-        assert issubclass(w[0].category, DeprecationWarning)
-        assert "CONFIG_PARSER" in str(w[0].message) and "deprecated" in str(w[0].message)
+            # Then DeprecationWarning should be raised
+            assert len(w) == 1
+            assert issubclass(w[0].category, DeprecationWarning)
+            assert "CONFIG_PARSER" in str(w[0].message) and "deprecated" in str(w[0].message)
 
-        # And CONFIG_PARSER should reference CONFIG_MANAGER
-        assert config_parser is cm.CONFIG_MANAGER
+            # And CONFIG_PARSER should reference CONFIG_MANAGER
+            assert config_parser is cm.CONFIG_MANAGER
+        elif NEW_DRIVER_ONLY("BD#11"):
+            # When Accessing CONFIG_PARSER on the new driver
+            # Then AttributeError should be raised (alias was removed)
+            with pytest.raises(AttributeError):
+                _ = cm.CONFIG_PARSER
 
     def test_sub_parsers_property(self):
         """Test backward compatibility for _sub_parsers."""
@@ -279,13 +389,19 @@ class TestBackwardCompatibility:
         child = ConfigManager(name="child")
         manager.add_submanager(child)
 
-        # When Accessing _sub_parsers property
-        with pytest.warns(DeprecationWarning):
-            sub_parsers = manager._sub_parsers
+        if OLD_DRIVER_ONLY("BD#12"):
+            # When Accessing _sub_parsers property (old driver)
+            with pytest.warns(DeprecationWarning):
+                sub_parsers = manager._sub_parsers
 
-        # Then DeprecationWarning should be raised
-        # And _sub_parsers should reference _sub_managers
-        assert sub_parsers is manager._sub_managers
+            # Then DeprecationWarning should be raised
+            # And _sub_parsers should reference _sub_managers
+            assert sub_parsers is manager._sub_managers
+        elif NEW_DRIVER_ONLY("BD#12"):
+            # When Accessing _sub_parsers on the new driver
+            # Then AttributeError should be raised (property was removed)
+            with pytest.raises(AttributeError):
+                _ = manager._sub_parsers
 
     def test_add_subparser_method(self):
         """Test backward compatibility for add_subparser."""
@@ -293,10 +409,16 @@ class TestBackwardCompatibility:
         manager = ConfigManager(name="test_manager")
         child = ConfigManager(name="child")
 
-        # When Calling add_subparser method
-        with pytest.warns(DeprecationWarning):
-            manager.add_subparser(child)
+        if OLD_DRIVER_ONLY("BD#12"):
+            # When Calling add_subparser method (old driver)
+            with pytest.warns(DeprecationWarning):
+                manager.add_subparser(child)
 
-        # Then DeprecationWarning should be raised
-        # And The child should be in _sub_managers
-        assert "child" in manager._sub_managers
+            # Then DeprecationWarning should be raised
+            # And The child should be in _sub_managers
+            assert "child" in manager._sub_managers
+        elif NEW_DRIVER_ONLY("BD#12"):
+            # When Calling add_subparser on the new driver
+            # Then AttributeError should be raised (method was removed)
+            with pytest.raises(AttributeError):
+                manager.add_subparser(child)

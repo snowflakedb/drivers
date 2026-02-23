@@ -18,19 +18,30 @@ behavior_differences:
       OLD driver: `private_key_file_pwd`
 
   6:
-    name: "ConfigManager reads config from SNOWFLAKE_HOME via sf_core"
+    name: "ConfigManager section path handling differs"
     description: |
-      NEW driver: Reads config files from SNOWFLAKE_HOME directory using Rust sf_core.
-      OLD driver: Reads config from file_path specified in ConfigManager constructor.
+      NEW driver: Reads config files via sf_core; correctly resolves nested section paths
+      like [section] my_option when _nest_path is used.
+      OLD driver: Has different section path resolution that may fall back to default values.
+      Note: This looks like a fix of behavior in old driver.
 
   7:
     name: "ConfigManager does not support SNOWFLAKE_<SECTION>_<KEY> environment variable overrides"
     description: |
       NEW driver: Does not apply SNOWFLAKE_<SECTION>_<KEY> env var overrides to config values.
-      OLD driver: Does not support this pattern; uses only custom env_name if specified.
+      The default env name is derived from _nest_path (excluding the root manager name),
+      e.g. SNOWFLAKE_MYKEY, not SNOWFLAKE_SECTION_MYKEY.
+      OLD driver: Does not support this pattern either; uses only custom env_name if specified.
+      Note: This looks like a fix of behavior in old driver.
 
-  8:
-    name: "ConfigManager has clear_cache method and cache attributes"
+  11:
+    name: "CONFIG_PARSER deprecated alias removed"
     description: |
-      NEW driver: Has clear_cache() and conf_file_cache attributes.
-      OLD driver: Uses different caching mechanism.
+      NEW driver: CONFIG_PARSER module attribute no longer exists; accessing it raises AttributeError.
+      OLD driver: CONFIG_PARSER is a deprecated alias for CONFIG_MANAGER that emits DeprecationWarning.
+
+  12:
+    name: "Deprecated add_subparser method and _sub_parsers property removed"
+    description: |
+      NEW driver: add_subparser() and _sub_parsers are removed; accessing them raises AttributeError.
+      OLD driver: add_subparser() and _sub_parsers are deprecated aliases that emit DeprecationWarning.

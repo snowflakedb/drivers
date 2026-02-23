@@ -2,11 +2,16 @@ use super::{ConfigDirNotFoundSnafu, ConfigError};
 use std::env;
 use std::path::PathBuf;
 
-/// Holds the paths to configuration files
+/// Holds the paths to configuration files.
+///
+/// Fields are `Option<PathBuf>` so callers can specify only the paths they
+/// care about. When a path is `None`, the corresponding file is not read
+/// (no fallback to platform defaults). Use [`get_config_paths`] to obtain
+/// a `ConfigPaths` with both paths resolved to their platform defaults.
 #[derive(Debug, Clone)]
 pub struct ConfigPaths {
-    pub connections_file: PathBuf,
-    pub config_file: PathBuf,
+    pub connections_file: Option<PathBuf>,
+    pub config_file: Option<PathBuf>,
 }
 
 /// Get the Snowflake home directory from SNOWFLAKE_HOME environment variable
@@ -26,8 +31,8 @@ pub fn get_config_paths() -> Result<ConfigPaths, ConfigError> {
 fn resolve_config_paths(snowflake_home: Option<PathBuf>) -> Result<ConfigPaths, ConfigError> {
     if let Some(snowflake_home) = snowflake_home {
         return Ok(ConfigPaths {
-            connections_file: snowflake_home.join("connections.toml"),
-            config_file: snowflake_home.join("config.toml"),
+            connections_file: Some(snowflake_home.join("connections.toml")),
+            config_file: Some(snowflake_home.join("config.toml")),
         });
     }
 
@@ -36,8 +41,8 @@ fn resolve_config_paths(snowflake_home: Option<PathBuf>) -> Result<ConfigPaths, 
         .join("snowflake");
 
     Ok(ConfigPaths {
-        connections_file: config_dir.join("connections.toml"),
-        config_file: config_dir.join("config.toml"),
+        connections_file: Some(config_dir.join("connections.toml")),
+        config_file: Some(config_dir.join("config.toml")),
     })
 }
 
@@ -49,21 +54,17 @@ mod tests {
     #[test]
     fn test_resolve_config_paths_default() {
         let paths = resolve_config_paths(None).unwrap();
+        let connections_file = paths.connections_file.unwrap();
+        let config_file = paths.config_file.unwrap();
 
+        assert!(connections_file.to_string_lossy().contains("snowflake"));
+        assert!(config_file.to_string_lossy().contains("snowflake"));
         assert!(
-            paths
-                .connections_file
-                .to_string_lossy()
-                .contains("snowflake")
-        );
-        assert!(paths.config_file.to_string_lossy().contains("snowflake"));
-        assert!(
-            paths
-                .connections_file
+            connections_file
                 .to_string_lossy()
                 .ends_with("connections.toml")
         );
-        assert!(paths.config_file.to_string_lossy().ends_with("config.toml"));
+        assert!(config_file.to_string_lossy().ends_with("config.toml"));
     }
 
     #[test]
@@ -72,16 +73,17 @@ mod tests {
         let temp_path = temp_dir.path().to_path_buf();
 
         let paths = resolve_config_paths(Some(temp_path.clone())).unwrap();
+        let connections_file = paths.connections_file.unwrap();
+        let config_file = paths.config_file.unwrap();
 
-        assert!(paths.connections_file.starts_with(&temp_path));
-        assert!(paths.config_file.starts_with(&temp_path));
+        assert!(connections_file.starts_with(&temp_path));
+        assert!(config_file.starts_with(&temp_path));
         assert!(
-            paths
-                .connections_file
+            connections_file
                 .to_string_lossy()
                 .ends_with("connections.toml")
         );
-        assert!(paths.config_file.to_string_lossy().ends_with("config.toml"));
+        assert!(config_file.to_string_lossy().ends_with("config.toml"));
     }
 
     #[test]

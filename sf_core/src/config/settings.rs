@@ -6,6 +6,7 @@ pub enum Setting {
     Bytes(Vec<u8>),
     Int(i64),
     Double(f64),
+    Bool(bool),
 }
 
 impl Setting {
@@ -25,7 +26,6 @@ impl Setting {
         }
     }
 
-    #[allow(dead_code)]
     fn as_double(&self) -> Option<&f64> {
         if let Setting::Double(value) = self {
             Some(value)
@@ -34,9 +34,16 @@ impl Setting {
         }
     }
 
-    #[allow(dead_code)]
     fn as_bytes(&self) -> Option<&Vec<u8>> {
         if let Setting::Bytes(value) = self {
+            Some(value)
+        } else {
+            None
+        }
+    }
+
+    fn as_bool(&self) -> Option<&bool> {
+        if let Setting::Bool(value) = self {
             Some(value)
         } else {
             None
@@ -60,33 +67,34 @@ pub trait Settings {
             .and_then(|v| u64::try_from(v).ok())
             .or_else(|| self.get_string(key).and_then(|s| s.parse::<u64>().ok()))
     }
-    #[allow(dead_code)]
+
     fn get_double(&self, key: &str) -> Option<f64> {
         let setting = self.get(key)?;
         setting.as_double().cloned()
     }
-    #[allow(dead_code)]
     fn get_bytes(&self, key: &str) -> Option<Vec<u8>> {
         let setting = self.get(key)?;
         setting.as_bytes().cloned()
     }
-    #[allow(dead_code)]
+    fn get_bool(&self, key: &str) -> Option<bool> {
+        let setting = self.get(key)?;
+        setting.as_bool().copied()
+    }
     fn set(&mut self, key: &str, value: Setting);
-    #[allow(dead_code)]
     fn set_string(&mut self, key: &str, value: String) {
         self.set(key, Setting::String(value));
     }
-    #[allow(dead_code)]
     fn set_int(&mut self, key: &str, value: i64) {
         self.set(key, Setting::Int(value));
     }
-    #[allow(dead_code)]
     fn set_double(&mut self, key: &str, value: f64) {
         self.set(key, Setting::Double(value));
     }
-    #[allow(dead_code)]
     fn set_bytes(&mut self, key: &str, value: Vec<u8>) {
         self.set(key, Setting::Bytes(value));
+    }
+    fn set_bool(&mut self, key: &str, value: bool) {
+        self.set(key, Setting::Bool(value));
     }
 }
 

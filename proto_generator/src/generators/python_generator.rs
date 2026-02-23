@@ -289,13 +289,9 @@ class ProtoError(Exception):
             error.ParseFromString(response_bytes)
             raise ProtoApplicationException(error)
         elif code == 2:
-            error = str(response_bytes)
-            raise ProtoTransportException(response_bytes)
+            raise ProtoTransportException(str(response_bytes))
         else:
             raise ProtoTransportException(f"Unknown error code: %s", code)
-
-        response.ParseFromString(self._transport.handle_message('{service_name}', '{name}', request.SerializeToString()))
-        return response
 
 "#
             );
