@@ -695,4 +695,4 @@ CursorType = Union[type[SnowflakeCursor], type[DictCursor]]
 CursorInstance = Union[SnowflakeCursor, DictCursor]
 
 
-__all__ = ["SnowflakeCursor", "DictCursor"]
+__all__ = ["SnowflakeCursor", "SnowflakeCursorBase", "DictCursor"]
