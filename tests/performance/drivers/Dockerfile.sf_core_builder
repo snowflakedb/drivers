@@ -67,6 +67,8 @@ COPY proto_utils/src/ ./proto_utils/src/
 COPY odbc/src/ ./odbc/src/
 COPY proto_generator/src/ ./proto_generator/src/
 COPY jdbc_bridge/src/ ./jdbc_bridge/src/
+COPY error_trace/src/ ./error_trace/src/
+COPY error_trace_derive/src/ ./error_trace_derive/src/
 
 # Build sf_core
 RUN cargo build --release --package sf_core && \
