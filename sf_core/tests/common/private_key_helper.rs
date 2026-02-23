@@ -11,7 +11,7 @@ pub enum PrivateKeyFile {
         PathBuf,
         TempDir, // Keep the TempDir alive to ensure the file is not deleted
     ),
-    // A private key file that already exists on the filesystem, which we should not delete.
+    /// A private key file that already exists on the filesystem, which we should not delete.
     Existing(PathBuf),
 }
 
