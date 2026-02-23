@@ -140,7 +140,7 @@ mod tests {
         }
     }
 
-    // Scenario: keyring add_and_get_token_succeeds
+    // Scenario: Should add and get token via keyring
     //   Given a keyring-based token cache
     //   When we add a token and then retrieve it
     //   Then the retrieved token should match
@@ -171,7 +171,7 @@ mod tests {
         cleanup_test_token(&cache, &host, &username);
     }
 
-    // Scenario: keyring get_nonexistent_token_returns_none
+    // Scenario: Should return none for nonexistent keyring token
     //   Given a keyring-based token cache with no stored token
     //   When we get a token
     //   Then None should be returned
@@ -188,7 +188,7 @@ mod tests {
         assert_eq!(result.unwrap(), None);
     }
 
-    // Scenario: keyring remove_existing_token_succeeds
+    // Scenario: Should remove existing token from keyring
     //   Given a keyring-based token cache with a stored token
     //   When we remove the token
     //   Then getting it should return None
@@ -220,7 +220,7 @@ mod tests {
         cleanup_test_token(&cache, &host, &username);
     }
 
-    // Scenario: keyring remove_nonexistent_token_succeeds
+    // Scenario: Should succeed when removing nonexistent keyring token
     //   Given a keyring-based token cache with no stored token
     //   When we remove a token
     //   Then the operation should succeed
@@ -240,7 +240,7 @@ mod tests {
         );
     }
 
-    // Scenario: keyring overwrite_token_succeeds
+    // Scenario: Should overwrite token in keyring
     //   Given a keyring-based token cache with a stored token
     //   When we add a new value for the same key
     //   Then the new value should replace the old one
@@ -284,7 +284,7 @@ mod tests {
         cleanup_test_token(&cache, &host, &username);
     }
 
-    // Scenario: keyring different_token_types_stored_separately
+    // Scenario: Should store different token types separately in keyring
     //   Given a keyring-based token cache
     //   When we store tokens of different types for the same host and user
     //   Then each type should return its own value
@@ -314,7 +314,7 @@ mod tests {
         cleanup_test_token(&cache, &host, &username);
     }
 
-    // Scenario: keyring add_token_with_empty_host_fails
+    // Scenario: Should fail to add keyring token with empty host
     //   Given a keyring-based token cache
     //   When we add a token with an empty host
     //   Then an InvalidKeyFormat error should be returned
@@ -330,7 +330,7 @@ mod tests {
         ));
     }
 
-    // Scenario: keyring add_token_with_empty_username_fails
+    // Scenario: Should fail to add keyring token with empty username
     //   Given a keyring-based token cache
     //   When we add a token with an empty username
     //   Then an InvalidKeyFormat error should be returned
@@ -346,7 +346,7 @@ mod tests {
         ));
     }
 
-    // Scenario: keyring get_token_with_empty_host_fails
+    // Scenario: Should fail to get keyring token with empty host
     //   Given a keyring-based token cache
     //   When we get a token with an empty host
     //   Then an InvalidKeyFormat error should be returned
@@ -362,7 +362,7 @@ mod tests {
         ));
     }
 
-    // Scenario: keyring get_token_with_empty_username_fails
+    // Scenario: Should fail to get keyring token with empty username
     //   Given a keyring-based token cache
     //   When we get a token with an empty username
     //   Then an InvalidKeyFormat error should be returned
@@ -378,7 +378,7 @@ mod tests {
         ));
     }
 
-    // Scenario: keyring remove_token_with_empty_host_fails
+    // Scenario: Should fail to remove keyring token with empty host
     //   Given a keyring-based token cache
     //   When we remove a token with an empty host
     //   Then an InvalidKeyFormat error should be returned
@@ -394,7 +394,7 @@ mod tests {
         ));
     }
 
-    // Scenario: keyring remove_token_with_empty_username_fails
+    // Scenario: Should fail to remove keyring token with empty username
     //   Given a keyring-based token cache
     //   When we remove a token with an empty username
     //   Then an InvalidKeyFormat error should be returned

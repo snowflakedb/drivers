@@ -1029,7 +1029,7 @@ mod tests {
             assert!(matches!(err, keyring::Error::NoEntry));
         }
 
-        // Scenario: credential adapter overwrite_password
+        // Scenario: Should overwrite password via credential adapter
         //   Given a credential with a stored password
         //   When we set a new password
         //   Then the new password should replace the old one
@@ -1046,7 +1046,7 @@ mod tests {
             assert_eq!(cred.get_password().unwrap(), "second");
         }
 
-        // Scenario: credential adapter separate_credentials_are_independent
+        // Scenario: Should keep separate credentials independent via adapter
         //   Given two credentials with different keys from the same builder
         //   When we set different passwords on each
         //   Then each credential should return its own password
@@ -1068,7 +1068,7 @@ mod tests {
             assert_eq!(cred2.get_password().unwrap(), "mfa_val");
         }
 
-        // Scenario: credential adapter persistence_is_until_delete
+        // Scenario: Should report persistence as until delete via adapter
         //   Given a FileCredentialBuilder
         //   Then its persistence should be UntilDelete
         #[test]
@@ -1081,7 +1081,7 @@ mod tests {
             ));
         }
 
-        // Scenario: credential adapter credentials_share_same_backing_file
+        // Scenario: Should share same backing file across credentials
         //   Given two credential instances for the same key
         //   When one sets a password
         //   Then the other should be able to read it
