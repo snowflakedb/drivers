@@ -1,4 +1,5 @@
 use crate::apis::database_driver_v1::ApiError;
+use crate::apis::database_driver_v1::ConnectionInfo;
 use crate::apis::database_driver_v1::Handle;
 use crate::apis::database_driver_v1::Setting;
 use crate::apis::database_driver_v1::error::ConfigError;
@@ -129,6 +130,18 @@ impl From<Handle> for StatementHandle {
         StatementHandle {
             id: handle.id as i64,
             magic: handle.magic as i64,
+        }
+    }
+}
+
+impl From<ConnectionInfo> for ConnectionGetInfoResponse {
+    fn from(info: ConnectionInfo) -> Self {
+        ConnectionGetInfoResponse {
+            host: info.host,
+            port: info.port,
+            server_url: info.server_url,
+            session_token: info.session_token,
+            session_id: info.session_id,
         }
     }
 }
@@ -532,13 +545,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
 
         let info = connection_get_info(conn_handle.into()).to_protobuf()?;
 
-        Ok(ConnectionGetInfoResponse {
-            host: info.host,
-            port: info.port,
-            server_url: info.server_url,
-            session_token: info.session_token,
-            session_id: info.session_id,
-        })
+        Ok(ConnectionGetInfoResponse::from(info))
     }
 
     #[instrument(name = "DatabaseDriverV1::connection_get_objects", skip(_input))]

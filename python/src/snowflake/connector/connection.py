@@ -96,7 +96,8 @@ class Connection:
         self._connection_info: ConnectionGetInfoResponse = self.db_api.connection_get_info(
             ConnectionGetInfoRequest(conn_handle=self.conn_handle)
         )
-        self.kwargs = kwargs
+        _sensitive_keys = {"password", "private_key"}
+        self.kwargs = {k: ("***" if k in _sensitive_keys else v) for k, v in kwargs.items()}
         self._closed = False
         self._autocommit = False
 
