@@ -67,7 +67,7 @@ jobs:
         with:
           python-version: '3.13'
 
-      - name: Generate proto (Java onl)
+      - name: Generate proto (Java only)
         run: |
           ./scripts/generate_proto.sh
 

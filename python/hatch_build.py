@@ -119,7 +119,8 @@ class BuildHook(BuildHookInterface):
     def _generate_protobuf(self) -> None:
         """Generate Python protobuf code using the Rust proto_generator binary."""
         python_dir = Path(self.root)
-        proto_input = self.PROTO_INPUT
+        proto_input = (python_dir / self.PROTO_INPUT).resolve()
+        protobuf_gen_dir = python_dir / self.PROTOBUF_GEN_DIR
 
         if not proto_input.exists():
             raise RuntimeError(
@@ -129,6 +130,15 @@ class BuildHook(BuildHookInterface):
 
         cargo_manifest = python_dir / "Cargo.toml"
         if not cargo_manifest.exists():
+            # When Cargo.toml is missing (e.g. building a wheel from sdist without the
+            # Rust toolchain), fall back to previously generated files if they exist.
+            if any(protobuf_gen_dir.glob("*_pb2.py")):
+                warnings.warn(
+                    "Cargo.toml not found; skipping protobuf regeneration. "
+                    "Using previously generated protobuf files.",
+                    stacklevel=1,
+                )
+                return
             raise RuntimeError(
                 "Cargo.toml not found. Cannot build proto_generator. "
                 "Ensure Cargo.toml symlink exists (ln -s ../Cargo.toml Cargo.toml) "
@@ -136,7 +146,14 @@ class BuildHook(BuildHookInterface):
             )
 
         cargo_manifest = cargo_manifest.resolve()
-        self.PROTOBUF_GEN_DIR.mkdir(parents=True, exist_ok=True)
+        protobuf_gen_dir.mkdir(parents=True, exist_ok=True)
+
+        # Ensure protoc-gen-mypy is discoverable by protoc for .pyi stub generation.
+        # mypy-protobuf is declared in build-system.requires, but the plugin binary
+        # may not be on PATH when cargo shells out to protoc.
+        env = os.environ.copy()
+        scripts_dir = str(Path(sys.executable).parent)
+        env["PATH"] = scripts_dir + os.pathsep + env.get("PATH", "")
 
         with TemporaryDirectory() as temp_dir:
             cargo_args = [
@@ -154,7 +171,7 @@ class BuildHook(BuildHookInterface):
                 "--input",
                 str(proto_input),
                 "--output",
-                str(self.PROTOBUF_GEN_DIR),
+                str(protobuf_gen_dir),
             ]
 
             try:
@@ -163,6 +180,7 @@ class BuildHook(BuildHookInterface):
                     check=True,
                     capture_output=True,
                     text=True,
+                    env=env,
                 )
                 print(result.stdout)
             except subprocess.CalledProcessError as e:
