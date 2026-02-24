@@ -325,22 +325,22 @@ class Connection:
 
     @property
     def database(self) -> str | None:
-        # TODO: Read from connection details
+        # TODO: SNOW-3155976 Read from connection details
         return self.kwargs.get("database")  # type: ignore[return-value]
 
     @property
     def schema(self) -> str | None:
-        # TODO: Read from connection details
+        # TODO: SNOW-3155976 Read from connection details
         return self.kwargs.get("schema")  # type: ignore[return-value]
 
     @property
     def account(self) -> str | None:
-        # TODO: Read from connection details
+        # TODO: SNOW-3155976 Read from connection details
         return self.kwargs.get("account")  # type: ignore[return-value]
 
     @property
     def warehouse(self) -> str | None:
-        # TODO: Read from connection details
+        # TODO: SNOW-3155976 Read from connection details
         return self.kwargs.get("warehouse")  # type: ignore[return-value]
 
 

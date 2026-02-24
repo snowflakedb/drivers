@@ -182,6 +182,8 @@ class TestExecuteString:
         # Then statements should still execute correctly
         cursors = list(cursors)
         assert len(cursors) == 2
+        assert cursors[0].query == "SELECT 1;"
+        assert cursors[1].query == "SELECT 2"
 
     def test_execute_string_with_quoted_semicolons(self, connection):
         """Test execute_string doesn't split on semicolons inside quotes."""
