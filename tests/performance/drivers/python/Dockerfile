@@ -12,6 +12,7 @@ RUN apt-get update && apt-get install -y \
     golang-go \
     curl \
     clang \
+    unzip \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /workdir
