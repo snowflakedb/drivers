@@ -629,26 +629,29 @@ mod tests {
         use super::*;
 
         // Scenario: Should produce deterministic SHA256
-        //   Given a cache key string
-        //   When we hash it multiple times
-        //   Then each result should be identical and 64 hex characters long
         #[test]
         fn produces_deterministic_sha256() {
+            // Given a cache key string
             let key = "myhost.snowflake.com;testuser;ID_TOKEN";
+
+            // When we hash it multiple times
             let hash1 = hash_cache_key(key);
             let hash2 = hash_cache_key(key);
+
+            // Then each result should be identical and 64 hex characters long
             assert_eq!(hash1, hash2);
             assert_eq!(hash1.len(), 64);
         }
 
         // Scenario: Should produce different hashes for different keys
-        //   Given two distinct cache key strings
-        //   When we hash each
-        //   Then the hashes should differ
         #[test]
         fn different_keys_produce_different_hashes() {
+            // Given two distinct cache key strings
+            // When we hash each
             let hash1 = hash_cache_key("host1;user1;ID_TOKEN");
             let hash2 = hash_cache_key("host2;user1;ID_TOKEN");
+
+            // Then the hashes should differ
             assert_ne!(hash1, hash2);
         }
     }
@@ -669,10 +672,13 @@ mod tests {
         #[test]
         fn set_and_get_secret() {
             let (_dir, cache) = create_temp_cache();
+
+            // When we set a secret for a key
             cache
                 .set_secret("my_key", b"my_secret")
                 .expect("Failed to set secret");
 
+            // Then we should be able to retrieve the same secret
             let result = cache.get_secret("my_key").expect("Failed to get secret");
             assert_eq!(result, Some(b"my_secret".to_vec()));
         }
@@ -684,9 +690,13 @@ mod tests {
         #[test]
         fn get_missing_key_returns_none() {
             let (_dir, cache) = create_temp_cache();
+
+            // When we get a secret for a nonexistent key
             let result = cache
                 .get_secret("nonexistent")
                 .expect("Failed to get secret");
+
+            // Then None should be returned
             assert_eq!(result, None);
         }
 
@@ -701,11 +711,13 @@ mod tests {
                 .set_secret("to_delete", b"val")
                 .expect("Failed to set secret");
 
+            // When we delete the credential
             let existed = cache
                 .delete_credential("to_delete")
                 .expect("Failed to delete");
-            assert!(existed);
 
+            // Then the key should no longer exist
+            assert!(existed);
             let result = cache.get_secret("to_delete").expect("Failed to get");
             assert_eq!(result, None);
         }
@@ -717,9 +729,13 @@ mod tests {
         #[test]
         fn delete_nonexistent_returns_false() {
             let (_dir, cache) = create_temp_cache();
+
+            // When we delete a nonexistent key
             let existed = cache
                 .delete_credential("nonexistent")
                 .expect("Failed to delete");
+
+            // Then the result should indicate the key did not exist
             assert!(!existed);
         }
 
@@ -733,10 +749,13 @@ mod tests {
             cache
                 .set_secret("key", b"old")
                 .expect("Failed to set secret");
+
+            // When we set a new secret for the same key
             cache
                 .set_secret("key", b"new")
                 .expect("Failed to overwrite");
 
+            // Then the new secret should replace the old one
             let result = cache.get_secret("key").expect("Failed to get");
             assert_eq!(result, Some(b"new".to_vec()));
         }
@@ -748,9 +767,12 @@ mod tests {
         #[test]
         fn different_keys_stored_separately() {
             let (_dir, cache) = create_temp_cache();
+
+            // When we set secrets for two different keys
             cache.set_secret("key_a", b"val_a").expect("Failed to set");
             cache.set_secret("key_b", b"val_b").expect("Failed to set");
 
+            // Then each key should return its own secret independently
             assert_eq!(cache.get_secret("key_a").unwrap(), Some(b"val_a".to_vec()));
             assert_eq!(cache.get_secret("key_b").unwrap(), Some(b"val_b".to_vec()));
         }
@@ -762,10 +784,13 @@ mod tests {
         #[test]
         fn cache_file_uses_correct_name() {
             let (_dir, cache) = create_temp_cache();
+
+            // When a secret is stored
             cache
                 .set_secret("key", b"val")
                 .expect("Failed to set secret");
 
+            // Then the backing file should be named credential_cache_v2.json
             assert!(cache.cache_file_path.ends_with("credential_cache_v2.json"));
             assert!(cache.cache_file_path.exists());
         }
@@ -781,7 +806,10 @@ mod tests {
                 .set_secret("key", b"val")
                 .expect("Failed to set secret");
 
+            // When we read the backing file
             let content = fs::read_to_string(&cache.cache_file_path).expect("Failed to read file");
+
+            // Then it should contain valid JSON with a "tokens" key
             let parsed: serde_json::Value =
                 serde_json::from_str(&content).expect("Invalid JSON in cache file");
             assert!(parsed.get("tokens").is_some());
@@ -798,28 +826,32 @@ mod tests {
                 .set_secret("my_raw_key", b"val")
                 .expect("Failed to set secret");
 
+            // When we inspect the backing JSON file
             let content = fs::read_to_string(&cache.cache_file_path).expect("Failed to read file");
             let parsed: CacheFileContent =
                 serde_json::from_str(&content).expect("Invalid JSON in cache file");
 
+            // Then the key should be the SHA-256 hash of the original key
             let expected_key = hash_cache_key("my_raw_key");
             assert!(parsed.tokens.contains_key(&expected_key));
             assert_eq!(parsed.tokens.get(&expected_key).unwrap(), "val");
         }
 
         // Scenario: Should set cache file mode to 600
-        //   Given a file-based credential store on a Unix system
-        //   When a secret is stored
-        //   Then the cache file permissions should be 0600
         #[cfg(unix)]
         #[test]
         fn cache_file_has_mode_600() {
             use std::os::unix::fs::PermissionsExt;
+
+            // Given a file-based credential store on a Unix system
             let (_dir, cache) = create_temp_cache();
+
+            // When a secret is stored
             cache
                 .set_secret("key", b"val")
                 .expect("Failed to set secret");
 
+            // Then the cache file permissions should be 0600
             let metadata =
                 fs::metadata(&cache.cache_file_path).expect("Failed to read file metadata");
             let mode = metadata.permissions().mode() & 0o777;
@@ -827,18 +859,16 @@ mod tests {
         }
 
         // Scenario: Should reject file with wrong permissions
-        //   Given a cache file with permissions other than 0600
-        //   When we attempt to read a secret
-        //   Then an InsufficientPermissions error should be returned
         #[cfg(unix)]
         #[test]
         fn remediates_file_with_wrong_permissions() {
             use std::os::unix::fs::PermissionsExt;
+
+            // Given a cache file with permissions other than 0600
             let (_dir, cache) = create_temp_cache();
             cache
                 .set_secret("key", b"val")
                 .expect("Failed to set secret");
-
             fs::set_permissions(&cache.cache_file_path, fs::Permissions::from_mode(0o644))
                 .expect("Failed to change permissions");
 
@@ -854,18 +884,19 @@ mod tests {
         }
 
         // Scenario: Should accept file owned by current user
-        //   Given a cache file created by the current user
-        //   When we read a secret
-        //   Then the ownership check should pass
         #[cfg(unix)]
         #[test]
         fn accepts_file_owned_by_current_user() {
+            // Given a cache file created by the current user
             let (_dir, cache) = create_temp_cache();
             cache
                 .set_secret("key", b"val")
                 .expect("Failed to set secret");
 
+            // When we read a secret
             let result = cache.get_secret("key");
+
+            // Then the ownership check should pass
             assert!(
                 result.is_ok(),
                 "File created by current user should pass ownership check"
@@ -873,18 +904,19 @@ mod tests {
         }
 
         // Scenario: Should reject file not owned by current user
-        //   Given a cache file owned by a different user
-        //   When we attempt to read a secret
-        //   Then a FileNotOwnedByCurrentUser error should be returned
         #[cfg(unix)]
         #[test]
         fn rejects_file_not_owned_by_current_user() {
             use std::os::unix::fs::MetadataExt;
+
+            // Given a cache file owned by a different user
             let (_dir, cache) = create_temp_cache();
             cache
                 .set_secret("key", b"val")
                 .expect("Failed to set secret");
 
+            // When we attempt to read a secret
+            // Then a FileNotOwnedByCurrentUser error should be returned
             let metadata = fs::metadata(&cache.cache_file_path).unwrap();
             let current_uid = unsafe { libc::getuid() };
             assert_eq!(
@@ -902,10 +934,13 @@ mod tests {
         #[test]
         fn lock_file_removed_after_operation() {
             let (_dir, cache) = create_temp_cache();
+
+            // When an operation completes
             cache
                 .set_secret("key", b"val")
                 .expect("Failed to set secret");
 
+            // Then the .lck file should not exist
             let lock_path = cache.cache_file_path.with_extension("json.lck");
             assert!(
                 !lock_path.exists(),
@@ -922,16 +957,16 @@ mod tests {
             let dir = tempfile::tempdir().expect("Failed to create temp dir");
             let cache = FileTokenCache::with_directory(dir.path().to_path_buf())
                 .stale_lock_timeout(Duration::from_millis(50));
-
             let lock_path = cache.cache_file_path.with_extension("json.lck");
             fs::create_dir(&lock_path).expect("Failed to create stale lock dir");
-
             std::thread::sleep(Duration::from_millis(100));
 
+            // When we perform an operation on the cache
             cache
                 .set_secret("key", b"val")
                 .expect("Should succeed after breaking stale lock");
 
+            // Then the stale lock should be broken and the operation should succeed
             let result = cache.get_secret("key").expect("Failed to get secret");
             assert_eq!(result, Some(b"val".to_vec()));
         }
@@ -941,12 +976,16 @@ mod tests {
         //   Then the retry count, delay, and stale lock timeout should match
         #[test]
         fn configurable_retry_parameters() {
+        #[test]
+        fn configurable_retry_parameters() {
+            // Given a file-based credential store with custom retry settings
             let dir = tempfile::tempdir().expect("Failed to create temp dir");
             let cache = FileTokenCache::with_directory(dir.path().to_path_buf())
                 .retry_count(10)
                 .retry_delay(Duration::from_millis(50))
                 .stale_lock_timeout(Duration::from_secs(30));
 
+            // Then the retry count, delay, and stale lock timeout should match
             assert_eq!(cache.retry_count, 10);
             assert_eq!(cache.retry_delay, Duration::from_millis(50));
             assert_eq!(cache.stale_lock_timeout, Duration::from_secs(30));
@@ -973,8 +1012,11 @@ mod tests {
                 .build(None, "svc", "host.example.com;user1;ID_TOKEN")
                 .unwrap();
 
+            // When we set a password and then get it
             cred.set_password("secret123").unwrap();
             let password = cred.get_password().unwrap();
+
+            // Then the retrieved password should match
             assert_eq!(password, "secret123");
         }
 
@@ -990,7 +1032,10 @@ mod tests {
                 .build(None, "svc", "host.example.com;user1;ID_TOKEN")
                 .unwrap();
 
+            // When we get the password
             let err = cred.get_password().unwrap_err();
+
+            // Then a NoEntry error should be returned
             assert!(matches!(err, keyring::Error::NoEntry));
         }
 
@@ -1005,10 +1050,12 @@ mod tests {
             let cred = builder
                 .build(None, "svc", "host.example.com;user1;MFA_TOKEN")
                 .unwrap();
-
             cred.set_password("to_delete").unwrap();
+
+            // When we delete the credential
             cred.delete_credential().unwrap();
 
+            // Then getting the password should return NoEntry
             let err = cred.get_password().unwrap_err();
             assert!(matches!(err, keyring::Error::NoEntry));
         }
@@ -1025,7 +1072,10 @@ mod tests {
                 .build(None, "svc", "host.example.com;user1;ID_TOKEN")
                 .unwrap();
 
+            // When we delete the credential
             let err = cred.delete_credential().unwrap_err();
+
+            // Then a NoEntry error should be returned
             assert!(matches!(err, keyring::Error::NoEntry));
         }
 
@@ -1040,9 +1090,12 @@ mod tests {
             let cred = builder
                 .build(None, "svc", "host.example.com;user1;ID_TOKEN")
                 .unwrap();
-
             cred.set_password("first").unwrap();
+
+            // When we set a new password
             cred.set_password("second").unwrap();
+
+            // Then the new password should replace the old one
             assert_eq!(cred.get_password().unwrap(), "second");
         }
 
@@ -1061,20 +1114,23 @@ mod tests {
                 .build(None, "svc", "host.example.com;user1;MFA_TOKEN")
                 .unwrap();
 
+            // When we set different passwords on each
             cred1.set_password("id_val").unwrap();
             cred2.set_password("mfa_val").unwrap();
 
+            // Then each credential should return its own password
             assert_eq!(cred1.get_password().unwrap(), "id_val");
             assert_eq!(cred2.get_password().unwrap(), "mfa_val");
         }
 
         // Scenario: Should report persistence as until delete via adapter
-        //   Given a FileCredentialBuilder
-        //   Then its persistence should be UntilDelete
         #[test]
         fn persistence_is_until_delete() {
+            // Given a FileCredentialBuilder
             let dir = tempfile::tempdir().unwrap();
             let builder = create_builder(&dir);
+
+            // Then its persistence should be UntilDelete
             assert!(matches!(
                 builder.persistence(),
                 CredentialPersistence::UntilDelete
@@ -1090,11 +1146,13 @@ mod tests {
             let dir = tempfile::tempdir().unwrap();
             let builder = create_builder(&dir);
 
+            // When one sets a password
             let cred_write = builder
                 .build(None, "svc", "host.example.com;user1;ID_TOKEN")
                 .unwrap();
             cred_write.set_password("shared_val").unwrap();
 
+            // Then the other should be able to read it
             let cred_read = builder
                 .build(None, "svc", "host.example.com;user1;ID_TOKEN")
                 .unwrap();

@@ -141,18 +141,16 @@ mod tests {
     }
 
     // Scenario: Should add and get token via keyring
-    //   Given a keyring-based token cache
-    //   When we add a token and then retrieve it
-    //   Then the retrieved token should match
     #[test]
     fn add_and_get_token_succeeds() {
+        // Given a keyring-based token cache
         let cache = KeyringTokenCache::new().expect("Failed to create cache");
         let host = unique_test_key("test_host");
         let username = unique_test_key("test_user");
         let token_value = "test_token_value_12345";
-
         cleanup_test_token(&cache, &host, &username);
 
+        // When we add a token and then retrieve it
         let add_result = cache.add_token(&host, &username, TokenType::IdToken, token_value);
         assert!(
             add_result.is_ok(),
@@ -160,6 +158,7 @@ mod tests {
             add_result.err()
         );
 
+        // Then the retrieved token should match
         let get_result = cache.get_token(&host, &username, TokenType::IdToken);
         assert!(
             get_result.is_ok(),
@@ -172,41 +171,38 @@ mod tests {
     }
 
     // Scenario: Should return none for nonexistent keyring token
-    //   Given a keyring-based token cache with no stored token
-    //   When we get a token
-    //   Then None should be returned
     #[test]
     fn get_nonexistent_token_returns_none() {
+        // Given a keyring-based token cache with no stored token
         let cache = KeyringTokenCache::new().expect("Failed to create cache");
         let host = unique_test_key("nonexistent_host");
         let username = unique_test_key("nonexistent_user");
-
         cleanup_test_token(&cache, &host, &username);
 
+        // When we get a token
         let result = cache.get_token(&host, &username, TokenType::MfaToken);
+
+        // Then None should be returned
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), None);
     }
 
     // Scenario: Should remove existing token from keyring
-    //   Given a keyring-based token cache with a stored token
-    //   When we remove the token
-    //   Then getting it should return None
     #[test]
     fn remove_existing_token_succeeds() {
+        // Given a keyring-based token cache with a stored token
         let cache = KeyringTokenCache::new().expect("Failed to create cache");
         let host = unique_test_key("remove_test_host");
         let username = unique_test_key("remove_test_user");
         let token_value = "token_to_be_removed";
-
         cleanup_test_token(&cache, &host, &username);
         cache
             .add_token(&host, &username, TokenType::OAuthAccessToken, token_value)
             .expect("Setup failed: could not add token");
-
         let get_result = cache.get_token(&host, &username, TokenType::OAuthAccessToken);
         assert_eq!(get_result.unwrap(), Some(token_value.to_string()));
 
+        // When we remove the token
         let remove_result = cache.remove_token(&host, &username, TokenType::OAuthAccessToken);
         assert!(
             remove_result.is_ok(),
@@ -214,6 +210,7 @@ mod tests {
             remove_result.err()
         );
 
+        // Then getting it should return None
         let get_after_remove = cache.get_token(&host, &username, TokenType::OAuthAccessToken);
         assert_eq!(get_after_remove.unwrap(), None);
 
@@ -221,18 +218,18 @@ mod tests {
     }
 
     // Scenario: Should succeed when removing nonexistent keyring token
-    //   Given a keyring-based token cache with no stored token
-    //   When we remove a token
-    //   Then the operation should succeed
     #[test]
     fn remove_nonexistent_token_succeeds() {
+        // Given a keyring-based token cache with no stored token
         let cache = KeyringTokenCache::new().expect("Failed to create cache");
         let host = unique_test_key("remove_nonexistent_host");
         let username = unique_test_key("remove_nonexistent_user");
-
         cleanup_test_token(&cache, &host, &username);
 
+        // When we remove a token
         let result = cache.remove_token(&host, &username, TokenType::OAuthRefreshToken);
+
+        // Then the operation should succeed
         assert!(
             result.is_ok(),
             "Remove nonexistent should succeed: {:?}",
@@ -241,19 +238,15 @@ mod tests {
     }
 
     // Scenario: Should overwrite token in keyring
-    //   Given a keyring-based token cache with a stored token
-    //   When we add a new value for the same key
-    //   Then the new value should replace the old one
     #[test]
     fn overwrite_token_succeeds() {
+        // Given a keyring-based token cache with a stored token
         let cache = KeyringTokenCache::new().expect("Failed to create cache");
         let host = unique_test_key("overwrite_test_host");
         let username = unique_test_key("overwrite_test_user");
         let original_token = "original_token_value";
         let updated_token = "updated_token_value";
-
         cleanup_test_token(&cache, &host, &username);
-
         cache
             .add_token(
                 &host,
@@ -262,10 +255,10 @@ mod tests {
                 original_token,
             )
             .expect("Failed to add original token");
-
         let first_get = cache.get_token(&host, &username, TokenType::DpopBundledAccessToken);
         assert_eq!(first_get.unwrap(), Some(original_token.to_string()));
 
+        // When we add a new value for the same key
         let overwrite_result = cache.add_token(
             &host,
             &username,
@@ -278,6 +271,7 @@ mod tests {
             overwrite_result.err()
         );
 
+        // Then the new value should replace the old one
         let second_get = cache.get_token(&host, &username, TokenType::DpopBundledAccessToken);
         assert_eq!(second_get.unwrap(), Some(updated_token.to_string()));
 
@@ -285,19 +279,17 @@ mod tests {
     }
 
     // Scenario: Should store different token types separately in keyring
-    //   Given a keyring-based token cache
-    //   When we store tokens of different types for the same host and user
-    //   Then each type should return its own value
     #[test]
     fn different_token_types_stored_separately() {
+        // Given a keyring-based token cache
         let cache = KeyringTokenCache::new().expect("Failed to create cache");
         let host = unique_test_key("multi_type_host");
         let username = unique_test_key("multi_type_user");
         let id_token = "id_token_value";
         let mfa_token = "mfa_token_value";
-
         cleanup_test_token(&cache, &host, &username);
 
+        // When we store tokens of different types for the same host and user
         cache
             .add_token(&host, &username, TokenType::IdToken, id_token)
             .expect("Failed to add ID token");
@@ -305,9 +297,9 @@ mod tests {
             .add_token(&host, &username, TokenType::MfaToken, mfa_token)
             .expect("Failed to add MFA token");
 
+        // Then each type should return its own value
         let get_id = cache.get_token(&host, &username, TokenType::IdToken);
         let get_mfa = cache.get_token(&host, &username, TokenType::MfaToken);
-
         assert_eq!(get_id.unwrap(), Some(id_token.to_string()));
         assert_eq!(get_mfa.unwrap(), Some(mfa_token.to_string()));
 
@@ -315,14 +307,15 @@ mod tests {
     }
 
     // Scenario: Should fail to add keyring token with empty host
-    //   Given a keyring-based token cache
-    //   When we add a token with an empty host
-    //   Then an InvalidKeyFormat error should be returned
     #[test]
     fn add_token_with_empty_host_fails() {
+        // Given a keyring-based token cache
         let cache = KeyringTokenCache::new().expect("Failed to create cache");
 
+        // When we add a token with an empty host
         let result = cache.add_token("", "username", TokenType::IdToken, "token_value");
+
+        // Then an InvalidKeyFormat error should be returned
         assert!(result.is_err());
         assert!(matches!(
             result,
@@ -331,14 +324,15 @@ mod tests {
     }
 
     // Scenario: Should fail to add keyring token with empty username
-    //   Given a keyring-based token cache
-    //   When we add a token with an empty username
-    //   Then an InvalidKeyFormat error should be returned
     #[test]
     fn add_token_with_empty_username_fails() {
+        // Given a keyring-based token cache
         let cache = KeyringTokenCache::new().expect("Failed to create cache");
 
+        // When we add a token with an empty username
         let result = cache.add_token("host.example.com", "", TokenType::IdToken, "token_value");
+
+        // Then an InvalidKeyFormat error should be returned
         assert!(result.is_err());
         assert!(matches!(
             result,
@@ -347,14 +341,15 @@ mod tests {
     }
 
     // Scenario: Should fail to get keyring token with empty host
-    //   Given a keyring-based token cache
-    //   When we get a token with an empty host
-    //   Then an InvalidKeyFormat error should be returned
     #[test]
     fn get_token_with_empty_host_fails() {
+        // Given a keyring-based token cache
         let cache = KeyringTokenCache::new().expect("Failed to create cache");
 
+        // When we get a token with an empty host
         let result = cache.get_token("", "username", TokenType::IdToken);
+
+        // Then an InvalidKeyFormat error should be returned
         assert!(result.is_err());
         assert!(matches!(
             result,
@@ -363,14 +358,15 @@ mod tests {
     }
 
     // Scenario: Should fail to get keyring token with empty username
-    //   Given a keyring-based token cache
-    //   When we get a token with an empty username
-    //   Then an InvalidKeyFormat error should be returned
     #[test]
     fn get_token_with_empty_username_fails() {
+        // Given a keyring-based token cache
         let cache = KeyringTokenCache::new().expect("Failed to create cache");
 
+        // When we get a token with an empty username
         let result = cache.get_token("host.example.com", "", TokenType::IdToken);
+
+        // Then an InvalidKeyFormat error should be returned
         assert!(result.is_err());
         assert!(matches!(
             result,
@@ -379,14 +375,15 @@ mod tests {
     }
 
     // Scenario: Should fail to remove keyring token with empty host
-    //   Given a keyring-based token cache
-    //   When we remove a token with an empty host
-    //   Then an InvalidKeyFormat error should be returned
     #[test]
     fn remove_token_with_empty_host_fails() {
+        // Given a keyring-based token cache
         let cache = KeyringTokenCache::new().expect("Failed to create cache");
 
+        // When we remove a token with an empty host
         let result = cache.remove_token("", "username", TokenType::IdToken);
+
+        // Then an InvalidKeyFormat error should be returned
         assert!(result.is_err());
         assert!(matches!(
             result,
@@ -395,14 +392,15 @@ mod tests {
     }
 
     // Scenario: Should fail to remove keyring token with empty username
-    //   Given a keyring-based token cache
-    //   When we remove a token with an empty username
-    //   Then an InvalidKeyFormat error should be returned
     #[test]
     fn remove_token_with_empty_username_fails() {
+        // Given a keyring-based token cache
         let cache = KeyringTokenCache::new().expect("Failed to create cache");
 
+        // When we remove a token with an empty username
         let result = cache.remove_token("host.example.com", "", TokenType::IdToken);
+
+        // Then an InvalidKeyFormat error should be returned
         assert!(result.is_err());
         assert!(matches!(
             result,
