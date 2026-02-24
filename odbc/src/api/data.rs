@@ -1,6 +1,6 @@
 use crate::api::error::{
-    ConversionSnafu, DataNotFetchedSnafu, ExecutionDoneSnafu, FetchDataSnafu,
-    InvalidBufferLengthSnafu, InvalidCursorPositionSnafu, InvalidCursorStateSnafu,
+    ConversionSnafu, DataNotFetchedSnafu, ExecutionDoneSnafu, ExtendedFetchUsedSnafu,
+    FetchDataSnafu, InvalidBufferLengthSnafu, InvalidCursorPositionSnafu, InvalidCursorStateSnafu,
     InvalidDescriptorIndexSnafu, NoMoreDataSnafu, NullPointerSnafu, StatementErrorStateSnafu,
     StatementNotExecutedSnafu, UnsupportedFeatureSnafu,
 };
@@ -106,6 +106,16 @@ fn advance_cursor(state: &mut crate::api::State<StatementState>) -> OdbcResult<(
 pub fn fetch(statement_handle: sql::Handle, warnings: &mut Warnings) -> OdbcResult<()> {
     tracing::debug!("fetch called");
     let stmt = stmt_from_handle(statement_handle);
+
+    if stmt.extended_fetch_used {
+        return ExtendedFetchUsedSnafu.fail();
+    }
+
+    fetch_inner(stmt, warnings)
+}
+
+/// Core fetch logic shared by `fetch` and `extended_fetch`.
+fn fetch_inner(stmt: &mut Statement, warnings: &mut Warnings) -> OdbcResult<()> {
     stmt.get_data_state = None;
 
     let array_size = stmt.ard.array_size.max(1);
@@ -216,6 +226,46 @@ pub fn fetch_scroll(
         return UnsupportedFeatureSnafu.fail();
     }
     fetch(statement_handle, warnings)
+}
+
+/// `SQLExtendedFetch` — deprecated ODBC 2.x function. Only `SQL_FETCH_NEXT` is
+/// supported. Sets `extended_fetch_used` so that subsequent `SQLFetch` calls
+/// return HY010 until the cursor is closed with `SQLFreeStmt(SQL_CLOSE)`.
+pub fn extended_fetch(
+    statement_handle: sql::Handle,
+    fetch_orientation: sql::SmallInt,
+    row_count_ptr: *mut sql::ULen,
+    row_status_ptr: *mut sql::USmallInt,
+    warnings: &mut Warnings,
+) -> OdbcResult<()> {
+    tracing::debug!("extended_fetch called");
+    if fetch_orientation != SQL_FETCH_NEXT {
+        tracing::warn!(
+            "extended_fetch: unsupported orientation {}",
+            fetch_orientation
+        );
+        return UnsupportedFeatureSnafu.fail();
+    }
+
+    let stmt = stmt_from_handle(statement_handle);
+    stmt.extended_fetch_used = true;
+
+    let saved_row_status = stmt.ird.array_status_ptr;
+    let saved_rows_fetched = stmt.ird.rows_processed_ptr;
+
+    if !row_status_ptr.is_null() {
+        stmt.ird.array_status_ptr = row_status_ptr;
+    }
+    if !row_count_ptr.is_null() {
+        stmt.ird.rows_processed_ptr = row_count_ptr;
+    }
+
+    let result = fetch_inner(stmt, warnings);
+
+    stmt.ird.array_status_ptr = saved_row_status;
+    stmt.ird.rows_processed_ptr = saved_rows_fetched;
+
+    result
 }
 
 fn write_row_status(row_status_ptr: *mut u16, row_idx: usize, status: RowStatus) {

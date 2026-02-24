@@ -593,6 +593,9 @@ pub struct Statement<'a> {
     pub cursor_type: CursorType,
     /// `SQL_ATTR_MAX_LENGTH` — default 0 (no limit). Stored but not enforced.
     pub max_length: sql::ULen,
+    /// Set to `true` after `SQLExtendedFetch` is called. While set, `SQLFetch`
+    /// must return HY010 (function sequence error). Cleared by `SQLFreeStmt(SQL_CLOSE)`.
+    pub extended_fetch_used: bool,
 }
 
 // Helper functions for handle conversion

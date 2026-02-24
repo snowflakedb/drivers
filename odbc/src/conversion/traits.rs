@@ -1,6 +1,6 @@
 use odbc_sys as sql;
 
-use crate::cdata_types::CDataType;
+use crate::cdata_types::{CDataType, SQL_NO_TOTAL};
 use crate::conversion::error::{IndicatorRequiredSnafu, ReadArrowError, WriteOdbcError};
 use crate::conversion::warning::{Warning, Warnings};
 
@@ -135,7 +135,6 @@ impl Binding {
         }
 
         let offset = get_data_offset.unwrap_or(0);
-        let total_units = src.encode_utf16().count();
         let max_len = (self.buffer_length / 2) as usize;
         let value_ptr = self.target_value_ptr as *mut u16;
         let mut dst_idx = 0;
@@ -144,8 +143,7 @@ impl Binding {
                 unsafe {
                     std::ptr::write(value_ptr.add(max_len - 1), 0);
                 }
-                let remaining_bytes = ((total_units - offset) * 2) as sql::Len;
-                let _ = self.write_length_or_null(LengthOrNull::Length(remaining_bytes));
+                let _ = self.write_length_or_null(LengthOrNull::Length(SQL_NO_TOTAL));
                 *get_data_offset = Some(offset + dst_idx);
                 return vec![Warning::StringDataTruncated];
             }

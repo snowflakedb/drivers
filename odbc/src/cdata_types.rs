@@ -30,6 +30,7 @@ use odbc_sys as sql;
 pub const C_TYPES_EXTENDED: i16 = 0x04000;
 
 pub const SQL_NULL_DATA: sql::Len = -1;
+pub const SQL_NO_TOTAL: sql::Len = -4;
 
 #[repr(i16)]
 #[derive(Debug, Default, PartialEq, Eq, Clone, Copy)]

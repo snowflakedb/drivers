@@ -180,6 +180,12 @@ pub enum OdbcError {
         location: Location,
     },
 
+    #[snafu(display("SQLFetch cannot be mixed with SQLExtendedFetch without closing cursor"))]
+    ExtendedFetchUsed {
+        #[snafu(implicit)]
+        location: Location,
+    },
+
     #[snafu(display("Failed to parse port '{port}'"))]
     InvalidPort {
         port: String,
@@ -372,6 +378,7 @@ impl OdbcError {
             OdbcError::NoMoreData { .. } => SqlState::NoDataFound,
             OdbcError::InvalidCursorPosition { .. } => SqlState::InvalidCursorPosition,
             OdbcError::UnsupportedFeature { .. } => SqlState::OptionalFeatureNotImplemented,
+            OdbcError::ExtendedFetchUsed { .. } => SqlState::FunctionSequenceError,
             OdbcError::InvalidPort { .. } => SqlState::InvalidConnectionStringAttribute,
             OdbcError::SetSqlQuery { .. } => SqlState::SyntaxErrorOrAccessRuleViolation,
             OdbcError::PrepareStatement { .. } => SqlState::SyntaxErrorOrAccessRuleViolation,
