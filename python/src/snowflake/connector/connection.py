@@ -106,9 +106,6 @@ class Connection:
             )
 
         self.db_api.connection_init(ConnectionInitRequest(conn_handle=self.conn_handle, db_handle=self.db_handle))
-        self._connection_info: ConnectionGetInfoResponse = self.db_api.connection_get_info(
-            ConnectionGetInfoRequest(conn_handle=self.conn_handle)
-        )
         _sensitive_keys = {"password", "private_key"}
         self.kwargs = {k: ("***" if k in _sensitive_keys else v) for k, v in kwargs.items()}
         self._closed = False
@@ -308,8 +305,7 @@ class Connection:
     @internal_api
     def _get_connection_info(self) -> ConnectionGetInfoResponse:
         """Refresh connection details for connection"""
-        self._connection_info = self.db_api.connection_get_info(ConnectionGetInfoRequest(conn_handle=self.conn_handle))
-        return self._connection_info
+        return self.db_api.connection_get_info(ConnectionGetInfoRequest(conn_handle=self.conn_handle))
 
     @internal_api
     @backward_compatibility

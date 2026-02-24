@@ -12,14 +12,14 @@ from snowflake.connector.errors import NotSupportedError
 
 
 class TestConnectionInfo:
-    """Integration tests for Connection._connection_info property."""
+    """Integration tests for Connection._get_connection_info."""
 
     @pytest.mark.skip_reference
-    def test_connection_info_is_set_after_connect(self, connection):
-        """Test that _connection_info is populated after connection is established."""
+    def test_get_connection_info_returns_info_after_connect(self, connection):
+        """Test that _get_connection_info returns info after connection is established."""
         # Given an established connection
-        # When accessing _connection_info
-        info = connection._connection_info
+        # When calling _get_connection_info
+        info = connection._get_connection_info()
 
         # Then it should not be None
         assert info is not None
