@@ -28,11 +28,15 @@ ENV AWS_LC_FIPS_SYS_CC=clang
 # Copy Rust workspace sources (all members required for cargo workspace resolution)
 COPY Cargo.toml Cargo.lock build_common.rs ./
 COPY sf_core/ ./sf_core/
+COPY sf_mini_core/ ./sf_mini_core/
+COPY sf_mini_core_static/ ./sf_mini_core_static/
+COPY odbc/ ./odbc/
 COPY proto_utils/ ./proto_utils/
 COPY proto_generator/ ./proto_generator/
 COPY protobuf/ ./protobuf/
 COPY error_trace/ ./error_trace/
 COPY error_trace_derive/ ./error_trace_derive/
+COPY jdbc_bridge/ ./jdbc_bridge/
 
 # Copy Python package sources
 COPY python/ ./python/
