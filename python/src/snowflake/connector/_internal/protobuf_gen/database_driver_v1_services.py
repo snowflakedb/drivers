@@ -947,4 +947,3 @@ class DatabaseDriverClient:
 
         response.ParseFromString(self._transport.handle_message('DatabaseDriver', 'config_load_all_sections', request.SerializeToString()))
         return response
-
