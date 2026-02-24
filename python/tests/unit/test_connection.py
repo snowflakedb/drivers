@@ -6,6 +6,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
+    ConnectionHandle,
+    DatabaseHandle,
+)
 from tests.compatibility import IS_UNIVERSAL_DRIVER
 
 
@@ -16,8 +20,8 @@ pytestmark = pytest.mark.skipif(not IS_UNIVERSAL_DRIVER, reason="Requires univer
 def mock_db_api():
     """Create a mock DatabaseDriverClient with minimal stubs for Connection.__init__."""
     db_api = MagicMock()
-    db_api.database_new.return_value = MagicMock(db_handle=1)
-    db_api.connection_new.return_value = MagicMock(conn_handle=42)
+    db_api.database_new.return_value = MagicMock(db_handle=DatabaseHandle(id=1))
+    db_api.connection_new.return_value = MagicMock(conn_handle=ConnectionHandle(id=42))
     return db_api
 
 
