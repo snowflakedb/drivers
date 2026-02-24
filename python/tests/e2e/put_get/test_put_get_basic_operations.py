@@ -160,7 +160,7 @@ def test_should_return_correct_column_metadata_for_put(connection):
         assert upload_result[6] == "UPLOADED"
 
         # Verify column names and type codes (TEXT=2, FIXED=0)
-        expected = [
+        expected_columns = [
             ("source", 2),
             ("target", 2),
             ("source_size", 0),
@@ -170,12 +170,12 @@ def test_should_return_correct_column_metadata_for_put(connection):
             ("status", 2),
             ("message", 2),
         ]
-        for i, (expected_name, expected_type_code) in enumerate(expected):
-            assert columns[i][0].lower() == expected_name, (
-                f"Column {i} should be named '{expected_name}', got '{columns[i][0]}'"
-            )
-            assert columns[i][1] == expected_type_code, (
-                f"Column '{expected_name}' type_code should be {expected_type_code}, got {columns[i][1]}"
+        for i, (expected_name, expected_type_code) in enumerate(expected_columns):
+            actual_name = columns[i][0].lower()
+            actual_type_code = columns[i][1]
+            assert actual_name == expected_name, f"Column {i} should be named '{expected_name}', got '{actual_name}'"
+            assert actual_type_code == expected_type_code, (
+                f"Column '{expected_name}' type_code should be {expected_type_code}, got {actual_type_code}"
             )
 
 
@@ -205,16 +205,18 @@ def test_should_return_correct_column_metadata_for_get(connection):
             assert get_result[2] == "DOWNLOADED"
 
             # Verify column names and type codes (TEXT=2, FIXED=0)
-            expected = [
+            expected_columns = [
                 ("file", 2),
                 ("size", 0),
                 ("status", 2),
                 ("message", 2),
             ]
-            for i, (expected_name, expected_type_code) in enumerate(expected):
-                assert columns[i][0].lower() == expected_name, (
-                    f"Column {i} should be named '{expected_name}', got '{columns[i][0]}'"
+            for i, (expected_name, expected_type_code) in enumerate(expected_columns):
+                actual_name = columns[i][0].lower()
+                actual_type_code = columns[i][1]
+                assert actual_name == expected_name, (
+                    f"Column {i} should be named '{expected_name}', got '{actual_name}'"
                 )
-                assert columns[i][1] == expected_type_code, (
-                    f"Column '{expected_name}' type_code should be {expected_type_code}, got {columns[i][1]}"
+                assert actual_type_code == expected_type_code, (
+                    f"Column '{expected_name}' type_code should be {expected_type_code}, got {actual_type_code}"
                 )
