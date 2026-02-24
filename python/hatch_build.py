@@ -31,16 +31,21 @@ except ImportError:
 
 
 class BuildHook(BuildHookInterface):
-    """Build hook for compiling Cython extensions with nanoarrow C++ code."""
+    """Build hook for compiling Cython extensions and generating protobuf code."""
 
     PLUGIN_NAME = "nanoarrow"
 
     # Relative paths from src/
+    SRC_DIR = Path("src")
     CONNECTOR_DIR = Path("snowflake") / "connector"
     INTERNAL_DIR = CONNECTOR_DIR / "_internal"
     NANOARROW_CPP_DIR = INTERNAL_DIR / "nanoarrow_cpp"
     ARROW_ITERATOR_DIR = NANOARROW_CPP_DIR / "ArrowIterator"
     LOGGING_DIR = NANOARROW_CPP_DIR / "Logging"
+
+    # Proto generation
+    PROTO_INPUT = Path("protobuf") / "database_driver_v1.proto"
+    PROTOBUF_GEN_DIR = SRC_DIR / INTERNAL_DIR / "protobuf_gen"
 
     # Extension module name
     EXTENSION_NAME = "snowflake.connector._internal.arrow_stream_iterator"
@@ -90,9 +95,10 @@ class BuildHook(BuildHookInterface):
     VENDORED_C_FILES = ("nanoarrow.c", "nanoarrow_ipc.c", "flatcc.c")
 
     def initialize(self, version: str, build_data: dict[str, Any]) -> None:
-        """Initialize the build hook and compile extensions."""
+        """Initialize the build hook: generate protobuf code and compile extensions."""
+        self._generate_protobuf()
+
         if self.target_name != "wheel":
-            # For source distribution
             return
 
         if os.environ.get(self.DISABLE_COMPILE_ENV_VAR, "false").lower() in self.POSITIVE_VALUES:
@@ -109,6 +115,61 @@ class BuildHook(BuildHookInterface):
 
         self._build_extensions()
         self._build_core()
+
+    def _generate_protobuf(self) -> None:
+        """Generate Python protobuf code using the Rust proto_generator binary."""
+        python_dir = Path(self.root)
+        proto_input = self.PROTO_INPUT
+
+        if not proto_input.exists():
+            raise RuntimeError(
+                f"Proto file not found at {proto_input}. "
+                "Cannot build package without protobuf definitions."
+            )
+
+        cargo_manifest = python_dir / "Cargo.toml"
+        if not cargo_manifest.exists():
+            raise RuntimeError(
+                "Cargo.toml not found. Cannot build proto_generator. "
+                "Ensure Cargo.toml symlink exists (ln -s ../Cargo.toml Cargo.toml) "
+                "or build from a pre-built wheel."
+            )
+
+        cargo_manifest = cargo_manifest.resolve()
+        self.PROTOBUF_GEN_DIR.mkdir(parents=True, exist_ok=True)
+
+        with TemporaryDirectory() as temp_dir:
+            cargo_args = [
+                "cargo",
+                "run",
+                "--bin",
+                "proto_generator",
+                "--manifest-path",
+                str(cargo_manifest),
+                "--target-dir",
+                str(temp_dir),
+                "--",
+                "--generator",
+                "python",
+                "--input",
+                str(proto_input),
+                "--output",
+                str(self.PROTOBUF_GEN_DIR),
+            ]
+
+            try:
+                result = subprocess.run(
+                    cargo_args,
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                )
+                print(result.stdout)
+            except subprocess.CalledProcessError as e:
+                print(f"Proto generation failed with exit code {e.returncode}")
+                print(f"stdout: {e.stdout}")
+                print(f"stderr: {e.stderr}")
+                raise
 
     def _build_extensions(self) -> None:
         """Build the Cython extensions."""

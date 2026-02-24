@@ -1,5 +1,5 @@
 [build-system]
-requires = ["hatchling", "Cython", "setuptools"]
+requires = ["hatchling", "Cython", "setuptools", "mypy-protobuf~=5.0"]
 build-backend = "hatchling.build"
 
 [project]

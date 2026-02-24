@@ -67,12 +67,12 @@ jobs:
         with:
           python-version: '3.13'
 
-      - name: Generate proto
+      - name: Generate proto (Java onl)
         run: |
           ./scripts/generate_proto.sh
 
-      - name: Check proto files are up-to-date
-        run: git diff --exit-code
+      - name: Check Java proto files are up-to-date
+        run: git diff --exit-code -- jdbc/
 
   tests-format-validator:
     needs: detect-changes
