@@ -278,8 +278,11 @@ class Connection:
         """Execute a SQL text including multiple statements. This is a non-standard convenience method."""
         stream = StringIO(sql_text)
         stream_generator = self.execute_stream(stream, remove_comments=remove_comments, cursor_class=cursor_class)
-        ret = list(stream_generator)
-        return ret if return_cursors else list()
+        if return_cursors:
+            return list(stream_generator)
+        for _ in stream_generator:
+            pass
+        return []
 
     @backward_compatibility
     def execute_stream(
@@ -290,9 +293,9 @@ class Connection:
         **kwargs: Any,
     ) -> Generator[CursorInstance, None, None]:
         """Execute a stream of SQL statements. This is a non-standard convenient method."""
-        split_statements_list = split_statements(stream, remove_comments=remove_comments)
-        non_empty_statements = [e for e in split_statements_list if e[0]]
-        for sql, is_put_or_get in non_empty_statements:
+        for sql, is_put_or_get in split_statements(stream, remove_comments=remove_comments):
+            if not sql:
+                continue
             cur = self.cursor(cursor_class=cursor_class)
             cur.execute(sql, _is_put_get=is_put_or_get)
             yield cur
