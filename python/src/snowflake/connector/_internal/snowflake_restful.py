@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import urllib3.util
+from urllib.parse import urlparse
 
 from snowflake.connector._internal.protobuf_gen.database_driver_v1_services import (
     ConnectionGetInfoResponse,
@@ -26,11 +26,11 @@ class SnowflakeRestful:
 
     @property
     def _protocol(self) -> str | None:
-        return urllib3.util.parse_url(self._connection_info.server_url).scheme
+        return urlparse(self._connection_info.server_url).scheme
 
     @property
     def _port(self) -> int | None:
-        return urllib3.util.parse_url(self._connection_info.server_url).port or 443
+        return urlparse(self._connection_info.server_url).port or 443
 
     @property
     def master_token(self) -> str | None:
