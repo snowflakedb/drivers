@@ -265,7 +265,7 @@ mod tests {
     mod token_type_tests {
         use super::*;
 
-        // Scenario: Should return correct values from token type as str
+        // Scenario: Should return correct values from token type as_str
         #[test]
         fn as_str_returns_correct_values() {
             // Given all token type variants
@@ -281,7 +281,7 @@ mod tests {
             );
         }
 
-        // Scenario: Should match display output with as str
+        // Scenario: Should match display output with as_str
         #[test]
         fn display_matches_as_str() {
             // Given a token type
@@ -307,7 +307,7 @@ mod tests {
     mod validation_tests {
         use super::*;
 
-        // Scenario: Should reject empty host when validating key components
+        // Scenario Outline: Should reject empty <component> when validating key components
         #[test]
         fn validate_key_components_rejects_empty_values() {
             for (host, username, token_key_component_name) in [
