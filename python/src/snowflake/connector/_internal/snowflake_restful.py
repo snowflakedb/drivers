@@ -1,17 +1,24 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
-from snowflake.connector._internal.protobuf_gen.database_driver_v1_services import (
-    ConnectionGetInfoResponse,
-)
+from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import ConnectionGetInfoResponse
+
+
+if TYPE_CHECKING:
+    from ..connection import SnowflakeConnection
 
 
 class SnowflakeRestful:
-    """Extend as required"""
+    """Internal only iterface to underlying v1 API"""
 
-    def __init__(self, connection_info: ConnectionGetInfoResponse) -> None:
-        self._connection_info = connection_info
+    def __init__(self, connection: SnowflakeConnection) -> None:
+        self._connection = connection
+
+    @property
+    def _connection_info(self) -> ConnectionGetInfoResponse:
+        return self._connection._get_connection_info()
 
     @property
     def token(self) -> str | None:
@@ -34,4 +41,5 @@ class SnowflakeRestful:
 
     @property
     def master_token(self) -> str | None:
-        return "TODO"
+        # TODO: SNOW-3155971
+        raise NotImplementedError()

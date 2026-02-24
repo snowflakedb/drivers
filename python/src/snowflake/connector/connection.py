@@ -33,6 +33,7 @@ from ._internal.decorators import backward_compatibility, internal_api
 from ._internal.text_utils import split_statements
 from .cursor import CursorInstance, CursorType, SnowflakeCursor
 from .errors import InterfaceError, NotSupportedError
+from .telemetry import TelemetryClient
 
 
 SessionParameters = dict[str, Any]
@@ -211,7 +212,7 @@ class Connection:
         Args:
             autocommit (bool): True to enable autocommit, False to disable
         """
-        # TODO: Lacks full implementation
+        # TODO: SNOW-3155976 Lacks full implementation
         self._autocommit = autocommit
 
     def get_autocommit(self) -> bool:
@@ -221,7 +222,7 @@ class Connection:
         Returns:
             bool: Current autocommit setting
         """
-        # TODO: Lacks full implementation
+        # TODO: SNOW-3155976 Lacks full implementation
         return self._autocommit
 
     def autocommit(self, value: bool) -> None:
@@ -266,7 +267,6 @@ class Connection:
         """
         return self._paramstyle
 
-    @backward_compatibility
     def execute_string(
         self,
         sql_text: str,
@@ -284,7 +284,6 @@ class Connection:
             pass
         return []
 
-    @backward_compatibility
     def execute_stream(
         self,
         stream: StringIO,
@@ -304,12 +303,18 @@ class Connection:
     @internal_api
     @backward_compatibility
     def rest(self) -> SnowflakeRestful:
-        return SnowflakeRestful(connection_info=self._connection_info)
+        return SnowflakeRestful(connection=self)
+
+    @internal_api
+    def _get_connection_info(self) -> ConnectionGetInfoResponse:
+        """Refresh connection details for connection"""
+        self._connection_info = self.db_api.connection_get_info(ConnectionGetInfoRequest(conn_handle=self.conn_handle))
+        return self._connection_info
 
     @internal_api
     @backward_compatibility
-    def _telemetry(self) -> Any:
-        return None
+    def _telemetry(self) -> TelemetryClient:
+        return TelemetryClient()
 
     @backward_compatibility
     def _rewrite_private_key_password(self, kwargs: ConnectionParameters) -> ConnectionParameters:
