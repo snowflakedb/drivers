@@ -120,13 +120,13 @@ pub fn build_cache_key(host: &str, username: &str, token_type: TokenType) -> Str
 
 /// Validates that host and username are non-empty.
 pub(super) fn validate_key_components(host: &str, username: &str) -> Result<(), TokenCacheError> {
-    if host.is_empty() || host.contains(':') {
+    if host.is_empty() || host.contains(';') {
         return Err(TokenCacheError::InvalidKeyFormat {
             key: format!("{};{}", host, username),
             location: Location::new(file!(), line!(), 0),
         });
     }
-    if username.is_empty() || username.contains(':') {
+    if username.is_empty() || username.contains(';') {
         return Err(TokenCacheError::InvalidKeyFormat {
             key: format!("{};{}", host, username),
             location: Location::new(file!(), line!(), 0),
@@ -305,13 +305,13 @@ mod tests {
 
         #[test]
         fn validate_key_components_disallows_invalid_host() {
-            let result = validate_key_components("host.example.com:123", "testuser");
+            let result = validate_key_components("host.example.com;", "testuser");
             assert!(result.is_err());
         }
 
         #[test]
         fn validate_key_components_disallows_invalid_user() {
-            let result = validate_key_components("host.example.com", "test:user");
+            let result = validate_key_components("host.example.com", "test;user");
             assert!(result.is_err());
         }
     }
