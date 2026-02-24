@@ -157,11 +157,8 @@ macro_rules! int64_array {
     };
 }
 
-/// Converts upload results to Arrow format
-pub fn upload_results_reader(
-    upload_results: Vec<UploadResult>,
-) -> Result<Box<dyn RecordBatchReader + Send>, ArrowError> {
-    let row_types: Vec<RowType> = vec![
+fn upload_row_types() -> Vec<RowType> {
+    vec![
         build_generic_text_rowtype("source"),
         build_generic_text_rowtype("target"),
         build_generic_fixed_rowtype("source_size"),
@@ -170,8 +167,23 @@ pub fn upload_results_reader(
         build_generic_text_rowtype("target_compression"),
         build_generic_text_rowtype("status"),
         build_generic_text_rowtype("message"),
-    ];
-    let schema = create_schema(&row_types).expect("Failed to create schema from RowTypes");
+    ]
+}
+
+fn download_row_types() -> Vec<RowType> {
+    vec![
+        build_generic_text_rowtype("file"),
+        build_generic_fixed_rowtype("size"),
+        build_generic_text_rowtype("status"),
+        build_generic_text_rowtype("message"),
+    ]
+}
+
+/// Converts upload results to Arrow format
+pub fn upload_results_reader(
+    upload_results: Vec<UploadResult>,
+) -> Result<Box<dyn RecordBatchReader + Send>, ArrowError> {
+    let schema = create_schema(&upload_row_types()).expect("Failed to create schema from RowTypes");
 
     let columns: Vec<Arc<dyn Array>> = vec![
         string_array!(upload_results, source),
@@ -191,13 +203,8 @@ pub fn upload_results_reader(
 pub fn download_results_reader(
     download_results: Vec<DownloadResult>,
 ) -> Result<Box<dyn RecordBatchReader + Send>, ArrowError> {
-    let row_types: Vec<RowType> = vec![
-        build_generic_text_rowtype("file"),
-        build_generic_fixed_rowtype("size"),
-        build_generic_text_rowtype("status"),
-        build_generic_text_rowtype("message"),
-    ];
-    let schema = create_schema(&row_types).expect("Failed to create schema from RowTypes");
+    let schema =
+        create_schema(&download_row_types()).expect("Failed to create schema from RowTypes");
 
     let columns: Vec<Arc<dyn Array>> = vec![
         string_array!(download_results, file),
@@ -258,28 +265,18 @@ fn rowtype_to_column_metadata(rt: &RowType) -> ColumnMetadata {
 
 /// Build column metadata for PUT (UPLOAD) results.
 pub fn upload_column_metadata() -> Vec<ColumnMetadata> {
-    let row_types = [
-        build_generic_text_rowtype("source"),
-        build_generic_text_rowtype("target"),
-        build_generic_fixed_rowtype("source_size"),
-        build_generic_fixed_rowtype("target_size"),
-        build_generic_text_rowtype("source_compression"),
-        build_generic_text_rowtype("target_compression"),
-        build_generic_text_rowtype("status"),
-        build_generic_text_rowtype("message"),
-    ];
-    row_types.iter().map(rowtype_to_column_metadata).collect()
+    upload_row_types()
+        .iter()
+        .map(rowtype_to_column_metadata)
+        .collect()
 }
 
 /// Build column metadata for GET (DOWNLOAD) results.
 pub fn download_column_metadata() -> Vec<ColumnMetadata> {
-    let row_types = [
-        build_generic_text_rowtype("file"),
-        build_generic_fixed_rowtype("size"),
-        build_generic_text_rowtype("status"),
-        build_generic_text_rowtype("message"),
-    ];
-    row_types.iter().map(rowtype_to_column_metadata).collect()
+    download_row_types()
+        .iter()
+        .map(rowtype_to_column_metadata)
+        .collect()
 }
 
 #[derive(Debug, Snafu, error_trace::ErrorTrace)]
