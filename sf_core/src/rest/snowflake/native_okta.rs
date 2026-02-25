@@ -10,6 +10,8 @@ use snafu::{Location, ResultExt, Snafu};
 use std::time::{Duration, Instant};
 use url::Url;
 
+const SF_AUTHENTICATOR_REQUEST_PATH: &str = "/session/authenticator-request";
+
 #[derive(Debug, Snafu)]
 #[snafu(visibility(pub(crate)))]
 pub enum NativeOktaError {
@@ -172,6 +174,8 @@ fn extract_form_action(html: &str) -> Option<String> {
         end += 1;
     }
     if end >= html.len() {
+        // Truncated or malformed HTML — return None so that the caller
+        // (fetch_saml_with_retries) can re-mint the token and retry.
         return None;
     }
     let raw = &html[start..end];
@@ -265,12 +269,12 @@ async fn request_authenticator_endpoints(
     data.authenticator = Some(config.okta_url.as_str().to_string());
     let authn_req = AuthRequest { data };
     let authn_url = format!(
-        "{}/session/authenticator-request",
-        login_parameters.server_url
+        "{}{}",
+        login_parameters.server_url, SF_AUTHENTICATOR_REQUEST_PATH
     );
 
     let body_string = serde_json::to_string(&authn_req).context(JsonSerializeSnafu)?;
-    let ctx = HttpContext::new(Method::POST, "/session/authenticator-request").allow_post_retry();
+    let ctx = HttpContext::new(Method::POST, SF_AUTHENTICATOR_REQUEST_PATH).allow_post_retry();
     let (status, text) = request_text_with_retry(
         || {
             client
@@ -443,7 +447,7 @@ async fn fetch_saml_with_retries(
             }
             if saml_attempt >= base_policy.max_attempts {
                 return HttpStatusSnafu {
-                    context: "Okta SAML fetch",
+                    context: "Okta SAML fetch (retries exhausted)",
                     status: saml_status,
                     body: saml_html,
                 }

@@ -116,6 +116,8 @@ impl LoginParameters {
     }
 }
 
+pub const DEFAULT_AUTHENTICATION_TIMEOUT_SECS: u64 = 120;
+
 #[derive(Debug)]
 pub struct NativeOktaConfig {
     /// Snowflake user name (used in authenticator-request to Snowflake).
@@ -323,8 +325,9 @@ impl LoginMethod {
                     .or_else(|| settings.get_int("disable_saml_url_check").map(|v| v != 0))
                     .unwrap_or(false);
 
-                let authentication_timeout_secs =
-                    settings.get_u64("authentication_timeout").unwrap_or(120);
+                let authentication_timeout_secs = settings
+                    .get_u64("authentication_timeout")
+                    .unwrap_or(DEFAULT_AUTHENTICATION_TIMEOUT_SECS);
 
                 Ok(Self::NativeOkta(NativeOktaConfig {
                     username,
