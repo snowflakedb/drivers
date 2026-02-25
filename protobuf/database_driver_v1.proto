@@ -226,51 +226,6 @@ message DatabaseNewResponse {
   DatabaseHandle db_handle = 1;
 }
 
-message DatabaseSetOptionStringRequest {
-  DatabaseHandle db_handle = 1;
-  string key = 2;
-  string value = 3;
-}
-
-message DatabaseSetOptionStringResponse {
-}
-
-message DatabaseSetOptionBytesRequest {
-  DatabaseHandle db_handle = 1;
-  string key = 2;
-  bytes value = 3;
-}
-
-message DatabaseSetOptionBytesResponse {
-}
-
-message DatabaseSetOptionIntRequest {
-  DatabaseHandle db_handle = 1;
-  string key = 2;
-  int64 value = 3;
-}
-
-message DatabaseSetOptionIntResponse {
-}
-
-message DatabaseSetOptionDoubleRequest {
-  DatabaseHandle db_handle = 1;
-  string key = 2;
-  double value = 3;
-}
-
-message DatabaseSetOptionDoubleResponse {
-}
-
-message DatabaseSetOptionBoolRequest {
-  DatabaseHandle db_handle = 1;
-  string key = 2;
-  bool value = 3;
-}
-
-message DatabaseSetOptionBoolResponse {
-}
-
 message DatabaseInitRequest {
   DatabaseHandle db_handle = 1;
 }
@@ -292,51 +247,6 @@ message ConnectionNewRequest {
 
 message ConnectionNewResponse {
   ConnectionHandle conn_handle = 1;
-}
-
-message ConnectionSetOptionStringRequest {
-  ConnectionHandle conn_handle = 1;
-  string key = 2;
-  string value = 3;
-}
-
-message ConnectionSetOptionStringResponse {
-}
-
-message ConnectionSetOptionBytesRequest {
-  ConnectionHandle conn_handle = 1;
-  string key = 2;
-  bytes value = 3;
-}
-
-message ConnectionSetOptionBytesResponse {
-}
-
-message ConnectionSetOptionIntRequest {
-  ConnectionHandle conn_handle = 1;
-  string key = 2;
-  int64 value = 3;
-}
-
-message ConnectionSetOptionIntResponse {
-}
-
-message ConnectionSetOptionDoubleRequest {
-  ConnectionHandle conn_handle = 1;
-  string key = 2;
-  double value = 3;
-}
-
-message ConnectionSetOptionDoubleResponse {
-}
-
-message ConnectionSetOptionBoolRequest {
-  ConnectionHandle conn_handle = 1;
-  string key = 2;
-  bool value = 3;
-}
-
-message ConnectionSetOptionBoolResponse {
 }
 
 message ConnectionInitRequest {
@@ -569,51 +479,6 @@ message StatementPrepareResponse {
   PrepareResult result = 1;
 }
 
-message StatementSetOptionStringRequest {
-  StatementHandle stmt_handle = 1;
-  string key = 2;
-  string value = 3;
-}
-
-message StatementSetOptionStringResponse {
-}
-
-message StatementSetOptionBytesRequest {
-  StatementHandle stmt_handle = 1;
-  string key = 2;
-  bytes value = 3;
-}
-
-message StatementSetOptionBytesResponse {
-}
-
-message StatementSetOptionIntRequest {
-  StatementHandle stmt_handle = 1;
-  string key = 2;
-  int64 value = 3;
-}
-
-message StatementSetOptionIntResponse {
-}
-
-message StatementSetOptionDoubleRequest {
-  StatementHandle stmt_handle = 1;
-  string key = 2;
-  double value = 3;
-}
-
-message StatementSetOptionDoubleResponse {
-}
-
-message StatementSetOptionBoolRequest {
-  StatementHandle stmt_handle = 1;
-  string key = 2;
-  bool value = 3;
-}
-
-message StatementSetOptionBoolResponse {
-}
-
 message StatementGetParameterSchemaRequest {
   StatementHandle stmt_handle = 1;
 }
@@ -798,11 +663,6 @@ service DatabaseDriver {
   option (service_error) = "DriverException";
   // Database operations
   rpc DatabaseNew(DatabaseNewRequest) returns (DatabaseNewResponse);
-  rpc DatabaseSetOptionString(DatabaseSetOptionStringRequest) returns (DatabaseSetOptionStringResponse);
-  rpc DatabaseSetOptionBytes(DatabaseSetOptionBytesRequest) returns (DatabaseSetOptionBytesResponse);
-  rpc DatabaseSetOptionInt(DatabaseSetOptionIntRequest) returns (DatabaseSetOptionIntResponse);
-  rpc DatabaseSetOptionDouble(DatabaseSetOptionDoubleRequest) returns (DatabaseSetOptionDoubleResponse);
-  rpc DatabaseSetOptionBool(DatabaseSetOptionBoolRequest) returns (DatabaseSetOptionBoolResponse);
   rpc DatabaseSetOptions(DatabaseSetOptionsRequest) returns (DatabaseSetOptionsResponse);
   rpc DatabaseInit(DatabaseInitRequest) returns (DatabaseInitResponse);
   rpc DatabaseRelease(DatabaseReleaseRequest) returns (DatabaseReleaseResponse);
@@ -810,11 +670,6 @@ service DatabaseDriver {
 
   // Connection operations
   rpc ConnectionNew(ConnectionNewRequest) returns (ConnectionNewResponse);
-  rpc ConnectionSetOptionString(ConnectionSetOptionStringRequest) returns (ConnectionSetOptionStringResponse);
-  rpc ConnectionSetOptionBytes(ConnectionSetOptionBytesRequest) returns (ConnectionSetOptionBytesResponse);
-  rpc ConnectionSetOptionInt(ConnectionSetOptionIntRequest) returns (ConnectionSetOptionIntResponse);
-  rpc ConnectionSetOptionDouble(ConnectionSetOptionDoubleRequest) returns (ConnectionSetOptionDoubleResponse);
-  rpc ConnectionSetOptionBool(ConnectionSetOptionBoolRequest) returns (ConnectionSetOptionBoolResponse);
   rpc ConnectionSetOptions(ConnectionSetOptionsRequest) returns (ConnectionSetOptionsResponse);
   rpc ConnectionInit(ConnectionInitRequest) returns (ConnectionInitResponse);
   rpc ConnectionRelease(ConnectionReleaseRequest) returns (ConnectionReleaseResponse);
@@ -849,11 +704,6 @@ service DatabaseDriver {
   rpc StatementSetSqlQuery(StatementSetSqlQueryRequest) returns (StatementSetSqlQueryResponse);
   rpc StatementSetSubstraitPlan(StatementSetSubstraitPlanRequest) returns (StatementSetSubstraitPlanResponse);
   rpc StatementPrepare(StatementPrepareRequest) returns (StatementPrepareResponse);
-  rpc StatementSetOptionString(StatementSetOptionStringRequest) returns (StatementSetOptionStringResponse);
-  rpc StatementSetOptionBytes(StatementSetOptionBytesRequest) returns (StatementSetOptionBytesResponse);
-  rpc StatementSetOptionInt(StatementSetOptionIntRequest) returns (StatementSetOptionIntResponse);
-  rpc StatementSetOptionDouble(StatementSetOptionDoubleRequest) returns (StatementSetOptionDoubleResponse);
-  rpc StatementSetOptionBool(StatementSetOptionBoolRequest) returns (StatementSetOptionBoolResponse);
   rpc StatementSetOptions(StatementSetOptionsRequest) returns (StatementSetOptionsResponse);
   rpc StatementGetParameterSchema(StatementGetParameterSchemaRequest) returns (StatementGetParameterSchemaResponse);
   rpc StatementExecuteQuery(StatementExecuteQueryRequest) returns (StatementExecuteQueryResponse);
