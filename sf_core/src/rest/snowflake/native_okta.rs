@@ -293,6 +293,12 @@ async fn request_authenticator_endpoints(
     .await
     .context(RetryExhaustedSnafu)?;
 
+    tracing::debug!(
+        status = %status,
+        elapsed_ms = start.elapsed().as_millis(),
+        "Snowflake authenticator-request completed"
+    );
+
     if !status.is_success() {
         tracing::error!(
             status = %status,
@@ -386,6 +392,11 @@ async fn fetch_saml_with_retries(
 ) -> Result<String, NativeOktaError> {
     let budget = Duration::from_secs(config.authentication_timeout_secs);
     let idp_login = config.okta_username.as_deref().unwrap_or(&config.username);
+    tracing::debug!(
+        budget_secs = config.authentication_timeout_secs,
+        max_attempts = base_policy.max_attempts,
+        "Starting SAML fetch with retries"
+    );
 
     let mut saml_attempt: u32 = 0;
     loop {
@@ -528,6 +539,12 @@ async fn request_okta_token(
         );
         return BadCredentialsSnafu { status }.fail();
     }
+    tracing::debug!(
+        status = %status,
+        elapsed_ms = start.elapsed().as_millis(),
+        "Okta token endpoint responded"
+    );
+
     if !status.is_success() {
         tracing::error!(
             status = %status,
@@ -556,6 +573,11 @@ async fn request_okta_token(
         }
     })?;
     let relay_state = resp.relay_state.unwrap_or_default();
+    tracing::debug!(
+        elapsed_ms = start.elapsed().as_millis(),
+        has_relay_state = !relay_state.is_empty(),
+        "Successfully obtained one-time token from Okta"
+    );
     Ok((one_time, relay_state))
 }
 
