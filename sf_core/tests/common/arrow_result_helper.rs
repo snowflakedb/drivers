@@ -4,6 +4,7 @@ extern crate tracing_subscriber;
 
 use super::arrow_deserialize::ArrowDeserialize;
 use super::arrow_extract_value::{ArrowExtractError, ArrowExtractValue, extract_arrow_value};
+use crate::common::arrow_convert_row::ArrowConvertRow;
 use arrow::ffi_stream::ArrowArrayStreamReader;
 use arrow::ffi_stream::FFI_ArrowArrayStream;
 use arrow::record_batch::RecordBatchReader;
@@ -59,6 +60,17 @@ impl ArrowResultHelper {
             }
         }
         Ok(all_rows)
+    }
+
+    pub fn transform_rows<T: ArrowConvertRow>(&mut self) -> Result<Vec<T>, ArrowExtractError> {
+        let mut all_values = Vec::new();
+        while let Some(batch) = self.next_batch() {
+            for row_idx in 0..batch.num_rows() {
+                let value = T::from_arrow_row(&batch, row_idx)?;
+                all_values.push(value);
+            }
+        }
+        Ok(all_values)
     }
 
     /// Asserts that the result equals the expected 2D array

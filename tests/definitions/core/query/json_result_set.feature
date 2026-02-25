@@ -4,9 +4,11 @@ Feature: JSON Result Set
   @core_e2e
   Scenario: should return arrow even if JSON result set is returned for simple types
     Given Snowflake client is logged in
-    And Query result format is forced to JSON
     When Query "SELECT 'abc', 123" is executed
-    Then all values are deserialized correctly
+    And Query result format is forced to JSON
+    And Query "SELECT 'abc', 123" is executed
+    Then Schema for both queries should match
+    And the result for both queries should match
     And Statement should be released
 
   # TODO add a test for larger result set with chunks

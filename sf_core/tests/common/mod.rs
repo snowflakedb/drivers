@@ -1,3 +1,4 @@
+pub mod arrow_convert_row;
 pub mod arrow_deserialize;
 pub mod arrow_extract_value;
 pub mod arrow_result_helper;

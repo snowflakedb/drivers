@@ -5,14 +5,6 @@ pub enum ArrowExtractError {
     UnsupportedType,
 }
 
-impl std::fmt::Display for ArrowExtractError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ArrowExtractError::UnsupportedType => write!(f, "Unsupported data type for extraction"),
-        }
-    }
-}
-
 pub trait ArrowExtractValue: Sized {
     fn extract_int8(_value: i8) -> Result<Self, ArrowExtractError> {
         Err(ArrowExtractError::UnsupportedType)

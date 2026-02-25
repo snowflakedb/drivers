@@ -1,42 +1,35 @@
-use crate::common::arrow_deserialize::ArrowDeserialize;
-use crate::common::arrow_extract_value::extract_arrow_value;
+use crate::common::arrow_convert_row::ArrowConvertRow;
+use crate::common::arrow_deserialize::RecordBatch;
+use crate::common::arrow_extract_value::{ArrowExtractError, extract_arrow_value};
 use crate::common::arrow_result_helper::ArrowResultHelper;
 use crate::common::snowflake_test_client::SnowflakeTestClient;
 
-#[derive(Debug)]
-struct AllTypes {
-    s: String,
-    i: i64,
-}
-
-impl ArrowDeserialize for AllTypes {
-    fn deserialize_one(
-        batch: &crate::common::arrow_deserialize::RecordBatch,
-        row_index: usize,
-    ) -> Result<Self, String> {
-        Ok(AllTypes {
-            s: extract_arrow_value::<String>(batch.column(0), row_index)
-                .map_err(|e| e.to_string())?,
-            i: extract_arrow_value::<i64>(batch.column(1), row_index).map_err(|e| e.to_string())?,
-        })
-    }
-}
-
-impl PartialEq for AllTypes {
-    fn eq(&self, other: &Self) -> bool {
-        assert_eq!(self.s, other.s);
-        assert_eq!(self.i, other.i);
-        true
-    }
-}
-
 #[test]
 fn should_return_arrow_even_if_json_result_set_is_returned_for_simple_types() {
+    #[derive(Debug, PartialEq)]
+    struct StringAndInt {
+        str_col: String,
+        int_col: i32,
+    }
+
+    impl ArrowConvertRow for StringAndInt {
+        fn from_arrow_row(batch: &RecordBatch, row_idx: usize) -> Result<Self, ArrowExtractError> {
+            Ok(StringAndInt {
+                str_col: extract_arrow_value::<String>(batch.column(0).as_ref(), row_idx)?,
+                int_col: extract_arrow_value::<i32>(batch.column(1).as_ref(), row_idx)?,
+            })
+        }
+    }
+
     // Given Snowflake client is logged in
     let client = SnowflakeTestClient::connect_with_default_auth();
+    let stmt = client.new_statement();
+
+    // When Query "SELECT 'abc', 123" is executed
+    client.set_sql_query(&stmt, "SELECT 'abc', 123");
+    let arrow_result = client.execute_statement_query(&stmt);
 
     // And Query result format is forced to JSON
-    let stmt = client.new_statement();
     client.set_sql_query(
         &stmt,
         "ALTER SESSION SET PYTHON_CONNECTOR_QUERY_RESULT_FORMAT = JSON",
@@ -44,18 +37,26 @@ fn should_return_arrow_even_if_json_result_set_is_returned_for_simple_types() {
     let result = client.execute_statement_query(&stmt);
     assert_eq!(result.rows_affected(), 1, "Cannot force JSON result set");
 
-    // When Query "SELECT 'abc', 123" is executed
+    // And Query "SELECT 'abc', 123" is executed
     client.set_sql_query(&stmt, "SELECT 'abc', 123");
-    let result = client.execute_statement_query(&stmt);
+    let json_result = client.execute_statement_query(&stmt);
 
-    // Then all values are deserialized correctly
-    let mut arrow_helper = ArrowResultHelper::from_result(result);
-    let all_types: AllTypes = arrow_helper.fetch_one().unwrap();
-    assert_eq!(
-        all_types,
-        AllTypes {
-            s: "abc".to_string(),
-            i: 123
-        }
-    );
+    let mut arrow_result_helper = ArrowResultHelper::from_result(arrow_result);
+    let mut json_result_helper = ArrowResultHelper::from_result(json_result);
+
+    // Then Schema for both queries should match
+    let arrow_schema = arrow_result_helper.schema();
+    let json_schema = json_result_helper.schema();
+    assert_eq!(arrow_schema, json_schema, "Schemas do not match");
+
+    let arrow_records = arrow_result_helper
+        .transform_rows::<StringAndInt>()
+        .unwrap();
+    let json_records = json_result_helper.transform_rows::<StringAndInt>().unwrap();
+
+    // And the result for both queries should match
+    assert_eq!(arrow_records, json_records, "Records do not match");
+
+    // And Statement should be released
+    client.release_statement(&stmt);
 }
