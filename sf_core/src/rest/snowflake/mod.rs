@@ -226,8 +226,7 @@ pub async fn snowflake_login_with_client(
     );
 
     // Build the login request data (handles all auth methods including Okta SAML exchange)
-    let auth_request_data =
-        auth_request_data(client, login_parameters, session_parameters).await?;
+    let auth_request_data = auth_request_data(client, login_parameters, session_parameters).await?;
     tracing::Span::current().record("login_name", &auth_request_data.login_name);
     let login_request = AuthRequest {
         data: auth_request_data,

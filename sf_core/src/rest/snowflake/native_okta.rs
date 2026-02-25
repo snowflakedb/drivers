@@ -12,7 +12,7 @@ use url::Url;
 
 const SF_AUTHENTICATOR_REQUEST_PATH: &str = "/session/authenticator-request";
 
-#[derive(Debug, Snafu)]
+#[derive(Debug, Snafu, error_trace::ErrorTrace)]
 #[snafu(visibility(pub(crate)))]
 pub enum NativeOktaError {
     #[snafu(display("Authentication timeout exceeded (budget {budget:?})"))]
