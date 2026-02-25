@@ -418,13 +418,8 @@ class Connection:
         Returns:
             bool: True if connection is closed, False otherwise
         """
-        try:
-            response = self.db_api.connection_is_closed(ConnectionIsClosedRequest(conn_handle=self.conn_handle))
-            return bool(response.is_closed)
-        except InterfaceError:
-            # If handle is invalid or already released, treat as closed
-            # This can happen if connection_release() was called
-            return True
+        response = self.db_api.connection_is_closed(ConnectionIsClosedRequest(conn_handle=self.conn_handle))
+        return bool(response.is_closed)
 
     def _get_session_parameter(self, name: str) -> str | None:
         """
