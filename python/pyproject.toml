@@ -1,5 +1,5 @@
 [build-system]
-requires = ["hatchling", "Cython", "setuptools"]
+requires = ["hatchling", "Cython", "setuptools", "mypy-protobuf~=5.0"]
 build-backend = "hatchling.build"
 
 [project]
@@ -55,6 +55,7 @@ dev = [
     "mypy",
     "hatchling",
     "types-pytz",
+    "types-protobuf",
 ]
 
 [tool.hatch.version]
@@ -69,6 +70,10 @@ include = [
     # Rust sources (directory symlinks dereferenced during sdist build)
     "sf_core/",
     "proto_utils/",
+    "proto_generator/",
+    "protobuf/",
+    "error_trace/",
+    "error_trace_derive/",
 ]
 exclude = [
     "__pycache__",
@@ -200,7 +205,7 @@ dependencies = [
 check = [
     'ruff format --check {args:src/snowflake tests}',
     'ruff check {args:src/snowflake tests}',
-    'mypy --install-types --non-interactive -p snowflake.connector',
+    'mypy -p snowflake.connector',
 ]
 fix = [
     'ruff format src/snowflake tests',

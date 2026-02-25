@@ -3088,77 +3088,145 @@ tests:
     ud_tests: []
   unit/test_configmanager.py:
   - test_name: test_complicated_nesting
-    ud_tests: []
+    ud_tests:
+    - tests/integ/config/test_config_manager.py::TestConfigManager::test_add_submanager
+    notes: Complex nesting simplified; sf_core handles nested config via SNOWFLAKE_HOME
   - test_name: test_config_file_resolution_non_sfdirs
-    ud_tests: []
+    ud_tests:
+    - sf_core/src/config/path_resolver.rs::tests::test_get_config_paths_default
+    - sf_core/src/config/path_resolver.rs::tests::test_get_snowflake_home_not_set
+    notes: Config file resolution handled by sf_core in Rust
   - test_name: test_config_file_resolution_sfdirs_default
-    ud_tests: []
+    ud_tests:
+    - sf_core/src/config/path_resolver.rs::tests::test_get_config_paths_default
+    - sf_core/src/config/path_resolver.rs::tests::test_get_snowflake_home_set
+    notes: SNOWFLAKE_HOME resolution handled by sf_core in Rust
   - test_name: test_config_file_resolution_sfdirs_nondefault
-    ud_tests: []
+    ud_tests:
+    - sf_core/src/config/path_resolver.rs::tests::test_snowflake_home_override
+    - sf_core/src/config/path_resolver.rs::tests::test_snowflake_home_nonexistent
+    notes: SNOWFLAKE_HOME resolution handled by sf_core in Rust
   - test_name: test_configoption_default_value
-    ud_tests: []
+    ud_tests:
+    - tests/integ/config/test_config_manager.py::TestConfigOption::test_default_value
   - test_name: test_configoption_missing_nest_path
-    ud_tests: []
+    ud_tests:
+    - tests/unit/test_config_manager.py::TestConfigOptionConstructor::test_missing_nest_path
   - test_name: test_configoption_missing_root_manager
-    ud_tests: []
+    ud_tests:
+    - tests/unit/test_config_manager.py::TestConfigOptionConstructor::test_missing_root_manager
   - test_name: test_defaultconnectionname
     ud_tests: []
+    notes: Connection name handling tested via connection tests
   - test_name: test_deprecationwarning_add_subparser
-    ud_tests: []
+    ud_tests:
+    - tests/integ/config/test_config_manager.py::TestBackwardCompatibility::test_add_subparser_method
   - test_name: test_deprecationwarning_config_parser
-    ud_tests: []
+    ud_tests:
+    - tests/integ/config/test_config_manager.py::TestBackwardCompatibility::test_config_parser_alias
   - test_name: test_deprecationwarning_sub_parsers
-    ud_tests: []
+    ud_tests:
+    - tests/integ/config/test_config_manager.py::TestBackwardCompatibility::test_sub_parsers_property
   - test_name: test_error_child_conflict
-    ud_tests: []
+    ud_tests:
+    - tests/integ/config/test_config_manager.py::TestConfigManager::test_conflict_detection
   - test_name: test_error_config_file_writable_by_group
-    ud_tests: []
+    ud_tests:
+    - sf_core/src/config/toml_loader.rs::tests::test_check_file_permissions_writable_by_others
+    notes: File permission checks handled by sf_core in Rust
   - test_name: test_error_config_file_writable_by_others
-    ud_tests: []
+    ud_tests:
+    - sf_core/src/config/toml_loader.rs::tests::test_check_file_permissions_writable_by_others
+    notes: File permission checks handled by sf_core in Rust
   - test_name: test_error_contains
-    ud_tests: []
+    ud_tests:
+    - tests/integ/config/test_config_manager.py::TestConfigOption::test_choices_validation
   - test_name: test_error_invalid_toml
-    ud_tests: []
+    ud_tests:
+    - sf_core/src/config/toml_loader.rs::tests::test_load_toml_file_invalid
+    notes: TOML parsing handled by sf_core in Rust
   - test_name: test_error_missing_file_path
-    ud_tests: []
+    ud_tests:
+    - sf_core/src/config/toml_loader.rs::tests::test_load_toml_file_not_exists
+    - sf_core/src/config/path_resolver.rs::tests::test_get_config_paths_default
+    notes: File path handling changed; sf_core uses SNOWFLAKE_HOME
   - test_name: test_error_missing_fp
-    ud_tests: []
+    ud_tests:
+    - sf_core/src/config/toml_loader.rs::tests::test_load_toml_file_not_exists
+    notes: File path handling changed; sf_core uses SNOWFLAKE_HOME
   - test_name: test_error_missing_fp_retrieve
-    ud_tests: []
+    ud_tests:
+    - sf_core/src/config/toml_loader.rs::tests::test_load_toml_file_not_exists
+    notes: File path handling changed; sf_core uses SNOWFLAKE_HOME
   - test_name: test_error_missing_item
-    ud_tests: []
+    ud_tests:
+    - tests/integ/config/test_config_manager.py::TestConfigOption::test_default_value
+    notes: Missing item returns default value
   - test_name: test_explicit_env_name
-    ud_tests: []
+    ud_tests:
+    - tests/integ/config/test_config_manager.py::TestConfigOption::test_custom_env_name
+    - tests/integ/config/test_config_manager.py::TestConfigOption::test_custom_env_name_with_parse_str
   - test_name: test_incorrect_config_read
-    ud_tests: []
+    ud_tests:
+    - sf_core/src/config/toml_loader.rs::tests::test_load_toml_file_invalid
+    notes: TOML parsing errors handled by sf_core in Rust
   - test_name: test_log_debug_config_file_parent_dir_permissions
-    ud_tests: []
+    ud_tests:
+    - sf_core/src/config/toml_loader.rs::tests::test_check_file_permissions_writable_by_others
+    notes: File permission logging handled by sf_core in Rust
   - test_name: test_missing_config_file
-    ud_tests: []
+    ud_tests:
+    - tests/integ/config/test_config_manager.py::TestConfigOption::test_default_value
+    notes: Missing config returns default value
   - test_name: test_missing_config_files_sliced
-    ud_tests: []
+    ud_tests:
+    - sf_core/src/config/config_manager.rs::tests::test_connections_toml_overrides_config_toml
+    notes: Config slicing replaced by connections.toml override; sf_core handles config from SNOWFLAKE_HOME
   - test_name: test_missing_value
-    ud_tests: []
+    ud_tests:
+    - tests/integ/config/test_config_manager.py::TestConfigOption::test_default_value
   - test_name: test_missing_value_sliced
-    ud_tests: []
+    ud_tests:
+    - sf_core/src/config/config_manager.rs::tests::test_load_config_section_nonexistent
+    notes: Config slicing replaced; sf_core handles config from SNOWFLAKE_HOME
   - test_name: test_only_in_slice
-    ud_tests: []
+    ud_tests:
+    - sf_core/src/config/config_manager.rs::tests::test_connections_toml_does_not_affect_other_sections
+    notes: Config slicing replaced; sf_core handles config from SNOWFLAKE_HOME
   - test_name: test_sf_dirs
-    ud_tests: []
+    ud_tests:
+    - sf_core/src/config/path_resolver.rs::tests::test_get_config_paths_default
+    - sf_core/src/config/path_resolver.rs::tests::test_snowflake_home_override
+    - sf_core/src/config/path_resolver.rs::tests::test_get_snowflake_home_set
+    notes: Platform directory handling done by sf_core in Rust
   - test_name: test_simple_config_read
-    ud_tests: []
+    ud_tests:
+    - tests/integ/config/test_config_manager.py::TestConfigOption::test_config_value_from_file
   - test_name: test_simple_config_read_sliced
-    ud_tests: []
+    ud_tests:
+    - sf_core/src/config/config_manager.rs::tests::test_connections_toml_overrides_config_toml
+    - sf_core/src/config/config_manager.rs::tests::test_load_all_connections
+    notes: Config slicing replaced by connections.toml; sf_core handles config from SNOWFLAKE_HOME
   - test_name: test_simple_nesting
-    ud_tests: []
+    ud_tests:
+    - tests/integ/config/test_config_manager.py::TestConfigManager::test_add_submanager
+    - tests/integ/config/test_config_manager.py::TestConfigOption::test_config_value_from_file_no_env_override
   - test_name: test_skip_warning_config_file_permissions
-    ud_tests: []
+    ud_tests:
+    - sf_core/src/config/toml_loader.rs::tests::test_skip_warning_env_var
+    notes: File permission warnings handled by sf_core in Rust
   - test_name: test_warn_config_file_owner
-    ud_tests: []
+    ud_tests:
+    - sf_core/src/config/toml_loader.rs::tests::test_check_file_permissions_writable_by_others
+    notes: File permission warnings handled by sf_core in Rust
   - test_name: test_warn_config_file_permissions
-    ud_tests: []
+    ud_tests:
+    - sf_core/src/config/toml_loader.rs::tests::test_check_file_permissions_writable_by_others
+    notes: File permission warnings handled by sf_core in Rust
   - test_name: test_warn_config_file_permissions_windows
-    ud_tests: []
+    ud_tests:
+    - sf_core/src/config/toml_loader.rs::tests::test_check_file_permissions_writable_by_others
+    notes: File permission warnings handled by sf_core in Rust; platform-specific checks in Rust
   unit/test_connection.py:
   - test_name: test__get_private_bytes_from_file
     ud_tests: []

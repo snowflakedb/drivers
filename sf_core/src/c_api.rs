@@ -34,7 +34,7 @@ fn write_buffer(vec: Vec<u8>, buffer: *mut *const u8, len: *mut usize) {
 pub unsafe extern "C" fn sf_core_free_buffer(buffer: *const u8, len: usize) {
     if !buffer.is_null() {
         unsafe {
-            drop(Box::from_raw(std::slice::from_raw_parts_mut(
+            drop(Box::from_raw(std::ptr::slice_from_raw_parts_mut(
                 buffer as *mut u8,
                 len,
             )));

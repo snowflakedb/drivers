@@ -12,8 +12,9 @@ use arrow::ffi_stream::{ArrowArrayStreamReader, FFI_ArrowArrayStream};
 use odbc_sys as sql;
 use sf_core::protobuf_apis::database_driver_v1::DatabaseDriverClient;
 use sf_core::protobuf_gen::database_driver_v1::{
-    ArrowArrayPtr, ArrowSchemaPtr, StatementBindRequest, StatementExecuteQueryRequest,
-    StatementExecuteQueryResponse, StatementPrepareRequest, StatementSetSqlQueryRequest,
+    ArrowArrayPtr, ArrowSchemaPtr, ConnectionGetParameterRequest, ConnectionHandle,
+    StatementBindRequest, StatementExecuteQueryRequest, StatementExecuteQueryResponse,
+    StatementPrepareRequest, StatementSetSqlQueryRequest,
 };
 use snafu::ResultExt;
 use tracing;
@@ -60,7 +61,7 @@ pub fn exec_direct(statement_handle: sql::Handle, statement_text: &str) -> OdbcR
     match &mut stmt.conn.state {
         ConnectionState::Connected {
             db_handle: _,
-            conn_handle: _,
+            conn_handle,
         } => {
             DatabaseDriverClient::statement_set_sql_query(StatementSetSqlQueryRequest {
                 stmt_handle: Some(stmt.stmt_handle),
@@ -71,8 +72,12 @@ pub fn exec_direct(statement_handle: sql::Handle, statement_text: &str) -> OdbcR
                 DatabaseDriverClient::statement_execute_query(StatementExecuteQueryRequest {
                     stmt_handle: Some(stmt.stmt_handle),
                     bindings: None,
-                })?;
+                });
 
+            tracing::info!("exec_direct: response={:?}", response);
+            let response = response?;
+
+            update_numeric_settings(conn_handle, &mut stmt.conn.numeric_settings);
             stmt.state = create_execute_state(response)?.into();
             Ok(())
         }
@@ -80,6 +85,40 @@ pub fn exec_direct(statement_handle: sql::Handle, statement_text: &str) -> OdbcR
             tracing::error!("exec_direct: connection is disconnected");
             DisconnectedSnafu.fail()
         }
+    }
+}
+
+use crate::conversion::NumericSettings;
+
+fn update_numeric_settings(conn_handle: &ConnectionHandle, settings: &mut NumericSettings) {
+    if let Ok(resp) =
+        DatabaseDriverClient::connection_get_parameter(ConnectionGetParameterRequest {
+            conn_handle: Some(*conn_handle),
+            key: "ODBC_TREAT_DECIMAL_AS_INT".to_string(),
+        })
+        && let Some(value) = resp.value
+    {
+        let bool_value = value.eq_ignore_ascii_case("true");
+        settings.treat_decimal_as_int = bool_value;
+        tracing::info!(
+            "Server parameter ODBC_TREAT_DECIMAL_AS_INT = {}",
+            bool_value
+        );
+    }
+
+    if let Ok(resp) =
+        DatabaseDriverClient::connection_get_parameter(ConnectionGetParameterRequest {
+            conn_handle: Some(*conn_handle),
+            key: "ODBC_TREAT_BIG_NUMBER_AS_STRING".to_string(),
+        })
+        && let Some(value) = resp.value
+    {
+        let bool_value = value.eq_ignore_ascii_case("true");
+        settings.treat_big_number_as_string = bool_value;
+        tracing::info!(
+            "Server parameter ODBC_TREAT_BIG_NUMBER_AS_STRING = {}",
+            bool_value
+        );
     }
 }
 
@@ -129,7 +168,7 @@ pub fn execute(statement_handle: sql::Handle) -> OdbcResult<()> {
     match &mut stmt.conn.state {
         ConnectionState::Connected {
             db_handle: _,
-            conn_handle: _,
+            conn_handle,
         } => {
             // If there are bound parameters, we should bind them to the statement
             if !stmt.parameter_bindings.is_empty() {
@@ -159,6 +198,7 @@ pub fn execute(statement_handle: sql::Handle) -> OdbcResult<()> {
                 })?;
 
             tracing::info!("execute: Successfully executed statement");
+            update_numeric_settings(conn_handle, &mut stmt.conn.numeric_settings);
             stmt.state = create_execute_state(response)?.into();
             Ok(())
         }
@@ -169,7 +209,26 @@ pub fn execute(statement_handle: sql::Handle) -> OdbcResult<()> {
     }
 }
 
+const STATEMENT_TYPE_ID_MANAGE_PATS: i64 = 0x6244;
+
+fn is_pat_statement(statement_type_id: i64) -> bool {
+    statement_type_id == STATEMENT_TYPE_ID_MANAGE_PATS
+}
+
+fn is_ddl_statement(statement_type_id: i64) -> bool {
+    tracing::debug!("is_ddl_statement: statement_type_id={}", statement_type_id);
+    if statement_type_id == STATEMENT_TYPE_ID_MANAGE_PATS {
+        return false;
+    }
+    (0x6000..0x7000).contains(&statement_type_id)
+}
+
+fn has_result_set(statement_type_id: i64) -> bool {
+    is_ddl_statement(statement_type_id) && !is_pat_statement(statement_type_id)
+}
+
 fn create_execute_state(response: StatementExecuteQueryResponse) -> OdbcResult<StatementState> {
+    tracing::debug!("create_execute_state: response={:?}", response);
     let result = response.result.required("Execute result is required")?;
     let stream_ptr: *mut FFI_ArrowArrayStream =
         result.stream.required("Stream is required")?.into();
@@ -177,6 +236,11 @@ fn create_execute_state(response: StatementExecuteQueryResponse) -> OdbcResult<S
     let reader =
         ArrowArrayStreamReader::try_new(stream).context(ArrowArrayStreamReaderCreationSnafu {})?;
     let rows_affected = result.rows_affected;
+    if let Some(statement_type_id) = result.statement_type_id
+        && has_result_set(statement_type_id)
+    {
+        return Ok(StatementState::NoResultSet);
+    }
     Ok(StatementState::Executed {
         reader,
         rows_affected,
@@ -241,6 +305,8 @@ pub fn free_stmt(statement_handle: sql::Handle, option: sql::FreeStmtOption) -> 
         sql::FreeStmtOption::Close => {
             tracing::info!("free_stmt: Closing cursor");
             stmt.state = StatementState::Created.into();
+            stmt.get_data_state = None;
+            stmt.extended_fetch_used = false;
         }
         sql::FreeStmtOption::Unbind => {
             tracing::info!("free_stmt: Unbinding all columns");
@@ -284,11 +350,101 @@ pub fn bind_col(
                 target_type,
                 target_value_ptr,
                 buffer_length,
-                str_len_or_ind_ptr,
+                octet_length_ptr: str_len_or_ind_ptr,
+                indicator_ptr: str_len_or_ind_ptr,
+                precision: None,
+                scale: None,
             },
         );
     }
     Ok(())
+}
+
+/// Set a statement attribute value
+pub fn set_stmt_attr(
+    statement_handle: sql::Handle,
+    attribute: sql::Integer,
+    value_ptr: sql::Pointer,
+    _string_length: sql::Integer,
+    warnings: &mut crate::conversion::warning::Warnings,
+) -> OdbcResult<()> {
+    use crate::api::{CursorType, StmtAttr};
+    use crate::conversion::warning::Warning;
+
+    tracing::debug!(
+        "set_stmt_attr: statement_handle={:?}, attribute={}, value_ptr={:?}",
+        statement_handle,
+        attribute,
+        value_ptr
+    );
+
+    let attr = StmtAttr::try_from(attribute)?;
+    let stmt = stmt_from_handle(statement_handle);
+
+    match attr {
+        StmtAttr::CursorType => {
+            let raw = value_ptr as sql::ULen;
+            let requested = CursorType::try_from(raw)?;
+            tracing::debug!("set_stmt_attr: CursorType requested = {requested:?}");
+            if requested != CursorType::ForwardOnly {
+                stmt.cursor_type = CursorType::ForwardOnly;
+                warnings.push(Warning::OptionValueChanged);
+            } else {
+                stmt.cursor_type = CursorType::ForwardOnly;
+            }
+            Ok(())
+        }
+        StmtAttr::MaxLength => {
+            let length = value_ptr as sql::ULen;
+            tracing::debug!("set_stmt_attr: MaxLength = {}", length);
+            stmt.max_length = length;
+            Ok(())
+        }
+        StmtAttr::UseBookmarks => {
+            tracing::debug!("set_stmt_attr: UseBookmarks (ignored, bookmarks not supported)");
+            Ok(())
+        }
+        StmtAttr::RowArraySize => {
+            let size = value_ptr as usize;
+            tracing::debug!("set_stmt_attr: RowArraySize = {}", size);
+            let effective_size = if size == 0 {
+                tracing::warn!("set_stmt_attr: RowArraySize value 0 is invalid; coercing to 1");
+                1
+            } else {
+                size
+            };
+            stmt.ard.array_size = effective_size;
+            Ok(())
+        }
+        StmtAttr::RowStatusPtr => {
+            let ptr = value_ptr as *mut u16;
+            tracing::debug!("set_stmt_attr: RowStatusPtr = {:?}", ptr);
+            stmt.ird.array_status_ptr = ptr;
+            Ok(())
+        }
+        StmtAttr::RowsFetchedPtr => {
+            let ptr = value_ptr as *mut sql::ULen;
+            tracing::debug!("set_stmt_attr: RowsFetchedPtr = {:?}", ptr);
+            stmt.ird.rows_processed_ptr = ptr;
+            Ok(())
+        }
+        StmtAttr::RowBindType => {
+            let raw_bind_type = value_ptr as sql::ULen;
+            tracing::debug!("set_stmt_attr: RowBindType (raw) = {}", raw_bind_type);
+            stmt.ard.bind_type = raw_bind_type;
+            Ok(())
+        }
+        StmtAttr::RowBindOffsetPtr => {
+            let ptr = value_ptr as *mut sql::Len;
+            tracing::debug!("set_stmt_attr: RowBindOffsetPtr = {:?}", ptr);
+            stmt.ard.bind_offset_ptr = ptr;
+            Ok(())
+        }
+        _ => {
+            tracing::warn!("set_stmt_attr: unsupported attribute {:?}", attr);
+            crate::api::error::UnsupportedAttributeSnafu { attribute }.fail()
+        }
+    }
 }
 
 /// Get a statement attribute value
@@ -297,7 +453,7 @@ pub fn get_stmt_attr(
     attribute: sql::Integer,
     value_ptr: sql::Pointer,
     _buffer_length: sql::Integer,
-    _string_length_ptr: *mut sql::Integer,
+    string_length_ptr: *mut sql::Integer,
 ) -> OdbcResult<()> {
     use crate::api::StmtAttr;
 
@@ -311,10 +467,77 @@ pub fn get_stmt_attr(
     let stmt = stmt_from_handle(statement_handle);
 
     match attr {
+        StmtAttr::CursorType => {
+            unsafe {
+                std::ptr::write_unaligned(
+                    value_ptr as *mut sql::ULen,
+                    stmt.cursor_type as sql::ULen,
+                );
+                if !string_length_ptr.is_null() {
+                    std::ptr::write_unaligned(
+                        string_length_ptr,
+                        std::mem::size_of::<sql::ULen>() as sql::Integer,
+                    );
+                }
+            }
+            Ok(())
+        }
+        StmtAttr::MaxLength => {
+            unsafe {
+                *(value_ptr as *mut sql::ULen) = stmt.max_length;
+                if !string_length_ptr.is_null() {
+                    *string_length_ptr = std::mem::size_of::<sql::ULen>() as sql::Integer;
+                }
+            }
+            Ok(())
+        }
         StmtAttr::AppRowDesc => {
             let ard_ptr = &mut stmt.ard as *mut crate::api::ArdDescriptor as sql::Handle;
             unsafe {
                 *(value_ptr as *mut sql::Handle) = ard_ptr;
+            }
+            Ok(())
+        }
+        StmtAttr::ImpRowDesc => {
+            let ird_ptr = &mut stmt.ird as *mut crate::api::IrdDescriptor as sql::Handle;
+            unsafe {
+                *(value_ptr as *mut sql::Handle) = ird_ptr;
+            }
+            Ok(())
+        }
+        StmtAttr::RowArraySize => {
+            unsafe {
+                *(value_ptr as *mut sql::ULen) = stmt.ard.array_size as sql::ULen;
+                if !string_length_ptr.is_null() {
+                    *string_length_ptr = std::mem::size_of::<sql::ULen>() as sql::Integer;
+                }
+            }
+            Ok(())
+        }
+        StmtAttr::RowStatusPtr => {
+            unsafe {
+                *(value_ptr as *mut *mut u16) = stmt.ird.array_status_ptr;
+            }
+            Ok(())
+        }
+        StmtAttr::RowsFetchedPtr => {
+            unsafe {
+                *(value_ptr as *mut *mut sql::ULen) = stmt.ird.rows_processed_ptr;
+            }
+            Ok(())
+        }
+        StmtAttr::RowBindType => {
+            unsafe {
+                *(value_ptr as *mut sql::ULen) = stmt.ard.bind_type;
+                if !string_length_ptr.is_null() {
+                    *string_length_ptr = std::mem::size_of::<sql::ULen>() as sql::Integer;
+                }
+            }
+            Ok(())
+        }
+        StmtAttr::RowBindOffsetPtr => {
+            unsafe {
+                *(value_ptr as *mut *mut sql::Len) = stmt.ard.bind_offset_ptr;
             }
             Ok(())
         }

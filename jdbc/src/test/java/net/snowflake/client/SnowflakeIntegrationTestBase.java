@@ -10,8 +10,38 @@ import java.util.Properties;
 import net.snowflake.client.api.driver.SnowflakeDriver;
 import org.json.JSONObject;
 import org.json.JSONTokener;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.TestInstance;
 
+@TestInstance(TestInstance.Lifecycle.PER_CLASS)
 public abstract class SnowflakeIntegrationTestBase {
+  private Connection defaultConnection;
+
+  @BeforeAll
+  protected void setUpDefaultConnection() throws Exception {
+    defaultConnection = openConnection();
+    ensureDatabaseAndSchema(defaultConnection);
+  }
+
+  @AfterAll
+  protected void tearDownDefaultConnection() throws Exception {
+    if (defaultConnection != null && !defaultConnection.isClosed()) {
+      defaultConnection.close();
+    }
+    defaultConnection = null;
+  }
+
+  protected Connection getDefaultConnection() throws Exception {
+    if (defaultConnection == null) {
+      throw new IllegalStateException("Default test connection is not initialized");
+    }
+    if (defaultConnection.isClosed()) {
+      throw new IllegalStateException("Default test connection is closed");
+    }
+    return defaultConnection;
+  }
+
   protected Properties loadConnectionProperties() throws Exception {
     // Load parameters.json from test resources
     String paramPath = System.getenv("PARAMETER_PATH");

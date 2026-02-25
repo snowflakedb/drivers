@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from datetime import datetime
 from math import isinf, isnan
 
 
@@ -30,6 +31,22 @@ def assert_type(values: Iterable, expected_type: type, can_be_none: bool = False
         assert isinstance(value, expected_type), (
             f"Value at index {i} should be {expected_type.__name__}, got {type(value).__name__}"
         )
+
+
+def assert_datetime_type(values: Iterable, can_be_none: bool = False, require_tzinfo: bool = False) -> None:
+    """Assert all values are datetime instances.
+
+    Args:
+        values: Iterable of values to check.
+        can_be_none: If True, None values are allowed.
+        require_tzinfo: If True, datetime values must have timezone info (tzinfo is not None).
+    """
+    for i, value in enumerate(values):
+        if can_be_none and value is None:
+            continue
+        assert isinstance(value, datetime), f"Value at index {i} should be datetime, got {type(value).__name__}"
+        if require_tzinfo:
+            assert value.tzinfo is not None, f"Value at index {i} should have timezone info (tzinfo is None)"
 
 
 def assert_float_equal(actual: float, expected: float | None, msg: str = "") -> None:
@@ -142,3 +159,22 @@ def assert_sequential_values(
 
         if not is_equal:
             raise AssertionError(f"Value mismatch at index {i}: expected {expected!r}, got {actual!r}")
+
+
+def batch_insert(execute_query, table_name, values, quote_strings: bool = False) -> None:
+    """Execute a batch INSERT INTO table VALUES (v1), (v2), ... statement.
+
+    Args:
+        execute_query: Function to execute SQL queries.
+        table_name: Name of the table to insert into.
+        values: Iterable of values to insert (one column per row).
+        quote_strings: If True, use repr() to quote string values for SQL.
+    """
+
+    def format_value(v):
+        if v is None:
+            return "NULL"
+        return repr(v) if quote_strings else str(v)
+
+    values_str = ", ".join(f"({format_value(v)})" for v in values)
+    execute_query(f"INSERT INTO {table_name} VALUES {values_str}")

@@ -1,0 +1,250 @@
+---
+description: Guidelines for generating Gherkin .feature files for Universal Driver tests
+globs: tests/definitions/**/*.feature
+---
+
+# Gherkin Scenario Generation Rules
+
+## Architecture: Core vs Wrapper Ownership
+
+**Core (Rust) tests** — dense coverage of logic:
+- HTTP protocol: endpoint, method, headers, body, query params
+- Retry/timeout mechanics (503, 429, connection reset, budget)
+- Error codes: 390111, 390112, 390114, 4xx, 5xx
+- Error strategies (strict vs best-effort) via injection
+- Token management and renewal
+- Parameter truth tables (Phase 3 defaults)
+- Concurrency and edge cases
+
+**Wrapper (Python/JDBC/ODBC) tests** — sparse defaults + integration:
+- Parameter defaults and naming
+- Phase 2 backward-compat truth tables (if different from Phase 3)
+- Language-specific: atexit, GC, finalizers, Statement invalidation
+- Sanity: verify correct params passed to Core
+- One happy-path integration test
+
+**Wrappers do NOT test:** HTTP headers, retry logic, timeout behavior, error code handling, Phase 3 param combinations (unless wrapper implements Phase 3).
+
+**Shared (`shared/`) tests** — identical E2E behavior across drivers:
+- Token cleanup, idempotent close, post-close rejection
+- Must NOT use mock servers (those belong in `core/`)
+
+---
+
+## File Organization
+
+```
+tests/definitions/
+├── core/<category>/<feature>.feature      # Core HTTP/protocol/logic
+├── shared/<category>/<feature>.feature    # Multi-driver E2E scenarios
+├── python/<category>/<feature>.feature    # Python-specific
+├── jdbc/<category>/<feature>.feature      # JDBC-specific
+└── odbc/<category>/<feature>.feature      # ODBC-specific
+```
+
+**Feature-level tags:** `@core`, `@python`, `@odbc`, `@jdbc`, `@core @python` (for shared)
+
+**Scenario-level tags:** None initially. Added during implementation:
+- `@python_e2e`, `@core_int` — test type
+- `@python_not_needed`, `@jdbc_not_needed` — exclusions (use immediately)
+
+---
+
+## Scenario Writing Rules
+
+### One scenario, one behavior
+Each scenario tests one observable outcome. Split when behaviors differ.
+
+### No vague assertions
+```gherkin
+# ❌ BAD:
+Then Behavior depends on configuration
+Then Error is handled according to strategy
+Then No race conditions occur
+Then Resources are cleaned up
+
+# ✅ GOOD:
+Then No logout request is sent
+Then close() throws SQLException
+Then Only one logout request is sent
+And All close calls return successfully
+```
+
+### No implementation details
+```gherkin
+# ❌ BAD:
+Then Query ID is added to _async_sfqids dict
+Then Telemetry close is called with retry=True
+
+# ✅ GOOD:
+Then Query ID is added to async query registry
+Then Logout is retried on transient failure
+```
+
+### Outcomes never parametrized
+When outcomes differ, split into separate scenarios. Only parametrize inputs that produce the same outcome.
+
+```gherkin
+# ✅ Same outcome → merge with Scenario Outline:
+Scenario Outline: should ignore SESSION_GONE 390111 for each <strategy_type>
+
+# ✅ Different outcomes → separate scenarios:
+Scenario: should throw after exhausted retries with strict strategy
+Scenario: should log WARN and succeed after exhausted retries with best-effort strategy
+```
+
+### Make configuration explicit
+Never use "any value" or "any of (a, b, c)" in Given steps. Use Scenario Outline with Examples:
+
+```gherkin
+# ❌ BAD:
+And enable_auto_detection set to any value
+
+# ✅ GOOD:
+Scenario Outline: should skip logout when keep_alive is true regardless of auto_detection
+  And enable_auto_detection is set to <auto_detection>
+  Examples:
+    | auto_detection |
+    | true           |
+    | false          |
+```
+
+### Cleanup long-running operations
+```gherkin
+And Test cleans up the running query after assertions complete
+```
+
+### One WHEN per scenario
+Rare exceptions allowed, but generally one trigger event.
+
+---
+
+## Naming Conventions
+
+- Start with `should`: `should send logout when server_session_keep_alive is explicitly false`
+- No word duplication in Outline names
+- Placeholder names are descriptive: `<strategy_type>`, `<error_type>`, not `<x>`
+- Titles read naturally when placeholders are stripped
+
+---
+
+## Pattern Recognition (Minimize Test Count)
+
+**Truth tables:** Count distinct outcomes. If 8 combinations produce 3 behaviors, create 3 scenarios. Name clearly describes the combination:
+```gherkin
+Scenario: should skip logout when server_session_keep_alive is none and auto_detection true and async queries found
+```
+
+**Symmetric behaviors:** Two scenarios (one per side), not a matrix.
+
+**Error handling strategies:** Group by strategy, use Scenario Outline for same-outcome errors.
+
+**Type synonyms / boundaries:** Parametrize, don't create separate scenarios.
+
+---
+
+## Phase 2/3 Documentation
+
+Always reference ticket when mentioning phases:
+```gherkin
+# Phase 2 (doc for: SNOW-2314152) behavior. Will change in Phase 3.
+# Phase 3 (doc for: SNOW-2314152) unified behavior. Target model.
+```
+
+Include: phase identifier, what will change, which drivers affected.
+
+---
+
+## Timing Tests
+
+- Use wide margins (e.g., 2s delay / 5s budget, not 4.9s / 5s)
+- No unbounded server behavior — always specify delays
+- Document timing math in comments:
+```gherkin
+# 2s server delay, 5s total budget:
+#   Attempt 1: effective timeout = min(5s, 10s) = 5s → waits 2s → 503 (remaining ~3s)
+```
+
+---
+
+## Telemetry Testing
+
+**E2E (shared/wrappers):** High-level only:
+```gherkin
+Then Connection close metrics are recorded in telemetry
+```
+
+**Core integration:** Detailed but no exact field names:
+```gherkin
+Then Metrics include whether auto-detection was performed
+And Metrics include whether logout will be sent or skipped
+```
+
+Never specify: exact field names, telemetry format, transmission method.
+
+---
+
+## Section Comments
+
+Use separators for readability:
+```gherkin
+  # ===========================================================================
+  #                        Timeout and Retry Behavior
+  # ===========================================================================
+```
+
+---
+
+## Anti-Patterns
+
+| Anti-Pattern | Example | Fix |
+|---|---|---|
+| Vague assertion | `Then behavior depends on config` | Specify exact outcome |
+| Tests implementation | `Then added to _sfqids dict` | Test observable behavior |
+| Redundant across layers | Shared duplicates Core retry test | Remove from shared |
+| Over-specification in E2E | Exact telemetry field names | Use high-level assertion |
+| Missing cleanup | Async query left running | Add cleanup step |
+| Multiple behaviors | Tests true AND false in one scenario | Split into two |
+
+---
+
+## 5-Step Generation Process
+
+### Step 1: Analysis Document
+Create `.ai/docs/agent-instructions/<FEATURE>_GHERKIN_ANALYSIS.md`:
+- Extract testable aspects from design docs (HTTP, params, errors, resources, edge cases)
+- Document old driver behavior per driver with code references
+- Identify BCRs and Phase 2/3 migration paths
+- Define scope (in/out) and test distribution strategy
+
+### Step 2: Scenario Names List
+- Categorized list of scenario names before writing full Gherkins
+- Organized by: shared / core / python / jdbc / odbc
+- Count scenarios per category, justify count
+
+### Step 3: Old Driver Cross-Check
+- Map each scenario to old driver behavior (or mark as new)
+- Check old driver tests for edge cases
+- Update scenario list with findings
+
+### Step 4: Write Feature Files
+- Follow all rules above
+- Proper directory structure, tags, Given/When/Then
+- Phase annotations with ticket numbers
+
+### Step 5: Validation
+Cross-reference every scenario:
+- ✅ Match: Gherkin matches old driver exactly
+- ⚠️ New: New behavior in UD (documented)
+- 🔄 BCR: Breaking change with Phase 2 compat
+- Run `tests/tests_format_validator` to validate format
+
+---
+
+## Reference Examples
+
+- **Core HTTP/protocol tests:** [core/session/logout.feature](mdc:tests/definitions/core/session/logout.feature)
+- **Shared E2E tests:** [shared/session/logout.feature](mdc:tests/definitions/shared/session/logout.feature)
+- **Wrapper Phase 2 + truth table:** [python/session/logout.feature](mdc:tests/definitions/python/session/logout.feature)
+- **Wrapper Phase 3 reference:** [odbc/session/logout.feature](mdc:tests/definitions/odbc/session/logout.feature)
+- **Feature file conventions:** [tests/definitions/README.md](mdc:tests/definitions/README.md)

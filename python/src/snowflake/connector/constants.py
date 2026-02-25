@@ -1,0 +1,3 @@
+"""BACKWARD COMPATIBILITY MODULE ONLY"""
+
+from .config_manager import CONNECTIONS_FILE, CONFIG_FILE  # noqa

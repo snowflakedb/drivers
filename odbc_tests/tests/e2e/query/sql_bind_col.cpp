@@ -531,7 +531,6 @@ TEST_CASE("SQLBindCol ignores BufferLength for fixed-length data types.", "[quer
 }
 
 TEST_CASE("SQLBindCol returns HY090 when BufferLength is less than 0.", "[query][bind_col]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "SQLBindCol returns SQLSTATE HY090 (Invalid string or buffer length)
   //       when BufferLength is less than 0 but not when BufferLength is 0."
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlbindcol-function#arguments
@@ -551,7 +550,6 @@ TEST_CASE("SQLBindCol returns HY090 when BufferLength is less than 0.", "[query]
 }
 
 TEST_CASE("SQLBindCol does not return error when BufferLength is 0 for non-character type.", "[query][bind_col]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "SQLBindCol returns SQLSTATE HY090 (Invalid string or buffer length)
   //       when BufferLength is less than 0 but not when BufferLength is 0."
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlbindcol-function#arguments
@@ -684,7 +682,6 @@ TEST_CASE("SQLBindCol converts data to the specified TargetType.", "[query][bind
 }
 
 TEST_CASE("SQLBindCol returns HY003 for invalid TargetType.", "[query][bind_col]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "HY003 - Invalid application buffer type: The argument TargetType was
   //       neither a valid data type nor SQL_C_DEFAULT."
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlbindcol-function#diagnostics
@@ -704,7 +701,6 @@ TEST_CASE("SQLBindCol returns HY003 for invalid TargetType.", "[query][bind_col]
 }
 
 TEST_CASE("SQLBindCol supports SQL_C_DEFAULT as TargetType.", "[query][bind_col]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "When the application specifies a TargetType of SQL_DEFAULT, SQLBindCol
   //       can be applied to a column of a different data type from the one
   //       intended by the application."
@@ -1207,7 +1203,6 @@ TEST_CASE("SQLBindCol sets ARD descriptor fields for multiple columns.", "[query
 // =============================================================================
 
 TEST_CASE("SQLBindCol supports column-wise binding with arrays.", "[query][bind_col]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "In column-wise binding, the application binds separate data and
   //       length/indicator arrays to each column."
   // Doc: "To use column-wise binding, the application first sets the
@@ -1253,7 +1248,6 @@ TEST_CASE("SQLBindCol supports column-wise binding with arrays.", "[query][bind_
 // =============================================================================
 
 TEST_CASE("SQLBindCol supports row-wise binding.", "[query][bind_col]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "In row-wise binding, the application defines a structure that contains
   //       data and length/indicator buffers for each column to be bound."
   // Doc: "Sets the SQL_ATTR_ROW_BIND_TYPE statement attribute to the size of the
@@ -1311,7 +1305,6 @@ TEST_CASE("SQLBindCol supports row-wise binding.", "[query][bind_col]") {
 // =============================================================================
 
 TEST_CASE("SQLBindCol supports binding offsets via SQL_ATTR_ROW_BIND_OFFSET_PTR.", "[query][bind_col]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "Using a binding offset has basically the same effect as rebinding a
   //       column by calling SQLBindCol. The difference is that a new call to
   //       SQLBindCol specifies new addresses for the data buffer and
@@ -1362,7 +1355,6 @@ TEST_CASE("SQLBindCol supports binding offsets via SQL_ATTR_ROW_BIND_OFFSET_PTR.
 }
 
 TEST_CASE("SQLBindCol binding offset of 0 uses originally bound addresses.", "[query][bind_col]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "In particular, if the offset is set to 0 or if the statement attribute
   //       is set to a null pointer, the driver uses the originally bound
   //       addresses."
@@ -1399,7 +1391,6 @@ TEST_CASE("SQLBindCol binding offset of 0 uses originally bound addresses.", "[q
 // =============================================================================
 
 TEST_CASE("SQLBindCol binds arrays when SQL_ATTR_ROW_ARRAY_SIZE > 1.", "[query][bind_col]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "If the rowset size (the value of the SQL_ATTR_ROW_ARRAY_SIZE statement
   //       attribute) is greater than 1, the application binds arrays of buffers
   //       instead of single buffers."
@@ -1443,7 +1434,6 @@ TEST_CASE("SQLBindCol binds arrays when SQL_ATTR_ROW_ARRAY_SIZE > 1.", "[query][
 // =============================================================================
 
 TEST_CASE("SQLBindCol returns 07009 when ColumnNumber exceeds max columns.", "[query][bind_col]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "07009 - Invalid descriptor index: The value specified for the argument
   //       ColumnNumber exceeded the maximum number of columns in the result set."
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlbindcol-function#diagnostics
@@ -1563,7 +1553,6 @@ TEST_CASE("SQLBindCol can bind some columns while SQLGetData retrieves others.",
 // =============================================================================
 
 TEST_CASE("SQLBindCol supports SQL_C_CHAR binding.", "[query][bind_col]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "TargetType [Input] The identifier of the C data type of the
   //       *TargetValuePtr buffer."
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlbindcol-function#arguments
@@ -1590,7 +1579,6 @@ TEST_CASE("SQLBindCol supports SQL_C_CHAR binding.", "[query][bind_col]") {
 }
 
 TEST_CASE("SQLBindCol supports SQL_C_SBIGINT binding.", "[query][bind_col]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "TargetType [Input] The identifier of the C data type of the
   //       *TargetValuePtr buffer."
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlbindcol-function#arguments
@@ -1617,7 +1605,6 @@ TEST_CASE("SQLBindCol supports SQL_C_SBIGINT binding.", "[query][bind_col]") {
 }
 
 TEST_CASE("SQLBindCol supports SQL_C_DOUBLE binding.", "[query][bind_col]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "TargetType [Input] The identifier of the C data type of the
   //       *TargetValuePtr buffer."
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlbindcol-function#arguments
@@ -1644,7 +1631,6 @@ TEST_CASE("SQLBindCol supports SQL_C_DOUBLE binding.", "[query][bind_col]") {
 }
 
 TEST_CASE("SQLBindCol supports SQL_C_TYPE_DATE binding.", "[query][bind_col]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "TargetType [Input] The identifier of the C data type of the
   //       *TargetValuePtr buffer."
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlbindcol-function#arguments
@@ -1672,7 +1658,6 @@ TEST_CASE("SQLBindCol supports SQL_C_TYPE_DATE binding.", "[query][bind_col]") {
 }
 
 TEST_CASE("SQLBindCol supports SQL_C_TYPE_TIMESTAMP binding.", "[query][bind_col]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "TargetType [Input] The identifier of the C data type of the
   //       *TargetValuePtr buffer."
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlbindcol-function#arguments
@@ -2064,7 +2049,6 @@ TEST_CASE("SQLBindCol allows binding non-consecutive columns.", "[query][bind_co
 // =============================================================================
 
 TEST_CASE("SQLBindCol supports SQL_C_NUMERIC binding.", "[query][bind_col]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "If the TargetType argument is SQL_C_NUMERIC, the default precision
   //       (driver-defined) and default scale (0), as set in the SQL_DESC_PRECISION
   //       and SQL_DESC_SCALE fields of the ARD, are used for the data.
@@ -2128,7 +2112,6 @@ TEST_CASE("SQLBindCol supports SQL_C_NUMERIC binding.", "[query][bind_col]") {
 // =============================================================================
 
 TEST_CASE("SQLBindCol works with SQLFetchScroll.", "[query][bind_col]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "SQLBindCol is used to associate, or bind, columns in the result set
   //       to data buffers and length/indicator buffers in the application.
   //       When the application calls SQLFetch, SQLFetchScroll, or SQLSetPos to
@@ -2176,7 +2159,6 @@ TEST_CASE("SQLBindCol works with SQLFetchScroll.", "[query][bind_col]") {
 // =============================================================================
 
 TEST_CASE("SQLBindCol supports SQL_C_BINARY binding.", "[query][bind_col]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "The driver uses BufferLength to avoid writing past the end of the
   //       *TargetValuePtr buffer when it returns variable-length data, such as
   //       character or binary data."
@@ -2208,7 +2190,6 @@ TEST_CASE("SQLBindCol supports SQL_C_BINARY binding.", "[query][bind_col]") {
 // =============================================================================
 
 TEST_CASE("SQLBindCol supports SQL_C_SHORT binding.", "[query][bind_col]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "TargetType [Input] The identifier of the C data type of the
   //       *TargetValuePtr buffer."
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlbindcol-function#arguments
@@ -2239,7 +2220,6 @@ TEST_CASE("SQLBindCol supports SQL_C_SHORT binding.", "[query][bind_col]") {
 // =============================================================================
 
 TEST_CASE("SQLBindCol supports SQL_C_FLOAT binding.", "[query][bind_col]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "TargetType [Input] The identifier of the C data type of the
   //       *TargetValuePtr buffer."
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlbindcol-function#arguments
@@ -2270,7 +2250,6 @@ TEST_CASE("SQLBindCol supports SQL_C_FLOAT binding.", "[query][bind_col]") {
 // =============================================================================
 
 TEST_CASE("SQLBindCol supports SQL_C_BIT binding.", "[query][bind_col]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Doc: "TargetType [Input] The identifier of the C data type of the
   //       *TargetValuePtr buffer."
   // https://learn.microsoft.com/en-us/sql/odbc/reference/syntax/sqlbindcol-function#arguments

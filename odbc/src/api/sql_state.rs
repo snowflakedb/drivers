@@ -94,11 +94,17 @@ pub enum SqlState {
     /// 0A000 - Feature not supported
     FeatureNotSupported,
 
-    // Cast error class (22)
+    // Data exception class (22)
+    /// 22002 - Indicator variable required but not supplied
+    IndicatorVariableRequiredButNotSupplied,
     /// 22003 - Numeric value out of range
     NumericValueOutOfRange,
     /// 22018 - Invalid character value for cast
     InvalidCharacterValueForCast,
+
+    // Invalid cursor state class (24)
+    /// 24000 - Invalid cursor state
+    InvalidCursorState,
 
     // Invalid transaction state class (25)
     /// 25000 - Invalid transaction state
@@ -109,7 +115,6 @@ pub enum SqlState {
     TransactionIsStillActive,
     /// 25S03 - Transaction is rolled back
     TransactionIsRolledBack,
-
     // Invalid SQL statement name class (26)
     /// 26000 - Invalid SQL statement name
     InvalidSqlStatementName,
@@ -338,8 +343,10 @@ impl SqlState {
             SqlState::CommunicationLinkFailure => "08S01",
             SqlState::TriggeredActionException => "09000",
             SqlState::FeatureNotSupported => "0A000",
+            SqlState::IndicatorVariableRequiredButNotSupplied => "22002",
             SqlState::NumericValueOutOfRange => "22003",
             SqlState::InvalidCharacterValueForCast => "22018",
+            SqlState::InvalidCursorState => "24000",
             SqlState::InvalidTransactionState => "25000",
             SqlState::TransactionStateUnknown => "25S01",
             SqlState::TransactionIsStillActive => "25S02",
@@ -509,6 +516,10 @@ impl FromStr for SqlState {
             "08S01" => SqlState::CommunicationLinkFailure,
             "09000" => SqlState::TriggeredActionException,
             "0A000" => SqlState::FeatureNotSupported,
+            "22002" => SqlState::IndicatorVariableRequiredButNotSupplied,
+            "22003" => SqlState::NumericValueOutOfRange,
+            "22018" => SqlState::InvalidCharacterValueForCast,
+            "24000" => SqlState::InvalidCursorState,
             "25000" => SqlState::InvalidTransactionState,
             "25S01" => SqlState::TransactionStateUnknown,
             "25S02" => SqlState::TransactionIsStillActive,

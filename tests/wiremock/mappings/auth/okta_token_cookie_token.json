@@ -1,0 +1,14 @@
+{
+  "name": "Okta token success with cookieToken",
+  "request": {
+    "urlPathPattern": "/api/v1/authn.*",
+    "method": "POST"
+  },
+  "response": {
+    "status": 200,
+    "jsonBody": {
+      "cookieToken": "okta-cookie-token",
+      "relayState": "relay-state"
+    }
+  }
+}

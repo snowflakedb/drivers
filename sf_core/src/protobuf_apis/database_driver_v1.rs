@@ -1,4 +1,5 @@
 use crate::apis::database_driver_v1::ApiError;
+use crate::apis::database_driver_v1::ConnectionInfo;
 use crate::apis::database_driver_v1::Handle;
 use crate::apis::database_driver_v1::Setting;
 use crate::apis::database_driver_v1::error::ConfigError;
@@ -6,8 +7,9 @@ use crate::apis::database_driver_v1::error::RestError;
 use crate::apis::database_driver_v1::statement_bind;
 use crate::apis::database_driver_v1::{BindingType, DataPtr};
 use crate::apis::database_driver_v1::{
-    connection_close, connection_get_parameter, connection_init, connection_is_closed,
-    connection_new, connection_release, connection_set_option, connection_set_session_parameters,
+    connection_close, connection_get_info, connection_get_parameter, connection_init,
+    connection_is_closed, connection_new, connection_release, connection_set_option,
+    connection_set_session_parameters,
 };
 use crate::apis::database_driver_v1::{
     database_init, database_new, database_release, database_set_option,
@@ -16,11 +18,12 @@ use crate::apis::database_driver_v1::{
     statement_execute_query, statement_new, statement_prepare, statement_release,
     statement_set_option, statement_set_sql_query,
 };
+use crate::config::config_manager;
 use crate::protobuf_gen::database_driver_v1::*;
 use arrow::ffi::FFI_ArrowArray;
 use arrow::ffi::FFI_ArrowSchema;
 use arrow::ffi_stream::FFI_ArrowArrayStream;
-use snafu::Report;
+use error_trace::ErrorTrace;
 use tracing::instrument;
 
 impl From<ArrowArrayStreamPtr> for *mut FFI_ArrowArrayStream {
@@ -128,6 +131,18 @@ impl From<Handle> for StatementHandle {
         StatementHandle {
             id: handle.id as i64,
             magic: handle.magic as i64,
+        }
+    }
+}
+
+impl From<ConnectionInfo> for ConnectionGetInfoResponse {
+    fn from(info: ConnectionInfo) -> Self {
+        ConnectionGetInfoResponse {
+            host: info.host,
+            port: info.port,
+            server_url: info.server_url,
+            session_token: info.session_token,
+            session_id: info.session_id,
         }
     }
 }
@@ -240,6 +255,34 @@ fn to_driver_error(error: &ApiError) -> DriverError {
         ApiError::InvalidRefreshState { .. } => DriverError {
             error_type: Some(driver_error::ErrorType::InternalError(InternalError {})),
         },
+        ApiError::Configuration {
+            source: ConfigError::ConfigFileRead { .. },
+            ..
+        }
+        | ApiError::Configuration {
+            source: ConfigError::TomlParse { .. },
+            ..
+        }
+        | ApiError::Configuration {
+            source: ConfigError::InsecurePermissions { .. },
+            ..
+        }
+        | ApiError::Configuration {
+            source: ConfigError::ConfigDirNotFound { .. },
+            ..
+        } => DriverError {
+            error_type: Some(driver_error::ErrorType::InternalError(InternalError {})),
+        },
+        ApiError::Configuration {
+            source: ConfigError::ConnectionNotFound { name, .. },
+            ..
+        } => DriverError {
+            error_type: Some(driver_error::ErrorType::MissingParameter(
+                MissingParameter {
+                    parameter: format!("connection: {}", name),
+                },
+            )),
+        },
     }
 }
 
@@ -259,6 +302,26 @@ fn to_driver_exception(error: ApiError) -> DriverException {
             source: ConfigError::ConflictingParameters { .. },
             ..
         } => StatusCode::InvalidParameterValue,
+        ApiError::Configuration {
+            source: ConfigError::ConfigFileRead { .. },
+            ..
+        } => StatusCode::InternalError,
+        ApiError::Configuration {
+            source: ConfigError::TomlParse { .. },
+            ..
+        } => StatusCode::InternalError,
+        ApiError::Configuration {
+            source: ConfigError::InsecurePermissions { .. },
+            ..
+        } => StatusCode::InternalError,
+        ApiError::Configuration {
+            source: ConfigError::ConfigDirNotFound { .. },
+            ..
+        } => StatusCode::InternalError,
+        ApiError::Configuration {
+            source: ConfigError::ConnectionNotFound { .. },
+            ..
+        } => StatusCode::MissingParameter,
         ApiError::InvalidArgument { .. } => StatusCode::InvalidArgument,
         ApiError::Login {
             source: RestError::LoginError { .. },
@@ -281,12 +344,21 @@ fn to_driver_exception(error: ApiError) -> DriverException {
 
     let message = error.to_string();
     let driver_error = to_driver_error(&error);
-    let report = Report::from_error(error).to_string();
+    let error_trace = error
+        .error_trace()
+        .into_iter()
+        .map(|entry| ErrorTraceEntry {
+            file: entry.location.file,
+            line: entry.location.line,
+            column: entry.location.column,
+            message: entry.message,
+        })
+        .collect();
     DriverException {
         message,
         status_code: status_code as i32,
         error: Some(driver_error),
-        report,
+        error_trace,
     }
 }
 
@@ -296,7 +368,7 @@ fn required<T>(value: Option<T>, message: &str) -> Result<T, DriverException> {
         message: message.to_string(),
         status_code: StatusCode::InvalidArgument as i32,
         error: None,
-        report: message.to_string(),
+        error_trace: vec![],
     })
 }
 
@@ -305,7 +377,7 @@ fn not_implemented(message: &str) -> DriverException {
         message: message.to_string(),
         status_code: StatusCode::NotImplemented as i32,
         error: None,
-        report: message.to_string(),
+        error_trace: vec![],
     }
 }
 
@@ -479,6 +551,17 @@ impl DatabaseDriver for DatabaseDriverImpl {
         Ok(ConnectionReleaseResponse {})
     }
 
+    #[instrument(name = "DatabaseDriverV1::connection_get_info", skip(input))]
+    fn connection_get_info(
+        input: ConnectionGetInfoRequest,
+    ) -> Result<ConnectionGetInfoResponse, DriverException> {
+        let conn_handle = required(input.conn_handle, "Connection handle is required")?;
+
+        let info = connection_get_info(conn_handle.into()).to_protobuf()?;
+
+        Ok(ConnectionGetInfoResponse::from(info))
+    }
+
     #[instrument(name = "DatabaseDriverV1::connection_close", skip(input))]
     fn connection_close(
         input: ConnectionCloseRequest,
@@ -500,7 +583,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
                     message: format!("Invalid error_strategy value: {}", v),
                     status_code: StatusCode::InvalidArgument as i32,
                     error: None,
-                    report: format!("Invalid error_strategy value: {}", v),
+                    error_trace: vec![],
                 });
             }
         };
@@ -516,7 +599,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
                 ),
                 status_code: StatusCode::InvalidArgument as i32,
                 error: None,
-                report: format!("Negative timeout not allowed: {}", timeout_secs),
+                error_trace: vec![],
             });
         }
 
@@ -544,16 +627,6 @@ impl DatabaseDriver for DatabaseDriverImpl {
 
         let is_closed = connection_is_closed(conn_handle.into()).to_protobuf()?;
         Ok(ConnectionIsClosedResponse { is_closed })
-    }
-
-    #[instrument(name = "DatabaseDriverV1::connection_get_info", skip(_input))]
-    fn connection_get_info(
-        _input: ConnectionGetInfoRequest,
-    ) -> Result<ConnectionGetInfoResponse, DriverException> {
-        // TODO: Implement when corresponding API method is available
-        Err(not_implemented(
-            "connection_get_info is not yet implemented",
-        ))
     }
 
     #[instrument(name = "DatabaseDriverV1::connection_get_objects", skip(_input))]
@@ -775,6 +848,8 @@ impl DatabaseDriver for DatabaseDriverImpl {
                 rows_affected: result.rows_affected,
                 query_id: result.query_id,
                 columns: result.columns,
+                statement_type_id: result.statement_type_id,
+                query: result.query,
             }),
         })
     }
@@ -796,9 +871,67 @@ impl DatabaseDriver for DatabaseDriverImpl {
             "statement_read_partition is not yet implemented",
         ))
     }
+
+    #[instrument(name = "DatabaseDriverV1::config_load_all_sections", skip(_input))]
+    fn config_load_all_sections(
+        _input: ConfigLoadAllSectionsRequest,
+    ) -> Result<ConfigLoadAllSectionsResponse, DriverException> {
+        let all_sections = config_manager::load_all_config_sections().map_err(|e| {
+            to_driver_exception(ApiError::Configuration {
+                source: e,
+                location: snafu::Location::new(file!(), line!(), 0),
+            })
+        })?;
+
+        let sections = all_sections
+            .into_iter()
+            .map(|(section_name, settings)| {
+                let proto_settings = settings
+                    .into_iter()
+                    .map(|(key, value)| {
+                        let proto_value = match value {
+                            Setting::String(s) => ConfigSetting {
+                                value: Some(config_setting::Value::StringValue(s)),
+                            },
+                            Setting::Int(i) => ConfigSetting {
+                                value: Some(config_setting::Value::IntValue(i)),
+                            },
+                            Setting::Double(d) => ConfigSetting {
+                                value: Some(config_setting::Value::DoubleValue(d)),
+                            },
+                            Setting::Bytes(b) => ConfigSetting {
+                                value: Some(config_setting::Value::BytesValue(b)),
+                            },
+                        };
+                        (key, proto_value)
+                    })
+                    .collect();
+                (
+                    section_name,
+                    ConfigSection {
+                        settings: proto_settings,
+                    },
+                )
+            })
+            .collect();
+
+        Ok(ConfigLoadAllSectionsResponse { sections })
+    }
 }
 
 impl DatabaseDriverServer for DatabaseDriverImpl {}
+
+impl ErrorTrace for DriverException {
+    fn error_trace(&self) -> Vec<error_trace::ErrorTraceEntry> {
+        self.error_trace
+            .iter()
+            .map(|entry| error_trace::ErrorTraceEntry {
+                location: error_trace::Location::new(entry.file.clone(), entry.line, entry.column),
+                message: entry.message.clone(),
+            })
+            .collect()
+    }
+}
 
 pub type DatabaseDriverClient = crate::protobuf_gen::database_driver_v1::DatabaseDriverClient<
     crate::protobuf_apis::RustTransport,

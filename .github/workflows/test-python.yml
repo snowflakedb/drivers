@@ -96,7 +96,7 @@ jobs:
   # Packaging tests - verify sdist can be built and installed from source
   packaging_tests:
     needs: [detect-changes, format]
-    if: github.event_name == 'push' || needs.detect-changes.outputs.run_python == 'true'
+    if: github.event_name == 'push' || needs.detect-changes.outputs.run_python_packaging == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository

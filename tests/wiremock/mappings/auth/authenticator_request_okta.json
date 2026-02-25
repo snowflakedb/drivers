@@ -1,0 +1,18 @@
+{
+  "name": "Snowflake authenticator-request for Okta",
+  "request": {
+    "urlPathPattern": "/session/authenticator-request.*",
+    "method": "POST"
+  },
+  "response": {
+    "status": 200,
+    "jsonBody": {
+      "success": true,
+      "data": {
+        "tokenUrl": "{{OKTA_BASE_URL}}/api/v1/authn",
+        "ssoUrl": "{{OKTA_BASE_URL}}/app/sso/saml"
+      }
+    }
+  }
+}
+

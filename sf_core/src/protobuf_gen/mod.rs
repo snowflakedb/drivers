@@ -1,3 +1,6 @@
 #![allow(clippy::result_large_err)]
-pub mod database_driver_v1;
 extern crate prost;
+
+pub mod database_driver_v1 {
+    include!(concat!(env!("OUT_DIR"), "/database_driver_v1.rs"));
+}

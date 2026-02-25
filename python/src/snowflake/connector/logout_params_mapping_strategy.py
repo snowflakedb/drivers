@@ -7,6 +7,7 @@ Phase 3: Pass parameters directly to Core without mapping
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Optional
 
+
 if TYPE_CHECKING:
     from snowflake.connector.connection import Connection
 

@@ -34,7 +34,7 @@ impl CodeGenerator for JsonGenerator {
 
     fn generate(&self, context: &GeneratorContext) -> Result<GenerationResult, Whatever> {
         // Run protoc to get the descriptor set
-        let descriptor_set = run_protoc(context.proto_file.clone())?;
+        let descriptor_set = run_protoc(context)?;
 
         // Write the JSON descriptor
         let mut result = GenerationResult::new();

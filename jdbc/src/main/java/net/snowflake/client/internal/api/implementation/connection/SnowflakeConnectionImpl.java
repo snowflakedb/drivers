@@ -59,6 +59,7 @@ public class SnowflakeConnectionImpl implements SnowflakeConnection, Connection 
   public SnowflakeConnectionImpl(String url, Properties properties) throws SQLException {
     this.url = url;
     this.properties = properties;
+    Properties connectionOptions = ConnectionOptionsResolver.resolve(url, properties);
     try {
       this.databaseHandle =
           ProtobufApis.databaseDriverV1
@@ -71,7 +72,7 @@ public class SnowflakeConnectionImpl implements SnowflakeConnection, Connection 
           ProtobufApis.databaseDriverV1
               .connectionNew(ConnectionNewRequest.getDefaultInstance())
               .getConnHandle();
-      properties.forEach(
+      connectionOptions.forEach(
           (key, value) -> {
             if (!(key instanceof String)) {
               return;

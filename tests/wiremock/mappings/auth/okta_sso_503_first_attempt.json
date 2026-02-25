@@ -1,0 +1,15 @@
+{
+  "name": "Okta SSO returns 503 on first attempt (transient error)",
+  "scenarioName": "okta-sso-retry",
+  "requiredScenarioState": "Retry Test Started",
+  "newScenarioState": "First SSO Failed",
+  "request": {
+    "urlPathPattern": "/app/sso/saml.*",
+    "method": "GET"
+  },
+  "response": {
+    "status": 503,
+    "body": "Service Temporarily Unavailable"
+  },
+  "priority": 1
+}

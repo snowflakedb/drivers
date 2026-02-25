@@ -10,6 +10,12 @@ pub fn to_pascal_case(s: &str) -> String {
     s.to_case(Case::Pascal)
 }
 
+/// Strip common test-method prefixes (`test_`, `vpn_`) so the bare name
+/// can be compared against the Gherkin scenario name.
+pub fn clean_method_name(name: &str) -> &str {
+    name.trim_start_matches("test_").trim_start_matches("vpn_")
+}
+
 /// Check if two strings match when normalized (ignoring case, spaces, underscores, hyphens, angle brackets)
 pub fn strings_match_normalized(s1: &str, s2: &str) -> bool {
     let normalize = |s: &str| {

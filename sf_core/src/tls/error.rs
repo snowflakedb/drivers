@@ -1,6 +1,6 @@
 use snafu::{Location, Snafu};
 
-#[derive(Snafu, Debug)]
+#[derive(Snafu, Debug, error_trace::ErrorTrace)]
 #[snafu(visibility(pub))]
 pub enum TlsError {
     #[snafu(display("Failed to build HTTP client"))]
