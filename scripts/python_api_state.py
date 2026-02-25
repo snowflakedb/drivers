@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Analyse the public API of Connection and Cursor classes and report implementation status.
+"""Analyze the public API of Connection and Cursor classes and report implementation status.
 
 The script inspects the source code via the ``ast`` module so it does not
 need to import or instantiate any driver classes (no native libraries

@@ -111,7 +111,7 @@ class Connection:
         self._closed = False
         self._autocommit = False
         self._messages: list[tuple[type[Exception], dict[str, str | bool]]] = []
-        self._errorhandler: Callable = ProgrammingError
+        self._errorhandler: Callable
 
     @pep249
     def close(self) -> None:

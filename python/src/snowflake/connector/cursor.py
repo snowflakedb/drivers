@@ -118,7 +118,7 @@ class SnowflakeCursorBase(abc.ABC):
         self._binding_data: None | bytes = None
         self._messages: list[tuple[type[Exception], dict[str, str | bool]]] = []
         self._rownumber: int | None = None
-        self._errorhandler: Callable = ProgrammingError
+        self._errorhandler: Callable
 
     # ------------------------------------------------------------------
     # PEP 249 attributes
