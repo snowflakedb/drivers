@@ -126,6 +126,7 @@ behavior_differences:
       receive a standards-compliant SQL_NUMERIC_STRUCT instead of raw double bytes.
       Related: BD#12 (same issue for DECIMAL/NUMERIC columns).
       TODO: To be fixed in old driver
+
   17:
     name: "SQL_C_CHAR with small buffer on FLOAT columns returns SQL_ERROR instead of SQL_SUCCESS_WITH_INFO"
     description: |
