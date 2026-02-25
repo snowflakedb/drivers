@@ -191,19 +191,22 @@ pub fn describe_col(
 
     // Write data type
     if !data_type_ptr.is_null() {
-        let sql_type = sql_type_from_field(field, &stmt.conn.numeric_settings).context(ConversionSnafu)?;
+        let sql_type =
+            sql_type_from_field(field, &stmt.conn.numeric_settings).context(ConversionSnafu)?;
         unsafe { std::ptr::write(data_type_ptr, sql_type.0 as sql::SmallInt) };
     }
 
     // Write column size
     if !column_size_ptr.is_null() {
-        let col_size = column_size_from_field(field, &stmt.conn.numeric_settings).context(ConversionSnafu)?;
+        let col_size =
+            column_size_from_field(field, &stmt.conn.numeric_settings).context(ConversionSnafu)?;
         unsafe { std::ptr::write(column_size_ptr, col_size) };
     }
 
     // Write decimal digits
     if !decimal_digits_ptr.is_null() {
-        let digits = decimal_digits_from_field(field, &stmt.conn.numeric_settings).context(ConversionSnafu)?;
+        let digits = decimal_digits_from_field(field, &stmt.conn.numeric_settings)
+            .context(ConversionSnafu)?;
         unsafe { std::ptr::write(decimal_digits_ptr, digits) };
     }
 

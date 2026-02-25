@@ -9,9 +9,9 @@ mod boolean;
 mod date;
 mod nullable;
 mod number;
-mod real;
 #[cfg(test)]
 mod number_tests;
+mod real;
 mod timestamp;
 mod varchar;
 
@@ -301,15 +301,21 @@ pub fn make_converter<'a>(
 /// Map a Snowflake Arrow field to the corresponding SQL data type.
 pub fn sql_type_from_field(
     field: &Field,
-    numeric_settings: &NumericSettings
+    numeric_settings: &NumericSettings,
 ) -> Result<odbc_sys::SqlDataType, ConversionError> {
     SnowflakeFieldType::from_field(field, numeric_settings).map(|ft| ft.sql_type())
 }
 
-pub fn column_size_from_field(field: &Field, numeric_settings: &NumericSettings) -> Result<odbc_sys::ULen, ConversionError> {
+pub fn column_size_from_field(
+    field: &Field,
+    numeric_settings: &NumericSettings,
+) -> Result<odbc_sys::ULen, ConversionError> {
     SnowflakeFieldType::from_field(field, numeric_settings).map(|ft| ft.column_size())
 }
 
-pub fn decimal_digits_from_field(field: &Field, numeric_settings: &NumericSettings) -> Result<odbc_sys::SmallInt, ConversionError> {
+pub fn decimal_digits_from_field(
+    field: &Field,
+    numeric_settings: &NumericSettings,
+) -> Result<odbc_sys::SmallInt, ConversionError> {
     SnowflakeFieldType::from_field(field, numeric_settings).map(|ft| ft.decimal_digits())
 }
