@@ -52,9 +52,8 @@ pub struct Data {
     #[serde(rename = "chunkHeaders")]
     chunk_headers: Option<HashMap<String, String>>,
 
-    //unused fields
     #[serde(rename = "parameters")]
-    _parameters: Option<Vec<NameValueParameter>>,
+    pub parameters: Option<Vec<NameValueParameter>>,
     #[serde(rename = "total")]
     pub total: Option<i64>,
     #[serde(rename = "returned")]
@@ -169,11 +168,10 @@ pub struct Stats {
 
 #[derive(Debug, Deserialize)]
 pub struct NameValueParameter {
-    //unused fields
     #[serde(rename = "name")]
-    _name: String,
+    pub name: String,
     #[serde(rename = "value")]
-    _value: serde_json::Value,
+    pub value: serde_json::Value,
 }
 
 #[derive(Deserialize)]

@@ -120,10 +120,18 @@ fn execute_bindings(stmt: &mut Statement) -> OdbcResult<Warnings> {
         batch_idx,
     } = &stmt.state.as_ref()
     {
-        for (column_number, binding) in &stmt.column_bindings {
-            let array_ref = record_batch.column((column_number - 1) as usize);
+        for (column_number, binding) in &stmt.ard.bindings {
             let schema = record_batch.schema();
-            let field = schema.field((column_number - 1) as usize);
+            let arrow_column_number = *column_number as usize - 1;
+            if arrow_column_number >= schema.fields().len() {
+                tracing::error!(
+                    "execute_bindings: column_number {} is out of range",
+                    *column_number
+                );
+                continue;
+            }
+            let array_ref = record_batch.column(arrow_column_number);
+            let field = schema.field(arrow_column_number);
             tracing::debug!(
                 "execute_bindings: column_number={}, binding={:?}",
                 column_number,
@@ -139,10 +147,16 @@ fn execute_bindings(stmt: &mut Statement) -> OdbcResult<Warnings> {
                 *batch_idx,
             )
             .context(ConversionSnafu)?;
+            tracing::debug!(
+                "execute_bindings: column_number={}, binding={:?}, conversion_warnings={:?}",
+                column_number,
+                binding,
+                conversion_warnings
+            );
             warnings.extend(conversion_warnings);
         }
     }
-    Ok(vec![])
+    Ok(warnings)
 }
 
 /// Get data from a specific column
@@ -299,8 +313,9 @@ mod tests {
             );
 
             assert!(result.is_ok());
-            assert_eq!(str_len, 11); // Full length reported
-            assert_eq!(&buffer[..5], b"hello"); // Truncated
+            assert_eq!(str_len, sql::NO_TOTAL); // SQL_NO_TOTAL when truncated
+            assert_eq!(&buffer[..4], b"hell"); // Truncated with null terminator at position 4
+            assert_eq!(buffer[4], 0); // Null terminator
         }
     }
 
@@ -725,25 +740,35 @@ mod tests {
         }
 
         #[test]
-        fn returns_error_for_wchar_target_type() {
+        fn successfully_reads_wchar_target_type() {
             let array = StringArray::from(vec!["hello"]);
             let field = field_with_text_meta();
             let mut buffer = vec![0u16; 32];
+            let mut str_len: sql::Len = 0;
 
             let result = read_arrow_value(
-                CDataType::WChar, // Unsupported
+                CDataType::WChar,
                 buffer.as_mut_ptr() as sql::Pointer,
-                buffer.len() as sql::Len,
-                std::ptr::null_mut(),
+                (buffer.len() * 2) as sql::Len, // buffer_length is in bytes for WChar
+                &mut str_len,
                 &array,
                 &field,
                 0,
             );
 
-            assert!(matches!(
-                result,
-                Err(ConversionError::WriteOdbcValue { .. })
-            ));
+            assert!(result.is_ok());
+            assert_eq!(str_len, 10); // "hello" is 5 UTF-16 code units = 10 bytes
+            assert_eq!(
+                &buffer[..5],
+                &[
+                    b'h' as u16,
+                    b'e' as u16,
+                    b'l' as u16,
+                    b'l' as u16,
+                    b'o' as u16
+                ]
+            );
+            assert_eq!(buffer[5], 0); // Null terminator
         }
     }
 

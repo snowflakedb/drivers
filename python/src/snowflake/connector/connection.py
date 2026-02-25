@@ -7,12 +7,20 @@ This module defines the Connection class as specified in PEP 249.
 from __future__ import annotations
 
 import atexit
+import logging
 import warnings
 
+from dataclasses import dataclass
 from typing import Any
 
-from snowflake.connector._internal.protobuf_gen.database_driver_v1_services import (  # type: ignore[attr-defined]
+from snowflake.connector.logout_params_mapping_strategy import (
+    LogoutParamsMappingStrategy,
+    Phase2LogoutParamsMappingStrategy,
+    Phase3LogoutParamsMappingStrategy,
+)
+from snowflake.connector._internal.protobuf_gen.database_driver_v1_services import (
     ConnectionCloseRequest,
+    ConnectionGetParameterRequest,
     ConnectionInitRequest,
     ConnectionIsClosedRequest,
     ConnectionNewRequest,
@@ -20,52 +28,133 @@ from snowflake.connector._internal.protobuf_gen.database_driver_v1_services impo
     ConnectionSetOptionDoubleRequest,
     ConnectionSetOptionIntRequest,
     ConnectionSetOptionStringRequest,
+    ConnectionSetSessionParametersRequest,
     DatabaseInitRequest,
     DatabaseNewRequest,
 )
+from snowflake.connector._internal.protobuf_gen import database_driver_v1_pb2
 
 from ._internal._private_key_helper import normalize_private_key
 from ._internal.api_client.client_api import database_driver_client
 from .cursor import SnowflakeCursor, SnowflakeCursorBase
-from .errors import InterfaceError, NotSupportedError
+from .errors import InterfaceError, NotSupportedError, ProgrammingError
 
 
-# Global flag to track if first auto-cleanup warning has been emitted in this process
-_first_auto_cleanup_in_process = True
+# Paramstyles that enable server-side binding in the universal driver.
+_SUPPORTED_PARAMSTYLES = {"qmark", "numeric"}
+
+# TODO: to be added in follow-up PR
+_CLIENT_SIDE_PARAMSTYLES = {"format", "pyformat"}
+
+
+def _resolve_paramstyle(value: str | None) -> str | None:
+    """Validate a *paramstyle* value.
+
+    Returns the canonical lower-case paramstyle string when it names a
+    server-side binding style supported by the universal driver, ``None``
+    when it names a client-side style that we tolerate but don't support,
+    and raises :class:`ProgrammingError` for anything else.
+    """
+    if value is None:
+        return None
+
+    normalised = value.strip().lower()
+
+    if normalised in _SUPPORTED_PARAMSTYLES:
+        return normalised
+
+    # TODO: remove in follow-up PR
+    if normalised in _CLIENT_SIDE_PARAMSTYLES:
+        return None
+
+    raise ProgrammingError(
+        f"Invalid paramstyle is specified: {value!r}. Supported values: {', '.join(sorted(_SUPPORTED_PARAMSTYLES))}"
+    )
+
+
+# Module-level logger
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class ConnectionClassConfig:
+    """Static configuration flags for Connection class behavior.
+
+    Immutable configuration that controls Connection behavior across all instances.
+    """
+
+    # Internal flag for logout semantics migration (SNOW-2314152)
+    # False (default): Phase 2 - server_session_keep_alive=False respects auto-detection
+    # True: Phase 3 - Pass parameters directly to Core without mapping
+    # WARNING: Phase 3 will become default in future release (Breaking Change)
+    USE_PHASE3_LOGOUT_SEMANTICS: bool = False
+
+
+@dataclass
+class ConnectionClassState:
+    """Mutable class-level state shared across all Connection instances in the process.
+
+    This is static/class-level state, NOT instance state.
+    """
+
+    # Track if first auto-cleanup warning has been emitted in this process
+    # False = warning already emitted, True = warning not yet emitted
+    first_auto_cleanup_warning_pending: bool = True
 
 
 class Connection:
     """Connection objects represent a database connection."""
 
-    def __init__(self, **kwargs: Any) -> None:
+    # Protected static configuration (immutable class-level settings)
+    _class_config = ConnectionClassConfig()
+
+    # Protected static state (mutable class-level state, shared across all instances)
+    _class_state = ConnectionClassState()
+
+    @classmethod
+    def _get_logout_params_mapping_strategy(cls) -> LogoutParamsMappingStrategy:
+        """Factory method for logout parameter mapping strategy.
+
+        Returns:
+            Phase2 or Phase3 strategy based on USE_PHASE3_LOGOUT_SEMANTICS flag
+        """
+        if cls._class_config.USE_PHASE3_LOGOUT_SEMANTICS:
+            return Phase3LogoutParamsMappingStrategy()
+        return Phase2LogoutParamsMappingStrategy()
+
+    def __init__(self, *, paramstyle: str | None = None, **kwargs: Any) -> None:
         """
         Initialize a new connection object.
 
         Args:
+            paramstyle: Binding style – ``"qmark"`` or ``"numeric"``.
             database: Database name
             user: Username
             password: Password
             host: Host name
             port: Port number
             private_key: Private key in bytes, str (base64), or RSAPrivateKey format
+            session_parameters: Optional dict of session parameters to set at connection time
             server_session_keep_alive: Optional[bool] - Control server session lifecycle
                 - True: Never send logout (Fire & Forget)
-                - False: [Phase 2] Respects auto-detection if enabled
-                         [Phase 3] Always logout (ignore auto-detection)
+                - False: Respects auto-detection if enabled
                 - None: Delegate to auto-detection setting
             enable_server_session_keep_alive_auto_detection: Optional[bool]
                 - True: Check async query registry before logout
-                - False/None: Don't check registry
-            ALLOW_BREAKING_CHANGE_SERVER_SESSION_KEEP_ALIVE_AUTO_DETECTION: bool
-                - False (default): Phase 2 behavior (auto-detect enabled by default)
-                - True: Phase 3 behavior (auto-detect disabled by default)
+                - False: Don't check registry
+                - None: Defaults to True (auto-detection enabled for backward compatibility)
             auto_cleanup: bool - Enable atexit handler for automatic connection cleanup
             **kwargs: Additional connection parameters
         """
+        self._paramstyle = _resolve_paramstyle(paramstyle)
+
         self.db_api = database_driver_client()
         self.db_handle = self.db_api.database_new(DatabaseNewRequest()).db_handle
         self.db_api.database_init(DatabaseInitRequest(db_handle=self.db_handle))
         self.conn_handle = self.db_api.connection_new(ConnectionNewRequest()).conn_handle
+
+        # Extract session_parameters before processing other kwargs
+        session_params = kwargs.pop("session_parameters", None)
 
         # Pre-process private_key if present - normalize for Rust core
         if "private_key" in kwargs:
@@ -75,9 +164,6 @@ class Connection:
         self.server_session_keep_alive: bool | None = kwargs.pop("server_session_keep_alive", None)
         self.enable_server_session_keep_alive_auto_detection: bool | None = kwargs.pop(
             "enable_server_session_keep_alive_auto_detection", None
-        )
-        self.ALLOW_BREAKING_CHANGE_SERVER_SESSION_KEEP_ALIVE_AUTO_DETECTION: bool = kwargs.pop(
-            "ALLOW_BREAKING_CHANGE_SERVER_SESSION_KEEP_ALIVE_AUTO_DETECTION", False
         )
         self.auto_cleanup: bool = kwargs.pop("auto_cleanup", True)
 
@@ -102,14 +188,19 @@ class Connection:
                     ConnectionSetOptionBytesRequest(conn_handle=self.conn_handle, key=key, value=value)
                 )
 
+        # Set session parameters if provided (before connection_init)
+        if session_params:
+            self.db_api.connection_set_session_parameters(
+                ConnectionSetSessionParametersRequest(conn_handle=self.conn_handle, parameters=session_params)
+            )
+
         self.db_api.connection_init(ConnectionInitRequest(conn_handle=self.conn_handle, db_handle=self.db_handle))
-        self.kwargs = kwargs
         self._closed = False
         self._autocommit = False
 
         # Register atexit handler if auto_cleanup is enabled
         if self.auto_cleanup:
-            atexit.register(self._close_at_exit)
+            atexit.register(self._close_at_process_exit)
 
     def close(self, retry: bool = True) -> None:
         """
@@ -118,90 +209,98 @@ class Connection:
         Sends logout request to server based on configuration, then cleans up resources.
 
         Args:
-            retry: Whether to retry failed logout (Note: retry parameter kept for compatibility,
-                   but retry behavior is now controlled by Core's retry policy)
+            retry: Whether to retry failed logout requests (backward compatible with old driver).
+                   - True (default): Allow retries (Core default: up to 6 attempts with exponential backoff)
+                   - False: No retries, single attempt only (matches old driver behavior)
 
-        Phase 2 vs Phase 3 Behavior:
-
-        When ALLOW_BREAKING_CHANGE_SERVER_SESSION_KEEP_ALIVE_AUTO_DETECTION = False (Phase 2 default):
-            - Auto-detection enabled by default (legacy Python behavior)
+        Behavior (Phase 2 - Backward Compatible, SNOW-2314152):
+            - Auto-detection enabled by default (legacy Python behavior for backward compatibility)
             - server_session_keep_alive=False still respects auto-detection
-            - Emits deprecation warning when server_session_keep_alive=False
+            - server_session_keep_alive=True never sends logout (Fire & Forget)
+            - server_session_keep_alive=None delegates to auto-detection setting
 
-        When ALLOW_BREAKING_CHANGE_SERVER_SESSION_KEEP_ALIVE_AUTO_DETECTION = True (Phase 3 opt-in):
-            - Auto-detection disabled by default (unified model)
-            - server_session_keep_alive=False forces logout
-            - No deprecation warnings
+        Note: Phase 2 behavior is achieved by mapping Python parameters to Core's Phase 3
+        semantics. In Phase 3, Python will pass parameters directly to Core without mapping.
+        See .ai/docs/UD_Design_Doc_Fire_Forget.md and SNOW-2314152 for Phase 2/3 migration plan.
         """
-        if self.is_closed():
-            return  # Already closed, idempotent
+        # Unregister atexit handler to prevent it from running at process exit
+        # after explicit close(). This prevents double cleanup and false warnings.
+        # atexit.unregister() is idempotent, safe to call multiple times.
+        atexit.unregister(self._close_at_process_exit)
 
-        # Determine effective auto-detection setting based on phase
-        if self.ALLOW_BREAKING_CHANGE_SERVER_SESSION_KEEP_ALIVE_AUTO_DETECTION:
-            # Phase 3: Default to None (auto-detection disabled)
-            effective_enable_auto = self.enable_server_session_keep_alive_auto_detection
+        # Note: Idempotence is handled atomically in Core (connection_close)
+
+        # Map Python parameters to Core parameters using strategy pattern (SNOW-2314152)
+        strategy = self._get_logout_params_mapping_strategy()
+        core_keep_alive = strategy.map_server_session_keep_alive(self)
+
+        # Default auto-detection setting for Core (used when core_keep_alive is None)
+        effective_enable_auto = (
+            self.enable_server_session_keep_alive_auto_detection
+            if self.enable_server_session_keep_alive_auto_detection is not None
+            else True
+        )
+
+        # Handle retry parameter (backward compatibility with old driver)
+        # Old driver: retry=True → 3 attempts, retry=False → 1 attempt
+        # UD: Pass max_retry_attempts to Core to control retry count
+        if retry:
+            # Allow retries: Use Core default (typically 6 attempts)
+            max_retry_attempts = None
         else:
-            # Phase 2: Default to True (auto-detection enabled for backward compatibility)
-            effective_enable_auto = (
-                self.enable_server_session_keep_alive_auto_detection
-                if self.enable_server_session_keep_alive_auto_detection is not None
-                else True
-            )
+            # No retries: Single attempt only (matches old driver retry=False)
+            max_retry_attempts = 1
 
-        # Emit deprecation warning for Phase 2 when server_session_keep_alive=False
-        if (
-            self.server_session_keep_alive is False
-            and not self.ALLOW_BREAKING_CHANGE_SERVER_SESSION_KEEP_ALIVE_AUTO_DETECTION
-        ):
-            warnings.warn(
-                "server_session_keep_alive=False currently still respects auto-detection "
-                "(Phase 2 behavior). In Phase 3, False will force logout regardless of async queries. "
-                "To opt into Phase 3 behavior now, set "
-                "ALLOW_BREAKING_CHANGE_SERVER_SESSION_KEEP_ALIVE_AUTO_DETECTION=True",
-                FutureWarning,
-                stacklevel=2,
-            )
-
-        # Call Core connection_close with configuration
+        # Call Core connection_close with mapped configuration
         # Core will set is_closed flag atomically
         self.db_api.connection_close(
             ConnectionCloseRequest(
                 conn_handle=self.conn_handle,
-                server_session_keep_alive=self.server_session_keep_alive,
+                server_session_keep_alive=core_keep_alive,  # Mapped parameter
                 enable_auto_detection=effective_enable_auto,
-                error_strategy="BestEffort",  # Python default
+                error_strategy=database_driver_v1_pb2.ERROR_STRATEGY_BEST_EFFORT,  # Python default
                 timeout_seconds=5,  # 5 second default
+                max_retry_attempts=max_retry_attempts,
             )
         )
 
-    def _close_at_exit(self) -> None:
+    def _close_at_process_exit(self) -> None:
         """
         Cleanup handler called by atexit when process exits.
 
-        Emits deprecation warning on first call per process.
+        If close() was called successfully, this handler should have been unregistered
+        and should NOT run. If it runs for an already-closed connection, that indicates
+        a potential bug (unregister failed, race condition, or multiple registrations).
         """
-        global _first_auto_cleanup_in_process
+        if self.is_closed():
+            # This shouldn't happen! If close() succeeded, handler should be unregistered.
+            logger.debug(
+                "atexit handler ran for already-closed connection. "
+                "This may indicate atexit.unregister() failed or a race condition occurred."
+            )
+            return
 
-        if _first_auto_cleanup_in_process:
+        # Connection is leaked (not explicitly closed) - emit deprecation warning
+        # Phase 3 (SNOW-2314152): Auto-cleanup will be disabled by default
+        if self.__class__._class_state.first_auto_cleanup_warning_pending:
             warnings.warn(
                 "Connection was not explicitly closed before process exit. "
-                "Auto-cleanup at exit will be disabled by default in Phase 3. "
+                "Auto-cleanup at exit will be disabled by default in a future version. "
                 "Please explicitly call connection.close() or use context manager.",
                 FutureWarning,
                 stacklevel=2,
             )
-            _first_auto_cleanup_in_process = False
+            self.__class__._class_state.first_auto_cleanup_warning_pending = False
 
-        # Close without retry on exit
-        if not self.is_closed():
-            try:
-                # Temporarily disable auto_cleanup flag to avoid atexit recursion
-                saved_auto_cleanup = self.auto_cleanup
-                self.auto_cleanup = False
-                self.close(retry=False)
-                self.auto_cleanup = saved_auto_cleanup
-            except Exception:
-                pass  # Suppress errors during exit cleanup
+        # Attempt cleanup for leaked connection
+        try:
+            # Temporarily disable auto_cleanup flag to avoid atexit recursion
+            saved_auto_cleanup = self.auto_cleanup
+            self.auto_cleanup = False
+            self.close(retry=False)
+            self.auto_cleanup = saved_auto_cleanup
+        except Exception:
+            pass  # Suppress errors during exit cleanup
 
     def commit(self) -> None:
         """
@@ -355,3 +454,17 @@ class Connection:
             # If handle is invalid or already released, treat as closed
             # This can happen if connection_release() was called
             return True
+
+    def _get_session_parameter(self, name: str) -> str | None:
+        """
+        Get a session parameter value (internal method).
+
+        Args:
+            name: The parameter name (case-insensitive)
+
+        Returns:
+            str | None: The parameter value, or None if not found
+        """
+        request = ConnectionGetParameterRequest(conn_handle=self.conn_handle, key=name)
+        response = self.db_api.connection_get_parameter(request)
+        return response.value if response.value else None

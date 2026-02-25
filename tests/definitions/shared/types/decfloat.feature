@@ -115,7 +115,6 @@ Feature: DECFLOAT type support
     Given Snowflake client is logged in
     And Table with DECFLOAT column exists
     When DECFLOAT values [0, 123.456, -789.012, NULL] are inserted using explicit binding
-    And Query "SELECT * FROM <table>" is executed
     Then SELECT should return the same exact values
 
   @python_e2e

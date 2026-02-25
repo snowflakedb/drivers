@@ -1,3 +1,5 @@
+import pytest
+
 from runner.test_types import TestType
 
 S3_TEST_DATA_12MX100 = "s3://sfc-eng-data/ecosystem/12Mx100/"
@@ -23,6 +25,7 @@ def test_put_files_12mx100(perf_test):
     )
 
 
+@pytest.mark.iterations(1)
 def test_put_files_12mx1000(perf_test):
     """
     PUT test: Upload 1000 files of 12MB each from local disk to temporary stage.
@@ -41,6 +44,7 @@ def test_put_files_12mx1000(perf_test):
     )
 
 
+@pytest.mark.iterations(1)
 def test_put_files_1_2Gx10(perf_test):
     """
     PUT test: Upload 10 files of 1.2GB each from local disk to temporary stage.

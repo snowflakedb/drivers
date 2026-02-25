@@ -51,6 +51,12 @@ enum InfoCode {
   INFO_CODE_DRIVER_ADBC_VERSION = 204;
 }
 
+enum ErrorStrategy {
+  ERROR_STRATEGY_UNSPECIFIED = 0;  // Defaults to BEST_EFFORT
+  ERROR_STRATEGY_BEST_EFFORT = 1;  // Log errors, always succeed
+  ERROR_STRATEGY_STRICT = 2;       // Raise errors (except SESSION_GONE)
+}
+
 // Error detail message
 message ErrorDetail {
   string key = 1;
@@ -165,6 +171,30 @@ message ArrowSchemaPtr {
 // Arrow array pointer
 message ArrowArrayPtr {
   bytes value = 1;
+}
+
+// =============================================================================
+// POINTER TYPES - For passing data references to core
+// =============================================================================
+
+// Pointer to raw binary data in memory with explicit length.
+// Used for passing data from language wrappers without copying.
+//
+// Both JSON and CSV use this same pointer type since both point to raw bytes:
+// - JSON: pointer to UTF-8 encoded JSON bytes (e.g., from json_str.encode('utf-8'))
+// - CSV: pointer to raw CSV file bytes
+message BinaryDataPtr {
+  bytes value = 1;   // 8-byte pointer (encoded as little-endian)
+  int64 length = 2;  // Length of data in bytes
+}
+
+// Union of all binding types.
+// Both variants use BinaryDataPtr since both point to raw bytes in memory.
+message QueryBindings {
+  oneof binding_type {
+    BinaryDataPtr json = 1;  // Pointer to UTF-8 encoded JSON bytes
+    BinaryDataPtr csv = 2;   // Pointer to raw CSV bytes
+  }
 }
 
 // Database service requests and responses
@@ -290,8 +320,9 @@ message ConnectionCloseRequest {
   ConnectionHandle conn_handle = 1;
   optional bool server_session_keep_alive = 2;
   optional bool enable_auto_detection = 3;
-  optional string error_strategy = 4;  // "Strict" or "BestEffort"
+  optional ErrorStrategy error_strategy = 4;
   optional int64 timeout_seconds = 5;
+  optional uint32 max_retry_attempts = 6;  // Maximum number of retry attempts (0 = no retries, 1 attempt only)
 }
 
 message ConnectionCloseResponse {
@@ -359,6 +390,23 @@ message ConnectionRollbackRequest {
 }
 
 message ConnectionRollbackResponse {
+}
+
+message ConnectionSetSessionParametersRequest {
+  ConnectionHandle conn_handle = 1;
+  map<string, string> parameters = 2;
+}
+
+message ConnectionSetSessionParametersResponse {
+}
+
+message ConnectionGetParameterRequest {
+  ConnectionHandle conn_handle = 1;
+  string key = 2;
+}
+
+message ConnectionGetParameterResponse {
+  optional string value = 1;
 }
 
 // Statement service requests and responses
@@ -462,8 +510,10 @@ message StatementBindStreamRequest {
 message StatementBindStreamResponse {
 }
 
+// Extend current StatementExecute
 message StatementExecuteQueryRequest {
   StatementHandle stmt_handle = 1;
+  optional QueryBindings bindings = 2;  // None = no bindings
 }
 
 message StatementExecuteQueryResponse {
@@ -515,6 +565,12 @@ service DatabaseDriver {
   rpc ConnectionGetTableTypes(ConnectionGetTableTypesRequest) returns (ConnectionGetTableTypesResponse);
   rpc ConnectionCommit(ConnectionCommitRequest) returns (ConnectionCommitResponse);
   rpc ConnectionRollback(ConnectionRollbackRequest) returns (ConnectionRollbackResponse);
+  // sets initial session parameters connection should be initialized with
+  // call before opening the connection
+  rpc ConnectionSetSessionParameters(ConnectionSetSessionParametersRequest) returns (ConnectionSetSessionParametersResponse);
+  // gets cached session parameter. Cache is updated with subset of connection parameters
+  // (chosen by server, included in HTTP response) after each query
+  rpc ConnectionGetParameter(ConnectionGetParameterRequest) returns (ConnectionGetParameterResponse);
 
   // Statement operations
   rpc StatementNew(StatementNewRequest) returns (StatementNewResponse);

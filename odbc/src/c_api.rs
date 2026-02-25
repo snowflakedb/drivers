@@ -75,6 +75,16 @@ pub unsafe extern "C" fn SQLFreeHandle(
 /// # Safety
 /// This function is called by the ODBC driver manager.
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn SQLFreeStmt(
+    statement_handle: sql::Handle,
+    option: sql::FreeStmtOption,
+) -> sql::RetCode {
+    api::statement::free_stmt(statement_handle, option).to_sql_code()
+}
+
+/// # Safety
+/// This function is called by the ODBC driver manager.
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn SQLConnect(
     connection_handle: sql::Handle,
     server_name: *const sql::Char,
@@ -119,6 +129,51 @@ pub unsafe extern "C" fn SQLGetEnvAttr(
     _string_length: sql::SmallInt,
 ) -> sql::RetCode {
     api::environment::get_env_attribute(environment_handle, attribute, value).to_sql_code()
+}
+
+/// # Safety
+/// This function is called by the ODBC driver manager.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn SQLSetConnectAttr(
+    connection_handle: sql::Handle,
+    attribute: sql::Integer,
+    value: sql::Pointer,
+    string_length: sql::Integer,
+) -> sql::RetCode {
+    api::diagnostic::clear_diag_info(sql::HandleType::Dbc, connection_handle);
+    let result =
+        api::connection::set_connect_attr(connection_handle, attribute, value, string_length);
+    api::diagnostic::set_diag_info_from_result(sql::HandleType::Dbc, connection_handle, &result);
+    result.to_sql_code()
+}
+
+/// # Safety
+/// This function is called by the ODBC driver manager.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn SQLGetConnectAttr(
+    connection_handle: sql::Handle,
+    attribute: sql::Integer,
+    value: sql::Pointer,
+    buffer_length: sql::Integer,
+    string_length_ptr: *mut sql::Integer,
+) -> sql::RetCode {
+    api::diagnostic::clear_diag_info(sql::HandleType::Dbc, connection_handle);
+    let mut warnings = vec![];
+    let result = api::connection::get_connect_attr(
+        connection_handle,
+        attribute,
+        value,
+        buffer_length,
+        string_length_ptr,
+        &mut warnings,
+    );
+    api::diagnostic::set_diag_info_from_warnings(
+        sql::HandleType::Dbc,
+        connection_handle,
+        &warnings,
+    );
+    api::diagnostic::set_diag_info_from_result(sql::HandleType::Dbc, connection_handle, &result);
+    result.to_sql_code_with_warnings(&warnings)
 }
 
 /// # Safety
@@ -331,6 +386,68 @@ pub unsafe extern "C" fn SQLBindCol(
         target_value_ptr,
         buffer_length,
         str_len_or_ind_ptr,
+    )
+    .to_sql_code()
+}
+
+/// # Safety
+/// This function is called by the ODBC driver manager.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn SQLGetStmtAttr(
+    statement_handle: sql::Handle,
+    attribute: sql::Integer,
+    value_ptr: sql::Pointer,
+    buffer_length: sql::Integer,
+    string_length_ptr: *mut sql::Integer,
+) -> sql::RetCode {
+    api::statement::get_stmt_attr(
+        statement_handle,
+        attribute,
+        value_ptr,
+        buffer_length,
+        string_length_ptr,
+    )
+    .to_sql_code()
+}
+
+/// # Safety
+/// This function is called by the ODBC driver manager.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn SQLGetDescField(
+    descriptor_handle: sql::Handle,
+    rec_number: sql::SmallInt,
+    field_identifier: sql::SmallInt,
+    value_ptr: sql::Pointer,
+    buffer_length: sql::Integer,
+    string_length_ptr: *mut sql::Integer,
+) -> sql::RetCode {
+    api::descriptor::get_desc_field(
+        descriptor_handle,
+        rec_number,
+        field_identifier,
+        value_ptr,
+        buffer_length,
+        string_length_ptr,
+    )
+    .to_sql_code()
+}
+
+/// # Safety
+/// This function is called by the ODBC driver manager.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn SQLSetDescField(
+    descriptor_handle: sql::Handle,
+    rec_number: sql::SmallInt,
+    field_identifier: sql::SmallInt,
+    value_ptr: sql::Pointer,
+    buffer_length: sql::Integer,
+) -> sql::RetCode {
+    api::descriptor::set_desc_field(
+        descriptor_handle,
+        rec_number,
+        field_identifier,
+        value_ptr,
+        buffer_length,
     )
     .to_sql_code()
 }

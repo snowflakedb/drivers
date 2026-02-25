@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fs;
 
 use crate::config::InvalidParameterValueSnafu;
@@ -85,6 +86,7 @@ pub struct LoginParameters {
     pub warehouse: Option<String>,
     pub role: Option<String>,
     pub client_info: ClientInfo,
+    pub session_parameters: Option<HashMap<String, String>>,
 }
 
 impl LoginParameters {
@@ -107,6 +109,7 @@ impl LoginParameters {
             warehouse: settings.get_string("warehouse"),
             role: settings.get_string("role"),
             client_info: ClientInfo::from_settings(settings)?,
+            session_parameters: None,
         })
     }
 }

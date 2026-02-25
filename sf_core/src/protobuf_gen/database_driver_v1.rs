@@ -161,6 +161,40 @@ pub struct ArrowArrayPtr {
     #[prost(bytes = "vec", tag = "1")]
     pub value: ::prost::alloc::vec::Vec<u8>,
 }
+/// Pointer to raw binary data in memory with explicit length.
+/// Used for passing data from language wrappers without copying.
+///
+/// Both JSON and CSV use this same pointer type since both point to raw bytes:
+/// - JSON: pointer to UTF-8 encoded JSON bytes (e.g., from json_str.encode('utf-8'))
+/// - CSV: pointer to raw CSV file bytes
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct BinaryDataPtr {
+    /// 8-byte pointer (encoded as little-endian)
+    #[prost(bytes = "vec", tag = "1")]
+    pub value: ::prost::alloc::vec::Vec<u8>,
+    /// Length of data in bytes
+    #[prost(int64, tag = "2")]
+    pub length: i64,
+}
+/// Union of all binding types.
+/// Both variants use BinaryDataPtr since both point to raw bytes in memory.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct QueryBindings {
+    #[prost(oneof = "query_bindings::BindingType", tags = "1, 2")]
+    pub binding_type: ::core::option::Option<query_bindings::BindingType>,
+}
+/// Nested message and enum types in `QueryBindings`.
+pub mod query_bindings {
+    #[derive(Clone, PartialEq, Eq, Hash, ::prost::Oneof)]
+    pub enum BindingType {
+        /// Pointer to UTF-8 encoded JSON bytes
+        #[prost(message, tag = "1")]
+        Json(super::BinaryDataPtr),
+        /// Pointer to raw CSV bytes
+        #[prost(message, tag = "2")]
+        Csv(super::BinaryDataPtr),
+    }
+}
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct DatabaseNewRequest {}
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
@@ -293,7 +327,7 @@ pub struct ConnectionReleaseRequest {
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ConnectionReleaseResponse {}
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ConnectionCloseRequest {
     #[prost(message, optional, tag = "1")]
     pub conn_handle: ::core::option::Option<ConnectionHandle>,
@@ -301,11 +335,13 @@ pub struct ConnectionCloseRequest {
     pub server_session_keep_alive: ::core::option::Option<bool>,
     #[prost(bool, optional, tag = "3")]
     pub enable_auto_detection: ::core::option::Option<bool>,
-    /// "Strict" or "BestEffort"
-    #[prost(string, optional, tag = "4")]
-    pub error_strategy: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(enumeration = "ErrorStrategy", optional, tag = "4")]
+    pub error_strategy: ::core::option::Option<i32>,
     #[prost(int64, optional, tag = "5")]
     pub timeout_seconds: ::core::option::Option<i64>,
+    /// Maximum number of retry attempts (0 = no retries, 1 attempt only)
+    #[prost(uint32, optional, tag = "6")]
+    pub max_retry_attempts: ::core::option::Option<u32>,
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ConnectionCloseResponse {}
@@ -393,6 +429,28 @@ pub struct ConnectionRollbackRequest {
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ConnectionRollbackResponse {}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ConnectionSetSessionParametersRequest {
+    #[prost(message, optional, tag = "1")]
+    pub conn_handle: ::core::option::Option<ConnectionHandle>,
+    #[prost(map = "string, string", tag = "2")]
+    pub parameters:
+        ::std::collections::HashMap<::prost::alloc::string::String, ::prost::alloc::string::String>,
+}
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ConnectionSetSessionParametersResponse {}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ConnectionGetParameterRequest {
+    #[prost(message, optional, tag = "1")]
+    pub conn_handle: ::core::option::Option<ConnectionHandle>,
+    #[prost(string, tag = "2")]
+    pub key: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ConnectionGetParameterResponse {
+    #[prost(string, optional, tag = "1")]
+    pub value: ::core::option::Option<::prost::alloc::string::String>,
+}
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct StatementNewRequest {
     #[prost(message, optional, tag = "1")]
@@ -509,10 +567,14 @@ pub struct StatementBindStreamRequest {
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct StatementBindStreamResponse {}
-#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+/// Extend current StatementExecute
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct StatementExecuteQueryRequest {
     #[prost(message, optional, tag = "1")]
     pub stmt_handle: ::core::option::Option<StatementHandle>,
+    /// None = no bindings
+    #[prost(message, optional, tag = "2")]
+    pub bindings: ::core::option::Option<QueryBindings>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct StatementExecuteQueryResponse {
@@ -673,6 +735,38 @@ impl InfoCode {
         }
     }
 }
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum ErrorStrategy {
+    /// Defaults to BEST_EFFORT
+    Unspecified = 0,
+    /// Log errors, always succeed
+    BestEffort = 1,
+    /// Raise errors (except SESSION_GONE)
+    Strict = 2,
+}
+impl ErrorStrategy {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "ERROR_STRATEGY_UNSPECIFIED",
+            Self::BestEffort => "ERROR_STRATEGY_BEST_EFFORT",
+            Self::Strict => "ERROR_STRATEGY_STRICT",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "ERROR_STRATEGY_UNSPECIFIED" => Some(Self::Unspecified),
+            "ERROR_STRATEGY_BEST_EFFORT" => Some(Self::BestEffort),
+            "ERROR_STRATEGY_STRICT" => Some(Self::Strict),
+            _ => None,
+        }
+    }
+}
 
 use prost::Message;
 use proto_utils::*;
@@ -739,6 +833,12 @@ pub trait DatabaseDriver {
     fn connection_rollback(
         input: ConnectionRollbackRequest,
     ) -> Result<ConnectionRollbackResponse, DriverException>;
+    fn connection_set_session_parameters(
+        input: ConnectionSetSessionParametersRequest,
+    ) -> Result<ConnectionSetSessionParametersResponse, DriverException>;
+    fn connection_get_parameter(
+        input: ConnectionGetParameterRequest,
+    ) -> Result<ConnectionGetParameterResponse, DriverException>;
     fn statement_new(input: StatementNewRequest) -> Result<StatementNewResponse, DriverException>;
     fn statement_release(
         input: StatementReleaseRequest,
@@ -1024,6 +1124,28 @@ pub trait DatabaseDriverServer: DatabaseDriver {
                     Err(e) => return Err(ProtoError::Transport(e.to_string())),
                 };
                 let result = Self::connection_rollback(input);
+                match result {
+                    Ok(output) => Ok(output.encode_to_vec()),
+                    Err(e) => Err(ProtoError::Application(e.encode_to_vec())),
+                }
+            }
+            "connection_set_session_parameters" => {
+                let input = match ConnectionSetSessionParametersRequest::decode(&message[..]) {
+                    Ok(input) => input,
+                    Err(e) => return Err(ProtoError::Transport(e.to_string())),
+                };
+                let result = Self::connection_set_session_parameters(input);
+                match result {
+                    Ok(output) => Ok(output.encode_to_vec()),
+                    Err(e) => Err(ProtoError::Application(e.encode_to_vec())),
+                }
+            }
+            "connection_get_parameter" => {
+                let input = match ConnectionGetParameterRequest::decode(&message[..]) {
+                    Ok(input) => input,
+                    Err(e) => return Err(ProtoError::Transport(e.to_string())),
+                };
+                let result = Self::connection_get_parameter(input);
                 match result {
                     Ok(output) => Ok(output.encode_to_vec()),
                     Err(e) => Err(ProtoError::Application(e.encode_to_vec())),
@@ -1753,6 +1875,60 @@ impl<T: Transport> DatabaseDriverClient<T> {
         match result {
             Ok(output) => {
                 let output = ConnectionRollbackResponse::decode(&output[..]);
+                match output {
+                    Ok(output) => Ok(output),
+                    Err(e) => Err(ProtoError::Transport(e.to_string())),
+                }
+            }
+            Err(ProtoError::Application(e)) => {
+                let output = DriverException::decode(&e[..]);
+                match output {
+                    Ok(output) => Err(ProtoError::Application(output)),
+                    Err(e) => Err(ProtoError::Transport(e.to_string())),
+                }
+            }
+            Err(ProtoError::Transport(e)) => Err(ProtoError::Transport(e)),
+        }
+    }
+
+    pub fn connection_set_session_parameters(
+        input: ConnectionSetSessionParametersRequest,
+    ) -> Result<ConnectionSetSessionParametersResponse, ProtoError<DriverException>> {
+        let result = T::handle_message(
+            "DatabaseDriver",
+            "connection_set_session_parameters",
+            input.encode_to_vec(),
+        );
+        match result {
+            Ok(output) => {
+                let output = ConnectionSetSessionParametersResponse::decode(&output[..]);
+                match output {
+                    Ok(output) => Ok(output),
+                    Err(e) => Err(ProtoError::Transport(e.to_string())),
+                }
+            }
+            Err(ProtoError::Application(e)) => {
+                let output = DriverException::decode(&e[..]);
+                match output {
+                    Ok(output) => Err(ProtoError::Application(output)),
+                    Err(e) => Err(ProtoError::Transport(e.to_string())),
+                }
+            }
+            Err(ProtoError::Transport(e)) => Err(ProtoError::Transport(e)),
+        }
+    }
+
+    pub fn connection_get_parameter(
+        input: ConnectionGetParameterRequest,
+    ) -> Result<ConnectionGetParameterResponse, ProtoError<DriverException>> {
+        let result = T::handle_message(
+            "DatabaseDriver",
+            "connection_get_parameter",
+            input.encode_to_vec(),
+        );
+        match result {
+            Ok(output) => {
+                let output = ConnectionGetParameterResponse::decode(&output[..]);
                 match output {
                     Ok(output) => Ok(output),
                     Err(e) => Err(ProtoError::Transport(e.to_string())),

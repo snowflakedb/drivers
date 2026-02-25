@@ -4,6 +4,7 @@ use base64::{Engine as _, engine::general_purpose};
 use openssl::pkey::PKey;
 use openssl::rsa::Rsa;
 use std::fs;
+use tempfile::TempDir;
 
 #[test]
 fn should_authenticate_using_private_file_with_password() {
@@ -108,6 +109,46 @@ fn should_automatically_update_authenticator_to_jwt_if_key_pair_params_present()
     let result = client.connect();
 
     //Then Connector changes authenticator to JWT and login is successful and simple query can be executed
+    client.verify_simple_query(result);
+}
+
+#[test]
+fn should_authenticate_using_unencrypted_private_key_file() {
+    //Given Authentication is set to JWT and an unencrypted private key file is provided (no password)
+    let mut client = SnowflakeTestClient::with_default_params();
+    client.set_connection_option("authenticator", "SNOWFLAKE_JWT");
+
+    let temp_key_file = private_key_helper::get_private_key_from_parameters(&client.parameters)
+        .expect("Failed to create private key file");
+
+    // Read encrypted PEM and decrypt it to produce an unencrypted key
+    let pem_contents = fs::read(temp_key_file.path()).expect("Failed to read private key file");
+    let password = client
+        .parameters
+        .private_key_password
+        .as_ref()
+        .expect("No private key password configured; cannot create unencrypted key for test");
+
+    let rsa = Rsa::private_key_from_pem_passphrase(&pem_contents, password.as_bytes())
+        .expect("Failed to decrypt private key");
+    let pkey = PKey::from_rsa(rsa).expect("Failed to create PKey from RSA");
+    let unencrypted_pem = pkey
+        .private_key_to_pem_pkcs8()
+        .expect("Failed to convert to unencrypted PEM");
+
+    // Write unencrypted PEM to a temp file
+    let temp_dir = TempDir::new().expect("Failed to create temp dir");
+    let unencrypted_path = temp_dir.path().join("unencrypted_key.p8");
+    fs::write(&unencrypted_path, &unencrypted_pem).expect("Failed to write unencrypted key");
+
+    // Connect using unencrypted key file — no password needed
+    client.set_connection_option("private_key_file", unencrypted_path.to_str().unwrap());
+    client.set_temp_key_file(temp_key_file);
+
+    //When Trying to Connect
+    let result = client.connect();
+
+    //Then Login is successful and simple query can be executed
     client.verify_simple_query(result);
 }
 

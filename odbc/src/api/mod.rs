@@ -1,6 +1,7 @@
 pub mod api_utils;
 pub mod connection;
 pub mod data;
+pub mod descriptor;
 pub mod diagnostic;
 pub mod environment;
 pub mod error;

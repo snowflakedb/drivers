@@ -198,3 +198,31 @@ class TestLogoutPhase5Optimization:
         # Then Detection returns true immediately
         # And Remaining queries are not checked
         pytest.fail("TODO: SNOW-2872349")
+
+
+class TestLogoutPhase2Phase3Migration:
+    """Tests for Phase 2/3 migration flag (SNOW-2314152)."""
+
+    def test_use_phase3_logout_semantics_must_be_false_to_prevent_breaking_change(self):
+        """GUARD TEST: Prevents accidental Phase 3 migration (BREAKING CHANGE).
+
+        This test will FAIL if someone accidentally enables Phase 3 semantics.
+        Phase 3 changes logout behavior: server_session_keep_alive=False will
+        force logout regardless of auto-detection (unlike Phase 2 which respects
+        auto-detection when enabled).
+
+        When ready to migrate to Phase 3:
+        1. Plan the breaking change rollout
+        2. Update this test or delete it
+        3. Change the default to True
+
+        Related: SNOW-2314152
+        """
+        from snowflake.connector.connection import Connection
+
+        assert Connection._class_config.USE_PHASE3_LOGOUT_SEMANTICS is False, (
+            "USE_PHASE3_LOGOUT_SEMANTICS must be False (Phase 2). "
+            "Changing to True is a BREAKING CHANGE. "
+            "If intentional, update/delete this test. "
+            "(SNOW-2314152)"
+        )

@@ -1,7 +1,7 @@
 use snafu::{OptionExt, ResultExt};
 use std::future::Future;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::{collections::HashMap, sync::Arc, sync::Mutex};
+use std::{collections::HashMap, sync::Arc, sync::Mutex, sync::RwLock};
 use tokio::sync::RwLock as AsyncRwLock;
 
 use super::Handle;
@@ -21,38 +21,47 @@ use reqwest;
 pub fn connection_init(conn_handle: Handle, _db_handle: Handle) -> Result<(), ApiError> {
     match CONN_HANDLE_MANAGER.get_obj(conn_handle) {
         Some(conn_ptr) => {
-            // Create a blocking runtime for the login process
-            let rt = tokio::runtime::Runtime::new().context(RuntimeCreationSnafu)?;
+            let rt = crate::async_bridge::runtime().context(RuntimeCreationSnafu)?;
 
             let settings_guard = conn_ptr
                 .lock()
                 .map_err(|_| ConnectionLockingSnafu {}.build())?;
             let login_parameters = LoginParameters::from_settings(&settings_guard.settings)
                 .context(ConfigurationSnafu)?;
+            let init_params = settings_guard.init_session_parameters.clone();
             drop(settings_guard);
 
             let http_client =
                 create_tls_client_with_config(login_parameters.client_info.tls_config.clone())
                     .context(TlsClientCreationSnafu)?;
 
-            let tokens = rt
+            let login_result = rt
                 .block_on(async {
                     crate::rest::snowflake::snowflake_login_with_client(
                         &http_client,
                         &login_parameters,
+                        init_params.as_ref(),
                     )
                     .await
                 })
                 .context(LoginSnafu)?;
 
+            // Initialize connection with session parameters from login response.
+            // The server returns system-level parameters but may not echo back
+            // user-set parameters (e.g. QUERY_TAG), so we merge in the
+            // init_session_parameters the caller explicitly requested.
+            let mut merged_params = init_params.unwrap_or_default();
+            merged_params.extend(login_result.session_parameters.unwrap_or_default());
+
             conn_ptr
                 .lock()
                 .map_err(|_| ConnectionLockingSnafu {}.build())?
                 .initialize(
-                    tokens,
+                    login_result.tokens,
                     http_client,
                     login_parameters.server_url.clone(),
                     login_parameters.client_info.clone(),
+                    merged_params,
                 );
             Ok(())
         }
@@ -70,6 +79,25 @@ pub fn connection_set_option(handle: Handle, key: String, value: Setting) -> Res
                 .lock()
                 .map_err(|_| ConnectionLockingSnafu {}.build())?;
             conn.settings.insert(key, value);
+            Ok(())
+        }
+        None => InvalidArgumentSnafu {
+            argument: "Connection handle not found".to_string(),
+        }
+        .fail(),
+    }
+}
+
+pub fn connection_set_session_parameters(
+    handle: Handle,
+    parameters: HashMap<String, String>,
+) -> Result<(), ApiError> {
+    match CONN_HANDLE_MANAGER.get_obj(handle) {
+        Some(conn_ptr) => {
+            let mut conn = conn_ptr
+                .lock()
+                .map_err(|_| ConnectionLockingSnafu {}.build())?;
+            conn.init_session_parameters = Some(parameters);
             Ok(())
         }
         None => InvalidArgumentSnafu {
@@ -103,6 +131,10 @@ pub struct Connection {
     pub server_url: Option<String>,
     /// Client info for refresh requests
     pub client_info: Option<ClientInfo>,
+    /// Session parameters cache (populated after login)
+    pub session_parameters: Arc<RwLock<HashMap<String, String>>>,
+    /// Session parameters to send during initialization (set before connection_init)
+    pub init_session_parameters: Option<HashMap<String, String>>,
     /// Registry for tracking async queries (for Fire & Forget auto-detection)
     pub async_query_registry: AsyncQueryRegistry,
     /// Flag indicating if connection has been closed
@@ -124,6 +156,8 @@ impl Connection {
             retry_policy: RetryPolicy::default(),
             server_url: None,
             client_info: None,
+            session_parameters: Arc::new(RwLock::new(HashMap::new())),
+            init_session_parameters: None,
             async_query_registry: AsyncQueryRegistry::new(),
             is_closed: Arc::new(AtomicBool::new(false)),
         }
@@ -135,17 +169,76 @@ impl Connection {
         http_client: reqwest::Client,
         server_url: String,
         client_info: ClientInfo,
+        session_params: HashMap<String, String>,
     ) {
         // Use blocking_write since we're in a sync context during connection_init
         *self.tokens.blocking_write() = Some(tokens);
         self.http_client = Some(http_client);
         self.server_url = Some(server_url);
         self.client_info = Some(client_info);
+
+        // Populate session parameters cache (assume login always returns parameters)
+        if let Ok(mut cache) = self.session_parameters.write() {
+            *cache = session_params;
+        }
+    }
+
+    /// Update the session parameters cache after a successful query.
+    pub fn update_session_params_cache(
+        &self,
+        query: &str,
+        response_parameters: Option<
+            &Vec<crate::rest::snowflake::query_response::NameValueParameter>,
+        >,
+    ) {
+        let mut cache = match self.session_parameters.write() {
+            Ok(cache) => cache,
+            Err(_) => return,
+        };
+
+        // 1. ALTER SESSION SET detection: optimistically update the cache based on user's query.
+        // This is necessary as Snowflake returns only part of session parameters in response.
+        // Details: SNOW-3104303
+        cache.extend(
+            super::alter_session_parser::parse_all_alter_sessions(query)
+                .into_iter()
+                .map(|p| {
+                    tracing::debug!(
+                        param_name = %p.name,
+                        param_value = %p.value,
+                        "Detected ALTER SESSION SET, updating cache optimistically"
+                    );
+                    (p.name.clone(), p.value.clone())
+                }),
+        );
+
+        // 2. Response parameters: merge any server-returned session parameters into the cache.
+        if let Some(parameters) = response_parameters {
+            cache.extend(
+                parameters
+                    .iter()
+                    .map(|param| {
+                        let value_str = match &param.value {
+                            serde_json::Value::String(s) => s.clone(),
+                            serde_json::Value::Number(n) => n.to_string(),
+                            serde_json::Value::Bool(b) => b.to_string(),
+                            other => {
+                                tracing::debug!(
+                                    param_name = %param.name,
+                                    param_value = ?other,
+                                    "Unexpected JSON type for session parameter, skipping"
+                                );
+                                return (String::new(), String::new());
+                            }
+                        };
+                        (param.name.to_uppercase(), value_str)
+                    })
+                    .filter(|(k, _)| !k.is_empty()),
+            );
+        }
     }
 }
 
-/// Execute an operation with automatic session refresh on 401.
-///
 /// This function:
 /// 1. Reads the session token (allows concurrent readers)
 /// 2. Runs the provided function with that token
@@ -158,86 +251,172 @@ where
     F: Fn(String) -> Fut,
     Fut: Future<Output = Result<T, RestError>>,
 {
-    // Extract connection info and get Arc to tokens RwLock
-    let (tokens_lock, http_client, server_url, client_info) = {
+    let mut ctx = RefreshContext::from_arc(conn)?;
+    let mut last_error: Option<RestError> = None;
+    loop {
+        let token = ctx.refresh_token(last_error).await?;
+        match f(token).await {
+            Ok(result) => return Ok(result),
+            Err(e) => last_error = Some(e),
+        }
+    }
+}
+
+/// Context for automatic session token refresh.
+///
+/// Instead of a higher-order function pattern, `RefreshContext` gives callers
+/// a loop-based API:
+///
+/// ```ignore
+/// let mut ctx = RefreshContext::new(&conn)?;
+/// let mut last_error: Option<RestError> = None;
+/// loop {
+///     let token = ctx.refresh_token(last_error).await?;
+///     match do_something(token).await {
+///         Ok(result) => return Ok(result),
+///         Err(e) => last_error = Some(e),
+///     }
+/// }
+/// ```
+///
+/// On first call (`last_error = None`), reads the session token (concurrent readers allowed).
+/// On subsequent calls with a `SessionExpired` error, acquires write lock and refreshes.
+/// On non-SessionExpired errors, propagates the error immediately.
+/// Only one refresh attempt is allowed; a second SessionExpired error is propagated.
+/// Tracks the state of the refresh lifecycle.
+enum RefreshState {
+    /// No token has been issued yet (initial call).
+    Initial,
+    /// A token was issued but hasn't been refreshed yet. Holds the token string
+    /// so we can detect if another request already refreshed while we waited.
+    FirstToken(String),
+    /// A refresh has already been performed. A second SessionExpired will be propagated.
+    Refreshed,
+}
+
+pub struct RefreshContext {
+    tokens_lock: Arc<AsyncRwLock<Option<SessionTokens>>>,
+    http_client: reqwest::Client,
+    server_url: String,
+    client_info: ClientInfo,
+    state: RefreshState,
+}
+
+impl RefreshContext {
+    pub fn from_arc(conn: &Arc<Mutex<Connection>>) -> Result<Self, ApiError> {
         let guard = conn.lock().map_err(|_| ConnectionLockingSnafu.build())?;
-        (
-            guard.tokens.clone(),
-            guard
+        Self::new(&guard)
+    }
+    /// Create a new `RefreshContext` by extracting connection info.
+    pub fn new(conn: &Connection) -> Result<Self, ApiError> {
+        Ok(Self {
+            tokens_lock: conn.tokens.clone(),
+            http_client: conn
                 .http_client
                 .clone()
                 .context(ConnectionNotInitializedSnafu)?,
-            guard
+            server_url: conn
                 .server_url
                 .clone()
                 .context(ConnectionNotInitializedSnafu)?,
-            guard
+            client_info: conn
                 .client_info
                 .clone()
                 .context(ConnectionNotInitializedSnafu)?,
-        )
-    };
+            state: RefreshState::Initial,
+        })
+    }
 
-    // Read session token - concurrent readers allowed
-    let session_token = {
-        let tokens_guard = tokens_lock.read().await;
-        tokens_guard
-            .as_ref()
-            .map(|t| t.session_token.clone())
-            .context(ConnectionNotInitializedSnafu)?
-    };
-
-    // First attempt - save the token we used so we can detect if it changed
-    let failed_token = session_token.clone();
-    match f(session_token).await {
-        Ok(result) => Ok(result),
-        Err(RestError::InvalidSnowflakeResponse {
-            source: SnowflakeResponseError::SessionExpired { .. },
-            ..
-        }) => {
-            tracing::info!("Session expired, attempting refresh");
-
-            // Acquire write lock - blocks other readers/writers during refresh
-            let mut tokens_guard = tokens_lock.write().await;
-
-            let tokens = tokens_guard
-                .as_ref()
-                .cloned()
-                .context(ConnectionNotInitializedSnafu)?;
-
-            // If another request already refreshed while we waited, use the new token.
-            // Compare actual token strings - more reliable than expiration times.
-            if tokens.session_token != failed_token {
-                tracing::debug!("Session already refreshed by another request");
-                let token = tokens.session_token.clone();
-                drop(tokens_guard); // Release write lock before async call
-                return f(token).await.context(QuerySnafu);
+    /// Get a valid session token, optionally refreshing if the previous call failed.
+    ///
+    /// - `last_error = None`: reads the current session token (first call).
+    /// - `last_error = Some(SessionExpired)`: refreshes the session and returns a new token.
+    /// - `last_error = Some(other)`: propagates the error immediately.
+    ///
+    /// Only one refresh is allowed. If the refreshed token also triggers SessionExpired,
+    /// the error is propagated on the next call.
+    pub async fn refresh_token(
+        &mut self,
+        last_error: Option<RestError>,
+    ) -> Result<String, ApiError> {
+        match &self.state {
+            // No token issued yet - read the current session token
+            RefreshState::Initial => {
+                let tokens_guard = self.tokens_lock.read().await;
+                let token = tokens_guard
+                    .as_ref()
+                    .map(|t| t.session_token.clone())
+                    .context(ConnectionNotInitializedSnafu)?;
+                self.state = RefreshState::FirstToken(token.clone());
+                Ok(token)
             }
 
-            // Check if master token is expired (can't refresh without valid master token)
-            if tokens.is_master_expired() {
-                tracing::error!("Master token expired, full re-authentication required");
-                return MasterTokenExpiredSnafu.fail();
-            }
+            // First token was issued - check if it failed with SessionExpired
+            RefreshState::FirstToken(failed_token) => match last_error {
+                Some(RestError::InvalidSnowflakeResponse {
+                    source: SnowflakeResponseError::SessionExpired { .. },
+                    ..
+                }) => {
+                    tracing::info!("Session expired, attempting refresh");
+                    let failed_token = failed_token.clone();
+                    self.state = RefreshState::Refreshed;
 
-            // Refresh session (still holding write lock to prevent concurrent refreshes)
-            let new_tokens =
-                snowflake::refresh_session(&http_client, &server_url, &client_info, &tokens)
+                    // Acquire write lock - blocks other readers/writers during refresh
+                    let mut tokens_guard = self.tokens_lock.write().await;
+
+                    let tokens = tokens_guard
+                        .as_ref()
+                        .cloned()
+                        .context(ConnectionNotInitializedSnafu)?;
+
+                    // If another request already refreshed while we waited, use the new token.
+                    if tokens.session_token != failed_token {
+                        tracing::debug!("Session already refreshed by another request");
+                        return Ok(tokens.session_token.clone());
+                    }
+
+                    // Check if master token is expired
+                    if tokens.is_master_expired() {
+                        tracing::error!("Master token expired, full re-authentication required");
+                        return MasterTokenExpiredSnafu.fail();
+                    }
+
+                    // Refresh session (still holding write lock to prevent concurrent refreshes)
+                    let new_tokens = snowflake::refresh_session(
+                        &self.http_client,
+                        &self.server_url,
+                        &self.client_info,
+                        &tokens,
+                    )
                     .await
                     .context(SessionRefreshSnafu)?;
 
-            let new_session_token = new_tokens.session_token.clone();
+                    let new_session_token = new_tokens.session_token.clone();
 
-            // Update tokens
-            *tokens_guard = Some(new_tokens);
-            drop(tokens_guard); // Release write lock before retry
+                    // Update tokens
+                    *tokens_guard = Some(new_tokens);
+                    drop(tokens_guard);
 
-            tracing::info!("Session refreshed, retrying operation");
+                    tracing::info!("Session refreshed, retrying operation");
 
-            // Retry with new token
-            f(new_session_token).await.context(QuerySnafu)
+                    Ok(new_session_token)
+                }
+                Some(other) => Err(other).context(QuerySnafu),
+                None => InvalidRefreshStateSnafu {
+                    message: "refresh_token called with None after FirstToken".to_string(),
+                }
+                .fail(),
+            },
+
+            // Already refreshed once - propagate any error
+            RefreshState::Refreshed => match last_error {
+                Some(err) => Err(err).context(QuerySnafu),
+                None => InvalidRefreshStateSnafu {
+                    message: "refresh_token called with None after Refreshed".to_string(),
+                }
+                .fail(),
+            },
         }
-        Err(e) => Err(e).context(QuerySnafu),
     }
 }
 
@@ -273,10 +452,10 @@ pub fn connection_is_closed(conn_handle: Handle) -> Result<bool, ApiError> {
 /// This function implements the complete connection close logic:
 /// 1. Check idempotency (early return if already closed)
 /// 2. Determine logout decision based on config and async query registry
-/// 3. Record telemetry (stub for now)
+/// 3. Record telemetry (TODO: SNOW-2912513)
 /// 4. Send logout if decision is "send"
 /// 5. Clean up resources (tokens, HTTP client)
-/// 6. Stop background tasks (heartbeat, telemetry - stubs)
+/// 6. Stop background tasks (TODO: SNOW-2881763 heartbeat, SNOW-2912513 telemetry, QCC clearing)
 ///
 /// # Arguments
 ///
@@ -300,120 +479,144 @@ pub fn connection_close(conn_handle: Handle, config: LogoutConfig) -> Result<(),
             argument: "Connection handle not found".to_string(),
         })?;
 
-    let mut conn = conn_ptr
-        .lock()
-        .map_err(|_| ConnectionLockingSnafu {}.build())?;
+    // ======== Phase 1: Extract data under lock ========
+    // Hold lock only long enough to set is_closed, determine logout decision,
+    // and clone out the data needed for the HTTP logout call.
+    let (send_logout, skip_reason, logout_data) = {
+        let conn = conn_ptr
+            .lock()
+            .map_err(|_| ConnectionLockingSnafu {}.build())?;
 
-    // 1. Check idempotency - early return if already closed
-    if conn.is_closed.swap(true, Ordering::SeqCst) {
-        tracing::debug!("Connection already closed, skipping duplicate close");
-        return Ok(());
-    }
+        // 1. Check idempotency - early return if already closed
+        if conn.is_closed.swap(true, Ordering::SeqCst) {
+            tracing::debug!("Connection already closed, skipping duplicate close");
+            return Ok(());
+        }
 
-    tracing::info!("Closing connection");
+        tracing::info!("Closing connection");
 
-    // 2. Determine logout decision
-    let (send_logout, skip_reason) = should_send_logout(&config, Some(&conn.async_query_registry));
+        // 2. Determine logout decision
+        let (send_logout, skip_reason) =
+            should_send_logout(&config, Some(&conn.async_query_registry));
 
-    // 3. Record telemetry (stub)
-    // TODO: SNOW-2912513 - Implement telemetry
-    tracing::info!(
-        send_logout,
-        skip_reason = ?skip_reason,
-        "Recording logout decision metrics (stub)"
-    );
+        // 3. Extract data needed for logout (clone out of locked state)
+        let logout_data = if send_logout {
+            let tokens_guard = conn.tokens.blocking_read();
+            let session_token = tokens_guard.as_ref().map(|t| t.session_token.clone());
+            drop(tokens_guard);
 
-    // 4. Send logout if decision is "send"
-    let logout_result = if send_logout {
-        // Extract necessary data for logout
-        let tokens_guard = conn.tokens.blocking_read();
-        let session_token = tokens_guard.as_ref().map(|t| t.session_token.clone());
-        drop(tokens_guard);
-
-        if let (Some(token), Some(client), Some(url), Some(info)) = (
-            session_token,
-            conn.http_client.as_ref(),
-            conn.server_url.as_ref(),
-            conn.client_info.as_ref(),
-        ) {
-            // Create runtime for async logout
-            let rt = tokio::runtime::Runtime::new().context(RuntimeCreationSnafu)?;
-
-            let result = rt.block_on(async {
-                logout_session(
-                    client,
-                    url,
-                    &token,
-                    info,
-                    config.timeout,
-                    &conn.retry_policy,
-                )
-                .await
-            });
-
-            // Handle logout result using Strategy pattern
-            let strategy = config.error_strategy.to_handler();
-
-            match result {
-                Ok(()) => {
-                    tracing::info!("Logout completed successfully");
-                    Ok(())
-                }
-                Err(logout_err) => {
-                    // Use Strategy pattern for error handling
-                    if strategy.should_ignore_error(&logout_err) {
-                        strategy.log_error(&logout_err, false);
-                        Ok(())
-                    } else if strategy.should_raise_error(&logout_err) {
-                        strategy.log_error(&logout_err, true);
-                        Err(logout_err)
-                    } else {
-                        strategy.log_error(&logout_err, false);
-                        Ok(())
+            match (
+                session_token,
+                conn.http_client.clone(),
+                conn.server_url.clone(),
+                conn.client_info.clone(),
+            ) {
+                (Some(token), Some(client), Some(url), Some(info)) => {
+                    // Build retry policy matching user's configuration
+                    let mut logout_retry_policy = conn.retry_policy.clone();
+                    if let Some(max_attempts) = config.max_retry_attempts {
+                        logout_retry_policy.max_attempts = max_attempts;
                     }
+                    // Total budget = timeout × max_attempts
+                    logout_retry_policy.max_elapsed =
+                        config.timeout * logout_retry_policy.max_attempts;
+
+                    Some((token, client, url, info, logout_retry_policy))
                 }
+                _ => None,
             }
         } else {
-            tracing::debug!("Connection was never fully initialized, skipping logout");
-            Ok(())
+            None
+        };
+
+        (send_logout, skip_reason, logout_data)
+    }; // Lock released here — HTTP logout runs without holding the mutex
+
+    // TODO: SNOW-2912513 - Record telemetry for logout decision
+    tracing::debug!(
+        send_logout,
+        skip_reason = ?skip_reason,
+        "TODO: SNOW-2912513 - Record logout decision metrics"
+    );
+
+    // ======== Phase 2: HTTP logout without holding lock ========
+    let logout_result = if let Some((token, client, url, info, logout_retry_policy)) = logout_data {
+        // Use shared runtime for async logout (same pattern as connection_init)
+        let rt = crate::async_bridge::runtime().context(RuntimeCreationSnafu)?;
+
+        let result = rt.block_on(async {
+            logout_session(
+                &client,
+                &url,
+                &token,
+                &info,
+                config.timeout,
+                &logout_retry_policy,
+            )
+            .await
+        });
+
+        // Handle logout result using Strategy pattern
+        let strategy = config.error_strategy.to_handler();
+
+        match result {
+            Ok(()) => {
+                tracing::info!("Logout completed successfully");
+                Ok(())
+            }
+            Err(logout_err) => {
+                if strategy.should_ignore_error(&logout_err) {
+                    strategy.log_error(&logout_err, false);
+                    Ok(())
+                } else if strategy.should_raise_error(&logout_err) {
+                    strategy.log_error(&logout_err, true);
+                    Err(logout_err)
+                } else {
+                    strategy.log_error(&logout_err, false);
+                    Ok(())
+                }
+            }
         }
-    } else {
+    } else if !send_logout {
         tracing::info!(?skip_reason, "Skipping logout based on configuration");
+        Ok(())
+    } else {
+        tracing::debug!("Connection was never fully initialized, skipping logout");
         Ok(())
     };
 
-    // 5. Essential cleanup: Clear tokens and HTTP client
-    // This happens regardless of logout success/failure
+    // ======== Phase 3: Cleanup under lock ========
     {
-        let mut tokens_guard = conn.tokens.blocking_write();
-        *tokens_guard = None;
-        tracing::debug!("Cleared session tokens");
+        let mut conn = conn_ptr
+            .lock()
+            .map_err(|_| ConnectionLockingSnafu {}.build())?;
+
+        // Clear tokens and HTTP client regardless of logout success/failure
+        {
+            let mut tokens_guard = conn.tokens.blocking_write();
+            *tokens_guard = None;
+            tracing::debug!("Cleared session tokens");
+        }
+        conn.http_client = None;
+        tracing::debug!("Cleared HTTP client");
     }
-    conn.http_client = None;
-    tracing::debug!("Cleared HTTP client");
 
-    // 6. Stubbed cleanup (TODO: implement when infrastructure is ready)
-    // TODO: SNOW-2881763 - Stop heartbeat
-    tracing::debug!("Heartbeat stopped (stub - TODO: SNOW-2881763)");
+    // TODO: SNOW-2881763 - Stop heartbeat thread
+    tracing::debug!("Heartbeat cleanup deferred");
+    // TODO: SNOW-2912513 - Flush telemetry cache
+    tracing::debug!("Telemetry flush deferred");
+    // TODO: Implement QCC (query result cache) clearing
+    tracing::debug!("Query result cache cleanup deferred");
 
-    // TODO: SNOW-2912513 - Flush telemetry
-    tracing::debug!("Telemetry flushed (stub - TODO: SNOW-2912513)");
-
-    // TODO: SNOW-xxxx - Clear QCC
-    tracing::debug!("Query result cache cleared (stub - TODO: SNOW-xxxx)");
-
-    // 7. Handle logout result based on error strategy
+    // Return logout result
     match logout_result {
         Ok(()) => {
             tracing::info!("Connection closed successfully");
             Ok(())
         }
-        Err(logout_err) => {
-            // Convert LogoutError to ApiError
-            Err(LogoutFailedSnafu {
-                message: format!("{:?}", logout_err),
-            }
-            .build())
+        Err(logout_err) => Err(LogoutFailedSnafu {
+            message: format!("{:?}", logout_err),
         }
+        .build()),
     }
 }

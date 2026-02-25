@@ -27,6 +27,12 @@ pub struct LogoutConfig {
 
     /// Timeout for logout HTTP request
     pub timeout: Duration,
+
+    /// Maximum number of retry attempts for failed logout requests
+    /// - Some(0): No retries, single attempt only
+    /// - Some(n): Allow up to n retries
+    /// - None: Use default from RetryPolicy (typically 6)
+    pub max_retry_attempts: Option<u32>,
 }
 
 impl Default for LogoutConfig {
@@ -36,6 +42,7 @@ impl Default for LogoutConfig {
             enable_auto_detection: None,
             error_strategy: ErrorStrategy::Strict,
             timeout: Duration::from_secs(5),
+            max_retry_attempts: None,
         }
     }
 }

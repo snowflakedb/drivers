@@ -100,4 +100,10 @@ pub enum ApiError {
         #[snafu(implicit)]
         location: Location,
     },
+    #[snafu(display("Invalid refresh state: {message}"))]
+    InvalidRefreshState {
+        message: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
 }

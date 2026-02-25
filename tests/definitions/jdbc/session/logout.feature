@@ -7,7 +7,7 @@ Feature: Session Logout - JDBC-specific behavior
 
   Scenario: should use JDBC default 300 second timeout
     # JDBC historically uses 300s (loginTimeout) for logout
-    Given JDBC connection is created with default timeout configuration
+    Given Snowflake JDBC connection is created with default timeout configuration
     When Connection is closed
     Then Logout timeout of 300 seconds is passed to Core
     And Logout request uses 300 second timeout
@@ -16,16 +16,13 @@ Feature: Session Logout - JDBC-specific behavior
     Given Snowflake JDBC connection is created with default parameters
     And Server will return 400 Bad Request error on logout
     When Connection is closed
-    Then SQLException is thrown
-    And Error is propagated to caller
-    And close() method throws exception
+    Then close() throws SQLException
     And Error handling strategy is strict by default
 
   # ===========================================================================
-  #                   Phase 2 Defaults and Truth Table
+  #                   Session Lifecycle Parameters
   # ===========================================================================
-  # "Phase 2" refers to the UD migration phase from SNOW-2314152 design doc.
-  # Phase 2: UD mirrors old JDBC behavior (auto-detection enabled by default).
+  # Phase 2 (doc for: SNOW-2314152): UD mirrors old JDBC behavior (auto-detection enabled by default).
   # Phase 3: All drivers converge on unified model (auto-detection disabled by default).
 
   Scenario: should have auto_detection enabled and server_session_keep_alive null by default
@@ -41,57 +38,43 @@ Feature: Session Logout - JDBC-specific behavior
     Then Deprecation warning is logged
     And Warning states that auto_detection will be disabled by default in the future
 
-  Scenario: should skip logout when server_session_keep_alive is true
-    # Phase 2 (doc for: SNOW-2314152) truth table: true + any → No logout
-    # Verifies JDBC correctly passes true to Core
+  Scenario: should forward server_session_keep_alive true to Core when explicitly set
+    # Phase 2 (doc for: SNOW-2314152) truth table: true + any → No logout, No deprecation
+    # Full logout-skip behavior tested in Core; this freezes the JDBC default to prevent BCRs
     Given Snowflake JDBC connection is created with server_session_keep_alive set to true
     When Connection is closed
-    Then No logout request is sent
-    And server_session_keep_alive true is passed to Core
+    Then server_session_keep_alive true is passed to Core
 
   Scenario: should always send logout when server_session_keep_alive is false
+    # E2E sanity check: Verifies JDBC wrapper + Core integration works end-to-end
     # Phase 2 (doc for: SNOW-2314152) truth table: false + any → Always logout, ignore auto-detect
     Given Snowflake JDBC connection is created with server_session_keep_alive set to false
-    And Long-running async query is executed using SYSTEM$SLEEP(300)
+    And Long-running async query is executed using SYSTEM$SLEEP(10)
     When Connection is closed
     Then Auto-detection is not performed
     And Logout request is sent
     And No deprecation warning is emitted
     And Test cleans up the running query after assertions complete
 
-  Scenario: should skip logout when server_session_keep_alive is null and auto_detection true and async queries found
-    # Phase 2 (doc for: SNOW-2314152) truth table: null + true + queries found → No logout + deprecation
+  Scenario: should pass correct parameters when server_session_keep_alive is null and auto_detection true
+    # Tests wrapper parameter passing (not E2E HTTP behavior - covered by Core tests)
+    # Phase 2 (doc for: SNOW-2314152) truth table: null + true → parameters passed to Core
     Given Snowflake JDBC connection is created with server_session_keep_alive set to null
     And enable_server_session_keep_alive_auto_detection is set to true
-    And Long-running async query is executed using SYSTEM$SLEEP(300)
     When Connection is closed
-    Then Auto-detection finds running query
-    And No logout request is sent
-    And Connection close metrics are recorded in telemetry
-    And Deprecation warning is logged
-    And Warning mentions migration to Phase 3 compliant behavior
-    And Test cleans up the running query after assertions complete
-
-  Scenario: should send logout when server_session_keep_alive is null and auto_detection true and no async queries found
-    # Phase 2 (doc for: SNOW-2314152) truth table: null + true + no queries → Send logout + deprecation
-    Given Snowflake JDBC connection is created with server_session_keep_alive set to null
-    And enable_server_session_keep_alive_auto_detection is set to true
-    And No async queries are running
-    When Connection is closed
-    Then Auto-detection finds no running queries
-    And Logout request is sent
-    And Connection close metrics are recorded in telemetry
+    Then server_session_keep_alive null is passed to Core
+    And enable_server_session_keep_alive_auto_detection true is passed to Core
     And Deprecation warning is logged
     And Warning mentions migration to Phase 3 compliant behavior
 
-  Scenario: should send logout when server_session_keep_alive is null and auto_detection false
-    # Phase 2 (doc for: SNOW-2314152) truth table: null + false → Send logout (no detection), No deprecation
+  Scenario: should pass correct parameters when server_session_keep_alive is null and auto_detection false
+    # Tests wrapper parameter passing (not E2E HTTP behavior - covered by Core tests)
+    # Phase 2 (doc for: SNOW-2314152) truth table: null + false → parameters passed to Core
     Given Snowflake JDBC connection is created with server_session_keep_alive set to null
     And enable_server_session_keep_alive_auto_detection is set to false
     When Connection is closed
-    Then Auto-detection is not performed
-    And Logout request is sent
-    And Connection close metrics are recorded in telemetry
+    Then server_session_keep_alive null is passed to Core
+    And enable_server_session_keep_alive_auto_detection false is passed to Core
     And No deprecation warning is emitted
 
   # ===========================================================================

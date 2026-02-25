@@ -44,15 +44,6 @@ static SQLRETURN get_data_raw(const StatementHandleWrapper& stmt, SQLUSMALLINT c
   return SQLGetData(stmt.getHandle(), col, target_type, value, sizeof(*value), indicator);
 }
 
-// Helper to check SQLSTATE from diagnostic records
-static std::string get_sqlstate(const StatementHandleWrapper& stmt) {
-  auto records = get_diag_rec(stmt);
-  if (!records.empty()) {
-    return records[0].sqlState;
-  }
-  return "";
-}
-
 // ============================================================================
 // SUCCESSFUL CONVERSIONS - String to Floating Point Types
 // ============================================================================

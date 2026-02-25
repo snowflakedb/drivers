@@ -2,8 +2,7 @@
 Feature: Session Logout - ODBC-specific behavior
 
   # ODBC implements Phase 3 (doc for: SNOW-2314152) unified behavior from the start.
-  # Most Phase 3 behaviors are tested in shared scenarios with @python_not_needed @jdbc_not_needed tags.
-  # This file contains only ODBC-specific implementation details.
+  # This file contains only ODBC-specific defaults and configuration.
 
   # ===========================================================================
   #                      ODBC Default Configuration
@@ -11,7 +10,7 @@ Feature: Session Logout - ODBC-specific behavior
 
   Scenario: should use ODBC default 300 second timeout
     # ODBC historically uses 300s (DEFAULT_RETRY_TIMEOUT) for logout
-    Given ODBC connection is created with default timeout configuration
+    Given Snowflake ODBC connection is created with default timeout configuration
     When Connection is closed
     Then Logout timeout of 300 seconds is passed to Core
     And Logout request uses 300 second timeout
@@ -41,5 +40,5 @@ Feature: Session Logout - ODBC-specific behavior
     Given Snowflake ODBC connection is created with default parameters
     And Server will return 400 Bad Request error on logout
     When Connection is closed
-    Then Error is propagated to caller
+    Then close() returns error to caller
     And Error handling strategy is strict by default

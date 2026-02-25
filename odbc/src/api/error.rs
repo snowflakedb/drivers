@@ -2,6 +2,7 @@ use std::{
     collections::HashSet,
     str::Utf8Error,
     string::{FromUtf8Error, FromUtf16Error},
+    sync::LazyLock,
 };
 
 use crate::{
@@ -10,7 +11,6 @@ use crate::{
     write_arrow::ArrowBindingError,
 };
 use arrow::error::ArrowError;
-use lazy_static::lazy_static;
 use odbc_sys as sql;
 use proto_utils::ProtoError;
 use sf_core::protobuf_gen::database_driver_v1::{
@@ -37,8 +37,21 @@ pub enum OdbcError {
         location: Location,
     },
 
+    #[snafu(display("Invalid use of null pointer"))]
+    NullPointer {
+        #[snafu(implicit)]
+        location: Location,
+    },
+
     #[snafu(display("Invalid record number: {number}"))]
     InvalidRecordNumber {
+        number: sql::SmallInt,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("Invalid descriptor index: {number}"))]
+    InvalidDescriptorIndex {
         number: sql::SmallInt,
         #[snafu(implicit)]
         location: Location,
@@ -53,6 +66,20 @@ pub enum OdbcError {
 
     #[snafu(display("Unknown attribute: {attribute}"))]
     UnknownAttribute {
+        attribute: i32,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("Unsupported attribute: {attribute}"))]
+    UnsupportedAttribute {
+        attribute: i32,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("Attribute cannot be set now: {attribute}"))]
+    AttributeCannotBeSetNow {
         attribute: i32,
         #[snafu(implicit)]
         location: Location,
@@ -231,19 +258,21 @@ impl<T> Required<T> for Option<T> {
     }
 }
 
-lazy_static! {
-    static ref AUTHENTICATOR_PARAMETERS: HashSet<String> = {
-        let mut set = HashSet::new();
-        set.insert("PRIV_KEY_FILE".to_string());
-        set.insert("PRIVATE_KEY_FILE".to_string());
-        set.insert("PRIV_KEY_FILE_PWD".to_string());
-        set.insert("TOKEN".to_string());
-        set.insert("AUTHENTICATOR".to_string());
-        set.insert("USER".to_string());
-        set.insert("PASSWORD".to_string());
-        set
-    };
-}
+static AUTHENTICATOR_PARAMETERS: LazyLock<HashSet<String>> = LazyLock::new(|| {
+    let mut set = HashSet::new();
+    set.insert("PRIV_KEY_FILE".to_string());
+    set.insert("PRIVATE_KEY_FILE".to_string());
+    set.insert("PRIV_KEY_FILE_PWD".to_string());
+    set.insert("PRIV_KEY_BASE64".to_string());
+    set.insert("PRIV_KEY_PWD".to_string());
+    set.insert("PRIVATE_KEY".to_string());
+    set.insert("PRIVATE_KEY_PASSWORD".to_string());
+    set.insert("TOKEN".to_string());
+    set.insert("AUTHENTICATOR".to_string());
+    set.insert("USER".to_string());
+    set.insert("PASSWORD".to_string());
+    set
+});
 
 impl OdbcError {
     pub fn to_diagnostic_record(&self) -> DiagnosticRecord {
@@ -259,11 +288,15 @@ impl OdbcError {
         match self {
             OdbcError::Disconnected { .. } => SqlState::ConnectionDoesNotExist,
             OdbcError::InvalidHandle { .. } => SqlState::InvalidConnectionName,
+            OdbcError::NullPointer { .. } => SqlState::InvalidUseOfNullPointer,
             OdbcError::InvalidRecordNumber { .. } => SqlState::InvalidDescriptorIndex,
             OdbcError::InvalidDiagnosticIdentifier { .. } => {
                 SqlState::InvalidDescriptorFieldIdentifier
             }
-            OdbcError::UnknownAttribute { .. } => SqlState::GeneralError,
+            OdbcError::InvalidDescriptorIndex { .. } => SqlState::InvalidDescriptorIndex,
+            OdbcError::UnknownAttribute { .. } => SqlState::InvalidAttributeOptionIdentifier,
+            OdbcError::UnsupportedAttribute { .. } => SqlState::OptionalFeatureNotImplemented,
+            OdbcError::AttributeCannotBeSetNow { .. } => SqlState::AttributeCannotBeSetNow,
             OdbcError::InvalidParameterNumber { .. } => SqlState::WrongNumberOfParameters,
             OdbcError::StatementNotExecuted { .. } => SqlState::FunctionSequenceError,
             OdbcError::DataNotFetched { .. } => SqlState::FunctionSequenceError,

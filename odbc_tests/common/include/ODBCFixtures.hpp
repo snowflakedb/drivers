@@ -3,23 +3,27 @@
 
 #include <sql.h>
 #include <sqlext.h>
+
 #include <optional>
+#include <string>
+#include <utility>
 
 #include <catch2/catch_test_macros.hpp>
-#include <utility>
+
 #include "HandleWrapper.hpp"
 #include "ODBCConfig.hpp"
+#include "compatibility.hpp"
+#include "odbc_cast.hpp"
 
 // ============================================================================
 // Base Fixtures (Parameterized via Constructor)
 // ============================================================================
 
 class EnvFixture {
-public:
   std::optional<ConfigInstallation> config;
   std::optional<EnvironmentHandleWrapper> env_wrapper;
-  SQLHENV env = SQL_NULL_HENV;
 
+ public:
   // Constructor with optional DSN configuration
   explicit EnvFixture(std::optional<DataSourceConfig> dsn_config = std::nullopt) {
     // Install DSN BEFORE creating ENV handle (critical for UnixODBC caching)
@@ -29,8 +33,8 @@ public:
 
     // Create ENV handle (will see installed DSN)
     env_wrapper.emplace();
-    env = env_wrapper->getHandle();
-    SQLRETURN ret = SQLSetEnvAttr(env, SQL_ATTR_ODBC_VERSION, reinterpret_cast<SQLPOINTER>(SQL_OV_ODBC3), 0);
+    SQLRETURN ret =
+        SQLSetEnvAttr(env_wrapper->getHandle(), SQL_ATTR_ODBC_VERSION, reinterpret_cast<SQLPOINTER>(SQL_OV_ODBC3), 0);
     REQUIRE(ret == SQL_SUCCESS);
   }
 
@@ -40,19 +44,20 @@ public:
   EnvFixture(EnvFixture&&) = delete;
   EnvFixture& operator=(EnvFixture&&) = delete;
 
-  SQLHENV env_handle() const { return env; }
+  [[nodiscard]] SQLHENV env_handle() const { return env_wrapper->getHandle(); }
+  [[nodiscard]] std::string dsn_name() const { return config.value().dsn_name(); }
+
+ protected:
+  [[nodiscard]] ConnectionHandleWrapper create_connection_handle() { return env_wrapper->createConnectionHandle(); }
 };
 
 class DbcFixture : public EnvFixture {
-public:
   std::optional<ConnectionHandleWrapper> dbc_wrapper;
-  SQLHDBC dbc = SQL_NULL_HDBC;
 
+ public:
   // Constructor with optional DSN configuration
-  explicit DbcFixture(std::optional<DataSourceConfig> dsn_config = std::nullopt)
-    : EnvFixture(std::move(dsn_config)) {
-    dbc_wrapper.emplace(env_wrapper->createConnectionHandle());
-    dbc = dbc_wrapper->getHandle();
+  explicit DbcFixture(std::optional<DataSourceConfig> dsn_config = std::nullopt) : EnvFixture(std::move(dsn_config)) {
+    dbc_wrapper.emplace(create_connection_handle());
   }
 
   // Disable copy and move (RAII resource management)
@@ -61,7 +66,11 @@ public:
   DbcFixture(DbcFixture&&) = delete;
   DbcFixture& operator=(DbcFixture&&) = delete;
 
-  SQLHDBC dbc_handle() const { return dbc; }
+  [[nodiscard]] SQLHDBC dbc_handle() const { return dbc_wrapper->getHandle(); }
+
+  // Releases the connection handle wrapper, preventing double-free when test
+  // code has already freed the underlying HDBC via SQLFreeHandle.
+  void release_dbc() { dbc_wrapper.reset(); }
 };
 
 // ============================================================================
@@ -69,23 +78,64 @@ public:
 // ============================================================================
 
 class EnvDefaultDSNFixture : public EnvFixture {
-public:
+ public:
   EnvDefaultDSNFixture() : EnvFixture(DataSourceConfig::Snowflake()) {}
 };
 
 class DbcDefaultDSNFixture : public DbcFixture {
-public:
+ public:
   DbcDefaultDSNFixture() : DbcFixture(DataSourceConfig::Snowflake()) {}
 };
 
 class EnvNoAuthDSNFixture : public EnvFixture {
-public:
+ public:
   EnvNoAuthDSNFixture() : EnvFixture(DataSourceConfig::SnowflakeNoAuth()) {}
 };
 
 class DbcNoAuthDSNFixture : public DbcFixture {
-public:
+ public:
   DbcNoAuthDSNFixture() : DbcFixture(DataSourceConfig::SnowflakeNoAuth()) {}
 };
 
-#endif // ODBCFIXTURES_HPP
+// ============================================================================
+// Connected Statement Fixtures (ENV + DBC + SQLConnect + STMT)
+// ============================================================================
+
+class StmtFixture : public DbcFixture {
+  SQLHSTMT stmt = SQL_NULL_HSTMT;
+
+ public:
+  explicit StmtFixture(std::optional<DataSourceConfig> dsn_config = std::nullopt) : DbcFixture(std::move(dsn_config)) {
+    // SQLConnect is not yet implemented in the new driver
+    SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
+
+    const std::string dsn = dsn_name();
+    SQLRETURN ret = SQLConnect(dbc_handle(), sqlchar(dsn.c_str()), SQL_NTS, nullptr, 0, nullptr, 0);
+    REQUIRE(ret == SQL_SUCCESS);
+
+    ret = SQLAllocHandle(SQL_HANDLE_STMT, dbc_handle(), &stmt);
+    REQUIRE(ret == SQL_SUCCESS);
+  }
+
+  ~StmtFixture() {
+    if (stmt != SQL_NULL_HSTMT) {
+      SQLFreeHandle(SQL_HANDLE_STMT, stmt);
+    }
+    SQLDisconnect(dbc_handle());
+  }
+
+  // Disable copy and move (RAII resource management)
+  StmtFixture(const StmtFixture&) = delete;
+  StmtFixture& operator=(const StmtFixture&) = delete;
+  StmtFixture(StmtFixture&&) = delete;
+  StmtFixture& operator=(StmtFixture&&) = delete;
+
+  [[nodiscard]] SQLHSTMT stmt_handle() const { return stmt; }
+};
+
+class StmtDefaultDSNFixture : public StmtFixture {
+ public:
+  StmtDefaultDSNFixture() : StmtFixture(DataSourceConfig::Snowflake()) {}
+};
+
+#endif  // ODBCFIXTURES_HPP

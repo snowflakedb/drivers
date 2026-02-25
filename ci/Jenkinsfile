@@ -117,15 +117,27 @@ def setupRust(platform) {
   sh """
     whoami
     env
-    if command -v rustc >/dev/null 2>&1; then
-      rustup update stable
-    else
+    if ! command -v rustup >/dev/null 2>&1; then
       curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
       source $HOME/.cargo/env
     fi
+    # IMPORTANT: this assumes `cargo` is the rustup proxy binary.
+    # Our earlier rustup check/install ensures that is true on clean agents.
+    # Running `cargo --version` in this repo causes rustup to read
+    # rust-toolchain.toml and install/select the requested channel/profile/components.
+    # Then we query the resolved active toolchain name and use it explicitly when
+    # adding the cross-compilation target for this matrix entry.
+    cargo --version
+
+    TOOLCHAIN=\$(rustup show active-toolchain | awk '{print \$1}')
+    if [ -z "\$TOOLCHAIN" ]; then
+      echo "Could not determine active rustup toolchain"
+      exit 1
+    fi
+
     rustc --version
     cargo --version
-    rustup target add ${platform_target(platform)}
+    rustup target add --toolchain "\$TOOLCHAIN" ${platform_target(platform)}
   """.stripMargin()
 }
 

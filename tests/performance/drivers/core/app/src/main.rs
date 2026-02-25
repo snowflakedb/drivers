@@ -17,7 +17,6 @@ use sf_core::protobuf_gen::database_driver_v1::*;
 use config::TestConfig;
 use connection::{
     DatabaseDriver, create_connection, create_database, create_statement, execute_setup_queries,
-    get_server_version,
 };
 use put_execution::execute_put_get_test;
 use query_execution::execute_fetch_test;
@@ -39,11 +38,6 @@ fn run() -> Result<()> {
     let conn_handle = create_connection(db_handle, &config.params.testconnection)
         .map_err(|e| format!("Failed to connect to Snowflake: {:?}", e))?;
 
-    let server_version = get_server_version(conn_handle).unwrap_or_else(|e| {
-        eprintln!("⚠️  Warning: Could not retrieve server version: {}", e);
-        "UNKNOWN".to_string()
-    });
-
     execute_setup_queries(conn_handle, &config.setup_queries)
         .map_err(|e| format!("Failed to execute setup queries: {:?}", e))?;
 
@@ -56,20 +50,20 @@ fn run() -> Result<()> {
 
     match config.test_type {
         TestType::Select => execute_fetch_test(
+            conn_handle,
             stmt_handle,
             &config.sql_command,
             config.warmup_iterations,
             config.iterations,
             &config.test_name,
-            &server_version,
         )?,
         TestType::PutGet => execute_put_get_test(
+            conn_handle,
             stmt_handle,
             &config.sql_command,
             config.warmup_iterations,
             config.iterations,
             &config.test_name,
-            &server_version,
         )?,
     }
 

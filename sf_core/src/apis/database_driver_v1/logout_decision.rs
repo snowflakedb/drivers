@@ -1,13 +1,14 @@
 //! Logout decision logic
 //!
 //! Implements Phase 3 truth table for determining whether to send logout request.
+//! See SNOW-2314152 for Phase 2/3 migration plan and semantics.
 
 use super::async_query_registry::AsyncQueryRegistry;
 use crate::config::logout::LogoutConfig;
 
 /// Determine whether to send logout request based on configuration and async query state
 ///
-/// Implements Phase 3 unified truth table:
+/// Implements Phase 3 unified truth table (SNOW-2314152):
 ///
 /// | server_session_keep_alive | enable_auto_detection | Auto-detect result | Logout? |
 /// |---------------------------|----------------------|-------------------|---------|
@@ -37,7 +38,7 @@ pub fn should_send_logout(
             return (false, Some("server_session_keep_alive=true".to_string()));
         }
         Some(false) => {
-            // Explicit kill: always logout (Phase 3 semantics)
+            // Explicit kill: always logout (Phase 3 semantics - SNOW-2314152)
             tracing::info!("Sending logout: server_session_keep_alive=false (explicit kill)");
             return (true, None);
         }
@@ -51,15 +52,30 @@ pub fn should_send_logout(
         Some(true) => {
             // Auto-detection enabled - check registry
             if let Some(reg) = registry {
-                if reg.has_running_queries() {
-                    tracing::info!("Skipping logout: auto-detection found running async queries");
-                    (
-                        false,
-                        Some("auto_detection_found_running_queries".to_string()),
-                    )
-                } else {
-                    tracing::info!("Sending logout: auto-detection found no running async queries");
-                    (true, None)
+                match reg.has_running_queries() {
+                    Ok(true) => {
+                        tracing::info!(
+                            "Skipping logout: auto-detection found running async queries"
+                        );
+                        (
+                            false,
+                            Some("auto_detection_found_running_queries".to_string()),
+                        )
+                    }
+                    Ok(false) => {
+                        tracing::info!(
+                            "Sending logout: auto-detection found no running async queries"
+                        );
+                        (true, None)
+                    }
+                    Err(e) => {
+                        // Registry lock error - default to logout (safer behavior)
+                        tracing::error!(
+                            error = %e,
+                            "Failed to check running queries, defaulting to logout"
+                        );
+                        (true, None)
+                    }
                 }
             } else {
                 // Registry not available - default to logout
@@ -70,7 +86,7 @@ pub fn should_send_logout(
             }
         }
         Some(false) | None => {
-            // Auto-detection disabled or not set - default to logout (Phase 3)
+            // Auto-detection disabled or not set - default to logout (Phase 3 - SNOW-2314152)
             tracing::info!(
                 "Sending logout: auto-detection disabled (enable_auto_detection={:?})",
                 config.enable_auto_detection
@@ -111,12 +127,12 @@ mod tests {
             ..Default::default()
         };
         let registry = AsyncQueryRegistry::new();
-        registry.register("query1".to_string()); // Should be ignored
+        registry.register("query1".to_string()).unwrap(); // Should be ignored
 
         // When checking decision
         let (send, reason) = should_send_logout(&config, Some(&registry));
 
-        // Then should send logout (Phase 3: false means force logout)
+        // Then should send logout (Phase 3: false means force logout - SNOW-2314152)
         assert!(send, "Should send logout when keep_alive=false");
         assert!(reason.is_none(), "Should not have skip reason");
     }
@@ -130,7 +146,7 @@ mod tests {
             ..Default::default()
         };
         let registry = AsyncQueryRegistry::new();
-        registry.register("query1".to_string());
+        registry.register("query1".to_string()).unwrap();
 
         // When checking decision
         let (send, reason) = should_send_logout(&config, Some(&registry));
@@ -168,7 +184,7 @@ mod tests {
             ..Default::default()
         };
         let registry = AsyncQueryRegistry::new();
-        registry.register("query1".to_string()); // Should be ignored
+        registry.register("query1".to_string()).unwrap(); // Should be ignored
 
         // When checking decision
         let (send, reason) = should_send_logout(&config, Some(&registry));
@@ -180,15 +196,15 @@ mod tests {
 
     #[test]
     fn test_default_config_phase3() {
-        // Given default config (Phase 3: both None)
+        // Given default config (Phase 3: both None - SNOW-2314152)
         let config = LogoutConfig::default();
         let registry = AsyncQueryRegistry::new();
-        registry.register("query1".to_string()); // Should be ignored
+        registry.register("query1".to_string()).unwrap(); // Should be ignored
 
         // When checking decision
         let (send, reason) = should_send_logout(&config, Some(&registry));
 
-        // Then should send logout (Phase 3 default: always logout)
+        // Then should send logout (Phase 3 default: always logout - SNOW-2314152)
         assert!(send, "Phase 3 default should send logout");
         assert!(reason.is_none(), "Should not have skip reason");
     }
