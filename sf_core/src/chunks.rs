@@ -1,12 +1,14 @@
 use std::collections::{HashMap, VecDeque};
 use std::io;
 use std::str::FromStr;
+use std::sync::Arc;
 
 use crate::compression::{CompressionError, decompress_data};
 use arrow::array::{RecordBatch, RecordBatchReader};
-use arrow::datatypes::SchemaRef;
+use arrow::datatypes::{Fields, Schema, SchemaRef};
 use arrow::error::ArrowError;
 use arrow_ipc::reader::StreamReader;
+use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
 use reqwest::Client;
 use reqwest::header::{self, HeaderMap, HeaderName, HeaderValue};
 use snafu::{Location, ResultExt, Snafu};
@@ -35,14 +37,14 @@ pub struct ChunkReader {
 
 impl ChunkReader {
     pub async fn multi_chunk(
-        initial: Vec<u8>,
+        initial_base64_opt: Option<&str>,
         mut rest: VecDeque<ChunkDownloadData>,
         client: Client,
     ) -> Result<Self, ChunkError> {
-        let initial = if initial.is_empty() {
-            get_chunk_data(&client, &rest.pop_front().unwrap()).await?
+        let initial = if let Some(initial) = initial_base64_opt {
+            BASE64.decode(initial).context(Base64DecodingSnafu)?
         } else {
-            initial
+            get_chunk_data(&client, &rest.pop_front().unwrap()).await?
         };
         let cursor = io::Cursor::new(initial);
         let reader = StreamReader::try_new(cursor, None).context(ChunkReadingSnafu)?;
@@ -55,8 +57,9 @@ impl ChunkReader {
         })
     }
 
-    pub fn single_chunk(initial: Vec<u8>) -> Result<Self, ChunkError> {
-        let cursor = io::Cursor::new(initial);
+    pub fn single_chunk(base64: &str) -> Result<Self, ChunkError> {
+        let bytes = BASE64.decode(base64).context(Base64DecodingSnafu)?;
+        let cursor = io::Cursor::new(bytes);
         let reader = StreamReader::try_new(cursor, None).context(ChunkReadingSnafu)?;
         Ok(Self {
             rest: VecDeque::new(),
@@ -64,6 +67,15 @@ impl ChunkReader {
             current_stream: Some(reader),
             client: None,
         })
+    }
+
+    pub fn empty() -> Self {
+        Self {
+            rest: VecDeque::new(),
+            schema: Arc::new(Schema::new(Fields::empty())),
+            current_stream: None,
+            client: None,
+        }
     }
 }
 
@@ -221,7 +233,7 @@ fn decode_chunk_body(body: Vec<u8>, encoding: Option<&HeaderValue>) -> Result<Ve
     Ok(data)
 }
 
-#[derive(Snafu, Debug)]
+#[derive(Snafu, Debug, error_trace::ErrorTrace)]
 pub enum ChunkError {
     #[snafu(display("Failed to create runtime"))]
     RuntimeCreation {
@@ -276,6 +288,12 @@ pub enum ChunkError {
     #[snafu(display("Failed to read chunk data"))]
     ChunkReading {
         source: ArrowError,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Failed to decode base64 data"))]
+    Base64Decoding {
+        source: base64::DecodeError,
         #[snafu(implicit)]
         location: Location,
     },

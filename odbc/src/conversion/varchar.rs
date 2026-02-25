@@ -179,14 +179,21 @@ fn is_valid_time_format(s: &str) -> bool {
 }
 
 impl WriteODBCType for SnowflakeVarchar {
+    fn sql_type(&self) -> sql::SqlDataType {
+        sql::SqlDataType::VARCHAR
+    }
+
     fn write_odbc_type(
         &self,
         snowflake_value: Self::Representation<'_>,
         binding: &Binding,
+        get_data_offset: &mut Option<usize>,
     ) -> Result<Warnings, WriteOdbcError> {
         match binding.target_type {
-            CDataType::Char => Ok(binding.write_char_string(snowflake_value)),
-            CDataType::WChar => Ok(binding.write_wchar_string(snowflake_value)),
+            CDataType::Default | CDataType::Char => {
+                Ok(binding.write_char_string(snowflake_value, get_data_offset))
+            }
+            CDataType::WChar => Ok(binding.write_wchar_string(snowflake_value, get_data_offset)),
             CDataType::SBigInt => write_i_number!(snowflake_value, i64, binding),
             CDataType::UBigInt => write_u_number!(snowflake_value, u64, binding),
             CDataType::Long | CDataType::SLong => write_i_number!(snowflake_value, i32, binding),
@@ -341,20 +348,7 @@ impl WriteODBCType for SnowflakeVarchar {
                 Ok(warnings)
             }
             CDataType::Binary => {
-                // Copy the string bytes directly to the buffer
-                let bytes = snowflake_value.as_bytes();
-                let copy_len = std::cmp::min(bytes.len(), binding.buffer_length as usize);
-                unsafe {
-                    std::ptr::copy_nonoverlapping(
-                        bytes.as_ptr(),
-                        binding.target_value_ptr as *mut u8,
-                        copy_len,
-                    );
-                }
-                if !binding.str_len_or_ind_ptr.is_null() {
-                    unsafe { std::ptr::write(binding.str_len_or_ind_ptr, bytes.len() as sql::Len) };
-                }
-                Ok(vec![])
+                Ok(binding.write_binary(snowflake_value.as_bytes(), get_data_offset))
             }
             _ => UnsupportedOdbcTypeSnafu {
                 target_type: binding.target_type,

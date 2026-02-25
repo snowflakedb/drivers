@@ -204,7 +204,7 @@ pub async fn download_single_file(
 }
 
 // Error types for file manager operations
-#[derive(Snafu, Debug)]
+#[derive(Snafu, Debug, error_trace::ErrorTrace)]
 pub enum FileManagerError {
     #[snafu(display("Failed to read or write file"))]
     Io {

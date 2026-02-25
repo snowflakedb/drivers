@@ -66,7 +66,7 @@ SNOWFLAKE_TYPE_TO_CODE = {
 }
 
 # Python type name to Snowflake type name mapping.
-# Used by BindingSerializer to infer the Snowflake type from a Python value.
+# Used by JsonBindingConverter to infer the Snowflake type from a Python value.
 # Mirrors PYTHON_TO_SNOWFLAKE_TYPE from the reference connector's converter.py.
 PYTHON_TO_SNOWFLAKE_TYPE = {
     "int": "FIXED",

@@ -6,18 +6,56 @@ FROM --platform=${BUILDPLATFORM} artifactory.ci1.us-west-2.aws-dev.app.snowflake
 RUN apt-get update && apt-get install -y \
     ca-certificates \
     build-essential \
+    pkg-config \
+    libssl-dev \
+    cmake \
+    golang-go \
+    curl \
+    clang \
+    unzip \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /workdir
 
-# Copy and install python package
-COPY python/ /workdir/python/
+# Install Rust toolchain
+COPY rust-toolchain.toml ./rust-toolchain.toml
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain none
+ENV PATH="/root/.cargo/bin:${PATH}"
+RUN rustup show
 
-# Copy the pre-built sf_core library and rust version
-RUN mkdir -p /workdir/python/src/snowflake/connector/_core
-COPY tests/performance/.tmp/libsf_core.so /workdir/python/src/snowflake/connector/_core/libsf_core.so
-COPY tests/performance/.tmp/rust_version /etc/rust_version
+# TODO SNOW-2705435: Use Clang for aws-lc-fips-sys to avoid GCC >= 14 incompatibility
+ENV AWS_LC_FIPS_SYS_CC=clang
 
+# Copy Rust workspace sources (all members required for cargo workspace resolution)
+COPY Cargo.toml Cargo.lock build_common.rs ./
+COPY sf_core/ ./sf_core/
+COPY sf_mini_core/ ./sf_mini_core/
+COPY sf_mini_core_static/ ./sf_mini_core_static/
+COPY odbc/ ./odbc/
+COPY proto_utils/ ./proto_utils/
+COPY proto_generator/ ./proto_generator/
+COPY protobuf/ ./protobuf/
+COPY error_trace/ ./error_trace/
+COPY error_trace_derive/ ./error_trace_derive/
+COPY jdbc_bridge/ ./jdbc_bridge/
+
+# Copy Python package sources
+COPY python/ ./python/
+# Recreate symlinks (Docker COPY does not preserve symlinks to outside the context)
+RUN cd python && \
+    rm -f Cargo.toml sf_core proto_utils proto_generator protobuf error_trace error_trace_derive && \
+    ln -s ../Cargo.toml Cargo.toml && \
+    ln -s ../sf_core sf_core && \
+    ln -s ../proto_utils proto_utils && \
+    ln -s ../proto_generator proto_generator && \
+    ln -s ../protobuf protobuf && \
+    ln -s ../error_trace error_trace && \
+    ln -s ../error_trace_derive error_trace_derive
+
+# Save Rust version for runtime reporting
+RUN rustc --version | awk '{print $2}' | cut -d. -f1,2 > /etc/rust_version
+
+# Install the driver — this builds Rust core and Cython extensions via hatch_build.py
 RUN pip install --no-cache-dir /workdir/python/
 
 # Copy test application

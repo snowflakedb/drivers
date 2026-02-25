@@ -29,7 +29,6 @@ TEST_CASE("SQLFetch fetches a row from SELECT query", "[query]") {
 }
 
 TEST_CASE("SQLFetch returns data about number of rows affected.") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
@@ -49,7 +48,6 @@ TEST_CASE("SQLFetch returns data about number of rows affected.") {
 }
 
 TEST_CASE("SQLSetStmtAttr sets supported cursor types.") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
@@ -102,7 +100,6 @@ TEST_CASE("SQLSetStmtAttr sets supported cursor types.") {
 }
 
 TEST_CASE("SQLFetch can be mixed with SQLFetchScroll.") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
@@ -133,7 +130,6 @@ TEST_CASE("SQLFetch can be mixed with SQLFetchScroll.") {
 }
 
 TEST_CASE("SQLFetch returns multiple rows when SQL_ATTR_ROW_ARRAY_SIZE is set.") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
@@ -178,7 +174,6 @@ TEST_CASE("SQLFetch returns multiple rows when SQL_ATTR_ROW_ARRAY_SIZE is set.")
 }
 
 TEST_CASE("SQL_ATTR_ROW_STATUS_PTR returns SQL_ROW_SUCCESS for successfully fetched rows.") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
@@ -221,7 +216,6 @@ TEST_CASE("SQL_ATTR_ROW_STATUS_PTR returns SQL_ROW_SUCCESS for successfully fetc
 }
 
 TEST_CASE("SQL_ATTR_ROW_STATUS_PTR returns SQL_ROW_SUCCESS_WITH_INFO when data is truncated.") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
@@ -262,7 +256,6 @@ TEST_CASE("SQL_ATTR_ROW_STATUS_PTR returns SQL_ROW_SUCCESS_WITH_INFO when data i
 }
 
 TEST_CASE("SQL_ATTR_ROW_STATUS_PTR returns SQL_ROW_ERROR when conversion error occurs.") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
@@ -298,7 +291,6 @@ TEST_CASE("SQL_ATTR_ROW_STATUS_PTR returns SQL_ROW_ERROR when conversion error o
 }
 
 TEST_CASE("SQL_ATTR_ROW_STATUS_PTR returns SQL_ROW_NOROW when rowset overlaps end of result set.") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
@@ -352,7 +344,6 @@ TEST_CASE("SQL_ATTR_ROW_STATUS_PTR returns SQL_ROW_NOROW when rowset overlaps en
 // =============================================================================
 
 TEST_CASE("SQLFetch respects SQL_DESC_ARRAY_SIZE set on ARD.") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
@@ -392,7 +383,6 @@ TEST_CASE("SQLFetch respects SQL_DESC_ARRAY_SIZE set on ARD.") {
 }
 
 TEST_CASE("SQLFetch respects SQL_DESC_ARRAY_STATUS_PTR set on IRD.") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
@@ -433,7 +423,6 @@ TEST_CASE("SQLFetch respects SQL_DESC_ARRAY_STATUS_PTR set on IRD.") {
 }
 
 TEST_CASE("SQLFetch respects SQL_DESC_BIND_OFFSET_PTR set on ARD.") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
@@ -481,7 +470,6 @@ TEST_CASE("SQLFetch respects SQL_DESC_BIND_OFFSET_PTR set on ARD.") {
 }
 
 TEST_CASE("SQLFetch respects SQL_DESC_BIND_TYPE set on ARD for row-wise binding.") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
@@ -535,7 +523,6 @@ TEST_CASE("SQLFetch respects SQL_DESC_BIND_TYPE set on ARD for row-wise binding.
 }
 
 TEST_CASE("SQLFetch respects SQL_DESC_COUNT set on ARD.") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
@@ -579,7 +566,6 @@ TEST_CASE("SQLFetch respects SQL_DESC_COUNT set on ARD.") {
 }
 
 TEST_CASE("SQLFetch respects SQL_DESC_DATA_PTR set on ARD.") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
@@ -614,7 +600,6 @@ TEST_CASE("SQLFetch respects SQL_DESC_DATA_PTR set on ARD.") {
 }
 
 TEST_CASE("SQLFetch respects SQL_DESC_INDICATOR_PTR set on ARD.") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
@@ -649,7 +634,6 @@ TEST_CASE("SQLFetch respects SQL_DESC_INDICATOR_PTR set on ARD.") {
 }
 
 TEST_CASE("SQLFetch respects SQL_DESC_OCTET_LENGTH set on ARD.") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
@@ -687,7 +671,6 @@ TEST_CASE("SQLFetch respects SQL_DESC_OCTET_LENGTH set on ARD.") {
 }
 
 TEST_CASE("SQLFetch respects SQL_DESC_OCTET_LENGTH_PTR set on ARD.") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
@@ -724,7 +707,6 @@ TEST_CASE("SQLFetch respects SQL_DESC_OCTET_LENGTH_PTR set on ARD.") {
 }
 
 TEST_CASE("SQLFetch respects SQL_DESC_ROWS_PROCESSED_PTR set on IRD.") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
@@ -762,7 +744,6 @@ TEST_CASE("SQLFetch respects SQL_DESC_ROWS_PROCESSED_PTR set on IRD.") {
 }
 
 TEST_CASE("SQLFetch respects SQL_DESC_TYPE set on ARD.") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
@@ -793,7 +774,6 @@ TEST_CASE("SQLFetch respects SQL_DESC_TYPE set on ARD.") {
 }
 
 TEST_CASE("SQLFetch respects multiple ARD descriptor fields set together.") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
@@ -860,7 +840,6 @@ TEST_CASE("SQLFetch respects multiple ARD descriptor fields set together.") {
 }
 
 TEST_CASE("SQLFetch respects both ARD and IRD descriptor fields.") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
@@ -921,7 +900,6 @@ TEST_CASE("SQLFetch respects both ARD and IRD descriptor fields.") {
 // Note: This is old driver behavior - not the specification.
 // Specifically, the specification says that the data should be truncated to the SQL_ATTR_MAX_LENGTH characters
 TEST_CASE("SQLFetch ignores SQL_ATTR_MAX_LENGTH on statement handle.", "[query]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
@@ -964,7 +942,6 @@ TEST_CASE("SQLFetch ignores SQL_ATTR_MAX_LENGTH on statement handle.", "[query]"
 // =============================================================================
 
 TEST_CASE("SQLFetch returns 22002 when NULL data fetched without indicator pointer.", "[query]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
@@ -985,7 +962,6 @@ TEST_CASE("SQLFetch returns 22002 when NULL data fetched without indicator point
 }
 
 TEST_CASE("SQLFetch returns 22018 when invalid date string is bound to SQL_C_TYPE_DATE.", "[query]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
@@ -1005,9 +981,7 @@ TEST_CASE("SQLFetch returns 22018 when invalid date string is bound to SQL_C_TYP
   REQUIRE(ret == SQL_ERROR);
   CHECK(get_sqlstate(stmt) == "22018");
 }
-
 TEST_CASE("SQLFetch returns 24000 when no result set exists.", "[query]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
@@ -1023,8 +997,21 @@ TEST_CASE("SQLFetch returns 24000 when no result set exists.", "[query]") {
   CHECK(get_sqlstate(stmt) == "24000");
 }
 
+TEST_CASE("SQLFetch returns SQL_NO_DATA when result set is empty.", "[query]") {
+  // Given Snowflake client is logged in
+  Connection conn;
+  auto stmt = conn.createStatement();
+
+  // When a SELECT statement is executed that returns no rows
+  SQLRETURN ret = SQLExecDirect(stmt.getHandle(), (SQLCHAR*)"SELECT 1 WHERE true=false", SQL_NTS);
+  CHECK_ODBC(ret, stmt);
+
+  // Then SQLFetch should return SQL_NO_DATA (no rows to fetch)
+  ret = SQLFetch(stmt.getHandle());
+  REQUIRE(ret == SQL_NO_DATA);
+}
+
 TEST_CASE("SQLFetch returns HY010 when called without executing statement.", "[query]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
@@ -1038,7 +1025,6 @@ TEST_CASE("SQLFetch returns HY010 when called without executing statement.", "[q
 }
 
 TEST_CASE("SQLFetch moves cursor forward when no columns are bound.", "[query]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
@@ -1097,7 +1083,6 @@ TEST_CASE("SQLFetch moves cursor forward when no columns are bound.", "[query]")
 }
 
 TEST_CASE("SQLFetch supports separate length and indicator buffers via descriptor.", "[query]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
@@ -1155,7 +1140,6 @@ TEST_CASE("SQLFetch supports separate length and indicator buffers via descripto
 }
 
 TEST_CASE("SQLFetch cannot be called after SQLExtendedFetch without SQLFreeStmt.", "[query]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
@@ -1191,7 +1175,6 @@ TEST_CASE("SQLFetch cannot be called after SQLExtendedFetch without SQLFreeStmt.
 }
 
 TEST_CASE("SQLGetDiagField returns correct row and column number on fetch error.", "[query]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();
@@ -1248,7 +1231,6 @@ TEST_CASE("SQLGetDiagField returns correct row and column number on fetch error.
 }
 
 TEST_CASE("SQLFetch returns SQL_SUCCESS_WITH_INFO when error occurs on subset of rows in block cursor.", "[query]") {
-  SKIP_NEW_DRIVER_NOT_IMPLEMENTED();
   // Given Snowflake client is logged in
   Connection conn;
   auto stmt = conn.createStatement();

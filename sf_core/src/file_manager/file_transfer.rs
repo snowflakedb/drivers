@@ -172,7 +172,7 @@ async fn create_s3_client(stage_info: &StageInfo, provider_name: &'static str) -
     S3Client::new(&config)
 }
 
-#[derive(Snafu, Debug)]
+#[derive(Snafu, Debug, error_trace::ErrorTrace)]
 pub enum UploadFileError {
     #[snafu(display("Failed to upload file to S3"))]
     S3Upload {
@@ -196,7 +196,7 @@ pub enum UploadFileError {
     },
 }
 
-#[derive(Snafu, Debug)]
+#[derive(Snafu, Debug, error_trace::ErrorTrace)]
 pub enum DownloadFileError {
     #[snafu(display("Failed to download file from S3"))]
     S3Download {

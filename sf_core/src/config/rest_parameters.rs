@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 use std::fs;
 
+use url::Url;
+
 use crate::config::InvalidParameterValueSnafu;
 use crate::config::settings::Setting;
 use crate::config::settings::Settings;
@@ -64,8 +66,12 @@ impl ClientInfo {
         let crl_config = CrlConfig::from_settings(settings)?;
         let tls_config = TlsConfig::from_settings(settings)?;
 
+        // TODO: ClientInfo should be dynamically created based on the real hardware and
+        // the wrapper client type
         let client_info = ClientInfo {
-            application: "PythonConnector".to_string(),
+            application: settings
+                .get_string("client_app_id")
+                .unwrap_or_else(|| "PythonConnector".to_string()),
             version: "3.15.0".to_string(),
             os: "Darwin".to_string(),
             os_version: "macOS-15.5-arm64-arm-64bit".to_string(),
@@ -114,12 +120,33 @@ impl LoginParameters {
     }
 }
 
+pub const DEFAULT_AUTHENTICATION_TIMEOUT_SECS: u64 = 120;
+
+#[derive(Debug)]
+pub struct NativeOktaConfig {
+    /// Snowflake user name (used in authenticator-request to Snowflake).
+    pub username: String,
+    /// Optional override for the Okta login name. When set, this is sent to
+    /// Okta's `/api/v1/authn` instead of `username`. Matches JDBC's `oktausername`
+    /// property — useful when the Okta email differs from the Snowflake user.
+    pub okta_username: Option<String>,
+    /// IdP password (native Okta SSO).
+    pub password: String,
+    /// Okta authenticator URL endpoint (native Okta SSO).
+    pub okta_url: Url,
+    /// Disable SAML destination/postback validation (default false; discouraged).
+    pub disable_saml_url_check: bool,
+    /// End-to-end auth budget for the Okta flow, mapped onto retry max_elapsed.
+    pub authentication_timeout_secs: u64,
+}
+
 #[derive(Debug)]
 pub enum LoginMethod {
     Password {
         username: String,
         password: String,
     },
+    NativeOkta(NativeOktaConfig),
     PrivateKey {
         username: String,
         private_key: String,
@@ -273,10 +300,52 @@ impl LoginMethod {
                     .get_string("token")
                     .context(MissingParameterSnafu { parameter: "token" })?,
             }),
+            _ if authenticator.to_ascii_lowercase().starts_with("https://") => {
+                // Native Okta SSO is configured by passing the Okta URL endpoint as `authenticator`.
+                // This is intentionally broad (vanity domains may not contain "okta").
+                // Validate the URL is well-formed early to provide a clear error message.
+                let okta_url = Url::parse(&authenticator).map_err(|_| {
+                    InvalidParameterValueSnafu {
+                        parameter: "authenticator",
+                        value: authenticator,
+                        explanation: "The authenticator URL is not a valid URL",
+                    }
+                    .build()
+                })?;
+
+                let username = settings
+                    .get_string("user")
+                    .context(MissingParameterSnafu { parameter: "user" })?;
+                let okta_username = settings.get_string("okta_username");
+                let password = settings
+                    .get_string("password")
+                    .context(MissingParameterSnafu {
+                        parameter: "password",
+                    })?;
+
+                let disable_saml_url_check = settings
+                    .get_string("disable_saml_url_check")
+                    .map(|v| v.eq_ignore_ascii_case("true") || v == "1")
+                    .or_else(|| settings.get_int("disable_saml_url_check").map(|v| v != 0))
+                    .unwrap_or(false);
+
+                let authentication_timeout_secs = settings
+                    .get_u64("authentication_timeout")
+                    .unwrap_or(DEFAULT_AUTHENTICATION_TIMEOUT_SECS);
+
+                Ok(Self::NativeOkta(NativeOktaConfig {
+                    username,
+                    okta_username,
+                    password,
+                    okta_url,
+                    disable_saml_url_check,
+                    authentication_timeout_secs,
+                }))
+            }
             _ => InvalidParameterValueSnafu {
                 parameter: "authenticator",
                 value: authenticator,
-                explanation: "Allowed values are SNOWFLAKE_JWT, SNOWFLAKE_PASSWORD, and PROGRAMMATIC_ACCESS_TOKEN",
+                explanation: "Allowed values are SNOWFLAKE_JWT, SNOWFLAKE_PASSWORD, PROGRAMMATIC_ACCESS_TOKEN, or an https:// URL for native Okta SSO",
             }
             .fail()?,
         }

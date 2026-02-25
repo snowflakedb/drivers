@@ -292,6 +292,9 @@ TEST_CASE_METHOD(DbcDefaultDSNFixture, "SQLFreeHandle: Double free statement han
   ret = SQLFreeHandle(SQL_HANDLE_STMT, stmt);
   REQUIRE(ret == SQL_SUCCESS);
 
+  // Note: Using a freed handle is undefined behavior per ODBC spec. The reference
+  // driver returns SQL_INVALID_HANDLE for statement handles but crashes for
+  // connection handles.
   ret = SQLFreeHandle(SQL_HANDLE_STMT, stmt);
   REQUIRE(ret == SQL_INVALID_HANDLE);
 

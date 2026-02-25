@@ -88,10 +88,8 @@ impl SnowflakeTestClient {
             host: Some("localhost".to_string()),
             role: Some("test_role".to_string()),
             server_url: Some(server_url.to_string()),
-            port: None,
             protocol: Some("http".to_string()),
-            private_key_contents: None,
-            private_key_password: None,
+            ..Default::default()
         };
 
         let db_response = DatabaseDriverClient::database_new(DatabaseNewRequest {}).unwrap();

@@ -444,17 +444,19 @@ class TestFetchmanyArraysizeAttribute:
         """Create a cursor with a mock connection."""
         return SnowflakeCursor(mock_connection)
 
-    def test_arraysize_class_attribute_default(self):
-        """Test that Cursor class has default arraysize of 1."""
-        assert SnowflakeCursorBase.arraysize == 1
+    def test_arraysize_default(self, cursor):
+        """Test that cursor has default arraysize of 1."""
+        assert cursor.arraysize == 1
 
-    def test_arraysize_instance_attribute_overrides_class(self, cursor):
-        """Test instance arraysize overrides class attribute."""
+    def test_arraysize_is_property(self):
+        """Test that arraysize is a property on the class."""
+        assert isinstance(SnowflakeCursorBase.__dict__["arraysize"], property)
+
+    def test_arraysize_instance_independent(self, cursor):
+        """Test instance arraysize changes are independent."""
         assert cursor.arraysize == 1
         cursor.arraysize = 10
         assert cursor.arraysize == 10
-        # Class attribute unchanged
-        assert SnowflakeCursorBase.arraysize == 1
 
     def test_fetchmany_uses_instance_arraysize(self, cursor):
         """Test fetchmany uses instance arraysize, not class attribute."""

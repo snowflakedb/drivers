@@ -19,7 +19,7 @@ use x509_parser::oid_registry::OID_X509_EXT_CRL_NUMBER;
 use x509_parser::prelude::*;
 use x509_parser::x509::X509Name;
 
-#[derive(Snafu, Debug)]
+#[derive(Snafu, Debug, error_trace::ErrorTrace)]
 #[snafu(visibility(pub))]
 pub enum X509Error {
     #[snafu(display("Failed to parse certificate"))]

@@ -29,9 +29,13 @@ graph LR
             SESSION[Session Management Service]
         end
         AUTH[Authentication Module] 
-        CFG[Configuration Module]
-        TM[Telemetry Module]
-        LOG[Logger Module]
+        subgraph UTILS[Utilities]
+            direction TB
+            CFG[Configuration Module]
+            TM[Telemetry Module]
+            LOG[Logger Module]
+            IO[FS I/O Module]
+        end
         subgraph BLOB [Cloud Provider Stage Operations Service]
             AZ[Azure Storage Service]
             AWS[AWS Storage Service]
@@ -46,6 +50,11 @@ graph LR
         AUTH-->SQL
         SQL<-->HTTP
         SQL<-->BLOB
+        
+        SQL-.->UTILS
+        HTTP-.->UTILS
+        SQL-.->UTILS
+        AUTH-.->UTILS
     end
 
     subgraph IL [FFI & Serialization]
