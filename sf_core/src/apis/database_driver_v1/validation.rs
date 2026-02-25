@@ -213,10 +213,7 @@ mod tests {
             "account".to_string(),
             Setting::String("myaccount".to_string()),
         );
-        options.insert(
-            "user".to_string(),
-            Setting::String("myuser".to_string()),
-        );
+        options.insert("user".to_string(), Setting::String("myuser".to_string()));
 
         let (resolved, issues) = resolve_options(options);
 
@@ -325,10 +322,7 @@ mod tests {
             .filter(|i| i.severity == ValidationSeverity::Error)
             .collect();
         assert!(errors.is_empty(), "unexpected errors: {errors:?}");
-        assert_eq!(
-            resolved.get("verify_hostname"),
-            Some(&Setting::Bool(false))
-        );
+        assert_eq!(resolved.get("verify_hostname"), Some(&Setting::Bool(false)));
     }
 
     #[test]

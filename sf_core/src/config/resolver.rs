@@ -1,10 +1,10 @@
 use std::collections::HashMap;
 
+use crate::config::ConfigError;
 use crate::config::config_manager;
 use crate::config::param_registry;
 use crate::config::path_resolver::ConfigPaths;
 use crate::config::settings::Setting;
-use crate::config::ConfigError;
 
 /// Merges configuration from multiple sources into a single resolved map.
 ///
@@ -47,8 +47,7 @@ impl ConfigResolver {
 
         // Layer 3+2: TOML files (if connection_name is set)
         if let Some(Setting::String(name)) = explicit.get("connection_name") {
-            let file_settings =
-                config_manager::load_connection_config_with_paths(name, paths)?;
+            let file_settings = config_manager::load_connection_config_with_paths(name, paths)?;
             merged.extend(file_settings);
         }
 

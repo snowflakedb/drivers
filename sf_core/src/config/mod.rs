@@ -1,4 +1,5 @@
 pub mod config_manager;
+pub mod config_source;
 pub mod connection_config;
 pub mod param_registry;
 pub mod path_resolver;

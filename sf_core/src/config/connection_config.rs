@@ -8,6 +8,10 @@ use chrono::Duration;
 use openssl::pkey::PKey;
 use snafu::OptionExt;
 
+use crate::config::config_source::ConfigSource;
+use crate::config::config_source::FromConfigSource;
+use crate::config::param_registry::ACCOUNT;
+use crate::config::param_registry::SERVER_URL;
 use crate::config::settings::Setting;
 use crate::config::{
     ConfigError, ConflictingParametersSnafu, InvalidParameterValueSnafu, MissingParameterSnafu,
@@ -33,6 +37,33 @@ pub struct ConnectionConfig {
 pub struct ServerConfig {
     pub account: String,
     pub server_url: String,
+}
+
+/*
+FromConfigSource implementation for ServerConfig.
+Note this is naive implementation that fails early.
+We can do better by collecting all errors and returning them together.
+This is harder to implement but returning Vec<ConfigError> is more flexible and allows us to do that implementation.
+
+In theory this could automatically derived
+#[derive(FromConfigSource)]
+pub struct ServerConfig {
+    #[from_config_param(ACCOUNT)]
+    pub account: String,
+    #[from_config_param(SERVER_URL)]
+    pub server_url: String,
+}
+*/
+
+impl FromConfigSource for ServerConfig {
+    fn from_config_source(source: &Box<dyn ConfigSource>) -> Result<Self, Vec<ConfigError>> {
+        let account = source.get_required(&ACCOUNT)?.as_string()?;
+        let server_url = source.get_required(&SERVER_URL)?.as_string()?;
+        Ok(Self {
+            account,
+            server_url,
+        })
+    }
 }
 
 #[derive(Debug)]
@@ -247,9 +278,7 @@ fn derive_server_url(settings: &HashMap<String, Setting>) -> Result<String, Conf
     let protocol = get_string(settings, "protocol").unwrap_or_else(|| "https".to_string());
     let host = get_string(settings, "host").context(MissingParameterSnafu { parameter: "host" })?;
     if protocol != "https" && protocol != "http" {
-        tracing::warn!(
-            "Unexpected protocol specified during server url construction: {protocol}"
-        );
+        tracing::warn!("Unexpected protocol specified during server url construction: {protocol}");
     }
 
     let base_url = format!("{protocol}://{host}");
@@ -382,8 +411,9 @@ impl ConnectionConfig {
             return ValidationFailedSnafu { issues: errors }.fail();
         }
 
-        let account = get_string(settings, "account")
-            .context(MissingParameterSnafu { parameter: "account" })?;
+        let account = get_string(settings, "account").context(MissingParameterSnafu {
+            parameter: "account",
+        })?;
         let server_url = derive_server_url(settings)?;
         let auth = build_auth_config(settings)?;
         let tls = build_tls_config(settings);
@@ -458,8 +488,8 @@ pub fn validate_settings(settings: &HashMap<String, Setting>) -> Vec<ValidationI
                 issues.push(ValidationIssue {
                     severity: ValidationSeverity::Error,
                     parameter: "private_key".into(),
-                    message:
-                        "Missing 'private_key' or 'private_key_file' for JWT authentication".into(),
+                    message: "Missing 'private_key' or 'private_key_file' for JWT authentication"
+                        .into(),
                     code: ValidationCode::MissingRequired,
                 });
             }
@@ -502,9 +532,7 @@ pub fn validate_settings(settings: &HashMap<String, Setting>) -> Vec<ValidationI
             issues.push(ValidationIssue {
                 severity: ValidationSeverity::Error,
                 parameter: "protocol".into(),
-                message: format!(
-                    "Invalid protocol '{protocol}'. Allowed values: 'http', 'https'"
-                ),
+                message: format!("Invalid protocol '{protocol}'. Allowed values: 'http', 'https'"),
                 code: ValidationCode::InvalidValue,
             });
         }
@@ -575,7 +603,10 @@ mod tests {
             ("account", Setting::String("myaccount".into())),
             ("user", Setting::String("myuser".into())),
             ("password", Setting::String("mypassword".into())),
-            ("host", Setting::String("myaccount.snowflakecomputing.com".into())),
+            (
+                "host",
+                Setting::String("myaccount.snowflakecomputing.com".into()),
+            ),
         ])
     }
 
@@ -587,7 +618,12 @@ mod tests {
         let config = ConnectionConfig::build(&settings).unwrap();
 
         assert_eq!(config.server.account, "myaccount");
-        assert!(config.server.server_url.contains("myaccount.snowflakecomputing.com"));
+        assert!(
+            config
+                .server
+                .server_url
+                .contains("myaccount.snowflakecomputing.com")
+        );
         match &config.auth {
             AuthConfig::Password { user, password } => {
                 assert_eq!(user, "myuser");
@@ -690,7 +726,10 @@ mod tests {
             ("account", Setting::String("acct".into())),
             ("user", Setting::String("u".into())),
             ("token", Setting::String("tok123".into())),
-            ("authenticator", Setting::String("PROGRAMMATIC_ACCESS_TOKEN".into())),
+            (
+                "authenticator",
+                Setting::String("PROGRAMMATIC_ACCESS_TOKEN".into()),
+            ),
             ("host", Setting::String("h.com".into())),
         ]);
         let config = ConnectionConfig::build(&settings).unwrap();

@@ -23,13 +23,11 @@ pub fn connection_init(conn_handle: Handle, _db_handle: Handle) -> Result<(), Ap
                 .lock()
                 .map_err(|_| ConnectionLockingSnafu {}.build())?;
 
-            let resolved = ConfigResolver::resolve(&conn.settings)
-                .context(ConfigurationSnafu)?;
+            let resolved = ConfigResolver::resolve(&conn.settings).context(ConfigurationSnafu)?;
 
             let rt = crate::async_bridge::runtime().context(RuntimeCreationSnafu)?;
 
-            let config = ConnectionConfig::build(&resolved)
-                .context(ConfigurationSnafu)?;
+            let config = ConnectionConfig::build(&resolved).context(ConfigurationSnafu)?;
             let init_params = conn.init_session_parameters.clone();
             drop(conn);
 
@@ -175,17 +173,16 @@ pub fn connection_set_session_parameters(
     }
 }
 
-pub fn connection_validate_options(
-    conn_handle: Handle,
-) -> Result<Vec<ValidationIssue>, ApiError> {
+pub fn connection_validate_options(conn_handle: Handle) -> Result<Vec<ValidationIssue>, ApiError> {
     match CONN_HANDLE_MANAGER.get_obj(conn_handle) {
         Some(conn_ptr) => {
             let conn = conn_ptr
                 .lock()
                 .map_err(|_| ConnectionLockingSnafu {}.build())?;
-            let resolved =
-                ConfigResolver::resolve(&conn.settings).context(ConfigurationSnafu)?;
-            Ok(crate::config::connection_config::validate_settings(&resolved))
+            let resolved = ConfigResolver::resolve(&conn.settings).context(ConfigurationSnafu)?;
+            Ok(crate::config::connection_config::validate_settings(
+                &resolved,
+            ))
         }
         None => InvalidArgumentSnafu {
             argument: "Connection handle not found".to_string(),
