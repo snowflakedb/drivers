@@ -2,6 +2,8 @@ package net.snowflake.client.api.statement;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -13,373 +15,143 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.sql.Types;
 import java.util.UUID;
+import java.util.stream.Stream;
+import lombok.ToString;
+import lombok.Value;
 import net.snowflake.client.SnowflakeIntegrationTestBase;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 
 public class SnowflakePreparedStatementBindingTest extends SnowflakeIntegrationTestBase {
 
-  @Test
-  public void testSetNull() throws Exception {
-    String tableName = buildTempTableName();
+  @ParameterizedTest(name = "{index} => {0}")
+  @MethodSource("singleSetterCases")
+  public void testSingleSetterBindings(SingleSetterCase testCase) throws Exception {
     Connection conn = getDefaultConnection();
-    createTempTable(conn, tableName, "(id INTEGER)");
+    String tableName = prepareTable(conn, testCase.getSchema());
 
-    try (PreparedStatement insert =
-        conn.prepareStatement("INSERT INTO " + tableName + " (id) VALUES (?)")) {
-      insert.setNull(1, Types.INTEGER);
-      insert.execute();
-    }
+    executeInsert(conn, "INSERT INTO " + tableName + " (v) VALUES (?)", testCase.getBinder());
 
-    try (PreparedStatement verify =
-            conn.prepareStatement("SELECT COUNT(*), COUNT(id) FROM " + tableName);
-        ResultSet rs = verify.executeQuery()) {
-      assertTrue(rs.next(), "Verification query should return one row");
-      assertEquals(1, rs.getInt(1), "Exactly one row should be inserted");
-      assertEquals(0, rs.getInt(2), "Null column should not contribute to COUNT(column)");
-    }
-  }
-
-  @Test
-  public void testSetString() throws Exception {
-    String tableName = buildTempTableName();
-    Connection conn = getDefaultConnection();
-    createTempTable(conn, tableName, "(txt STRING)");
-
-    try (PreparedStatement insert =
-        conn.prepareStatement("INSERT INTO " + tableName + " (txt) VALUES (?)")) {
-      insert.setString(1, "hello");
-      insert.execute();
-    }
-
-    try (PreparedStatement verify =
-            conn.prepareStatement("SELECT COUNT(*), MIN(txt) FROM " + tableName);
-        ResultSet rs = verify.executeQuery()) {
-      assertTrue(rs.next(), "Verification query should return one row");
-      assertEquals(1, rs.getInt(1), "Exactly one row should be inserted");
-      assertEquals("hello", rs.getString(2), "Inserted string value should match");
-    }
-  }
-
-  @Test
-  public void testSetBoolean() throws Exception {
-    String tableName = buildTempTableName();
-    Connection conn = getDefaultConnection();
-    createTempTable(conn, tableName, "(flag BOOLEAN)");
-
-    try (PreparedStatement insert =
-        conn.prepareStatement("INSERT INTO " + tableName + " (flag) VALUES (?)")) {
-      insert.setBoolean(1, true);
-      insert.execute();
-    }
-
-    try (PreparedStatement verify =
-            conn.prepareStatement("SELECT COUNT(*), MIN(flag) FROM " + tableName);
-        ResultSet rs = verify.executeQuery()) {
-      assertTrue(rs.next(), "Verification query should return one row");
-      assertEquals(1, rs.getInt(1), "Exactly one row should be inserted");
-      assertTrue(rs.getBoolean(2), "Inserted boolean value should match");
-    }
-  }
-
-  @Test
-  public void testSetByte() throws Exception {
-    String tableName = buildTempTableName();
-    Connection conn = getDefaultConnection();
-    createTempTable(conn, tableName, "(v INTEGER)");
-
-    try (PreparedStatement insert =
-        conn.prepareStatement("INSERT INTO " + tableName + " (v) VALUES (?)")) {
-      insert.setByte(1, (byte) 7);
-      insert.execute();
-    }
-
-    try (PreparedStatement verify =
-            conn.prepareStatement("SELECT COUNT(*), MIN(v) FROM " + tableName);
-        ResultSet rs = verify.executeQuery()) {
-      assertTrue(rs.next(), "Verification query should return one row");
-      assertEquals(1, rs.getInt(1), "Exactly one row should be inserted");
-      assertEquals((byte) 7, rs.getByte(2), "Inserted byte value should match");
-    }
-  }
-
-  @Test
-  public void testSetShort() throws Exception {
-    String tableName = buildTempTableName();
-    Connection conn = getDefaultConnection();
-    createTempTable(conn, tableName, "(v INTEGER)");
-
-    try (PreparedStatement insert =
-        conn.prepareStatement("INSERT INTO " + tableName + " (v) VALUES (?)")) {
-      insert.setShort(1, (short) 11);
-      insert.execute();
-    }
-
-    try (PreparedStatement verify =
-            conn.prepareStatement("SELECT COUNT(*), MIN(v) FROM " + tableName);
-        ResultSet rs = verify.executeQuery()) {
-      assertTrue(rs.next(), "Verification query should return one row");
-      assertEquals(1, rs.getInt(1), "Exactly one row should be inserted");
-      assertEquals((short) 11, rs.getShort(2), "Inserted short value should match");
-    }
-  }
-
-  @Test
-  public void testSetInt() throws Exception {
-    String tableName = buildTempTableName();
-    Connection conn = getDefaultConnection();
-    createTempTable(conn, tableName, "(v INTEGER)");
-
-    try (PreparedStatement insert =
-        conn.prepareStatement("INSERT INTO " + tableName + " (v) VALUES (?)")) {
-      insert.setInt(1, 42);
-      insert.execute();
-    }
-
-    try (PreparedStatement verify =
-            conn.prepareStatement("SELECT COUNT(*), MIN(v) FROM " + tableName);
-        ResultSet rs = verify.executeQuery()) {
-      assertTrue(rs.next(), "Verification query should return one row");
-      assertEquals(1, rs.getInt(1), "Exactly one row should be inserted");
-      assertEquals(42, rs.getInt(2), "Inserted int value should match");
-    }
-  }
-
-  @Test
-  public void testSetLong() throws Exception {
-    String tableName = buildTempTableName();
-    Connection conn = getDefaultConnection();
-    createTempTable(conn, tableName, "(v INTEGER)");
-
-    try (PreparedStatement insert =
-        conn.prepareStatement("INSERT INTO " + tableName + " (v) VALUES (?)")) {
-      insert.setLong(1, 123456789L);
-      insert.execute();
-    }
-
-    try (PreparedStatement verify =
-            conn.prepareStatement("SELECT COUNT(*), MIN(v) FROM " + tableName);
-        ResultSet rs = verify.executeQuery()) {
-      assertTrue(rs.next(), "Verification query should return one row");
-      assertEquals(1, rs.getInt(1), "Exactly one row should be inserted");
-      assertEquals(123456789L, rs.getLong(2), "Inserted long value should match");
-    }
-  }
-
-  @Test
-  public void testSetFloat() throws Exception {
-    String tableName = buildTempTableName();
-    Connection conn = getDefaultConnection();
-    createTempTable(conn, tableName, "(v FLOAT)");
-
-    try (PreparedStatement insert =
-        conn.prepareStatement("INSERT INTO " + tableName + " (v) VALUES (?)")) {
-      insert.setFloat(1, 1.25f);
-      insert.execute();
-    }
-
-    try (PreparedStatement verify =
-            conn.prepareStatement("SELECT COUNT(*), MIN(v) FROM " + tableName);
-        ResultSet rs = verify.executeQuery()) {
-      assertTrue(rs.next(), "Verification query should return one row");
-      assertEquals(1, rs.getInt(1), "Exactly one row should be inserted");
-      assertEquals(1.25f, rs.getFloat(2), 0.0001f, "Inserted float value should match");
-    }
-  }
-
-  @Test
-  public void testSetDouble() throws Exception {
-    String tableName = buildTempTableName();
-    Connection conn = getDefaultConnection();
-    createTempTable(conn, tableName, "(v FLOAT)");
-
-    try (PreparedStatement insert =
-        conn.prepareStatement("INSERT INTO " + tableName + " (v) VALUES (?)")) {
-      insert.setDouble(1, 2.5d);
-      insert.execute();
-    }
-
-    try (PreparedStatement verify =
-            conn.prepareStatement("SELECT COUNT(*), MIN(v) FROM " + tableName);
-        ResultSet rs = verify.executeQuery()) {
-      assertTrue(rs.next(), "Verification query should return one row");
-      assertEquals(1, rs.getInt(1), "Exactly one row should be inserted");
-      assertEquals(2.5d, rs.getDouble(2), 0.0001d, "Inserted double value should match");
-    }
-  }
-
-  @Test
-  public void testSetBigDecimal() throws Exception {
-    String tableName = buildTempTableName();
-    Connection conn = getDefaultConnection();
-    createTempTable(conn, tableName, "(v NUMBER(18,2))");
-
-    try (PreparedStatement insert =
-        conn.prepareStatement("INSERT INTO " + tableName + " (v) VALUES (?)")) {
-      insert.setBigDecimal(1, new BigDecimal("12345.67"));
-      insert.execute();
-    }
-
-    try (PreparedStatement verify =
-            conn.prepareStatement("SELECT COUNT(*), MIN(v) FROM " + tableName);
-        ResultSet rs = verify.executeQuery()) {
-      assertTrue(rs.next(), "Verification query should return one row");
-      assertEquals(1, rs.getInt(1), "Exactly one row should be inserted");
-      assertEquals(
-          0,
-          new BigDecimal("12345.67").compareTo(rs.getBigDecimal(2)),
-          "Inserted BigDecimal value should match");
-    }
-  }
-
-  @Test
-  public void testSetBytes() throws Exception {
-    String tableName = buildTempTableName();
-    byte[] value = new byte[] {0x01, 0x02, 0x03};
-    Connection conn = getDefaultConnection();
-    createTempTable(conn, tableName, "(v BINARY)");
-
-    try (PreparedStatement insert =
-        conn.prepareStatement("INSERT INTO " + tableName + " (v) VALUES (?)")) {
-      insert.setBytes(1, value);
-      insert.execute();
-    }
-
-    try (PreparedStatement verify =
-            conn.prepareStatement("SELECT COUNT(*), MIN(v) FROM " + tableName);
-        ResultSet rs = verify.executeQuery()) {
-      assertTrue(rs.next(), "Verification query should return one row");
-      assertEquals(1, rs.getInt(1), "Exactly one row should be inserted");
-      assertArrayEquals(value, rs.getBytes(2), "Inserted byte[] value should match");
-    }
+    verifySingleValue(conn, "SELECT v FROM " + tableName, testCase.getVerifier());
   }
 
   @Test
   public void testAllSupportedSetters() throws Exception {
-    String tableName = buildTempTableName();
-    byte[] bytesValue = new byte[] {0x0A, 0x0B, 0x0C};
     Connection conn = getDefaultConnection();
-    createTempTable(
+    String tableName =
+        prepareTable(
+            conn,
+            "(n INTEGER, s STRING, b BOOLEAN, byte_col INTEGER, short_col INTEGER, i INTEGER, l INTEGER,"
+                + " f FLOAT, d FLOAT, bd NUMBER(18,2), bin BINARY)");
+    byte[] bytesValue = new byte[] {0x0A, 0x0B, 0x0C};
+    BigDecimal expectedDecimal = new BigDecimal("77.88");
+
+    executeInsert(
         conn,
-        tableName,
-        "(n INTEGER, s STRING, b BOOLEAN, byte_col INTEGER, short_col INTEGER, i INTEGER, l INTEGER,"
-            + " f FLOAT, d FLOAT, bd NUMBER(18,2), bin BINARY)");
+        "INSERT INTO "
+            + tableName
+            + " (n, s, b, byte_col, short_col, i, l, f, d, bd, bin) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        insert -> {
+          insert.setNull(1, Types.INTEGER);
+          insert.setString(2, "all");
+          insert.setBoolean(3, true);
+          insert.setByte(4, (byte) 12);
+          insert.setShort(5, (short) 320);
+          insert.setInt(6, 1234);
+          insert.setLong(7, 987654321L);
+          insert.setFloat(8, 3.25f);
+          insert.setDouble(9, 6.5d);
+          insert.setBigDecimal(10, expectedDecimal);
+          insert.setBytes(11, bytesValue);
+        });
 
-    try (PreparedStatement insert =
-        conn.prepareStatement(
-            "INSERT INTO "
-                + tableName
-                + " (n, s, b, byte_col, short_col, i, l, f, d, bd, bin) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")) {
-      insert.setNull(1, Types.INTEGER);
-      insert.setString(2, "all");
-      insert.setBoolean(3, true);
-      insert.setByte(4, (byte) 12);
-      insert.setShort(5, (short) 320);
-      insert.setInt(6, 1234);
-      insert.setLong(7, 987654321L);
-      insert.setFloat(8, 3.25f);
-      insert.setDouble(9, 6.5d);
-      insert.setBigDecimal(10, new BigDecimal("77.88"));
-      insert.setBytes(11, bytesValue);
-      insert.execute();
-    }
-
-    try (PreparedStatement verify =
-            conn.prepareStatement(
-                "SELECT COUNT(*), COUNT(n), MIN(s), MIN(b), MIN(byte_col), MIN(short_col),"
-                    + " MIN(i), MIN(l), MIN(f), MIN(d), MIN(bd), MIN(bin) FROM "
-                    + tableName);
-        ResultSet rs = verify.executeQuery()) {
-      assertTrue(rs.next(), "Verification query should return one row");
-      assertEquals(1, rs.getInt(1), "Exactly one row should be inserted");
-      assertEquals(0, rs.getInt(2), "setNull column should remain NULL");
-      assertEquals("all", rs.getString(3), "setString value should match");
-      assertTrue(rs.getBoolean(4), "setBoolean value should match");
-      assertEquals((byte) 12, rs.getByte(5), "setByte value should match");
-      assertEquals((short) 320, rs.getShort(6), "setShort value should match");
-      assertEquals(1234, rs.getInt(7), "setInt value should match");
-      assertEquals(987654321L, rs.getLong(8), "setLong value should match");
-      assertEquals(3.25f, rs.getFloat(9), 0.0001f, "setFloat value should match");
-      assertEquals(6.5d, rs.getDouble(10), 0.0001d, "setDouble value should match");
-      assertEquals(
-          0,
-          new BigDecimal("77.88").compareTo(rs.getBigDecimal(11)),
-          "setBigDecimal value should match");
-      assertArrayEquals(bytesValue, rs.getBytes(12), "setBytes value should match");
-    }
+    verifySingleRow(
+        conn,
+        "SELECT COUNT(*), COUNT(n), MIN(s), MIN(b), MIN(byte_col), MIN(short_col),"
+            + " MIN(i), MIN(l), MIN(f), MIN(d), MIN(bd), MIN(bin) FROM "
+            + tableName,
+        rs -> {
+          assertEquals(0, rs.getInt(2));
+          assertEquals("all", rs.getString(3));
+          assertTrue(rs.getBoolean(4));
+          assertEquals((byte) 12, rs.getByte(5));
+          assertEquals((short) 320, rs.getShort(6));
+          assertEquals(1234, rs.getInt(7));
+          assertEquals(987654321L, rs.getLong(8));
+          assertEquals(3.25f, rs.getFloat(9), 0.0001f);
+          assertEquals(6.5d, rs.getDouble(10), 0.0001d);
+          assertEquals(0, expectedDecimal.compareTo(rs.getBigDecimal(11)));
+          assertArrayEquals(bytesValue, rs.getBytes(12));
+        });
   }
 
   @Test
   public void testSetObject() throws Exception {
-    String tableName = buildTempTableName();
-    byte[] bytesValue = new byte[] {0x01, 0x02, 0x03};
     Connection conn = getDefaultConnection();
-    createTempTable(
+    String tableName =
+        prepareTable(
+            conn,
+            "(n INTEGER, s STRING, b BOOLEAN, i INTEGER, l INTEGER, f FLOAT, d FLOAT,"
+                + " bd NUMBER(18,2), bin BINARY)");
+    byte[] bytesValue = new byte[] {0x01, 0x02, 0x03};
+    BigDecimal expectedDecimal = new BigDecimal("77.88");
+
+    executeInsert(
         conn,
-        tableName,
-        "(n INTEGER, s STRING, b BOOLEAN, i INTEGER, l INTEGER, f FLOAT, d FLOAT,"
-            + " bd NUMBER(18,2), bin BINARY)");
+        "INSERT INTO "
+            + tableName
+            + " (n, s, b, i, l, f, d, bd, bin) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        insert -> {
+          insert.setObject(1, null);
+          insert.setObject(2, "obj");
+          insert.setObject(3, true);
+          insert.setObject(4, 123);
+          insert.setObject(5, 987654321L);
+          insert.setObject(6, 1.25f);
+          insert.setObject(7, 2.5d);
+          insert.setObject(8, expectedDecimal);
+          insert.setObject(9, bytesValue);
+        });
 
-    try (PreparedStatement insert =
-        conn.prepareStatement(
-            "INSERT INTO "
-                + tableName
-                + " (n, s, b, i, l, f, d, bd, bin) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")) {
-      insert.setObject(1, null);
-      insert.setObject(2, "obj");
-      insert.setObject(3, true);
-      insert.setObject(4, 123);
-      insert.setObject(5, 987654321L);
-      insert.setObject(6, 1.25f);
-      insert.setObject(7, 2.5d);
-      insert.setObject(8, new BigDecimal("77.88"));
-      insert.setObject(9, bytesValue);
-      insert.execute();
-    }
-
-    try (PreparedStatement verify =
-            conn.prepareStatement(
-                "SELECT COUNT(*), COUNT(n), MIN(s), MIN(b), MIN(i), MIN(l), MIN(f), MIN(d),"
-                    + " MIN(bd), MIN(bin) FROM "
-                    + tableName);
-        ResultSet rs = verify.executeQuery()) {
-      assertTrue(rs.next(), "Verification query should return one row");
-      assertEquals(1, rs.getInt(1), "Exactly one row should be inserted");
-      assertEquals(0, rs.getInt(2), "setObject(null) should keep INTEGER column NULL");
-      assertEquals("obj", rs.getString(3), "setObject(String) value should match");
-      assertTrue(rs.getBoolean(4), "setObject(Boolean) value should match");
-      assertEquals(123, rs.getInt(5), "setObject(Integer) value should match");
-      assertEquals(987654321L, rs.getLong(6), "setObject(Long) value should match");
-      assertEquals(1.25f, rs.getFloat(7), 0.0001f, "setObject(Float) value should match");
-      assertEquals(2.5d, rs.getDouble(8), 0.0001d, "setObject(Double) value should match");
-      assertEquals(
-          0,
-          new BigDecimal("77.88").compareTo(rs.getBigDecimal(9)),
-          "setObject(BigDecimal) value should match");
-      assertArrayEquals(bytesValue, rs.getBytes(10), "setObject(byte[]) value should match");
-    }
+    verifySingleRow(
+        conn,
+        "SELECT COUNT(*), COUNT(n), MIN(s), MIN(b), MIN(i), MIN(l), MIN(f), MIN(d),"
+            + " MIN(bd), MIN(bin) FROM "
+            + tableName,
+        rs -> {
+          assertEquals(0, rs.getInt(2));
+          assertEquals("obj", rs.getString(3));
+          assertTrue(rs.getBoolean(4));
+          assertEquals(123, rs.getInt(5));
+          assertEquals(987654321L, rs.getLong(6));
+          assertEquals(1.25f, rs.getFloat(7), 0.0001f);
+          assertEquals(2.5d, rs.getDouble(8), 0.0001d);
+          assertEquals(0, expectedDecimal.compareTo(rs.getBigDecimal(9)));
+          assertArrayEquals(bytesValue, rs.getBytes(10));
+        });
   }
 
   @Test
   public void testSetObjectWithTargetSqlTypeAndNull() throws Exception {
-    String tableName = buildTempTableName();
     Connection conn = getDefaultConnection();
-    createTempTable(conn, tableName, "(id INTEGER, txt STRING)");
+    String tableName = prepareTable(conn, "(id INTEGER, txt STRING)");
 
-    try (PreparedStatement insert =
-        conn.prepareStatement("INSERT INTO " + tableName + " (id, txt) VALUES (?, ?)")) {
-      insert.setObject(1, null, Types.INTEGER);
-      insert.setObject(2, "typed", Types.VARCHAR);
-      insert.execute();
-    }
+    executeInsert(
+        conn,
+        "INSERT INTO " + tableName + " (id, txt) VALUES (?, ?)",
+        insert -> {
+          insert.setObject(1, null, Types.INTEGER);
+          insert.setObject(2, "typed", Types.VARCHAR);
+        });
 
-    try (PreparedStatement verify =
-            conn.prepareStatement("SELECT COUNT(*), COUNT(id), MIN(txt) FROM " + tableName);
-        ResultSet rs = verify.executeQuery()) {
-      assertTrue(rs.next(), "Verification query should return one row");
-      assertEquals(1, rs.getInt(1), "Exactly one row should be inserted");
-      assertEquals(0, rs.getInt(2), "setObject(null, Types.INTEGER) should remain NULL");
-      assertEquals("typed", rs.getString(3), "setObject with sqlType should delegate correctly");
-    }
+    verifySingleRow(
+        conn,
+        "SELECT COUNT(*), COUNT(id), MIN(txt) FROM " + tableName,
+        rs -> {
+          assertEquals(0, rs.getInt(2));
+          assertEquals("typed", rs.getString(3));
+        });
   }
 
   @Test
@@ -388,13 +160,13 @@ public class SnowflakePreparedStatementBindingTest extends SnowflakeIntegrationT
     try (PreparedStatement stmt =
             conn.prepareStatement("SELECT SYSTEM$TYPEOF(?), SYSTEM$TYPEOF(?)");
         ResultSet rs = executeWithTargetTypes(stmt)) {
-      assertTrue(rs.next(), "TYPEOF query should return one row");
+      assertTrue(rs.next());
       assertTrue(
           rs.getString(1).toUpperCase().contains("VARCHAR"),
-          "setObject(..., Types.VARCHAR) should bind as text type");
+          "Expected VARCHAR binding for setObject(..., Types.VARCHAR)");
       assertTrue(
           rs.getString(2).toUpperCase().contains("NUMBER"),
-          "setObject(..., Types.INTEGER) should bind as numeric type");
+          "Expected NUMBER binding for setObject(..., Types.INTEGER)");
     }
   }
 
@@ -406,9 +178,8 @@ public class SnowflakePreparedStatementBindingTest extends SnowflakeIntegrationT
 
   @Test
   public void testSetObjectUnsupportedTypeThrowsSQLException() throws Exception {
-    String tableName = buildTempTableName();
     Connection conn = getDefaultConnection();
-    createTempTable(conn, tableName, "(v STRING)");
+    String tableName = prepareTable(conn, "(v STRING)");
 
     try (PreparedStatement insert =
         conn.prepareStatement("INSERT INTO " + tableName + " (v) VALUES (?)")) {
@@ -418,9 +189,8 @@ public class SnowflakePreparedStatementBindingTest extends SnowflakeIntegrationT
 
   @Test
   public void testClearParametersAndPartialRebindFailsDeterministically() throws Exception {
-    String tableName = buildTempTableName();
     Connection conn = getDefaultConnection();
-    createTempTable(conn, tableName, "(id INTEGER, txt STRING)");
+    String tableName = prepareTable(conn, "(id INTEGER, txt STRING)");
 
     try (PreparedStatement insert =
         conn.prepareStatement("INSERT INTO " + tableName + " (id, txt) VALUES (?, ?)")) {
@@ -435,28 +205,140 @@ public class SnowflakePreparedStatementBindingTest extends SnowflakeIntegrationT
 
   @Test
   public void testSetNullWithRepresentativeSqlTypes() throws Exception {
-    String tableName = buildTempTableName();
     Connection conn = getDefaultConnection();
-    createTempTable(conn, tableName, "(b BOOLEAN, i INTEGER, bin BINARY)");
+    String tableName = prepareTable(conn, "(b BOOLEAN, i INTEGER, bin BINARY)");
 
-    try (PreparedStatement insert =
-        conn.prepareStatement("INSERT INTO " + tableName + " (b, i, bin) VALUES (?, ?, ?)")) {
-      insert.setNull(1, Types.BOOLEAN);
-      insert.setNull(2, Types.INTEGER);
-      insert.setNull(3, Types.BINARY);
+    executeInsert(
+        conn,
+        "INSERT INTO " + tableName + " (b, i, bin) VALUES (?, ?, ?)",
+        insert -> {
+          insert.setNull(1, Types.BOOLEAN);
+          insert.setNull(2, Types.INTEGER);
+          insert.setNull(3, Types.BINARY);
+        });
+
+    verifySingleRow(
+        conn,
+        "SELECT COUNT(*), COUNT(b), COUNT(i), COUNT(bin) FROM " + tableName,
+        rs -> {
+          assertEquals(0, rs.getInt(2));
+          assertEquals(0, rs.getInt(3));
+          assertEquals(0, rs.getInt(4));
+        });
+  }
+
+  private String prepareTable(Connection conn, String schema) throws Exception {
+    String tableName = buildTempTableName();
+    createTempTable(conn, tableName, schema);
+    return tableName;
+  }
+
+  private static Stream<SingleSetterCase> singleSetterCases() {
+    byte[] bytesValue = new byte[] {0x01, 0x02, 0x03};
+    BigDecimal bigDecimalValue = new BigDecimal("12345.67");
+    return Stream.of(
+        new SingleSetterCase(
+            "setNull",
+            "(v INTEGER)",
+            insert -> insert.setNull(1, Types.INTEGER),
+            rs -> assertNull(rs.getObject(1))),
+        new SingleSetterCase(
+            "setString",
+            "(v STRING)",
+            insert -> insert.setString(1, "hello"),
+            rs -> assertEquals("hello", rs.getString(1))),
+        new SingleSetterCase(
+            "setBoolean",
+            "(v BOOLEAN)",
+            insert -> insert.setBoolean(1, true),
+            rs -> assertTrue(rs.getBoolean(1))),
+        new SingleSetterCase(
+            "setByte",
+            "(v INTEGER)",
+            insert -> insert.setByte(1, (byte) 7),
+            rs -> assertEquals((byte) 7, rs.getByte(1))),
+        new SingleSetterCase(
+            "setShort",
+            "(v INTEGER)",
+            insert -> insert.setShort(1, (short) 11),
+            rs -> assertEquals((short) 11, rs.getShort(1))),
+        new SingleSetterCase(
+            "setInt",
+            "(v INTEGER)",
+            insert -> insert.setInt(1, 42),
+            rs -> assertEquals(42, rs.getInt(1))),
+        new SingleSetterCase(
+            "setLong",
+            "(v INTEGER)",
+            insert -> insert.setLong(1, 123456789L),
+            rs -> assertEquals(123456789L, rs.getLong(1))),
+        new SingleSetterCase(
+            "setFloat",
+            "(v FLOAT)",
+            insert -> insert.setFloat(1, 1.25f),
+            rs -> assertEquals(1.25f, rs.getFloat(1), 0.0001f)),
+        new SingleSetterCase(
+            "setDouble",
+            "(v FLOAT)",
+            insert -> insert.setDouble(1, 2.5d),
+            rs -> assertEquals(2.5d, rs.getDouble(1), 0.0001d)),
+        new SingleSetterCase(
+            "setBigDecimal",
+            "(v NUMBER(18,2))",
+            insert -> insert.setBigDecimal(1, bigDecimalValue),
+            rs -> assertEquals(0, bigDecimalValue.compareTo(rs.getBigDecimal(1)))),
+        new SingleSetterCase(
+            "setBytes",
+            "(v BINARY)",
+            insert -> insert.setBytes(1, bytesValue),
+            rs -> assertArrayEquals(bytesValue, rs.getBytes(1))));
+  }
+
+  private void executeInsert(Connection conn, String sql, SqlInsertBinder binder)
+      throws SQLException {
+    try (PreparedStatement insert = conn.prepareStatement(sql)) {
+      binder.bind(insert);
       insert.execute();
     }
+  }
 
-    try (PreparedStatement verify =
-            conn.prepareStatement(
-                "SELECT COUNT(*), COUNT(b), COUNT(i), COUNT(bin) FROM " + tableName);
+  private void verifySingleRow(Connection conn, String sql, ResultSetVerifier verifier)
+      throws SQLException {
+    try (PreparedStatement verify = conn.prepareStatement(sql);
         ResultSet rs = verify.executeQuery()) {
-      assertTrue(rs.next(), "Verification query should return one row");
-      assertEquals(1, rs.getInt(1), "Exactly one row should be inserted");
-      assertEquals(0, rs.getInt(2), "BOOLEAN NULL should not contribute to COUNT");
-      assertEquals(0, rs.getInt(3), "INTEGER NULL should not contribute to COUNT");
-      assertEquals(0, rs.getInt(4), "BINARY NULL should not contribute to COUNT");
+      assertTrue(rs.next());
+      assertEquals(1, rs.getInt(1));
+      verifier.verify(rs);
     }
+  }
+
+  private void verifySingleValue(Connection conn, String sql, ResultSetVerifier verifier)
+      throws SQLException {
+    try (PreparedStatement verify = conn.prepareStatement(sql);
+        ResultSet rs = verify.executeQuery()) {
+      assertTrue(rs.next());
+      verifier.verify(rs);
+      assertFalse(rs.next());
+    }
+  }
+
+  @FunctionalInterface
+  private interface SqlInsertBinder {
+    void bind(PreparedStatement insert) throws SQLException;
+  }
+
+  @FunctionalInterface
+  private interface ResultSetVerifier {
+    void verify(ResultSet rs) throws SQLException;
+  }
+
+  @Value
+  @ToString(of = "name")
+  private static class SingleSetterCase {
+    String name;
+    String schema;
+    SqlInsertBinder binder;
+    ResultSetVerifier verifier;
   }
 
   private String buildTempTableName() {

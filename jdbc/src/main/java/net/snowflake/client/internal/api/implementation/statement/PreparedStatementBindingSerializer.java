@@ -124,19 +124,32 @@ final class PreparedStatementBindingSerializer {
     }
 
     static NativeBuffer fromBytes(byte[] source) throws SQLException {
-      RootAllocator allocator = new RootAllocator(Long.MAX_VALUE);
-      ArrowBuf arrowBuf = allocator.buffer(source.length);
-      arrowBuf.setBytes(0, source);
-      long address = arrowBuf.memoryAddress();
-      if (address == 0L) {
-        arrowBuf.close();
-        allocator.close();
-        logger.warn(
-            "Failed to allocate native memory for binding data: payloadBytes={}", source.length);
-        throw new SQLException("Failed to allocate native memory for binding data");
+      RootAllocator allocator = null;
+      ArrowBuf arrowBuf = null;
+      boolean success = false;
+      try {
+        allocator = new RootAllocator(Long.MAX_VALUE);
+        arrowBuf = allocator.buffer(source.length);
+        arrowBuf.setBytes(0, source);
+        long address = arrowBuf.memoryAddress();
+        if (address == 0L) {
+          logger.warn(
+              "Failed to allocate native memory for binding data: payloadBytes={}", source.length);
+          throw new SQLException("Failed to allocate native memory for binding data");
+        }
+        logger.debug("Allocated native binding buffer: payloadBytes={}", source.length);
+        success = true;
+        return new NativeBuffer(allocator, arrowBuf, address);
+      } finally {
+        if (!success) {
+          if (arrowBuf != null) {
+            arrowBuf.close();
+          }
+          if (allocator != null) {
+            allocator.close();
+          }
+        }
       }
-      logger.debug("Allocated native binding buffer: payloadBytes={}", source.length);
-      return new NativeBuffer(allocator, arrowBuf, address);
     }
 
     byte[] pointerAsLittleEndianBytes() {

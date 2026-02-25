@@ -25,11 +25,12 @@ import java.sql.Types;
 import java.util.Arrays;
 import java.util.Calendar;
 import java.util.Map;
+import java.util.function.Function;
 import net.snowflake.client.api.statement.SnowflakePreparedStatement;
 import net.snowflake.client.internal.api.implementation.connection.SnowflakeConnectionImpl;
 import net.snowflake.client.internal.log.SFLogger;
 import net.snowflake.client.internal.log.SFLoggerFactory;
-import net.snowflake.client.internal.util.SnowflakeUtil;
+import net.snowflake.client.internal.util.HexUtil;
 
 /**
  * Snowflake JDBC PreparedStatement implementation
@@ -121,31 +122,21 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
   @Override
   public void setBigDecimal(int parameterIndex, BigDecimal x) throws SQLException {
     checkClosed();
-    if (x == null) {
-      setNull(parameterIndex, Types.DECIMAL);
-      return;
-    }
-    setParameter(parameterIndex, "FIXED", String.valueOf(x));
+    setNullableParameter(
+        parameterIndex, Types.DECIMAL, "FIXED", x, decimal -> String.valueOf(decimal));
   }
 
   @Override
   public void setString(int parameterIndex, String x) throws SQLException {
     checkClosed();
-    if (x == null) {
-      setNull(parameterIndex, Types.VARCHAR);
-      return;
-    }
-    setParameter(parameterIndex, "TEXT", x);
+    setNullableParameter(parameterIndex, Types.VARCHAR, "TEXT", x, stringValue -> stringValue);
   }
 
   @Override
   public void setBytes(int parameterIndex, byte[] x) throws SQLException {
     checkClosed();
-    if (x == null) {
-      setNull(parameterIndex, Types.BINARY);
-      return;
-    }
-    setParameter(parameterIndex, "BINARY", SnowflakeUtil.bytesToHex(x));
+    setNullableParameter(
+        parameterIndex, Types.BINARY, "BINARY", x, bytes -> HexUtil.bytesToHex(bytes));
   }
 
   @Override
@@ -484,6 +475,16 @@ public class SnowflakePreparedStatementImpl extends SnowflakeStatementImpl
         bindType,
         value == null,
         parameterValues.length);
+  }
+
+  private <T> void setNullableParameter(
+      int parameterIndex, int sqlType, String bindType, T value, Function<T, String> serializer)
+      throws SQLException {
+    if (value == null) {
+      setNull(parameterIndex, sqlType);
+      return;
+    }
+    setParameter(parameterIndex, bindType, serializer.apply(value));
   }
 
   private static String sqlTypeToBindType(int sqlType) {

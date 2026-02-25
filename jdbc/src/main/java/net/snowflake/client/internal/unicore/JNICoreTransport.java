@@ -40,7 +40,7 @@ public class JNICoreTransport implements CoreTransport {
         "JNI transport request: service={}, method={}, requestBytes={}",
         serviceName,
         methodName,
-        requestBytes == null ? 0 : requestBytes.length);
+        requestBytes == null ? -1 : requestBytes.length);
     TransportResponse response = nativeHandleMessage(serviceName, methodName, requestBytes);
     if (response == null) {
       logger.warn(
@@ -53,7 +53,7 @@ public class JNICoreTransport implements CoreTransport {
         serviceName,
         methodName,
         response.getCode(),
-        responseBytes == null ? 0 : responseBytes.length);
+        responseBytes == null ? -1 : responseBytes.length);
     return response;
   }
 
