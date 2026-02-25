@@ -83,7 +83,7 @@ class ConnectionClassState:
 
     # Track if first auto-cleanup warning has been emitted in this process
     # False = warning already emitted, True = warning not yet emitted
-    first_auto_cleanup_warning_pending: bool = True
+    first_auto_cleanup_pending: bool = True
 
 
 class Connection:
@@ -253,7 +253,7 @@ class Connection:
 
         # Connection is leaked (not explicitly closed) - emit deprecation warning
         # Phase 3 (SNOW-2314152): Auto-cleanup will be disabled by default
-        if self.__class__._class_state.first_auto_cleanup_warning_pending:
+        if self.__class__._class_state.first_auto_cleanup_pending:
             warnings.warn(
                 "Connection was not explicitly closed before process exit. "
                 "Auto-cleanup at exit will be disabled by default in a future version. "
@@ -261,7 +261,7 @@ class Connection:
                 FutureWarning,
                 stacklevel=2,
             )
-            self.__class__._class_state.first_auto_cleanup_warning_pending = False
+            self.__class__._class_state.first_auto_cleanup_pending = False
 
         # Attempt cleanup for leaked connection
         try:
