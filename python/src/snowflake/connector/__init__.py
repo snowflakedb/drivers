@@ -8,6 +8,7 @@ as defined in PEP 249.
 from typing import Any
 
 from ._internal.api_client.c_api import register_default_logger_callback
+from ._internal.decorators import pep249
 from .connection import Connection, SnowflakeConnection
 from .cursor import DictCursor, SnowflakeCursor
 from .errors import (
@@ -47,6 +48,7 @@ paramstyle = "pyformat"  # Default: %(name)s and %s placeholders (client-side in
 register_default_logger_callback()
 
 
+@pep249
 def connect(**kwargs: Any) -> Connection:
     """
     Create a connection to the database.

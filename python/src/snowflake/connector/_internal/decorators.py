@@ -22,3 +22,8 @@ def internal_api(func: F) -> F:
 def backward_compatibility(func: F) -> F:
     """Mark a method as backward compatibility utility"""
     return func
+
+
+def pep249(func: F) -> F:
+    """Mark a method or property as defined by PEP 249 (required or optional)."""
+    return func

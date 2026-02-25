@@ -15,7 +15,7 @@ import abc
 import ctypes
 
 from collections.abc import Iterator, Sequence
-from typing import TYPE_CHECKING, Any, NamedTuple, Union, cast
+from typing import TYPE_CHECKING, Any, Callable, NamedTuple, Union, cast
 
 from ._internal.arrow_context import ArrowConverterContext
 from ._internal.arrow_stream_iterator import ArrowStreamIterator
@@ -24,6 +24,7 @@ from ._internal.binding_converters import (
     JsonBindingConverter,
     ParamStyle,
 )
+from ._internal.decorators import pep249
 from ._internal.protobuf_gen.database_driver_v1_pb2 import (
     BinaryDataPtr,
     ExecuteResult,
@@ -95,9 +96,6 @@ class SnowflakeCursorBase(abc.ABC):
     must override :pyattr:`_use_dict_result` and :pymeth:`fetchone`.
     """
 
-    # Class attribute for arraysize
-    arraysize = 1
-
     def __init__(self, connection: Connection) -> None:
         """
         Initialize a new cursor object.
@@ -105,10 +103,10 @@ class SnowflakeCursorBase(abc.ABC):
         Args:
             connection: Connection object that created this cursor
         """
-        self.connection = connection
+        self._connection = connection
         self._description: list[ResultMetadata] | None = None
         self._rowcount: int | None = None
-        self.arraysize = 1  # Instance attribute overrides class attribute
+        self._arraysize: int = 1
         self._closed = False
         # Streaming state for Arrow results
         self._reader = None
@@ -118,12 +116,22 @@ class SnowflakeCursorBase(abc.ABC):
         self._iterator: Iterator[Row] | None = None
         # Query bindings - keep binding data reference to prevent garbage collection while Rust uses it
         self._binding_data: None | bytes = None
+        self._messages: list[tuple[type[Exception], dict[str, str | bool]]] = []
+        self._rownumber: int | None = None
+        self._errorhandler: Callable = ProgrammingError
 
     # ------------------------------------------------------------------
     # PEP 249 attributes
     # ------------------------------------------------------------------
 
     @property
+    @pep249
+    def connection(self) -> Connection:
+        """The :class:`Connection` object that created this cursor."""
+        return self._connection
+
+    @property
+    @pep249
     def description(self) -> list[ResultMetadata] | None:
         """
         Read-only attribute describing the result columns of a query.
@@ -142,6 +150,7 @@ class SnowflakeCursorBase(abc.ABC):
         return self._description
 
     @property
+    @pep249
     def rowcount(self) -> int | None:
         """
         Read-only attribute specifying the number of rows that the last
@@ -151,6 +160,26 @@ class SnowflakeCursorBase(abc.ABC):
             int: Number of rows affected, or None if not determined
         """
         return self._rowcount
+
+    @property
+    @pep249
+    def arraysize(self) -> int:
+        """Number of rows to fetch at a time with .fetchmany(). Defaults to 1."""
+        return self._arraysize
+
+    @arraysize.setter
+    def arraysize(self, value: int) -> None:
+        self._arraysize = int(value)
+
+    @property
+    @pep249
+    def messages(self) -> list[tuple[type[Exception], dict[str, str | bool]]]:
+        """List of (exception class, exception value) tuples received from the database."""
+        return self._messages
+
+    @messages.setter
+    def messages(self, value: list[tuple[type[Exception], dict[str, str | bool]]]) -> None:
+        self._messages = value
 
     # ------------------------------------------------------------------
     # Result format control
@@ -189,6 +218,7 @@ class SnowflakeCursorBase(abc.ABC):
             return None
         return self.execute_result.query_id if self.execute_result.query_id else None
 
+    @pep249
     def callproc(self, procname: str, parameters: Sequence[Any] | None = None) -> Sequence[Any]:
         """
         Call a stored database procedure with the given name.
@@ -205,6 +235,7 @@ class SnowflakeCursorBase(abc.ABC):
         """
         raise NotSupportedError("callproc is not implemented")
 
+    @pep249
     def close(self) -> None:
         """Close the cursor now (rather than whenever __del__ is called)."""
         self._closed = True
@@ -264,7 +295,7 @@ class SnowflakeCursorBase(abc.ABC):
         if parameters is None:
             return operation, None
 
-        paramstyle = self.connection.paramstyle  # Always returns ParamStyle enum
+        paramstyle = self._connection.paramstyle  # Always returns ParamStyle enum
 
         if paramstyle.is_client_side():
             # format paramstyle only supports positional params (%s), not named params
@@ -286,6 +317,7 @@ class SnowflakeCursorBase(abc.ABC):
             bindings = self._build_query_bindings(parameters)
             return operation, bindings
 
+    @pep249
     def execute(
         self,
         operation: str,
@@ -304,16 +336,16 @@ class SnowflakeCursorBase(abc.ABC):
         """
         query, bindings = self._prepare_query(operation, parameters)
 
-        stmt_handle = self.connection.db_api.statement_new(
-            StatementNewRequest(conn_handle=self.connection.conn_handle)
+        stmt_handle = self._connection.db_api.statement_new(
+            StatementNewRequest(conn_handle=self._connection.conn_handle)
         ).stmt_handle
-        self.connection.db_api.statement_set_sql_query(
+        self._connection.db_api.statement_set_sql_query(
             StatementSetSqlQueryRequest(stmt_handle=stmt_handle, query=query)
         )
 
         request = StatementExecuteQueryRequest(stmt_handle=stmt_handle, bindings=bindings)
 
-        self.execute_result = self.connection.db_api.statement_execute_query(request).result
+        self.execute_result = self._connection.db_api.statement_execute_query(request).result
 
         # Reset streaming state for a new result
         self._binding_data = None
@@ -330,6 +362,7 @@ class SnowflakeCursorBase(abc.ABC):
         else:
             self._rowcount = None
 
+    @pep249
     def executemany(self, operation: str, seq_of_parameters: Sequence[Sequence[Any] | dict[str, Any]]) -> None:
         """
         Execute a database operation repeatedly for each element in seq_of_parameters.
@@ -348,7 +381,7 @@ class SnowflakeCursorBase(abc.ABC):
         if not seq_of_parameters:
             return  # Empty sequence - no-op per PEP 249
 
-        paramstyle = self.connection.paramstyle
+        paramstyle = self._connection.paramstyle
         first_params = seq_of_parameters[0]
 
         # Execute individually for:
@@ -464,10 +497,12 @@ class SnowflakeCursorBase(abc.ABC):
         except StopIteration:
             return None
 
+    @pep249
     @abc.abstractmethod
     def fetchone(self) -> Row | DictRow | None:
         """Fetch the next row of a query result set."""
 
+    @pep249
     def fetchmany(self, size: int | None = None) -> list[Any]:
         """
         Fetch the next set of rows of a query result.
@@ -497,6 +532,7 @@ class SnowflakeCursorBase(abc.ABC):
 
         return ret
 
+    @pep249
     def fetchall(self) -> list[Any]:
         """
         Fetch all (remaining) rows of a query result.
@@ -512,6 +548,7 @@ class SnowflakeCursorBase(abc.ABC):
     # PEP 249 optional / no-op methods
     # ------------------------------------------------------------------
 
+    @pep249
     def nextset(self) -> None:
         """
         Skip to the next available set, discarding any remaining rows from current set.
@@ -524,10 +561,12 @@ class SnowflakeCursorBase(abc.ABC):
         """
         raise NotSupportedError("nextset is not implemented")
 
+    @pep249
     def setinputsizes(self, sizes: Sequence[Any]) -> None:
         """Not supported."""
         return None
 
+    @pep249
     def setoutputsize(self, size: int, column: int | None = None) -> None:
         """Not supported."""
         return None
@@ -536,6 +575,7 @@ class SnowflakeCursorBase(abc.ABC):
     # Iterator protocol
     # ------------------------------------------------------------------
 
+    @pep249
     def __iter__(self) -> SnowflakeCursorBase:
         """
         Return the cursor itself as an iterator.
@@ -560,7 +600,7 @@ class SnowflakeCursorBase(abc.ABC):
             raise StopIteration
         return row
 
-    # Python 2 compatibility
+    @pep249
     def next(self) -> Row | DictRow:
         """Python 2 compatibility method."""
         return self.__next__()
@@ -590,6 +630,150 @@ class SnowflakeCursorBase(abc.ABC):
             bool: True if closed, False otherwise
         """
         return self._closed
+
+    @property
+    @pep249
+    def rownumber(self) -> int | None:
+        """The current 0-based index of the cursor in the result set, or ``None`` if indeterminate."""
+        return self._rownumber if self._rownumber is not None and self._rownumber >= 0 else None
+
+    @property
+    def sqlstate(self) -> str | None:
+        """The SQLSTATE code of the last executed operation."""
+        raise NotImplementedError("sqlstate is not yet implemented")
+
+    @property
+    def timestamp_output_format(self) -> str | None:
+        """The session's ``TIMESTAMP_OUTPUT_FORMAT`` parameter value."""
+        raise NotImplementedError("timestamp_output_format is not yet implemented")
+
+    @property
+    def timestamp_ltz_output_format(self) -> str | None:
+        """The session's ``TIMESTAMP_LTZ_OUTPUT_FORMAT`` parameter value.
+
+        Falls back to :pyattr:`timestamp_output_format` when not set explicitly.
+        """
+        raise NotImplementedError("timestamp_ltz_output_format is not yet implemented")
+
+    @property
+    def timestamp_tz_output_format(self) -> str | None:
+        """The session's ``TIMESTAMP_TZ_OUTPUT_FORMAT`` parameter value.
+
+        Falls back to :pyattr:`timestamp_output_format` when not set explicitly.
+        """
+        raise NotImplementedError("timestamp_tz_output_format is not yet implemented")
+
+    @property
+    def timestamp_ntz_output_format(self) -> str | None:
+        """The session's ``TIMESTAMP_NTZ_OUTPUT_FORMAT`` parameter value.
+
+        Falls back to :pyattr:`timestamp_output_format` when not set explicitly.
+        """
+        raise NotImplementedError("timestamp_ntz_output_format is not yet implemented")
+
+    @property
+    def date_output_format(self) -> str | None:
+        """The session's ``DATE_OUTPUT_FORMAT`` parameter value."""
+        raise NotImplementedError("date_output_format is not yet implemented")
+
+    @property
+    def time_output_format(self) -> str | None:
+        """The session's ``TIME_OUTPUT_FORMAT`` parameter value."""
+        raise NotImplementedError("time_output_format is not yet implemented")
+
+    @property
+    def timezone(self) -> str | None:
+        """The session's ``TIMEZONE`` parameter value."""
+        raise NotImplementedError("timezone is not yet implemented")
+
+    @property
+    def binary_output_format(self) -> str | None:
+        """The session's ``BINARY_OUTPUT_FORMAT`` parameter value (``HEX`` or ``BASE64``)."""
+        raise NotImplementedError("binary_output_format is not yet implemented")
+
+    @property
+    @pep249
+    def errorhandler(self) -> Callable:
+        """PEP 249 error handler for this cursor."""
+        return self._errorhandler
+
+    @errorhandler.setter
+    def errorhandler(self, value: Callable | None) -> None:
+        if value is None:
+            raise ProgrammingError("Invalid errorhandler is specified")
+        self._errorhandler = value
+
+    @property
+    def is_file_transfer(self) -> bool:
+        """Whether the last executed command was a PUT or GET file transfer."""
+        raise NotImplementedError("is_file_transfer is not yet implemented")
+
+    @property
+    @pep249
+    def lastrowid(self) -> None:
+        """Snowflake does not support lastrowid; returns None per PEP 249."""
+        return None
+
+    def execute_async(
+        self,
+        command: str,
+        params: Sequence[Any] | dict[str, Any] | None = None,
+        timeout: int | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        """Execute a query asynchronously without waiting for results."""
+        raise NotImplementedError("execute_async is not yet implemented")
+
+    def describe(
+        self,
+        command: str,
+        params: Sequence[Any] | dict[str, Any] | None = None,
+        timeout: int | None = None,
+        **kwargs: Any,
+    ) -> list[ResultMetadata]:
+        """Obtain the schema of the result without executing the query."""
+        raise NotImplementedError("describe is not yet implemented")
+
+    @pep249
+    def scroll(self, value: int, mode: str = "relative") -> None:
+        """Scroll the cursor in the result set."""
+        raise NotSupportedError("scroll is not supported")
+
+    def reset(self, closing: bool = False) -> None:
+        """Reset the result set."""
+        raise NotImplementedError("reset is not yet implemented")
+
+    def query_result(self, qid: str) -> SnowflakeCursorBase:
+        """Query the result of a previously executed query."""
+        raise NotImplementedError("query_result is not yet implemented")
+
+    def fetch_arrow_batches(self, **kwargs: Any) -> Iterator[Any]:
+        """Fetch Arrow Tables in batches."""
+        raise NotImplementedError("fetch_arrow_batches is not yet implemented")
+
+    def fetch_arrow_all(self, **kwargs: Any) -> Any:
+        """Fetch all results as a single Arrow Table."""
+        raise NotImplementedError("fetch_arrow_all is not yet implemented")
+
+    def fetch_pandas_batches(self, **kwargs: Any) -> Iterator[Any]:
+        """Fetch Pandas DataFrames in batches."""
+        raise NotImplementedError("fetch_pandas_batches is not yet implemented")
+
+    def fetch_pandas_all(self, **kwargs: Any) -> Any:
+        """Fetch all results as a single Pandas DataFrame."""
+        raise NotImplementedError("fetch_pandas_all is not yet implemented")
+
+    def abort_query(self, qid: str) -> bool:
+        """Abort a running query."""
+        raise NotImplementedError("abort_query is not yet implemented")
+
+    def get_results_from_sfqid(self, sfqid: str) -> None:
+        """Get results from a previously executed async query."""
+        raise NotImplementedError("get_results_from_sfqid is not yet implemented")
+
+    def get_result_batches(self) -> list[Any] | None:
+        """Get the previously executed query's ResultBatches if available."""
+        raise NotImplementedError("get_result_batches is not yet implemented")
 
 
 # ======================================================================

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Generator, Iterable
 from io import StringIO
-from typing import Any, Union
+from typing import Any, Callable, Union
 
 from snowflake.connector._internal.protobuf_gen.database_driver_v1_services import (
     ConnectionGetInfoRequest,
@@ -29,10 +29,10 @@ from snowflake.connector._internal.snowflake_restful import SnowflakeRestful
 from ._internal._private_key_helper import normalize_private_key
 from ._internal.api_client.client_api import database_driver_client
 from ._internal.binding_converters import ParamStyle
-from ._internal.decorators import backward_compatibility, internal_api
+from ._internal.decorators import backward_compatibility, internal_api, pep249
 from ._internal.text_utils import split_statements
 from .cursor import CursorInstance, CursorType, SnowflakeCursor
-from .errors import InterfaceError, NotSupportedError
+from .errors import InterfaceError, NotSupportedError, ProgrammingError
 from .telemetry import TelemetryClient
 
 
@@ -110,11 +110,25 @@ class Connection:
         self.kwargs = {k: ("***" if k in _sensitive_keys else v) for k, v in kwargs.items()}
         self._closed = False
         self._autocommit = False
+        self._messages: list[tuple[type[Exception], dict[str, str | bool]]] = []
+        self._errorhandler: Callable = ProgrammingError
 
+    @pep249
     def close(self) -> None:
         """Close the connection now."""
         self._closed = True
 
+    @property
+    @pep249
+    def messages(self) -> list[tuple[type[Exception], dict[str, str | bool]]]:
+        """List of (exception class, exception value) tuples received from the database."""
+        return self._messages
+
+    @messages.setter
+    def messages(self, value: list[tuple[type[Exception], dict[str, str | bool]]]) -> None:
+        self._messages = value
+
+    @pep249
     def commit(self) -> None:
         """
         Commit any pending transaction to the database.
@@ -124,6 +138,7 @@ class Connection:
         """
         raise NotSupportedError("commit is not implemented")
 
+    @pep249
     def rollback(self) -> None:
         """
         Roll back to the start of any pending transaction.
@@ -133,6 +148,7 @@ class Connection:
         """
         raise NotSupportedError("rollback is not implemented")
 
+    @pep249
     def cursor(self, cursor_class: CursorType = SnowflakeCursor) -> CursorInstance:
         """
         Return a new Cursor object using the connection.
@@ -222,6 +238,7 @@ class Connection:
         # TODO: SNOW-3155976 Lacks full implementation
         return self._autocommit
 
+    @pep249
     def autocommit(self, value: bool) -> None:
         """
         Set autocommit mode.
@@ -300,6 +317,7 @@ class Connection:
     @internal_api
     @backward_compatibility
     def rest(self) -> SnowflakeRestful:
+        """Internal :class:`SnowflakeRestful` instance exposed for backward compatibility."""
         return SnowflakeRestful(connection=self)
 
     @internal_api
@@ -321,27 +339,209 @@ class Connection:
 
     @property
     def role(self) -> str | None:
+        """The current role in use for the session."""
         return self.kwargs.get("role")  # type: ignore[return-value]
 
     @property
     def database(self) -> str | None:
+        """The current database in use for the session."""
         # TODO: SNOW-3155976 Read from connection details
         return self.kwargs.get("database")  # type: ignore[return-value]
 
     @property
     def schema(self) -> str | None:
+        """The current schema in use for the session."""
         # TODO: SNOW-3155976 Read from connection details
         return self.kwargs.get("schema")  # type: ignore[return-value]
 
     @property
     def account(self) -> str | None:
+        """The Snowflake account name used by this connection."""
         # TODO: SNOW-3155976 Read from connection details
         return self.kwargs.get("account")  # type: ignore[return-value]
 
     @property
     def warehouse(self) -> str | None:
+        """The current warehouse in use for the session."""
         # TODO: SNOW-3155976 Read from connection details
         return self.kwargs.get("warehouse")  # type: ignore[return-value]
+
+    @property
+    def user(self) -> str | None:
+        """The user name used for authentication."""
+        # TODO: SNOW-3155976 Read from connection details
+        return self.kwargs.get("user")  # type: ignore[return-value]
+
+    @property
+    def host(self) -> str | None:
+        """The host name of the Snowflake instance."""
+        # TODO: SNOW-3155976 Read from connection details
+        return self.kwargs.get("host")  # type: ignore[return-value]
+
+    @property
+    def port(self) -> int | None:
+        """The port number of the Snowflake instance."""
+        # TODO: SNOW-3155976 Read from connection details
+        return self.kwargs.get("port")  # type: ignore[return-value]
+
+    @property
+    def region(self) -> str | None:
+        """Deprecated. The region for the Snowflake account."""
+        raise NotImplementedError("region is not implemented")
+
+    @property
+    def session_id(self) -> int:
+        """The Snowflake session ID for this connection."""
+        # TODO: SNOW-3155976 Read from connection details
+        raise NotImplementedError("session_id is not yet implemented")
+
+    @property
+    def login_timeout(self) -> int | None:
+        """The login timeout in seconds."""
+        raise NotImplementedError("login_timeout is not yet implemented")
+
+    @property
+    def network_timeout(self) -> int | None:
+        """The network timeout in seconds for all other operations."""
+        raise NotImplementedError("network_timeout is not yet implemented")
+
+    @property
+    def socket_timeout(self) -> int | None:
+        """The socket timeout in seconds."""
+        raise NotImplementedError("socket_timeout is not yet implemented")
+
+    @property
+    def client_session_keep_alive(self) -> bool | None:
+        """Whether to keep the session active with periodic heartbeat requests."""
+        raise NotImplementedError("client_session_keep_alive is not yet implemented")
+
+    @client_session_keep_alive.setter
+    def client_session_keep_alive(self, value: bool) -> None:
+        raise NotImplementedError("client_session_keep_alive is not yet implemented")
+
+    @property
+    def client_session_keep_alive_heartbeat_frequency(self) -> int | None:
+        """The frequency in seconds of heartbeat requests when session keep-alive is enabled."""
+        raise NotImplementedError("client_session_keep_alive_heartbeat_frequency is not yet implemented")
+
+    @client_session_keep_alive_heartbeat_frequency.setter
+    def client_session_keep_alive_heartbeat_frequency(self, value: int) -> None:
+        raise NotImplementedError("client_session_keep_alive_heartbeat_frequency is not yet implemented")
+
+    @property
+    def client_prefetch_threads(self) -> int:
+        """The number of threads used to prefetch query result data."""
+        raise NotImplementedError("client_prefetch_threads is not yet implemented")
+
+    @client_prefetch_threads.setter
+    def client_prefetch_threads(self, value: int) -> None:
+        raise NotImplementedError("client_prefetch_threads is not yet implemented")
+
+    @property
+    def application(self) -> str:
+        """The name of the client application connecting to Snowflake."""
+        raise NotImplementedError("application is not yet implemented")
+
+    @property
+    @pep249
+    def errorhandler(self) -> Callable:
+        """PEP 249 error handler called for connection and cursor errors."""
+        return self._errorhandler
+
+    @errorhandler.setter
+    def errorhandler(self, value: Callable | None) -> None:
+        if value is None:
+            raise ProgrammingError("Invalid errorhandler is specified")
+        self._errorhandler = value
+
+    @property
+    def is_pyformat(self) -> bool:
+        """Whether the connection uses pyformat or format paramstyle (client-side binding)."""
+        return self._paramstyle in (ParamStyle.PYFORMAT, ParamStyle.FORMAT)
+
+    @property
+    def telemetry_enabled(self) -> bool:
+        """Whether client-side telemetry collection is enabled."""
+        raise NotImplementedError("telemetry_enabled is not yet implemented")
+
+    @telemetry_enabled.setter
+    def telemetry_enabled(self, value: bool) -> None:
+        raise NotImplementedError("telemetry_enabled is not yet implemented")
+
+    @property
+    def service_name(self) -> str | None:
+        """The Snowflake service name for the connection, used for service discovery."""
+        raise NotImplementedError("service_name is not yet implemented")
+
+    @service_name.setter
+    def service_name(self, value: str | None) -> None:
+        raise NotImplementedError("service_name is not yet implemented")
+
+    @property
+    def log_max_query_length(self) -> int:
+        """Maximum number of characters of a query string to log."""
+        raise NotImplementedError("log_max_query_length is not yet implemented")
+
+    @property
+    def disable_request_pooling(self) -> bool:
+        """Whether HTTP connection pooling is disabled."""
+        raise NotImplementedError("disable_request_pooling is not yet implemented")
+
+    @disable_request_pooling.setter
+    def disable_request_pooling(self, value: bool) -> None:
+        raise NotImplementedError("disable_request_pooling is not yet implemented")
+
+    @property
+    def use_openssl_only(self) -> bool:
+        """Deprecated. Whether to restrict TLS to OpenSSL only (always ``True``)."""
+        raise NotImplementedError("use_openssl_only is not yet implemented")
+
+    @property
+    def arrow_number_to_decimal(self) -> bool:
+        """Whether to convert Arrow numeric types to Python ``Decimal`` instead of ``float``."""
+        raise NotImplementedError("arrow_number_to_decimal is not yet implemented")
+
+    @arrow_number_to_decimal.setter
+    def arrow_number_to_decimal(self, value: bool) -> None:
+        raise NotImplementedError("arrow_number_to_decimal is not yet implemented")
+
+    @property
+    def validate_default_parameters(self) -> bool:
+        """Whether to validate default connection parameters at connect time."""
+        raise NotImplementedError("validate_default_parameters is not yet implemented")
+
+    @property
+    def insecure_mode(self) -> bool:
+        """Whether OCSP certificate revocation checking is disabled."""
+        raise NotImplementedError("insecure_mode is not yet implemented")
+
+    @property
+    def consent_cache_id_token(self) -> bool:
+        """Whether to cache the IdP token for browser-based SSO authentication."""
+        raise NotImplementedError("consent_cache_id_token is not yet implemented")
+
+    @property
+    def snowflake_version(self) -> str:
+        """The current Snowflake server version string."""
+        raise NotImplementedError("snowflake_version is not yet implemented")
+
+    def get_query_status(self, sf_qid: str) -> Any:
+        """Retrieve the status of query with sf_qid."""
+        raise NotImplementedError("get_query_status is not yet implemented")
+
+    def get_query_status_throw_if_error(self, sf_qid: str) -> Any:
+        """Retrieve the status of query with sf_qid and raises an exception if the query terminated with an error."""
+        raise NotImplementedError("get_query_status_throw_if_error is not yet implemented")
+
+    @staticmethod
+    def is_still_running(status: Any) -> bool:
+        """Check whether given status is currently running."""
+        raise NotImplementedError("is_still_running is not yet implemented")
+
+    @staticmethod
+    def is_an_error(status: Any) -> bool:
+        """Check whether given status means that there has been an error."""
+        raise NotImplementedError("is_an_error is not yet implemented")
 
 
 # Backward compatibility alias
