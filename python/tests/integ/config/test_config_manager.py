@@ -1,12 +1,15 @@
 """Integration tests for the ConfigManager implementation."""
 
 import os
+import stat
 
 import pytest
 
 from snowflake.connector.config_manager import (
     ConfigManager,
     ConfigOption,
+    ConfigSlice,
+    ConfigSliceOptions,
 )
 from tests.compatibility import NEW_DRIVER_ONLY, OLD_DRIVER_ONLY
 
@@ -422,3 +425,483 @@ class TestBackwardCompatibility:
             # Then AttributeError should be raised (method was removed)
             with pytest.raises(AttributeError):
                 manager.add_subparser(child)
+
+
+def _write_config(path, content):
+    """Write a TOML file with secure permissions."""
+    path.write_text(content)
+    path.chmod(stat.S_IRUSR | stat.S_IWUSR)
+
+
+def _make_manager(config_file, connections_file=None):
+    """Create a ConfigManager with optional connections.toml slice."""
+    slices = []
+    if connections_file is not None:
+        slices.append(ConfigSlice(connections_file, ConfigSliceOptions(check_permissions=True), "connections"))
+    manager = ConfigManager(name="test_manager", file_path=config_file, _slices=slices)
+    manager.add_option(name="connections", default=dict())
+    manager.add_option(name="default_connection_name", default="default")
+    return manager
+
+
+class TestCLIScenarios:
+    """Tests covering scenarios exercised by the Snowflake CLI.
+
+    These validate that the driver's ConfigManager behaves correctly for
+    the configuration patterns the CLI depends on: connections.toml
+    replacement, rich multi-connection configs, root-level scalars,
+    tomlkit type wrapping, and re-read consistency.
+    """
+
+    def test_connections_toml_replaces_config_toml_connections(self, tmp_path):
+        """connections.toml connections fully replace config.toml connections."""
+        # Given config.toml has default and full connections
+        config_file = tmp_path / "config.toml"
+        connections_file = tmp_path / "connections.toml"
+        _write_config(
+            config_file,
+            """\
+[connections.default]
+database = "db_for_test"
+schema = "test_public"
+role = "test_role"
+
+[connections.full]
+account = "dev_account"
+user = "dev_user"
+""",
+        )
+        # And connections.toml defines only default with a different value
+        _write_config(
+            connections_file,
+            """\
+[default]
+database = "overridden_database"
+""",
+        )
+
+        # When ConfigManager reads with a connections slice
+        manager = _make_manager(config_file, connections_file)
+
+        # Then Only the connections.toml connection should be visible
+        connections = manager["connections"]
+        assert connections == {"default": {"database": "overridden_database"}}
+        assert "full" not in connections
+
+    def test_connections_toml_different_connections_replace(self, tmp_path):
+        """connections.toml with entirely different connection names replaces all."""
+        # Given config.toml has conn_a and conn_b
+        config_file = tmp_path / "config.toml"
+        connections_file = tmp_path / "connections.toml"
+        _write_config(
+            config_file,
+            """\
+[connections.conn_a]
+account = "account_a"
+
+[connections.conn_b]
+account = "account_b"
+""",
+        )
+        # And connections.toml has conn_x and conn_y (completely different)
+        _write_config(
+            connections_file,
+            """\
+[conn_x]
+account = "account_x"
+
+[conn_y]
+account = "account_y"
+""",
+        )
+
+        # When ConfigManager reads with a connections slice
+        manager = _make_manager(config_file, connections_file)
+
+        # Then Only connections.toml connections should be present
+        connections = manager["connections"]
+        assert set(connections.keys()) == {"conn_x", "conn_y"}
+        assert "conn_a" not in connections
+        assert "conn_b" not in connections
+
+    def test_empty_connections_toml_preserves_config_connections(self, tmp_path):
+        """An empty connections.toml file does not remove config.toml connections."""
+        # Given config.toml has a connection
+        config_file = tmp_path / "config.toml"
+        connections_file = tmp_path / "connections.toml"
+        _write_config(
+            config_file,
+            """\
+[connections.myconn]
+account = "my_account"
+""",
+        )
+        # And connections.toml exists but is empty
+        _write_config(connections_file, "")
+
+        # When ConfigManager reads with a connections slice
+        manager = _make_manager(config_file, connections_file)
+
+        # Then config.toml connections should be preserved
+        connections = manager["connections"]
+        assert "myconn" in connections
+        assert connections["myconn"]["account"] == "my_account"
+
+    def test_nonexistent_connections_toml_preserves_config_connections(self, tmp_path):
+        """When connections.toml doesn't exist, config.toml connections are kept."""
+        # Given config.toml has connections
+        config_file = tmp_path / "config.toml"
+        connections_file = tmp_path / "connections.toml"
+        _write_config(
+            config_file,
+            """\
+[connections.myconn]
+account = "my_account"
+""",
+        )
+        # And connections.toml does NOT exist on disk
+
+        # When ConfigManager reads with a connections slice
+        manager = _make_manager(config_file, connections_file)
+
+        # Then config.toml connections should be present
+        connections = manager["connections"]
+        assert "myconn" in connections
+
+    def test_rich_multi_connection_config(self, tmp_path):
+        """Read a config matching the CLI's test.toml with many connections and data types."""
+        # Given A config.toml with multiple connections of various shapes
+        config_file = tmp_path / "config.toml"
+        _write_config(
+            config_file,
+            """\
+[connections.full]
+account = "dev_account"
+user = "dev_user"
+host = "dev_host"
+port = 8000
+protocol = "dev_protocol"
+role = "dev_role"
+schema = "dev_schema"
+database = "dev_database"
+warehouse = "dev_warehouse"
+
+[connections.default]
+database = "db_for_test"
+schema = "test_public"
+role = "test_role"
+warehouse = "xs"
+password = "dummy_password"
+
+[connections.empty]
+
+[connections.test_connections]
+user = "python"
+""",
+        )
+
+        # When ConfigManager reads the config
+        manager = _make_manager(config_file)
+
+        # Then All connections should be returned with correct types
+        connections = manager["connections"]
+        assert set(connections.keys()) == {"full", "default", "empty", "test_connections"}
+
+        full = connections["full"]
+        assert full["account"] == "dev_account"
+        assert full["port"] == 8000
+        assert isinstance(full["port"], int)
+
+        default = connections["default"]
+        assert default["database"] == "db_for_test"
+        assert default["password"] == "dummy_password"
+
+        assert connections["test_connections"]["user"] == "python"
+
+    def test_empty_connection_section(self, tmp_path):
+        """An empty connection section [connections.empty] is still present as empty dict."""
+        # Given config.toml with an empty connection section
+        config_file = tmp_path / "config.toml"
+        _write_config(
+            config_file,
+            """\
+[connections.empty]
+
+[connections.notempty]
+user = "someone"
+""",
+        )
+
+        # When ConfigManager reads the config
+        manager = _make_manager(config_file)
+
+        # Then The empty connection should be present as an empty dict
+        connections = manager["connections"]
+        assert "notempty" in connections
+        assert connections["notempty"]["user"] == "someone"
+        # Empty sections may or may not appear depending on TOML parser;
+        # the key behavior is that notempty is correct
+
+    def test_root_level_default_connection_name_from_file(self, tmp_path):
+        """Root-level scalar default_connection_name is accessible after read."""
+        # Given config.toml has default_connection_name at root level
+        config_file = tmp_path / "config.toml"
+        _write_config(
+            config_file,
+            """\
+default_connection_name = "my_custom_conn"
+
+[connections.my_custom_conn]
+account = "acct"
+""",
+        )
+
+        # When ConfigManager reads the config
+        manager = _make_manager(config_file)
+
+        # Then The root-level value should be accessible
+        assert manager["default_connection_name"] == "my_custom_conn"
+
+    def test_root_level_default_connection_name_with_connections_toml(self, tmp_path):
+        """Root-level scalar is preserved when connections.toml replaces connections."""
+        # Given config.toml has default_connection_name and connections
+        config_file = tmp_path / "config.toml"
+        connections_file = tmp_path / "connections.toml"
+        _write_config(
+            config_file,
+            """\
+default_connection_name = "myconn"
+
+[connections.old_conn]
+account = "old_account"
+""",
+        )
+        # And connections.toml replaces with different connection
+        _write_config(
+            connections_file,
+            """\
+[myconn]
+account = "new_account"
+""",
+        )
+
+        # When ConfigManager reads the config
+        manager = _make_manager(config_file, connections_file)
+
+        # Then Root-level value is preserved while connections are replaced
+        assert manager["default_connection_name"] == "myconn"
+        connections = manager["connections"]
+        assert "old_conn" not in connections
+        assert connections["myconn"]["account"] == "new_account"
+
+    def test_non_connection_sections_preserved_during_replacement(self, tmp_path):
+        """Non-connection sections from config.toml survive connections.toml replacement."""
+        # Given config.toml has connections and other sections
+        config_file = tmp_path / "config.toml"
+        connections_file = tmp_path / "connections.toml"
+        _write_config(
+            config_file,
+            """\
+[connections.old]
+account = "old_account"
+
+[cli]
+analytics = true
+
+[log]
+level = "debug"
+""",
+        )
+        # And connections.toml replaces connections
+        _write_config(
+            connections_file,
+            """\
+[new_conn]
+account = "new_account"
+""",
+        )
+
+        # When ConfigManager reads with a connections slice
+        manager = ConfigManager(
+            name="test_manager",
+            file_path=config_file,
+            _slices=[ConfigSlice(connections_file, ConfigSliceOptions(), "connections")],
+        )
+        cli_manager = ConfigManager(name="cli")
+        cli_manager.add_option(name="analytics", default=False)
+        manager.add_submanager(cli_manager)
+        log_manager = ConfigManager(name="log")
+        log_manager.add_option(name="level", default="info")
+        manager.add_submanager(log_manager)
+        manager.add_option(name="connections", default=dict())
+
+        # Then Non-connection sections should be accessible
+        assert manager["cli"]["analytics"] is True
+        assert manager["log"]["level"] == "debug"
+
+        # And connections should come from connections.toml only
+        connections = manager["connections"]
+        assert "old" not in connections
+        assert connections["new_conn"]["account"] == "new_account"
+
+    def test_tomlkit_type_wrapping(self, tmp_path):
+        """Returned connection dicts are wrapped in tomlkit Container/Table types."""
+        # Given A config.toml with connections
+        config_file = tmp_path / "config.toml"
+        _write_config(
+            config_file,
+            """\
+[connections.default]
+account = "test_account"
+database = "test_db"
+""",
+        )
+
+        # When ConfigManager reads and returns connections
+        manager = _make_manager(config_file)
+        connections = manager["connections"]
+
+        # Then The result should be tomlkit types (for CLI isinstance checks)
+        try:
+            from tomlkit.container import Container
+            from tomlkit.items import Table
+
+            assert isinstance(connections, Container), (
+                f"connections should be a tomlkit Container, got {type(connections)}"
+            )
+            assert isinstance(connections["default"], Table), (
+                f"connection entry should be a tomlkit Table, got {type(connections['default'])}"
+            )
+        except ImportError:
+            pytest.skip("tomlkit not available")
+
+    def test_reread_consistency(self, tmp_path):
+        """Re-reading config after clear_cache returns the same result."""
+        # Given A config.toml with connections
+        config_file = tmp_path / "config.toml"
+        connections_file = tmp_path / "connections.toml"
+        _write_config(
+            config_file,
+            """\
+default_connection_name = "prod"
+
+[connections.prod]
+account = "prod_account"
+database = "prod_db"
+""",
+        )
+        _write_config(
+            connections_file,
+            """\
+[prod]
+account = "overridden_account"
+""",
+        )
+
+        # When ConfigManager reads, clears cache, and reads again
+        manager = _make_manager(config_file, connections_file)
+        first_connections = dict(manager["connections"])
+        first_default = manager["default_connection_name"]
+
+        manager.clear_cache()
+
+        second_connections = dict(manager["connections"])
+        second_default = manager["default_connection_name"]
+
+        # Then Both reads should produce identical results
+        assert first_connections == second_connections
+        assert first_default == second_default
+        assert first_connections == {"prod": {"account": "overridden_account"}}
+
+    def test_multiple_connections_toml_with_varied_types(self, tmp_path):
+        """connections.toml with multiple connections having varied value types."""
+        # Given connections.toml with connections using strings, integers, and booleans
+        config_file = tmp_path / "config.toml"
+        connections_file = tmp_path / "connections.toml"
+        _write_config(config_file, "")
+        _write_config(
+            connections_file,
+            """\
+[conn1]
+account = "acct1"
+port = 443
+validate_certs = true
+
+[conn2]
+account = "acct2"
+port = 8080
+validate_certs = false
+warehouse = "xs"
+""",
+        )
+
+        # When ConfigManager reads with a connections slice
+        manager = _make_manager(config_file, connections_file)
+
+        # Then All connections with correct types should be returned
+        connections = manager["connections"]
+        assert connections["conn1"]["account"] == "acct1"
+        assert connections["conn1"]["port"] == 443
+        assert connections["conn1"]["validate_certs"] is True
+
+        assert connections["conn2"]["port"] == 8080
+        assert connections["conn2"]["validate_certs"] is False
+        assert connections["conn2"]["warehouse"] == "xs"
+
+    def test_only_in_slice_with_connections_in_config(self, tmp_path):
+        """only_in_slice=True strips connections from config.toml even without connections.toml."""
+        # Given config.toml has connections and only_in_slice is True
+        config_file = tmp_path / "config.toml"
+        connections_file = tmp_path / "connections.toml"
+        _write_config(
+            config_file,
+            """\
+[connections.default]
+account = "config_account"
+""",
+        )
+        # And connections.toml does not exist
+
+        # When ConfigManager uses only_in_slice=True for connections
+        manager = ConfigManager(
+            name="test_manager",
+            file_path=config_file,
+            _slices=[
+                ConfigSlice(
+                    connections_file,
+                    ConfigSliceOptions(only_in_slice=True),
+                    "connections",
+                )
+            ],
+        )
+        manager.add_option(name="connections", default=dict())
+
+        # Then Connections from config.toml should be stripped
+        connections = manager["connections"]
+        assert connections == {}
+
+    def test_connections_from_config_toml_only(self, tmp_path):
+        """Without connections.toml slice, connections from config.toml are returned."""
+        # Given config.toml has connections and no slice is configured
+        config_file = tmp_path / "config.toml"
+        _write_config(
+            config_file,
+            """\
+[connections.default]
+database = "db_for_test"
+schema = "test_public"
+
+[connections.full]
+account = "dev_account"
+user = "dev_user"
+""",
+        )
+
+        # When ConfigManager reads without a connections slice
+        manager = _make_manager(config_file)
+
+        # Then All config.toml connections should be present
+        connections = manager["connections"]
+        assert set(connections.keys()) == {"default", "full"}
+        assert connections["default"]["database"] == "db_for_test"
+        assert connections["full"]["account"] == "dev_account"

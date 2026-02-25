@@ -549,7 +549,7 @@ message ConfigLoadAllSectionsRequest {
 }
 
 message ConfigLoadAllSectionsResponse {
-  map<string, ConfigSection> sections = 1;
+  string config_json = 1;
 }
 
 message ConfigGetPathsRequest {

@@ -28,6 +28,7 @@ dependencies = [
     "cryptography>=44.0.1",
     "protobuf>=6.32.1",
     "pytz",
+    "tomlkit>=0.13",
 ]
 
 [project.urls]
@@ -49,6 +50,7 @@ test = [
     "requests",
     "brotli",
     "zstandard",
+    "tomlkit",
 ]
 dev = [
     "ruff",

@@ -61072,38 +61072,16 @@ net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSettin
       com.google.protobuf.MessageOrBuilder {
 
     /**
-     * <code>map&lt;string, .database_driver_v1.ConfigSection&gt; sections = 1;</code>
+     * <code>string config_json = 1;</code>
+     * @return The configJson.
      */
-    int getSectionsCount();
+    java.lang.String getConfigJson();
     /**
-     * <code>map&lt;string, .database_driver_v1.ConfigSection&gt; sections = 1;</code>
+     * <code>string config_json = 1;</code>
+     * @return The bytes for configJson.
      */
-    boolean containsSections(
-        java.lang.String key);
-    /**
-     * Use {@link #getSectionsMap()} instead.
-     */
-    @java.lang.Deprecated
-    java.util.Map<java.lang.String, net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSection>
-    getSections();
-    /**
-     * <code>map&lt;string, .database_driver_v1.ConfigSection&gt; sections = 1;</code>
-     */
-    java.util.Map<java.lang.String, net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSection>
-    getSectionsMap();
-    /**
-     * <code>map&lt;string, .database_driver_v1.ConfigSection&gt; sections = 1;</code>
-     */
-    /* nullable */
-net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSection getSectionsOrDefault(
-        java.lang.String key,
-        /* nullable */
-net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSection defaultValue);
-    /**
-     * <code>map&lt;string, .database_driver_v1.ConfigSection&gt; sections = 1;</code>
-     */
-    net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSection getSectionsOrThrow(
-        java.lang.String key);
+    com.google.protobuf.ByteString
+        getConfigJsonBytes();
   }
   /**
    * Protobuf type {@code database_driver_v1.ConfigLoadAllSectionsResponse}
@@ -61127,6 +61105,7 @@ net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSectio
       super(builder);
     }
     private ConfigLoadAllSectionsResponse() {
+      configJson_ = "";
     }
 
     public static final com.google.protobuf.Descriptors.Descriptor
@@ -61134,18 +61113,6 @@ net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSectio
       return net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.internal_static_database_driver_v1_ConfigLoadAllSectionsResponse_descriptor;
     }
 
-    @SuppressWarnings({"rawtypes"})
-    @java.lang.Override
-    protected com.google.protobuf.MapFieldReflectionAccessor internalGetMapFieldReflection(
-        int number) {
-      switch (number) {
-        case 1:
-          return internalGetSections();
-        default:
-          throw new RuntimeException(
-              "Invalid map field number: " + number);
-      }
-    }
     @java.lang.Override
     protected com.google.protobuf.GeneratedMessage.FieldAccessorTable
         internalGetFieldAccessorTable() {
@@ -61154,83 +61121,43 @@ net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSectio
               net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigLoadAllSectionsResponse.class, net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigLoadAllSectionsResponse.Builder.class);
     }
 
-    public static final int SECTIONS_FIELD_NUMBER = 1;
-    private static final class SectionsDefaultEntryHolder {
-      static final com.google.protobuf.MapEntry<
-          java.lang.String, net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSection> defaultEntry =
-              com.google.protobuf.MapEntry
-              .<java.lang.String, net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSection>newDefaultInstance(
-                  net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.internal_static_database_driver_v1_ConfigLoadAllSectionsResponse_SectionsEntry_descriptor, 
-                  com.google.protobuf.WireFormat.FieldType.STRING,
-                  "",
-                  com.google.protobuf.WireFormat.FieldType.MESSAGE,
-                  net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSection.getDefaultInstance());
-    }
+    public static final int CONFIG_JSON_FIELD_NUMBER = 1;
     @SuppressWarnings("serial")
-    private com.google.protobuf.MapField<
-        java.lang.String, net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSection> sections_;
-    private com.google.protobuf.MapField<java.lang.String, net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSection>
-    internalGetSections() {
-      if (sections_ == null) {
-        return com.google.protobuf.MapField.emptyMapField(
-            SectionsDefaultEntryHolder.defaultEntry);
+    private volatile java.lang.Object configJson_ = "";
+    /**
+     * <code>string config_json = 1;</code>
+     * @return The configJson.
+     */
+    @java.lang.Override
+    public java.lang.String getConfigJson() {
+      java.lang.Object ref = configJson_;
+      if (ref instanceof java.lang.String) {
+        return (java.lang.String) ref;
+      } else {
+        com.google.protobuf.ByteString bs = 
+            (com.google.protobuf.ByteString) ref;
+        java.lang.String s = bs.toStringUtf8();
+        configJson_ = s;
+        return s;
       }
-      return sections_;
-    }
-    public int getSectionsCount() {
-      return internalGetSections().getMap().size();
     }
     /**
-     * <code>map&lt;string, .database_driver_v1.ConfigSection&gt; sections = 1;</code>
+     * <code>string config_json = 1;</code>
+     * @return The bytes for configJson.
      */
     @java.lang.Override
-    public boolean containsSections(
-        java.lang.String key) {
-      if (key == null) { throw new NullPointerException("map key"); }
-      return internalGetSections().getMap().containsKey(key);
-    }
-    /**
-     * Use {@link #getSectionsMap()} instead.
-     */
-    @java.lang.Override
-    @java.lang.Deprecated
-    public java.util.Map<java.lang.String, net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSection> getSections() {
-      return getSectionsMap();
-    }
-    /**
-     * <code>map&lt;string, .database_driver_v1.ConfigSection&gt; sections = 1;</code>
-     */
-    @java.lang.Override
-    public java.util.Map<java.lang.String, net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSection> getSectionsMap() {
-      return internalGetSections().getMap();
-    }
-    /**
-     * <code>map&lt;string, .database_driver_v1.ConfigSection&gt; sections = 1;</code>
-     */
-    @java.lang.Override
-    public /* nullable */
-net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSection getSectionsOrDefault(
-        java.lang.String key,
-        /* nullable */
-net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSection defaultValue) {
-      if (key == null) { throw new NullPointerException("map key"); }
-      java.util.Map<java.lang.String, net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSection> map =
-          internalGetSections().getMap();
-      return map.containsKey(key) ? map.get(key) : defaultValue;
-    }
-    /**
-     * <code>map&lt;string, .database_driver_v1.ConfigSection&gt; sections = 1;</code>
-     */
-    @java.lang.Override
-    public net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSection getSectionsOrThrow(
-        java.lang.String key) {
-      if (key == null) { throw new NullPointerException("map key"); }
-      java.util.Map<java.lang.String, net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSection> map =
-          internalGetSections().getMap();
-      if (!map.containsKey(key)) {
-        throw new java.lang.IllegalArgumentException();
+    public com.google.protobuf.ByteString
+        getConfigJsonBytes() {
+      java.lang.Object ref = configJson_;
+      if (ref instanceof java.lang.String) {
+        com.google.protobuf.ByteString b = 
+            com.google.protobuf.ByteString.copyFromUtf8(
+                (java.lang.String) ref);
+        configJson_ = b;
+        return b;
+      } else {
+        return (com.google.protobuf.ByteString) ref;
       }
-      return map.get(key);
     }
 
     private byte memoizedIsInitialized = -1;
@@ -61247,12 +61174,9 @@ net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSectio
     @java.lang.Override
     public void writeTo(com.google.protobuf.CodedOutputStream output)
                         throws java.io.IOException {
-      com.google.protobuf.GeneratedMessage
-        .serializeStringMapTo(
-          output,
-          internalGetSections(),
-          SectionsDefaultEntryHolder.defaultEntry,
-          1);
+      if (!com.google.protobuf.GeneratedMessage.isStringEmpty(configJson_)) {
+        com.google.protobuf.GeneratedMessage.writeString(output, 1, configJson_);
+      }
       getUnknownFields().writeTo(output);
     }
 
@@ -61262,15 +61186,8 @@ net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSectio
       if (size != -1) return size;
 
       size = 0;
-      for (java.util.Map.Entry<java.lang.String, net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSection> entry
-           : internalGetSections().getMap().entrySet()) {
-        com.google.protobuf.MapEntry<java.lang.String, net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSection>
-        sections__ = SectionsDefaultEntryHolder.defaultEntry.newBuilderForType()
-            .setKey(entry.getKey())
-            .setValue(entry.getValue())
-            .build();
-        size += com.google.protobuf.CodedOutputStream
-            .computeMessageSize(1, sections__);
+      if (!com.google.protobuf.GeneratedMessage.isStringEmpty(configJson_)) {
+        size += com.google.protobuf.GeneratedMessage.computeStringSize(1, configJson_);
       }
       size += getUnknownFields().getSerializedSize();
       memoizedSize = size;
@@ -61287,8 +61204,8 @@ net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSectio
       }
       net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigLoadAllSectionsResponse other = (net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigLoadAllSectionsResponse) obj;
 
-      if (!internalGetSections().equals(
-          other.internalGetSections())) return false;
+      if (!getConfigJson()
+          .equals(other.getConfigJson())) return false;
       if (!getUnknownFields().equals(other.getUnknownFields())) return false;
       return true;
     }
@@ -61300,10 +61217,8 @@ net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSectio
       }
       int hash = 41;
       hash = (19 * hash) + getDescriptor().hashCode();
-      if (!internalGetSections().getMap().isEmpty()) {
-        hash = (37 * hash) + SECTIONS_FIELD_NUMBER;
-        hash = (53 * hash) + internalGetSections().hashCode();
-      }
+      hash = (37 * hash) + CONFIG_JSON_FIELD_NUMBER;
+      hash = (53 * hash) + getConfigJson().hashCode();
       hash = (29 * hash) + getUnknownFields().hashCode();
       memoizedHashCode = hash;
       return hash;
@@ -61413,28 +61328,6 @@ net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSectio
         return net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.internal_static_database_driver_v1_ConfigLoadAllSectionsResponse_descriptor;
       }
 
-      @SuppressWarnings({"rawtypes"})
-      protected com.google.protobuf.MapFieldReflectionAccessor internalGetMapFieldReflection(
-          int number) {
-        switch (number) {
-          case 1:
-            return internalGetSections();
-          default:
-            throw new RuntimeException(
-                "Invalid map field number: " + number);
-        }
-      }
-      @SuppressWarnings({"rawtypes"})
-      protected com.google.protobuf.MapFieldReflectionAccessor internalGetMutableMapFieldReflection(
-          int number) {
-        switch (number) {
-          case 1:
-            return internalGetMutableSections();
-          default:
-            throw new RuntimeException(
-                "Invalid map field number: " + number);
-        }
-      }
       @java.lang.Override
       protected com.google.protobuf.GeneratedMessage.FieldAccessorTable
           internalGetFieldAccessorTable() {
@@ -61457,7 +61350,7 @@ net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSectio
       public Builder clear() {
         super.clear();
         bitField0_ = 0;
-        internalGetMutableSections().clear();
+        configJson_ = "";
         return this;
       }
 
@@ -61492,7 +61385,7 @@ net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSectio
       private void buildPartial0(net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigLoadAllSectionsResponse result) {
         int from_bitField0_ = bitField0_;
         if (((from_bitField0_ & 0x00000001) != 0)) {
-          result.sections_ = internalGetSections().build(SectionsDefaultEntryHolder.defaultEntry);
+          result.configJson_ = configJson_;
         }
       }
 
@@ -61508,9 +61401,11 @@ net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSectio
 
       public Builder mergeFrom(net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigLoadAllSectionsResponse other) {
         if (other == net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigLoadAllSectionsResponse.getDefaultInstance()) return this;
-        internalGetMutableSections().mergeFrom(
-            other.internalGetSections());
-        bitField0_ |= 0x00000001;
+        if (!other.getConfigJson().isEmpty()) {
+          configJson_ = other.configJson_;
+          bitField0_ |= 0x00000001;
+          onChanged();
+        }
         this.mergeUnknownFields(other.getUnknownFields());
         onChanged();
         return this;
@@ -61538,11 +61433,7 @@ net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSectio
                 done = true;
                 break;
               case 10: {
-                com.google.protobuf.MapEntry<java.lang.String, net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSection>
-                sections__ = input.readMessage(
-                    SectionsDefaultEntryHolder.defaultEntry.getParserForType(), extensionRegistry);
-                internalGetMutableSections().ensureBuilderMap().put(
-                    sections__.getKey(), sections__.getValue());
+                configJson_ = input.readStringRequireUtf8();
                 bitField0_ |= 0x00000001;
                 break;
               } // case 10
@@ -61563,159 +61454,76 @@ net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSectio
       }
       private int bitField0_;
 
-      private static final class SectionsConverter implements com.google.protobuf.MapFieldBuilder.Converter<java.lang.String, net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSectionOrBuilder, net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSection> {
-        @java.lang.Override
-        public net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSection build(net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSectionOrBuilder val) {
-          if (val instanceof net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSection) { return (net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSection) val; }
-          return ((net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSection.Builder) val).build();
+      private java.lang.Object configJson_ = "";
+      /**
+       * <code>string config_json = 1;</code>
+       * @return The configJson.
+       */
+      public java.lang.String getConfigJson() {
+        java.lang.Object ref = configJson_;
+        if (!(ref instanceof java.lang.String)) {
+          com.google.protobuf.ByteString bs =
+              (com.google.protobuf.ByteString) ref;
+          java.lang.String s = bs.toStringUtf8();
+          configJson_ = s;
+          return s;
+        } else {
+          return (java.lang.String) ref;
         }
-
-        @java.lang.Override
-        public com.google.protobuf.MapEntry<java.lang.String, net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSection> defaultEntry() {
-          return SectionsDefaultEntryHolder.defaultEntry;
-        }
-      };
-      private static final SectionsConverter sectionsConverter = new SectionsConverter();
-
-      private com.google.protobuf.MapFieldBuilder<
-          java.lang.String, net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSectionOrBuilder, net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSection, net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSection.Builder> sections_;
-      private com.google.protobuf.MapFieldBuilder<java.lang.String, net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSectionOrBuilder, net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSection, net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSection.Builder>
-          internalGetSections() {
-        if (sections_ == null) {
-          return new com.google.protobuf.MapFieldBuilder<>(sectionsConverter);
-        }
-        return sections_;
       }
-      private com.google.protobuf.MapFieldBuilder<java.lang.String, net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSectionOrBuilder, net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSection, net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSection.Builder>
-          internalGetMutableSections() {
-        if (sections_ == null) {
-          sections_ = new com.google.protobuf.MapFieldBuilder<>(sectionsConverter);
+      /**
+       * <code>string config_json = 1;</code>
+       * @return The bytes for configJson.
+       */
+      public com.google.protobuf.ByteString
+          getConfigJsonBytes() {
+        java.lang.Object ref = configJson_;
+        if (ref instanceof String) {
+          com.google.protobuf.ByteString b = 
+              com.google.protobuf.ByteString.copyFromUtf8(
+                  (java.lang.String) ref);
+          configJson_ = b;
+          return b;
+        } else {
+          return (com.google.protobuf.ByteString) ref;
         }
+      }
+      /**
+       * <code>string config_json = 1;</code>
+       * @param value The configJson to set.
+       * @return This builder for chaining.
+       */
+      public Builder setConfigJson(
+          java.lang.String value) {
+        if (value == null) { throw new NullPointerException(); }
+        configJson_ = value;
         bitField0_ |= 0x00000001;
         onChanged();
-        return sections_;
-      }
-      public int getSectionsCount() {
-        return internalGetSections().ensureBuilderMap().size();
+        return this;
       }
       /**
-       * <code>map&lt;string, .database_driver_v1.ConfigSection&gt; sections = 1;</code>
+       * <code>string config_json = 1;</code>
+       * @return This builder for chaining.
        */
-      @java.lang.Override
-      public boolean containsSections(
-          java.lang.String key) {
-        if (key == null) { throw new NullPointerException("map key"); }
-        return internalGetSections().ensureBuilderMap().containsKey(key);
-      }
-      /**
-       * Use {@link #getSectionsMap()} instead.
-       */
-      @java.lang.Override
-      @java.lang.Deprecated
-      public java.util.Map<java.lang.String, net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSection> getSections() {
-        return getSectionsMap();
-      }
-      /**
-       * <code>map&lt;string, .database_driver_v1.ConfigSection&gt; sections = 1;</code>
-       */
-      @java.lang.Override
-      public java.util.Map<java.lang.String, net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSection> getSectionsMap() {
-        return internalGetSections().getImmutableMap();
-      }
-      /**
-       * <code>map&lt;string, .database_driver_v1.ConfigSection&gt; sections = 1;</code>
-       */
-      @java.lang.Override
-      public /* nullable */
-net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSection getSectionsOrDefault(
-          java.lang.String key,
-          /* nullable */
-net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSection defaultValue) {
-        if (key == null) { throw new NullPointerException("map key"); }
-        java.util.Map<java.lang.String, net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSectionOrBuilder> map = internalGetMutableSections().ensureBuilderMap();
-        return map.containsKey(key) ? sectionsConverter.build(map.get(key)) : defaultValue;
-      }
-      /**
-       * <code>map&lt;string, .database_driver_v1.ConfigSection&gt; sections = 1;</code>
-       */
-      @java.lang.Override
-      public net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSection getSectionsOrThrow(
-          java.lang.String key) {
-        if (key == null) { throw new NullPointerException("map key"); }
-        java.util.Map<java.lang.String, net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSectionOrBuilder> map = internalGetMutableSections().ensureBuilderMap();
-        if (!map.containsKey(key)) {
-          throw new java.lang.IllegalArgumentException();
-        }
-        return sectionsConverter.build(map.get(key));
-      }
-      public Builder clearSections() {
+      public Builder clearConfigJson() {
+        configJson_ = getDefaultInstance().getConfigJson();
         bitField0_ = (bitField0_ & ~0x00000001);
-        internalGetMutableSections().clear();
+        onChanged();
         return this;
       }
       /**
-       * <code>map&lt;string, .database_driver_v1.ConfigSection&gt; sections = 1;</code>
+       * <code>string config_json = 1;</code>
+       * @param value The bytes for configJson to set.
+       * @return This builder for chaining.
        */
-      public Builder removeSections(
-          java.lang.String key) {
-        if (key == null) { throw new NullPointerException("map key"); }
-        internalGetMutableSections().ensureBuilderMap()
-            .remove(key);
-        return this;
-      }
-      /**
-       * Use alternate mutation accessors instead.
-       */
-      @java.lang.Deprecated
-      public java.util.Map<java.lang.String, net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSection>
-          getMutableSections() {
+      public Builder setConfigJsonBytes(
+          com.google.protobuf.ByteString value) {
+        if (value == null) { throw new NullPointerException(); }
+        checkByteStringIsUtf8(value);
+        configJson_ = value;
         bitField0_ |= 0x00000001;
-        return internalGetMutableSections().ensureMessageMap();
-      }
-      /**
-       * <code>map&lt;string, .database_driver_v1.ConfigSection&gt; sections = 1;</code>
-       */
-      public Builder putSections(
-          java.lang.String key,
-          net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSection value) {
-        if (key == null) { throw new NullPointerException("map key"); }
-        if (value == null) { throw new NullPointerException("map value"); }
-        internalGetMutableSections().ensureBuilderMap()
-            .put(key, value);
-        bitField0_ |= 0x00000001;
+        onChanged();
         return this;
-      }
-      /**
-       * <code>map&lt;string, .database_driver_v1.ConfigSection&gt; sections = 1;</code>
-       */
-      public Builder putAllSections(
-          java.util.Map<java.lang.String, net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSection> values) {
-        for (java.util.Map.Entry<java.lang.String, net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSection> e : values.entrySet()) {
-          if (e.getKey() == null || e.getValue() == null) {
-            throw new NullPointerException();
-          }
-        }
-        internalGetMutableSections().ensureBuilderMap()
-            .putAll(values);
-        bitField0_ |= 0x00000001;
-        return this;
-      }
-      /**
-       * <code>map&lt;string, .database_driver_v1.ConfigSection&gt; sections = 1;</code>
-       */
-      public net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSection.Builder putSectionsBuilderIfAbsent(
-          java.lang.String key) {
-        java.util.Map<java.lang.String, net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSectionOrBuilder> builderMap = internalGetMutableSections().ensureBuilderMap();
-        net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSectionOrBuilder entry = builderMap.get(key);
-        if (entry == null) {
-          entry = net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSection.newBuilder();
-          builderMap.put(key, entry);
-        }
-        if (entry instanceof net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSection) {
-          entry = ((net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSection) entry).toBuilder();
-          builderMap.put(key, entry);
-        }
-        return (net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSection.Builder) entry;
       }
 
       // @@protoc_insertion_point(builder_scope:database_driver_v1.ConfigLoadAllSectionsResponse)
@@ -63310,11 +63118,6 @@ net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSectio
     com.google.protobuf.GeneratedMessage.FieldAccessorTable
       internal_static_database_driver_v1_ConfigLoadAllSectionsResponse_fieldAccessorTable;
   private static final com.google.protobuf.Descriptors.Descriptor
-    internal_static_database_driver_v1_ConfigLoadAllSectionsResponse_SectionsEntry_descriptor;
-  private static final 
-    com.google.protobuf.GeneratedMessage.FieldAccessorTable
-      internal_static_database_driver_v1_ConfigLoadAllSectionsResponse_SectionsEntry_fieldAccessorTable;
-  private static final com.google.protobuf.Descriptors.Descriptor
     internal_static_database_driver_v1_ConfigGetPathsRequest_descriptor;
   private static final 
     com.google.protobuf.GeneratedMessage.FieldAccessorTable
@@ -63549,164 +63352,161 @@ net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSectio
       "ConfigLoadAllSectionsRequest\022\030\n\013config_f" +
       "ile\030\001 \001(\tH\000\210\001\001\022\035\n\020connections_file\030\002 \001(\t" +
       "H\001\210\001\001B\016\n\014_config_fileB\023\n\021_connections_fi" +
-      "le\"\306\001\n\035ConfigLoadAllSectionsResponse\022Q\n\010" +
-      "sections\030\001 \003(\0132?.database_driver_v1.Conf" +
-      "igLoadAllSectionsResponse.SectionsEntry\032" +
-      "R\n\rSectionsEntry\022\013\n\003key\030\001 \001(\t\0220\n\005value\030\002" +
-      " \001(\0132!.database_driver_v1.ConfigSection:" +
-      "\0028\001\"\027\n\025ConfigGetPathsRequest\"G\n\026ConfigGe" +
-      "tPathsResponse\022\023\n\013config_file\030\001 \001(\t\022\030\n\020c" +
-      "onnections_file\030\002 \001(\t*\264\004\n\nStatusCode\022\033\n\027" +
-      "STATUS_CODE_UNSPECIFIED\020\000\022\022\n\016STATUS_CODE" +
-      "_OK\020\001\022$\n STATUS_CODE_AUTHENTICATION_ERRO" +
-      "R\020\002\022\037\n\033STATUS_CODE_NOT_IMPLEMENTED\020\003\022\031\n\025" +
-      "STATUS_CODE_NOT_FOUND\020\004\022\036\n\032STATUS_CODE_A" +
-      "LREADY_EXISTS\020\005\022 \n\034STATUS_CODE_INVALID_A" +
-      "RGUMENT\020\006\022\035\n\031STATUS_CODE_INVALID_STATE\020\007" +
-      "\022\034\n\030STATUS_CODE_INVALID_DATA\020\010\022\022\n\016STATUS" +
-      "_CODE_IO\020\t\022\031\n\025STATUS_CODE_CANCELLED\020\n\022\037\n" +
-      "\033STATUS_CODE_UNAUTHENTICATED\020\013\022\034\n\030STATUS" +
-      "_CODE_UNAUTHORIZED\020\014\022\035\n\031STATUS_CODE_GENE" +
-      "RIC_ERROR\020\r\022\036\n\032STATUS_CODE_INTERNAL_ERRO" +
-      "R\020\016\022!\n\035STATUS_CODE_MISSING_PARAMETER\020\017\022\'" +
-      "\n#STATUS_CODE_INVALID_PARAMETER_VALUE\020\020\022" +
-      "\033\n\027STATUS_CODE_LOGIN_ERROR\020\021*\230\003\n\010InfoCod" +
-      "e\022\031\n\025INFO_CODE_UNSPECIFIED\020\000\022\031\n\025INFO_COD" +
-      "E_VENDOR_NAME\020\001\022\034\n\030INFO_CODE_VENDOR_VERS" +
-      "ION\020\002\022\"\n\036INFO_CODE_VENDOR_ARROW_VERSION\020" +
-      "\003\022\030\n\024INFO_CODE_VENDOR_SQL\020e\022\036\n\032INFO_CODE" +
-      "_VENDOR_SUBSTRAIT\020f\022*\n&INFO_CODE_VENDOR_" +
-      "SUBSTRAIT_MIN_VERSION\020g\022*\n&INFO_CODE_VEN" +
-      "DOR_SUBSTRAIT_MAX_VERSION\020h\022\032\n\025INFO_CODE" +
-      "_DRIVER_NAME\020\311\001\022\035\n\030INFO_CODE_DRIVER_VERS" +
-      "ION\020\312\001\022#\n\036INFO_CODE_DRIVER_ARROW_VERSION" +
-      "\020\313\001\022\"\n\035INFO_CODE_DRIVER_ADBC_VERSION\020\314\0012" +
-      "\361%\n\016DatabaseDriver\022^\n\013DatabaseNew\022&.data" +
-      "base_driver_v1.DatabaseNewRequest\032\'.data" +
-      "base_driver_v1.DatabaseNewResponse\022\202\001\n\027D" +
-      "atabaseSetOptionString\0222.database_driver" +
-      "_v1.DatabaseSetOptionStringRequest\0323.dat" +
-      "abase_driver_v1.DatabaseSetOptionStringR" +
-      "esponse\022\177\n\026DatabaseSetOptionBytes\0221.data" +
-      "base_driver_v1.DatabaseSetOptionBytesReq" +
-      "uest\0322.database_driver_v1.DatabaseSetOpt" +
-      "ionBytesResponse\022y\n\024DatabaseSetOptionInt" +
-      "\022/.database_driver_v1.DatabaseSetOptionI" +
-      "ntRequest\0320.database_driver_v1.DatabaseS" +
-      "etOptionIntResponse\022\202\001\n\027DatabaseSetOptio" +
-      "nDouble\0222.database_driver_v1.DatabaseSet" +
-      "OptionDoubleRequest\0323.database_driver_v1" +
-      ".DatabaseSetOptionDoubleResponse\022a\n\014Data" +
-      "baseInit\022\'.database_driver_v1.DatabaseIn" +
-      "itRequest\032(.database_driver_v1.DatabaseI" +
-      "nitResponse\022j\n\017DatabaseRelease\022*.databas" +
-      "e_driver_v1.DatabaseReleaseRequest\032+.dat" +
-      "abase_driver_v1.DatabaseReleaseResponse\022" +
-      "d\n\rConnectionNew\022(.database_driver_v1.Co" +
-      "nnectionNewRequest\032).database_driver_v1." +
-      "ConnectionNewResponse\022\210\001\n\031ConnectionSetO" +
-      "ptionString\0224.database_driver_v1.Connect" +
-      "ionSetOptionStringRequest\0325.database_dri" +
-      "ver_v1.ConnectionSetOptionStringResponse" +
-      "\022\205\001\n\030ConnectionSetOptionBytes\0223.database" +
-      "_driver_v1.ConnectionSetOptionBytesReque" +
-      "st\0324.database_driver_v1.ConnectionSetOpt" +
-      "ionBytesResponse\022\177\n\026ConnectionSetOptionI" +
-      "nt\0221.database_driver_v1.ConnectionSetOpt" +
-      "ionIntRequest\0322.database_driver_v1.Conne" +
-      "ctionSetOptionIntResponse\022\210\001\n\031Connection" +
-      "SetOptionDouble\0224.database_driver_v1.Con" +
-      "nectionSetOptionDoubleRequest\0325.database" +
-      "_driver_v1.ConnectionSetOptionDoubleResp" +
-      "onse\022g\n\016ConnectionInit\022).database_driver" +
-      "_v1.ConnectionInitRequest\032*.database_dri" +
-      "ver_v1.ConnectionInitResponse\022p\n\021Connect" +
-      "ionRelease\022,.database_driver_v1.Connecti" +
-      "onReleaseRequest\032-.database_driver_v1.Co" +
-      "nnectionReleaseResponse\022p\n\021ConnectionGet" +
-      "Info\022,.database_driver_v1.ConnectionGetI" +
-      "nfoRequest\032-.database_driver_v1.Connecti" +
-      "onGetInfoResponse\022y\n\024ConnectionGetObject" +
-      "s\022/.database_driver_v1.ConnectionGetObje" +
-      "ctsRequest\0320.database_driver_v1.Connecti" +
-      "onGetObjectsResponse\022\205\001\n\030ConnectionGetTa" +
-      "bleSchema\0223.database_driver_v1.Connectio" +
-      "nGetTableSchemaRequest\0324.database_driver" +
-      "_v1.ConnectionGetTableSchemaResponse\022\202\001\n" +
-      "\027ConnectionGetTableTypes\0222.database_driv" +
-      "er_v1.ConnectionGetTableTypesRequest\0323.d" +
-      "atabase_driver_v1.ConnectionGetTableType" +
-      "sResponse\022m\n\020ConnectionCommit\022+.database" +
-      "_driver_v1.ConnectionCommitRequest\032,.dat" +
-      "abase_driver_v1.ConnectionCommitResponse" +
-      "\022s\n\022ConnectionRollback\022-.database_driver" +
-      "_v1.ConnectionRollbackRequest\032..database" +
-      "_driver_v1.ConnectionRollbackResponse\022\227\001" +
-      "\n\036ConnectionSetSessionParameters\0229.datab" +
-      "ase_driver_v1.ConnectionSetSessionParame" +
-      "tersRequest\032:.database_driver_v1.Connect" +
-      "ionSetSessionParametersResponse\022\177\n\026Conne" +
-      "ctionGetParameter\0221.database_driver_v1.C" +
-      "onnectionGetParameterRequest\0322.database_" +
-      "driver_v1.ConnectionGetParameterResponse" +
-      "\022a\n\014StatementNew\022\'.database_driver_v1.St" +
-      "atementNewRequest\032(.database_driver_v1.S" +
-      "tatementNewResponse\022m\n\020StatementRelease\022" +
-      "+.database_driver_v1.StatementReleaseReq" +
-      "uest\032,.database_driver_v1.StatementRelea" +
-      "seResponse\022y\n\024StatementSetSqlQuery\022/.dat" +
-      "abase_driver_v1.StatementSetSqlQueryRequ" +
-      "est\0320.database_driver_v1.StatementSetSql" +
-      "QueryResponse\022\210\001\n\031StatementSetSubstraitP" +
-      "lan\0224.database_driver_v1.StatementSetSub" +
-      "straitPlanRequest\0325.database_driver_v1.S" +
-      "tatementSetSubstraitPlanResponse\022m\n\020Stat" +
-      "ementPrepare\022+.database_driver_v1.Statem" +
-      "entPrepareRequest\032,.database_driver_v1.S" +
-      "tatementPrepareResponse\022\205\001\n\030StatementSet" +
-      "OptionString\0223.database_driver_v1.Statem" +
-      "entSetOptionStringRequest\0324.database_dri" +
-      "ver_v1.StatementSetOptionStringResponse\022" +
-      "\202\001\n\027StatementSetOptionBytes\0222.database_d" +
-      "river_v1.StatementSetOptionBytesRequest\032" +
-      "3.database_driver_v1.StatementSetOptionB" +
-      "ytesResponse\022|\n\025StatementSetOptionInt\0220." +
-      "database_driver_v1.StatementSetOptionInt" +
-      "Request\0321.database_driver_v1.StatementSe" +
-      "tOptionIntResponse\022\205\001\n\030StatementSetOptio" +
-      "nDouble\0223.database_driver_v1.StatementSe" +
-      "tOptionDoubleRequest\0324.database_driver_v" +
-      "1.StatementSetOptionDoubleResponse\022\216\001\n\033S" +
-      "tatementGetParameterSchema\0226.database_dr" +
-      "iver_v1.StatementGetParameterSchemaReque" +
-      "st\0327.database_driver_v1.StatementGetPara" +
-      "meterSchemaResponse\022d\n\rStatementBind\022(.d" +
-      "atabase_driver_v1.StatementBindRequest\032)" +
-      ".database_driver_v1.StatementBindRespons" +
-      "e\022v\n\023StatementBindStream\022..database_driv" +
-      "er_v1.StatementBindStreamRequest\032/.datab" +
-      "ase_driver_v1.StatementBindStreamRespons" +
-      "e\022|\n\025StatementExecuteQuery\0220.database_dr" +
-      "iver_v1.StatementExecuteQueryRequest\0321.d" +
-      "atabase_driver_v1.StatementExecuteQueryR" +
-      "esponse\022\213\001\n\032StatementExecutePartitions\0225" +
-      ".database_driver_v1.StatementExecutePart" +
-      "itionsRequest\0326.database_driver_v1.State" +
-      "mentExecutePartitionsResponse\022\177\n\026Stateme" +
-      "ntReadPartition\0221.database_driver_v1.Sta" +
-      "tementReadPartitionRequest\0322.database_dr" +
-      "iver_v1.StatementReadPartitionResponse\022|" +
-      "\n\025ConfigLoadAllSections\0220.database_drive" +
-      "r_v1.ConfigLoadAllSectionsRequest\0321.data" +
-      "base_driver_v1.ConfigLoadAllSectionsResp" +
-      "onse\022g\n\016ConfigGetPaths\022).database_driver" +
-      "_v1.ConfigGetPathsRequest\032*.database_dri" +
-      "ver_v1.ConfigGetPathsResponse\032\024\302\251\311\001\017Driv" +
-      "erException:;\n\rservice_error\022\037.google.pr" +
-      "otobuf.ServiceOptions\030\230\225\031 \001(\t\210\001\001:9\n\014meth" +
-      "od_error\022\036.google.protobuf.MethodOptions" +
-      "\030\230\225\031 \001(\t\210\001\001B4\n2net.snowflake.client.inte" +
-      "rnal.unicore.protobuf_genb\006proto3"
+      "le\"4\n\035ConfigLoadAllSectionsResponse\022\023\n\013c" +
+      "onfig_json\030\001 \001(\t\"\027\n\025ConfigGetPathsReques" +
+      "t\"G\n\026ConfigGetPathsResponse\022\023\n\013config_fi" +
+      "le\030\001 \001(\t\022\030\n\020connections_file\030\002 \001(\t*\264\004\n\nS" +
+      "tatusCode\022\033\n\027STATUS_CODE_UNSPECIFIED\020\000\022\022" +
+      "\n\016STATUS_CODE_OK\020\001\022$\n STATUS_CODE_AUTHEN" +
+      "TICATION_ERROR\020\002\022\037\n\033STATUS_CODE_NOT_IMPL" +
+      "EMENTED\020\003\022\031\n\025STATUS_CODE_NOT_FOUND\020\004\022\036\n\032" +
+      "STATUS_CODE_ALREADY_EXISTS\020\005\022 \n\034STATUS_C" +
+      "ODE_INVALID_ARGUMENT\020\006\022\035\n\031STATUS_CODE_IN" +
+      "VALID_STATE\020\007\022\034\n\030STATUS_CODE_INVALID_DAT" +
+      "A\020\010\022\022\n\016STATUS_CODE_IO\020\t\022\031\n\025STATUS_CODE_C" +
+      "ANCELLED\020\n\022\037\n\033STATUS_CODE_UNAUTHENTICATE" +
+      "D\020\013\022\034\n\030STATUS_CODE_UNAUTHORIZED\020\014\022\035\n\031STA" +
+      "TUS_CODE_GENERIC_ERROR\020\r\022\036\n\032STATUS_CODE_" +
+      "INTERNAL_ERROR\020\016\022!\n\035STATUS_CODE_MISSING_" +
+      "PARAMETER\020\017\022\'\n#STATUS_CODE_INVALID_PARAM" +
+      "ETER_VALUE\020\020\022\033\n\027STATUS_CODE_LOGIN_ERROR\020" +
+      "\021*\230\003\n\010InfoCode\022\031\n\025INFO_CODE_UNSPECIFIED\020" +
+      "\000\022\031\n\025INFO_CODE_VENDOR_NAME\020\001\022\034\n\030INFO_COD" +
+      "E_VENDOR_VERSION\020\002\022\"\n\036INFO_CODE_VENDOR_A" +
+      "RROW_VERSION\020\003\022\030\n\024INFO_CODE_VENDOR_SQL\020e" +
+      "\022\036\n\032INFO_CODE_VENDOR_SUBSTRAIT\020f\022*\n&INFO" +
+      "_CODE_VENDOR_SUBSTRAIT_MIN_VERSION\020g\022*\n&" +
+      "INFO_CODE_VENDOR_SUBSTRAIT_MAX_VERSION\020h" +
+      "\022\032\n\025INFO_CODE_DRIVER_NAME\020\311\001\022\035\n\030INFO_COD" +
+      "E_DRIVER_VERSION\020\312\001\022#\n\036INFO_CODE_DRIVER_" +
+      "ARROW_VERSION\020\313\001\022\"\n\035INFO_CODE_DRIVER_ADB" +
+      "C_VERSION\020\314\0012\361%\n\016DatabaseDriver\022^\n\013Datab" +
+      "aseNew\022&.database_driver_v1.DatabaseNewR" +
+      "equest\032\'.database_driver_v1.DatabaseNewR" +
+      "esponse\022\202\001\n\027DatabaseSetOptionString\0222.da" +
+      "tabase_driver_v1.DatabaseSetOptionString" +
+      "Request\0323.database_driver_v1.DatabaseSet" +
+      "OptionStringResponse\022\177\n\026DatabaseSetOptio" +
+      "nBytes\0221.database_driver_v1.DatabaseSetO" +
+      "ptionBytesRequest\0322.database_driver_v1.D" +
+      "atabaseSetOptionBytesResponse\022y\n\024Databas" +
+      "eSetOptionInt\022/.database_driver_v1.Datab" +
+      "aseSetOptionIntRequest\0320.database_driver" +
+      "_v1.DatabaseSetOptionIntResponse\022\202\001\n\027Dat" +
+      "abaseSetOptionDouble\0222.database_driver_v" +
+      "1.DatabaseSetOptionDoubleRequest\0323.datab" +
+      "ase_driver_v1.DatabaseSetOptionDoubleRes" +
+      "ponse\022a\n\014DatabaseInit\022\'.database_driver_" +
+      "v1.DatabaseInitRequest\032(.database_driver" +
+      "_v1.DatabaseInitResponse\022j\n\017DatabaseRele" +
+      "ase\022*.database_driver_v1.DatabaseRelease" +
+      "Request\032+.database_driver_v1.DatabaseRel" +
+      "easeResponse\022d\n\rConnectionNew\022(.database" +
+      "_driver_v1.ConnectionNewRequest\032).databa" +
+      "se_driver_v1.ConnectionNewResponse\022\210\001\n\031C" +
+      "onnectionSetOptionString\0224.database_driv" +
+      "er_v1.ConnectionSetOptionStringRequest\0325" +
+      ".database_driver_v1.ConnectionSetOptionS" +
+      "tringResponse\022\205\001\n\030ConnectionSetOptionByt" +
+      "es\0223.database_driver_v1.ConnectionSetOpt" +
+      "ionBytesRequest\0324.database_driver_v1.Con" +
+      "nectionSetOptionBytesResponse\022\177\n\026Connect" +
+      "ionSetOptionInt\0221.database_driver_v1.Con" +
+      "nectionSetOptionIntRequest\0322.database_dr" +
+      "iver_v1.ConnectionSetOptionIntResponse\022\210" +
+      "\001\n\031ConnectionSetOptionDouble\0224.database_" +
+      "driver_v1.ConnectionSetOptionDoubleReque" +
+      "st\0325.database_driver_v1.ConnectionSetOpt" +
+      "ionDoubleResponse\022g\n\016ConnectionInit\022).da" +
+      "tabase_driver_v1.ConnectionInitRequest\032*" +
+      ".database_driver_v1.ConnectionInitRespon" +
+      "se\022p\n\021ConnectionRelease\022,.database_drive" +
+      "r_v1.ConnectionReleaseRequest\032-.database" +
+      "_driver_v1.ConnectionReleaseResponse\022p\n\021" +
+      "ConnectionGetInfo\022,.database_driver_v1.C" +
+      "onnectionGetInfoRequest\032-.database_drive" +
+      "r_v1.ConnectionGetInfoResponse\022y\n\024Connec" +
+      "tionGetObjects\022/.database_driver_v1.Conn" +
+      "ectionGetObjectsRequest\0320.database_drive" +
+      "r_v1.ConnectionGetObjectsResponse\022\205\001\n\030Co" +
+      "nnectionGetTableSchema\0223.database_driver" +
+      "_v1.ConnectionGetTableSchemaRequest\0324.da" +
+      "tabase_driver_v1.ConnectionGetTableSchem" +
+      "aResponse\022\202\001\n\027ConnectionGetTableTypes\0222." +
+      "database_driver_v1.ConnectionGetTableTyp" +
+      "esRequest\0323.database_driver_v1.Connectio" +
+      "nGetTableTypesResponse\022m\n\020ConnectionComm" +
+      "it\022+.database_driver_v1.ConnectionCommit" +
+      "Request\032,.database_driver_v1.ConnectionC" +
+      "ommitResponse\022s\n\022ConnectionRollback\022-.da" +
+      "tabase_driver_v1.ConnectionRollbackReque" +
+      "st\032..database_driver_v1.ConnectionRollba" +
+      "ckResponse\022\227\001\n\036ConnectionSetSessionParam" +
+      "eters\0229.database_driver_v1.ConnectionSet" +
+      "SessionParametersRequest\032:.database_driv" +
+      "er_v1.ConnectionSetSessionParametersResp" +
+      "onse\022\177\n\026ConnectionGetParameter\0221.databas" +
+      "e_driver_v1.ConnectionGetParameterReques" +
+      "t\0322.database_driver_v1.ConnectionGetPara" +
+      "meterResponse\022a\n\014StatementNew\022\'.database" +
+      "_driver_v1.StatementNewRequest\032(.databas" +
+      "e_driver_v1.StatementNewResponse\022m\n\020Stat" +
+      "ementRelease\022+.database_driver_v1.Statem" +
+      "entReleaseRequest\032,.database_driver_v1.S" +
+      "tatementReleaseResponse\022y\n\024StatementSetS" +
+      "qlQuery\022/.database_driver_v1.StatementSe" +
+      "tSqlQueryRequest\0320.database_driver_v1.St" +
+      "atementSetSqlQueryResponse\022\210\001\n\031Statement" +
+      "SetSubstraitPlan\0224.database_driver_v1.St" +
+      "atementSetSubstraitPlanRequest\0325.databas" +
+      "e_driver_v1.StatementSetSubstraitPlanRes" +
+      "ponse\022m\n\020StatementPrepare\022+.database_dri" +
+      "ver_v1.StatementPrepareRequest\032,.databas" +
+      "e_driver_v1.StatementPrepareResponse\022\205\001\n" +
+      "\030StatementSetOptionString\0223.database_dri" +
+      "ver_v1.StatementSetOptionStringRequest\0324" +
+      ".database_driver_v1.StatementSetOptionSt" +
+      "ringResponse\022\202\001\n\027StatementSetOptionBytes" +
+      "\0222.database_driver_v1.StatementSetOption" +
+      "BytesRequest\0323.database_driver_v1.Statem" +
+      "entSetOptionBytesResponse\022|\n\025StatementSe" +
+      "tOptionInt\0220.database_driver_v1.Statemen" +
+      "tSetOptionIntRequest\0321.database_driver_v" +
+      "1.StatementSetOptionIntResponse\022\205\001\n\030Stat" +
+      "ementSetOptionDouble\0223.database_driver_v" +
+      "1.StatementSetOptionDoubleRequest\0324.data" +
+      "base_driver_v1.StatementSetOptionDoubleR" +
+      "esponse\022\216\001\n\033StatementGetParameterSchema\022" +
+      "6.database_driver_v1.StatementGetParamet" +
+      "erSchemaRequest\0327.database_driver_v1.Sta" +
+      "tementGetParameterSchemaResponse\022d\n\rStat" +
+      "ementBind\022(.database_driver_v1.Statement" +
+      "BindRequest\032).database_driver_v1.Stateme" +
+      "ntBindResponse\022v\n\023StatementBindStream\022.." +
+      "database_driver_v1.StatementBindStreamRe" +
+      "quest\032/.database_driver_v1.StatementBind" +
+      "StreamResponse\022|\n\025StatementExecuteQuery\022" +
+      "0.database_driver_v1.StatementExecuteQue" +
+      "ryRequest\0321.database_driver_v1.Statement" +
+      "ExecuteQueryResponse\022\213\001\n\032StatementExecut" +
+      "ePartitions\0225.database_driver_v1.Stateme" +
+      "ntExecutePartitionsRequest\0326.database_dr" +
+      "iver_v1.StatementExecutePartitionsRespon" +
+      "se\022\177\n\026StatementReadPartition\0221.database_" +
+      "driver_v1.StatementReadPartitionRequest\032" +
+      "2.database_driver_v1.StatementReadPartit" +
+      "ionResponse\022|\n\025ConfigLoadAllSections\0220.d" +
+      "atabase_driver_v1.ConfigLoadAllSectionsR" +
+      "equest\0321.database_driver_v1.ConfigLoadAl" +
+      "lSectionsResponse\022g\n\016ConfigGetPaths\022).da" +
+      "tabase_driver_v1.ConfigGetPathsRequest\032*" +
+      ".database_driver_v1.ConfigGetPathsRespon" +
+      "se\032\024\302\251\311\001\017DriverException:;\n\rservice_erro" +
+      "r\022\037.google.protobuf.ServiceOptions\030\230\225\031 \001" +
+      "(\t\210\001\001:9\n\014method_error\022\036.google.protobuf." +
+      "MethodOptions\030\230\225\031 \001(\t\210\001\001B4\n2net.snowflak" +
+      "e.client.internal.unicore.protobuf_genb\006" +
+      "proto3"
     };
     descriptor = com.google.protobuf.Descriptors.FileDescriptor
       .internalBuildGeneratedFileFrom(descriptorData,
@@ -64318,13 +64118,7 @@ net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSectio
     internal_static_database_driver_v1_ConfigLoadAllSectionsResponse_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_database_driver_v1_ConfigLoadAllSectionsResponse_descriptor,
-        new java.lang.String[] { "Sections", });
-    internal_static_database_driver_v1_ConfigLoadAllSectionsResponse_SectionsEntry_descriptor =
-      internal_static_database_driver_v1_ConfigLoadAllSectionsResponse_descriptor.getNestedTypes().get(0);
-    internal_static_database_driver_v1_ConfigLoadAllSectionsResponse_SectionsEntry_fieldAccessorTable = new
-      com.google.protobuf.GeneratedMessage.FieldAccessorTable(
-        internal_static_database_driver_v1_ConfigLoadAllSectionsResponse_SectionsEntry_descriptor,
-        new java.lang.String[] { "Key", "Value", });
+        new java.lang.String[] { "ConfigJson", });
     internal_static_database_driver_v1_ConfigGetPathsRequest_descriptor =
       getDescriptor().getMessageTypes().get(99);
     internal_static_database_driver_v1_ConfigGetPathsRequest_fieldAccessorTable = new

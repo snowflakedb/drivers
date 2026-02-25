@@ -8,12 +8,15 @@ All file I/O, TOML parsing, and permission checks are performed by sf_core.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Any, Callable, Literal, NamedTuple, TypeVar
+
+import tomlkit
 
 from snowflake.connector._internal.api_client.client_api import (
     database_driver_client,
@@ -50,20 +53,26 @@ class ConfigSlice(NamedTuple):
     section: str
 
 
-def _parse_config_setting(setting: Any) -> Any:
-    """Parse a ConfigSetting protobuf message to extract the value."""
-    value_field = setting.WhichOneof("value")
-    if value_field == "string_value":
-        return setting.string_value
-    elif value_field == "int_value":
-        return setting.int_value
-    elif value_field == "double_value":
-        return setting.double_value
-    elif value_field == "bytes_value":
-        return setting.bytes_value
-    elif value_field == "bool_value":
-        return setting.bool_value
-    return None
+def _dict_to_tomlkit_container(data: dict[str, Any]) -> Any:
+    """Wrap a nested plain dict in tomlkit types for CLI backward compatibility."""
+    doc = tomlkit.document()
+    _populate_tomlkit(doc, data)
+    return doc
+
+
+def _populate_tomlkit(target: Any, source: dict[str, Any]) -> None:
+    """Recursively copy *source* into a tomlkit container *target*."""
+    for key, value in source.items():
+        if value is None:
+            continue
+        if isinstance(value, dict):
+            table = tomlkit.table()
+            _populate_tomlkit(table, value)
+            target.add(key, table)
+        elif isinstance(value, bytes):
+            target.add(key, value.decode("utf-8", errors="replace"))
+        else:
+            target.add(key, value)
 
 
 def _translate_core_error(
@@ -160,55 +169,34 @@ class ConfigOption:
         return f"SNOWFLAKE_{'_'.join(pieces)}"
 
     def _get_config(self) -> Any:
-        """Get value from the cached configuration loaded by sf_core."""
-        all_sections = self._root_manager._get_cached_config()
+        """Get value from the nested cached configuration loaded by sf_core.
 
-        if not all_sections:
+        Dict values that contain sub-dicts are wrapped in tomlkit types so
+        that the CLI's ``isinstance(section, Container)`` / ``Table`` gates
+        work for environment-variable merging.
+        """
+        nested_config = self._root_manager._get_cached_config()
+
+        if not nested_config:
             raise MissingConfigOptionError(
                 f"Configuration option '{self.option_name}' is not defined anywhere, "
                 "have you forgotten to set it in a configuration file, or "
                 "environmental variable?"
             )
 
-        if len(self._nest_path) > 2:
-            section_path = ".".join(self._nest_path[1:-1])
-            option_name = self._nest_path[-1]
-
-            if section_path in all_sections:
-                section_settings = all_sections[section_path]
-                if option_name in section_settings:
-                    return section_settings[option_name]
-
-            raise MissingConfigOptionError(
-                f"Configuration option '{self.option_name}' is not defined anywhere, "
-                "have you forgotten to set it in a configuration file, or "
-                "environmental variable?"
-            )
-        else:
-            if self.name == "connections":
-                connections = {}
-                for section_name, section_settings in all_sections.items():
-                    if section_name.startswith("connections."):
-                        conn_name = section_name[len("connections.") :]
-                        connections[conn_name] = section_settings
-                if connections:
-                    return connections
+        path_parts = self._nest_path[1:]
+        current = nested_config
+        for part in path_parts:
+            try:
+                current = current[part]
+            except (KeyError, TypeError) as err:
                 raise MissingConfigOptionError(
                     f"Configuration option '{self.option_name}' is not defined anywhere, "
                     "have you forgotten to set it in a configuration file, or "
                     "environmental variable?"
-                )
-            else:
-                for section_name, section_settings in all_sections.items():
-                    if not section_name.startswith("connections."):
-                        if self.name in section_settings:
-                            return section_settings[self.name]
+                ) from err
 
-                raise MissingConfigOptionError(
-                    f"Configuration option '{self.option_name}' is not defined anywhere, "
-                    "have you forgotten to set it in a configuration file, or "
-                    "environmental variable?"
-                )
+        return _dict_to_tomlkit_container(current)
 
 
 class ConfigManager:
@@ -274,31 +262,14 @@ class ConfigManager:
                 return
             raise _translate_core_error(e, self.file_path) from e
 
-        all_sections: dict[str, Any] = {}
-        for section_name, section in response.sections.items():
-            section_dict: dict[str, Any] = {}
-            for key, setting in section.settings.items():
-                section_dict[key] = _parse_config_setting(setting)
-            all_sections[section_name] = section_dict
+        nested_config: dict[str, Any] = json.loads(response.config_json) if response.config_json else {}
 
-        # Handle only_in_slice: remove sections that should only come from slice.
-        #
-        # LIMITATION: The Rust core returns already-merged sections without
-        # per-setting provenance, so we cannot distinguish values that came
-        # from the base config file vs. the slice file. Deleting by section
-        # name here also removes entries that legitimately originate from the
-        # slice file (e.g. connections.toml). This is acceptable for the
-        # current use case where only_in_slice means "ignore base-file
-        # entries entirely", but a proper fix requires the core to either
-        # support "only read from slice" semantics or expose provenance info.
         for slice_info in self._slices:
             _slice_path, slice_options, slice_section = slice_info
             if slice_options.only_in_slice:
-                keys_to_remove = [k for k in all_sections if k == slice_section or k.startswith(f"{slice_section}.")]
-                for k in keys_to_remove:
-                    del all_sections[k]
+                nested_config.pop(slice_section, None)
 
-        self.conf_file_cache = all_sections
+        self.conf_file_cache = nested_config
 
     def _get_connections_file_path(self) -> Path | None:
         """Extract connections file path from slices configuration."""
@@ -351,6 +322,7 @@ class ConfigManager:
         _root_setter_helper(new_child)
 
     def __getitem__(self, name: str) -> ConfigOption | ConfigManager | Any:
+        self._root_manager._get_cached_config()
         if name in self._options:
             return self._options[name].value()
         if name in self._sub_managers:

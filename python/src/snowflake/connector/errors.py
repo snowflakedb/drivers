@@ -109,3 +109,7 @@ class MissingConfigOptionError(ConfigSourceError):
 
 class ForbiddenError(Error):
     """Exception for 403 HTTP error for retry."""
+
+
+class BadGatewayError(Error):
+    """Exception for 502 HTTP error for retry."""

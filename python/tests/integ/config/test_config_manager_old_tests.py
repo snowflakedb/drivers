@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 import stat
+import tempfile
 
 from pathlib import Path
 from textwrap import dedent
@@ -9,6 +10,7 @@ from typing import Callable, Literal, Union
 from uuid import uuid4
 
 import pytest
+import tomlkit
 
 from pytest import raises
 
@@ -24,6 +26,18 @@ from snowflake.connector.errors import (
     ConfigSourceError,
     MissingConfigOptionError,
 )
+
+
+@pytest.fixture
+def snowflake_home(monkeypatch):
+    """
+    Set up the default location of config files to [temporary_directory]/.snowflake
+    """
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        snowflake_home = Path(tmp_dir) / ".snowflake"
+        snowflake_home.mkdir()
+        monkeypatch.setenv("SNOWFLAKE_HOME", str(snowflake_home))
+        yield snowflake_home
 
 
 def tmp_files_helper(cwd: Path, to_create: files) -> None:
@@ -93,11 +107,9 @@ class TestsBackwardCompatibilityForConfigManager:
             name="test",
             file_path=config_file,
         )
-        import tomllib
-
         TEST_PARSER.add_option(
             name="connections",
-            parse_str=tomllib.loads,
+            parse_str=tomlkit.loads,
         )
         settings_parser = ConfigManager(
             name="settings",
@@ -141,11 +153,9 @@ class TestsBackwardCompatibilityForConfigManager:
             file_path=tmp_folder / "config.toml",
             _slices=(ConfigSlice(tmp_folder / "connections.toml", ConfigSliceOptions(), "connections"),),
         )
-        import tomllib
-
         TEST_PARSER.add_option(
             name="connections",
-            parse_str=tomllib.loads,
+            parse_str=tomlkit.loads,
         )
         settings_parser = ConfigManager(
             name="settings",
@@ -385,9 +395,7 @@ class TestsBackwardCompatibilityForConfigManager:
             name="test_parser",
         )
 
-        import tomllib
-
-        TEST_PARSER.add_option(name="connections", parse_str=tomllib.loads, env_name="CONNECTIONS")
+        TEST_PARSER.add_option(name="connections", parse_str=tomlkit.loads, env_name="CONNECTIONS")
         with monkeypatch.context() as m:
             m.setenv("CONNECTIONS", toml_value)
             assert TEST_PARSER["connections"] == {"text": rnd_string}
