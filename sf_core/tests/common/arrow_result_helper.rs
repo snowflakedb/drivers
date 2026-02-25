@@ -62,6 +62,7 @@ impl ArrowResultHelper {
         Ok(all_rows)
     }
 
+    /// Converts all result rows into a vector of `T` using the `ArrowConvertRow` trait
     pub fn transform_rows<T: ArrowConvertRow>(&mut self) -> Result<Vec<T>, ArrowExtractError> {
         let mut all_values = Vec::new();
         while let Some(batch) = self.next_batch() {
