@@ -13,11 +13,6 @@ import warnings
 from dataclasses import dataclass
 from typing import Any
 
-from snowflake.connector.logout_params_mapping_strategy import (
-    LogoutParamsMappingStrategy,
-    Phase2LogoutParamsMappingStrategy,
-    Phase3LogoutParamsMappingStrategy,
-)
 from snowflake.connector._internal.protobuf_gen.database_driver_v1_services import (
     ConnectionCloseRequest,
     ConnectionGetParameterRequest,
@@ -32,7 +27,10 @@ from snowflake.connector._internal.protobuf_gen.database_driver_v1_services impo
     DatabaseInitRequest,
     DatabaseNewRequest,
 )
-from snowflake.connector._internal.protobuf_gen import database_driver_v1_pb2
+from snowflake.connector.logout_config_mapping import (
+    LogoutConfig,
+    map_logout_config_phase2,
+)
 
 from ._internal._private_key_helper import normalize_private_key
 from ._internal.api_client.client_api import database_driver_client
@@ -77,20 +75,6 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
-class ConnectionClassConfig:
-    """Static configuration flags for Connection class behavior.
-
-    Immutable configuration that controls Connection behavior across all instances.
-    """
-
-    # Internal flag for logout semantics migration (SNOW-2314152)
-    # False (default): Phase 2 - server_session_keep_alive=False respects auto-detection
-    # True: Phase 3 - Pass parameters directly to Core without mapping
-    # WARNING: Phase 3 will become default in future release (Breaking Change)
-    USE_PHASE3_LOGOUT_SEMANTICS: bool = False
-
-
-@dataclass
 class ConnectionClassState:
     """Mutable class-level state shared across all Connection instances in the process.
 
@@ -105,22 +89,8 @@ class ConnectionClassState:
 class Connection:
     """Connection objects represent a database connection."""
 
-    # Protected static configuration (immutable class-level settings)
-    _class_config = ConnectionClassConfig()
-
     # Protected static state (mutable class-level state, shared across all instances)
     _class_state = ConnectionClassState()
-
-    @classmethod
-    def _get_logout_params_mapping_strategy(cls) -> LogoutParamsMappingStrategy:
-        """Factory method for logout parameter mapping strategy.
-
-        Returns:
-            Phase2 or Phase3 strategy based on USE_PHASE3_LOGOUT_SEMANTICS flag
-        """
-        if cls._class_config.USE_PHASE3_LOGOUT_SEMANTICS:
-            return Phase3LogoutParamsMappingStrategy()
-        return Phase2LogoutParamsMappingStrategy()
 
     def __init__(self, *, paramstyle: str | None = None, **kwargs: Any) -> None:
         """
@@ -162,8 +132,10 @@ class Connection:
 
         # Extract logout configuration parameters before passing to Core
         self.server_session_keep_alive: bool | None = kwargs.pop("server_session_keep_alive", None)
+        # Phase 2 default for Python: enable auto-detection by default for backward compatibility
+        # If user explicitly passes None, it's kept as None (Core treats as False)
         self.enable_server_session_keep_alive_auto_detection: bool | None = kwargs.pop(
-            "enable_server_session_keep_alive_auto_detection", None
+            "enable_server_session_keep_alive_auto_detection", True
         )
         self.auto_cleanup: bool = kwargs.pop("auto_cleanup", True)
 
@@ -202,6 +174,16 @@ class Connection:
         if self.auto_cleanup:
             atexit.register(self._close_at_process_exit)
 
+    def _map_logout_config(self) -> LogoutConfig:
+        """Map logout parameters to Core configuration.
+
+        Returns logout configuration with all values resolved (defaults applied,
+        phase-specific mapping done).
+
+        Related: SNOW-2314152
+        """
+        return map_logout_config_phase2(self)
+
     def close(self, retry: bool = True) -> None:
         """
         Close the connection now.
@@ -213,15 +195,11 @@ class Connection:
                    - True (default): Allow retries (Core default: up to 6 attempts with exponential backoff)
                    - False: No retries, single attempt only (matches old driver behavior)
 
-        Behavior (Phase 2 - Backward Compatible, SNOW-2314152):
-            - Auto-detection enabled by default (legacy Python behavior for backward compatibility)
-            - server_session_keep_alive=False still respects auto-detection
+        Behavior (SNOW-2314152):
+            - Auto-detection enabled by default (legacy Python behavior)
+            - server_session_keep_alive=False respects auto-detection
             - server_session_keep_alive=True never sends logout (Fire & Forget)
-            - server_session_keep_alive=None delegates to auto-detection setting
-
-        Note: Phase 2 behavior is achieved by mapping Python parameters to Core's Phase 3
-        semantics. In Phase 3, Python will pass parameters directly to Core without mapping.
-        See .ai/docs/UD_Design_Doc_Fire_Forget.md and SNOW-2314152 for Phase 2/3 migration plan.
+            - server_session_keep_alive=None delegates to auto-detection
         """
         # Unregister atexit handler to prevent it from running at process exit
         # after explicit close(). This prevents double cleanup and false warnings.
@@ -230,16 +208,9 @@ class Connection:
 
         # Note: Idempotence is handled atomically in Core (connection_close)
 
-        # Map Python parameters to Core parameters using strategy pattern (SNOW-2314152)
-        strategy = self._get_logout_params_mapping_strategy()
-        core_keep_alive = strategy.map_server_session_keep_alive(self)
-
-        # Default auto-detection setting for Core (used when core_keep_alive is None)
-        effective_enable_auto = (
-            self.enable_server_session_keep_alive_auto_detection
-            if self.enable_server_session_keep_alive_auto_detection is not None
-            else True
-        )
+        # Map Python parameters to Core parameters (SNOW-2314152)
+        # All logic (defaults, mapping) handled in _map_logout_config()
+        logout_config = self._map_logout_config()
 
         # Handle retry parameter (backward compatibility with old driver)
         # Old driver: retry=True → 3 attempts, retry=False → 1 attempt
@@ -251,14 +222,14 @@ class Connection:
             # No retries: Single attempt only (matches old driver retry=False)
             max_retry_attempts = 1
 
-        # Call Core connection_close with mapped configuration
+        # Call Core connection_close with fully resolved configuration
         # Core will set is_closed flag atomically
         self.db_api.connection_close(
             ConnectionCloseRequest(
                 conn_handle=self.conn_handle,
-                server_session_keep_alive=core_keep_alive,  # Mapped parameter
-                enable_auto_detection=effective_enable_auto,
-                error_strategy=database_driver_v1_pb2.ERROR_STRATEGY_BEST_EFFORT,  # Python default
+                server_session_keep_alive=logout_config.server_session_keep_alive,
+                enable_auto_detection=logout_config.enable_auto_detection,
+                error_strategy=logout_config.error_strategy,
                 timeout_seconds=5,  # 5 second default
                 max_retry_attempts=max_retry_attempts,
             )
