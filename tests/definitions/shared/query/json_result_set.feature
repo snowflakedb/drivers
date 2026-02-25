@@ -7,6 +7,7 @@ Feature: JSON Result Set
     And Query result format is forced to JSON
     When Query "SELECT 'abc', 123" is executed
     Then all values are deserialized correctly
+    And Statement should be released
 
   # TODO add a test for larger result set with chunks
 
