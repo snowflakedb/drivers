@@ -19,7 +19,7 @@ pub fn num_result_cols(
     let stmt = stmt_from_handle(statement_handle);
 
     let num_cols = match stmt.state.as_ref() {
-        StatementState::Prepared { reader } => reader.schema().fields().len() as sql::SmallInt,
+        StatementState::Prepared => stmt.ird.desc_count,
         StatementState::Executed { reader, .. } => reader.schema().fields().len() as sql::SmallInt,
         StatementState::Fetching { record_batch, .. } => {
             record_batch.schema().fields().len() as sql::SmallInt
@@ -77,7 +77,6 @@ pub fn col_attribute(
     let stmt = stmt_from_handle(statement_handle);
 
     let schema = match stmt.state.as_ref() {
-        StatementState::Prepared { reader } => reader.schema(),
         StatementState::Executed { reader, .. } => reader.schema(),
         StatementState::Fetching { record_batch, .. } => record_batch.schema(),
         _ => return StatementNotExecutedSnafu.fail(),
@@ -140,7 +139,6 @@ pub fn describe_col(
     let stmt = stmt_from_handle(statement_handle);
 
     let schema = match stmt.state.as_ref() {
-        StatementState::Prepared { reader } => reader.schema(),
         StatementState::Executed { reader, .. } => reader.schema(),
         StatementState::Fetching { record_batch, .. } => record_batch.schema(),
         _ => return StatementNotExecutedSnafu.fail(),

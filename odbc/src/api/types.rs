@@ -493,9 +493,7 @@ pub struct ParameterBinding {
 
 pub enum StatementState {
     Created,
-    Prepared {
-        reader: ArrowArrayStreamReader,
-    },
+    Prepared,
     Executed {
         reader: ArrowArrayStreamReader,
         rows_affected: Option<i64>,
@@ -530,7 +528,7 @@ impl<T> State<T> {
         self.current_state.take().unwrap()
     }
 
-    fn set(&mut self, state: T) {
+    pub fn set(&mut self, state: T) {
         self.current_state = Some(state);
     }
 
