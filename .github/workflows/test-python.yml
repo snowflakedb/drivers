@@ -89,7 +89,7 @@ jobs:
         run: uv python install 3.13
 
       - name: Install Hatch
-        run: uv tool install hatch
+        run: uv tool install hatch --with "virtualenv<21.0.0"
 
       - name: Run packaging tests
         working-directory: ./python
@@ -134,10 +134,8 @@ jobs:
         env:
           PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
 
-      - name: Setup env
-        run: &setup_env |
-          uv venv
-          uv pip install hatch "virtualenv<21.0.0"
+      - name: Install Hatch
+        run: &setup_env uv tool install hatch --with "virtualenv<21.0.0"
 
       - name: Install snowflake ud driver from wheel
         working-directory: python
@@ -201,8 +199,9 @@ jobs:
         env:
           PARAMETERS_SECRET: ${{ secrets.PARAMETERS_SECRET }}
 
-      - name: Setup env
+      - name: Install Hatch
         run: *setup_env
+
       - name: Run reference integration tests
         env:
           PARAMETER_PATH: ${{ github.workspace }}/parameters.json
@@ -248,7 +247,7 @@ jobs:
           name: results-reference-${{ env.REFERENCE_OS_VERSION }}-${{ env.REFERENCE_PYTHON_VERSION }}
           path: ${{ github.workspace }}/reference-results
 
-      - name: Setup env
+      - name: Install Hatch
         run: *setup_env
 
       - name: Compare integration test results
