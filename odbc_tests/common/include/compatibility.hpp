@@ -1,8 +1,9 @@
 #ifndef COMPATIBILITY_HPP
 #define COMPATIBILITY_HPP
 
-#include <catch2/catch_test_macros.hpp>
 #include <cstdlib>
+
+#include <catch2/catch_test_macros.hpp>
 
 // Cross-platform process ID
 #ifdef _WIN32
@@ -41,11 +42,11 @@ extern DRIVER_TYPE get_driver_type();
     }                                            \
   } while (0)
 
-#define REQUIRE_VPN(message)                                          \
-  do {                                                                \
-    if (std::getenv("JENKINS_URL") == nullptr) {                      \
-      SKIP("Requires VPN (run on Jenkins): " << message);             \
-    }                                                                 \
+#define REQUIRE_VPN(message)                              \
+  do {                                                    \
+    if (std::getenv("JENKINS_URL") == nullptr) {          \
+      SKIP("Requires VPN (run on Jenkins): " << message); \
+    }                                                     \
   } while (0)
 
 #endif  // COMPATIBILITY_HPP
