@@ -104,7 +104,7 @@ TEST_CASE("should fail native okta authentication with wrong credentials", "[nat
   // When Trying to Connect
   auto records = require_connection_failed(connection_string);
 
-  // Then Connection fails with authentication error indicating bad credentials
+  // Then Connection fails with authentication error
   REQUIRE(records.size() >= 1);
   CHECK(records[0].sqlState == "28000");
   CHECK_THAT(records[0].messageText, ContainsSubstring("rejected credentials"));
@@ -128,10 +128,8 @@ TEST_CASE("should fail native okta authentication with wrong okta url", "[native
   // When Trying to Connect
   auto records = require_connection_failed(connection_string);
 
-  // Then Connection fails with IdP URL mismatch (real IdP URLs don't match invalid.okta.com)
+  // Then Connection fails with authentication error
   REQUIRE(records.size() >= 1);
   CHECK(records[0].sqlState == "28000");
-  CHECK_THAT(records[0].messageText,
-             ContainsSubstring("does not match configured Okta URL") ||
-                 ContainsSubstring("Native Okta SSO failed"));
+  CHECK_THAT(records[0].messageText, ContainsSubstring("does not match configured Okta URL") || ContainsSubstring("Native Okta SSO failed"));
 }
