@@ -289,11 +289,11 @@ async fn should_timeout_after_5_seconds_by_default_when_server_does_not_respond(
     //And UD Core connection is logged in with no timeout override
     let config = LogoutConfig::default(); // Default timeout is 5 seconds
 
-    // Build retry policy: total budget = timeout (5s)
-    // After the first request times out at 5s, the deadline check will
-    // see elapsed >= max_elapsed and return DeadlineExceeded
+    // Build retry policy matching Python's default configuration (5s per-request timeout)
+    // Python passes logout_request_timeout_seconds=5 by default
     let retry_policy = RetryPolicy {
         max_elapsed: config.logout_total_timeout,
+        per_request_timeout: Some(Duration::from_secs(5)), // Python's default
         ..Default::default()
     };
 
@@ -380,6 +380,7 @@ async fn should_cancel_individual_request_when_per_request_socket_timeout_exceed
     // Build retry policy with total budget matching connection_close behavior
     let retry_policy = RetryPolicy {
         max_elapsed: total_timeout,
+        per_request_timeout: Some(per_request_timeout),
         ..Default::default()
     };
 
@@ -1479,6 +1480,7 @@ async fn should_throw_on_timeout_with_strict_strategy() {
     let retry_policy = RetryPolicy {
         max_attempts: 1,
         max_elapsed: timeout,
+        per_request_timeout: Some(timeout),
         ..Default::default()
     };
 
@@ -1553,6 +1555,7 @@ async fn should_log_warn_and_succeed_on_timeout_with_best_effort_strategy() {
     let retry_policy = RetryPolicy {
         max_attempts: 1,
         max_elapsed: timeout,
+        per_request_timeout: Some(timeout),
         ..Default::default()
     };
 

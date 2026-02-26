@@ -71,5 +71,5 @@ def map_logout_config_phase2(connection: "Connection") -> LogoutConfig:
         error_strategy=database_driver_v1_pb2.ERROR_STRATEGY_BEST_EFFORT,
         logout_total_timeout_seconds=15,  # 15 second total budget with 3 max attempts = ~5s per attempt
         max_retry_attempts=3,  # Limit retries for faster failure feedback
-        logout_request_timeout_seconds=10,  # 10s per request, 15s total budget, 3 attempts max
+        logout_request_timeout_seconds=5,  # 5s per request (default), dynamically adjusted to min(5s, remaining)
     )
