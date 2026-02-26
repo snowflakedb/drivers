@@ -2,12 +2,16 @@ package net.snowflake.client.api.resultset;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.math.BigDecimal;
 import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.sql.Statement;
 import net.snowflake.client.SnowflakeIntegrationTestBase;
 import org.junit.jupiter.api.Test;
@@ -93,6 +97,50 @@ public class SnowflakeResultSetGettersTest extends SnowflakeIntegrationTestBase 
       assertTrue(Float.isInfinite(posInf) && posInf > 0);
       assertTrue(Float.isInfinite(negInf) && negInf < 0);
       assertTrue(Float.isNaN(nanVal));
+    }
+  }
+
+  @Test
+  public void testDecfloatIntegerGetterOverflowBehavior() throws Exception {
+    try (Statement stmt = getDefaultConnection().createStatement();
+        ResultSet rs =
+            stmt.executeQuery(
+                "SELECT 123::DECFLOAT, 2147483648::DECFLOAT, 9223372036854775808::DECFLOAT")) {
+      assertTrue(rs.next());
+
+      assertEquals(123, rs.getInt(1));
+      assertEquals(123L, rs.getLong(1));
+      assertEquals((short) 123, rs.getShort(1));
+
+      assertThrows(SQLException.class, () -> rs.getInt(2));
+      assertThrows(SQLException.class, () -> rs.getShort(2));
+      assertEquals(2147483648L, rs.getLong(2));
+
+      assertThrows(SQLException.class, () -> rs.getLong(3));
+      assertThrows(SQLException.class, () -> rs.getInt(3));
+      assertThrows(SQLException.class, () -> rs.getShort(3));
+    }
+  }
+
+  @Test
+  public void testDecfloatWasNullAcrossMultipleGetters() throws Exception {
+    try (Statement stmt = getDefaultConnection().createStatement();
+        ResultSet rs = stmt.executeQuery("SELECT NULL::DECFLOAT")) {
+      assertTrue(rs.next());
+
+      assertNull(rs.getBigDecimal(1));
+      assertTrue(rs.wasNull());
+
+      assertNull(rs.getObject(1));
+      assertTrue(rs.wasNull());
+
+      assertEquals(0.0d, rs.getDouble(1), 0.0d);
+      assertTrue(rs.wasNull());
+
+      assertNull(rs.getString(1));
+      assertTrue(rs.wasNull());
+
+      assertFalse(rs.next());
     }
   }
 }
