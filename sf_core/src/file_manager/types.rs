@@ -87,6 +87,9 @@ pub struct StageInfo {
     pub key_prefix: String,
     pub region: String,
     pub creds: Credentials,
+    /// S3 endpoint provided by Snowflake (e.g. for FIPS or regional routing).
+    /// When present, the S3 client uses this instead of the SDK default.
+    pub end_point: Option<String>,
 }
 
 #[derive(Debug, Clone)]

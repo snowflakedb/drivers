@@ -224,6 +224,9 @@ pub struct StageInfo {
     #[serde(rename = "location")]
     location: Option<String>,
 
+    #[serde(rename = "endPoint")]
+    end_point: Option<String>,
+
     // unused fields
     #[serde(rename = "locationType")]
     _location_type: Option<String>,
@@ -235,8 +238,6 @@ pub struct StageInfo {
     _is_client_side_encrypted: Option<bool>,
     #[serde(rename = "presignedUrl")]
     _presigned_url: Option<String>,
-    #[serde(rename = "endPoint")]
-    _end_point: Option<String>,
     #[serde(rename = "useS3RegionalUrl")]
     _use_s3_regional_url: Option<bool>,
     #[serde(rename = "useRegionalUrl")]
@@ -355,9 +356,7 @@ impl Data {
             .fail()?,
         };
 
-        let overwrite = self.overwrite.context(MissingParameterSnafu {
-            parameter: "overwrite",
-        })?;
+        let overwrite = self.overwrite.unwrap_or(false);
 
         Ok(file_manager::UploadData {
             src_location_pattern: src_location,
@@ -603,7 +602,10 @@ impl TryFrom<&StageInfo> for file_manager::StageInfo {
         })?;
 
         let bucket = location[..bucket_separator].to_string();
-        let key_prefix = location[bucket_separator + 1..].to_string();
+        let mut key_prefix = location[bucket_separator + 1..].to_string();
+        if !key_prefix.is_empty() && !key_prefix.ends_with('/') {
+            key_prefix.push('/');
+        }
 
         let region = value
             .region
@@ -621,11 +623,18 @@ impl TryFrom<&StageInfo> for file_manager::StageInfo {
             })?
             .try_into()?;
 
+        let end_point = value
+            .end_point
+            .as_ref()
+            .filter(|ep| !ep.is_empty())
+            .cloned();
+
         Ok(file_manager::StageInfo {
             bucket,
             key_prefix,
             region,
             creds,
+            end_point,
         })
     }
 }

@@ -5,6 +5,8 @@ from pathlib import Path
 
 from tests.compatibility import NEW_DRIVER_ONLY, OLD_DRIVER_ONLY
 from tests.e2e.put_get.put_get_helper import (
+    as_file_uri,
+    create_temporary_stage,
     create_temporary_stage_and_upload_file,
     get_file_from_stage,
     list_stage_contents,
@@ -220,3 +222,26 @@ def test_should_return_correct_column_metadata_for_get(connection):
                 assert actual_type_code == expected_type_code, (
                     f"Column '{expected_name}' type_code should be {expected_type_code}, got {actual_type_code}"
                 )
+
+
+def test_should_upload_file_to_subdirectory_in_stage(connection):
+    test_file_path = shared_test_data_dir() / "compression" / "test_data.csv"
+    filename = test_file_path.name
+
+    with connection.cursor() as cursor:
+        # Given Snowflake client is logged in
+        assert cursor is not None
+
+        # When File is uploaded to a subdirectory in stage
+        stage_name = create_temporary_stage(cursor, "TEST_SUBDIR_UPLOAD")
+        subdir_path = f"@{stage_name}/nested/subdir"
+        file_uri = as_file_uri(test_file_path)
+        put_command = f"PUT 'file://{file_uri}' {subdir_path} AUTO_COMPRESS=FALSE"
+        cursor.execute(put_command)
+        upload_result = cursor.fetchone()
+        assert upload_result[6] == "UPLOADED"
+
+        # Then File should be listed under the subdirectory
+        files = list_stage_contents(cursor, stage_name)
+        listed_names = [row[0] for row in files]
+        assert any("nested/subdir" in name and filename in name for name in listed_names)
