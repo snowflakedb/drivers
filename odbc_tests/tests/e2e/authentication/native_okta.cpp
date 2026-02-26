@@ -131,5 +131,7 @@ TEST_CASE("should fail native okta authentication with wrong okta url", "[native
   // Then Connection fails with authentication error
   REQUIRE(records.size() >= 1);
   CHECK(records[0].sqlState == "28000");
-  CHECK_THAT(records[0].messageText, ContainsSubstring("does not match configured Okta URL") || ContainsSubstring("Native Okta SSO failed"));
+  CHECK_THAT(records[0].messageText,
+             ContainsSubstring("does not match configured Okta URL") ||
+                 ContainsSubstring("Native Okta SSO failed"));
 }
