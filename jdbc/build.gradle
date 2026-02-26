@@ -140,6 +140,8 @@ publishing {
 // ====================
 def configureCommonTestTask = { t ->
     t.useJUnitPlatform()
+    t.minHeapSize = '1g'
+    t.maxHeapSize = '4g'
 
     if (JavaVersion.current().isJava9Compatible()) {
         t.jvmArgs '--add-opens=java.base/java.nio=org.apache.arrow.memory.core,ALL-UNNAMED'
