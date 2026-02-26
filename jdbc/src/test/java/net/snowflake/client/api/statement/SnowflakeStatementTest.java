@@ -32,20 +32,7 @@ public class SnowflakeStatementTest extends SnowflakeIntegrationTestBase {
 
   @Test
   public void testStatementExecuteWithDecfloatResultSet() throws Exception {
-    try (Connection conn = openConnection();
-        Statement stmt = conn.createStatement();
-        ResultSet rs = stmt.executeQuery("SELECT 123.456::DECFLOAT")) {
-      assertNotNull(rs, "ResultSet should be available after executeQuery");
-      assertTrue(rs.next(), "Expected one row");
-      assertEquals(new BigDecimal("123.456"), rs.getBigDecimal(1));
-      assertFalse(rs.next(), "Expected exactly one row");
-    }
-  }
-
-  @Test
-  public void testStatementExecuteWithDecfloatResultSet() throws Exception {
-    try (Connection conn = openConnection();
-        Statement stmt = conn.createStatement();
+    try (Statement stmt = getDefaultConnection().createStatement();
         ResultSet rs = stmt.executeQuery("SELECT 123.456::DECFLOAT")) {
       assertNotNull(rs, "ResultSet should be available after executeQuery");
       assertTrue(rs.next(), "Expected one row");
