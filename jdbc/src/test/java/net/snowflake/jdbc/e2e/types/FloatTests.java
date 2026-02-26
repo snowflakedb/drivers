@@ -12,7 +12,6 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.UUID;
 import net.snowflake.client.SnowflakeIntegrationTestBase;
 import org.junit.jupiter.api.Test;
 
@@ -176,7 +175,7 @@ public class FloatTests extends SnowflakeIntegrationTestBase {
     // When Query "SELECT * FROM float_table" is executed
     // Then Result should contain floats [0.0, 123.456, -789.012, 123000.0, -0.00987]
     Connection connection = getDefaultConnection();
-    String tableName = createTempTable(connection, "col " + FLOAT_TYPE);
+    String tableName = createTempTable(connection, "ud_float_", "col " + FLOAT_TYPE);
     execute(
         connection,
         "INSERT INTO " + tableName + " VALUES (0.0), (123.456), (-789.012), (1.23e5), (-9.87e-3)");
@@ -192,7 +191,7 @@ public class FloatTests extends SnowflakeIntegrationTestBase {
     // When Query "SELECT * FROM <table>" is executed
     // Then Result should contain [NaN, positive_infinity, negative_infinity, 42.0, -42.0]
     Connection connection = getDefaultConnection();
-    String tableName = createTempTable(connection, "col " + FLOAT_TYPE);
+    String tableName = createTempTable(connection, "ud_float_", "col " + FLOAT_TYPE);
     execute(
         connection,
         "INSERT INTO "
@@ -248,7 +247,7 @@ public class FloatTests extends SnowflakeIntegrationTestBase {
     // Then Result should contain maximum, minimum, and precision boundary values
     // And All values should be preserved within float precision limits
     Connection connection = getDefaultConnection();
-    String tableName = createTempTable(connection, "col " + FLOAT_TYPE);
+    String tableName = createTempTable(connection, "ud_float_", "col " + FLOAT_TYPE);
     execute(
         connection,
         "INSERT INTO "
@@ -295,7 +294,7 @@ public class FloatTests extends SnowflakeIntegrationTestBase {
     // When Query "SELECT * FROM <table>" is executed
     // Then Result should contain [NULL, 123.456, NULL, -789.012]
     Connection connection = getDefaultConnection();
-    String tableName = createTempTable(connection, "col " + FLOAT_TYPE);
+    String tableName = createTempTable(connection, "ud_float_", "col " + FLOAT_TYPE);
     execute(
         connection, "INSERT INTO " + tableName + " VALUES (NULL), (123.456), (NULL), (-789.012)");
 
@@ -310,7 +309,7 @@ public class FloatTests extends SnowflakeIntegrationTestBase {
     // Then Result should contain 50000 rows
     // And All values should be returned as appropriate float type
     Connection connection = getDefaultConnection();
-    String tableName = createTempTable(connection, "col " + FLOAT_TYPE);
+    String tableName = createTempTable(connection, "ud_float_", "col " + FLOAT_TYPE);
     execute(
         connection,
         "INSERT INTO "
@@ -344,18 +343,6 @@ public class FloatTests extends SnowflakeIntegrationTestBase {
             resultSet, i + 1, expected.get(i), "Column " + (i + 1) + " mismatch for " + FLOAT_TYPE);
       }
       assertFalse(resultSet.next(), "Expected exactly one row for type: " + FLOAT_TYPE);
-    }
-  }
-
-  private static String createTempTable(Connection connection, String columns) throws Exception {
-    String tableName = "ud_float_" + UUID.randomUUID().toString().replace("-", "");
-    execute(connection, "CREATE TEMPORARY TABLE " + tableName + " (" + columns + ")");
-    return tableName;
-  }
-
-  private static void execute(Connection connection, String sql) throws Exception {
-    try (Statement statement = connection.createStatement()) {
-      statement.execute(sql);
     }
   }
 
