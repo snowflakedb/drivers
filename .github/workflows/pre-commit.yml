@@ -48,17 +48,15 @@ jobs:
         with:
           python-version: '3.13'
 
-      - name: Install Hatch
-        run: uv tool install hatch
-
       - name: Set up Java
         uses: actions/setup-java@v4
         with:
           java-version: '17'
           distribution: 'temurin'
 
-      - name: Install pre-commit
-        run: pip install pre-commit
+      - name: Setup Python
+        run: |
+          pip install pre-commit hatch "virtualenv<21.0.0"
 
       - name: Cache pre-commit hooks
         uses: actions/cache@v4
