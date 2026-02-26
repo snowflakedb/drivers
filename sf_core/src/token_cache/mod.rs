@@ -136,6 +136,7 @@ pub(super) fn validate_key_components(host: &str, username: &str) -> Result<(), 
 }
 
 #[derive(Debug, Snafu)]
+#[snafu(visibility(pub))]
 pub enum TokenCacheError {
     #[snafu(display("Failed to access keystore"))]
     KeystoreAccess {

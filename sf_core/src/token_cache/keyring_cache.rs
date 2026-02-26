@@ -1,9 +1,13 @@
 use std::sync::OnceLock;
 
-use snafu::Location;
+use snafu::ResultExt;
 
 use super::file_cache::install_file_credential_fallback;
-use super::{TokenCache, TokenCacheError, TokenType, build_cache_key, validate_key_components};
+use super::{
+    CacheDirectoryResolutionSnafu, KeystoreAccessSnafu, TokenCache, TokenCacheError,
+    TokenRemovalSnafu, TokenRetrievalSnafu, TokenStorageSnafu, TokenType, build_cache_key,
+    validate_key_components,
+};
 
 const KEYRING_SERVICE_NAME: &str = "snowflake_credential_cache";
 
@@ -34,9 +38,7 @@ impl KeyringTokenCache {
         let result = FALLBACK_INIT
             .get_or_init(|| install_file_credential_fallback().map_err(|e| format!("{e}")));
         if result.is_err() {
-            return Err(TokenCacheError::CacheDirectoryResolution {
-                location: Location::default(),
-            });
+            return CacheDirectoryResolutionSnafu.fail();
         }
         Ok(Self)
     }
@@ -49,12 +51,9 @@ impl KeyringTokenCache {
         token_type: TokenType,
     ) -> Result<keyring::Entry, TokenCacheError> {
         let key = build_cache_key(host, username, token_type);
-        keyring::Entry::new(KEYRING_SERVICE_NAME, &key).map_err(|e| {
-            TokenCacheError::KeystoreAccess {
-                source: Box::new(e),
-                location: Location::default(),
-            }
-        })
+        keyring::Entry::new(KEYRING_SERVICE_NAME, &key)
+            .boxed()
+            .context(KeystoreAccessSnafu)
     }
 }
 
@@ -71,10 +70,8 @@ impl TokenCache for KeyringTokenCache {
         let entry = self.create_entry(host, username, token_type)?;
         entry
             .set_password(token_value)
-            .map_err(|e| TokenCacheError::TokenStorage {
-                source: Box::new(e),
-                location: Location::default(),
-            })
+            .boxed()
+            .context(TokenStorageSnafu)
     }
 
     fn remove_token(
@@ -89,10 +86,7 @@ impl TokenCache for KeyringTokenCache {
         match entry.delete_credential() {
             Ok(()) => Ok(()),
             Err(keyring::Error::NoEntry) => Ok(()),
-            Err(e) => Err(TokenCacheError::TokenRemoval {
-                source: Box::new(e),
-                location: Location::default(),
-            }),
+            Err(e) => Err(e).boxed().context(TokenRemovalSnafu),
         }
     }
 
@@ -108,10 +102,7 @@ impl TokenCache for KeyringTokenCache {
         match entry.get_password() {
             Ok(password) => Ok(Some(password)),
             Err(keyring::Error::NoEntry) => Ok(None),
-            Err(e) => Err(TokenCacheError::TokenRetrieval {
-                source: Box::new(e),
-                location: Location::default(),
-            }),
+            Err(e) => Err(e).boxed().context(TokenRetrievalSnafu),
         }
     }
 }

@@ -9,9 +9,12 @@ use std::time::{Duration, SystemTime};
 use keyring::credential::{CredentialApi, CredentialBuilderApi, CredentialPersistence};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use snafu::Location;
+use snafu::{OptionExt, ResultExt, ensure};
 
-use super::TokenCacheError;
+use super::{
+    CacheDirectoryResolutionSnafu, FileNotOwnedByCurrentUserSnafu, InsufficientPermissionsSnafu,
+    LockAcquisitionSnafu, TokenCacheError, TokenRetrievalSnafu, TokenStorageSnafu,
+};
 
 const DEFAULT_CACHE_FILE_NAME: &str = "credential_cache_v2.json";
 const DEFAULT_RETRY_COUNT: u32 = 5;
@@ -80,10 +83,7 @@ impl FileLock {
         let lock_path = cache_path.with_extension("json.lck");
 
         if let Some(parent) = lock_path.parent() {
-            fs::create_dir_all(parent).map_err(|e| TokenCacheError::LockAcquisition {
-                source: e,
-                location: Location::default(),
-            })?;
+            fs::create_dir_all(parent).context(LockAcquisitionSnafu)?;
         }
 
         for attempt in 0..retry_count {
@@ -105,21 +105,16 @@ impl FileLock {
                     }
                 }
                 Err(e) => {
-                    return Err(TokenCacheError::LockAcquisition {
-                        source: e,
-                        location: Location::default(),
-                    });
+                    return Err(e).context(LockAcquisitionSnafu);
                 }
             }
         }
 
-        Err(TokenCacheError::LockAcquisition {
-            source: std::io::Error::new(
-                std::io::ErrorKind::WouldBlock,
-                "failed to acquire file lock after maximum retries",
-            ),
-            location: Location::default(),
-        })
+        Err(std::io::Error::new(
+            std::io::ErrorKind::WouldBlock,
+            "failed to acquire file lock after maximum retries",
+        ))
+        .context(LockAcquisitionSnafu)
     }
 
     fn is_stale(lock_path: &Path, stale_timeout: Duration) -> bool {
@@ -157,9 +152,7 @@ impl FileTokenCache {
     /// Creates a new file-based credential store, resolving the cache directory
     /// from environment variables.
     pub fn new() -> Result<Self, TokenCacheError> {
-        let cache_dir = resolve_cache_dir().ok_or(TokenCacheError::CacheDirectoryResolution {
-            location: Location::default(),
-        })?;
+        let cache_dir = resolve_cache_dir().context(CacheDirectoryResolutionSnafu)?;
         let file_name = resolve_cache_file_name();
         Ok(Self {
             cache_file_path: cache_dir.join(file_name),
@@ -198,11 +191,9 @@ impl FileTokenCache {
     /// Stores a secret under the given key. The key is SHA-256 hashed before
     /// storage. The secret bytes must be valid UTF-8.
     pub fn set_secret(&self, key: &str, secret: &[u8]) -> Result<(), TokenCacheError> {
-        let value =
-            String::from_utf8(secret.to_vec()).map_err(|e| TokenCacheError::TokenStorage {
-                source: Box::new(e),
-                location: Location::default(),
-            })?;
+        let value = String::from_utf8(secret.to_vec())
+            .boxed()
+            .context(TokenStorageSnafu)?;
         let _lock = self.acquire_lock()?;
         let hashed_key = hash_cache_key(key);
 
@@ -254,12 +245,9 @@ impl FileTokenCache {
         #[cfg(unix)]
         self.ensure_file_permissions()?;
 
-        let content = fs::read_to_string(&self.cache_file_path).map_err(|e| {
-            TokenCacheError::TokenRetrieval {
-                source: Box::new(e),
-                location: Location::default(),
-            }
-        })?;
+        let content = fs::read_to_string(&self.cache_file_path)
+            .boxed()
+            .context(TokenRetrievalSnafu)?;
 
         if content.trim().is_empty() {
             return Ok(CacheFileContent {
@@ -267,25 +255,21 @@ impl FileTokenCache {
             });
         }
 
-        serde_json::from_str(&content).map_err(|e| TokenCacheError::TokenRetrieval {
-            source: Box::new(e),
-            location: Location::default(),
-        })
+        serde_json::from_str(&content)
+            .boxed()
+            .context(TokenRetrievalSnafu)
     }
 
     fn write_cache(&self, cache: &CacheFileContent) -> Result<(), TokenCacheError> {
         if let Some(parent) = self.cache_file_path.parent() {
-            fs::create_dir_all(parent).map_err(|e| TokenCacheError::TokenStorage {
-                source: Box::new(e),
-                location: Location::default(),
-            })?;
+            fs::create_dir_all(parent)
+                .boxed()
+                .context(TokenStorageSnafu)?;
         }
 
-        let content =
-            serde_json::to_string_pretty(cache).map_err(|e| TokenCacheError::TokenStorage {
-                source: Box::new(e),
-                location: Location::default(),
-            })?;
+        let content = serde_json::to_string_pretty(cache)
+            .boxed()
+            .context(TokenStorageSnafu)?;
 
         self.write_with_permissions(&content)
     }
@@ -299,62 +283,53 @@ impl FileTokenCache {
             .truncate(true)
             .mode(0o600)
             .open(&self.cache_file_path)
-            .map_err(|e| TokenCacheError::TokenStorage {
-                source: Box::new(e),
-                location: Location::default(),
-            })?;
+            .boxed()
+            .context(TokenStorageSnafu)?;
         file.write_all(content.as_bytes())
-            .map_err(|e| TokenCacheError::TokenStorage {
-                source: Box::new(e),
-                location: Location::default(),
-            })
+            .boxed()
+            .context(TokenStorageSnafu)
     }
 
     #[cfg(not(unix))]
     fn write_with_permissions(&self, content: &str) -> Result<(), TokenCacheError> {
-        fs::write(&self.cache_file_path, content).map_err(|e| TokenCacheError::TokenStorage {
-            source: Box::new(e),
-            location: Location::default(),
-        })
+        fs::write(&self.cache_file_path, content)
+            .boxed()
+            .context(TokenStorageSnafu)
     }
 
     #[cfg(unix)]
     fn ensure_file_permissions(&self) -> Result<(), TokenCacheError> {
         use std::os::unix::fs::PermissionsExt;
-        let metadata =
-            fs::metadata(&self.cache_file_path).map_err(|e| TokenCacheError::TokenRetrieval {
-                source: Box::new(e),
-                location: Location::default(),
-            })?;
+        let metadata = fs::metadata(&self.cache_file_path)
+            .boxed()
+            .context(TokenRetrievalSnafu)?;
         let mode = metadata.permissions().mode() & 0o777;
-        if mode != 0o600 {
-            return Err(TokenCacheError::InsufficientPermissions {
-                path: self.cache_file_path.clone(),
-                location: Location::default(),
-            });
-        }
+        ensure!(
+            mode == 0o600,
+            InsufficientPermissionsSnafu {
+                path: self.cache_file_path.clone()
+            }
+        );
         Ok(())
     }
 
     #[cfg(unix)]
     fn ensure_file_ownership(&self) -> Result<(), TokenCacheError> {
         use std::os::unix::fs::MetadataExt;
-        let metadata =
-            fs::metadata(&self.cache_file_path).map_err(|e| TokenCacheError::TokenRetrieval {
-                source: Box::new(e),
-                location: Location::default(),
-            })?;
+        let metadata = fs::metadata(&self.cache_file_path)
+            .boxed()
+            .context(TokenRetrievalSnafu)?;
         let file_uid = metadata.uid();
         // SAFETY: getuid is always safe to call.
         let current_uid = unsafe { libc::getuid() };
-        if file_uid != current_uid {
-            return Err(TokenCacheError::FileNotOwnedByCurrentUser {
+        ensure!(
+            file_uid == current_uid,
+            FileNotOwnedByCurrentUserSnafu {
                 path: self.cache_file_path.clone(),
                 file_uid,
                 current_uid,
-                location: Location::default(),
-            });
-        }
+            }
+        );
         Ok(())
     }
 }
