@@ -611,7 +611,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
             logout_total_timeout: input
                 .logout_total_timeout_seconds
                 .map(|s| Duration::from_secs(s as u64)) // Safe: validated non-negative above
-                .unwrap_or(Duration::from_secs(300)),
+                .unwrap_or(Duration::from_secs(5)),
             max_retry_attempts: input.max_retry_attempts,
         };
 

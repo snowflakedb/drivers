@@ -1,52 +1,24 @@
 //! Session logout functionality
 //!
 //! Handles HTTP requests to `/session?delete=true` to terminate server sessions.
+//! Returns `RestError` like other Snowflake REST operations (login, query),
+//! enabling `RefreshContext` to handle 390112 token refresh automatically.
 
 use crate::config::rest_parameters::ClientInfo;
 use crate::config::retry::RetryPolicy;
 use crate::http::retry::{HttpContext, HttpError, execute_with_retry};
+use crate::rest::snowflake::error::SfError;
+use crate::rest::snowflake::{
+    AsyncQuerySnafu, LogoutFailedSnafu, RestError, SnowflakeResponseError, UrlJoinSnafu,
+};
 use reqwest::{Method, header};
-use snafu::{Location, ResultExt, Snafu};
+use snafu::ResultExt;
 use std::time::Duration;
 use url::Url;
 
 /// Error codes from Snowflake GS
 const SESSION_GONE: i32 = 390111;
-
-// NOTE: SESSION_TOKEN_EXPIRED (390112) handling is deferred to SNOW-2923705.
-// Currently, 390112 is treated as a generic retryable error (retry without token refresh).
-// This is acceptable for most scenarios - the session may still be valid even if the token
-// has expired, and the retry logic will handle transient errors appropriately.
-// Future work (SNOW-2923705) will integrate token refresh before retry for 390112 errors.
-
-#[derive(Debug, Snafu)]
-pub enum LogoutError {
-    #[snafu(display("Failed to build logout request URL"))]
-    UrlConstruction {
-        source: url::ParseError,
-        #[snafu(implicit)]
-        location: Location,
-    },
-    #[snafu(display("HTTP error during logout"))]
-    Http {
-        source: HttpError,
-        #[snafu(implicit)]
-        location: Location,
-    },
-    #[snafu(display("Failed to parse logout response"))]
-    ResponseParse {
-        source: reqwest::Error,
-        #[snafu(implicit)]
-        location: Location,
-    },
-    #[snafu(display("Logout failed with error: {message} (code: {code})"))]
-    LogoutFailed {
-        message: String,
-        code: i32,
-        #[snafu(implicit)]
-        location: Location,
-    },
-}
+const SESSION_TOKEN_EXPIRED: i32 = 390112;
 
 /// Response from the logout endpoint
 #[derive(Debug, serde::Deserialize)]
@@ -58,27 +30,17 @@ struct LogoutResponse {
 
 /// Send a logout request to terminate the Snowflake session.
 ///
-/// This is a pure HTTP function that takes individual parameters and sends
-/// a `POST /session?delete=true` request to the Snowflake server.
+/// This is a pure HTTP function that sends `POST /session?delete=true` to the
+/// Snowflake server. Returns `RestError` to enable `RefreshContext` token refresh.
 ///
-/// # Arguments
+/// # Error handling
 ///
-/// * `client` - HTTP client to use for the request
-/// * `server_url` - Base URL of the Snowflake server
-/// * `session_token` - Current session token for authentication
-/// * `client_info` - Client information for User-Agent header
-/// * `timeout` - Timeout duration for the request
-/// * `retry_policy` - Retry policy to use for transient failures
-///
-/// # Returns
-///
-/// * `Ok(())` - Session logged out successfully or already gone (SESSION_GONE 390111)
-/// * `Err(LogoutError)` - Logout failed with unrecoverable error
-///
-/// # Errors
-///
-/// * SESSION_GONE (390111) - Silently ignored (session already terminated)
-/// * Other errors - Returned to caller for handling per error strategy
+/// - SESSION_GONE (390111) → `Ok(())` (session already terminated, true success)
+/// - SESSION_TOKEN_EXPIRED (390112) → `Err(InvalidSnowflakeResponse { SessionExpired })`
+///   (signals `RefreshContext` to refresh master token and retry)
+/// - Other Snowflake codes → `Err(RestError::LogoutFailed { code, message })`
+/// - Non-2xx with non-JSON body → `Err(RestError::InvalidSnowflakeResponse { ResponseStatus })`
+/// - HTTP transport/retry errors → `Err(RestError::AsyncQuery { SfError })` (mapped from HttpError)
 #[tracing::instrument(skip(client, session_token))]
 pub async fn logout_session(
     client: &reqwest::Client,
@@ -87,42 +49,35 @@ pub async fn logout_session(
     client_info: &ClientInfo,
     timeout: Duration,
     retry_policy: &RetryPolicy,
-) -> Result<(), LogoutError> {
+) -> Result<(), RestError> {
     tracing::info!("Initiating session logout");
 
     // Construct logout URL
     let logout_url = Url::parse(server_url)
         .and_then(|base| base.join("/session"))
-        .context(UrlConstructionSnafu)?;
+        .context(UrlJoinSnafu { path: "/session" })?;
 
-    // Generate UUIDs for request tracking
-    let request_id = generate_request_id();
-    let request_guid = generate_request_guid();
+    // Generate request ID (static across retries for idempotency)
+    let request_id = uuid::Uuid::new_v4();
 
     tracing::debug!(
         %request_id,
-        %request_guid,
         %logout_url,
         timeout_secs = timeout.as_secs(),
         "Logout request parameters"
     );
 
-    // Build User-Agent per UD spec: {WrapperUA} UD/{core_ver} Rust/{rust_ver}
     let user_agent = build_user_agent(client_info);
-
-    // Build authorization header
     let auth_header = format!("Snowflake Token=\"{}\"", session_token);
 
-    // Create HTTP context for retry logic
     // Logout is POST but idempotent server-side (safe to retry)
     let ctx = HttpContext::new(Method::POST, "/session")
         .with_idempotent(true)
         .allow_post_retry();
 
-    // Execute with retry
     let build_request = || {
-        // Note: request_guid is regenerated on each retry, requestId stays the same
-        let retry_request_guid = generate_request_guid();
+        // request_guid is regenerated on each retry, requestId stays the same
+        let retry_request_guid = uuid::Uuid::new_v4();
 
         client
             .post(logout_url.clone())
@@ -135,7 +90,7 @@ pub async fn logout_session(
             .header(header::CONTENT_TYPE, "application/json")
             .header(header::ACCEPT, "application/snowflake")
             .header(header::USER_AGENT, &user_agent)
-            .json(&serde_json::json!({})) // Empty JSON object body
+            .json(&serde_json::json!({}))
             .timeout(timeout)
     };
 
@@ -143,59 +98,134 @@ pub async fn logout_session(
         Ok(resp)
     })
     .await
-    .context(HttpSnafu)?;
+    .map_err(map_http_error)
+    .context(AsyncQuerySnafu)?;
 
-    // Parse response
+    // Read response body as text first (avoids crash on non-JSON responses)
     let status = response.status();
-    let logout_response: LogoutResponse = response.json().await.context(ResponseParseSnafu)?;
+    let body_text = response.text().await.ok().unwrap_or_default();
 
-    tracing::debug!(
-        success = logout_response.success,
-        status = %status,
-        "Logout response received"
-    );
+    // Try to parse as JSON
+    let parsed: Option<LogoutResponse> = serde_json::from_str(&body_text).ok();
 
-    // Handle response
-    if !logout_response.success {
-        let message = logout_response
-            .message
-            .unwrap_or_else(|| "Unknown error".to_string());
-        let code = logout_response
-            .code
-            .as_deref()
-            .and_then(|c| c.parse::<i32>().ok())
-            .unwrap_or(-1);
-
-        // SESSION_GONE (390111) means session already terminated - this is success
-        if code == SESSION_GONE {
-            tracing::info!(
-                code = SESSION_GONE,
-                "Session already gone (390111) - treating as successful logout"
+    match parsed {
+        Some(logout_response) => {
+            tracing::debug!(
+                success = logout_response.success,
+                status = %status,
+                "Logout response received"
             );
-            return Ok(());
+            handle_logout_response(logout_response)
         }
+        None => {
+            // Non-JSON response (e.g. proxy HTML page)
+            if status.is_success() {
+                // 2xx but non-JSON is unexpected — treat as success with warning
+                tracing::warn!(
+                    status = %status,
+                    body_len = body_text.len(),
+                    "Logout returned 2xx with non-JSON body, treating as success"
+                );
+                Ok(())
+            } else {
+                // Non-2xx with non-JSON body (e.g. proxy error page)
+                tracing::warn!(
+                    status = %status,
+                    body_len = body_text.len(),
+                    "Logout returned non-2xx with non-JSON body"
+                );
+                Err(RestError::InvalidSnowflakeResponse {
+                    source: SnowflakeResponseError::ResponseStatus {
+                        status,
+                        message: body_text.chars().take(500).collect::<String>(),
+                        location: snafu::Location::default(),
+                    },
+                    location: snafu::Location::default(),
+                })
+            }
+        }
+    }
+}
 
-        // Other errors are returned to caller
-        tracing::warn!(
-            code,
-            %message,
-            "Logout failed with error"
-        );
-        return LogoutFailedSnafu { message, code }.fail();
+/// Handle a parsed JSON logout response from Snowflake.
+fn handle_logout_response(response: LogoutResponse) -> Result<(), RestError> {
+    if response.success {
+        tracing::info!("Session logout completed successfully");
+        return Ok(());
     }
 
-    tracing::info!("Session logout completed successfully");
-    Ok(())
+    let message = response
+        .message
+        .unwrap_or_else(|| "Unknown error".to_string());
+    let code = response
+        .code
+        .as_deref()
+        .and_then(|c| c.parse::<i32>().ok())
+        .unwrap_or(-1);
+
+    // SESSION_GONE (390111) means session already terminated — this is success
+    if code == SESSION_GONE {
+        tracing::info!(
+            code = SESSION_GONE,
+            "Session already gone (390111) - treating as successful logout"
+        );
+        return Ok(());
+    }
+
+    // SESSION_TOKEN_EXPIRED (390112) — signal RefreshContext to refresh token and retry
+    if code == SESSION_TOKEN_EXPIRED {
+        tracing::info!(
+            code = SESSION_TOKEN_EXPIRED,
+            "Session token expired (390112) - signaling token refresh"
+        );
+        return Err(RestError::InvalidSnowflakeResponse {
+            source: SnowflakeResponseError::SessionExpired {
+                location: snafu::Location::default(),
+            },
+            location: snafu::Location::default(),
+        });
+    }
+
+    // Other Snowflake errors
+    tracing::warn!(code, %message, "Logout failed with error");
+    LogoutFailedSnafu { message, code }.fail()
 }
 
-/// Generate a unique request ID (static across retries for the same request)
-fn generate_request_id() -> uuid::Uuid {
-    uuid::Uuid::new_v4()
-}
-
-/// Generate a unique request GUID (regenerated on each retry)
-fn generate_request_guid() -> uuid::Uuid {
-    uuid::Uuid::new_v4()
+/// Map HttpError to SfError (same pattern as async_exec.rs:map_http_error)
+fn map_http_error(err: HttpError) -> SfError {
+    match err {
+        HttpError::Transport { source, .. } => SfError::Transport {
+            source,
+            location: snafu::Location::default(),
+        },
+        HttpError::DeadlineExceeded {
+            configured,
+            elapsed,
+            ..
+        } => SfError::DeadlineExceeded {
+            configured,
+            elapsed,
+            location: snafu::Location::default(),
+        },
+        HttpError::MaxAttempts {
+            attempts,
+            last_status,
+            ..
+        } => SfError::RetryAttemptsExhausted {
+            attempts,
+            last_status,
+            location: snafu::Location::default(),
+        },
+        HttpError::RetryAfterExceeded {
+            retry_after,
+            remaining,
+            ..
+        } => SfError::RetryBudgetExceeded {
+            retry_after,
+            remaining,
+            location: snafu::Location::default(),
+        },
+    }
 }
 
 /// Build User-Agent header per UD spec: {WrapperUA} UD/{core_ver} Rust/{rust_ver}
@@ -215,5 +245,67 @@ mod tests {
     #[test]
     fn test_session_gone_error_code() {
         assert_eq!(SESSION_GONE, 390111);
+    }
+
+    #[test]
+    fn test_session_token_expired_error_code() {
+        assert_eq!(SESSION_TOKEN_EXPIRED, 390112);
+    }
+
+    #[test]
+    fn test_handle_success_response() {
+        let response = LogoutResponse {
+            success: true,
+            message: None,
+            code: None,
+        };
+        assert!(handle_logout_response(response).is_ok());
+    }
+
+    #[test]
+    fn test_handle_session_gone_390111() {
+        let response = LogoutResponse {
+            success: false,
+            message: Some("Session gone".to_string()),
+            code: Some("390111".to_string()),
+        };
+        assert!(handle_logout_response(response).is_ok());
+    }
+
+    #[test]
+    fn test_handle_session_token_expired_390112() {
+        let response = LogoutResponse {
+            success: false,
+            message: Some("Token expired".to_string()),
+            code: Some("390112".to_string()),
+        };
+        let err = handle_logout_response(response).unwrap_err();
+        // Should be SessionExpired wrapped in InvalidSnowflakeResponse
+        assert!(
+            matches!(
+                err,
+                RestError::InvalidSnowflakeResponse {
+                    source: SnowflakeResponseError::SessionExpired { .. },
+                    ..
+                }
+            ),
+            "Expected SessionExpired, got: {:?}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_handle_other_error_code() {
+        let response = LogoutResponse {
+            success: false,
+            message: Some("Bad request".to_string()),
+            code: Some("400".to_string()),
+        };
+        let err = handle_logout_response(response).unwrap_err();
+        assert!(
+            matches!(err, RestError::LogoutFailed { code: 400, .. }),
+            "Expected LogoutFailed with code 400, got: {:?}",
+            err
+        );
     }
 }

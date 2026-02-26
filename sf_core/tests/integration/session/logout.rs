@@ -142,7 +142,7 @@ fn should_not_send_logout_when_connection_was_never_established() {
         server_session_keep_alive: Some(false), // Would send logout if initialized
         enable_auto_detection: None,
         error_strategy: ErrorStrategy::BestEffort,
-        timeout: Duration::from_secs(5),
+        logout_total_timeout: Duration::from_secs(5),
         max_retry_attempts: None,
     };
     let result = connection_close(conn_handle, config);
@@ -190,7 +190,7 @@ async fn should_not_send_logout_when_server_session_keep_alive_is_explicitly_tru
             server_session_keep_alive: Some(true),
             enable_auto_detection: None,
             error_strategy: None,
-            timeout_seconds: None,
+            logout_total_timeout_seconds: None,
 
             max_retry_attempts: None,
         })
@@ -247,7 +247,7 @@ async fn should_send_logout_when_server_session_keep_alive_is_explicitly_false()
         &server_url,
         session_token,
         &client_info,
-        config.timeout,
+        config.logout_total_timeout,
         &RetryPolicy::default(),
     )
     .await;
@@ -294,7 +294,7 @@ async fn should_timeout_after_5_seconds_by_default_when_server_does_not_respond(
     // After the first request times out at 5s, the deadline check will
     // see elapsed >= max_elapsed and return DeadlineExceeded
     let retry_policy = RetryPolicy {
-        max_elapsed: config.timeout,
+        max_elapsed: config.logout_total_timeout,
         ..Default::default()
     };
 
@@ -305,7 +305,7 @@ async fn should_timeout_after_5_seconds_by_default_when_server_does_not_respond(
         &server_url,
         "test_token",
         &client_info,
-        config.timeout,
+        config.logout_total_timeout,
         &retry_policy,
     )
     .await;
@@ -590,7 +590,7 @@ async fn should_ignore_session_gone_390111_for_each_strategy_type() {
             &server_url,
             "test_token",
             &client_info,
-            config.timeout,
+            config.logout_total_timeout,
             &RetryPolicy::default(),
         )
         .await;
@@ -666,7 +666,7 @@ async fn should_retry_logout_on_retryable_error_type_for_each_strategy_type() {
                 &server_url,
                 "test_token",
                 &client_info,
-                config.timeout,
+                config.logout_total_timeout,
                 &RetryPolicy::default(),
             )
             .await;
@@ -735,7 +735,7 @@ async fn should_retry_logout_on_retryable_error_type_for_each_strategy_type() {
                 &server_url,
                 "test_token",
                 &client_info,
-                config.timeout,
+                config.logout_total_timeout,
                 &RetryPolicy::default(),
             )
             .await;
@@ -763,11 +763,14 @@ async fn should_retry_logout_on_retryable_error_type_for_each_strategy_type() {
 }
 
 #[tokio::test]
-#[ignore = "TODO: Requires token refresh implementation - SNOW-2923705"]
 async fn should_attempt_token_refresh_on_390112_when_retries_allowed_for_each_strategy_type() {
+    use serde_json::json;
+    use wiremock::matchers::{body_partial_json, header, method, path, path_regex, query_param};
+    use wiremock::{Mock, ResponseTemplate};
+
     // Scenario Outline: Examples (strategy_type)
     // strict, best-effort
-    for (_strategy_name, _error_strategy) in [
+    for (strategy_name, error_strategy) in [
         ("strict", ErrorStrategy::Strict),
         ("best-effort", ErrorStrategy::BestEffort),
     ] {
@@ -775,33 +778,253 @@ async fn should_attempt_token_refresh_on_390112_when_retries_allowed_for_each_st
         //And Mock HTTP server returns SESSION_TOKEN_EXPIRED 390112 on first attempt
         //And Mock HTTP server returns 200 after token refresh
         //And Retry policy allows 1 retry
+        let server = MockServer::start().await;
+
+        // Login: returns initial tokens with master token for refresh
+        Mock::given(method("POST"))
+            .and(path_regex(r"/session/v1/login-request.*"))
+            .and(body_partial_json(json!({
+                "data": { "AUTHENTICATOR": "SNOWFLAKE_JWT" }
+            })))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(json!({
+                        "success": true,
+                        "data": {
+                            "token": "initial-session-token",
+                            "masterToken": "valid-master-token",
+                            "sessionId": 12345
+                        }
+                    }))
+                    .insert_header("Content-Type", "application/json"),
+            )
+            .mount(&server)
+            .await;
+
+        // First logout attempt: returns 390112 SESSION_TOKEN_EXPIRED
+        Mock::given(method("POST"))
+            .and(path("/session"))
+            .and(query_param("delete", "true"))
+            .and(header(
+                "Authorization",
+                "Snowflake Token=\"initial-session-token\"",
+            ))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(json!({
+                        "success": false,
+                        "code": "390112",
+                        "message": "Session token expired"
+                    }))
+                    .insert_header("Content-Type", "application/json"),
+            )
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+
+        // Token refresh: returns new session token
+        Mock::given(method("POST"))
+            .and(path_regex(r"/session/token-request.*"))
+            .and(header(
+                "Authorization",
+                "Snowflake Token=\"valid-master-token\"",
+            ))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(json!({
+                        "success": true,
+                        "data": {
+                            "sessionToken": "refreshed-session-token",
+                            "masterToken": "valid-master-token",
+                            "sessionId": 12345
+                        }
+                    }))
+                    .insert_header("Content-Type", "application/json"),
+            )
+            .mount(&server)
+            .await;
+
+        // Second logout attempt with refreshed token: succeeds
+        Mock::given(method("POST"))
+            .and(path("/session"))
+            .and(query_param("delete", "true"))
+            .and(header(
+                "Authorization",
+                "Snowflake Token=\"refreshed-session-token\"",
+            ))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(json!({ "success": true }))
+                    .insert_header("Content-Type", "application/json"),
+            )
+            .mount(&server)
+            .await;
+
+        //And UD Core connection is logged in
+        let server_uri = server.uri();
+        let client = tokio::task::spawn_blocking(move || {
+            SnowflakeTestClient::connect_integration_test(Some(&server_uri))
+        })
+        .await
+        .unwrap();
+
         //When Logout is executed
+        let conn_handle = client.conn_handle;
+        let result = tokio::task::spawn_blocking(move || {
+            use sf_core::protobuf_apis::database_driver_v1::DatabaseDriverClient;
+            DatabaseDriverClient::connection_close(ConnectionCloseRequest {
+                conn_handle: Some(conn_handle),
+                server_session_keep_alive: Some(false),
+                enable_auto_detection: None,
+                error_strategy: Some(match error_strategy {
+                    ErrorStrategy::Strict => 2,
+                    ErrorStrategy::BestEffort => 1,
+                }),
+                logout_total_timeout_seconds: Some(30),
+                max_retry_attempts: None,
+            })
+        })
+        .await
+        .unwrap();
+
         //Then Token refresh request is sent to server
         //And Logout is retried with new session token
         //And Close succeeds
+        assert!(
+            result.is_ok(),
+            "Close should succeed after token refresh for {}: {:?}",
+            strategy_name,
+            result.err()
+        );
 
-        // TODO: SNOW-2923705 - Requires token refresh during logout
+        // Verify requests: login + logout(390112) + token-refresh + logout(success)
+        let received_requests = server.received_requests().await.unwrap();
+        let request_paths: Vec<String> = received_requests
+            .iter()
+            .map(|r| r.url.path().to_string())
+            .collect();
+
+        assert!(
+            request_paths.iter().any(|p| p.contains("token-request")),
+            "Should have made token refresh request for {}: {:?}",
+            strategy_name,
+            request_paths
+        );
+
+        let logout_count = request_paths.iter().filter(|p| p == &"/session").count();
+        assert!(
+            logout_count >= 2,
+            "Should have made at least 2 logout requests for {}, got {}: {:?}",
+            strategy_name,
+            logout_count,
+            request_paths
+        );
     }
 }
 
 #[tokio::test]
-#[ignore = "TODO: Requires token refresh implementation - SNOW-2923705"]
-async fn should_not_attempt_token_refresh_when_retry_count_is_0_for_each_strategy_type() {
-    // Scenario Outline: Examples (strategy_type)
-    // strict, best-effort
-    for (_strategy_name, _error_strategy) in [
-        ("strict", ErrorStrategy::Strict),
-        ("best-effort", ErrorStrategy::BestEffort),
-    ] {
-        //Given Core logout function called with <strategy_type> strategy
-        //And Mock HTTP server returns SESSION_TOKEN_EXPIRED 390112
-        //And Retry policy allows 0 retries
-        //When Logout is executed
-        //Then No token refresh request is sent to server
-        // (For strict: Close throws SESSION_TOKEN_EXPIRED error)
-        // (For best-effort: SESSION_TOKEN_EXPIRED is logged as WARN and Close succeeds)
+async fn should_fail_gracefully_when_token_refresh_fails_on_390112_for_each_strategy_type() {
+    use serde_json::json;
+    use wiremock::matchers::{body_partial_json, method, path, path_regex, query_param};
+    use wiremock::{Mock, ResponseTemplate};
 
-        // TODO: SNOW-2923705 - Requires token refresh during logout
+    // Scenario Outline: Examples (strategy_type)
+    // Tests that when 390112 triggers a refresh but the master token is also expired,
+    // Strict raises the error and BestEffort suppresses it.
+    for (strategy_name, error_strategy, should_succeed) in [
+        ("strict", ErrorStrategy::Strict, false),
+        ("best-effort", ErrorStrategy::BestEffort, true),
+    ] {
+        //Given Mock HTTP server configured with login, 390112 logout, and failed token refresh
+        let server = MockServer::start().await;
+
+        // Login: returns initial tokens with master token that will fail refresh
+        Mock::given(method("POST"))
+            .and(path_regex(r"/session/v1/login-request.*"))
+            .and(body_partial_json(json!({
+                "data": { "AUTHENTICATOR": "SNOWFLAKE_JWT" }
+            })))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(json!({
+                        "success": true,
+                        "data": {
+                            "token": "initial-session-token",
+                            "masterToken": "expired-master-token",
+                            "sessionId": 12345
+                        }
+                    }))
+                    .insert_header("Content-Type", "application/json"),
+            )
+            .mount(&server)
+            .await;
+
+        // Logout attempt: returns 390112 SESSION_TOKEN_EXPIRED
+        Mock::given(method("POST"))
+            .and(path("/session"))
+            .and(query_param("delete", "true"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(json!({
+                        "success": false,
+                        "code": "390112",
+                        "message": "Session token expired"
+                    }))
+                    .insert_header("Content-Type", "application/json"),
+            )
+            .mount(&server)
+            .await;
+
+        // Token refresh: fails with 401 (master token expired)
+        Mock::given(method("POST"))
+            .and(path_regex(r"/session/token-request.*"))
+            .respond_with(ResponseTemplate::new(401).set_body_string("Master token expired"))
+            .mount(&server)
+            .await;
+
+        //And UD Core connection is logged in
+        let server_uri = server.uri();
+        let client = tokio::task::spawn_blocking(move || {
+            SnowflakeTestClient::connect_integration_test(Some(&server_uri))
+        })
+        .await
+        .unwrap();
+
+        //When Connection close is initiated
+        let conn_handle = client.conn_handle;
+        let result = tokio::task::spawn_blocking(move || {
+            use sf_core::protobuf_apis::database_driver_v1::DatabaseDriverClient;
+            DatabaseDriverClient::connection_close(ConnectionCloseRequest {
+                conn_handle: Some(conn_handle),
+                server_session_keep_alive: Some(false),
+                enable_auto_detection: None,
+                error_strategy: Some(match error_strategy {
+                    ErrorStrategy::Strict => 2,
+                    ErrorStrategy::BestEffort => 1,
+                }),
+                logout_total_timeout_seconds: Some(30),
+                max_retry_attempts: None,
+            })
+        })
+        .await
+        .unwrap();
+
+        if should_succeed {
+            //Then BestEffort: Close succeeds (error suppressed)
+            assert!(
+                result.is_ok(),
+                "BestEffort should suppress refresh failure for {}: {:?}",
+                strategy_name,
+                result.err()
+            );
+        } else {
+            //Then Strict: Close fails with error
+            assert!(
+                result.is_err(),
+                "Strict should raise refresh failure for {}",
+                strategy_name,
+            );
+        }
     }
 }
 
@@ -863,7 +1086,7 @@ async fn should_honor_provided_retry_config_and_succeed_for_each_strategy_type()
             &server_url,
             "test_token",
             &client_info,
-            config.timeout,
+            config.logout_total_timeout,
             &RetryPolicy::default(),
         )
         .await;
@@ -911,7 +1134,7 @@ async fn should_honor_provided_timeout_config_and_succeed_for_each_strategy_type
 
         let config = LogoutConfig {
             error_strategy,
-            timeout: Duration::from_secs(timeout_seconds),
+            logout_total_timeout: Duration::from_secs(timeout_seconds),
             ..Default::default()
         };
 
@@ -922,7 +1145,7 @@ async fn should_honor_provided_timeout_config_and_succeed_for_each_strategy_type
             &server_url,
             "test_token",
             &client_info,
-            config.timeout,
+            config.logout_total_timeout,
             &RetryPolicy::default(),
         )
         .await;
@@ -968,7 +1191,7 @@ async fn should_throw_after_exhausted_retries_with_strict_strategy() {
         &server_url,
         "test_token",
         &client_info,
-        config.timeout,
+        config.logout_total_timeout,
         &RetryPolicy::default(),
     )
     .await;
@@ -1014,7 +1237,7 @@ async fn should_log_warn_and_succeed_after_exhausted_retries_with_best_effort_st
         &server_url,
         "test_token",
         &client_info,
-        config.timeout,
+        config.logout_total_timeout,
         &RetryPolicy::default(),
     )
     .await;
@@ -1027,19 +1250,23 @@ async fn should_log_warn_and_succeed_after_exhausted_retries_with_best_effort_st
     );
 
     // Apply error strategy (same logic as connection_close)
-    let strategy = config.error_strategy.to_handler();
-    let handled_ok = match &result {
-        Ok(()) => true,
-        Err(e) => strategy.should_ignore_error(e) || !strategy.should_raise_error(e),
-    };
+    // Wrap RestError as ApiError::LogoutFailed, then apply strategy
+    let api_result =
+        result.map_err(
+            |e| sf_core::apis::database_driver_v1::ApiError::LogoutFailed {
+                message: format!("{e}"),
+                location: snafu::Location::default(),
+            },
+        );
+    let handled_result = config.error_strategy.handle_failed_logout(api_result);
 
     //And No further retries after max reached
     //And WARN log is emitted (check via log output)
     //And Close succeeds (BestEffort suppresses error)
     assert!(
-        handled_ok,
+        handled_result.is_ok(),
         "BestEffort should succeed despite exhausted retries, raw result: {:?}",
-        result
+        handled_result
     );
 
     server.await.unwrap();
@@ -1099,7 +1326,7 @@ async fn should_throw_on_non_retryable_error_code_in_strict_strategy() {
             &server_url,
             "test_token",
             &client_info,
-            config.timeout,
+            config.logout_total_timeout,
             &RetryPolicy::default(),
         )
         .await;
@@ -1166,24 +1393,27 @@ async fn should_log_and_suppress_non_retryable_error_code_in_best_effort_strateg
             &server_url,
             "test_token",
             &client_info,
-            config.timeout,
+            config.logout_total_timeout,
             &RetryPolicy::default(),
         )
         .await;
 
         // Apply error strategy (same logic as connection_close)
-        let strategy = config.error_strategy.to_handler();
-        let handled_ok = match &result {
-            Ok(()) => true,
-            Err(e) => strategy.should_ignore_error(e) || !strategy.should_raise_error(e),
-        };
+        let api_result =
+            result.map_err(
+                |e| sf_core::apis::database_driver_v1::ApiError::LogoutFailed {
+                    message: format!("{e}"),
+                    location: snafu::Location::default(),
+                },
+            );
+        let handled_result = config.error_strategy.handle_failed_logout(api_result);
 
         //Then Error is logged as WARN
         //And Close succeeds without throwing
         assert!(
-            handled_ok,
-            "BestEffort should succeed despite {} error, raw result: {:?}",
-            error_code, result
+            handled_result.is_ok(),
+            "BestEffort should succeed despite {} error",
+            error_code,
         );
 
         //And No retries are attempted
@@ -1240,7 +1470,7 @@ async fn should_throw_on_timeout_with_strict_strategy() {
 
     let config = LogoutConfig {
         error_strategy: ErrorStrategy::Strict,
-        timeout,
+        logout_total_timeout: timeout,
         ..Default::default()
     };
 
@@ -1257,7 +1487,7 @@ async fn should_throw_on_timeout_with_strict_strategy() {
         &server_url,
         "test_token",
         &client_info,
-        config.timeout,
+        config.logout_total_timeout,
         &retry_policy,
     )
     .await;
@@ -1315,7 +1545,7 @@ async fn should_log_warn_and_succeed_on_timeout_with_best_effort_strategy() {
 
     let config = LogoutConfig {
         error_strategy: ErrorStrategy::BestEffort,
-        timeout,
+        logout_total_timeout: timeout,
         ..Default::default()
     };
 
@@ -1332,7 +1562,7 @@ async fn should_log_warn_and_succeed_on_timeout_with_best_effort_strategy() {
         &server_url,
         "test_token",
         &client_info,
-        config.timeout,
+        config.logout_total_timeout,
         &retry_policy,
     )
     .await;
@@ -1347,18 +1577,21 @@ async fn should_log_warn_and_succeed_on_timeout_with_best_effort_strategy() {
     );
 
     // Apply error strategy (same logic as connection_close)
-    let strategy = config.error_strategy.to_handler();
-    let handled_ok = match &result {
-        Ok(()) => true,
-        Err(e) => strategy.should_ignore_error(e) || !strategy.should_raise_error(e),
-    };
+    let api_result =
+        result.map_err(
+            |e| sf_core::apis::database_driver_v1::ApiError::LogoutFailed {
+                message: format!("{e}"),
+                location: snafu::Location::default(),
+            },
+        );
+    let handled_result = config.error_strategy.handle_failed_logout(api_result);
 
     //And WARN log is emitted (check via log output)
     //And Close succeeds (BestEffort suppresses timeout error)
     assert!(
-        handled_ok,
+        handled_result.is_ok(),
         "BestEffort should succeed despite timeout, raw result: {:?}",
-        result
+        handled_result
     );
 
     server.abort();
@@ -1390,7 +1623,7 @@ async fn should_reject_queries_client_side_after_connection_is_closed() {
             server_session_keep_alive: Some(true), // Skip logout HTTP request
             enable_auto_detection: None,
             error_strategy: None,
-            timeout_seconds: None,
+            logout_total_timeout_seconds: None,
             max_retry_attempts: None,
         })
     })

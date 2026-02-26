@@ -970,6 +970,13 @@ pub enum RestError {
         #[snafu(implicit)]
         location: Location,
     },
+    #[snafu(display("Logout failed: {message} (code: {code})"))]
+    LogoutFailed {
+        message: String,
+        code: i32,
+        #[snafu(implicit)]
+        location: Location,
+    },
 }
 #[derive(Debug, Snafu, error_trace::ErrorTrace)]
 pub enum SnowflakeResponseError {
