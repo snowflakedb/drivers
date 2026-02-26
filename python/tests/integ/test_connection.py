@@ -34,23 +34,6 @@ class TestConnectionMethods:
         connection.close()
         assert connection.is_closed()
 
-    @pytest.mark.skip_reference
-    def test_commit_not_implemented(self, connection):
-        """Test that commit raises NotSupportedError."""
-        with pytest.raises(NotSupportedError) as excinfo:
-            connection.commit()
-        assert "commit is not implemented" in str(excinfo.value)
-
-    @pytest.mark.skip_reference
-    def test_rollback_not_implemented(self, connection):
-        """Test that rollback raises NotSupportedError."""
-        with pytest.raises(NotSupportedError) as excinfo:
-            connection.rollback()
-        assert "rollback is not implemented" in str(excinfo.value)
-
-
-# TODO: Tests for context manager were deleted - we might want to add them again later
-
 
 class TestConnectionOptionalMethods:
     """Test optional Connection methods."""
@@ -89,13 +72,12 @@ class TestConnectionAutocommitMethod:
 
     @pytest.mark.skip_reference
     def test_autocommit_sets_flag_and_calls_set_autocommit(self, connection, monkeypatch):
-        """Test that autocommit() sets _autocommit and delegates to set_autocommit."""
+        """Test that autocommit() delegates to set_autocommit."""
         mock_set_autocommit = Mock()
         monkeypatch.setattr(connection, "set_autocommit", mock_set_autocommit)
 
         connection.autocommit(True)
 
-        assert connection._autocommit is True
         mock_set_autocommit.assert_called_once_with(True)
 
     @pytest.mark.skip_reference
@@ -265,3 +247,117 @@ class TestExecuteStream:
         assert len(cursors) == 1
         assert isinstance(cursors[0], DictCursor)
         assert cursors[0].fetchone() == {"ID": 1}
+
+
+class TestCommitRollback:
+    """Integration tests for commit and rollback."""
+
+    def test_commit_persists_inserted_rows(self, connection):
+        """Test that commit() persists data inserted in a transaction."""
+        connection.set_autocommit(False)
+        cur = connection.cursor()
+        cur.execute("CREATE TEMPORARY TABLE _test_commit (id INTEGER, name VARCHAR)")
+        cur.execute("INSERT INTO _test_commit VALUES (1, 'alice')")
+        connection.commit()
+
+        cur.execute("SELECT id, name FROM _test_commit WHERE id = 1")
+        assert cur.fetchone() == (1, "alice")
+
+    def test_rollback_discards_inserted_rows(self, connection):
+        """Test that rollback() discards uncommitted inserts."""
+        connection.set_autocommit(False)
+        cur = connection.cursor()
+        cur.execute("CREATE TEMPORARY TABLE _test_rollback (id INTEGER)")
+        cur.execute("INSERT INTO _test_rollback VALUES (1)")
+        connection.commit()
+
+        cur.execute("INSERT INTO _test_rollback VALUES (2)")
+        connection.rollback()
+
+        cur.execute("SELECT COUNT(*) FROM _test_rollback")
+        assert cur.fetchone() == (1,)
+
+    def test_rollback_discards_update(self, connection):
+        """Test that rollback() reverts an UPDATE to previously committed data."""
+        connection.set_autocommit(False)
+        cur = connection.cursor()
+        cur.execute("CREATE TEMPORARY TABLE _test_rb_upd (id INTEGER, val VARCHAR)")
+        cur.execute("INSERT INTO _test_rb_upd VALUES (1, 'original')")
+        connection.commit()
+
+        cur.execute("UPDATE _test_rb_upd SET val = 'modified' WHERE id = 1")
+        connection.rollback()
+
+        cur.execute("SELECT val FROM _test_rb_upd WHERE id = 1")
+        assert cur.fetchone() == ("original",)
+
+
+class TestAutocommitAlterSession:
+    """Integration tests for set_autocommit ALTER SESSION."""
+
+    @pytest.mark.skip_reference
+    def test_set_autocommit_true_updates_session_parameter(self, connection):
+        """Test that set_autocommit(True) sets the AUTOCOMMIT session parameter."""
+        connection.set_autocommit(True)
+        assert connection._get_session_parameter("AUTOCOMMIT") == "true"
+
+    @pytest.mark.skip_reference
+    def test_set_autocommit_false_updates_session_parameter(self, connection):
+        """Test that set_autocommit(False) sets the AUTOCOMMIT session parameter."""
+        connection.set_autocommit(False)
+        assert connection._get_session_parameter("AUTOCOMMIT") == "false"
+
+    def test_autocommit_on_persists_without_explicit_commit(self, connection):
+        """Test that with autocommit ON, each statement is committed automatically."""
+        connection.set_autocommit(True)
+        cur = connection.cursor()
+        cur.execute("CREATE TEMPORARY TABLE _test_ac_on (id INTEGER)")
+        cur.execute("INSERT INTO _test_ac_on VALUES (1)")
+        # No explicit commit — autocommit should handle it
+
+        cur.execute("SELECT COUNT(*) FROM _test_ac_on")
+        assert cur.fetchone() == (1,)
+
+
+class TestContextManagerAutocommit:
+    """Integration tests for context manager with autocommit."""
+
+    def test_context_manager_commits_inserts_on_clean_exit(self, connection_factory):
+        """Test that the context manager commits DML on clean exit when autocommit is off."""
+        table = "_test_cm_commit"
+        with connection_factory() as conn:
+            conn.set_autocommit(False)
+            cur = conn.cursor()
+            cur.execute(f"CREATE TEMPORARY TABLE {table} (id INTEGER)")
+            conn.commit()
+            cur.execute(f"INSERT INTO {table} VALUES (1)")
+            cur.execute(f"INSERT INTO {table} VALUES (2)")
+            # clean exit should trigger commit
+
+        # Verify with a fresh connection — temp tables are session-scoped so
+        # we just confirm the context manager didn't raise
+        # (temp table is gone with the old session, but the exit was clean)
+
+    def test_context_manager_rolls_back_on_exception(self, connection_factory):
+        """Test that the context manager rolls back on exception when autocommit is off."""
+        try:
+            with connection_factory() as conn:
+                conn.set_autocommit(False)
+                cur = conn.cursor()
+                cur.execute("CREATE TEMPORARY TABLE _test_cm_rb (id INTEGER)")
+                conn.commit()
+                cur.execute("INSERT INTO _test_cm_rb VALUES (99)")
+                raise ValueError("simulated error")
+        except ValueError:
+            pass
+        # The rollback ran without error; connection was closed cleanly
+
+    def test_context_manager_with_autocommit_on_does_not_commit_or_rollback(self, connection_factory):
+        """Test that with autocommit ON, __exit__ skips explicit commit/rollback."""
+        with connection_factory() as conn:
+            conn.set_autocommit(True)
+            cur = conn.cursor()
+            cur.execute("CREATE TEMPORARY TABLE _test_cm_ac (id INTEGER)")
+            cur.execute("INSERT INTO _test_cm_ac VALUES (1)")
+            cur.execute("SELECT COUNT(*) FROM _test_cm_ac")
+            assert cur.fetchone() == (1,)

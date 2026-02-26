@@ -1,5 +1,5 @@
 """
-Unit tests for Connection._get_connection_info.
+Unit tests for Connection.
 """
 
 from unittest.mock import MagicMock, patch
@@ -10,6 +10,7 @@ from snowflake.connector._internal.protobuf_gen.database_driver_v1_pb2 import (
     ConnectionHandle,
     DatabaseHandle,
 )
+from snowflake.connector.errors import ProgrammingError
 from tests.compatibility import IS_UNIVERSAL_DRIVER
 
 
@@ -68,3 +69,46 @@ class TestGetConnectionInfo:
 
         args, _ = mock_db_api.connection_get_info.call_args
         assert args[0].conn_handle == connection.conn_handle
+
+
+class TestSetAutocommitValidation:
+    """Unit tests for set_autocommit input validation."""
+
+    def test_set_autocommit_rejects_non_bool(self, connection):
+        """set_autocommit should raise ProgrammingError for non-bool input."""
+        with pytest.raises(ProgrammingError, match="Invalid parameter"):
+            connection.set_autocommit("yes")
+
+        with pytest.raises(ProgrammingError, match="Invalid parameter"):
+            connection.set_autocommit(1)
+
+
+class TestContextManagerUnit:
+    """Unit tests for __exit__ behavior."""
+
+    def test_exit_skips_commit_when_autocommit_on(self, connection, mock_db_api):
+        """When autocommit is on, __exit__ should not execute COMMIT or ROLLBACK."""
+        connection._autocommit = True
+        mock_db_api.reset_mock()
+
+        connection.__exit__(None, None, None)
+
+        # No statement_execute calls for COMMIT/ROLLBACK
+        for call in mock_db_api.method_calls:
+            if "statement_execute" in str(call):
+                assert "COMMIT" not in str(call)
+                assert "ROLLBACK" not in str(call)
+
+    def test_exit_always_closes(self, connection):
+        """close() should be called even if commit raises an exception."""
+        connection._autocommit = False
+
+        def failing_commit():
+            raise RuntimeError("commit failed")
+
+        connection.commit = failing_commit
+
+        with pytest.raises(RuntimeError, match="commit failed"):
+            connection.__exit__(None, None, None)
+
+        assert connection._closed is True
