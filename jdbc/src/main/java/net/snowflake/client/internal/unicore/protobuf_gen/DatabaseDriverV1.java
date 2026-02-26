@@ -511,7 +511,7 @@ public final class DatabaseDriverV1 extends com.google.protobuf.GeneratedFile {
       implements com.google.protobuf.ProtocolMessageEnum {
     /**
      * <pre>
-     * Defaults to BEST_EFFORT
+     * Defaults to STRICT
      * </pre>
      *
      * <code>ERROR_STRATEGY_UNSPECIFIED = 0;</code>
@@ -547,7 +547,7 @@ public final class DatabaseDriverV1 extends com.google.protobuf.GeneratedFile {
     }
     /**
      * <pre>
-     * Defaults to BEST_EFFORT
+     * Defaults to STRICT
      * </pre>
      *
      * <code>ERROR_STRATEGY_UNSPECIFIED = 0;</code>
@@ -31217,7 +31217,7 @@ public final class DatabaseDriverV1 extends com.google.protobuf.GeneratedFile {
 
     /**
      * <pre>
-     * Total timeout budget for logout (including all retries). Default: 300s
+     * Total timeout budget for logout (including all retries). Default: 5s (Core internal). Language wrappers may override (e.g., Python uses 15s with 3 max attempts).
      * </pre>
      *
      * <code>optional int64 logout_total_timeout_seconds = 5;</code>
@@ -31226,7 +31226,7 @@ public final class DatabaseDriverV1 extends com.google.protobuf.GeneratedFile {
     boolean hasLogoutTotalTimeoutSeconds();
     /**
      * <pre>
-     * Total timeout budget for logout (including all retries). Default: 300s
+     * Total timeout budget for logout (including all retries). Default: 5s (Core internal). Language wrappers may override (e.g., Python uses 15s with 3 max attempts).
      * </pre>
      *
      * <code>optional int64 logout_total_timeout_seconds = 5;</code>
@@ -31252,6 +31252,25 @@ public final class DatabaseDriverV1 extends com.google.protobuf.GeneratedFile {
      * @return The maxRetryAttempts.
      */
     int getMaxRetryAttempts();
+
+    /**
+     * <pre>
+     * Per-request socket timeout. Default: None (no per-request limit, only total budget applies). If set, each HTTP request times out after this duration. Dynamically adjusted per attempt to min(configured_value, remaining_budget).
+     * </pre>
+     *
+     * <code>optional int64 logout_request_timeout_seconds = 7;</code>
+     * @return Whether the logoutRequestTimeoutSeconds field is set.
+     */
+    boolean hasLogoutRequestTimeoutSeconds();
+    /**
+     * <pre>
+     * Per-request socket timeout. Default: None (no per-request limit, only total budget applies). If set, each HTTP request times out after this duration. Dynamically adjusted per attempt to min(configured_value, remaining_budget).
+     * </pre>
+     *
+     * <code>optional int64 logout_request_timeout_seconds = 7;</code>
+     * @return The logoutRequestTimeoutSeconds.
+     */
+    long getLogoutRequestTimeoutSeconds();
   }
   /**
    * Protobuf type {@code database_driver_v1.ConnectionCloseRequest}
@@ -31385,7 +31404,7 @@ public final class DatabaseDriverV1 extends com.google.protobuf.GeneratedFile {
     private long logoutTotalTimeoutSeconds_ = 0L;
     /**
      * <pre>
-     * Total timeout budget for logout (including all retries). Default: 300s
+     * Total timeout budget for logout (including all retries). Default: 5s (Core internal). Language wrappers may override (e.g., Python uses 15s with 3 max attempts).
      * </pre>
      *
      * <code>optional int64 logout_total_timeout_seconds = 5;</code>
@@ -31397,7 +31416,7 @@ public final class DatabaseDriverV1 extends com.google.protobuf.GeneratedFile {
     }
     /**
      * <pre>
-     * Total timeout budget for logout (including all retries). Default: 300s
+     * Total timeout budget for logout (including all retries). Default: 5s (Core internal). Language wrappers may override (e.g., Python uses 15s with 3 max attempts).
      * </pre>
      *
      * <code>optional int64 logout_total_timeout_seconds = 5;</code>
@@ -31435,6 +31454,33 @@ public final class DatabaseDriverV1 extends com.google.protobuf.GeneratedFile {
       return maxRetryAttempts_;
     }
 
+    public static final int LOGOUT_REQUEST_TIMEOUT_SECONDS_FIELD_NUMBER = 7;
+    private long logoutRequestTimeoutSeconds_ = 0L;
+    /**
+     * <pre>
+     * Per-request socket timeout. Default: None (no per-request limit, only total budget applies). If set, each HTTP request times out after this duration. Dynamically adjusted per attempt to min(configured_value, remaining_budget).
+     * </pre>
+     *
+     * <code>optional int64 logout_request_timeout_seconds = 7;</code>
+     * @return Whether the logoutRequestTimeoutSeconds field is set.
+     */
+    @java.lang.Override
+    public boolean hasLogoutRequestTimeoutSeconds() {
+      return ((bitField0_ & 0x00000040) != 0);
+    }
+    /**
+     * <pre>
+     * Per-request socket timeout. Default: None (no per-request limit, only total budget applies). If set, each HTTP request times out after this duration. Dynamically adjusted per attempt to min(configured_value, remaining_budget).
+     * </pre>
+     *
+     * <code>optional int64 logout_request_timeout_seconds = 7;</code>
+     * @return The logoutRequestTimeoutSeconds.
+     */
+    @java.lang.Override
+    public long getLogoutRequestTimeoutSeconds() {
+      return logoutRequestTimeoutSeconds_;
+    }
+
     private byte memoizedIsInitialized = -1;
     @java.lang.Override
     public final boolean isInitialized() {
@@ -31466,6 +31512,9 @@ public final class DatabaseDriverV1 extends com.google.protobuf.GeneratedFile {
       }
       if (((bitField0_ & 0x00000020) != 0)) {
         output.writeUInt32(6, maxRetryAttempts_);
+      }
+      if (((bitField0_ & 0x00000040) != 0)) {
+        output.writeInt64(7, logoutRequestTimeoutSeconds_);
       }
       getUnknownFields().writeTo(output);
     }
@@ -31499,6 +31548,10 @@ public final class DatabaseDriverV1 extends com.google.protobuf.GeneratedFile {
       if (((bitField0_ & 0x00000020) != 0)) {
         size += com.google.protobuf.CodedOutputStream
           .computeUInt32Size(6, maxRetryAttempts_);
+      }
+      if (((bitField0_ & 0x00000040) != 0)) {
+        size += com.google.protobuf.CodedOutputStream
+          .computeInt64Size(7, logoutRequestTimeoutSeconds_);
       }
       size += getUnknownFields().getSerializedSize();
       memoizedSize = size;
@@ -31544,6 +31597,11 @@ public final class DatabaseDriverV1 extends com.google.protobuf.GeneratedFile {
         if (getMaxRetryAttempts()
             != other.getMaxRetryAttempts()) return false;
       }
+      if (hasLogoutRequestTimeoutSeconds() != other.hasLogoutRequestTimeoutSeconds()) return false;
+      if (hasLogoutRequestTimeoutSeconds()) {
+        if (getLogoutRequestTimeoutSeconds()
+            != other.getLogoutRequestTimeoutSeconds()) return false;
+      }
       if (!getUnknownFields().equals(other.getUnknownFields())) return false;
       return true;
     }
@@ -31581,6 +31639,11 @@ public final class DatabaseDriverV1 extends com.google.protobuf.GeneratedFile {
       if (hasMaxRetryAttempts()) {
         hash = (37 * hash) + MAX_RETRY_ATTEMPTS_FIELD_NUMBER;
         hash = (53 * hash) + getMaxRetryAttempts();
+      }
+      if (hasLogoutRequestTimeoutSeconds()) {
+        hash = (37 * hash) + LOGOUT_REQUEST_TIMEOUT_SECONDS_FIELD_NUMBER;
+        hash = (53 * hash) + com.google.protobuf.Internal.hashLong(
+            getLogoutRequestTimeoutSeconds());
       }
       hash = (29 * hash) + getUnknownFields().hashCode();
       memoizedHashCode = hash;
@@ -31729,6 +31792,7 @@ public final class DatabaseDriverV1 extends com.google.protobuf.GeneratedFile {
         errorStrategy_ = 0;
         logoutTotalTimeoutSeconds_ = 0L;
         maxRetryAttempts_ = 0;
+        logoutRequestTimeoutSeconds_ = 0L;
         return this;
       }
 
@@ -31789,6 +31853,10 @@ public final class DatabaseDriverV1 extends com.google.protobuf.GeneratedFile {
           result.maxRetryAttempts_ = maxRetryAttempts_;
           to_bitField0_ |= 0x00000020;
         }
+        if (((from_bitField0_ & 0x00000040) != 0)) {
+          result.logoutRequestTimeoutSeconds_ = logoutRequestTimeoutSeconds_;
+          to_bitField0_ |= 0x00000040;
+        }
         result.bitField0_ |= to_bitField0_;
       }
 
@@ -31821,6 +31889,9 @@ public final class DatabaseDriverV1 extends com.google.protobuf.GeneratedFile {
         }
         if (other.hasMaxRetryAttempts()) {
           setMaxRetryAttempts(other.getMaxRetryAttempts());
+        }
+        if (other.hasLogoutRequestTimeoutSeconds()) {
+          setLogoutRequestTimeoutSeconds(other.getLogoutRequestTimeoutSeconds());
         }
         this.mergeUnknownFields(other.getUnknownFields());
         onChanged();
@@ -31880,6 +31951,11 @@ public final class DatabaseDriverV1 extends com.google.protobuf.GeneratedFile {
                 bitField0_ |= 0x00000020;
                 break;
               } // case 48
+              case 56: {
+                logoutRequestTimeoutSeconds_ = input.readInt64();
+                bitField0_ |= 0x00000040;
+                break;
+              } // case 56
               default: {
                 if (!super.parseUnknownField(input, extensionRegistry, tag)) {
                   done = true; // was an endgroup tag
@@ -32159,7 +32235,7 @@ public final class DatabaseDriverV1 extends com.google.protobuf.GeneratedFile {
       private long logoutTotalTimeoutSeconds_ ;
       /**
        * <pre>
-       * Total timeout budget for logout (including all retries). Default: 300s
+       * Total timeout budget for logout (including all retries). Default: 5s (Core internal). Language wrappers may override (e.g., Python uses 15s with 3 max attempts).
        * </pre>
        *
        * <code>optional int64 logout_total_timeout_seconds = 5;</code>
@@ -32171,7 +32247,7 @@ public final class DatabaseDriverV1 extends com.google.protobuf.GeneratedFile {
       }
       /**
        * <pre>
-       * Total timeout budget for logout (including all retries). Default: 300s
+       * Total timeout budget for logout (including all retries). Default: 5s (Core internal). Language wrappers may override (e.g., Python uses 15s with 3 max attempts).
        * </pre>
        *
        * <code>optional int64 logout_total_timeout_seconds = 5;</code>
@@ -32183,7 +32259,7 @@ public final class DatabaseDriverV1 extends com.google.protobuf.GeneratedFile {
       }
       /**
        * <pre>
-       * Total timeout budget for logout (including all retries). Default: 300s
+       * Total timeout budget for logout (including all retries). Default: 5s (Core internal). Language wrappers may override (e.g., Python uses 15s with 3 max attempts).
        * </pre>
        *
        * <code>optional int64 logout_total_timeout_seconds = 5;</code>
@@ -32199,7 +32275,7 @@ public final class DatabaseDriverV1 extends com.google.protobuf.GeneratedFile {
       }
       /**
        * <pre>
-       * Total timeout budget for logout (including all retries). Default: 300s
+       * Total timeout budget for logout (including all retries). Default: 5s (Core internal). Language wrappers may override (e.g., Python uses 15s with 3 max attempts).
        * </pre>
        *
        * <code>optional int64 logout_total_timeout_seconds = 5;</code>
@@ -32264,6 +32340,62 @@ public final class DatabaseDriverV1 extends com.google.protobuf.GeneratedFile {
       public Builder clearMaxRetryAttempts() {
         bitField0_ = (bitField0_ & ~0x00000020);
         maxRetryAttempts_ = 0;
+        onChanged();
+        return this;
+      }
+
+      private long logoutRequestTimeoutSeconds_ ;
+      /**
+       * <pre>
+       * Per-request socket timeout. Default: None (no per-request limit, only total budget applies). If set, each HTTP request times out after this duration. Dynamically adjusted per attempt to min(configured_value, remaining_budget).
+       * </pre>
+       *
+       * <code>optional int64 logout_request_timeout_seconds = 7;</code>
+       * @return Whether the logoutRequestTimeoutSeconds field is set.
+       */
+      @java.lang.Override
+      public boolean hasLogoutRequestTimeoutSeconds() {
+        return ((bitField0_ & 0x00000040) != 0);
+      }
+      /**
+       * <pre>
+       * Per-request socket timeout. Default: None (no per-request limit, only total budget applies). If set, each HTTP request times out after this duration. Dynamically adjusted per attempt to min(configured_value, remaining_budget).
+       * </pre>
+       *
+       * <code>optional int64 logout_request_timeout_seconds = 7;</code>
+       * @return The logoutRequestTimeoutSeconds.
+       */
+      @java.lang.Override
+      public long getLogoutRequestTimeoutSeconds() {
+        return logoutRequestTimeoutSeconds_;
+      }
+      /**
+       * <pre>
+       * Per-request socket timeout. Default: None (no per-request limit, only total budget applies). If set, each HTTP request times out after this duration. Dynamically adjusted per attempt to min(configured_value, remaining_budget).
+       * </pre>
+       *
+       * <code>optional int64 logout_request_timeout_seconds = 7;</code>
+       * @param value The logoutRequestTimeoutSeconds to set.
+       * @return This builder for chaining.
+       */
+      public Builder setLogoutRequestTimeoutSeconds(long value) {
+
+        logoutRequestTimeoutSeconds_ = value;
+        bitField0_ |= 0x00000040;
+        onChanged();
+        return this;
+      }
+      /**
+       * <pre>
+       * Per-request socket timeout. Default: None (no per-request limit, only total budget applies). If set, each HTTP request times out after this duration. Dynamically adjusted per attempt to min(configured_value, remaining_budget).
+       * </pre>
+       *
+       * <code>optional int64 logout_request_timeout_seconds = 7;</code>
+       * @return This builder for chaining.
+       */
+      public Builder clearLogoutRequestTimeoutSeconds() {
+        bitField0_ = (bitField0_ & ~0x00000040);
+        logoutRequestTimeoutSeconds_ = 0L;
         onChanged();
         return this;
       }
@@ -64639,7 +64771,7 @@ net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSectio
       "DatabaseHandle\"\030\n\026ConnectionInitResponse" +
       "\"U\n\030ConnectionReleaseRequest\0229\n\013conn_han" +
       "dle\030\001 \001(\0132$.database_driver_v1.Connectio" +
-      "nHandle\"\033\n\031ConnectionReleaseResponse\"\256\003\n" +
+      "nHandle\"\033\n\031ConnectionReleaseResponse\"\376\003\n" +
       "\026ConnectionCloseRequest\0229\n\013conn_handle\030\001" +
       " \001(\0132$.database_driver_v1.ConnectionHand" +
       "le\022&\n\031server_session_keep_alive\030\002 \001(\010H\000\210" +
@@ -64647,10 +64779,12 @@ net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSectio
       "\n\016error_strategy\030\004 \001(\0162!.database_driver" +
       "_v1.ErrorStrategyH\002\210\001\001\022)\n\034logout_total_t" +
       "imeout_seconds\030\005 \001(\003H\003\210\001\001\022\037\n\022max_retry_a" +
-      "ttempts\030\006 \001(\rH\004\210\001\001B\034\n\032_server_session_ke" +
-      "ep_aliveB\030\n\026_enable_auto_detectionB\021\n\017_e" +
-      "rror_strategyB\037\n\035_logout_total_timeout_s" +
-      "econdsB\025\n\023_max_retry_attempts\"\031\n\027Connect" +
+      "ttempts\030\006 \001(\rH\004\210\001\001\022+\n\036logout_request_tim" +
+      "eout_seconds\030\007 \001(\003H\005\210\001\001B\034\n\032_server_sessi" +
+      "on_keep_aliveB\030\n\026_enable_auto_detectionB" +
+      "\021\n\017_error_strategyB\037\n\035_logout_total_time" +
+      "out_secondsB\025\n\023_max_retry_attemptsB!\n\037_l" +
+      "ogout_request_timeout_seconds\"\031\n\027Connect" +
       "ionCloseResponse\"V\n\031ConnectionIsClosedRe" +
       "quest\0229\n\013conn_handle\030\001 \001(\0132$.database_dr" +
       "iver_v1.ConnectionHandle\"/\n\032ConnectionIs" +
@@ -65235,7 +65369,7 @@ net.snowflake.client.internal.unicore.protobuf_gen.DatabaseDriverV1.ConfigSectio
     internal_static_database_driver_v1_ConnectionCloseRequest_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessage.FieldAccessorTable(
         internal_static_database_driver_v1_ConnectionCloseRequest_descriptor,
-        new java.lang.String[] { "ConnHandle", "ServerSessionKeepAlive", "EnableAutoDetection", "ErrorStrategy", "LogoutTotalTimeoutSeconds", "MaxRetryAttempts", });
+        new java.lang.String[] { "ConnHandle", "ServerSessionKeepAlive", "EnableAutoDetection", "ErrorStrategy", "LogoutTotalTimeoutSeconds", "MaxRetryAttempts", "LogoutRequestTimeoutSeconds", });
     internal_static_database_driver_v1_ConnectionCloseResponse_descriptor =
       getDescriptor().getMessageTypes().get(50);
     internal_static_database_driver_v1_ConnectionCloseResponse_fieldAccessorTable = new
