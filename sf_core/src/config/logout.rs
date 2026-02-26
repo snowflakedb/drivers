@@ -31,6 +31,11 @@ pub struct LogoutConfig {
     /// - Some(n): Allow up to n retries
     /// - None: Use default from RetryPolicy (typically 6)
     pub max_retry_attempts: Option<u32>,
+
+    /// Per-request socket timeout for individual HTTP requests
+    /// - Some(duration): Each request times out after this duration (dynamically adjusted to min(this, remaining_budget))
+    /// - None: No per-request timeout (only total budget applies, like login/query operations)
+    pub logout_request_timeout: Option<Duration>,
 }
 
 impl Default for LogoutConfig {
@@ -41,6 +46,7 @@ impl Default for LogoutConfig {
             error_strategy: ErrorStrategy::Strict,
             logout_total_timeout: Duration::from_secs(5),
             max_retry_attempts: None,
+            logout_request_timeout: None,
         }
     }
 }

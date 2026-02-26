@@ -243,6 +243,7 @@ class Connection:
                 error_strategy=logout_config.error_strategy,
                 logout_total_timeout_seconds=logout_config.logout_total_timeout_seconds,
                 max_retry_attempts=max_retry_attempts,
+                logout_request_timeout_seconds=logout_config.logout_request_timeout_seconds,
             )
         )
 

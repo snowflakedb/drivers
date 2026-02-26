@@ -603,6 +603,26 @@ impl DatabaseDriver for DatabaseDriverImpl {
             });
         }
 
+        // Validate logout_request_timeout_seconds (must be non-negative)
+        // Follows same pattern as logout_total_timeout_seconds validation above
+        if let Some(timeout_secs) = input.logout_request_timeout_seconds
+            && timeout_secs < 0
+        {
+            return Err(DriverException {
+                message: format!(
+                    "Invalid logout_request_timeout_seconds: {}. Must be non-negative",
+                    timeout_secs
+                ),
+                status_code: StatusCode::InvalidArgument as i32,
+                error: None,
+                error_trace: vec![],
+            });
+        }
+
+        let logout_request_timeout = input
+            .logout_request_timeout_seconds
+            .map(|secs| Duration::from_secs(secs as u64)); // Safe: validated non-negative above
+
         // Build logout config
         let config = LogoutConfig {
             server_session_keep_alive: input.server_session_keep_alive,
@@ -613,6 +633,7 @@ impl DatabaseDriver for DatabaseDriverImpl {
                 .map(|s| Duration::from_secs(s as u64)) // Safe: validated non-negative above
                 .unwrap_or(Duration::from_secs(5)),
             max_retry_attempts: input.max_retry_attempts,
+            logout_request_timeout,
         };
 
         connection_close(conn_handle.into(), config).to_protobuf()?;

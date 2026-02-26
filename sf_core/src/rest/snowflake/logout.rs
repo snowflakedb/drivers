@@ -13,7 +13,6 @@ use crate::rest::snowflake::{
 };
 use reqwest::{Method, header};
 use snafu::ResultExt;
-use std::time::Duration;
 use url::Url;
 
 /// Error codes from Snowflake GS
@@ -47,7 +46,6 @@ pub async fn logout_session(
     server_url: &str,
     session_token: &str,
     client_info: &ClientInfo,
-    timeout: Duration,
     retry_policy: &RetryPolicy,
 ) -> Result<(), RestError> {
     tracing::info!("Initiating session logout");
@@ -63,7 +61,6 @@ pub async fn logout_session(
     tracing::debug!(
         %request_id,
         %logout_url,
-        timeout_secs = timeout.as_secs(),
         "Logout request parameters"
     );
 
@@ -91,7 +88,7 @@ pub async fn logout_session(
             .header(header::ACCEPT, "application/snowflake")
             .header(header::USER_AGENT, &user_agent)
             .json(&serde_json::json!({}))
-            .timeout(timeout)
+        // NO .timeout() - execute_with_retry applies it dynamically
     };
 
     let response = execute_with_retry(&build_request, &ctx, retry_policy, |resp| async move {

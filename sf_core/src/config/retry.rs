@@ -14,6 +14,10 @@ pub struct RetryPolicy {
     pub backoff: BackoffConfig,
     /// Maximum total duration spent on the operation before we stop retrying.
     pub max_elapsed: Duration,
+    /// Optional per-request socket timeout. If Some, each HTTP request gets
+    /// timeout = min(this, remaining_budget). If None, no per-request timeout
+    /// is applied (only max_elapsed budget enforcement, like login/query operations).
+    pub per_request_timeout: Option<Duration>,
 }
 
 #[derive(Clone, Debug)]
@@ -57,6 +61,7 @@ impl Default for RetryPolicy {
                 jitter: Jitter::Decorrelated,
             },
             max_elapsed: Duration::from_secs(120),
+            per_request_timeout: None,
         }
     }
 }

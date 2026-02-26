@@ -46,7 +46,6 @@ async fn should_construct_logout_request_with_correct_http_method_url_headers_an
         &server_url,
         session_token,
         &client_info,
-        Duration::from_secs(5),
         &RetryPolicy::default(),
     )
     .await;
@@ -143,6 +142,7 @@ fn should_not_send_logout_when_connection_was_never_established() {
         enable_auto_detection: None,
         error_strategy: ErrorStrategy::BestEffort,
         logout_total_timeout: Duration::from_secs(5),
+        logout_request_timeout: None,
         max_retry_attempts: None,
     };
     let result = connection_close(conn_handle, config);
@@ -191,7 +191,7 @@ async fn should_not_send_logout_when_server_session_keep_alive_is_explicitly_tru
             enable_auto_detection: None,
             error_strategy: None,
             logout_total_timeout_seconds: None,
-
+            logout_request_timeout_seconds: None,
             max_retry_attempts: None,
         })
     })
@@ -247,7 +247,6 @@ async fn should_send_logout_when_server_session_keep_alive_is_explicitly_false()
         &server_url,
         session_token,
         &client_info,
-        config.logout_total_timeout,
         &RetryPolicy::default(),
     )
     .await;
@@ -305,7 +304,6 @@ async fn should_timeout_after_5_seconds_by_default_when_server_does_not_respond(
         &server_url,
         "test_token",
         &client_info,
-        config.logout_total_timeout,
         &retry_policy,
     )
     .await;
@@ -392,7 +390,6 @@ async fn should_cancel_individual_request_when_per_request_socket_timeout_exceed
         &server_url,
         "test_token",
         &client_info,
-        per_request_timeout,
         &retry_policy,
     )
     .await;
@@ -454,7 +451,6 @@ async fn should_respect_total_retry_budget_timeout_across_all_attempts() {
         &server_url,
         "test_token",
         &client_info,
-        total_timeout,
         &retry_policy,
     )
     .await;
@@ -590,7 +586,6 @@ async fn should_ignore_session_gone_390111_for_each_strategy_type() {
             &server_url,
             "test_token",
             &client_info,
-            config.logout_total_timeout,
             &RetryPolicy::default(),
         )
         .await;
@@ -666,7 +661,6 @@ async fn should_retry_logout_on_retryable_error_type_for_each_strategy_type() {
                 &server_url,
                 "test_token",
                 &client_info,
-                config.logout_total_timeout,
                 &RetryPolicy::default(),
             )
             .await;
@@ -735,7 +729,6 @@ async fn should_retry_logout_on_retryable_error_type_for_each_strategy_type() {
                 &server_url,
                 "test_token",
                 &client_info,
-                config.logout_total_timeout,
                 &RetryPolicy::default(),
             )
             .await;
@@ -881,6 +874,7 @@ async fn should_attempt_token_refresh_on_390112_when_retries_allowed_for_each_st
                     ErrorStrategy::BestEffort => 1,
                 }),
                 logout_total_timeout_seconds: Some(30),
+                logout_request_timeout_seconds: None,
                 max_retry_attempts: Some(1),  // 1 retry = allow token refresh and second logout attempt
             })
         })
@@ -1003,6 +997,7 @@ async fn should_fail_gracefully_when_token_refresh_fails_on_390112_for_each_stra
                     ErrorStrategy::BestEffort => 1,
                 }),
                 logout_total_timeout_seconds: Some(30),
+                logout_request_timeout_seconds: None,
                 max_retry_attempts: None,
             })
         })
@@ -1091,7 +1086,6 @@ async fn should_honor_provided_retry_config_and_succeed_for_each_strategy_type()
             &server_url,
             "test_token",
             &client_info,
-            config.logout_total_timeout,
             &retry_policy,
         )
         .await;
@@ -1150,7 +1144,6 @@ async fn should_honor_provided_timeout_config_and_succeed_for_each_strategy_type
             &server_url,
             "test_token",
             &client_info,
-            config.logout_total_timeout,
             &RetryPolicy::default(),
         )
         .await;
@@ -1201,7 +1194,6 @@ async fn should_throw_after_exhausted_retries_with_strict_strategy() {
         &server_url,
         "test_token",
         &client_info,
-        config.logout_total_timeout,
         &retry_policy,
     )
     .await;
@@ -1251,7 +1243,6 @@ async fn should_log_warn_and_succeed_after_exhausted_retries_with_best_effort_st
         &server_url,
         "test_token",
         &client_info,
-        config.logout_total_timeout,
         &retry_policy,
     )
     .await;
@@ -1339,7 +1330,6 @@ async fn should_throw_on_non_retryable_error_code_in_strict_strategy() {
             &server_url,
             "test_token",
             &client_info,
-            config.logout_total_timeout,
             &RetryPolicy::default(),
         )
         .await;
@@ -1406,7 +1396,6 @@ async fn should_log_and_suppress_non_retryable_error_code_in_best_effort_strateg
             &server_url,
             "test_token",
             &client_info,
-            config.logout_total_timeout,
             &RetryPolicy::default(),
         )
         .await;
@@ -1500,7 +1489,6 @@ async fn should_throw_on_timeout_with_strict_strategy() {
         &server_url,
         "test_token",
         &client_info,
-        config.logout_total_timeout,
         &retry_policy,
     )
     .await;
@@ -1575,7 +1563,6 @@ async fn should_log_warn_and_succeed_on_timeout_with_best_effort_strategy() {
         &server_url,
         "test_token",
         &client_info,
-        config.logout_total_timeout,
         &retry_policy,
     )
     .await;
@@ -1636,6 +1623,7 @@ async fn should_reject_queries_client_side_after_connection_is_closed() {
             enable_auto_detection: None,
             error_strategy: None,
             logout_total_timeout_seconds: None,
+            logout_request_timeout_seconds: None,
             max_retry_attempts: None,
         })
     })

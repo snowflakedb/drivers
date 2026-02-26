@@ -24,6 +24,7 @@ class LogoutConfig:
         error_strategy: Error handling strategy (BEST_EFFORT or STRICT)
         logout_total_timeout_seconds: Total timeout budget for logout operation (all retries)
         max_retry_attempts: Maximum number of retry attempts for logout
+        logout_request_timeout_seconds: Per-request socket timeout (None = no per-request limit)
     """
 
     server_session_keep_alive: Optional[bool]
@@ -31,6 +32,7 @@ class LogoutConfig:
     error_strategy: int
     logout_total_timeout_seconds: int
     max_retry_attempts: Optional[int]
+    logout_request_timeout_seconds: Optional[int]
 
 
 def map_logout_config_phase2(connection: "Connection") -> LogoutConfig:
@@ -69,4 +71,5 @@ def map_logout_config_phase2(connection: "Connection") -> LogoutConfig:
         error_strategy=database_driver_v1_pb2.ERROR_STRATEGY_BEST_EFFORT,
         logout_total_timeout_seconds=15,  # 15 second total budget with 3 max attempts = ~5s per attempt
         max_retry_attempts=3,  # Limit retries for faster failure feedback
+        logout_request_timeout_seconds=10,  # 10s per request, 15s total budget, 3 attempts max
     )

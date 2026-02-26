@@ -1,7 +1,6 @@
 use snafu::{OptionExt, ResultExt};
 use std::future::Future;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
 use std::{collections::HashMap, sync::Arc, sync::Mutex, sync::RwLock};
 use tokio::sync::RwLock as AsyncRwLock;
 
@@ -566,22 +565,31 @@ pub fn connection_is_closed(conn_handle: Handle) -> Result<bool, ApiError> {
     Ok(conn.is_closed.load(Ordering::SeqCst))
 }
 
-/// Minimum per-request timeout for logout HTTP calls.
-/// Prevents unreasonably short timeouts when total budget is small.
-const MIN_PER_REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
-
-/// Maximum per-request timeout for logout HTTP calls.
-/// Individual requests shouldn't consume the entire budget.
-const MAX_PER_REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
-
 /// Data extracted from a locked connection needed to perform HTTP logout.
 struct LogoutData {
     client: reqwest::Client,
     url: String,
     info: ClientInfo,
     retry_policy: RetryPolicy,
-    per_request_timeout: Duration,
     refresh_ctx: RefreshContext,
+}
+
+/// Validate logout configuration values.
+///
+/// Checks for invalid timeout configurations that would cause immediate failure.
+fn validate_logout_config(config: &LogoutConfig) -> Result<(), ApiError> {
+    // Zero timeout means immediate failure - reject at configuration time
+    if let Some(timeout) = config.logout_request_timeout
+        && timeout.is_zero()
+    {
+        return Err(InvalidArgumentSnafu {
+            argument:
+                "logout_request_timeout: 0s. Zero timeout means immediate failure. Must be positive."
+                    .to_string(),
+        }
+        .build());
+    }
+    Ok(())
 }
 
 /// Extract logout data from a locked connection, set is_closed, and determine
@@ -590,6 +598,8 @@ fn prepare_logout(
     conn_ptr: &Arc<Mutex<Connection>>,
     config: &LogoutConfig,
 ) -> Result<(bool, Option<String>, Option<LogoutData>), ApiError> {
+    // Validate config first
+    validate_logout_config(config)?;
     let conn = conn_ptr
         .lock()
         .map_err(|_| ConnectionLockingSnafu {}.build())?;
@@ -618,18 +628,21 @@ fn prepare_logout(
                     retry_policy.max_attempts = max_attempts;
                 }
                 retry_policy.max_elapsed = config.logout_total_timeout;
+                retry_policy.per_request_timeout = config.logout_request_timeout;
 
-                let per_request_timeout =
-                    config.logout_total_timeout / retry_policy.max_attempts.max(1);
-                let per_request_timeout =
-                    per_request_timeout.clamp(MIN_PER_REQUEST_TIMEOUT, MAX_PER_REQUEST_TIMEOUT);
+                tracing::debug!(
+                    total_timeout_secs = config.logout_total_timeout.as_secs(),
+                    max_attempts = retry_policy.max_attempts,
+                    per_request_timeout_secs =
+                        retry_policy.per_request_timeout.map(|t| t.as_secs()),
+                    "Configured logout retry policy"
+                );
 
                 Some(LogoutData {
                     client,
                     url,
                     info,
                     retry_policy,
-                    per_request_timeout,
                     refresh_ctx: refresh_ctx_result?,
                 })
             }
@@ -657,7 +670,6 @@ fn send_logout_request(data: LogoutData) -> Result<(), ApiError> {
                 &data.url,
                 &session_token,
                 &data.info,
-                data.per_request_timeout,
                 &data.retry_policy,
             )
             .await
@@ -749,4 +761,41 @@ pub fn connection_close(conn_handle: Handle, config: LogoutConfig) -> Result<(),
         tracing::info!("Connection closed successfully");
     }
     logout_result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn test_validate_logout_config_accepts_none() {
+        let config = LogoutConfig {
+            logout_request_timeout: None,
+            ..Default::default()
+        };
+        assert!(validate_logout_config(&config).is_ok());
+    }
+
+    #[test]
+    fn test_validate_logout_config_accepts_positive_timeout() {
+        let config = LogoutConfig {
+            logout_request_timeout: Some(Duration::from_secs(10)),
+            ..Default::default()
+        };
+        assert!(validate_logout_config(&config).is_ok());
+    }
+
+    #[test]
+    fn test_validate_logout_config_rejects_zero_timeout() {
+        let config = LogoutConfig {
+            logout_request_timeout: Some(Duration::ZERO),
+            ..Default::default()
+        };
+        let result = validate_logout_config(&config);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(matches!(err, ApiError::InvalidArgument { .. }));
+        assert!(err.to_string().contains("Zero timeout"));
+    }
 }
