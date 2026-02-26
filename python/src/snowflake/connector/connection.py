@@ -424,7 +424,14 @@ class Connection:
         a separate Python-side flag.
 
         Returns:
-            bool: True if connection is closed, False otherwise
+            bool: True if close() has been called (connection marked as closed atomically),
+                  False if close() has never been called
+
+        Important: Core sets is_closed=True immediately when close() starts, BEFORE
+        attempting logout. This means is_closed() returns True even if:
+        - Logout fails and close() raises an exception (error_strategy=STRICT)
+        - Logout is still in progress
+        This ensures idempotency and prevents double-close attempts.
         """
         response = self.db_api.connection_is_closed(ConnectionIsClosedRequest(conn_handle=self.conn_handle))
         return bool(response.is_closed)
