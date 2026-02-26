@@ -287,13 +287,14 @@ async fn should_timeout_after_5_seconds_by_default_when_server_does_not_respond(
     let client_info = test_client_info();
 
     //And UD Core connection is logged in with no timeout override
-    let config = LogoutConfig::default(); // Default timeout is 5 seconds
+    let config = LogoutConfig::default(); // Default total timeout is 5 seconds
 
-    // Build retry policy matching Python's default configuration (5s per-request timeout)
-    // Python passes logout_request_timeout_seconds=5 by default
+    // Simulate user-facing default: Python passes logout_request_timeout_seconds=5 by default
+    // This tests what users experience "by default" through language wrappers
+    // (Core's internal default is None, but wrappers configure it)
     let retry_policy = RetryPolicy {
         max_elapsed: config.logout_total_timeout,
-        per_request_timeout: Some(Duration::from_secs(5)), // Python's default
+        per_request_timeout: Some(Duration::from_secs(5)), // User-facing default via Python
         ..Default::default()
     };
 
