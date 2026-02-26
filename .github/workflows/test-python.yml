@@ -59,7 +59,7 @@ jobs:
 
       - name: Build python wheel
         working-directory: ./python
-        run: uv run --python ${{ matrix.py }} --with hatch --with cython --with setuptools hatch build
+        run: uv run --python ${{ matrix.py }} --with hatch --with cython --with setuptools --with "virtualenv<21.0.0" hatch build
 
       - name: Inspect wheel
         working-directory: ./python
