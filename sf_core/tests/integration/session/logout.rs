@@ -881,7 +881,7 @@ async fn should_attempt_token_refresh_on_390112_when_retries_allowed_for_each_st
                     ErrorStrategy::BestEffort => 1,
                 }),
                 logout_total_timeout_seconds: Some(30),
-                max_retry_attempts: None,
+                max_retry_attempts: Some(1),  // 1 retry = allow token refresh and second logout attempt
             })
         })
         .await
@@ -1080,6 +1080,11 @@ async fn should_honor_provided_retry_config_and_succeed_for_each_strategy_type()
             ..Default::default()
         };
 
+        let retry_policy = RetryPolicy {
+            max_attempts: expected_attempts as u32,  // Use the calculated value from loop
+            ..Default::default()
+        };
+
         //When Logout is executed
         let result = logout_session(
             &client,
@@ -1087,7 +1092,7 @@ async fn should_honor_provided_retry_config_and_succeed_for_each_strategy_type()
             "test_token",
             &client_info,
             config.logout_total_timeout,
-            &RetryPolicy::default(),
+            &retry_policy,
         )
         .await;
 
@@ -1185,6 +1190,11 @@ async fn should_throw_after_exhausted_retries_with_strict_strategy() {
         ..Default::default()
     };
 
+    let retry_policy = RetryPolicy {
+        max_attempts: max_attempts as u32,
+        ..Default::default()
+    };
+
     //When Logout is executed
     let result = logout_session(
         &client,
@@ -1192,7 +1202,7 @@ async fn should_throw_after_exhausted_retries_with_strict_strategy() {
         "test_token",
         &client_info,
         config.logout_total_timeout,
-        &RetryPolicy::default(),
+        &retry_policy,
     )
     .await;
 
@@ -1204,7 +1214,6 @@ async fn should_throw_after_exhausted_retries_with_strict_strategy() {
     );
 
     //And No further retries after max reached
-    //And WARN log is emitted
     //And Close throws error
     assert!(result.is_err(), "Should fail after retries exhausted");
 
@@ -1231,6 +1240,11 @@ async fn should_log_warn_and_succeed_after_exhausted_retries_with_best_effort_st
         ..Default::default()
     };
 
+    let retry_policy = RetryPolicy {
+        max_attempts: max_attempts as u32,
+        ..Default::default()
+    };
+
     //When Logout is executed
     let result = logout_session(
         &client,
@@ -1238,7 +1252,7 @@ async fn should_log_warn_and_succeed_after_exhausted_retries_with_best_effort_st
         "test_token",
         &client_info,
         config.logout_total_timeout,
-        &RetryPolicy::default(),
+        &retry_policy,
     )
     .await;
 
@@ -1261,7 +1275,6 @@ async fn should_log_warn_and_succeed_after_exhausted_retries_with_best_effort_st
     let handled_result = config.error_strategy.handle_failed_logout(api_result);
 
     //And No further retries after max reached
-    //And WARN log is emitted (check via log output)
     //And Close succeeds (BestEffort suppresses error)
     assert!(
         handled_result.is_ok(),
@@ -1408,7 +1421,7 @@ async fn should_log_and_suppress_non_retryable_error_code_in_best_effort_strateg
             );
         let handled_result = config.error_strategy.handle_failed_logout(api_result);
 
-        //Then Error is logged as WARN
+        //Then Error is suppressed (BestEffort strategy)
         //And Close succeeds without throwing
         assert!(
             handled_result.is_ok(),
@@ -1586,7 +1599,6 @@ async fn should_log_warn_and_succeed_on_timeout_with_best_effort_strategy() {
         );
     let handled_result = config.error_strategy.handle_failed_logout(api_result);
 
-    //And WARN log is emitted (check via log output)
     //And Close succeeds (BestEffort suppresses timeout error)
     assert!(
         handled_result.is_ok(),
