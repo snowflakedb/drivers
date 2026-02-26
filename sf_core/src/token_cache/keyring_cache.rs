@@ -1,6 +1,7 @@
 use std::sync::OnceLock;
 
 use snafu::ResultExt;
+use tracing::{debug, info};
 
 use super::file_cache::install_file_credential_fallback;
 use super::{
@@ -50,6 +51,8 @@ impl KeyringTokenCache {
         username: &str,
         token_type: TokenType,
     ) -> Result<keyring::Entry, TokenCacheError> {
+        validate_key_components(host, username)?;
+        debug!("Creating secret for {token_type:?}");
         let key = build_cache_key(host, username, token_type);
         keyring::Entry::new(KEYRING_SERVICE_NAME, &key)
             .boxed()
@@ -66,6 +69,7 @@ impl TokenCache for KeyringTokenCache {
         token_value: &str,
     ) -> Result<(), TokenCacheError> {
         validate_key_components(host, username)?;
+        info!("Saving secret for {token_type:?}");
 
         let entry = self.create_entry(host, username, token_type)?;
         entry
@@ -81,7 +85,7 @@ impl TokenCache for KeyringTokenCache {
         token_type: TokenType,
     ) -> Result<(), TokenCacheError> {
         validate_key_components(host, username)?;
-
+        debug!("Saving secret for {token_type:?}");
         let entry = self.create_entry(host, username, token_type)?;
         match entry.delete_credential() {
             Ok(()) => Ok(()),
@@ -97,6 +101,7 @@ impl TokenCache for KeyringTokenCache {
         token_type: TokenType,
     ) -> Result<Option<String>, TokenCacheError> {
         validate_key_components(host, username)?;
+        debug!("Retrieving secret for {token_type:?}");
 
         let entry = self.create_entry(host, username, token_type)?;
         match entry.get_password() {
