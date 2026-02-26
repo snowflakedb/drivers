@@ -13,7 +13,6 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.Arrays;
 import java.util.List;
-import java.util.UUID;
 import net.snowflake.client.SnowflakeIntegrationTestBase;
 import org.junit.jupiter.api.Test;
 
@@ -141,7 +140,7 @@ public class IntTests extends SnowflakeIntegrationTestBase {
     // When Query "SELECT * FROM <table> ORDER BY col" is executed
     // Then Result should contain integers <expected_values>
     Connection connection = getDefaultConnection();
-    String tableName = createTempTable(connection, "col " + INT_TYPE);
+    String tableName = createTempTable(connection, "ud_int_", "col " + INT_TYPE);
 
     execute(
         connection,
@@ -188,7 +187,7 @@ public class IntTests extends SnowflakeIntegrationTestBase {
     // Then Result should contain integers [-99999999999999999999999999999999999999,
     // 99999999999999999999999999999999999999]
     Connection connection = getDefaultConnection();
-    String tableName = createTempTable(connection, "col " + INT_TYPE);
+    String tableName = createTempTable(connection, "ud_int_", "col " + INT_TYPE);
     execute(
         connection,
         "INSERT INTO " + tableName + " VALUES (" + SMALL_INT + "), (" + LARGE_INT + ")");
@@ -213,7 +212,7 @@ public class IntTests extends SnowflakeIntegrationTestBase {
     // When Query "SELECT * FROM <table> ORDER BY col" is executed
     // Then Result should contain 50000 sequentially numbered rows from 0 to 49999
     Connection connection = getDefaultConnection();
-    String tableName = createTempTable(connection, "col " + INT_TYPE);
+    String tableName = createTempTable(connection, "ud_int_", "col " + INT_TYPE);
     execute(
         connection,
         "INSERT INTO "
@@ -247,18 +246,6 @@ public class IntTests extends SnowflakeIntegrationTestBase {
             resultSet, i + 1, expected.get(i), "Column mismatch for " + INT_TYPE);
       }
       assertFalse(resultSet.next(), "Expected exactly one row for type: " + INT_TYPE);
-    }
-  }
-
-  private static String createTempTable(Connection connection, String columns) throws Exception {
-    String tableName = "ud_int_" + UUID.randomUUID().toString().replace("-", "");
-    execute(connection, "CREATE TEMPORARY TABLE " + tableName + " (" + columns + ")");
-    return tableName;
-  }
-
-  private static void execute(Connection connection, String sql) throws Exception {
-    try (Statement statement = connection.createStatement()) {
-      statement.execute(sql);
     }
   }
 

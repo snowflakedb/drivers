@@ -11,6 +11,7 @@ mod nullable;
 mod number;
 #[cfg(test)]
 mod number_tests;
+mod real;
 mod timestamp;
 mod varchar;
 
@@ -135,6 +136,7 @@ enum SnowflakeFieldType {
     TimestampNtz(timestamp::SnowflakeTimestampNtz),
     Boolean(boolean::SnowflakeBoolean),
     Binary(binary::SnowflakeBinary),
+    Real(real::SnowflakeReal),
 }
 
 impl SnowflakeFieldType {
@@ -166,6 +168,7 @@ impl SnowflakeFieldType {
                     sql_type,
                 }))
             }
+            "REAL" => Ok(Self::Real(real::SnowflakeReal)),
             "DATE" => Ok(Self::Date(date::SnowflakeDate)),
             "TIMESTAMP_NTZ" => Ok(Self::TimestampNtz(timestamp::SnowflakeTimestampNtz)),
             "BOOLEAN" => Ok(Self::Boolean(boolean::SnowflakeBoolean)),
@@ -186,6 +189,31 @@ impl SnowflakeFieldType {
             Self::TimestampNtz(t) => t.sql_type(),
             Self::Boolean(t) => t.sql_type(),
             Self::Binary(t) => t.sql_type(),
+            Self::Real(t) => t.sql_type(),
+        }
+    }
+
+    fn column_size(&self) -> odbc_sys::ULen {
+        match self {
+            Self::Varchar(t) => t.column_size(),
+            Self::Number(t) => t.column_size(),
+            Self::Date(t) => t.column_size(),
+            Self::TimestampNtz(t) => t.column_size(),
+            Self::Boolean(t) => t.column_size(),
+            Self::Binary(t) => t.column_size(),
+            Self::Real(t) => t.column_size(),
+        }
+    }
+
+    fn decimal_digits(&self) -> odbc_sys::SmallInt {
+        match self {
+            Self::Varchar(t) => t.decimal_digits(),
+            Self::Number(t) => t.decimal_digits(),
+            Self::Date(t) => t.decimal_digits(),
+            Self::TimestampNtz(t) => t.decimal_digits(),
+            Self::Boolean(t) => t.decimal_digits(),
+            Self::Binary(t) => t.decimal_digits(),
+            Self::Real(t) => t.decimal_digits(),
         }
     }
 }
@@ -259,6 +287,14 @@ pub fn make_converter<'a>(
                 nullable
             )
         }
+        SnowflakeFieldType::Real(snowflake_type) => {
+            make_primitive_data_converter!(
+                arrow::datatypes::Float64Type,
+                snowflake_type,
+                arrow_array,
+                nullable
+            )
+        }
     }
 }
 
@@ -268,4 +304,18 @@ pub fn sql_type_from_field(
     numeric_settings: &NumericSettings,
 ) -> Result<odbc_sys::SqlDataType, ConversionError> {
     SnowflakeFieldType::from_field(field, numeric_settings).map(|ft| ft.sql_type())
+}
+
+pub fn column_size_from_field(
+    field: &Field,
+    numeric_settings: &NumericSettings,
+) -> Result<odbc_sys::ULen, ConversionError> {
+    SnowflakeFieldType::from_field(field, numeric_settings).map(|ft| ft.column_size())
+}
+
+pub fn decimal_digits_from_field(
+    field: &Field,
+    numeric_settings: &NumericSettings,
+) -> Result<odbc_sys::SmallInt, ConversionError> {
+    SnowflakeFieldType::from_field(field, numeric_settings).map(|ft| ft.decimal_digits())
 }

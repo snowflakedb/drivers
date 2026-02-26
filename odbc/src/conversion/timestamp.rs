@@ -53,6 +53,14 @@ impl WriteODBCType for SnowflakeTimestampNtz {
         sql::SqlDataType::TIMESTAMP
     }
 
+    fn column_size(&self) -> sql::ULen {
+        29
+    }
+
+    fn decimal_digits(&self) -> sql::SmallInt {
+        9
+    }
+
     fn write_odbc_type(
         &self,
         snowflake_value: Self::Representation<'_>,

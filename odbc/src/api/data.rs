@@ -1,8 +1,8 @@
 use crate::api::error::{
-    ConversionSnafu, DataNotFetchedSnafu, ExecutionDoneSnafu, ExtendedFetchUsedSnafu,
-    FetchDataSnafu, InvalidBufferLengthSnafu, InvalidCursorPositionSnafu, InvalidCursorStateSnafu,
-    InvalidDescriptorIndexSnafu, NoMoreDataSnafu, NullPointerSnafu, StatementErrorStateSnafu,
-    StatementNotExecutedSnafu, UnsupportedFeatureSnafu,
+    ConversionSnafu, DataNotFetchedSnafu, ExecutionDoneSnafu, FetchDataSnafu,
+    InvalidBufferLengthSnafu, InvalidCursorPositionSnafu, InvalidCursorStateSnafu,
+    InvalidDescriptorIndexSnafu, MixedCursorFunctionsSnafu, NoMoreDataSnafu, NullPointerSnafu,
+    StatementErrorStateSnafu, StatementNotExecutedSnafu, UnsupportedFeatureSnafu,
 };
 use crate::api::{
     GetDataState, OdbcResult, Statement, StatementState, WithState, stmt_from_handle,
@@ -12,6 +12,7 @@ use crate::conversion::warning::Warnings;
 use crate::conversion::{Binding, ConversionError, NumericSettings, make_converter};
 use arrow::array::Array;
 use arrow::datatypes::Field;
+use arrow::ffi_stream::ArrowArrayStreamReader;
 use odbc_sys as sql;
 use snafu::ResultExt;
 use tracing;
@@ -40,6 +41,38 @@ enum RowStatus {
     SuccessWithInfo = 6,
 }
 
+/// Read batches from the Arrow reader until a non-empty one is found.
+/// Empty batches (0 rows) are skipped. Returns `NoMoreData` when the
+/// reader is exhausted.
+#[allow(clippy::result_large_err)]
+fn next_non_empty_batch(
+    mut reader: ArrowArrayStreamReader,
+    rows_affected: Option<i64>,
+) -> Result<(StatementState, ()), (StatementState, crate::api::OdbcError)> {
+    loop {
+        match reader.next() {
+            Some(rb) => {
+                let record_batch = rb
+                    .context(FetchDataSnafu)
+                    .with_state(StatementState::Error)?;
+                if record_batch.num_rows() == 0 {
+                    continue;
+                }
+                break Ok((
+                    StatementState::Fetching {
+                        reader,
+                        record_batch,
+                        batch_idx: 0,
+                        rows_affected,
+                    },
+                    (),
+                ));
+            }
+            None => break NoMoreDataSnafu.fail().with_state(StatementState::Done),
+        }
+    }
+}
+
 /// Advance the cursor by one row. Handles state transitions from
 /// `Executed` → `Fetching` and from one batch to the next.
 fn advance_cursor(state: &mut crate::api::State<StatementState>) -> OdbcResult<()> {
@@ -47,26 +80,15 @@ fn advance_cursor(state: &mut crate::api::State<StatementState>) -> OdbcResult<(
         StatementState::NoResultSet => InvalidCursorStateSnafu
             .fail()
             .with_state(StatementState::NoResultSet),
-        StatementState::Executed { mut reader, .. } => match reader.next() {
-            Some(rb) => {
-                let record_batch = rb
-                    .context(FetchDataSnafu)
-                    .with_state(StatementState::Error)?;
-                Ok((
-                    StatementState::Fetching {
-                        reader,
-                        record_batch,
-                        batch_idx: 0,
-                    },
-                    (),
-                ))
-            }
-            None => NoMoreDataSnafu.fail().with_state(StatementState::Done),
-        },
+        StatementState::Executed {
+            reader,
+            rows_affected,
+        } => next_non_empty_batch(reader, rows_affected),
         StatementState::Fetching {
-            mut reader,
+            reader,
             record_batch,
             batch_idx,
+            rows_affected,
         } => {
             let new_idx = batch_idx + 1;
             if new_idx < record_batch.num_rows() {
@@ -75,31 +97,19 @@ fn advance_cursor(state: &mut crate::api::State<StatementState>) -> OdbcResult<(
                         reader,
                         record_batch,
                         batch_idx: new_idx,
+                        rows_affected,
                     },
                     (),
                 ))
             } else {
-                match reader.next() {
-                    Some(rb) => {
-                        let new_batch = rb
-                            .context(FetchDataSnafu)
-                            .with_state(StatementState::Error)?;
-                        Ok((
-                            StatementState::Fetching {
-                                reader,
-                                record_batch: new_batch,
-                                batch_idx: 0,
-                            },
-                            (),
-                        ))
-                    }
-                    None => NoMoreDataSnafu.fail().with_state(StatementState::Done),
-                }
+                next_non_empty_batch(reader, rows_affected)
             }
         }
         state @ StatementState::Error => StatementErrorStateSnafu.fail().with_state(state),
         state @ StatementState::Done => ExecutionDoneSnafu.fail().with_state(state),
-        state @ StatementState::Created => StatementNotExecutedSnafu.fail().with_state(state),
+        state @ StatementState::Created | state @ StatementState::Prepared => {
+            StatementNotExecutedSnafu.fail().with_state(state)
+        }
     })
 }
 
@@ -108,15 +118,15 @@ pub fn fetch(statement_handle: sql::Handle, warnings: &mut Warnings) -> OdbcResu
     tracing::debug!("fetch called");
     let stmt = stmt_from_handle(statement_handle);
 
-    if stmt.extended_fetch_used {
-        return ExtendedFetchUsedSnafu.fail();
+    if stmt.used_extended_fetch {
+        return MixedCursorFunctionsSnafu.fail();
     }
 
-    fetch_inner(stmt, warnings)
+    fetch_impl(statement_handle, warnings)
 }
 
-/// Core fetch logic shared by `fetch` and `extended_fetch`.
-fn fetch_inner(stmt: &mut Statement, warnings: &mut Warnings) -> OdbcResult<()> {
+fn fetch_impl(statement_handle: sql::Handle, warnings: &mut Warnings) -> OdbcResult<()> {
+    let stmt = stmt_from_handle(statement_handle);
     stmt.get_data_state = None;
 
     let array_size = stmt.ard.array_size.max(1);
@@ -229,17 +239,20 @@ pub fn fetch_scroll(
     fetch(statement_handle, warnings)
 }
 
-/// `SQLExtendedFetch` — deprecated ODBC 2.x function. Only `SQL_FETCH_NEXT` is
-/// supported. Sets `extended_fetch_used` so that subsequent `SQLFetch` calls
-/// return HY010 until the cursor is closed with `SQLFreeStmt(SQL_CLOSE)`.
+/// `SQLExtendedFetch` — ODBC 2.x block-fetch function.
+///
+/// Sets the `used_extended_fetch` flag so that subsequent `SQLFetch` calls
+/// are rejected (per ODBC spec) until the cursor is closed.
 pub fn extended_fetch(
     statement_handle: sql::Handle,
     fetch_orientation: sql::SmallInt,
+    _fetch_offset: sql::Len,
     row_count_ptr: *mut sql::ULen,
     row_status_ptr: *mut sql::USmallInt,
     warnings: &mut Warnings,
 ) -> OdbcResult<()> {
     tracing::debug!("extended_fetch called");
+
     if fetch_orientation != SQL_FETCH_NEXT {
         tracing::warn!(
             "extended_fetch: unsupported orientation {}",
@@ -249,24 +262,11 @@ pub fn extended_fetch(
     }
 
     let stmt = stmt_from_handle(statement_handle);
-    stmt.extended_fetch_used = true;
+    stmt.used_extended_fetch = true;
+    stmt.ird.rows_processed_ptr = row_count_ptr;
+    stmt.ird.array_status_ptr = row_status_ptr;
 
-    let saved_row_status = stmt.ird.array_status_ptr;
-    let saved_rows_fetched = stmt.ird.rows_processed_ptr;
-
-    if !row_status_ptr.is_null() {
-        stmt.ird.array_status_ptr = row_status_ptr;
-    }
-    if !row_count_ptr.is_null() {
-        stmt.ird.rows_processed_ptr = row_count_ptr;
-    }
-
-    let result = fetch_inner(stmt, warnings);
-
-    stmt.ird.array_status_ptr = saved_row_status;
-    stmt.ird.rows_processed_ptr = saved_rows_fetched;
-
-    result
+    fetch_impl(statement_handle, warnings)
 }
 
 fn write_row_status(row_status_ptr: *mut u16, row_idx: usize, status: RowStatus) {
@@ -472,9 +472,9 @@ pub fn get_data(
 
     match stmt.state.as_ref() {
         StatementState::Fetching {
-            reader: _,
             record_batch,
             batch_idx,
+            ..
         } => {
             let col_idx = (col_or_param_num - 1) as usize;
             if col_idx >= record_batch.num_columns() {
@@ -533,7 +533,7 @@ pub fn get_data(
             tracing::debug!("get_data: statement execution is done");
             ExecutionDoneSnafu.fail()
         }
-        StatementState::Created => {
+        StatementState::Created | StatementState::Prepared => {
             tracing::error!("get_data: data not fetched yet");
             DataNotFetchedSnafu.fail()
         }

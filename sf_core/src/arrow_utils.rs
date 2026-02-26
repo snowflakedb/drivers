@@ -1,5 +1,5 @@
-use arrow::array::{Array, Int64Array, StringArray};
-use arrow::datatypes::{DataType, Field, Schema};
+use arrow::array::{Array, BooleanArray, Float64Array, Int64Array, StringArray};
+use arrow::datatypes::{DataType, Date32Type, Field, Int32Type, Int64Type, Schema};
 use arrow::error::ArrowError;
 use arrow::record_batch::RecordBatch;
 use snafu::{Location, ResultExt, Snafu};
@@ -17,13 +17,12 @@ pub fn create_field(row_type: &RowType) -> Field {
             length,
             byte_length,
         } => {
-            let arrow_type = DataType::Utf8;
             let mut metadata = HashMap::new();
             metadata.insert("logicalType".to_string(), "TEXT".to_string());
             metadata.insert("physicalType".to_string(), "LOB".to_string());
             metadata.insert("charLength".to_string(), length.to_string());
             metadata.insert("byteLength".to_string(), byte_length.to_string());
-            Field::new(name, arrow_type, *nullable).with_metadata(metadata)
+            Field::new(name, DataType::Utf8, *nullable).with_metadata(metadata)
         }
         RowType::Fixed {
             name,
@@ -31,7 +30,11 @@ pub fn create_field(row_type: &RowType) -> Field {
             precision,
             scale,
         } => {
-            let arrow_type = DataType::Int64;
+            let arrow_type = if *scale > 0 {
+                DataType::Decimal128(*precision as u8, *scale as i8)
+            } else {
+                DataType::Int64
+            };
             let mut metadata = HashMap::new();
             metadata.insert("logicalType".to_string(), "FIXED".to_string());
             metadata.insert("scale".to_string(), scale.to_string());
@@ -41,6 +44,35 @@ pub fn create_field(row_type: &RowType) -> Field {
                 physical_type_from_precision_signed(*precision),
             );
             Field::new(name, arrow_type, *nullable).with_metadata(metadata)
+        }
+        RowType::Boolean { name, nullable } => {
+            let mut metadata = HashMap::new();
+            metadata.insert("logicalType".to_string(), "BOOLEAN".to_string());
+            Field::new(name, DataType::Boolean, *nullable).with_metadata(metadata)
+        }
+        RowType::Real { name, nullable } => {
+            let mut metadata = HashMap::new();
+            metadata.insert("logicalType".to_string(), "REAL".to_string());
+            Field::new(name, DataType::Float64, *nullable).with_metadata(metadata)
+        }
+        RowType::Date { name, nullable } => {
+            let mut metadata = HashMap::new();
+            metadata.insert("logicalType".to_string(), "DATE".to_string());
+            Field::new(name, DataType::Date32, *nullable).with_metadata(metadata)
+        }
+        RowType::TimestampNtz {
+            name,
+            nullable,
+            scale,
+        } => {
+            let mut metadata = HashMap::new();
+            metadata.insert("logicalType".to_string(), "TIMESTAMP_NTZ".to_string());
+            metadata.insert("scale".to_string(), scale.to_string());
+            let fields = vec![
+                Field::new("epoch", DataType::Int64, false),
+                Field::new("fraction", DataType::Int32, false),
+            ];
+            Field::new(name, DataType::Struct(fields.into()), *nullable).with_metadata(metadata)
         }
     }
 }
@@ -52,8 +84,24 @@ fn create_column_array(
 ) -> Result<Arc<dyn Array>, ArrowUtilsError> {
     match row_type {
         RowType::Text { .. } => Ok(Arc::new(StringArray::from(values))),
+        RowType::Fixed {
+            scale, precision, ..
+        } if *scale > 0 => {
+            let decimal_values: Result<Vec<i128>, ArrowUtilsError> = values
+                .into_iter()
+                .map(|v| {
+                    v.parse::<i128>().context(IntegerParsingSnafu {
+                        value: v.to_string(),
+                    })
+                })
+                .collect();
+            Ok(Arc::new(
+                arrow::array::Decimal128Array::from(decimal_values?)
+                    .with_precision_and_scale(*precision as u8, *scale as i8)
+                    .expect("valid decimal precision/scale"),
+            ))
+        }
         RowType::Fixed { .. } => {
-            // Convert string values to i64 and return parsing error if any value is invalid
             let int_values: Result<Vec<i64>, ArrowUtilsError> = values
                 .into_iter()
                 .map(|v| {
@@ -63,6 +111,60 @@ fn create_column_array(
                 })
                 .collect();
             Ok(Arc::new(Int64Array::from(int_values?)))
+        }
+        RowType::Boolean { .. } => {
+            let bool_values: Result<Vec<bool>, ArrowUtilsError> = values
+                .into_iter()
+                .map(|v| match v {
+                    "true" => Ok(true),
+                    "false" => Ok(false),
+                    other => BooleanParsingSnafu {
+                        value: other.to_string(),
+                    }
+                    .fail(),
+                })
+                .collect();
+            Ok(Arc::new(BooleanArray::from(bool_values?)))
+        }
+        RowType::Real { .. } => {
+            let float_values: Result<Vec<f64>, ArrowUtilsError> = values
+                .into_iter()
+                .map(|v| {
+                    v.parse::<f64>().context(FloatParsingSnafu {
+                        value: v.to_string(),
+                    })
+                })
+                .collect();
+            Ok(Arc::new(Float64Array::from(float_values?)))
+        }
+        RowType::Date { .. } => {
+            let day_values: Result<Vec<i32>, ArrowUtilsError> = values
+                .into_iter()
+                .map(|v| {
+                    v.parse::<i32>().context(IntegerParsingSnafu {
+                        value: v.to_string(),
+                    })
+                })
+                .collect();
+            Ok(Arc::new(arrow::array::PrimitiveArray::<Date32Type>::from(
+                day_values?,
+            )))
+        }
+        RowType::TimestampNtz { .. } => {
+            let epoch: Arc<dyn Array> = Arc::new(arrow::array::PrimitiveArray::<Int64Type>::from(
+                Vec::<i64>::new(),
+            ));
+            let fraction: Arc<dyn Array> = Arc::new(
+                arrow::array::PrimitiveArray::<Int32Type>::from(Vec::<i32>::new()),
+            );
+            let fields = vec![
+                (Arc::new(Field::new("epoch", DataType::Int64, false)), epoch),
+                (
+                    Arc::new(Field::new("fraction", DataType::Int32, false)),
+                    fraction,
+                ),
+            ];
+            Ok(Arc::new(arrow::array::StructArray::from(fields)))
         }
     }
 }
@@ -137,6 +239,19 @@ pub enum ArrowUtilsError {
         #[snafu(implicit)]
         location: Location,
     },
+    #[snafu(display("Failed to parse float value: {value}"))]
+    FloatParsing {
+        value: String,
+        source: std::num::ParseFloatError,
+        #[snafu(implicit)]
+        location: Location,
+    },
+    #[snafu(display("Failed to parse boolean value: {value}"))]
+    BooleanParsing {
+        value: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
 }
 
 #[cfg(test)]
@@ -158,7 +273,7 @@ mod tests {
         // Describe columns via RowType
         let row_types = vec![
             RowType::text("col_text", false, 16, 64),
-            RowType::fixed("col_fixed", false, 5, 0).unwrap(),
+            RowType::fixed("col_fixed", false, 5, 0),
         ];
 
         // Convert to Arrow reader
@@ -233,7 +348,7 @@ mod tests {
         // Describe columns via RowType
         let row_types = vec![
             RowType::text("col_text", false, 64, 256),
-            RowType::fixed("col_fixed", false, 19, 0).unwrap(),
+            RowType::fixed("col_fixed", false, 19, 0),
         ];
 
         // Convert to Arrow reader

@@ -167,6 +167,10 @@ impl Binding {
 pub trait WriteODBCType: SnowflakeType {
     fn sql_type(&self) -> sql::SqlDataType;
 
+    fn column_size(&self) -> sql::ULen;
+
+    fn decimal_digits(&self) -> sql::SmallInt;
+
     fn write_odbc_type(
         &self,
         snowflake_value: Self::Representation<'_>,

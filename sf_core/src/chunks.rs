@@ -15,6 +15,7 @@ use snafu::{Location, ResultExt, Snafu};
 
 const MAX_CHUNK_DECOMPRESSION_RETRIES: u32 = 2;
 
+#[derive(Debug)]
 pub struct ChunkDownloadData {
     url: String,
     headers: HashMap<String, String>,

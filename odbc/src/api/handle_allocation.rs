@@ -58,7 +58,7 @@ pub fn alloc_statement(input_handle: sql::Handle) -> OdbcResult<*mut Statement<'
                 get_data_state: None,
                 cursor_type: crate::api::CursorType::ForwardOnly,
                 max_length: 0,
-                extended_fetch_used: false,
+                used_extended_fetch: false,
             });
             Ok(Box::into_raw(stmt))
         }

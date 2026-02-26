@@ -86,7 +86,7 @@ pipeline {
                                 python -m pip --version
                                 
                                 echo "Installing hatch..."
-                                python -m pip install hatch
+                                python -m pip install hatch "virtualenv<21.0.0"
                                 
                                 echo "Hatch version:"
                                 python -m hatch --version

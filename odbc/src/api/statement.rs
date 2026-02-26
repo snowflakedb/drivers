@@ -7,6 +7,7 @@ use crate::api::{ConnectionState, OdbcResult, ParameterBinding, StatementState, 
 use crate::cdata_types::CDataType;
 use crate::conversion::Binding;
 use crate::write_arrow::odbc_bindings_to_arrow_bindings;
+use arrow::array::RecordBatchReader;
 use arrow::ffi::{FFI_ArrowArray, FFI_ArrowSchema};
 use arrow::ffi_stream::{ArrowArrayStreamReader, FFI_ArrowArrayStream};
 use odbc_sys as sql;
@@ -79,6 +80,9 @@ pub fn exec_direct(statement_handle: sql::Handle, statement_text: &str) -> OdbcR
 
             update_numeric_settings(conn_handle, &mut stmt.conn.numeric_settings);
             stmt.state = create_execute_state(response)?.into();
+            if let StatementState::Executed { reader, .. } = stmt.state.as_ref() {
+                stmt.ird.desc_count = reader.schema().fields().len() as sql::SmallInt;
+            }
             Ok(())
         }
         ConnectionState::Disconnected => {
@@ -138,19 +142,17 @@ pub fn prepare(
         } => {
             let query = cstr_to_string(statement_text, text_length)?;
             tracing::debug!("prepare: query = {}", query);
-
-            // Set the SQL query for the statement
             DatabaseDriverClient::statement_set_sql_query(StatementSetSqlQueryRequest {
                 stmt_handle: Some(stmt.stmt_handle),
                 query,
             })?;
 
-            // Call the prepare method on the statement
             DatabaseDriverClient::statement_prepare(StatementPrepareRequest {
                 stmt_handle: Some(stmt.stmt_handle),
             })?;
 
-            tracing::info!("prepare: Successfully prepared statement");
+            stmt.state.set(StatementState::Prepared);
+            stmt.ird.desc_count = 0;
             Ok(())
         }
         ConnectionState::Disconnected => {
@@ -200,6 +202,9 @@ pub fn execute(statement_handle: sql::Handle) -> OdbcResult<()> {
             tracing::info!("execute: Successfully executed statement");
             update_numeric_settings(conn_handle, &mut stmt.conn.numeric_settings);
             stmt.state = create_execute_state(response)?.into();
+            if let StatementState::Executed { reader, .. } = stmt.state.as_ref() {
+                stmt.ird.desc_count = reader.schema().fields().len() as sql::SmallInt;
+            }
             Ok(())
         }
         ConnectionState::Disconnected => {
@@ -306,7 +311,7 @@ pub fn free_stmt(statement_handle: sql::Handle, option: sql::FreeStmtOption) -> 
             tracing::info!("free_stmt: Closing cursor");
             stmt.state = StatementState::Created.into();
             stmt.get_data_state = None;
-            stmt.extended_fetch_used = false;
+            stmt.used_extended_fetch = false;
         }
         sql::FreeStmtOption::Unbind => {
             tracing::info!("free_stmt: Unbinding all columns");

@@ -166,6 +166,12 @@ fn get_ird_field(
 ) -> OdbcResult<()> {
     if rec_number == 0 {
         match field {
+            DescField::Count => {
+                unsafe {
+                    std::ptr::write_unaligned(value_ptr as *mut sql::SmallInt, desc.desc_count);
+                }
+                Ok(())
+            }
             DescField::ArrayStatusPtr => {
                 unsafe {
                     std::ptr::write_unaligned(value_ptr as *mut *mut u16, desc.array_status_ptr);

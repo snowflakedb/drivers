@@ -88,6 +88,7 @@ async fn read_batches<'a>(
     data: query_response::RowsetData<'a>,
     http_client: &Client,
 ) -> Result<Box<dyn RecordBatchReader + Send>, ReadBatchesError> {
+    tracing::debug!("read_batches called {:?}", data);
     match data {
         query_response::RowsetData::ArrowSingleChunk { chunk_base64 } => {
             let reader_result =
@@ -109,6 +110,16 @@ async fn read_batches<'a>(
             .context(ChunkReadingSnafu)?;
 
             Ok(Box::new(reader_result))
+        }
+        query_response::RowsetData::SchemaOnly { rowtype } => {
+            let row_types = rowtype
+                .iter()
+                .map(|rt| rt.try_into())
+                .collect::<Result<Vec<_>, _>>()
+                .context(RowTypeParsingSnafu)?;
+            let rowset = vec![];
+            convert_string_rowset_to_arrow_reader(&rowset, &row_types)
+                .context(RowsetConversionSnafu)
         }
         query_response::RowsetData::JsonRowset { rowset, rowtype } => {
             let row_types = rowtype
@@ -260,6 +271,7 @@ fn rowtype_to_column_metadata(rt: &RowType) -> ColumnMetadata {
             byte_length: None,
             nullable: *nullable,
         },
+        _ => todo!(),
     }
 }
 

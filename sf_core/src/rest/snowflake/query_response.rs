@@ -89,7 +89,7 @@ pub struct Data {
     #[serde(rename = "resultTypes")]
     _result_types: Option<String>,
     #[serde(rename = "queryResultFormat")]
-    _query_result_format: Option<String>,
+    query_result_format: Option<String>,
     #[serde(rename = "asyncResult")]
     _async_result: Option<SnowflakeResult>,
     #[serde(rename = "asyncRows")]
@@ -174,7 +174,7 @@ pub struct NameValueParameter {
     pub value: serde_json::Value,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 pub struct RowType {
     #[serde(rename = "name")]
     pub name: String,
@@ -196,7 +196,7 @@ pub struct RowType {
     pub _fields: Option<Vec<FieldMetadata>>,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 pub struct FieldMetadata {
     //unused fields
     #[serde(rename = "name")]
@@ -426,24 +426,43 @@ impl Data {
     }
 
     pub fn to_rowset_data<'a>(&'a self) -> RowsetData<'a> {
-        match (self.to_initial_base64_opt(), self.to_chunk_download_data()) {
-            (initial_base64_opt, Some(chunk_download_data)) => {
-                return RowsetData::ArrowMultiChunk {
-                    initial_base64_opt,
-                    chunk_download_data,
-                };
+        match self.query_result_format.as_deref() {
+            Some("arrow") => {
+                match (
+                    self.to_initial_base64_opt(),
+                    self.to_chunk_download_data(),
+                    self.row_type.as_ref(),
+                ) {
+                    (initial_base64_opt, Some(chunk_download_data), _) => {
+                        RowsetData::ArrowMultiChunk {
+                            initial_base64_opt,
+                            chunk_download_data,
+                        }
+                    }
+                    (Some(chunk_base64), None, _) => RowsetData::ArrowSingleChunk { chunk_base64 },
+                    (None, None, Some(rowtype)) => RowsetData::SchemaOnly { rowtype },
+                    _ => {
+                        tracing::error!(
+                            "Initial base64 and/or chunk download data are missing for Arrow result format"
+                        );
+                        RowsetData::NoData
+                    }
+                }
             }
-            (Some(chunk_base64), None) => {
-                return RowsetData::ArrowSingleChunk { chunk_base64 };
+            Some("json") => {
+                if let Some((rowset, rowtype)) = self.to_json_rowset() {
+                    RowsetData::JsonRowset { rowset, rowtype }
+                } else {
+                    tracing::error!("Rowset and/or rowtype are missing for JSON result format");
+                    RowsetData::NoData
+                }
             }
-            _ => (),
+            Some(other) => {
+                tracing::error!("Unsupported query result format: {other}");
+                RowsetData::NoData
+            }
+            None => RowsetData::NoData,
         }
-
-        if let Some((rowset, rowtype)) = self.to_json_rowset() {
-            return RowsetData::JsonRowset { rowset, rowtype };
-        }
-
-        RowsetData::NoData
     }
 
     pub fn to_chunk_download_data(&self) -> Option<Vec<ChunkDownloadData>> {
@@ -488,7 +507,11 @@ impl Data {
     }
 }
 
+#[derive(Debug)]
 pub enum RowsetData<'a> {
+    SchemaOnly {
+        rowtype: &'a Vec<RowType>,
+    },
     ArrowMultiChunk {
         initial_base64_opt: Option<&'a str>,
         chunk_download_data: Vec<ChunkDownloadData>,
@@ -544,16 +567,17 @@ impl TryFrom<&RowType> for query_types::RowType {
                     ),
                 })?;
 
-                let row_type = query_types::RowType::fixed(&name, nullable, precision, scale)
-                    .map_err(|e| {
-                        InvalidFormatSnafu {
-                            message: format!("Invalid type for column '{name}': {e}"),
-                        }
-                        .build()
-                    })?;
-
-                Ok(row_type)
+                Ok(query_types::RowType::fixed(
+                    &name, nullable, precision, scale,
+                ))
             }
+            "REAL" => Ok(query_types::RowType::real(&name, nullable)),
+            "DATE" => Ok(query_types::RowType::date(&name, nullable)),
+            "TIMESTAMP_NTZ" => {
+                let scale = value.scale.unwrap_or(9);
+                Ok(query_types::RowType::timestamp_ntz(&name, nullable, scale))
+            }
+            "BOOLEAN" => Ok(query_types::RowType::boolean(&name, nullable)),
             other => InvalidFormatSnafu {
                 message: format!("Unsupported column type '{other}' for column '{name}'"),
             }
