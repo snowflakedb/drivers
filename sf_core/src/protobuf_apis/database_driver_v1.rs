@@ -576,8 +576,8 @@ impl DatabaseDriver for DatabaseDriverImpl {
         let error_strategy = match input.error_strategy {
             Some(v) if v == ProtoErrorStrategy::Strict as i32 => ErrorStrategy::Strict,
             Some(v) if v == ProtoErrorStrategy::BestEffort as i32 => ErrorStrategy::BestEffort,
-            Some(v) if v == ProtoErrorStrategy::Unspecified as i32 => ErrorStrategy::BestEffort,
-            None => ErrorStrategy::BestEffort,
+            Some(v) if v == ProtoErrorStrategy::Unspecified as i32 => ErrorStrategy::Strict,
+            None => ErrorStrategy::Strict,
             Some(v) => {
                 return Err(DriverException {
                     message: format!("Invalid error_strategy value: {}", v),
